@@ -383,6 +383,7 @@ private:
     // UI-scale preview, so it stays the physical size it opened with while everything
     // behind it rescales - what the JUCE panel's inverse body transform did.
     double audioSettingsReferenceScale = 1.0;
+    int audioSettingsTab = 0;
     // Run once the panel's child is off the screen: the JUCE modal it stepped down for.
     std::function<void()> audioSettingsHandOff;
    #endif

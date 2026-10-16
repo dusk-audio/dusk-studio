@@ -17,6 +17,7 @@ struct InstalledPack
     ProviderPack provider;
     std::string archiveSha256;
     std::vector<ProviderInstrument> instruments;
+    std::vector<ProviderInstrument> programs;
     std::filesystem::path directory;
 
     ManagedSfzLocator locatorFor (const ProviderInstrument& instrument) const
@@ -34,7 +35,8 @@ struct PackPublishResult : OperationResult
 class PackStore
 {
 public:
-    explicit PackStore (std::filesystem::path root) : storeRoot (std::move (root)) {}
+    explicit PackStore (std::filesystem::path root, std::string marker = {})
+        : storeRoot (std::move (root)), requiredMarker (std::move (marker)) {}
     bool initialize (std::string& error);
     const std::filesystem::path& root() const noexcept { return storeRoot; }
     std::filesystem::path createStaging (std::string& error);
@@ -50,5 +52,6 @@ public:
 private:
     std::optional<InstalledPack> readReceipt (const std::filesystem::path&) const;
     std::filesystem::path storeRoot;
+    std::string requiredMarker;
 };
 } // namespace duskstudio::sfz

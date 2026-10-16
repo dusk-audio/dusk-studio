@@ -1,5 +1,5 @@
 #include "MultisampleLoader.h"
-#include "../sfz/SfzPackStore.h"
+#include "../sfz/SfzLibraryLocations.h"
 
 #include <algorithm>
 #include <chrono>
@@ -107,19 +107,18 @@ MultisampleLoader::Result MultisampleLoader::primeRequest (Request request)
     Result result;
     result.request = std::move (request);
     auto& input = result.request;
+    const auto locations = sfz::readLibraryLocations();
     if (input.locator)
     {
-        sfz::PackStore store (sfz::defaultPackStoreRoot());
-        std::string error;
-        const auto resolved = store.initialize (error) ? store.resolve (*input.locator) : std::nullopt;
+        const auto resolved = sfz::resolveLibraryInstrument (locations, *input.locator);
         if (resolved) input.path = *resolved;
-        else result.error = "This SFZ pack version is missing from the local library. Open Library to install it.";
+        else result.error = locations.error.empty()
+            ? "This SFZ pack version is unavailable. Reconnect its library drive or open SFZ Manager to install it."
+            : locations.error;
     }
     else
     {
-        sfz::PackStore store (sfz::defaultPackStoreRoot());
-        std::string error;
-        if (store.initialize (error)) input.locator = store.locatorForFile (input.path);
+        input.locator = sfz::libraryLocatorForFile (locations, input.path);
     }
     if (result.error.empty())
     {

@@ -168,18 +168,63 @@ std::string scalar (std::string value)
     return value;
 }
 
-std::optional<std::string> catalogPage (std::string_view text, const std::string& repository)
+std::string catalogDescription (std::string value, bool block)
+{
+    const auto first = value.find_first_not_of (' ');
+    if (first == std::string::npos) return {};
+    value.erase (0, first);
+    while (! value.empty() && value.back() == ' ') value.pop_back();
+    if (value.size() > 2048 || value.find_first_of ("\\\t\r\n") != std::string::npos
+        || value.find ('\0') != std::string::npos) return {};
+    if (block) return value;
+    if (value.front() == '\'' || value.front() == '"')
+    {
+        std::string result;
+        const auto quote = value.front();
+        for (std::size_t i = 1; i < value.size(); ++i)
+        {
+            if (value[i] != quote) { result += value[i]; continue; }
+            if (quote == '\'' && i + 1 < value.size() && value[i + 1] == quote)
+            { result += quote; ++i; continue; }
+            const auto tail = value.find_first_not_of (' ', i + 1);
+            return tail == std::string::npos || value[tail] == '#' ? result : std::string {};
+        }
+        return {};
+    }
+    if (value.find_first_of ("[]{}") != std::string::npos || value.find (": ") != std::string::npos
+        || std::string_view ("&*!|>").find (value.front()) != std::string_view::npos) return {};
+    const auto comment = value.find (" #");
+    if (comment != std::string::npos) value.resize (comment);
+    while (! value.empty() && value.back() == ' ') value.pop_back();
+    return value;
+}
+
+struct CatalogMetadata
+{
+    std::string page, description;
+};
+
+void appendMetadataText (std::string& text, const std::string& extra)
+{
+    if (extra.empty() || text.find (extra) != std::string::npos
+        || text.size() + extra.size() + 1 > 8192) return;
+    if (! text.empty()) text += ' ';
+    text += extra;
+}
+
+std::optional<CatalogMetadata> catalogMetadata (std::string_view text, const std::string& repository)
 {
     // Project explicit repository URLs and simple page slugs, without interpreting general YAML.
     struct Entry
     {
         bool active = false, invalid = false, downloads = false, hasPage = false, hasUrl = false;
-        std::string category, page, name;
+        bool hasDescription = false, continuingDescription = false, descriptionBlock = false, descriptionInvalid = false;
+        std::string category, page, name, description;
         std::set<std::string> repositories;
     } entry;
     std::string category;
     bool categoryPage = false;
-    std::set<std::string> pages;
+    std::vector<CatalogMetadata> matches;
     const auto pageSegment = [] (const std::string& value)
     { return repositoryName (value) && value.find ('.') == std::string::npos; };
     const auto finish = [&]
@@ -197,10 +242,12 @@ std::optional<std::string> catalogPage (std::string_view text, const std::string
             ? 0 : repository.find ('.') + 1);
         const bool nameMatch = repository.find ('.') != std::string::npos && entry.repositories.empty()
             && ! entry.name.empty() && slug (entry.name) == slug (shortRepository);
-        if (nameMatch && ! entry.hasPage) entry.page = slug (entry.name);
+        const bool repositoryMatch = entry.repositories.size() == 1 && *entry.repositories.begin() == lower (repository);
+        if ((nameMatch || repositoryMatch) && ! entry.hasPage) entry.page = slug (entry.name);
         if (entry.active && ! entry.invalid && pageSegment (entry.category) && pageSegment (entry.page)
-            && (nameMatch || (entry.repositories.size() == 1 && *entry.repositories.begin() == lower (repository))))
-            pages.insert (entry.category + "/" + entry.page);
+            && (nameMatch || repositoryMatch))
+            matches.push_back ({ entry.category + "/" + entry.page,
+                entry.descriptionInvalid ? std::string {} : catalogDescription (entry.description, entry.descriptionBlock) });
     };
     std::istringstream input { std::string (text) };
     std::string line;
@@ -212,6 +259,17 @@ std::optional<std::string> catalogPage (std::string_view text, const std::string
         const auto indent = line.find_first_not_of (' ');
         if (indent == std::string::npos || line[indent] == '#') continue;
         const auto content = line.substr (indent);
+        if (entry.continuingDescription && indent >= 6)
+        {
+            if (content.size() + entry.description.size() + 1 > 2048) entry.descriptionInvalid = true;
+            else if (! entry.descriptionInvalid)
+            {
+                if (! entry.description.empty()) entry.description += ' ';
+                entry.description += content;
+            }
+            continue;
+        }
+        entry.continuingDescription = false;
         if (indent == 0 && content.compare (0, 7, "- name:") == 0)
         { finish(); entry = {}; category.clear(); categoryPage = false; }
         else if (indent == 2 && content.compare (0, 5, "page:") == 0)
@@ -228,6 +286,19 @@ std::optional<std::string> catalogPage (std::string_view text, const std::string
             if (content.compare (0, 5, "page:") == 0)
             { if (entry.hasPage) entry.invalid = true; entry.page = scalar (content.substr (5)); entry.hasPage = true; }
             if (content.compare (0, 4, "url:") == 0 && entry.hasUrl) entry.invalid = true;
+            if (content.compare (0, 18, "short_description:") == 0)
+            {
+                if (entry.hasDescription) entry.invalid = true;
+                entry.hasDescription = entry.continuingDescription = true;
+                const auto start = content.find_first_not_of (' ', 18);
+                entry.description = start == std::string::npos ? std::string {} : content.substr (start);
+                const auto end = entry.description.find (" #");
+                auto style = entry.description.substr (0, end);
+                while (! style.empty() && style.back() == ' ') style.pop_back();
+                entry.descriptionBlock = style == ">" || style == ">-" || style == ">+"
+                    || style == "|" || style == "|-" || style == "|+";
+                if (entry.descriptionBlock) entry.description.clear();
+            }
         }
         if (! entry.active || ! ((indent == 4 || ((indent == 6 || indent == 8) && entry.downloads))
             && content.compare (0, 4, "url:") == 0)) continue;
@@ -241,24 +312,41 @@ std::optional<std::string> catalogPage (std::string_view text, const std::string
             entry.repositories.insert (lower (name));
     }
     finish();
-    return pages.size() == 1 ? std::optional<std::string> (*pages.begin()) : std::nullopt;
+    return matches.size() == 1 ? std::optional<CatalogMetadata> (std::move (matches.front())) : std::nullopt;
+}
+
+OperationResult githubCatalog (HttpTransport& transport, std::string& text, const OperationControl& control)
+{
+    HttpRequest request;
+    request.url = "https://raw.githubusercontent.com/sfzinstruments/sfzinstruments.github.io/master/data/sfz/instruments.yml";
+    request.connectTimeoutSeconds = 3; request.timeoutSeconds = 5; request.lowSpeedSeconds = 3;
+    try
+    {
+        const auto catalog = fetchHttpText (transport, request, 131072, control);
+        const auto catalogStatus = control.status();
+        if (catalogStatus != OperationStatus::Complete) return { catalogStatus, "Source metadata lookup interrupted" };
+        if (catalog.status == OperationStatus::Paused || catalog.status == OperationStatus::Cancelled)
+            return { catalog.status, catalog.error };
+        if (catalog && catalog.response.statusCode == 200) text = catalog.body;
+    }
+    catch (const std::exception&) {}
+    const auto catalogStatus = control.status();
+    return { catalogStatus, catalogStatus == OperationStatus::Complete ? std::string {} : "Source metadata lookup interrupted" };
 }
 
 OperationResult githubDemos (HttpTransport& transport, const std::string& repository,
                              ProviderPresentation& presentation, const OperationControl& control)
 {
+    std::string text;
+    const auto catalog = githubCatalog (transport, text, control);
+    if (! catalog) return catalog;
+    const auto metadata = catalogMetadata (text, repository);
+    if (! metadata) return { OperationStatus::Complete, {} };
+    appendMetadataText (presentation.categoryHint, metadata->description);
+    const auto& page = metadata->page;
     HttpRequest request;
-    request.url = "https://raw.githubusercontent.com/sfzinstruments/sfzinstruments.github.io/master/data/sfz/instruments.yml";
+    request.url = "https://sfzinstruments.github.io/" + page + "/";
     request.connectTimeoutSeconds = 3; request.timeoutSeconds = 5; request.lowSpeedSeconds = 3;
-    const auto catalog = fetchHttpText (transport, request, 131072, control);
-    const auto catalogStatus = control.status();
-    if (catalogStatus != OperationStatus::Complete) return { catalogStatus, "Source demo lookup interrupted" };
-    if (catalog.status == OperationStatus::Paused || catalog.status == OperationStatus::Cancelled)
-        return { catalog.status, catalog.error };
-    if (! catalog || catalog.response.statusCode != 200) return { OperationStatus::Complete, {} };
-    const auto page = catalogPage (catalog.body, repository);
-    if (! page) return { OperationStatus::Complete, {} };
-    request.url = "https://sfzinstruments.github.io/" + *page + "/";
     const auto html = fetchHttpText (transport, request, 262144, control);
     const auto htmlStatus = control.status();
     if (htmlStatus != OperationStatus::Complete) return { htmlStatus, "Source demo lookup interrupted" };
@@ -266,7 +354,7 @@ OperationResult githubDemos (HttpTransport& transport, const std::string& reposi
         return { html.status, html.error };
     if (! html || html.response.statusCode != 200 || html.response.url != request.url)
         return { OperationStatus::Complete, {} };
-    const auto audio = "/assets/audio/" + *page + ".mp3";
+    const auto audio = "/assets/audio/" + page + ".mp3";
     std::size_t offset = 0;
     while ((offset = html.body.find ('<', offset)) != std::string::npos)
     {
@@ -285,7 +373,7 @@ OperationResult githubDemos (HttpTransport& transport, const std::string& reposi
                 const auto from = start + marker.size(), to = tag.find (quote, from);
                 if (to == std::string::npos) continue;
                 const auto path = tag.substr (from, to - from);
-                const auto prefix = "/assets/img/" + page->substr (0, page->find ('/')) + "/";
+                const auto prefix = "/assets/img/" + page.substr (0, page.find ('/')) + "/";
                 if (path.compare (0, prefix.size(), prefix) == 0 && path.find ("..") == std::string::npos
                     && https ("https://sfzinstruments.github.io" + path))
                     presentation.artworkUrl = "https://sfzinstruments.github.io" + path;
@@ -550,6 +638,8 @@ ProviderPackResult githubPack (HttpTransport& transport, const ProviderSummary& 
     pack.expectedRoot = summary.locator + "-" + revision;
     pack.versionPinned = true;
     presentationMetadata (repository.json, pack.presentation);
+    if (summary.sourceId == "sfzinstruments")
+        appendMetadataText (pack.presentation.categoryHint, summary.presentation.categoryHint);
     std::set<std::string> paths;
     std::set<std::string> regularFiles;
     for (const auto& entry : *entries)
@@ -741,6 +831,12 @@ ProviderPageResult browseProvider (HttpTransport& transport, const std::string& 
     if (! response) { result.status = response.status; result.error = response.error; return result; }
     if (! response.json.is_array() || response.json.size() > 256)
     { result.error = "Repository listing is invalid or too large"; return result; }
+    std::string catalog;
+    if (sourceId == "sfzinstruments" && ! query.empty())
+    {
+        const auto metadata = githubCatalog (transport, catalog, control);
+        if (! metadata) { result.status = metadata.status; result.error = metadata.error; return result; }
+    }
     std::set<std::string> ids;
     for (const auto& entry : response.json)
     {
@@ -766,6 +862,15 @@ ProviderPageResult browseProvider (HttpTransport& transport, const std::string& 
             if (! summary.licenseHint.empty() && summary.licenseHint != "NOASSERTION"
                 && ! ccLicense (summary.licenseHint)) continue;
             if (sourceId != "sfzinstruments" && ! ccLicense (summary.licenseHint)) continue;
+            if (! catalog.empty())
+            {
+                const auto metadata = catalogMetadata (catalog, summary.locator);
+                if (metadata)
+                {
+                    appendMetadataText (summary.description, metadata->description);
+                    appendMetadataText (summary.presentation.categoryHint, metadata->description);
+                }
+            }
             if (sourceId == "versilian")
             {
                 summary.name = summary.locator == "VCSL" ? "Versilian Community Sample Library" : "VSCO 2 Community Edition";

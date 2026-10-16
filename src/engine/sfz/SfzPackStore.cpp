@@ -1,6 +1,7 @@
 #include "SfzPackStore.h"
+#include "SfzLibraryLocations.h"
+#include "SfzPackIndex.h"
 #include "../../foundation/Fs.h"
-#include "../../foundation/AppConfigDir.h"
 
 #include <sodium.h>
 
@@ -43,8 +44,7 @@ PackPublishResult failure (const std::string& message)
 
 fs::path defaultPackStoreRoot()
 {
-    const auto config = dusk::fs::appConfigDir();
-    return config.empty() ? fs::path {} : config / "sfz-library";
+    return readLibraryLocations().active.root;
 }
 
 std::string PackStore::identity (const ManagedSfzLocator& locator)
@@ -62,6 +62,15 @@ std::string PackStore::identity (const ManagedSfzLocator& locator)
 bool PackStore::initialize (std::string& error)
 {
     if (storeRoot.empty()) { error = "No SFZ library directory is configured"; return false; }
+    if (! requiredMarker.empty())
+    {
+        if (! libraryLocationAvailable ({ storeRoot, requiredMarker }))
+        {
+            error = "The SFZ library drive is unavailable. Reconnect it or choose another folder in Settings.";
+            return false;
+        }
+        return true;
+    }
     std::error_code ec;
     fs::create_directories (storeRoot, ec);
     if (! ec) storeRoot = fs::canonical (storeRoot, ec);
@@ -144,6 +153,7 @@ PackPublishResult PackStore::publish (const ProviderPack& provider, const std::s
     }
     fs::rename (staging, pack.directory, ec);
     if (ec) return failure ("Cannot publish SFZ installation: " + ec.message());
+    pack.programs = indexPackPrograms (pack.directory, pack.instruments);
     PackPublishResult result;
     result.status = OperationStatus::Complete;
     result.pack = std::move (pack);
@@ -197,7 +207,11 @@ std::vector<InstalledPack> PackStore::installed() const
     std::error_code ec;
     for (auto it = fs::directory_iterator (storeRoot / "packs", ec);
          ! ec && it != fs::directory_iterator(); it.increment (ec))
-        if (auto pack = readReceipt (it->path())) result.push_back (std::move (*pack));
+        if (auto pack = readReceipt (it->path()))
+        {
+            pack->programs = indexPackPrograms (pack->directory, pack->instruments);
+            result.push_back (std::move (*pack));
+        }
     std::sort (result.begin(), result.end(), [] (const InstalledPack& a, const InstalledPack& b)
         { return a.provider.displayName < b.provider.displayName; });
     return result;
@@ -219,7 +233,9 @@ std::optional<ManagedSfzLocator> PackStore::locatorForFile (const fs::path& file
     std::error_code ec;
     const auto actual = fs::canonical (file, ec);
     if (ec) return {};
-    const auto relative = actual.lexically_relative (storeRoot / "packs");
+    const auto packs = fs::canonical (storeRoot / "packs", ec);
+    if (ec) return {};
+    const auto relative = actual.lexically_relative (packs);
     if (relative.empty()) return {};
     const auto key = relative.begin()->u8string();
     if (! isSha256 (key)) return {};

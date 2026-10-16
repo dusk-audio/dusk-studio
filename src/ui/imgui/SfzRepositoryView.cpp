@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <chrono>
 #include <map>
+#include <set>
 #include <utility>
 
 namespace duskstudio::imgui
@@ -76,6 +77,7 @@ const char* stateLabel (LibraryState state, bool busy)
         case LibraryState::Resolving: return "Checking version and license...";
         case LibraryState::Downloading: return "Downloading instrument pack...";
         case LibraryState::Extracting: return "Installing instrument pack...";
+        case LibraryState::ChangingLocation: return "Updating SFZ library location...";
         case LibraryState::Paused: return "Library work paused";
         case LibraryState::Failed: return "Library operation could not finish";
         case LibraryState::Cancelled: return "Library operation cancelled";
@@ -180,9 +182,11 @@ private:
     enum class Intent { None, Browse, Resolve, Install, Refresh, Remove };
     struct BrowserRow
     {
-        std::size_t pack = 0, instrument = 0;
+        std::size_t pack = 0;
         sfz::InstrumentCategory category = sfz::InstrumentCategory::Other;
         std::string title, subtitle;
+        std::string searchText {};
+        std::vector<sfz::InstrumentCategory> categories {};
     };
 
     void rebuildInstalledRows (const sfz::LibrarySnapshot& snapshot)
@@ -196,14 +200,20 @@ private:
         {
             const auto& pack = snapshot.installed[p];
             const auto context = pack.provider.displayName + " " + pack.provider.presentation.categoryHint;
-            for (std::size_t i = 0; i < pack.instruments.size(); ++i)
+            const auto category = sfz::instrumentCategory (pack.provider.displayName, pack.provider.presentation.categoryHint);
+            BrowserRow row { p, category, displayTitle (pack.provider.displayName, pack.provider.sourceId),
+                std::to_string (pack.programs.size()) + (pack.programs.size() == 1 ? " program | " : " programs | ")
+                    + sourceName (pack.provider.sourceId) };
+            std::set<sfz::InstrumentCategory> categories { category };
+            for (const auto& instrument : pack.programs)
             {
-                const auto& instrument = pack.instruments[i];
-                const auto category = sfz::instrumentCategory (instrument.name, instrument.relativePath + " " + context);
-                installedRows.push_back ({ p, i, category, displayTitle (instrument.name, pack.provider.sourceId),
-                    displayTitle (pack.provider.displayName, pack.provider.sourceId) + " | " + sourceName (pack.provider.sourceId) });
-                ++installedCounts[static_cast<std::size_t> (category)];
+                categories.insert (sfz::instrumentCategory (instrument.name, instrument.relativePath + " " + context));
+                row.searchText += " " + instrument.name + " " + instrument.relativePath;
             }
+            row.searchText += " " + pack.provider.presentation.categoryHint;
+            row.categories.assign (categories.begin(), categories.end());
+            for (const auto member : row.categories) ++installedCounts[static_cast<std::size_t> (member)];
+            installedRows.push_back (std::move (row));
         }
         std::stable_sort (installedRows.begin(), installedRows.end(), [] (const auto& a, const auto& b)
         { return a.category != b.category ? a.category < b.category : a.title < b.title; });
@@ -220,7 +230,7 @@ private:
             const auto& item = results[i];
             const auto category = sfz::instrumentCategory (item.locator + " " + item.name,
                 item.presentation.categoryHint + " " + item.description);
-            onlineRows.push_back ({ i, 0, category, displayTitle (item.name, item.sourceId), sourceName (item.sourceId) });
+            onlineRows.push_back ({ i, category, displayTitle (item.name, item.sourceId), sourceName (item.sourceId) });
             ++onlineCounts[static_cast<std::size_t> (category)];
         }
         std::stable_sort (onlineRows.begin(), onlineRows.end(), [] (const auto& a, const auto& b)
@@ -240,8 +250,9 @@ private:
         };
         const auto queryText = lower (search);
         for (std::size_t i = 0; i < rows.size(); ++i)
-            if ((category < 0 || static_cast<int> (rows[i].category) == category)
-                && (queryText.empty() || lower (rows[i].title + " " + rows[i].subtitle).find (queryText) != std::string::npos))
+            if ((category < 0 || static_cast<int> (rows[i].category) == category
+                    || std::find (rows[i].categories.begin(), rows[i].categories.end(), static_cast<sfz::InstrumentCategory> (category)) != rows[i].categories.end())
+                && (queryText.empty() || lower (rows[i].title + " " + rows[i].subtitle + " " + rows[i].searchText).find (queryText) != std::string::npos))
                 visible.push_back (i);
     }
 
@@ -298,7 +309,7 @@ private:
         ImGui::Separator();
     }
 
-    bool beginCategoryList (dw::Context& ctx, int& category, const std::array<std::size_t, 17>& counts)
+    bool beginCategoryList (dw::Context& ctx, int& category, const std::array<std::size_t, 17>& counts, std::size_t total)
     {
         const bool columns = ImGui::GetContentRegionAvail().x >= ctx.s (420)
             && ImGui::GetContentRegionAvail().y >= ctx.s (270);
@@ -322,13 +333,17 @@ private:
             category < 0 ? "All instruments" : sfz::kInstrumentCategories[static_cast<std::size_t> (category)].name);
         if (open)
         {
-            std::size_t total = 0;
-            for (const auto count : counts) total += count;
-            choose (-1, "All instruments (" + std::to_string (total) + ")", "all");
+            const auto countLabel = [this] (std::size_t count)
+            { return std::to_string (count) + (onlineTab ? "" : count == 1 ? " pack" : " packs"); };
+            choose (-1, "All instruments (" + countLabel (total) + ")", "all");
+            remember ("category-all-count-" + std::to_string (total));
             for (std::size_t i = 0; i < counts.size(); ++i)
                 if (counts[i] != 0 || category == static_cast<int> (i))
+                {
                     choose (static_cast<int> (i), std::string (sfz::kInstrumentCategories[i].name)
-                        + " (" + std::to_string (counts[i]) + ")", sfz::kInstrumentCategories[i].id);
+                        + " (" + countLabel (counts[i]) + ")", sfz::kInstrumentCategories[i].id);
+                    remember (std::string ("category-") + sfz::kInstrumentCategories[i].id + "-count-" + std::to_string (counts[i]));
+                }
             if (! columns) ImGui::EndCombo();
         }
         if (columns) { ImGui::EndChild(); ImGui::SameLine(); }
@@ -384,6 +399,7 @@ private:
         ImGui::BeginDisabled (! enabled || frameMutation);
         const bool clicked = ImGui::Button (label, size);
         remember (name);
+        if (enabled && ! frameMutation) remember (std::string ("enabled-") + name);
         ImGui::EndDisabled();
         ImGui::PopID();
         if (primary) ImGui::PopStyleColor (4);
@@ -618,7 +634,7 @@ private:
                 drawPreview (ctx, std::min (ctx.s (164), bodyHeight * 0.30f),
                     selectedSummary ? summaryKey (*selectedSummary) : "online-category", title, category, imageUrl, ! pageCached);
             else clearPreview (std::min (ctx.s (164), bodyHeight * 0.30f));
-            beginCategoryList (ctx, onlineCategory, onlineCounts);
+            beginCategoryList (ctx, onlineCategory, onlineCounts, results.size());
             filterRows (onlineRows, onlineCategory, visibleOnline, onlineFilterDirty);
             if (ImGui::BeginChild ("##sfz-online-list", { 0, 0 }, ImGuiChildFlags_None))
             {
@@ -768,20 +784,27 @@ private:
             std::string imageUrl, title;
             const BrowserRow* selectedRow = nullptr;
             for (const auto& entry : installedRows)
-                if (&snapshot.installed[entry.pack] == selected
-                    && snapshot.installed[entry.pack].instruments[entry.instrument].id == selectedInstrument)
+                if (&snapshot.installed[entry.pack] == selected && ! selectedInstrument.empty())
                 { selectedRow = &entry; break; }
             if (selectedRow)
             {
                 imageUrl = selected->provider.presentation.artworkUrl;
                 title = selectedRow->title;
                 category = selectedRow->category;
+                for (const auto& program : selected->programs)
+                    if (program.id == selectedInstrument)
+                    {
+                        title = program.name;
+                        category = sfz::instrumentCategory (program.name, program.relativePath + " "
+                            + selected->provider.displayName + " " + selected->provider.presentation.categoryHint);
+                        break;
+                    }
             }
             if (selectedRow || installedCategory >= 0)
                 drawPreview (ctx, std::min (ctx.s (164), bodyHeight * 0.30f),
                     selectedRow ? packKey (*selected) + "/" + selectedInstrument : "installed-category", title, category, imageUrl, false);
             else clearPreview (std::min (ctx.s (164), bodyHeight * 0.30f));
-            beginCategoryList (ctx, installedCategory, installedCounts);
+            beginCategoryList (ctx, installedCategory, installedCounts, snapshot.installed.size());
             filterRows (installedRows, installedCategory, visibleInstalled, installedFilterDirty, installedQuery.data());
             if (selectedInstalled.empty()) selected = nullptr;
             if (ImGui::BeginChild ("##sfz-installed-list", { 0, 0 }, ImGuiChildFlags_None))
@@ -799,13 +822,23 @@ private:
                     const auto& entry = installedRows[visibleInstalled[static_cast<std::size_t> (visible)]];
                     const auto i = entry.pack;
                     const auto& pack = snapshot.installed[i];
-                    const auto& instrument = pack.instruments[entry.instrument];
-                    if (row (ctx, "installed-instrument-" + std::to_string (i) + "-" + std::to_string (entry.instrument),
-                        entry.title, entry.subtitle, packKey (pack) == selectedInstalled && selectedInstrument == instrument.id,
+                    if (row (ctx, "installed-item-" + std::to_string (i),
+                        entry.title, entry.subtitle, packKey (pack) == selectedInstalled,
                         available, ctx.s (64)))
-                    { selectedInstalled = packKey (pack); selectedInstrument = instrument.id; selected = &pack; }
-                    if (controls.find ("installed-item-" + std::to_string (i)) == controls.end())
-                        remember ("installed-item-" + std::to_string (i));
+                    {
+                        selectedInstalled = packKey (pack);
+                        selectedInstrument.clear();
+                        showAllFiles = false;
+                        selected = &pack;
+                        for (const auto& program : pack.programs)
+                        {
+                            const auto category = sfz::instrumentCategory (program.name, program.relativePath + " "
+                                + pack.provider.displayName + " " + pack.provider.presentation.categoryHint);
+                            if (selectedInstrument.empty()) selectedInstrument = program.id;
+                            if (installedCategory >= 0 && static_cast<int> (category) == installedCategory)
+                            { selectedInstrument = program.id; break; }
+                        }
+                    }
                     const auto tooltip = pack.provider.releaseId + "\n" + pack.archiveSha256 + "\n" + pack.provider.sourceUrl;
                     formTooltip (tooltip.c_str());
                 }
@@ -822,24 +855,37 @@ private:
                 muted (sourceName (selected->provider.sourceId));
                 ImGui::TextColored (ImGui::ColorConvertU32ToFloat4 (consolePalette().eqAccent),
                                     "Verified license: %s", selected->provider.license.id.c_str());
-                ImGui::TextUnformatted ("Instrument file");
+                if (selected->programs.size() < selected->instruments.size())
+                {
+                    ImGui::Checkbox ("Show all SFZ files", &showAllFiles);
+                    remember ("show-all-files");
+                    formTooltip ("Includes internal mappings and alternate files. The Program list uses the pack's declared bank programs.");
+                }
+                ImGui::TextUnformatted (showAllFiles ? "SFZ file" : "Program");
+                const auto& choices = showAllFiles ? selected->instruments : selected->programs;
                 const sfz::ProviderInstrument* instrument = nullptr;
-                for (const auto& candidate : selected->instruments) if (candidate.id == selectedInstrument) instrument = &candidate;
+                for (const auto& candidate : choices) if (candidate.id == selectedInstrument) instrument = &candidate;
                 ImGui::BeginDisabled (! available);
                 ImGui::SetNextItemWidth (-1);
                 const auto comboAt = ImGui::GetCursorScreenPos();
                 const float comboWidth = ImGui::GetContentRegionAvail().x;
                 const ImVec2 comboEnd { comboAt.x + comboWidth, comboAt.y + ImGui::GetFrameHeight() };
                 if (ImGui::IsRectVisible (comboAt, comboEnd)) controls["instrument"] = { comboAt, comboEnd };
-                if (ImGui::BeginCombo ("##sfz-instrument", instrument ? instrument->relativePath.c_str() : "Select an SFZ file"))
+                const auto preview = instrument ? (showAllFiles ? instrument->relativePath : instrument->name) : "Select a program";
+                if (ImGui::BeginCombo ("##sfz-instrument", preview.c_str()))
                 {
-                    for (std::size_t i = 0; i < selected->instruments.size(); ++i)
+                    for (std::size_t i = 0; i < choices.size(); ++i)
                     {
-                        const auto& candidate = selected->instruments[i];
+                        const auto& candidate = choices[i];
                         ImGui::PushID (static_cast<int> (i));
-                        if (ImGui::Selectable (candidate.relativePath.c_str(), candidate.id == selectedInstrument))
+                        const auto label = showAllFiles ? candidate.relativePath : candidate.name;
+                        if (ImGui::Selectable (label.c_str(), candidate.id == selectedInstrument))
                         { selectedInstrument = candidate.id; instrument = &candidate; }
-                        remember ("instrument-choice-" + std::to_string (i));
+                        const auto original = std::find_if (selected->instruments.begin(), selected->instruments.end(),
+                            [&] (const auto& entry) { return entry.id == candidate.id; });
+                        if (original != selected->instruments.end())
+                            remember ("instrument-choice-" + std::to_string (std::distance (selected->instruments.begin(), original)));
+                        formTooltip (candidate.relativePath.c_str());
                         ImGui::PopID();
                     }
                     ImGui::EndCombo();
@@ -863,7 +909,7 @@ private:
                     start (Intent::Remove, [&] { return service.remove (*selected, used); });
                 if (referenced) ImGui::TextWrapped ("This version is used by the current session. Unload its instruments before removing it.");
                 if (! inUse) ImGui::TextWrapped ("Session use cannot be checked, so Remove is unavailable.");
-                if (instrument && instrument->candidateOnly)
+                if (showAllFiles && instrument && instrument->candidateOnly)
                     ImGui::TextWrapped ("This is a discovered SFZ file. Choose the instrument's main file; include fragments may also appear in the list.");
                 ImGui::Separator();
                 if (! selected->provider.author.empty() && selected->provider.author != selected->provider.sourceId
@@ -956,6 +1002,7 @@ private:
     unsigned currentPage = 0, nextPage = 0, requestedPage = 0;
     bool pageCached = false, resolutionCached = false, forceInstalled = false;
     bool onlineTab = false;
+    bool showAllFiles = false;
     bool keyboardActive = false, keyboardWasActive = false, frameMutation = false;
     std::uint64_t requestedGeneration = 0;
     Intent pendingIntent = Intent::None;

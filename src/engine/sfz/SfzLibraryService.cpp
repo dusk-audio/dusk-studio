@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <fstream>
 #include <system_error>
 
@@ -85,7 +86,13 @@ public:
         const auto key = digest (Json { { "url", request.url }, { "headers", request.headers } }.dump());
         if (key.empty()) return { OperationStatus::Failed, "Cannot identify repository cache entry" };
         const auto path = cache / (key + ".json");
-        if (offlineOnly)
+        std::error_code cacheError;
+        const auto modified = fs::last_write_time (path, cacheError);
+        const bool freshCatalog = ! cacheError
+            && request.url == "https://raw.githubusercontent.com/sfzinstruments/sfzinstruments.github.io/master/data/sfz/instruments.yml"
+            && modified <= fs::file_time_type::clock::now()
+            && fs::file_time_type::clock::now() - modified < std::chrono::hours (6);
+        if (offlineOnly || freshCatalog)
         {
             std::error_code error;
             if (! fs::is_regular_file (fs::symlink_status (path, error)) || error
@@ -121,7 +128,7 @@ public:
                 if (! body (std::string_view (text).substr (offset, 32768)))
                     return { OperationStatus::Failed, "Cached repository response was rejected" };
             }
-            usedCache = true;
+            if (offlineOnly) usedCache = true;
             return { OperationStatus::Complete, {} };
         }
         HttpResponse response;
@@ -189,9 +196,20 @@ std::string rateLimitError (std::string error, const ProviderRateLimit& limit)
 }
 } // namespace
 
+LibraryService::LibraryService()
+    : LibraryService (readLibraryLocations(), libraryLocationsFile(), {}) {}
+
 LibraryService::LibraryService (fs::path root, std::shared_ptr<HttpTransport> supplied)
-    : store (root), transport (supplied ? std::move (supplied) : std::make_shared<CurlTransport>()),
-      artworkCache (root / ".artwork-cache", transport),
+    : LibraryService (LibraryLocations { { std::move (root), {} }, {}, {} }, {}, std::move (supplied)) {}
+
+LibraryService::LibraryService (LibraryLocations configured, fs::path file, std::shared_ptr<HttpTransport> supplied)
+    : store (configured.active.root, configured.active.marker),
+      transport (supplied ? std::move (supplied) : std::make_shared<CurlTransport>()),
+      locations (std::move (configured)), configurationFile (std::move (file)),
+      cacheRoot (configurationFile.empty() ? store.root() / ".repository-cache"
+                                          : configurationFile.parent_path() / "sfz-cache" / "repository"),
+      artworkCache (configurationFile.empty() ? store.root() / ".artwork-cache"
+                                              : configurationFile.parent_path() / "sfz-cache" / "artwork", transport),
       worker ([this] { run(); }) {}
 
 LibraryService::~LibraryService()
@@ -231,6 +249,7 @@ bool LibraryService::enqueue (Job job)
         current.error.clear();
         current.cachedResponse = false;
         current.progress = {};
+        if (job.kind == JobKind::ChangeLocation) movingPacks.store (job.moveExisting, std::memory_order_release);
         if (job.kind == JobKind::Resolve) current.pack.reset();
         if (job.kind == JobKind::Install) current.pack = job.pack;
         cancelRequested.store (false, std::memory_order_release);
@@ -285,6 +304,15 @@ bool LibraryService::remove (InstalledPack pack, std::vector<ManagedSfzLocator> 
     job.kind = JobKind::Remove;
     job.installed = std::move (pack);
     job.inUse = std::move (inUse);
+    return enqueue (std::move (job));
+}
+
+bool LibraryService::changeLocation (fs::path destination, bool moveExisting)
+{
+    Job job;
+    job.kind = JobKind::ChangeLocation;
+    job.destination = std::move (destination);
+    job.moveExisting = moveExisting;
     return enqueue (std::move (job));
 }
 
@@ -427,6 +455,29 @@ OperationResult LibraryService::execute (Job& job, const OperationControl& contr
         return { OperationStatus::Cancelled, {} };
     }
     if (control.status() != OperationStatus::Complete) return interrupted (control);
+    if (job.kind == JobKind::ChangeLocation)
+    {
+        setState (job.generation, LibraryState::ChangingLocation);
+        auto changed = changeLibraryLocation (locations, job.destination, job.moveExisting, control, configurationFile);
+        if (! changed || ! changed.locations) return { changed.status, changed.error };
+        locations = std::move (*changed.locations);
+        store = PackStore (locations.active.root, locations.active.marker);
+        const auto installed = installedLibraryPacks (locations);
+        const std::lock_guard<std::mutex> lock (mutex);
+        if (current.generation == job.generation)
+        {
+            current.locations = locations;
+            current.installed = installed;
+        }
+        return { OperationStatus::Complete, changed.error };
+    }
+    if (job.kind == JobKind::Installed && ! configurationFile.empty())
+    {
+        locations = readLibraryLocations (configurationFile);
+        store = PackStore (locations.active.root, locations.active.marker);
+        const std::lock_guard<std::mutex> lock (mutex);
+        if (current.generation == job.generation) current.locations = locations;
+    }
     if (job.kind == JobKind::Browse && job.sourceId == kAllRepositoriesSourceId)
     {
         setState (job.generation, LibraryState::Browsing);
@@ -440,6 +491,12 @@ OperationResult LibraryService::execute (Job& job, const OperationControl& contr
             setState (job.generation, LibraryState::Browsing);
             auto result = browseProvider (cached, job.sourceId, job.page, job.query, control);
             if (result) cached.commit();
+            while (result && ! job.query.empty() && result.items.empty() && result.nextPage != 0)
+            {
+                if (control.status() != OperationStatus::Complete) return interrupted (control);
+                result = browseProvider (cached, job.sourceId, result.nextPage, job.query, control);
+                if (result) cached.commit();
+            }
             const std::lock_guard<std::mutex> lock (mutex);
             if (current.generation == job.generation)
             {
@@ -461,19 +518,22 @@ OperationResult LibraryService::execute (Job& job, const OperationControl& contr
     }
     if (job.kind == JobKind::Install)
     {
+        std::string error;
+        if (! store.initialize (error)) return { OperationStatus::Failed, error };
         setState (job.generation, LibraryState::Downloading);
         if (job.part.empty())
         {
             const auto key = digest (providerPackToJson (job.pack));
             if (key.empty()) return { OperationStatus::Failed, "Cannot identify SFZ download" };
-            job.part = cacheRoot / (key + ".part");
+            const auto downloads = configurationFile.empty() ? cacheRoot : store.root() / ".downloads";
+            if (! plainDirectory (downloads)) return { OperationStatus::Failed, "Cannot open the SFZ download directory" };
+            job.part = downloads / (key + ".part");
         }
         const auto downloaded = downloadFile (*transport,
             { job.pack.downloadUrl, job.part, job.pack.expectedSha256, ArchiveLimits{}.maxArchiveBytes }, control);
         if (! downloaded) return { downloaded.status, downloaded.error };
         if (control.status() != OperationStatus::Complete) return interrupted (control);
         setState (job.generation, LibraryState::Extracting);
-        std::string error;
         job.staging = store.createStaging (error);
         if (job.staging.empty()) return { OperationStatus::Failed, error };
         ArchiveRequest request;
@@ -496,7 +556,7 @@ OperationResult LibraryService::execute (Job& job, const OperationControl& contr
         const auto published = store.publish (job.pack, downloaded.sha256, job.staging, extracted.sfzPaths);
         if (! published) return { published.status, published.error };
         cleanInstall (job);
-        const auto installed = store.installed();
+        const auto installed = installedLibraryPacks (locations);
         const std::lock_guard<std::mutex> lock (mutex);
         if (current.generation == job.generation)
         {
@@ -507,12 +567,31 @@ OperationResult LibraryService::execute (Job& job, const OperationControl& contr
     }
     if (job.kind == JobKind::Remove)
     {
-        const auto removed = store.remove (job.installed, job.inUse);
-        if (! removed) return removed;
+        if (job.installed.instruments.empty()) return { OperationStatus::Failed, "Invalid installed SFZ pack" };
+        const auto key = PackStore::identity (job.installed.locatorFor (job.installed.instruments.front()));
+        const auto installed = installedLibraryPacks (locations);
+        if (std::none_of (installed.begin(), installed.end(), [&] (const auto& pack) { return pack.directory == job.installed.directory; }))
+            return { OperationStatus::Failed, "The selected pack is outside the registered SFZ libraries" };
+        auto registered = locations.previous;
+        registered.insert (registered.begin(), locations.active);
+        for (const auto& location : registered)
+        {
+            if (! libraryLocationAvailable (location)) continue;
+            PackStore owner (location.root, location.marker);
+            for (const auto& pack : owner.installed())
+                if (! pack.instruments.empty() && PackStore::identity (pack.locatorFor (pack.instruments.front())) == key)
+                {
+                    const auto removed = owner.remove (pack, job.inUse);
+                    if (! removed) return removed;
+                }
+        }
     }
-    const auto installed = store.installed();
+    const auto installed = installedLibraryPacks (locations);
     const std::lock_guard<std::mutex> lock (mutex);
     if (current.generation == job.generation) current.installed = installed;
+    if (! locations.error.empty()) return { OperationStatus::Failed, locations.error };
+    if (! libraryLocationAvailable (locations.active))
+        return { OperationStatus::Failed, "The SFZ library drive is unavailable. Reconnect it or choose another folder in Settings." };
     return { OperationStatus::Complete, {} };
 }
 
@@ -525,19 +604,21 @@ void LibraryService::run()
 #elif defined(__linux__)
     setpriority (PRIO_PROCESS, 0, 10);
 #endif
-    std::string initializationError;
-    const bool initialized = store.initialize (initializationError);
+    std::string initializationError = locations.error;
+    const bool initialized = initializationError.empty() && store.initialize (initializationError);
     bool cacheReady = false;
-    if (initialized)
+    if (initialized || ! configurationFile.empty())
     {
-        cacheRoot = store.root() / ".repository-cache";
+        std::error_code error;
+        fs::create_directories (cacheRoot.parent_path(), error);
         cacheReady = plainDirectory (cacheRoot);
         if (! cacheReady) initializationError = "Cannot open the SFZ repository cache directory";
     }
-    const auto installed = initialized ? store.installed() : std::vector<InstalledPack> {};
+    const auto installed = installedLibraryPacks (locations);
     {
         const std::lock_guard<std::mutex> lock (mutex);
         current.installed = installed;
+        current.locations = locations;
         current.busy = false;
         if (! initialized || ! cacheReady)
         {
@@ -574,7 +655,7 @@ void LibraryService::run()
         OperationResult result;
         try
         {
-            result = initialized && cacheReady
+            result = cacheReady || job.kind == JobKind::ChangeLocation
                 ? execute (job, control)
                 : OperationResult { OperationStatus::Failed, initializationError };
         }
@@ -605,6 +686,9 @@ void LibraryService::run()
                 current.state = stateFor (result.status);
                 current.error = result.error;
                 current.busy = false;
+                if (result.status != OperationStatus::Paused
+                    && (job.kind == JobKind::ChangeLocation || job.kind == JobKind::Cleanup))
+                    movingPacks.store (false, std::memory_order_release);
                 if (result.status == OperationStatus::Paused) paused = std::move (job);
             }
         }

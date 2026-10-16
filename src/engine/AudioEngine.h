@@ -179,6 +179,7 @@ public:
     std::function<void (int trackIndex, int regionIndex)> onMidiPassCommitted;
     void serviceMidiRecording();
     sfz::LibraryService& getSfzLibrary() noexcept { return *sfzLibrary; }
+    bool changeSfzLibraryLocation (std::filesystem::path destination, bool moveExisting, std::string& error);
     std::vector<sfz::ManagedSfzLocator> managedSfzInUse() const;
     void setAssetRenderActive (bool active) noexcept;
 #if DUSKSTUDIO_HAS_MULTISAMPLE

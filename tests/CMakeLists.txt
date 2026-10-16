@@ -39,6 +39,8 @@ add_executable(dusk-studio-tests
     sfz_archive.cpp
     sfz_provider.cpp
     sfz_pack_store.cpp
+    sfz_pack_index.cpp
+    sfz_library_locations.cpp
     sfz_library_service.cpp
     sfz_artwork_cache.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzLibrary.cpp
@@ -50,6 +52,8 @@ add_executable(dusk-studio-tests
     ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzPathPolicy.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzProvider.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzPackStore.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzPackIndex.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzLibraryLocations.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzLibraryService.cpp
     # Native CLAP tests + sources are added conditionally below.
     plugin_descriptor.cpp
@@ -789,7 +793,7 @@ if(TARGET sfizz_static)
         multisample_resolved_path.cpp
         multisample_loader.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/multisample/MultisampleLoader.cpp)
-    target_link_libraries(dusk-studio-tests PRIVATE sfizz::static)
+    target_link_libraries(dusk-studio-tests PRIVATE sfizz::static sfizz::pugixml)
     target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_HAS_MULTISAMPLE=1)
 endif()
 

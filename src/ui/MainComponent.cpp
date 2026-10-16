@@ -13,6 +13,7 @@
  #define DUSKSTUDIO_HAS_BINARY_ICON 0
 #endif
 #include "DuskFileBrowser.h"
+#include "../engine/sfz/SfzLibraryService.h"
 #include "SaveTargetChecks.h"
 #include "AuxView.h"
 #include "BounceDialog.h"
@@ -1377,6 +1378,10 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
    #endif
     const bool modalUp = ! EmbeddedModal::activeModalStack().empty();
    #if DUSKSTUDIO_HAS_NATIVE_UI
+    if (! modalUp && audioSettingsWindow != nullptr
+        && audioSettingsWindow->offerShellKey (key.getTextDescription().toStdString(),
+            static_cast<std::uint32_t> (key.getTextCharacter())))
+        return true;
     if (! modalUp && consoleView != nullptr)
         for (int track = 0; track < Session::kNumTracks; ++track)
             if (auto* strip = consoleView->getStripComponent (track);
@@ -2554,6 +2559,44 @@ void MainComponent::openAudioSettings()
 
     juce::Component::SafePointer<MainComponent> safeThis (this);
     imgui::AudioSettingsHost host;
+    host.initialTab = audioSettingsTab;
+    host.tabChanged = [safeThis] (int tab)
+    {
+        if (auto* self = safeThis.getComponent()) self->audioSettingsTab = tab;
+    };
+    host.chooseSfzFolder = [safeThis] (bool moveExisting)
+    {
+        auto* self = safeThis.getComponent();
+        if (self == nullptr) return;
+        self->handOffAudioSettings ([safeThis, moveExisting]
+        {
+            auto* owner = safeThis.getComponent();
+            if (owner == nullptr) return;
+            filebrowser::Options options;
+            options.title = "Choose SFZ library folder";
+            options.selectDirectories = true;
+            const auto root = owner->engine.getSfzLibrary().snapshot().locations.active.root;
+            using Folder = decltype (options.initialFileOrDirectory);
+            options.initialFileOrDirectory = Folder (root.u8string().c_str());
+            filebrowser::open (*owner, std::move (options), [safeThis, moveExisting] (auto folder)
+            {
+                auto* back = safeThis.getComponent();
+                if (back == nullptr) return;
+                std::string error;
+                if (folder.isDirectory()
+                    && ! back->engine.changeSfzLibraryLocation (
+                        std::filesystem::u8path (folder.getFullPathName().toStdString()), moveExisting, error))
+                {
+                    showDuskAlert (*back, "SFZ library location", error, [safeThis]
+                    {
+                        if (auto* settings = safeThis.getComponent()) settings->openAudioSettings();
+                    });
+                    return;
+                }
+                back->openAudioSettings();
+            });
+        });
+    };
     host.alert = [safeThis] (std::string title, std::string message)
     {
         auto* const self = safeThis.getComponent();

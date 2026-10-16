@@ -26,17 +26,28 @@ canonical source.
   A larger, responsive browser shows source stars or favorites and opens
   published demos before downloading an instrument pack. Both tabs group
   instruments by type, show repository artwork or licensed instrument cutouts,
-  and reuse background image caches. Installed search filters individual patches
-  without rescanning packs.
+  and reuse background image caches. Installed search includes program names and
+  descriptions without rescanning packs.
   All repositories is the default search, combining all four sources with separate
   page progress and repository labels; one unavailable source leaves the others'
   results usable. Versilian offers the official VSCO 2 CE and VCSL SFZ releases.
+- **Settings tabs and SFZ storage.** Top tabs replace the long settings page.
+  Choose a download folder on an external drive, keep existing packs in place or
+  move them after copying and verification. Session instrument references survive
+  the move, and disconnected drives are reported.
 - **Complete MIDI channel controls.** Recording, import, session save and
   playback keep pitch bend, channel and polyphonic pressure, and program changes
   alongside notes and CCs.
 
 ### Fixed
 
+- **Installed SFZ counts and programs.** Each installed pack counts once per
+  category. ARIA bank declarations supply its normal program choices; internal
+  SFZ mappings remain accessible through Show all SFZ files.
+- **SFZ description search.** Search includes community catalog descriptions,
+  including Swirly Drums when searching for Brushes.
+- **Exact recording offset.** Type a sample value or adjust it one sample at a
+  time with minus and plus buttons.
 - **SFZ Manager entry point.** The insert chooser opens one manager for online,
   downloaded and local instruments. Its separate Soundfont choice is removed;
   local SFZ, SF2 and ARIA bank files remain available through the manager.

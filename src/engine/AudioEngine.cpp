@@ -759,7 +759,7 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
     , midiIn (midi::makeJuceMidiInputBackend (&deviceManager.juceManager()))
    #endif
 {
-    sfzLibrary = std::make_unique<sfz::LibraryService> (sfz::defaultPackStoreRoot());
+    sfzLibrary = std::make_unique<sfz::LibraryService>();
 #if DUSKSTUDIO_HAS_MULTISAMPLE
     multisampleLoads = std::make_unique<MultisampleLoadState>();
 #endif
@@ -1852,6 +1852,23 @@ void AudioEngine::setAssetRenderActive (bool active) noexcept
     updateAssetWorkPause();
 }
 
+bool AudioEngine::changeSfzLibraryLocation (std::filesystem::path destination, bool moveExisting, std::string& error)
+{
+   #if DUSKSTUDIO_HAS_MULTISAMPLE
+    if (moveExisting && (! managedSfzInUse().empty() || hasPendingMultisampleLoads()))
+    {
+        error = "Unload managed SFZ instruments before moving their files, or choose the new folder for future downloads only.";
+        return false;
+    }
+   #endif
+    if (! sfzLibrary->changeLocation (std::move (destination), moveExisting))
+    {
+        error = "Wait for the current SFZ library operation to finish, or resume or cancel it before changing folders.";
+        return false;
+    }
+    return true;
+}
+
 std::vector<sfz::ManagedSfzLocator> AudioEngine::managedSfzInUse() const
 {
     std::vector<sfz::ManagedSfzLocator> result;
@@ -1883,6 +1900,7 @@ bool AudioEngine::requestNativeMultisampleLoad (
     std::function<void (bool, std::string)> onDone, int presetIndex,
     bool restoring, std::vector<std::uint8_t> state, std::function<void()> beforeCommit)
 {
+    if (sfzLibrary->isMovingPacks()) return false;
     if (trackIndex < 0 || trackIndex >= Session::kNumTracks
         || (! restoring && session.track (trackIndex).frozen.load (std::memory_order_acquire))) return false;
     auto& loads = *multisampleLoads;

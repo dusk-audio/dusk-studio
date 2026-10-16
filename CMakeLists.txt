@@ -977,6 +977,8 @@ target_sources(DuskStudio PRIVATE
     src/engine/sfz/SfzPathPolicy.cpp
     src/engine/sfz/SfzProvider.cpp
     src/engine/sfz/SfzPackStore.cpp
+    src/engine/sfz/SfzPackIndex.cpp
+    src/engine/sfz/SfzLibraryLocations.cpp
     src/engine/sfz/SfzLibraryService.cpp)
 include(cmake/SfzDependencies.cmake)
 target_link_libraries(DuskStudio PRIVATE dusk_sfz_dependencies)
@@ -1945,7 +1947,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/dusk-fizz/src/sfizz.h")
     unset(_dsk_chk_c)
 
     add_subdirectory(external/dusk-fizz EXCLUDE_FROM_ALL)
-    target_link_libraries(DuskStudio PRIVATE sfizz::static)
+    target_link_libraries(DuskStudio PRIVATE sfizz::static sfizz::pugixml)
     target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_MULTISAMPLE=1)
     target_sources(DuskStudio PRIVATE
         src/engine/multisample/DuskMultisampleProcessor.cpp

@@ -1,5 +1,6 @@
 #include "../GuiScenarioSupport.h"
 #include "../../../engine/sfz/SfzLibraryService.h"
+#include "../../../foundation/Fs.h"
 #include "../../../foundation/Json.h"
 #include "../../../session/RegionEditActions.h"
 #include "../../../session/SessionSerializer.h"
@@ -19,6 +20,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -35,6 +37,7 @@ namespace fs = std::filesystem;
 using Json = dusk::json::Json;
 using namespace sfz;
 constexpr const char* kCc0 = "Creative Commons CC0 1.0 Universal\nhttps://creativecommons.org/publicdomain/zero/1.0/\n";
+constexpr const char* kCatalogUrl = "https://raw.githubusercontent.com/sfzinstruments/sfzinstruments.github.io/master/data/sfz/instruments.yml";
 constexpr const char* kDemoPage = "https://sfzinstruments.github.io/woodwinds/dusk_gui/";
 
 bool sameFile (const std::string& actual, const fs::path& expected)
@@ -91,6 +94,10 @@ std::string zipBytes (const std::string& root)
         { "LICENSE", kCc0 },
         { "Instruments/One.sfz", "<region> sample=../Samples/tone.wav key=60\n" },
         { "Instruments/Two.sfz", "<region> sample=../Samples/tone.wav key=61\n" },
+        { "Mappings/One.sfz", "<global> volume=-3\n" },
+        { "Fixture.bank.xml", "<?xml version=\"1.0\"?><Key/><AriaBank>"
+            "<AriaProgram name=\"One\"><AriaElement path=\"Instruments/One.sfz\"/></AriaProgram>"
+            "<AriaProgram name=\"Two\"><AriaElement path=\"Instruments/Two.sfz\"/></AriaProgram></AriaBank>" },
         { "Samples/tone.wav", waveBytes() }
     };
     for (const auto& member : members)
@@ -157,8 +164,7 @@ public:
             if (! body (R"({"message":"Fixture repository rate limit"})")) return stopped();
             return { OperationStatus::Complete, {} };
         }
-        if (request.url == "https://raw.githubusercontent.com/sfzinstruments/sfzinstruments.github.io/master/data/sfz/instruments.yml"
-            || request.url == kDemoPage)
+        if (request.url == kCatalogUrl || request.url == kDemoPage)
         {
             const bool page = request.url == kDemoPage;
             const auto bytes = page ? std::string ("<audio src=\"/assets/audio/woodwinds/dusk_gui.mp3\" controls></audio><img src=\"/assets/img/woodwinds/") + name + ".png\">"
@@ -274,6 +280,7 @@ struct CaseState
 {
     std::shared_ptr<RepositoryTransport> transport;
     fs::path restore, originalDirectory, blank, capture, onlineCapture, compactCapture;
+    fs::path catalogCache, catalogBackup;
     std::vector<int> originalWindow;
     float originalUiScale = 1.0f;
     std::int64_t originalPlayhead = 0;
@@ -281,6 +288,8 @@ struct CaseState
     unsigned requests = 0;
     std::size_t initialInstalled = 0;
     bool injected = false, restored = false, finished = false, rendering = false;
+    bool compactRequired = false;
+    bool catalogIsolated = false, catalogBackedUp = false;
     std::optional<InstalledPack> installed;
     bool replacementDone = false, replacementSucceeded = true;
     unsigned cancelledLoadCompletions = 0;
@@ -293,6 +302,26 @@ bool fixturePack (const InstalledPack& pack, const CaseState& state)
     return pack.provider.sourceId == "sfzinstruments" && pack.provider.packId == state.transport->packId;
 }
 
+std::string restoreCatalogCache (ScenarioContext& ctx, CaseState& state)
+{
+    if (! state.catalogIsolated) return {};
+    if (ctx.engine().getSfzLibrary().snapshot().busy) return "SFZ worker was still busy during catalog cache restoration";
+    std::error_code error;
+    const auto status = fs::symlink_status (state.catalogCache, error);
+    if (error && error != std::errc::no_such_file_or_directory) return "Cannot inspect fixture catalog cache: " + error.message();
+    if (fs::exists (status) && ! fs::is_regular_file (status)) return "Fixture catalog cache is no longer a regular file";
+    error.clear();
+    fs::remove (state.catalogCache, error);
+    if (error) return "Cannot remove fixture catalog cache: " + error.message();
+    if (state.catalogBackedUp)
+    {
+        fs::rename (state.catalogBackup, state.catalogCache, error);
+        if (error) return "Cannot restore original catalog cache: " + error.message();
+    }
+    state.catalogIsolated = state.catalogBackedUp = false;
+    return {};
+}
+
 std::shared_ptr<CaseState> prepare (GuiHost& host, ScenarioContext& ctx, const char* name)
 {
     auto state = std::make_shared<CaseState>();
@@ -302,6 +331,11 @@ std::shared_ptr<CaseState> prepare (GuiHost& host, ScenarioContext& ctx, const c
     state->capture = ctx.tempDir() / "sfz-library.png";
     state->onlineCapture = ctx.tempDir() / "sfz-online.png";
     state->compactCapture = ctx.tempDir() / "sfz-online-compact.png";
+    const auto catalogKey = hash (Json { { "url", kCatalogUrl },
+        { "headers", HttpHeaders { { "accept-encoding", "identity" } } } }.dump());
+    state->catalogCache = libraryLocationsFile().parent_path() / "sfz-cache" / "repository" / (catalogKey + ".json");
+    state->catalogBackup = state->catalogCache.parent_path()
+        / (".scenario-catalog-" + hash (ctx.tempDir().string() + name).substr (0, 32));
     state->originalWindow = host.mainWindowSize();
     state->originalUiScale = static_cast<float> (host.uiScale());
     state->originalDirectory = currentSessionDirectory (ctx.session());
@@ -311,6 +345,12 @@ std::shared_ptr<CaseState> prepare (GuiHost& host, ScenarioContext& ctx, const c
     const auto blank = std::make_unique<Session>();
     if (! ctx.expect (SessionSerializer::save (*blank, state->blank), "could not save a blank session")) return {};
     keepStage (host, ctx);
+    // The shared catalog outlives its transport; retain it only within this fixture's lifetime.
+    ctx.cleanup ([&ctx, state]
+    {
+        const auto error = restoreCatalogCache (ctx, *state);
+        if (! error.empty()) ctx.note (error);
+    });
     ctx.cleanup ([&host, &ctx, state]
     {
         host.closeSfzLibrary (kStripIndex);
@@ -360,7 +400,8 @@ void pushClick (std::vector<Step>& steps, GuiHost& host, ScenarioContext& ctx, s
     { ctx.expect (host.sfzLibraryPointer (kStripIndex, control, 0.5f, false), "SFZ control release failed: " + control); } });
 }
 
-void pushCategory (std::vector<Step>& steps, GuiHost& host, ScenarioContext& ctx, const std::string& category)
+void pushCategory (std::vector<Step>& steps, GuiHost& host, ScenarioContext& ctx, const std::string& category,
+                   std::function<std::size_t()> expectedCount = {})
 {
     const auto compact = std::make_shared<bool> (false);
     steps.push_back ({ 0, [&host, compact]
@@ -369,6 +410,13 @@ void pushCategory (std::vector<Step>& steps, GuiHost& host, ScenarioContext& ctx
     { if (*compact) host.sfzLibraryPointer (kStripIndex, "category-filter", 0.5f, true); } });
     steps.push_back ({ 0, [&host, compact]
     { if (*compact) host.sfzLibraryPointer (kStripIndex, "category-filter", 0.5f, false); } });
+    if (expectedCount)
+        steps.push_back ({ 0, [&host, &ctx, category, expectedCount]
+        {
+            ctx.expect (host.sfzLibraryPointer (kStripIndex,
+                "category-" + category + "-count-" + std::to_string (expectedCount()), 0.5f, false),
+                "the Installed category counted SFZ files instead of unique packs");
+        } });
     pushClick (steps, host, ctx, "category-" + category);
 }
 
@@ -398,6 +446,27 @@ void pushStart (std::vector<Step>& steps, GuiHost& host, ScenarioContext& ctx, c
         state->injected = service.setTransportForTest (state->transport);
         if (! ctx.expect (state->injected, "idle SFZ service rejected the fake transport"))
         { ctx.complete (ctx.verdict()); return; }
+        if (! state->catalogIsolated)
+        {
+            std::error_code error;
+            const auto status = fs::symlink_status (state->catalogCache, error);
+            if (error == std::errc::no_such_file_or_directory) error.clear();
+            if (! ctx.expect (! error && (! fs::exists (status) || fs::is_regular_file (status)),
+                              "could not inspect the original catalog cache safely: " + error.message()))
+            { ctx.complete (ctx.verdict()); return; }
+            if (fs::exists (status))
+            {
+                const auto backup = fs::symlink_status (state->catalogBackup, error);
+                if (error == std::errc::no_such_file_or_directory) error.clear();
+                if (! ctx.expect (! error && ! fs::exists (backup), "catalog cache backup path is unavailable"))
+                { ctx.complete (ctx.verdict()); return; }
+                fs::rename (state->catalogCache, state->catalogBackup, error);
+                if (! ctx.expect (! error, "could not quarantine the original catalog cache: " + error.message()))
+                { ctx.complete (ctx.verdict()); return; }
+                state->catalogBackedUp = true;
+            }
+            state->catalogIsolated = true;
+        }
         ctx.expect (host.openSession (state->blank), "could not open the blank fixture session");
         host.switchToStage (GuiHost::Stage::Mixing);
         host.captureSfzSources (kStripIndex, true);
@@ -557,6 +626,11 @@ void pushFinish (std::vector<Step>& steps, GuiHost& host, ScenarioContext& ctx, 
         const bool reset = ctx.expect (service.setTransportForTest ({}), "idle SFZ transport could not be restored");
         state->finished = removed && reset;
     }, [&ctx] { return ! ctx.engine().getSfzLibrary().snapshot().busy; }, "fixture removal did not finish", {}, kSettleBoundMs });
+    steps.push_back ({ 0, [&ctx, state]
+    {
+        const auto error = restoreCatalogCache (ctx, *state);
+        ctx.expect (error.empty(), error);
+    } });
 }
 
 #if DUSKSTUDIO_HAS_MULTISAMPLE
@@ -617,7 +691,7 @@ std::optional<ScenarioResult> runArtworkCategories (GuiHost& host, ScenarioConte
     steps->push_back ({ 100, [&host, state] { host.captureSfzLibrary (kStripIndex, state->capture); } });
     steps->push_back ({ 0, [] {}, [state] { std::error_code error; return fs::is_regular_file (state->capture, error); },
     "drum category capture did not arrive" });
-    pushCategory (*steps, host, ctx, "all");
+    pushCategory (*steps, host, ctx, "all", [state] { return state->initialInstalled + 1; });
     steps->push_back ({ 0, [&host, &ctx, state]
     {
         ctx.expect (! host.sfzLibraryPointer (kStripIndex, "preview", 0.5f, false), "All instruments retained the selected drum image");
@@ -687,12 +761,13 @@ std::optional<ScenarioResult> runWorkflow (GuiHost& host, ScenarioContext& ctx)
         ctx.expect (fs::file_size (state->onlineCapture, error) > 0 && ! error, "online SFZ library capture was not written");
     }, [state] { std::error_code error; return fs::is_regular_file (state->onlineCapture, error); }, "online SFZ library capture did not arrive" });
     steps->push_back ({ 0, [&host] { host.restoreUiScale (1.5f); } });
-    steps->push_back ({ 100, [&host, &ctx]
+    steps->push_back ({ 100, [&host, &ctx, state]
     {
         const auto window = host.mainWindowSize();
         if (! ctx.expect (window.size() >= 4, "the main window reported no resize limits")) return;
         const auto width = (std::max) (window[2], (std::min) (820, window[0]));
         const auto height = (std::max) (window[3], (std::min) (680, window[1]));
+        state->compactRequired = window[2] <= 820 && window[3] <= 680;
         const auto resized = host.resizeMainWindow (width, height);
         const auto actual = host.mainWindowSize();
         ctx.expect (resized,
@@ -702,12 +777,16 @@ std::optional<ScenarioResult> runWorkflow (GuiHost& host, ScenarioContext& ctx)
                         + ", minimum " + std::to_string (window[2]) + "x" + std::to_string (window[3])
                         + ", scale " + std::to_string (host.uiScale()));
     }, [&host] { return std::abs (host.uiScale() - 1.5) < 0.001; }, "the compact UI scale did not take effect" });
-    steps->push_back ({ 150, [&host, &ctx, state]
+    steps->push_back ({ 0, [&host, &ctx, state]
     {
-        ctx.expect (host.sfzLibraryPointer (kStripIndex, "category-filter", 0.5f, false),
-                    "compact SFZ browser did not collapse its categories into a dropdown");
+        if (! host.sfzLibraryPointer (kStripIndex, "category-filter", 0.5f, false))
+            ctx.note ("The native window minimum retains category columns at 150% scale; the workflow exercises those columns.");
         host.captureSfzLibrary (kStripIndex, state->compactCapture);
-    } });
+    }, [&host, state]
+    {
+        return host.sfzLibraryPointer (kStripIndex, "category-filter", 0.5f, false)
+            || (! state->compactRequired && host.sfzLibraryPointer (kStripIndex, "category-all", 0.5f, false));
+    }, "the resized SFZ browser did not expose usable category controls", {}, kSettleBoundMs });
     steps->push_back ({ 0, [&ctx, state]
     {
         std::error_code error;
@@ -716,7 +795,7 @@ std::optional<ScenarioResult> runWorkflow (GuiHost& host, ScenarioContext& ctx)
     pushCategory (*steps, host, ctx, "piano");
     pushCategory (*steps, host, ctx, "all");
     pushWorkClick (*steps, host, ctx, state, "online-item-0", LibraryState::Complete);
-    pushWorkClick (*steps, host, ctx, state, "download", LibraryState::Complete);
+    pushWorkClick (*steps, host, ctx, state, "enabled-download", LibraryState::Complete);
     pushInstalledSelection (*steps, host, ctx, state);
     steps->push_back ({ 0, [] {}, [&host]
     { return host.sfzLibraryPointer (kStripIndex, "preview-source", 0.5f, false); },
@@ -729,7 +808,8 @@ std::optional<ScenarioResult> runWorkflow (GuiHost& host, ScenarioContext& ctx)
     {
         if (! ctx.expect (state->installed.has_value(), "download was not published")) return;
         ctx.expect (state->installed->archiveSha256 == hash (state->transport->archive), "installed local archive checksum differs from downloaded bytes");
-        ctx.expect (state->installed->instruments.size() == 2, "installed SFZ choices do not match extracted files");
+        ctx.expect (state->installed->instruments.size() == 3 && state->installed->programs.size() == 2,
+                    "the installed pack did not distinguish its declared programs from internal SFZ files");
         ctx.expect (ctx.engine().getSfzLibrary().snapshot().installed.size() == state->initialInstalled + 1,
                     "download did not add exactly one installed version");
     } });
@@ -746,9 +826,8 @@ std::optional<ScenarioResult> runWorkflow (GuiHost& host, ScenarioContext& ctx)
         for (std::size_t i = 0; i < installed.size(); ++i)
             if (fixturePack (installed[i], *state))
             {
-                const auto prefix = "installed-instrument-" + std::to_string (i) + "-";
-                ctx.expect (! host.sfzLibraryPointer (kStripIndex, prefix + "0", 0.5f, false), "installed search retained a nonmatching patch");
-                ctx.expect (host.sfzLibraryPointer (kStripIndex, prefix + "1", 0.5f, false), "installed search lost the matching patch");
+                ctx.expect (host.sfzLibraryPointer (kStripIndex, "installed-item-" + std::to_string (i), 0.5f, false),
+                            "installed program search lost its containing pack");
             }
         ctx.expect (state->transport->artworkRequests.load() == 1, "installed filtering contacted the artwork source");
     } });
@@ -783,6 +862,33 @@ std::optional<ScenarioResult> runWorkflow (GuiHost& host, ScenarioContext& ctx)
         return state->installed && slot.getInstance() && slot.getInstance()->hasLoadedRuntime()
             && ctx.session().track (kStripIndex).nativeMultisampleLocator.has_value();
     }, "choosing Load did not produce a native SFZ runtime" });
+    steps->push_back ({ 0, [&ctx, state]
+    {
+        auto& engine = ctx.engine();
+        auto& service = engine.getSfzLibrary();
+        const auto before = service.snapshot();
+        const auto configuration = libraryLocationsFile();
+        const bool configured = fs::exists (configuration);
+        const auto bytes = fileBytes (configuration);
+        const auto instrument = state->installed->directory / "Instruments/Two.sfz";
+        const auto samples = state->installed->directory / "Samples/tone.wav";
+        const auto instrumentBytes = fileBytes (instrument), sampleBytes = fileBytes (samples);
+        const auto destination = ctx.tempDir() / "in-use-library";
+        std::error_code error;
+        if (! ctx.expect (fs::create_directory (destination, error) && ! error, "could not create the in-use Move destination")) return;
+        std::string reason;
+        ctx.expect (! engine.changeSfzLibraryLocation (destination, true, reason) && ! reason.empty(),
+                    "Move accepted a library with a loaded managed instrument");
+        const auto after = service.snapshot();
+        ctx.expect (after.generation == before.generation && after.locations.active.root == before.locations.active.root
+                    && after.locations.active.marker == before.locations.active.marker,
+                    "refused in-use Move changed the active library or submitted worker activity");
+        ctx.expect (fs::exists (configuration) == configured && fileBytes (configuration) == bytes,
+                    "refused in-use Move changed the saved library configuration");
+        ctx.expect (! instrumentBytes.empty() && ! sampleBytes.empty() && fileBytes (instrument) == instrumentBytes
+                    && fileBytes (samples) == sampleBytes && fs::is_empty (destination, error) && ! error,
+                    "refused in-use Move changed installed files or wrote to its destination");
+    } });
     steps->push_back ({ 0, [&ctx]
     {
         CloneTrackAction clone (ctx.session(), ctx.engine(), kStripIndex, 1);
@@ -929,6 +1035,202 @@ std::optional<ScenarioResult> runWorkflow (GuiHost& host, ScenarioContext& ctx)
     return std::nullopt;
 }
 
+std::optional<ScenarioResult> runStorageMove (GuiHost& host, ScenarioContext& ctx)
+{
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("native SFZ library settings are not built");
+   #else
+    if (! ctx.engine().getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires stopped transport and no modal");
+    const auto initial = ctx.engine().getSfzLibrary().snapshot();
+    if (initial.busy || ! initial.installed.empty() || ! initial.locations.error.empty())
+        return ScenarioResult::skip ("requires an idle, empty SFZ library in a private profile");
+    struct StorageState
+    {
+        fs::path configuration, originalRoot, destination, originalPack;
+        std::string bytes, originalMarker, samples;
+        bool configured = false, refreshQueued = false;
+        std::uint64_t generation = 0;
+        std::optional<InstalledPack> before;
+        std::shared_ptr<CaseState> fixture;
+    };
+    const auto storage = std::make_shared<StorageState>();
+    storage->configuration = libraryLocationsFile();
+    storage->configured = fs::exists (storage->configuration);
+    storage->bytes = fileBytes (storage->configuration);
+    storage->originalRoot = initial.locations.active.root;
+    storage->originalMarker = initial.locations.active.marker;
+    storage->destination = ctx.tempDir() / "moved-sfz-library";
+    {
+        std::error_code error;
+        if (! ctx.expect (fs::create_directory (storage->destination, error) && ! error,
+                          "could not create the storage Move destination")) return ctx.verdict();
+    }
+    const auto restoreConfiguration = [&ctx, storage]
+    {
+        if (storage->refreshQueued) return true;
+        auto& service = ctx.engine().getSfzLibrary();
+        if (service.snapshot().busy) return false;
+        std::error_code error;
+        if (storage->configured)
+        {
+            if (! dusk::fs::writeStringToFile (storage->configuration, storage->bytes)) return false;
+        }
+        else
+        {
+            fs::remove (storage->configuration, error);
+            if (error) return false;
+        }
+        storage->generation = service.snapshot().generation;
+        storage->refreshQueued = service.requestInstalled();
+        return storage->refreshQueued;
+    };
+    // Registered first so fixture/session cleanup finishes before the configuration refresh.
+    ctx.cleanup ([&host, &ctx, storage, restoreConfiguration]
+    {
+        host.closeAudioSettings();
+        if (storage->fixture)
+            for (const auto& root : { storage->originalRoot, storage->destination })
+            {
+                PackStore store (root);
+                for (const auto& pack : store.installed())
+                    if (fixturePack (pack, *storage->fixture))
+                    {
+                        const auto removed = store.remove (pack, ctx.engine().managedSfzInUse());
+                        if (! removed) ctx.note ("Storage fixture cleanup: " + removed.error);
+                    }
+            }
+        if (! restoreConfiguration()) ctx.note ("Could not restore SFZ library configuration and request its refresh");
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds (2);
+        auto& service = ctx.engine().getSfzLibrary();
+        while (service.snapshot().busy && std::chrono::steady_clock::now() < deadline) std::this_thread::yield();
+        if (service.snapshot().busy) ctx.note ("Storage fixture refresh did not finish during cleanup");
+    });
+    auto state = prepare (host, ctx, "storage-move");
+    if (! state) return ctx.verdict();
+    storage->fixture = state;
+    auto steps = std::make_shared<std::vector<Step>>();
+    pushStart (*steps, host, ctx, state);
+    steps->push_back ({ 0, [&ctx, state]
+    {
+        if (! ctx.expect (state->initialInstalled == 0, "private storage fixture no longer has an empty library"))
+            ctx.complete (ctx.verdict());
+    } });
+    pushWorkClick (*steps, host, ctx, state, "enabled-download", LibraryState::Complete);
+    pushInstalledSelection (*steps, host, ctx, state);
+    steps->push_back ({ 0, [&host, &ctx, state, storage]
+    {
+        const auto snapshot = ctx.engine().getSfzLibrary().snapshot();
+        if (! ctx.expect (state->installed.has_value() && snapshot.installed.size() == 1
+                          && fixturePack (snapshot.installed.front(), *state),
+                          "storage Move requires only its installed fixture pack"))
+        { ctx.complete (ctx.verdict()); return; }
+        storage->before = state->installed;
+        storage->originalPack = state->installed->directory;
+        storage->samples = fileBytes (storage->originalPack / "Samples/tone.wav");
+        if (! ctx.expect (state->installed->instruments.size() == 3 && state->installed->programs.size() == 2
+                          && ! storage->samples.empty(), "storage fixture did not expose three raw SFZ files, two programs and samples"))
+        { ctx.complete (ctx.verdict()); return; }
+        host.closeSfzLibrary (kStripIndex);
+        ctx.expect (host.openAudioSettings(), "Settings did not open for SFZ library relocation");
+    } });
+    for (const std::string control : { "tab-sfz-library", "sfz-move", "sfz-folder" })
+    {
+        steps->push_back ({ 0, [] {}, [&host, control] { return host.pointerAudioSettings (control, 0.5f, false); },
+                           "SFZ Settings control did not appear: " + control, {}, kSettleBoundMs });
+        steps->push_back ({ 0, [] {}, [&host, control] { return host.clickAudioSettingsControl (control); },
+                           "SFZ Settings control could not be clicked: " + control, {}, kSettleBoundMs });
+    }
+    steps->push_back ({ 0, [&host, &ctx, storage]
+    {
+        if (! ctx.expect (host.clickFileBrowserControl (true), "SFZ folder browser has no path field")) return;
+        typeReplacing (host, storage->destination.string());
+        ctx.expect (host.pressPeerKey ("Return"), "SFZ folder browser did not accept the typed path");
+    }, [&host] { return ! host.fileBrowserFolder().empty() && ! host.fileBrowserScanning(); },
+                       "Settings did not open the SFZ folder browser", {}, kSettleBoundMs });
+    steps->push_back ({ 0, [&host, &ctx, state]
+    {
+        state->generation = ctx.engine().getSfzLibrary().snapshot().generation;
+        ctx.expect (host.clickModalButton ("Open"), "SFZ folder browser did not offer Open");
+    }, [&host, storage]
+    { return sameFile (host.fileBrowserFolder().u8string(), storage->destination) && ! host.fileBrowserScanning(); },
+                       "SFZ folder browser did not navigate to the Move destination", {}, kSettleBoundMs });
+    steps->push_back ({ 0, [&ctx, state, storage]
+    {
+        const auto snapshot = ctx.engine().getSfzLibrary().snapshot();
+        if (! ctx.expect (snapshot.state == LibraryState::Complete && snapshot.installed.size() == 1,
+                          "SFZ storage Move failed: " + snapshot.error))
+        { ctx.complete (ctx.verdict()); return; }
+        const auto& moved = snapshot.installed.front();
+        if (! ctx.expect (fixturePack (moved, *state) && moved.instruments.size() == 3 && moved.programs.size() == 2,
+                          "SFZ storage Move changed the fixture identity or program counts"))
+        { ctx.complete (ctx.verdict()); return; }
+        ctx.expect (sameFile (snapshot.locations.active.root.u8string(), storage->destination)
+                    && moved.directory == storage->destination / "packs" / PackStore::identity (storage->before->locatorFor (storage->before->instruments.front())),
+                    "SFZ storage Move did not publish under the selected folder");
+        ctx.expect (moved.archiveSha256 == storage->before->archiveSha256 && moved.provider.releaseId == storage->before->provider.releaseId,
+                    "SFZ storage Move changed the archive digest or release identity");
+        for (std::size_t i = 0; i < moved.instruments.size(); ++i)
+            ctx.expect (moved.locatorFor (moved.instruments[i]) == storage->before->locatorFor (storage->before->instruments[i])
+                        && fs::is_regular_file (moved.directory / moved.instruments[i].relativePath),
+                        "SFZ storage Move changed or lost a raw instrument locator");
+        for (std::size_t i = 0; i < moved.programs.size(); ++i)
+            ctx.expect (moved.locatorFor (moved.programs[i]) == storage->before->locatorFor (storage->before->programs[i]),
+                        "SFZ storage Move changed a declared program locator");
+        ctx.expect (! storage->samples.empty() && fileBytes (moved.directory / "Samples/tone.wav") == storage->samples,
+                    "SFZ storage Move changed or lost the instrument samples");
+        ctx.expect (! fs::exists (storage->originalPack), "SFZ storage Move retained the original pack copy");
+        state->installed = moved;
+    }, [&ctx, state]
+    {
+        const auto snapshot = ctx.engine().getSfzLibrary().snapshot();
+        return ! snapshot.busy && snapshot.generation > state->generation;
+    }, "SFZ storage Move worker did not finish", {}, kSettleBoundMs });
+    steps->push_back ({ 0, [&host] { host.closeAudioSettings(); },
+                       [&host] { return host.audioSettingsOpen(); }, "Settings did not return after folder selection", {}, kSettleBoundMs });
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.openSfzLibrary (kStripIndex), "SFZ Manager did not reopen after moving the library"); },
+    [&host] { return ! host.audioSettingsOpen(); }, "Settings did not close after SFZ storage Move", {}, kSettleBoundMs });
+    pushInstalledSelection (*steps, host, ctx, state);
+    pushClick (*steps, host, ctx, "load");
+    steps->push_back ({ 0, [&host, &ctx, state]
+    {
+        const auto& slot = ctx.engine().getChannelStrip (kStripIndex).getNativeMultisampleSlot();
+        const auto& track = ctx.session().track (kStripIndex);
+        ctx.expect (track.nativeMultisampleLocator && std::any_of (state->installed->programs.begin(), state->installed->programs.end(),
+            [&] (const auto& instrument)
+            { return *track.nativeMultisampleLocator == state->installed->locatorFor (instrument)
+                && sameFile (slot.getLoadedSoundfontPath(), state->installed->directory / instrument.relativePath); }),
+            "loading the moved pack lost its managed locator or used an old path");
+        if (auto* strip = host.strip (kStripIndex)) strip->closeEditor();
+    }, [&ctx]
+    {
+        auto& slot = ctx.engine().getChannelStrip (kStripIndex).getNativeMultisampleSlot();
+        return ! ctx.engine().hasPendingMultisampleLoads() && slot.getInstance() && slot.getInstance()->hasLoadedRuntime();
+    }, "the moved instrument did not load its sample runtime", {}, kSettleBoundMs });
+    pushFinish (*steps, host, ctx, state);
+    steps->push_back ({ 0, [&ctx, restoreConfiguration]
+    { ctx.expect (restoreConfiguration(), "SFZ library configuration could not be restored after fixture removal"); } });
+    steps->push_back ({ 0, [&ctx, storage]
+    {
+        const auto snapshot = ctx.engine().getSfzLibrary().snapshot();
+        ctx.expect (snapshot.state == LibraryState::Complete && snapshot.installed.empty()
+                    && snapshot.locations.active.root == storage->originalRoot && snapshot.locations.active.marker == storage->originalMarker,
+                    "restored SFZ configuration did not refresh the empty original library");
+        ctx.expect (fs::exists (storage->configuration) == storage->configured && fileBytes (storage->configuration) == storage->bytes,
+                    "storage scenario did not restore the exact original configuration bytes");
+    }, [&ctx, storage]
+    {
+        const auto snapshot = ctx.engine().getSfzLibrary().snapshot();
+        return storage->refreshQueued && ! snapshot.busy && snapshot.generation > storage->generation;
+    }, "restored SFZ library configuration did not refresh", {}, kSettleBoundMs });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+   #endif
+}
+
 std::optional<ScenarioResult> runPauseCancel (GuiHost& host, ScenarioContext& ctx)
 {
     if (! ctx.engine().getTransport().isStopped() || ! host.modalStackEmpty())
@@ -938,7 +1240,7 @@ std::optional<ScenarioResult> runPauseCancel (GuiHost& host, ScenarioContext& ct
     auto steps = std::make_shared<std::vector<Step>>();
     pushStart (*steps, host, ctx, state);
     steps->push_back ({ 0, [state] { state->transport->holdArchive.store (true, std::memory_order_release); } });
-    pushClick (*steps, host, ctx, "download");
+    pushClick (*steps, host, ctx, "enabled-download");
     steps->push_back ({ 0, [&ctx, state]
     {
         ctx.expect (! ctx.engine().getSfzLibrary().setTransportForTest ({}), "busy SFZ service accepted a transport replacement");
@@ -985,7 +1287,7 @@ std::optional<ScenarioResult> runPauseCancel (GuiHost& host, ScenarioContext& ct
     } });
     pushClick (*steps, host, ctx, "online-tab");
     pushWorkClick (*steps, host, ctx, state, "online-item-0", LibraryState::Complete);
-    pushClick (*steps, host, ctx, "download");
+    pushClick (*steps, host, ctx, "enabled-download");
     steps->push_back ({ 0, [] {}, [&ctx, state]
     {
         return state->transport->archiveEntered.load (std::memory_order_acquire)
@@ -1011,6 +1313,7 @@ std::optional<ScenarioResult> runPauseCancel (GuiHost& host, ScenarioContext& ct
 std::optional<ScenarioResult> runSearchKey (GuiHost&, ScenarioContext&, bool) { return ScenarioResult::skip ("SFZ support is not built"); }
 std::optional<ScenarioResult> runArtworkCategories (GuiHost&, ScenarioContext&) { return ScenarioResult::skip ("SFZ support is not built"); }
 std::optional<ScenarioResult> runWorkflow (GuiHost&, ScenarioContext&) { return ScenarioResult::skip ("SFZ support is not built"); }
+std::optional<ScenarioResult> runStorageMove (GuiHost&, ScenarioContext&) { return ScenarioResult::skip ("SFZ support is not built"); }
 std::optional<ScenarioResult> runPauseCancel (GuiHost&, ScenarioContext&) { return ScenarioResult::skip ("SFZ support is not built"); }
 #endif
 
@@ -1021,6 +1324,10 @@ const ScenarioRegistrar workflow { Scenario {
 const ScenarioRegistrar artworkCategories { Scenario {
     "gui.sfz_artwork_categories", { "gui", "sfz", "repository", "multisample" }, Needs::Engine | Needs::Gui,
     {}, {}, 60000, runArtworkCategories
+} };
+const ScenarioRegistrar storageMove { Scenario {
+    "gui.sfz_library_storage_move", { "gui", "sfz", "repository", "multisample", "settings" }, Needs::Engine | Needs::Gui,
+    {}, {}, 90000, runStorageMove
 } };
 const ScenarioRegistrar pauseCancel { Scenario {
     "gui.sfz_repository_pause_cancel", { "gui", "sfz", "repository", "multisample" }, Needs::Engine | Needs::Gui,

@@ -3,6 +3,7 @@
 #include "SfzArchive.h"
 #include "SfzArtworkCache.h"
 #include "SfzPackStore.h"
+#include "SfzLibraryLocations.h"
 
 #include <atomic>
 #include <condition_variable>
@@ -19,7 +20,7 @@ inline constexpr const char* kAllRepositoriesSourceId = "all";
 
 enum class LibraryState
 {
-    Idle, Browsing, Resolving, Downloading, Extracting, Paused, Complete, Failed, Cancelled
+    Idle, Browsing, Resolving, Downloading, Extracting, ChangingLocation, Paused, Complete, Failed, Cancelled
 };
 
 struct LibrarySnapshot
@@ -33,11 +34,13 @@ struct LibrarySnapshot
     ProviderPageResult page;
     std::optional<ProviderPack> pack;
     std::vector<InstalledPack> installed;
+    LibraryLocations locations;
 };
 
 class LibraryService
 {
 public:
+    LibraryService();
     explicit LibraryService (std::filesystem::path libraryRoot,
                              std::shared_ptr<HttpTransport> transport = {});
     ~LibraryService();
@@ -52,6 +55,8 @@ public:
     void cancel();
     bool requestInstalled();
     bool remove (InstalledPack, std::vector<ManagedSfzLocator> inUse);
+    bool changeLocation (std::filesystem::path destination, bool moveExisting);
+    bool isMovingPacks() const noexcept { return movingPacks.load (std::memory_order_acquire); }
     bool setTransportForTest (std::shared_ptr<HttpTransport>);
     void setHeavyWork (bool active) noexcept
     {
@@ -62,7 +67,8 @@ public:
     LibrarySnapshot snapshot() const;
 
 private:
-    enum class JobKind { Browse, Resolve, Install, Installed, Remove, Cleanup };
+    LibraryService (LibraryLocations, std::filesystem::path configurationFile, std::shared_ptr<HttpTransport>);
+    enum class JobKind { Browse, Resolve, Install, Installed, Remove, Cleanup, ChangeLocation };
     struct Job
     {
         JobKind kind = JobKind::Installed;
@@ -70,11 +76,12 @@ private:
         std::string sourceId, query;
         unsigned page = 1;
         bool offlineOnly = false;
+        bool moveExisting = false;
         ProviderSummary summary;
         ProviderPack pack;
         InstalledPack installed;
         std::vector<ManagedSfzLocator> inUse;
-        std::filesystem::path part, staging;
+        std::filesystem::path part, staging, destination;
     };
 
     struct BrowseSession
@@ -93,6 +100,8 @@ private:
 
     PackStore store;
     std::shared_ptr<HttpTransport> transport;
+    LibraryLocations locations;
+    std::filesystem::path configurationFile;
     std::filesystem::path cacheRoot;
     ArtworkCache artworkCache;
     mutable std::mutex mutex;
@@ -102,6 +111,7 @@ private:
     std::optional<Job> paused;
     std::optional<BrowseSession> allBrowse;
     std::atomic<bool> stopping { false }, cancelRequested { false }, heavyWork { false };
+    std::atomic<bool> movingPacks { false };
     std::thread worker;
 };
 } // namespace duskstudio::sfz

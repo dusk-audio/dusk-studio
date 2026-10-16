@@ -161,6 +161,7 @@ TEST_CASE ("Additional SFZ repositories browse only their own Creative Commons c
     CHECK (result.items.front().locator == name);
     CHECK (result.items.front().sourceUrl == "https://github.com/" + owner + "/" + name);
     CHECK (transport.requests.front().url.find ("/users/" + owner + "/repos?") != std::string::npos);
+    CHECK (transport.requests.size() == 1);
 }
 
 TEST_CASE ("Additional GitHub SFZ repositories resolve licensed immutable archives", "[sfz][provider]")
@@ -258,6 +259,7 @@ TEST_CASE ("SFZ Instruments browsing filters known non-CC licenses and retains p
     CHECK (result.nextPage == 2);
     CHECK (result.rateLimit.remaining == "57");
     CHECK (transport.requests.front().headers.at ("accept") == "application/vnd.github+json");
+    CHECK (transport.requests.size() == 1);
 }
 
 TEST_CASE ("SFZ provider browse queries preserve bounded API requests", "[sfz][provider]")
@@ -267,11 +269,86 @@ TEST_CASE ("SFZ provider browse queries preserve bounded API requests", "[sfz][p
     {
         auto synth = repository (43, "Synth");
         synth["description"] = "A synthesizer collection";
-        transport.replies = { { Json::array ({ repository(), synth }) } };
+        Reply optional { {}, 403 };
+        SECTION ("Unavailable catalog keeps ordinary GitHub matches") {}
+        SECTION ("Transport exceptions keep ordinary GitHub matches")
+        { optional = { {}, 200, {}, "catalog", [] { throw std::runtime_error ("Fixture connection failure"); } }; }
+        SECTION ("Oversized catalog declaration keeps ordinary GitHub matches")
+        { optional = { {}, 200, { { "content-length", "131073" } } }; }
+        transport.replies = { { Json::array ({ repository(), synth }) }, optional };
         const auto result = browseProvider (transport, "sfzinstruments", 1, "piano");
         REQUIRE (result);
         REQUIRE (result.items.size() == 1);
         CHECK (result.items.front().packId == "42");
+        REQUIRE (transport.requests.size() == 2);
+        CHECK (transport.requests.front().url == "https://api.github.com/orgs/sfzinstruments/repos?type=public&sort=full_name&per_page=50&page=1");
+        CHECK (transport.requests.back().url == "https://raw.githubusercontent.com/sfzinstruments/sfzinstruments.github.io/master/data/sfz/instruments.yml");
+        CHECK (transport.requests.back().timeoutSeconds == 5);
+    }
+    SECTION ("SFZ Instruments matches official descriptions before filtering")
+    {
+        const std::string description = "Punk/indie drums and unusual percussion played with brushes.";
+        const std::string header = "- name: Drums\n  page: drums\n  instruments:\n"
+            "  - name: Swirly Drums\n  # page: swirly_drums\n    license: CC0-1.0\n"
+            "    url: https://karoryfer-samples.myshopify.com/pages/free-swirly-drums\n";
+        std::string text = "    short_description:\n      \"" + description + "\"\n";
+        std::string suffix, expectedDescription = description, query = "BrUsHeS";
+        bool matches = true;
+        auto swirly = repository (42, "karoryfer.swirly-drums", "NOASSERTION");
+        swirly["description"] = nullptr;
+        auto other = repository (43, "Unrelated");
+        other["description"] = nullptr;
+        SECTION ("Real Swirly Drums has a null GitHub description") {}
+        SECTION ("Quoted continuation is folded with spaces")
+        { text = "    short_description: \"Punk/indie drums and unusual percussion played with\n      brushes.\"\n"; query = "with brushes"; }
+        SECTION ("Folded YAML text is searchable")
+        { text = "    short_description: >- # excerpt\n      Punk/indie drums and unusual percussion played with\n      brushes.\n"; query = "with brushes"; }
+        SECTION ("Plain continuation is searchable")
+        { text = "    short_description: Punk/indie drums and unusual percussion played with\n      brushes.\n"; query = "with brushes"; }
+        SECTION ("Single-quoted continuation preserves escaped apostrophes")
+        {
+            text = "    short_description: 'Drummer''s kit played with\n      brushes.'\n";
+            expectedDescription = "Drummer's kit played with brushes."; query = "with brushes";
+        }
+        SECTION ("GitHub descriptions are retained alongside catalog text")
+        { swirly["description"] = "Original description"; expectedDescription = "Original description " + description; }
+        SECTION ("Explicit repository URLs are matched")
+        { suffix = "    downloads:\n    - label: Instrument\n      url: https://github.com/sfzinstruments/karoryfer.swirly-drums/releases/download/v1/pack.zip\n"; }
+        SECTION ("Download descriptions do not replace the instrument description")
+        { suffix = "    downloads:\n    - label: Samples\n      short_description: Unrelated sample download\n"; }
+        SECTION ("Different explicit repository prevents a title guess")
+        { suffix = "    downloads:\n    - label: Instrument\n      url: https://github.com/sfzinstruments/someone.swirly-drums\n"; matches = false; }
+        SECTION ("Descriptions do not spill into another entry")
+        { text.clear(); suffix = "  - name: Other Drums\n    page: other\n    short_description: brushes\n"; matches = false; }
+        SECTION ("Duplicate description fields are ambiguous")
+        { suffix = "    short_description: brushes\n"; matches = false; }
+        SECTION ("Multiple matched entries are ambiguous even with the same page")
+        { suffix = "  - name: Swirly Drums\n    short_description: brushes\n"; matches = false; }
+        SECTION ("Unterminated quoted descriptions are ignored")
+        { text = "    short_description: \"brushes\n"; matches = false; }
+        SECTION ("YAML aliases are not interpreted")
+        { text = "    short_description: *brushes\n"; matches = false; }
+        SECTION ("Oversized continued descriptions are ignored")
+        { text = "    short_description: >\n      " + std::string (1100, 'a') + "\n      " + std::string (1100, 'b') + " brushes\n"; matches = false; }
+        SECTION ("Catalog lines remain bounded")
+        { suffix = "#" + std::string (2048, 'x') + "\n"; matches = false; }
+        transport.replies = { { Json::array ({ swirly, other }), 200,
+            { { "link", "<next>; rel=\"next\"" }, { "x-ratelimit-remaining", "57" } } },
+            { {}, 200, {}, header + text + suffix } };
+        const auto result = browseProvider (transport, "sfzinstruments", 1, query);
+        CAPTURE (query, text, suffix);
+        REQUIRE (result);
+        REQUIRE (result.items.size() == (matches ? 1 : 0));
+        if (matches)
+        {
+            CHECK (result.items.front().locator == "karoryfer.swirly-drums");
+            CHECK (result.items.front().description == expectedDescription);
+            CHECK (result.items.front().presentation.categoryHint == expectedDescription);
+            CHECK (result.items.front().licenseHint == "NOASSERTION");
+        }
+        CHECK (result.nextPage == 2);
+        CHECK (result.rateLimit.remaining == "57");
+        CHECK (transport.requests.size() == 2);
     }
     SECTION ("Musical Artifacts query is encoded")
     {
@@ -280,11 +357,26 @@ TEST_CASE ("SFZ provider browse queries preserve bounded API requests", "[sfz][p
         REQUIRE (result);
         CHECK (result.nextPage == 2);
         CHECK (transport.requests.front().url.find ("q=piano%20%26%20bells") != std::string::npos);
+        CHECK (transport.requests.size() == 1);
     }
     SECTION ("Unbounded page is rejected before transport")
     {
         CHECK_FALSE (browseProvider (transport, "sfzinstruments", 201));
         CHECK (transport.requests.empty());
+    }
+    SECTION ("Unbounded query is rejected before transport")
+    {
+        CHECK_FALSE (browseProvider (transport, "sfzinstruments", 1, std::string (257, 'a')));
+        CHECK (transport.requests.empty());
+    }
+    SECTION ("Maximum page and query remain valid")
+    {
+        transport.replies = { { Json::array() }, { {}, 403 } };
+        const auto result = browseProvider (transport, "sfzinstruments", 200, std::string (256, 'a'));
+        REQUIRE (result);
+        CHECK (result.nextPage == 0);
+        REQUIRE (transport.requests.size() == 2);
+        CHECK (transport.requests.front().url.find ("per_page=50&page=200") != std::string::npos);
     }
 }
 
@@ -602,12 +694,24 @@ TEST_CASE ("SFZ repository artwork uses declared images and immutable repository
     {
         summary.locator = summary.name = "author.Grand-Piano";
         transport.replies[0].json["name"] = summary.locator;
-        transport.replies.push_back ({ {}, 200, {}, "- name: Pianos\n  page: pianos\n  instruments:\n  - name: Grand Piano\n    url: https://creator.example/piano\n" });
+        transport.replies.push_back ({ {}, 200, {}, "- name: Pianos\n  page: pianos\n  instruments:\n  - name: Grand Piano\n    url: https://creator.example/piano\n    short_description: Multisampled acoustic piano\n" });
         transport.replies.push_back ({ {}, 200, {}, "<img src='/assets/img/pianos/actual_cover.jpg'>" });
         const auto result = resolveProviderPack (transport, summary);
         REQUIRE (result);
         REQUIRE (result.pack);
         CHECK (result.pack->presentation.artworkUrl == "https://sfzinstruments.github.io/assets/img/pianos/actual_cover.jpg");
+        CHECK (result.pack->presentation.categoryHint.find ("Multisampled acoustic piano") != std::string::npos);
+    }
+    SECTION ("Search descriptions survive unavailable optional metadata during resolve")
+    {
+        summary.presentation.categoryHint = "Punk/indie drums and unusual percussion played with brushes.";
+        transport.replies[0].json["description"] = nullptr;
+        transport.replies.push_back ({ {}, 403 });
+        const auto result = resolveProviderPack (transport, summary);
+        REQUIRE (result);
+        REQUIRE (result.pack);
+        CHECK (result.pack->presentation.categoryHint == summary.presentation.categoryHint);
+        CHECK (result.pack->license.text == kLicenseText);
     }
     SECTION ("Artifact tags and explicit HTTPS artwork survive browsing")
     {
@@ -644,6 +748,21 @@ TEST_CASE ("SFZ provider requests can pause before using the transport", "[sfz][
         CHECK (result.status == OperationStatus::Paused);
         CHECK_FALSE (result.pack);
         CHECK (transport.requests.size() == 5);
+    }
+    SECTION ("Search catalog lookup preserves pause and cancellation")
+    {
+        bool interrupted = false;
+        OperationStatus expected = OperationStatus::Paused;
+        SECTION ("Paused while reading the optional catalog")
+        { control.paused = [&interrupted] { return interrupted; }; }
+        SECTION ("Cancelled while reading the optional catalog")
+        { control.cancelled = [&interrupted] { return interrupted; }; expected = OperationStatus::Cancelled; }
+        transport.replies = { { Json::array ({ repository() }) },
+            { {}, 200, {}, "catalog", [&interrupted] { interrupted = true; } } };
+        const auto result = browseProvider (transport, "sfzinstruments", 1, "piano", control);
+        CHECK (result.status == expected);
+        CHECK (result.items.empty());
+        CHECK (transport.requests.size() == 2);
     }
     SECTION ("Cancel during optional demo lookup is preserved")
     {
