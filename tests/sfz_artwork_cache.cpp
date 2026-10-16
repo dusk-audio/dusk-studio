@@ -173,6 +173,54 @@ TEST_CASE ("SFZ artwork maintenance waits for the last active cache owner", "[sf
    #endif
 }
 
+TEST_CASE ("SFZ artwork quotas evict only owned plain cache images", "[sfz][artwork][ipc]")
+{
+    namespace fs = std::filesystem;
+    Tree tree;
+    unsigned count = 256;
+    bool oversized = false;
+    SECTION ("Image count") {}
+    SECTION ("Byte limit") { count = 1; oversized = true; }
+    const auto old = fs::file_time_type::clock::now() - std::chrono::hours (2);
+    std::vector<fs::path> images;
+    for (unsigned index = 0; index < count; ++index)
+    {
+        const auto token = std::to_string (index);
+        images.push_back (tree.root / (std::string (64 - token.size(), '0') + token + ".image"));
+        REQUIRE (dusk::fs::writeStringToFile (images.back(), "image"));
+        if (oversized) fs::resize_file (images.back(), 64 * 1024 * 1024);
+        fs::last_write_time (images.back(), old);
+    }
+    const auto unrelated = tree.root / "notes.image";
+    const auto uppercase = tree.root / (std::string (64, 'A') + ".image");
+    for (const auto& path : { unrelated, uppercase })
+    {
+        REQUIRE (dusk::fs::writeStringToFile (path, "keep"));
+        fs::last_write_time (path, old - std::chrono::hours (1));
+    }
+    const auto linked = tree.root / (std::string (64, 'f') + ".image");
+    std::error_code error;
+    fs::create_hard_link (unrelated, linked, error);
+    const bool madeLink = ! error;
+    const auto symbolic = tree.root / (std::string (64, 'e') + ".image");
+    fs::create_symlink (unrelated, symbolic, error);
+    const bool madeSymbolic = ! error;
+    const auto directory = tree.root / (std::string (64, 'd') + ".image");
+    REQUIRE (fs::create_directory (directory));
+    auto transport = std::make_shared<Transport>();
+    ArtworkCache cache (tree.root, transport);
+    cache.request ("source", url, fallback, decode, true, "sfzinstruments");
+    until ([&] { const auto state = cache.snapshot(); return state.sourceImage && ! state.busy; });
+    CHECK_FALSE (fs::exists (images.front()));
+    for (unsigned index = 1; index < count; ++index) CHECK (fs::exists (images[index]));
+    CHECK (dusk::fs::loadFileAsString (unrelated) == "keep");
+    CHECK (dusk::fs::loadFileAsString (uppercase) == "keep");
+    if (madeLink) CHECK (dusk::fs::loadFileAsString (linked) == "keep");
+    if (madeSymbolic) CHECK (fs::is_symlink (fs::symlink_status (symbolic)));
+    CHECK (fs::is_directory (directory));
+    CHECK (transport->calls == 1);
+}
+
 TEST_CASE ("SFZ artwork remains available when disk ownership or publication fails", "[sfz][artwork][ipc]")
 {
     namespace fs = std::filesystem;

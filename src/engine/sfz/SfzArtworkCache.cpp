@@ -82,7 +82,12 @@ void trimDiskCache (const fs::path& root)
     for (fs::directory_iterator it (root, error), end; ! error && it != end; it.increment (error))
     {
         const auto& entry = *it;
-        if (! fs::is_regular_file (entry.symlink_status (error)) || error || entry.path().extension() != ".image") continue;
+        const auto name = entry.path().filename().u8string();
+        if (name.size() != 70 || name.substr (64) != ".image"
+            || ! std::all_of (name.begin(), name.begin() + 64, [] (char c)
+                { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); })) continue;
+        if (! fs::is_regular_file (entry.symlink_status (error)) || error
+            || fs::hard_link_count (entry.path(), error) != 1 || error) continue;
         const auto size = entry.file_size (error);
         if (error) break;
         const auto time = entry.last_write_time (error);
