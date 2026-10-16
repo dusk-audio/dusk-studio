@@ -6,6 +6,10 @@
 #include "../../../session/SessionSerializer.h"
 #include "../../../engine/scenario/cases/MidiProbeHarness.h"
 
+#if DUSKSTUDIO_HAS_NATIVE_UI
+ #include "../../imgui/DuskPanelWindow.h"
+#endif
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -16,6 +20,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace duskstudio::scenario::gui
@@ -1634,6 +1639,31 @@ std::optional<ScenarioResult> runPianoNativeShortcuts (GuiHost& host, ScenarioCo
     auto& track = ctx.session().track (0);
     auto& transport = engine.getTransport();
     const auto original = track.midiRegions.current().front().notes;
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    const std::array<std::pair<ImGuiKey, const char*>, 9> expectedNames { {
+             { ImGuiKey_Enter, "return" }, { ImGuiKey_KeypadEnter, "return" },
+             { ImGuiKey_PageUp, "page up" }, { ImGuiKey_PageDown, "page down" },
+             { ImGuiKey_Comma, "," }, { ImGuiKey_GraveAccent, "`" }, { ImGuiKey_Backslash, "\\" },
+             { ImGuiKey_KeypadAdd, "numpad +" }, { ImGuiKey_KeypadSubtract, "numpad -" } } };
+    for (const auto& expected : expectedNames)
+        ctx.expect (imgui::shellKeyName (expected.first) == expected.second,
+                    "the native shell bridge did not preserve " + std::string (expected.second));
+    for (const auto key : { ImGuiKey_LeftCtrl, ImGuiKey_RightCtrl, ImGuiKey_LeftAlt, ImGuiKey_RightAlt,
+                           ImGuiKey_LeftShift, ImGuiKey_RightShift, ImGuiKey_LeftSuper, ImGuiKey_RightSuper,
+                           ImGuiKey_CapsLock, ImGuiKey_NumLock, ImGuiKey_ScrollLock, ImGuiKey_None })
+        ctx.expect (imgui::shellKeyName (key).empty(), "a modifier or unmapped key acquired a shell name");
+   #endif
+    const bool expanded = (host.tapeExpansionState() & 2) != 0;
+    std::array<bool, Session::kNumTracks> armed {};
+    for (int t = 0; t < Session::kNumTracks; ++t)
+        armed[(std::size_t) t] = ctx.session().track (t).recordArmed.load();
+    ctx.cleanup ([&host, &session = ctx.session(), armed, expanded]
+    {
+        for (int t = 0; t < Session::kNumTracks; ++t)
+            session.track (t).recordArmed.store (armed[(std::size_t) t]);
+        session.recomputeRtCounters();
+        host.setTimelineShown (expanded);
+    });
     const auto pitch = [&track]
     {
         const auto& regions = track.midiRegions.current();
@@ -1642,6 +1672,37 @@ std::optional<ScenarioResult> runPianoNativeShortcuts (GuiHost& host, ScenarioCo
     const auto position = transport.getPlayhead();
     const int centre = std::clamp (appconfig::getVkbCentreNote(), 0, 120);
     auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.focusPiano(), "the native piano child could not receive focus"); },
+    [&host] { return host.pianoViewport()[3] > 0; }, "the native piano roll did not draw" });
+    for (const auto* key : { "return", "numpad enter", "page up", "page down", ",", "`",
+                            "left alt", "right alt", "left ctrl", "right ctrl", "left shift", "right shift",
+                            "left super", "right super", "caps lock", "num lock", "scroll lock" })
+    {
+        steps->push_back ({ 0, [&host, &ctx, key]
+        { ctx.expect (host.inputPianoRoll (key), "native input failed for " + std::string (key)); } });
+        steps->push_back ({ 30, [&host, &ctx, &engine, &track, &transport, original, armed, expanded, key]
+        {
+            const auto name = std::string (key);
+            ctx.expect (transport.isStopped() && ! engine.getRecordManager().isActive(), name + " started recording");
+            ctx.expect (! transport.isPunchEnabled(), name + " toggled punch");
+            const auto& regions = track.midiRegions.current();
+            ctx.expect (regions.size() == 2 && regions.front().notes == original, name + " changed the MIDI take");
+            for (int t = 0; t < Session::kNumTracks; ++t)
+                ctx.expect (ctx.session().track (t).recordArmed.load() == armed[(std::size_t) t], name + " changed ARM");
+            ctx.expect (host.timelineViewMatches (expanded), name + " toggled the timeline");
+            ctx.expect (! host.virtualKeyboardOpen(), name + " opened the virtual keyboard");
+            ctx.expect (host.modalStackEmpty(), name + " opened a modal");
+            ctx.expect (host.pianoNativeWindowOpen(), name + " closed the piano roll");
+        } });
+    }
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.inputPianoRoll (commandChord ('\\')), "the native timeline alias was not delivered"); } });
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.inputPianoRoll (commandChord ('\\')), "the native timeline alias could not restore the view"); },
+    [&host, expanded] { return host.timelineViewMatches (! expanded); }, "the native timeline alias did not toggle the view" });
+    steps->push_back ({ 0, [] {}, [&host, expanded] { return host.timelineViewMatches (expanded); },
+                       "the native timeline alias did not restore the view" });
     steps->push_back ({ 0, [&host, &ctx]
     {
         ctx.expect (host.focusPiano(), "the native piano child could not receive focus");

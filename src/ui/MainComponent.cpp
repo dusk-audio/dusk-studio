@@ -6365,12 +6365,14 @@ void MainComponent::openPianoRoll (int trackIdx, int regionIdx)
        #if ! defined (__APPLE__)
         if (chord.super) return false;
        #endif
+        const auto keyName = imgui::shellKeyName (chord.key);
+        if (keyName.empty()) return false;
         std::string description;
         if (chord.ctrl) description += "ctrl + ";
         if (chord.super) description += "command + ";
         if (chord.alt) description += "alt + ";
         if (chord.shift) description += "shift + ";
-        description += ImGui::GetKeyName (chord.key);
+        description += keyName;
         // A native frame must unwind before a shell action can replace its window.
         dusk::callAsync ([safeThis, generation, description, question = chord.key == ImGuiKey_Slash && chord.shift]
         {

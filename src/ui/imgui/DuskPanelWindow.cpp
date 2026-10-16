@@ -120,11 +120,12 @@ struct NamedKey
     const char* name;
     ImGuiKey key;
     unsigned int code;
+    bool forwardToShell = true;
 };
 
-const std::array<NamedKey, 23>& namedKeys()
+const std::array<NamedKey, 34>& namedKeys()
 {
-    static const std::array<NamedKey, 23> keys { {
+    static const std::array<NamedKey, 34> keys { {
         { "spacebar", ImGuiKey_Space, DGL::kKeySpace },
         { "space", ImGuiKey_Space, DGL::kKeySpace },
         { "return", ImGuiKey_Enter, DGL::kKeyEnter },
@@ -148,6 +149,17 @@ const std::array<NamedKey, 23>& namedKeys()
         { "numpad add", ImGuiKey_KeypadAdd, DGL::kKeyPadAdd },
         { "numpad -", ImGuiKey_KeypadSubtract, DGL::kKeyPadSubtract },
         { "numpad subtract", ImGuiKey_KeypadSubtract, DGL::kKeyPadSubtract },
+        { "left ctrl", ImGuiKey_LeftCtrl, DGL::kKeyControlL, false },
+        { "right ctrl", ImGuiKey_RightCtrl, DGL::kKeyControlR, false },
+        { "left alt", ImGuiKey_LeftAlt, DGL::kKeyAltL, false },
+        { "right alt", ImGuiKey_RightAlt, DGL::kKeyAltR, false },
+        { "left shift", ImGuiKey_LeftShift, DGL::kKeyShiftL, false },
+        { "right shift", ImGuiKey_RightShift, DGL::kKeyShiftR, false },
+        { "left super", ImGuiKey_LeftSuper, DGL::kKeySuperL, false },
+        { "right super", ImGuiKey_RightSuper, DGL::kKeySuperR, false },
+        { "caps lock", ImGuiKey_CapsLock, DGL::kKeyCapsLock, false },
+        { "num lock", ImGuiKey_NumLock, DGL::kKeyNumLock, false },
+        { "scroll lock", ImGuiKey_ScrollLock, DGL::kKeyScrollLock, false },
     } };
     return keys;
 }
@@ -271,6 +283,22 @@ DGL::MouseCursor frameworkCursor (ImGuiMouseCursor cursor)
     }
 }
 } // namespace
+
+std::string shellKeyName (ImGuiKey key)
+{
+    if (key >= ImGuiKey_A && key <= ImGuiKey_Z)
+        return std::string (1, static_cast<char> ('a' + key - ImGuiKey_A));
+    if (key >= ImGuiKey_0 && key <= ImGuiKey_9)
+        return std::string (1, static_cast<char> ('0' + key - ImGuiKey_0));
+    if (key == ImGuiKey_KeypadEnter) return "return";
+    for (const auto& printable : printableKeys())
+        if (printable.key == key)
+            return std::string (1, printable.character);
+    for (const auto& named : namedKeys())
+        if (named.key == key && named.forwardToShell)
+            return named.name;
+    return {};
+}
 
 std::optional<KeyChord> parseKeyDescription (const std::string& description)
 {
@@ -640,6 +668,14 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
             if (key.key == 0)
                 return false;
             key.mod = frameworkModifiers (chord.shift, chord.ctrl, chord.super, chord.alt);
+            switch (chord.key)
+            {
+                case ImGuiKey_LeftCtrl: case ImGuiKey_RightCtrl: key.mod |= DGL::kModifierControl; break;
+                case ImGuiKey_LeftAlt: case ImGuiKey_RightAlt: key.mod |= DGL::kModifierAlt; break;
+                case ImGuiKey_LeftShift: case ImGuiKey_RightShift: key.mod |= DGL::kModifierShift; break;
+                case ImGuiKey_LeftSuper: case ImGuiKey_RightSuper: key.mod |= DGL::kModifierSuper; break;
+                default: break;
+            }
             key.press = true;
             onKeyboard (key);
             keyReleases.push_back (key.key);

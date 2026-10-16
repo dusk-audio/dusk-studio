@@ -31,6 +31,9 @@ struct KeyChord
 // modifier it does not know.
 std::optional<KeyChord> parseKeyDescription (const std::string& description);
 
+// Shell names differ from ImGui's debug names. Empty for modifiers and unmapped keys.
+std::string shellKeyName (ImGuiKey key);
+
 // The shell shortcut a panel passes on for a key: a bare transport key, Shift with a
 // bracket for the punch pair, or the command key with Z, Y, S or Q for Undo, Redo,
 // Save, Save As and Quit. Empty for every other key, which the panel keeps.
