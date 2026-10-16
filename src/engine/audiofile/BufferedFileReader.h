@@ -17,6 +17,12 @@ class BufferedFileReader
 public:
     enum class Fill { Background, Manual };
 
+    struct ReadCoverage
+    {
+        std::int64_t startFrame = 0;
+        std::int64_t endFrame = 0;
+    };
+
     static constexpr std::int64_t kDefaultWindowFrames = 96000;
     static constexpr std::int64_t kFillChunkFrames = 8192;
 
@@ -32,8 +38,10 @@ public:
     bool isManual() const noexcept { return fillMode == Fill::Manual; }
 
     // RT: immutable snapshots, silence for missing frames, no disk or wakeup.
+    // Coverage describes the file frames copied from that same snapshot.
     bool readRt (float* const* dest, int numDestCh,
-                 std::int64_t startFrame, std::int64_t numFrames) noexcept;
+                 std::int64_t startFrame, std::int64_t numFrames,
+                 ReadCoverage* coverage = nullptr) noexcept;
 
     void hintRt (std::int64_t startFrame) noexcept;
     std::int64_t hint() const noexcept;

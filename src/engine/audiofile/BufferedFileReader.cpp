@@ -258,8 +258,10 @@ void BufferedFileReader::run()
 }
 
 bool BufferedFileReader::readRt (float* const* dest, int numDestCh,
-                                 std::int64_t startFrame, std::int64_t numFrames) noexcept
+                                 std::int64_t startFrame, std::int64_t numFrames,
+                                 ReadCoverage* coverage) noexcept
 {
+    if (coverage != nullptr) *coverage = {};
     if (dest == nullptr || numDestCh <= 0 || numFrames <= 0) return true;
     hintRt (startFrame);
     const auto clearAll = [&]
@@ -284,6 +286,7 @@ bool BufferedFileReader::readRt (float* const* dest, int numDestCh,
         const auto to = std::min (wantedEnd, window->startFrame + window->numFrames);
         if (to > from)
         {
+            if (coverage != nullptr) *coverage = { from, to };
             const auto destinationOffset = from - startFrame;
             const auto sourceOffset = from - window->startFrame;
             const auto have = to - from;

@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "engine/audiofile/BufferedFileReader.h"
 #include "engine/audiofile/FileWriter.h"
@@ -231,6 +232,30 @@ TEST_CASE ("BufferedFileReader says whether a span is resident before anyone rea
     CHECK (r->holds (at + kWindow - 1 - kBlock, kBlock));
     CHECK_FALSE (r->holds (at - 1, kBlock));
     CHECK_FALSE (r->holds (at + kWindow, kBlock));
+    BufferedFileReader::ReadCoverage coverage;
+    Block prefix (kBlock);
+    REQUIRE_FALSE (r->readRt (prefix.ptrs.data(), kChannels, at - 128, kBlock, &coverage));
+    CHECK (coverage.startFrame == at);
+    CHECK (coverage.endFrame == at + kBlock - 128);
+    for (int c = 0; c < kChannels; ++c)
+        for (std::int64_t f = 0; f < kBlock; ++f)
+            CHECK_THAT (prefix.data[(size_t) c][(size_t) f], Catch::Matchers::WithinAbs (
+                f < 128 ? 0.0f : sample (c, at - 128 + f), 1.0e-7f));
+
+    Block suffix (kBlock);
+    const auto last = at + kWindow;
+    REQUIRE_FALSE (r->readRt (suffix.ptrs.data(), kChannels, last - 128, kBlock, &coverage));
+    CHECK (coverage.startFrame == last - 128);
+    CHECK (coverage.endFrame == last);
+    for (int c = 0; c < kChannels; ++c)
+        for (std::int64_t f = 0; f < kBlock; ++f)
+            CHECK_THAT (suffix.data[(size_t) c][(size_t) f], Catch::Matchers::WithinAbs (
+                f < 128 ? sample (c, last - 128 + f) : 0.0f, 1.0e-7f));
+
+    r->releaseResidency();
+    REQUIRE_FALSE (r->readRt (suffix.ptrs.data(), kChannels, at, kBlock, &coverage));
+    CHECK (coverage.startFrame == coverage.endFrame);
+    CHECK (suffix.isSilent());
     // Past the end of the file is silence, which is always there.
     CHECK (r->holds (kFrames, kBlock));
 
