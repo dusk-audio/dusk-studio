@@ -1991,6 +1991,8 @@ Installed versions coexist. A session references the exact source, pack, version
 
 Instrument replacement is prepared in the background while the current instrument keeps playing. A failed replacement leaves it playing, and an older request cannot replace a newer selection.
 
+Downloading the same pack version again repairs a missing or damaged installation receipt. A valid installation of that version is reused.
+
 When a `.sf2` holds more than one preset (most GM/GS/XG SoundFonts do), a **preset picker** appears. Click it to open a filterable browser: start typing to filter presets by name or number, or read across the columns. Presets are grouped program-first — an instrument and its bank variations list together, drum kits last — each shown as `program [bank] name`.
 
 The loaded file path and the chosen preset are saved with the session. If that preset can no longer be loaded, Dusk Studio reports the problem and falls back to preset 0 so the slot remains playable.

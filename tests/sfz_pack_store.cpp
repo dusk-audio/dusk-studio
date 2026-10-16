@@ -161,6 +161,9 @@ TEST_CASE ("SFZ malformed receipts stay unavailable to offline session restorati
     const auto locator = installed.locatorFor (installed.instruments.front());
     const auto path = installed.directory / ".dusk-pack.json";
     auto receipt = Json::parse (dusk::fs::loadFileAsString (path));
+    bool truncated = false, missing = false;
+    SECTION ("Truncated receipt") { truncated = true; }
+    SECTION ("Missing receipt") { missing = true; }
     SECTION ("Unknown schema") { receipt["schema"] = 2; }
     SECTION ("Changed archive identity") { receipt["archive_sha256"] = std::string (64, 'b'); }
     SECTION ("Missing entrypoint") { receipt["instruments"][0]["path"] = "missing.sfz"; }
@@ -175,9 +178,19 @@ TEST_CASE ("SFZ malformed receipts stay unavailable to offline session restorati
         receipt["instruments"].push_back (std::move (entry));
     }
     SECTION ("Invalid license") { receipt["provider"]["license"]["text"] = "unlicensed"; }
-    REQUIRE (dusk::fs::writeStringToFile (path, receipt.dump()));
+    REQUIRE (dusk::fs::writeStringToFile (path, truncated ? "{\"schema\":" : receipt.dump()));
+    if (missing) REQUIRE (fs::remove (path));
     REQUIRE (store.installed().empty());
     REQUIRE_FALSE (store.resolve (locator));
+
+    const auto repaired = store.publish (installed.provider, installed.archiveSha256, stage (store),
+                                         { u8"Programs/Étude.sfz" });
+    REQUIRE (repaired);
+    REQUIRE (repaired.pack);
+    REQUIRE (repaired.pack->locatorFor (repaired.pack->instruments.front()) == locator);
+    REQUIRE (store.resolve (locator));
+    REQUIRE (store.installed().size() == 1);
+    REQUIRE_FALSE (fs::exists (installed.directory / "other.sfz"));
 }
 
 TEST_CASE ("SFZ removal refuses any instrument from a pack used by the current session", "[sfz][store]")

@@ -10,6 +10,10 @@
 #include <set>
 #include <system_error>
 
+#if ! defined(_WIN32)
+ #include <fcntl.h>
+#endif
+
 namespace duskstudio::sfz
 {
 namespace
@@ -17,6 +21,42 @@ namespace
 namespace fs = std::filesystem;
 using Json = dusk::json::Json;
 constexpr const char* kReceipt = ".dusk-pack.json";
+
+bool syncPath (const fs::path& path, bool directory)
+{
+#if defined(_WIN32)
+    // Directory publication is flushed by MoveFileEx's write-through rename.
+    if (directory) return true;
+    const auto handle = CreateFileW (path.c_str(), GENERIC_WRITE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+        FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+    if (handle == INVALID_HANDLE_VALUE) return false;
+    BY_HANDLE_FILE_INFORMATION info {};
+    const bool ordinary = GetFileInformationByHandle (handle, &info) != 0
+        && (info.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) == 0;
+    const bool flushed = ordinary && FlushFileBuffers (handle) != 0;
+    const bool closed = CloseHandle (handle) != 0;
+    return flushed && closed;
+#else
+    const auto handle = ::open (path.c_str(), O_NOFOLLOW | (directory ? O_RDONLY | O_DIRECTORY : O_RDWR));
+    if (handle < 0) return false;
+    int flushed;
+    do { flushed = ::fsync (handle); } while (flushed != 0 && errno == EINTR);
+    const bool closed = ::close (handle) == 0;
+    return flushed == 0 && closed;
+#endif
+}
+
+void renameDirectory (const fs::path& source, const fs::path& target, std::error_code& error)
+{
+#if defined(_WIN32)
+    if (! MoveFileExW (source.c_str(), target.c_str(), MOVEFILE_WRITE_THROUGH))
+        error = std::error_code (static_cast<int> (GetLastError()), std::system_category());
+    else error.clear();
+#else
+    fs::rename (source, target, error);
+#endif
+}
 
 bool plainPath (const fs::path& root, const std::string& relative)
 {
@@ -138,21 +178,52 @@ PackPublishResult PackStore::publish (const ProviderPack& provider, const std::s
                          { "presentation", { { "artwork_url", provider.presentation.artworkUrl },
                                                { "category_hint", provider.presentation.categoryHint } } },
                          { "archive_sha256", digest }, { "instruments", std::move (entries) } };
-    if (! dusk::fs::writeStringToFile (staging / kReceipt, receipt.dump (2)))
+    if (! dusk::fs::writeStringToFile (staging / kReceipt, receipt.dump (2))
+        || ! syncPath (staging / kReceipt, false))
         return failure ("Cannot write SFZ installation receipt");
+   #if ! defined(_WIN32)
+    for (auto it = fs::recursive_directory_iterator (staging, ec);
+         ! ec && it != fs::recursive_directory_iterator(); it.increment (ec))
+        if (fs::is_directory (it->symlink_status (ec)) && ! ec && ! syncPath (it->path(), true))
+            return failure ("Cannot flush SFZ staging directory");
+    if (ec || ! syncPath (staging, true)) return failure ("Cannot flush SFZ staging directory");
+   #endif
     pack.directory = storeRoot / "packs" / identity (pack.locatorFor (pack.instruments.front()));
+    fs::path displaced;
     if (fs::exists (pack.directory, ec))
     {
         auto existing = readReceipt (pack.directory);
-        if (! existing) return failure ("An incomplete SFZ installation already occupies this version");
-        fs::remove_all (staging, ec);
-        PackPublishResult result;
-        result.status = OperationStatus::Complete;
-        result.pack = std::move (existing);
-        return result;
+        if (existing)
+        {
+            fs::remove_all (staging, ec);
+            PackPublishResult result;
+            result.status = OperationStatus::Complete;
+            result.pack = std::move (existing);
+            return result;
+        }
+        if (! fs::is_directory (fs::symlink_status (pack.directory, ec)) || ec)
+            return failure ("The SFZ installation path is not a plain directory");
+        displaced = staging;
+        displaced += ".replaced";
+        if (fs::exists (fs::symlink_status (displaced, ec)))
+            return failure ("The SFZ repair directory is already occupied");
+        renameDirectory (pack.directory, displaced, ec);
+        if (ec) return failure ("Cannot repair SFZ installation: " + ec.message());
     }
-    fs::rename (staging, pack.directory, ec);
-    if (ec) return failure ("Cannot publish SFZ installation: " + ec.message());
+    renameDirectory (staging, pack.directory, ec);
+    if (ec)
+    {
+        const auto error = "Cannot publish SFZ installation: " + ec.message();
+        if (! displaced.empty())
+        {
+            renameDirectory (displaced, pack.directory, ec);
+            if (ec) return failure (error + "; previous files remain in " + displaced.u8string());
+        }
+        return failure (error);
+    }
+    if (! syncPath (pack.directory.parent_path(), true) || ! syncPath (storeRoot, true))
+        return failure ("Cannot flush SFZ installation directory");
+    if (! displaced.empty()) fs::remove_all (displaced, ec);
     pack.programs = indexPackPrograms (pack.directory, pack.instruments);
     PackPublishResult result;
     result.status = OperationStatus::Complete;
