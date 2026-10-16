@@ -1,22 +1,96 @@
 #include "SfzArtwork.h"
 #include <BinaryData.h>
 
+#include <algorithm>
+#include <cmath>
+#include <cstddef>
+#include <cstdlib>
+#include <cstring>
+#include <new>
+
+namespace
+{
+constexpr std::size_t kInitialDecoderBytes = 16 * 1024 * 1024;
+constexpr std::size_t kMaxDecoderBytes = 512 * 1024 * 1024;
+struct ArtworkDecodeBudget;
+thread_local ArtworkDecodeBudget* artworkBudget = nullptr;
+
+struct ArtworkDecodeBudget
+{
+    ArtworkDecodeBudget() noexcept : previous (artworkBudget) { artworkBudget = this; }
+    ~ArtworkDecodeBudget() { artworkBudget = previous; }
+    ArtworkDecodeBudget (const ArtworkDecodeBudget&) = delete;
+    ArtworkDecodeBudget& operator= (const ArtworkDecodeBudget&) = delete;
+
+    std::size_t limit = kInitialDecoderBytes, used = 0;
+    ArtworkDecodeBudget* previous;
+};
+
+struct alignas (std::max_align_t) ArtworkAllocation
+{
+    std::size_t bytes;
+    ArtworkDecodeBudget* owner;
+};
+constexpr auto kAllocationAlignment = std::max<std::size_t> (16, alignof (std::max_align_t));
+constexpr auto kAllocationHeaderBytes = (sizeof (ArtworkAllocation) + kAllocationAlignment - 1)
+                                     / kAllocationAlignment * kAllocationAlignment;
+
+void* allocateArtwork (std::size_t bytes) noexcept
+{
+    auto* budget = artworkBudget;
+    if (budget == nullptr) return nullptr;
+    const auto available = budget->limit - budget->used;
+    if (bytes > available || kAllocationHeaderBytes > available - bytes) return nullptr;
+    const auto total = bytes + kAllocationHeaderBytes;
+    auto* storage = std::malloc (total);
+    if (storage == nullptr) return nullptr;
+    new (storage) ArtworkAllocation { total, budget };
+    budget->used += total;
+    return static_cast<char*> (storage) + kAllocationHeaderBytes;
+}
+
+void freeArtwork (void* memory) noexcept
+{
+    if (memory == nullptr) return;
+    auto* allocation = reinterpret_cast<ArtworkAllocation*> (static_cast<char*> (memory) - kAllocationHeaderBytes);
+    allocation->owner->used -= allocation->bytes;
+    std::free (allocation);
+}
+
+void* reallocateArtwork (void* memory, std::size_t bytes) noexcept
+{
+    auto* replacement = allocateArtwork (bytes);
+    if (replacement == nullptr) return nullptr;
+    if (memory != nullptr)
+    {
+        const auto* allocation = reinterpret_cast<ArtworkAllocation*> (static_cast<char*> (memory) - kAllocationHeaderBytes);
+        std::memcpy (replacement, memory, std::min (bytes, allocation->bytes - kAllocationHeaderBytes));
+        freeArtwork (memory);
+    }
+    return replacement;
+}
+} // namespace
+
 #define STB_IMAGE_IMPLEMENTATION
 #define STB_IMAGE_STATIC
 #define STBI_ONLY_PNG
 #define STBI_ONLY_JPEG
 #define STBI_NO_STDIO
+#define STBI_MAX_DIMENSIONS 8192
+#define STBI_MALLOC(bytes) allocateArtwork (bytes)
+#define STBI_REALLOC_SIZED(memory, oldBytes, newBytes) reallocateArtwork (memory, newBytes)
+#define STBI_FREE(memory) freeArtwork (memory)
 #if defined (__GNUC__) || defined (__clang__)
  #pragma GCC diagnostic push
  #pragma GCC diagnostic ignored "-Wunused-function"
 #endif
-#include <src/nanovg/stb_image.h>
+#include "../../../external/stb/stb_image.h"
 #if defined (__GNUC__) || defined (__clang__)
  #pragma GCC diagnostic pop
 #endif
-
-#include <algorithm>
-#include <cmath>
+#undef STBI_MALLOC
+#undef STBI_REALLOC_SIZED
+#undef STBI_FREE
 
 namespace duskstudio::imgui
 {
@@ -60,11 +134,14 @@ const char* instrumentArtworkCredit (sfz::InstrumentCategory category)
 std::shared_ptr<const sfz::ArtworkPixels> decodeInstrumentArtwork (std::string_view bytes)
 {
     if (bytes.empty() || bytes.size() > 4 * 1024 * 1024) return {};
+    ArtworkDecodeBudget budget;
     const auto* data = reinterpret_cast<const stbi_uc*> (bytes.data());
     int width = 0, height = 0, channels = 0;
     if (! stbi_info_from_memory (data, static_cast<int> (bytes.size()), &width, &height, &channels)
         || width < 1 || height < 1 || width > 8192 || height > 8192
         || static_cast<std::uint64_t> (width) * static_cast<std::uint64_t> (height) > 16 * 1024 * 1024) return {};
+    // PNG inflation can grow beyond the dimensions declared by its header.
+    budget.limit = std::min (kMaxDecoderBytes, kInitialDecoderBytes + static_cast<std::size_t> (width) * height * 32);
     const std::unique_ptr<stbi_uc, decltype (&stbi_image_free)> image (
         stbi_load_from_memory (data, static_cast<int> (bytes.size()), &width, &height, &channels, 4), stbi_image_free);
     if (! image) return {};

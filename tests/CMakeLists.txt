@@ -410,11 +410,6 @@ if(EXISTS "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui/DearImGui/imgui.h")
     target_include_directories(dusk-studio-tests SYSTEM PRIVATE
         ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui
         ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/dusk)
-    if(TARGET DuskStudioBinaryIcon AND EXISTS "${DUSKSTUDIO_DAF_SOURCE_DIR}/dgl/src/nanovg/stb_image.h")
-        target_sources(dusk-studio-tests PRIVATE sfz_artwork_decode.cpp ${CMAKE_SOURCE_DIR}/src/ui/imgui/SfzArtwork.cpp)
-        target_include_directories(dusk-studio-tests SYSTEM PRIVATE "${DUSKSTUDIO_DAF_SOURCE_DIR}/dgl")
-        target_link_libraries(dusk-studio-tests PRIVATE DuskStudioBinaryIcon)
-    endif()
     # Dear ImGui is vendored third-party code and does not build clean under this
     # target's warning set. The app silences it the same way for dgl-opengl3.
     set_source_files_properties(
@@ -423,6 +418,11 @@ if(EXISTS "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui/DearImGui/imgui.h")
         ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui/DearImGui/imgui_tables.cpp
         ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui/DearImGui/imgui_widgets.cpp
         PROPERTIES COMPILE_OPTIONS "$<IF:$<CXX_COMPILER_ID:MSVC>,/w,-w>")
+endif()
+
+if(TARGET DuskStudioBinaryIcon)
+    target_sources(dusk-studio-tests PRIVATE sfz_artwork_decode.cpp ${CMAKE_SOURCE_DIR}/src/ui/imgui/SfzArtwork.cpp)
+    target_link_libraries(dusk-studio-tests PRIVATE DuskStudioBinaryIcon)
 endif()
 
 target_compile_definitions(dusk-studio-tests PRIVATE
