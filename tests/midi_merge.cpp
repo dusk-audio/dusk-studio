@@ -55,6 +55,56 @@ TEST_CASE ("MIDI merge extends left without moving the original musical performa
     REQUIRE (target.ccs[0].atTick == 300);
 }
 
+TEST_CASE ("MIDI merge growing left preserves previous takes at their absolute ticks", "[midi][merge]")
+{
+    MidiRegion target;
+    target.lengthInTicks = 960;
+    target.notes.push_back ({ 1, 60, 100, 120, 240 });
+    target.ccs.push_back ({ 1, 11, 90, 60 });
+    target.previousTakes.push_back ({ 720, { { 2, 64, 80, 240, 120 } }, { { 2, 7, 90, 300 } }, {} });
+    target.previousTakes.push_back ({ 480, { { 3, 67, 75, 0, 60 } }, { { 3, 64, 127, 120 } }, {} });
+    MidiRegion pass;
+    pass.lengthInTicks = 480;
+    pass.notes.push_back ({ 1, 36, 100, 0, 120 });
+    const auto before = target;
+    const auto merged = mergeMidiPass (target, pass, -480);
+    REQUIRE (merged.changed);
+    REQUIRE (merged.leadingTicks == 480);
+    constexpr std::int64_t oldStart = 3840;
+    const auto newStart = oldStart - merged.leadingTicks;
+    for (const auto& take : before.previousTakes)
+    {
+        REQUIRE (cycleTake (target, true));
+        REQUIRE (target.notes.size() == take.notes.size());
+        REQUIRE (target.ccs.size() == take.ccs.size());
+        CHECK (newStart + target.notes.front().startTick == oldStart + take.notes.front().startTick);
+        CHECK (newStart + target.ccs.front().atTick == oldStart + take.ccs.front().atTick);
+        CHECK (newStart + target.lengthInTicks == oldStart + take.lengthInTicks);
+    }
+    REQUIRE (cycleTake (target, false));
+    CHECK (newStart + target.notes.front().startTick == oldStart + before.previousTakes.front().notes.front().startTick);
+}
+
+TEST_CASE ("MIDI merge rejects overflowing previous takes before changing any events", "[midi][merge]")
+{
+    MidiRegion target, pass;
+    target.lengthInTicks = 480;
+    target.notes.push_back ({ 1, 60, 100, 0, 120 });
+    target.previousTakes.push_back ({ 480, { { 2, 64, 80, 0, 120 } }, { { 2, 7, 90, 0 } }, {} });
+    auto& take = target.previousTakes.front();
+    SECTION ("Length") { take.lengthInTicks = std::numeric_limits<std::int64_t>::max(); }
+    SECTION ("Note") { take.notes.front().startTick = std::numeric_limits<std::int64_t>::max(); }
+    SECTION ("Controller") { take.ccs.front().atTick = std::numeric_limits<std::int64_t>::max(); }
+    const auto before = target;
+    pass.notes.push_back ({ 1, 36, 90, 0, 120 });
+    REQUIRE_FALSE (mergeMidiPass (target, pass, -480).changed);
+    CHECK (target.notes == before.notes);
+    CHECK (target.lengthInTicks == before.lengthInTicks);
+    CHECK (target.previousTakes.front().notes == before.previousTakes.front().notes);
+    CHECK (target.previousTakes.front().ccs == before.previousTakes.front().ccs);
+    CHECK (target.previousTakes.front().lengthInTicks == before.previousTakes.front().lengthInTicks);
+}
+
 TEST_CASE ("MIDI merge retains repeated pitches and stable equal-tick controller order",
            "[midi][merge]")
 {
