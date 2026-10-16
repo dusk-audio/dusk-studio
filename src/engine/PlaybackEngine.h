@@ -176,9 +176,8 @@ private:
         // [loopCacheTimelineStart, +loopCacheLen), filled on the message
         // thread in preparePlayback while the audio thread is guaranteed
         // out (streamsActive false). The audio thread serves reads from
-        // here while the reader re-warms. Stale-guarded: readSpanForTrack
-        // only uses the cache when the window matches the loop start it
-        // was primed for.
+        // here while the reader re-warms. Its absolute timeline samples remain
+        // valid when the loop range changes.
         std::vector<float> loopCacheL, loopCacheR;
         std::int64_t        loopCacheTimelineStart = -1;
         int                loopCacheLen           = 0;
@@ -256,7 +255,7 @@ private:
     static void primeLoopCache (PerTrackStream& stream, std::int64_t loopStart, std::int64_t loopEnd);
 
     // Audio thread bumps audioInFlight BEFORE inspecting streamsActive /
-    // streams[] and decrements on exit. stopPlayback clears streamsActive
+    // the live streams and decrements on exit. stopPlayback clears streamsActive
     // then spins until zero before destroying the readers. Closes the UAF
     // window where a callback that latched Playing is still summing
     // regions while the message thread tears the streams down.

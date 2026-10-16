@@ -292,8 +292,6 @@ PlaybackEngine::buildTrackStream (int t, Audition audition, std::int64_t warmAt,
 
     if (stream->regions.empty())
         return nullptr;
-    // Loop points changed while rolling are picked up on the next build;
-    // until then readSpanForTrack's stale-guard falls back to the reader.
     if (transport != nullptr && transport->isLoopEnabled())
         primeLoopCache (*stream, transport->getLoopStart(), transport->getLoopEnd());
     return stream;
