@@ -80,6 +80,7 @@ add_executable(dusk-studio-tests
     midi_merge.cpp
     midi_channel_playback.cpp
     midi_capture_stream.cpp
+    midi_merge_playback.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/MidiCaptureStream.cpp
     atomic_park.cpp
     audio_worker_pool.cpp
