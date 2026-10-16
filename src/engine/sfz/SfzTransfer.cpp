@@ -150,6 +150,7 @@ bool safeRequest (const HttpRequest& request)
 {
     if (! httpsUrl (request.url) || request.connectTimeoutSeconds <= 0 || request.timeoutSeconds <= 0
         || request.lowSpeedBytesPerSecond <= 0 || request.lowSpeedSeconds <= 0) return false;
+    if (! request.allowedHosts.empty() && ! httpsUrlOnHosts (request.url, request.allowedHosts)) return false;
     for (const auto& item : request.headers)
     {
         const auto name = lower (item.first);
@@ -177,6 +178,7 @@ OperationResult requestHttps (HttpTransport& transport, HttpRequest request,
             std::chrono::steady_clock::now() - started).count();
         if (elapsed >= timeout) return { OperationStatus::Failed, "HTTPS request timed out" };
         request.timeoutSeconds = timeout - static_cast<long> (elapsed);
+        if (! safeRequest (request)) return { OperationStatus::Failed, "HTTPS host is not allowed for this request" };
         bool redirect = false;
         bool receivedHeaders = false;
         std::size_t redirectBytes = 0;
@@ -464,6 +466,24 @@ std::string hashDigest (crypto_hash_sha256_state hash)
 bool initializeHttpTransport()
 {
     return curlReady();
+}
+
+bool httpsUrlOnHosts (const std::string& source, const std::vector<std::string>& hosts)
+{
+    const auto normalized = httpsUrl (source);
+    if (! normalized) return false;
+    using Url = std::unique_ptr<CURLU, decltype (&curl_url_cleanup)>;
+    Url url (curl_url(), &curl_url_cleanup);
+    if (! url || curl_url_set (url.get(), CURLUPART_URL, normalized->c_str(), 0) != CURLUE_OK) return false;
+    char* host = nullptr;
+    if (curl_url_get (url.get(), CURLUPART_HOST, &host, 0) != CURLUE_OK) return false;
+    const std::string hostname = lower (host);
+    curl_free (host);
+    char* port = nullptr;
+    const auto portResult = curl_url_get (url.get(), CURLUPART_PORT, &port, 0);
+    const bool standardPort = portResult == CURLUE_NO_PORT || (portResult == CURLUE_OK && std::string_view (port) == "443");
+    curl_free (port);
+    return standardPort && std::find (hosts.begin(), hosts.end(), hostname) != hosts.end();
 }
 
 OperationResult CurlTransport::perform (const HttpRequest& request, const HttpHeadersCallback& onHeaders,

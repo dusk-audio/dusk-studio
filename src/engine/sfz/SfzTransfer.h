@@ -7,6 +7,7 @@
 #include <map>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace duskstudio::sfz
 {
@@ -20,9 +21,11 @@ struct HttpRequest
     long timeoutSeconds = 60;
     long lowSpeedBytesPerSecond = 128;
     long lowSpeedSeconds = 30;
+    std::vector<std::string> allowedHosts;
 };
 
 bool initializeHttpTransport();
+bool httpsUrlOnHosts (const std::string&, const std::vector<std::string>&);
 
 struct HttpResponse
 {

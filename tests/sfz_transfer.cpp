@@ -361,6 +361,47 @@ TEST_CASE ("SFZ HTTP redirects remain bounded HTTPS requests", "[sfz][transfer]"
         CHECK_FALSE (fetchHttpText (transport, "https://example.test/data", 16));
         CHECK (transport.requests.size() == 1);
     }
+    SECTION ("Explicit hosts admit relative redirects and an allowed CDN")
+    {
+        transport.replies = { { 302, { { "location", "/second" } }, "" },
+                              { 307, { { "location", "https://cdn.test/data" } }, "" },
+                              { 200, {}, "{}" } };
+        HttpRequest request;
+        request.url = "https://EXAMPLE.TEST:443/first";
+        request.allowedHosts = { "example.test", "cdn.test" };
+        const auto result = fetchHttpText (transport, request, 16);
+        REQUIRE (result);
+        CHECK (result.body == "{}");
+        CHECK (transport.requests.size() == 3);
+    }
+    SECTION ("Explicit hosts reject an unsafe initial destination without a request")
+    {
+        HttpRequest request;
+        request.url = "https://elsewhere.test/data";
+        request.allowedHosts = { "example.test" };
+        CHECK_FALSE (fetchHttpText (transport, request, 16));
+        CHECK (transport.requests.empty());
+    }
+    SECTION ("Explicit hosts reject a redirect before contacting the other destination")
+    {
+        for (const auto* destination : { "https://elsewhere.test/data", "https://example.test.evil.invalid/data",
+                                        "https://example.test:444/data", "https://user@example.test/data" })
+        {
+            CAPTURE (destination);
+            FakeTransport redirected;
+            redirected.replies = { { 302, { { "location", destination } }, "" } };
+            HttpRequest request;
+            request.url = "https://example.test/data";
+            request.allowedHosts = { "example.test" };
+            CHECK_FALSE (fetchHttpText (redirected, request, 16));
+            CHECK (redirected.requests.size() == 1);
+        }
+        CHECK_FALSE (httpsUrlOnHosts ("https://example.test/data", {}));
+        auto embeddedNull = std::string ("https://example.test/data");
+        embeddedNull += '\0';
+        embeddedNull += "elsewhere.test";
+        CHECK_FALSE (httpsUrlOnHosts (embeddedNull, { "example.test" }));
+    }
     SECTION ("Redirect loops stop after five redirects")
     {
         transport.replies.assign (6, { 302, { { "location", "/loop" } }, "" });
