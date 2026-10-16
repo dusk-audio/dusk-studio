@@ -25,8 +25,12 @@ struct PianoRollHost
     std::function<void()> regionsGone;
     std::function<void (bool redo)> undo;
     // Dispatch a known shell binding without offering it back to this view.
-    // Bindings already represented by ShellShortcut use the window's route.
+    // The window routes ShellShortcut bindings unless the covering keyboard claims them.
     std::function<bool (const KeyChord&)> unhandledKey;
+    std::function<bool()> covered;
+    std::function<void()> dismissCover;
+    std::function<bool (const KeyChord&)> keyboardOwnsKey;
+    std::function<bool (ShellShortcut)> keyboardClaimsShortcut;
 };
 
 class PianoRollView : public DuskPanelView
@@ -53,6 +57,13 @@ public:
     virtual std::array<int, 4> optionsForScenario() const = 0;
     virtual bool notePointForScenario (std::int64_t tick, int pitch, ImVec2& point) const = 0;
     virtual std::array<double, 4> laneBoundsForScenario (bool cc) const = 0;
+    virtual std::array<double, 4> gridBoundsForScenario() const = 0;
+    virtual ImVec2 bodyPointForScenario (ImVec2 nativePoint) const = 0;
+    virtual float scaleForScenario() const = 0;
+    virtual std::array<int, 2> mergeStateForScenario() const = 0;
+    virtual bool popupForScenario() const = 0;
+    virtual std::vector<std::string> menuItemsForScenario() const = 0;
+    virtual bool wheelForScenario (float delta, bool command, bool shift, bool smooth, bool lane) = 0;
     virtual std::vector<int> selectionForScenario() const = 0;
     virtual std::int64_t editCursorForScenario() const = 0;
 };

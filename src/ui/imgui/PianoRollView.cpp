@@ -3,6 +3,7 @@
 #include "RulerDensity.h"
 #include "../AppConfig.h"
 #include "../PianoRollEdit.h"
+#include "../WheelScroll.h"
 #include "../../engine/AudioEngine.h"
 #include "../../engine/Transport.h"
 #include "../../session/RegionEditActions.h"
@@ -23,7 +24,6 @@ namespace
 {
 namespace dw = DuskWidgets;
 constexpr int kKeyboardWidth = 76;
-constexpr int kToolbarHeight = 48;
 constexpr int kHeaderHeight = 28;
 constexpr int kNoteHeight = 16;
 constexpr int kNumKeys = 128;
@@ -90,10 +90,11 @@ public:
     ImVec2 preferredSize() const override { return available; }
     float dimAlpha() const override { return 0.80f; }
     bool escapeDismisses() const override { return false; }
-    bool capturesKeyboard() const override { return popupOpen || popupRequested != Popup::none; }
+    bool capturesKeyboard() const override { return ! covered() && (popupOpen || popupRequested != Popup::none); }
     bool takeDismissRequest() override { return std::exchange (dismissRequested, false); }
     bool claimsShortcut (ShellShortcut key) const override
     {
+        if (covered() && host.keyboardClaimsShortcut && host.keyboardClaimsShortcut (key)) return true;
         return key == ShellShortcut::undo || key == ShellShortcut::redo || key == ShellShortcut::playheadToZero
             || key == ShellShortcut::setLoopIn || key == ShellShortcut::setLoopOut
             || key == ShellShortcut::setPunchIn || key == ShellShortcut::setPunchOut
@@ -137,6 +138,23 @@ public:
         const auto point = screen ({ box.x, box.y });
         return { point.x, point.y, box.w * scaleFactor, box.h * scaleFactor };
     }
+    std::array<double, 4> gridBoundsForScenario() const override
+    {
+        const auto p = screen ({ grid.x, grid.y });
+        return { p.x, p.y, grid.w * scaleFactor, grid.h * scaleFactor };
+    }
+    ImVec2 bodyPointForScenario (ImVec2 p) const override { return local (p); }
+    float scaleForScenario() const override { return scaleFactor; }
+    std::array<int, 2> mergeStateForScenario() const override { return drawnMerge; }
+    bool popupForScenario() const override { return popupOpen || popupRequested != Popup::none; }
+    std::vector<std::string> menuItemsForScenario() const override { return menuLabels; }
+    bool wheelForScenario (float delta, bool command, bool shift, bool smooth, bool lane) override
+    {
+        if (! laidOut || covered() || popupForScenario()) return false;
+        const auto& area = lane ? velocityArea : grid;
+        wheelInputs.push_back ({ { area.x + area.w * 0.5f, area.y + area.h * 0.5f }, delta, 0, command, shift, smooth });
+        return true;
+    }
     std::vector<int> selectionForScenario() const override { return edit.selectedNotes; }
     std::int64_t editCursorForScenario() const override { return editCursorTick; }
     bool controlPointForScenario (const std::string& name, ImVec2& point, float position) const override
@@ -167,11 +185,19 @@ public:
         if (! chord) return false;
         if (repeat && ! repeats (chord->key)) return true;
         followRegionEdits();
-        return dispatchKey (*chord);
+        return handleKey (*chord);
     }
 
     void draw (dw::Context& ctx, ImVec2 at, ImVec2 size) override
     {
+        const bool isCovered = covered();
+        if (isCovered && ! wasCovered)
+        {
+            cancelGesture();
+            popupRequested = Popup::none;
+            cancelPopups = true;
+        }
+        wasCovered = isCovered;
         const bool popupWasOpen = popupOpen;
         origin = at;
         scaleFactor = std::max (0.01f, ctx.scale);
@@ -180,32 +206,57 @@ public:
         layout();
         laidOut = true;
         controls.clear();
-        followRegionEdits();
+        menuLabels.clear();
+        if (! isCovered) followRegionEdits();
         followPlayhead();
         const ScopedFormStyle style (ctx);
         fill (ctx, { 0, 0, static_cast<float> (width), static_cast<float> (height) }, 0xff181820);
         drawGrid (ctx);
+        ImGui::BeginDisabled (isCovered);
         drawToolbar (ctx);
-        handlePointer (popupWasOpen);
-        handleWheel (popupWasOpen);
+        if (! isCovered && covered())
+        {
+            ImGui::EndDisabled();
+            return;
+        }
+        if (! isCovered)
+        {
+            handlePointer (popupWasOpen);
+            handleWheel (popupWasOpen);
+            if (! popupWasOpen)
+                for (const auto& input : wheelInputs) applyWheel (input);
+        }
+        wheelInputs.clear();
         drawNotes (ctx);
         drawLanes (ctx);
         drawStatus (ctx);
         drawScroll (ctx);
-        if (! popupWasOpen && ! ImGui::GetIO().WantTextInput && (dw::shortcutsAvailable (ctx) || gestureActive))
+        ImGui::EndDisabled();
+        if ((isCovered || ! popupWasOpen) && ! ImGui::GetIO().WantTextInput && (dw::shortcutsAvailable (ctx) || gestureActive))
         {
             const auto& io = ImGui::GetIO();
             for (int code = ImGuiKey_NamedKey_BEGIN; code < ImGuiKey_GamepadStart; ++code)
             {
                 const auto key = static_cast<ImGuiKey> (code);
                 if (ImGui::IsKeyPressed (key, repeats (key)))
+                   #if defined (__APPLE__)
+                    dispatchKey ({ key, io.KeySuper, io.KeyCtrl, io.KeyShift, io.KeyAlt });
+                   #else
                     dispatchKey ({ key, io.KeyCtrl, io.KeySuper, io.KeyShift, io.KeyAlt });
+                   #endif
             }
         }
         drawPopups (ctx);
         popupOpen = popupRequested != Popup::none
             || ImGui::IsPopupOpen (nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
-        drawCursor (ctx);
+        if (isCovered)
+        {
+            ctx.dl->AddRectFilled ({ 0, 0 }, { size.x + at.x * 2, size.y + at.y * 2 }, IM_COL32 (0, 0, 0, 140));
+            if (ImGui::IsWindowHovered (ImGuiHoveredFlags_AllowWhenBlockedByPopup)
+                && ImGui::IsMouseClicked (ImGuiMouseButton_Left) && host.dismissCover)
+                host.dismissCover();
+        }
+        else drawCursor (ctx);
     }
 
 private:
@@ -216,11 +267,17 @@ private:
     PianoRollEdit edit;
     ImVec2 available { 1120, 680 }, origin;
     float scaleFactor = 1.0f;
-    int width = 1120, height = 680, statusHeight = 30;
+    int width = 1120, height = 680, statusHeight = 30, toolbarHeight = 48;
     bool laidOut = false, dismissRequested = false, popupOpen = false, gestureActive = false;
     float pixelsPerTick = 0.05f;
     int scrollX = 0, scrollY = (kNumKeys - 24) * kNoteHeight / 2;
-    float wheelX = 0, wheelY = 0, wheelLane = 0;
+    wheel::Accumulator wheelX, wheelY, wheelLane;
+    struct WheelInput { ImVec2 point; float vertical, horizontal; bool command, shift, smooth; };
+    std::vector<WheelInput> wheelInputs;
+    bool wasCovered = false;
+    std::array<int, 2> drawnMerge { -1, -1 };
+    std::vector<std::string> menuLabels;
+    bool covered() const { return host.covered && host.covered(); }
     std::int64_t snapTicks = 120, editCursorTick = 0;
     int velocityStripH = 110, ccStripH = 0, activeCcController = 1, colorMode = 0, noteEntryMode = 0;
     enum class Scale { Off, Major, Minor, Dorian, Phrygian, Lydian, Mixolydian, Locrian };
@@ -291,26 +348,40 @@ private:
     float xForTick (std::int64_t tick) const
     { return static_cast<float> (kKeyboardWidth - static_cast<double> (scrollX) + static_cast<double> (tick) * pixelsPerTick); }
     float yForNoteNumber (int note) const
-    { return static_cast<float> (kToolbarHeight + kHeaderHeight + (127 - note) * kNoteHeight - scrollY); }
+    { return static_cast<float> (toolbarHeight + kHeaderHeight + (127 - note) * kNoteHeight - scrollY); }
     int noteNumberForY (float y) const
-    { return std::clamp (127 - static_cast<int> ((y - kToolbarHeight - kHeaderHeight + static_cast<float> (scrollY)) / kNoteHeight), 0, 127); }
+    { return std::clamp (127 - static_cast<int> ((y - toolbarHeight - kHeaderHeight + static_cast<float> (scrollY)) / kNoteHeight), 0, 127); }
     std::int64_t tickForX (float x) const
     { return std::max<std::int64_t> (0, static_cast<std::int64_t> (std::llround ((x - kKeyboardWidth + static_cast<double> (scrollX)) / pixelsPerTick))); }
     std::int64_t effectiveSnapTicks() const { return session.midiEditorSnap ? snapTicks : 0; }
     bool frozen() const { return trackIdx < 0 || trackIdx >= Session::kNumTracks || session.track (trackIdx).frozen.load (std::memory_order_relaxed); }
     bool editable() const { const auto* r = region(); return r != nullptr && ! frozen() && ! r->locked; }
 
+    std::array<Box, 15> toolbarBoxes() const
+    {
+        constexpr float widths[] { 28, 28, 28, 28, 28, 28, 34, 34, 42, 90, 52, 28, 28, 28, 28 };
+        std::array<Box, 15> boxes;
+        float x = 8, y = 10;
+        for (std::size_t i = 0; i < boxes.size(); ++i)
+        {
+            if (x > 8 && x + widths[i] > width - 8) { x = 8; y += 38; }
+            boxes[i] = { x, y, widths[i], 28 };
+            x += widths[i] + (i == 6 || i == 7 || i == 8 ? 4 : i == 9 || i == 10 ? 8 : 6);
+        }
+        return boxes;
+    }
     void layout()
     {
+        toolbarHeight = static_cast<int> (toolbarBoxes().back().bottom()) + 10;
         statusHeight = width < 920 ? 56 : 30;
         const float bottom = static_cast<float> (height - statusHeight - kScrollBarH);
-        const float top = static_cast<float> (kToolbarHeight + kHeaderHeight);
+        const float top = static_cast<float> (toolbarHeight + kHeaderHeight);
         const float laneRoom = std::max (0.0f, bottom - top - 40.0f);
         const float requested = static_cast<float> (velocityStripH + ccStripH);
         const float shrink = requested > 0 ? std::min (1.0f, laneRoom / requested) : 1.0f;
         const float cc = static_cast<float> (ccStripH) * shrink, vel = static_cast<float> (velocityStripH) * shrink;
         const float w = std::max (1.0f, static_cast<float> (width - kKeyboardWidth));
-        rulerArea = { kKeyboardWidth, kToolbarHeight, w, kHeaderHeight };
+        rulerArea = { kKeyboardWidth, static_cast<float> (toolbarHeight), w, kHeaderHeight };
         ccArea = { kKeyboardWidth, bottom - cc, w, cc };
         velocityArea = { kKeyboardWidth, bottom - cc - vel, w, vel };
         grid = { kKeyboardWidth, top, w, std::max (1.0f, velocityArea.y - top) };
@@ -417,6 +488,10 @@ private:
     }
     bool dispatchKey (const KeyChord& key)
     {
+        if (covered() && host.keyboardOwnsKey && host.keyboardOwnsKey (key))
+            return host.unhandledKey && host.unhandledKey (key);
+        if (covered() && (key.key == ImGuiKey_Escape || key.key == ImGuiKey_K))
+            return host.unhandledKey && host.unhandledKey (key);
         if (handleKey (key)) return true;
         return host.unhandledKey && ! shellShortcutFor (key) && host.unhandledKey (key);
     }
@@ -697,7 +772,7 @@ private:
         if (drag == Drag::velocityHeight || drag == Drag::ccHeight)
         {
             const int value = resizeStartStripH + static_cast<int> (dragStart.y - p.y);
-            const int top = kToolbarHeight + kHeaderHeight + statusHeight + kScrollBarH + 80;
+            const int top = toolbarHeight + kHeaderHeight + statusHeight + kScrollBarH + 80;
             if (drag == Drag::velocityHeight) velocityStripH = limited (kVelocityStripHMin, std::min (320, height - top - ccStripH), value);
             else ccStripH = limited (kCcStripHMin, std::min (320, height - top - velocityStripH), value);
             return;
@@ -768,7 +843,7 @@ private:
     }
     void handlePointer (bool popupWasOpen)
     {
-        const Box surface { 0, kToolbarHeight, static_cast<float> (width), std::max (1.0f, ccArea.bottom() - kToolbarHeight) };
+        const Box surface { 0, static_cast<float> (toolbarHeight), static_cast<float> (width), std::max (1.0f, ccArea.bottom() - toolbarHeight) };
         ImGui::SetCursorScreenPos (screen ({ surface.x, surface.y }));
         ImGui::InvisibleButton ("##piano-gesture", { surface.w * scaleFactor, surface.h * scaleFactor },
             ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
@@ -839,40 +914,37 @@ private:
                 ctx.dl->AddLine (p (t, -3), p (t, 3), IM_COL32 (0, 0, 0, 217), ctx.s (1.1f));
         }
     }
-    static int wheelPixels (float& remainder, float amount)
+    void applyWheel (const WheelInput& input)
     {
-        if (! std::isfinite (amount) || amount == 0) return 0;
-        if ((remainder < 0 && amount > 0) || (remainder > 0 && amount < 0)) remainder = 0;
-        remainder += std::clamp (amount, -100000.0f, 100000.0f);
-        const int whole = static_cast<int> (std::trunc (remainder + std::copysign (0.00001f, remainder)));
-        remainder -= static_cast<float> (whole);
-        return whole;
+        const auto p = input.point;
+        if (velocityArea.contains (p) || (ccArea.h > 0 && ccArea.contains (p)))
+        {
+            const int delta = wheelLane.pixels (input.vertical, input.smooth, 8);
+            if (velocityArea.contains (p)) velocityStripH = limited (kVelocityStripHMin,
+                std::min (kVelocityStripHMax, height - toolbarHeight - kHeaderHeight - ccStripH - statusHeight - kScrollBarH - 80), velocityStripH + delta);
+            else ccStripH = limited (kCcStripHMin,
+                std::min (kCcStripHMax, height - toolbarHeight - kHeaderHeight - velocityStripH - statusHeight - kScrollBarH - 80), ccStripH + delta);
+        }
+        else if (input.command)
+        {
+            const auto tick = tickForX (p.x);
+            pixelsPerTick = std::clamp (pixelsPerTick * wheel::zoomFactor (input.vertical, input.smooth, 1.15f), 0.005f, 1.0f);
+            scrollX = static_cast<int> (std::clamp (static_cast<double> (tick) * pixelsPerTick - (p.x - kKeyboardWidth),
+                       0.0, static_cast<double> (std::numeric_limits<int>::max())));
+        }
+        else if (input.horizontal != 0 || input.shift)
+            scrollX = std::max (0, scrollX + wheelX.pixels (-(input.horizontal != 0 ? input.horizontal : input.vertical), input.smooth, 24));
+        else scrollY = std::clamp (scrollY + wheelY.pixels (-input.vertical, input.smooth, kNoteHeight), 0,
+                                  std::max (0, kFullGridHeight - static_cast<int> (grid.h)));
     }
     void handleWheel (bool popupWasOpen)
     {
         const auto& io = ImGui::GetIO();
         const auto p = local (io.MousePos);
-        if (popupWasOpen || ! ImGui::IsWindowHovered() || p.x < 0 || p.x > width || p.y < kToolbarHeight
+        if (popupWasOpen || ! ImGui::IsWindowHovered() || p.x < 0 || p.x > width || p.y < toolbarHeight
             || p.y >= height - statusHeight || (io.MouseWheel == 0 && io.MouseWheelH == 0)) return;
-        if (velocityArea.contains (p) || (ccArea.h > 0 && ccArea.contains (p)))
-        {
-            const int delta = wheelPixels (wheelLane, io.MouseWheel * 8);
-            if (velocityArea.contains (p)) velocityStripH = limited (kVelocityStripHMin,
-                std::min (kVelocityStripHMax, height - kToolbarHeight - kHeaderHeight - ccStripH - statusHeight - kScrollBarH - 80), velocityStripH + delta);
-            else ccStripH = limited (kCcStripHMin,
-                std::min (kCcStripHMax, height - kToolbarHeight - kHeaderHeight - velocityStripH - statusHeight - kScrollBarH - 80), ccStripH + delta);
-        }
-        else if (io.KeyCtrl || io.KeySuper)
-        {
-            const auto tick = tickForX (p.x);
-            pixelsPerTick = std::clamp (pixelsPerTick * std::pow (1.15f, io.MouseWheel), 0.005f, 1.0f);
-            scrollX = static_cast<int> (std::clamp (static_cast<double> (tick) * pixelsPerTick - (p.x - kKeyboardWidth),
-                       0.0, static_cast<double> (std::numeric_limits<int>::max())));
-        }
-        else if (io.MouseWheelH != 0 || io.KeyShift)
-            scrollX = std::max (0, scrollX - wheelPixels (wheelX, (io.MouseWheelH != 0 ? io.MouseWheelH : io.MouseWheel) * 24));
-        else scrollY = std::clamp (scrollY - wheelPixels (wheelY, io.MouseWheel * kNoteHeight), 0,
-                                  std::max (0, kFullGridHeight - static_cast<int> (grid.h)));
+        const auto notch = wheel::profile().lineNotchDelta;
+        applyWheel ({ p, io.MouseWheel * notch, io.MouseWheelH * notch, io.KeyCtrl || io.KeySuper, io.KeyShift, false });
     }
 
     ImU32 noteColour (const MidiNote& note) const
@@ -885,7 +957,7 @@ private:
     }
     void drawGrid (dw::Context& ctx)
     {
-        fill (ctx, { 0, kToolbarHeight, static_cast<float> (width), kHeaderHeight }, 0xff202028);
+        fill (ctx, { 0, static_cast<float> (toolbarHeight), static_cast<float> (width), kHeaderHeight }, 0xff202028);
         ctx.dl->PushClipRect (screen ({ 0, grid.y }), screen ({ static_cast<float> (width), grid.bottom() }), true);
         for (int note = 0; note < 128; ++note)
         {
@@ -1087,31 +1159,33 @@ private:
     }
     void drawToolbar (dw::Context& ctx)
     {
-        fill (ctx, { 0, 0, static_cast<float> (width), kToolbarHeight }, 0xff20202c);
-        float x = 8;
-        const auto next = [&] { const Box b { x, 10, 28, 28 }; x += 34; return b; };
+        fill (ctx, { 0, 0, static_cast<float> (width), static_cast<float> (toolbarHeight) }, 0xff20202c);
+        const auto boxes = toolbarBoxes();
+        std::size_t index = 0;
+        const auto next = [&] { return boxes[index++]; };
         if (icon (ctx, "undo", next(), Glyph::undo, "Undo", engine.getUndoManager().canUndo())) undoOrRedo (false);
         if (icon (ctx, "redo", next(), Glyph::redo, "Redo", engine.getUndoManager().canRedo())) undoOrRedo (true);
         if (icon (ctx, "split", next(), Glyph::split, "Split at edit cursor", editable())) splitSelectedAtCursor();
         if (icon (ctx, "glue", next(), Glyph::glue, "Glue selection", editable() && edit.selectedNotes.size() >= 2)) glue();
         if (icon (ctx, "quantize", next(), Glyph::quantize, "Quantize...", editable())) showPopup (Popup::quantize);
         if (icon (ctx, "properties", next(), Glyph::properties, "Region properties...", region() != nullptr)) showPopup (Popup::region);
-        if (button (ctx, "grab", { x, 10, 34, 28 }, "Grab", session.editMode == EditMode::Grab)) session.editMode = EditMode::Grab;
-        x += 38;
-        if (button (ctx, "draw", { x, 10, 34, 28 }, "Draw", session.editMode == EditMode::Draw)) session.editMode = EditMode::Draw;
-        x += 38;
-        if (button (ctx, "snap", { x, 10, 42, 28 }, "Snap", session.midiEditorSnap)) session.midiEditorSnap = ! session.midiEditorSnap;
-        x += 46;
-        if (button (ctx, "midi-merge", { x, 10, 90, 28 }, "MIDI Merge", session.midiMergeEnabled.load (std::memory_order_relaxed), ! engine.getRecordManager().isActive()))
+        if (button (ctx, "grab", next(), "Grab", session.editMode == EditMode::Grab)) session.editMode = EditMode::Grab;
+        if (button (ctx, "draw", next(), "Draw", session.editMode == EditMode::Draw)) session.editMode = EditMode::Draw;
+        if (button (ctx, "snap", next(), "Snap", session.midiEditorSnap)) session.midiEditorSnap = ! session.midiEditorSnap;
+        const bool merge = session.midiMergeEnabled.load (std::memory_order_relaxed);
+        const bool mergeEnabled = ! engine.getRecordManager().isActive() && ! covered();
+        const auto mergeBox = next();
+        drawnMerge = mergeBox.right() <= width ? std::array<int, 2> { merge ? 1 : 0, mergeEnabled ? 1 : 0 }
+                                               : std::array<int, 2> { -1, -1 };
+        if (button (ctx, "midi-merge", mergeBox, "MIDI Merge", merge, mergeEnabled))
             session.midiMergeEnabled.store (! session.midiMergeEnabled.load (std::memory_order_relaxed), std::memory_order_relaxed);
-        x += 98;
-        if (button (ctx, "chase", { x, 10, 52, 28 }, "Chase", chase)) chase = ! chase;
-        x += 60;
+        if (button (ctx, "chase", next(), "Chase", chase)) chase = ! chase;
         if (icon (ctx, "toggle-cc", next(), Glyph::cc, "Show / hide CC lane")) ccStripH = ccStripH > 0 ? 0 : 100;
         if (icon (ctx, "zoom-out", next(), Glyph::zoomOut, "Zoom out (-)")) zoomByFactor (1 / 1.15f);
         if (icon (ctx, "zoom-in", next(), Glyph::zoomIn, "Zoom in (=)")) zoomByFactor (1.15f);
         if (icon (ctx, "zoom-fit", next(), Glyph::zoomFit, "Zoom fit")) zoomFit();
     }
+
     void drawStatus (dw::Context& ctx)
     {
         const float top = static_cast<float> (height - statusHeight);
@@ -1211,7 +1285,16 @@ private:
     {
         const bool clicked = ImGui::MenuItem (title.c_str(), nullptr, selected, enabled);
         rememberMenu (id, enabled);
+        rememberMenu ("menu:" + title, enabled);
+        menuLabels.push_back (title);
         return clicked;
+    }
+    bool beginMenu (const char* title, bool enabled = true)
+    {
+        const bool open = ImGui::BeginMenu (title, enabled);
+        rememberMenu (std::string ("menu:") + title, enabled);
+        menuLabels.push_back (title);
+        return open;
     }
     void drawPopups (dw::Context& ctx)
     {
@@ -1239,7 +1322,7 @@ private:
             {
                 if (menu ("Off", "scale:off", true, scale == Scale::Off)) scale = Scale::Off;
                 for (int s = 1; s < 8; ++s)
-                    if (ImGui::BeginMenu (kScaleNames[s]))
+                    if (beginMenu (kScaleNames[s]))
                     {
                         for (int root = 0; root < 12; ++root)
                             if (menu (kRootNames[root], std::string ("scale:") + kScaleNames[s] + ":" + kRootNames[root], true,
@@ -1256,19 +1339,19 @@ private:
                 ImGui::Separator();
                 ImGui::TextUnformatted ("Set velocity");
                 for (const int value : { 127, 100, 80, 64, 32 })
-                    if (menu ("Set to " + std::to_string (value), "velocity:" + std::to_string (value), editable())) setVelocity (value);
+                    if (menu ("Set to " + std::to_string (value) + (value == 127 ? " (max)" : value == 64 ? " (mid)" : ""), "velocity:" + std::to_string (value), editable())) setVelocity (value);
             }
             if (kind == Popup::note)
             {
                 ImGui::Text ("Note Properties (%zu notes)", edit.selectedNotes.size());
-                if (ImGui::BeginMenu ("Channel", editable()))
+                if (beginMenu ("Channel", editable()))
                 {
                     for (int ch = 1; ch <= 16; ++ch)
                         if (menu ("Channel " + std::to_string (ch), "channel:" + std::to_string (ch)))
                             changeNotes ("Set note channel", [&] (MidiRegion& r) { edit.setChannelForSelected (r.notes, ch); });
                     ImGui::EndMenu();
                 }
-                if (ImGui::BeginMenu ("Length", editable()))
+                if (beginMenu ("Length", editable()))
                 {
                     constexpr const char* labels[] { "Whole", "Half", "Quarter", "Eighth", "Sixteenth", "Thirty-second" };
                     for (int i = 0; i < 6; ++i)
@@ -1276,10 +1359,10 @@ private:
                             changeNotes ("Set note length", [&] (MidiRegion& r) { edit.setLengthTicksForSelected (r.notes, r.lengthInTicks, kGridTicks[i]); });
                     ImGui::EndMenu();
                 }
-                if (ImGui::BeginMenu ("Velocity", editable()))
+                if (beginMenu ("Velocity", editable()))
                 {
                     for (const int value : { 127, 100, 80, 64, 32 })
-                        if (menu (std::to_string (value), "velocity:" + std::to_string (value))) setVelocity (value);
+                        if (menu (std::to_string (value) + (value == 127 ? " (max)" : value == 64 ? " (mid)" : ""), "velocity:" + std::to_string (value))) setVelocity (value);
                     ImGui::EndMenu();
                 }
             }
@@ -1328,7 +1411,7 @@ private:
         if (r == nullptr) return;
         if (menu (r->locked ? "Unlock region" : "Lock region", "region:lock", ! frozen()))
             changeRegion (r->locked ? "Unlock MIDI region" : "Lock MIDI region", [] (MidiRegion& a) { a.locked = ! a.locked; });
-        if (ImGui::BeginMenu ("Color", ! frozen()))
+        if (beginMenu ("Color", ! frozen()))
         {
             for (const auto& colour : kPalette)
                 if (menu (colour.label, std::string ("region:color:") + colour.label))

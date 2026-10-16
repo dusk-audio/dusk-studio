@@ -25,8 +25,10 @@ class NativeNotepadWindow;
 namespace imgui
 {
 class DuskPanelWindow;
+class DuskPanelView;
 class StartupView;
 class AudioEditorView;
+class PianoRollView;
 struct RecentSession;
 }
 
@@ -400,6 +402,7 @@ private:
     // The virtual keyboard is native: a framework child over the window with a dim
     // sibling behind it, the shape every ported panel takes. Built on first open.
     std::unique_ptr<imgui::DuskPanelWindow> virtualKeyboardWindow;
+    imgui::DuskPanelView* virtualKeyboardView = nullptr;
     std::unique_ptr<DimOverlay> virtualKeyboardDim;
     PluginEditorHider virtualKeyboardHider;
    #endif
@@ -546,15 +549,24 @@ private:
     // "no tabs / no hidden panels" per docs/DuskStudio.md. Tracked indices
     // let the tape-strip click handler toggle (same region) vs swap
     // (different region).
-    std::unique_ptr<class DimOverlay>          pianoRollDim;
-    std::unique_ptr<class PianoRollComponent>  pianoRoll;
+    imgui::PianoRollView* pianoRoll = nullptr;
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    std::unique_ptr<imgui::DuskPanelWindow> pianoRollWindow;
+    std::unique_ptr<class DimOverlay> pianoRollDim;
+    PluginEditorHider pianoRollHider;
+    bool pianoRollClosing = false;
+    bool pianoRollForwardingKey = false;
+    std::uint64_t pianoRollGeneration = 0;
+    int pianoRollChildX = 0, pianoRollChildY = 0;
+    void finishPianoRollClose();
+    void closeNativePanelsForModal (bool keepPianoRoll = false);
+   #endif
     int pianoRollTrackIdx  = -1;
     int pianoRollRegionIdx = -1;
     void openPianoRoll  (int trackIdx, int regionIdx);
-    // Immediate teardown (swap / mutual exclusion). Deferred destruction for a
-    // close the roll's own handler may have led to.
-    void closePianoRoll (bool deferDestruction = false);
-    void closePianoRollAnimated();  // collapse into region rect, then teardown
+    void closePianoRoll();
+    void destroyPianoRoll();
+    bool pianoRollShowing() const noexcept;
 
     // Mutually exclusive with the piano roll (opening one closes the other). A native
     // panel: a framework child over the window with a dim sibling behind it.
@@ -610,12 +622,6 @@ private:
     void snapshotEditModeForModal();
     void scheduleEditModeRestore();
     void restoreEditModeIfModalClosed();
-
-    // One-shot deferred teardown for the editor collapse animation - kept
-    // alive while the ComponentAnimator runs, then fires the immediate
-    // close. Only one region editor is open at a time, so a single slot
-    // suffices.
-    std::unique_ptr<dusk::Timer> editorTeardownTimer;
 
     // 30 Hz timer polls Session::tuneLatestHz / Level into the overlay.
     // onDismiss closes the modal AND clears tuneTrackIndex so the
