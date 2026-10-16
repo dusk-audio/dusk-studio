@@ -193,6 +193,18 @@ TEST_CASE ("SFZ download inspection preserves usable state without writing", "[s
         CHECK (inspectDownloadPart (temp.root / "absent" / "archive.part", download.maxBytes) == DownloadPartState::Invalid);
         CHECK_FALSE (std::filesystem::exists (temp.root / "absent"));
     }
+    SECTION ("Ownership failure leaves an existing prefix unexamined")
+    {
+        const auto lockFile = temp.root / ".dusk-sfz.lock";
+        REQUIRE (std::filesystem::remove (lockFile));
+        REQUIRE (std::filesystem::create_directory (lockFile));
+        const auto result = downloadFile (transport, download);
+        CHECK (result.status == OperationStatus::Failed);
+        CHECK (result.preservePart);
+        CHECK (readFile (temp.part()) == "abcd");
+        CHECK (readFile (sidecar) == original);
+        CHECK (transport.requests.size() == 1);
+    }
     SECTION ("Uninspectable metadata is preserved")
     {
         const auto linked = temp.root / "metadata-link";
@@ -224,7 +236,7 @@ TEST_CASE ("SFZ transfer verifies an upstream digest before completion", "[sfz][
         CHECK (result.error.find ("SHA-256") != std::string::npos);
         CHECK (result.sha256 == sha256 ("abcdefgh"));
         CHECK (readFile (temp.part()) == "abcdefgh");
-        CHECK_FALSE (result.resumeAvailable);
+        CHECK_FALSE (result.preservePart);
     }
 }
 
@@ -291,7 +303,7 @@ TEST_CASE ("SFZ transfer does not append a mismatched resume response", "[sfz][t
     transport.replies.push_back (reply);
     const auto result = downloadFile (transport, download);
     CHECK_FALSE (result);
-    CHECK_FALSE (result.resumeAvailable);
+    CHECK_FALSE (result.preservePart);
     CHECK (readFile (temp.part()) == "abcd");
     CHECK (transport.requests.size() == 2);
 }
@@ -326,7 +338,7 @@ TEST_CASE ("SFZ transfer retains validated prefixes across transient failures", 
     transport.replies.push_back (reply);
     const auto interrupted = downloadFile (transport, download);
     REQUIRE_FALSE (interrupted);
-    REQUIRE (interrupted.resumeAvailable);
+    REQUIRE (interrupted.preservePart);
     REQUIRE (interrupted.bytes == prefix.size());
     REQUIRE (readFile (temp.part()) == prefix);
     const auto tail = std::string ("abcdefgh").substr (prefix.size());
@@ -354,7 +366,7 @@ TEST_CASE ("SFZ transfer preserves validated prefixes while hashing is interrupt
     control.progress = [&] (const OperationProgress&) { interrupted = true; };
     const auto result = downloadFile (transport, download, control);
     CHECK (result.status == (cancelled ? OperationStatus::Cancelled : OperationStatus::Paused));
-    CHECK (result.resumeAvailable);
+    CHECK (result.preservePart);
     CHECK (result.bytes == 4);
     CHECK (transport.requests.size() == 1);
     transport.replies.push_back ({ 206, { { "content-range", "bytes 4-7/8" }, { "etag", "\"v1\"" } }, "efgh" });

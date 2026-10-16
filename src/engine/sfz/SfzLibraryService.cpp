@@ -631,7 +631,7 @@ OperationResult LibraryService::execute (Job& job, const OperationControl& contr
             return { OperationStatus::Failed, "Cannot open the SFZ download directory" };
         const auto downloaded = downloadFile (*transport,
             { job.pack.downloadUrl, job.part, job.pack.expectedSha256, ArchiveLimits{}.maxArchiveBytes }, control);
-        job.preserveDownload = downloaded.resumeAvailable || static_cast<bool> (downloaded);
+        job.preserveDownload = downloaded.preservePart || static_cast<bool> (downloaded);
         if (! downloaded) return { downloaded.status, downloaded.error };
         if (control.status() != OperationStatus::Complete) return interrupted (control);
         setState (job.generation, LibraryState::Extracting);

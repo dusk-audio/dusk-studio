@@ -3,6 +3,7 @@
 #endif
 
 #include "SfzTransfer.h"
+#include "SfzDirectoryLease.h"
 #include "SfzNetworkPolicy.h"
 #include "../../foundation/Json.h"
 
@@ -647,7 +648,7 @@ DownloadResult downloadFile (HttpTransport& transport, const DownloadRequest& re
 {
     DownloadResult result;
     const auto fail = [&] (const std::string& message)
-    { result.status = OperationStatus::Failed; result.error = message; result.resumeAvailable = false; return result; };
+    { result.status = OperationStatus::Failed; result.error = message; result.preservePart = false; return result; };
     const auto initialState = control.status();
     if (initialState != OperationStatus::Complete) { result.status = initialState; return result; }
     const auto url = httpsUrl (request.url);
@@ -661,6 +662,17 @@ DownloadResult downloadFile (HttpTransport& transport, const DownloadRequest& re
     const auto parent = request.partPath.parent_path();
     if (! parent.empty()) std::filesystem::create_directories (parent, error);
     if (error) return fail ("Cannot create download directory");
+    DirectoryLease downloadLease;
+    std::string ownershipError;
+    const auto ownershipDirectory = parent.empty() ? std::filesystem::current_path (error) : parent;
+    if (error || ! downloadLease.acquire (ownershipDirectory, DirectoryLease::Access::Shared, ownershipError))
+    {
+        result.status = OperationStatus::Failed;
+        result.error = error ? "Cannot locate the download directory: " + error.message() : ownershipError;
+        // An ownership failure leaves any existing prefix unexamined.
+        result.preservePart = true;
+        return result;
+    }
     auto file = openFile (request.partPath);
     if (! file) return fail ("Cannot open download part safely");
     auto offset = std::filesystem::file_size (request.partPath, error);
@@ -671,7 +683,7 @@ DownloadResult downloadFile (HttpTransport& transport, const DownloadRequest& re
     if (completed && *metadata.completedBytes != offset) return fail ("Completed download part has changed size; restart the download");
     const bool resume = offset != 0 && sameRequest
         && ! metadata.validator().empty() && httpsUrl (metadata.effectiveUrl).has_value();
-    result.resumeAvailable = offset != 0 && (resume || completed);
+    result.preservePart = offset != 0 && (resume || completed);
     if (! resume && ! completed)
     {
         if (! rewindFile (file.get(), true)) return fail ("Cannot restart download part");
@@ -718,7 +730,7 @@ DownloadResult downloadFile (HttpTransport& transport, const DownloadRequest& re
     bool accepted = false;
     std::string failure;
     const auto reject = [&] (const char* reason)
-    { failure = reason; result.resumeAvailable = false; return false; };
+    { failure = reason; result.preservePart = false; return false; };
     const auto operation = requestHttps (transport, http, [&] (const HttpResponse& response)
     {
         if (response.statusCode != 200 && response.statusCode != 206)
@@ -761,7 +773,7 @@ DownloadResult downloadFile (HttpTransport& transport, const DownloadRequest& re
         metadata = { *url, digest, response.url, header (response, "etag"), header (response, "last-modified"), {}, {} };
         if (! writeMetadata (sidecar, metadata)) return reject ("Cannot save download resume information");
         accepted = true;
-        result.resumeAvailable = ! metadata.validator().empty();
+        result.preservePart = ! metadata.validator().empty();
         return true;
     }, [&] (std::string_view chunk)
     {
@@ -781,7 +793,7 @@ DownloadResult downloadFile (HttpTransport& transport, const DownloadRequest& re
     result.error = failure.empty() ? operation.error : failure;
     if (! failure.empty()) result.status = OperationStatus::Failed;
     if (std::fflush (file.get()) != 0) return fail ("Cannot flush download part");
-    result.resumeAvailable = result.resumeAvailable && result.bytes != 0;
+    result.preservePart = result.preservePart && result.bytes != 0;
     if (! result) return result;
     if (! accepted) return fail ("Download response has no accepted body");
     if ((expectedBody && received != *expectedBody) || (expectedTotal && result.bytes != *expectedTotal))

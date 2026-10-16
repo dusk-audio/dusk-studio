@@ -320,7 +320,7 @@ TEST_CASE ("SFZ library preserves saved downloads when its metadata cache is una
     interrupted.append (std::move (first));
     const auto prefix = downloadFile (interrupted, { pack.downloadUrl, part, pack.expectedSha256, ArchiveLimits{}.maxArchiveBytes });
     REQUIRE_FALSE (prefix);
-    REQUIRE (prefix.resumeAvailable);
+    REQUIRE (prefix.preservePart);
     REQUIRE (ownedInstallFiles (tree) == 2);
     const auto cache = configuration / "sfz-cache" / "repository";
     REQUIRE (fs::create_directory (cache.parent_path()));
