@@ -89,6 +89,21 @@ printf '%s\n' \
     '    VERSION=0.0.1   # this release' \
     > "$FIXTURE/packaging/RELEASE-NOTES.md"
 
+NO_NOTES_ERROR="$SCRATCH/no-notes-error.txt"
+cp "$FIXTURE/packaging/RELEASE-NOTES.md" "$SCRATCH/notes-before.md"
+cp "$FIXTURE/packaging/DuskStudio.appdata.xml" "$SCRATCH/appdata-before.xml"
+if (cd "$FIXTURE" && bash scripts/bump-version.sh 9.9.9 >/dev/null 2>"$NO_NOTES_ERROR"); then
+    echo "FAIL: omitting release notes must be rejected" >&2
+    exit 1
+fi
+if ! grep -qF 'explicit release notes are required' "$NO_NOTES_ERROR" \
+    || [[ "$(cat "$FIXTURE/VERSION")" != "0.0.0" ]] \
+    || ! cmp -s "$FIXTURE/packaging/RELEASE-NOTES.md" "$SCRATCH/notes-before.md" \
+    || ! cmp -s "$FIXTURE/packaging/DuskStudio.appdata.xml" "$SCRATCH/appdata-before.xml"; then
+    echo "FAIL: omitted notes must leave release metadata untouched" >&2
+    exit 1
+fi
+
 WHITESPACE_ERROR="$SCRATCH/whitespace-notes-error.txt"
 if (cd "$FIXTURE" \
     && bash scripts/bump-version.sh 9.9.9 '' \

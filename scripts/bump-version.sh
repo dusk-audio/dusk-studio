@@ -8,8 +8,7 @@
 #     signature-check commands
 # Then prints what to do next (git commit + tag).
 #
-# Usage:   scripts/bump-version.sh 1.0.0
-#          scripts/bump-version.sh 1.0.0 "Release notes line one"
+# Usage:   scripts/bump-version.sh 1.0.0 "Release notes line one"
 #
 # Refuses to overwrite if the requested version is already in VERSION.
 # Does NOT git-commit, tag, or push. Tag-triggered CI workflows build, package,
@@ -35,18 +34,15 @@ strip_html_comments() {
     printf '%s' "$visible"
 }
 
-if [[ $# -lt 1 ]]; then
-    echo "usage: $0 <semver> [release notes ...]" >&2
+if [[ $# -lt 2 ]]; then
+    echo "usage: $0 <semver> <release notes ...>" >&2
+    echo "error: explicit release notes are required; include any session-format warning" >&2
     exit 2
 fi
 
 NEW_VERSION="$1"
 shift
-if [[ $# -eq 0 ]]; then
-    NOTES='Patch release.'
-else
-    NOTES="$*"
-fi
+NOTES="$*"
 
 VISIBLE_NOTES=$(strip_html_comments "$NOTES")
 while [[ "$VISIBLE_NOTES" == [[:space:]]* ]]; do
