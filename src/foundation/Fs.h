@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -8,6 +9,7 @@
 #include <fstream>
 #include <memory>
 #include <string>
+#include <system_error>
 #include <vector>
 
 #include "Text.h"
@@ -19,7 +21,6 @@
  #include <windows.h>
  #include <shlobj.h>
 #else
- #include <cerrno>
  #include <pwd.h>
  #include <sys/stat.h>
  #include <unistd.h>
@@ -85,13 +86,28 @@ inline std::string loadFileAsString (const std::filesystem::path& path)
     return std::string (std::istreambuf_iterator<char> (in), std::istreambuf_iterator<char>());
 }
 
-inline bool writeStringToFile (const std::filesystem::path& path, std::string_view text)
+inline bool writeStringToFile (const std::filesystem::path& path, std::string_view text,
+                               std::error_code* nativeError = nullptr)
 {
-    std::ofstream out (nativeIOPath (path), std::ios::binary | std::ios::trunc);
-    if (! out) return false;
+    if (nativeError) nativeError->clear();
+    const auto failed = [&]
+    {
+        if (nativeError) *nativeError = { errno ? errno : EIO, std::generic_category() };
+        return false;
+    };
+    const auto ioPath = nativeIOPath (path);
+    errno = 0;
+    std::ofstream out (ioPath, std::ios::binary | std::ios::trunc);
+    if (! out) return failed();
+    errno = 0;
     out.write (text.data(), (std::streamsize) text.size());
-    out.flush();   // surface disk-full / write errors that only appear at flush
-    return (bool) out;
+    if (! out) return failed();
+    errno = 0;
+    out.flush();
+    if (! out) return failed();
+    errno = 0;
+    out.close();
+    return out ? true : failed();
 }
 
 inline std::int64_t fileSize (const std::filesystem::path& path) noexcept

@@ -70,7 +70,9 @@ TEST_CASE ("dusk::fs matches juce::File", "[foundation][fs]")
     stdfs::remove_all (root);
     stdfs::create_directories (root / "sub");
 
-    REQUIRE (fs::writeStringToFile (root / "a.wav", "hello"));
+    auto writeError = std::make_error_code (std::errc::io_error);
+    REQUIRE (fs::writeStringToFile (root / "a.wav", "hello", &writeError));
+    CHECK_FALSE (writeError);
     REQUIRE (fs::writeStringToFile (root / "b.wav", "world!!"));
     REQUIRE (fs::writeStringToFile (root / "c.txt", "text"));
     REQUIRE (fs::writeStringToFile (root / "sub" / "d.wav", "nested"));
@@ -91,6 +93,14 @@ TEST_CASE ("dusk::fs matches juce::File", "[foundation][fs]")
         const juce::File jf (p.string());
         for (const char* ext : { "wav", ".wav", "WAV", ".WAV", "txt" })
             REQUIRE (fs::hasExtension (p, ext) == jf.hasFileExtension (ext));
+    }
+
+    SECTION ("failed writes retain their native error")
+    {
+        CHECK_FALSE (fs::writeStringToFile (root / "sub", "cannot replace a directory", &writeError));
+        CHECK (writeError);
+        CHECK (writeError != std::errc::no_space_on_device);
+        CHECK (stdfs::is_directory (root / "sub"));
     }
 
     SECTION ("findChildFiles matches juce")

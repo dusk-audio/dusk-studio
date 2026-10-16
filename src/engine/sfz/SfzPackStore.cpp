@@ -23,27 +23,34 @@ namespace fs = std::filesystem;
 using Json = dusk::json::Json;
 constexpr const char* kReceipt = ".dusk-pack.json";
 
-bool syncPath (const fs::path& path, bool directory)
+bool syncPath (const fs::path& path, bool directory, std::error_code& error)
 {
+    error.clear();
 #if defined(_WIN32)
     // Directory publication is flushed by MoveFileEx's write-through rename.
     if (directory) return true;
     const auto handle = CreateFileW (dusk::fs::nativeIOPath (path).c_str(), GENERIC_WRITE,
         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
         FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
-    if (handle == INVALID_HANDLE_VALUE) return false;
+    if (handle == INVALID_HANDLE_VALUE)
+    { error = { static_cast<int> (GetLastError()), std::system_category() }; return false; }
     BY_HANDLE_FILE_INFORMATION info {};
-    const bool ordinary = GetFileInformationByHandle (handle, &info) != 0
-        && (info.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) == 0;
+    const bool read = GetFileInformationByHandle (handle, &info) != 0;
+    if (! read) error = { static_cast<int> (GetLastError()), std::system_category() };
+    const bool ordinary = read && (info.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) == 0;
     const bool flushed = ordinary && FlushFileBuffers (handle) != 0;
+    if (ordinary && ! flushed) error = { static_cast<int> (GetLastError()), std::system_category() };
     const bool closed = CloseHandle (handle) != 0;
+    if (! closed && ! error) error = { static_cast<int> (GetLastError()), std::system_category() };
     return flushed && closed;
 #else
     const auto handle = ::open (path.c_str(), O_NOFOLLOW | (directory ? O_RDONLY | O_DIRECTORY : O_RDWR));
-    if (handle < 0) return false;
+    if (handle < 0) { error = { errno, std::generic_category() }; return false; }
     int flushed;
     do { flushed = ::fsync (handle); } while (flushed != 0 && errno == EINTR);
+    if (flushed != 0) error = { errno, std::generic_category() };
     const bool closed = ::close (handle) == 0;
+    if (! closed && ! error) error = { errno, std::generic_category() };
     return flushed == 0 && closed;
 #endif
 }
@@ -75,10 +82,16 @@ bool plainPath (const fs::path& root, const std::string& relative)
     return fs::is_regular_file (dusk::fs::nativeIOPath (path), ec) && ! ec;
 }
 
-PackPublishResult failure (const std::string& message)
+FailureKind storageFailureKind (const std::error_code& error)
+{
+    return error == std::errc::no_space_on_device ? FailureKind::DiskFull : FailureKind::None;
+}
+
+PackPublishResult failure (const std::string& message, FailureKind kind = FailureKind::None)
 {
     PackPublishResult result;
     result.error = message;
+    result.failureKind = kind;
     return result;
 }
 } // namespace
@@ -100,9 +113,10 @@ std::string PackStore::identity (const ManagedSfzLocator& locator)
     return hex.data();
 }
 
-bool PackStore::initialize (std::string& error)
+bool PackStore::initialize (std::string& error, std::error_code* nativeError)
 {
     error.clear();
+    if (nativeError) nativeError->clear();
     if (storeRoot.empty()) { error = "No SFZ library directory is configured"; return false; }
     if (! requiredMarker.empty())
     {
@@ -118,19 +132,26 @@ bool PackStore::initialize (std::string& error)
         fs::create_directories (dusk::fs::nativeIOPath (storeRoot), ec);
         if (! ec) storeRoot = fs::canonical (dusk::fs::nativeIOPath (storeRoot), ec);
         if (! ec) fs::create_directories (dusk::fs::nativeIOPath (storeRoot / "packs"), ec);
-        if (ec) { error = "Cannot open the SFZ library: " + ec.message(); return false; }
+        if (ec)
+        {
+            if (nativeError) *nativeError = ec;
+            error = "Cannot open the SFZ library: " + ec.message(); return false;
+        }
         if (! fs::is_directory (fs::symlink_status (dusk::fs::nativeIOPath (storeRoot / "packs"), ec)) || ec)
-        { error = "The SFZ packs directory is not a plain directory"; return false; }
+        {
+            if (nativeError) *nativeError = ec;
+            error = "The SFZ packs directory is not a plain directory"; return false;
+        }
     }
     DirectoryLease next;
-    if (! next.acquire (storeRoot, DirectoryLease::Access::Shared, error)) return false;
+    if (! next.acquire (storeRoot, DirectoryLease::Access::Shared, error, nativeError)) return false;
     rootLease = std::move (next);
     return true;
 }
 
-fs::path PackStore::createStaging (std::string& error)
+fs::path PackStore::createStaging (std::string& error, std::error_code* nativeError)
 {
-    if (! initialize (error) || sodium_init() < 0) return {};
+    if (! initialize (error, nativeError) || sodium_init() < 0) return {};
     std::array<unsigned char, 16> random {};
     std::array<char, 33> name {};
     randombytes_buf (random.data(), random.size());
@@ -138,7 +159,10 @@ fs::path PackStore::createStaging (std::string& error)
     const auto path = storeRoot / (std::string (".install-") + name.data());
     std::error_code ec;
     if (! fs::create_directory (dusk::fs::nativeIOPath (path), ec))
-    { error = "Cannot create SFZ staging directory: " + ec.message(); return {}; }
+    {
+        if (nativeError) *nativeError = ec;
+        error = "Cannot create SFZ staging directory: " + ec.message(); return {};
+    }
     return path;
 }
 
@@ -147,13 +171,13 @@ PackPublishResult PackStore::publish (const ProviderPack& provider, const std::s
                                      const std::vector<std::string>& sfzPaths)
 {
     std::string error;
-    if (! initialize (error)) return failure (error);
+    std::error_code ec;
+    if (! initialize (error, &ec)) return failure (error, storageFailureKind (ec));
     if (! isSha256 (digest) || ! providerPackFromJson (providerPackToJson (provider)))
         return failure ("Invalid SFZ pack identity or Creative Commons license receipt");
     if (! provider.expectedSha256.empty() && provider.expectedSha256 != digest)
-        return failure ("The SFZ archive does not match its published SHA-256");
+        return failure ("The SFZ archive does not match its published SHA-256", FailureKind::Integrity);
     if (sfzPaths.empty()) return failure ("The archive contains no SFZ instruments");
-    std::error_code ec;
     if (staging.parent_path() != storeRoot || staging.filename().u8string().rfind (".install-", 0) != 0
         || ! fs::is_directory (fs::symlink_status (dusk::fs::nativeIOPath (staging), ec)) || ec)
         return failure ("The SFZ staging directory is outside its library");
@@ -220,15 +244,15 @@ PackPublishResult PackStore::publish (const ProviderPack& provider, const std::s
                          { "presentation", { { "artwork_url", provider.presentation.artworkUrl },
                                                { "category_hint", provider.presentation.categoryHint } } },
                          { "archive_sha256", digest }, { "instruments", std::move (entries) } };
-    if (! dusk::fs::writeStringToFile (staging / kReceipt, receipt.dump (2))
-        || ! syncPath (staging / kReceipt, false))
-        return failure ("Cannot write SFZ installation receipt");
+    if (! dusk::fs::writeStringToFile (staging / kReceipt, receipt.dump (2), &ec)
+        || ! syncPath (staging / kReceipt, false, ec))
+        return failure ("Cannot write SFZ installation receipt", storageFailureKind (ec));
    #if ! defined(_WIN32)
     for (auto it = fs::recursive_directory_iterator (staging, ec);
          ! ec && it != fs::recursive_directory_iterator(); it.increment (ec))
-        if (fs::is_directory (it->symlink_status (ec)) && ! ec && ! syncPath (it->path(), true))
-            return failure ("Cannot flush SFZ staging directory");
-    if (ec || ! syncPath (staging, true)) return failure ("Cannot flush SFZ staging directory");
+        if (fs::is_directory (it->symlink_status (ec)) && ! ec && ! syncPath (it->path(), true, ec))
+            return failure ("Cannot flush SFZ staging directory", storageFailureKind (ec));
+    if (ec || ! syncPath (staging, true, ec)) return failure ("Cannot flush SFZ staging directory", storageFailureKind (ec));
    #endif
     pack.directory = storeRoot / "packs" / identity (pack.locatorFor (pack.instruments.front()));
     fs::path displaced;
@@ -250,21 +274,22 @@ PackPublishResult PackStore::publish (const ProviderPack& provider, const std::s
         if (fs::exists (fs::symlink_status (dusk::fs::nativeIOPath (displaced), ec)))
             return failure ("The SFZ repair directory is already occupied");
         renameDirectory (pack.directory, displaced, ec);
-        if (ec) return failure ("Cannot repair SFZ installation: " + ec.message());
+        if (ec) return failure ("Cannot repair SFZ installation: " + ec.message(), storageFailureKind (ec));
     }
     renameDirectory (staging, pack.directory, ec);
     if (ec)
     {
+        const auto kind = storageFailureKind (ec);
         const auto error = "Cannot publish SFZ installation: " + ec.message();
         if (! displaced.empty())
         {
             renameDirectory (displaced, pack.directory, ec);
-            if (ec) return failure (error + "; previous files remain in " + displaced.u8string());
+            if (ec) return failure (error + "; previous files remain in " + displaced.u8string(), kind);
         }
-        return failure (error);
+        return failure (error, kind);
     }
-    if (! syncPath (pack.directory.parent_path(), true) || ! syncPath (storeRoot, true))
-        return failure ("Cannot flush SFZ installation directory");
+    if (! syncPath (pack.directory.parent_path(), true, ec) || ! syncPath (storeRoot, true, ec))
+        return failure ("Cannot flush SFZ installation directory", storageFailureKind (ec));
     if (! displaced.empty()) fs::remove_all (dusk::fs::nativeIOPath (displaced), ec);
     pack.programs = indexPackPrograms (pack.directory, pack.instruments);
     PackPublishResult result;

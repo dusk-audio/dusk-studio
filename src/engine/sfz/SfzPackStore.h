@@ -39,9 +39,9 @@ class PackStore
 public:
     explicit PackStore (std::filesystem::path root, std::string marker = {})
         : storeRoot (std::move (root)), requiredMarker (std::move (marker)) {}
-    bool initialize (std::string& error);
+    bool initialize (std::string& error, std::error_code* nativeError = nullptr);
     const std::filesystem::path& root() const noexcept { return storeRoot; }
-    std::filesystem::path createStaging (std::string& error);
+    std::filesystem::path createStaging (std::string& error, std::error_code* nativeError = nullptr);
     PackPublishResult publish (const ProviderPack&, const std::string& archiveSha256,
                                const std::filesystem::path& staging,
                                const std::vector<std::string>& extractedSfzPaths);

@@ -143,10 +143,32 @@ TEST_CASE ("SFZ packs publish complete trees atomically and resolve portable loc
         pack = pinnedProvider();
         REQUIRE (dusk::fs::writeStringToFile (staging / "README.md", pack.license.text));
     }
+    SECTION ("Initialization reports native failures and clears stale errors")
+    {
+        const auto blocked = tree.root / "blocked";
+        REQUIRE (dusk::fs::writeStringToFile (blocked, "keep this"));
+        PackStore unavailable (blocked);
+        std::string error;
+        std::error_code nativeError;
+        CHECK_FALSE (unavailable.initialize (error, &nativeError));
+        CHECK (nativeError);
+        CHECK (nativeError != std::errc::no_space_on_device);
+        CHECK_FALSE (error.empty());
+        REQUIRE (original.initialize (error, &nativeError));
+        CHECK_FALSE (nativeError);
+        CHECK (error.empty());
+        nativeError = std::make_error_code (std::errc::io_error);
+        const auto extraStaging = original.createStaging (error, &nativeError);
+        REQUIRE_FALSE (extraStaging.empty());
+        CHECK_FALSE (nativeError);
+        CHECK (error.empty());
+        CHECK (dusk::fs::loadFileAsString (blocked) == "keep this");
+    }
     pack.presentation.artworkUrl = "https://fixtures.example/piano.jpg";
     pack.presentation.categoryHint = "piano";
     const auto result = original.publish (pack, std::string (64, 'a'), staging, { u8"Programs/Étude.sfz" });
     REQUIRE (result);
+    CHECK (result.failureKind == FailureKind::None);
     REQUIRE (result.pack);
     REQUIRE_FALSE (fs::exists (dusk::fs::nativeIOPath (staging)));
     REQUIRE (original.installed().size() == 1);
@@ -241,6 +263,7 @@ TEST_CASE ("SFZ pack publication rejects incomplete or ambiguous extracted entry
     auto staging = stage (store);
     std::vector<std::string> entries { u8"Programs/Étude.sfz" };
     std::string archiveDigest = pack.expectedSha256;
+    auto failureKind = FailureKind::None;
     SECTION ("Missing entrypoint") { entries = { "missing.sfz" }; }
     SECTION ("No instruments") { entries.clear(); }
     SECTION ("Duplicate path") { entries.push_back (entries.front()); }
@@ -250,7 +273,8 @@ TEST_CASE ("SFZ pack publication rejects incomplete or ambiguous extracted entry
     SECTION ("Reserved receipt")
     { REQUIRE (dusk::fs::writeStringToFile (staging / ".dusk-pack.json", "{}")); }
     SECTION ("Invalid archive hash") { archiveDigest = "not a digest"; }
-    SECTION ("Wrong upstream archive hash") { archiveDigest = std::string (64, 'b'); }
+    SECTION ("Wrong upstream archive hash")
+    { archiveDigest = std::string (64, 'b'); failureKind = FailureKind::Integrity; }
     SECTION ("Unverified license") { pack.license.text = "Free download"; }
     SECTION ("Restricted sample license")
     { REQUIRE (dusk::fs::writeStringToFile (staging / "Samples/LICENSE.txt", "https://creativecommons.org/licenses/by-nc/4.0/")); }
@@ -300,6 +324,7 @@ TEST_CASE ("SFZ pack publication rejects incomplete or ambiguous extracted entry
     const auto result = store.publish (pack, archiveDigest, staging, entries);
     REQUIRE_FALSE (result);
     REQUIRE_FALSE (result.error.empty());
+    CHECK (result.failureKind == failureKind);
     REQUIRE (store.installed().empty());
     REQUIRE (fs::exists (staging / ".dusk-pack.json") == receiptExisted);
 }
