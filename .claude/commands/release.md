@@ -18,8 +18,8 @@ acceptance pass that decides whether it can be announced.
   `gh release list` against the public repo returns nothing. That is correct, not a fault.
 - **One workflow fires on a `v*` tag**: `Dusk Studio release`. Its four build
   jobs fan in to one publisher, so a partial platform set is never published.
-- **A complete release is exactly six assets**: two Linux tarballs, one macOS DMG,
-  one Windows MSI, `MANUAL.pdf`, one `SHA256SUMS`.
+- **A complete release is exactly seven assets**: two Linux tarballs, one macOS DMG,
+  one Windows MSI, `MANUAL.pdf`, `SHA256SUMS` and `SHA256SUMS.asc`.
 
 ## Instructions
 
@@ -75,7 +75,7 @@ with AskUserQuestion rather than inventing them.
 ### Step 3: Bump metadata
 
 ```bash
-scripts/bump-version.sh "$NEW_VERSION"
+scripts/bump-version.sh "$NEW_VERSION" "${RELEASE_NOTES_SUMMARY:?Set the reviewed summary, including any format warning}"
 ```
 
 It updates `VERSION`, the appdata XML, and the release notes, then prints its own
@@ -184,30 +184,33 @@ done
 scripts/verify-release-assets.sh "v$NEW_VERSION"
 ```
 
-Must report `PASS: all 6 assets present.` It checks names and the summary slot
+Must report `PASS: all 7 assets present.` It checks names and the summary slot
 only; it never opens a payload.
 
 ### Step 9: Acceptance - the artifacts must actually run
 
-Download all six into a clean directory. This step exists because v0.13.0 shipped
+Download all seven into a clean directory. This step exists because v0.13.0 shipped
 a macOS DMG that passed every CI job and could not launch on any machine: the app
 linked Homebrew dylibs by absolute path with none bundled, and CMake's bundle
 install invalidated the signature after signing. The build and the test suite both
 run against the build tree and the CI machine's library prefix, so they pass whether
 or not the packaged artifact is self-contained.
 
-All six are present, so every entry must verify. `--ignore-missing` belongs in the
+All seven are present, so every entry must verify. `--ignore-missing` belongs in the
 advice given to users, who download one payload; here it would pass a release with
 an asset missing.
 
 `shasum -c` says nothing about a payload the file never listed, so a short or
 duplicated `SHA256SUMS` verifies clean. Prove the entry set is exactly the five
-payloads first, then verify.
+payloads first, then verify. Before changing to the download directory, import
+the release key from the source checkout with
+`gpg --import packaging/release-signing.pub`.
 
 ```bash
 set -euo pipefail
+gpg --verify SHA256SUMS.asc SHA256SUMS
 LISTED=$(awk '{sub(/^\*/, "", $2); print $2}' SHA256SUMS | sort)
-PRESENT=$(ls -1 | grep -vx SHA256SUMS | sort)
+PRESENT=$(ls -1 | grep -vxF -e SHA256SUMS -e SHA256SUMS.asc | sort)
 [ "$(printf '%s\n' "$LISTED" | wc -l)" -eq 5 ] \
   || { echo "STOP: SHA256SUMS does not carry exactly 5 entries"; exit 1; }
 [ "$(printf '%s\n' "$LISTED" | sort -u | wc -l)" -eq 5 ] \
@@ -279,7 +282,7 @@ accidentals display. Report that as checked or not checked; there is no command 
 
 ### Step 10: Report
 
-Print old version, new version, tag, the six asset names with their checksum
+Print old version, new version, tag, the seven asset names with their checksum
 results, and the per-platform launch result. State plainly which platforms were
 launch-tested and which were not. The release is announceable only when Steps 8
 and 9 both pass on every platform.
