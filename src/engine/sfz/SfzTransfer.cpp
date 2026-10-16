@@ -422,6 +422,11 @@ std::string hashDigest (crypto_hash_sha256_state hash)
 }
 } // namespace
 
+bool initializeHttpTransport()
+{
+    return curlReady();
+}
+
 OperationResult CurlTransport::perform (const HttpRequest& request, const HttpHeadersCallback& onHeaders,
                                          const HttpBodyCallback& onBody, const OperationControl& control)
 {

@@ -17,6 +17,7 @@ if(catch2_POPULATED AND IS_DIRECTORY "${catch2_SOURCE_DIR}")
 endif()
 
 add_executable(dusk-studio-tests
+    main.cpp
     # Shared native-host foundation (PortLayout / PortBuffers / INativeInstance)
     # is header-only + platform-neutral, so it links in the base target.
     hosting_port_layout.cpp
@@ -773,7 +774,7 @@ if(DUSKSTUDIO_NATIVE_AU)
 endif()
 
 target_link_libraries(dusk-studio-tests PRIVATE
-    Catch2::Catch2WithMain
+    Catch2::Catch2
     ${CMAKE_DL_LIBS}   # dl: ClapBundle dlopen
     juce::juce_audio_basics
     juce::juce_audio_formats

@@ -22,6 +22,8 @@ struct HttpRequest
     long lowSpeedSeconds = 30;
 };
 
+bool initializeHttpTransport();
+
 struct HttpResponse
 {
     int statusCode = 0;

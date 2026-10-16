@@ -1,9 +1,12 @@
 #include "DuskStudioApp.h"
+#include "engine/sfz/SfzTransfer.h"
 #include "platform/WindowsSoftwareOpenGL.h"
+
+#include <cstdio>
+#include <cstdlib>
 
 #if defined (_WIN32)
 #include <clocale>
-#include <cstdio>
 
 namespace
 {
@@ -43,7 +46,6 @@ const UseUtf8ForNarrowPaths useUtf8ForNarrowPaths;
 
 #if defined (__linux__)
 #include <cerrno>
-#include <cstdlib>
 #include <strings.h>
 
 // Dusk Studio is an X11/XWayland client on Linux: every window (main UI and
@@ -88,5 +90,20 @@ struct ForceXWaylandByDefault
 const ForceXWaylandByDefault forceXWaylandByDefault;
 } // namespace
 #endif
+
+namespace
+{
+// Older libcurl must initialize before the framework can start helper threads.
+struct HttpTransportStartup
+{
+    HttpTransportStartup()
+    {
+        if (duskstudio::sfz::initializeHttpTransport()) return;
+        std::fputs ("Cannot initialize HTTPS transport\n", stderr);
+        std::exit (EXIT_FAILURE);
+    }
+};
+const HttpTransportStartup httpTransportStartup;
+} // namespace
 
 START_JUCE_APPLICATION (duskstudio::DuskStudioApp)
