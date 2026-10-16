@@ -323,12 +323,18 @@ using File = std::unique_ptr<std::FILE, CloseFile>;
 bool safeFilePath (const std::filesystem::path& path)
 {
     std::error_code error;
-    const auto absolute = std::filesystem::absolute (path, error);
+    const auto absolute = dusk::fs::absolutePathForInspection (path, error);
     if (error || absolute.filename().empty()) return false;
-    std::filesystem::path current;
-    for (const auto& part : absolute)
+    auto current = absolute.root_path();
+    const auto relative = absolute.relative_path();
+    auto component = relative.begin();
+   #if defined(_WIN32)
+    if (absolute.root_name().native().compare (0, 2, L"\\\\") == 0 && component != relative.end())
+        current /= *component++;
+   #endif
+    for (; component != relative.end(); ++component)
     {
-        current /= part;
+        current /= *component;
         const auto status = std::filesystem::symlink_status (dusk::fs::nativeIOPath (current), error);
         if (error && error != std::errc::no_such_file_or_directory) return false;
         error.clear();

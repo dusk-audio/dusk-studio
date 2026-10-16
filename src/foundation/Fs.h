@@ -34,6 +34,36 @@
 // used inline as std::filesystem at call sites, so they live no helper here.
 namespace dusk::fs
 {
+inline std::filesystem::path absolutePathForInspection (const std::filesystem::path& path, std::error_code& error)
+{
+    error.clear();
+    if (path.empty()) { error = std::make_error_code (std::errc::invalid_argument); return {}; }
+    auto logical = path;
+   #if defined(_WIN32)
+    const auto& spelling = path.native();
+    if (spelling.compare (0, 4, L"\\\\?\\") == 0)
+    {
+        if (spelling.size() >= 8 && (spelling[4] == L'U' || spelling[4] == L'u')
+            && (spelling[5] == L'N' || spelling[5] == L'n') && (spelling[6] == L'C' || spelling[6] == L'c')
+            && spelling[7] == L'\\') logical = std::filesystem::path (L"\\\\" + spelling.substr (8));
+        else if (spelling.size() >= 7 && spelling[5] == L':' && spelling[6] == L'\\')
+            logical = std::filesystem::path (spelling.substr (4));
+        else { error = std::make_error_code (std::errc::invalid_argument); return {}; }
+    }
+    logical.make_preferred();
+   #endif
+    if (logical.is_absolute()) return logical;
+    // GetFullPathNameW would erase link components followed by "..".
+    auto base = std::filesystem::current_path (error);
+    if (error) return {};
+   #if defined(_WIN32)
+    if (logical.has_root_name() && logical.root_name() != base.root_name())
+        base = std::filesystem::absolute (logical.root_name(), error);
+    if (error) return {};
+   #endif
+    return base / logical;
+}
+
 inline std::filesystem::path nativeIOPath (const std::filesystem::path& path)
 {
     if (path.empty()) return path;

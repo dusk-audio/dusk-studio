@@ -281,6 +281,9 @@ TEST_CASE ("SFZ transfer resumes a paused archive using its entity validator", "
     FakeTransport transport;
     auto download = request (temp, sha256 ("abcdefgh"));
     SECTION ("Ordinary download path") {}
+   #if defined(_WIN32)
+    SECTION ("Extended download path") { download.partPath = dusk::fs::nativeIOPath (download.partPath); }
+   #endif
     SECTION ("Deep download path")
     {
         auto directory = temp.root;
@@ -639,6 +642,14 @@ TEST_CASE ("SFZ transfer refuses unsafe existing parts", "[sfz][transfer]")
     TemporaryDownload temp;
     FakeTransport transport;
     auto download = request (temp);
+    SECTION ("Empty path")
+    {
+        std::error_code error;
+        CHECK (dusk::fs::absolutePathForInspection ({}, error).empty());
+        CHECK (error == std::errc::invalid_argument);
+        download.partPath.clear();
+        CHECK_FALSE (downloadFile (transport, download));
+    }
     SECTION ("Oversized part")
     {
         std::ofstream stream (temp.part(), std::ios::binary);
@@ -660,6 +671,19 @@ TEST_CASE ("SFZ transfer refuses unsafe existing parts", "[sfz][transfer]")
             CHECK (readFile (target) == "untouched");
         }
         else SUCCEED ("Host does not permit symlink creation");
+    }
+    SECTION ("Parent traversal cannot erase a symbolic directory")
+    {
+        const auto real = temp.root / "real";
+        const auto alias = temp.root / "alias";
+        REQUIRE (std::filesystem::create_directories (real / "sub"));
+        std::error_code error;
+        std::filesystem::create_directory_symlink (real / "sub", alias, error);
+        if (error) SKIP ("The filesystem cannot create a symbolic-directory fixture");
+        download.partPath = alias / ".." / "archive.part";
+        CHECK_FALSE (downloadFile (transport, download));
+        CHECK_FALSE (std::filesystem::exists (real / "archive.part"));
+        CHECK_FALSE (std::filesystem::exists (temp.part()));
     }
     CHECK (transport.requests.empty());
 }

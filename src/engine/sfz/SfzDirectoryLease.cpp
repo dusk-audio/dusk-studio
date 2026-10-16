@@ -58,23 +58,36 @@ bool DirectoryLease::acquire (const std::filesystem::path& directory, Access acc
     if (*this) { error = "The SFZ directory lease is already held"; return false; }
     if (directory.empty()) { error = "No SFZ directory was supplied for ownership"; return false; }
     std::error_code ec;
-    const auto absolute = std::filesystem::absolute (directory, ec);
+    const auto absolute = dusk::fs::absolutePathForInspection (directory, ec);
     if (ec) { error = "Cannot locate the SFZ directory: " + ec.message(); return false; }
     auto current = absolute.root_path();
+    const auto relative = absolute.relative_path();
+    auto component = relative.begin();
+   #if defined(_WIN32)
+    if (absolute.root_name().native().compare (0, 2, L"\\\\") == 0 && component != relative.end())
+        current /= *component++;
+   #endif
     const auto plain = [&]
     {
-        const auto status = std::filesystem::symlink_status (dusk::fs::nativeIOPath (current), ec);
-        if (ec || ! std::filesystem::is_directory (status)) return false;
        #if defined(_WIN32)
-        const auto attributes = GetFileAttributesW (dusk::fs::nativeIOPath (current).c_str());
-        if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) return false;
+        const auto file = CreateFileW (dusk::fs::nativeIOPath (current).c_str(), FILE_READ_ATTRIBUTES,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+        if (file == INVALID_HANDLE_VALUE) return false;
+        BY_HANDLE_FILE_INFORMATION info {};
+        const bool read = GetFileInformationByHandle (file, &info) != 0;
+        const bool closed = CloseHandle (file) != 0;
+        return read && closed && (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0
+            && (info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0;
+       #else
+        const auto status = std::filesystem::symlink_status (current, ec);
+        return ! ec && std::filesystem::is_directory (status);
        #endif
-        return true;
     };
     if (! plain()) { error = "The SFZ ownership directory is unavailable or not a plain directory"; return false; }
-    for (const auto& component : absolute.relative_path())
+    for (; component != relative.end(); ++component)
     {
-        current /= component;
+        current /= *component;
         if (! plain()) { error = "The SFZ ownership directory is unavailable or not a plain directory"; return false; }
     }
     const auto path = absolute / ".dusk-sfz.lock";

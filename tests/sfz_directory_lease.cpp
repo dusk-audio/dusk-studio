@@ -26,6 +26,16 @@ TEST_CASE ("SFZ directory owners exclude maintenance until their last lease ends
     LeaseTree tree;
     auto root = tree.root;
     SECTION ("Ordinary root") {}
+   #if defined(_WIN32)
+    SECTION ("Extended root") { root = dusk::fs::nativeIOPath (root); }
+    SECTION ("UNC inspection accepts forward separators without erasing traversal")
+    {
+        std::error_code error;
+        const auto inspected = dusk::fs::absolutePathForInspection (L"//server/share/alias/../cache", error);
+        CHECK_FALSE (error);
+        CHECK (inspected.native() == LR"(\\server\share\alias\..\cache)");
+    }
+   #endif
     SECTION ("Deep root")
     {
         for (int index = 0; index < 4; ++index) root /= std::string (72, char ('a' + index));
