@@ -39,9 +39,10 @@ std::string digest (std::string_view text)
 bool plainDirectory (const fs::path& path)
 {
     std::error_code error;
-    fs::create_directory (path, error);
+    const auto ioPath = dusk::fs::nativeIOPath (path);
+    fs::create_directory (ioPath, error);
     error.clear();
-    return fs::is_directory (fs::symlink_status (path, error)) && ! error;
+    return fs::is_directory (fs::symlink_status (ioPath, error)) && ! error;
 }
 
 bool lowerHex (std::string_view name)
@@ -53,9 +54,10 @@ bool lowerHex (std::string_view name)
 void removePlainFile (const fs::path& path)
 {
     std::error_code error;
-    if (! fs::is_regular_file (fs::symlink_status (path, error)) || error) return;
-    if (fs::hard_link_count (path, error) != 1 || error) return;
-    fs::remove (path, error);
+    const auto ioPath = dusk::fs::nativeIOPath (path);
+    if (! fs::is_regular_file (fs::symlink_status (ioPath, error)) || error) return;
+    if (fs::hard_link_count (ioPath, error) != 1 || error) return;
+    fs::remove (ioPath, error);
 }
 
 void sweepWorkDirectory (const fs::path& directory) noexcept
@@ -66,7 +68,7 @@ void sweepWorkDirectory (const fs::path& directory) noexcept
         std::string ownershipError;
         if (! maintenance.acquire (directory, DirectoryLease::Access::Exclusive, ownershipError)) return;
         std::error_code error;
-        for (fs::directory_iterator it (directory, error), end; ! error && it != end; it.increment (error))
+        for (fs::directory_iterator it (dusk::fs::nativeIOPath (directory), error), end; ! error && it != end; it.increment (error))
         {
             const auto name = it->path().filename().u8string();
             if (name.size() == 39 && name.compare (0, 7, ".cache-") == 0 && lowerHex (std::string_view (name).substr (7)))
@@ -98,7 +100,7 @@ void sweepLibraryStaging (const LibraryLocation& location) noexcept
         if (! maintenance.acquire (location.root, DirectoryLease::Access::Exclusive, ownershipError)
             || ! libraryLocationAvailable (location)) return;
         std::error_code error;
-        for (fs::directory_iterator it (location.root, error), end; ! error && it != end; it.increment (error))
+        for (fs::directory_iterator it (dusk::fs::nativeIOPath (location.root), error), end; ! error && it != end; it.increment (error))
         {
             const auto name = it->path().filename().u8string();
             if (name.size() != 41 || name.compare (0, 9, ".install-") != 0
@@ -118,7 +120,7 @@ bool atomicCacheWrite (const fs::path& target, const std::string& text)
     std::array<char, 33> name {};
     randombytes_buf (random.data(), random.size());
     sodium_bin2hex (name.data(), name.size(), random.data(), random.size());
-    const auto temporary = target.parent_path() / (std::string (".cache-") + name.data());
+    const auto temporary = dusk::fs::nativeIOPath (target.parent_path() / (std::string (".cache-") + name.data()));
     if (! dusk::fs::writeStringToFile (temporary, text))
     {
         std::error_code ignored;
@@ -127,7 +129,7 @@ bool atomicCacheWrite (const fs::path& target, const std::string& text)
     }
     std::error_code error;
 #if defined(_WIN32)
-    const bool replaced = MoveFileExW (temporary.c_str(), target.c_str(),
+    const bool replaced = MoveFileExW (temporary.c_str(), dusk::fs::nativeIOPath (target).c_str(),
                                        MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
 #else
     fs::rename (temporary, target, error);
@@ -143,7 +145,7 @@ void trimRepositoryCache (const fs::path& root)
     std::vector<Entry> entries;
     std::uintmax_t total = 0;
     std::error_code error;
-    for (auto it = fs::directory_iterator (root, error); ! error && it != fs::directory_iterator(); it.increment (error))
+    for (auto it = fs::directory_iterator (dusk::fs::nativeIOPath (root), error); ! error && it != fs::directory_iterator(); it.increment (error))
     {
         if (it->path().extension() != ".json" || ! isSha256 (it->path().stem().u8string())) continue;
         std::error_code entryError;
@@ -188,7 +190,7 @@ public:
     {
         const auto key = digest (Json { { "url", request.url }, { "headers", request.headers } }.dump());
         if (key.empty()) return { OperationStatus::Failed, "Cannot identify repository cache entry" };
-        const auto path = cache / (key + ".json");
+        const auto path = dusk::fs::nativeIOPath (cache / (key + ".json"));
         std::error_code cacheError;
         const auto modified = fs::last_write_time (path, cacheError);
         const auto freshness = request.url == "https://raw.githubusercontent.com/sfzinstruments/sfzinstruments.github.io/master/data/sfz/instruments.yml"
@@ -529,26 +531,26 @@ void LibraryService::setState (std::uint64_t generation, LibraryState state)
 
 void LibraryService::cleanInstall (Job& job, bool removeDownload) noexcept
 {
-    if ((! job.staging.empty() || ! job.part.empty()) && ! libraryLocationAvailable (locations.active)) return;
-    std::error_code error;
-    if (! job.staging.empty()) fs::remove_all (job.staging, error);
-    job.staging.clear();
-    if (removeDownload && ! job.part.empty())
+    try
     {
-        if (! fs::is_directory (fs::symlink_status (job.part.parent_path(), error)) || error) return;
-        DirectoryLease cleanupLease;
-        std::string ownershipError;
-        try
+        if ((! job.staging.empty() || ! job.part.empty()) && ! libraryLocationAvailable (locations.active)) return;
+        std::error_code error;
+        if (! job.staging.empty()) fs::remove_all (dusk::fs::nativeIOPath (job.staging), error);
+        job.staging.clear();
+        if (removeDownload && ! job.part.empty())
         {
+            if (! fs::is_directory (fs::symlink_status (dusk::fs::nativeIOPath (job.part.parent_path()), error)) || error) return;
+            DirectoryLease cleanupLease;
+            std::string ownershipError;
             if (! cleanupLease.acquire (job.part.parent_path(), DirectoryLease::Access::Shared, ownershipError)) return;
+            fs::remove (dusk::fs::nativeIOPath (job.part), error);
+            auto sidecar = job.part;
+            sidecar += ".resume.json";
+            fs::remove (dusk::fs::nativeIOPath (sidecar), error);
+            job.part.clear();
         }
-        catch (...) { return; }
-        fs::remove (job.part, error);
-        auto sidecar = job.part;
-        sidecar += ".resume.json";
-        fs::remove (sidecar, error);
-        job.part.clear();
     }
+    catch (...) {}
 }
 
 OperationResult LibraryService::browseAll (const Job& job, const OperationControl& control)
@@ -727,7 +729,7 @@ OperationResult LibraryService::execute (Job& job, const OperationControl& contr
         {
             if (extracted.status == OperationStatus::Failed) job.preserveDownload = false;
             std::error_code ignored;
-            fs::remove_all (job.staging, ignored);
+            fs::remove_all (dusk::fs::nativeIOPath (job.staging), ignored);
             job.staging.clear();
             return { extracted.status, extracted.error };
         }
@@ -802,11 +804,11 @@ void LibraryService::run()
     if (initialized || ! configurationFile.empty())
     {
         std::error_code error;
-        fs::create_directories (cacheRoot.parent_path(), error);
+        fs::create_directories (dusk::fs::nativeIOPath (cacheRoot.parent_path()), error);
         cacheReady = plainDirectory (cacheRoot);
         if (cacheReady)
         {
-            const auto canonical = fs::canonical (cacheRoot, error);
+            const auto canonical = fs::canonical (dusk::fs::nativeIOPath (cacheRoot), error);
             cacheReady = ! error;
             if (cacheReady) cacheRoot = canonical;
         }

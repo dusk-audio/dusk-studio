@@ -62,7 +62,7 @@ void sweepImageTemporaries (const fs::path& root) noexcept
     try
     {
         std::error_code error;
-        for (fs::directory_iterator it (root, error), end; ! error && it != end; it.increment (error))
+        for (fs::directory_iterator it (dusk::fs::nativeIOPath (root), error), end; ! error && it != end; it.increment (error))
         {
             if (! temporaryImageName (it->path().filename().u8string())) continue;
             std::error_code entryError;
@@ -79,7 +79,7 @@ void trimDiskCache (const fs::path& root)
     std::error_code error;
     std::vector<std::pair<fs::file_time_type, fs::path>> files;
     std::uintmax_t bytes = 0;
-    for (fs::directory_iterator it (root, error), end; ! error && it != end; it.increment (error))
+    for (fs::directory_iterator it (dusk::fs::nativeIOPath (root), error), end; ! error && it != end; it.increment (error))
     {
         const auto& entry = *it;
         const auto name = entry.path().filename().u8string();
@@ -175,9 +175,10 @@ void ArtworkCache::run()
     const auto acquireCache = [&] (bool sweep)
     {
         std::error_code error;
-        fs::create_directories (root, error);
-        if (error || ! fs::is_directory (fs::symlink_status (root, error)) || error) return false;
-        const auto canonical = fs::canonical (root, error);
+        const auto ioRoot = dusk::fs::nativeIOPath (root);
+        fs::create_directories (ioRoot, error);
+        if (error || ! fs::is_directory (fs::symlink_status (ioRoot, error)) || error) return false;
+        const auto canonical = fs::canonical (ioRoot, error);
         if (error) return false;
         std::string ownershipError;
         if (sweep)
@@ -251,7 +252,7 @@ void ArtworkCache::run()
             if (control.status() != OperationStatus::Complete) continue;
             std::error_code error;
             const bool cacheReady = acquireCache (false);
-            const auto path = root / (key + ".image");
+            const auto path = dusk::fs::nativeIOPath (root / (key + ".image"));
             if (cacheReady && fs::is_regular_file (fs::symlink_status (path, error)) && ! error)
             {
                 const auto bytes = fs::file_size (path, error) <= kMaxImageBytes && ! error
@@ -272,7 +273,7 @@ void ArtworkCache::run()
             publish (request, std::move (pixels), true);
             if (cacheReady)
             {
-                const auto temporary = root / (key + "." + std::to_string (randombytes_random()) + ".part");
+                const auto temporary = dusk::fs::nativeIOPath (root / (key + "." + std::to_string (randombytes_random()) + ".part"));
                 const auto status = fs::symlink_status (temporary, error);
                 if (error == std::errc::no_such_file_or_directory) error.clear();
                 if (! error && ! fs::exists (status))

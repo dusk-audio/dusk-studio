@@ -87,7 +87,7 @@ ProviderPack packFor (const std::string& bytes)
 struct Tree
 {
     Tree() : root (fs::canonical (dusk::fs::createUniqueTempDirectory ("dusk-sfz-service-"))) {}
-    ~Tree() { std::error_code ignored; fs::remove_all (root, ignored); }
+    ~Tree() { std::error_code ignored; fs::remove_all (dusk::fs::nativeIOPath (root), ignored); }
     fs::path root;
 };
 
@@ -226,7 +226,7 @@ std::size_t ownedInstallFiles (const Tree& tree)
 {
     std::size_t count = 0;
     std::error_code error;
-    for (auto it = fs::recursive_directory_iterator (tree.root, error);
+    for (auto it = fs::recursive_directory_iterator (dusk::fs::nativeIOPath (tree.root), error);
          ! error && it != fs::recursive_directory_iterator(); it.increment (error))
     {
         const auto name = it->path().filename().u8string();
@@ -541,13 +541,19 @@ TEST_CASE ("SFZ service changes storage without replacing its worker or portable
 TEST_CASE ("SFZ library installs a downloaded archive and publishes its portable locator", "[sfz][service][ipc]")
 {
     Tree tree;
+    auto root = tree.root;
+    SECTION ("Ordinary library path") {}
+    SECTION ("Deep library path")
+    {
+        for (int index = 0; index < 4; ++index) root /= std::string (72, char ('a' + index));
+    }
     const auto bytes = archiveBytes();
     auto pack = packFor (bytes);
     pack.presentation.artworkUrl = "https://fixtures.example/piano.png";
     pack.presentation.categoryHint = "piano";
     const auto transport = std::make_shared<ScriptedTransport>();
     transport->append ({ bytes, 200, { { "content-length", std::to_string (bytes.size()) } } });
-    LibraryService service (tree.root, transport);
+    LibraryService service (root, transport);
     settled (service);
     REQUIRE (service.install (pack));
     const auto result = settled (service);
@@ -558,7 +564,7 @@ TEST_CASE ("SFZ library installs a downloaded archive and publishes its portable
     REQUIRE (result.installed[0].archiveSha256 == hash (bytes));
     REQUIRE (transport->count() == 1);
     const auto locator = result.installed[0].locatorFor (result.installed[0].instruments.front());
-    PackStore offline (tree.root);
+    PackStore offline (root);
     REQUIRE (offline.resolve (locator));
     REQUIRE (ownedInstallFiles (tree) == 0);
 }
@@ -686,11 +692,17 @@ TEST_CASE ("SFZ library serializes requests and cancels a paused job without res
 TEST_CASE ("SFZ repository cache retains the last valid listing and supports explicit offline browsing", "[sfz][service][ipc]")
 {
     Tree tree;
+    auto root = tree.root;
+    SECTION ("Ordinary cache path") {}
+    SECTION ("Deep cache path")
+    {
+        for (int index = 0; index < 4; ++index) root /= std::string (72, char ('a' + index));
+    }
     const auto transport = std::make_shared<ScriptedTransport>();
     transport->append ({ listing, 200, { { "content-type", "application/json" } } });
     transport->append ({ "{broken JSON", 200, { { "content-type", "application/json" } } });
     {
-        LibraryService service (tree.root, transport);
+        LibraryService service (root, transport);
         settled (service);
         REQUIRE (service.browse ("musical-artifacts"));
         REQUIRE (settled (service).page.items.size() == 1);
@@ -704,7 +716,7 @@ TEST_CASE ("SFZ repository cache retains the last valid listing and supports exp
         REQUIRE (transport->count() == 2);
     }
     const auto offline = std::make_shared<ScriptedTransport>();
-    LibraryService restored (tree.root, offline);
+    LibraryService restored (root, offline);
     settled (restored);
     REQUIRE (offline->count() == 0);
     REQUIRE (restored.browse ("musical-artifacts", 1, {}, true));

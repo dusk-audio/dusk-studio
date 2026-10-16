@@ -17,7 +17,7 @@ using namespace duskstudio::sfz;
 struct Tree
 {
     std::filesystem::path root = dusk::fs::createUniqueTempDirectory ("dusk-sfz-artwork-");
-    ~Tree() { std::error_code error; std::filesystem::remove_all (root, error); }
+    ~Tree() { std::error_code error; std::filesystem::remove_all (dusk::fs::nativeIOPath (root), error); }
 };
 
 std::shared_ptr<const ArtworkPixels> decode (std::string_view bytes)
@@ -261,16 +261,22 @@ TEST_CASE ("SFZ artwork remains available when disk ownership or publication fai
 TEST_CASE ("SFZ artwork cache survives restart and never fetches for offline selections", "[sfz][artwork][ipc]")
 {
     Tree tree;
+    auto root = tree.root;
+    SECTION ("Ordinary cache path") {}
+    SECTION ("Deep cache path")
+    {
+        for (int index = 0; index < 4; ++index) root /= std::string (72, char ('a' + index));
+    }
     auto online = std::make_shared<Transport>();
     {
-        ArtworkCache cache (tree.root, online);
+        ArtworkCache cache (root, online);
         cache.request ("piano", url, fallback, decode, true, "sfzinstruments");
         until ([&] { return cache.snapshot().sourceImage; });
         REQUIRE (cache.snapshot().pixels->rgba.front() == 's');
         REQUIRE (online->calls == 1);
     }
     auto offline = std::make_shared<Transport>();
-    ArtworkCache cached (tree.root, offline);
+    ArtworkCache cached (root, offline);
     cached.request ("installed-piano", url, fallback, decode, false, "sfzinstruments");
     until ([&] { return cached.snapshot().sourceImage; });
     CHECK (cached.snapshot().pixels->rgba.front() == 's');
@@ -280,14 +286,14 @@ TEST_CASE ("SFZ artwork cache survives restart and never fetches for offline sel
     CHECK_FALSE (cached.snapshot().sourceImage);
     CHECK (cached.snapshot().pixels->rgba.front() == 'f');
     CHECK (offline->calls == 0);
-    for (const auto& file : std::filesystem::directory_iterator (tree.root))
+    for (const auto& file : std::filesystem::directory_iterator (dusk::fs::nativeIOPath (root)))
         if (file.path().extension() == ".image") REQUIRE (dusk::fs::writeStringToFile (file.path(), "invalid"));
     auto repair = std::make_shared<Transport>();
-    ArtworkCache repaired (tree.root, repair);
+    ArtworkCache repaired (root, repair);
     repaired.request ("repaired", url, fallback, decode, true, "sfzinstruments");
     until ([&] { const auto state = repaired.snapshot(); return state.sourceImage && ! state.busy; });
     CHECK (repair->calls == 1);
-    ArtworkCache reloaded (tree.root, offline);
+    ArtworkCache reloaded (root, offline);
     reloaded.request ("reloaded", url, fallback, decode, false, "sfzinstruments");
     until ([&] { const auto state = reloaded.snapshot(); return state.pixels && ! state.busy; });
     CHECK (reloaded.snapshot().sourceImage);
