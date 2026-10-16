@@ -6516,24 +6516,6 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                                          });
         }
 
-        // Build this block's per-track MIDI buffer. Two source paths,
-        // mutually exclusive (matches the audio source decision above):
-        //   - Disk playback (willReadFromDisk): walk the track's
-        //     midiRegions and emit any note/CC events whose absolute
-        //     sample-position falls inside this block. This is the
-        //     scheduled-playback path - the synth hears notes that were
-        //     previously recorded onto the timeline.
-        //   - Live monitoring (else): pull from the input MIDI collector
-        //     and apply the per-track channel filter.
-        // The strip's instrument plugin then sees one unified buffer.
-        // Note: scratch already cleared above by the flush block, plus any
-        // emitted panic events. Both source paths add to those.
-        // Live-input MIDI pull. Shared by the stopped/record live-monitor
-        // branch and the play-along overlay in the disk-playback branch:
-        // applies the per-track channel filter, mirrors the dusk->juce raw-byte
-        // copy that feeds the instrument + recorder, and - on an armed track -
-        // always auditions the on-screen keyboard. Only meaningful on MIDI
-        // tracks; harmless (no matching input events consumed) otherwise.
         auto pullInput = [&] (int srcIdx, int chFilter)
         {
             if (srcIdx < 0 || srcIdx >= (int) perInputMidi.size()) return;
@@ -6745,24 +6727,6 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             if (! strandedCheckDue)
                 midiTimelineSeen[(size_t) t] = timelineStamp;
 
-            // Play-along overlay. Live-MIDI delivery is a PER-BRANCH obligation:
-            // every transport-source branch that builds perTrackMidi must
-            // pull live input itself, or play-along goes silent in that state.
-            // The same IN control is checked through two different audibility
-            // gates depending on the branch:
-            //   - stopped/record (the else branch below): monitorPasses is the
-            //     master-accumulation gate, and it already folds in IN.
-            //   - playing (here): monitorPasses is forced open during playback,
-            //     so pullsLiveMidi checks IN explicitly instead.
-            // A future third source branch must likewise pull live input under
-            // whichever gate governs its audibility, and pullsLiveMidi has to
-            // say so, or the flush judges a route the branch does not read.
-            // With IN engaged the live controller (and, on an armed track, the
-            // on-screen keyboard) merges ON TOP of the scheduled timeline notes
-            // so the instrument sounds both the recorded part and what the user
-            // plays while the transport rolls. Overlay events are additive, so
-            // the recorder (armed + Recording only, below) and scheduled
-            // playback are untouched.
             if (pullsLiveMidi)
                 pullLiveMidi();
         }
