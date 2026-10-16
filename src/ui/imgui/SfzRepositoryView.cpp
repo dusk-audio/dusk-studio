@@ -67,7 +67,7 @@ std::string sizeLabel (std::uint64_t bytes)
     return text;
 }
 
-const char* stateLabel (LibraryState state, bool busy)
+const char* stateLabel (LibraryState state, bool busy, sfz::FailureKind failure)
 {
     switch (state)
     {
@@ -79,10 +79,23 @@ const char* stateLabel (LibraryState state, bool busy)
         case LibraryState::Extracting: return "Installing instrument pack...";
         case LibraryState::ChangingLocation: return "Updating SFZ library location...";
         case LibraryState::Paused: return "Library work paused";
-        case LibraryState::Failed: return "Library operation could not finish";
+        case LibraryState::Failed:
+            if (failure == sfz::FailureKind::DiskFull) return "Not enough disk space";
+            if (failure == sfz::FailureKind::Integrity) return "Instrument pack verification failed";
+            return "Library operation could not finish";
         case LibraryState::Cancelled: return "Library operation cancelled";
         default: return busy ? "Updating library..." : "Ready";
     }
+}
+
+const char* failureGuidance (const sfz::LibrarySnapshot& snapshot)
+{
+    if (snapshot.state != LibraryState::Failed) return "";
+    if (snapshot.failureKind == sfz::FailureKind::DiskFull)
+        return "Free disk space, then retry. If library initialization failed, restart Dusk Studio first.";
+    if (snapshot.failureKind == sfz::FailureKind::Integrity)
+        return "Download this version again. If verification fails again, check the pack's source.";
+    return "";
 }
 
 class SfzRepositoryView final : public DuskPanelView
@@ -159,10 +172,15 @@ public:
             };
             float footerHeight = snapshot.busy || snapshot.state == LibraryState::Paused
                 ? ImGui::GetFrameHeight() : ImGui::GetTextLineHeight();
+            if (snapshot.state == LibraryState::Failed)
+                footerHeight = std::max (footerHeight,
+                    ImGui::CalcTextSize (stateLabel (snapshot.state, snapshot.busy, snapshot.failureKind),
+                        nullptr, false, ImGui::GetContentRegionAvail().x).y);
             if (snapshot.state == LibraryState::Downloading || snapshot.state == LibraryState::Extracting)
                 footerHeight += ctx.s (22) + ImGui::GetStyle().ItemSpacing.y;
             if (snapshot.state == LibraryState::Paused) footerHeight += extraHeight (kPauseMessage);
-            else if (snapshot.state != LibraryState::Cancelled) footerHeight += extraHeight (snapshot.error);
+            else if (snapshot.state != LibraryState::Cancelled)
+                footerHeight += extraHeight (snapshot.error) + extraHeight (failureGuidance (snapshot));
             footerHeight += extraHeight (notice) + ctx.s (4);
             footerHeight = std::clamp (footerHeight, ctx.s (32),
                 std::max (ctx.s (32), ImGui::GetContentRegionAvail().y * 0.4f));
@@ -955,7 +973,9 @@ private:
     {
         if (ImGui::BeginChild ("##sfz-library-status", { 0, height }, ImGuiChildFlags_None))
         {
-            ImGui::TextUnformatted (stateLabel (snapshot.state, snapshot.busy));
+            const auto* statusText = stateLabel (snapshot.state, snapshot.busy, snapshot.failureKind);
+            if (snapshot.state == LibraryState::Failed) ImGui::TextWrapped ("%s", statusText);
+            else ImGui::TextUnformatted (statusText);
             if (snapshot.state == LibraryState::Paused)
             {
                 ImGui::SameLine();
@@ -986,6 +1006,8 @@ private:
             if (! snapshot.error.empty() && snapshot.state != LibraryState::Paused
                 && snapshot.state != LibraryState::Cancelled && snapshot.state != LibraryState::Complete)
                 ImGui::TextWrapped ("%s", snapshot.error.c_str());
+            const auto* guidance = failureGuidance (snapshot);
+            if (*guidance != '\0') ImGui::TextWrapped ("%s", guidance);
             if (! notice.empty()) ImGui::TextWrapped ("%s", notice.c_str());
         }
         ImGui::EndChild();
