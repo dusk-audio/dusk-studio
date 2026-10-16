@@ -102,6 +102,7 @@ std::string PackStore::identity (const ManagedSfzLocator& locator)
 
 bool PackStore::initialize (std::string& error)
 {
+    error.clear();
     if (storeRoot.empty()) { error = "No SFZ library directory is configured"; return false; }
     if (! requiredMarker.empty())
     {
@@ -110,15 +111,20 @@ bool PackStore::initialize (std::string& error)
             error = "The SFZ library drive is unavailable. Reconnect it or choose another folder in Settings.";
             return false;
         }
-        return true;
     }
-    std::error_code ec;
-    fs::create_directories (storeRoot, ec);
-    if (! ec) storeRoot = fs::canonical (storeRoot, ec);
-    if (! ec) fs::create_directories (storeRoot / "packs", ec);
-    if (ec) { error = "Cannot open the SFZ library: " + ec.message(); return false; }
-    if (! fs::is_directory (fs::symlink_status (storeRoot / "packs", ec)) || ec)
-    { error = "The SFZ packs directory is not a plain directory"; return false; }
+    else
+    {
+        std::error_code ec;
+        fs::create_directories (storeRoot, ec);
+        if (! ec) storeRoot = fs::canonical (storeRoot, ec);
+        if (! ec) fs::create_directories (storeRoot / "packs", ec);
+        if (ec) { error = "Cannot open the SFZ library: " + ec.message(); return false; }
+        if (! fs::is_directory (fs::symlink_status (storeRoot / "packs", ec)) || ec)
+        { error = "The SFZ packs directory is not a plain directory"; return false; }
+    }
+    DirectoryLease next;
+    if (! next.acquire (storeRoot, DirectoryLease::Access::Shared, error)) return false;
+    rootLease = std::move (next);
     return true;
 }
 

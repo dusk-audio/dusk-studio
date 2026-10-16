@@ -8,6 +8,7 @@
 #include <array>
 #include <filesystem>
 #include <string>
+#include <utility>
 
 namespace
 {
@@ -97,6 +98,41 @@ TEST_CASE ("SFZ packs publish complete trees atomically and resolve portable loc
     const auto staging = stage (original);
     REQUIRE (original.installed().empty());
     auto pack = provider();
+    SECTION ("Staging ownership survives store moves until the last owner is released")
+    {
+        std::string error;
+        const auto root = original.root();
+        DirectoryLease maintenance;
+        CHECK_FALSE (maintenance.acquire (root, DirectoryLease::Access::Exclusive, error));
+        CHECK (error.empty());
+        PackStore moved (std::move (original));
+        REQUIRE (moved.initialize (error));
+        CHECK_FALSE (maintenance.acquire (root, DirectoryLease::Access::Exclusive, error));
+        CHECK (error.empty());
+        original = std::move (moved);
+        {
+            PackStore additional (tree.root / "additional");
+            REQUIRE (additional.initialize (error));
+            CHECK_FALSE (maintenance.acquire (additional.root(), DirectoryLease::Access::Exclusive, error));
+            CHECK (error.empty());
+        }
+        REQUIRE (maintenance.acquire (tree.root / "additional", DirectoryLease::Access::Exclusive, error));
+    }
+   #if ! defined(_WIN32)
+    SECTION ("Replacing a root cannot leave its new staging directory unprotected")
+    {
+        const auto root = tree.root / "replaced-owner";
+        PackStore replaced (root);
+        std::string error;
+        REQUIRE (replaced.initialize (error));
+        fs::rename (root, tree.root / "old-owner");
+        REQUIRE (fs::create_directories (root / "packs"));
+        REQUIRE_FALSE (replaced.createStaging (error).empty());
+        DirectoryLease maintenance;
+        CHECK_FALSE (maintenance.acquire (root, DirectoryLease::Access::Exclusive, error));
+        CHECK (error.empty());
+    }
+   #endif
     SECTION ("Pinned primary license is kept byte for byte")
     {
         pack = pinnedProvider();
@@ -157,7 +193,8 @@ TEST_CASE ("SFZ packs publish complete trees atomically and resolve portable loc
 
     const auto relocatedRoot = tree.root / "relocated";
     std::error_code error;
-    fs::copy (original.root(), relocatedRoot, fs::copy_options::recursive, error);
+    REQUIRE (fs::create_directory (relocatedRoot));
+    fs::copy (original.root() / "packs", relocatedRoot / "packs", fs::copy_options::recursive, error);
     REQUIRE_FALSE (error);
     PackStore relocated (relocatedRoot);
     std::string message;

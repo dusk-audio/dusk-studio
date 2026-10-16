@@ -975,6 +975,7 @@ target_sources(DuskStudio PRIVATE
     src/engine/sfz/SfzCatalog.cpp
     src/engine/sfz/SfzCatalogEnvelope.cpp
     src/engine/sfz/SfzTransfer.cpp
+    src/engine/sfz/SfzDirectoryLease.cpp
     src/engine/sfz/SfzArtworkCache.cpp
     src/engine/sfz/SfzArchive.cpp
     src/engine/sfz/SfzPathPolicy.cpp

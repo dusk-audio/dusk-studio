@@ -1,11 +1,13 @@
 #pragma once
 
 #include "ManagedSfzLocator.h"
+#include "SfzDirectoryLease.h"
 #include "SfzProvider.h"
 
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace duskstudio::sfz
@@ -53,5 +55,6 @@ private:
     std::optional<InstalledPack> readReceipt (const std::filesystem::path&) const;
     std::filesystem::path storeRoot;
     std::string requiredMarker;
+    DirectoryLease rootLease;
 };
 } // namespace duskstudio::sfz
