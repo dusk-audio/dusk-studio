@@ -468,7 +468,7 @@ Open **Settings → Audio…** to choose your audio device. Use the tabs across 
 - **Periods (Linux/ALSA only)**: how many buffers the ALSA driver keeps in flight. Two is the lowest-latency safe value; three or more is more robust on a busy machine.
 - **Active output channels**: the master mix uses outputs 1-2. If your interface has more outputs, tick the extra pairs here to open them — each pair then becomes selectable as an aux lane's **Output** (a headphone / cue feed). Off by default; the master stays stereo until you enable more.
 - **Main output**: which physical pair the master mix goes to. **1-2 (default)** in most rigs; move it to another pair (e.g. when you want outputs 1-2 free for a control-room or cue feed). Only pairs the device currently has open are listed. If an aux lane is routed to the same pair as the master, the two sum on that pair.
-- **Rescan devices**: re-enumerates every backend and every MIDI port, useful if you plugged in a USB interface after launch. MIDI controllers on Linux do not need it — see [MIDI hot-plug](#midi-hot-plug).
+- **Rescan devices**: re-enumerates every backend and every MIDI port, useful if you plugged in a USB interface after launch. MIDI port enumeration waits until the transport stops. MIDI controllers on Linux do not need it; see [MIDI hot-plug](#midi-hot-plug).
 - **First launch only**: with nothing saved yet, Dusk Studio picks an input device alongside the output when the backend offers one, so recording works without a trip to this panel first. It never touches a configuration you have already made: if you chose no input on purpose, it stays that way. If the device will not open with that input (a capture device on another card can refuse the output's sample rate, or be busy), Dusk Studio reopens the output on its own so playback keeps working, and when that output has no inputs of its own the transport bar says **No input device. Choose one in Settings > Audio.** until you pick one here. If even the output will not reopen, you get the same warning as when [no audio device opens at startup](#audio-device-in-use-or-wont-open-at-startup). At startup, when an open that pairs the output with an input fails as a whole, Dusk Studio opens that output on its own rather than leaving you with no device. On macOS the input waits for the microphone prompt: the output opens first, and the input follows once you click **Allow** (see the macOS steps under [Installing Dusk Studio](#installing-dusk-studio)).
 
 ### Control surface
@@ -1175,6 +1175,8 @@ On Linux, plugging in a MIDI controller while Dusk Studio is running is enough �
 The one rule: the port list is only rebuilt while the transport is **stopped**. Plug something in mid-take and nothing happens until you hit stop, at which point it appears. That is deliberate. Rebuilding the port list briefly interrupts audio, so a controller waking up — or a USB hub blinking — can never put a hole in a take you are recording.
 
 On macOS and Windows, use **Rescan devices** in Audio Settings after plugging a controller in.
+
+Pressing **Rescan devices** during playback or recording also defers MIDI port enumeration until Stop, so it cannot interrupt the take.
 
 ## Arming a track
 

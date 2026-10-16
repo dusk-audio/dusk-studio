@@ -1107,7 +1107,7 @@ void AudioEngine::serviceMidiHotplug()
 
 void AudioEngine::refreshMidiInputs()
 {
-    if (offlineRenderActive.load (std::memory_order_acquire) || isProcessingSuspended())
+    if (! transport.isStopped() || offlineRenderActive.load (std::memory_order_acquire) || isProcessingSuspended())
     {
         noteMidiDeviceChange();
         return;
