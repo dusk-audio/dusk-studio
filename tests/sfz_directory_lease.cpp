@@ -16,7 +16,7 @@ using Access = DirectoryLease::Access;
 struct LeaseTree
 {
     LeaseTree() : root (fs::canonical (dusk::fs::createUniqueTempDirectory ("dusk-sfz-lease-"))) {}
-    ~LeaseTree() { std::error_code error; fs::remove_all (root, error); }
+    ~LeaseTree() { std::error_code error; fs::remove_all (dusk::fs::nativeIOPath (root), error); }
     fs::path root;
 };
 }

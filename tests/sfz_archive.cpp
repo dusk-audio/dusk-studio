@@ -33,7 +33,7 @@ struct ScratchTree
     ~ScratchTree()
     {
         std::error_code error;
-        std::filesystem::remove_all (root, error);
+        std::filesystem::remove_all (dusk::fs::nativeIOPath (root), error);
     }
     std::filesystem::path root;
 };

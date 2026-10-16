@@ -16,7 +16,7 @@ namespace fs = std::filesystem;
 struct IndexTree
 {
     IndexTree() : root (fs::canonical (dusk::fs::createUniqueTempDirectory ("dusk-sfz-index-"))) {}
-    ~IndexTree() { std::error_code ignored; fs::remove_all (root, ignored); }
+    ~IndexTree() { std::error_code ignored; fs::remove_all (dusk::fs::nativeIOPath (root), ignored); }
 
     void write (const std::string& path, const std::string& contents)
     {

@@ -38,7 +38,7 @@ struct TemporaryDownload
                + "-" + std::to_string (randombytes_random()));
         REQUIRE (std::filesystem::create_directories (root));
     }
-    ~TemporaryDownload() { std::error_code error; std::filesystem::remove_all (root, error); }
+    ~TemporaryDownload() { std::error_code error; std::filesystem::remove_all (dusk::fs::nativeIOPath (root), error); }
     std::filesystem::path part() const { return root / "archive.part"; }
     std::filesystem::path root;
 };

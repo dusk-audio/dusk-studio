@@ -29,7 +29,7 @@ std::string hash (const std::string& text)
 struct StoreTree
 {
     StoreTree() : root (fs::canonical (dusk::fs::createUniqueTempDirectory ("dusk-sfz-store-"))) {}
-    ~StoreTree() { std::error_code ignored; fs::remove_all (root, ignored); }
+    ~StoreTree() { std::error_code ignored; fs::remove_all (dusk::fs::nativeIOPath (root), ignored); }
     fs::path root;
 };
 
