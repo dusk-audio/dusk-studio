@@ -235,14 +235,16 @@ macOS DMG, all published to the private releases repo on each tag. Beta builds
 are ad-hoc signed on macOS and unsigned on Windows. Self-building is fully
 supported and equivalent at the source level, with no support tier attached.
 
-Source builds need libsndfile and libsodium; MP3 bounce also uses LAME. The
-Linux and Windows guides list the exact packages and manifest setup.
+Source builds need libsndfile, libsodium, libcurl, libarchive and utf8proc;
+MP3 bounce also uses LAME. CMake builds pinned static utf8proc when a compatible
+system package is unavailable, and always on macOS. The Linux and Windows
+guides list the exact packages and manifest setup.
 
 | Platform | Doc |
 |----------|-----|
 | Linux | [BUILDING-LINUX.md](docs/BUILDING-LINUX.md) |
 | Windows | [BUILDING-WINDOWS.md](docs/BUILDING-WINDOWS.md) |
-| macOS | Mirrors the Linux flow: upstream JUCE 8.0.4, the donor plugins checkout at the pinned revision, DAF `main`, and static libsodium supplied through `DUSKSTUDIO_SODIUM_ROOT`. Built and tested per push on `macos-14` (Apple Silicon), see [.github/workflows/macos-build.yml](.github/workflows/macos-build.yml). |
+| macOS | Upstream JUCE 8.0.4, the pinned donor plugins, DAF `main`, libsndfile and LAME; static libsodium through `DUSKSTUDIO_SODIUM_ROOT`; SDK libcurl, zlib and iconv; static libarchive through `CMAKE_PREFIX_PATH`; and pinned static utf8proc built by CMake. CI builds libarchive 3.8.7 for macOS 11. See [.github/workflows/macos-build.yml](.github/workflows/macos-build.yml). |
 | Linux tarball packaging | [packaging/README.md](packaging/README.md) |
 | End-user manual and troubleshooting | [MANUAL.md](MANUAL.md) |
 

@@ -302,13 +302,14 @@ CMake auto-detects three external repos at configure time, on top of three git s
 - **Dusk plugins:** `-DDUSK_PLUGINS_PATH=…` wins; otherwise configure fetches the commit named in the `DONOR_REV` file into `build/_deps/dusk-plugins`, the same commit every CI and release workflow clones. Point `-DDUSK_PLUGINS_PATH` at your `../plugins` checkout only to try donor edits against Dusk Studio. If the fetch fails (no network, no git), configure stops with an error; reconfigure with network access or pass `-DDUSK_PLUGINS_PATH`. To move the donor, change `DONOR_REV` and the donor revisions in LICENSES.txt together.
 - **SFZ repository libraries:** [cmake/SfzDependencies.cmake](../cmake/SfzDependencies.cmake)
   links libcurl >= 7.62.0 for HTTPS and libarchive >= 3.4.0 for ZIP extraction.
-  Unix builds use pkg-config. Install `libarchive-dev` and `libutf8proc-dev`
-  alongside the existing curl development package on Debian/Ubuntu and
-  Raspberry Pi OS. macOS uses Homebrew `curl`, `libarchive` and `utf8proc`;
-  the build must put their explicit Homebrew prefixes on its discovery paths,
-  and the app bundle must close the resulting dylib dependency set.
-  A missing Unix utf8proc >= 2.11.3 package triggers a static source fallback
+  Linux uses pkg-config for libcurl and libarchive. Install `libarchive-dev`
+  alongside the curl development package on Debian/Ubuntu and Raspberry Pi OS.
+  A missing system utf8proc >= 2.11.3 package triggers a static source fallback
   pinned to 2.11.3, commit `e5e799221b45bbb90f5fdc5c69b6b8dfbf017e78`.
+  macOS uses SDK libcurl, zlib and iconv, static libarchive, and always builds
+  the pinned static utf8proc source. Both macOS workflows build libarchive
+  3.8.7 for the macOS 11 deployment target and pass its installation prefix
+  through `CMAKE_PREFIX_PATH`.
   Windows uses the existing static vcpkg manifest: curl 8.21.0 with
   Schannel/SSPI TLS, libarchive 3.8.7 with zlib 1.3.2 and optional features
   disabled, and utf8proc 2.11.3. No OpenSSL is added by that manifest.
@@ -591,8 +592,12 @@ timing, sampled memory, thread count and worker wait returns. Run it while the
 host is idle. The [0.16 comparison](validation/0.16-reader-pool.json) retains
 before/after results, baseline instrumentation and TSan results. Wait returns
 include timeouts and notifications; they are not OS scheduler wake-ups. The
-[live SFZ validation](validation/0.16-sfz-live.json) records five downloaded
-packs, their verified licenses, archive receipts and native sampler renders.
+[historical live SFZ validation](validation/0.16-sfz-live.json) records its
+provider-source hashes and the render binary's commit,
+`b4dd29a9fdffc920e50991a1360f517c7750f39e`. It covers five downloaded packs,
+verified licenses, archive receipts and native sampler renders from SFZ
+Instruments and Musical Artifacts, before the FreePats and Versilian providers
+and the current ZIP pathname decoder and compression restrictions.
 
 #### Package mode
 
@@ -837,7 +842,7 @@ including when a leg fails.
 
 | Leg | What it proves |
 |---|---|
-| `mac-preflight` | node reachable, review model unloaded from ollama (it pins several GB and a `-j6` build would swap against it), working tree clean. |
+| `mac-preflight` | node reachable; tracked checkout and submodule worktrees clean; previous branch and commits recorded. |
 | `push-head` / `mac-checkout` | the node builds this exact commit. `WARN` when a submodule cannot be synced to the recorded pin. |
 | `daf-main` | `~/src/DAF` fast-forwarded to the tip of `main`, which is what CI builds against. Best effort: a node that cannot reach GitHub is a `WARN`, not a failure. DAF is left where it lands, not put back. |
 | `configure-app` / `configure-tests` | both trees configure through `~/mac-configure.sh`. |

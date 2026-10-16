@@ -27,6 +27,8 @@ Each line below is a check somebody can run and get a yes or a no.
   `notepad.md` in the session folder.
 - A local SFZ and SF2 instrument browser lists what is on disk and loads from
   it, with no network access at any point.
+- SFZ Manager browses Creative Commons repositories and installs versioned
+  packs with portable session references; session loading stays offline.
 - Quitting through any route (window close, application quit, SIGTERM, logout)
   runs the same staged shutdown and offers the unsaved-changes prompt.
 
@@ -73,12 +75,12 @@ Every open issue, one bucket each; completed release work is marked done.
 
 | # | Title | Bucket | Reason |
 |---|---|---|---|
-| 74 | New Feature: Downloadable SFZ | post-1.0 | Online catalog and downloads deferred to 1.1. The offline half is #535. |
+| 74 | New Feature: Downloadable SFZ | superseded | Replaced by #804's repository browser and downloads in 0.16. |
 | 75 | New Feature: Built In Plugins | 1.0 | Agreed 1.0 scope. A fresh install must have a reverb, delay, colour and instrument. Scoped in a comment on the issue. |
 | 124 | Playlist comping (Option B) | done | Shipped in 0.15 as take folders: every recording pass is kept whole as a take on its track, and the comp is built in the audio editor's take lanes. |
-| 252 | SFZ library: cancellable download and hardened ZIP install | post-1.0 | Part of the deferred download path. Brings libcurl and libarchive with it. |
-| 253 | SFZ library: portable session locator and asynchronous loading | post-1.0 | Depends on the deferred catalog. |
-| 254 | SFZ library: embedded catalog UI and audited launch packs | post-1.0 | Online catalog UI and signed launch packs. The local-only browser is split out as #535. |
+| 252 | SFZ library: cancellable download and hardened ZIP install | superseded | Implemented under #804 in 0.16, including libcurl and libarchive. |
+| 253 | SFZ library: portable session locator and asynchronous loading | superseded | Implemented under #804 in 0.16. |
+| 254 | SFZ library: embedded catalog UI and audited launch packs | superseded | #804 implements browsing external Creative Commons repositories in 0.16; no signed catalog or instrument packs are bundled. |
 | 286 | Allow builds without signed SFZ catalog support | post-1.0 | Build-option convenience. Does not change what a shipped release does. |
 | 294 | Consolidate and pin the reusable DSP/UI source of truth | post-1.0 | Framework-removal campaign. |
 | 295 | [H2] Replace the mastering multiband processor | post-1.0 | Framework-removal campaign. |
@@ -117,10 +119,11 @@ Every open issue, one bucket each; completed release work is marked done.
 | 532 | Post-download smoke test for published artifacts | done | Implemented and closed: smoke-test scripts exercise downloaded artifacts. |
 | 533 | Quickstart page linked from the app and every package | done | Implemented and closed: quickstart, app link and package copies. |
 | 534 | Define the 1.0 package contents and verify all three packagers | done | Implemented and closed: shared contents contract and verification for all three packagers. |
-| 535 | Local instrument browser for soundfonts on disk | 1.0 | The offline half of the SFZ work, with no network, catalog or archive code. |
+| 535 | Local instrument browser for soundfonts on disk | done | Local browsing shipped in 0.14; #804 adds repository browsing alongside it in 0.16. |
 | 536 | Walk the demo path on packaged builds and file what it snags on | 1.0 | Individual demo-path bugs have been fixed one at a time. Nobody has walked the whole path on a shipped build. |
 | 586 | Multi-Comp 2 donor prerequisites | deferred (1.1) | Moved to 1.1 with #342. |
 | 605 | Self-test coverage across CI platforms | 1.0 | macOS CI and the Linux and macOS release jobs now run it; the Windows leg stays manual (see the checklist). |
+| 804 | SFZ library: online catalog, downloads and portable locators | 0.16 (implemented) | Four external Creative Commons sources, verified installation, portable references and asynchronous loading. |
 | 606 | Built-in suite placeholder in package contract | 1.0 | The contract listed plugin files the in-binary suite never produces. |
 | 607 | Signing wording in release docs | 1.0 | README, QUICKSTART and MANUAL described all builds as unsigned after the workflow gained signing. |
 | 608 | Release-plan status drift | 1.0 | This document listed #531 to #534 as open after they shipped. |
@@ -174,7 +177,7 @@ the follow-ups are known before the schedule is committed.
 |---|---|---|---|
 | Built-in plugin suite: slot type, picker category, serialization | 75 | 16-24 | `src/engine/PluginSlot.*`, `src/ui/PluginPickerPanel.*`, `src/session/` |
 | Built-in plugin suite: the units and their editors | 75 | 16-24 | `src/dsp/`, `src/ui/`, donor cores |
-| Local SFZ and SF2 browser | 535 | 12-16 | `src/ui/multisample/`, `src/engine/sfz/`, `src/session/` |
+| Local SFZ and SF2 browser; repository library | 535, 804 | complete | `src/ui/multisample/`, `src/engine/sfz/`, `src/session/` |
 | CloneTrackAction coverage | 500 | 3-4 | `tests/`, self-test leg |
 | Milestone-6 audit residues | 503 | 4-6 | `src/util/SingleInstance.cpp`, `src/engine/PluginSlot.cpp`, `src/ui/ChannelStripComponent.cpp` |
 | Windows self-test harness child resolution | 504 | 2-3 | `src/DuskStudioApp.cpp`, `src/engine/PluginManager.h` |
@@ -335,9 +338,6 @@ release.
   and the widget kit in-tree, and consuming it is how the native notepad UI and
   the built-in unit editors are built. A change to it lands only when a 1.0
   feature needs it, through a DAF pull request, never as a refactor.
-- Downloadable SFZ: the online catalog, downloads, archive extraction and the
-  libcurl and libarchive dependencies (#74, #252, #253, #254). Only the
-  offline browser (#535) is in.
 - MIDI take folders and Flatten. Both were dropped; audio comping (#124)
   shipped in 0.15 as take folders.
 - Self-hosted macOS build routing (#320).

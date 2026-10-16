@@ -63,8 +63,8 @@ The right-hand column is the Debian/Ubuntu package name. On those:
         libxext6 libxrandr2 libdbus-1-3
 
 libsodium is compiled into the release binary and needs nothing from the host.
-A build linked to system utf8proc also needs libutf8proc.so.2 (Debian/Ubuntu:
-libutf8proc2). The pinned static utf8proc fallback needs no host utf8proc.
+A build linked to system utf8proc also needs libutf8proc.so.3 (Debian/Ubuntu:
+libutf8proc3). The pinned static utf8proc fallback needs no host utf8proc.
 libcurl and libarchive can require further libraries supplied by their distro
 packages. The tarball does not bundle those shared-library dependencies; DEB
 and RPM packages discover their runtime requirements from the linked ELF files.

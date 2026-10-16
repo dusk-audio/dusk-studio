@@ -18,7 +18,7 @@ sudo apt-get install -y --no-install-recommends \
   libsndfile1-dev libsodium-dev libmp3lame-dev \
   liblilv-dev libsuil-dev lv2-dev \
   ladspa-sdk \
-  libcurl4-openssl-dev libarchive-dev libutf8proc-dev \
+  libcurl4-openssl-dev libarchive-dev \
   libfreetype-dev libfontconfig1-dev \
   libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
   libxinerama-dev libxrandr-dev libxrender-dev libxss-dev \
