@@ -478,6 +478,7 @@ public:
     // repainted still shows what it last drew. `scratch` is a file it may write.
     // -1 when the window cannot be read back (no roll, or not Linux).
     virtual int pianoRowOnScreen (int pitch, const std::filesystem::path& scratch) = 0;
+    virtual int pianoLaneValueOnScreen (bool cc, std::int64_t tick, const std::filesystem::path& scratch) = 0;
     virtual bool clickPianoGrid (std::int64_t tick, int pitch) = 0;
     virtual bool dragPianoVelocity (std::int64_t tick, float fraction) = 0;
     virtual bool resizePianoVelocity (int pixels) = 0;

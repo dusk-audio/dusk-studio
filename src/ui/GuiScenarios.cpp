@@ -884,6 +884,23 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
        #endif
     }
    #if DUSKSTUDIO_HAS_NATIVE_UI
+    bool capturePianoPixels (const std::filesystem::path& scratch, int& width, int& height,
+                             std::vector<unsigned char>& pixels)
+    {
+        if (! owner.pianoRollShowing() || owner.pianoRoll == nullptr) return false;
+        const auto file = scratch.string();
+        if (! platform::captureNativeWindowToPpm (owner.pianoRollWindow->nativeWindowHandleForScenario(), file))
+            return false;
+        std::FILE* in = std::fopen (file.c_str(), "rb");
+        if (in == nullptr) return false;
+        int maxValue = 0;
+        const bool header = std::fscanf (in, "P6 %d %d %d", &width, &height, &maxValue) == 3
+                         && std::fgetc (in) != EOF && width > 0 && height > 0 && maxValue == 255;
+        pixels.resize (header ? (std::size_t) width * (std::size_t) height * 3 : 0);
+        const bool read = header && std::fread (pixels.data(), 1, pixels.size(), in) == pixels.size();
+        std::fclose (in);
+        return read;
+    }
     bool pianoDrag (ImVec2 start, ImVec2 end)
     {
         return pianoPointer (start.x, start.y, true) && pianoPointer (end.x, end.y, true)
@@ -2665,19 +2682,9 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
        #if DUSKSTUDIO_HAS_NATIVE_UI
         auto* piano = owner.pianoRoll;
         if (! owner.pianoRollShowing() || piano == nullptr) return -1;
-        const auto nativeWindow = owner.pianoRollWindow->nativeWindowHandleForScenario();
-        const auto file = scratch.string();
-        if (! platform::captureNativeWindowToPpm (nativeWindow, file))
-            return -1;
-        std::FILE* in = std::fopen (file.c_str(), "rb");
-        if (in == nullptr) return -1;
-        int width = 0, height = 0, maxValue = 0;
-        const bool header = std::fscanf (in, "P6 %d %d %d", &width, &height, &maxValue) == 3
-                         && std::fgetc (in) != EOF && width > 0 && height > 0 && maxValue == 255;
-        std::vector<unsigned char> pixels (header ? (std::size_t) width * (std::size_t) height * 3 : 0);
-        const bool read = header && std::fread (pixels.data(), 1, pixels.size(), in) == pixels.size();
-        std::fclose (in);
-        if (! read) return -1;
+        int width = 0, height = 0;
+        std::vector<unsigned char> pixels;
+        if (! capturePianoPixels (scratch, width, height, pixels)) return -1;
 
         ImVec2 row;
         if (! piano->notePointForScenario (0, pitch, row)) return -1;
@@ -2709,6 +2716,35 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         return notes;
        #else
         (void) pitch; (void) scratch;
+        return -1;
+       #endif
+    }
+    int pianoLaneValueOnScreen (bool cc, std::int64_t tick, const std::filesystem::path& scratch) override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        auto* piano = owner.pianoRoll;
+        if (! owner.pianoRollShowing() || piano == nullptr) return -1;
+        ImVec2 point;
+        if (! piano->notePointForScenario (tick, 60, point)) return -1;
+        const auto area = piano->laneBoundsForScenario (cc);
+        const int x = static_cast<int> (std::lround (point.x));
+        if (area[3] <= 0 || x < area[0] || x >= area[0] + area[2]) return -1;
+        int width = 0, height = 0;
+        std::vector<unsigned char> pixels;
+        if (! capturePianoPixels (scratch, width, height, pixels) || x < 0 || x >= width) return -1;
+        const int top = std::max (0, static_cast<int> (std::ceil (area[1])));
+        const int bottom = std::min (height, static_cast<int> (std::ceil (area[1] + area[3])));
+        for (int y = top; y < bottom; ++y)
+        {
+            const auto* pixel = &pixels[((std::size_t) y * (std::size_t) width + (std::size_t) x) * 3];
+            const int high = std::max ({ pixel[0], pixel[1], pixel[2] });
+            const int low = std::min ({ pixel[0], pixel[1], pixel[2] });
+            if (high - low > 60 && high > 90)
+                return std::clamp (static_cast<int> (std::lround (127 * (area[1] + area[3] - y) / area[3])), 0, 127);
+        }
+        return 0;
+       #else
+        (void) cc; (void) tick; (void) scratch;
         return -1;
        #endif
     }

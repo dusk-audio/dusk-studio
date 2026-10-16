@@ -944,6 +944,7 @@ std::optional<ScenarioResult> runPianoLiveRecordingPreview (GuiHost& host, Scena
     const int heldPitch = typedPitch == 64 ? 67 : 64;
     MidiRegion seed;
     seed.lengthInTicks = 7680;
+    seed.notes = { { 1, 72, 38, 0, 7680 } };
     if (auto result = beginMidiCaptureCase (host, ctx, seed)) return result;
     auto& engine = ctx.engine();
     auto& session = ctx.session();
@@ -958,10 +959,11 @@ std::optional<ScenarioResult> runPianoLiveRecordingPreview (GuiHost& host, Scena
                 if (note.noteNumber == heldPitch) return note.lengthInTicks;
         return std::int64_t { 0 };
     };
-    const auto unchanged = [&ctx, &session]
+    const auto unchanged = [&ctx, &session, &engine, notes = seed.notes]
     {
         const auto& regions = session.track (0).midiRegions.current();
-        ctx.expect (regions.size() == 1 && regions.front().notes.empty(),
+        ctx.expect (regions.size() == 1 && regions.front().notes == notes && regions.front().ccs.empty()
+                    && ! engine.getUndoManager().canUndo(),
                     "live recording preview or virtual keyboard step recording changed the committed model");
     };
     const auto heldLength = std::make_shared<std::int64_t> (0);
@@ -969,9 +971,17 @@ std::optional<ScenarioResult> runPianoLiveRecordingPreview (GuiHost& host, Scena
     auto steps = std::make_shared<std::vector<Step>>();
     steps->push_back ({ 200, [&ctx, &host]
     {
-        ctx.expect (host.openRegionEditor (0, 0, true), "the empty piano roll did not open");
-        ctx.expect (host.pressPeerKey ("K", 'k'), "K did not open the piano roll's virtual keyboard");
+        ctx.expect (host.openRegionEditor (0, 0, true), "the piano roll did not open");
     } });
+    steps->push_back ({ 100, [&ctx, &host]
+    {
+        if (host.pianoCcHeight() == 0) ctx.expect (host.togglePianoCc(), "the preview CC lane did not open");
+        ctx.expect (host.pianoCcController() == 1, "the preview did not select Mod Wheel");
+    } });
+    steps->push_back ({ 0, [&ctx, &host]
+    {
+        ctx.expect (host.pressPeerKey ("K", 'k'), "K did not open the piano roll's virtual keyboard");
+    }, [&host] { return host.pianoCcHeight() > 0; }, "the preview CC lane did not become visible", {}, 3000 });
     steps->push_back ({ 0, [&ctx, &host] { ctx.expect (host.clickRecord(), "Record was unavailable with the keyboard open"); },
         [&host] { return host.virtualKeyboardOpen(); }, "the virtual keyboard did not open", {}, 3000 });
     steps->push_back ({ 100, [&ctx, &engine, &host, heldPitch]
@@ -979,12 +989,28 @@ std::optional<ScenarioResult> runPianoLiveRecordingPreview (GuiHost& host, Scena
         const std::uint8_t message[] { 0x90, (std::uint8_t) heldPitch, 100 };
         engine.postVirtualKeyboardMidi (message, 3);
         ctx.expect (host.inputVirtualKeyboard ("x"), "the typing note did not reach the virtual keyboard while recording");
+        const std::uint8_t control[] { 0xb0, 1, 96 };
+        engine.postVirtualKeyboardMidi (control, 3);
     }, [&transport] { return transport.isRecording(); }, "Record did not start", {}, 3000 });
     steps->push_back ({ 0, [&host] { host.closeVirtualKeyboard(); } });
-    steps->push_back ({ 300, [&ctx, &host, scratch, heldPitch, heldLength, length, unchanged]
+    steps->push_back ({ 300, [&ctx, &host, &engine, scratch, heldPitch, heldLength, length, unchanged]
     {
         *heldLength = length();
         ctx.expect (host.pianoRowOnScreen (heldPitch, scratch) == 1, "the held note did not appear before note-off");
+        const auto* preview = engine.getRecordManager().midiCapturePreview (0);
+        if (! ctx.expect (preview != nullptr, "the recording preview disappeared")) return;
+        const auto note = std::find_if (preview->notes.begin(), preview->notes.end(), [heldPitch] (const auto& n)
+        { return n.noteNumber == heldPitch; });
+        const auto control = std::find_if (preview->ccs.begin(), preview->ccs.end(), [] (const auto& cc)
+        { return cc.kind == MidiCc::Kind::ControlChange && cc.controller == 1 && cc.value == 96; });
+        if (! ctx.expect (note != preview->notes.end() && control != preview->ccs.end(), "the lane preview lost its events")) return;
+        const auto noteTick = note->startTick, controlTick = control->atTick;
+        ctx.expect (std::abs (host.pianoLaneValueOnScreen (false, noteTick, scratch) - 100) <= 4,
+                    "the velocity preview was not rendered at its recorded value");
+        ctx.expect (std::abs (host.pianoLaneValueOnScreen (true, controlTick, scratch) - 96) <= 4,
+                    "the selected CC preview was not rendered at its recorded value");
+        ctx.expect (host.dragPianoVelocity (noteTick, 0.2f), "the preview velocity drag did not reach the native lane");
+        ctx.expect (host.dragPianoCc (controlTick, 0.2f), "the preview CC drag did not reach the native lane");
         unchanged();
     }, [length] { return length() >= 120; }, "the held note did not reach the live preview", {}, 3000 });
     steps->push_back ({ 300, [&ctx, &host, scratch, heldPitch, heldLength, length, unchanged, &engine]
@@ -1037,6 +1063,9 @@ std::optional<ScenarioResult> runPianoLiveRecordingPreview (GuiHost& host, Scena
                     "the committed held note differs from the released preview");
         ctx.expect (std::count_if (notes.begin(), notes.end(), [typedPitch] (const auto& note)
                     { return note.noteNumber == typedPitch; }) == 1, "the typing note was duplicated by step recording");
+        ctx.expect (std::count_if (regions.back().ccs.begin(), regions.back().ccs.end(), [] (const auto& control)
+                    { return control.kind == MidiCc::Kind::ControlChange && control.controller == 1 && control.value == 96; }) == 1,
+                    "the committed controller differs from its lane preview");
         ctx.expect (host.pianoRowOnScreen (heldPitch, scratch) == 1,
                     "the committed roll did not retain the held-note preview");
     } });
