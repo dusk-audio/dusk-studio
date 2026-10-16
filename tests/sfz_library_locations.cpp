@@ -2,6 +2,7 @@
 #include <catch2/generators/catch_generators.hpp>
 
 #include "engine/sfz/SfzLibraryLocations.h"
+#include "foundation/AppConfigDir.h"
 #include "foundation/Fs.h"
 
 #include <sodium.h>
@@ -70,6 +71,18 @@ struct LibraryTree
     std::string sample;
 };
 } // namespace
+
+TEST_CASE ("SFZ library defaults to application data while location settings stay in config", "[sfz][storage]")
+{
+    const auto root = dusk::fs::createUniqueTempDirectory ("dusk-sfz-default-location-");
+    REQUIRE_FALSE (root.empty());
+    const auto locations = readLibraryLocations (root / "absent.json");
+    std::error_code ignored;
+    fs::remove_all (root, ignored);
+    REQUIRE (locations.error.empty());
+    REQUIRE (locations.active.root == dusk::fs::appDataDir() / "sfz-library");
+    REQUIRE (libraryLocationsFile() == dusk::fs::appConfigDir() / "sfz-library-locations.json");
+}
 
 TEST_CASE ("SFZ library locations preserve identities across copies and future-download folders", "[sfz][storage]")
 {

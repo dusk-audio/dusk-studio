@@ -30,8 +30,8 @@ constexpr const char* kMarker = ".dusk-sfz-library";
 
 fs::path internalRoot()
 {
-    const auto config = dusk::fs::appConfigDir();
-    return config.empty() ? fs::path {} : config / "sfz-library";
+    const auto data = dusk::fs::appDataDir();
+    return data.empty() ? fs::path {} : data / "sfz-library";
 }
 
 std::vector<LibraryLocation> roots (const LibraryLocations& locations)
