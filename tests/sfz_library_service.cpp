@@ -433,7 +433,17 @@ TEST_CASE ("SFZ library preserves saved downloads when its metadata cache is una
     const auto library = tree.root / "library";
     REQUIRE (fs::create_directory (configuration));
     REQUIRE (fs::create_directory (library));
-    const ScopedConfigDirectory isolated (configuration);
+    auto settings = configuration;
+    SECTION ("The configured data directory uses a plain parent") {}
+    SECTION ("The configured data directory may use a symbolic parent")
+    {
+        const auto alias = tree.root / "configuration-alias";
+        std::error_code error;
+        fs::create_directory_symlink (tree.root, alias, error);
+        if (error) SKIP ("The filesystem cannot create a symbolic-directory fixture");
+        settings = alias / "configuration";
+    }
+    const ScopedConfigDirectory isolated (settings);
     REQUIRE (changeLibraryLocation ({}, library, false, {}, libraryLocationsFile()));
     REQUIRE (fs::create_directory (library / ".downloads"));
     const auto bytes = archiveBytes();

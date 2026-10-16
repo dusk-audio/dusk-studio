@@ -807,6 +807,12 @@ void LibraryService::run()
         cacheReady = plainDirectory (cacheRoot);
         if (cacheReady)
         {
+            const auto canonical = fs::canonical (cacheRoot, error);
+            cacheReady = ! error;
+            if (cacheReady) cacheRoot = canonical;
+        }
+        if (cacheReady)
+        {
             sweepWorkDirectory (cacheRoot);
             std::string ownershipError;
             cacheReady = repositoryLease.acquire (cacheRoot, DirectoryLease::Access::Shared, ownershipError);
