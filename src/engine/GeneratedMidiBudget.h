@@ -8,6 +8,7 @@ namespace duskstudio
 // and so what it is charged against the budget.
 constexpr int kGeneratedEventBytes = (int) dusk::MidiBuffer::recordBytes (3);
 constexpr int kHangingResetBytes = midi::kHangingResetMessageCount * kGeneratedEventBytes;
+constexpr int kTransportStopResetBytes = midi::kTransportStopResetMessageCount * kGeneratedEventBytes;
 constexpr int kGeneratedMidiBudgetBytes = (int) dusk::kMidiGeneratedBlockBytes;
 static_assert ((std::size_t) kGeneratedMidiBudgetBytes + 2 * dusk::kMidiBlockBytes
                    <= dusk::kMidiRoutingBlockBytes,

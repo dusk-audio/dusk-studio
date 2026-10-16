@@ -570,8 +570,10 @@ Switching into or out of MASTERING force-stops the transport. The mix engine and
 From left to right:
 
 - **Stop** (■). Halts playback or recording and silences held notes in hosted
-  instruments even when their tracks are muted or excluded by solo. The playhead
-  goes back to where playback or the take began, or wherever **Playhead on Stop**
+  instruments even when their tracks are muted or excluded by solo. It sends a
+  controller reset, centred pitch bend and zero channel pressure on all MIDI
+  channels. The playhead goes back to where playback or the take began, or
+  wherever **Playhead on Stop**
   in Settings sends it. Press Stop again while stopped to return to bar 1. A stop
   that comes from MIDI clock or MTC chase leaves the playhead where the master
   stopped.

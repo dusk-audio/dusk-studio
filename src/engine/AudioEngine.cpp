@@ -6483,16 +6483,16 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         constexpr int kMidiScheduleScanBudget = 32768;
         static_assert (kGeneratedMidiBudget
                        >= (8192 / kMinLoopRecordSamples + 1)
-                            * kHangingResetBytes);
+                            * kHangingResetBytes + kTransportStopResetBytes - kHangingResetBytes);
         // A bridged window's seams, plus the flush a narrowed live route can add.
         static_assert (kGeneratedMidiBudget
                        >= ((8192 + kMaxMidiLatencyBridge) / kMinLoopRecordSamples + 2)
-                            * kHangingResetBytes);
+                            * kHangingResetBytes + kTransportStopResetBytes - kHangingResetBytes);
         GeneratedMidiBudget generatedMidiBudget (kGeneratedMidiBudget);
         if (midiTrack && perTrackFlush)
         {
             const bool reserved = generatedMidiBudget.reserveStructural (
-                kHangingResetBytes);
+                transportJustStopped ? kTransportStopResetBytes : kHangingResetBytes);
             jassert (reserved);
             (void) reserved;
         }
@@ -6510,18 +6510,20 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         };
         auto& timelineSounding = midiTimelineSounding[(size_t) t];
         const auto timelineBeforeBlock = timelineSounding;
-        auto emitHangingMidiReset = [&] (int sampleOffset) noexcept
+        auto emitMidiReset = [&] (int sampleOffset, bool transportStop) noexcept
         {
-            // A reset is structural: either all 48 three-byte messages fit or
-            // none are emitted. Discretionary scheduling reserves this exact
-            // capacity before it can consume the shared generated-event budget.
-            if (! generatedMidiBudget.consumeStructural (kHangingResetBytes)
-                || ! midi::emitHangingReset (perTrackMidi[(size_t) t], sampleOffset))
+            // Discretionary events cannot spend the reset's reserved capacity.
+            if (! generatedMidiBudget.consumeStructural (
+                    transportStop ? kTransportStopResetBytes : kHangingResetBytes))
                 return false;
+            const bool emitted = transportStop
+                ? midi::emitTransportStopReset (perTrackMidi[(size_t) t], sampleOffset)
+                : midi::emitHangingReset (perTrackMidi[(size_t) t], sampleOffset);
+            if (! emitted) return false;
             timelineSounding.clear();
             return true;
         };
-        if (midiTrack && perTrackFlush && ! emitHangingMidiReset (0))
+        if (midiTrack && perTrackFlush && ! emitMidiReset (0, transportJustStopped))
             midiEventsDropped = true;
 
         // The track stopped playing its timeline while the transport rolls
@@ -6730,7 +6732,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                     // an exhausted musical-event or scan budget cannot suppress
                     // this or any later seam reset.
                     if (midiTrack && seam
-                        && ! emitHangingMidiReset (bufferOffsetOf (span.bufferOffset)))
+                        && ! emitMidiReset (bufferOffsetOf (span.bufferOffset), false))
                     {
                         midiEventsDropped = true;
                         return;
@@ -6821,7 +6823,9 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         if (midiEventsDropped)
         {
             perTrackMidi[(size_t) t].clear();
-            const bool reset = midi::emitHangingReset (perTrackMidi[(size_t) t], 0);
+            const bool reset = transportJustStopped
+                ? midi::emitTransportStopReset (perTrackMidi[(size_t) t], 0)
+                : midi::emitHangingReset (perTrackMidi[(size_t) t], 0);
             jassert (reset);
             (void) reset;
             timelineSounding.clear();
