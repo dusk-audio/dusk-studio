@@ -654,6 +654,38 @@ private:
         }
         return best;
     }
+    const MidiCapturePreview* recordingPreview (std::int64_t& offset) const
+    {
+        const auto* r = region();
+        auto& recorder = engine.getRecordManager();
+        if (r == nullptr || ! recorder.isActive()) return nullptr;
+        const auto* preview = recorder.midiCapturePreview (trackIdx);
+        if (preview == nullptr) return nullptr;
+        const auto sr = engine.getTimelineSampleRate();
+        offset = session.samplesToTicks (recorder.midiCaptureTimelineStart(), sr) - session.samplesToTicks (r->timelineStart, sr);
+        return preview;
+    }
+    Box laneBar (std::int64_t tick, int value, const Box& area) const
+    {
+        const float h = static_cast<float> (value) / 127 * area.h;
+        return { xForTick (tick) - 4, area.bottom() - h, 8, std::max (h, 3.0f) };
+    }
+    bool hitsRecordingBar (ImVec2 p, bool cc) const
+    {
+        std::int64_t offset = 0;
+        const auto* preview = recordingPreview (offset);
+        if (preview == nullptr) return false;
+        if (cc)
+        {
+            for (const auto& control : preview->ccs)
+                if (control.kind == MidiCc::Kind::ControlChange && control.controller == activeCcController
+                    && laneBar (control.atTick + offset, control.value, ccArea).contains (p)) return true;
+        }
+        else
+            for (const auto& note : preview->notes)
+                if (laneBar (note.startTick + offset, note.velocity, velocityArea).contains (p)) return true;
+        return false;
+    }
     int valueAt (float y, const Box& b, int minimum) const
     { return std::clamp (static_cast<int> (std::lround ((b.bottom() - y) * 127.0f / std::max (1.0f, b.h))), minimum, 127); }
     void pointerDown (ImVec2 p, int button)
@@ -698,6 +730,7 @@ private:
         { drag = Drag::ccHeight; resizeStartStripH = ccStripH; return; }
         if (ccArea.h > 0 && ccArea.contains (p) && editable())
         {
+            if (hitsRecordingBar (p, true)) return;
             beginNoteEdit();
             draggedCcIdx = hitBar (p.x, true);
             if (draggedCcIdx < 0)
@@ -713,6 +746,7 @@ private:
         }
         if (velocityArea.contains (p) && editable())
         {
+            if (hitsRecordingBar (p, false)) return;
             const int index = hitBar (p.x, false);
             if (index >= 0)
             {
@@ -1037,19 +1071,14 @@ private:
             ctx.dl->AddRect (screen ({ box.x, box.y }), screen ({ box.right(), box.bottom() }), argb (0xff141418));
         };
         for (int i = 0; i < static_cast<int> (r->notes.size()); ++i) note (r->notes[static_cast<std::size_t> (i)], edit.isNoteSelected (i), false);
-        auto& recorder = engine.getRecordManager();
-        if (recorder.isActive())
-            if (const auto* preview = recorder.midiCapturePreview (trackIdx))
-            {
-                const auto sr = engine.getTimelineSampleRate();
-                const auto offset = session.samplesToTicks (recorder.midiCaptureTimelineStart(), sr) - session.samplesToTicks (r->timelineStart, sr);
-                for (auto n : preview->notes) { n.startTick += offset; note (n, false, true); }
-            }
+        std::int64_t offset = 0;
+        if (const auto* preview = recordingPreview (offset))
+            for (auto n : preview->notes) { n.startTick += offset; note (n, false, true); }
         line (ctx, { xForTick (editCursorTick), grid.y }, { xForTick (editCursorTick), grid.bottom() }, 0xffffd060);
         const auto sr = engine.getTimelineSampleRate();
         const auto playhead = engine.getTransport().getPlayhead();
         const double tick = session.samplesToTicksFractional (playhead, sr) - session.samplesToTicksFractional (r->timelineStart, sr);
-        if (playhead >= r->timelineStart && (tick <= r->lengthInTicks || recorder.isActive()))
+        if (playhead >= r->timelineStart && (tick <= r->lengthInTicks || engine.getRecordManager().isActive()))
         {
             const float x = static_cast<float> (kKeyboardWidth - scrollX + tick * pixelsPerTick);
             line (ctx, { x, grid.y }, { x, grid.bottom() }, 0xffffe8c0);
@@ -1096,17 +1125,33 @@ private:
             remember (cc ? "cc-strip" : "velocity-strip", area);
             if (r == nullptr) continue;
             ctx.dl->PushClipRect (screen ({ area.x, area.y }), screen ({ area.right(), area.bottom() }), true);
+            const auto bar = [&] (std::int64_t tick, int value, ImU32 colour)
+            {
+                const auto bounds = laneBar (tick, value, area);
+                if (! bounds.intersects (area)) return;
+                ctx.dl->AddRectFilled (screen ({ bounds.x + 1, bounds.y }), screen ({ bounds.right() - 1, area.bottom() }), colour);
+                ctx.dl->AddRectFilled (screen ({ bounds.x, bounds.y }), screen ({ bounds.right(), bounds.y + 3 }), colour);
+            };
             const auto count = cc ? r->ccs.size() : r->notes.size();
             for (std::size_t i = 0; i < count; ++i)
             {
                 if (cc && (r->ccs[i].kind != MidiCc::Kind::ControlChange || r->ccs[i].controller != activeCcController)) continue;
-                const float x = xForTick (cc ? r->ccs[i].atTick : r->notes[i].startTick);
-                if (x < area.x - 6 || x > area.right()) continue;
                 const int value = cc ? r->ccs[i].value : r->notes[i].velocity;
-                const float h = static_cast<float> (value) / 127 * area.h;
                 const auto colour = cc ? argb (0xff70b0e0) : edit.isNoteSelected (static_cast<int> (i)) ? argb (0xffffd060) : noteColour (r->notes[i]);
-                ctx.dl->AddRectFilled (screen ({ x - 3, area.bottom() - h }), screen ({ x + 3, area.bottom() }), colour);
-                ctx.dl->AddRectFilled (screen ({ x - 4, area.bottom() - h }), screen ({ x + 4, area.bottom() - h + 3 }), colour);
+                bar (cc ? r->ccs[i].atTick : r->notes[i].startTick, value, colour);
+            }
+            std::int64_t offset = 0;
+            if (const auto* preview = recordingPreview (offset))
+            {
+                const auto colour = argb (0xffffd060, 0.65f);
+                if (cc)
+                {
+                    for (const auto& control : preview->ccs)
+                        if (control.kind == MidiCc::Kind::ControlChange && control.controller == activeCcController)
+                            bar (control.atTick + offset, control.value, colour);
+                }
+                else
+                    for (const auto& note : preview->notes) bar (note.startTick + offset, note.velocity, colour);
             }
             ctx.dl->PopClipRect();
         }
