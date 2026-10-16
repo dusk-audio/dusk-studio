@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "engine/sfz/SfzArtworkCache.h"
+#include "engine/sfz/SfzDirectoryLease.h"
 #include "engine/sfz/SfzInstrumentCategory.h"
 #include "foundation/Fs.h"
 
@@ -8,6 +9,7 @@
 #include <chrono>
 #include <future>
 #include <thread>
+#include <vector>
 
 namespace
 {
@@ -79,6 +81,133 @@ TEST_CASE ("SFZ categories recognize instrument names before collection context"
     CHECK (instrumentCategory ("VCSL", "piano and woodwinds") == C::Collection);
     CHECK (instrumentCategory ("Koto") == C::World);
     CHECK (instrumentCategory ("Unknown") == C::Other);
+}
+
+TEST_CASE ("SFZ artwork startup removes only abandoned owned image temporaries", "[sfz][artwork][ipc]")
+{
+    namespace fs = std::filesystem;
+    Tree tree;
+    const auto root = fs::canonical (tree.root);
+    const std::vector<std::string> owned {
+        std::string (64, 'a') + ".42.part", std::string (64, 'b') + ".4294967295.part", std::string (64, 'c') + ".0.part"
+    };
+    const std::vector<std::string> unrelated {
+        "other.part", std::string (64, 'a') + ".0042.part", std::string (64, 'b') + ".4294967296.part",
+        std::string (64, 'A') + ".42.part", ".cache-" + std::string (32, 'a')
+    };
+    for (const auto& name : owned) REQUIRE (dusk::fs::writeStringToFile (root / name, "unfinished"));
+    for (const auto& name : unrelated) REQUIRE (dusk::fs::writeStringToFile (root / name, "keep"));
+    const auto directory = root / (std::string (64, 'd') + ".7.part");
+    REQUIRE (fs::create_directory (directory));
+    const auto target = root / "unrelated-target";
+    REQUIRE (dusk::fs::writeStringToFile (target, "keep"));
+    const auto symbolic = root / (std::string (64, 'e') + ".8.part");
+    std::error_code error;
+    fs::create_symlink (target, symbolic, error);
+    const bool madeSymbolic = ! error;
+    const auto linked = root / (std::string (64, 'f') + ".9.part");
+    fs::create_hard_link (target, linked, error);
+    const bool madeLink = ! error;
+    auto transport = std::make_shared<Transport>();
+    ArtworkCache cache (root, transport);
+    cache.request ("startup", {}, fallback, decode, false, "sfzinstruments");
+    until ([&] { const auto state = cache.snapshot(); return state.pixels && ! state.busy; });
+    for (const auto& name : owned) CHECK_FALSE (fs::exists (root / name));
+    for (const auto& name : unrelated) CHECK (dusk::fs::loadFileAsString (root / name) == "keep");
+    CHECK (fs::is_directory (directory));
+    CHECK (dusk::fs::loadFileAsString (target) == "keep");
+    if (madeSymbolic) CHECK (fs::is_symlink (fs::symlink_status (symbolic)));
+    if (madeLink) CHECK (dusk::fs::loadFileAsString (linked) == "keep");
+    CHECK (transport->calls == 0);
+}
+
+TEST_CASE ("SFZ artwork maintenance waits for the last active cache owner", "[sfz][artwork][ipc]")
+{
+    namespace fs = std::filesystem;
+    Tree tree;
+    const auto root = fs::canonical (tree.root);
+    const auto cacheRoot = root / "images";
+    REQUIRE (fs::create_directory (cacheRoot));
+    auto input = cacheRoot;
+    SECTION ("Plain cache parent") {}
+    SECTION ("Symbolic cache parent")
+    {
+        const auto alias = root / "alias";
+        std::error_code error;
+        fs::create_directory_symlink (root, alias, error);
+        if (error) SKIP ("The filesystem cannot create a symbolic-directory fixture");
+        input = alias / "images";
+    }
+    const auto temporary = cacheRoot / (std::string (64, 'a') + ".17.part");
+    auto transport = std::make_shared<Transport>();
+    {
+        DirectoryLease active;
+        std::string error;
+        REQUIRE (active.acquire (cacheRoot, DirectoryLease::Access::Shared, error));
+        REQUIRE (dusk::fs::writeStringToFile (temporary, "active"));
+        ArtworkCache first (input, transport);
+        first.request ("first", {}, fallback, decode, false, "sfzinstruments");
+        until ([&] { const auto state = first.snapshot(); return state.pixels && ! state.busy; });
+        active = {};
+        ArtworkCache second (input, transport);
+        second.request ("second", {}, fallback, decode, false, "sfzinstruments");
+        until ([&] { const auto state = second.snapshot(); return state.pixels && ! state.busy; });
+        CHECK (dusk::fs::loadFileAsString (temporary) == "active");
+        CHECK (transport->calls == 0);
+    }
+    ArtworkCache restarted (input, transport);
+    restarted.request ("restarted", {}, fallback, decode, false, "sfzinstruments");
+    until ([&] { const auto state = restarted.snapshot(); return state.pixels && ! state.busy; });
+    CHECK_FALSE (fs::exists (temporary));
+    CHECK (transport->calls == 0);
+   #if ! defined(_WIN32)
+    fs::rename (cacheRoot, root / "old-images");
+    REQUIRE (fs::create_directory (cacheRoot));
+    restarted.request ("new-root", url, fallback, decode, true, "sfzinstruments");
+    until ([&] { const auto state = restarted.snapshot(); return state.sourceImage && ! state.busy; });
+    DirectoryLease maintenance;
+    std::string error;
+    CHECK_FALSE (maintenance.acquire (cacheRoot, DirectoryLease::Access::Exclusive, error));
+    CHECK (error.empty());
+    CHECK (transport->calls == 1);
+   #endif
+}
+
+TEST_CASE ("SFZ artwork remains available when disk ownership or publication fails", "[sfz][artwork][ipc]")
+{
+    namespace fs = std::filesystem;
+    Tree tree;
+    auto transport = std::make_shared<Transport>();
+    fs::path blockedImage;
+    SECTION ("Unavailable ownership leaves the disk cache untouched")
+    {
+        REQUIRE (fs::create_directory (tree.root / ".dusk-sfz.lock"));
+    }
+    SECTION ("A failed rename removes the temporary image")
+    {
+        {
+            ArtworkCache seed (tree.root, transport);
+            seed.request ("seed", url, fallback, decode, true, "sfzinstruments");
+            until ([&] { const auto state = seed.snapshot(); return state.sourceImage && ! state.busy; });
+        }
+        for (const auto& entry : fs::directory_iterator (tree.root))
+            if (entry.path().extension() == ".image") blockedImage = entry.path();
+        REQUIRE_FALSE (blockedImage.empty());
+        REQUIRE (fs::remove (blockedImage));
+        REQUIRE (fs::create_directory (blockedImage));
+    }
+    const auto before = transport->calls.load();
+    ArtworkCache cache (tree.root, transport);
+    cache.request ("image", url, fallback, decode, true, "sfzinstruments");
+    until ([&] { const auto state = cache.snapshot(); return state.sourceImage && ! state.busy; });
+    CHECK (cache.snapshot().pixels->rgba.front() == 's');
+    CHECK (transport->calls == before + 1);
+    for (const auto& entry : fs::directory_iterator (tree.root))
+    {
+        CHECK (entry.path().extension() != ".part");
+        if (entry.path().extension() == ".image") CHECK (entry.path() == blockedImage);
+    }
+    if (! blockedImage.empty()) CHECK (fs::is_directory (blockedImage));
 }
 
 TEST_CASE ("SFZ artwork cache survives restart and never fetches for offline selections", "[sfz][artwork][ipc]")

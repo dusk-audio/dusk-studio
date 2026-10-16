@@ -1,4 +1,5 @@
 #include "SfzArtworkCache.h"
+#include "SfzDirectoryLease.h"
 #include "SfzProvider.h"
 #include "../../foundation/Fs.h"
 
@@ -6,6 +7,7 @@
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <map>
 
 #if defined (_WIN32)
@@ -41,6 +43,35 @@ bool validPixels (const std::shared_ptr<const ArtworkPixels>& pixels)
 {
     return pixels && pixels->width > 0 && pixels->width <= 512 && pixels->height > 0 && pixels->height <= 512
         && pixels->rgba.size() == static_cast<std::size_t> (pixels->width) * static_cast<std::size_t> (pixels->height) * 4;
+}
+
+bool temporaryImageName (std::string_view name)
+{
+    if (name.size() < 71 || name.size() > 80 || name[64] != '.' || name.substr (name.size() - 5) != ".part"
+        || ! std::all_of (name.begin(), name.begin() + 64, [] (char c)
+            { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); })) return false;
+    const auto token = name.substr (65, name.size() - 70);
+    std::uint32_t value = 0;
+    const auto parsed = std::from_chars (token.data(), token.data() + token.size(), value);
+    return parsed.ec == std::errc {} && parsed.ptr == token.data() + token.size()
+        && (token.size() == 1 || token.front() != '0');
+}
+
+void sweepImageTemporaries (const fs::path& root) noexcept
+{
+    try
+    {
+        std::error_code error;
+        for (fs::directory_iterator it (root, error), end; ! error && it != end; it.increment (error))
+        {
+            if (! temporaryImageName (it->path().filename().u8string())) continue;
+            std::error_code entryError;
+            if (! fs::is_regular_file (it->symlink_status (entryError)) || entryError
+                || fs::hard_link_count (it->path(), entryError) != 1 || entryError) continue;
+            fs::remove (it->path(), entryError);
+        }
+    }
+    catch (...) {}
 }
 
 void trimDiskCache (const fs::path& root)
@@ -135,6 +166,28 @@ void ArtworkCache::run()
 #elif defined (__linux__)
     setpriority (PRIO_PROCESS, 0, 10);
 #endif
+    DirectoryLease cacheLease;
+    const auto acquireCache = [&] (bool sweep)
+    {
+        std::error_code error;
+        fs::create_directories (root, error);
+        if (error || ! fs::is_directory (fs::symlink_status (root, error)) || error) return false;
+        const auto canonical = fs::canonical (root, error);
+        if (error) return false;
+        std::string ownershipError;
+        if (sweep)
+        {
+            DirectoryLease maintenance;
+            if (maintenance.acquire (canonical, DirectoryLease::Access::Exclusive, ownershipError))
+                sweepImageTemporaries (canonical);
+        }
+        DirectoryLease next;
+        if (! next.acquire (canonical, DirectoryLease::Access::Shared, ownershipError)) return false;
+        cacheLease = std::move (next);
+        root = canonical;
+        return true;
+    };
+    try { acquireCache (true); } catch (...) {}
     struct CachedImage { std::shared_ptr<const ArtworkPixels> pixels; std::uint64_t used; };
     std::map<std::string, CachedImage> decoded;
     std::uint64_t useCounter = 0;
@@ -192,8 +245,7 @@ void ArtworkCache::run()
                 [&] { return heavyWork.load (std::memory_order_acquire); }, {} };
             if (control.status() != OperationStatus::Complete) continue;
             std::error_code error;
-            fs::create_directories (root, error);
-            const bool cacheReady = ! error && fs::is_directory (fs::symlink_status (root, error)) && ! error;
+            const bool cacheReady = acquireCache (false);
             const auto path = root / (key + ".image");
             if (cacheReady && fs::is_regular_file (fs::symlink_status (path, error)) && ! error)
             {
@@ -216,12 +268,18 @@ void ArtworkCache::run()
             if (cacheReady)
             {
                 const auto temporary = root / (key + "." + std::to_string (randombytes_random()) + ".part");
-                if (! fs::exists (fs::symlink_status (temporary, error))
-                    && dusk::fs::writeStringToFile (temporary, response.body))
+                const auto status = fs::symlink_status (temporary, error);
+                if (error == std::errc::no_such_file_or_directory) error.clear();
+                if (! error && ! fs::exists (status))
                 {
-                    fs::rename (temporary, path, error);
-                    if (error) fs::remove (temporary, error);
-                    trimDiskCache (root);
+                    const auto removeTemporary = [&temporary] (void*)
+                    { std::error_code ignored; fs::remove (temporary, ignored); };
+                    const std::unique_ptr<void, decltype (removeTemporary)> cleanup (this, removeTemporary);
+                    if (dusk::fs::writeStringToFile (temporary, response.body))
+                    {
+                        fs::rename (temporary, path, error);
+                        if (! error) trimDiskCache (root);
+                    }
                 }
             }
         }

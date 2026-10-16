@@ -1993,7 +1993,7 @@ Select a pack on the left to see its license, contents and download action on th
 
 Installation checks `LICENSE`, `LICENCE` and `COPYING` documents, licensing directories and `.license` or `.licence` sample sidecars. Conflicting or unrecognized declarations are refused. A pack can contain at most 32 such documents, with a 200,000-byte limit per document and a 2 MiB combined limit. For GitHub packs, the extracted primary license must match the document shown before download.
 
-At startup, the library removes abandoned installation folders and temporary repository files when no running owner holds their directory. Reusable partial downloads and files that cannot be inspected safely are kept. Installed packs and repair rollback folders are preserved.
+At startup, the library removes abandoned installation folders and temporary repository and artwork files when no running owner holds their directory. Reusable partial downloads and files that cannot be inspected safely are kept. Installed packs and repair rollback folders are preserved.
 
 GitHub stars and Musical Artifacts favorites appear when supplied by the source. These counts indicate popularity, not a sound-quality rating. **Listen to demo** opens a published audio or video demo in your browser without downloading or installing the instrument pack. **More demos** lists additional demos when available. Some packs have no published demo; the library then displays **No source demo available.** If you decide against a downloaded pack, unload its instruments from the current session and use **Remove** in **Installed**.
 
