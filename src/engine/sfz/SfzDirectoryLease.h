@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <system_error>
 
 namespace duskstudio::sfz
 {
@@ -20,7 +21,8 @@ public:
 
     // Shared acquisition waits; exclusive maintenance returns immediately if an owner is active.
     // A busy exclusive request leaves error empty; filesystem failures supply an error.
-    bool acquire (const std::filesystem::path&, Access, std::string& error);
+    bool acquire (const std::filesystem::path&, Access, std::string& error,
+                  std::error_code* nativeError = nullptr);
     explicit operator bool() const noexcept { return handle != -1; }
 
 private:

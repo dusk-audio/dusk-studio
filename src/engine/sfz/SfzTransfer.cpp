@@ -700,11 +700,14 @@ DownloadResult downloadFile (HttpTransport& transport, const DownloadRequest& re
         error == std::errc::no_space_on_device ? FailureKind::DiskFull : FailureKind::None);
     DirectoryLease downloadLease;
     std::string ownershipError;
+    std::error_code ownershipCode;
     const auto ownershipDirectory = parent.empty() ? std::filesystem::current_path (error) : parent;
-    if (error || ! downloadLease.acquire (ownershipDirectory, DirectoryLease::Access::Shared, ownershipError))
+    if (error || ! downloadLease.acquire (ownershipDirectory, DirectoryLease::Access::Shared, ownershipError, &ownershipCode))
     {
         result.status = OperationStatus::Failed;
         result.error = error ? "Cannot locate the download directory: " + error.message() : ownershipError;
+        result.failureKind = (error ? error : ownershipCode) == std::errc::no_space_on_device
+            ? FailureKind::DiskFull : FailureKind::None;
         // An ownership failure leaves any existing prefix unexamined.
         result.preservePart = true;
         return result;

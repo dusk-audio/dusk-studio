@@ -52,14 +52,23 @@ void DirectoryLease::release() noexcept
     handle = -1;
 }
 
-bool DirectoryLease::acquire (const std::filesystem::path& directory, Access access, std::string& error)
+bool DirectoryLease::acquire (const std::filesystem::path& directory, Access access, std::string& error,
+                              std::error_code* nativeError)
 {
     error.clear();
+    if (nativeError) nativeError->clear();
+    const auto fail = [&] (const char* message, std::error_code code)
+    {
+        if (nativeError) *nativeError = code;
+        error = message;
+        if (code) error += ": " + code.message();
+        return false;
+    };
     if (*this) { error = "The SFZ directory lease is already held"; return false; }
     if (directory.empty()) { error = "No SFZ directory was supplied for ownership"; return false; }
     std::error_code ec;
     const auto absolute = dusk::fs::absolutePathForInspection (directory, ec);
-    if (ec) { error = "Cannot locate the SFZ directory: " + ec.message(); return false; }
+    if (ec) return fail ("Cannot locate the SFZ directory", ec);
     auto current = absolute.root_path();
     const auto relative = absolute.relative_path();
     auto component = relative.begin();
@@ -73,10 +82,13 @@ bool DirectoryLease::acquire (const std::filesystem::path& directory, Access acc
         const auto file = CreateFileW (dusk::fs::nativeIOPath (current).c_str(), FILE_READ_ATTRIBUTES,
             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
             FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
-        if (file == INVALID_HANDLE_VALUE) return false;
+        if (file == INVALID_HANDLE_VALUE)
+        { ec = { static_cast<int> (GetLastError()), std::system_category() }; return false; }
         BY_HANDLE_FILE_INFORMATION info {};
         const bool read = GetFileInformationByHandle (file, &info) != 0;
+        if (! read) ec = { static_cast<int> (GetLastError()), std::system_category() };
         const bool closed = CloseHandle (file) != 0;
+        if (! closed && ! ec) ec = { static_cast<int> (GetLastError()), std::system_category() };
         return read && closed && (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0
             && (info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0;
        #else
@@ -84,11 +96,11 @@ bool DirectoryLease::acquire (const std::filesystem::path& directory, Access acc
         return ! ec && std::filesystem::is_directory (status);
        #endif
     };
-    if (! plain()) { error = "The SFZ ownership directory is unavailable or not a plain directory"; return false; }
+    if (! plain()) return fail ("The SFZ ownership directory is unavailable or not a plain directory", ec);
     for (; component != relative.end(); ++component)
     {
         current /= *component;
-        if (! plain()) { error = "The SFZ ownership directory is unavailable or not a plain directory"; return false; }
+        if (! plain()) return fail ("The SFZ ownership directory is unavailable or not a plain directory", ec);
     }
     const auto path = absolute / ".dusk-sfz.lock";
     DirectoryLease candidate;
@@ -96,11 +108,12 @@ bool DirectoryLease::acquire (const std::filesystem::path& directory, Access acc
     const auto file = CreateFileW (dusk::fs::nativeIOPath (path).c_str(), GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
                                   nullptr, OPEN_ALWAYS, FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
     if (file == INVALID_HANDLE_VALUE)
-    { error = "Cannot open SFZ ownership: " + std::error_code (static_cast<int> (GetLastError()), std::system_category()).message(); return false; }
+        return fail ("Cannot open SFZ ownership", { static_cast<int> (GetLastError()), std::system_category() });
     candidate.handle = reinterpret_cast<std::intptr_t> (file);
     BY_HANDLE_FILE_INFORMATION info {};
-    if (! GetFileInformationByHandle (file, &info) || info.nNumberOfLinks != 1
-        || (info.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) != 0)
+    if (! GetFileInformationByHandle (file, &info))
+        return fail ("Cannot inspect SFZ ownership", { static_cast<int> (GetLastError()), std::system_category() });
+    if (info.nNumberOfLinks != 1 || (info.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) != 0)
     { error = "The SFZ ownership file is not a plain single-link file"; return false; }
     OVERLAPPED position {};
     const auto flags = access == Access::Exclusive ? LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY : 0;
@@ -108,24 +121,27 @@ bool DirectoryLease::acquire (const std::filesystem::path& directory, Access acc
     {
         const auto code = GetLastError();
         if (access != Access::Exclusive || code != ERROR_LOCK_VIOLATION)
-            error = "Cannot lock SFZ ownership: " + std::error_code (static_cast<int> (code), std::system_category()).message();
+            return fail ("Cannot lock SFZ ownership", { static_cast<int> (code), std::system_category() });
         return false;
     }
    #else
     const auto fd = ::open (path.c_str(), O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK, 0600);
     if (fd == -1)
-    { error = "Cannot open SFZ ownership: " + std::error_code (errno, std::generic_category()).message(); return false; }
+        return fail ("Cannot open SFZ ownership", { errno, std::generic_category() });
     candidate.handle = fd;
     struct stat info {};
-    if (::fstat (fd, &info) != 0 || ! S_ISREG (info.st_mode) || info.st_nlink != 1)
+    if (::fstat (fd, &info) != 0)
+        return fail ("Cannot inspect SFZ ownership", { errno, std::generic_category() });
+    if (! S_ISREG (info.st_mode) || info.st_nlink != 1)
     { error = "The SFZ ownership file is not a plain single-link file"; return false; }
     const auto flags = access == Access::Exclusive ? LOCK_EX | LOCK_NB : LOCK_SH;
     int result;
     do { result = ::flock (fd, flags); } while (result != 0 && errno == EINTR);
     if (result != 0)
     {
-        if (access != Access::Exclusive || (errno != EWOULDBLOCK && errno != EAGAIN))
-            error = "Cannot lock SFZ ownership: " + std::error_code (errno, std::generic_category()).message();
+        const auto code = errno;
+        if (access != Access::Exclusive || (code != EWOULDBLOCK && code != EAGAIN))
+            return fail ("Cannot lock SFZ ownership", { code, std::generic_category() });
         return false;
     }
    #endif

@@ -42,11 +42,15 @@ TEST_CASE ("SFZ directory owners exclude maintenance until their last lease ends
         REQUIRE (fs::create_directories (dusk::fs::nativeIOPath (root)));
     }
     std::string error;
+    auto nativeError = std::make_error_code (std::errc::io_error);
     DirectoryLease first, second, maintenance;
-    REQUIRE (first.acquire (root, Access::Shared, error));
+    REQUIRE (first.acquire (root, Access::Shared, error, &nativeError));
+    CHECK_FALSE (nativeError);
     REQUIRE (second.acquire (root, Access::Shared, error));
-    CHECK_FALSE (maintenance.acquire (root, Access::Exclusive, error));
+    nativeError = std::make_error_code (std::errc::io_error);
+    CHECK_FALSE (maintenance.acquire (root, Access::Exclusive, error, &nativeError));
     CHECK (error.empty());
+    CHECK_FALSE (nativeError);
     DirectoryLease moved (std::move (first));
     CHECK_FALSE (static_cast<bool> (first));
     REQUIRE (static_cast<bool> (moved));
@@ -90,7 +94,10 @@ TEST_CASE ("SFZ directory ownership refuses unsafe files and never creates missi
     SECTION ("Directory in place of the ownership file")
     {
         REQUIRE (fs::create_directory (lockFile));
-        CHECK_FALSE (owner.acquire (tree.root, Access::Shared, error));
+        std::error_code nativeError;
+        CHECK_FALSE (owner.acquire (tree.root, Access::Shared, error, &nativeError));
+        CHECK (nativeError);
+        CHECK (nativeError != std::errc::no_space_on_device);
         CHECK (fs::is_directory (lockFile));
     }
     SECTION ("Hard-linked ownership file")

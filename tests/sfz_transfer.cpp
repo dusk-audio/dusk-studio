@@ -205,6 +205,7 @@ TEST_CASE ("SFZ download inspection preserves usable state without writing", "[s
         REQUIRE (std::filesystem::create_directory (lockFile));
         const auto result = downloadFile (transport, download);
         CHECK (result.status == OperationStatus::Failed);
+        CHECK (result.failureKind == FailureKind::None);
         CHECK (result.preservePart);
         CHECK (readFile (temp.part()) == "abcd");
         CHECK (readFile (sidecar) == original);
