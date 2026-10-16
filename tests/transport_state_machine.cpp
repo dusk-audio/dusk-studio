@@ -44,16 +44,16 @@ TEST_CASE ("Transport: playhead advance accumulates across calls", "[transport]"
 
     Transport t;
     t.setPlayhead (0);
-    t.advancePlayhead (480);
-    t.advancePlayhead (480);
-    t.advancePlayhead (39);
+    t.finishAudioBlock (t.beginAudioBlock() + 480);
+    t.finishAudioBlock (t.beginAudioBlock() + 480);
+    t.finishAudioBlock (t.beginAudioBlock() + 39);
     REQUIRE (t.getPlayhead() == 999);
 
     // setPlayhead is a direct seek, not an accumulator
     t.setPlayhead (100);
     REQUIRE (t.getPlayhead() == 100);
 
-    t.advancePlayhead (50);
+    t.finishAudioBlock (t.beginAudioBlock() + 50);
     REQUIRE (t.getPlayhead() == 150);
 }
 
@@ -66,7 +66,7 @@ TEST_CASE ("Transport: setPlayhead accepts negative for pre-roll cases", "[trans
     REQUIRE (t.getPlayhead() == -48000);
 
     // Advance from negative crosses zero cleanly
-    t.advancePlayhead (96000);
+    t.finishAudioBlock (t.beginAudioBlock() + 96000);
     REQUIRE (t.getPlayhead() == 48000);
 }
 

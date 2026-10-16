@@ -96,6 +96,49 @@ TEST_CASE ("A locate during playback becomes the point Stop returns to",
         CHECK (t.getPlayhead() == 5000);
         CHECK (t.getRollStart() == 1000);
     }
+
+    SECTION ("A request during a callback survives its final position publication")
+    {
+        t.setState (Transport::State::Playing);
+        t.onLocate = [&] (std::int64_t s) { t.requestLocate (s); };
+        CHECK (t.beginAudioBlock() == 1000);
+        std::int64_t requested = 5000, endpoint = 1256;
+        bool newerRequest = false;
+        SECTION ("A normal callback") {}
+        SECTION ("A wrapping callback") { endpoint = 100; }
+        SECTION ("A repeated position") { requested = 1000; }
+        SECTION ("A negative target") { requested = -48000; }
+        SECTION ("A newer request after consumption") { newerRequest = true; }
+        t.locate (requested);
+        CHECK (t.getPlayhead() == requested);
+        t.finishAudioBlock (endpoint);
+        CHECK (t.getCommittedPlayhead() == endpoint);
+        CHECK (t.getPlayhead() == requested);
+        CHECK (t.getRollStart() == requested);
+        CHECK (t.getLocateCount() == 1);
+        CHECK (t.beginAudioBlock() == requested);
+        const auto following = newerRequest ? 7000 : requested;
+        t.locate (following);
+        t.finishAudioBlock (requested + 256);
+        CHECK (t.beginAudioBlock() == following);
+        CHECK (t.getLocateCount() == 2);
+        t.finishAudioBlock (following + 256);
+        CHECK (t.getPlayhead() == following + 256);
+    }
+
+    SECTION ("Explicit Stop positioning discards a request audio never consumed")
+    {
+        t.setState (Transport::State::Recording);
+        CHECK (t.beginAudioBlock() == 1000);
+        t.requestLocate (5000);
+        t.finishAudioBlock (1256);
+        CHECK (t.getCommittedPlayhead() == 1256);
+        t.setState (Transport::State::Stopped);
+        t.setPlayhead (t.getCommittedPlayhead());
+        CHECK (t.getPlayhead() == 1256);
+        CHECK (t.beginAudioBlock() == 1256);
+        CHECK (t.getRollStart() == 1000);
+    }
 }
 
 TEST_CASE ("The persisted Playhead on Stop values keep their meaning",

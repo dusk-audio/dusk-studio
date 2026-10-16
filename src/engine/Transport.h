@@ -3,12 +3,10 @@
 #include <cstdint>
 #include <atomic>
 #include <functional>
+#include <limits>
 
 namespace duskstudio
 {
-// Phase 2 minimum: Stopped / Playing / Recording. Punch-in/out + Loop arrive
-// in Phase 3 per the spec. The state itself is a single atomic so the audio
-// thread can read it lock-free; transitions happen on the message thread.
 class Transport
 {
 public:
@@ -21,8 +19,41 @@ public:
 
     void setState (State s) noexcept { state.store (s, std::memory_order_relaxed); }
 
-    std::int64_t getPlayhead() const noexcept { return playheadSamples.load (std::memory_order_relaxed); }
-    void setPlayhead (std::int64_t s) noexcept { playheadSamples.store (s, std::memory_order_relaxed); }
+    std::int64_t getPlayhead() const noexcept
+    {
+        const auto requested = pendingLocate.load (std::memory_order_acquire);
+        return requested != kNoPendingLocate ? requested : getCommittedPlayhead();
+    }
+    std::int64_t getCommittedPlayhead() const noexcept
+    {
+        return playheadSamples.load (std::memory_order_relaxed);
+    }
+
+    // Explicit positioning requires a quiescent audio owner.
+    void setPlayhead (std::int64_t s) noexcept
+    {
+        playheadSamples.store (s, std::memory_order_relaxed);
+        pendingLocate.store (kNoPendingLocate, std::memory_order_release);
+    }
+
+    // A seek is visible to the UI immediately; only the audio owner consumes it.
+    void requestLocate (std::int64_t s) noexcept
+    {
+        if (isPlaying()) setRollStart (s);
+        locates.fetch_add (1, std::memory_order_relaxed);
+        pendingLocate.store (s, std::memory_order_release);
+    }
+    std::int64_t beginAudioBlock() noexcept
+    {
+        const auto requested = pendingLocate.exchange (kNoPendingLocate, std::memory_order_acq_rel);
+        if (requested != kNoPendingLocate)
+            playheadSamples.store (requested, std::memory_order_relaxed);
+        return getCommittedPlayhead();
+    }
+    void finishAudioBlock (std::int64_t next) noexcept
+    {
+        playheadSamples.store (next, std::memory_order_relaxed);
+    }
 
     // Where playback or the take last began from a stopped transport, leaving
     // out count-in and pre-roll. Stop returns here under
@@ -51,16 +82,6 @@ public:
     // changes, so the stretch a seek skipped keeps what it held.
     std::uint32_t getLocateCount() const noexcept { return locates.load (std::memory_order_relaxed); }
 
-    // Called from the audio callback when state is Playing or Recording.
-    void advancePlayhead (int numSamples) noexcept
-    {
-        playheadSamples.fetch_add (numSamples, std::memory_order_relaxed);
-    }
-
-    // Loop region. Only honoured by the audio thread when loopEnabled is true
-    // and loopEnd > loopStart. Wrap-around is applied during Playing only -
-    // recording stays linear so the captured WAV maps cleanly onto the
-    // timeline (loop-take-stacking is a future feature).
     bool        isLoopEnabled() const noexcept    { return loopEnabled.load (std::memory_order_relaxed); }
     void        setLoopEnabled (bool e) noexcept  { loopEnabled.store (e, std::memory_order_relaxed); }
     std::int64_t getLoopStart() const noexcept     { return loopStart.load (std::memory_order_relaxed); }
@@ -101,8 +122,10 @@ public:
     }
 
 private:
+    static constexpr auto kNoPendingLocate = std::numeric_limits<std::int64_t>::min();
     std::atomic<State>       state            { State::Stopped };
     std::atomic<std::int64_t> playheadSamples  { 0 };
+    std::atomic<std::int64_t> pendingLocate    { kNoPendingLocate };
     std::atomic<std::int64_t> rollStart        { 0 };
     std::atomic<std::uint32_t> locates         { 0 };
 

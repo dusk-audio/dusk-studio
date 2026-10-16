@@ -790,7 +790,8 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
     {
         if (offlineRenderActive.load (std::memory_order_acquire)
             || recordManager.isLoopCaptureActive()) return;
-        transport.commitLocate (position);
+        if (transport.isStopped()) transport.commitLocate (position);
+        else transport.requestLocate (position);
     };
     // 500 units covers thousands of edits while bounding memory under
     // multi-hour sessions; without this the stack grows unbounded.
@@ -2333,7 +2334,9 @@ void AudioEngine::play (PlaybackEngine::Audition audition)
         }
     }
 
-    transport.setRollStart (transport.getPlayhead());
+    const auto rollStart = transport.getPlayhead();
+    transport.setPlayhead (rollStart);
+    transport.setRollStart (rollStart);
     playbackEngine.preparePlayback (audition);
     transport.setState (Transport::State::Playing);
     schedulePlaybackService();
@@ -2355,6 +2358,8 @@ void AudioEngine::stop()
             ~ResumeGuard() { engine.resumeProcessing(); }
         } resumeGuard { *this };
 
+        const auto endSample = transport.getCommittedPlayhead();
+        transport.setPlayhead (endSample);
         const bool wasRecording = transport.isRecording() || recordManager.isActive();
         transport.setState (Transport::State::Stopped);
 
@@ -2362,7 +2367,7 @@ void AudioEngine::stop()
         {
             if (onBeforeRecordCommit)
                 onBeforeRecordCommit (recordManager.getActiveCaptureTrackMask());
-            recordManager.stopRecording (transport.getPlayhead());
+            recordManager.stopRecording (endSample);
             updateAssetWorkPause();
             serviceMidiRecording();
             activeRecordStart.store (std::numeric_limits<std::int64_t>::min(),
@@ -2677,8 +2682,7 @@ void AudioEngine::record()
         return;
     }
 
-    if (loopPlan.enabled)
-        transport.setPlayhead (startSample);
+    transport.setPlayhead (loopPlan.enabled ? startSample : transport.getPlayhead());
 
     activeRecordStart.store (startSample, std::memory_order_relaxed);
     updateAssetWorkPause();
@@ -4553,7 +4557,7 @@ void AudioEngine::audioDeviceStopped()
     // record button immediately reflects "stopped" rather than the
     // pre-disconnect "Recording".
     if (recordManager.isActive())
-        recordManager.stopRecording (transport.getPlayhead());
+        recordManager.stopRecording (transport.getCommittedPlayhead());
     // Force-stop the transport on ANY device loss (not just
     // Recording). A hot-unplug while playing leaves the transport
     // in Playing with no device to render - user gets a silent
@@ -5967,7 +5971,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     const auto state = transport.getState();
     const bool isPlaying   = (state == Transport::State::Playing);
     const bool isRecording = (state == Transport::State::Recording);
-    std::int64_t blockStartSamples = transport.getPlayhead();
+    std::int64_t blockStartSamples = transport.beginAudioBlock();
 
     // Offline renders must be deterministic - live input never prints. An offline
     // bounce/stem/freeze drives this callback from a worker thread while the MIDI
@@ -5995,21 +5999,22 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         // expected wrapped endpoint keeps pass coordinates and writer offsets
         // contiguous even if a ruler click lands between callbacks.
         blockStartSamples = lastBlockEndSample;
-        transport.setPlayhead (blockStartSamples);
+        transport.finishAudioBlock (blockStartSamples);
     }
     const int loopRecordPassAtBlockStart = loopRecordingActive
         ? std::max (1, activeLoopRecordPassOrdinal.load (std::memory_order_acquire)) : 0;
 
     // Unarmed/frozen accompaniment must hear the same seam as the recorder.
     // Plain playback still follows the live transport bounds.
-    const bool playbackLoopActive = isPlaying && transport.isLoopEnabled()
-                                 && transport.getLoopEnd() > transport.getLoopStart();
+    const auto liveLoopStart = transport.getLoopStart();
+    const auto liveLoopEnd = transport.getLoopEnd();
+    const bool playbackLoopActive = isPlaying && transport.isLoopEnabled() && liveLoopEnd > liveLoopStart;
     const std::int64_t loopReadStart = loopRecordingActive
         ? loopRecordPlan.loopStartSample
-        : (playbackLoopActive ? transport.getLoopStart() : -1);
+        : (playbackLoopActive ? liveLoopStart : -1);
     const std::int64_t loopReadEnd = loopRecordingActive
         ? loopRecordPlan.loopEndSample
-        : (playbackLoopActive ? transport.getLoopEnd() : -1);
+        : (playbackLoopActive ? liveLoopEnd : -1);
     playbackEngine.beginAudioBlock (blockStartSamples, loopReadStart, loopReadEnd);
 
     // Re-enumerated at each capture site instead of storing a variable-size
@@ -7517,52 +7522,32 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
 
     writeMasterMixToOutput (outputChannelData, numOutputChannels, numSamples);
 
+    auto nextBlockStart = blockStartSamples + numSamples;
     if (isPlaying || isRecording)
     {
-        // A ruler/marker seek can race a live callback. Loop-record gestures
-        // deliberately defer seeks until Stop, so advance from the immutable
-        // block coordinate instead of adding onto a concurrently replaced
-        // playhead. Plain playback keeps its normal seekable fetch-add path.
-        if (loopRecordingActive)
-            transport.setPlayhead (blockStartSamples + numSamples);
-        else
-            transport.advancePlayhead (numSamples);
-
         if (loopRecordingActive)
         {
-            const auto curr = transport.getPlayhead();
             const auto loopStart = loopRecordPlan.loopStartSample;
             const auto loopEnd   = loopRecordPlan.loopEndSample;
-            if (curr >= loopEnd)
+            if (nextBlockStart >= loopEnd)
             {
                 const auto loopLength = loopEnd - loopStart;
-                const auto distancePastEnd = curr - loopEnd;
+                const auto distancePastEnd = nextBlockStart - loopEnd;
                 const auto crossings = 1 + distancePastEnd / loopLength;
-                transport.setPlayhead (loopStart + distancePastEnd % loopLength);
+                nextBlockStart = loopStart + distancePastEnd % loopLength;
                 activeLoopRecordPassOrdinal.fetch_add ((int) crossings,
                                                         std::memory_order_relaxed);
             }
         }
-        else if (isPlaying && transport.isLoopEnabled())
+        else if (playbackLoopActive && nextBlockStart >= loopReadEnd)
         {
-            const auto lStart = transport.getLoopStart();
-            const auto lEnd   = transport.getLoopEnd();
-            if (lEnd > lStart)
-            {
-                const auto curr = transport.getPlayhead();
-                if (curr >= lEnd)
-                {
-                    const auto loopLen   = lEnd - lStart;
-                    const auto overshoot = (curr - lEnd) % loopLen;
-                    transport.setPlayhead (lStart + overshoot);
-                }
-            }
+            nextBlockStart = loopReadStart + (nextBlockStart - loopReadEnd) % (loopReadEnd - loopReadStart);
         }
+        transport.finishAudioBlock (nextBlockStart);
     }
 
     lastBlockWasLoopRecording = loopRecordingActive;
-    lastBlockEndSample = isRolling ? transport.getPlayhead()
-                                   : blockStartSamples + numSamples;
+    lastBlockEndSample = nextBlockStart;
 
     // Detect xrun: callback work shouldn't exceed the buffer's wall-clock
     // budget. If it does, we'd glitch on the next callback. Track the count

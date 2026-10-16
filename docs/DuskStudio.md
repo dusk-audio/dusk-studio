@@ -208,7 +208,7 @@ AudioCallback (one buffer, e.g. 256 samples):
 10. If recording MIDI: push captured MIDI events to session model (non-RT thread)
 ```
 
-**Disk streaming**: playback readers share three fill workers (the pool clamps worker counts to 2-4). Readers retain their file handles, but sample memory is resident only near the playhead, normally about three seconds ahead and two seconds behind. Workers publish immutable sample windows and retire old windows after real-time readers leave them. The audio callback only copies available samples and publishes position hints through atomics; it performs no disk I/O, locking or worker wakeup. Message-thread seeks prime the destination before publishing it. Loop-start caches and explicit non-real-time priming cover loop wraps and offline renders.
+**Disk streaming**: playback readers share three fill workers (the pool clamps worker counts to 2-4). Readers retain their file handles, but sample memory is resident only near the playhead, normally about three seconds ahead and two seconds behind. Workers publish immutable sample windows and retire old windows after real-time readers leave them. The audio callback only copies available samples and publishes position hints through atomics; it performs no disk I/O, locking or worker wakeup. Rolling seeks publish a target consumed at the next callback boundary; they never suspend capture or prime disk readers on the message thread. Loop-start caches and explicit non-real-time priming cover loop wraps and offline renders.
 
 Recording writers remain separate from this reader pool. Buffer preparation and filling happen outside the audio callback.
 
