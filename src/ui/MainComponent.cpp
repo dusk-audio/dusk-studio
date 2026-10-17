@@ -1372,6 +1372,10 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         && audioSettingsWindow->offerShellKey (key.getTextDescription().toStdString(),
             static_cast<std::uint32_t> (key.getTextCharacter())))
         return true;
+    if (! modalUp && masteringView != nullptr && masteringView->isShowing()
+        && masteringView->offerPhaseKey (key.getTextDescription().toStdString(),
+                                        static_cast<std::uint32_t> (key.getTextCharacter())))
+        return true;
     if (! modalUp && consoleView != nullptr)
         for (int track = 0; track < Session::kNumTracks; ++track)
             if (auto* strip = consoleView->getStripComponent (track);

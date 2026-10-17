@@ -273,8 +273,9 @@ Assign a strip to one of eight fader groups (right-click the strip → **Fader g
 | 4   | 5-band digital EQ | Low shelf / 3 peaks / high shelf, ±12 dB per band.                                          |
 | 5   | Multiband compressor | Four bands with independent dynamics controls.                         |
 | 6   | Brickwall limiter | True-peak, 4× oversampled lookahead (see the mastering chapter).                            |
-| 7   | Loudness panel    | Momentary / short-term / integrated LUFS + True Peak (4× oversampled, BS.1770).             |
-| 8   | Export master…    | Renders the chain offline to a stereo file.                                                 |
+| 7   | Phase module     | Post-limiter correlation, coherence, timing and mono compatibility by frequency band.       |
+| 8   | Loudness panel    | Momentary / short-term / integrated LUFS + True Peak (4× oversampled, BS.1770).             |
+| 9   | Export master…    | Renders the chain offline to a stereo file.                                                 |
 
 ## The tape strip
 
@@ -1092,11 +1093,11 @@ A full-width audio thumbnail of the loaded file. Click anywhere on the waveform 
 
 ## Mastering chain
 
-Three columns of DSP, each with its own enable toggle:
+The digital EQ, multiband compressor and limiter each have an enable toggle. A fourth **PHASE** panel measures the stereo output after the limiter. In a compact window, the picker above the panels shows one full-width module at a time: **Digital EQ**, **Multiband compressor**, **Limiter** or **Phase**.
 
 ### Digital 5-band EQ
 
-A clean linear-phase-style mastering EQ. A real-time spectrum analyzer (FFT)
+A clean digital mastering EQ. A real-time spectrum analyzer (FFT)
 draws the post-EQ frequency content behind the response curve; toggle it with
 the **FFT** button in the panel's top-left.
 
@@ -1127,9 +1128,30 @@ A true-peak brickwall limiter with lookahead. **Enabled by default.** It runs th
 
 The lookahead adds latency (set by the Lookahead control) on the mastering output. True-peak control is to 4× resolution; for very-high-frequency masters reserve a little extra ceiling headroom.
 
+### Phase module
+
+The **PHASE** panel measures the post-limiter stereo signal without changing it or adding latency. It refreshes at 30 Hz while the mastering view is visible. Its analysis settings save in the session; readings, held values, warnings, the selected display mode and the **Mono** monitor switch do not.
+
+- **Bands**: 4 to 64 logarithmic frequency bands from 20 Hz to 20 kHz, default **16**. Frequencies above the device's Nyquist limit are unavailable.
+- **Q**: **0.25 to 8**, default **2**. Higher values select narrower frequency regions; lower values give wider overlapping bands.
+- **Average**: **50 to 5000 ms**, default **500 ms**. This is the correlation time constant. A longer setting steadies the reading.
+- **Reset** clears held correlation minima and sticky warnings.
+
+**Correlation** shows one bar per band from -1 to +1. Negative values draw red; the grey mark holds the minimum. The smaller **Overall** bar measures the full available frequency range directly, so a healthy overall reading can still accompany a negative band. Click a band to read its frequency range, correlation, held minimum and **Mono loss**. Scroll the panel to reach all the readings in a short window.
+
+A band that stays below zero for 250 ms of analyzed audio gets a sticky **Out of phase: [low] to [high] Hz** warning. Silence alone does not create a warning. Warnings and minima survive seeks, stage changes and native-panel recreation; **Reset**, loading another source, or changing the band count clears them. Changing Q or the device rate starts the current estimates again while preserving held results. Missing reader blocks, interrupted playback and discarded backlogs also start a fresh analysis window. The panel reads **Warming up** until enough new audio has arrived.
+
+Choose **Coherence / time** for magnitude-squared coherence bars from 0 to 1 and the selected band's timing readings. High coherence means the channels share a stable relationship. Low coherence can be normal stereo width. Coherence needs sustained audio across independent FFT windows; it uses an averaging time of at least eight FFT windows, so it can take much longer to settle than **Average**, especially at low frequencies and high Q. The panel shows the actual FFT window and coherence averaging time; silence or a single brief sound cannot establish confidence.
+
+**Wrapped offset** expresses the L/R phase angle as milliseconds and cannot identify a unique delay. A single tone is ambiguous. **Fitted R lag** needs sustained coherent energy across enough frequencies and can remain unavailable on music or changing noise. Positive values mean R lags L. The supported fitted range is plus or minus one-sixth of the FFT window, shown in milliseconds; treat it as a bounded estimate, since larger delays can alias. The panel does not correct timing or polarity.
+
+**Mono loss** compares the energy of `(L+R)/2` with the mean stereo-channel energy. Identical channels read **0 dB**; more negative values mean more loss when folded. A polarity-inverted pair approaches complete cancellation. A signal on only one channel reads about **-3 dB**, with correlation and coherence unavailable. The **Overall** mono figure gives the same comparison across the full available range.
+
+**Mono** folds live monitoring to `(L+R)/2`, with a short smooth transition. The analysis tap and loudness meters stay stereo, and exported or bounced files are unchanged. This temporary monitor setting remains in effect until you switch it off or quit; it is not written to the session. Analysis pauses during master export and starts a fresh window afterwards.
+
 ## Loudness metering
 
-Right of the chain are three loudness readouts:
+The transport row above the chain shows four loudness readouts:
 
 - **Momentary LUFS** (400 ms window).
 - **Short-Term LUFS** (3 second window).
@@ -2999,6 +3021,12 @@ The hardware-insert ping reports its result inline on the editor (not a modal), 
 | Limiter   | Ceiling                          | −12 to 0 dB   | −0.3 dB     |
 | Limiter   | Drive                            | 0 to +20 dB   | 0 dB        |
 | Limiter   | Release                          | 10–1000 ms     | 100 ms      |
+| Phase     | Bands                            | 4–64          | 16          |
+| Phase     | Q                                | 0.25–8        | 2           |
+| Phase     | Average                          | 50–5000 ms    | 500 ms      |
+| Phase     | Display                          | Correlation / Coherence / time | Correlation |
+| Phase     | Mono monitor                     | Off / On      | Off         |
+| Phase     | Reset                            | Clear minima and warnings |             |
 
 The multiband compressor has four bands: Low, Low-Mid, High-Mid and High. These are the editor's control ranges; the DSP keeps each crossover at least 1.5 times the preceding crossover. At least two bands must remain enabled.
 

@@ -14,9 +14,11 @@
  #include "imgui/DuskPanelWindow.h"
  #include "imgui/MasteringEqView.h"
  #include "imgui/MasteringLimiterView.h"
+ #include "imgui/MasteringPhaseView.h"
 #endif
 #include <algorithm>
 #include <cmath>
+#include <utility>
 #if DUSKSTUDIO_HAS_DUSK_DSP
   #include "ModernCompressorPanels.h"   // multi-comp - MultibandCompressorPanel
 #endif
@@ -322,9 +324,18 @@ MasteringView::MasteringView (Session& s, AudioEngine& e)
    #if DUSKSTUDIO_HAS_NATIVE_UI
     eqProxy.onVisibilityChanged = [this] { scheduleNativePanelSync(); };
     limiterProxy.onVisibilityChanged = [this] { scheduleNativePanelSync(); };
-    addAndMakeVisible (eqProxy);
-    addAndMakeVisible (limiterProxy);
+    phaseProxy.onVisibilityChanged = [this] { scheduleNativePanelSync(); };
+    addChildComponent (eqProxy);
+    addChildComponent (limiterProxy);
+    addChildComponent (phaseProxy);
    #endif
+
+    const char* compactPanels[] = { "Digital EQ", "Multiband compressor", "Limiter", "Phase" };
+    for (int i = 0; i < 4; ++i) compactPanelCombo.addItem (compactPanels[i], i + 1);
+    compactPanelCombo.setSelectedId (1);
+    compactPanelCombo.setTooltip ("Select a mastering module in a compact window.");
+    compactPanelCombo.onChange = [this] { resized(); };
+    addChildComponent (compactPanelCombo);
 
     // Embedded Multiband Comp editor + header wrapper
     // The mastering chain's UniversalCompressor is in Multiband mode (7),
@@ -391,7 +402,9 @@ MasteringView::MasteringView (Session& s, AudioEngine& e)
     // The session's source is already in the player: every session switch
     // loads it, whether or not this page exists yet.
     updateLabels();
-    startTimerHz (20);
+    phaseSourceGeneration = engine.getMasteringPlayer().getSourceGeneration();
+    phaseAnalyzer.prepare (engine.getTimelineSampleRate(), session.mastering().phase.snapshot());
+    startTimerHz (30);
 }
 
 MasteringView::~MasteringView()
@@ -402,6 +415,7 @@ MasteringView::~MasteringView()
     // go down while it is still whole.
     eqWindow.reset();
     limiterWindow.reset();
+    phaseWindow.reset();
    #endif
 }
 
@@ -435,9 +449,28 @@ void MasteringView::scheduleNativePanelSync()
    #endif
 }
 
+void MasteringView::syncNativePanelVisibility()
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    const int selected = compactPanelCombo.getSelectedId() - 1;
+    const std::array<std::pair<NativePanelProxy*, int>, 3> panels { {
+        { &eqProxy, 0 }, { &limiterProxy, 2 }, { &phaseProxy, 3 }
+    } };
+    for (const auto& panel : panels)
+    {
+        auto& proxy = *panel.first;
+        const bool wanted = ! compactPanelCombo.isVisible() || selected == panel.second;
+        const bool hidden = (int) proxy.getProperties().getWithDefault ("dusk_modalHideCount", 0) > 0;
+        // A cover may have opened with no visible proxy to take a hide token.
+        proxy.setVisible (wanted && ! hidden && (! PluginEditorHider::hasActiveSurface() || proxy.isVisible()));
+    }
+   #endif
+}
+
 void MasteringView::applyNativePanelSync()
 {
    #if DUSKSTUDIO_HAS_NATIVE_UI
+    syncNativePanelVisibility();
     auto* const topLevel = getTopLevelComponent();
     const auto parentHandle = topLevel != nullptr
                             ? embedscale::nativeParentHandle (*topLevel) : 0;
@@ -464,6 +497,14 @@ void MasteringView::applyNativePanelSync()
           {
               return imgui::makeMasteringLimiterView (
                   self.session.mastering(), self.engine.getMasteringChain().getLimiter());
+          } },
+        { phaseWindow, phaseProxy, "dusk-studio-mastering-phase", "mastering-phase", "Mastering Phase",
+          [] (MasteringView& self)
+          {
+              auto* audioEngine = &self.engine;
+              return imgui::makeMasteringPhaseView (self.session.mastering().phase, self.phaseAnalyzer,
+                  [audioEngine] { return audioEngine->getMasteringMonoMonitor(); },
+                  [audioEngine] (bool mono) { audioEngine->setMasteringMonoMonitor (mono); });
           } }
     };
 
@@ -524,12 +565,24 @@ int MasteringView::nativePanelsOpenForScenario() const
 {
    #if DUSKSTUDIO_HAS_NATIVE_UI
     int open = 0;
-    for (const auto* window : { eqWindow.get(), limiterWindow.get() })
+    for (const auto* window : { eqWindow.get(), limiterWindow.get(), phaseWindow.get() })
         if (window != nullptr && window->isOpen())
             ++open;
     return open;
    #else
     return -1;
+   #endif
+}
+
+bool MasteringView::offerPhaseKey (const std::string& description, std::uint32_t character)
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    return phaseProxy.isShowing() && phaseWindow != nullptr
+        && phaseWindow->offerShellKey (description, character);
+   #else
+    (void) description;
+    (void) character;
+    return false;
    #endif
 }
 
@@ -549,6 +602,7 @@ MasteringView::captureNativePanels (const juce::File& dir)
     };
     ask (eqWindow, eqProxy, "_mastering-eq.ppm");
     ask (limiterWindow, limiterProxy, "_mastering-limiter.ppm");
+    ask (phaseWindow, phaseProxy, "_mastering-phase.ppm");
    #else
     juce::ignoreUnused (dir);
    #endif
@@ -741,28 +795,39 @@ void MasteringView::resized()
         waveform->setBounds (area.removeFromTop (kWaveH));
     area.removeFromTop (6);
 
-    // 3-panel row: Digital EQ | Multiband Comp | Limiter
-    // The EQ curve + 5-band knob row reads better with more width, and
-    // the multiband panel's 4 columns are still legible at a smaller
-    // share. Limiter is naturally narrow so it gets the leftover.
-    auto panelsRow = area;
-
     constexpr int kPanelGap = 8;
-    const int totalW    = std::max (0, panelsRow.getWidth() - 2 * kPanelGap);
-    // The limiter is the terminal stage and was starved at 0.14 (clipped
-    // labels, cramped meters); the EQ curve had the most slack. Rebalance to
-    // 0.36 / 0.42 / 0.22 so all three read comfortably.
-    const int eqW       = (int) std::round (totalW * 0.36);
-    const int limW      = (int) std::round (totalW * 0.22);
-    const int compW     = totalW - eqW - limW;
+    constexpr int kEqMin = 280, kCompMin = 401, kLimiterMin = 200, kPhaseMin = 200;
+    const bool compact = area.getWidth() < kEqMin + kCompMin + kLimiterMin + kPhaseMin + 3 * kPanelGap;
+    compactPanelCombo.setVisible (compact);
+    if (compact)
+    {
+        compactPanelCombo.setBounds (area.removeFromTop (24));
+        area.removeFromTop (6);
+    }
+    auto panelsRow = area;
+    const int totalW    = std::max (0, panelsRow.getWidth() - 3 * kPanelGap);
+    // The donor compressor has seven fixed 55px knobs, plus the wrapper's insets.
+    const int spare    = std::max (0, totalW - kEqMin - kCompMin - kLimiterMin - kPhaseMin);
+    const int eqW      = kEqMin + (int) std::round (spare * 0.36);
+    const int compW    = kCompMin + (int) std::round (spare * 0.42);
+    const int limW     = kLimiterMin + (int) std::round (spare * 0.10);
 
-    auto eqPanel   = panelsRow.removeFromLeft (eqW);
-    panelsRow.removeFromLeft (kPanelGap);
-    auto compPanel = panelsRow.removeFromLeft (compW);
-    panelsRow.removeFromLeft (kPanelGap);
-    auto limPanel  = panelsRow;
+    auto eqPanel = panelsRow, compPanel = panelsRow, limPanel = panelsRow;
+    auto phasePanel = panelsRow;
+    if (! compact)
+    {
+        eqPanel = panelsRow.removeFromLeft (eqW);
+        panelsRow.removeFromLeft (kPanelGap);
+        compPanel = panelsRow.removeFromLeft (compW);
+        panelsRow.removeFromLeft (kPanelGap);
+        limPanel = panelsRow.removeFromLeft (limW);
+        panelsRow.removeFromLeft (kPanelGap);
+        phasePanel = panelsRow;
+    }
+    const int selected = std::clamp (compactPanelCombo.getSelectedId() - 1, 0, 3);
 
    #if DUSKSTUDIO_HAS_NATIVE_UI
+    syncNativePanelVisibility();
     eqProxy.setBounds (eqPanel);
    #endif
 
@@ -770,6 +835,7 @@ void MasteringView::resized()
     // top, then the embedded plugin editor takes the rest of the panel.
     if (compPanelWrapper != nullptr)
     {
+        compPanelWrapper->setVisible (! compact || selected == 1);
         compPanelWrapper->setBounds (compPanel);
         auto inner = compPanelWrapper->getLocalBounds().reduced (8);
         // Title bar (full width), then a centred preset picker row beneath it.
@@ -804,12 +870,70 @@ void MasteringView::resized()
 
    #if DUSKSTUDIO_HAS_NATIVE_UI
     limiterProxy.setBounds (limPanel);
+    phaseProxy.setBounds (phasePanel);
     scheduleNativePanelSync();
    #endif
 }
 
+void MasteringView::updatePhaseAnalysis()
+{
+    auto& feed = engine.getMasteringChain().getPhaseFeed();
+    const auto source = engine.getMasteringPlayer().getSourceGeneration();
+    if (source != phaseSourceGeneration)
+    {
+        phaseSourceGeneration = source;
+        feed.discardPending();
+        phaseAnalyzer.markDiscontinuity();
+        phaseAnalyzer.resetHeld();
+        phaseStreamValid = false;
+    }
+    const double deviceRate = engine.getCurrentSampleRate();
+    const bool active = isShowing() && engine.getStage() == AudioEngine::Stage::Mastering
+                        && ! exportModal.isOpen() && deviceRate > 0.0;
+    if (! active)
+    {
+        feed.discardPending();
+        if (phaseActive) phaseAnalyzer.markDiscontinuity();
+        phaseActive = phaseStreamValid = false;
+        return;
+    }
+    if (! phaseActive)
+    {
+        feed.discardPending();
+        phaseAnalyzer.markDiscontinuity();
+        phaseStreamValid = false;
+        phaseActive = true;
+    }
+    const auto settings = session.mastering().phase.snapshot();
+    const auto configure = [&] (double rate)
+    {
+        const auto& report = phaseAnalyzer.report();
+        if (report.sampleRate != rate || report.settings.bands != settings.bands
+            || report.settings.q != settings.q || report.settings.averagingMs != settings.averagingMs)
+            phaseAnalyzer.prepare (rate, settings);
+    };
+    int pending = feed.pendingSamples();
+    if (pending == 0) configure (deviceRate);
+    while (pending > 0)
+    {
+        const auto chunk = feed.read (phaseLeft.data(), phaseRight.data(),
+                                      std::min (pending, (int) phaseLeft.size()));
+        if (chunk.samples == 0) break;
+        pending -= chunk.samples;
+        configure (chunk.sampleRate);
+        if (! phaseStreamValid || phaseFeedGeneration != chunk.generation || phaseNextSequence != chunk.sequence)
+            phaseAnalyzer.markDiscontinuity();
+        phaseFeedGeneration = chunk.generation;
+        phaseNextSequence = chunk.sequence + (std::uint64_t) chunk.samples;
+        phaseStreamValid = true;
+        phaseAnalyzer.push (phaseLeft.data(), phaseRight.data(), chunk.samples);
+    }
+}
+
 void MasteringView::timerCallback()
 {
+    syncNativePanelVisibility();
+    updatePhaseAnalysis();
     auto& player = engine.getMasteringPlayer();
     auto& m = session.mastering();
 
