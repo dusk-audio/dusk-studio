@@ -21,8 +21,8 @@ VENDORED DEPENDENCIES (compiled into the Dusk Studio binary)
 ------------------------------------------------------
 
 JUCE (audio framework)
-  Version  : 8.0.12 on Linux (dusk-audio/JUCE-wayland tag dusk-wayland-v2, rev
-             4d85afa175a45e0b5da11f9211de3ba88705588e — the JUCE_TAG / JUCE_REV
+  Version  : 8.0.12 on Linux (dusk-audio/JUCE-wayland tag dusk-wayland-v3, rev
+             075eed7a1000b6b9dfce6aae93e7f2b82fa35f68 - the JUCE_TAG / JUCE_REV
              pin in .github/workflows/linux-build.yml); 8.0.4 from upstream
              juce-framework/JUCE on the macOS and Windows runners
   License  : Dual-licensed — AGPLv3 (used here) OR JUCE Commercial. JUCE's
@@ -754,8 +754,8 @@ of trailing whitespace required by repository hygiene; where a header says
 "notice", only that complete notice is reproduced. Paths starting `modules/`
 are inside the JUCE tree
 Dusk Studio builds against on Linux — the
-dusk-audio/JUCE-wayland tag dusk-wayland-v2, rev
-4d85afa175a45e0b5da11f9211de3ba88705588e, JUCE 8.0.12. The per-platform version
+dusk-audio/JUCE-wayland tag dusk-wayland-v3, rev
+075eed7a1000b6b9dfce6aae93e7f2b82fa35f68, JUCE 8.0.12. The per-platform version
 inventory for those is in the JUCE entry above; upstream 8.0.4 on macOS and
 Windows carries the same licenses apart from the VST3 SDK, which is noted
 there.
@@ -2889,7 +2889,7 @@ That's all there is to it!
 --------------------------------------------------------------------------------
 JUCE-bundled VST3 SDK 3.8.0 — MIT
 modules/juce_audio_processors_headless/format_types/VST3_SDK/LICENSE.txt
-dusk-audio/JUCE-wayland rev 4d85afa175a45e0b5da11f9211de3ba88705588e
+dusk-audio/JUCE-wayland rev 075eed7a1000b6b9dfce6aae93e7f2b82fa35f68
 (Linux build only; JUCE 8.0.4 on macOS and Windows carries the older dual
 license described in the inventory)
 --------------------------------------------------------------------------------
@@ -2922,7 +2922,7 @@ SOFTWARE.
 --------------------------------------------------------------------------------
 JUCE-bundled LV2 SDK — ISC notices
 modules/juce_audio_processors_headless/format_types/LV2_SDK/<name>/COPYING
-dusk-audio/JUCE-wayland rev 4d85afa175a45e0b5da11f9211de3ba88705588e
+dusk-audio/JUCE-wayland rev 075eed7a1000b6b9dfce6aae93e7f2b82fa35f68
 The five COPYING files are byte-identical in upstream JUCE 8.0.4 rev
 51d11a2be6d5c97ccf12b4e5e827006e19f0555a. The identical lilv, serd and sord
 files are reproduced once.

@@ -68,6 +68,9 @@ canonical source.
 
 ### Fixed
 
+- **Sandboxed plugin editors on X11.** Editors open when optional window-manager
+  properties are absent, and closing an editor leaves its host child alive until
+  the plugin is unloaded.
 - **Dropdown keyboard navigation.** Home highlights the first dropdown choice
   instead of seeking the transport. Mastering dropdowns retain keyboard focus
   after a covered native panel closes.
