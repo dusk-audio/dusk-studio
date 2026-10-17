@@ -89,7 +89,8 @@ public:
     bool startRecording (double sampleRate, std::int64_t startSample,
                           int latencyOffsetSamples,
                           const LoopCapturePlan& loopCapturePlan,
-                          PreparedMidiCapture&& prepared);
+                          PreparedMidiCapture&& prepared,
+                          std::optional<std::int64_t> linearMidiEndSample = std::nullopt);
 
     LoopCaptureSpan coordinateLoopCaptureSpan (int passOrdinal,
                                                 std::int64_t transportStartSample,
@@ -122,6 +123,9 @@ public:
                             const float* R,
                             int numSamples,
                             const LoopCaptureSpan* explicitLoopSpan = nullptr) noexcept;
+
+    // Audio thread. A null end removes the linear punch-out boundary.
+    void setLinearMidiCaptureEndSample (std::optional<std::int64_t> endSample) noexcept;
 
     // Audio thread. blockStartFromRecord can be negative during count-in
     // pre-roll; events with negative sample positions are dropped at
@@ -378,6 +382,7 @@ private:
     std::vector<RecordError> lastRecordErrors;
 
     std::int64_t recordStartSample = 0;
+    std::atomic<std::int64_t> linearMidiCaptureLength { -1 };
     double      recordSampleRate  = 0.0;
     float       recordTempoBpm = 0.0f;
 

@@ -20,6 +20,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <initializer_list>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -387,6 +388,142 @@ ScenarioResult eightInputsRecordSeparately (ScenarioContext& ctx)
         for (std::size_t frame = 0; frame < recorded.size(); ++frame)
             if (! ctx.expect (std::abs (recorded[frame] - input[static_cast<std::size_t> (channels - 1 - index)][frame]) < 1.0e-5f,
                               "a take contains another input's signal")) break;
+    }
+    return ctx.verdict();
+}
+
+ScenarioResult midiLinearPunch (ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+    auto& track = session.track (0);
+    const int input = engine.getVirtualKeyboardInputIndex();
+    if (! ctx.expect (input >= 0, "the virtual MIDI input is missing")) return ctx.verdict();
+    ctx.keep (session.tempoBpm);
+    ctx.keep (session.midiMergeEnabled);
+    ctx.keep (session.countInEnabled);
+    ctx.keep (session.preRollEnabled);
+    ctx.keep (session.postRollEnabled);
+    ctx.keep (session.lastRecordPointSamples);
+    ctx.keep (track.mode);
+    ctx.keep (track.midiInputIndex);
+    ctx.keep (track.midiChannel);
+    ctx.keep (track.inputMonitor);
+    ctx.keep (track.frozen);
+    for (int t = 0; t < Session::kNumTracks; ++t)
+    {
+        ctx.keep (session.track (t).recordArmed);
+        session.setTrackArmed (t, false);
+    }
+    ctx.cleanup ([&engine, &session, &track, tempoMap = session.tempoMap,
+                  regions = track.midiRegions.current(), stage = engine.getStage(),
+                  position = transport.getPlayhead(), loop = transport.isLoopEnabled(),
+                  punch = transport.isPunchEnabled(), punchIn = transport.getPunchIn(),
+                  punchOut = transport.getPunchOut()]
+    {
+        engine.stop();
+        engine.getUndoManager().clearUndoHistory();
+        track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (regions));
+        session.tempoMap = tempoMap;
+        engine.publishTempoMap();
+        engine.setStage (stage);
+        auto& restored = engine.getTransport();
+        restored.setPlayhead (position);
+        restored.setLoopEnabled (loop);
+        restored.setPunchRange (punchIn, punchOut);
+        restored.setPunchEnabled (punch);
+    });
+    engine.stop();
+    engine.setStage (AudioEngine::Stage::Recording);
+    session.tempoBpm.store (120.0f, std::memory_order_release);
+    session.tempoMap.clear();
+    engine.publishTempoMap();
+    session.countInEnabled.store (false);
+    session.preRollEnabled.store (false);
+    session.postRollEnabled.store (false);
+    track.mode.store ((int) Track::Mode::Midi);
+    track.midiInputIndex.store (input);
+    track.midiChannel.store (0);
+    track.inputMonitor.store (true);
+    track.frozen.store (false);
+    session.setTrackArmed (0, true);
+    transport.setLoopEnabled (false);
+    transport.setPunchRange (1000, 1500);
+    transport.setPunchEnabled (true);
+    const std::vector<MidiNote> notes { { 1, 60, 100, 2, 8 }, { 1, 64, 90, 4, 2 }, { 1, 72, 80, 9, 1 } };
+    const std::vector<MidiCc> ccs { { 1, 1, 30, 5 }, { 1, 1, 40, 9 } };
+    for (const bool merge : { false, true })
+    {
+        engine.getUndoManager().clearUndoHistory();
+        track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>>());
+        session.midiMergeEnabled.store (merge);
+        transport.setPlayhead (900);
+        engine.record();
+        if (! ctx.expect (transport.isRecording(), "linear MIDI punch did not start")) return ctx.verdict();
+        auto pump = [&ctx, input] (std::initializer_list<std::array<int, 4>> events)
+        {
+            dusk::MidiBuffer midi;
+            for (const auto& event : events)
+            {
+                const std::uint8_t bytes[] { (std::uint8_t) event[0], (std::uint8_t) event[1],
+                                             (std::uint8_t) event[2] };
+                midi.addEvent (bytes, 3, event[3]);
+            }
+            ctx.pumpWithMidi (input, std::move (midi));
+        };
+        pump ({ { 0x90, 67, 100, 50 }, { 0xb0, 1, 20, 50 }, { 0x90, 60, 100, 200 } });
+        pump ({ { 0x90, 64, 90, 44 }, { 0xb0, 1, 30, 94 }, { 0x80, 64, 0, 144 } });
+        pump ({ { 0xb0, 1, 40, 87 }, { 0x90, 72, 80, 87 }, { 0xb0, 1, 50, 88 }, { 0x90, 69, 100, 138 },
+                { 0xb0, 1, 60, 138 }, { 0x80, 60, 0, 188 }, { 0x80, 69, 0, 188 } });
+        ctx.pump (2);
+        engine.serviceMidiRecording();
+        ctx.expect (transport.isRecording(), "punch-out stopped the transport without post-roll");
+        const auto* preview = engine.getRecordManager().midiCapturePreview (0);
+        if (! ctx.expect (preview != nullptr, "the linear MIDI punch has no capture preview")) return ctx.verdict();
+        ctx.expect (preview->lengthInSamples == 500 && preview->notes == notes && preview->ccs == ccs,
+                    "the MIDI preview captured outside punch or extended a held note past punch-out");
+        engine.stop();
+        const auto& regions = track.midiRegions.current();
+        if (! ctx.expect (regions.size() == 1, "linear MIDI punch did not commit one region")) return ctx.verdict();
+        ctx.expect (regions[0].timelineStart == 1000 && regions[0].lengthInSamples == 500
+                    && regions[0].lengthInTicks == 10
+                    && std::is_permutation (regions[0].notes.begin(), regions[0].notes.end(), notes.begin(), notes.end())
+                    && regions[0].ccs == ccs,
+                    "the MIDI punch committed post-roll notes, controls or held-note duration");
+        for (const bool disablePunch : { false, true })
+        {
+            engine.getUndoManager().clearUndoHistory();
+            track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>>());
+            transport.setPunchRange (1000, 1500);
+            transport.setPunchEnabled (true);
+            transport.setPlayhead (900);
+            engine.record();
+            if (! ctx.expect (transport.isRecording(), "the editable MIDI punch did not start"))
+                return ctx.verdict();
+            ctx.pump (2);
+            if (disablePunch) transport.setPunchEnabled (false);
+            else transport.setPunchRange (1000, 1800);
+            pump ({ { 0x90, 69, 100, 138 }, { 0xb0, 1, 60, 138 }, { 0x80, 69, 0, 188 } });
+            ctx.pump (2);
+            engine.serviceMidiRecording();
+            const auto length = disablePunch ? transport.getPlayhead() - 1000 : 800;
+            const std::vector<MidiNote> editedNotes { { 1, 69, 100, 11, 1 } };
+            const std::vector<MidiCc> editedCcs { { 1, 1, 60, 11 } };
+            const auto* editedPreview = engine.getRecordManager().midiCapturePreview (0);
+            ctx.expect (editedPreview != nullptr && editedPreview->lengthInSamples == length
+                        && editedPreview->notes == editedNotes && editedPreview->ccs == editedCcs,
+                        "the MIDI preview ignored the live punch change");
+            engine.stop();
+            const auto& edited = track.midiRegions.current();
+            const auto committedLength = merge ? ticksToSamples (samplesToTicks (length,
+                ScenarioContext::kSampleRate, 120.0f), ScenarioContext::kSampleRate, 120.0f) : length;
+            ctx.expect (edited.size() == 1 && edited[0].lengthInSamples == committedLength
+                        && edited[0].notes == editedNotes && edited[0].ccs == editedCcs,
+                        "the MIDI take ignored the live punch change");
+        }
+        transport.setPunchRange (1000, 1500);
+        transport.setPunchEnabled (true);
     }
     return ctx.verdict();
 }
@@ -1980,6 +2117,9 @@ const ScenarioRegistrar eightInputsRegistrar { Scenario {
 const ScenarioRegistrar midiJsonRegistrar { Scenario {
     "record.midi_embedded_in_json", { "record", "midi", "session" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (midiRecordingLivesInJson, ctx); } } };
+const ScenarioRegistrar midiPunchRegistrar { Scenario {
+    "record.midi_linear_punch", { "record", "midi", "punch", "merge" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (midiLinearPunch, ctx); } } };
 const ScenarioRegistrar fullCoverRegistrar { Scenario {
     "take.full_cover_keeps_the_covered_take", { "take", "record", "undo" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (fullCoverKeepsTheCoveredTake, ctx); } } };

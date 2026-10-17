@@ -68,6 +68,11 @@ canonical source.
 
 ### Fixed
 
+- **MIDI punch-out.** Linear MIDI takes stop capturing at punch-out with MIDI
+  Merge on or off. Post-roll notes and controls stay out of the preview and
+  recorded region, and held notes end at the punch boundary. Turning Punch off
+  or changing punch-out during a take updates MIDI capture at the next block.
+  Notes released after punch-out stay ended if Punch is later switched off.
 - **PDC changes during playback.** Tracks already playing without compensation
   wait for silence before adding delay. Silent and muted tracks adopt the new
   compensation when their audio resumes.

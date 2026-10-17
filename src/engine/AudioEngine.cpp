@@ -2691,9 +2691,13 @@ void AudioEngine::record()
 
     lastBlockWasLoopRecording = false;
 
+    std::optional<std::int64_t> linearMidiEndSample;
+    if (! loopPlan.enabled && transport.isPunchEnabled())
+        linearMidiEndSample = transport.getPunchOut() > transport.getPunchIn()
+            ? transport.getPunchOut() : startSample;
     if (! recordManager.startRecording (sr, startSample,
                                          recordingLatencyOffsetSamples_, loopPlan,
-                                         std::move (preparedMidi)))
+                                         std::move (preparedMidi), linearMidiEndSample))
     {
         std::fprintf (stderr, "[Dusk Studio/AudioEngine] record(): startRecording failed; "
                               "no armed track could be set up (e.g. all frozen, or the take "
@@ -6047,6 +6051,14 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                               ? recordManager.getLoopCapturePlan()
                               : RecordManager::LoopCapturePlan {};
     const bool loopRecordingActive = recordManagerActive && loopRecordPlan.enabled;
+    if (recordManagerActive && ! loopRecordingActive)
+    {
+        std::optional<std::int64_t> midiEnd;
+        if (transport.isPunchEnabled())
+            midiEnd = transport.getPunchOut() > transport.getPunchIn()
+                ? transport.getPunchOut() : activeRecordStart.load (std::memory_order_relaxed);
+        recordManager.setLinearMidiCaptureEndSample (midiEnd);
+    }
     const auto captureTrackMask = recordManagerActive
         ? recordManager.getActiveCaptureTrackMask() : std::uint32_t { 0 };
     const auto midiCaptureTrackMask = recordManagerActive

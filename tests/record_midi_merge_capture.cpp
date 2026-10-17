@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "engine/RecordManager.h"
@@ -157,6 +158,147 @@ TEST_CASE ("RecordManager snapshots MIDI merge mode and previews both capture mo
         REQUIRE (regions[0].notes == std::vector<MidiNote> { { 1, 64, 100, 10, 90 } });
         REQUIRE (regions[0].previousTakes.size() == 1);
         REQUIRE (fixture.manager.getLastCommitDiff().size() == 1);
+    }
+}
+
+TEST_CASE ("RecordManager linear MIDI capture clips preview and commits at punch-out",
+           "[recording][recordmanager][midi][merge][punch]")
+{
+    const bool merge = GENERATE (false, true);
+    const std::int64_t captureEnd = GENERATE (200, 100);
+    CAPTURE (merge, captureEnd);
+    CaptureFixture fixture (merge);
+    auto prepared = fixture.manager.prepareMidiCapture (false);
+    REQUIRE (fixture.manager.startRecording (kSampleRate, 100, 0, {}, std::move (prepared), captureEnd));
+
+    dusk::MidiBuffer first;
+    addMessage (first, 0x90, 60, 100, 10);
+    addMessage (first, 0x90, 64, 100, 20);
+    addMessage (first, 0xb0, 1, 30, 30);
+    fixture.manager.writeMidiBlock (0, first, -20, nullptr, 70);
+    dusk::MidiBuffer crossing;
+    addMessage (crossing, 0xb0, 1, 40, 49);
+    addMessage (crossing, 0x90, 67, 100, 50);
+    addMessage (crossing, 0xb0, 1, 50, 50);
+    addMessage (crossing, 0x90, 69, 100, 70);
+    addMessage (crossing, 0xb0, 1, 60, 70);
+    addMessage (crossing, 0x80, 64, 0, 80);
+    fixture.manager.writeMidiBlock (0, crossing, 50, nullptr, 150);
+    fixture.manager.serviceMidiCapture();
+
+    const auto length = captureEnd - 100;
+    const std::vector<MidiNote> notes = length > 0
+        ? std::vector<MidiNote> { { 1, 64, 100, 0, length } } : std::vector<MidiNote> {};
+    const std::vector<MidiCc> ccs = length > 0
+        ? std::vector<MidiCc> { { 1, 1, 30, 10 }, { 1, 1, 40, 99 } } : std::vector<MidiCc> {};
+    const auto* preview = fixture.manager.midiCapturePreview (0);
+    REQUIRE (preview != nullptr);
+    CHECK (preview->lengthInSamples == length);
+    CHECK (preview->notes == notes);
+    CHECK (preview->ccs == ccs);
+
+    fixture.manager.stopRecording (400);
+    const auto groups = fixture.manager.takeMidiPassGroups();
+    const auto& regions = fixture.session.track (0).midiRegions.current();
+    if (merge)
+    {
+        REQUIRE (groups.size() == 1);
+        REQUIRE (groups[0].tracks.size() == (length > 0 ? 1 : 0));
+        REQUIRE (regions.empty());
+        if (length > 0)
+        {
+            CHECK (groups[0].tracks[0].pass.lengthInSamples == length);
+            CHECK (groups[0].tracks[0].pass.notes == notes);
+            CHECK (groups[0].tracks[0].pass.ccs == ccs);
+        }
+    }
+    else
+    {
+        REQUIRE (groups.empty());
+        REQUIRE (regions.size() == (length > 0 ? 1 : 0));
+        if (length > 0)
+        {
+            CHECK (regions[0].lengthInSamples == length);
+            CHECK (regions[0].notes == notes);
+            CHECK (regions[0].ccs == ccs);
+        }
+    }
+}
+
+TEST_CASE ("RecordManager linear MIDI capture follows punch changes during recording",
+           "[recording][recordmanager][midi][merge][punch]")
+{
+    const bool merge = GENERATE (false, true);
+    const std::int64_t editedEnd = GENERATE (150, 300, -1);
+    CAPTURE (merge, editedEnd);
+    CaptureFixture fixture (merge);
+    auto prepared = fixture.manager.prepareMidiCapture (false);
+    REQUIRE (fixture.manager.startRecording (kSampleRate, 100, 0, {}, std::move (prepared), 200));
+    fixture.manager.writeMidiBlock (0, note (60), 0, nullptr, 150);
+    fixture.manager.serviceMidiCapture();
+    fixture.manager.setLinearMidiCaptureEndSample (editedEnd >= 0
+        ? std::optional<std::int64_t> (editedEnd) : std::nullopt);
+    fixture.manager.writeMidiBlock (0, note (64, 60, 90), 50, nullptr, 200);
+    fixture.manager.serviceMidiCapture();
+    const auto length = editedEnd >= 0 ? editedEnd - 100 : 250;
+    std::vector<MidiNote> expected { { 1, 60, 100, 10, 20 } };
+    if (length > 110) expected.push_back ({ 1, 64, 100, 110, 30 });
+    const auto* preview = fixture.manager.midiCapturePreview (0);
+    REQUIRE (preview != nullptr);
+    CHECK (preview->lengthInSamples == length);
+    CHECK (preview->notes == expected);
+    fixture.manager.stopRecording (350);
+    const auto groups = fixture.manager.takeMidiPassGroups();
+    const auto& regions = fixture.session.track (0).midiRegions.current();
+    if (merge)
+    {
+        REQUIRE (groups.size() == 1);
+        REQUIRE (groups[0].tracks.size() == 1);
+        CHECK (groups[0].tracks[0].pass.lengthInSamples == length);
+        CHECK (groups[0].tracks[0].pass.notes == expected);
+        CHECK (regions.empty());
+    }
+    else
+    {
+        REQUIRE (regions.size() == 1);
+        CHECK (regions[0].lengthInSamples == length);
+        CHECK (regions[0].notes == expected);
+        CHECK (groups.empty());
+    }
+}
+
+TEST_CASE ("RecordManager preserves punch-out note endings when linear capture resumes",
+           "[recording][recordmanager][midi][merge][punch]")
+{
+    const bool merge = GENERATE (false, true);
+    const std::uint8_t releaseStatus = GENERATE (std::uint8_t { 0x80 }, std::uint8_t { 0x90 });
+    CaptureFixture fixture (merge);
+    auto prepared = fixture.manager.prepareMidiCapture (false);
+    REQUIRE (fixture.manager.startRecording (kSampleRate, 100, 0, {}, std::move (prepared), 200));
+    dusk::MidiBuffer held;
+    addMessage (held, 0x90, 60, 100, 10);
+    addMessage (held, releaseStatus, 60, 0, 140);
+    fixture.manager.writeMidiBlock (0, held, 0, nullptr, 200);
+    fixture.manager.serviceMidiCapture();
+    const std::vector<MidiNote> expected { { 1, 60, 100, 10, 90 } };
+    REQUIRE (fixture.manager.midiCapturePreview (0)->notes == expected);
+    fixture.manager.setLinearMidiCaptureEndSample (std::nullopt);
+    fixture.manager.writeMidiBlock (0, {}, 200, nullptr, 50);
+    fixture.manager.serviceMidiCapture();
+    CHECK (fixture.manager.midiCapturePreview (0)->notes == expected);
+    fixture.manager.stopRecording (350);
+    if (merge)
+    {
+        const auto groups = fixture.manager.takeMidiPassGroups();
+        REQUIRE (groups.size() == 1);
+        REQUIRE (groups[0].tracks.size() == 1);
+        CHECK (groups[0].tracks[0].pass.notes == expected);
+    }
+    else
+    {
+        const auto& regions = fixture.session.track (0).midiRegions.current();
+        REQUIRE (regions.size() == 1);
+        CHECK (regions[0].notes == expected);
     }
 }
 

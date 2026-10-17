@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include "engine/MidiCaptureStream.h"
 
@@ -417,6 +418,24 @@ TEST_CASE ("MIDI capture configure resets an earlier gesture including its overf
 TEST_CASE ("MIDI capture retains events before a sample boundary that rounds to the final tick",
            "[recording][midi][capture-stream]")
 {
+    MidiCaptureStream bounded;
+    const bool loop = GENERATE (false, true);
+    bounded.configure ([] (std::int64_t sample) { return (sample + 5) / 10; }, loop ? 50 : 0);
+    bounded.pushEvent (1, 48, 0x90, 60, 100);
+    bounded.pushEvent (1, 49, 0x80, 60, 0);
+    bounded.pushEvent (1, 49, 0x90, 64, 90);
+    bounded.pushEvent (1, 49, 0xe0, 1, 64);
+    bounded.publishProgress (1, 50, false);
+    bounded.service (loop ? -1 : 50);
+    CHECK (bounded.preview().lengthInTicks == 5);
+    CHECK (bounded.preview().notes == std::vector<MidiNote> {
+        { 1, 60, 100, 4, 1 }, { 1, 64, 90, 4, 1 } });
+    CHECK (bounded.preview().ccs == std::vector<MidiCc> {
+        { 1, 0, 8193, 4, MidiCc::Kind::PitchBend } });
+    bounded.publishProgress (1, 50, false);
+    bounded.service (loop ? -1 : 50);
+    CHECK (bounded.preview().notes[1] == MidiNote { 1, 64, 90, 4, 1 });
+
     MidiCaptureStream stream;
     stream.configure ([] (std::int64_t sample) { return (sample + 5) / 10; });
     stream.pushEvent (1, 48, 0x90, 60, 100);

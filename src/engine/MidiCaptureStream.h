@@ -53,7 +53,7 @@ public:
     bool publishProgress (int passOrdinal, std::int64_t endSample,
                           bool complete) noexcept;
 
-    bool service();
+    bool service (std::int64_t linearCaptureLength = -1);
     void sealFinal (int passOrdinal, std::int64_t endSample);
     std::vector<MidiCapturedPass> takeCompleted();
     const MidiCapturePreview& preview() const noexcept { return previewSnapshot; }
@@ -102,6 +102,7 @@ private:
 
     SampleToTick sampleToTick;
     std::int64_t loopLength = 0;
+    std::int64_t linearPreviewLength = -1;
     MidiCapturedPass current;
     std::vector<NoteBounds> noteBounds;
     std::vector<std::int64_t> controlSamples;
