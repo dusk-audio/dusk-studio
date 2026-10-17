@@ -292,6 +292,8 @@ endif()
 # CMakeLists and shared with the app target.
 target_sources(dusk-studio-tests PRIVATE
     fft_pffft_parity.cpp
+    phase_analyzer.cpp
+    ${CMAKE_SOURCE_DIR}/src/dsp/PhaseAnalyzer.cpp
     ${CMAKE_SOURCE_DIR}/src/foundation/Fft.cpp)
 target_link_libraries(dusk-studio-tests PRIVATE dusk-pffft)
 
