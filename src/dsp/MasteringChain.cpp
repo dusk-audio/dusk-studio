@@ -44,6 +44,7 @@ void MasteringChain::prepare (double sampleRate, int blockSize, int oversampling
     limiter.reset();
 
     loudnessMeter.prepare (sampleRate, bs);
+    phaseFeed.prepare (sampleRateForMeter);
 
     // Scope ring: power-of-two, large enough that a single FFT window (2048)
     // is rarely overwritten mid-copy even at large block sizes.
@@ -175,7 +176,7 @@ void MasteringChain::updateLimiterParameters() noexcept
     limiter.setStereoLink (paramsRef->limiterStereoLink.load (std::memory_order_relaxed));
 }
 
-void MasteringChain::processInPlace (float* L, float* R, int numSamples) noexcept
+void MasteringChain::processInPlace (float* L, float* R, int numSamples, bool capturePhase) noexcept
 {
     dusk::audio::ScopedNoDenormals noDenormals;
 
@@ -187,6 +188,7 @@ void MasteringChain::processInPlace (float* L, float* R, int numSamples) noexcep
     jassert (numSamples <= preparedBlockSize);
     if (numSamples > preparedBlockSize)
     {
+        phaseFeed.markDiscontinuity();
         std::memset (L, 0, sizeof (float) * (size_t) numSamples);
         std::memset (R, 0, sizeof (float) * (size_t) numSamples);
         return;
@@ -225,6 +227,11 @@ void MasteringChain::processInPlace (float* L, float* R, int numSamples) noexcep
 
     updateLimiterParameters();
     limiter.processInPlace (L, R, numSamples);
+
+    if (capturePhase)
+        phaseFeed.push (L, R, numSamples);
+    else
+        phaseFeed.markDiscontinuity();
 
     if (paramsRef != nullptr)
         paramsRef->meterLimiterGrDb.store (limiter.getCurrentGrDb(),

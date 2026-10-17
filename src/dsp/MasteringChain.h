@@ -6,6 +6,7 @@
 #include "BrickwallLimiter.h"
 #include "LoudnessMeter.h"
 #include "MasteringDigitalEq.h"
+#include "PhaseAnalysisFeed.h"
 #include "../session/Session.h"
 
 #if DUSKSTUDIO_HAS_DUSK_DSP
@@ -30,7 +31,9 @@ public:
     void prepare (double sampleRate, int blockSize, int oversamplingFactor = 1);
     void bind (const MasteringParams& params) noexcept;
 
-    void processInPlace (float* L, float* R, int numSamples) noexcept;
+    void processInPlace (float* L, float* R, int numSamples, bool capturePhase = true) noexcept;
+
+    PhaseAnalysisFeed& getPhaseFeed() noexcept { return phaseFeed; }
 
     // Reset the integrated LUFS history - used when the user clicks
     // "Reset" in the mastering view, or when a new mix is loaded so the
@@ -76,6 +79,7 @@ private:
     BrickwallLimiter      limiter;
     LoudnessMeter         loudnessMeter;
     MasteringDigitalEq    digitalEq;   // replaces the Tube EQ in the master strip
+    PhaseAnalysisFeed     phaseFeed;
 
     void updateEqParameters() noexcept;
     void updateLimiterParameters() noexcept;
