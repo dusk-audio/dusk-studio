@@ -656,17 +656,23 @@ std::optional<ScenarioResult> runMasteringPhasePanel (GuiHost& host, ScenarioCon
                             && report->broadband.minimumCorrelation < -0.99,
                             "native child recreation lost held phase evidence");
             }, [&host] { return host.masteringPanelsOpen() == 3; }, "mastering children did not reopen" });
-            const auto click = [&] (std::string control, float position = 0.5f)
+            const auto click = [&] (std::string control, float position = 0.5f, int modifiers = 0)
             {
-                steps->push_back ({ 100, [&host, &ctx, control, position]
-                { ctx.expect (host.masteringPhasePointer (control, position, true), "phase press unavailable: " + control); } });
-                steps->push_back ({ 100, [&host, &ctx, control, position]
-                { ctx.expect (host.masteringPhasePointer (control, position, false), "phase release unavailable: " + control); } });
+                steps->push_back ({ 100, [&host, &ctx, control, position, modifiers]
+                { ctx.expect (host.masteringPhasePointer (control, position, true, modifiers), "phase press unavailable: " + control); } });
+                steps->push_back ({ 100, [&host, &ctx, control, position, modifiers]
+                { ctx.expect (host.masteringPhasePointer (control, position, false, modifiers), "phase release unavailable: " + control); } });
             };
             click ("mode");
             steps->push_back ({ 100, [&host, &ctx]
             { ctx.expect (host.pressPeerKey ("escape"), "Phase menu did not keep Escape"); },
-                               [&host] { return host.masteringPhaseCapturesKeyboard(); }, "Phase menu never opened" });
+                               [&host]
+            {
+               #if defined (__APPLE__)
+                if (! host.masteringPhaseHasKeyboard()) return false;
+               #endif
+                return host.masteringPhaseCapturesKeyboard();
+            }, "Phase menu never captured the keyboard" });
             steps->push_back ({ 100, [] {}, [&host] { return ! host.masteringPhaseCapturesKeyboard(); },
                                "Escape left the Phase menu active" });
             click ("mono");
@@ -684,9 +690,9 @@ std::optional<ScenarioResult> runMasteringPhasePanel (GuiHost& host, ScenarioCon
             click ("averaging", 1.0f);
             steps->push_back ({ 200, [&host, &ctx]
             {
-                const auto settings = ctx.session().mastering().phase.snapshot();
-                ctx.expect (settings.bands == 64 && std::abs (settings.q - 8.0f) < 1.0e-5f
-                            && std::abs (settings.averagingMs - 5000.0f) < 1.0e-3f,
+                const auto& settings = ctx.session().mastering().phase;
+                ctx.expect (settings.bands.load() == 64 && std::abs (settings.q.load() - 8.0f) < 1.0e-5f
+                            && std::abs (settings.averagingMs.load() - 5000.0f) < 1.0e-3f,
                             "native Phase controls did not reach their documented upper bounds");
                 ctx.expect (host.masteringPanelsOpen() == 3, "Phase interaction closed a native module");
             }, [&host]
@@ -696,6 +702,30 @@ std::optional<ScenarioResult> runMasteringPhasePanel (GuiHost& host, ScenarioCon
                     && std::abs (report->settings.q - 8.0f) < 1.0e-5f
                     && std::abs (report->settings.averagingMs - 5000.0f) < 1.0e-3f;
             }, "the host analyzer did not follow the native settings" });
+            click ("q", 0.5f, 2);
+            steps->push_back ({ 100, [&host, &ctx]
+            {
+                // Clear the field's initial selection so Select All must reach it.
+                ctx.expect (host.pressPeerKey ("cursor right"), "Q entry did not keep Right");
+            }, [&host]
+            {
+               #if defined (__APPLE__)
+                if (! host.masteringPhaseHasKeyboard()) return false;
+               #endif
+                return host.masteringPhaseCapturesKeyboard();
+            }, "Q text entry never captured the keyboard" });
+            steps->push_back ({ 100, [&host, &ctx]
+            { ctx.expect (host.pressPeerKey (commandChord ('A')), "Q entry did not keep Select All"); } });
+            steps->push_back ({ 100, [&host, &ctx]
+            { ctx.expect (host.typeInMasteringPhase ("3.5"), "Q entry did not accept text"); } });
+            steps->push_back ({ 100, [&host, &ctx]
+            { ctx.expect (host.pressPeerKey ("return"), "Q entry did not keep Return"); } });
+            steps->push_back ({ 200, [&host, &ctx]
+            {
+                ctx.expect (std::abs (ctx.session().mastering().phase.q.load() - 3.5f) < 1.0e-5f,
+                            "parent-routed Select All and Return did not commit Q text");
+                ctx.expect (host.masteringPanelsOpen() == 3, "Q entry closed a native module");
+            }, [&host] { return ! host.masteringPhaseCapturesKeyboard(); }, "Q entry kept the keyboard after Return" });
             runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
         }, "live mastering never produced a valid negative correlation and sticky warning");
     }, "the native mastering panels never opened");

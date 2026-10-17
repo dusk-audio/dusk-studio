@@ -411,9 +411,11 @@ public:
     virtual bool clickMasteringTarget() = 0;
     // The multiband comp's preset picker; false when this build lays out none.
     virtual bool clickMasteringCompPreset() = 0;
-    virtual bool masteringPhasePointer (const std::string& control, float position, bool pressed) = 0;
+    virtual bool masteringPhasePointer (const std::string& control, float position, bool pressed, int modifiers = 0) = 0;
     virtual void resetMasteringPhasePanel() = 0;
     virtual bool masteringPhaseCapturesKeyboard() const = 0;
+    virtual bool masteringPhaseHasKeyboard() const = 0;
+    virtual bool typeInMasteringPhase (const std::string& text) = 0;
     virtual const PhaseAnalyzer::Report* masteringPhaseReport() const = 0;
     virtual bool clickMasteringModulePicker() = 0;
     virtual bool masteringModulePickerShown() const = 0;

@@ -2061,10 +2061,10 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
             view, view->compPresetPointForScenario()).toFloat();
         return clickAt (point.x, point.y, 1);
     }
-    bool masteringPhasePointer (const std::string& control, float position, bool pressed) override
+    bool masteringPhasePointer (const std::string& control, float position, bool pressed, int modifiers) override
     {
         return owner.masteringView != nullptr
-            && owner.masteringView->phasePointerForScenario (control, position, pressed);
+            && owner.masteringView->phasePointerForScenario (control, position, pressed, modifiers);
     }
     void resetMasteringPhasePanel() override
     {
@@ -2073,6 +2073,14 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     bool masteringPhaseCapturesKeyboard() const override
     {
         return owner.masteringView != nullptr && owner.masteringView->phaseCapturesKeyboardForScenario();
+    }
+    bool masteringPhaseHasKeyboard() const override
+    {
+        return owner.masteringView != nullptr && owner.masteringView->phaseHasKeyboardForScenario();
+    }
+    bool typeInMasteringPhase (const std::string& text) override
+    {
+        return owner.masteringView != nullptr && owner.masteringView->phaseTypeForScenario (text);
     }
     const PhaseAnalyzer::Report* masteringPhaseReport() const override
     {
