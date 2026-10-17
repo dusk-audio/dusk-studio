@@ -14,9 +14,11 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <charconv>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <system_error>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -320,7 +322,7 @@ std::optional<KeyChord> parseKeyDescription (const std::string& description)
     };
 
     KeyChord chord;
-    const auto name = parts.back();
+    auto name = parts.back();
     parts.pop_back();
     for (const auto& part : parts)
     {
@@ -331,6 +333,16 @@ std::optional<KeyChord> parseKeyDescription (const std::string& description)
         else if (modifier == "command" || modifier == "cmd")
             (commandIsSuper() ? chord.super : chord.ctrl) = true;
         else return std::nullopt;
+    }
+
+    if (name.size() > 1 && name.front() == '#')
+    {
+        unsigned int code = 0;
+        const auto* end = name.data() + name.size();
+        const auto parsed = std::from_chars (name.data() + 1, end, code, 16);
+        if (parsed.ec != std::errc {} || parsed.ptr != end || code > 0x7f)
+            return std::nullopt;
+        name.assign (1, static_cast<char> (code));
     }
 
     if (name.size() == 1)
@@ -1101,6 +1113,14 @@ bool DuskPanelWindow::keyboardFocusForScenario (bool focused)
 {
     if (! isOpen() || impl->panelWidget == nullptr) return false;
     impl->panelWidget->focusForScenario (focused);
+    return true;
+}
+bool DuskPanelWindow::focusForScenario()
+{
+    if (! isOpen() || impl->panelWidget == nullptr || impl->host.window() == nullptr) return false;
+    impl->host.window()->focus();
+    impl->panelWidget->focusForScenario (true);
+    impl->panelWidget->noteScenarioInput();
     return true;
 }
 bool DuskPanelWindow::hasKeyboardForScenario() const noexcept

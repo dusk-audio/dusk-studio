@@ -1781,7 +1781,11 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     }
     bool focusPiano() override
     {
-        return clickPianoControl ("at:3,3");
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        return owner.pianoRollShowing() && owner.pianoRollWindow->focusForScenario();
+       #else
+        return false;
+       #endif
     }
     std::array<int, 4> pianoOptions() const override
     {

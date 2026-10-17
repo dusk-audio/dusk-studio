@@ -221,6 +221,7 @@ public:
     // Tells the child it gained or lost the keyboard, as the platform does when the
     // focus moves.
     bool keyboardFocusForScenario (bool focused);
+    bool focusForScenario();
     bool hasKeyboardForScenario() const noexcept;
     bool capturesKeyboardForScenario() const noexcept;
     // How often a field or menu opening has asked the system to focus the child.

@@ -962,7 +962,11 @@ private:
         else if (input.command)
         {
             const auto tick = tickForX (p.x);
-            pixelsPerTick = std::clamp (pixelsPerTick * wheel::zoomFactor (input.vertical, input.smooth, 1.15f), 0.005f, 1.0f);
+            const auto* r = region();
+            const float minimum = r != nullptr && r->lengthInTicks > 0
+                ? std::min (0.005f, grid.w / (float) r->lengthInTicks) : 0.005f;
+            pixelsPerTick = std::clamp (pixelsPerTick * wheel::zoomFactor (input.vertical, input.smooth, 1.15f),
+                                       std::min (pixelsPerTick, minimum), 1.0f);
             scrollX = static_cast<int> (std::clamp (static_cast<double> (tick) * pixelsPerTick - (p.x - kKeyboardWidth),
                        0.0, static_cast<double> (std::numeric_limits<int>::max())));
         }
@@ -1777,9 +1781,7 @@ void PianoRollViewImpl::zoomFit()
 {
     const auto* r = region();
     if (r == nullptr || r->lengthInTicks <= 0) return;
-    const int gridW = std::max (200, width - kKeyboardWidth - 8);
-    pixelsPerTick = limited (0.005f, 1.0f,
-                                       (float) gridW / (float) r->lengthInTicks);
+    pixelsPerTick = std::min (1.0f, (float) grid.w / (float) r->lengthInTicks);
     scrollX = 0;
 }
 
@@ -1790,7 +1792,10 @@ void PianoRollViewImpl::zoomByFactor (float factor)
     const int viewportW = std::max (1, width - gridLeft);
     const int centreX = gridLeft + viewportW / 2;
     const auto centreTickBefore = tickForX (centreX);
-    pixelsPerTick = limited (0.005f, 1.0f, pixelsPerTick * factor);
+    const auto* r = region();
+    const float minimum = r != nullptr && r->lengthInTicks > 0
+        ? std::min (0.005f, grid.w / (float) r->lengthInTicks) : 0.005f;
+    pixelsPerTick = limited (std::min (pixelsPerTick, minimum), 1.0f, pixelsPerTick * factor);
     const int newCentrePx = (int) std::round ((double) centreTickBefore * pixelsPerTick);
     scrollX = std::max (0, newCentrePx - (centreX - gridLeft));
 }

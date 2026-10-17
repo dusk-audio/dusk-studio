@@ -75,6 +75,8 @@ canonical source.
   Notes released after punch-out stay ended if Punch is later switched off.
 - **Malformed SFZ artwork.** JPEG marker errors, incomplete component scans and
   premature scan ends are rejected instead of rendering uninitialized pixels.
+- **Piano roll controls.** Zoom Fit fits long regions to the full grid width,
+  and shifted bracket shortcuts work with hexadecimal window key codes.
 - **PDC changes during playback.** Tracks already playing without compensation
   wait for silence before adding delay. Silent and muted tracks adopt the new
   compensation when their audio resumes.

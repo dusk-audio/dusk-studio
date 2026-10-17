@@ -353,6 +353,54 @@ std::optional<ScenarioResult> runPianoViewport (GuiHost& host, ScenarioContext& 
         ctx.expect (std::abs (after[1]) < 0.1, "Zoom fit did not return to the region start");
         ctx.expect (std::abs (after[0] * 100000.0 - after[3]) < 1.0, "Zoom fit did not fit the whole region");
     } });
+    steps->push_back ({ 150, [&host, &ctx, &session, &engine]
+    {
+        auto regions = session.track (0).midiRegions.current();
+        regions[0].lengthInTicks = 1000000;
+        regions[0].lengthInSamples = session.ticksToSamples (regions[0].lengthInTicks,
+                                                           engine.getCurrentSampleRate());
+        session.track (0).midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (std::move (regions)));
+        ctx.expect (host.clickPianoFit(), "Zoom fit button was not clicked for the long region");
+    } });
+    steps->push_back ({ 150, [&host, &ctx]
+    {
+        const auto after = host.pianoViewport();
+        ctx.expect (std::abs (after[0] * 1000000.0 - after[3]) < 1.0,
+                    "Zoom fit stopped at the minimum manual zoom before fitting the long region");
+        ctx.expect (host.pressPeerKey ("-", '-'), "zoom-out key was not handled after fitting the long region");
+    } });
+    steps->push_back ({ 150, [&host, &ctx]
+    {
+        const auto after = host.pianoViewport();
+        ctx.expect (std::abs (after[0] * 1000000.0 - after[3]) < 1.0,
+                    "zooming out enlarged the fitted long region");
+        ctx.expect (host.scrollPiano (notch (1.0f), true, false, false), "zoom wheel was not handled after fitting");
+    } });
+    steps->push_back ({ 150, [&host, &ctx, &session, &engine, before]
+    {
+        const auto after = host.pianoViewport();
+        ctx.expect (std::abs (after[0] * 1000000.0 / after[3] - 1.15) < 0.001,
+                    "the zoom wheel jumped to the manual minimum after fitting the long region");
+        *before = after;
+        auto regions = session.track (0).midiRegions.current();
+        regions[0].lengthInTicks = 500000;
+        regions[0].lengthInSamples = session.ticksToSamples (regions[0].lengthInTicks,
+                                                           engine.getCurrentSampleRate());
+        session.track (0).midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (std::move (regions)));
+    } });
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (host.pressPeerKey ("-", '-'), "zoom-out key was not handled after shortening the region"); } });
+    steps->push_back ({ 150, [&host, &ctx, before]
+    {
+        ctx.expect (std::abs (host.pianoViewport()[0] - (*before)[0]) < 1.0e-9,
+                    "zooming out enlarged the view after shortening the region");
+        ctx.expect (host.scrollPiano (notch (-1.0f), true, false, false), "zoom-out wheel was not handled");
+    } });
+    steps->push_back ({ 150, [&host, &ctx, before]
+    {
+        ctx.expect (std::abs (host.pianoViewport()[0] - (*before)[0]) < 1.0e-9,
+                    "the zoom-out wheel enlarged the view after shortening the region");
+    } });
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
 }
@@ -409,7 +457,7 @@ std::optional<ScenarioResult> runPianoWheelSizes (GuiHost& host, ScenarioContext
         wheel::setProfileForScenario (wheel::kMacProfile);
         *before = pitch();
         wheelOf (-wheel::kMacProfile.lineNotchDelta, false, false, 1);
-    }, [&host] { return host.pianoRollOpen(); }, "the piano roll did not come up" });
+    }, [&host] { return host.pianoRollOpen() && host.pianoViewport()[3] > 0.0; }, "the piano roll did not come up" });
     steps->push_back ({ 0, [&ctx, pitch, before, wheelOf]
     {
         ctx.expect (pitch() - *before >= kKeyH, "a macOS wheel click scrolled the piano roll less than a key");
@@ -2038,8 +2086,15 @@ std::optional<ScenarioResult> runMidiActivityLed (GuiHost& host, ScenarioContext
         return ctx.verdict();
     auto seen = std::make_shared<bool> (false);
     auto steps = std::make_shared<std::vector<Step>>();
-    steps->push_back ({ 300, [strip, &ctx]
-    { ctx.expect (strip->midiActivityVisible(), "the MIDI input activity LED is not visible"); } });
+    steps->push_back ({ 300, [strip, &ctx, &engine, &track]
+    {
+        ctx.expect (strip->midiActivityVisible(), "the MIDI input activity LED is not visible");
+        ctx.expect (engine.isAudioCallbackRegistered() && ! engine.isProcessingSuspended(),
+                    "the MIDI activity fixture has no active audio callback");
+        ctx.expect (track.midiInputIndex.load() == engine.getVirtualKeyboardInputIndex()
+                        && track.midiChannel.load() == 1,
+                    "the MIDI activity fixture lost its input route");
+    } });
     for (const bool matching : { false, true })
     {
         steps->push_back ({ 100, [seen] { *seen = false; } });
@@ -2204,13 +2259,15 @@ std::optional<ScenarioResult> runPianoLoopKeysWithoutDevice (GuiHost& host, Scen
     steps->push_back ({ 150, [press] { press (2880, "shift + " + keyCodeDescription ('{')); } });
     steps->push_back ({ 150, [click] { click (4800); } });
     steps->push_back ({ 150, [press] { press (4800, "shift + " + keyCodeDescription ('}')); } });
-    steps->push_back ({ 150, [&ctx, &transport, sampleAt]
+    steps->push_back ({ 150, [&host, &ctx, &transport, sampleAt]
     {
         ctx.expect (transport.getPunchIn() == sampleAt (2880) && transport.getPunchOut() == sampleAt (4800)
                         && transport.isPunchEnabled(),
                     "Shift+[ and Shift+] left the punch at " + std::to_string (transport.getPunchIn()) + " to "
                         + std::to_string (transport.getPunchOut()) + ", not " + std::to_string (sampleAt (2880))
                         + " to " + std::to_string (sampleAt (4800)));
+        for (const auto* invalid : { "#", "#7bz", "#100000000", "#80", "#-1" })
+            ctx.expect (! host.pressPianoRollKey (invalid), "the piano roll accepted malformed key " + std::string (invalid));
     } });
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
