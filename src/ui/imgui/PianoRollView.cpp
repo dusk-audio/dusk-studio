@@ -1638,7 +1638,7 @@ void PianoRollViewImpl::stepRecordNoteOn (int noteNumber, int velocity)
     }
 
     const auto nowPlayhead = engine.getTransport().getPlayhead();
-    if (nowPlayhead - r->timelineStart < 0) return;   
+    if (nowPlayhead - r->timelineStart < 0) return;
     const auto regStartTick = session.samplesToTicks (r->timelineStart, sr);
     const std::int64_t startTick = session.samplesToTicks (nowPlayhead, sr) - regStartTick;
     const MidiRegion before = *r;
