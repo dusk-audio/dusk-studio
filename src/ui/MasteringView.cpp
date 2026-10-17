@@ -586,6 +586,47 @@ bool MasteringView::offerPhaseKey (const std::string& description, std::uint32_t
    #endif
 }
 
+bool MasteringView::phaseKeyForScenario (const std::string& description)
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    return phaseWindow != nullptr && phaseWindow->hasKeyboardForScenario()
+        && phaseCapturesKeyboardForScenario() && phaseWindow->inputForScenario (description);
+   #else
+    (void) description;
+    return false;
+   #endif
+}
+
+bool MasteringView::phaseCapturesKeyboardForScenario() const
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    return phaseProxy.isShowing() && phaseWindow != nullptr && phaseWindow->capturesKeyboardForScenario();
+   #else
+    return false;
+   #endif
+}
+
+void MasteringView::resetPhasePanelForScenario()
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    phaseWindow.reset();
+    scheduleNativePanelSync();
+   #endif
+}
+
+bool MasteringView::phasePointerForScenario (const std::string& control, float position, bool pressed)
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    return phaseProxy.isShowing() && phaseWindow != nullptr
+        && phaseWindow->pointerControlForScenario (control, position, pressed);
+   #else
+    (void) control;
+    (void) position;
+    (void) pressed;
+    return false;
+   #endif
+}
+
 std::vector<MasteringView::NativePanelCapture>
 MasteringView::captureNativePanels (const juce::File& dir)
 {

@@ -520,6 +520,8 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
 
     bool pressKey (const std::string& description, char text) override
     {
+        if (owner.masteringView != nullptr && owner.masteringView->phaseKeyForScenario (description))
+            return true;
        #if DUSKSTUDIO_HAS_NATIVE_UI
         if (owner.pianoRollShowing() && owner.pianoRoll->capturesKeyboard()
             && owner.pianoRollWindow->hasKeyboardForScenario())
@@ -830,6 +832,8 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     }
     bool holdPeerKey (const std::string& description, char text) override
     {
+        if (owner.masteringView != nullptr && owner.masteringView->phaseKeyForScenario (description))
+            return true;
        #if DUSKSTUDIO_HAS_NATIVE_UI
         if (owner.pianoRollShowing() && owner.pianoRoll->capturesKeyboard()
             && owner.pianoRollWindow->hasKeyboardForScenario())
@@ -1742,6 +1746,15 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         window->setSize (width, height);
         return window->getWidth() == width && window->getHeight() == height;
     }
+    bool setMainWindowMinimumWidth (int width) override
+    {
+        auto* window = owner.getTopLevelComponent();
+        auto* peer = window != nullptr ? window->getPeer() : nullptr;
+        auto* limits = peer != nullptr ? peer->getConstrainer() : nullptr;
+        if (limits == nullptr) return false;
+        limits->setMinimumWidth (std::max (1, width));
+        return true;
+    }
     int tapeExpansionState() const override
     {
         const bool displayed = owner.tapeStrip->isVisible() && ! owner.tapeStrip->getBounds().isEmpty();
@@ -2047,6 +2060,42 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         const auto point = owner.getTopLevelComponent()->getLocalPoint (
             view, view->compPresetPointForScenario()).toFloat();
         return clickAt (point.x, point.y, 1);
+    }
+    bool masteringPhasePointer (const std::string& control, float position, bool pressed) override
+    {
+        return owner.masteringView != nullptr
+            && owner.masteringView->phasePointerForScenario (control, position, pressed);
+    }
+    void resetMasteringPhasePanel() override
+    {
+        if (owner.masteringView != nullptr) owner.masteringView->resetPhasePanelForScenario();
+    }
+    bool masteringPhaseCapturesKeyboard() const override
+    {
+        return owner.masteringView != nullptr && owner.masteringView->phaseCapturesKeyboardForScenario();
+    }
+    const PhaseAnalyzer::Report* masteringPhaseReport() const override
+    {
+        return owner.masteringView != nullptr ? &owner.masteringView->phaseReportForScenario() : nullptr;
+    }
+    bool clickMasteringModulePicker() override
+    {
+        auto* view = owner.masteringView.get();
+        if (view == nullptr || ! view->compactModuleShownForScenario()) return false;
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (view, view->compactModulePointForScenario()).toFloat();
+        return clickAt (point.x, point.y, 1);
+    }
+    bool masteringModulePickerShown() const override
+    {
+        return owner.masteringView != nullptr && owner.masteringView->compactModuleShownForScenario();
+    }
+    int masteringModuleIndex() const override
+    {
+        return owner.masteringView != nullptr ? owner.masteringView->compactModuleIndexForScenario() : -1;
+    }
+    void restoreMasteringModule (int index) override
+    {
+        if (owner.masteringView != nullptr) owner.masteringView->restoreCompactModuleForScenario (index);
     }
     int masteringPanelsOpen() const override
     {

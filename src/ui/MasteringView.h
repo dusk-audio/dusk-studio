@@ -91,6 +91,15 @@ public:
     // no native panels to open.
     int nativePanelsOpenForScenario() const;
     bool offerPhaseKey (const std::string& description, std::uint32_t character);
+    bool phaseKeyForScenario (const std::string& description);
+    bool phaseCapturesKeyboardForScenario() const;
+    void resetPhasePanelForScenario();
+    bool phasePointerForScenario (const std::string& control, float position, bool pressed);
+    const PhaseAnalyzer::Report& phaseReportForScenario() const { return phaseAnalyzer.report(); }
+    bool compactModuleShownForScenario() const { return compactPanelCombo.isShowing(); }
+    int compactModuleIndexForScenario() const { return compactPanelCombo.getSelectedId() - 1; }
+    auto compactModulePointForScenario() const { return compactPanelCombo.getBounds().getCentre(); }
+    void restoreCompactModuleForScenario (int index) { compactPanelCombo.setSelectedId (index + 1); resized(); }
     std::string targetTextForScenario() const { return masteringTargetCombo.getText().toStdString(); }
     void restoreTargetForScenario (int index) { masteringTargetCombo.setSelectedId (index + 1); }
     std::string loudnessTextForScenario (bool peak) const
