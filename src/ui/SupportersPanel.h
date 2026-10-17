@@ -84,11 +84,14 @@ private:
         std::vector<Tier> tiers() const
         {
             return {
-                { "CHAMPIONS",       &PatreonCredits::champions,      juce::Colour (0xffffd700), false },
-                { "PATRONS",         &PatreonCredits::patrons,        juce::Colour (0xff00aaff), false },
-                { "SUPPORTERS",      &PatreonCredits::supporters,     juce::Colour (0xff6ac47e), false },
-                { "HUGS",            &PatreonCredits::hugs,           juce::Colour (0xffc08ad0), false },
-                { "PAST SUPPORTERS", &PatreonCredits::pastSupporters, juce::Colour (0xff606060), true  },
+                // Array names predate the current tiers; see the plugins'
+                // scripts/update-patrons.py TIERS for the mapping. hugs is
+                // retired (always empty) but still drawn for older donor pins.
+                { "PATRONS",             &PatreonCredits::champions,      juce::Colour (0xffffd700), false },
+                { "SUPPORTERS",          &PatreonCredits::patrons,        juce::Colour (0xff00aaff), false },
+                { "FOUNDING SUPPORTERS", &PatreonCredits::supporters,     juce::Colour (0xff6ac47e), false },
+                { "FOUNDING SUPPORTERS", &PatreonCredits::hugs,           juce::Colour (0xff6ac47e), false },
+                { "PAST SUPPORTERS",     &PatreonCredits::pastSupporters, juce::Colour (0xff606060), true  },
             };
         }
 
