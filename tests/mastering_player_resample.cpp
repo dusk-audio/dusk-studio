@@ -57,10 +57,21 @@ TEST_CASE ("MasteringPlayer resamples a source whose rate differs from the devic
     juce::int64 deviceSamples = 0;
     const juce::int64 hardCap = 10 * (juce::int64) deviceRate;
     const auto expected = (juce::int64) std::llround ((double) kSourceLen * deviceRate / kSourceRate);
+    std::int64_t expectedStart = 0;
+    std::uint64_t revision = 0;
     while (player.isPlaying() && deviceSamples < hardCap)
     {
         REQUIRE (player.primeOfflineBlock (kBlock));
-        player.process (outL.data(), outR.data(), kBlock);
+        const auto block = player.process (outL.data(), outR.data(), kBlock);
+        REQUIRE (block.stable);
+        REQUIRE (block.playing);
+        REQUIRE (block.completeSourceRead);
+        REQUIRE (block.sourceStart == expectedStart);
+        REQUIRE (block.sourceEnd == player.getPlayhead());
+        REQUIRE (block.sourceEnd >= block.sourceStart);
+        if (deviceSamples == 0) revision = block.revision;
+        REQUIRE (block.revision == revision);
+        expectedStart = block.sourceEnd;
         if (deviceSamples + kBlock < expected - kBlock)
         {
             for (const auto* samples : { outL.data(), outR.data() })

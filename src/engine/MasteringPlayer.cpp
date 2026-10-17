@@ -46,6 +46,7 @@ bool MasteringPlayer::parkAndWaitForAudio()
 
 void MasteringPlayer::prepare (int maxBlockSize, double deviceSampleRate)
 {
+    ControlChangeScope change (*this);
     const bool drained = parkAndWaitForAudio();
     if (drained)
         retiredReader.reset();
@@ -85,6 +86,7 @@ void MasteringPlayer::updateResampleState()
 
 bool MasteringPlayer::loadFile (const juce::File& file)
 {
+    ControlChangeScope change (*this);
     // Closes the current file first, so a load that fails below doesn't
     // leave it open either.
     unloadFile();
@@ -120,6 +122,7 @@ bool MasteringPlayer::loadFile (const juce::File& file)
 
 void MasteringPlayer::unloadFile()
 {
+    ControlChangeScope change (*this);
     playing.store (false, std::memory_order_relaxed);
     loadedFile = juce::File();
     ++sourceGeneration;
@@ -170,13 +173,23 @@ void MasteringPlayer::finishOfflineRender()
     }
 }
 
-void MasteringPlayer::process (float* L, float* R, int numSamples) noexcept
+MasteringPlayer::BlockInfo MasteringPlayer::process (float* L, float* R, int numSamples) noexcept
 {
-    if (L == nullptr || R == nullptr) return;
+    if (L == nullptr || R == nullptr || numSamples <= 0) return {};
+    BlockInfo info;
+    info.revision = controlRevision.load (std::memory_order_seq_cst);
+    const bool stableAtEntry = controlsInFlight.load (std::memory_order_seq_cst) == 0;
+    const auto finish = [&]() noexcept
+    {
+        info.stable = stableAtEntry && controlsInFlight.load (std::memory_order_seq_cst) == 0
+                      && controlRevision.load (std::memory_order_seq_cst) == info.revision;
+        return info;
+    };
     std::memset (L, 0, sizeof (float) * (size_t) numSamples);
     std::memset (R, 0, sizeof (float) * (size_t) numSamples);
 
-    if (! playing.load (std::memory_order_relaxed)) return;
+    info.playing = playing.load (std::memory_order_relaxed);
+    if (! info.playing) return finish();
 
     // Bump BEFORE loading currentReader: parkAndWaitForAudio clears the
     // pointer then drains this counter, so a block that got past the null
@@ -187,17 +200,26 @@ void MasteringPlayer::process (float* L, float* R, int numSamples) noexcept
     // acquires the publishing release-stores and is seq_cst for the park's
     // handshake (see audioInFlight).
     auto* r = currentReader.load (std::memory_order_seq_cst);
-    if (r == nullptr) return;
+    if (r == nullptr)
+    {
+        info.completeSourceRead = false;
+        return finish();
+    }
 
     const std::int64_t start  = playhead.load (std::memory_order_relaxed);
+    info.sourceStart = info.sourceEnd = start;
     const std::int64_t length = r->info().numFrames;
     const bool         mono   = r->info().numChannels < 2;
-    if (start < 0) return;
+    if (start < 0)
+    {
+        info.completeSourceRead = false;
+        return finish();
+    }
     if (start >= length)
     {
         // Past EOF - auto-stop so the UI can flip the Play button back.
         playing.store (false, std::memory_order_relaxed);
-        return;
+        return finish();
     }
 
     const double ratio = speedRatio.load (std::memory_order_acquire);
@@ -205,11 +227,15 @@ void MasteringPlayer::process (float* L, float* R, int numSamples) noexcept
     {
         const int  available = (int) std::min ((std::int64_t) numSamples,
                                                   (std::int64_t) (length - start));
-        if (available > readScratch.numSamples()) return;  // shouldn't happen
+        if (available > readScratch.numSamples())
+        {
+            info.completeSourceRead = false;
+            return finish();
+        }
 
         // The reader zero-fills destination channels the file doesn't have, so
         // a mono source is duplicated here to keep the stage stereo.
-        r->readRt (readScratch.data(), 2, start, available);
+        info.completeSourceRead = r->readRt (readScratch.data(), 2, start, available);
         if (mono)
             std::memcpy (readScratch.channel (1), readScratch.channel (0),
                           sizeof (float) * (size_t) available);
@@ -218,18 +244,23 @@ void MasteringPlayer::process (float* L, float* R, int numSamples) noexcept
         std::memcpy (R, readScratch.channel (1), sizeof (float) * (size_t) available);
 
         playhead.fetch_add (available, std::memory_order_relaxed);
+        info.sourceEnd = start + available;
 
         // If we just hit EOF mid-block, auto-stop.
         if (start + available >= length)
             playing.store (false, std::memory_order_relaxed);
-        return;
+        return finish();
     }
 
     // Source rate ≠ device rate: Lagrange-resample so the file plays at the
     // right speed and pitch. The playhead advances by SOURCE samples
     // consumed, keeping every UI position/seek in the source domain.
     const int inNeeded = (int) std::ceil ((double) numSamples * ratio) + 8;
-    if (inNeeded > inScratch.numSamples()) return;  // prepare/load sizes this
+    if (inNeeded > inScratch.numSamples())
+    {
+        info.completeSourceRead = false;
+        return finish();
+    }
 
     // A seek (or first block after load) breaks read continuity - drop the
     // interpolators' history so the jump doesn't smear.
@@ -245,7 +276,7 @@ void MasteringPlayer::process (float* L, float* R, int numSamples) noexcept
     inScratch.clear();
     if (inAvailable > 0)
     {
-        r->readRt (inScratch.data(), 2, start, inAvailable);
+        info.completeSourceRead = r->readRt (inScratch.data(), 2, start, inAvailable);
         if (mono)
             std::memcpy (inScratch.channel (1), inScratch.channel (0),
                           sizeof (float) * (size_t) inAvailable);
@@ -258,8 +289,10 @@ void MasteringPlayer::process (float* L, float* R, int numSamples) noexcept
                                               (std::int64_t) (length - start));
     playhead.fetch_add (consumed, std::memory_order_relaxed);
     resampleReadPos = start + consumed;
+    info.sourceEnd = start + consumed;
 
     if (start + consumed >= length)
         playing.store (false, std::memory_order_relaxed);
+    return finish();
 }
 } // namespace duskstudio

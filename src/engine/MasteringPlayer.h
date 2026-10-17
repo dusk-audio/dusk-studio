@@ -47,19 +47,61 @@ public:
     std::uint64_t getSourceGeneration() const noexcept { return sourceGeneration; }
 
     // Transport.
-    void play() noexcept    { playing.store (true, std::memory_order_relaxed); }
-    void stop() noexcept    { playing.store (false, std::memory_order_relaxed); }
+    void play() noexcept
+    {
+        ControlChangeScope change (*this);
+        playing.store (true, std::memory_order_relaxed);
+    }
+    void stop() noexcept
+    {
+        ControlChangeScope change (*this);
+        playing.store (false, std::memory_order_relaxed);
+    }
     bool isPlaying() const noexcept { return playing.load (std::memory_order_relaxed); }
 
     std::int64_t getPlayhead() const noexcept     { return playhead.load (std::memory_order_relaxed); }
-    void setPlayhead (std::int64_t p) noexcept    { playhead.store (p, std::memory_order_relaxed); }
+    void setPlayhead (std::int64_t p) noexcept
+    {
+        ControlChangeScope change (*this);
+        playhead.store (p, std::memory_order_relaxed);
+    }
+
+    struct BlockInfo
+    {
+        std::int64_t sourceStart = 0, sourceEnd = 0;
+        std::uint64_t revision = 0;
+        bool playing = false;
+        // False includes a prefetched prefix followed by an unavailable tail.
+        bool completeSourceRead = true;
+        // False when a control or source change overlapped this block.
+        bool stable = false;
+    };
 
     // Audio thread. Writes `numSamples` of stereo audio to L/R. Both must
     // be valid pointers. Output is silence when not playing or when the
     // playhead is past the file length.
-    void process (float* L, float* R, int numSamples) noexcept;
+    BlockInfo process (float* L, float* R, int numSamples) noexcept;
 
 private:
+    // This validates analysis metadata, not ownership of reader mutations.
+    // The active count covers nested load/unload and overlapping controls.
+    std::atomic<unsigned> controlsInFlight { 0 };
+    std::atomic<std::uint64_t> controlRevision { 0 };
+    struct ControlChangeScope
+    {
+        MasteringPlayer& owner;
+        explicit ControlChangeScope (MasteringPlayer& player) noexcept : owner (player)
+        {
+            owner.controlsInFlight.fetch_add (1, std::memory_order_seq_cst);
+            owner.controlRevision.fetch_add (1, std::memory_order_seq_cst);
+        }
+        ~ControlChangeScope() noexcept
+        {
+            owner.controlRevision.fetch_add (1, std::memory_order_seq_cst);
+            owner.controlsInFlight.fetch_sub (1, std::memory_order_seq_cst);
+        }
+    };
+
     // Owning pointers - mutated only on the message thread. The audio thread
     // reads via the `currentReader` atomic below. An unpublished reader is
     // destroyed, closing its file, as soon as parkAndWaitForAudio proves no
