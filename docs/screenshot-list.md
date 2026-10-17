@@ -31,8 +31,8 @@ are taken at the end of the run, after the bounce phase, which leaves the input
 meter reading - so the harness parks the compressor panel's meters at rest
 before capturing it, because that figure is of the panel and not of a signal.
 The startup dialog, the virtual keyboard, the audio settings panel and the audio
-editor have no meters to settle. The settings panel is taller than a 1200 px display can grant,
-so its figure is the panel scrolled to the top, which is what opening it shows.
+editor have no meters to settle. The settings figure shows the Audio tab;
+the other sections are reached through the tabs along the top.
 
 **Capture conventions (manual shots)**
 
@@ -85,7 +85,7 @@ so its figure is the panel scrolled to the top, which is what opening it shows.
 | `vkb-01-virtual-keyboard.png`   | L595   | ✅   | Virtual MIDI keyboard. Native panel, same route as `fx-02-comp.png`. |
 | `fx-03-tape.png`                | L976   | ✅   | Master tape editor: Tape Machine 2's own editor, read back from its window once painted, same route as the built-in units' plug-in editors. |
 | `mm-01-automation-modes.png`    | L1598  | ✅   | A fader's automation-mode label (READ / WRITE / TOUCH).   |
-| `mm-02-mastering-chain.png`     | L1059  | ✅   | Mastering chain with EQ, comp, and limiter engaged.       |
+| `mm-02-mastering-chain.png`     | L1059  | Yes  | Mastering chain with EQ, comp, limiter and Phase panels. |
 | `pl-01-plugin-picker.png`       | L1672  | ✅   | Plugin picker panel populated.                            |
 | `bi-01-utility.png`             | L1745  | ✅   | The Utility unit's editor. One figure per built-in unit: the harness loads each onto track 1's insert and shoots it through the panel window the user opens. |
 | `bi-02-reverb.png`              | L1770  | ✅   | The DuskVerb 2 unit's editor. Same route as `bi-01-utility.png`. |
