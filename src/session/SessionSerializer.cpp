@@ -2392,6 +2392,10 @@ juce::String SessionSerializer::serialize (const Session& s)
     mast["limiter_lookahead_ms"] = s.mastering().limiterLookaheadMs.load();
     mast["limiter_mode"]         = s.mastering().limiterMode.load();
     mast["limiter_stereo_link"]  = s.mastering().limiterStereoLink.load();
+    const auto phase = s.mastering().phase.snapshot();
+    mast["phase_bands"]        = phase.bands;
+    mast["phase_q"]            = phase.q;
+    mast["phase_averaging_ms"] = phase.averagingMs;
     mast["loudness_target"]      = s.mastering().targetPresetIndex.load();
     root["mastering"] = std::move (mast);
 
@@ -3053,6 +3057,12 @@ bool SessionSerializer::load (Session& s, const File& source, SessionLoadError* 
                                                        kMasteringDefaults.limiterMode.load()), 0, 2));
         m.limiterStereoLink.store (json::getBool (mast, "limiter_stereo_link",
                                                   kMasteringDefaults.limiterStereoLink.load()));
+        m.phase.bands.store (std::clamp (json::getInt (mast, "phase_bands", 16),
+                                        MasteringPhaseSettings::kMinBands, MasteringPhaseSettings::kMaxBands));
+        storeFiniteClampedFloat (m.phase.q, mast, "phase_q", 2.0f,
+                                 MasteringPhaseSettings::kMinQ, MasteringPhaseSettings::kMaxQ);
+        storeFiniteClampedFloat (m.phase.averagingMs, mast, "phase_averaging_ms", 500.0f,
+                                 MasteringPhaseSettings::kMinAveragingMs, MasteringPhaseSettings::kMaxAveragingMs);
         if (json::has (mast, "loudness_target"))
         {
             m.targetPresetIndex.store (std::clamp (json::getInt (mast, "loudness_target",

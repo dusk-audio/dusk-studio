@@ -24,6 +24,7 @@
 #include "MidiBindings.h"
 #include "SessionLayout.h"
 #include "TrackMove.h"
+#include "MasteringPhaseParams.h"
 #include "../engine/PluginDescriptor.h"
 #include "../engine/StopBehavior.h"
 #include "../engine/sfz/ManagedSfzLocator.h"
@@ -1595,6 +1596,8 @@ struct MasteringParams
     // Lookahead, ms. More lookahead = the gain finishes ramping further ahead
     // of the peak (cleaner transients) at the cost of more latency.
     std::atomic<float> limiterLookaheadMs { 2.0f };
+
+    MasteringPhaseParams phase;
 
     mutable std::atomic<float> meterPostMasterLDb  { -100.0f };
     mutable std::atomic<float> meterPostMasterRDb  { -100.0f };

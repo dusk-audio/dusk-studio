@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <fstream>
+#include <limits>
 #include <utility>
 #include <vector>
 
@@ -281,6 +282,7 @@ TEST_CASE ("Appendix A: mastering defaults and load ranges", "[session][appendix
 {
     Session session;
     auto& p = session.mastering();
+    CHECK (p.phase.bands.load() == 16);
     checkParameters (session, {
         { "/mastering/eq_band_0_freq", &p.eqBandFreq[0], 50, 20, 400 },
         { "/mastering/eq_band_1_freq", &p.eqBandFreq[1], 250, 60, 1500 },
@@ -298,9 +300,49 @@ TEST_CASE ("Appendix A: mastering defaults and load ranges", "[session][appendix
         { "/mastering/limiter_ceiling_db", &p.limiterCeilingDb, -0.3f, -12, 0 },
         { "/mastering/limiter_drive_db", &p.limiterDriveDb, 0, 0, 20 },
         { "/mastering/limiter_release_ms", &p.limiterReleaseMs, 100, 10, 1000 },
+        { "/mastering/phase_q", &p.phase.q, 2, 0.25f, 8 },
+        { "/mastering/phase_averaging_ms", &p.phase.averagingMs, 500, 50, 5000 },
     }, {
         { "/mastering/eq_enabled", &p.eqEnabled },
         { "/mastering/comp_enabled", &p.compEnabled },
         { "/mastering/limiter_enabled", &p.limiterEnabled, true },
     });
+
+    for (const auto& entry : std::vector<std::pair<Json, int>> {
+             { 4, 4 }, { 64, 64 }, { 23, 23 }, { -100, 4 }, { 1000, 64 },
+             { "invalid", 16 }, { nullptr, 16 } })
+    {
+        auto document = Json::parse (SessionSerializer::serialize (session).toStdString());
+        document["mastering"]["phase_bands"] = entry.first;
+        load (session, document);
+        CHECK (p.phase.bands.load() == entry.second);
+        const auto saved = Json::parse (SessionSerializer::serialize (session).toStdString());
+        CHECK (saved["mastering"]["phase_bands"] == entry.second);
+    }
+    auto document = Json::parse (SessionSerializer::serialize (session).toStdString());
+    document["mastering"]["phase_q"] = "invalid";
+    document["mastering"]["phase_averaging_ms"] = nullptr;
+    load (session, document);
+    CHECK_THAT (p.phase.q.load(), WithinAbs (2.0f, 1e-6));
+    CHECK_THAT (p.phase.averagingMs.load(), WithinAbs (500.0f, 1e-6));
+    const auto saved = Json::parse (SessionSerializer::serialize (session).toStdString());
+    CHECK_THAT (saved["mastering"]["phase_q"].get<float>(), WithinAbs (2.0f, 1e-6));
+    CHECK_THAT (saved["mastering"]["phase_averaging_ms"].get<float>(), WithinAbs (500.0f, 1e-6));
+
+    p.phase.bands.store (31);
+    p.phase.q.store (1.25f);
+    p.phase.averagingMs.store (2250.0f);
+    Session restored;
+    load (restored, Json::parse (SessionSerializer::serialize (session).toStdString()));
+    CHECK (restored.mastering().phase.bands.load() == 31);
+    CHECK_THAT (restored.mastering().phase.q.load(), WithinAbs (1.25f, 1e-6));
+    CHECK_THAT (restored.mastering().phase.averagingMs.load(), WithinAbs (2250.0f, 1e-6));
+
+    p.phase.bands.store (1000);
+    p.phase.q.store (std::numeric_limits<float>::quiet_NaN());
+    p.phase.averagingMs.store (std::numeric_limits<float>::infinity());
+    const auto sanitized = Json::parse (SessionSerializer::serialize (session).toStdString());
+    CHECK (sanitized["mastering"]["phase_bands"] == 64);
+    CHECK_THAT (sanitized["mastering"]["phase_q"].get<float>(), WithinAbs (2.0f, 1e-6));
+    CHECK_THAT (sanitized["mastering"]["phase_averaging_ms"].get<float>(), WithinAbs (500.0f, 1e-6));
 }
