@@ -1,0 +1,2858 @@
+{
+  "version": 10,
+  "session_sample_rate": 48000.0,
+  "tracks": [
+    {
+      "name": "1",
+      "colour": "ffbf6969",
+      "fader_db": -3.0,
+      "pan": 0.0,
+      "mute": false,
+      "solo": false,
+      "phase_invert": false,
+      "fader_group": 0,
+      "input_monitor": false,
+      "print_effects": false,
+      "input_source": -2,
+      "input_source_r": -2,
+      "midi_input_idx": -1,
+      "midi_input_id": "",
+      "midi_output_idx": -1,
+      "midi_output_id": "",
+      "midi_channel": 0,
+      "track_mode": 0,
+      "frozen": false,
+      "bus_assign": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "aux_sends_bypassed": false,
+      "aux_send_db": [
+        -100.0,
+        -100.0,
+        -100.0,
+        -100.0
+      ],
+      "aux_send_pre_fader": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "hpf": {
+        "enabled": false,
+        "freq": 20.0
+      },
+      "lpf": {
+        "enabled": false,
+        "freq": 20000.0
+      },
+      "eq": {
+        "enabled": false,
+        "type": "brown",
+        "lf": {
+          "gain": 0.0,
+          "freq": 100.0
+        },
+        "lm": {
+          "gain": 0.0,
+          "freq": 600.0,
+          "q": 0.699999988079071
+        },
+        "hm": {
+          "gain": 0.0,
+          "freq": 2000.0,
+          "q": 0.699999988079071
+        },
+        "hf": {
+          "gain": 0.0,
+          "freq": 8000.0
+        }
+      },
+      "comp": {
+        "enabled": false,
+        "mode_picked": false,
+        "mode": 0,
+        "opto_peak_red": 0.0,
+        "opto_gain": 50.0,
+        "opto_limit": false,
+        "fet_input": 0.0,
+        "fet_output": 0.0,
+        "fet_attack": 0.20000000298023224,
+        "fet_release": 400.0,
+        "fet_ratio": 0,
+        "fet_threshold_db": -10.0,
+        "vca_thresh_db": 12.0,
+        "vca_ratio": 4.0,
+        "vca_attack": 1.0,
+        "vca_release": 100.0,
+        "vca_output": 0.0,
+        "vca_overeasy": false,
+        "vca_detector_classic": false
+      },
+      "hardware_insert": {
+        "enabled": false,
+        "output_ch_l": -1,
+        "output_ch_r": -1,
+        "input_ch_l": -1,
+        "input_ch_r": -1,
+        "latency_samples": 0,
+        "format": 0,
+        "output_gain_db": 0.0,
+        "input_gain_db": 0.0,
+        "dry_wet": 1.0
+      },
+      "regions": [],
+      "automation_mode": 0
+    },
+    {
+      "name": "2",
+      "colour": "ffbf7f69",
+      "fader_db": 0.0,
+      "pan": 0.0,
+      "mute": false,
+      "solo": false,
+      "phase_invert": false,
+      "fader_group": 0,
+      "input_monitor": false,
+      "print_effects": false,
+      "input_source": -2,
+      "input_source_r": -2,
+      "midi_input_idx": -1,
+      "midi_input_id": "",
+      "midi_output_idx": -1,
+      "midi_output_id": "",
+      "midi_channel": 0,
+      "track_mode": 0,
+      "frozen": false,
+      "bus_assign": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "aux_sends_bypassed": false,
+      "aux_send_db": [
+        -100.0,
+        -100.0,
+        -100.0,
+        -100.0
+      ],
+      "aux_send_pre_fader": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "hpf": {
+        "enabled": false,
+        "freq": 20.0
+      },
+      "lpf": {
+        "enabled": false,
+        "freq": 20000.0
+      },
+      "eq": {
+        "enabled": false,
+        "type": "brown",
+        "lf": {
+          "gain": 0.0,
+          "freq": 100.0
+        },
+        "lm": {
+          "gain": 0.0,
+          "freq": 600.0,
+          "q": 0.699999988079071
+        },
+        "hm": {
+          "gain": 0.0,
+          "freq": 2000.0,
+          "q": 0.699999988079071
+        },
+        "hf": {
+          "gain": 0.0,
+          "freq": 8000.0
+        }
+      },
+      "comp": {
+        "enabled": false,
+        "mode_picked": false,
+        "mode": 0,
+        "opto_peak_red": 0.0,
+        "opto_gain": 50.0,
+        "opto_limit": false,
+        "fet_input": 0.0,
+        "fet_output": 0.0,
+        "fet_attack": 0.20000000298023224,
+        "fet_release": 400.0,
+        "fet_ratio": 0,
+        "fet_threshold_db": -10.0,
+        "vca_thresh_db": 12.0,
+        "vca_ratio": 4.0,
+        "vca_attack": 1.0,
+        "vca_release": 100.0,
+        "vca_output": 0.0,
+        "vca_overeasy": false,
+        "vca_detector_classic": false
+      },
+      "hardware_insert": {
+        "enabled": false,
+        "output_ch_l": -1,
+        "output_ch_r": -1,
+        "input_ch_l": -1,
+        "input_ch_r": -1,
+        "latency_samples": 0,
+        "format": 0,
+        "output_gain_db": 0.0,
+        "input_gain_db": 0.0,
+        "dry_wet": 1.0
+      },
+      "regions": [],
+      "automation_mode": 0
+    },
+    {
+      "name": "3",
+      "colour": "ffbf9469",
+      "fader_db": 0.0,
+      "pan": 0.0,
+      "mute": false,
+      "solo": false,
+      "phase_invert": false,
+      "fader_group": 0,
+      "input_monitor": false,
+      "print_effects": false,
+      "input_source": -2,
+      "input_source_r": -2,
+      "midi_input_idx": -1,
+      "midi_input_id": "",
+      "midi_output_idx": -1,
+      "midi_output_id": "",
+      "midi_channel": 0,
+      "track_mode": 0,
+      "frozen": false,
+      "bus_assign": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "aux_sends_bypassed": false,
+      "aux_send_db": [
+        -100.0,
+        -100.0,
+        -100.0,
+        -100.0
+      ],
+      "aux_send_pre_fader": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "hpf": {
+        "enabled": false,
+        "freq": 20.0
+      },
+      "lpf": {
+        "enabled": false,
+        "freq": 20000.0
+      },
+      "eq": {
+        "enabled": false,
+        "type": "brown",
+        "lf": {
+          "gain": 0.0,
+          "freq": 100.0
+        },
+        "lm": {
+          "gain": 0.0,
+          "freq": 600.0,
+          "q": 0.699999988079071
+        },
+        "hm": {
+          "gain": 0.0,
+          "freq": 2000.0,
+          "q": 0.699999988079071
+        },
+        "hf": {
+          "gain": 0.0,
+          "freq": 8000.0
+        }
+      },
+      "comp": {
+        "enabled": false,
+        "mode_picked": false,
+        "mode": 0,
+        "opto_peak_red": 0.0,
+        "opto_gain": 50.0,
+        "opto_limit": false,
+        "fet_input": 0.0,
+        "fet_output": 0.0,
+        "fet_attack": 0.20000000298023224,
+        "fet_release": 400.0,
+        "fet_ratio": 0,
+        "fet_threshold_db": -10.0,
+        "vca_thresh_db": 12.0,
+        "vca_ratio": 4.0,
+        "vca_attack": 1.0,
+        "vca_release": 100.0,
+        "vca_output": 0.0,
+        "vca_overeasy": false,
+        "vca_detector_classic": false
+      },
+      "hardware_insert": {
+        "enabled": false,
+        "output_ch_l": -1,
+        "output_ch_r": -1,
+        "input_ch_l": -1,
+        "input_ch_r": -1,
+        "latency_samples": 0,
+        "format": 0,
+        "output_gain_db": 0.0,
+        "input_gain_db": 0.0,
+        "dry_wet": 1.0
+      },
+      "regions": [],
+      "automation_mode": 0
+    },
+    {
+      "name": "4",
+      "colour": "ffbfaa69",
+      "fader_db": 0.0,
+      "pan": 0.0,
+      "mute": false,
+      "solo": false,
+      "phase_invert": false,
+      "fader_group": 0,
+      "input_monitor": false,
+      "print_effects": false,
+      "input_source": -2,
+      "input_source_r": -2,
+      "midi_input_idx": -1,
+      "midi_input_id": "",
+      "midi_output_idx": -1,
+      "midi_output_id": "",
+      "midi_channel": 0,
+      "track_mode": 0,
+      "frozen": false,
+      "bus_assign": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "aux_sends_bypassed": false,
+      "aux_send_db": [
+        -100.0,
+        -100.0,
+        -100.0,
+        -100.0
+      ],
+      "aux_send_pre_fader": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "hpf": {
+        "enabled": false,
+        "freq": 20.0
+      },
+      "lpf": {
+        "enabled": false,
+        "freq": 20000.0
+      },
+      "eq": {
+        "enabled": false,
+        "type": "brown",
+        "lf": {
+          "gain": 0.0,
+          "freq": 100.0
+        },
+        "lm": {
+          "gain": 0.0,
+          "freq": 600.0,
+          "q": 0.699999988079071
+        },
+        "hm": {
+          "gain": 0.0,
+          "freq": 2000.0,
+          "q": 0.699999988079071
+        },
+        "hf": {
+          "gain": 0.0,
+          "freq": 8000.0
+        }
+      },
+      "comp": {
+        "enabled": false,
+        "mode_picked": false,
+        "mode": 0,
+        "opto_peak_red": 0.0,
+        "opto_gain": 50.0,
+        "opto_limit": false,
+        "fet_input": 0.0,
+        "fet_output": 0.0,
+        "fet_attack": 0.20000000298023224,
+        "fet_release": 400.0,
+        "fet_ratio": 0,
+        "fet_threshold_db": -10.0,
+        "vca_thresh_db": 12.0,
+        "vca_ratio": 4.0,
+        "vca_attack": 1.0,
+        "vca_release": 100.0,
+        "vca_output": 0.0,
+        "vca_overeasy": false,
+        "vca_detector_classic": false
+      },
+      "hardware_insert": {
+        "enabled": false,
+        "output_ch_l": -1,
+        "output_ch_r": -1,
+        "input_ch_l": -1,
+        "input_ch_r": -1,
+        "latency_samples": 0,
+        "format": 0,
+        "output_gain_db": 0.0,
+        "input_gain_db": 0.0,
+        "dry_wet": 1.0
+      },
+      "regions": [],
+      "automation_mode": 0
+    },
+    {
+      "name": "5",
+      "colour": "ffbfbf69",
+      "fader_db": 0.0,
+      "pan": 0.0,
+      "mute": false,
+      "solo": false,
+      "phase_invert": false,
+      "fader_group": 0,
+      "input_monitor": false,
+      "print_effects": false,
+      "input_source": -2,
+      "input_source_r": -2,
+      "midi_input_idx": -1,
+      "midi_input_id": "",
+      "midi_output_idx": -1,
+      "midi_output_id": "",
+      "midi_channel": 0,
+      "track_mode": 0,
+      "frozen": false,
+      "bus_assign": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "aux_sends_bypassed": false,
+      "aux_send_db": [
+        -100.0,
+        -100.0,
+        -100.0,
+        -100.0
+      ],
+      "aux_send_pre_fader": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "hpf": {
+        "enabled": false,
+        "freq": 20.0
+      },
+      "lpf": {
+        "enabled": false,
+        "freq": 20000.0
+      },
+      "eq": {
+        "enabled": false,
+        "type": "brown",
+        "lf": {
+          "gain": 0.0,
+          "freq": 100.0
+        },
+        "lm": {
+          "gain": 0.0,
+          "freq": 600.0,
+          "q": 0.699999988079071
+        },
+        "hm": {
+          "gain": 0.0,
+          "freq": 2000.0,
+          "q": 0.699999988079071
+        },
+        "hf": {
+          "gain": 0.0,
+          "freq": 8000.0
+        }
+      },
+      "comp": {
+        "enabled": false,
+        "mode_picked": false,
+        "mode": 0,
+        "opto_peak_red": 0.0,
+        "opto_gain": 50.0,
+        "opto_limit": false,
+        "fet_input": 0.0,
+        "fet_output": 0.0,
+        "fet_attack": 0.20000000298023224,
+        "fet_release": 400.0,
+        "fet_ratio": 0,
+        "fet_threshold_db": -10.0,
+        "vca_thresh_db": 12.0,
+        "vca_ratio": 4.0,
+        "vca_attack": 1.0,
+        "vca_release": 100.0,
+        "vca_output": 0.0,
+        "vca_overeasy": false,
+        "vca_detector_classic": false
+      },
+      "hardware_insert": {
+        "enabled": false,
+        "output_ch_l": -1,
+        "output_ch_r": -1,
+        "input_ch_l": -1,
+        "input_ch_r": -1,
+        "latency_samples": 0,
+        "format": 0,
+        "output_gain_db": 0.0,
+        "input_gain_db": 0.0,
+        "dry_wet": 1.0
+      },
+      "regions": [],
+      "automation_mode": 0
+    },
+    {
+      "name": "6",
+      "colour": "ffaabf69",
+      "fader_db": 0.0,
+      "pan": 0.0,
+      "mute": false,
+      "solo": false,
+      "phase_invert": false,
+      "fader_group": 0,
+      "input_monitor": false,
+      "print_effects": false,
+      "input_source": -2,
+      "input_source_r": -2,
+      "midi_input_idx": -1,
+      "midi_input_id": "",
+      "midi_output_idx": -1,
+      "midi_output_id": "",
+      "midi_channel": 0,
+      "track_mode": 0,
+      "frozen": false,
+      "bus_assign": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "aux_sends_bypassed": false,
+      "aux_send_db": [
+        -100.0,
+        -100.0,
+        -100.0,
+        -100.0
+      ],
+      "aux_send_pre_fader": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "hpf": {
+        "enabled": false,
+        "freq": 20.0
+      },
+      "lpf": {
+        "enabled": false,
+        "freq": 20000.0
+      },
+      "eq": {
+        "enabled": false,
+        "type": "brown",
+        "lf": {
+          "gain": 0.0,
+          "freq": 100.0
+        },
+        "lm": {
+          "gain": 0.0,
+          "freq": 600.0,
+          "q": 0.699999988079071
+        },
+        "hm": {
+          "gain": 0.0,
+          "freq": 2000.0,
+          "q": 0.699999988079071
+        },
+        "hf": {
+          "gain": 0.0,
+          "freq": 8000.0
+        }
+      },
+      "comp": {
+        "enabled": false,
+        "mode_picked": false,
+        "mode": 0,
+        "opto_peak_red": 0.0,
+        "opto_gain": 50.0,
+        "opto_limit": false,
+        "fet_input": 0.0,
+        "fet_output": 0.0,
+        "fet_attack": 0.20000000298023224,
+        "fet_release": 400.0,
+        "fet_ratio": 0,
+        "fet_threshold_db": -10.0,
+        "vca_thresh_db": 12.0,
+        "vca_ratio": 4.0,
+        "vca_attack": 1.0,
+        "vca_release": 100.0,
+        "vca_output": 0.0,
+        "vca_overeasy": false,
+        "vca_detector_classic": false
+      },
+      "hardware_insert": {
+        "enabled": false,
+        "output_ch_l": -1,
+        "output_ch_r": -1,
+        "input_ch_l": -1,
+        "input_ch_r": -1,
+        "latency_samples": 0,
+        "format": 0,
+        "output_gain_db": 0.0,
+        "input_gain_db": 0.0,
+        "dry_wet": 1.0
+      },
+      "regions": [],
+      "automation_mode": 0
+    },
+    {
+      "name": "7",
+      "colour": "ff94bf69",
+      "fader_db": 0.0,
+      "pan": 0.0,
+      "mute": false,
+      "solo": false,
+      "phase_invert": false,
+      "fader_group": 0,
+      "input_monitor": false,
+      "print_effects": false,
+      "input_source": -2,
+      "input_source_r": -2,
+      "midi_input_idx": -1,
+      "midi_input_id": "",
+      "midi_output_idx": -1,
+      "midi_output_id": "",
+      "midi_channel": 0,
+      "track_mode": 0,
+      "frozen": false,
+      "bus_assign": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "aux_sends_bypassed": false,
+      "aux_send_db": [
+        -100.0,
+        -100.0,
+        -100.0,
+        -100.0
+      ],
+      "aux_send_pre_fader": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "hpf": {
+        "enabled": false,
+        "freq": 20.0
+      },
+      "lpf": {
+        "enabled": false,
+        "freq": 20000.0
+      },
+      "eq": {
+        "enabled": false,
+        "type": "brown",
+        "lf": {
+          "gain": 0.0,
+          "freq": 100.0
+        },
+        "lm": {
+          "gain": 0.0,
+          "freq": 600.0,
+          "q": 0.699999988079071
+        },
+        "hm": {
+          "gain": 0.0,
+          "freq": 2000.0,
+          "q": 0.699999988079071
+        },
+        "hf": {
+          "gain": 0.0,
+          "freq": 8000.0
+        }
+      },
+      "comp": {
+        "enabled": false,
+        "mode_picked": false,
+        "mode": 0,
+        "opto_peak_red": 0.0,
+        "opto_gain": 50.0,
+        "opto_limit": false,
+        "fet_input": 0.0,
+        "fet_output": 0.0,
+        "fet_attack": 0.20000000298023224,
+        "fet_release": 400.0,
+        "fet_ratio": 0,
+        "fet_threshold_db": -10.0,
+        "vca_thresh_db": 12.0,
+        "vca_ratio": 4.0,
+        "vca_attack": 1.0,
+        "vca_release": 100.0,
+        "vca_output": 0.0,
+        "vca_overeasy": false,
+        "vca_detector_classic": false
+      },
+      "hardware_insert": {
+        "enabled": false,
+        "output_ch_l": -1,
+        "output_ch_r": -1,
+        "input_ch_l": -1,
+        "input_ch_r": -1,
+        "latency_samples": 0,
+        "format": 0,
+        "output_gain_db": 0.0,
+        "input_gain_db": 0.0,
+        "dry_wet": 1.0
+      },
+      "regions": [],
+      "automation_mode": 0
+    },
+    {
+      "name": "8",
+      "colour": "ff7fbf69",
+      "fader_db": 0.0,
+      "pan": 0.0,
+      "mute": false,
+      "solo": false,
+      "phase_invert": false,
+      "fader_group": 0,
+      "input_monitor": false,
+      "print_effects": false,
+      "input_source": -2,
+      "input_source_r": -2,
+      "midi_input_idx": -1,
+      "midi_input_id": "",
+      "midi_output_idx": -1,
+      "midi_output_id": "",
+      "midi_channel": 0,
+      "track_mode": 0,
+      "frozen": false,
+      "bus_assign": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "aux_sends_bypassed": false,
+      "aux_send_db": [
+        -100.0,
+        -100.0,
+        -100.0,
+        -100.0
+      ],
+      "aux_send_pre_fader": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "hpf": {
+        "enabled": false,
+        "freq": 20.0
+      },
+      "lpf": {
+        "enabled": false,
+        "freq": 20000.0
+      },
+      "eq": {
+        "enabled": false,
+        "type": "brown",
+        "lf": {
+          "gain": 0.0,
+          "freq": 100.0
+        },
+        "lm": {
+          "gain": 0.0,
+          "freq": 600.0,
+          "q": 0.699999988079071
+        },
+        "hm": {
+          "gain": 0.0,
+          "freq": 2000.0,
+          "q": 0.699999988079071
+        },
+        "hf": {
+          "gain": 0.0,
+          "freq": 8000.0
+        }
+      },
+      "comp": {
+        "enabled": false,
+        "mode_picked": false,
+        "mode": 0,
+        "opto_peak_red": 0.0,
+        "opto_gain": 50.0,
+        "opto_limit": false,
+        "fet_input": 0.0,
+        "fet_output": 0.0,
+        "fet_attack": 0.20000000298023224,
+        "fet_release": 400.0,
+        "fet_ratio": 0,
+        "fet_threshold_db": -10.0,
+        "vca_thresh_db": 12.0,
+        "vca_ratio": 4.0,
+        "vca_attack": 1.0,
+        "vca_release": 100.0,
+        "vca_output": 0.0,
+        "vca_overeasy": false,
+        "vca_detector_classic": false
+      },
+      "hardware_insert": {
+        "enabled": false,
+        "output_ch_l": -1,
+        "output_ch_r": -1,
+        "input_ch_l": -1,
+        "input_ch_r": -1,
+        "latency_samples": 0,
+        "format": 0,
+        "output_gain_db": 0.0,
+        "input_gain_db": 0.0,
+        "dry_wet": 1.0
+      },
+      "regions": [],
+      "automation_mode": 0
+    },
+    {
+      "name": "9",
+      "colour": "ff69bf69",
+      "fader_db": 0.0,
+      "pan": 0.0,
+      "mute": false,
+      "solo": false,
+      "phase_invert": false,
+      "fader_group": 0,
+      "input_monitor": false,
+      "print_effects": false,
+      "input_source": -2,
+      "input_source_r": -2,
+      "midi_input_idx": -1,
+      "midi_input_id": "",
+      "midi_output_idx": -1,
+      "midi_output_id": "",
+      "midi_channel": 0,
+      "track_mode": 0,
+      "frozen": false,
+      "bus_assign": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "aux_sends_bypassed": false,
+      "aux_send_db": [
+        -100.0,
+        -100.0,
+        -100.0,
+        -100.0
+      ],
+      "aux_send_pre_fader": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "hpf": {
+        "enabled": false,
+        "freq": 20.0
+      },
+      "lpf": {
+        "enabled": false,
+        "freq": 20000.0
+      },
+      "eq": {
+        "enabled": false,
+        "type": "brown",
+        "lf": {
+          "gain": 0.0,
+          "freq": 100.0
+        },
+        "lm": {
+          "gain": 0.0,
+          "freq": 600.0,
+          "q": 0.699999988079071
+        },
+        "hm": {
+          "gain": 0.0,
+          "freq": 2000.0,
+          "q": 0.699999988079071
+        },
+        "hf": {
+          "gain": 0.0,
+          "freq": 8000.0
+        }
+      },
+      "comp": {
+        "enabled": false,
+        "mode_picked": false,
+        "mode": 0,
+        "opto_peak_red": 0.0,
+        "opto_gain": 50.0,
+        "opto_limit": false,
+        "fet_input": 0.0,
+        "fet_output": 0.0,
+        "fet_attack": 0.20000000298023224,
+        "fet_release": 400.0,
+        "fet_ratio": 0,
+        "fet_threshold_db": -10.0,
+        "vca_thresh_db": 12.0,
+        "vca_ratio": 4.0,
+        "vca_attack": 1.0,
+        "vca_release": 100.0,
+        "vca_output": 0.0,
+        "vca_overeasy": false,
+        "vca_detector_classic": false
+      },
+      "hardware_insert": {
+        "enabled": false,
+        "output_ch_l": -1,
+        "output_ch_r": -1,
+        "input_ch_l": -1,
+        "input_ch_r": -1,
+        "latency_samples": 0,
+        "format": 0,
+        "output_gain_db": 0.0,
+        "input_gain_db": 0.0,
+        "dry_wet": 1.0
+      },
+      "regions": [],
+      "automation_mode": 0
+    },
+    {
+      "name": "10",
+      "colour": "ff69bf7f",
+      "fader_db": 0.0,
+      "pan": 0.0,
+      "mute": false,
+      "solo": false,
+      "phase_invert": false,
+      "fader_group": 0,
+      "input_monitor": false,
+      "print_effects": false,
+      "input_source": -2,
+      "input_source_r": -2,
+      "midi_input_idx": -1,
+      "midi_input_id": "",
+      "midi_output_idx": -1,
+      "midi_output_id": "",
+      "midi_channel": 0,
+      "track_mode": 0,
+      "frozen": false,
+      "bus_assign": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "aux_sends_bypassed": false,
+      "aux_send_db": [
+        -100.0,
+        -100.0,
+        -100.0,
+        -100.0
+      ],
+      "aux_send_pre_fader": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "hpf": {
+        "enabled": false,
+        "freq": 20.0
+      },
+      "lpf": {
+        "enabled": false,
+        "freq": 20000.0
+      },
+      "eq": {
+        "enabled": false,
+        "type": "brown",
+        "lf": {
+          "gain": 0.0,
+          "freq": 100.0
+        },
+        "lm": {
+          "gain": 0.0,
+          "freq": 600.0,
+          "q": 0.699999988079071
+        },
+        "hm": {
+          "gain": 0.0,
+          "freq": 2000.0,
+          "q": 0.699999988079071
+        },
+        "hf": {
+          "gain": 0.0,
+          "freq": 8000.0
+        }
+      },
+      "comp": {
+        "enabled": false,
+        "mode_picked": false,
+        "mode": 0,
+        "opto_peak_red": 0.0,
+        "opto_gain": 50.0,
+        "opto_limit": false,
+        "fet_input": 0.0,
+        "fet_output": 0.0,
+        "fet_attack": 0.20000000298023224,
+        "fet_release": 400.0,
+        "fet_ratio": 0,
+        "fet_threshold_db": -10.0,
+        "vca_thresh_db": 12.0,
+        "vca_ratio": 4.0,
+        "vca_attack": 1.0,
+        "vca_release": 100.0,
+        "vca_output": 0.0,
+        "vca_overeasy": false,
+        "vca_detector_classic": false
+      },
+      "hardware_insert": {
+        "enabled": false,
+        "output_ch_l": -1,
+        "output_ch_r": -1,
+        "input_ch_l": -1,
+        "input_ch_r": -1,
+        "latency_samples": 0,
+        "format": 0,
+        "output_gain_db": 0.0,
+        "input_gain_db": 0.0,
+        "dry_wet": 1.0
+      },
+      "regions": [],
+      "automation_mode": 0
+    },
+    {
+      "name": "11",
+      "colour": "ff69bf94",
+      "fader_db": 0.0,
+      "pan": 0.0,
+      "mute": false,
+      "solo": false,
+      "phase_invert": false,
+      "fader_group": 0,
+      "input_monitor": false,
+      "print_effects": false,
+      "input_source": -2,
+      "input_source_r": -2,
+      "midi_input_idx": -1,
+      "midi_input_id": "",
+      "midi_output_idx": -1,
+      "midi_output_id": "",
+      "midi_channel": 0,
+      "track_mode": 0,
+      "frozen": false,
+      "bus_assign": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "aux_sends_bypassed": false,
+      "aux_send_db": [
+        -100.0,
+        -100.0,
+        -100.0,
+        -100.0
+      ],
+      "aux_send_pre_fader": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "hpf": {
+        "enabled": false,
+        "freq": 20.0
+      },
+      "lpf": {
+        "enabled": false,
+        "freq": 20000.0
+      },
+      "eq": {
+        "enabled": false,
+        "type": "brown",
+        "lf": {
+          "gain": 0.0,
+          "freq": 100.0
+        },
+        "lm": {
+          "gain": 0.0,
+          "freq": 600.0,
+          "q": 0.699999988079071
+        },
+        "hm": {
+          "gain": 0.0,
+          "freq": 2000.0,
+          "q": 0.699999988079071
+        },
+        "hf": {
+          "gain": 0.0,
+          "freq": 8000.0
+        }
+      },
+      "comp": {
+        "enabled": false,
+        "mode_picked": false,
+        "mode": 0,
+        "opto_peak_red": 0.0,
+        "opto_gain": 50.0,
+        "opto_limit": false,
+        "fet_input": 0.0,
+        "fet_output": 0.0,
+        "fet_attack": 0.20000000298023224,
+        "fet_release": 400.0,
+        "fet_ratio": 0,
+        "fet_threshold_db": -10.0,
+        "vca_thresh_db": 12.0,
+        "vca_ratio": 4.0,
+        "vca_attack": 1.0,
+        "vca_release": 100.0,
+        "vca_output": 0.0,
+        "vca_overeasy": false,
+        "vca_detector_classic": false
+      },
+      "hardware_insert": {
+        "enabled": false,
+        "output_ch_l": -1,
+        "output_ch_r": -1,
+        "input_ch_l": -1,
+        "input_ch_r": -1,
+        "latency_samples": 0,
+        "format": 0,
+        "output_gain_db": 0.0,
+        "input_gain_db": 0.0,
+        "dry_wet": 1.0
+      },
+      "regions": [],
+      "automation_mode": 0
+    },
+    {
+      "name": "12",
+      "colour": "ff69bfaa",
+      "fader_db": 0.0,
+      "pan": 0.0,
+      "mute": false,
+      "solo": false,
+      "phase_invert": false,
+      "fader_group": 0,
+      "input_monitor": false,
+      "print_effects": false,
+      "input_source": -2,
+      "input_source_r": -2,
+      "midi_input_idx": -1,
+      "midi_input_id": "",
+      "midi_output_idx": -1,
+      "midi_output_id": "",
+      "midi_channel": 0,
+      "track_mode": 0,
+      "frozen": false,
+      "bus_assign": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "aux_sends_bypassed": false,
+      "aux_send_db": [
+        -100.0,
+        -100.0,
+        -100.0,
+        -100.0
+      ],
+      "aux_send_pre_fader": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "hpf": {
+        "enabled": false,
+        "freq": 20.0
+      },
+      "lpf": {
+        "enabled": false,
+        "freq": 20000.0
+      },
+      "eq": {
+        "enabled": false,
+        "type": "brown",
+        "lf": {
+          "gain": 0.0,
+          "freq": 100.0
+        },
+        "lm": {
+          "gain": 0.0,
+          "freq": 600.0,
+          "q": 0.699999988079071
+        },
+        "hm": {
+          "gain": 0.0,
+          "freq": 2000.0,
+          "q": 0.699999988079071
+        },
+        "hf": {
+          "gain": 0.0,
+          "freq": 8000.0
+        }
+      },
+      "comp": {
+        "enabled": false,
+        "mode_picked": false,
+        "mode": 0,
+        "opto_peak_red": 0.0,
+        "opto_gain": 50.0,
+        "opto_limit": false,
+        "fet_input": 0.0,
+        "fet_output": 0.0,
+        "fet_attack": 0.20000000298023224,
+        "fet_release": 400.0,
+        "fet_ratio": 0,
+        "fet_threshold_db": -10.0,
+        "vca_thresh_db": 12.0,
+        "vca_ratio": 4.0,
+        "vca_attack": 1.0,
+        "vca_release": 100.0,
+        "vca_output": 0.0,
+        "vca_overeasy": false,
+        "vca_detector_classic": false
+      },
+      "hardware_insert": {
+        "enabled": false,
+        "output_ch_l": -1,
+        "output_ch_r": -1,
+        "input_ch_l": -1,
+        "input_ch_r": -1,
+        "latency_samples": 0,
+        "format": 0,
+        "output_gain_db": 0.0,
+        "input_gain_db": 0.0,
+        "dry_wet": 1.0
+      },
+      "regions": [],
+      "automation_mode": 0
+    },
+    {
+      "name": "13",
+      "colour": "ff69bfbf",
+      "fader_db": 0.0,
+      "pan": 0.0,
+      "mute": false,
+      "solo": false,
+      "phase_invert": false,
+      "fader_group": 0,
+      "input_monitor": false,
+      "print_effects": false,
+      "input_source": -2,
+      "input_source_r": -2,
+      "midi_input_idx": -1,
+      "midi_input_id": "",
+      "midi_output_idx": -1,
+      "midi_output_id": "",
+      "midi_channel": 0,
+      "track_mode": 0,
+      "frozen": false,
+      "bus_assign": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "aux_sends_bypassed": false,
+      "aux_send_db": [
+        -100.0,
+        -100.0,
+        -100.0,
+        -100.0
+      ],
+      "aux_send_pre_fader": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "hpf": {
+        "enabled": false,
+        "freq": 20.0
+      },
+      "lpf": {
+        "enabled": false,
+        "freq": 20000.0
+      },
+      "eq": {
+        "enabled": false,
+        "type": "brown",
+        "lf": {
+          "gain": 0.0,
+          "freq": 100.0
+        },
+        "lm": {
+          "gain": 0.0,
+          "freq": 600.0,
+          "q": 0.699999988079071
+        },
+        "hm": {
+          "gain": 0.0,
+          "freq": 2000.0,
+          "q": 0.699999988079071
+        },
+        "hf": {
+          "gain": 0.0,
+          "freq": 8000.0
+        }
+      },
+      "comp": {
+        "enabled": false,
+        "mode_picked": false,
+        "mode": 0,
+        "opto_peak_red": 0.0,
+        "opto_gain": 50.0,
+        "opto_limit": false,
+        "fet_input": 0.0,
+        "fet_output": 0.0,
+        "fet_attack": 0.20000000298023224,
+        "fet_release": 400.0,
+        "fet_ratio": 0,
+        "fet_threshold_db": -10.0,
+        "vca_thresh_db": 12.0,
+        "vca_ratio": 4.0,
+        "vca_attack": 1.0,
+        "vca_release": 100.0,
+        "vca_output": 0.0,
+        "vca_overeasy": false,
+        "vca_detector_classic": false
+      },
+      "hardware_insert": {
+        "enabled": false,
+        "output_ch_l": -1,
+        "output_ch_r": -1,
+        "input_ch_l": -1,
+        "input_ch_r": -1,
+        "latency_samples": 0,
+        "format": 0,
+        "output_gain_db": 0.0,
+        "input_gain_db": 0.0,
+        "dry_wet": 1.0
+      },
+      "regions": [],
+      "automation_mode": 0
+    },
+    {
+      "name": "14",
+      "colour": "ff69aabf",
+      "fader_db": 0.0,
+      "pan": 0.0,
+      "mute": false,
+      "solo": false,
+      "phase_invert": false,
+      "fader_group": 0,
+      "input_monitor": false,
+      "print_effects": false,
+      "input_source": -2,
+      "input_source_r": -2,
+      "midi_input_idx": -1,
+      "midi_input_id": "",
+      "midi_output_idx": -1,
+      "midi_output_id": "",
+      "midi_channel": 0,
+      "track_mode": 0,
+      "frozen": false,
+      "bus_assign": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "aux_sends_bypassed": false,
+      "aux_send_db": [
+        -100.0,
+        -100.0,
+        -100.0,
+        -100.0
+      ],
+      "aux_send_pre_fader": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "hpf": {
+        "enabled": false,
+        "freq": 20.0
+      },
+      "lpf": {
+        "enabled": false,
+        "freq": 20000.0
+      },
+      "eq": {
+        "enabled": false,
+        "type": "brown",
+        "lf": {
+          "gain": 0.0,
+          "freq": 100.0
+        },
+        "lm": {
+          "gain": 0.0,
+          "freq": 600.0,
+          "q": 0.699999988079071
+        },
+        "hm": {
+          "gain": 0.0,
+          "freq": 2000.0,
+          "q": 0.699999988079071
+        },
+        "hf": {
+          "gain": 0.0,
+          "freq": 8000.0
+        }
+      },
+      "comp": {
+        "enabled": false,
+        "mode_picked": false,
+        "mode": 0,
+        "opto_peak_red": 0.0,
+        "opto_gain": 50.0,
+        "opto_limit": false,
+        "fet_input": 0.0,
+        "fet_output": 0.0,
+        "fet_attack": 0.20000000298023224,
+        "fet_release": 400.0,
+        "fet_ratio": 0,
+        "fet_threshold_db": -10.0,
+        "vca_thresh_db": 12.0,
+        "vca_ratio": 4.0,
+        "vca_attack": 1.0,
+        "vca_release": 100.0,
+        "vca_output": 0.0,
+        "vca_overeasy": false,
+        "vca_detector_classic": false
+      },
+      "hardware_insert": {
+        "enabled": false,
+        "output_ch_l": -1,
+        "output_ch_r": -1,
+        "input_ch_l": -1,
+        "input_ch_r": -1,
+        "latency_samples": 0,
+        "format": 0,
+        "output_gain_db": 0.0,
+        "input_gain_db": 0.0,
+        "dry_wet": 1.0
+      },
+      "regions": [],
+      "automation_mode": 0
+    },
+    {
+      "name": "15",
+      "colour": "ff6994bf",
+      "fader_db": 0.0,
+      "pan": 0.0,
+      "mute": false,
+      "solo": false,
+      "phase_invert": false,
+      "fader_group": 0,
+      "input_monitor": false,
+      "print_effects": false,
+      "input_source": -2,
+      "input_source_r": -2,
+      "midi_input_idx": -1,
+      "midi_input_id": "",
+      "midi_output_idx": -1,
+      "midi_output_id": "",
+      "midi_channel": 0,
+      "track_mode": 0,
+      "frozen": false,
+      "bus_assign": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "aux_sends_bypassed": false,
+      "aux_send_db": [
+        -100.0,
+        -100.0,
+        -100.0,
+        -100.0
+      ],
+      "aux_send_pre_fader": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "hpf": {
+        "enabled": false,
+        "freq": 20.0
+      },
+      "lpf": {
+        "enabled": false,
+        "freq": 20000.0
+      },
+      "eq": {
+        "enabled": false,
+        "type": "brown",
+        "lf": {
+          "gain": 0.0,
+          "freq": 100.0
+        },
+        "lm": {
+          "gain": 0.0,
+          "freq": 600.0,
+          "q": 0.699999988079071
+        },
+        "hm": {
+          "gain": 0.0,
+          "freq": 2000.0,
+          "q": 0.699999988079071
+        },
+        "hf": {
+          "gain": 0.0,
+          "freq": 8000.0
+        }
+      },
+      "comp": {
+        "enabled": false,
+        "mode_picked": false,
+        "mode": 0,
+        "opto_peak_red": 0.0,
+        "opto_gain": 50.0,
+        "opto_limit": false,
+        "fet_input": 0.0,
+        "fet_output": 0.0,
+        "fet_attack": 0.20000000298023224,
+        "fet_release": 400.0,
+        "fet_ratio": 0,
+        "fet_threshold_db": -10.0,
+        "vca_thresh_db": 12.0,
+        "vca_ratio": 4.0,
+        "vca_attack": 1.0,
+        "vca_release": 100.0,
+        "vca_output": 0.0,
+        "vca_overeasy": false,
+        "vca_detector_classic": false
+      },
+      "hardware_insert": {
+        "enabled": false,
+        "output_ch_l": -1,
+        "output_ch_r": -1,
+        "input_ch_l": -1,
+        "input_ch_r": -1,
+        "latency_samples": 0,
+        "format": 0,
+        "output_gain_db": 0.0,
+        "input_gain_db": 0.0,
+        "dry_wet": 1.0
+      },
+      "regions": [],
+      "automation_mode": 0
+    },
+    {
+      "name": "16",
+      "colour": "ff697fbf",
+      "fader_db": 0.0,
+      "pan": 0.0,
+      "mute": false,
+      "solo": false,
+      "phase_invert": false,
+      "fader_group": 0,
+      "input_monitor": false,
+      "print_effects": false,
+      "input_source": -2,
+      "input_source_r": -2,
+      "midi_input_idx": -1,
+      "midi_input_id": "",
+      "midi_output_idx": -1,
+      "midi_output_id": "",
+      "midi_channel": 0,
+      "track_mode": 0,
+      "frozen": false,
+      "bus_assign": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "aux_sends_bypassed": false,
+      "aux_send_db": [
+        -100.0,
+        -100.0,
+        -100.0,
+        -100.0
+      ],
+      "aux_send_pre_fader": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "hpf": {
+        "enabled": false,
+        "freq": 20.0
+      },
+      "lpf": {
+        "enabled": false,
+        "freq": 20000.0
+      },
+      "eq": {
+        "enabled": false,
+        "type": "brown",
+        "lf": {
+          "gain": 0.0,
+          "freq": 100.0
+        },
+        "lm": {
+          "gain": 0.0,
+          "freq": 600.0,
+          "q": 0.699999988079071
+        },
+        "hm": {
+          "gain": 0.0,
+          "freq": 2000.0,
+          "q": 0.699999988079071
+        },
+        "hf": {
+          "gain": 0.0,
+          "freq": 8000.0
+        }
+      },
+      "comp": {
+        "enabled": false,
+        "mode_picked": false,
+        "mode": 0,
+        "opto_peak_red": 0.0,
+        "opto_gain": 50.0,
+        "opto_limit": false,
+        "fet_input": 0.0,
+        "fet_output": 0.0,
+        "fet_attack": 0.20000000298023224,
+        "fet_release": 400.0,
+        "fet_ratio": 0,
+        "fet_threshold_db": -10.0,
+        "vca_thresh_db": 12.0,
+        "vca_ratio": 4.0,
+        "vca_attack": 1.0,
+        "vca_release": 100.0,
+        "vca_output": 0.0,
+        "vca_overeasy": false,
+        "vca_detector_classic": false
+      },
+      "hardware_insert": {
+        "enabled": false,
+        "output_ch_l": -1,
+        "output_ch_r": -1,
+        "input_ch_l": -1,
+        "input_ch_r": -1,
+        "latency_samples": 0,
+        "format": 0,
+        "output_gain_db": 0.0,
+        "input_gain_db": 0.0,
+        "dry_wet": 1.0
+      },
+      "regions": [],
+      "automation_mode": 0
+    },
+    {
+      "name": "17",
+      "colour": "ff6969bf",
+      "fader_db": 0.0,
+      "pan": 0.0,
+      "mute": false,
+      "solo": false,
+      "phase_invert": false,
+      "fader_group": 0,
+      "input_monitor": false,
+      "print_effects": false,
+      "input_source": -2,
+      "input_source_r": -2,
+      "midi_input_idx": -1,
+      "midi_input_id": "",
+      "midi_output_idx": -1,
+      "midi_output_id": "",
+      "midi_channel": 0,
+      "track_mode": 0,
+      "frozen": false,
+      "bus_assign": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "aux_sends_bypassed": false,
+      "aux_send_db": [
+        -100.0,
+        -100.0,
+        -100.0,
+        -100.0
+      ],
+      "aux_send_pre_fader": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "hpf": {
+        "enabled": false,
+        "freq": 20.0
+      },
+      "lpf": {
+        "enabled": false,
+        "freq": 20000.0
+      },
+      "eq": {
+        "enabled": false,
+        "type": "brown",
+        "lf": {
+          "gain": 0.0,
+          "freq": 100.0
+        },
+        "lm": {
+          "gain": 0.0,
+          "freq": 600.0,
+          "q": 0.699999988079071
+        },
+        "hm": {
+          "gain": 0.0,
+          "freq": 2000.0,
+          "q": 0.699999988079071
+        },
+        "hf": {
+          "gain": 0.0,
+          "freq": 8000.0
+        }
+      },
+      "comp": {
+        "enabled": false,
+        "mode_picked": false,
+        "mode": 0,
+        "opto_peak_red": 0.0,
+        "opto_gain": 50.0,
+        "opto_limit": false,
+        "fet_input": 0.0,
+        "fet_output": 0.0,
+        "fet_attack": 0.20000000298023224,
+        "fet_release": 400.0,
+        "fet_ratio": 0,
+        "fet_threshold_db": -10.0,
+        "vca_thresh_db": 12.0,
+        "vca_ratio": 4.0,
+        "vca_attack": 1.0,
+        "vca_release": 100.0,
+        "vca_output": 0.0,
+        "vca_overeasy": false,
+        "vca_detector_classic": false
+      },
+      "hardware_insert": {
+        "enabled": false,
+        "output_ch_l": -1,
+        "output_ch_r": -1,
+        "input_ch_l": -1,
+        "input_ch_r": -1,
+        "latency_samples": 0,
+        "format": 0,
+        "output_gain_db": 0.0,
+        "input_gain_db": 0.0,
+        "dry_wet": 1.0
+      },
+      "regions": [],
+      "automation_mode": 0
+    },
+    {
+      "name": "18",
+      "colour": "ff7f69bf",
+      "fader_db": 0.0,
+      "pan": 0.0,
+      "mute": false,
+      "solo": false,
+      "phase_invert": false,
+      "fader_group": 0,
+      "input_monitor": false,
+      "print_effects": false,
+      "input_source": -2,
+      "input_source_r": -2,
+      "midi_input_idx": -1,
+      "midi_input_id": "",
+      "midi_output_idx": -1,
+      "midi_output_id": "",
+      "midi_channel": 0,
+      "track_mode": 0,
+      "frozen": false,
+      "bus_assign": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "aux_sends_bypassed": false,
+      "aux_send_db": [
+        -100.0,
+        -100.0,
+        -100.0,
+        -100.0
+      ],
+      "aux_send_pre_fader": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "hpf": {
+        "enabled": false,
+        "freq": 20.0
+      },
+      "lpf": {
+        "enabled": false,
+        "freq": 20000.0
+      },
+      "eq": {
+        "enabled": false,
+        "type": "brown",
+        "lf": {
+          "gain": 0.0,
+          "freq": 100.0
+        },
+        "lm": {
+          "gain": 0.0,
+          "freq": 600.0,
+          "q": 0.699999988079071
+        },
+        "hm": {
+          "gain": 0.0,
+          "freq": 2000.0,
+          "q": 0.699999988079071
+        },
+        "hf": {
+          "gain": 0.0,
+          "freq": 8000.0
+        }
+      },
+      "comp": {
+        "enabled": false,
+        "mode_picked": false,
+        "mode": 0,
+        "opto_peak_red": 0.0,
+        "opto_gain": 50.0,
+        "opto_limit": false,
+        "fet_input": 0.0,
+        "fet_output": 0.0,
+        "fet_attack": 0.20000000298023224,
+        "fet_release": 400.0,
+        "fet_ratio": 0,
+        "fet_threshold_db": -10.0,
+        "vca_thresh_db": 12.0,
+        "vca_ratio": 4.0,
+        "vca_attack": 1.0,
+        "vca_release": 100.0,
+        "vca_output": 0.0,
+        "vca_overeasy": false,
+        "vca_detector_classic": false
+      },
+      "hardware_insert": {
+        "enabled": false,
+        "output_ch_l": -1,
+        "output_ch_r": -1,
+        "input_ch_l": -1,
+        "input_ch_r": -1,
+        "latency_samples": 0,
+        "format": 0,
+        "output_gain_db": 0.0,
+        "input_gain_db": 0.0,
+        "dry_wet": 1.0
+      },
+      "regions": [],
+      "automation_mode": 0
+    },
+    {
+      "name": "19",
+      "colour": "ff9469bf",
+      "fader_db": 0.0,
+      "pan": 0.0,
+      "mute": false,
+      "solo": false,
+      "phase_invert": false,
+      "fader_group": 0,
+      "input_monitor": false,
+      "print_effects": false,
+      "input_source": -2,
+      "input_source_r": -2,
+      "midi_input_idx": -1,
+      "midi_input_id": "",
+      "midi_output_idx": -1,
+      "midi_output_id": "",
+      "midi_channel": 0,
+      "track_mode": 0,
+      "frozen": false,
+      "bus_assign": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "aux_sends_bypassed": false,
+      "aux_send_db": [
+        -100.0,
+        -100.0,
+        -100.0,
+        -100.0
+      ],
+      "aux_send_pre_fader": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "hpf": {
+        "enabled": false,
+        "freq": 20.0
+      },
+      "lpf": {
+        "enabled": false,
+        "freq": 20000.0
+      },
+      "eq": {
+        "enabled": false,
+        "type": "brown",
+        "lf": {
+          "gain": 0.0,
+          "freq": 100.0
+        },
+        "lm": {
+          "gain": 0.0,
+          "freq": 600.0,
+          "q": 0.699999988079071
+        },
+        "hm": {
+          "gain": 0.0,
+          "freq": 2000.0,
+          "q": 0.699999988079071
+        },
+        "hf": {
+          "gain": 0.0,
+          "freq": 8000.0
+        }
+      },
+      "comp": {
+        "enabled": false,
+        "mode_picked": false,
+        "mode": 0,
+        "opto_peak_red": 0.0,
+        "opto_gain": 50.0,
+        "opto_limit": false,
+        "fet_input": 0.0,
+        "fet_output": 0.0,
+        "fet_attack": 0.20000000298023224,
+        "fet_release": 400.0,
+        "fet_ratio": 0,
+        "fet_threshold_db": -10.0,
+        "vca_thresh_db": 12.0,
+        "vca_ratio": 4.0,
+        "vca_attack": 1.0,
+        "vca_release": 100.0,
+        "vca_output": 0.0,
+        "vca_overeasy": false,
+        "vca_detector_classic": false
+      },
+      "hardware_insert": {
+        "enabled": false,
+        "output_ch_l": -1,
+        "output_ch_r": -1,
+        "input_ch_l": -1,
+        "input_ch_r": -1,
+        "latency_samples": 0,
+        "format": 0,
+        "output_gain_db": 0.0,
+        "input_gain_db": 0.0,
+        "dry_wet": 1.0
+      },
+      "regions": [],
+      "automation_mode": 0
+    },
+    {
+      "name": "20",
+      "colour": "ffaa69bf",
+      "fader_db": 0.0,
+      "pan": 0.0,
+      "mute": false,
+      "solo": false,
+      "phase_invert": false,
+      "fader_group": 0,
+      "input_monitor": false,
+      "print_effects": false,
+      "input_source": -2,
+      "input_source_r": -2,
+      "midi_input_idx": -1,
+      "midi_input_id": "",
+      "midi_output_idx": -1,
+      "midi_output_id": "",
+      "midi_channel": 0,
+      "track_mode": 0,
+      "frozen": false,
+      "bus_assign": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "aux_sends_bypassed": false,
+      "aux_send_db": [
+        -100.0,
+        -100.0,
+        -100.0,
+        -100.0
+      ],
+      "aux_send_pre_fader": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "hpf": {
+        "enabled": false,
+        "freq": 20.0
+      },
+      "lpf": {
+        "enabled": false,
+        "freq": 20000.0
+      },
+      "eq": {
+        "enabled": false,
+        "type": "brown",
+        "lf": {
+          "gain": 0.0,
+          "freq": 100.0
+        },
+        "lm": {
+          "gain": 0.0,
+          "freq": 600.0,
+          "q": 0.699999988079071
+        },
+        "hm": {
+          "gain": 0.0,
+          "freq": 2000.0,
+          "q": 0.699999988079071
+        },
+        "hf": {
+          "gain": 0.0,
+          "freq": 8000.0
+        }
+      },
+      "comp": {
+        "enabled": false,
+        "mode_picked": false,
+        "mode": 0,
+        "opto_peak_red": 0.0,
+        "opto_gain": 50.0,
+        "opto_limit": false,
+        "fet_input": 0.0,
+        "fet_output": 0.0,
+        "fet_attack": 0.20000000298023224,
+        "fet_release": 400.0,
+        "fet_ratio": 0,
+        "fet_threshold_db": -10.0,
+        "vca_thresh_db": 12.0,
+        "vca_ratio": 4.0,
+        "vca_attack": 1.0,
+        "vca_release": 100.0,
+        "vca_output": 0.0,
+        "vca_overeasy": false,
+        "vca_detector_classic": false
+      },
+      "hardware_insert": {
+        "enabled": false,
+        "output_ch_l": -1,
+        "output_ch_r": -1,
+        "input_ch_l": -1,
+        "input_ch_r": -1,
+        "latency_samples": 0,
+        "format": 0,
+        "output_gain_db": 0.0,
+        "input_gain_db": 0.0,
+        "dry_wet": 1.0
+      },
+      "regions": [],
+      "automation_mode": 0
+    },
+    {
+      "name": "21",
+      "colour": "ffbf69bf",
+      "fader_db": 0.0,
+      "pan": 0.0,
+      "mute": false,
+      "solo": false,
+      "phase_invert": false,
+      "fader_group": 0,
+      "input_monitor": false,
+      "print_effects": false,
+      "input_source": -2,
+      "input_source_r": -2,
+      "midi_input_idx": -1,
+      "midi_input_id": "",
+      "midi_output_idx": -1,
+      "midi_output_id": "",
+      "midi_channel": 0,
+      "track_mode": 0,
+      "frozen": false,
+      "bus_assign": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "aux_sends_bypassed": false,
+      "aux_send_db": [
+        -100.0,
+        -100.0,
+        -100.0,
+        -100.0
+      ],
+      "aux_send_pre_fader": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "hpf": {
+        "enabled": false,
+        "freq": 20.0
+      },
+      "lpf": {
+        "enabled": false,
+        "freq": 20000.0
+      },
+      "eq": {
+        "enabled": false,
+        "type": "brown",
+        "lf": {
+          "gain": 0.0,
+          "freq": 100.0
+        },
+        "lm": {
+          "gain": 0.0,
+          "freq": 600.0,
+          "q": 0.699999988079071
+        },
+        "hm": {
+          "gain": 0.0,
+          "freq": 2000.0,
+          "q": 0.699999988079071
+        },
+        "hf": {
+          "gain": 0.0,
+          "freq": 8000.0
+        }
+      },
+      "comp": {
+        "enabled": false,
+        "mode_picked": false,
+        "mode": 0,
+        "opto_peak_red": 0.0,
+        "opto_gain": 50.0,
+        "opto_limit": false,
+        "fet_input": 0.0,
+        "fet_output": 0.0,
+        "fet_attack": 0.20000000298023224,
+        "fet_release": 400.0,
+        "fet_ratio": 0,
+        "fet_threshold_db": -10.0,
+        "vca_thresh_db": 12.0,
+        "vca_ratio": 4.0,
+        "vca_attack": 1.0,
+        "vca_release": 100.0,
+        "vca_output": 0.0,
+        "vca_overeasy": false,
+        "vca_detector_classic": false
+      },
+      "hardware_insert": {
+        "enabled": false,
+        "output_ch_l": -1,
+        "output_ch_r": -1,
+        "input_ch_l": -1,
+        "input_ch_r": -1,
+        "latency_samples": 0,
+        "format": 0,
+        "output_gain_db": 0.0,
+        "input_gain_db": 0.0,
+        "dry_wet": 1.0
+      },
+      "regions": [],
+      "automation_mode": 0
+    },
+    {
+      "name": "22",
+      "colour": "ffbf69aa",
+      "fader_db": 0.0,
+      "pan": 0.0,
+      "mute": false,
+      "solo": false,
+      "phase_invert": false,
+      "fader_group": 0,
+      "input_monitor": false,
+      "print_effects": false,
+      "input_source": -2,
+      "input_source_r": -2,
+      "midi_input_idx": -1,
+      "midi_input_id": "",
+      "midi_output_idx": -1,
+      "midi_output_id": "",
+      "midi_channel": 0,
+      "track_mode": 0,
+      "frozen": false,
+      "bus_assign": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "aux_sends_bypassed": false,
+      "aux_send_db": [
+        -100.0,
+        -100.0,
+        -100.0,
+        -100.0
+      ],
+      "aux_send_pre_fader": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "hpf": {
+        "enabled": false,
+        "freq": 20.0
+      },
+      "lpf": {
+        "enabled": false,
+        "freq": 20000.0
+      },
+      "eq": {
+        "enabled": false,
+        "type": "brown",
+        "lf": {
+          "gain": 0.0,
+          "freq": 100.0
+        },
+        "lm": {
+          "gain": 0.0,
+          "freq": 600.0,
+          "q": 0.699999988079071
+        },
+        "hm": {
+          "gain": 0.0,
+          "freq": 2000.0,
+          "q": 0.699999988079071
+        },
+        "hf": {
+          "gain": 0.0,
+          "freq": 8000.0
+        }
+      },
+      "comp": {
+        "enabled": false,
+        "mode_picked": false,
+        "mode": 0,
+        "opto_peak_red": 0.0,
+        "opto_gain": 50.0,
+        "opto_limit": false,
+        "fet_input": 0.0,
+        "fet_output": 0.0,
+        "fet_attack": 0.20000000298023224,
+        "fet_release": 400.0,
+        "fet_ratio": 0,
+        "fet_threshold_db": -10.0,
+        "vca_thresh_db": 12.0,
+        "vca_ratio": 4.0,
+        "vca_attack": 1.0,
+        "vca_release": 100.0,
+        "vca_output": 0.0,
+        "vca_overeasy": false,
+        "vca_detector_classic": false
+      },
+      "hardware_insert": {
+        "enabled": false,
+        "output_ch_l": -1,
+        "output_ch_r": -1,
+        "input_ch_l": -1,
+        "input_ch_r": -1,
+        "latency_samples": 0,
+        "format": 0,
+        "output_gain_db": 0.0,
+        "input_gain_db": 0.0,
+        "dry_wet": 1.0
+      },
+      "regions": [],
+      "automation_mode": 0
+    },
+    {
+      "name": "23",
+      "colour": "ffbf6994",
+      "fader_db": 0.0,
+      "pan": 0.0,
+      "mute": false,
+      "solo": false,
+      "phase_invert": false,
+      "fader_group": 0,
+      "input_monitor": false,
+      "print_effects": false,
+      "input_source": -2,
+      "input_source_r": -2,
+      "midi_input_idx": -1,
+      "midi_input_id": "",
+      "midi_output_idx": -1,
+      "midi_output_id": "",
+      "midi_channel": 0,
+      "track_mode": 0,
+      "frozen": false,
+      "bus_assign": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "aux_sends_bypassed": false,
+      "aux_send_db": [
+        -100.0,
+        -100.0,
+        -100.0,
+        -100.0
+      ],
+      "aux_send_pre_fader": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "hpf": {
+        "enabled": false,
+        "freq": 20.0
+      },
+      "lpf": {
+        "enabled": false,
+        "freq": 20000.0
+      },
+      "eq": {
+        "enabled": false,
+        "type": "brown",
+        "lf": {
+          "gain": 0.0,
+          "freq": 100.0
+        },
+        "lm": {
+          "gain": 0.0,
+          "freq": 600.0,
+          "q": 0.699999988079071
+        },
+        "hm": {
+          "gain": 0.0,
+          "freq": 2000.0,
+          "q": 0.699999988079071
+        },
+        "hf": {
+          "gain": 0.0,
+          "freq": 8000.0
+        }
+      },
+      "comp": {
+        "enabled": false,
+        "mode_picked": false,
+        "mode": 0,
+        "opto_peak_red": 0.0,
+        "opto_gain": 50.0,
+        "opto_limit": false,
+        "fet_input": 0.0,
+        "fet_output": 0.0,
+        "fet_attack": 0.20000000298023224,
+        "fet_release": 400.0,
+        "fet_ratio": 0,
+        "fet_threshold_db": -10.0,
+        "vca_thresh_db": 12.0,
+        "vca_ratio": 4.0,
+        "vca_attack": 1.0,
+        "vca_release": 100.0,
+        "vca_output": 0.0,
+        "vca_overeasy": false,
+        "vca_detector_classic": false
+      },
+      "hardware_insert": {
+        "enabled": false,
+        "output_ch_l": -1,
+        "output_ch_r": -1,
+        "input_ch_l": -1,
+        "input_ch_r": -1,
+        "latency_samples": 0,
+        "format": 0,
+        "output_gain_db": 0.0,
+        "input_gain_db": 0.0,
+        "dry_wet": 1.0
+      },
+      "regions": [],
+      "automation_mode": 0
+    },
+    {
+      "name": "24",
+      "colour": "ffbf697f",
+      "fader_db": 0.0,
+      "pan": 0.0,
+      "mute": false,
+      "solo": false,
+      "phase_invert": false,
+      "fader_group": 0,
+      "input_monitor": false,
+      "print_effects": false,
+      "input_source": -2,
+      "input_source_r": -2,
+      "midi_input_idx": -1,
+      "midi_input_id": "",
+      "midi_output_idx": -1,
+      "midi_output_id": "",
+      "midi_channel": 0,
+      "track_mode": 0,
+      "frozen": false,
+      "bus_assign": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "aux_sends_bypassed": false,
+      "aux_send_db": [
+        -100.0,
+        -100.0,
+        -100.0,
+        -100.0
+      ],
+      "aux_send_pre_fader": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "hpf": {
+        "enabled": false,
+        "freq": 20.0
+      },
+      "lpf": {
+        "enabled": false,
+        "freq": 20000.0
+      },
+      "eq": {
+        "enabled": false,
+        "type": "brown",
+        "lf": {
+          "gain": 0.0,
+          "freq": 100.0
+        },
+        "lm": {
+          "gain": 0.0,
+          "freq": 600.0,
+          "q": 0.699999988079071
+        },
+        "hm": {
+          "gain": 0.0,
+          "freq": 2000.0,
+          "q": 0.699999988079071
+        },
+        "hf": {
+          "gain": 0.0,
+          "freq": 8000.0
+        }
+      },
+      "comp": {
+        "enabled": false,
+        "mode_picked": false,
+        "mode": 0,
+        "opto_peak_red": 0.0,
+        "opto_gain": 50.0,
+        "opto_limit": false,
+        "fet_input": 0.0,
+        "fet_output": 0.0,
+        "fet_attack": 0.20000000298023224,
+        "fet_release": 400.0,
+        "fet_ratio": 0,
+        "fet_threshold_db": -10.0,
+        "vca_thresh_db": 12.0,
+        "vca_ratio": 4.0,
+        "vca_attack": 1.0,
+        "vca_release": 100.0,
+        "vca_output": 0.0,
+        "vca_overeasy": false,
+        "vca_detector_classic": false
+      },
+      "hardware_insert": {
+        "enabled": false,
+        "output_ch_l": -1,
+        "output_ch_r": -1,
+        "input_ch_l": -1,
+        "input_ch_r": -1,
+        "latency_samples": 0,
+        "format": 0,
+        "output_gain_db": 0.0,
+        "input_gain_db": 0.0,
+        "dry_wet": 1.0
+      },
+      "regions": [],
+      "automation_mode": 0
+    }
+  ],
+  "buses": [
+    {
+      "name": "BUS 1",
+      "colour": "ff77a4b8",
+      "fader_db": 0.0,
+      "pan": 0.0,
+      "mute": false,
+      "solo": false,
+      "eq_enabled": false,
+      "eq_lf_db": 0.0,
+      "eq_mid_db": 0.0,
+      "eq_hf_db": 0.0,
+      "hpf_enabled": false,
+      "hpf_freq": 20.0,
+      "comp_enabled": false,
+      "comp_thresh_db": 0.0,
+      "comp_ratio": 4.0,
+      "comp_attack_ms": 10.0,
+      "comp_release_ms": 100.0,
+      "comp_release_auto": true,
+      "comp_makeup_db": 0.0,
+      "automation_mode": 0
+    },
+    {
+      "name": "BUS 2",
+      "colour": "ff7789b8",
+      "fader_db": 0.0,
+      "pan": 0.0,
+      "mute": false,
+      "solo": false,
+      "eq_enabled": false,
+      "eq_lf_db": 0.0,
+      "eq_mid_db": 0.0,
+      "eq_hf_db": 0.0,
+      "hpf_enabled": false,
+      "hpf_freq": 20.0,
+      "comp_enabled": false,
+      "comp_thresh_db": 0.0,
+      "comp_ratio": 4.0,
+      "comp_attack_ms": 10.0,
+      "comp_release_ms": 100.0,
+      "comp_release_auto": true,
+      "comp_makeup_db": 0.0,
+      "automation_mode": 0
+    },
+    {
+      "name": "BUS 3",
+      "colour": "ff8077b8",
+      "fader_db": 0.0,
+      "pan": 0.0,
+      "mute": false,
+      "solo": false,
+      "eq_enabled": false,
+      "eq_lf_db": 0.0,
+      "eq_mid_db": 0.0,
+      "eq_hf_db": 0.0,
+      "hpf_enabled": false,
+      "hpf_freq": 20.0,
+      "comp_enabled": false,
+      "comp_thresh_db": 0.0,
+      "comp_ratio": 4.0,
+      "comp_attack_ms": 10.0,
+      "comp_release_ms": 100.0,
+      "comp_release_auto": true,
+      "comp_makeup_db": 0.0,
+      "automation_mode": 0
+    },
+    {
+      "name": "BUS 4",
+      "colour": "ff9b77b8",
+      "fader_db": 0.0,
+      "pan": 0.0,
+      "mute": false,
+      "solo": false,
+      "eq_enabled": false,
+      "eq_lf_db": 0.0,
+      "eq_mid_db": 0.0,
+      "eq_hf_db": 0.0,
+      "hpf_enabled": false,
+      "hpf_freq": 20.0,
+      "comp_enabled": false,
+      "comp_thresh_db": 0.0,
+      "comp_ratio": 4.0,
+      "comp_attack_ms": 10.0,
+      "comp_release_ms": 100.0,
+      "comp_release_auto": true,
+      "comp_makeup_db": 0.0,
+      "automation_mode": 0
+    }
+  ],
+  "aux_lanes": [
+    {
+      "name": "AUX 1",
+      "colour": "ffad77c7",
+      "return_level_db": 0.0,
+      "mute": false,
+      "output_pair": -1,
+      "plugin_slots": [
+        {
+          "plugin_state": "",
+          "hardware_insert": {
+            "enabled": false,
+            "output_ch_l": -1,
+            "output_ch_r": -1,
+            "input_ch_l": -1,
+            "input_ch_r": -1,
+            "latency_samples": 0,
+            "format": 0,
+            "output_gain_db": 0.0,
+            "input_gain_db": 0.0,
+            "dry_wet": 1.0
+          }
+        }
+      ],
+      "automation_mode": 0
+    },
+    {
+      "name": "AUX 2",
+      "colour": "ffc577c7",
+      "return_level_db": 0.0,
+      "mute": false,
+      "output_pair": -1,
+      "plugin_slots": [
+        {
+          "plugin_state": "",
+          "hardware_insert": {
+            "enabled": false,
+            "output_ch_l": -1,
+            "output_ch_r": -1,
+            "input_ch_l": -1,
+            "input_ch_r": -1,
+            "latency_samples": 0,
+            "format": 0,
+            "output_gain_db": 0.0,
+            "input_gain_db": 0.0,
+            "dry_wet": 1.0
+          }
+        }
+      ],
+      "automation_mode": 0
+    },
+    {
+      "name": "AUX 3",
+      "colour": "ffc777b1",
+      "return_level_db": 0.0,
+      "mute": false,
+      "output_pair": -1,
+      "plugin_slots": [
+        {
+          "plugin_state": "",
+          "hardware_insert": {
+            "enabled": false,
+            "output_ch_l": -1,
+            "output_ch_r": -1,
+            "input_ch_l": -1,
+            "input_ch_r": -1,
+            "latency_samples": 0,
+            "format": 0,
+            "output_gain_db": 0.0,
+            "input_gain_db": 0.0,
+            "dry_wet": 1.0
+          }
+        }
+      ],
+      "automation_mode": 0
+    },
+    {
+      "name": "AUX 4",
+      "colour": "ffc77799",
+      "return_level_db": 0.0,
+      "mute": false,
+      "output_pair": -1,
+      "plugin_slots": [
+        {
+          "plugin_state": "",
+          "hardware_insert": {
+            "enabled": false,
+            "output_ch_l": -1,
+            "output_ch_r": -1,
+            "input_ch_l": -1,
+            "input_ch_r": -1,
+            "latency_samples": 0,
+            "format": 0,
+            "output_gain_db": 0.0,
+            "input_gain_db": 0.0,
+            "dry_wet": 1.0
+          }
+        }
+      ],
+      "automation_mode": 0
+    }
+  ],
+  "markers": [],
+  "master": {
+    "fader_db": 0.0,
+    "output_pair": -1,
+    "tape_enabled": false,
+    "tape_hq": false,
+    "tape": {
+      "machine": 0,
+      "speed": 1,
+      "type": 0,
+      "signal_path": 0,
+      "eq_standard": 0,
+      "calibration": 0,
+      "input_gain_db": 0.0,
+      "bias": 50.0,
+      "highpass_hz": 20.0,
+      "lowpass_hz": 20000.0,
+      "noise_amount": 0.0,
+      "wow": 7.0,
+      "flutter": 3.0,
+      "output_gain_db": 0.0,
+      "auto_cal": true,
+      "auto_comp": true,
+      "noise_enabled": false,
+      "head_width": 1,
+      "crosstalk": true,
+      "wow_flutter_on": true,
+      "transformer": true,
+      "repro_lf_db": 0.0,
+      "repro_lmf_db": 0.0,
+      "repro_hmf_db": 0.0,
+      "repro_hf_db": 0.0,
+      "level_hmf_trim_db": 0.0,
+      "level_hf_trim_db": 0.0,
+      "lowpass_q": 0.7070000171661377,
+      "prog_hmf_trim_db": 0.0,
+      "prog_hf_trim_db": 0.0,
+      "repro_sub_bell_db": 0.0,
+      "prog_lf_trim_db": 0.0
+    },
+    "eq_enabled": false,
+    "eq_lf_boost": 0.0,
+    "eq_lf_atten": 0.0,
+    "eq_lf_freq": 60.0,
+    "eq_hf_boost": 0.0,
+    "eq_hf_boost_freq": 8000.0,
+    "eq_hf_boost_bandwidth": 0.5,
+    "eq_hf_atten": 0.0,
+    "eq_hf_atten_freq": 10000.0,
+    "eq_output_gain_db": 0.0,
+    "comp_enabled": false,
+    "comp_thresh_db": 0.0,
+    "comp_ratio": 4.0,
+    "comp_attack_ms": 10.0,
+    "comp_release_ms": 100.0,
+    "comp_release_auto": true,
+    "comp_makeup_db": 0.0,
+    "automation_mode": 0
+  },
+  "mastering": {
+    "source_file": "",
+    "eq_enabled": false,
+    "eq_band_0_freq": 50.0,
+    "eq_band_0_gain_db": 0.0,
+    "eq_band_0_q": 0.699999988079071,
+    "eq_band_1_freq": 250.0,
+    "eq_band_1_gain_db": 0.0,
+    "eq_band_1_q": 1.0,
+    "eq_band_2_freq": 1000.0,
+    "eq_band_2_gain_db": 0.0,
+    "eq_band_2_q": 1.0,
+    "eq_band_3_freq": 4000.0,
+    "eq_band_3_gain_db": 0.0,
+    "eq_band_3_q": 1.0,
+    "eq_band_4_freq": 12000.0,
+    "eq_band_4_gain_db": 0.0,
+    "eq_band_4_q": 0.699999988079071,
+    "eq_lf_boost": 0.0,
+    "eq_hf_boost": 0.0,
+    "eq_hf_atten": 0.0,
+    "eq_tube_drive": 0.30000001192092896,
+    "eq_output_gain_db": 0.0,
+    "comp_enabled": false,
+    "comp_thresh_db": 0.0,
+    "comp_ratio": 2.0,
+    "comp_attack_ms": 30.0,
+    "comp_release_ms": 250.0,
+    "comp_release_auto": true,
+    "comp_makeup_db": 0.0,
+    "limiter_enabled": true,
+    "limiter_drive_db": 0.0,
+    "limiter_ceiling_db": -0.30000001192092896,
+    "limiter_release_ms": 100.0,
+    "limiter_lookahead_ms": 2.0,
+    "limiter_mode": 0,
+    "limiter_stereo_link": true,
+    "loudness_target": 0
+  },
+  "transport": {
+    "loop_enabled": false,
+    "loop_start": 0,
+    "loop_end": 0,
+    "punch_enabled": false,
+    "punch_in": 0,
+    "punch_out": 0,
+    "snap_to_grid": false,
+    "audio_editor_snap": false,
+    "midi_editor_snap": true,
+    "snap_resolution": 2,
+    "piano_roll_key_snap": true,
+    "tempo_bpm": 120.0,
+    "ui_stage": 0,
+    "sync_source_input": "",
+    "sync_follow_tempo": true,
+    "sync_chase_transport": false,
+    "sync_output": "",
+    "sync_emit_clock": false,
+    "sync_chase_timecode": false,
+    "sync_emit_timecode": false,
+    "sync_timecode_frame_rate": 3,
+    "mcu_input_id": "",
+    "mcu_output_id": "",
+    "mcu_assign_mode": 0,
+    "beats_per_bar": 4,
+    "beat_unit": 4,
+    "metronome_enabled": false,
+    "metronome_vol_db": -12.0,
+    "metronome_click_recording": true,
+    "metronome_click_playing": false,
+    "metronome_only_countin": false,
+    "metronome_polyphonic": false,
+    "count_in_enabled": false,
+    "time_display_mode": 0,
+    "last_record_point": 0,
+    "pre_roll_seconds": 0.0,
+    "post_roll_seconds": 0.0,
+    "pre_roll_enabled": true,
+    "post_roll_enabled": true,
+    "oversampling_factor": 1
+  }
+}

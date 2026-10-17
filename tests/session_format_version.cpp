@@ -7,6 +7,8 @@
 #include <juce_core/juce_core.h>
 #include <nlohmann/json.hpp>
 
+#include <filesystem>
+#include <fstream>
 #include <memory>
 
 namespace
@@ -207,4 +209,41 @@ TEST_CASE ("SessionSerializer explains rejected loads and clears stale errors", 
     CHECK (error.supportedVersion == 11);
     CHECK (live->track (0).name == "Loaded");
     dir.deleteRecursively();
+}
+
+TEST_CASE ("SessionSerializer loads an unchanged format-10 file written by released 0.15.1", "[session][serializer][version]")
+{
+    using namespace duskstudio;
+    using Catch::Matchers::WithinAbs;
+    const auto fixture = std::filesystem::u8path (DUSKSTUDIO_SOURCE_DIR)
+        / "tests/fixtures/sessions/v0.15.1-format10.json";
+    std::ifstream input (fixture, std::ios::binary);
+    REQUIRE (input.is_open());
+    const auto original = nlohmann::json::parse (input);
+    REQUIRE (original["version"].get<int>() == 10);
+    REQUIRE (original["tracks"].size() == 24);
+    REQUIRE_FALSE (original["mastering"].contains ("phase_bands"));
+    REQUIRE_FALSE (original["mastering"].contains ("phase_q"));
+    REQUIRE_FALSE (original["mastering"].contains ("phase_averaging_ms"));
+
+    auto loaded = std::make_unique<Session>();
+    loaded->mastering().phase.bands.store (64);
+    loaded->mastering().phase.q.store (8.0f);
+    loaded->mastering().phase.averagingMs.store (5000.0f);
+    SessionLoadError error;
+    REQUIRE (SessionSerializer::load (*loaded, fixture, &error));
+    REQUIRE (error.failure == SessionLoadFailure::None);
+    CHECK (error.fileVersion == 10);
+    CHECK_THAT (loaded->sessionSampleRate, WithinAbs (48000.0, 1.0e-6));
+    CHECK_THAT (loaded->track (0).strip.faderDb.load(), WithinAbs (-3.0f, 1.0e-6f));
+    CHECK (loaded->mastering().phase.bands.load() == 16);
+    CHECK_THAT (loaded->mastering().phase.q.load(), WithinAbs (2.0f, 1.0e-6f));
+    CHECK_THAT (loaded->mastering().phase.averagingMs.load(), WithinAbs (500.0f, 1.0e-6f));
+    CHECK_FALSE (loaded->mastering().eqEnabled.load());
+    CHECK_FALSE (loaded->mastering().compEnabled.load());
+    CHECK (loaded->mastering().limiterEnabled.load());
+    const auto saved = nlohmann::json::parse (SessionSerializer::serialize (*loaded).toStdString());
+    CHECK (saved["version"].get<int>() == 11);
+    CHECK_THAT (saved["tracks"][0]["fader_db"].get<float>(), WithinAbs (-3.0f, 1.0e-6f));
+    CHECK_THAT (saved["session_sample_rate"].get<double>(), WithinAbs (48000.0, 1.0e-6));
 }
