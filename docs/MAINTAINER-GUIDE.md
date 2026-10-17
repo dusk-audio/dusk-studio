@@ -824,6 +824,13 @@ checklist item to the scenario, black-box leg or unit test that covers it, or
 says why it stays manual. When a fix lands, land its scenario (or extend one)
 and update that table in the same change.
 
+`docs/capture-screenshots.sh` also runs `gui.sfz_repository_workflow` in a
+separate isolated app process. Setting `DUSKSTUDIO_SCENARIO_CAPTURE_DIR` exports
+its Installed and Online native frames before case cleanup; the script converts
+them to the manual's PNGs. Do not combine that scenario with
+`DUSKSTUDIO_CAPTURE_DIR`, which starts the general capture harness in the same
+process.
+
 ### macOS
 
 The M3 Air (`marc@macbook-air.local`) is a headless build node: key auth, no

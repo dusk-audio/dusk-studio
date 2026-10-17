@@ -23,6 +23,7 @@
 #include <cmath>
 #include <condition_variable>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -43,6 +44,18 @@ using namespace sfz;
 constexpr const char* kCc0 = "Creative Commons CC0 1.0 Universal\nhttps://creativecommons.org/publicdomain/zero/1.0/\n";
 constexpr const char* kCatalogUrl = "https://raw.githubusercontent.com/sfzinstruments/sfzinstruments.github.io/master/data/sfz/instruments.yml";
 constexpr const char* kDemoPage = "https://sfzinstruments.github.io/woodwinds/dusk_gui/";
+
+void exportCapture (ScenarioContext& ctx, const fs::path& source, const char* name)
+{
+    const auto* destination = std::getenv ("DUSKSTUDIO_SCENARIO_CAPTURE_DIR");
+    if (destination == nullptr || *destination == '\0') return;
+    const auto directory = fs::u8path (destination);
+    std::error_code error;
+    fs::create_directories (directory, error);
+    if (! ctx.expect (! error, "could not create the scenario capture directory: " + error.message())) return;
+    fs::copy_file (source, directory / name, fs::copy_options::overwrite_existing, error);
+    ctx.expect (! error, "could not export the scenario capture: " + error.message());
+}
 
 bool sameFile (const std::string& actual, const fs::path& expected)
 {
@@ -759,11 +772,16 @@ std::optional<ScenarioResult> runWorkflow (GuiHost& host, ScenarioContext& ctx)
         }
         ctx.expect (! state->transport->archiveEntered.load(), "listening to a demo downloaded the instrument archive");
     }, [&host] { return host.sfzSourceRequests (kStripIndex).size() >= 3; }, "source and demo buttons did not dispatch" });
-    steps->push_back ({ 0, [&host, state] { host.captureSfzLibrary (kStripIndex, state->onlineCapture); } });
+    steps->push_back ({ 0, [&host, &ctx, state]
+    {
+        ctx.expect (host.sfzLibraryPointer (kStripIndex, "online-tab", 0.5f, false), "online tab was not available before capture");
+        host.captureSfzLibrary (kStripIndex, state->onlineCapture);
+    } });
     steps->push_back ({ 0, [&ctx, state]
     {
         std::error_code error;
-        ctx.expect (fs::file_size (state->onlineCapture, error) > 0 && ! error, "online SFZ library capture was not written");
+        if (ctx.expect (fs::file_size (state->onlineCapture, error) > 0 && ! error, "online SFZ library capture was not written"))
+            exportCapture (ctx, state->onlineCapture, "ms-04-sfz-online.ppm");
     }, [state] { std::error_code error; return fs::is_regular_file (state->onlineCapture, error); }, "online SFZ library capture did not arrive" });
     steps->push_back ({ 0, [&host] { host.restoreUiScale (1.5f); } });
     steps->push_back ({ 100, [&host, &ctx, state]
@@ -1052,6 +1070,7 @@ std::optional<ScenarioResult> runWorkflow (GuiHost& host, ScenarioContext& ctx)
         ctx.expect (ctx.engine().getSfzLibrary().snapshot().generation == state->generation,
                     "Remove submitted deletion of a version used by the current session");
         ctx.expect (fs::is_regular_file (state->installed->directory / "Instruments/Two.sfz"), "used pack was deleted");
+        ctx.expect (host.sfzLibraryPointer (kStripIndex, "installed-tab", 0.5f, false), "installed tab was not available before capture");
         host.captureSfzLibrary (kStripIndex, state->capture);
         ctx.expect (ctx.engine().requestNativeMultisampleLoad (kStripIndex, ctx.tempDir() / "missing.sfz", {},
             [state] (bool success, std::string error)
@@ -1073,7 +1092,8 @@ std::optional<ScenarioResult> runWorkflow (GuiHost& host, ScenarioContext& ctx)
     steps->push_back ({ 0, [&ctx, state]
     {
         std::error_code error;
-        ctx.expect (fs::file_size (state->capture, error) > 0 && ! error, "native SFZ library capture was not written");
+        if (ctx.expect (fs::file_size (state->capture, error) > 0 && ! error, "native SFZ library capture was not written"))
+            exportCapture (ctx, state->capture, "ms-03-sfz-installed.ppm");
     }, [state] { std::error_code error; return fs::is_regular_file (state->capture, error); }, "native SFZ library capture did not arrive" });
     pushClick (*steps, host, ctx, "online-tab");
     pushWorkClick (*steps, host, ctx, state, "browse", LibraryState::Failed);

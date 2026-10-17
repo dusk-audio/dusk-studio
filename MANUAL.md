@@ -1991,11 +1991,13 @@ Click a track's **Insert** slot and choose **SFZ Manager...** to load an instrum
 
 **SFZ Manager...** in the soundfont editor or a track's Insert menu opens the manager. The **Installed** tab lists downloaded instrument packs, and **Online** browses Creative Commons SFZ instruments from external repositories. **Local SFZ folders** opens the folder library for `.sfz` and `.sf2` files already on this computer; its **Open local file...** button also accepts ARIA `.bank.xml` manifests. **Browse...** in the soundfont editor opens a file directly.
 
+![SFZ Manager Installed tab with a downloaded pack and its programs.](docs/images/ms-03-sfz-installed.png)
+
 Both tabs have an instrument preview above a grouped browser. Choose **Piano**, **Drum Kit**, **Acoustic Guitar** or another category to narrow the current list; **All instruments** restores it and leaves the preview blank until you select an instrument. On smaller windows the category list becomes a dropdown. **Installed** lists each downloaded pack once, and category counts count packs rather than SFZ files. **Search installed instruments** matches pack names, program names and saved descriptions without rescanning. Select a pack and choose its **Program**: when an ARIA bank declares its programs, the normal list uses those declarations and hides internal mapping fragments. **Show all SFZ files** exposes the full extracted file list when needed. Without usable bank metadata, all discovered SFZ candidates remain available.
 
 The preview uses repository artwork from GitHub raw/user-content hosts or Musical Artifacts' own hosts when the source declares a suitable image. Redirects must stay on those hosts. Otherwise it shows a licensed instrument cutout for the category. Image decoding and downloads run in the background, with bounded memory and disk caches. Installed and cached browsing reuse saved images without network requests; an uncached or unavailable image uses the category cutout. Older installations without saved artwork metadata use the same category for their list grouping and cutout, including patches with generic filenames. Image credits are included in **LICENSES.txt**.
 
-![Instrument library](docs/images/ms-02-sfz-library.png)
+![Local SFZ folders](docs/images/ms-02-sfz-library.png)
 
 The local folder library looks in a short list of standard locations for your platform, plus any folder you add with **Add folder...**. On Linux that includes the directories distribution packages install into, so a machine with a packaged General MIDI bank shows something the first time it opens. Your added folders are remembered per machine, not per session.
 
@@ -2006,6 +2008,8 @@ Scanning happens only when you open the panel, press **Rescan**, or add a folder
 In **Online**, **All repositories** is selected by default: enter an optional search, then press **Search** or Enter to search **SFZ Instruments**, **Musical Artifacts**, **FreePats** and **Versilian Studios**. Choose a repository to narrow the search. Search includes descriptions supplied by the source. SFZ Instruments also uses its community catalog descriptions, so searching for **Brushes** can find **Swirly Drums**. Each result names its repository. Editing the search keeps the last results visible until you submit it. **Previous** and **Next** move between result pages, keeping each repository's progress independently. If one repository is unavailable or rate-limited, its error appears while results from the others remain available. **Browse cached** searches saved listings without contacting the repositories and reports any missing cache.
 
 **FreePats** offers its Creative Commons instrument repositories. **Versilian Studios** offers the official **VSCO 2 Community Edition** and **Versilian Community Sample Library** collections, using their latest stable SFZ releases. Round-robin sampling varies by instrument and articulation; a collection's inclusion does not mean every patch has round robins.
+
+![SFZ Manager Online tab with repository results and license details.](docs/images/ms-04-sfz-online.png)
 
 Recent GitHub metadata may be reused for five minutes to reduce repository requests; community catalog descriptions may be reused for six hours. Saved repository responses are limited to 64 MiB and 256 entries. Responses older than 30 days are removed as the library updates, so **Browse cached** may require a new online search for an older listing. Repository and artwork caches stay in the platform's Dusk Studio data directory, even when the library uses an external drive.
 
