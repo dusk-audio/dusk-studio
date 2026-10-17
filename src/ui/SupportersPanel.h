@@ -78,17 +78,25 @@ private:
 
     struct TierList final : public juce::Component
     {
-        struct Tier { const char* heading; const std::vector<juce::String>* names;
+        struct Tier { const char* heading; std::vector<juce::String> names;
                       juce::Colour accent; bool past; };
 
         std::vector<Tier> tiers() const
         {
+            // Array names predate the current tiers; see the plugins'
+            // scripts/update-patrons.py TIERS for the mapping. hugs is retired
+            // (always empty once regenerated) but older donor pins still fill
+            // it, so it is listed with supporters under the one heading.
+            auto founding = PatreonCredits::supporters;
+            founding.insert (founding.end(), PatreonCredits::hugs.begin(), PatreonCredits::hugs.end());
+            std::sort (founding.begin(), founding.end(),
+                       [] (const auto& a, const auto& b) { return a.compareIgnoreCase (b) < 0; });
+
             return {
-                { "CHAMPIONS",       &PatreonCredits::champions,      juce::Colour (0xffffd700), false },
-                { "PATRONS",         &PatreonCredits::patrons,        juce::Colour (0xff00aaff), false },
-                { "SUPPORTERS",      &PatreonCredits::supporters,     juce::Colour (0xff6ac47e), false },
-                { "HUGS",            &PatreonCredits::hugs,           juce::Colour (0xffc08ad0), false },
-                { "PAST SUPPORTERS", &PatreonCredits::pastSupporters, juce::Colour (0xff606060), true  },
+                { "PATRONS",             PatreonCredits::champions,      juce::Colour (0xffffd700), false },
+                { "SUPPORTERS",          PatreonCredits::patrons,        juce::Colour (0xff00aaff), false },
+                { "FOUNDING SUPPORTERS", std::move (founding),           juce::Colour (0xff6ac47e), false },
+                { "PAST SUPPORTERS",     PatreonCredits::pastSupporters, juce::Colour (0xff606060), true  },
             };
         }
 
@@ -96,8 +104,8 @@ private:
         {
             int h = 6;
             for (const auto& t : tiers())
-                if (! t.names->empty())
-                    h += 28 + (int) t.names->size() * 18 + 14;
+                if (! t.names.empty())
+                    h += 28 + (int) t.names.size() * 18 + 14;
             return std::max (h, 60);
         }
 
@@ -109,7 +117,7 @@ private:
             bool any = false;
             for (const auto& t : tiers())
             {
-                if (t.names->empty()) continue;
+                if (t.names.empty()) continue;
                 any = true;
 
                 g.setFont (juce::Font (juce::FontOptions (10.0f, juce::Font::bold)));
@@ -121,7 +129,7 @@ private:
 
                 g.setFont (juce::Font (juce::FontOptions (t.past ? 12.0f : 13.0f)));
                 g.setColour (t.past ? juce::Colour (0xff707078) : juce::Colour (0xffd0d0d4));
-                for (const auto& name : *t.names)
+                for (const auto& name : t.names)
                 {
                     g.drawText (name, 0, y, getWidth(), 18, juce::Justification::centred, true);
                     y += 18;

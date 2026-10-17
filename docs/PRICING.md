@@ -4,11 +4,12 @@ This file is the single source of truth for Dusk Studio pricing. If the README,
 the manual, the website or a Patreon post disagrees with this file, this file
 wins.
 
-Buy at [duskaudio.com](https://duskaudio.com).
+During the beta, official builds come through
+[Patreon](https://www.patreon.com/cw/DuskAudio/membership).
 
 ## Stage
 
-Beta. Paid licences available now.
+Beta. Patreon tiers are open now. Licences go on sale at 1.0.
 
 ## What you pay for
 
@@ -25,16 +26,18 @@ supported and equivalent at the source level.
 |------|-------|--------------|
 | Patreon Supporter | $5 / month | Official builds for all three OSes, credits |
 | Patreon Patron | $10 / month | Everything in Supporter, plus early beta access and roadmap votes |
-| One-time licence | $49 | The current major version and all of its updates |
-| Lifetime licence | $89 | Every future major version |
+| One-time licence (from 1.0) | $49, planned | The current major version and all of its updates |
+| Lifetime licence (from 1.0) | $89, planned | Every future major version |
 
-$5 a month is the build floor. Below that there is no build, only source.
+$5 a month is the build floor for new members. Members of the closed $1 and
+$3 tiers keep their build access. Below that there is no build, only source.
 
 ## Guarantee
 
 30 days. Finish a track in your first session or full refund. No argument, no
 form to fill in.
 
-## Founder pricing
+## Licence pricing
 
-These are founder prices. They rise at 1.0.
+Licence prices are planned, not final. They are confirmed when licences go on
+sale at 1.0.
