@@ -156,11 +156,20 @@ void PhaseAnalyzer::push (const float* left, const float* right, int samples)
 
 void PhaseAnalyzer::analyze()
 {
+    double meanL = 0.0, meanR = 0.0;
+    for (int i = 0; i < size; ++i)
+    {
+        meanL += ringL[(size_t) i];
+        meanR += ringR[(size_t) i];
+    }
+    meanL /= size;
+    meanR /= size;
     for (int i = 0; i < size; ++i)
     {
         const auto slot = (size_t) ((writePosition + i) & (size - 1));
-        workL[(size_t) i] = ringL[slot] * window[(size_t) i];
-        workR[(size_t) i] = ringR[slot] * window[(size_t) i];
+        // Detrend before Hann windowing so DC cannot leak into the audible bins.
+        workL[(size_t) i] = (float) ((ringL[slot] - meanL) * window[(size_t) i]);
+        workR[(size_t) i] = (float) ((ringR[slot] - meanR) * window[(size_t) i]);
     }
     fft->performRealOnlyForwardTransform (workL.data(), true);
     fft->performRealOnlyForwardTransform (workR.data(), true);

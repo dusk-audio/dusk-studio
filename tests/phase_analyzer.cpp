@@ -288,10 +288,43 @@ TEST_CASE ("Phase analyzer rejects undefined stereo measurements without inventi
     analyzer.push (&invalid, &invalid, 1);
     REQUIRE (analyzer.report().warming);
     REQUIRE_FALSE (analyzer.report().broadband.monoValid);
+
+    for (const float polarity : { 1.0f, -1.0f })
+    {
+        PhaseAnalyzer dcOnly;
+        dcOnly.prepare (kRate, { 16, 0.25f, 50.0f });
+        const std::vector<float> dcLeft ((size_t) dcOnly.windowSize() * 16, 0.25f);
+        const std::vector<float> dcRight (dcLeft.size(), polarity * 0.25f);
+        dcOnly.push (dcLeft.data(), dcRight.data(), (int) dcLeft.size());
+        REQUIRE_FALSE (dcOnly.report().warming);
+        for (int i = 0; i <= 16; ++i)
+        {
+            const auto& reading = i == 16 ? dcOnly.report().broadband : dcOnly.report().bands[(size_t) i];
+            REQUIRE_FALSE (reading.correlationValid);
+            REQUIRE_FALSE (reading.coherenceValid);
+            REQUIRE_FALSE (reading.phaseValid);
+            REQUIRE_FALSE (reading.delayValid);
+            REQUIRE_FALSE (reading.monoValid);
+            REQUIRE_FALSE (reading.minimumValid);
+            REQUIRE_FALSE (reading.flagged);
+        }
+    }
 }
 
 TEST_CASE ("Phase analyzer retains held warnings across discontinuities until Reset", "[mastering][phase]")
 {
+    PhaseAnalyzer hold;
+    hold.prepare (kRate, { 4, 0.25f, 50.0f });
+    const auto heldLeft = noise (19200);
+    auto heldRight = heldLeft;
+    for (auto& value : heldRight) value = -value;
+    hold.push (heldLeft.data(), heldRight.data(), 9600);
+    REQUIRE (hold.report().broadband.correlationValid);
+    REQUIRE (hold.report().broadband.minimumValid);
+    REQUIRE_FALSE (hold.report().broadband.flagged);
+    hold.push (heldLeft.data() + 9600, heldRight.data() + 9600, 9600);
+    REQUIRE (hold.report().broadband.flagged);
+
     PhaseAnalyzer analyzer;
     analyzer.prepare (kRate, { 16, 2.0f, 50.0f });
     const auto left = noise (analyzer.windowSize() * 4);
@@ -319,6 +352,19 @@ TEST_CASE ("Phase analyzer retains held warnings across discontinuities until Re
     REQUIRE_FALSE (analyzer.report().broadband.minimumValid);
     for (const auto& band : analyzer.report().bands)
         REQUIRE_FALSE (band.flagged);
+
+    for (int pass = 0; pass < 4; ++pass)
+        analyzer.push (left.data(), right.data(), (int) left.size());
+    REQUIRE (analyzer.report().broadband.flagged);
+    REQUIRE (analyzer.report().broadband.minimumValid);
+    analyzer.prepare (96000.0, { 8, 4.0f, 50.0f });
+    REQUIRE_FALSE (analyzer.report().broadband.flagged);
+    REQUIRE_FALSE (analyzer.report().broadband.minimumValid);
+    for (const auto& band : analyzer.report().bands)
+    {
+        REQUIRE_FALSE (band.flagged);
+        REQUIRE_FALSE (band.minimumValid);
+    }
 }
 
 TEST_CASE ("Phase analyzer sizes low-frequency windows and marks unavailable Nyquist bands", "[mastering][phase]")
