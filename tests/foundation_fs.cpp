@@ -139,6 +139,14 @@ TEST_CASE ("native IO paths support long files without changing portable paths",
     const auto removeRoot = [&nativeRoot] (void*)
     { std::error_code error; stdfs::remove_all (nativeRoot, error); };
     const std::unique_ptr<void, decltype (removeRoot)> cleanup (&root, removeRoot);
+    const auto nested = nativeRoot / stdfs::u8path ("Samples/tone.wav");
+    const auto expected = nativeRoot / L"Samples" / L"tone.wav";
+    CHECK (fs::nativeIOPath (nested).native() == expected.native());
+    CHECK (fs::nativeIOPath (LR"(\\?\UNC\server\share\Samples/tone.wav)").native()
+        == LR"(\\?\UNC\server\share\Samples\tone.wav)");
+    REQUIRE (stdfs::create_directory (nativeRoot / L"Samples"));
+    REQUIRE (fs::writeStringToFile (nested, "nested sample"));
+    CHECK (fs::loadFileAsString (nested) == "nested sample");
     auto directory = root;
     for (int index = 0; index < 4; ++index) directory /= std::wstring (72, wchar_t (L'a' + index));
     REQUIRE (directory.native().size() > 260);

@@ -69,7 +69,7 @@ inline std::filesystem::path nativeIOPath (const std::filesystem::path& path)
 {
     if (path.empty()) return path;
    #if defined(_WIN32)
-    if (path.native().compare (0, 4, L"\\\\?\\") == 0) return path;
+    if (path.native().compare (0, 4, L"\\\\?\\") == 0) return std::filesystem::path (path).make_preferred();
     auto absolute = std::filesystem::absolute (path).lexically_normal();
     const auto full = absolute.make_preferred().native();
     if (full.compare (0, 2, L"\\\\") == 0) return std::filesystem::path (L"\\\\?\\UNC\\" + full.substr (2));
