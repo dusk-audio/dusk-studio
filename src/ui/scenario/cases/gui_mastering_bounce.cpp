@@ -752,6 +752,7 @@ std::optional<ScenarioResult> runMasteringCompactCover (GuiHost& host, ScenarioC
         host.switchToStage (guiStage (originalStage));
     });
     if (host.masteringPanelsOpen() < 0) return ScenarioResult::skip ("this build has no native mastering panels");
+    host.restoreMasteringModule (3);
     if (! host.setMainWindowMinimumWidth (900) || ! host.resizeMainWindow (1040, std::max (900, size[1])))
         return ScenarioResult::fail ("could not request the compact workspace");
     const int wide = std::max (1440, size[0]), height = std::max (900, size[1]);
@@ -761,10 +762,14 @@ std::optional<ScenarioResult> runMasteringCompactCover (GuiHost& host, ScenarioC
                        [&host] { return host.masteringModulePickerShown(); }, "workspace never became compact" });
     steps->push_back ({ 100, [&host, &ctx]
     {
+        ctx.expect (host.modalHasKeyboardFocus(), "compact module menu did not own keyboard focus");
         ctx.expect (host.pressPeerKey ("home", 0), "compact module Home was unavailable");
         ctx.expect (host.pressPeerKey ("cursor down", 0), "compact compressor choice was unavailable");
         ctx.expect (host.pressPeerKey ("return", '\r'), "compact module Return was unavailable");
-    }, [&host] { return host.modalCount() > 0; }, "compact module choices never opened" });
+    }, [&host]
+    {
+        return host.modalCount() > 0 && host.modalHasKeyboardFocus() && host.masteringPanelsOpen() == 0;
+    }, "compact module choices never received focus after native teardown" });
     steps->push_back ({ 300, [&host, &ctx]
     { ctx.expect (host.clickMasteringButton ("Load mix..."), "Load mix was unavailable"); },
                        [&host] { return host.masteringModuleIndex() == 1 && host.masteringPanelsOpen() == 0; },
@@ -802,7 +807,10 @@ std::optional<ScenarioResult> runMasteringCompactCover (GuiHost& host, ScenarioC
     {
         ctx.expect (host.pressPeerKey ("end", 0), "compact Phase choice was unavailable");
         ctx.expect (host.pressPeerKey ("return", '\r'), "compact Phase Return was unavailable");
-    }, [&host] { return host.modalCount() > 0; }, "compact module choices never reopened" });
+    }, [&host]
+    {
+        return host.modalCount() > 0 && host.modalHasKeyboardFocus() && host.masteringPanelsOpen() == 0;
+    }, "compact module choices never regained keyboard focus" });
     steps->push_back ({ 200, [&host, &ctx]
     { ctx.expect (host.masteringModuleIndex() == 3, "Phase was not selected"); },
                        [&host] { return host.masteringPanelsOpen() == 1; }, "compact Phase child did not open" });

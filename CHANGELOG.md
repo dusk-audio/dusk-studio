@@ -68,6 +68,9 @@ canonical source.
 
 ### Fixed
 
+- **Dropdown keyboard navigation.** Home highlights the first dropdown choice
+  instead of seeking the transport. Mastering dropdowns retain keyboard focus
+  after a covered native panel closes.
 - **Existing SFZ libraries.** Packs in the former default configuration folder
   remain available after upgrading to the application data default. Saved
   external-library settings keep their previous built-in folder too.

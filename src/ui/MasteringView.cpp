@@ -4,6 +4,7 @@
 #include "DuskAlerts.h"
 #include "DuskContextMenu.h"
 #include "DuskFileBrowser.h"
+#include "EmbeddedModal.h"
 #include "SaveTargetChecks.h"
 #include "../dsp/MultibandCompPresets.h"
 #include "../engine/BounceEngine.h"
@@ -542,7 +543,14 @@ void MasteringView::applyNativePanelSync()
         callbacks.closed = [safeThis]
         {
             if (auto* const self = safeThis.getComponent())
+            {
                 self->scheduleNativePanelSync();
+                // Native child teardown can clear the covering popup's focus.
+                const auto& modals = EmbeddedModal::activeModalStack();
+                if (! modals.empty())
+                    if (auto* body = modals.back()->getBody(); body != nullptr && ! body->hasKeyboardFocus (true))
+                        body->grabKeyboardFocus();
+            }
         };
         callbacks.geometry = [safeThis, proxy]
         {

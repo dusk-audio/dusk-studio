@@ -2529,7 +2529,7 @@ An open chord slot takes the keys instead:
 
 ## Notes on shortcut design
 
-- Shortcuts that would conflict with a focused text field always defer to the text field. You can edit a track label or type into the BPM spinner without accidentally arming a track or starting playback. An open dropdown in Audio settings keeps the keyboard too: Home and End highlight its first and last choices, and Enter selects the highlighted choice. Session shortcuts resume after the dropdown closes.
+- Shortcuts that would conflict with a focused text field always defer to the text field. You can edit a track label or type into the BPM spinner without accidentally arming a track or starting playback. An open dropdown keeps its navigation keys too: Home and End highlight its first and last choices, and Enter selects the highlighted choice. Audio settings dropdowns also keep session shortcuts until the dropdown closes.
 - **M** drops a marker at the playhead, not mute; per-track mute is **X** to avoid the clash with the marker action.
 - Plain **B** taps tempo; **Cmd+B** triggers Bounce (Logic convention).
 - While a prompt that decides what happens to your session is up, no shortcut works: the unsaved-changes prompt when you quit, open or start another session, **Recover from autosave?**, and the Startup dialog, which decides which session there is to work on. **Space** and **R** do nothing until you answer it. A control surface or a MIDI binding can still start a take behind it, and so can **R** in the Save As browser that **Save** opens for a session you have never saved; **Save** stops that take first and saves it with the session. **Escape** still does whatever that prompt allows.
