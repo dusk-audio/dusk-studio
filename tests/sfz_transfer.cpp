@@ -187,8 +187,9 @@ TEST_CASE ("SFZ download inspection preserves usable state without writing", "[s
     REQUIRE (inspectDownloadPart (temp.part(), download.maxBytes) == DownloadPartState::Reusable);
     CHECK (readFile (temp.part()) == "abcd");
     CHECK (readFile (sidecar) == original);
-    CHECK (std::filesystem::last_write_time (temp.part()) == partTime);
-    CHECK (std::filesystem::last_write_time (sidecar) == metadataTime);
+    // Catch cannot stream the macOS file-clock's 128-bit representation.
+    CHECK ((std::filesystem::last_write_time (temp.part()) == partTime));
+    CHECK ((std::filesystem::last_write_time (sidecar) == metadataTime));
     CHECK (transport.requests.size() == 1);
     const auto parsed = dusk::json::Json::parse (original);
     SECTION ("Malformed and inconsistent metadata is invalid")
