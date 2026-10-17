@@ -77,6 +77,7 @@ const char* stateLabel (LibraryState state, bool busy, sfz::FailureKind failure)
         case LibraryState::Resolving: return "Checking version and license...";
         case LibraryState::Downloading: return "Downloading instrument pack...";
         case LibraryState::Extracting: return "Installing instrument pack...";
+        case LibraryState::Verifying: return "Verifying installed files...";
         case LibraryState::ChangingLocation: return "Updating SFZ library location...";
         case LibraryState::Paused: return "Library work paused";
         case LibraryState::Failed:
@@ -94,7 +95,7 @@ const char* failureGuidance (const sfz::LibrarySnapshot& snapshot)
     if (snapshot.failureKind == sfz::FailureKind::DiskFull)
         return "Free disk space, then retry. If library initialization failed, restart Dusk Studio first.";
     if (snapshot.failureKind == sfz::FailureKind::Integrity)
-        return "During a library move, keep the originals and choose another destination. For a download, try again; check the pack's source if verification fails again.";
+        return "For changed installed files, keep edits you need, unload the pack, Remove it and Download again. During a library move, keep the originals and choose another destination. For a failed download, try again or check the pack's source.";
     return "";
 }
 
@@ -176,10 +177,11 @@ public:
                 footerHeight = std::max (footerHeight,
                     ImGui::CalcTextSize (stateLabel (snapshot.state, snapshot.busy, snapshot.failureKind),
                         nullptr, false, ImGui::GetContentRegionAvail().x).y);
-            if (snapshot.state == LibraryState::Downloading || snapshot.state == LibraryState::Extracting)
+            if (snapshot.state == LibraryState::Downloading || snapshot.state == LibraryState::Extracting
+                || snapshot.state == LibraryState::Verifying)
                 footerHeight += ctx.s (22) + ImGui::GetStyle().ItemSpacing.y;
             if (snapshot.state == LibraryState::Paused) footerHeight += extraHeight (kPauseMessage);
-            else if (snapshot.state != LibraryState::Cancelled)
+            else if (snapshot.state != LibraryState::Cancelled && snapshot.state != LibraryState::Complete)
                 footerHeight += extraHeight (snapshot.error) + extraHeight (failureGuidance (snapshot));
             footerHeight += extraHeight (notice) + ctx.s (4);
             footerHeight = std::clamp (footerHeight, ctx.s (32),
@@ -201,7 +203,7 @@ public:
     }
 
 private:
-    enum class Intent { None, Browse, Resolve, Install, Refresh, Remove };
+    enum class Intent { None, Browse, Resolve, Install, Refresh, Remove, Verify };
     struct BrowserRow
     {
         std::size_t pack = 0;
@@ -494,6 +496,7 @@ private:
                 installedQuery.fill (0); installedCategory = -1; installedFilterDirty = true;
                 notice = "Pack installed. Choose an SFZ file in Installed to load it.";
             }
+            else if (pendingIntent == Intent::Verify) notice = snapshot.error;
         }
         pendingIntent = Intent::None;
     }
@@ -928,6 +931,10 @@ private:
                         deferred = [callback, pack, entry] { callback (pack, entry); };
                     }
                 }
+                if (button ("verify", "Verify installed files", available && ! selected->installedTreeSha256.empty()))
+                    start (Intent::Verify, [&] { return service.verify (*selected); });
+                if (selected->installedTreeSha256.empty())
+                    ImGui::TextWrapped ("File verification is unavailable for this installation because it has no recorded file digest.");
                 if (button ("load", "Load", available && instrument && static_cast<bool> (onLoad), { ctx.s (140), ctx.s (40) }, true))
                 {
                     const auto callback = onLoad;
@@ -991,7 +998,8 @@ private:
                 ImGui::SameLine();
                 if (button ("cancel", "Cancel")) { service.cancel(); frameMutation = true; }
             }
-            if (snapshot.state == LibraryState::Downloading || snapshot.state == LibraryState::Extracting)
+            if (snapshot.state == LibraryState::Downloading || snapshot.state == LibraryState::Extracting
+                || snapshot.state == LibraryState::Verifying)
             {
                 const float fraction = snapshot.progress.totalBytes == 0 ? 0.0f
                     : static_cast<float> (std::min (1.0, static_cast<double> (snapshot.progress.completedBytes) / static_cast<double> (snapshot.progress.totalBytes)));

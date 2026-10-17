@@ -299,6 +299,7 @@ struct CaseState
     unsigned cancelledLoadCompletions = 0;
     bool otherLoadDone = false, otherLoadSucceeded = false;
     std::string replacementError;
+    std::string verificationReceipt, verificationSample;
 };
 
 bool fixturePack (const InstalledPack& pack, const CaseState& state)
@@ -816,7 +817,62 @@ std::optional<ScenarioResult> runWorkflow (GuiHost& host, ScenarioContext& ctx)
                     "the installed pack did not distinguish its declared programs from internal SFZ files");
         ctx.expect (ctx.engine().getSfzLibrary().snapshot().installed.size() == state->initialInstalled + 1,
                     "download did not add exactly one installed version");
+        state->verificationReceipt = fileBytes (state->installed->directory / ".dusk-pack.json");
+        state->verificationSample = fileBytes (state->installed->directory / "Samples/tone.wav");
+        state->requests = state->transport->requests.load();
     } });
+    pushWorkClick (*steps, host, ctx, state, "enabled-verify", LibraryState::Complete);
+    steps->push_back ({ 0, [&ctx, state]
+    {
+        if (! ctx.expect (state->installed.has_value(), "verification lost the installed selection")) return;
+        const auto checked = ctx.engine().getSfzLibrary().snapshot();
+        ctx.expect (checked.error == "Installed files match the installation record.", "verification did not report a matching record");
+        ctx.expect (fileBytes (state->installed->directory / ".dusk-pack.json") == state->verificationReceipt,
+                    "verification rewrote the installed receipt");
+        auto changed = state->verificationSample;
+        if (! ctx.expect (! changed.empty(), "verification fixture sample is empty")) return;
+        changed.back() = static_cast<char> (changed.back() ^ 1);
+        ctx.expect (dusk::fs::writeStringToFile (state->installed->directory / "Samples/tone.wav", changed),
+                    "could not change the verification fixture sample");
+    } });
+    pushWorkClick (*steps, host, ctx, state, "enabled-verify", LibraryState::Failed);
+    steps->push_back ({ 0, [&ctx, state]
+    {
+        if (! ctx.expect (state->installed.has_value(), "failed verification lost its selection")) return;
+        ctx.expect (ctx.engine().getSfzLibrary().snapshot().failureKind == FailureKind::Integrity,
+                    "changed installed sample did not report an integrity failure");
+        ctx.expect (fileBytes (state->installed->directory / ".dusk-pack.json") == state->verificationReceipt,
+                    "failed verification rewrote the receipt");
+        ctx.expect (dusk::fs::writeStringToFile (state->installed->directory / "Samples/tone.wav", state->verificationSample),
+                    "could not restore the verification fixture sample");
+    } });
+    pushWorkClick (*steps, host, ctx, state, "enabled-verify", LibraryState::Complete);
+    steps->push_back ({ 0, [&ctx, state]
+    {
+        if (! ctx.expect (state->installed.has_value(), "verification recovery lost its selection")) return;
+        ctx.expect (ctx.engine().getSfzLibrary().snapshot().failureKind == FailureKind::None,
+                    "successful verification retained the earlier integrity failure");
+        auto receipt = Json::parse (state->verificationReceipt);
+        receipt.erase ("installed_tree_sha256_v1");
+        ctx.expect (dusk::fs::writeStringToFile (state->installed->directory / ".dusk-pack.json", receipt.dump()),
+                    "could not prepare the legacy verification receipt");
+    } });
+    pushWorkClick (*steps, host, ctx, state, "refresh-installed", LibraryState::Complete);
+    pushInstalledSelection (*steps, host, ctx, state);
+    steps->push_back ({ 0, [&host, &ctx, state]
+    {
+        if (! ctx.expect (state->installed.has_value(), "legacy receipt disappeared from Installed")) return;
+        ctx.expect (state->installed->installedTreeSha256.empty(), "legacy receipt acquired an invented digest");
+        ctx.expect (host.sfzLibraryPointer (kStripIndex, "verify", 0.5f, false)
+                    && ! host.sfzLibraryPointer (kStripIndex, "enabled-verify", 0.5f, false),
+                    "verification was available for a legacy receipt without a baseline");
+        ctx.expect (dusk::fs::writeStringToFile (state->installed->directory / ".dusk-pack.json", state->verificationReceipt),
+                    "could not restore the current verification receipt");
+        ctx.expect (state->transport->requests.load() == state->requests,
+                    "installed verification or refresh contacted a repository");
+    } });
+    pushWorkClick (*steps, host, ctx, state, "refresh-installed", LibraryState::Complete);
+    pushInstalledSelection (*steps, host, ctx, state);
     pushClick (*steps, host, ctx, "installed-query");
     steps->push_back ({ 0, [&host, &ctx]
     {
