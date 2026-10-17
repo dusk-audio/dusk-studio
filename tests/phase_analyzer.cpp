@@ -312,6 +312,7 @@ TEST_CASE ("Phase analyzer retains held warnings across discontinuities until Re
     analyzer.prepare (96000.0, { 16, 4.0f, 50.0f });
     REQUIRE (analyzer.report().warming);
     REQUIRE (analyzer.report().broadband.flagged);
+    REQUIRE (analyzer.report().broadband.minimumValid);
     REQUIRE_THAT (analyzer.report().broadband.minimumCorrelation, WithinAbs (-1.0, 1e-6));
     analyzer.resetHeld();
     REQUIRE_FALSE (analyzer.report().broadband.flagged);

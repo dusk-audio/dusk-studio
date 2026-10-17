@@ -10,6 +10,7 @@ namespace
 constexpr double kPi = 3.14159265358979323846;
 constexpr double kEnergyFloor = 1.0e-12;
 constexpr double kWarningHoldSeconds = 0.25;
+constexpr int kMaxBinStep = 3;
 
 double magnitudeSquaredCoherence (double left, double right, std::complex<double> cross)
 {
@@ -268,6 +269,7 @@ void PhaseAnalyzer::measure (Reading& reading, Band& band)
     {
         double weight = 0.0, squaredWeight = 0.0, x = 0.0, y = 0.0, xx = 0.0, xy = 0.0, yy = 0.0;
         double previousPhase = 0.0, unwrapped = 0.0;
+        int lastBin = -1;
     } run, best;
     for (size_t i = 0; i < band.weights.size(); ++i)
     {
@@ -279,14 +281,17 @@ void PhaseAnalyzer::measure (Reading& reading, Band& band)
         const double w = band.weights[i] * std::sqrt (moment.left * moment.right);
         if (averages < 6.0 || w < peakEnergy * 1e-3 || w <= 0.0
             || magnitudeSquaredCoherence (moment.left, moment.right, moment.cross) < 0.8)
+            continue;
+        // Holes within a Hann main lobe do not split a resolved region.
+        if (run.lastBin >= 0 && (int) bin - run.lastBin > kMaxBinStep)
         {
             if (run.weight > best.weight) best = run;
             run = {};
-            continue;
         }
         const double phase = std::arg (moment.cross);
         run.unwrapped = run.weight > 0.0 ? run.unwrapped + std::remainder (phase - run.previousPhase, 2.0 * kPi) : phase;
         run.previousPhase = phase;
+        run.lastBin = (int) bin;
         const double frequency = bin * binHz;
         run.weight += w;
         run.squaredWeight += w * w;
@@ -302,6 +307,7 @@ void PhaseAnalyzer::measure (Reading& reading, Band& band)
     const double variance = best.xx - best.x * best.x / best.weight;
     if (variance / best.weight < 4.0 * binHz * binHz) return;
     const double slope = (best.xy - best.x * best.y / best.weight) / variance;
+    if (std::abs (slope) * binHz * kMaxBinStep >= kPi) return;
     const double residual = std::max (0.0, (best.yy - best.y * best.y / best.weight - slope * slope * variance) / best.weight);
     if (residual > 0.15 * 0.15) return;
     reading.delayMs = slope * 1000.0 / (2.0 * kPi);
