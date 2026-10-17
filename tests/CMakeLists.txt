@@ -312,6 +312,7 @@ target_sources(dusk-studio-tests PRIVATE
     foundation_audio_math.cpp
     foundation_int_delay_line.cpp
     foundation_spsc_index_fifo.cpp
+    phase_analysis_feed.cpp
     bus_tone_eq.cpp
     ${CMAKE_SOURCE_DIR}/src/dsp/BusToneEq.cpp
     foundation_lagrange_interpolator.cpp
