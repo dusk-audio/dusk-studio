@@ -546,14 +546,32 @@ TEST_CASE ("SFZ publication reuses the identical version without exposing leftov
     StoreTree tree;
     PackStore store (tree.root);
     const auto installed = publish (store, provider());
+    const auto receiptPath = installed.directory / ".dusk-pack.json";
+    const auto receiptBytes = dusk::fs::loadFileAsString (receiptPath);
+    bool changed = false;
+    SECTION ("Unchanged files") {}
+    SECTION ("Changed samples are retained with their original baseline")
+    {
+        changed = true;
+        REQUIRE (dusk::fs::writeStringToFile (installed.directory / "Samples/tone.wav", "corrupt sample"));
+    }
     const auto staging = stage (store);
     const auto result = store.publish (installed.provider, installed.archiveSha256, staging,
                                        { u8"Programs/Étude.sfz" });
     REQUIRE (result);
     REQUIRE (result.pack);
     REQUIRE (result.pack->directory == installed.directory);
+    CHECK (result.pack->installedTreeSha256 == installed.installedTreeSha256);
+    CHECK (dusk::fs::loadFileAsString (receiptPath) == receiptBytes);
     REQUIRE (store.installed().size() == 1);
     REQUIRE_FALSE (fs::exists (staging));
+    const auto checked = store.verify (*result.pack);
+    CHECK (static_cast<bool> (checked) == ! changed);
+    if (changed)
+    {
+        CHECK (checked.failureKind == FailureKind::Integrity);
+        CHECK (dusk::fs::loadFileAsString (installed.directory / "Samples/tone.wav") == "corrupt sample");
+    }
 }
 
 TEST_CASE ("SFZ installed tree digests include paths and contents without receipt metadata", "[sfz][store]")
