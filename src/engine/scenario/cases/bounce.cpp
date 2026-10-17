@@ -1914,6 +1914,209 @@ std::optional<ScenarioResult> exportMasterPostLimiter (ScenarioContext& ctx)
     return std::nullopt;
 }
 
+std::optional<ScenarioResult> masteringMonoMonitor (ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& player = engine.getMasteringPlayer();
+    auto& feed = engine.getMasteringChain().getPhaseFeed();
+    const auto oldStage = engine.getStage();
+    const bool oldMono = engine.getMasteringMonoMonitor();
+    ctx.cleanup ([&engine, &player, &feed, oldStage, oldMono]
+    {
+        player.stop();
+        player.unloadFile();
+        feed.discardPending();
+        engine.setMasteringMonoMonitor (oldMono);
+        engine.setStage (oldStage);
+    });
+    auto& params = ctx.session().mastering();
+    ctx.keep (params.eqEnabled);
+    ctx.keep (params.compEnabled);
+    ctx.keep (params.limiterEnabled);
+    params.eqEnabled.store (false);
+    params.compEnabled.store (false);
+    params.limiterEnabled.store (false);
+    const auto left = sine (440.0f, 0.25f, 96000);
+    const auto right = sine (997.0f, 0.08f, 96000);
+    const auto source = ctx.tempDir() / "stereo-monitor.wav";
+    dusk::audio::WriteSpec spec;
+    spec.sampleRate = kRate;
+    spec.numChannels = 2;
+    spec.bitsPerSample = 32;
+    {
+        auto writer = dusk::audio::FileWriter::create (source, spec);
+        const float* channels[] = { left.data(), right.data() };
+        if (writer == nullptr || ! writer->write (channels, 2, (std::int64_t) left.size())
+            || ! writer->flush())
+            return ScenarioResult::fail ("could not write the asymmetric stereo mix");
+    }
+    engine.setStage (AudioEngine::Stage::Mastering);
+    engine.setMasteringMonoMonitor (false);
+    if (! player.loadFile (sessionFile (source)))
+        return ScenarioResult::fail ("could not load the asymmetric stereo mix");
+    player.play();
+    feed.discardPending();
+    std::array<float, ScenarioContext::kBlockSize> feedL {}, feedR {};
+    for (const bool mono : { false, true, false })
+    {
+        engine.setMasteringMonoMonitor (mono);
+        float maxError = 0.0f, stereoDifference = 0.0f, outputPeak = 0.0f;
+        for (int block = 0; block < 24; ++block)
+        {
+            if (! player.primeOfflineBlock (ScenarioContext::kBlockSize))
+                return ScenarioResult::fail ("could not prime the live monitor block");
+            ctx.pump (1);
+            const auto chunk = feed.read (feedL.data(), feedR.data(), ScenarioContext::kBlockSize);
+            if (! ctx.expect (chunk.samples == ScenarioContext::kBlockSize, "missing live stereo analysis block"))
+                return ctx.verdict();
+            if (block < 12) continue;
+            for (std::size_t i = 0; i < feedL.size(); ++i)
+            {
+                ctx.expect (std::isfinite (feedL[i]) && std::isfinite (feedR[i])
+                            && std::isfinite (ctx.lastBlock (0)[i]) && std::isfinite (ctx.lastBlock (1)[i]),
+                            "the monitor or phase feed contains a non-finite sample");
+                const float mid = 0.5f * feedL[i] + 0.5f * feedR[i];
+                maxError = std::max ({ maxError,
+                    std::abs (ctx.lastBlock (0)[i] - (mono ? mid : feedL[i])),
+                    std::abs (ctx.lastBlock (1)[i] - (mono ? mid : feedR[i])) });
+                stereoDifference = std::max (stereoDifference, std::abs (feedL[i] - feedR[i]));
+                outputPeak = std::max (outputPeak, std::abs (ctx.lastBlock (0)[i]));
+            }
+        }
+        ctx.expect (maxError < 1.0e-6f, mono ? "Mono did not fold only the live monitor"
+                                             : "stereo monitoring differs from the analysis tap");
+        ctx.expect (stereoDifference > 0.01f, "the analysis feed lost its stereo difference");
+        ctx.expect (outputPeak > 0.01f, "the live monitor is silent");
+    }
+    player.stop();
+    const auto baselinePath = ctx.sessionDir() / "master-stereo.wav";
+    const auto monoPath = ctx.sessionDir() / "master-with-monitor-mono.wav";
+    Render render;
+    render.mode = BounceEngine::Mode::MasteringChain;
+    render.sampleRate = 0.0;
+    render.tailSeconds = 0.2;
+    renderThen (ctx, baselinePath, render, [&ctx, baselinePath, monoPath, render] (bool ok, const std::string& error)
+    {
+        const auto baseline = readBack (baselinePath);
+        if (! ctx.expect (ok && baseline.has_value(), "the stereo export failed: " + error))
+        {
+            ctx.complete (ctx.verdict());
+            return;
+        }
+        ctx.expect (ctx.engine().getMasteringChain().getPhaseFeed().pendingSamples() == 0,
+                    "offline export entered the live analysis feed");
+        ctx.engine().setMasteringMonoMonitor (true);
+        renderThen (ctx, monoPath, render, [&ctx, baseline, monoPath] (bool monoOk, const std::string& monoError)
+        {
+            const auto monitored = readBack (monoPath);
+            if (ctx.expect (monoOk && monitored.has_value(), "the Mono-monitor export failed: " + monoError)
+                && ctx.expect (monitored->info.numChannels == 2 && baseline->info.numChannels == 2
+                               && monitored->left.size() == baseline->left.size(), "export channel or frame count changed"))
+            {
+                float maxError = 0.0f, stereoDifference = 0.0f;
+                for (std::size_t i = 0; i < baseline->left.size(); ++i)
+                {
+                    ctx.expect (std::isfinite (baseline->left[i]) && std::isfinite (baseline->right[i])
+                                && std::isfinite (monitored->left[i]) && std::isfinite (monitored->right[i]),
+                                "the export contains a non-finite sample");
+                    maxError = std::max ({ maxError, std::abs (baseline->left[i] - monitored->left[i]),
+                                          std::abs (baseline->right[i] - monitored->right[i]) });
+                    stereoDifference = std::max (stereoDifference, std::abs (baseline->left[i] - baseline->right[i]));
+                }
+                ctx.expect (baseline->peak() > 0.01f && stereoDifference > 0.01f, "the reference export is silent or mono");
+                ctx.expect (maxError <= 1.0e-6f, "Mono monitoring changed the exported stereo samples");
+                ctx.expect (ctx.engine().getMasteringMonoMonitor(), "the export changed the monitor switch");
+                ctx.expect (ctx.engine().getMasteringChain().getPhaseFeed().pendingSamples() == 0,
+                            "Mono export entered the live analysis feed");
+            }
+            ctx.complete (ctx.verdict());
+        });
+    });
+    return std::nullopt;
+}
+
+std::optional<ScenarioResult> masteringPhaseContinuity (ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& player = engine.getMasteringPlayer();
+    auto& feed = engine.getMasteringChain().getPhaseFeed();
+    const auto oldStage = engine.getStage();
+    ctx.cleanup ([&engine, &player, &feed, oldStage]
+    {
+        player.stop();
+        player.unloadFile();
+        feed.discardPending();
+        engine.setStage (oldStage);
+    });
+    constexpr int kFrames = 3 * dusk::audio::BufferedFileReader::kDefaultWindowFrames;
+    const auto source = ctx.tempDir() / "phase-continuity.wav";
+    if (! writeMono (source, sine (440.0f, 0.1f, kFrames)))
+        return ScenarioResult::fail ("could not write the continuity mix");
+    engine.setStage (AudioEngine::Stage::Mastering);
+    if (! player.loadFile (sessionFile (source)))
+        return ScenarioResult::fail ("could not load the continuity mix");
+    feed.discardPending();
+    std::array<float, ScenarioContext::kBlockSize> left {}, right {};
+    const auto block = [&] (bool prime = true)
+    {
+        if (prime) ctx.expect (player.primeOfflineBlock (ScenarioContext::kBlockSize), "could not prime a continuity block");
+        ctx.pump (1);
+        const auto chunk = feed.read (left.data(), right.data(), ScenarioContext::kBlockSize);
+        if (prime) ctx.expect (chunk.samples == ScenarioContext::kBlockSize, "missing primed continuity block");
+        return chunk;
+    };
+    player.play();
+    const auto first = block();
+    const auto adjacent = block();
+    ctx.expect (first.samples == ScenarioContext::kBlockSize && adjacent.samples == ScenarioContext::kBlockSize,
+                "normal playback did not enter the phase feed");
+    ctx.expect (first.generation == adjacent.generation
+                && adjacent.sequence == first.sequence + first.samples, "adjacent playback lost continuity");
+    player.setPlayhead (player.getPlayhead());
+    const auto seek = block();
+    ctx.expect (seek.generation != adjacent.generation, "a same-position seek retained the FFT window");
+    player.stop();
+    const auto stopped = block();
+    const auto tail = block();
+    ctx.expect (stopped.samples == ScenarioContext::kBlockSize && tail.samples == ScenarioContext::kBlockSize,
+                "stopped-chain tails were excluded from analysis");
+    ctx.expect (stopped.generation != seek.generation && tail.generation == stopped.generation,
+                "Stop did not start one continuous tail generation");
+
+    player.play();
+    const auto resumed = block();
+    ctx.expect (resumed.generation != tail.generation, "Play did not reset continuity");
+    engine.suspendProcessing();
+    ctx.pump (1);
+    engine.resumeProcessing();
+    const auto gated = block();
+    ctx.expect (gated.generation != resumed.generation, "a process-gate interval retained old analysis");
+
+    player.setPlayhead (kFrames - 4096);
+    const auto missing = block (false);
+    ctx.expect (missing.samples == 0, "an unavailable reader block entered phase analysis");
+    const auto recovered = block();
+    ctx.expect (recovered.samples == ScenarioContext::kBlockSize && recovered.generation != gated.generation,
+                "a recovered reader block reused the pre-gap generation");
+    player.setPlayhead (kFrames - 128);
+    const auto final = block();
+    const auto eofTail = block();
+    ctx.expect (! player.isPlaying(), "the player did not reach EOF");
+    ctx.expect (final.samples == ScenarioContext::kBlockSize && eofTail.samples == ScenarioContext::kBlockSize
+                && final.generation == eofTail.generation, "EOF split the limiter tail from its final block");
+    engine.prepareForSelfTest (96000.0, ScenarioContext::kBlockSize);
+    ctx.cleanup ([&engine] { engine.prepareForSelfTest (kRate, ScenarioContext::kBlockSize); });
+    const auto prepared = block();
+    ctx.expect (prepared.generation != eofTail.generation && std::abs (prepared.sampleRate - 96000.0) < 0.5,
+                "a device-rate change retained old phase metadata");
+    engine.setStage (AudioEngine::Stage::Mixing);
+    ctx.pump (1);
+    engine.setStage (AudioEngine::Stage::Mastering);
+    const auto returned = block();
+    ctx.expect (returned.generation != prepared.generation, "leaving and returning to Mastering retained old analysis");
+    return ctx.verdict();
+}
+
 // The export presets that do not leave the session rate. Every export plays the
 // loaded mix through the mastering chain; `check` inspects the file.
 std::optional<ScenarioResult> exportMaster (ScenarioContext& ctx, const std::vector<float>& mix,
@@ -2147,6 +2350,12 @@ const ScenarioRegistrar refusedRegistrar { Scenario {
 const ScenarioRegistrar exportRegistrar { Scenario {
     "bounce.export_master_post_limiter", { "bounce", "mastering" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return exportMasterPostLimiter (ctx); }, 120000 } };
+const ScenarioRegistrar monoMonitorRegistrar { Scenario {
+    "mastering.mono_monitor_keeps_export_stereo", { "mastering", "phase", "bounce" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return masteringMonoMonitor (ctx); }, 240000 } };
+const ScenarioRegistrar phaseContinuityRegistrar { Scenario {
+    "mastering.phase_tracks_playback_continuity", { "mastering", "phase" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return masteringPhaseContinuity (ctx); } } };
 const ScenarioRegistrar exportWav24Registrar { Scenario {
     "bounce.export_master_wav24_session_rate", { "bounce", "mastering" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return exportMasterWav24 (ctx); }, 120000 } };

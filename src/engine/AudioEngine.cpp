@@ -4332,6 +4332,9 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
     }
     masteringChain.prepare (sr, bs, oxFactor);
     masteringPlayer.prepare (bs, sr);
+    masteringMonoMix.reset (sr, 0.02);
+    masteringMonoMix.setCurrentAndTargetValue (getMasteringMonoMonitor() ? 1.0f : 0.0f);
+    phaseContinuityValid = false;
 
     {
         auto prepPdc = [] (MasterPdcDelay& d, int capacity = ChannelStrip::kMaxPdcSamples)
@@ -4829,6 +4832,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
 
     if ((int) mixL.size() < numSamples)
     {
+        phaseContinuityValid = false;
         silentDims.store (((std::uint64_t) (std::uint32_t) mixL.size() << 32)
                           | (std::uint32_t) numSamples, std::memory_order_relaxed);
         silentBlocks.fetch_add (1, std::memory_order_relaxed);
@@ -5928,8 +5932,36 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     // the audio thread.
     if (stage.load (std::memory_order_acquire) == Stage::Mastering)
     {
-        masteringPlayer.process (mixL.data(), mixR.data(), numSamples);
-        masteringChain.processInPlace (mixL.data(), mixR.data(), numSamples);
+        const auto block = masteringPlayer.process (mixL.data(), mixR.data(), numSamples);
+        const bool capturePhase = ! context.offlineRender && block.stable && block.completeSourceRead;
+        const auto gatedBlocks = getGatedBlockCount();
+        if (capturePhase && (! phaseContinuityValid || gatedBlocks != phaseGatedBlockCount
+            || block.revision != previousPhaseBlock.revision
+            || (block.playing && previousPhaseBlock.playing && block.sourceStart != previousPhaseBlock.sourceEnd)))
+            masteringChain.getPhaseFeed().markDiscontinuity();
+        masteringChain.processInPlace (mixL.data(), mixR.data(), numSamples, capturePhase);
+        previousPhaseBlock = block;
+        phaseGatedBlockCount = gatedBlocks;
+        phaseContinuityValid = capturePhase;
+
+        // Monitoring follows the analysis tap and is never part of an export.
+        if (! context.offlineRender)
+        {
+            masteringMonoMix.setTargetValue (getMasteringMonoMonitor() ? 1.0f : 0.0f);
+            if (masteringMonoMix.isSmoothing() || masteringMonoMix.getCurrentValue() > 0.0f)
+                for (int i = 0; i < numSamples; ++i)
+                {
+                    const float mix = masteringMonoMix.getNextValue();
+                    const float mid = 0.5f * mixL[(size_t) i] + 0.5f * mixR[(size_t) i];
+                    if (mix >= 1.0f)
+                        mixL[(size_t) i] = mixR[(size_t) i] = mid;
+                    else
+                    {
+                        mixL[(size_t) i] += mix * (mid - mixL[(size_t) i]);
+                        mixR[(size_t) i] += mix * (mid - mixR[(size_t) i]);
+                    }
+                }
+        }
 
         writeMasterMixToOutput (outputChannelData, numOutputChannels, numSamples);
 
@@ -5958,6 +5990,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         return;
     }
 
+    phaseContinuityValid = false;
     dusk::audio::vecClear (mixL.data(), numSamples);
     dusk::audio::vecClear (mixR.data(), numSamples);
     for (auto& v : busL) dusk::audio::vecClear (v.data(), numSamples);

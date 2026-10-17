@@ -20,6 +20,7 @@
 #include "../dsp/PitchDetector.h"
 #include "../foundation/IntDelayLine.h"
 #include "../foundation/MessageThread.h"
+#include "../foundation/SmoothedValue.h"
 #include "../foundation/TransportPosition.h"
 #include "MidiSyncReceiver.h"
 #include "MidiTimeCodeReceiver.h"
@@ -213,6 +214,8 @@ public:
     PluginManager&    getPluginManager()   noexcept { return pluginManager; }
     MasteringPlayer&  getMasteringPlayer() noexcept { return masteringPlayer; }
     MasteringChain&   getMasteringChain()  noexcept { return masteringChain; }
+    bool getMasteringMonoMonitor() const noexcept { return masteringMonoMonitor.load (std::memory_order_relaxed); }
+    void setMasteringMonoMonitor (bool mono) noexcept { masteringMonoMonitor.store (mono, std::memory_order_relaxed); }
     MasterBus&        getMasterBus()       noexcept { return master; }
     Metronome&        getMetronome()       noexcept { return metronome; }
 
@@ -796,6 +799,11 @@ private:
 
     MasteringPlayer  masteringPlayer;
     MasteringChain   masteringChain;
+    std::atomic<bool> masteringMonoMonitor { false };
+    dusk::audio::SmoothedValue<float> masteringMonoMix;
+    MasteringPlayer::BlockInfo previousPhaseBlock;
+    std::int64_t phaseGatedBlockCount = 0;
+    bool phaseContinuityValid = false;
     Metronome        metronome;
 
     // Lock-free tempo-map snapshot for the audio thread (MIDI scheduler +
