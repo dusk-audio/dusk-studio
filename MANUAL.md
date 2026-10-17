@@ -29,7 +29,7 @@ Dusk Studio includes:
 - Four aux return lanes, each with one plugin or hardware insert slot.
 - Four mix buses, each with a 3-band tone EQ, a highpass and a console-style bus compressor.
 - A master bus with tape saturation, a tube program EQ, bus compressor, and mono-sum check.
-- A dedicated mastering stage with 5-band digital EQ, multiband compressor, brick-wall limiter, and BS.1770 loudness metering.
+- A dedicated mastering stage with 5-band digital EQ, multiband compressor, brick-wall limiter, BS.1770 loudness metering, and multiband phase analysis with a Mono monitor.
 - VST3, LV2, AU, and CLAP plugin hosting, with optional out-of-process sandboxing for crash isolation. CLAP and VST3 — effects and instruments — run through Dusk Studio's own native hosts on Linux, macOS, and Windows; LV2 does on Linux and macOS, and Audio Units do on macOS. On Windows, LV2 plugins load through the standard plugin host.
 - External hardware insert per channel and per aux, with automatic latency measurement.
 - A multi-sampler that plays `.sfz` files and `.sf2` SoundFonts on MIDI tracks, both through the built-in sfizz engine (SF2 files are converted to SFZ on load — no external synth required).
@@ -128,7 +128,7 @@ When the mix is where you want it, hit **Cmd+B** to open the bounce dialog. Pick
 
 ![Bounce dialog with a destination filename.](docs/images/qg-07-bounce-dialog.png)
 
-If you want the bounce to also pass through a mastering chain (5-band EQ, multiband compressor, brickwall limiter, LUFS metering), switch to **MASTERING** stage, click **Load latest mixdown** to pull in the bounce you just made (it looks for `mixdown.wav`, then `bounce.wav`, the bounce dialog's default name), dial the chain in, then **Export master…** to render the final file.
+If you want the bounce to also pass through a mastering chain (5-band EQ, multiband compressor, brickwall limiter, LUFS metering), switch to **MASTERING** stage, click **Load latest mixdown** to pull in the bounce you just made (it looks for `mixdown.wav`, then `bounce.wav`, the bounce dialog's default name), dial the chain in, then **Export master…** to render the final file. The **PHASE** panel checks stereo correlation by frequency band; its **Mono** switch lets you hear the fold-down without changing the exported file.
 
 That is the whole loop: arm → record → overdub → mix → bounce. Everything below in this manual is a deeper reference on one of those steps.
 
@@ -3081,7 +3081,7 @@ The multiband compressor has four bands: Low, Low-Mid, High-Mid and High. These 
 
 **Mackie Control (MCU).** A protocol for control surfaces with motorised faders and bank-of-eight ergonomics.
 
-**Mastering chain.** A separate signal flow that processes a finished mix file through dedicated EQ, compression, and limiting.
+**Mastering chain.** A separate signal flow that processes a finished mix file through dedicated EQ, compression, and limiting, followed by loudness and multiband phase analysis.
 
 **OOP plugin sandbox.** Out-of-process plugin hosting. Each loaded plugin runs in a child process so a crash does not take the DAW with it.
 

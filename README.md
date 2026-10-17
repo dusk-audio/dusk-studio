@@ -83,7 +83,7 @@ deeper accessibility.
 | Plugin offline-state preservation (missing plugin doesn't wipe save) | Working |
 | Out-of-process plugin sandbox, audio, opt-in (Linux + macOS + Windows) | Working |
 | Out-of-process plugin sandbox, editor embed (Linux XEmbed, Windows SetParent, macOS in-process shell) | Working |
-| Mastering view (waveform + 5-band EQ + multiband comp + brick-wall limiter + BS.1770) | Working |
+| Mastering view (waveform + 5-band EQ + multiband comp + brick-wall limiter + BS.1770 + multiband phase / Mono monitor) | Working |
 | Offline bounce / mixdown export (master) | Working |
 | Single-pass stem export (tracks + buses + aux returns) | Working |
 | Realtime bounce (hardware inserts print wet) | Working |

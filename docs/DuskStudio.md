@@ -838,6 +838,49 @@ While a bounce is running:
 * Recording is disabled during bounce (the RECORD button is greyed out). Trying to record cancels the bounce with a confirmation prompt.
 * Saving the session is allowed during bounce; the bounce thread holds its snapshot independently.
 
+### **10. Mastering analysis (`src/dsp/`, `src/ui/`)**
+
+MASTERING plays one stereo mix file through the digital EQ, multiband compressor
+and brickwall limiter. A fourth native **Phase** panel measures the post-limiter
+signal without changing the chain output or latency. Wide windows show all four
+modules; compact windows select one full-width module. Covering dialogs must keep
+native children hidden across layout changes, including a cover opened while no
+native module was visible.
+
+The audio producer copies stereo samples into a bounded, preallocated SPSC feed.
+Rate, generation and sequence metadata identify discontinuities without resetting
+FIFO storage under the consumer. Seeks, reader gaps, gated callbacks and offline
+renders must not join unrelated analysis windows. Offline renders never populate
+the live feed. The view owns a JUCE-free `PhaseAnalyzer`, drains a bounded snapshot
+from its 30 Hz message-thread timer, and discards hidden/export backlogs. Native
+child recreation preserves the analyzer and held evidence.
+
+The analyzer uses Hann-windowed FFTs, log-spaced bands from 20 Hz to 20 kHz,
+Q-dependent spectral weights and exponentially smoothed cross/auto spectra.
+**Bands** (4-64, default 16), **Q** (0.25-8, default 2) and **Average** (50-5000 ms,
+default 500 ms) save as `phase_bands`, `phase_q` and `phase_averaging_ms` in the
+session's `mastering` object. Missing fields restore their defaults. Meter values,
+held evidence, display mode and live Mono monitoring are runtime state.
+
+Correlation bars show -1 to +1 per band and overall, with held minima. Negative
+correlation sustained for 250 ms of analyzed audio sets a sticky band warning.
+Reset, a new source or a band-count change clears held evidence; ordinary playback
+discontinuities, Q changes and rate changes retain it. Silence and one-channel
+signals do not invent valid stereo correlation or coherence.
+
+The alternate **Coherence / time** display estimates magnitude-squared coherence
+from independent FFT windows with energy-weighted confidence. Its averaging time
+is at least eight FFT windows. Phase and delay require mature, coherent spectral
+support; a single tone cannot identify a unique delay. Wrapped offsets are
+ambiguous, and fitted R lag is bounded to plus or minus one-sixth of the FFT
+window. The panel exposes these limits and settling times instead of displaying
+unqualified timing estimates.
+
+Mono loss compares `(L+R)/2` energy with the mean stereo-channel energy. **Mono**
+smoothly folds only live monitoring after the stereo analysis and metering taps.
+The engine owns this unsaved switch until it is turned off or the app quits;
+offline exports stay stereo. Analysis performs no automatic phase correction.
+
 ## **Project Structure**
 
 ```
