@@ -4703,24 +4703,10 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     // was rebuilt during deserialize; this is the engine-side half).
     engine.reapplyFreezeState();
 
-    // Re-resolve MIDI input routing from the just-loaded session. The load
-    // restores the saved identifiers (MCU input, sync source, per-track MIDI
-    // in) but NOT the runtime index each maps to, so without this the MCU
-    // surface (and track MIDI inputs) stay dead until the user re-picks the
-    // device in Settings. Use the LIGHTWEIGHT per-track re-resolve - the full
-    // refreshMidiInputs() hot-plug path detaches/reattaches the audio callback
-    // and disables/re-enables every MIDI device, which froze the UI for a few
-    // seconds on every load. The physical devices are unchanged since startup,
-    // so the banks are valid; MCU + sync re-resolve happens in
-    // openConfiguredMidiOutputs() below.
+    // Resolve saved identifiers against the existing banks without reopening
+    // every MIDI device during session load.
     engine.reresolveTrackMidiFromSession();
-
-    // Open MIDI output ports for any tracks the loaded session had
-    // routed. Done here (not in the engine constructor) so startup
-    // never blocks on snd_seq_connect_to for ports nobody uses.
-    // Safely variant: the audio callback is live on the load path (the
-    // lightweight reresolve above doesn't detach), so the bank open must.
-    engine.openConfiguredMidiOutputsSafely();
+    engine.openConfiguredMidiOutputs();
     const auto tAfterMidiOuts = juce::Time::getMillisecondCounterHiRes();
 
     // Reconstruct the console so all controls reflect the freshly

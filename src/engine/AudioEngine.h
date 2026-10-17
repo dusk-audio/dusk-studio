@@ -293,15 +293,9 @@ public:
         midiOut.installBackend (std::move (backend));
     }
 
-    // Open the MIDI output every track is routed to. Called once after
-    // SessionSerializer::load resolves identifiers. Message-thread only.
-    // Caller MUST have the audio callback detached (startup pre-attach path).
+    // Open restored track, sync and MCU output ports. Message-thread only;
+    // output availability is published atomically to the audio thread.
     void openConfiguredMidiOutputs();
-
-    // Same, but for live callers (session load) where the audio callback is
-    // attached: detaches it around the bank mutation so the audio thread
-    // never reads the output bank mid-open. Message-thread only.
-    void openConfiguredMidiOutputsSafely();
 
     juce::UndoManager& getUndoManager() noexcept { return undoManager; }
 

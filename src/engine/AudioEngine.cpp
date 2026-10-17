@@ -1610,12 +1610,8 @@ bool AudioEngine::moveTracks (const TrackMovePlan& requested, const TrackSlotMas
 
 void AudioEngine::reresolveTrackMidiFromSession()
 {
-    // Re-map saved per-track MIDI identifiers to runtime indices against the
-    // EXISTING device banks. Only atomic index stores (the audio thread reads
-    // these), no bank mutation - so no callback detach, no device reconfigure,
-    // no audio glitch. Cheap enough to run on every session load. (The full
-    // refreshMidiInputs hot-plug path would detach/reattach the audio callback
-    // and disable/re-enable every MIDI device - seconds of frozen UI on load.)
+    // Session load reuses existing banks rather than gating processing to
+    // re-enumerate unchanged MIDI devices.
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
         auto& track = session.track (t);
@@ -1707,18 +1703,6 @@ void AudioEngine::openConfiguredMidiOutputs()
         midiOut.ensureOpen (i);
     if (const int i = session.mcu.resolvedOutputIdx.load (std::memory_order_acquire); i >= 0)
         midiOut.ensureOpen (i);
-}
-
-void AudioEngine::openConfiguredMidiOutputsSafely()
-{
-    // Session-load calls this with the audio callback ATTACHED, but ensureOpen
-    // mutates the output bank the audio thread reads (in the clock / MCU send
-    // paths). Detach the callback for the brief open pass - same contract
-    // refreshMidiInputs() relies on. The startup caller runs pre-attach and
-    // uses openConfiguredMidiOutputs() directly.
-    deviceManager.removeCallback (this);
-    openConfiguredMidiOutputs();
-    deviceManager.addCallback (this);
 }
 
 void AudioEngine::detachAudioCallback()

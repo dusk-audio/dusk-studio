@@ -988,6 +988,40 @@ std::optional<ScenarioResult> runMidiSelectors (GuiHost& host, ScenarioContext& 
     [&engine, noticesBefore]
     { return engine.midiHotplugNoticesForScenario() > noticesBefore && engine.midiHotplugSettledForScenario(); },
     "the hot-plug refresh for the private MIDI destination never finished" });
+    steps->push_back ({ 0, [&track, &engine, &ctx, keyboard, keyboardId, destination, destinationId]
+    {
+        track.midiInputIndex.store (keyboard);
+        track.midiInputIdentifier = keyboardId;
+        track.midiChannel.store (0);
+        track.midiOutputIndex.store (destination);
+        track.midiOutputIdentifier = destinationId;
+        const auto registered = engine.isAudioCallbackRegistered();
+        const auto rate = engine.getCurrentSampleRate();
+        const auto suspends = engine.getProcessingSuspendCount();
+        engine.openConfiguredMidiOutputs();
+        ctx.expect (registered && engine.isAudioCallbackRegistered() && std::abs (engine.getCurrentSampleRate() - rate) < 0.5,
+                    "opening configured MIDI outputs changed the live audio callback");
+        ctx.expect (engine.getProcessingSuspendCount() == suspends && ! engine.isProcessingSuspended(),
+                    "opening configured MIDI outputs suspended audio processing");
+        const std::uint8_t message[] = { 0xb2, 116, 49 };
+        engine.postVirtualKeyboardMidi (message, 3);
+    } });
+    steps->push_back ({ 0, [] {}, [seq]
+    {
+        snd_seq_event_t* event = nullptr;
+        while (snd_seq_event_input (seq.get(), &event) >= 0)
+            if (event != nullptr && event->type == SND_SEQ_EVENT_CONTROLLER
+                && event->data.control.channel == 2 && event->data.control.param == 116 && event->data.control.value == 49)
+                return true;
+        return false;
+    }, "the configured MIDI output did not receive its first message" });
+    steps->push_back ({ 0, [&track]
+    {
+        track.midiInputIndex.store (-1);
+        track.midiInputIdentifier.clear();
+        track.midiOutputIndex.store (-1);
+        track.midiOutputIdentifier.clear();
+    } });
     pick (*steps, 0, keyboard + 1, [&track, keyboard] { return track.midiInputIndex.load() == keyboard; },
           "input picker did not select the virtual keyboard");
     pick (*steps, 1, 3, [&track] { return track.midiChannel.load() == 3; }, "channel picker did not select channel 3");
