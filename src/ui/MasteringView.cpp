@@ -545,11 +545,17 @@ void MasteringView::applyNativePanelSync()
             if (auto* const self = safeThis.getComponent())
             {
                 self->scheduleNativePanelSync();
-                // Native child teardown can clear the covering popup's focus.
+                // Native teardown can leave OS focus empty while the framework
+                // still reports the covering popup as focused.
                 const auto& modals = EmbeddedModal::activeModalStack();
                 if (! modals.empty())
-                    if (auto* body = modals.back()->getBody(); body != nullptr && ! body->hasKeyboardFocus (true))
-                        body->grabKeyboardFocus();
+                    if (auto* body = modals.back()->getBody())
+                    {
+                        if (auto* peer = body->getPeer(); peer != nullptr && ! peer->isFocused())
+                            peer->grabFocus();
+                        if (! body->hasKeyboardFocus (true))
+                            body->grabKeyboardFocus();
+                    }
             }
         };
         callbacks.geometry = [safeThis, proxy]

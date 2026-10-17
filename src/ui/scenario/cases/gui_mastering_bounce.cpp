@@ -758,6 +758,19 @@ std::optional<ScenarioResult> runMasteringCompactCover (GuiHost& host, ScenarioC
     const int wide = std::max (1440, size[0]), height = std::max (900, size[1]);
     auto steps = std::make_shared<std::vector<Step>>();
     steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.masteringPhasePointer ("mode", 0.5f, true), "Phase mode press is unavailable"); },
+                       [&host] { return host.masteringModulePickerShown() && host.masteringPanelsOpen() == 1; },
+                       "compact Phase panel never opened" });
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.masteringPhasePointer ("mode", 0.5f, false), "Phase mode release is unavailable"); } });
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.pressPeerKey ("escape"), "Phase menu did not accept Escape"); },
+                       [&host] { return host.masteringPhaseCapturesKeyboard() && host.masteringPhaseHasKeyboard(); },
+                       "Phase menu never received native keyboard focus" });
+    steps->push_back ({ 100, [] {},
+                       [&host] { return ! host.masteringPhaseCapturesKeyboard() && host.masteringPhaseHasKeyboard(); },
+                       "Escape did not leave keyboard focus on the Phase child" });
+    steps->push_back ({ 100, [&host, &ctx]
     { ctx.expect (host.clickMasteringModulePicker(), "compact module picker is unavailable"); },
                        [&host] { return host.masteringModulePickerShown(); }, "workspace never became compact" });
     steps->push_back ({ 100, [&host, &ctx]
