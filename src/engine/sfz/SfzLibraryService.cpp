@@ -743,7 +743,7 @@ OperationResult LibraryService::execute (Job& job, const OperationControl& contr
             return { extracted.status, extracted.error, extracted.failureKind };
         }
         if (control.status() != OperationStatus::Complete) return interrupted (control);
-        const auto published = store.publish (job.pack, downloaded.sha256, job.staging, extracted.sfzPaths);
+        const auto published = store.publish (job.pack, downloaded.sha256, job.staging, extracted.sfzPaths, control);
         if (! published) return { published.status, published.error, published.failureKind };
         cleanInstall (job);
         const auto installed = installedLibraryPacks (locations);

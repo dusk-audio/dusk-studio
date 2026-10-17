@@ -1,6 +1,7 @@
 #include "SfzPackStore.h"
 #include "SfzLibraryLocations.h"
 #include "SfzPackIndex.h"
+#include "SfzPackIntegrity.h"
 #include "../../foundation/Fs.h"
 
 #include <sodium.h>
@@ -82,6 +83,20 @@ bool plainPath (const fs::path& root, const std::string& relative)
     return fs::is_regular_file (dusk::fs::nativeIOPath (path), ec) && ! ec;
 }
 
+std::optional<std::string> receiptText (const fs::path& directory)
+{
+    if (! plainPath (directory, kReceipt)) return {};
+    const auto path = dusk::fs::nativeIOPath (directory / kReceipt);
+    std::error_code ec;
+    const auto size = fs::file_size (path, ec);
+    if (ec || size == 0 || size > 8 * 1024 * 1024) return {};
+    std::ifstream stream (path, std::ios::binary);
+    std::string text (static_cast<std::size_t> (size), '\0');
+    if (! stream.read (text.data(), static_cast<std::streamsize> (text.size()))
+        || stream.peek() != std::char_traits<char>::eof() || stream.bad()) return {};
+    return text;
+}
+
 FailureKind storageFailureKind (const std::error_code& error)
 {
     return error == std::errc::no_space_on_device ? FailureKind::DiskFull : FailureKind::None;
@@ -92,6 +107,14 @@ PackPublishResult failure (const std::string& message, FailureKind kind = Failur
     PackPublishResult result;
     result.error = message;
     result.failureKind = kind;
+    return result;
+}
+
+PackPublishResult interrupted (OperationStatus status)
+{
+    PackPublishResult result;
+    result.status = status;
+    result.error = "SFZ installation interrupted";
     return result;
 }
 } // namespace
@@ -168,8 +191,9 @@ fs::path PackStore::createStaging (std::string& error, std::error_code* nativeEr
 
 PackPublishResult PackStore::publish (const ProviderPack& provider, const std::string& digest,
                                      const fs::path& staging,
-                                     const std::vector<std::string>& sfzPaths)
+                                     const std::vector<std::string>& sfzPaths, const OperationControl& control)
 {
+    if (const auto status = control.status(); status != OperationStatus::Complete) return interrupted (status);
     std::string error;
     std::error_code ec;
     if (! initialize (error, &ec)) return failure (error, storageFailureKind (ec));
@@ -190,6 +214,7 @@ PackPublishResult PackStore::publish (const ProviderPack& provider, const std::s
     for (auto it = fs::recursive_directory_iterator (ioStaging, ec);
          ! ec && it != fs::recursive_directory_iterator(); it.increment (ec))
     {
+        if (const auto status = control.status(); status != OperationStatus::Complete) return interrupted (status);
         if (++entryCount > 100000) return failure ("SFZ staging tree exceeds the entry limit");
         const auto relative = it->path().lexically_relative (ioStaging).generic_u8string();
         const auto status = it->symlink_status (ec);
@@ -240,10 +265,20 @@ PackPublishResult PackStore::publish (const ProviderPack& provider, const std::s
         entries.push_back ({ { "id", instrument.id }, { "name", instrument.name },
                             { "path", relative }, { "candidate", instrument.candidateOnly } });
     }
+    const auto contents = hashPackContents (staging, control);
+    if (! contents)
+    {
+        auto result = failure (contents.error, contents.failureKind);
+        result.status = contents.status;
+        return result;
+    }
+    pack.installedTreeSha256 = contents.sha256;
     const Json receipt { { "schema", 1 }, { "provider", Json::parse (providerPackToJson (provider)) },
                          { "presentation", { { "artwork_url", provider.presentation.artworkUrl },
                                                { "category_hint", provider.presentation.categoryHint } } },
-                         { "archive_sha256", digest }, { "instruments", std::move (entries) } };
+                         { "archive_sha256", digest }, { "installed_tree_sha256_v1", contents.sha256 },
+                         { "instruments", std::move (entries) } };
+    if (const auto status = control.status(); status != OperationStatus::Complete) return interrupted (status);
     if (! dusk::fs::writeStringToFile (staging / kReceipt, receipt.dump (2), &ec)
         || ! syncPath (staging / kReceipt, false, ec))
         return failure ("Cannot write SFZ installation receipt", storageFailureKind (ec));
@@ -254,6 +289,7 @@ PackPublishResult PackStore::publish (const ProviderPack& provider, const std::s
             return failure ("Cannot flush SFZ staging directory", storageFailureKind (ec));
     if (ec || ! syncPath (staging, true, ec)) return failure ("Cannot flush SFZ staging directory", storageFailureKind (ec));
    #endif
+    if (const auto status = control.status(); status != OperationStatus::Complete) return interrupted (status);
     pack.directory = storeRoot / "packs" / identity (pack.locatorFor (pack.instruments.front()));
     fs::path displaced;
     if (fs::exists (dusk::fs::nativeIOPath (pack.directory), ec))
@@ -298,11 +334,13 @@ PackPublishResult PackStore::publish (const ProviderPack& provider, const std::s
     return result;
 }
 
-std::optional<InstalledPack> PackStore::readReceipt (const fs::path& directory) const
+std::optional<InstalledPack> PackStore::readReceipt (const fs::path& directory, bool requireEntrypoints,
+                                                  std::string* receiptBytes) const
 {
-    if (directory.parent_path() != storeRoot / "packs" || ! plainPath (directory, kReceipt)) return {};
-    if (dusk::fs::fileSize (directory / kReceipt) > 8 * 1024 * 1024) return {};
-    const auto receipt = Json::parse (dusk::fs::loadFileAsString (directory / kReceipt), nullptr, false);
+    if (directory.parent_path() != storeRoot / "packs") return {};
+    const auto bytes = receiptText (directory);
+    if (! bytes) return {};
+    const auto receipt = Json::parse (*bytes, nullptr, false);
     if (receipt.is_discarded() || dusk::json::getInt (receipt, "schema", 0) != 1) return {};
     auto parsed = providerPackFromJson (dusk::json::child (receipt, "provider").dump(), PackDescriptorUse::InstalledReceipt);
     if (! parsed || ! parsed.pack) return {};
@@ -317,6 +355,12 @@ std::optional<InstalledPack> PackStore::readReceipt (const fs::path& directory) 
     if (category.size() <= 8192 && category.find ('\0') == std::string::npos)
         pack.provider.presentation.categoryHint = category;
     pack.archiveSha256 = dusk::json::getString (receipt, "archive_sha256");
+    if (receipt.contains ("installed_tree_sha256_v1"))
+    {
+        const auto& digest = receipt["installed_tree_sha256_v1"];
+        if (! digest.is_string() || ! isSha256 (digest.get<std::string>())) return {};
+        pack.installedTreeSha256 = digest.get<std::string>();
+    }
     pack.directory = directory;
     if (! isSha256 (pack.archiveSha256)
         || (! pack.provider.expectedSha256.empty()
@@ -328,15 +372,49 @@ std::optional<InstalledPack> PackStore::readReceipt (const fs::path& directory) 
             dusk::json::getString (entry, "name"), dusk::json::getString (entry, "path"),
             dusk::json::getBool (entry, "candidate", true) };
         const auto key = portablePathKey (instrument.relativePath);
+        std::string error;
         if (instrument.id.empty() || instrument.id.size() > 512
-            || ! plainPath (directory, instrument.relativePath)
+            || ! validateRelativePath (instrument.relativePath, error)
+            || (requireEntrypoints && ! plainPath (directory, instrument.relativePath))
             || dusk::text::toLowerCase (fs::u8path (instrument.relativePath).extension().u8string()) != ".sfz"
             || ! key || ! paths.insert (*key).second || ! ids.insert (instrument.id).second) return {};
         pack.instruments.push_back (std::move (instrument));
     }
     if (pack.instruments.empty()
         || directory.filename().u8string() != identity (pack.locatorFor (pack.instruments.front()))) return {};
+    if (receiptBytes) *receiptBytes = *bytes;
     return pack;
+}
+
+OperationResult PackStore::verify (const InstalledPack& selected, const OperationControl& control) const
+{
+    if (const auto status = control.status(); status != OperationStatus::Complete)
+        return { status, "SFZ file verification interrupted" };
+    if (selected.instruments.empty()
+        || selected.directory != storeRoot / "packs" / identity (selected.locatorFor (selected.instruments.front())))
+        return { OperationStatus::Failed, "Invalid installed SFZ pack selection" };
+    if (! libraryLocationAvailable ({ storeRoot, requiredMarker }))
+        return { OperationStatus::Failed, "The SFZ library drive is unavailable" };
+    std::string bytes;
+    const auto pack = readReceipt (selected.directory, false, &bytes);
+    if (! pack) return { OperationStatus::Failed, "The SFZ installation receipt is invalid", FailureKind::Integrity };
+    if (pack->installedTreeSha256.empty())
+        return { OperationStatus::Failed, "File verification is unavailable: this installation has no recorded file digest" };
+    DirectoryLease lease;
+    std::string error;
+    if (! lease.acquire (storeRoot, DirectoryLease::Access::Shared, error))
+        return { OperationStatus::Failed, error };
+    if (! libraryLocationAvailable ({ storeRoot, requiredMarker }) || receiptText (selected.directory) != bytes)
+        return { OperationStatus::Failed, "The SFZ installation changed before verification", FailureKind::Integrity };
+    const auto contents = hashPackContents (pack->directory, control);
+    if (! contents) return contents;
+    if (! libraryLocationAvailable ({ storeRoot, requiredMarker }) || receiptText (selected.directory) != bytes)
+        return { OperationStatus::Failed, "The SFZ installation changed during verification", FailureKind::Integrity };
+    if (contents.sha256 != pack->installedTreeSha256)
+        return { OperationStatus::Failed, "Installed SFZ files differ from the installation record", FailureKind::Integrity };
+    if (const auto status = control.status(); status != OperationStatus::Complete)
+        return { status, "SFZ file verification interrupted" };
+    return { OperationStatus::Complete, {} };
 }
 
 std::vector<InstalledPack> PackStore::installed() const

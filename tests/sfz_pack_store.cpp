@@ -168,6 +168,23 @@ TEST_CASE ("SFZ packs publish complete trees atomically and resolve portable loc
     }
     pack.presentation.artworkUrl = "https://fixtures.example/piano.jpg";
     pack.presentation.categoryHint = "piano";
+    SECTION ("Publication interruption leaves no receipt or installed version")
+    {
+        bool interrupted = false;
+        OperationControl control;
+        SECTION ("Cancelled before initialization") { control.cancelled = [] { return true; }; }
+        SECTION ("Paused while hashing")
+        {
+            control.paused = [&] { return interrupted; };
+            control.progress = [&] (const OperationProgress&) { interrupted = true; };
+        }
+        const auto stopped = original.publish (pack, std::string (64, 'a'), staging,
+                                               { u8"Programs/Étude.sfz" }, control);
+        CHECK_FALSE (stopped);
+        CHECK (stopped.status == (interrupted ? OperationStatus::Paused : OperationStatus::Cancelled));
+        CHECK_FALSE (fs::exists (dusk::fs::nativeIOPath (staging / ".dusk-pack.json")));
+        CHECK (original.installed().empty());
+    }
     const auto result = original.publish (pack, std::string (64, 'a'), staging, { u8"Programs/Étude.sfz" });
     REQUIRE (result);
     CHECK (result.failureKind == FailureKind::None);
@@ -176,6 +193,85 @@ TEST_CASE ("SFZ packs publish complete trees atomically and resolve portable loc
     REQUIRE (original.installed().size() == 1);
     CHECK (original.installed().front().provider.presentation.artworkUrl == pack.presentation.artworkUrl);
     CHECK (original.installed().front().provider.presentation.categoryHint == "piano");
+    REQUIRE (isSha256 (result.pack->installedTreeSha256));
+    CHECK (original.installed().front().installedTreeSha256 == result.pack->installedTreeSha256);
+    REQUIRE (original.verify (*result.pack));
+    const auto receiptPath = result.pack->directory / ".dusk-pack.json";
+    const auto receiptBytes = dusk::fs::loadFileAsString (receiptPath);
+    SECTION ("Verification reads the current receipt rather than the copied digest")
+    {
+        auto selected = *result.pack;
+        selected.installedTreeSha256 = std::string (64, 'b');
+        CHECK (original.verify (selected));
+    }
+    SECTION ("Verification detects changed and missing installed files")
+    {
+        auto path = result.pack->directory / "Samples/tone.wav";
+        SECTION ("Equal length sample corruption")
+        {
+            REQUIRE (dusk::fs::writeStringToFile (path, "corrupt sample"));
+        }
+        SECTION ("Missing sample") { REQUIRE (fs::remove (dusk::fs::nativeIOPath (path))); }
+        SECTION ("Missing SFZ")
+        {
+            path = result.pack->directory / fs::u8path (u8"Programs/Étude.sfz");
+            REQUIRE (fs::remove (dusk::fs::nativeIOPath (path)));
+        }
+        const auto checked = original.verify (*result.pack);
+        CHECK_FALSE (checked);
+        CHECK (checked.failureKind == FailureKind::Integrity);
+        CHECK (dusk::fs::loadFileAsString (receiptPath) == receiptBytes);
+        return;
+    }
+    SECTION ("Verification refuses a receipt changed during hashing")
+    {
+        OperationControl control;
+        control.progress = [&] (const OperationProgress&)
+        { REQUIRE (dusk::fs::writeStringToFile (receiptPath, receiptBytes + "\n")); };
+        const auto checked = original.verify (*result.pack, control);
+        CHECK_FALSE (checked);
+        CHECK (checked.failureKind == FailureKind::Integrity);
+        return;
+    }
+    SECTION ("Verification can pause or cancel without modifying installed data")
+    {
+        OperationControl control;
+        bool interrupted = false;
+        SECTION ("Pause") { control.paused = [&] { return interrupted; }; }
+        SECTION ("Cancel") { control.cancelled = [&] { return interrupted; }; }
+        control.progress = [&] (const OperationProgress&) { interrupted = true; };
+        const auto checked = original.verify (*result.pack, control);
+        CHECK_FALSE (checked);
+        CHECK ((checked.status == OperationStatus::Paused || checked.status == OperationStatus::Cancelled));
+        CHECK (dusk::fs::loadFileAsString (receiptPath) == receiptBytes);
+        REQUIRE (original.verify (*result.pack));
+    }
+    SECTION ("Legacy receipts remain usable without inventing a baseline")
+    {
+        auto receipt = Json::parse (receiptBytes);
+        receipt.erase ("installed_tree_sha256_v1");
+        const auto legacyBytes = receipt.dump();
+        REQUIRE (dusk::fs::writeStringToFile (receiptPath, legacyBytes));
+        const auto installed = original.installed();
+        REQUIRE (installed.size() == 1);
+        CHECK (installed.front().installedTreeSha256.empty());
+        const auto unavailable = original.verify (*result.pack);
+        CHECK_FALSE (unavailable);
+        CHECK (unavailable.failureKind == FailureKind::None);
+        CHECK (unavailable.error.find ("unavailable") != std::string::npos);
+        const auto reused = original.publish (pack, std::string (64, 'a'), stage (original),
+                                              { u8"Programs/Étude.sfz" });
+        REQUIRE (reused);
+        REQUIRE (reused.pack);
+        CHECK (reused.pack->installedTreeSha256.empty());
+        CHECK (dusk::fs::loadFileAsString (receiptPath) == legacyBytes);
+    }
+    SECTION ("Verification rejects a pack from another library")
+    {
+        auto selected = *result.pack;
+        selected.directory = tree.root / "elsewhere" / selected.directory.filename();
+        CHECK_FALSE (original.verify (selected));
+    }
     SECTION ("prior restricted installations remain usable without permitting a new publication")
     {
         std::string type;
@@ -397,6 +493,9 @@ TEST_CASE ("SFZ malformed receipts stay unavailable to offline session restorati
     SECTION ("Missing receipt") { missing = true; }
     SECTION ("Unknown schema") { receipt["schema"] = 2; }
     SECTION ("Changed archive identity") { receipt["archive_sha256"] = std::string (64, 'b'); }
+    SECTION ("Invalid installed tree digest") { receipt["installed_tree_sha256_v1"] = "invalid"; }
+    SECTION ("Empty installed tree digest") { receipt["installed_tree_sha256_v1"] = ""; }
+    SECTION ("Non-string installed tree digest") { receipt["installed_tree_sha256_v1"] = 1; }
     SECTION ("Missing entrypoint") { receipt["instruments"][0]["path"] = "missing.sfz"; }
     SECTION ("Traversal") { receipt["instruments"][0]["path"] = "../outside.sfz"; }
     SECTION ("Non SFZ file") { receipt["instruments"][0]["path"] = "Samples/tone.wav"; }
