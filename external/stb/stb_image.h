@@ -2968,9 +2968,7 @@ static int stbi__parse_entropy_coded_data(stbi__jpeg *z)
                // every data block is an MCU, so countdown the restart interval
                if (--z->todo <= 0) {
                   if (z->code_bits < 24) stbi__grow_buffer_unsafe(z);
-                  // if it's NOT a restart, then just bail, so we get corrupt data
-                  // rather than no data
-                  if (!STBI__RESTART(z->marker)) return 1;
+                  if (!STBI__RESTART(z->marker)) return i+1 == w && j+1 == h;
                   stbi__jpeg_reset(z);
                }
             }
@@ -3000,7 +2998,7 @@ static int stbi__parse_entropy_coded_data(stbi__jpeg *z)
                // so now count down the restart interval
                if (--z->todo <= 0) {
                   if (z->code_bits < 24) stbi__grow_buffer_unsafe(z);
-                  if (!STBI__RESTART(z->marker)) return 1;
+                  if (!STBI__RESTART(z->marker)) return i+1 == z->img_mcu_x && j+1 == z->img_mcu_y;
                   stbi__jpeg_reset(z);
                }
             }
@@ -3031,7 +3029,7 @@ static int stbi__parse_entropy_coded_data(stbi__jpeg *z)
                // every data block is an MCU, so countdown the restart interval
                if (--z->todo <= 0) {
                   if (z->code_bits < 24) stbi__grow_buffer_unsafe(z);
-                  if (!STBI__RESTART(z->marker)) return 1;
+                  if (!STBI__RESTART(z->marker)) return i+1 == w && j+1 == h;
                   stbi__jpeg_reset(z);
                }
             }
@@ -3060,7 +3058,7 @@ static int stbi__parse_entropy_coded_data(stbi__jpeg *z)
                // so now count down the restart interval
                if (--z->todo <= 0) {
                   if (z->code_bits < 24) stbi__grow_buffer_unsafe(z);
-                  if (!STBI__RESTART(z->marker)) return 1;
+                  if (!STBI__RESTART(z->marker)) return i+1 == z->img_mcu_x && j+1 == z->img_mcu_y;
                   stbi__jpeg_reset(z);
                }
             }
@@ -3412,6 +3410,7 @@ static stbi_uc stbi__skip_jpeg_junk_at_end(stbi__jpeg *j)
 static int stbi__decode_jpeg_image(stbi__jpeg *j)
 {
    int m;
+   unsigned int initialized_components = 0;
    for (m = 0; m < 4; m++) {
       j->img_comp[m].raw_data = NULL;
       j->img_comp[m].raw_coeff = NULL;
@@ -3421,8 +3420,17 @@ static int stbi__decode_jpeg_image(stbi__jpeg *j)
    m = stbi__get_marker(j);
    while (!stbi__EOI(m)) {
       if (stbi__SOS(m)) {
+         int i;
+         unsigned int scan_components = 0;
          if (!stbi__process_scan_header(j)) return 0;
+         for (i = 0; i < j->scan_n; ++i)
+            scan_components |= 1u << j->order[i];
+         if (j->progressive && (j->spec_start != 0 || j->succ_high != 0)
+             && (initialized_components & scan_components) != scan_components)
+            return stbi__err("missing DC scan", "Corrupt JPEG");
          if (!stbi__parse_entropy_coded_data(j)) return 0;
+         if (!j->progressive || (j->spec_start == 0 && j->succ_high == 0))
+            initialized_components |= scan_components;
          if (j->marker == STBI__MARKER_none ) {
          j->marker = stbi__skip_jpeg_junk_at_end(j);
             // if we reach eof without hitting a marker, stbi__get_marker() below will fail and we'll eventually return 0
@@ -3437,10 +3445,12 @@ static int stbi__decode_jpeg_image(stbi__jpeg *j)
          if (NL != j->s->img_y) return stbi__err("bad DNL height", "Corrupt JPEG");
          m = stbi__get_marker(j);
       } else {
-         if (!stbi__process_marker(j, m)) return 1;
+         if (!stbi__process_marker(j, m)) return 0;
          m = stbi__get_marker(j);
       }
    }
+   if (initialized_components != (1u << j->s->img_n) - 1)
+      return stbi__err("missing component scan", "Corrupt JPEG");
    if (j->progressive)
       stbi__jpeg_finish(j);
    return 1;

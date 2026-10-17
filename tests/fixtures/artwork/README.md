@@ -13,3 +13,9 @@ zlib stream and IEND is empty. Each chunk carries its standard CRC-32.
 SHA-256: `d66fa204f7dea085b664c8254c08f9b054df0ee788a6685137beccb9504d9201`.
 
 It contains no source artwork or third-party content.
+
+`single-pixel.jpg` and `single-pixel-progressive.jpg` are 1×1 RGB JPEG
+fixtures for baseline and progressive decoding. The tests alter their scan
+headers and restart boundaries in memory to exercise missing components,
+uninitialized progressive coefficients and premature scan endings, while also
+checking that both complete images still decode.

@@ -73,6 +73,8 @@ canonical source.
   recorded region, and held notes end at the punch boundary. Turning Punch off
   or changing punch-out during a take updates MIDI capture at the next block.
   Notes released after punch-out stay ended if Punch is later switched off.
+- **Malformed SFZ artwork.** JPEG marker errors, incomplete component scans and
+  premature scan ends are rejected instead of rendering uninitialized pixels.
 - **PDC changes during playback.** Tracks already playing without compensation
   wait for silence before adding delay. Silent and muted tracks adopt the new
   compensation when their audio resumes.
