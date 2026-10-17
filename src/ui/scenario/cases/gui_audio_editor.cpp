@@ -722,28 +722,39 @@ std::optional<ScenarioResult> runAudioEditorRecordStopRefocuses (GuiHost& host, 
     auto& track = ctx.session().track (0);
     const auto original = track.takes[0].id;
     const auto landed = std::make_shared<TakeId> (0);
+    const auto frameAfterLanding = std::make_shared<std::uint64_t> (0);
     static constexpr int shift = 1;
     static constexpr int command = 2;
 
     auto steps = std::make_shared<std::vector<Step>>();
-    steps->push_back ({ 100, [&ctx, &track]
+    steps->push_back ({ 100, [&host, &ctx, &track, frameAfterLanding]
     {
         ctx.expect (landTake (ctx, track, 0, 24000, true).has_value() && track.regions.size() == 3
                         && track.regions[1].timelineStart == 48000,
                     "a take over the first region did not move the last region down the list");
+        *frameAfterLanding = host.audioEditorCompletedFrames();
     }, [&host, &track] { return editorShows (host, track, 48000); }, "the editor never showed the last region" });
-    steps->push_back ({ 100, [&host, &ctx, &track]
+    steps->push_back ({ 100, [&host, &ctx, &track, frameAfterLanding]
     {
         const auto selection = host.audioEditorSelection();
         ctx.expect (selection.size() == 5 && selection[0] == 1, "the editor did not follow its region to its new index");
         ctx.expect (landTake (ctx, track, 42000, 12000, false).has_value() && track.regions.size() == 4,
                     "a take across the seam did not cut into the regions either side");
-    }, [&host, &track, original]
-    { const auto focus = editorFocus (host, track); return focus && focus->takeId == original && focus->timelineStart == 48000; },
+        *frameAfterLanding = host.audioEditorCompletedFrames();
+    }, [&host, &track, original, frameAfterLanding]
+    {
+        const auto focus = editorFocus (host, track);
+        return host.audioEditorCompletedFrames() > *frameAfterLanding
+            && focus && focus->takeId == original && focus->timelineStart == 48000;
+    },
                         "a take over another region took the editor off the one it had in focus" });
     steps->push_back ({ 100, [&host, &ctx] { clickEditorWave (host, ctx, 30000, command); },
-                        [&host, &track, original]
-    { const auto focus = editorFocus (host, track); return focus && focus->takeId == original && focus->timelineStart > 48000; },
+                        [&host, &track, original, frameAfterLanding]
+    {
+        const auto focus = editorFocus (host, track);
+        return host.audioEditorCompletedFrames() > *frameAfterLanding
+            && focus && focus->takeId == original && focus->timelineStart > 48000;
+    },
                         "a take that cut the head off the focused region took the editor off what is left of it" });
     steps->push_back ({ 150, [&host, &ctx]
     {
@@ -755,11 +766,12 @@ std::optional<ScenarioResult> runAudioEditorRecordStopRefocuses (GuiHost& host, 
         host.audioEditorPointer (to[0], to[1], false, shift);
     }, [&host] { const auto selection = host.audioEditorSelection(); return selection.size() == 5 && selection[4] == 1; },
                         "the Cmd-click did not select a second region" });
-    steps->push_back ({ 100, [&ctx, &track, landed]
+    steps->push_back ({ 100, [&host, &ctx, &track, landed, frameAfterLanding]
     {
         if (const auto id = landTake (ctx, track, 24000, 72000, true))
             *landed = *id;
         ctx.expect (*landed != 0 && track.regions.size() == 2, "the take did not replace every region past the first");
+        *frameAfterLanding = host.audioEditorCompletedFrames();
     }, [&host] { const auto selection = host.audioEditorSelection(); return selection.size() == 5 && selection[1] == 1 && selection[4] == 1; },
                         "the Shift drag drew no range beside the selected region" });
     steps->push_back ({ 100, [&host, &ctx]
@@ -769,11 +781,12 @@ std::optional<ScenarioResult> runAudioEditorRecordStopRefocuses (GuiHost& host, 
         ctx.expect (selection.size() == 5 && selection[4] == 0,
                     "the take replaced the focused region and another stayed selected");
         ctx.expect (host.clickAudioEditorSample (12000), "the first region is not clickable");
-    }, [&host, &track, landed]
+    }, [&host, &track, landed, frameAfterLanding]
     {
         const auto focus = editorFocus (host, track);
         const auto selection = host.audioEditorSelection();
-        return focus && focus->takeId == *landed && selection.size() == 5 && selection[1] == 0 && selection[4] == 0;
+        return host.audioEditorCompletedFrames() > *frameAfterLanding
+            && focus && focus->takeId == *landed && selection.size() == 5 && selection[1] == 0 && selection[4] == 0;
     }, "the editor did not follow the landed take and clear its previous selection" });
     steps->push_back ({ 100, [&host, &ctx]
     { ctx.expect (host.pressAudioEditorKey ("delete"), "Delete was not handled"); },

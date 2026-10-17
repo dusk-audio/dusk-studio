@@ -668,6 +668,7 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
                 } drawing;
                 DGL::ImGuiTopLevelWidget::onDisplay();
             }
+            ++owner.completedFrames;
             owner.captureFrameIfAsked (static_cast<int> (getWidth()),
                                        static_cast<int> (getHeight()));
         }
@@ -913,6 +914,7 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
     PanelShellKeys shellKeys = PanelShellKeys::all;
     std::string capturePath;
     int framesDrawn = 0;
+    std::uint64_t completedFrames = 0;
     DuskImGuiHost host;
 };
 
@@ -1126,6 +1128,10 @@ bool DuskPanelWindow::focusForScenario()
 bool DuskPanelWindow::hasKeyboardForScenario() const noexcept
 {
     return isOpen() && impl->panelWidget != nullptr && impl->panelWidget->hasKeyboard();
+}
+std::uint64_t DuskPanelWindow::completedFramesForScenario() const noexcept
+{
+    return impl->completedFrames;
 }
 bool DuskPanelWindow::capturesKeyboardForScenario() const noexcept
 {

@@ -741,6 +741,14 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
        #endif
         return {};
     }
+    std::uint64_t audioEditorCompletedFrames() const override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        if (owner.audioEditorShowing())
+            return owner.audioEditorWindow->completedFramesForScenario();
+       #endif
+        return 0;
+    }
     std::vector<int> audioEditorTakePoint (const std::string& kind, std::uint64_t take,
                                            std::int64_t sample) const override
     {

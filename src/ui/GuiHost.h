@@ -169,6 +169,7 @@ public:
     virtual bool openAudioEditorOnTakes (int track) = 0;
     // Take ids in lane order, newest first; empty when the editor shows no lanes.
     virtual std::vector<std::uint64_t> audioEditorTakeLanes() const = 0;
+    virtual std::uint64_t audioEditorCompletedFrames() const = 0;
     // In the frame audioEditorPointer takes: "lane" is a take's waveform at a timeline
     // sample; "name", "audition", "delete", "confirm" and "cancel" its header controls.
     // Empty while the lane or the control is off screen.
