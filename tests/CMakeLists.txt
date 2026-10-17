@@ -996,10 +996,17 @@ catch_discover_tests(dusk-studio-tests
     TEST_SPEC "[sfz-disk-full],[sfz-service-disk-full],[sfz-location-disk-full],[sfz-store-disk-full]"
     EXTRA_ARGS --allow-running-no-tests
     PROPERTIES RUN_SERIAL TRUE)
+# Case-distinct names and links may be unavailable. Isolate skips so Catch2
+# cannot rerun shared rejection assertions without a fixture section.
+# Keep only fatal setup assertions before SKIP: the regex overrides exit status.
+catch_discover_tests(dusk-studio-tests
+    TEST_SPEC "[sfz-filesystem-fixture]"
+    EXTRA_ARGS --allow-running-no-tests
+    PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:")
+catch_discover_tests(dusk-studio-tests
+    TEST_SPEC "~[alsa]~[ipc]~[host-limits]~[sfz-disk-full]~[sfz-location-disk-full]~[sfz-store-disk-full]~[sfz-filesystem-fixture]")
 # [ipc] cases start plug-in hosts and assert on bounded response times. Run
 # them serially so other cases cannot starve their control threads.
-catch_discover_tests(dusk-studio-tests
-    TEST_SPEC "~[alsa]~[ipc]~[host-limits]~[sfz-disk-full]~[sfz-location-disk-full]~[sfz-store-disk-full]")
 catch_discover_tests(dusk-studio-tests
     TEST_SPEC "[ipc]~[sfz-shutdown]~[sfz-service-disk-full]"
     PROPERTIES RUN_SERIAL TRUE)

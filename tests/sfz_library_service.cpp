@@ -321,7 +321,7 @@ TEST_CASE ("SFZ library sweeps abandoned work without losing reusable downloads"
     const auto staging = tree.root / (".install-" + std::string (32, 'a'));
     const auto rollback = tree.root / (".install-" + std::string (32, 'b') + ".replaced");
     const auto unrelated = tree.root / ".install-unrelated";
-    const auto uppercaseStage = tree.root / (".install-" + std::string (32, 'A'));
+    const auto uppercaseStage = tree.root / (".install-" + std::string (32, 'C'));
     for (const auto& directory : { staging, rollback, unrelated, uppercaseStage })
     {
         REQUIRE (fs::create_directory (directory));
@@ -331,7 +331,7 @@ TEST_CASE ("SFZ library sweeps abandoned work without losing reusable downloads"
     const auto invalid = cache / (std::string (64, 'd') + ".part");
     const auto orphan = cache / (std::string (64, 'e') + ".part.resume.json");
     const auto foreign = cache / ".cache-unrelated";
-    const auto uppercaseCache = cache / (".cache-" + std::string (32, 'C'));
+    const auto uppercaseCache = cache / (".cache-" + std::string (32, 'D'));
     for (const auto& file : { temporary, invalid, orphan, foreign, uppercaseCache })
         REQUIRE (dusk::fs::writeStringToFile (file, "keep-or-sweep"));
     const auto directoryPretendingToBeFile = cache / (".cache-" + std::string (32, 'f'));

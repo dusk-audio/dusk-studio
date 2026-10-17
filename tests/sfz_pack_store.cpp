@@ -437,19 +437,6 @@ TEST_CASE ("SFZ pack publication rejects incomplete or ambiguous extracted entry
     {
         REQUIRE (dusk::fs::writeStringToFile (staging / "LICENSES/audio.txt", "Free to download."));
     }
-    SECTION ("Portable license aliases")
-    {
-        REQUIRE (dusk::fs::writeStringToFile (staging / "Samples/LICENSE", pack.license.text));
-        REQUIRE (dusk::fs::writeStringToFile (staging / "Samples/license", pack.license.text));
-        if (fs::equivalent (staging / "Samples/LICENSE", staging / "Samples/license"))
-            SKIP ("case-distinct filenames are unavailable");
-    }
-    SECTION ("Licensing file is a symbolic link")
-    {
-        std::error_code error;
-        fs::create_symlink ("Samples/tone.wav", staging / "LICENSE", error);
-        if (error) SKIP ("symlinks are unavailable");
-    }
     SECTION ("Oversized license document")
     { REQUIRE (dusk::fs::writeStringToFile (staging / "LICENSE", std::string (kMaxLicenseBytes + 1, 'x'))); }
     SECTION ("Too many license documents")
@@ -478,6 +465,41 @@ TEST_CASE ("SFZ pack publication rejects incomplete or ambiguous extracted entry
     CHECK (result.failureKind == failureKind);
     REQUIRE (store.installed().empty());
     REQUIRE (fs::exists (staging / ".dusk-pack.json") == receiptExisted);
+}
+
+TEST_CASE ("SFZ pack publication rejects case-distinct license aliases", "[sfz][store][sfz-filesystem-fixture]")
+{
+    StoreTree tree;
+    PackStore store (tree.root);
+    const auto pack = provider();
+    const auto staging = stage (store);
+    REQUIRE (dusk::fs::writeStringToFile (staging / "Samples/LICENSE", pack.license.text));
+    REQUIRE (dusk::fs::writeStringToFile (staging / "Samples/license", pack.license.text));
+    if (fs::equivalent (staging / "Samples/LICENSE", staging / "Samples/license"))
+        SKIP ("case-distinct filenames are unavailable");
+    const auto result = store.publish (pack, pack.expectedSha256, staging, { u8"Programs/Étude.sfz" });
+    REQUIRE_FALSE (result);
+    REQUIRE_FALSE (result.error.empty());
+    CHECK (result.failureKind == FailureKind::None);
+    REQUIRE (store.installed().empty());
+    REQUIRE_FALSE (fs::exists (staging / ".dusk-pack.json"));
+}
+
+TEST_CASE ("SFZ pack publication rejects symbolic license files", "[sfz][store][sfz-filesystem-fixture]")
+{
+    StoreTree tree;
+    PackStore store (tree.root);
+    const auto pack = provider();
+    const auto staging = stage (store);
+    std::error_code error;
+    fs::create_symlink ("Samples/tone.wav", staging / "LICENSE", error);
+    if (error) SKIP ("symlinks are unavailable");
+    const auto result = store.publish (pack, pack.expectedSha256, staging, { u8"Programs/Étude.sfz" });
+    REQUIRE_FALSE (result);
+    REQUIRE_FALSE (result.error.empty());
+    CHECK (result.failureKind == FailureKind::None);
+    REQUIRE (store.installed().empty());
+    REQUIRE_FALSE (fs::exists (staging / ".dusk-pack.json"));
 }
 
 TEST_CASE ("SFZ malformed receipts stay unavailable to offline session restoration", "[sfz][store]")
@@ -648,31 +670,60 @@ TEST_CASE ("SFZ installed tree hashing bounds and refuses unsafe entries", "[sfz
     SECTION ("Combined bytes") { limits.maxExpandedBytes = 4; }
     SECTION ("Path depth") { limits.paths.maxDepth = 1; }
     SECTION ("Path length") { limits.paths.maxBytes = 8; }
-    SECTION ("Symbolic file")
-    {
-        std::error_code error;
-        fs::create_symlink (tree.root / "Piano.sfz", tree.root / "alias.sfz", error);
-        if (error) SKIP ("The filesystem cannot create the symbolic-file fixture");
-    }
-    SECTION ("Hard-linked file")
-    {
-        std::error_code error;
-        fs::create_hard_link (tree.root / "Piano.sfz", tree.root / "alias.sfz", error);
-        if (error) SKIP ("The filesystem cannot create the hard-link fixture");
-    }
-    SECTION ("Symbolic directory")
-    {
-        std::error_code error;
-        fs::create_directory_symlink (tree.root / "Samples", tree.root / "alias", error);
-        if (error) SKIP ("The filesystem cannot create the symbolic-directory fixture");
-    }
-    SECTION ("Portable aliases")
-    {
-        REQUIRE (dusk::fs::writeStringToFile (tree.root / "PIANO.sfz", "<region>"));
-        if (fs::equivalent (tree.root / "Piano.sfz", tree.root / "PIANO.sfz"))
-            SKIP ("The filesystem cannot create case-distinct names");
-    }
     const auto result = hashPackContents (tree.root, {}, limits);
+    CHECK (result.status == OperationStatus::Failed);
+    CHECK (result.failureKind == FailureKind::Integrity);
+    CHECK (result.sha256.empty());
+}
+
+TEST_CASE ("SFZ installed tree hashing refuses symbolic files", "[sfz][store][sfz-filesystem-fixture]")
+{
+    StoreTree tree;
+    REQUIRE (dusk::fs::writeStringToFile (tree.root / "Piano.sfz", "<region>"));
+    std::error_code error;
+    fs::create_symlink (tree.root / "Piano.sfz", tree.root / "alias.sfz", error);
+    if (error) SKIP ("The filesystem cannot create the symbolic-file fixture");
+    const auto result = hashPackContents (tree.root);
+    CHECK (result.status == OperationStatus::Failed);
+    CHECK (result.failureKind == FailureKind::Integrity);
+    CHECK (result.sha256.empty());
+}
+
+TEST_CASE ("SFZ installed tree hashing refuses hard-linked files", "[sfz][store][sfz-filesystem-fixture]")
+{
+    StoreTree tree;
+    REQUIRE (dusk::fs::writeStringToFile (tree.root / "Piano.sfz", "<region>"));
+    std::error_code error;
+    fs::create_hard_link (tree.root / "Piano.sfz", tree.root / "alias.sfz", error);
+    if (error) SKIP ("The filesystem cannot create the hard-link fixture");
+    const auto result = hashPackContents (tree.root);
+    CHECK (result.status == OperationStatus::Failed);
+    CHECK (result.failureKind == FailureKind::Integrity);
+    CHECK (result.sha256.empty());
+}
+
+TEST_CASE ("SFZ installed tree hashing refuses symbolic directories", "[sfz][store][sfz-filesystem-fixture]")
+{
+    StoreTree tree;
+    REQUIRE (fs::create_directory (tree.root / "Samples"));
+    REQUIRE (dusk::fs::writeStringToFile (tree.root / "Samples/tone.wav", "samples"));
+    std::error_code error;
+    fs::create_directory_symlink (tree.root / "Samples", tree.root / "alias", error);
+    if (error) SKIP ("The filesystem cannot create the symbolic-directory fixture");
+    const auto result = hashPackContents (tree.root);
+    CHECK (result.status == OperationStatus::Failed);
+    CHECK (result.failureKind == FailureKind::Integrity);
+    CHECK (result.sha256.empty());
+}
+
+TEST_CASE ("SFZ installed tree hashing refuses case-distinct aliases", "[sfz][store][sfz-filesystem-fixture]")
+{
+    StoreTree tree;
+    REQUIRE (dusk::fs::writeStringToFile (tree.root / "Piano.sfz", "<region>"));
+    REQUIRE (dusk::fs::writeStringToFile (tree.root / "PIANO.sfz", "<region>"));
+    if (fs::equivalent (tree.root / "Piano.sfz", tree.root / "PIANO.sfz"))
+        SKIP ("The filesystem cannot create case-distinct names");
+    const auto result = hashPackContents (tree.root);
     CHECK (result.status == OperationStatus::Failed);
     CHECK (result.failureKind == FailureKind::Integrity);
     CHECK (result.sha256.empty());

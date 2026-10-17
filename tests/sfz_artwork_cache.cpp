@@ -93,7 +93,7 @@ TEST_CASE ("SFZ artwork startup removes only abandoned owned image temporaries",
     };
     const std::vector<std::string> unrelated {
         "other.part", std::string (64, 'a') + ".0042.part", std::string (64, 'b') + ".4294967296.part",
-        std::string (64, 'A') + ".42.part", ".cache-" + std::string (32, 'a')
+        std::string (64, 'D') + ".42.part", ".cache-" + std::string (32, 'a')
     };
     for (const auto& name : owned) REQUIRE (dusk::fs::writeStringToFile (root / name, "unfinished"));
     for (const auto& name : unrelated) REQUIRE (dusk::fs::writeStringToFile (root / name, "keep"));
