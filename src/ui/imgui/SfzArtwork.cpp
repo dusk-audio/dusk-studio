@@ -98,7 +98,7 @@ namespace
 {
 struct ImageResource { const char* resource; const char* credit; };
 constexpr ImageResource kImages[] {
-    { "sfz_piano_png", "Photo: © Copyright Steinway & Sons; CC BY-SA 3.0. Sources and adaptations: LICENSES.txt." },
+    { "sfz_piano_png", "TheresaKnott; CC0-1.0. Sources and adaptations: LICENSES.txt." },
     { "sfz_electric_piano_png", "Docrobbie; CC BY-SA 4.0. Sources and adaptations: LICENSES.txt." },
     { "sfz_organ_png", "Dongui; Public domain. Sources and adaptations: LICENSES.txt." },
     { "sfz_drums_png", "Mfaiiazi; Public domain. Sources and adaptations: LICENSES.txt." },
@@ -109,12 +109,12 @@ constexpr ImageResource kImages[] {
     { "sfz_strings_png", "Cornergraf; Public domain. Sources and adaptations: LICENSES.txt." },
     { "sfz_brass_png", "BenP; CC BY 2.5. Sources and adaptations: LICENSES.txt." },
     { "sfz_woodwinds_png", "Yamaha Corporation; CC BY-SA 4.0. Sources and adaptations: LICENSES.txt." },
-    { "sfz_mallets_png", "Marimbaone; CC BY-SA 3.0. Sources and adaptations: LICENSES.txt." },
+    { "sfz_mallets_png", "The Metropolitan Museum of Art; CC0-1.0. Sources and adaptations: LICENSES.txt." },
     { "sfz_synth_png", "Leo-setä; Clusternote; CC BY 2.0. Sources and adaptations: LICENSES.txt." },
-    { "sfz_voice_png", "Lucasbosch; CC BY-SA 3.0. Sources and adaptations: LICENSES.txt." },
+    { "sfz_voice_png", "Zzubnik; Public domain. Sources and adaptations: LICENSES.txt." },
     { "sfz_world_png", "Sathyadeep; Public domain. Sources and adaptations: LICENSES.txt." },
-    { "sfz_collection_png", "Photo: © Copyright Steinway & Sons; Cornergraf; Mfaiiazi; CC BY-SA 3.0. Sources and adaptations: LICENSES.txt." },
-    { "sfz_collection_png", "Photo: © Copyright Steinway & Sons; Cornergraf; Mfaiiazi; CC BY-SA 3.0. Sources and adaptations: LICENSES.txt." }
+    { "sfz_collection_png", "TheresaKnott; Cornergraf; Mfaiiazi; Dusk Audio; CC0-1.0. Sources and adaptations: LICENSES.txt." },
+    { "sfz_collection_png", "TheresaKnott; Cornergraf; Mfaiiazi; Dusk Audio; CC0-1.0. Sources and adaptations: LICENSES.txt." }
 };
 static_assert (sizeof (kImages) / sizeof (kImages[0]) == sfz::kInstrumentCategories.size());
 } // namespace

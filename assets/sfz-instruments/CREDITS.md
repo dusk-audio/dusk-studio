@@ -2,15 +2,23 @@
 
 These are licensed photographs and conventional illustrations, with transparent backgrounds. No AI-generated imagery is included. Cropping, resizing, hand-traced background masks and rotations were performed with ordinary image processing. Repository artwork, when available, takes precedence in the browser.
 
-The adapted images retain the licenses listed below. Sources and file hashes are recorded in `credits.json`.
+The adapted images retain the licenses listed below. [credits.json](credits.json) records output hashes and, for the nine images prepared for 0.16, hash-pinned inputs and edit recipes. The replacement sources have pinned Commons page revisions. Existing cutouts used for retouching and collection components are pinned to repository commit `8158dd093f676ef5c569c5d31d81b61f0e386529`.
+
+To reproduce those nine images, install the recorded Pillow version and download each `preparation.input.url` to a separate input directory under its recorded `file` name. Also download collection components that have a `url`. Then run:
+
+```sh
+python3 tools/prepare-sfz-artwork.py --input-dir /path/to/inputs --output-dir /path/to/outputs
+```
+
+The [preparation tool](../../tools/prepare-sfz-artwork.py) checks every input and output hash. It uses the recorded polygon masks, clone offsets and surface colors; it performs no downloads and does not alter the manifest. The piano input is Wikimedia's PNG rendering of the original SVG. The microphone input is Wikimedia's 500-pixel JPEG preview; its input hash identifies that preview, not the full-size original.
 
 ## sfz_piano.png
 
-Photo: © Copyright Steinway & Sons. [CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/).
+TheresaKnott. [CC0-1.0](https://creativecommons.org/publicdomain/zero/1.0/).
 
-[Original source](https://commons.wikimedia.org/wiki/File:Steinway_%26_Sons_concert_grand_piano%2C_model_D-274%2C_manufactured_at_Steinway%27s_factory_in_Hamburg%2C_Germany.png).
+[Original source](https://commons.wikimedia.org/wiki/File:Piano.svg). [Recorded source revision](https://commons.wikimedia.org/w/index.php?title=File:Piano.svg&oldid=866509947).
 
-Cropped, resized, and uniform background removed by conventional image processing; some instruments rotated for framing. No AI generation.
+Used Wikimedia's raster rendering of the CC0 illustration; cropped to its transparent bounds and resized.
 
 ## sfz_organ.png
 
@@ -46,11 +54,11 @@ Cropped, resized, and uniform background removed by conventional image processin
 
 ## sfz_mallets.png
 
-Marimbaone. [CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/).
+The Metropolitan Museum of Art. [CC0-1.0](https://creativecommons.org/publicdomain/zero/1.0/).
 
-[Original source](https://commons.wikimedia.org/wiki/File:Marimba_One_4000_Series.jpg).
+[Original source](https://commons.wikimedia.org/wiki/File:Marimba_MET_MUS805A.jpg). [Recorded source revision](https://commons.wikimedia.org/w/index.php?title=File:Marimba_MET_MUS805A.jpg&oldid=1152590486).
 
-Cropped, resized, and uniform background removed by conventional image processing; some instruments rotated for framing. No AI generation.
+Removed the background with manually traced polygon masks, cropped and resized.
 
 ## sfz_acoustic_guitar.png
 
@@ -58,7 +66,7 @@ Jim Hutcheson. [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
 
 [Original source](https://commons.wikimedia.org/wiki/File:C.F._Martin_GRH_160_or_000-16RGT_cropped.png).
 
-Cropped, resized, and uniform background removed by conventional image processing; some instruments rotated for framing. No AI generation.
+Cropped, resized, and uniform background removed by conventional image processing; some instruments rotated for framing. No AI generation. Maker and model marks retouched with the recorded surface colors, cloned regions and masks.
 
 ## sfz_electric_guitar.png
 
@@ -66,7 +74,7 @@ Patrick Mueller. [CC BY 2.0](https://creativecommons.org/licenses/by/2.0/).
 
 [Original source](https://commons.wikimedia.org/wiki/File:UNIVOX_Hi-Flier_phase_4_from_c.1977.jpg).
 
-Cropped, resized, and uniform background removed by conventional image processing; some instruments rotated for framing. No AI generation.
+Cropped, resized, and uniform background removed by conventional image processing; some instruments rotated for framing. No AI generation. Maker and model marks retouched with the recorded surface colors, cloned regions and masks.
 
 ## sfz_bass.png
 
@@ -74,7 +82,7 @@ Patrick Scales; Djhé. [Public domain](https://creativecommons.org/publicdomain/
 
 [Original source](https://commons.wikimedia.org/wiki/File:70%27s_Fender_Jazz_Bass.png).
 
-Cropped, resized, and uniform background removed by conventional image processing; some instruments rotated for framing. No AI generation.
+Cropped, resized, and uniform background removed by conventional image processing; some instruments rotated for framing. No AI generation. Maker and model marks retouched with the recorded surface colors, cloned regions and masks.
 
 ## sfz_electric_piano.png
 
@@ -82,7 +90,7 @@ Docrobbie. [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).
 
 [Original source](https://commons.wikimedia.org/wiki/File:Rhodes_MkI_Stage_88_1970.jpg).
 
-Cropped, resized, and uniform background removed by conventional image processing; some instruments rotated for framing. No AI generation.
+Cropped, resized, and uniform background removed by conventional image processing; some instruments rotated for framing. No AI generation. Maker and model marks retouched with the recorded surface colors, cloned regions and masks.
 
 ## sfz_synth.png
 
@@ -90,15 +98,15 @@ Leo-setä; Clusternote. [CC BY 2.0](https://creativecommons.org/licenses/by/2.0/
 
 [Original source](https://commons.wikimedia.org/wiki/File:Yamaha_DX7.jpg).
 
-Cropped, resized, and uniform background removed by conventional image processing; some instruments rotated for framing. No AI generation.
+Cropped, resized, and uniform background removed by conventional image processing; some instruments rotated for framing. No AI generation. Maker and model marks retouched with the recorded surface colors, cloned regions and masks.
 
 ## sfz_voice.png
 
-Lucasbosch. [CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/).
+Zzubnik. [Public domain](https://creativecommons.org/publicdomain/mark/1.0/).
 
-[Original source](https://commons.wikimedia.org/wiki/File:AKG_C214_Condenser_microphone.jpg).
+[Original source](https://commons.wikimedia.org/wiki/File:Microphone_gooseneck.jpg). [Recorded source revision](https://commons.wikimedia.org/w/index.php?title=File:Microphone_gooseneck.jpg&oldid=785217700).
 
-Cropped, resized, and uniform background removed by conventional image processing; some instruments rotated for framing. No AI generation.
+Used Wikimedia's 500-pixel preview; removed the background with manually traced polygon masks, cropped and resized.
 
 ## sfz_world.png
 
@@ -126,8 +134,8 @@ Cropped, resized, and uniform background removed by conventional image processin
 
 ## sfz_collection.png
 
-Photo: © Copyright Steinway & Sons; Cornergraf; Mfaiiazi. [CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/).
+TheresaKnott; Cornergraf; Mfaiiazi; Dusk Audio. [CC0-1.0](https://creativecommons.org/publicdomain/zero/1.0/).
 
 See sfz_piano.png, sfz_strings.png and sfz_drums.png credits.
 
-Assembly of the three credited cutouts.
+Assembled the credited CC0 piano illustration and public-domain violin and drum cutouts; Dusk Audio dedicates the composition under CC0-1.0.
