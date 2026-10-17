@@ -637,6 +637,7 @@ if(DUSKSTUDIO_ENABLE_NATIVE_UI)
         src/ui/imgui/BuiltinUnitView.cpp
         src/ui/imgui/DafEditorHost.cpp
         src/ui/imgui/MasteringLimiterView.cpp
+        src/ui/imgui/MasteringPhaseView.cpp
         src/ui/imgui/PanelControls.cpp
         src/ui/imgui/SfzRepositoryView.cpp
         src/ui/imgui/SfzArtwork.cpp
@@ -800,6 +801,7 @@ target_sources(DuskStudio PRIVATE
     src/dsp/MasterBus.cpp
     src/dsp/MasteringChain.cpp
     src/dsp/MasteringDigitalEq.cpp
+    src/dsp/PhaseAnalyzer.cpp
     src/dsp/Metronome.cpp
     src/session/MarkerEditActions.cpp
     src/session/RecentSessions.cpp
