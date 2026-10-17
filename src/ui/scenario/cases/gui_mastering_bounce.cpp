@@ -769,6 +769,28 @@ std::optional<ScenarioResult> runMasteringCompactCover (GuiHost& host, ScenarioC
     steps->push_back ({ 200, [&host, &ctx]
     { ctx.expect (host.masteringModuleIndex() == 3, "Phase was not selected"); },
                        [&host] { return host.masteringPanelsOpen() == 1; }, "compact Phase child did not open" });
+    steps->push_back ({ 100, [&host, &ctx, wide, height]
+    { ctx.expect (host.resizeMainWindow (wide, height), "could not restore the wide workspace"); } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickMasteringCompPreset(), "wide compressor preset picker is unavailable"); },
+                       [&host] { return host.masteringPanelsOpen() == 3; }, "wide native children did not return" });
+    steps->push_back ({ 300, [&host, &ctx, height]
+    {
+        ctx.expect (! host.modalStackEmpty(), "the compressor preset popup never opened");
+        ctx.expect (host.masteringPanelsOpen() == 3, "opening the preset popup closed an uncovered panel");
+        ctx.expect (host.resizeMainWindow (1040, height), "could not narrow beneath the preset popup");
+    } });
+    steps->push_back ({ 400, [&host, &ctx]
+    {
+        ctx.expect (! host.modalStackEmpty(), "narrowing dismissed the preset popup");
+        ctx.expect (host.masteringModulePickerShown() && host.masteringPanelsOpen() == 0,
+                    "a resized native panel covered the open preset popup");
+        ctx.expect (host.pressPeerKey ("escape"), "the preset popup did not accept Escape");
+    } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.masteringModuleIndex() == 3, "the preset popup changed the compact selection"); },
+                       [&host] { return host.modalStackEmpty() && host.masteringPanelsOpen() == 1; },
+                       "the compact Phase child did not return after closing the preset popup" });
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
 }

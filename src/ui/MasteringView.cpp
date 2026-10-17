@@ -868,8 +868,15 @@ void MasteringView::resized()
     const int selected = std::clamp (compactPanelCombo.getSelectedId() - 1, 0, 3);
 
    #if DUSKSTUDIO_HAS_NATIVE_UI
+    const auto placeNativePanel = [] (auto& proxy, const auto& bounds)
+    {
+        // A partial popup's hide tokens describe the geometry at opening.
+        if (PluginEditorHider::hasActiveSurface() && proxy.getBounds() != bounds)
+            proxy.setVisible (false);
+        proxy.setBounds (bounds);
+    };
     syncNativePanelVisibility();
-    eqProxy.setBounds (eqPanel);
+    placeNativePanel (eqProxy, eqPanel);
    #endif
 
     // Multiband Comp panel - wrapper hosts its own title + ON toggle on
@@ -910,8 +917,8 @@ void MasteringView::resized()
     }
 
    #if DUSKSTUDIO_HAS_NATIVE_UI
-    limiterProxy.setBounds (limPanel);
-    phaseProxy.setBounds (phasePanel);
+    placeNativePanel (limiterProxy, limPanel);
+    placeNativePanel (phaseProxy, phasePanel);
     scheduleNativePanelSync();
    #endif
 }
