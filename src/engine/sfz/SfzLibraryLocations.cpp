@@ -34,6 +34,12 @@ fs::path internalRoot()
     return data.empty() ? fs::path {} : data / "sfz-library";
 }
 
+fs::path formerInternalRoot()
+{
+    const auto config = dusk::fs::appConfigDir();
+    return config.empty() ? fs::path {} : config / "sfz-library";
+}
+
 std::vector<LibraryLocation> roots (const LibraryLocations& locations)
 {
     auto result = locations.previous;
@@ -469,6 +475,9 @@ LibraryLocations readLibraryLocations (const fs::path& file)
     if (! fs::exists (status) && (error == std::errc::no_such_file_or_directory || ! error))
     {
         locations.active.root = internalRoot();
+        const LibraryLocation former { formerInternalRoot(), {} };
+        if (former.root != locations.active.root && libraryLocationAvailable (former))
+            locations.previous.push_back (former);
         return locations;
     }
     const auto text = readSmallFile (file, 131072);
@@ -495,7 +504,8 @@ LibraryLocations readLibraryLocations (const fs::path& file)
         {
             location.root = fs::u8path (path);
             return location.root.is_absolute() && (validMarker (location.marker)
-                || (location.marker.empty() && location.root == internalRoot()));
+                || (location.marker.empty()
+                    && (location.root == internalRoot() || location.root == formerInternalRoot())));
         }
         catch (const std::exception&) { return false; }
     };

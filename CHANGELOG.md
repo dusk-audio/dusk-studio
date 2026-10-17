@@ -68,6 +68,9 @@ canonical source.
 
 ### Fixed
 
+- **Existing SFZ libraries.** Packs in the former default configuration folder
+  remain available after upgrading to the application data default. Saved
+  external-library settings keep their previous built-in folder too.
 - **MIDI punch-out.** Linear MIDI takes stop capturing at punch-out with MIDI
   Merge on or off. Post-roll notes and controls stay out of the preview and
   recorded region, and held notes end at the punch boundary. Turning Punch off

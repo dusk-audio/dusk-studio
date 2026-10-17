@@ -2015,6 +2015,8 @@ Recent GitHub metadata may be reused for five minutes to reduce repository reque
 
 The default downloaded library is `~/.local/share/Dusk Studio/sfz-library` on Linux (`XDG_DATA_HOME` overrides `~/.local/share`), `%LOCALAPPDATA%\Dusk Studio\sfz-library` on Windows, and `~/Library/Application Support/Dusk Studio/sfz-library` on macOS. **Settings > SFZ Library** lets you choose another folder, including an external drive.
 
+After upgrading, packs in the former default configuration folder remain available in place. New downloads use the data folder unless you have already chosen a download location; saved locations keep their existing folders.
+
 Select a pack on the left to see its license, contents and download action on the right. **Declared license** reports the source's license declaration. Only CC0, CC BY and CC BY-SA packs are offered for download. NonCommercial and NoDerivatives packs are refused, including when their restrictions are discovered on selection. Previously installed instruments remain available under their original licenses. Read the displayed attribution and ShareAlike requirements before using a pack. A pack's size can be unknown until it downloads.
 
 Installation checks `LICENSE`, `LICENCE` and `COPYING` documents, licensing directories and `.license` or `.licence` sample sidecars. Conflicting or unrecognized declarations are refused. A pack can contain at most 32 such documents, with a 200,000-byte limit per document and a 2 MiB combined limit. For GitHub packs, the extracted primary license must match the document shown before download.

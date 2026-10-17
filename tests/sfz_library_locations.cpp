@@ -17,6 +17,42 @@ namespace
 using namespace duskstudio::sfz;
 namespace fs = std::filesystem;
 
+class ScopedEnvironment
+{
+public:
+    ScopedEnvironment (const char* key, const fs::path& value) : name (key)
+    {
+       #if defined(_WIN32)
+        const auto* existing = ::_wgetenv (name.c_str());
+       #else
+        const auto* existing = std::getenv (name.c_str());
+       #endif
+        hadPrevious = existing != nullptr;
+        if (existing != nullptr) previous = existing;
+       #if defined(_WIN32)
+        REQUIRE (::_wputenv_s (name.c_str(), value.c_str()) == 0);
+       #else
+        REQUIRE (::setenv (name.c_str(), value.c_str(), 1) == 0);
+       #endif
+    }
+    ~ScopedEnvironment()
+    {
+       #if defined(_WIN32)
+        ::_wputenv_s (name.c_str(), hadPrevious ? previous.c_str() : L"");
+       #else
+        if (hadPrevious) ::setenv (name.c_str(), previous.c_str(), 1);
+        else ::unsetenv (name.c_str());
+       #endif
+    }
+    ScopedEnvironment (const ScopedEnvironment&) = delete;
+    ScopedEnvironment& operator= (const ScopedEnvironment&) = delete;
+
+private:
+    fs::path name;
+    fs::path::string_type previous;
+    bool hadPrevious = false;
+};
+
 std::string hash (const std::string& text)
 {
     REQUIRE (sodium_init() >= 0);
@@ -92,6 +128,64 @@ TEST_CASE ("SFZ library defaults to application data while location settings sta
     REQUIRE (locations.error.empty());
     REQUIRE (locations.active.root == dusk::fs::appDataDir() / "sfz-library");
     REQUIRE (libraryLocationsFile() == dusk::fs::appConfigDir() / "sfz-library-locations.json");
+}
+
+TEST_CASE ("SFZ library upgrades retain packs in the former default folder", "[sfz][storage]")
+{
+    LibraryTree tree;
+    const ScopedEnvironment specialLocations ("DUSKSTUDIO_TEST_SPECIAL_LOCATIONS_ROOT", tree.root);
+    const ScopedEnvironment noOverride ("DUSKSTUDIO_CONFIG_DIR", "");
+    const ScopedEnvironment noScenarios ("DUSKSTUDIO_RUN_SCENARIOS", "");
+    const ScopedEnvironment noSelfTest ("DUSKSTUDIO_RUN_SELFTEST", "0");
+    const auto formerRoot = dusk::fs::appConfigDir() / "sfz-library";
+    const auto dataRoot = dusk::fs::appDataDir() / "sfz-library";
+    REQUIRE (formerRoot != dataRoot);
+    REQUIRE (fs::create_directories (formerRoot.parent_path()));
+    fs::copy (tree.source, formerRoot, fs::copy_options::recursive);
+    REQUIRE (fs::remove (formerRoot / ".dusk-sfz-library"));
+    const auto locator = tree.pack.locatorFor (tree.pack.instruments.front());
+    auto expectedRoot = formerRoot;
+    auto activeRoot = dataRoot;
+    std::string configuration;
+    const auto encode = [] (const LibraryLocation& location)
+    { return dusk::json::Json { { "path", location.root.u8string() }, { "marker", location.marker } }; };
+    SECTION ("The old default did not need a locations file") {}
+    SECTION ("Saved external settings retain the former default as a previous root")
+    {
+        activeRoot = tree.source;
+        fs::remove_all (tree.source / "packs");
+        REQUIRE (fs::create_directory (tree.source / "packs"));
+        configuration = dusk::json::Json { { "schema", 1 }, { "active", encode (tree.before.active) },
+            { "previous", dusk::json::Json::array ({ encode ({ formerRoot, {} }) }) } }.dump();
+    }
+    SECTION ("The former default can remain the configured active root")
+    {
+        activeRoot = formerRoot;
+        configuration = dusk::json::Json { { "schema", 1 }, { "active", encode ({ formerRoot, {} }) },
+            { "previous", dusk::json::Json::array() } }.dump();
+    }
+    SECTION ("The new default takes precedence when both folders contain the same pack")
+    {
+        REQUIRE (fs::create_directories (dataRoot.parent_path()));
+        fs::copy (tree.source, dataRoot, fs::copy_options::recursive);
+        expectedRoot = dataRoot;
+    }
+    if (! configuration.empty())
+        REQUIRE (dusk::fs::writeStringToFile (libraryLocationsFile(), configuration));
+    const auto locations = readLibraryLocations();
+    REQUIRE (locations.error.empty());
+    CHECK (locations.active.root == activeRoot);
+    const auto installed = installedLibraryPacks (locations);
+    REQUIRE (installed.size() == 1);
+    const auto resolved = resolveLibraryInstrument (locations, locator);
+    REQUIRE (resolved);
+    CHECK (*resolved == expectedRoot / tree.pack.directory.lexically_relative (tree.source)
+        / fs::u8path (u8"Programs/Étude.sfz"));
+    CHECK (libraryLocatorForFile (locations, *resolved) == locator);
+    CHECK (dusk::fs::loadFileAsString (installed.front().directory / "Samples/tone.wav") == tree.sample);
+    CHECK (fs::is_directory (formerRoot / "packs"));
+    if (configuration.empty()) CHECK_FALSE (fs::exists (libraryLocationsFile()));
+    else CHECK (dusk::fs::loadFileAsString (libraryLocationsFile()) == configuration);
 }
 
 TEST_CASE ("SFZ library locations preserve identities across copies and future-download folders", "[sfz][storage]")
