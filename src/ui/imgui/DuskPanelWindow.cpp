@@ -1105,6 +1105,10 @@ bool DuskPanelWindow::hasKeyboardForScenario() const noexcept
 {
     return isOpen() && impl->panelWidget != nullptr && impl->panelWidget->hasKeyboard();
 }
+bool DuskPanelWindow::capturesKeyboardForScenario() const noexcept
+{
+    return isOpen() && impl->view != nullptr && impl->view->capturesKeyboard();
+}
 int DuskPanelWindow::keyboardRequestsForScenario() const noexcept
 {
     return impl->keyboardRequests;

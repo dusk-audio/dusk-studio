@@ -222,6 +222,7 @@ public:
     // focus moves.
     bool keyboardFocusForScenario (bool focused);
     bool hasKeyboardForScenario() const noexcept;
+    bool capturesKeyboardForScenario() const noexcept;
     // How often a field or menu opening has asked the system to focus the child.
     int keyboardRequestsForScenario() const noexcept;
     std::uintptr_t nativeWindowHandleForScenario() const noexcept;
