@@ -888,6 +888,7 @@ if(DUSK_PLUGINS_PATH)
         $<$<BOOL:${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}>:${CMAKE_SOURCE_DIR}/src/ui/imgui/BuiltinUnitView.cpp>
         $<$<BOOL:${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}>:${CMAKE_SOURCE_DIR}/src/ui/imgui/MasteringEqView.cpp>
         $<$<BOOL:${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}>:${CMAKE_SOURCE_DIR}/src/ui/imgui/MasteringLimiterView.cpp>
+        $<$<BOOL:${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}>:${CMAKE_SOURCE_DIR}/src/ui/imgui/MasteringPhaseView.cpp>
         dsp_stereo_oversampler.cpp
         oversampling_fanout.cpp
         console_saturation.cpp
