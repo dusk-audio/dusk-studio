@@ -486,7 +486,7 @@ TEST_CASE ("SFZ ZIP extraction rejects corrupt member data")
     CHECK (result.failureKind == FailureKind::Integrity);
 }
 
-TEST_CASE ("SFZ ZIP extraction distinguishes unavailable input from corrupt contents")
+TEST_CASE ("SFZ ZIP extraction distinguishes unavailable input from corrupt contents", "[sfz-filesystem-fixture]")
 {
    #if defined(_WIN32)
     SKIP ("Windows keeps an open archive protected against concurrent truncation");

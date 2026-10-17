@@ -996,7 +996,7 @@ catch_discover_tests(dusk-studio-tests
     TEST_SPEC "[sfz-disk-full],[sfz-service-disk-full],[sfz-location-disk-full],[sfz-store-disk-full]"
     EXTRA_ARGS --allow-running-no-tests
     PROPERTIES RUN_SERIAL TRUE)
-# Case-distinct names and links may be unavailable. Isolate skips so Catch2
+# Case-distinct names, links and concurrent truncation may be unavailable. Isolate skips so Catch2
 # cannot rerun shared rejection assertions without a fixture section.
 # Keep only fatal setup assertions before SKIP: the regex overrides exit status.
 catch_discover_tests(dusk-studio-tests
