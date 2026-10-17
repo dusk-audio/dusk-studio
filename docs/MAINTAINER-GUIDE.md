@@ -134,6 +134,7 @@ That round-trip — **UI writes atom → audio reads atom → audio writes meter
 | A channel strip's DSP (EQ/comp/fader/sends) | [src/dsp/ChannelStrip.cpp](../src/dsp/ChannelStrip.cpp) |
 | A bus or master DSP | [src/dsp/BusStrip.cpp](../src/dsp/BusStrip.cpp), [src/dsp/MasterBus.cpp](../src/dsp/MasterBus.cpp) |
 | The mastering chain (EQ/comp/limiter/LUFS) | [src/dsp/MasteringChain.cpp](../src/dsp/MasteringChain.cpp), [src/dsp/BrickwallLimiter.cpp](../src/dsp/BrickwallLimiter.cpp) |
+| Mastering phase analysis and live Mono | [src/dsp/PhaseAnalysisFeed.h](../src/dsp/PhaseAnalysisFeed.h), [src/dsp/PhaseAnalyzer.cpp](../src/dsp/PhaseAnalyzer.cpp), [src/ui/MasteringView.cpp](../src/ui/MasteringView.cpp), [src/ui/imgui/MasteringPhaseView.cpp](../src/ui/imgui/MasteringPhaseView.cpp) |
 | What gets saved/loaded | [src/session/Session.h](../src/session/Session.h) (the data) + [src/session/SessionSerializer.cpp](../src/session/SessionSerializer.cpp) (the JSON) |
 | A mixer strip's look or controls | [src/ui/ChannelStripComponent.cpp](../src/ui/ChannelStripComponent.cpp) (5000 lines — the biggest file) |
 | The overall window layout / view switching | [src/ui/MainComponent.cpp](../src/ui/MainComponent.cpp) |
@@ -182,7 +183,7 @@ DuskStudioApp (JUCE app)              src/DuskStudioApp.cpp
 3. **MIDI sync in/out** — chase incoming MIDI Clock/MTC if slaving; emit clock/MTC if mastering.
 4. **MIDI controller bindings** — route learned CC/notes to fader/pan/mute/solo/plugin atoms.
 5. **Automation routing** — per track, evaluate the automation lane at the playhead and publish `live*` atoms (the strip reads these, not the raw param, when in Read/Touch).
-6. **Mastering-stage shortcut** — if the user is in the Mastering view, read the bounced stereo file → `MasteringChain` → out, and return early. The whole live mixer below is skipped.
+6. **Mastering-stage shortcut** — if the user is in the Mastering view, read the bounced stereo file through `MasteringChain`, then apply the live-only Mono fold and output it. The chain copies post-limiter stereo into the preallocated `PhaseAnalysisFeed`; FFT analysis runs in the view's 30 Hz message-thread timer. Offline exports skip the live feed and Mono fold. Playback interval, control revision, reader-gap and gated-callback metadata prevent discontinuous windows from being joined. The whole live mixer below is skipped.
 7. **Clear mix/bus/aux buffers** (SIMD).
 8. **Per-track loop (×24):** resolve input (playback file via `PlaybackEngine`, live device input, or silence) → `ChannelStrip::processAndAccumulate(...)` which runs HPF→EQ→comp→pan/fader→sends and **accumulates** into the master mix and any assigned bus/aux buffers. Records the input to disk if armed.
 9. **Bus loop (×4):** `BusStrip::processInPlace` (EQ+comp), accumulate into master. Skipped if the bus is silent (cheap peak check first).
