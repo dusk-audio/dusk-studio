@@ -1029,6 +1029,10 @@ if(APPLE)
     endif()
 endif()
 
+add_test(NAME windows-vblank-guard-contract
+    COMMAND "${CMAKE_COMMAND}" "-DREPO_ROOT=${CMAKE_SOURCE_DIR}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/windows_vblank_guard.cmake")
+
 # Exercise the real release-version insertion script against an isolated fixture,
 # and pin the private-release fan-in and single-publisher contract. The release
 # script is Unix-only.

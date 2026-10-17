@@ -301,6 +301,11 @@ endif()
 # in that directory was in the default build to lose.
 add_subdirectory(${DUSKSTUDIO_JUCE_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/JUCE EXCLUDE_FROM_ALL)
 
+if(WIN32)
+    include(cmake/WindowsVBlankGuard.cmake)
+    duskstudio_guard_windows_vblank("${DUSKSTUDIO_JUCE_SOURCE_DIR}/modules/juce_gui_basics")
+endif()
+
 # App icon. JUCE bakes the PNG into platform-specific resources at
 # build time (.ico on Windows, .icns on macOS, embedded data block on
 # Linux). Same file is used for both BIG and SMALL - JUCE downscales
