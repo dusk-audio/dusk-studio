@@ -137,6 +137,7 @@ public:
     bool isAudioCallbackRegistered() const { return deviceManager.containsCallback (this); }
     void observeAudioRegistrationForScenario (std::function<void (bool)> observer)
     { audioRegistrationObserver = std::move (observer); }
+    void servicePlaybackForScenario() { servicePlayback(); }
 
     // Track FREEZE (message thread). The render is ASYNC (BounceEngine::
     // startFreeze on a worker thread) so a long render never wedges the UI, so

@@ -307,7 +307,10 @@ TEST_CASE ("SFZ library sweeps abandoned work without losing reusable downloads"
     const auto cache = tree.root / ".repository-cache";
     REQUIRE (fs::create_directory (cache));
     const auto bytes = archiveBytes();
-    const auto pack = packFor (bytes);
+    const auto normalizedPack = providerPackFromJson (providerPackToJson (packFor (bytes)));
+    REQUIRE (normalizedPack);
+    REQUIRE (normalizedPack.pack);
+    const auto pack = *normalizedPack.pack;
     const auto part = cache / (hash (providerPackToJson (pack)) + ".part");
     ScriptedTransport interrupted;
     Reply prefix { bytes.substr (0, 64), 200,
@@ -447,7 +450,10 @@ TEST_CASE ("SFZ library preserves saved downloads when its metadata cache is una
     REQUIRE (changeLibraryLocation ({}, library, false, {}, libraryLocationsFile()));
     REQUIRE (fs::create_directory (library / ".downloads"));
     const auto bytes = archiveBytes();
-    const auto pack = packFor (bytes);
+    const auto normalizedPack = providerPackFromJson (providerPackToJson (packFor (bytes)));
+    REQUIRE (normalizedPack);
+    REQUIRE (normalizedPack.pack);
+    const auto pack = *normalizedPack.pack;
     const auto part = library / ".downloads" / (hash (providerPackToJson (pack)) + ".part");
     ScriptedTransport interrupted;
     Reply first { bytes.substr (0, 64), 200,
@@ -897,6 +903,7 @@ TEST_CASE ("SFZ GitHub metadata freshness avoids repeated requests and repairs i
     if (corrupt)
         for (const auto& entry : fs::directory_iterator (tree.root / ".repository-cache"))
         {
+            if (entry.path().extension() != ".json") continue;
             auto json = dusk::json::Json::parse (dusk::fs::loadFileAsString (entry.path()));
             json["body"] = "[]";
             REQUIRE (dusk::fs::writeStringToFile (entry.path(), json.dump()));
@@ -1630,6 +1637,7 @@ TEST_CASE ("SFZ all repositories interruption preserves the last complete page",
     settled (service);
     REQUIRE (service.browse ("all", 1, "Piano"));
     REQUIRE (settled (service).page.items.size() == 2);
+    expireApiCache (tree);
     bool pause = false, holdSecond = false;
     SECTION ("Cancel during the first source") {}
     SECTION ("Pause during the first source and resume") { pause = true; }

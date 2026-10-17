@@ -58,7 +58,7 @@ ScenarioResult runPanic (ScenarioContext& ctx)
     for (const int t : kProbeTracks)
     {
         std::string error;
-        if (! ctx.expect (midiprobe::loadPanicProbe (ctx, t, error),
+        if (! ctx.expect (midiprobe::loadPanicProbe (ctx, t, error, midiprobe::kMidiPrimaryPanicProbeClapId),
                           std::string ("the ") + trackLabel (t)
                               + " track could not load the probe"))
         {

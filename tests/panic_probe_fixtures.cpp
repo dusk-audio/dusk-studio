@@ -183,6 +183,7 @@ TEST_CASE ("panic-probe CLAP fixture loads as an instrument with read-only count
     int latency = 0;
     SECTION ("default zero-latency probe") {}
     SECTION ("immutable latency probe") { pluginId = "studio.dusk.test.panic-probe-latency-400"; latency = 400; }
+    SECTION ("immutable MIDI-primary probe") { pluginId = "studio.dusk.test.panic-probe-midi-primary"; }
     REQUIRE (probe.load (DUSKSTUDIO_PANIC_PROBE_CLAP_FIXTURE_PATH, pluginId));
     REQUIRE (probe.slot.isLoadedInstrument());
     REQUIRE (probe.slot.getLatencySamples() == latency);
@@ -371,21 +372,48 @@ TEST_CASE ("the host turns a hosted panic into a choke on every CLAP note port",
            "[clap][fixture][panic]")
 {
     ClapProbe probe;
-    REQUIRE (probe.load (DUSKSTUDIO_PANIC_PROBE_CLAP_FIXTURE_PATH));
+    bool midiPrimary = false;
+    SECTION ("CLAP-only primary") {}
+    SECTION ("MIDI and CLAP primary") { midiPrimary = true; }
+    REQUIRE (probe.load (DUSKSTUDIO_PANIC_PROBE_CLAP_FIXTURE_PATH,
+                        midiPrimary ? "studio.dusk.test.panic-probe-midi-primary" : ""));
 
     dusk::MidiBuffer notes;
     addMidi (notes, 0x90, 60, 100);
+    if (midiPrimary)
+    {
+        addMidi (notes, 0xe0, 0, 65);
+        const std::array<std::uint8_t, 2> pressure { 0xd0, 80 };
+        notes.addEvent (pressure.data(), (int) pressure.size(), 0);
+    }
     REQUIRE_THAT (probe.runHosted (notes), WithinAbs (0.1, 1.0e-6));
     REQUIRE_THAT (probe.counter ("voicesHeld"), WithinAbs (1.0, 1.0e-9));
 
     dusk::MidiBuffer panic;
     addMidi (panic, 0xB0, 120, 0);
+    if (midiPrimary)
+    {
+        REQUIRE_THAT (probe.counter ("bentChannels"), WithinAbs (1.0, 1.0e-9));
+        REQUIRE_THAT (probe.counter ("pressedChannels"), WithinAbs (1.0, 1.0e-9));
+        addMidi (panic, 0xb0, 121, 0);
+        addMidi (panic, 0xe0, 0, 64);
+        const std::array<std::uint8_t, 2> pressure { 0xd0, 0 };
+        panic.addEvent (pressure.data(), (int) pressure.size(), 0);
+    }
     REQUIRE_THAT (probe.runHosted (panic), WithinAbs (0.0, 1.0e-6));
     REQUIRE_THAT (probe.counter ("voicesHeld"), WithinAbs (0.0, 1.0e-9));
     // One choke per CLAP note port, which is what makes a CLAP-only port
     // reachable by a panic at all.
     REQUIRE_THAT (probe.counter ("chokesSeen"), WithinAbs (2.0, 1.0e-9));
     REQUIRE_THAT (probe.counter ("noteOffsSeen"), WithinAbs (0.0, 1.0e-9));
+    if (midiPrimary)
+    {
+        REQUIRE_THAT (probe.counter ("cc121Seen"), WithinAbs (1.0, 1.0e-9));
+        REQUIRE_THAT (probe.counter ("pitchCentersSeen"), WithinAbs (1.0, 1.0e-9));
+        REQUIRE_THAT (probe.counter ("pressureZerosSeen"), WithinAbs (1.0, 1.0e-9));
+        REQUIRE_THAT (probe.counter ("bentChannels"), WithinAbs (0.0, 1.0e-9));
+        REQUIRE_THAT (probe.counter ("pressedChannels"), WithinAbs (0.0, 1.0e-9));
+    }
 }
 
 TEST_CASE ("a hosted CLAP block bigger than the host's event list still ends its notes",

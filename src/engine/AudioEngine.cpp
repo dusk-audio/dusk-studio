@@ -1923,7 +1923,7 @@ bool AudioEngine::requestManagedSfzRelink (int trackIndex, sfz::ManagedSfzLocato
     if (trackIndex < 0 || trackIndex >= Session::kNumTracks) return false;
     const auto& track = session.track (trackIndex);
     const auto& original = track.nativeMultisampleLocator;
-    const auto& slot = getStrip (trackIndex).getNativeMultisampleSlot();
+    auto& slot = getStrip (trackIndex).getNativeMultisampleSlot();
     if (! original || original->sourceId != replacement.sourceId || original->packId != replacement.packId
         || track.frozen.load (std::memory_order_acquire)
         || (slot.getInstance() && slot.getInstance()->hasLoadedRuntime())) return false;

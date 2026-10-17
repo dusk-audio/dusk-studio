@@ -22,6 +22,7 @@
 #include "SupportersPanel.h"
 #include "MidiBindingsPanel.h"
 #include "SelfTestPanel.h"
+#include "UpdateChecker.h"
 #if DUSKSTUDIO_HAS_NATIVE_UI
  #include "imgui/AudioEditorView.h"
  #include "imgui/PianoRollView.h"
@@ -66,6 +67,7 @@
 #include "../engine/audiofile/FileReader.h"
 #include "../engine/audiofile/FileWriter.h"
 #include "../engine/midi/MidiFileReader.h"
+#include "../engine/sfz/SfzLibraryService.h"
 #include "../foundation/AppConfigDir.h"
 #include "../foundation/AppMusicDir.h"
 #include "../foundation/PlanarBuffer.h"

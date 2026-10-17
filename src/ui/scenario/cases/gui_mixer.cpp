@@ -768,6 +768,8 @@ std::optional<ScenarioResult> runSettingsRescan (GuiHost& host, ScenarioContext&
     (void) ctx;
     return ScenarioResult::skip ("requires native settings and ALSA sequencer");
    #else
+    if (! ctx.engine().getTransport().isStopped())
+        return ScenarioResult::skip ("requires stopped transport");
     snd_seq_t* raw = nullptr;
     if (snd_seq_open (&raw, "default", SND_SEQ_OPEN_DUPLEX, SND_SEQ_NONBLOCK) < 0)
         return ScenarioResult::skip ("ALSA sequencer is unavailable");
@@ -781,7 +783,12 @@ std::optional<ScenarioResult> runSettingsRescan (GuiHost& host, ScenarioContext&
     ctx.keep (ctx.session().lastRecordPointSamples);
     ctx.keep (ctx.session().track (0).mode);
     ctx.keep (ctx.session().track (0).midiInputIndex);
-    ctx.keep (ctx.session().track (0).recordArmed);
+    for (int index = 0; index < Session::kNumTracks; ++index)
+    {
+        auto& armed = ctx.session().track (index).recordArmed;
+        ctx.keep (armed);
+        armed.store (false);
+    }
     ctx.session().countInEnabled.store (false);
     const auto suspends = std::make_shared<std::uint64_t> (0);
     const auto originalPosition = engine.getTransport().getPlayhead();

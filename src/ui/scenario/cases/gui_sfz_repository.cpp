@@ -1,5 +1,6 @@
 #include "../GuiScenarioSupport.h"
 #include "../../../engine/sfz/SfzLibraryService.h"
+#include "../../../foundation/AppConfigDir.h"
 #include "../../../foundation/Base64.h"
 #include "../../../foundation/Fs.h"
 #include "../../../foundation/Json.h"
@@ -297,7 +298,12 @@ struct CaseState
 {
     std::shared_ptr<RepositoryTransport> transport;
     fs::path restore, originalDirectory, blank, capture, onlineCapture, compactCapture;
-    fs::path catalogCache, catalogBackup;
+    struct CacheEntry
+    {
+        fs::path path, backup;
+        bool isolated = false, backedUp = false;
+    };
+    std::array<CacheEntry, 4> repositoryCaches;
     std::vector<int> originalWindow;
     float originalUiScale = 1.0f;
     std::int64_t originalPlayhead = 0;
@@ -306,7 +312,6 @@ struct CaseState
     std::size_t initialInstalled = 0;
     bool injected = false, restored = false, finished = false, rendering = false;
     bool compactRequired = false;
-    bool catalogIsolated = false, catalogBackedUp = false;
     std::optional<InstalledPack> installed;
     bool replacementDone = false, replacementSucceeded = true;
     unsigned cancelledLoadCompletions = 0;
@@ -322,22 +327,32 @@ bool fixturePack (const InstalledPack& pack, const CaseState& state)
 
 std::string restoreCatalogCache (ScenarioContext& ctx, CaseState& state)
 {
-    if (! state.catalogIsolated) return {};
     if (ctx.engine().getSfzLibrary().snapshot().busy) return "SFZ worker was still busy during catalog cache restoration";
-    std::error_code error;
-    const auto status = fs::symlink_status (state.catalogCache, error);
-    if (error && error != std::errc::no_such_file_or_directory) return "Cannot inspect fixture catalog cache: " + error.message();
-    if (fs::exists (status) && ! fs::is_regular_file (status)) return "Fixture catalog cache is no longer a regular file";
-    error.clear();
-    fs::remove (state.catalogCache, error);
-    if (error) return "Cannot remove fixture catalog cache: " + error.message();
-    if (state.catalogBackedUp)
+    std::string firstError;
+    for (auto& cache : state.repositoryCaches)
     {
-        fs::rename (state.catalogBackup, state.catalogCache, error);
-        if (error) return "Cannot restore original catalog cache: " + error.message();
+        if (! cache.isolated) continue;
+        const auto restore = [&cache]() -> std::string
+        {
+            std::error_code error;
+            const auto status = fs::symlink_status (cache.path, error);
+            if (error && error != std::errc::no_such_file_or_directory) return "Cannot inspect fixture catalog cache: " + error.message();
+            if (fs::exists (status) && ! fs::is_regular_file (status)) return "Fixture catalog cache is no longer a regular file";
+            error.clear();
+            fs::remove (cache.path, error);
+            if (error) return "Cannot remove fixture catalog cache: " + error.message();
+            if (cache.backedUp)
+            {
+                fs::rename (cache.backup, cache.path, error);
+                if (error) return "Cannot restore original catalog cache: " + error.message();
+            }
+            cache.isolated = cache.backedUp = false;
+            return {};
+        };
+        const auto error = restore();
+        if (firstError.empty()) firstError = error;
     }
-    state.catalogIsolated = state.catalogBackedUp = false;
-    return {};
+    return firstError;
 }
 
 std::shared_ptr<CaseState> prepare (GuiHost& host, ScenarioContext& ctx, const char* name)
@@ -349,11 +364,24 @@ std::shared_ptr<CaseState> prepare (GuiHost& host, ScenarioContext& ctx, const c
     state->capture = ctx.tempDir() / "sfz-library.png";
     state->onlineCapture = ctx.tempDir() / "sfz-online.png";
     state->compactCapture = ctx.tempDir() / "sfz-online-compact.png";
-    const auto catalogKey = hash (Json { { "url", kCatalogUrl },
-        { "headers", HttpHeaders { { "accept-encoding", "identity" } } } }.dump());
-    state->catalogCache = dusk::fs::appDataDir() / "sfz-cache" / "repository" / (catalogKey + ".json");
-    state->catalogBackup = state->catalogCache.parent_path()
-        / (".scenario-catalog-" + hash (ctx.tempDir().string() + name).substr (0, 32));
+    const std::array<std::string, 4> cacheUrls { kCatalogUrl,
+        "https://api.github.com/orgs/sfzinstruments/repos?type=public&sort=full_name&per_page=50&page=1",
+        "https://api.github.com/users/freepats/repos?type=owner&sort=full_name&per_page=50&page=1",
+        "https://api.github.com/users/sgossner/repos?type=owner&sort=full_name&per_page=50&page=1" };
+    for (std::size_t i = 0; i < cacheUrls.size(); ++i)
+    {
+        HttpHeaders headers { { "accept-encoding", "identity" } };
+        if (i > 0)
+        {
+            headers["accept"] = "application/vnd.github+json";
+            headers["x-github-api-version"] = "2022-11-28";
+        }
+        const auto key = hash (Json { { "url", cacheUrls[i] }, { "headers", headers } }.dump());
+        auto& cache = state->repositoryCaches[i];
+        cache.path = dusk::fs::appDataDir() / "sfz-cache" / "repository" / (key + ".json");
+        cache.backup = cache.path.parent_path()
+            / (".scenario-catalog-" + hash (ctx.tempDir().string() + name + key).substr (0, 32));
+    }
     state->originalWindow = host.mainWindowSize();
     state->originalUiScale = static_cast<float> (host.uiScale());
     state->originalDirectory = currentSessionDirectory (ctx.session());
@@ -395,12 +423,22 @@ std::shared_ptr<CaseState> prepare (GuiHost& host, ScenarioContext& ctx, const c
             engine.getTransport().locate (state->originalPlayhead);
         }
         PackStore store (defaultPackStoreRoot());
+        bool removed = false;
         for (const auto& pack : service.snapshot().installed)
             if (fixturePack (pack, *state))
             {
                 const auto result = store.remove (pack, engine.managedSfzInUse());
                 if (! result) ctx.note ("Emergency SFZ pack cleanup: " + result.error);
+                else removed = true;
             }
+        if (removed)
+        {
+            if (! service.requestInstalled()) ctx.note ("Emergency SFZ library refresh was rejected");
+            const auto refreshDeadline = std::chrono::steady_clock::now() + std::chrono::seconds (2);
+            while (service.snapshot().busy && std::chrono::steady_clock::now() < refreshDeadline)
+                std::this_thread::yield();
+            if (service.snapshot().busy) ctx.note ("Emergency SFZ library refresh did not finish");
+        }
         if (state->injected && ! service.setTransportForTest ({}))
             ctx.note ("Emergency SFZ transport reset was still busy");
     });
@@ -464,26 +502,27 @@ void pushStart (std::vector<Step>& steps, GuiHost& host, ScenarioContext& ctx, c
         state->injected = service.setTransportForTest (state->transport);
         if (! ctx.expect (state->injected, "idle SFZ service rejected the fake transport"))
         { ctx.complete (ctx.verdict()); return; }
-        if (! state->catalogIsolated)
+        for (auto& cache : state->repositoryCaches)
         {
+            if (cache.isolated) continue;
             std::error_code error;
-            const auto status = fs::symlink_status (state->catalogCache, error);
+            const auto status = fs::symlink_status (cache.path, error);
             if (error == std::errc::no_such_file_or_directory) error.clear();
             if (! ctx.expect (! error && (! fs::exists (status) || fs::is_regular_file (status)),
                               "could not inspect the original catalog cache safely: " + error.message()))
             { ctx.complete (ctx.verdict()); return; }
             if (fs::exists (status))
             {
-                const auto backup = fs::symlink_status (state->catalogBackup, error);
+                const auto backup = fs::symlink_status (cache.backup, error);
                 if (error == std::errc::no_such_file_or_directory) error.clear();
                 if (! ctx.expect (! error && ! fs::exists (backup), "catalog cache backup path is unavailable"))
                 { ctx.complete (ctx.verdict()); return; }
-                fs::rename (state->catalogCache, state->catalogBackup, error);
+                fs::rename (cache.path, cache.backup, error);
                 if (! ctx.expect (! error, "could not quarantine the original catalog cache: " + error.message()))
                 { ctx.complete (ctx.verdict()); return; }
-                state->catalogBackedUp = true;
+                cache.backedUp = true;
             }
-            state->catalogIsolated = true;
+            cache.isolated = true;
         }
         ctx.expect (host.openSession (state->blank), "could not open the blank fixture session");
         host.switchToStage (GuiHost::Stage::Mixing);
@@ -1087,6 +1126,13 @@ std::optional<ScenarioResult> runWorkflow (GuiHost& host, ScenarioContext& ctx)
         ctx.expect (ctx.session().track (kStripIndex).nativeMultisampleLocator
                     && ctx.session().track (kStripIndex).nativeMultisampleLocator->packId == state->transport->packId,
                     "failed replacement changed the managed locator");
+        for (std::size_t i = 1; i < state->repositoryCaches.size(); ++i)
+        {
+            std::error_code error;
+            fs::last_write_time (state->repositoryCaches[i].path,
+                                fs::file_time_type::clock::now() - std::chrono::hours (1), error);
+            ctx.expect (! error, "could not expire the fixture repository listing: " + error.message());
+        }
         state->transport->networkFailure.store (true, std::memory_order_release);
     }, [state] { return state->replacementDone; }, "missing replacement did not finish" });
     steps->push_back ({ 0, [&ctx, state]
@@ -1469,8 +1515,11 @@ std::optional<ScenarioResult> runRelink (GuiHost& host, ScenarioContext& ctx, bo
         track.nativeMultisamplePath = relink->originalPath;
         track.nativeMultisampleStateBase64 = relink->encoded;
         host.closeSfzLibrary (kStripIndex);
-        ctx.expect (host.openSfzLibrary (kStripIndex), "could not reopen the manager for the offline slot");
     } });
+    steps->push_back ({ 0, [&host, &ctx]
+    {
+        ctx.expect (host.openSfzLibrary (kStripIndex), "could not reopen the manager for the offline slot");
+    }, [&host] { return ! host.sfzLibraryOpen (kStripIndex); }, "the old manager did not close" });
     pushClick (*steps, host, ctx, "installed-tab");
     for (const bool down : { false, true, false })
         steps->push_back ({ 0, [] {}, [&host, &ctx, relink, down]
@@ -1507,7 +1556,7 @@ std::optional<ScenarioResult> runRelink (GuiHost& host, ScenarioContext& ctx, bo
     steps->push_back ({ 0, [&host, &ctx, state, relink, fail]
     {
         const auto& track = ctx.session().track (kStripIndex);
-        const auto& slot = ctx.engine().getChannelStrip (kStripIndex).getNativeMultisampleSlot();
+        auto& slot = ctx.engine().getChannelStrip (kStripIndex).getNativeMultisampleSlot();
         const auto* instance = slot.getInstance();
         if (fail)
         {
@@ -1551,7 +1600,7 @@ std::optional<ScenarioResult> runRelink (GuiHost& host, ScenarioContext& ctx, bo
         if (ctx.engine().hasPendingMultisampleLoads()) return false;
         if (fail) return host.modalText().find ("Couldn't relink soundfont") != std::string::npos;
         const auto* instance = ctx.engine().getChannelStrip (kStripIndex).getNativeMultisampleSlot().getInstance();
-        return instance && instance->hasLoadedRuntime();
+        return instance && instance->hasLoadedRuntime() && ! host.sfzLibraryOpen (kStripIndex);
     }, "the native relink did not finish" });
     pushFinish (*steps, host, ctx, state);
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });

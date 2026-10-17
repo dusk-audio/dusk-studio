@@ -243,7 +243,7 @@ TEST_CASE ("BufferedFileReader says whether a span is resident before anyone rea
                 f < 128 ? 0.0f : sample (c, at - 128 + f), 1.0e-7f));
 
     Block suffix (kBlock);
-    const auto last = at + kWindow;
+    const auto last = at + kWindow - 1;
     REQUIRE_FALSE (r->readRt (suffix.ptrs.data(), kChannels, last - 128, kBlock, &coverage));
     CHECK (coverage.startFrame == last - 128);
     CHECK (coverage.endFrame == last);

@@ -760,7 +760,11 @@ std::optional<ScenarioResult> runMasteringCompactCover (GuiHost& host, ScenarioC
     { ctx.expect (host.clickMasteringModulePicker(), "compact module picker is unavailable"); },
                        [&host] { return host.masteringModulePickerShown(); }, "workspace never became compact" });
     steps->push_back ({ 100, [&host, &ctx]
-    { ctx.expect (host.clickContextMenuItem ("Multiband compressor"), "compact compressor choice is unavailable"); } });
+    {
+        ctx.expect (host.pressPeerKey ("home", 0), "compact module Home was unavailable");
+        ctx.expect (host.pressPeerKey ("cursor down", 0), "compact compressor choice was unavailable");
+        ctx.expect (host.pressPeerKey ("return", '\r'), "compact module Return was unavailable");
+    }, [&host] { return host.modalCount() > 0; }, "compact module choices never opened" });
     steps->push_back ({ 300, [&host, &ctx]
     { ctx.expect (host.clickMasteringButton ("Load mix..."), "Load mix was unavailable"); },
                        [&host] { return host.masteringModuleIndex() == 1 && host.masteringPanelsOpen() == 0; },
@@ -795,7 +799,10 @@ std::optional<ScenarioResult> runMasteringCompactCover (GuiHost& host, ScenarioC
         ctx.expect (host.clickMasteringModulePicker(), "module picker did not return");
     }, [&host] { return host.modalStackEmpty(); }, "the second cover never closed" });
     steps->push_back ({ 100, [&host, &ctx]
-    { ctx.expect (host.clickContextMenuItem ("Phase"), "compact Phase choice is unavailable"); } });
+    {
+        ctx.expect (host.pressPeerKey ("end", 0), "compact Phase choice was unavailable");
+        ctx.expect (host.pressPeerKey ("return", '\r'), "compact Phase Return was unavailable");
+    }, [&host] { return host.modalCount() > 0; }, "compact module choices never reopened" });
     steps->push_back ({ 200, [&host, &ctx]
     { ctx.expect (host.masteringModuleIndex() == 3, "Phase was not selected"); },
                        [&host] { return host.masteringPanelsOpen() == 1; }, "compact Phase child did not open" });

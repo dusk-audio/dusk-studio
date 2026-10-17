@@ -152,6 +152,7 @@ TEST_CASE ("A track rebuilt while playing crossfades from its old audio to its n
         writeConstantMono (rig.dir.path(), "a.wav", kLevelB);
         rig.transport.setLoopRange (1000, 6000);
         rig.transport.setLoopEnabled (true);
+        rig.transport.setPlayhead (rig.playhead);
         rig.engine.beginAudioBlock (rig.playhead, 1000, 6000);
         rig.engine.service();
     }

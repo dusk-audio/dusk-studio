@@ -1042,12 +1042,13 @@ assert "Windows builds without ASIO are not supported." in cmake_source
 assert "target_compile_definitions(DuskStudio PRIVATE JUCE_ASIO=1)" in cmake_source
 readme = (source_root / "README.md").read_text(encoding="utf-8")
 test_sources = sorted((source_root / "tests").glob("*.cpp"))
-test_case_pattern = re.compile(r"^\s*TEST_CASE\s*\(", re.MULTILINE)
-test_case_count = sum(
+test_case_pattern = re.compile(r"^\s*(?:TEST_CASE|TEST_CASE_METHOD|SCENARIO)\s*\(", re.MULTILINE)
+test_case_counts = [
     len(test_case_pattern.findall(path.read_text(encoding="utf-8")))
     for path in test_sources
-)
-test_source_count = len(test_sources)
+]
+test_case_count = sum(test_case_counts)
+test_source_count = sum(count > 0 for count in test_case_counts)
 suite_summaries = re.findall(
     r"^The C\+\+ suite declares \d+ Catch2 test cases across "
     r"\d+ test source files\.",

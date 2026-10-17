@@ -32,6 +32,7 @@ public:
         ImGui::SetCurrentContext (context);
 
         auto& io = ImGui::GetIO();
+        io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
         io.DisplaySize = ImVec2 (700.0f, 520.0f);
         io.DeltaTime = 1.0f / 60.0f;
         io.IniFilename = nullptr;
@@ -513,7 +514,7 @@ TEST_CASE ("the compact mastering Phase view scrolls clipped controls without ch
     const auto frames = analyzer.report().frames;
     int monoWrites = 0;
     HeadlessPanel panel;
-    panel.setSize ({ 180.0f, 220.0f });
+    panel.setSize ({ 180.0f, 200.0f });
     auto view = imgui::makeMasteringPhaseView (params, analyzer, [] { return false; },
                                               [&] (bool) { ++monoWrites; });
     panel.movePointer ({ 90.0f, 110.0f });

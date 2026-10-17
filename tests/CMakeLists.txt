@@ -990,12 +990,18 @@ catch_discover_tests(dusk-studio-tests
 catch_discover_tests(dusk-studio-tests
     TEST_SPEC "[host-limits]"
     EXTRA_ARGS --allow-running-no-tests)
+# Capacity cases run with a private tmpfs in sfz-disk-full; ordinary discovery
+# must also accept their fixture-dependent skip.
+catch_discover_tests(dusk-studio-tests
+    TEST_SPEC "[sfz-disk-full],[sfz-service-disk-full],[sfz-location-disk-full],[sfz-store-disk-full]"
+    EXTRA_ARGS --allow-running-no-tests
+    PROPERTIES RUN_SERIAL TRUE)
 # [ipc] cases start plug-in hosts and assert on bounded response times. Run
 # them serially so other cases cannot starve their control threads.
 catch_discover_tests(dusk-studio-tests
-    TEST_SPEC "~[alsa]~[ipc]~[host-limits]")
+    TEST_SPEC "~[alsa]~[ipc]~[host-limits]~[sfz-disk-full]~[sfz-location-disk-full]~[sfz-store-disk-full]")
 catch_discover_tests(dusk-studio-tests
-    TEST_SPEC "[ipc]~[sfz-shutdown]"
+    TEST_SPEC "[ipc]~[sfz-shutdown]~[sfz-service-disk-full]"
     PROPERTIES RUN_SERIAL TRUE)
 catch_discover_tests(dusk-studio-tests
     TEST_SPEC "[sfz-shutdown]"

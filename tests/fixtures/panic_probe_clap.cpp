@@ -11,6 +11,7 @@ namespace
 {
 constexpr const char* kPluginId = "studio.dusk.test.panic-probe";
 constexpr const char* kLatencyPluginId = "studio.dusk.test.panic-probe-latency-400";
+constexpr const char* kMidiPrimaryPluginId = "studio.dusk.test.panic-probe-midi-primary";
 constexpr const char* kFeatures[] = { CLAP_PLUGIN_FEATURE_INSTRUMENT,
                                       CLAP_PLUGIN_FEATURE_STEREO, nullptr };
 constexpr uint32_t kNotePortCount = 2;
@@ -61,6 +62,7 @@ struct PluginData
     std::uint32_t bentChannels = 0;
     std::uint32_t pressedChannels = 0;
     std::uint32_t latencySamples = 0;
+    bool midiPrimary = false;
 
     // A voice is per note port: the same key and channel on two ports are two
     // voices, so a choke that reaches only one port leaves the other held.
@@ -113,6 +115,14 @@ const auto kLatencyDescriptor = []
     return descriptor;
 }();
 
+const auto kMidiPrimaryDescriptor = []
+{
+    auto descriptor = kDescriptor;
+    descriptor.id = kMidiPrimaryPluginId;
+    descriptor.name = "Dusk MIDI-primary panic probe fixture";
+    return descriptor;
+}();
+
 uint32_t CLAP_ABI audioPortCount (const clap_plugin_t*, bool isInput)
 {
     return isInput ? 0u : 1u;
@@ -139,16 +149,17 @@ uint32_t CLAP_ABI notePortCount (const clap_plugin_t*, bool isInput)
     return isInput ? kNotePortCount : 0u;
 }
 
-bool CLAP_ABI notePortGet (const clap_plugin_t*, uint32_t index, bool isInput,
+bool CLAP_ABI notePortGet (const clap_plugin_t* plugin, uint32_t index, bool isInput,
                            clap_note_port_info_t* info)
 {
     if (! isInput || index >= kNotePortCount || info == nullptr) return false;
     *info = {};
     info->id = index;
-    // Port 0 takes CLAP notes only, so a host panic has to reach it as a
-    // NOTE_CHOKE; port 1 also takes raw MIDI, so the controller path stays
-    // observable on the same plugin.
-    if (index == 0)
+    // The default keeps a CLAP-only primary; the MIDI variant makes channel
+    // expression observable through the host while retaining the other choke port.
+    const auto& data = *static_cast<const PluginData*> (plugin->plugin_data);
+    const uint32_t midiPort = data.midiPrimary ? 0u : 1u;
+    if (index != midiPort)
     {
         std::snprintf (info->name, sizeof (info->name), "CLAP notes");
         info->supported_dialects = CLAP_NOTE_DIALECT_CLAP;
@@ -395,7 +406,8 @@ const clap_plugin_t* CLAP_ABI createPlugin (const clap_plugin_factory_t*,
 {
     if (host == nullptr || pluginId == nullptr
         || ! clap_version_is_compatible (host->clap_version)
-        || (std::strcmp (pluginId, kPluginId) != 0 && std::strcmp (pluginId, kLatencyPluginId) != 0))
+        || (std::strcmp (pluginId, kPluginId) != 0 && std::strcmp (pluginId, kLatencyPluginId) != 0
+            && std::strcmp (pluginId, kMidiPrimaryPluginId) != 0))
         return nullptr;
 
     auto* plugin = new (std::nothrow) clap_plugin_t {};
@@ -408,8 +420,9 @@ const clap_plugin_t* CLAP_ABI createPlugin (const clap_plugin_factory_t*,
     }
 
     const bool latency = std::strcmp (pluginId, kLatencyPluginId) == 0;
+    data->midiPrimary = std::strcmp (pluginId, kMidiPrimaryPluginId) == 0;
     data->latencySamples = latency ? 400 : 0;
-    plugin->desc = latency ? &kLatencyDescriptor : &kDescriptor;
+    plugin->desc = latency ? &kLatencyDescriptor : (data->midiPrimary ? &kMidiPrimaryDescriptor : &kDescriptor);
     plugin->plugin_data = data;
     plugin->init = pluginInit;
     plugin->destroy = pluginDestroy;
@@ -424,11 +437,12 @@ const clap_plugin_t* CLAP_ABI createPlugin (const clap_plugin_factory_t*,
     return plugin;
 }
 
-uint32_t CLAP_ABI pluginCount (const clap_plugin_factory_t*) { return 2; }
+uint32_t CLAP_ABI pluginCount (const clap_plugin_factory_t*) { return 3; }
 const clap_plugin_descriptor_t* CLAP_ABI pluginDescriptor (const clap_plugin_factory_t*,
                                                            uint32_t index)
 {
-    return index == 0 ? &kDescriptor : (index == 1 ? &kLatencyDescriptor : nullptr);
+    return index == 0 ? &kDescriptor : (index == 1 ? &kLatencyDescriptor
+                                                 : (index == 2 ? &kMidiPrimaryDescriptor : nullptr));
 }
 const clap_plugin_factory_t kFactory { pluginCount, pluginDescriptor, createPlugin };
 

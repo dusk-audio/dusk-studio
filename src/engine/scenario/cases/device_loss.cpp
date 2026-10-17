@@ -262,7 +262,7 @@ std::optional<ScenarioResult> interruptedTakeResumesAssets (ScenarioContext& ctx
         if (route == TakeEnd::DeviceStop)
         {
             engine.reattachAudioCallback();
-            engine.servicePlayback();
+            engine.servicePlaybackForScenario();
         }
         if (! registered) engine.detachAudioCallback();
         engine.setStage (previousStage);
@@ -345,12 +345,12 @@ std::optional<ScenarioResult> interruptedTakeResumesAssets (ScenarioContext& ctx
                         && ! engine.getRecordManager().isActive(); }, 5000,
                         [&ctx, &engine, route, load]
                         {
-                            engine.servicePlayback();
+                            engine.servicePlaybackForScenario();
                             if (route == TakeEnd::DeviceStop)
                             {
                                 ctx.expect (! engine.isAudioCallbackRegistered(), "deferred DSP restart reattached a detached callback");
                                 engine.reattachAudioCallback();
-                                engine.servicePlayback();
+                                engine.servicePlaybackForScenario();
                                 ctx.expect (engine.isAudioCallbackRegistered(), "DSP restart lost an explicitly restored callback");
                                 engine.detachAudioCallback();
                             }
