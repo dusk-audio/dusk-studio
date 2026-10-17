@@ -857,7 +857,7 @@ std::optional<ScenarioResult> runWorkflow (GuiHost& host, ScenarioContext& ctx)
         ctx.expect (dusk::fs::writeStringToFile (state->installed->directory / ".dusk-pack.json", receipt.dump()),
                     "could not prepare the legacy verification receipt");
     } });
-    pushWorkClick (*steps, host, ctx, state, "refresh-installed", LibraryState::Complete);
+    pushWorkClick (*steps, host, ctx, state, "enabled-refresh-installed", LibraryState::Complete);
     pushInstalledSelection (*steps, host, ctx, state);
     steps->push_back ({ 0, [&host, &ctx, state]
     {
@@ -870,8 +870,13 @@ std::optional<ScenarioResult> runWorkflow (GuiHost& host, ScenarioContext& ctx)
                     "could not restore the current verification receipt");
         ctx.expect (state->transport->requests.load() == state->requests,
                     "installed verification or refresh contacted a repository");
-    } });
-    pushWorkClick (*steps, host, ctx, state, "refresh-installed", LibraryState::Complete);
+    }, [&host]
+    {
+        return host.sfzLibraryPointer (kStripIndex, "enabled-refresh-installed", 0.5f, false)
+            && host.sfzLibraryPointer (kStripIndex, "verify", 0.5f, false)
+            && ! host.sfzLibraryPointer (kStripIndex, "enabled-verify", 0.5f, false);
+    }, "the idle Installed panel did not disable verification for its legacy receipt", {}, kSettleBoundMs });
+    pushWorkClick (*steps, host, ctx, state, "enabled-refresh-installed", LibraryState::Complete);
     pushInstalledSelection (*steps, host, ctx, state);
     pushClick (*steps, host, ctx, "installed-query");
     steps->push_back ({ 0, [&host, &ctx]
