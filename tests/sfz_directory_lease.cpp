@@ -35,6 +35,26 @@ TEST_CASE ("SFZ directory owners exclude maintenance until their last lease ends
         CHECK_FALSE (error);
         CHECK (inspected.native() == LR"(\\server\share\alias\..\cache)");
     }
+    SECTION ("Ownership blocks root replacement until release")
+    {
+        const auto protectedRoot = root / L"leased";
+        const auto renamed = root / L"renamed";
+        REQUIRE (fs::create_directory (protectedRoot));
+        std::error_code renameError;
+        {
+            DirectoryLease owner;
+            std::string ownershipError;
+            REQUIRE (owner.acquire (protectedRoot, Access::Shared, ownershipError));
+            fs::rename (protectedRoot, renamed, renameError);
+            REQUIRE (renameError);
+            CHECK (fs::is_directory (protectedRoot));
+            CHECK_FALSE (fs::exists (renamed));
+        }
+        fs::rename (protectedRoot, renamed, renameError);
+        REQUIRE_FALSE (renameError);
+        fs::rename (renamed, protectedRoot, renameError);
+        REQUIRE_FALSE (renameError);
+    }
    #endif
     SECTION ("Deep root")
     {

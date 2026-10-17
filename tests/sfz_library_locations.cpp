@@ -116,6 +116,57 @@ struct LibraryTree
     InstalledPack pack;
     std::string sample;
 };
+
+#if ! defined(_WIN32)
+void checkDestinationDisconnection (bool replace)
+{
+    for (const bool betweenFiles : { false, true })
+    {
+        LibraryTree tree;
+        const auto configBefore = dusk::fs::loadFileAsString (tree.configuration);
+        bool changed = false;
+        const auto disconnect = [&]
+        {
+            if (changed) return;
+            const auto offline = tree.root / "disconnected destination";
+            fs::rename (tree.destination, offline);
+            if (replace)
+            {
+                REQUIRE (fs::create_directory (tree.destination));
+                REQUIRE (fs::create_directory (tree.destination / "packs"));
+                REQUIRE (fs::copy_file (offline / ".dusk-sfz-library", tree.destination / ".dusk-sfz-library"));
+            }
+            changed = true;
+        };
+        OperationControl control;
+        if (betweenFiles)
+            control.cancelled = [&]
+            {
+                if (! changed)
+                    for (const auto& entry : fs::directory_iterator (tree.destination))
+                        if (entry.path().filename().u8string().rfind (".install-", 0) == 0)
+                        { disconnect(); break; }
+                return false;
+            };
+        else control.progress = [&] (const auto&) { disconnect(); };
+        const auto result = changeLibraryLocation (tree.before, tree.destination, true, control, tree.configuration);
+        REQUIRE (changed);
+        REQUIRE_FALSE (result);
+        CHECK_FALSE (result.locations);
+        CHECK (dusk::fs::loadFileAsString (tree.configuration) == configBefore);
+        CHECK (dusk::fs::loadFileAsString (tree.pack.directory / "Samples/tone.wav") == tree.sample);
+        CHECK (result.failureKind == FailureKind::None);
+        CHECK (resolveLibraryInstrument (tree.before, tree.pack.locatorFor (tree.pack.instruments.front())).has_value());
+        if (replace)
+        {
+            CHECK (fs::is_empty (tree.destination / "packs"));
+            for (const auto& entry : fs::directory_iterator (tree.destination))
+                CHECK (entry.path().filename().u8string().rfind (".install-", 0) != 0);
+        }
+        else CHECK_FALSE (fs::exists (tree.destination));
+    }
+}
+#endif
 } // namespace
 
 TEST_CASE ("SFZ library defaults to application data while location settings stay in config", "[sfz][storage]")
@@ -265,7 +316,6 @@ TEST_CASE ("SFZ library relocation failures retain the active configuration and 
     auto failureKind = FailureKind::None;
     OperationControl control;
     bool cancelled = false;
-    bool removedDestination = false, replacedDestination = false;
     fs::path replacedStaging, removedStaging;
    #if defined(_WIN32)
     const bool betweenFiles = true;
@@ -329,28 +379,6 @@ TEST_CASE ("SFZ library relocation failures retain the active configuration and 
         fs::create_symlink (tree.configuration, tree.pack.directory / "linked.json", error);
         if (error) SKIP ("symlink creation is unavailable");
     }
-    SECTION ("A destination disconnected during transfer is never recreated")
-    {
-        atTransferCheckpoint ([&]
-        {
-            if (removedDestination) return;
-            fs::rename (tree.destination, tree.root / "disconnected destination");
-            removedDestination = true;
-        });
-    }
-    SECTION ("A replacement mount with a copied marker is rejected")
-    {
-        atTransferCheckpoint ([&]
-        {
-            if (replacedDestination) return;
-            const auto offline = tree.root / "disconnected destination";
-            fs::rename (tree.destination, offline);
-            REQUIRE (fs::create_directory (tree.destination));
-            REQUIRE (fs::create_directory (tree.destination / "packs"));
-            REQUIRE (fs::copy_file (offline / ".dusk-sfz-library", tree.destination / ".dusk-sfz-library"));
-            replacedDestination = true;
-        });
-    }
     SECTION ("A missing staging directory is never recreated")
     {
         atTransferCheckpoint ([&]
@@ -379,14 +407,29 @@ TEST_CASE ("SFZ library relocation failures retain the active configuration and 
     CHECK (dusk::fs::loadFileAsString (tree.pack.directory / "Samples/tone.wav") == tree.sample);
     CHECK (result.failureKind == failureKind);
     CHECK (resolveLibraryInstrument (tree.before, tree.pack.locatorFor (tree.pack.instruments.front())).has_value());
-    if (removedDestination) CHECK_FALSE (fs::exists (tree.destination));
-    else
-        for (const auto& entry : fs::directory_iterator (tree.destination))
-            if (entry.path() != replacedStaging)
-                CHECK (entry.path().filename().u8string().rfind (".install-", 0) != 0);
-    if (replacedDestination) CHECK (fs::is_empty (tree.destination / "packs"));
+    for (const auto& entry : fs::directory_iterator (tree.destination))
+        if (entry.path() != replacedStaging)
+            CHECK (entry.path().filename().u8string().rfind (".install-", 0) != 0);
     if (! removedStaging.empty()) CHECK_FALSE (fs::exists (removedStaging));
     if (! replacedStaging.empty()) CHECK (fs::is_empty (replacedStaging));
+}
+
+TEST_CASE ("SFZ library relocation never recreates a disconnected destination", "[sfz][storage][sfz-filesystem-fixture]")
+{
+   #if defined(_WIN32)
+    SKIP ("Windows directory ownership prevents renaming an active library");
+   #else
+    checkDestinationDisconnection (false);
+   #endif
+}
+
+TEST_CASE ("SFZ library relocation rejects a replacement destination with a copied marker", "[sfz][storage][sfz-filesystem-fixture]")
+{
+   #if defined(_WIN32)
+    SKIP ("Windows directory ownership prevents renaming an active library");
+   #else
+    checkDestinationDisconnection (true);
+   #endif
 }
 
 TEST_CASE ("SFZ relocation reports disk exhaustion without losing originals", "[sfz][storage][sfz-location-disk-full]")
