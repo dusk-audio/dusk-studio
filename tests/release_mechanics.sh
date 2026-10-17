@@ -896,6 +896,16 @@ assert re.search(
     windows_pr_build.group("body"),
 ), "Windows PR CI must compile both the app and test targets"
 
+assert re.search(
+    r"(?m)^\s*run: cmake --build build --config Release -j4 -- -p:CL_MPCount=1\s*$",
+    release_workflow,
+), "Windows release app builds must bound MSBuild and compiler concurrency"
+assert re.search(
+    r"(?m)^\s*cmake --build build-tests --config Release --target dusk-studio-tests "
+    r"-j4 -- -p:CL_MPCount=1\s*$",
+    release_workflow,
+), "Windows release test builds must bound MSBuild and compiler concurrency"
+
 file_importer_tests = (
     "FileImporter: transient file locks retry but remain bounded",
     "FileImporter: 44.1k mono -> 48k session preserves length",

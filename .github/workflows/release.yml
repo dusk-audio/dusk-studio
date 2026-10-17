@@ -564,7 +564,7 @@ jobs:
 
       - name: Build (Release)
         shell: bash
-        run: cmake --build build --config Release -j4
+        run: cmake --build build --config Release -j4 -- -p:CL_MPCount=1
 
       - name: Verify packaged Mesa selects llvmpipe
         shell: pwsh
@@ -603,7 +603,7 @@ jobs:
             grep -q "^${option}:BOOL=ON$" build-tests/CMakeCache.txt || {
               echo "::error::${option} was not enabled in the test configure" >&2; exit 1; }
           done
-          cmake --build build-tests --config Release --target dusk-studio-tests -j4
+          cmake --build build-tests --config Release --target dusk-studio-tests -j4 -- -p:CL_MPCount=1
           inventory="$(ctest --test-dir build-tests -N -C Release)"
           printf '%s\n' "$inventory"
           for required in \

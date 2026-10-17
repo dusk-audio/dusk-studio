@@ -523,6 +523,8 @@ def run_windows(driver: Driver, commit: str) -> None:
             [
                 "$ErrorActionPreference = 'Stop'",
                 f"$arguments = @('--build', {ps_quote(build)}, '--config', 'Release', '--target', {target_args}, '-j{args.jobs}')",
+                f"$cacheText = Get-Content -Raw -LiteralPath {ps_quote(ps_join(build, 'CMakeCache.txt'))}",
+                "if ($cacheText -match '(?m)^CMAKE_GENERATOR:INTERNAL=Visual Studio ') { $arguments += @('--', '-p:CL_MPCount=1') }",
                 f"& {ps_quote(cmake)} @arguments",
                 "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
             ]

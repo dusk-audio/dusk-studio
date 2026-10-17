@@ -23,7 +23,7 @@ $RepoDir = (Resolve-Path "$PSScriptRoot\..").Path
 Set-Location $RepoDir
 
 if (-not (Test-Path "$BuildDir\CMakeCache.txt")) {
-    Write-Error "$BuildDir missing - run: cmake -S . -B `"$BuildDir`" -DCMAKE_BUILD_TYPE=Release; if (`$LASTEXITCODE -eq 0) { cmake --build `"$BuildDir`" -j6 }"
+    Write-Error "$BuildDir missing - run: cmake -S . -B `"$BuildDir`" -G `"Visual Studio 17 2022`" -A x64; if (`$LASTEXITCODE -eq 0) { cmake --build `"$BuildDir`" --config Release -j4 -- -p:CL_MPCount=1 }"
 }
 if (-not (Get-Command "candle.exe" -ErrorAction SilentlyContinue)) {
     Write-Error "WIX Toolset not on PATH — install from https://wixtoolset.org/"

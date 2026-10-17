@@ -84,7 +84,7 @@ cd C:\dev\dusk-studio
 cmake -S . -B build -G "Visual Studio 17 2022" -A x64 ^
   -DCMAKE_PREFIX_PATH="%CD%/vcpkg_installed/x64-windows-static" ^
   -DASIOSDK_PATH=C:/dev/asiosdk
-cmake --build build --config Release -j6
+cmake --build build --config Release -j4 -- -p:CL_MPCount=1
 ```
 
 The first configure pulls in JUCE's CMake helpers and may take a minute. Subsequent configures are fast. There is no ASIO-less fallback configuration.
@@ -114,7 +114,7 @@ cmake -S . -B build -G "Visual Studio 17 2022" -A x64 ^
   -DASIOSDK_PATH=C:/dev/asiosdk ^
   -DDUSKSTUDIO_ENABLE_NATIVE_UI=ON ^
   -DDUSKSTUDIO_WINDOWS_SOFTWARE_OPENGL_DIR="%TEMP%/dusk-mesa-softgl"
-cmake --build build --config Release -j6
+cmake --build build --config Release -j4 -- -p:CL_MPCount=1
 powershell -ExecutionPolicy Bypass -File scripts\package-windows.ps1 -BuildDir build
 ```
 
@@ -157,12 +157,14 @@ Dusk Studio has Catch2 unit tests behind a CMake flag:
 
 ```cmd
 cmake -S . -B build-tests -DCMAKE_BUILD_TYPE=Release -DDUSKSTUDIO_BUILD_TESTS=ON
-cmake --build build-tests --target dusk-studio-tests --config Release -j6
+cmake --build build-tests --target dusk-studio-tests --config Release -j4 -- -p:CL_MPCount=1
 ctest --test-dir build-tests --output-on-failure -C Release
 ```
 
-Six jobs is the conservative local-development default. The GitHub-hosted
-Windows workflows use four jobs to match their smaller runner allocation.
+MSBuild runs at most four projects at once. `CL_MPCount=1` keeps each project
+to one compiler process; JUCE enables compiler multiprocessing separately from
+MSBuild's project limit. Use `-j1` on a small VM. Ninja builds use `-j4` without
+the MSBuild-specific arguments.
 
 Use a separate `build-tests\` directory so the two configurations don't fight over CMake cache state.
 
