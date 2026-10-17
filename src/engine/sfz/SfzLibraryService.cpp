@@ -177,9 +177,8 @@ void trimRepositoryCache (const fs::path& root)
     }
 }
 
-OperationResult interrupted (const OperationControl& control)
+OperationResult interrupted (OperationStatus status)
 {
-    const auto status = control.status();
     return { status, status == OperationStatus::Paused ? "SFZ library work is paused" : "SFZ library work was cancelled" };
 }
 
@@ -231,12 +230,12 @@ public:
                 if (headerBytes > 65536) return { OperationStatus::Failed, "Repository cache headers are too large" };
                 response.headers[it.key()] = value;
             }
-            if (control.status() != OperationStatus::Complete) return interrupted (control);
+            if (const auto status = control.status(); status != OperationStatus::Complete) return interrupted (status);
             if (! headers (response)) return { OperationStatus::Failed, "Cached repository response was rejected" };
             const auto& text = content->get_ref<const std::string&>();
             for (std::size_t offset = 0; offset < text.size(); offset += 32768)
             {
-                if (control.status() != OperationStatus::Complete) return interrupted (control);
+                if (const auto status = control.status(); status != OperationStatus::Complete) return interrupted (status);
                 if (! body (std::string_view (text).substr (offset, 32768)))
                     return { OperationStatus::Failed, "Cached repository response was rejected" };
             }
@@ -261,11 +260,11 @@ public:
         }, control);
         const auto replay = [&] () -> OperationResult
         {
-            if (control.status() != OperationStatus::Complete) return interrupted (control);
+            if (const auto status = control.status(); status != OperationStatus::Complete) return interrupted (status);
             if (! headers (cachedResponse)) return { OperationStatus::Failed, "Revalidated repository response was rejected" };
             for (std::size_t offset = 0; offset < cachedContent.size(); offset += 32768)
             {
-                if (control.status() != OperationStatus::Complete) return interrupted (control);
+                if (const auto status = control.status(); status != OperationStatus::Complete) return interrupted (status);
                 if (! body (std::string_view (cachedContent).substr (offset, 32768)))
                     return { OperationStatus::Failed, "Revalidated repository response was rejected" };
             }
@@ -484,6 +483,14 @@ bool LibraryService::remove (InstalledPack pack, std::vector<ManagedSfzLocator> 
     return enqueue (std::move (job));
 }
 
+bool LibraryService::verify (InstalledPack pack)
+{
+    Job job;
+    job.kind = JobKind::Verify;
+    job.installed = std::move (pack);
+    return enqueue (std::move (job));
+}
+
 bool LibraryService::changeLocation (fs::path destination, bool moveExisting)
 {
     Job job;
@@ -590,10 +597,10 @@ OperationResult LibraryService::browseAll (const Job& job, const OperationContro
         if (page == 0) continue;
         for (;;)
         {
-            if (control.status() != OperationStatus::Complete) return interrupted (control);
+            if (const auto status = control.status(); status != OperationStatus::Complete) return interrupted (status);
             CachedTransport cached (*transport, cacheRoot, job.offlineOnly);
             auto result = browseProvider (cached, sources[i].id, page, job.query, control);
-            if (control.status() != OperationStatus::Complete) return interrupted (control);
+            if (const auto status = control.status(); status != OperationStatus::Complete) return interrupted (status);
             if (result.status == OperationStatus::Cancelled || result.status == OperationStatus::Paused)
                 return { result.status, result.error };
             if (! result)
@@ -625,7 +632,7 @@ OperationResult LibraryService::browseAll (const Job& job, const OperationContro
     session.pages.resize (job.page);
     if (combined.nextPage != 0) session.pages.push_back (std::move (cursors));
     const std::lock_guard<std::mutex> lock (mutex);
-    if (control.status() != OperationStatus::Complete) return interrupted (control);
+    if (const auto status = control.status(); status != OperationStatus::Complete) return interrupted (status);
     if (current.generation != job.generation) return { OperationStatus::Cancelled, {} };
     allBrowse = std::move (session);
     current.page = std::move (combined);
@@ -641,7 +648,7 @@ OperationResult LibraryService::execute (Job& job, const OperationControl& contr
         cleanInstall (job);
         return { OperationStatus::Cancelled, {} };
     }
-    if (control.status() != OperationStatus::Complete) return interrupted (control);
+    if (const auto status = control.status(); status != OperationStatus::Complete) return interrupted (status);
     if (job.kind == JobKind::ChangeLocation)
     {
         setState (job.generation, LibraryState::ChangingLocation);
@@ -680,7 +687,7 @@ OperationResult LibraryService::execute (Job& job, const OperationControl& contr
             if (result) cached.commit();
             while (result && ! job.query.empty() && result.items.empty() && result.nextPage != 0)
             {
-                if (control.status() != OperationStatus::Complete) return interrupted (control);
+                if (const auto status = control.status(); status != OperationStatus::Complete) return interrupted (status);
                 result = browseProvider (cached, job.sourceId, result.nextPage, job.query, control);
                 if (result) cached.commit();
             }
@@ -720,7 +727,7 @@ OperationResult LibraryService::execute (Job& job, const OperationControl& contr
             { job.pack.downloadUrl, job.part, job.pack.expectedSha256, ArchiveLimits{}.maxArchiveBytes }, control);
         job.preserveDownload = downloaded.preservePart || static_cast<bool> (downloaded);
         if (! downloaded) return { downloaded.status, downloaded.error, downloaded.failureKind };
-        if (control.status() != OperationStatus::Complete) return interrupted (control);
+        if (const auto status = control.status(); status != OperationStatus::Complete) return interrupted (status);
         setState (job.generation, LibraryState::Extracting);
         job.staging = store.createStaging (error, &nativeError);
         if (job.staging.empty()) return { OperationStatus::Failed, error, storageFailureKind (nativeError) };
@@ -742,7 +749,7 @@ OperationResult LibraryService::execute (Job& job, const OperationControl& contr
             job.staging.clear();
             return { extracted.status, extracted.error, extracted.failureKind };
         }
-        if (control.status() != OperationStatus::Complete) return interrupted (control);
+        if (const auto status = control.status(); status != OperationStatus::Complete) return interrupted (status);
         const auto published = store.publish (job.pack, downloaded.sha256, job.staging, extracted.sfzPaths, control);
         if (! published) return { published.status, published.error, published.failureKind };
         cleanInstall (job);
@@ -754,6 +761,20 @@ OperationResult LibraryService::execute (Job& job, const OperationControl& contr
             current.pack = job.pack;
         }
         return { OperationStatus::Complete, {} };
+    }
+    if (job.kind == JobKind::Verify)
+    {
+        setState (job.generation, LibraryState::Verifying);
+        auto registered = locations.previous;
+        registered.insert (registered.begin(), locations.active);
+        for (const auto& location : registered)
+            if (job.installed.directory.parent_path() == location.root / "packs")
+            {
+                auto result = PackStore (location.root, location.marker).verify (job.installed, control);
+                if (result) result.error = "Installed files match the installation record.";
+                return result;
+            }
+        return { OperationStatus::Failed, "The selected pack is outside the registered SFZ libraries" };
     }
     if (job.kind == JobKind::Remove)
     {
@@ -887,7 +908,7 @@ void LibraryService::run()
             else
             {
                 if (nextRepository) repositoryLease = std::move (nextRepository);
-                result = cacheReady || job.kind == JobKind::ChangeLocation
+                result = cacheReady || job.kind == JobKind::ChangeLocation || job.kind == JobKind::Verify
                     ? execute (job, control)
                     : OperationResult { OperationStatus::Failed, initializationError, initializationKind };
             }

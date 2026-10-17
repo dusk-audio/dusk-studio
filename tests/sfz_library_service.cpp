@@ -573,6 +573,157 @@ TEST_CASE ("SFZ library installs a downloaded archive and publishes its portable
     REQUIRE (ownedInstallFiles (tree) == 0);
 }
 
+TEST_CASE ("SFZ library verifies installed files without downloading or changing its receipt", "[sfz][service][ipc]")
+{
+    Tree tree;
+    const auto bytes = archiveBytes();
+    const auto transport = std::make_shared<ScriptedTransport>();
+    transport->append ({ bytes, 200, {} });
+    LibraryService service (tree.root, transport);
+    settled (service);
+    REQUIRE (service.install (packFor (bytes)));
+    const auto installed = settled (service);
+    REQUIRE (installed.state == LibraryState::Complete);
+    REQUIRE (installed.installed.size() == 1);
+    const auto selected = installed.installed.front();
+    const auto receiptPath = selected.directory / ".dusk-pack.json";
+    const auto receiptBytes = dusk::fs::loadFileAsString (receiptPath);
+    SECTION ("Matching installation") {}
+    SECTION ("Changed sample and successful retry clear the integrity failure")
+    {
+        const auto path = selected.directory / "Samples/tone.wav";
+        REQUIRE (dusk::fs::writeStringToFile (path, std::string (4096, 'y')));
+        REQUIRE (service.verify (selected));
+        const auto failed = settled (service);
+        CHECK (failed.state == LibraryState::Failed);
+        CHECK (failed.failureKind == FailureKind::Integrity);
+        CHECK (dusk::fs::loadFileAsString (receiptPath) == receiptBytes);
+        REQUIRE (dusk::fs::writeStringToFile (path, std::string (4096, 'x')));
+    }
+    SECTION ("Missing SFZ remains verifiable from the selected installation")
+    {
+        REQUIRE (fs::remove (selected.directory / "Piano.sfz"));
+        REQUIRE (service.verify (selected));
+        const auto failed = settled (service);
+        CHECK (failed.state == LibraryState::Failed);
+        CHECK (failed.failureKind == FailureKind::Integrity);
+        CHECK (dusk::fs::loadFileAsString (receiptPath) == receiptBytes);
+        CHECK (transport->count() == 1);
+        return;
+    }
+    SECTION ("Legacy installation reports verification unavailable")
+    {
+        auto receipt = dusk::json::Json::parse (receiptBytes);
+        receipt.erase ("installed_tree_sha256_v1");
+        const auto legacy = receipt.dump();
+        REQUIRE (dusk::fs::writeStringToFile (receiptPath, legacy));
+        REQUIRE (service.verify (selected));
+        const auto failed = settled (service);
+        CHECK (failed.state == LibraryState::Failed);
+        CHECK (failed.failureKind == FailureKind::None);
+        CHECK (failed.error.find ("unavailable") != std::string::npos);
+        CHECK (dusk::fs::loadFileAsString (receiptPath) == legacy);
+        CHECK (transport->count() == 1);
+        return;
+    }
+    SECTION ("Another library cannot be verified through this service")
+    {
+        auto outside = selected;
+        outside.directory = tree.root / "unregistered" / "packs" / selected.directory.filename();
+        REQUIRE (service.verify (outside));
+        const auto failed = settled (service);
+        CHECK (failed.state == LibraryState::Failed);
+        CHECK (failed.failureKind == FailureKind::None);
+        CHECK (failed.error.find ("registered") != std::string::npos);
+    }
+    SECTION ("Heavy work pauses verification until an explicit resume")
+    {
+        service.setHeavyWork (true);
+        REQUIRE (service.verify (selected));
+        CHECK (settled (service).state == LibraryState::Paused);
+        CHECK_FALSE (service.resume());
+        service.setHeavyWork (false);
+        CHECK (service.snapshot().state == LibraryState::Paused);
+        CHECK_FALSE (service.verify (selected));
+        REQUIRE (service.resume());
+        CHECK (settled (service).state == LibraryState::Complete);
+    }
+    SECTION ("Cancelling paused verification preserves installed files")
+    {
+        service.setHeavyWork (true);
+        REQUIRE (service.verify (selected));
+        CHECK (settled (service).state == LibraryState::Paused);
+        service.cancel();
+        CHECK (settled (service).state == LibraryState::Cancelled);
+        service.setHeavyWork (false);
+    }
+    REQUIRE (service.verify (selected));
+    const auto checked = settled (service);
+    CHECK (checked.state == LibraryState::Complete);
+    CHECK (checked.failureKind == FailureKind::None);
+    CHECK (checked.error == "Installed files match the installation record.");
+    CHECK (checked.installed.size() == 1);
+    CHECK (dusk::fs::loadFileAsString (receiptPath) == receiptBytes);
+    CHECK (transport->count() == 1);
+}
+
+TEST_CASE ("SFZ installed verification remains local when the metadata cache is unavailable", "[sfz][service][storage][ipc]")
+{
+    Tree tree;
+    const auto configuration = tree.root / "configuration";
+    const ScopedConfigDirectory isolated (configuration);
+    REQUIRE (fs::create_directory (tree.root / "library"));
+    auto configured = changeLibraryLocation ({}, tree.root / "library", false, {}, libraryLocationsFile());
+    REQUIRE (configured);
+    REQUIRE (configured.locations);
+    const auto descriptor = packFor (archiveBytes());
+    const auto publishFixture = [&] (const LibraryLocation& location)
+    {
+        PackStore store (location.root, location.marker);
+        std::string error;
+        const auto staging = store.createStaging (error);
+        REQUIRE_FALSE (staging.empty());
+        REQUIRE (dusk::fs::writeStringToFile (staging / "Piano.sfz", "<region>"));
+        auto published = store.publish (descriptor, descriptor.expectedSha256, staging, { "Piano.sfz" });
+        REQUIRE (published);
+        REQUIRE (published.pack);
+        return *published.pack;
+    };
+    const auto selected = publishFixture (configured.locations->active);
+    std::optional<InstalledPack> duplicate;
+    SECTION ("Active library") {}
+    SECTION ("Exact previous copy despite an active copy of the same identity")
+    {
+        REQUIRE (fs::create_directory (tree.root / "next-library"));
+        configured = changeLibraryLocation (*configured.locations, tree.root / "next-library", false,
+                                            {}, libraryLocationsFile());
+        REQUIRE (configured);
+        REQUIRE (configured.locations);
+        duplicate = publishFixture (configured.locations->active);
+        REQUIRE (dusk::fs::writeStringToFile (duplicate->directory / "Piano.sfz", "<global>"));
+    }
+    const auto cache = configuration / "sfz-cache" / "repository";
+    REQUIRE (fs::create_directories (cache.parent_path()));
+    REQUIRE (dusk::fs::writeStringToFile (cache, "blocked"));
+    const auto transport = std::make_shared<ScriptedTransport>();
+    LibraryService service;
+    CHECK (settled (service).state == LibraryState::Failed);
+    REQUIRE (service.setTransportForTest (transport));
+    REQUIRE (service.verify (selected));
+    const auto checked = settled (service);
+    INFO (checked.error);
+    CHECK (checked.state == LibraryState::Complete);
+    CHECK (checked.failureKind == FailureKind::None);
+    if (duplicate)
+    {
+        REQUIRE (service.verify (*duplicate));
+        const auto failed = settled (service);
+        CHECK (failed.state == LibraryState::Failed);
+        CHECK (failed.failureKind == FailureKind::Integrity);
+    }
+    CHECK (transport->count() == 0);
+}
+
 TEST_CASE ("SFZ library pauses before HTTP during heavy work and requires explicit resume", "[sfz][service][ipc]")
 {
     Tree tree;

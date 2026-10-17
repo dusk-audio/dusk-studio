@@ -20,7 +20,7 @@ inline constexpr const char* kAllRepositoriesSourceId = "all";
 
 enum class LibraryState
 {
-    Idle, Browsing, Resolving, Downloading, Extracting, ChangingLocation, Paused, Complete, Failed, Cancelled
+    Idle, Browsing, Resolving, Downloading, Extracting, Verifying, ChangingLocation, Paused, Complete, Failed, Cancelled
 };
 
 struct LibrarySnapshot
@@ -56,6 +56,7 @@ public:
     void cancel();
     bool requestInstalled();
     bool remove (InstalledPack, std::vector<ManagedSfzLocator> inUse);
+    bool verify (InstalledPack);
     bool changeLocation (std::filesystem::path destination, bool moveExisting);
     bool isMovingPacks() const noexcept { return movingPacks.load (std::memory_order_acquire); }
     bool setTransportForTest (std::shared_ptr<HttpTransport>);
@@ -70,7 +71,7 @@ public:
 private:
     LibraryService (LibraryLocations, std::filesystem::path configurationFile, std::shared_ptr<HttpTransport>,
                     std::filesystem::path cacheDirectory);
-    enum class JobKind { Browse, Resolve, Install, Installed, Remove, Cleanup, ChangeLocation };
+    enum class JobKind { Browse, Resolve, Install, Installed, Remove, Verify, Cleanup, ChangeLocation };
     struct Job
     {
         JobKind kind = JobKind::Installed;
