@@ -588,7 +588,7 @@ bool MasteringView::offerPhaseKey (const std::string& description, std::uint32_t
 
 bool MasteringView::phaseKeyForScenario (const std::string& description)
 {
-   #if DUSKSTUDIO_HAS_NATIVE_UI
+   #if DUSKSTUDIO_HAS_NATIVE_UI && ! defined (__APPLE__)
     return phaseWindow != nullptr && phaseWindow->hasKeyboardForScenario()
         && phaseCapturesKeyboardForScenario() && phaseWindow->inputForScenario (description);
    #else
@@ -606,6 +606,25 @@ bool MasteringView::phaseCapturesKeyboardForScenario() const
    #endif
 }
 
+bool MasteringView::phaseHasKeyboardForScenario() const
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    return phaseProxy.isShowing() && phaseWindow != nullptr && phaseWindow->hasKeyboardForScenario();
+   #else
+    return false;
+   #endif
+}
+
+bool MasteringView::phaseTypeForScenario (const std::string& text)
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    return phaseProxy.isShowing() && phaseWindow != nullptr && phaseWindow->typeForScenario (text);
+   #else
+    (void) text;
+    return false;
+   #endif
+}
+
 void MasteringView::resetPhasePanelForScenario()
 {
    #if DUSKSTUDIO_HAS_NATIVE_UI
@@ -614,15 +633,16 @@ void MasteringView::resetPhasePanelForScenario()
    #endif
 }
 
-bool MasteringView::phasePointerForScenario (const std::string& control, float position, bool pressed)
+bool MasteringView::phasePointerForScenario (const std::string& control, float position, bool pressed, int modifiers)
 {
    #if DUSKSTUDIO_HAS_NATIVE_UI
     return phaseProxy.isShowing() && phaseWindow != nullptr
-        && phaseWindow->pointerControlForScenario (control, position, pressed);
+        && phaseWindow->pointerControlForScenario (control, position, pressed, modifiers);
    #else
     (void) control;
     (void) position;
     (void) pressed;
+    (void) modifiers;
     return false;
    #endif
 }

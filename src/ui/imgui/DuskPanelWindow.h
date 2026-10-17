@@ -189,9 +189,9 @@ public:
 
     // A key the shell received, as JUCE's KeyPress describes it, with the character it
     // types (0 for none). True when the view captures the keyboard (capturesKeyboard),
-    // so the shell must not act on the key. The key is replayed into the child only
-    // while the child does not hold the keyboard, which a Windows child never does; one
-    // that does got the key itself, so replaying it would type it twice.
+    // so the shell must not act on the key. macOS offers key equivalents to the parent
+    // before the native first responder, so claimed keys always need replay there.
+    // Other platforms replay only while the child does not hold the keyboard.
     bool offerShellKey (const std::string& description, std::uint32_t character);
 
     // A key the shell received that the view keeps (keepsKey), replayed into the child.

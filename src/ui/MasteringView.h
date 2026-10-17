@@ -93,8 +93,10 @@ public:
     bool offerPhaseKey (const std::string& description, std::uint32_t character);
     bool phaseKeyForScenario (const std::string& description);
     bool phaseCapturesKeyboardForScenario() const;
+    bool phaseHasKeyboardForScenario() const;
+    bool phaseTypeForScenario (const std::string& text);
     void resetPhasePanelForScenario();
-    bool phasePointerForScenario (const std::string& control, float position, bool pressed);
+    bool phasePointerForScenario (const std::string& control, float position, bool pressed, int modifiers = 0);
     const PhaseAnalyzer::Report& phaseReportForScenario() const { return phaseAnalyzer.report(); }
     bool compactModuleShownForScenario() const { return compactPanelCombo.isShowing(); }
     int compactModuleIndexForScenario() const { return compactPanelCombo.getSelectedId() - 1; }

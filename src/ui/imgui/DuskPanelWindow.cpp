@@ -1034,8 +1034,10 @@ bool DuskPanelWindow::offerShellKey (const std::string& description, std::uint32
 {
     if (! isOpen() || impl->view == nullptr || impl->panelWidget == nullptr || ! impl->view->capturesKeyboard())
         return false;
-    if (! impl->panelWidget->hasKeyboard())
-        impl->panelWidget->replayShellKey (description, character);
+   #if ! defined (__APPLE__)
+    if (impl->panelWidget->hasKeyboard()) return true;
+   #endif
+    impl->panelWidget->replayShellKey (description, character);
     return true;
 }
 
