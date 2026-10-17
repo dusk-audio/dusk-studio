@@ -14,7 +14,7 @@ issue for anything exploitable.
 
 - Preferred: [GitHub private vulnerability reporting](https://github.com/dusk-audio/dusk-studio/security/advisories/new)
   (Security → Advisories → *Report a vulnerability*).
-- Alternatively, DM via Patreon if you are a supporter, or use the support
+- Alternatively, message on Patreon if you are a Patron, or use the support
   email included in the private releases-repo invite.
 
 Include: affected version (`Dusk Studio --version`), platform, reproduction

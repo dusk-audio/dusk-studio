@@ -24,8 +24,8 @@ supported and equivalent at the source level.
 
 | Tier | Price | What you get |
 |------|-------|--------------|
-| Patreon Supporter | $5 / month | Official builds for all three OSes, credits |
-| Patreon Patron | $10 / month | Everything in Supporter, plus early beta access and roadmap votes |
+| Patreon Supporter | $5 / month | Official builds for all three OSes, new plugins and plugin updates two weeks early, credits, development updates |
+| Patreon Patron | $10 / month | Everything in Supporter, plus early beta builds, roadmap votes, bug reports looked at first and direct messages on Patreon |
 | One-time licence (from 1.0) | $49, planned | The current major version and all of its updates |
 | Lifetime licence (from 1.0) | $89, planned | Every future major version |
 
