@@ -1,15 +1,27 @@
 [
   {
     "file": "sfz_piano.png",
-    "title": "Steinway & Sons concert grand piano, model D-274, manufactured at Steinway's factory in Hamburg, Germany.png",
-    "author": "Photo: © Copyright Steinway & Sons",
-    "license": "CC BY-SA 3.0",
-    "source": "https://commons.wikimedia.org/wiki/File:Steinway_%26_Sons_concert_grand_piano%2C_model_D-274%2C_manufactured_at_Steinway%27s_factory_in_Hamburg%2C_Germany.png",
-    "original": "https://upload.wikimedia.org/wikipedia/commons/8/8d/Steinway_%26_Sons_concert_grand_piano%2C_model_D-274%2C_manufactured_at_Steinway%27s_factory_in_Hamburg%2C_Germany.png",
-    "date": "2012",
-    "changes": "Cropped, resized, and uniform background removed by conventional image processing; some instruments rotated for framing. No AI generation.",
-    "sha256": "386e28839cc875ff4cf9a63218ccad32961a02d3dc1ce727c45c0f71a302acd0",
-    "license_url": "https://creativecommons.org/licenses/by-sa/3.0/"
+    "title": "Piano.svg",
+    "author": "TheresaKnott",
+    "license": "CC0-1.0",
+    "source": "https://commons.wikimedia.org/wiki/File:Piano.svg",
+    "original": "https://upload.wikimedia.org/wikipedia/commons/5/50/Piano.svg",
+    "date": "2006",
+    "changes": "Used Wikimedia's raster rendering of the CC0 illustration; cropped to its transparent bounds and resized.",
+    "sha256": "d258e0bac4eae5345571905541f814489d606f6e66dcbedfea04e994c32a40ff",
+    "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+    "source_snapshot": "https://commons.wikimedia.org/w/index.php?title=File:Piano.svg&oldid=866509947",
+    "preparation": {
+      "tool": "tools/prepare-sfz-artwork.py",
+      "pillow_version": "12.3.0",
+      "input": {
+        "file": "Piano_500px.png",
+        "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/50/Piano.svg/500px-Piano.svg.png",
+        "sha256": "d702748e0de8564636f151f67d23d8ba79d1043dd460919463509955a20e0616"
+      },
+      "fit": [512, 512]
+    },
+    "original_sha256": "36b7077b3a40afdcc81c174a84edb9b88efecfe7a7bad447a9a5ab85429ca7b1"
   },
   {
     "file": "sfz_organ.png",
@@ -61,15 +73,73 @@
   },
   {
     "file": "sfz_mallets.png",
-    "title": "Marimba One 4000 Series.jpg",
-    "author": "Marimbaone",
-    "license": "CC BY-SA 3.0",
-    "source": "https://commons.wikimedia.org/wiki/File:Marimba_One_4000_Series.jpg",
-    "original": "https://upload.wikimedia.org/wikipedia/commons/1/18/Marimba_One_4000_Series.jpg",
-    "date": "2008",
-    "changes": "Cropped, resized, and uniform background removed by conventional image processing; some instruments rotated for framing. No AI generation.",
-    "sha256": "5be136b2519373c93173e013a3081dbd50a6dab9f76edb48e95a9b2716526bb2",
-    "license_url": "https://creativecommons.org/licenses/by-sa/3.0/"
+    "title": "Marimba MET MUS805A.jpg",
+    "author": "The Metropolitan Museum of Art",
+    "license": "CC0-1.0",
+    "source": "https://commons.wikimedia.org/wiki/File:Marimba_MET_MUS805A.jpg",
+    "original": "https://upload.wikimedia.org/wikipedia/commons/4/40/Marimba_MET_MUS805A.jpg",
+    "date": "2017 (Commons upload)",
+    "changes": "Removed the background with manually traced polygon masks, cropped and resized.",
+    "sha256": "2422924b92274af159ff9271ae239a57e84ad528ed0e243b8494e199311b3ed8",
+    "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+    "source_snapshot": "https://commons.wikimedia.org/w/index.php?title=File:Marimba_MET_MUS805A.jpg&oldid=1152590486",
+    "preparation": {
+      "tool": "tools/prepare-sfz-artwork.py",
+      "pillow_version": "12.3.0",
+      "input": {
+        "file": "Marimba_MET_MUS805A.jpg",
+        "url": "https://upload.wikimedia.org/wikipedia/commons/4/40/Marimba_MET_MUS805A.jpg",
+        "sha256": "fb077f409cad3ee176a165d8bdf05e472d2e81f6bb06b9cf9386ee619669297b"
+      },
+      "fit": [512, 512],
+      "keep_polygons": [
+        [
+          [8, 70],
+          [51, 47],
+          [158, 42],
+          [170, 44],
+          [178, 65],
+          [548, 52],
+          [553, 43],
+          [565, 43],
+          [565, 56],
+          [604, 56],
+          [612, 46],
+          [619, 46],
+          [625, 61],
+          [903, 69],
+          [916, 83],
+          [920, 138],
+          [912, 141],
+          [742, 141],
+          [780, 430],
+          [765, 437],
+          [722, 330],
+          [201, 300],
+          [158, 405],
+          [140, 412],
+          [145, 340],
+          [76, 342],
+          [45, 137],
+          [12, 129]
+        ]
+      ],
+      "clear_polygons": [
+        [
+          [202, 277],
+          [202, 281],
+          [721, 306],
+          [697, 145],
+          [572, 143],
+          [535, 168],
+          [500, 183],
+          [454, 207],
+          [400, 226],
+          [345, 250],
+          [280, 271]
+        ]
+      ]
+    }
   },
   {
     "file": "sfz_acoustic_guitar.png",
@@ -79,9 +149,38 @@
     "source": "https://commons.wikimedia.org/wiki/File:C.F._Martin_GRH_160_or_000-16RGT_cropped.png",
     "original": "https://upload.wikimedia.org/wikipedia/commons/4/4d/C.F._Martin_GRH_160_or_000-16RGT_cropped.png",
     "date": "2017",
-    "changes": "Cropped, resized, and uniform background removed by conventional image processing; some instruments rotated for framing. No AI generation.",
-    "sha256": "dd1a016200c0a5f77222e8fd95b3a2632fa4d315a38b0a2c8e31ef5b1a40e1bf",
-    "license_url": "https://creativecommons.org/licenses/by/4.0/"
+    "changes": "Cropped, resized, and uniform background removed by conventional image processing; some instruments rotated for framing. No AI generation. Maker and model marks retouched with the recorded surface colors, cloned regions and masks.",
+    "sha256": "e77148bf4a0a26acc9fc3e9df0a0e1a2b926eac66945a84605332b411bf07010",
+    "license_url": "https://creativecommons.org/licenses/by/4.0/",
+    "preparation": {
+      "tool": "tools/prepare-sfz-artwork.py",
+      "pillow_version": "12.3.0",
+      "input": {
+        "file": "sfz_acoustic_guitar.png",
+        "url": "https://raw.githubusercontent.com/dusk-audio/dusk-studio/8158dd093f676ef5c569c5d31d81b61f0e386529/assets/sfz-instruments/sfz_acoustic_guitar.png",
+        "sha256": "dd1a016200c0a5f77222e8fd95b3a2632fa4d315a38b0a2c8e31ef5b1a40e1bf"
+      },
+      "patches": [
+        {
+          "polygon": [
+            [269, 4],
+            [296, 16],
+            [291, 23],
+            [265, 11]
+          ],
+          "color": [34, 12, 4]
+        },
+        {
+          "polygon": [
+            [151, 292],
+            [167, 298],
+            [160, 321],
+            [145, 316]
+          ],
+          "color": [115, 102, 54]
+        }
+      ]
+    }
   },
   {
     "file": "sfz_electric_guitar.png",
@@ -91,9 +190,29 @@
     "source": "https://commons.wikimedia.org/wiki/File:UNIVOX_Hi-Flier_phase_4_from_c.1977.jpg",
     "original": "https://upload.wikimedia.org/wikipedia/commons/4/4a/UNIVOX_Hi-Flier_phase_4_from_c.1977.jpg",
     "date": "2019",
-    "changes": "Cropped, resized, and uniform background removed by conventional image processing; some instruments rotated for framing. No AI generation.",
-    "sha256": "ff9cbe8f7e1717910086e76bb98954039496ca21dd4b0e04fa98598531de546b",
-    "license_url": "https://creativecommons.org/licenses/by/2.0/"
+    "changes": "Cropped, resized, and uniform background removed by conventional image processing; some instruments rotated for framing. No AI generation. Maker and model marks retouched with the recorded surface colors, cloned regions and masks.",
+    "sha256": "c9a75e82a2a5354a3b028493a8617cd15a0bf1b5e45bc0793c475ae7028e1777",
+    "license_url": "https://creativecommons.org/licenses/by/2.0/",
+    "preparation": {
+      "tool": "tools/prepare-sfz-artwork.py",
+      "pillow_version": "12.3.0",
+      "input": {
+        "file": "sfz_electric_guitar.png",
+        "url": "https://raw.githubusercontent.com/dusk-audio/dusk-studio/8158dd093f676ef5c569c5d31d81b61f0e386529/assets/sfz-instruments/sfz_electric_guitar.png",
+        "sha256": "ff9cbe8f7e1717910086e76bb98954039496ca21dd4b0e04fa98598531de546b"
+      },
+      "patches": [
+        {
+          "polygon": [
+            [247, 64],
+            [257, 68],
+            [275, 23],
+            [264, 18]
+          ],
+          "color": [159, 110, 65]
+        }
+      ]
+    }
   },
   {
     "file": "sfz_bass.png",
@@ -103,9 +222,29 @@
     "source": "https://commons.wikimedia.org/wiki/File:70%27s_Fender_Jazz_Bass.png",
     "original": "https://upload.wikimedia.org/wikipedia/commons/a/a5/70%27s_Fender_Jazz_Bass.png",
     "date": "2008",
-    "changes": "Cropped, resized, and uniform background removed by conventional image processing; some instruments rotated for framing. No AI generation.",
-    "sha256": "00e22274ddf5a889b948f031464bab426aee3c94f71ee98f5259cf5f64ab1d38",
-    "license_url": "https://creativecommons.org/publicdomain/mark/1.0/"
+    "changes": "Cropped, resized, and uniform background removed by conventional image processing; some instruments rotated for framing. No AI generation. Maker and model marks retouched with the recorded surface colors, cloned regions and masks.",
+    "sha256": "6074c875f207e875d73ae4ec9d936b73984244b53134eddf1a3226cb3aaebb49",
+    "license_url": "https://creativecommons.org/publicdomain/mark/1.0/",
+    "preparation": {
+      "tool": "tools/prepare-sfz-artwork.py",
+      "pillow_version": "12.3.0",
+      "input": {
+        "file": "sfz_bass.png",
+        "url": "https://raw.githubusercontent.com/dusk-audio/dusk-studio/8158dd093f676ef5c569c5d31d81b61f0e386529/assets/sfz-instruments/sfz_bass.png",
+        "sha256": "00e22274ddf5a889b948f031464bab426aee3c94f71ee98f5259cf5f64ab1d38"
+      },
+      "patches": [
+        {
+          "polygon": [
+            [213, 79],
+            [230, 85],
+            [241, 28],
+            [224, 26]
+          ],
+          "color": [204, 114, 22]
+        }
+      ]
+    }
   },
   {
     "file": "sfz_electric_piano.png",
@@ -115,9 +254,47 @@
     "source": "https://commons.wikimedia.org/wiki/File:Rhodes_MkI_Stage_88_1970.jpg",
     "original": "https://upload.wikimedia.org/wikipedia/commons/5/57/Rhodes_MkI_Stage_88_1970.jpg",
     "date": "2013",
-    "changes": "Cropped, resized, and uniform background removed by conventional image processing; some instruments rotated for framing. No AI generation.",
-    "sha256": "985b345a3f06eaa489a2450b84787225017f9ce2c15b14945afd96008ee0d19d",
-    "license_url": "https://creativecommons.org/licenses/by-sa/4.0/"
+    "changes": "Cropped, resized, and uniform background removed by conventional image processing; some instruments rotated for framing. No AI generation. Maker and model marks retouched with the recorded surface colors, cloned regions and masks.",
+    "sha256": "125fef8d89eb413e18b19dc871111e46dcaad0aa56afa5d4ef3cb8fed8a882e4",
+    "license_url": "https://creativecommons.org/licenses/by-sa/4.0/",
+    "preparation": {
+      "tool": "tools/prepare-sfz-artwork.py",
+      "pillow_version": "12.3.0",
+      "input": {
+        "file": "sfz_electric_piano.png",
+        "url": "https://raw.githubusercontent.com/dusk-audio/dusk-studio/8158dd093f676ef5c569c5d31d81b61f0e386529/assets/sfz-instruments/sfz_electric_piano.png",
+        "sha256": "985b345a3f06eaa489a2450b84787225017f9ce2c15b14945afd96008ee0d19d"
+      },
+      "patches": [
+        {
+          "polygon": [
+            [356, 35],
+            [382, 25],
+            [387, 50],
+            [360, 64]
+          ],
+          "source_offset": [-28, 14]
+        },
+        {
+          "polygon": [
+            [278, 97],
+            [303, 85],
+            [308, 107],
+            [283, 119]
+          ],
+          "source_offset": [-30, 15]
+        },
+        {
+          "polygon": [
+            [169, 153],
+            [194, 141],
+            [197, 157],
+            [174, 171]
+          ],
+          "color": [204, 202, 191]
+        }
+      ]
+    }
   },
   {
     "file": "sfz_synth.png",
@@ -127,21 +304,112 @@
     "source": "https://commons.wikimedia.org/wiki/File:Yamaha_DX7.jpg",
     "original": "https://upload.wikimedia.org/wikipedia/commons/0/0c/Yamaha_DX7.jpg",
     "date": "2008",
-    "changes": "Cropped, resized, and uniform background removed by conventional image processing; some instruments rotated for framing. No AI generation.",
-    "sha256": "509012d1994dac4e7612fba09a58e6c643246cca992a08454826d5d1ba50f150",
-    "license_url": "https://creativecommons.org/licenses/by/2.0/"
+    "changes": "Cropped, resized, and uniform background removed by conventional image processing; some instruments rotated for framing. No AI generation. Maker and model marks retouched with the recorded surface colors, cloned regions and masks.",
+    "sha256": "eb2d0d7a7c595f56eee2b3b60ece7a6f7785715fa0f49d1bef372f6a4466f6e3",
+    "license_url": "https://creativecommons.org/licenses/by/2.0/",
+    "preparation": {
+      "tool": "tools/prepare-sfz-artwork.py",
+      "pillow_version": "12.3.0",
+      "input": {
+        "file": "sfz_synth.png",
+        "url": "https://raw.githubusercontent.com/dusk-audio/dusk-studio/8158dd093f676ef5c569c5d31d81b61f0e386529/assets/sfz-instruments/sfz_synth.png",
+        "sha256": "509012d1994dac4e7612fba09a58e6c643246cca992a08454826d5d1ba50f150"
+      },
+      "patches": [
+        {
+          "polygon": [
+            [27, 18],
+            [115, 18],
+            [115, 35],
+            [27, 35]
+          ],
+          "source_offset": [98, 0]
+        }
+      ]
+    }
   },
   {
     "file": "sfz_voice.png",
-    "title": "AKG C214 Condenser microphone.jpg",
-    "author": "Lucasbosch",
-    "license": "CC BY-SA 3.0",
-    "source": "https://commons.wikimedia.org/wiki/File:AKG_C214_Condenser_microphone.jpg",
-    "original": "https://upload.wikimedia.org/wikipedia/commons/0/0a/AKG_C214_Condenser_microphone.jpg",
-    "date": "2014",
-    "changes": "Cropped, resized, and uniform background removed by conventional image processing; some instruments rotated for framing. No AI generation.",
-    "sha256": "4a6617f8a28718ff7f8351a7736a796d90bfb0417dd158952ad59e3fd78da6d6",
-    "license_url": "https://creativecommons.org/licenses/by-sa/3.0/"
+    "title": "Microphone gooseneck.jpg",
+    "author": "Zzubnik",
+    "license": "Public domain",
+    "source": "https://commons.wikimedia.org/wiki/File:Microphone_gooseneck.jpg",
+    "original": "https://upload.wikimedia.org/wikipedia/commons/7/71/Microphone_gooseneck.jpg",
+    "date": "2008",
+    "changes": "Used Wikimedia's 500-pixel preview; removed the background with manually traced polygon masks, cropped and resized.",
+    "sha256": "484063305e607da5eb9fb6069ffba7ec695605df17e4a5bb4bb4e55a1d66ecf0",
+    "license_url": "https://creativecommons.org/publicdomain/mark/1.0/",
+    "source_snapshot": "https://commons.wikimedia.org/w/index.php?title=File:Microphone_gooseneck.jpg&oldid=785217700",
+    "preparation": {
+      "tool": "tools/prepare-sfz-artwork.py",
+      "pillow_version": "12.3.0",
+      "input": {
+        "file": "Microphone_gooseneck_500px.jpg",
+        "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/71/Microphone_gooseneck.jpg/500px-Microphone_gooseneck.jpg",
+        "sha256": "cb8db47c0499591d13f184be2a3bc601c6d3aa4ccc21b02eca61bb1b2a383a3f"
+      },
+      "fit": [512, 512],
+      "keep_polygons": [
+        [
+          [52, 53],
+          [71, 55],
+          [153, 80],
+          [180, 85],
+          [211, 100],
+          [241, 126],
+          [259, 159],
+          [273, 200],
+          [289, 281],
+          [305, 354],
+          [322, 382],
+          [343, 393],
+          [359, 393],
+          [379, 399],
+          [430, 420],
+          [437, 431],
+          [448, 433],
+          [449, 451],
+          [431, 455],
+          [447, 477],
+          [443, 496],
+          [411, 520],
+          [363, 537],
+          [303, 541],
+          [263, 525],
+          [243, 505],
+          [232, 478],
+          [231, 465],
+          [252, 450],
+          [283, 439],
+          [320, 433],
+          [339, 433],
+          [344, 415],
+          [323, 408],
+          [306, 392],
+          [290, 368],
+          [276, 325],
+          [258, 230],
+          [244, 178],
+          [228, 142],
+          [210, 120],
+          [183, 108],
+          [154, 101],
+          [129, 98],
+          [85, 110],
+          [53, 114],
+          [42, 107],
+          [35, 87],
+          [36, 68],
+          [42, 59]
+        ],
+        [
+          [433, 427],
+          [484, 410],
+          [488, 412],
+          [435, 435]
+        ]
+      ]
+    }
   },
   {
     "file": "sfz_world.png",
@@ -182,13 +450,39 @@
   {
     "file": "sfz_collection.png",
     "title": "Instrument collection",
-    "author": "Photo: © Copyright Steinway & Sons; Cornergraf; Mfaiiazi",
-    "license": "CC BY-SA 3.0",
+    "author": "TheresaKnott; Cornergraf; Mfaiiazi; Dusk Audio",
+    "license": "CC0-1.0",
     "source": "See sfz_piano.png, sfz_strings.png and sfz_drums.png credits",
     "original": "",
     "date": "2026",
-    "changes": "Assembly of the three credited cutouts.",
-    "license_url": "https://creativecommons.org/licenses/by-sa/3.0/",
-    "sha256": "ad3b0878ecc42233731bde2151895a04b2ef18cb38f7649c1c93d39f2d0c4b12"
+    "changes": "Assembled the credited CC0 piano illustration and public-domain violin and drum cutouts; Dusk Audio dedicates the composition under CC0-1.0.",
+    "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+    "sha256": "51b49d10ea40c445169464eaf50ded8c65ca8687a6da2ebf1f60a09b9e808394",
+    "preparation": {
+      "tool": "tools/prepare-sfz-artwork.py",
+      "pillow_version": "12.3.0",
+      "canvas": [512, 320],
+      "components": [
+        {
+          "file": "sfz_piano.png",
+          "size": [270, 280],
+          "at": [0, 22]
+        },
+        {
+          "file": "sfz_strings.png",
+          "url": "https://raw.githubusercontent.com/dusk-audio/dusk-studio/8158dd093f676ef5c569c5d31d81b61f0e386529/assets/sfz-instruments/sfz_strings.png",
+          "sha256": "542d8803cd06b6badfab1ec4bbc36e0a70944fee6fdfa239b8a8051e51736d7a",
+          "size": [220, 180],
+          "at": [279, 6]
+        },
+        {
+          "file": "sfz_drums.png",
+          "url": "https://raw.githubusercontent.com/dusk-audio/dusk-studio/8158dd093f676ef5c569c5d31d81b61f0e386529/assets/sfz-instruments/sfz_drums.png",
+          "sha256": "c2b51a57100df12dd57372f11d9006a1d8b7574038ac05ac97b22f8203dd8b9e",
+          "size": [261, 175],
+          "at": [245, 143]
+        }
+      ]
+    }
   }
 ]
