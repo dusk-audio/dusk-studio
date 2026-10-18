@@ -2,6 +2,8 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "engine/multisample/NativeMultisampleSlot.h"
+#include "engine/audiofile/FileWriter.h"
+#include "foundation/Fs.h"
 
 #include <juce_data_structures/juce_data_structures.h>
 
@@ -19,23 +21,102 @@ using Catch::Matchers::WithinAbs;
 
 TEST_CASE ("DuskMultisampleProcessor loads an SFZ file path with spaces", "[multisample][sfz]")
 {
-    const auto sfz = juce::File::getSpecialLocation (juce::File::tempDirectory)
-                         .getNonexistentChildFile ("Dusk SFZ load test", ".sfz", false);
-    struct ScopedFileCleanup
+    const auto root = dusk::fs::createUniqueTempDirectory ("dusk-sfz-load-");
+    REQUIRE_FALSE (root.empty());
+    struct ScopedDirectoryCleanup
     {
-        juce::File file;
-        ~ScopedFileCleanup() { file.deleteFile(); }
-    } cleanup { sfz };
+        std::filesystem::path path;
+        ~ScopedDirectoryCleanup()
+        {
+            std::error_code ignored;
+            std::filesystem::remove_all (dusk::fs::nativeIOPath (path), ignored);
+        }
+    } cleanup { root };
 
-    REQUIRE (sfz.replaceWithText ("<region> key=60 sample=*sine\n"));
+    auto directory = root / "SFZ with spaces";
+    bool longPath = false;
+    bool parentRelative = false;
+    SECTION ("Spaces") {}
+    SECTION ("Parent-relative include and sample") { parentRelative = true; }
+    SECTION ("Long native path") { longPath = true; }
+    SECTION ("Long parent-relative include and sample") { longPath = parentRelative = true; }
+    if (longPath)
+    {
+        for (int index = 0; index < 4; ++index)
+            directory /= std::string (72, (char) ('a' + index));
+        REQUIRE (directory.native().size() > 260);
+    }
+    REQUIRE (std::filesystem::create_directories (dusk::fs::nativeIOPath (directory)));
+    const auto sfz = (parentRelative ? directory / "Programs" : directory) / "instrument with spaces.sfz";
+    const auto sample = (parentRelative ? directory / "Samples" : directory) / "sample with spaces.wav";
+    if (parentRelative)
+    {
+        REQUIRE (std::filesystem::create_directory (dusk::fs::nativeIOPath (sfz.parent_path())));
+        REQUIRE (std::filesystem::create_directory (dusk::fs::nativeIOPath (sample.parent_path())));
+        REQUIRE (std::filesystem::create_directory (dusk::fs::nativeIOPath (directory / "Includes")));
+        REQUIRE (dusk::fs::writeStringToFile (directory / "Includes/region.sfz",
+                    "<region> key=60 sample=../Samples/sample with spaces.wav\n"));
+    }
+    dusk::audio::WriteSpec spec;
+    spec.sampleRate = 48000.0;
+    spec.numChannels = 1;
+    spec.bitsPerSample = 16;
+    auto writer = dusk::audio::FileWriter::create (dusk::fs::nativeIOPath (sample), spec);
+    REQUIRE (writer);
+    std::array<float, 8192> waveform {};
+    for (std::size_t frame = 0; frame < waveform.size(); ++frame)
+        waveform[frame] = 0.25f * std::sin ((float) frame * 0.05f);
+    REQUIRE (writer->writeInterleaved (waveform.data(), (std::int64_t) waveform.size()));
+    writer.reset();
+    REQUIRE (dusk::fs::writeStringToFile (sfz, parentRelative
+        ? "#include \"../Includes/region.sfz\"\n"
+        : "<region> key=60 sample=sample with spaces.wav\n"));
+    REQUIRE (std::filesystem::is_regular_file (dusk::fs::nativeIOPath (sfz)));
+    REQUIRE (std::filesystem::is_regular_file (dusk::fs::nativeIOPath (sample)));
 
-    duskstudio::DuskMultisampleProcessor processor;
-    juce::String error;
-    REQUIRE (processor.loadSfzFile (sfz, error));
-    REQUIRE (error.isEmpty());
-    REQUIRE (processor.hasLoadedFile());
-    REQUIRE (processor.getLoadedFilePath() == sfz.getFullPathName());
+    duskstudio::MultisampleBundle bundle;
+    std::string error;
+    const bool bundleLoaded = bundle.load (sfz.u8string(), error);
+    INFO (error);
+    REQUIRE (bundleLoaded);
+    REQUIRE (bundle.getFile() == sfz);
+    auto primed = duskstudio::NativeMultisampleSlot::prime (sfz, 48000.0, 256, error);
+    INFO (error);
+    REQUIRE (primed);
+    REQUIRE (primed.path == sfz.u8string());
+    auto& processor = *primed.instance;
+    REQUIRE (processor.getLoadedPathSnapshot() == sfz.u8string());
     REQUIRE (processor.getNumRegions() == 1);
+
+    std::array<float, 256> left {}, right {};
+    float* output[] { left.data(), right.data() };
+    dusk::MidiBuffer midi;
+    const std::uint8_t noteOn[] { 0x90, 60, 100 };
+    midi.addEvent (noteOn, 3, 0);
+    duskstudio::hosting::PortBuffers buffers;
+    buffers.mainOut = output;
+    buffers.mainOutChannels = 2;
+    buffers.numFrames = 256;
+    buffers.midiIn = &midi;
+    buffers.offlineRender = true;
+    double energy = 0.0;
+    for (int block = 0; block < 24; ++block)
+    {
+        processor.processBlock (buffers);
+        midi.clear();
+        for (float value : left)
+        {
+            REQUIRE (std::isfinite (value));
+            energy += (double) value * value;
+        }
+    }
+    REQUIRE (energy > 1.0e-5);
+    std::vector<std::uint8_t> state;
+    REQUIRE (processor.saveState (state));
+    duskstudio::DuskMultisampleProcessor restored;
+    REQUIRE (restored.loadState (state));
+    REQUIRE (restored.getLoadedPathSnapshot() == sfz.u8string());
+    REQUIRE (restored.getNumRegions() == 1);
 }
 
 TEST_CASE ("DuskMultisampleProcessor rejects an SFZ with no resolvable samples",

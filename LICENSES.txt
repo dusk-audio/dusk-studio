@@ -176,7 +176,7 @@ Dusk Audio plugins (donor DSP cores)
 
 dusk-fizz (SFZ / SoundFont sampler engine — powers the multisample instrument)
   Version  : 1.2.3 lineage, submodule rev
-             5299ff7058f4356d1d43180628b6708302662970
+             f54eaed2d8f7c53d12f2afea7a553350344879fc
   License  : BSD-2-Clause (external/dusk-fizz/LICENSE)
   Path     : external/dusk-fizz/ (git submodule, built as a static library)
   Fork home: https://github.com/dusk-audio/dusk-fizz (Dusk-maintained hard
