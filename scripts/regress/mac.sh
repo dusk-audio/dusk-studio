@@ -371,8 +371,7 @@ exit "\$RC"
 REMOTE
 }
 
-# The scenario suite behind the same marker-file deadline as the self-test, and
-# headless for the same reason: this node cannot open a window over ssh. The
+# The scenario suite uses the same marker-file deadline as the self-test. The
 # fixtures come out of the node's build-tests tree, which the tests build has
 # already produced - every fixture target is a dependency of dusk-studio-tests.
 leg_scenarios() {
@@ -489,10 +488,6 @@ regress_leg "ctest" leg_ctest
 regress_leg "selftest" leg_selftest
 mac_scenarios_leg
 
-# Launching the GUI over ssh aborts in the main window constructor on this node
-# - it reproduces on main, so it is the environment, not the build. Run those
-# two by hand from a console session on the Air:
-#   cd ~/src/dusk-studio && ./build/DuskStudio_artefacts/Release/DuskStudio.app/Contents/MacOS/DuskStudio
 regress_skip "gui-launch" "ssh session cannot construct the main window; run from a console session"
 regress_skip "scenarios-gui" "ssh session cannot construct the main window; run from a console session on the Air"
 regress_skip "ipc-selftest" "Linux-only code path"
