@@ -275,6 +275,13 @@ public:
     virtual bool clickPianoMidiMerge() = 0;
     // Transport on/enabled, followed by piano-roll on/enabled; -1 until laid out.
     virtual std::array<int, 4> midiMergeControls() const = 0;
+    // What keeps a click from reaching the transport's MIDI Merge toggle where it is
+    // drawn, one line each: the toggle not showing, a bank, timeline-toolbar or stage
+    // button laid over it, or another control under its centre. Empty when nothing does.
+    virtual std::vector<std::string> midiMergeObstructions() const = 0;
+    // The transport toggle's mean painted colour as ARGB, in its current state; 0
+    // without a transport bar.
+    virtual std::uint32_t midiMergePaint() = 0;
     virtual bool doubleClickTempo() = 0;
     virtual bool rightClickPunch() = 0;
     virtual bool focusModalTextInput() = 0;
@@ -494,6 +501,9 @@ public:
     // -1 when the window cannot be read back (no roll, or not Linux).
     virtual int pianoRowOnScreen (int pitch, const std::filesystem::path& scratch) = 0;
     virtual int pianoLaneValueOnScreen (bool cc, std::int64_t tick, const std::filesystem::path& scratch) = 0;
+    // The brightest channel value drawn inside a piano-roll toolbar control, so
+    // a control that ignores clicks but still draws lit is caught. -1 as above.
+    virtual int pianoControlPeakOnScreen (const std::string& control, const std::filesystem::path& scratch) = 0;
     virtual bool clickPianoGrid (std::int64_t tick, int pitch) = 0;
     virtual bool dragPianoVelocity (std::int64_t tick, float fraction) = 0;
     virtual bool resizePianoVelocity (int pixels) = 0;
@@ -510,6 +520,14 @@ public:
     virtual bool pianoKeyboardFocus (bool focused) = 0;
     // Includes the deferred close, until the native child is gone.
     virtual bool pianoNativeWindowOpen() const = 0;
+    // Whether the native window of "piano-roll" or "virtual-keyboard" drops the
+    // system's key auto-repeat: 1 when it does, 0 when held keys reach it as fresh
+    // presses, -1 when that panel has no window up.
+    virtual int panelKeyRepeat (const std::string& panel) const = 0;
+    // Whether the display server stacks that panel's native window topmost at its own
+    // centre: 1 when it does, 0 when another window covers it there, -1 when that
+    // panel has no window up, -2 when the platform cannot say.
+    virtual int panelTopmostAtCentre (const std::string& panel) const = 0;
     virtual bool doubleClickAudioRegion (int track, int region) = 0;
     // Modifiers as pianoNotePointer takes them: 1 Shift, 2 Cmd/Ctrl.
     virtual bool clickAudioRegion (int track, int region, bool right = false, int modifiers = 0) = 0;

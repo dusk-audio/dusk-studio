@@ -1249,7 +1249,7 @@ Silent audio passes remain available as takes. Empty MIDI passes are omitted bec
 
 **MIDI Merge** on the transport bar or piano-roll toolbar adds a MIDI performance to an existing unlocked region instead of replacing its notes and controls. It starts off and is saved with the session. Set it before recording; it cannot be changed during a take. Audio recording works as before.
 
-An overlapping region keeps its notes, channel controls and previous takes. Recording beyond either edge grows it without moving the existing performance or its previous takes in time. Incoming MIDI is audible while recording with Merge on even when **IN** is off, alongside the existing region. If there is no region to merge into, the pass creates one. Recorded notes join playback on the next loop pass, including a note at the loop start. In loop recording, each completed pass is one undo step, available while the transport is still rolling. Stopping adds the final partial pass as one step. Undoing a pass removes only that pass; Stop does not put it back. A pass with no recorded events adds no undo step.
+An overlapping region keeps its notes, channel controls and previous takes. A pass that overlaps several regions joins the one it starts in, or the first one it reaches if it starts before them all. Recording beyond either edge grows it without moving the existing performance or its previous takes in time. Incoming MIDI is audible while recording with Merge on even when **IN** is off, alongside the existing region. If there is no region to merge into, the pass creates one. Recorded notes join playback on the next loop pass, including a note at the loop start. In loop recording, each completed pass is one undo step, available while the transport is still rolling. Stopping adds the final partial pass as one step. Undoing a pass removes only that pass; Stop does not put it back. A pass with no recorded events adds no undo step.
 
 MIDI recording keeps notes, control changes, 14-bit pitch bend, channel pressure, polyphonic pressure and program changes. They are saved and played back with the region. The piano roll's CC lane edits control changes; the other channel controls play back unchanged.
 
@@ -1593,7 +1593,7 @@ Double-click a MIDI region to open the piano roll as a centred modal.
 
 ## Creating notes
 
-In **Draw** mode (**D**), click an empty grid cell to create a note at that pitch and tick. Its length follows the current note-entry grid; with snap off, it defaults to a quarter note. The note's velocity defaults to 100.
+In **Draw** mode (**D**), click an empty grid cell to create a note at that pitch and tick. With snap on, the note starts at the nearest grid line; with snap off, it starts exactly where you click. Its length follows the current note-entry grid; with snap off, it defaults to a quarter note. The note's velocity defaults to 100.
 
 ## Selecting and moving
 
@@ -1645,6 +1645,8 @@ The note-creation grid is set from the toolbar dropdown; there is no keyboard sh
 ## Step record
 
 With the piano roll open, virtual-keyboard notes enter at the transport playhead. Notes held together share that position. After all keys are released, the first note of the next chord advances the playhead by one snap step before inserting. This is the fastest way to enter a chord progression without playing in real time.
+
+Closing and reopening the keyboard keeps the step: the next note still advances one snap step. If you move the playhead while the keyboard is closed, the next note enters at the new position instead.
 
 Step record is off while the transport is recording: the keyboard's notes enter the recorded performance. They do not become separate step-record edits of the region the roll shows.
 

@@ -236,6 +236,63 @@ TEST_CASE ("pending MIDI uses the merge target's rounded origin and mute policy"
     }
 }
 
+TEST_CASE ("pending MIDI follows the region a pass starts in, as its commit does",
+           "[midi][schedule][merge]")
+{
+    Timeline timeline;
+    auto first = regionOfTicks (10);
+    auto later = regionOfTicks (20);
+    later.timelineStart = 600;
+    bool audible = true;
+    SECTION ("a muted region the pass runs into does not silence it") { later.muted = true; }
+    SECTION ("the muted region the pass starts in silences it") { first.muted = true; audible = false; }
+    timeline.add (first);
+    timeline.add (later);
+    constexpr std::int64_t captureStart = 100, captureEnd = 1100;
+    auto pending = pendingLoop (captureEnd - captureStart);
+    pending.pushEvent (1, 0, 0x90, 60, 90);
+    pending.pushEvent (1, 50, 0x80, 60, 0);
+    midischedule::PendingCapture overlay;
+    overlay.playback = &pending;
+    overlay.playbackPass = 2;
+    int scans = 32768;
+    const auto play = [&] (std::vector<Event>& events)
+    {
+        REQUIRE (overlay.locateTarget (*timeline.published, captureStart, captureEnd, kRate, kBpm, scans));
+        REQUIRE (timeline.play (0, 256, false, events, scans, &overlay) == midischedule::Outcome::complete);
+        std::stable_sort (events.begin(), events.end(), [] (const auto& a, const auto& b) { return a.at < b.at; });
+    };
+    std::vector<Event> pendingEvents;
+    play (pendingEvents);
+    if (audible)
+    {
+        REQUIRE (pendingEvents.size() == 2);
+        CHECK (pendingEvents[0].status == 0x90);
+        CHECK (pendingEvents[0].at == captureStart);
+        CHECK (pendingEvents[1].status == 0x80);
+        CHECK (pendingEvents[1].at == captureStart + 50);
+    }
+    else CHECK (pendingEvents.empty());
+
+    REQUIRE (findMidiMergeTarget (timeline.regions, captureStart, captureEnd) == 0);
+    auto& target = timeline.regions[0];
+    MidiRegion pass = regionOfTicks (20);
+    pass.notes = { { 1, 60, 90, 0, 1 } };
+    REQUIRE (mergeMidiPass (target, pass, samplesToTicks (captureStart - target.timelineStart, kRate, kBpm)).changed);
+    target.lengthInSamples = ticksToSamples (target.lengthInTicks, kRate, kBpm);
+    CHECK (target.timelineStart + target.lengthInSamples > timeline.regions[1].timelineStart);
+    timeline.published = buildMidiTimeline (timeline.regions, nullptr, { 42, 1 });
+    std::vector<Event> committedEvents;
+    play (committedEvents);
+    REQUIRE (committedEvents.size() == pendingEvents.size());
+    for (std::size_t i = 0; i < committedEvents.size(); ++i)
+    {
+        CHECK (committedEvents[i].status == pendingEvents[i].status);
+        CHECK (committedEvents[i].data1 == pendingEvents[i].data1);
+        CHECK (committedEvents[i].at == pendingEvents[i].at);
+    }
+}
+
 TEST_CASE ("pending controller chase combines lanes and puts banks before programs",
            "[midi][schedule][merge]")
 {

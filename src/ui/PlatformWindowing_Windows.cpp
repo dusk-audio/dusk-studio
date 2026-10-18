@@ -244,6 +244,22 @@ void prepareForTopLevelDestruction (juce::Component& topLevel)
 bool hasUsableDisplay() { return true; }   // native windowing always present
 bool captureNativeWindowToPpm (std::uintptr_t, const std::string&) { return false; }
 bool sendEscapeThroughDisplayServer (std::uintptr_t) { return false; }
+
+std::optional<std::uintptr_t> topmostSiblingAtCentre (std::uintptr_t nativeChild)
+{
+    const auto child = reinterpret_cast<HWND> (nativeChild);
+    const auto parent = child != nullptr ? ::GetParent (child) : nullptr;
+    RECT bounds {};
+    if (parent == nullptr || ! ::GetWindowRect (child, &bounds))
+        return std::uintptr_t {};
+    POINT centre { bounds.left + (bounds.right - bounds.left) / 2,
+                   bounds.top + (bounds.bottom - bounds.top) / 2 };
+    if (! ::ScreenToClient (parent, &centre))
+        return std::uintptr_t {};
+    const auto hit = ::ChildWindowFromPointEx (parent, centre, CWP_SKIPINVISIBLE);
+    return reinterpret_cast<std::uintptr_t> (hit);
+}
+
 double nativeViewBackingScale (void*) { return 1.0; }
 void clearXInputFocus() {}                 // X-only; no-op on Windows
 void requestFocusOnMainWaylandSurface() {} // Wayland-only; no-op on Windows

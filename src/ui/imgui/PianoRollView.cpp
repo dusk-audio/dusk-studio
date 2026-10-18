@@ -33,6 +33,7 @@ constexpr int kVelocityStripHMax = 320;
 constexpr int kCcStripHMin = 48;
 constexpr int kCcStripHMax = 320;
 constexpr int kScrollBarH = 12;
+constexpr std::uint32_t kDisabledInk = 0xff606068;
 
 template <typename T>
 T limited (T lo, T hi, T value) noexcept { return std::clamp (value, lo, std::max (lo, hi)); }
@@ -120,7 +121,7 @@ public:
     void showSwappedTake() override;
     void stepRecordNoteOn (int noteNumber, int velocity) override;
     void stepRecordNoteOff (int noteNumber) override;
-    void resetStepRecordState() noexcept override;
+    void stepRecordKeyboardClosed() noexcept override;
 
     std::array<double, 4> viewportForScenario() const override
     { return { pixelsPerTick, static_cast<double> (scrollX), static_cast<double> (scrollY), grid.w }; }
@@ -146,6 +147,16 @@ public:
     ImVec2 bodyPointForScenario (ImVec2 p) const override { return local (p); }
     float scaleForScenario() const override { return scaleFactor; }
     std::array<int, 2> mergeStateForScenario() const override { return drawnMerge; }
+    std::array<double, 4> controlBoundsForScenario (const std::string& name) const override
+    {
+        for (const auto& control : controls)
+            if (name == control.name)
+            {
+                const auto p = screen ({ control.box.x, control.box.y });
+                return { p.x, p.y, control.box.w * scaleFactor, control.box.h * scaleFactor };
+            }
+        return {};
+    }
     bool popupForScenario() const override { return popupOpen || popupRequested != Popup::none; }
     std::vector<std::string> menuItemsForScenario() const override { return menuLabels; }
     bool wheelForScenario (float delta, bool command, bool shift, bool smooth, bool lane) override
@@ -285,7 +296,8 @@ private:
     int scaleRoot = 0;
     bool keySnap = true, chase = false;
     int stepRecordHeld = 0;
-    bool stepRecordChordHad = false;
+    bool stepRecordChordHad = false, stepRecordReopened = false;
+    std::int64_t stepRecordAt = 0;
     Box grid, rulerArea, velocityArea, ccArea, rubberBand;
     struct Control { std::string name; Box box; bool enabled; };
     std::vector<Control> controls;
@@ -1165,6 +1177,7 @@ private:
     {
         ImGui::BeginDisabled (! enabled);
         dw::ButtonStyle style; style.fontSize = 11;
+        if (! enabled) { style.offText = argb (kDisabledInk); style.onFill = argb (kDisabledInk); }
         const bool clicked = dw::textButton (ctx, id, screen ({ b.x, b.y }), screen ({ b.right(), b.bottom() }), label, on, style).clicked;
         ImGui::EndDisabled();
         remember (id, b, enabled);
@@ -1182,7 +1195,7 @@ private:
         const auto centre = screen ({ b.x + b.w * 0.5f, b.y + b.h * 0.5f });
         ctx.dl->AddCircleFilled (centre, ctx.s (13), argb (hovered ? 0xff353544 : 0xff262630));
         ctx.dl->AddCircle (centre, ctx.s (13), argb (0xff3a3a44));
-        const auto colour = argb (enabled ? 0xffd0d0d0 : 0xff606068);
+        const auto colour = argb (enabled ? 0xffd0d0d0 : kDisabledInk);
         const auto p = [&] (float x, float y) { return ImVec2 (centre.x + ctx.s (x), centre.y + ctx.s (y)); };
         const auto stroke = [&] (float x, float y, float x1, float y1) { ctx.dl->AddLine (p (x, y), p (x1, y1), colour, ctx.s (1.5f)); };
         if (glyph == Glyph::undo || glyph == Glyph::redo)
@@ -1203,7 +1216,7 @@ private:
         }
         else if (glyph == Glyph::split) { stroke (-6, -5, 6, 5); stroke (6, -5, -6, 5); stroke (0, -8, 0, 8); }
         else if (glyph == Glyph::glue) { stroke (-7, -5, -2, -5); stroke (-2, -5, -2, 5); stroke (2, -5, 2, 5); stroke (2, 5, 7, 5); stroke (-7, 0, 7, 0); }
-        else text (ctx, { b.x + 5, b.y + 3, b.w - 8, b.h - 6 }, glyph == Glyph::cc ? "CC" : glyph == Glyph::quantize ? "Q" : "i", enabled ? 0xffd0d0d0 : 0xff606068, 12);
+        else text (ctx, { b.x + 5, b.y + 3, b.w - 8, b.h - 6 }, glyph == Glyph::cc ? "CC" : glyph == Glyph::quantize ? "Q" : "i", enabled ? 0xffd0d0d0 : kDisabledInk, 12);
         return enabled && click;
     }
     void drawToolbar (dw::Context& ctx)
@@ -1592,6 +1605,8 @@ void PianoRollViewImpl::showSwappedTake()
 
 void PianoRollViewImpl::showRegion (int newRegionIdx)
 {
+    if (newRegionIdx != regionIdx)
+        stepRecordChordHad = false;
     regionIdx = newRegionIdx;
     cancelPopups = true;
     leftForTake.valid = false;
@@ -1631,15 +1646,20 @@ void PianoRollViewImpl::stepRecordNoteOn (int noteNumber, int velocity)
         ? snapTicks
         : (kMidiTicksPerQuarter / 4);
 
-    if (stepRecordHeld == 0 && stepRecordChordHad)
+    // After the keyboard closes and reopens, a playhead the user moved meanwhile is
+    // the new entry point rather than a place to step on from.
+    const auto playhead = engine.getTransport().getPlayhead();
+    if (stepRecordHeld == 0 && stepRecordChordHad
+        && (! stepRecordReopened || playhead == stepRecordAt))
     {
-        const auto playhead   = engine.getTransport().getPlayhead();
         const auto playheadTick = session.samplesToTicks (playhead, sr);
         const std::int64_t advanceSamples =
             session.ticksToSamples (playheadTick + stepTicks, sr) - playhead;
         engine.getTransport().setPlayhead (playhead + advanceSamples);
-        stepRecordChordHad = false;
     }
+    if (stepRecordHeld == 0)
+        stepRecordChordHad = false;
+    stepRecordReopened = false;
 
     const auto nowPlayhead = engine.getTransport().getPlayhead();
     if (nowPlayhead - r->timelineStart < 0) return;
@@ -1665,6 +1685,7 @@ void PianoRollViewImpl::stepRecordNoteOn (int noteNumber, int velocity)
     pushNoteEdit (before, "Step record note");
     ++stepRecordHeld;
     stepRecordChordHad = true;
+    stepRecordAt = nowPlayhead;
 }
 
 void PianoRollViewImpl::stepRecordNoteOff (int )
@@ -1674,10 +1695,10 @@ void PianoRollViewImpl::stepRecordNoteOff (int )
 
 }
 
-void PianoRollViewImpl::resetStepRecordState() noexcept
+void PianoRollViewImpl::stepRecordKeyboardClosed() noexcept
 {
-    stepRecordHeld     = 0;
-    stepRecordChordHad = false;
+    stepRecordHeld = 0;
+    stepRecordReopened = stepRecordChordHad;
 }
 
 bool PianoRollViewImpl::isInScale (int noteNumber) const noexcept

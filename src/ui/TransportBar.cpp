@@ -24,6 +24,7 @@ const juce::Colour kNoInputText       { 0xffe0a0a0 };
 const juce::FontOptions kNoticeFont   { 11.5f };
 constexpr auto     kNoticeJustification = juce::Justification::centred;
 constexpr int      kNoticeMaxW          = 480;
+constexpr std::uint32_t kMidiMergeOn    = 0xff5878b0;
 } // namespace
 
 namespace
@@ -517,18 +518,18 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
     hintLabel.setFont (juce::Font (juce::FontOptions (11.0f)));
     addAndMakeVisible (hintLabel);
 
-    auto styleModeToggle = [] (juce::TextButton& b, juce::Colour onColour)
+    auto styleModeToggle = [] (juce::TextButton& b, std::uint32_t onArgb)
     {
         b.setClickingTogglesState (true);
         b.setColour (juce::TextButton::buttonColourId,   kPanelBackground);
-        b.setColour (juce::TextButton::buttonOnColourId, onColour.darker (0.45f));
+        b.setColour (juce::TextButton::buttonOnColourId, juce::Colour (onArgb).darker (0.45f));
         b.setColour (juce::TextButton::textColourOffId,  juce::Colour (0xff909094));
         b.setColour (juce::TextButton::textColourOnId,   juce::Colours::white);
     };
 
     // clickToggle is now a TransportIconButton - paints from its ctor
     // colour, no TextButton styling needed.
-    styleModeToggle (countInToggle, juce::Colour (0xff60c060));   // green: same family as CLICK
+    styleModeToggle (countInToggle, 0xff60c060);   // green: same family as CLICK
 
     // Loop / Punch / Keyboard icon buttons in the transport cluster. Loop +
     // Punch are toggle buttons (state mirrors transport flags); Keyboard
@@ -554,7 +555,7 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
     punchButton.addMouseListener (this, false);  // right-click -> settings menu
     addAndMakeVisible (punchButton);
 
-    midiMergeToggle.setClickingTogglesState (true);
+    styleModeToggle (midiMergeToggle, kMidiMergeOn);
     midiMergeToggle.setTooltip ("Add MIDI recording to an existing region. Each loop pass can be undone while recording.");
     midiMergeToggle.onClick = [this]
     {
@@ -1142,6 +1143,25 @@ void TransportBar::resized()
 
     area.removeFromLeft (12);
     hintLabel.setBounds (area);
+}
+
+std::uint32_t TransportBar::midiMergePaintForScenario()
+{
+    const auto image = midiMergeToggle.createComponentSnapshot (midiMergeToggle.getLocalBounds());
+    std::uint64_t red = 0, green = 0, blue = 0, count = 0;
+    for (int y = 0; y < image.getHeight(); ++y)
+        for (int x = 0; x < image.getWidth(); ++x)
+        {
+            const auto pixel = image.getPixelAt (x, y);
+            if (pixel.getAlpha() < 255) continue;
+            red += pixel.getRed();
+            green += pixel.getGreen();
+            blue += pixel.getBlue();
+            ++count;
+        }
+    if (count == 0) return 0;
+    return 0xff000000u | (std::uint32_t) (red / count) << 16
+                       | (std::uint32_t) (green / count) << 8 | (std::uint32_t) (blue / count);
 }
 
 void TransportBar::setHintVisible (bool visible)

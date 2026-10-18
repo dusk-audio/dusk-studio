@@ -228,6 +228,8 @@ public:
     // How often a field or menu opening has asked the system to focus the child.
     int keyboardRequestsForScenario() const noexcept;
     std::uintptr_t nativeWindowHandleForScenario() const noexcept;
+    // False while no window is up.
+    bool ignoresKeyRepeatForScenario() const noexcept;
     // Counts input that reached the panel by another road, a key the shell passed
     // on, as input still to be drawn.
     void expectInputForScenario();

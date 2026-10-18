@@ -203,8 +203,42 @@ TEST_CASE ("MIDI merge target selection agrees with immutable lock and mute plac
     int expected = -1;
     SECTION ("touching boundaries are not overlaps") {}
     SECTION ("an unlocked overlap is selected") { regions[1].locked = false; expected = 1; }
-    SECTION ("the last overlap retains its mute policy")
+    SECTION ("a muted overlap retains its mute policy")
     { regions[2].timelineStart = 105; regions[2].muted = true; expected = 2; }
+    SECTION ("a pass joins the region it starts in, not a later one it runs into")
+    { start = 50; end = 150; expected = 0; }
+    SECTION ("a pass starting before every overlap joins the earliest of them")
+    {
+        regions[0].timelineStart = 120;
+        regions[2].timelineStart = 130;
+        start = 50;
+        end = 150;
+        expected = 0;
+    }
+    SECTION ("overlaps starting together after the pass resolve to the later one")
+    {
+        regions[0].timelineStart = 120;
+        regions[2].timelineStart = 120;
+        start = 50;
+        end = 150;
+        expected = 2;
+    }
+    SECTION ("of stacked regions holding the start, the later one is joined")
+    {
+        regions[1].locked = false;
+        regions[1].timelineStart = 0;
+        start = 50;
+        end = 150;
+        expected = 1;
+    }
+    SECTION ("a locked region holding the start leaves the earliest unlocked overlap")
+    {
+        regions[0].timelineStart = 160;
+        regions[2].timelineStart = 170;
+        start = 150;
+        end = 300;
+        expected = 0;
+    }
     SECTION ("positive endpoints cannot overflow")
     {
         regions[2].timelineStart = std::numeric_limits<std::int64_t>::max() - 10;

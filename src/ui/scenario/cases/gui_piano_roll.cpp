@@ -486,6 +486,20 @@ const ScenarioRegistrar pianoWheelSizes { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runPianoWheelSizes (host, ctx); }
 } };
 
+#if DUSKSTUDIO_HAS_NATIVE_UI
+// Asked of the display server: a native child that Win32 stacks under the roll
+// leaves the dim up with no keyboard in it, missing its clicks while its notes
+// still play. The keyboard covers the roll's centre, so the roll reads as covered.
+void expectKeyboardOverRoll (GuiHost& host, ScenarioContext& ctx, const std::string& when)
+{
+    const int keyboard = host.panelTopmostAtCentre ("virtual-keyboard");
+    if (keyboard == -2) return;
+    ctx.expect (keyboard == 1, "the virtual keyboard is not the topmost window at its centre " + when);
+    ctx.expect (host.panelTopmostAtCentre ("piano-roll") == 0,
+                "the piano roll is not under the virtual keyboard " + when);
+}
+#endif
+
 std::optional<ScenarioResult> runPianoStepRecord (GuiHost& host, ScenarioContext& ctx)
 {
    #if ! DUSKSTUDIO_HAS_NATIVE_UI
@@ -506,7 +520,9 @@ std::optional<ScenarioResult> runPianoStepRecord (GuiHost& host, ScenarioContext
     const auto restore = ctx.tempDir() / "restore.json";
     if (! SessionSerializer::save (session, restore))
         return ScenarioResult::fail ("could not save the initial session");
-    ctx.cleanup ([&host, &session, &transport, originalDir, originalStage, originalPosition, restore]
+    const auto window = host.mainWindowSize();
+    if (window.size() < 4) return ScenarioResult::fail ("the main window reported no size");
+    ctx.cleanup ([&host, &session, &transport, originalDir, originalStage, originalPosition, restore, window]
     {
         host.closeVirtualKeyboard();
         host.closeRegionEditors();
@@ -514,6 +530,7 @@ std::optional<ScenarioResult> runPianoStepRecord (GuiHost& host, ScenarioContext
         applySessionDirectory (session, originalDir);
         transport.setPlayhead (originalPosition);
         host.switchToStage (guiStage (originalStage));
+        host.resizeMainWindow (window[0], window[1]);
     });
     const auto rate = engine.getCurrentSampleRate();
     MidiRegion region;
@@ -532,6 +549,12 @@ std::optional<ScenarioResult> runPianoStepRecord (GuiHost& host, ScenarioContext
     steps->push_back ({ 300, [&host, &ctx]
     {
         ctx.expect (host.virtualKeyboardOpen(), "virtual keyboard did not open above the piano roll");
+        expectKeyboardOverRoll (host, ctx, "on opening");
+        // A case cannot make the display server auto-repeat a key, so it reads the
+        // flag that keeps a held key from reaching the panels as fresh presses.
+        ctx.expect (host.panelKeyRepeat ("virtual-keyboard") == 1,
+                    "the virtual keyboard takes the system's key repeat, so a held key can sound twice");
+        ctx.expect (host.panelKeyRepeat ("piano-roll") == 1, "the piano roll takes the system's key repeat");
         ctx.expect (host.inputVirtualKeyboard ("z") && host.inputVirtualKeyboard ("x"),
                     "chord keys did not reach the native keyboard");
     } });
@@ -554,7 +577,7 @@ std::optional<ScenarioResult> runPianoStepRecord (GuiHost& host, ScenarioContext
                     "releasing the chord advanced before the next note");
         ctx.expect (host.inputVirtualKeyboard ("q"), "next chord key did not reach the native keyboard");
     } });
-    steps->push_back ({ 600, [&ctx, &session, &transport, centre, rate]
+    steps->push_back ({ 600, [&host, &ctx, &session, &transport, centre, rate, window]
     {
         const auto& regions = session.track (0).midiRegions.current();
         ctx.expect (regions.size() == 1 && regions.front().notes.size() == 3, "next chord did not insert a note");
@@ -567,9 +590,15 @@ std::optional<ScenarioResult> runPianoStepRecord (GuiHost& host, ScenarioContext
         }
         ctx.expect (transport.getPlayhead() == session.ticksToSamples (600, rate) && transport.isStopped(),
                     "step record changed the transport state or advanced the wrong distance");
+        expectKeyboardOverRoll (host, ctx, "after the chords");
+        const int width = window[0] - 120 >= window[2] ? window[0] - 120 : window[0] + 120;
+        ctx.expect (host.resizeMainWindow (width, window[1]), "the main window did not take the new width");
     } });
-    steps->push_back ({ 200, [&host, &ctx]
-    { ctx.expect (host.pressPeerKey ("K", 'k'), "K did not reach the piano roll a second time"); } });
+    steps->push_back ({ 400, [&host, &ctx]
+    {
+        expectKeyboardOverRoll (host, ctx, "after the window was resized");
+        ctx.expect (host.pressPeerKey ("K", 'k'), "K did not reach the piano roll a second time");
+    } });
     // The panel's close is deferred, so the verdict waits for it rather than
     // sampling after a fixed delay.
     runSteps (ctx, steps, [&host, &ctx]
@@ -710,11 +739,18 @@ std::optional<ScenarioResult> runPianoMidiMergeToggle (GuiHost& host, ScenarioCo
     steps->push_back ({ 0, [&host, &ctx]
     { ctx.expect (host.clickPianoMidiMerge(), "the smaller MIDI editor toggle was not clickable"); },
         [controls] { return controls (false, true); }, "MIDI Merge did not turn off in the smaller editor", {}, 4000 });
-    steps->push_back ({ 0, [&host, &ctx]
-    { ctx.expect (host.clickRecord(), "Record was unavailable with the MIDI editor open"); },
-        [controls] { return controls (true, true); }, "MIDI Merge did not turn back on", {}, 4000 });
-    steps->push_back ({ 0, [&host, &ctx, &session, &engine]
+    const auto lit = std::make_shared<std::pair<int, std::uint32_t>>();
+    steps->push_back ({ 0, [&host, &ctx, lit]
     {
+        *lit = { host.pianoControlPeakOnScreen ("midi-merge", ctx.tempDir() / "merge.ppm"), host.midiMergePaint() };
+        ctx.expect (host.clickRecord(), "Record was unavailable with the MIDI editor open");
+    }, [controls] { return controls (true, true); }, "MIDI Merge did not turn back on", {}, 4000 });
+    steps->push_back ({ 0, [&host, &ctx, &session, &engine, lit]
+    {
+        const auto locked = host.pianoControlPeakOnScreen ("midi-merge", ctx.tempDir() / "merge.ppm");
+        if (lit->first < 0 || locked < 0) ctx.note ("the piano-roll MIDI Merge look needs the window read back");
+        else ctx.expect (locked + 64 < lit->first, "the piano-roll MIDI Merge still looked enabled during recording");
+        ctx.expect (host.midiMergePaint() != lit->second, "the transport MIDI Merge still looked enabled during recording");
         ctx.expect (! host.clickPianoMidiMerge() && ! host.clickMidiMerge(), "MIDI Merge was editable during recording");
         ctx.expect (session.midiMergeEnabled.load(), "recording changed MIDI Merge");
         engine.pressStop();
@@ -2353,17 +2389,39 @@ std::optional<ScenarioResult> runPianoNoteCreation (GuiHost& host, ScenarioConte
             ctx.expect (note.noteNumber == 64 && note.startTick == 960 && note.lengthInTicks == 240 && note.velocity == 100,
                         "changing snap did not change the next note's duration");
         }
+    } });
+    // On the eighth-note grid 1450 is nearer 1440 and 1580 nearer 1680.
+    steps->push_back ({ 500, [&host, &ctx]
+    { ctx.expect (host.clickPianoGrid (1450, 72), "the first off-grid note cell was not visible"); } });
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.clickPianoGrid (1580, 74), "the second off-grid note cell was not visible"); } });
+    steps->push_back ({ 100, [&host, &ctx, &track]
+    {
+        const auto& regions = track.midiRegions.current();
+        if (ctx.expect (regions.size() == 1 && regions[0].notes.size() == 4, "the off-grid clicks did not create two notes"))
+        {
+            ctx.expect (regions[0].notes[2].startTick == 1440,
+                        "a click before a cell's midpoint did not start at the nearest grid line");
+            ctx.expect (regions[0].notes[3].startTick == 1680,
+                        "a click past a cell's midpoint did not start at the nearest grid line");
+        }
         ctx.expect (host.pressPianoRollKey ("0"), "the free-grid key was not handled");
     } });
     steps->push_back ({ 500, [&host, &ctx]
-    { ctx.expect (host.clickPianoGrid (1200, 67), "the free-grid note cell was not visible"); } });
-    steps->push_back ({ 100, [&ctx, &track]
+    { ctx.expect (host.clickPianoGrid (1250, 67), "the free-grid note cell was not visible"); } });
+    steps->push_back ({ 100, [&host, &ctx, &track]
     {
         const auto& regions = track.midiRegions.current();
-        if (ctx.expect (regions.size() == 1 && regions[0].notes.size() == 3, "the free-grid click did not create a third note"))
-            ctx.expect (regions[0].notes[2].noteNumber == 67 && regions[0].notes[2].lengthInTicks == 480
-                        && regions[0].notes[2].velocity == 100,
+        if (ctx.expect (regions.size() == 1 && regions[0].notes.size() == 5, "the free-grid click did not create a fifth note"))
+        {
+            const auto& note = regions[0].notes[4];
+            ctx.expect (note.noteNumber == 67 && note.lengthInTicks == 480 && note.velocity == 100,
                         "snap-off note creation did not retain the quarter-note default");
+            const double tolerance = 2.0 / std::max (1.0e-6, host.pianoViewport()[0]);
+            ctx.expect (std::abs (static_cast<double> (note.startTick) - 1250.0) <= tolerance,
+                        "with snap off the note did not start where the click landed: tick "
+                            + std::to_string (note.startTick));
+        }
     } });
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
