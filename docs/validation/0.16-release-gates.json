@@ -33,7 +33,7 @@
       "root": "/tmp/dusk-016-daf-cocoa-a5s3_k5r",
       "patch": "/tmp/dusk-016-daf-cocoa-candidate.patch",
       "patch_sha256": "1d0017e0592ec88a7314c51531507779e5885d2efd5bdbad2985da9c0c9a6faf",
-      "result": "Independent source review found no actionable findings. Native Cocoa regression fails at the initial embedded-focus callback on the baseline and passes with this fix; full CocoaRetiredView also passes. Application native-focus scenarios still fail.",
+      "result": "Independent source review found no actionable findings. Controlled native Cocoa regression fails before and passes after the fix; full CocoaRetiredView passes. All four clean-app mastering GUI checks pass with foreground GUI-domain launch and private window position clear of a system notification.",
       "changed_files": [
         "dgl/src/pugl-upstream/src/mac.h",
         "dgl/src/pugl-upstream/src/mac.m",
@@ -50,11 +50,11 @@
       "through": "0f86caa9eb6a3e7bb1f17b5a595f756a86183232",
       "result": "Independent read-only audit confirmed totals, source bounds and hashes. Corrected Windows failure classification, renderer metadata and native-fixture diagnostic; retained platform and fixture limits.",
       "latest_through": "95320fd29a8c5e56a651be1df791a2e7c8a9fe2e",
-      "latest_result": "No concrete inaccuracies found in refreshed totals, skips, native fixtures, log hashes, source bounds, Cocoa event proof versus failing app integration, Windows startup prototype limits, or transfer authorization status. Refreshed Linux tarball recorded after this audit."
+      "latest_result": "Independent read-only audit found no concrete inaccuracies or stale current statuses. All 116 registered hashes match. Four targeted Mac and Windows GUI passes, Windows exit0/session1/foreground sampling, cleanup, totals, skips and source bounds match logs. New Mac startup-guard bundle transfer was rejected after this audit and is explicitly pending below."
     },
     "windows_startup_integration": {
       "through": "95320fd29a8c5e56a651be1df791a2e7c8a9fe2e",
-      "result": "No remaining findings after fixing module-path normalization and dependency watches. Reviewed against exact JUCE 8.0.4 CMake module handling. Native Windows compilation remains pending."
+      "result": "No source-review findings after module-path normalization and dependency-watch fixes. Normal app/test builds, all 1697 CTest entries, focused SFZ, strict ASIO and required native-state checks pass. Original service-session startup regression passes with zero captured access violations. Four interactive mastering GUI checks pass with app exit0."
     }
   },
   "manual_sync": {
@@ -90,8 +90,8 @@
     },
     {
       "issue": 866,
-      "implemented_or_reviewed": "GUI isolation, dropdown key ownership/focus and editor frame-readiness fixes committed. Confirmed X11 sandbox child crash fixed in dependency and strengthened lifecycle regression. Native/logical focus race reproduced and fixed at 0f86caa9. Cocoa focus-event regression and fix proven separately. Windows startup crash resolved to unchecked DXGI output enumeration; guarded prototype reaches GUI scenarios.",
-      "remaining": "Validate normal Windows guard integration, resolve remaining macOS/Windows GUI prerequisite and focus failures, publish dependency fixes with authorization, and complete maintainer walkthrough."
+      "implemented_or_reviewed": "GUI isolation, dropdown focus and frame readiness fixes committed. X11 sandbox child crash and logical/native focus race reproduced and fixed. Cocoa focus-event regression and fix proven; four clean foreground Mac mastering GUI checks pass. Windows VBlank startup crash fixed in the normal build; full/native tests pass. Four Windows interactive mastering GUI checks pass with app exit0.",
+      "remaining": "Publish dependency fixes with authorization, complete exact-source CI and final package checks, and complete maintainer walkthrough."
     },
     {
       "issue": 870,
@@ -170,8 +170,7 @@
     }
   ],
   "remaining_release_gates": [
-    "Additional-payload transfer approval: macOS Cocoa diagnostics and relocation-fixture follow-up; Windows build integration of the startup guard. Earlier filesystem/DAF transfers were approved and validated.",
-    "Compile and validate the normal Windows startup guard; resolve remaining macOS/Windows GUI prerequisites and native focus on supported desktops.",
+    "Authorize the reviewed startup-guard bundle transfer to Mac and validate exact source95320fd2 there; current Mac proof is317a80e7.",
     "Publish reviewed JUCE dusk-wayland-v3 and DAF Cocoa focus fix only with authorization; current Linux CI tag does not exist and DAF main lacks the fix.",
     "Final exact-source platform and full sanitizer CI; refresh package dry runs after candidate fixes.",
     "Live SFZ operations from all four sources.",
@@ -226,20 +225,20 @@
       "cause": "Confirmed logical popup focus and native peer focus diverged; child destruction with RevertToNone left native focus empty, then queued FocusOut cleared logical focus.",
       "fix": "0f86caa9 peer focus reclamation and real native-focus precondition in existing GUI case.",
       "proof": "Strengthened scenario fails before and passes after; final four-case run passes without diagnostics.",
-      "remaining": "macOS and Windows native-focus integration coverage and maintainer walkthrough."
+      "remaining": "Four-case macOS and Windows native-focus integration now passes. Maintainer walkthrough remains open."
     },
     {
       "platform": "macOS",
       "failure": "Existing Phase GUI case and strengthened compact case fail waiting for native keyboard focus in direct and LaunchServices launches.",
-      "cause": "Confirmed embedded Cocoa focus events were not delivered to the callback; controlled native regression proves this defect and its repair. Separate Dusk native-focus failures persist with the repaired dependency.",
-      "next": "Capture actual NSApp/key-window/first-responder state in the failing application. Marc confirmed the desktop is unlocked; console session evidence confirms active Aqua session. Temporary diagnostic payload transfer was rejected and has not occurred."
+      "cause": "Controlled regression proved missing embedded Cocoa focus events and the DAF fix. Further direct-SSH diagnostics showed first-responder transfer succeeds but app remains inactive/non-key; an owned GUI-domain LaunchAgent makes Dusk active in audit100015 and Phase native focus passes. Preset failures were then traced in-process to a UserNotificationCenter window covering the click point; no preset popup handler ran.",
+      "next": "Resolved for these four checks: seed only private window-state.txt at x0 to avoid the covering notification. Clean app passes4/fails0/skips0; notification untouched and diagnostic app/object restored."
     },
     {
       "platform": "Windows",
       "failure": "GUI startup null-read access violation before any scenario",
       "cause": "JUCE 8.0.4 VBlank enumeration continues after DXGI EnumOutputs failure and dereferences its null output. Session 0 is documented to return DXGI_ERROR_NOT_CURRENTLY_AVAILABLE.",
-      "fix": "Build-local successful-HRESULT and non-null-output loop guard in 95320fd2; isolated prototype has zero observed access violations.",
-      "remaining": "Normal integrated Windows build and three remaining GUI scenario failures; neither audio nor focus prerequisites have yet been established for those failures."
+      "fix": "Build-local successful-HRESULT and non-null-output loop guard in 95320fd2. Normal app startup regression exits0 with zero captured access violations; full/native test suite passes.",
+      "remaining": "Earlier prototype GUI failures resolve in the interactive session: all four cases pass with app exit0. Final CI, package and maintainer coverage remain open."
     }
   ],
   "dependency_revisions": {
@@ -328,7 +327,46 @@
     "/tmp/dusk-016-windows-lease-final-provenance.log": "3e84925234f2a3d8c82527ee42ceb5a498fec1b57feb76bb169f79132ddba2ef",
     "/tmp/dusk-016-package-resolved-build.log": "3117d5cc6ea098af6af36c12ea79beec41f0f1cb98a1b143ea97f57a24afc253",
     "/tmp/dusk-016-package-resolved-smoke.log": "c8618655ac9531d19fef95d5af0d0687f3aa50a058772fa29007b758ab7d0a7c",
-    "/tmp/dusk-016-package-resolved-provenance.json": "bf91aad8b888e33013fabef1f1385c8f8a8fc0be25189266af41239b1582941e"
+    "/tmp/dusk-016-package-resolved-provenance.json": "bf91aad8b888e33013fabef1f1385c8f8a8fc0be25189266af41239b1582941e",
+    "/tmp/dusk-016-macos-lease-approved.log": "b342f7db83dc0be441771f663e0aa69d7f102caf113684025e876c251bc86001",
+    "/tmp/dusk-016-macos-lease-approved-lasttest.log": "0e7575f662403d5850bc8223c088084df3538b7377749a6ac21653e5fb6595e7",
+    "/tmp/dusk-016-macos-clean-provenance.log": "88e5008dc331e0bf91e3d0871e356d1af636bb146e6956b1e819706bed6781cd",
+    "/tmp/dusk-016-approved-cocoa-diagnostics.log": "cda436cd8f19179b47c01998db262915ca3c5d6f5943ff8f2f612fdcf855a1b9",
+    "/tmp/dusk-016-cocoa-diagnostic-build.log": "5f56e50f1389eaac322cc37b6c912a21312ecc6d838aa5d34a8afe407fc9d704",
+    "/tmp/dusk-016-cocoa-diagnostic-clean-build.log": "5f56e50f1389eaac322cc37b6c912a21312ecc6d838aa5d34a8afe407fc9d704",
+    "/tmp/dusk-016-macos-gui-domain.log": "826ea6d35d4e1dcac9e65a0a6d91de185d31fef86d311fe9da6dc2c632854b69",
+    "/tmp/dusk-016-macos-agent-probe.log": "7ed08f595019c9fde976f1d7e00955eed71946751c0de1117009f403400529ce",
+    "/tmp/dusk-016-macos-debug-probe.log": "96bc53b28c1c30c99f70b3ff233f07a84d87fbb2a8efa1824bc6e56b85d80005",
+    "/tmp/dusk-016-preset-diagnostic.patch": "ee9707b76a42ce6a617ee364c2eecdcc080268972ba22059fec271f2354696bd",
+    "/tmp/dusk-016-preset-GuiScenarios.cpp.syntax.log": "5ad9772f344a57fe7ecde11eca65b3895e12ce5f67f582a57267bd1f3c8abef6",
+    "/tmp/dusk-016-preset-DuskComboBox.cpp.syntax.log": "f0e183fc5c1f50d7a89bbc49c716f592147448fc1b5b68664070e0664d50b3d3",
+    "/tmp/dusk-016-windows-session-current.log": "391779dde63c20a25b37cf42f18658847fcd1a2c55d7052e2622fdc35f858775",
+    "/tmp/dusk-016-windows-normal-startup.log": "5f2191f815f0d4925c503689571ce89fc0586d894e6d57a2b7515eb3e55f3c83",
+    "/tmp/dusk-016-windows-normal-startup.ps1": "90c38f266ccf7d6df2355b21323d2ced77c542ae1427d70cf0182a81c2f7b0d6",
+    "/tmp/dusk-016-windows-interactive.ps1": "9023fcdf1d8ab494985b718c9bb979525b7c5a067e16a347899f3d8fca28a02c",
+    "/tmp/dusk-016-approved-preset-trace.log": "dfeb60a4bd0d1c8ccc0bfe0fb611b895a35a121898c2c3ec4a3b1b90c3c2c2c8",
+    "/tmp/dusk-016-preset-diagnostic-build.log": "42e4ec03ae0f2682bc9d66dd7958217995b16512140d7666dcaff3e7180b8308",
+    "/tmp/dusk-016-preset-diagnostic-clean-build.log": "c5f934323c4dad06d4a5d16a0205a3a5b05a5bfc2e310e01f052a773d21c710a",
+    "/tmp/dusk-016-run-preset-trace.sh": "c8427b8ab3ca916230d6038f82e4d45ae51d7826d232ce5be22713508e73373c",
+    "/tmp/dusk-016-macos-uncovered-gui.log": "2158351886aacebde0fe9fd03c3c92bb634c2c696d1b21f0f8c7bb38b874394f",
+    "/tmp/dusk-016-macos-uncovered-provenance.log": "d19ddf3a233ca8c1840b9953974317e148d5284ea12f83412240f93f443f46f8",
+    "/tmp/dusk-016-macos-uncovered-gui.sh": "4a6045881be2c17bd9f14ba38e9bc6b3124423f6a641d39e90cf61b7ed8c12c8",
+    "/tmp/dusk-016-macos-public-hit-trace-2.log": "0735038180d65fb630ce52848f2a97151c3dd124634457bc707f2f73485f282c",
+    "/tmp/dusk-016-macos-public-hit-trace.log": "326d918e7a7142fb4d18c98c92e8a55f23b06e3f2d5ea93fe70604a25371e70e",
+    "/tmp/dusk-016-macos-public-hit-link.log": "80e94275d875c6af6ed85d576a7372c83aa783e77f31bd525179741db95f808b",
+    "/tmp/dusk-016-macos-public-hit-trace.sh": "1b8fca52029aaa63793e7f0e2684e24515e92e9abba0ca1609f51938942a12c3",
+    "/tmp/dusk-016-macos-occluding-window.log": "d745512118bbfe5bccaca3af60b65a971351a932793fabbf3b2de5fb0d3c7a77",
+    "/tmp/dusk-016-macos-window-observer.log": "7340705cabadf1ec2b1eb4d5564fb0326c39eca2cb63740f17b2fb547ab059ce",
+    "/tmp/dusk-016-macos-windows.jsonl": "25b4ade1a3bfeb272a97f4a3af3d74ee5463722bbde394d3a46ab9ff6c7a1a10",
+    "/tmp/dusk-016-windows-vblank-approved.log": "3ac88f72272e3f4b10c3d07ed5dff21be4fb69bf4ad80c51937e69385f8246c3",
+    "/tmp/dusk-016-windows-vblank-lasttest.log": "3d6ab52178e0f6a5abf88b1ec5f9799cb09dc090c7ac6dfb41b54da55c187070",
+    "/tmp/dusk-016-windows-vblank-provenance.log": "e8d3bced5af6b8c6a00fd091b965307d01f403bf7dd1a8b44e387ead965448fd",
+    "/tmp/dusk-016-windows-controller-recovery.log": "f93b17a7b68d9a38f2030c156185fd442985fc76ec4041c4264ede78fc8efac7",
+    "/tmp/dusk-016-windows-interactive-final.log": "827c6679b7fed7f52065d562ebc3dbe1f5897d24d199bd19dd70de0193a1a5e1",
+    "/tmp/dusk-016-windows-interactive-cleanup.log": "048063b5d317874d6754c421c5c4779e69982a4bc91fce0ec48730c6e1ef3f9c",
+    "/tmp/dusk-016-windows-interactive-sid.log": "6568000aab1738066a1f72d65e4683811a517d2ae9c52b45c1d6a47052956a4c",
+    "/tmp/dusk-016-windows-interactive-task.log": "badc4d3a5b0c764e270e93e3709fe18d6d93e9642425a14c958f9ccf1dd566c2",
+    "/tmp/dusk-016-windows-interactive-task-run.log": "38c4adaa2d5b33454b3e56d02376988793e68b3afe5b061ee9af8a03589c3895"
   },
   "validation_transfer_block": {
     "reason": "Automatic approval review requires explicit authorization for each additional non-public source payload and destination. Rejected transfers were not performed or bypassed.",
@@ -346,26 +384,46 @@
     "pending": [
       {
         "host": "marc@macbook-air.local",
+        "payload": "/tmp/dusk-016-vblank-integration.bundle",
+        "sha256": "d7ee00f38f054a8853239d154f58adff61517f34e26099fd2831c917064120ea",
+        "source_commit": "95320fd29a8c5e56a651be1df791a2e7c8a9fe2e",
+        "purpose": "Run exact-source Mac validation of the reviewed four-file startup-guard integration already passing Linux and Windows checks.",
+        "reason": "Automatic approval review rejected this new payload-to-Mac transfer because prior startup-guard approval covered Windows only. Bundle verified locally; not transferred and no workaround attempted."
+      }
+    ],
+    "status": "All previously requested payloads approved and validated. Only startup-guard bundle transfer to the Mac is now blocked pending explicit destination-specific authorization.",
+    "resolved_additional": [
+      {
+        "host": "marc@macbook-air.local",
         "payload": "/tmp/dusk-016-cocoa-diagnostic.patch",
         "sha256": "dcbd22380680b5ea9d3933ab27563020b474a236900e07601aee5e92e2fab7e1",
-        "purpose": "Temporary native Cocoa focus diagnostics; remove after investigation. Not uploaded or applied."
+        "purpose": "Temporary Cocoa activation/key/responder trace completed, patch removed and clean app rebuilt.",
+        "status": "User explicitly approved; transferred and validation completed."
       },
       {
         "host": "marc@macbook-air.local",
         "payload": "/tmp/dusk-016-lease-fixtures.bundle",
         "sha256": "0de9b039df3903e6c842f9d76ac1470a9b332565129584b8acfc62626ec84d9c",
         "source_commit": "317a80e77f5677cb095523a03720adc143e93b97",
-        "purpose": "Four-file relocation-fixture follow-up; already validated on Linux and Windows. Not uploaded to Mac."
+        "purpose": "Mac relocation-fixture follow-up validated: full CTest, focused SFZ and native AU/CLAP pass.",
+        "status": "User explicitly approved; transferred and validation completed."
       },
       {
         "host": "marc@192.168.122.85",
         "payload": "/tmp/dusk-016-vblank-integration.bundle",
         "sha256": "d7ee00f38f054a8853239d154f58adff61517f34e26099fd2831c917064120ea",
         "source_commit": "95320fd29a8c5e56a651be1df791a2e7c8a9fe2e",
-        "purpose": "Four-file CMake startup guard integration; reviewed and Linux checks pass. Not uploaded."
+        "purpose": "Windows startup guard validated: normal app/test builds, full CTest, focused SFZ, strict ASIO and required VST3/CLAP state checks pass.",
+        "status": "User explicitly approved; transferred and build/test validation completed."
+      },
+      {
+        "host": "marc@macbook-air.local",
+        "payload": "/tmp/dusk-016-preset-diagnostic.patch",
+        "sha256": "ee9707b76a42ce6a617ee364c2eecdcc080268972ba22059fec271f2354696bd",
+        "purpose": "Temporary preset click/popup trace completed in the verified foreground GUI session; patch removed and clean application hash restored.",
+        "status": "User explicitly approved; transferred and validation completed."
       }
-    ],
-    "status": "Additional-payload asynchronous permission questions pending."
+    ]
   },
   "historical_checks": {
     "8e166e3c": "Linux and macOS builds and full CTest passed with fixture limits; Linux engine and GUI gates passed. Earlier packages are superseded by final-commit dry runs. No historical macOS GUI pass is claimed.",
@@ -373,10 +431,10 @@
   },
   "platform_status": {
     "linux": "Main/test builds, full CTest and refreshed tarball contents/version/scan/self-test pass at 95320fd2. Earlier full GUI and engine scenario suites remain tied to 0f86caa9. Same-host unsigned package dry run; hardware and cold-host proof remain open.",
-    "macos": "Main/test build, full CTest, AU and CLAP pass at 556f97a3 with DAF 82fc7ce4. Controlled Cocoa focus regression is repaired; application native-focus GUI still fails. Native LV2/CoreMIDI remain disabled.",
-    "windows": "Build, full CTest, focused SFZ, strict ASIO and native state pass at 317a80e7. Confirmed startup AV is absent in the isolated guard prototype; normal integrated Windows build and remaining GUI failures are pending."
+    "macos": "Main/test build, 1707 CTest checks, focused SFZ, AU and CLAP pass at 317a80e7 with clean DAF82fc7ce4. All four foreground mastering GUI checks pass after moving the private validation window clear of a system notification. Native LV2/CoreMIDI remain disabled.",
+    "windows": "Normal guarded app/test builds, 1697 CTest entries, focused SFZ, strict ASIO and VST3/CLAP state checks pass at 95320fd2. Original service-session startup regression passes with zero captured access violations. All four interactive mastering GUI checks pass in session1, app exit0, pinned Mesa renderer."
   },
-  "recorded_at_utc": "2026-10-17T21:57:45.806386+00:00",
+  "recorded_at_utc": "2026-10-18T00:11:57+00:00",
   "shared_validation_commit": "0f86caa9eb6a3e7bb1f17b5a595f756a86183232",
   "latest_source_commit": "95320fd29a8c5e56a651be1df791a2e7c8a9fe2e",
   "checks_at_shared_commit": {
@@ -1068,14 +1126,14 @@
       "limits": "Windows-only integration passes portable CMake contract here; Linux does not compile or execute the Windows GUI module. Seven ALSA loopback fixtures remain unavailable."
     },
     "macos": {
-      "source_commit": "556f97a3dff9e8b7a610bc80fe477d4bfa43474b",
+      "source_commit": "317a80e77f5677cb095523a03720adc143e93b97",
       "daf_commit": "82fc7ce42faf241131006c7a6190e6656b682c06",
       "dependency_clean": true,
       "main_build": "passed",
       "test_build": "passed",
-      "ctest_total": 1705,
+      "ctest_total": 1707,
       "ctest_failed": 0,
-      "ctest_seconds": 52.84,
+      "ctest_seconds": 51.64,
       "ctest_reported_skips": 2,
       "ctest_fixture_skips": [
         {
@@ -1116,10 +1174,10 @@
         }
       ],
       "focused": {
-        "cases": 48,
-        "passed": 44,
+        "cases": 50,
+        "passed": 46,
         "skipped": 4,
-        "assertions": 5623,
+        "assertions": 5627,
         "failed_assertions": 0
       },
       "stock_au": {
@@ -1133,11 +1191,11 @@
         "required_track_and_aux_rejection_diagnostics": true
       },
       "app_sha256": "d3ca5595358f0a51f51d79908746dd2f658a5b5cbf1f58b94333a7cbe4d825cd",
-      "test_sha256": "3cb0f17ed372c0770e335b2e07208ae6e87202ae6c10b65ed6d4f801294c9ccb",
+      "test_sha256": "488262001c3e6bd41a59b17a8d5b567648987bc9c7b5ed6ae4fe1eca06c6e83f",
       "logs": [
-        "/tmp/dusk-016-approved-macos.log",
-        "/tmp/dusk-016-approved-macos-lasttest.log",
-        "/tmp/dusk-016-approved-macos-provenance.log"
+        "/tmp/dusk-016-macos-lease-approved.log",
+        "/tmp/dusk-016-macos-lease-approved-lasttest.log",
+        "/tmp/dusk-016-macos-clean-provenance.log"
       ],
       "gui": {
         "direct": {
@@ -1154,7 +1212,9 @@
           "log": "/tmp/dusk-016-approved-macos-open-focus.log",
           "profile": "/tmp/dusk-016-mac-open-focus.rBjWeD"
         },
-        "failure": "Phase menu never captured keyboard; compact Phase menu never received native focus. LaunchServices also failed to open preset picker."
+        "failure": "Phase menu never captured keyboard; compact Phase menu never received native focus. LaunchServices also failed to open preset picker.",
+        "source_commit": "556f97a3dff9e8b7a610bc80fe477d4bfa43474b",
+        "scope": "Historical direct/LaunchServices results at556f97a3; superseded for these four checks by foreground_gui below."
       },
       "session": "Marc confirmed unlocked/no dialog. Console user 501, login complete and on console; active Aqua bootstrap, Dock and Finder. No assertion that the session is locked.",
       "session_log": "/tmp/dusk-016-mac-session-evidence.log",
@@ -1162,18 +1222,57 @@
         "Native LV2 disabled.",
         "Native CoreMIDI disabled; fallback used.",
         "No physical device or maintainer GUI walkthrough.",
-        "Relocation fixture follow-up and temporary Cocoa diagnostics not transferred."
-      ]
+        "Four targeted mastering GUI checks pass; this is not a full macOS GUI suite or maintainer walkthrough."
+      ],
+      "foreground_gui": {
+        "source_commit": "317a80e77f5677cb095523a03720adc143e93b97",
+        "daf_commit": "82fc7ce42faf241131006c7a6190e6656b682c06",
+        "app_sha256": "d3ca5595358f0a51f51d79908746dd2f658a5b5cbf1f58b94333a7cbe4d825cd",
+        "passed": 4,
+        "failed": 0,
+        "skipped": 0,
+        "cases": [
+          "gui.mastering_phase_panel",
+          "gui.mastering_combo_keeps_panels",
+          "gui.mastering_comp_panel_painted",
+          "gui.mastering_compact_cover"
+        ],
+        "launch": "Temporary owned LaunchAgent in gui/501; job removed afterward.",
+        "activation": "Dusk active=true, Regular policy, finishedLaunching=true.",
+        "private_window_state": "0 62 1440 928 in the isolated profile; moves preset click clear of the existing system notification. No notification interaction or product change.",
+        "profile": "/tmp/dusk-016-mac-agent.C9Abaj",
+        "log": "/tmp/dusk-016-macos-uncovered-gui.log",
+        "cleanup_log": "/tmp/dusk-016-macos-uncovered-provenance.log",
+        "source_and_dependencies_clean": true
+      },
+      "foreground_gui_obstructed": {
+        "source_commit": "317a80e77f5677cb095523a03720adc143e93b97",
+        "passed": 2,
+        "failed": 2,
+        "skipped": 0,
+        "passed_cases": [
+          "gui.mastering_phase_panel",
+          "gui.mastering_comp_panel_painted"
+        ],
+        "failed_cases": {
+          "gui.mastering_combo_keeps_panels": "Preset picker did not open or accept Escape.",
+          "gui.mastering_compact_cover": "Compressor preset popup never opened; subsequent popup-preservation assertions fail."
+        },
+        "launch": "Temporary owned LaunchAgent in gui/501; exact job removed afterward.",
+        "activation": "Dusk active=true, Regular policy, finishedLaunching=true, audit session100015 matching Finder.",
+        "log": "/tmp/dusk-016-macos-agent-probe.log",
+        "profile": "/tmp/dusk-016-mac-agent.V3T5iX"
+      }
     },
     "windows": {
-      "source_commit": "317a80e77f5677cb095523a03720adc143e93b97",
+      "source_commit": "95320fd29a8c5e56a651be1df791a2e7c8a9fe2e",
       "daf_commit": "a615d48734bd86ea9f9a23cd7df7872bcd5fd6d9",
       "main_build": "passed",
       "test_build": "passed",
       "strict_asio_preflight": "passed; SDK resolved and JUCE_ASIO=1",
-      "ctest_total": 1696,
+      "ctest_total": 1697,
       "ctest_failed": 0,
-      "ctest_seconds": 141.32,
+      "ctest_seconds": 142.17,
       "ctest_reported_skips": 5,
       "ctest_fixture_skips": [
         {
@@ -1250,19 +1349,47 @@
         "clap_skipped": 0,
         "required_track_and_aux_rejection_diagnostics": true
       },
-      "app_sha256": "033b8f31d76c8ff19fc517b1e970676c5c9592f07fac1a958235126f91ac0223",
-      "test_sha256": "434409f79791f26aa908912c5d8405fdd168c5330e8dc7364cc2b6961099147a",
+      "app_sha256": "79fe6c275530bd0981d7831f6aac313b3f6ee48b0c5e6601f7d3ed695c8e714a",
+      "test_sha256": "c9fbf157ebf73401b37cc66f7088a5c172fb65232f23f780018b739e486909c0",
       "logs": [
-        "/tmp/dusk-016-windows-lease-final.log",
-        "/tmp/dusk-016-windows-lease-final-lasttest.log",
-        "/tmp/dusk-016-windows-lease-final-provenance.log"
+        "/tmp/dusk-016-windows-vblank-approved.log",
+        "/tmp/dusk-016-windows-vblank-lasttest.log",
+        "/tmp/dusk-016-windows-vblank-provenance.log"
       ],
       "limits": [
         "Nine actual fixture skips: four Linux capacity, one archive truncation, two case-distinct names and two active-root rename fixtures.",
         "Native UI/CLAP/VST3 and required ASIO enabled; generic live VST3 parameter read-back lacks a suitable fixture.",
-        "This normal app does not yet contain the startup guard; prototype proof is separate.",
+        "Four targeted mastering GUI checks pass in session1 with pinned Mesa software rendering; not a full Windows GUI suite, physical GPU/audio-device test or maintainer walkthrough.",
         "Existing compiler warnings remain; not a zero-warning Windows build."
-      ]
+      ],
+      "driver_seconds": 3174.2,
+      "interactive_gui": {
+        "source_commit": "95320fd29a8c5e56a651be1df791a2e7c8a9fe2e",
+        "app_sha256": "79fe6c275530bd0981d7831f6aac313b3f6ee48b0c5e6601f7d3ed695c8e714a",
+        "passed": 4,
+        "failed": 0,
+        "skipped": 0,
+        "app_exit": 0,
+        "launcher_session": 1,
+        "app_session": 1,
+        "foreground_samples": {
+          "second2": false,
+          "second9": true
+        },
+        "cases": [
+          "gui.mastering_phase_panel",
+          "gui.mastering_combo_keeps_panels",
+          "gui.mastering_comp_panel_painted",
+          "gui.mastering_compact_cover"
+        ],
+        "renderer": "Pinned owned Mesa26.2.0 llvmpipe LLVM22.1.8; OpenGL4.6 core.",
+        "profile": "C:\\Users\\marc\\AppData\\Local\\Temp\\dusk-016-interactive-b08b4e45e98f41cf833e6bd17b531b0a",
+        "launch": "Temporary ScheduledTask with the verified current console-user SID, Interactive token and Limited run level. Process-only execution policy option for the trusted owned script; no persistent policy change.",
+        "log": "/tmp/dusk-016-windows-interactive-final.log",
+        "cleanup_log": "/tmp/dusk-016-windows-interactive-cleanup.log",
+        "cleanup": "Task, owned app, child run script and operational controller removed; Dusk and shared JUCE source clean.",
+        "controller_limits": "Initial SSH-stdin invocation stalled before any profile/app launch and was stopped by exact command match. File launch initially lacked execution-policy option, then account mapping from SSH env failed. SID-based launch passes; first pass had null .NET ExitCode, final retained Win32 handle records exit0."
+      }
     },
     "linux_tarball": {
       "source_commit": "95320fd29a8c5e56a651be1df791a2e7c8a9fe2e",
@@ -1306,7 +1433,7 @@
       "seconds": 100.03,
       "log": "/tmp/dusk-016-lease-fixture-ctest.log"
     },
-    "remote_validation": "Windows full/focused/native checks pass at this commit. Mac follow-up transfer awaits additional-payload approval.",
+    "remote_validation": "Windows and Mac full/focused/native checks pass at this commit; unsupported Windows whole-root rename fixtures remain explicit skips.",
     "manual_coverage": "Evidence tokens updated; statuses and ceilings unchanged.",
     "published": false
   },
@@ -1357,8 +1484,80 @@
         "/tmp/dusk-016-guarded-gui.log"
       ]
     },
-    "native_integration": "Pending additional-payload source transfer approval and normal Windows build/test.",
-    "remaining_diagnostics": "Confirm advancing audio callbacks and playback/Phase feed; inspect actual click-handler delivery and completed native-frame/control rectangles. Existing Windows display check is unconditional. No proven audio or focus cause for the three remaining failures.",
-    "published": false
+    "native_integration": "Normal app/test builds, all 1697 CTest entries, focused SFZ, strict ASIO and required VST3/CLAP state checks pass at 95320fd2. Original service-session startup regression passes with zero captured access violations. All four interactive mastering GUI checks pass with app exit0.",
+    "remaining_diagnostics": "Earlier service-session prototype GUI failures resolve in the normal app launched in the interactive desktop session. No remaining failure in these four targeted GUI cases; full Windows GUI suite and maintainer walkthrough remain open.",
+    "published": false,
+    "normal_startup": {
+      "source_commit": "95320fd29a8c5e56a651be1df791a2e7c8a9fe2e",
+      "app_sha256": "79fe6c275530bd0981d7831f6aac313b3f6ee48b0c5e6601f7d3ed695c8e714a",
+      "context": "Original noninteractive service session0 with pinned owned Mesa; normal CMake app binary, not standalone prototype relink.",
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "case": "gui.mastering_comp_panel_painted",
+      "target_exit": 0,
+      "captured_access_violations": 0,
+      "profile": "C:\\Users\\marc\\AppData\\Local\\Temp\\dusk-016-normal-startup-17bcf3454a544580a6cb921b44a7cf8c",
+      "log": "/tmp/dusk-016-windows-normal-startup.log"
+    }
+  },
+  "macos_focus_diagnostics": {
+    "source_commit": "317a80e77f5677cb095523a03720adc143e93b97",
+    "daf_commit": "82fc7ce42faf241131006c7a6190e6656b682c06",
+    "patch": "/tmp/dusk-016-cocoa-diagnostic.patch",
+    "patch_sha256": "dcbd22380680b5ea9d3933ab27563020b474a236900e07601aee5e92e2fab7e1",
+    "observed": "Direct SSH launch: Pugl wrapper becomes first responder, but window key=0, NSApp active=0 and appKey=nil through frame120. Diagnostic GUI:1pass3fail0skip.",
+    "diagnostic_app_sha256": "754f22c817864ff67bb4af545372278a9e03e29021d47b5cab8cefb8600c91da",
+    "removed": true,
+    "clean_rebuild": "Passed; clean application hash restored exactly.",
+    "clean_app_sha256": "d3ca5595358f0a51f51d79908746dd2f658a5b5cbf1f58b94333a7cbe4d825cd",
+    "source_and_dependency_clean": true,
+    "launch_context_control": "Unprivileged launchctl asuser failed before launch (audit-session switch EPERM). Temporary owned LaunchAgent in gui/501 succeeds: active Regular app, finished launch, audit100015. Phase passes; two preset-popup failures remain. All launch jobs removed. Subsequent copied-public-JUCE trace identifies a covering system notification; private window-position control passes all four cases (see macos_preset_diagnostics and latest_checks).",
+    "debugger": "Clean-symbol attach denied: noninteractive debug session cannot get permission. No breakpoints ran and no debugger security settings changed.",
+    "logs": [
+      "/tmp/dusk-016-approved-cocoa-diagnostics.log",
+      "/tmp/dusk-016-cocoa-diagnostic-build.log",
+      "/tmp/dusk-016-cocoa-diagnostic-clean-build.log",
+      "/tmp/dusk-016-macos-clean-provenance.log",
+      "/tmp/dusk-016-macos-gui-domain.log",
+      "/tmp/dusk-016-macos-agent-probe.log",
+      "/tmp/dusk-016-macos-debug-probe.log"
+    ]
+  },
+  "macos_preset_diagnostics": {
+    "source_commit": "317a80e77f5677cb095523a03720adc143e93b97",
+    "daf_commit": "82fc7ce42faf241131006c7a6190e6656b682c06",
+    "patch": "/tmp/dusk-016-preset-diagnostic.patch",
+    "patch_sha256": "ee9707b76a42ce6a617ee364c2eecdcc080268972ba22059fec271f2354696bd",
+    "diagnostic_app_sha256": "15d8c50b0c619dd2dd01a8e37535d771ee86d00152341a58de396d90ae9be3b4",
+    "context": "Temporary owned LaunchAgent in gui/501; Dusk active=true, Regular policy, finishedLaunching=true, audit session100015.",
+    "passed": 2,
+    "failed": 2,
+    "skipped": 0,
+    "profile": "/tmp/dusk-016-mac-agent.hCAv6O",
+    "observed": "Both preset clicks hit the logical Label and enabled/showing DuskComboBox at point705,326, scale1. The native peer contains(point,true) returns false. No preset showPopup handler entry occurs. Phase mode combo opens normally elsewhere in the same run.",
+    "interpretation": "In-process copied-public-JUCE trace identifies rejection by windowNumberAtPoint: expected Dusk24286, got24041. Filtered CG metadata identifies24041 as UserNotificationCenter, layer8, bounds830,188,260,250. Its rectangle covers the preset point945,388. Moving only the private validation window to x0 makes all four clean GUI cases pass.",
+    "removed": true,
+    "clean_rebuild": "Passed; exact clean app hash restored.",
+    "clean_app_sha256": "d3ca5595358f0a51f51d79908746dd2f658a5b5cbf1f58b94333a7cbe4d825cd",
+    "source_and_dependency_clean": true,
+    "logs": [
+      "/tmp/dusk-016-approved-preset-trace.log",
+      "/tmp/dusk-016-preset-diagnostic-build.log",
+      "/tmp/dusk-016-preset-diagnostic-clean-build.log"
+    ],
+    "public_juce_trace": {
+      "method": "Copy only public JUCE GUI module, compile isolated object and standalone relink of existing app objects. Shared JUCE/Dusk/DAF source untouched. Restore original object and complete app bundle afterward.",
+      "prototype": true,
+      "passed": 2,
+      "failed": 2,
+      "skipped": 0,
+      "trace": "Valid native view frame/bounds. Window visible, opaque, alpha1, ignoresMouseEvents0. Existing window-at-point gate rejects the covered coordinate before native hitTest.",
+      "log": "/tmp/dusk-016-macos-public-hit-trace-2.log",
+      "covering_window_log": "/tmp/dusk-016-macos-occluding-window.log",
+      "restored_app_sha256": "d3ca5595358f0a51f51d79908746dd2f658a5b5cbf1f58b94333a7cbe4d825cd",
+      "original_object_and_bundle_restored": true,
+      "external_observer_limit": "Separate external observer returned0 without an AppKit initialization/positive control; not used to infer the product failure."
+    }
   }
 }
