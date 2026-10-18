@@ -40,26 +40,33 @@
         "tests/CocoaRetiredView.cpp"
       ],
       "committed": true,
-      "published": false,
+      "published": true,
       "commit": "82fc7ce42faf241131006c7a6190e6656b682c06",
       "baseline_log": "/tmp/dusk-016-approved-cocoa-before.log",
       "fixed_log": "/tmp/dusk-016-approved-cocoa-after.log",
-      "limits": "Controlled key-window fixture with actual AppKit first-responder transfers proves event delivery, not real application activation or Dusk integration."
+      "limits": "Controlled key-window fixture with actual AppKit first-responder transfers proves event delivery, not real application activation or Dusk integration.",
+      "published_merge": "63e7c861461ff1c57cedc177fedfd946daf6941b"
     },
     "evidence_audit": {
       "through": "0f86caa9eb6a3e7bb1f17b5a595f756a86183232",
       "result": "Independent read-only audit confirmed totals, source bounds and hashes. Corrected Windows failure classification, renderer metadata and native-fixture diagnostic; retained platform and fixture limits.",
       "latest_through": "95320fd29a8c5e56a651be1df791a2e7c8a9fe2e",
-      "latest_result": "Independent read-only audit confirmed fresh Mac 1708-entry CTest and four-case GUI results, package hashes/scope, source bounds and validation log hashes. Corrected one stale audit sentence: the Mac startup-guard transfer is explicitly approved and completed; no payload approval remains pending. Dependency publication preflight was added after that audit and locally verified."
+      "latest_result": "Independent read-only audit confirmed fresh Mac 1708-entry CTest and four-case GUI results, package hashes/scope, source bounds and validation log hashes. Corrected one stale audit sentence: the Mac startup-guard transfer is explicitly approved and completed; no payload approval remains pending. Dependency publication preflight was added after that audit and locally verified.",
+      "publication_and_runner_result": "Independent audit confirmed ten successful required DAF checks, protected merge63e7c861, reviewed-tree equality, JUCE annotated tag object and peeled075eed7a target, runner build/contracts and all140 recorded log hashes. Historical platform/package source and dependency bounds retained."
     },
     "windows_startup_integration": {
       "through": "95320fd29a8c5e56a651be1df791a2e7c8a9fe2e",
       "result": "No source-review findings after module-path normalization and dependency-watch fixes. Normal app/test builds, all 1697 CTest entries, focused SFZ, strict ASIO and required native-state checks pass. Original service-session startup regression passes with zero captured access violations. Four interactive mastering GUI checks pass with app exit0."
+    },
+    "macos_regression_runner": {
+      "through": "84a772a9d7db453d85aeae24bd73f76e89ec6ad3",
+      "result": "Independent two-pass source review found no actionable findings in the runner, contract and maintainer guide changes, including cross-script cancellation and self-test isolation.",
+      "limits": "Source review and mocked orchestration tests; actual dedicated-node prepush run remains pending."
     }
   },
   "manual_sync": {
     "product_changes": "SFZ upgrade discovery and dropdown behavior documented in earlier commits.",
-    "latest_changes": "Build/test/CI fixes and restoration of documented sandbox, focus and Windows filesystem behavior. No controls, shortcuts, ranges, defaults or schema changed; no further MANUAL edit required."
+    "latest_changes": "Build/test/CI tooling, release evidence and restoration of documented sandbox, focus and Windows filesystem behavior. No controls, shortcuts, ranges, defaults or schema changed; no further MANUAL edit required."
   },
   "hygiene": "Staged diff reviewed before every commit; load-bearing invariants retained.",
   "coverage": {
@@ -170,8 +177,7 @@
     }
   ],
   "remaining_release_gates": [
-    "Publish reviewed JUCE dusk-wayland-v3 and DAF Cocoa focus fix only with authorization; current Linux CI tag does not exist and DAF main lacks the fix.",
-    "Final shipping-configuration and full sanitizer CI; cold-host package checks. Same-source local platform checks and same-host package dry runs pass at 95320fd2.",
+    "Final Linux/Mac prepush gate and shipping-configuration/full sanitizer CI using published dependencies; cold-host package checks. Same-source platform checks and same-host package dry runs pass at 95320fd2.",
     "Live SFZ operations from all four sources.",
     "Physical external-drive tests.",
     "Cold high-rate and Pi performance.",
@@ -244,10 +250,11 @@
     "donor": "78abae748a32c5863f586ca174a47047a4d2c4a1",
     "daf": "a615d48734bd86ea9f9a23cd7df7872bcd5fd6d9",
     "linux_juce": "075eed7a1000b6b9dfce6aae93e7f2b82fa35f68",
-    "linux_juce_tag": "dusk-wayland-v3 (prepared pins; tag not created or published)",
+    "linux_juce_tag": "dusk-wayland-v3 (published; peeled target 075eed7a1000b6b9dfce6aae93e7f2b82fa35f68)",
     "macos_windows_juce": "51d11a2be6d5c97ccf12b4e5e827006e19f0555a",
     "macos_validated_daf": "82fc7ce42faf241131006c7a6190e6656b682c06",
-    "windows_vblank_public_fix": "5a97289030cb8e1e601ef2c70c8ee9008828bc25 (isolated local JUCE commit; not published)"
+    "windows_vblank_public_fix": "5a97289030cb8e1e601ef2c70c8ee9008828bc25 (isolated local JUCE commit; not published)",
+    "published_daf_main": "63e7c861461ff1c57cedc177fedfd946daf6941b"
   },
   "log_sha256": {
     "/tmp/dusk-016-focus-clean-main-build.log": "dd340601ff13b86dafbd66b28c1f2a31a477fb7d53e1bd208edc75406158407a",
@@ -379,7 +386,17 @@
     "/tmp/dusk-016-windows-package-vblank-provenance.log": "d571378a008f2f1b0129a95c14fc056a162f91bea67d52ec906dece7cc1c45e9",
     "/tmp/dusk-016-windows-package-vblank-provenance-initial.log": "c0adb02deda0bf8f5810416e83ceb08e57894dded119ef2666661dc6b9877541",
     "/tmp/dusk-016-windows-package-vblank-entries.log": "58755dc43ccee0bdb21f63c2726226fa43236e2c20b4d9fdb27c071cccba3379",
-    "/tmp/dusk-016-dependency-publication-preflight.json": "fc132261f14421d3ffdc84f4346fa3b1f8b03d27bff99409c381df50770adc14"
+    "/tmp/dusk-016-dependency-publication-preflight.json": "fc132261f14421d3ffdc84f4346fa3b1f8b03d27bff99409c381df50770adc14",
+    "/tmp/dusk-016-daf-merged.json": "e28ca8347ddbc97e15979e66f8881ac78aebe4483049d24779f5390f00665b97",
+    "/tmp/dusk-016-daf-published-ref.log": "e8d7f2ac53373c7c8bf087c9a78d0e38ee4151ca1a7f982b9b56b575d5841063",
+    "/tmp/dusk-016-daf-required-progress-3.json": "499a2791976811d806c10a94f1fc7ee753e01b98a3526872a6175b12429b9453",
+    "/tmp/dusk-016-daf-merge.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/tmp/dusk-016-juce-publish.log": "2332086b4d00f3aee5003bc1537f999086632885f3e8cb94b08623b4aead49a4",
+    "/tmp/dusk-016-juce-published-refs.log": "334d86229459ed4b492d4ab804b0a3ef397fb16634061672a63d457a5a7a2366",
+    "/tmp/dusk-016-macos-daf-published-direct.log": "9e8b47027cf90443bf76f116a9b55b28708fbafe402a10a36aafa148efa2371e",
+    "/tmp/dusk-016-mac-runner-before.log": "76b5e65e8fa6dc9e7a8b760c1dac950d68b43141ca24651833505611f8a13f1e",
+    "/tmp/dusk-016-mac-runner-contract-final.log": "08896f19f0d89b1447a36558be03dde67d573ebf2d30ed0d3bd2bb0e670fe354",
+    "/tmp/dusk-016-runner-main-build.log": "f55ede763aec10d9412f63115ca86f561c42d556ad21a7a0e213ada12f4451b6"
   },
   "validation_transfer_block": {
     "reason": "Automatic approval review requires explicit authorization for each additional non-public source payload and destination. Rejected transfers were not performed or bypassed.",
@@ -446,9 +463,9 @@
     "macos": "Main/test build, 1708 CTest entries, focused SFZ, AU/CLAP and four foreground mastering GUI checks pass at 95320fd2 with clean DAF82fc7ce4. Refreshed DMG contents/version/scan/self-test pass. Native LV2/CoreMIDI remain disabled.",
     "windows": "Normal guarded app/test builds, 1697 CTest entries, focused SFZ, strict ASIO and VST3/CLAP state checks pass at 95320fd2. Original service-session startup regression passes with zero captured access violations. All four interactive mastering GUI checks pass in session1, app exit0, pinned Mesa renderer. Refreshed MSI contents/version/legal checks pass; current app and pinned Mesa hashes verified inside the package."
   },
-  "recorded_at_utc": "2026-10-18T00:22:13+00:00",
+  "recorded_at_utc": "2026-10-18T01:00:08Z",
   "shared_validation_commit": "0f86caa9eb6a3e7bb1f17b5a595f756a86183232",
-  "latest_source_commit": "95320fd29a8c5e56a651be1df791a2e7c8a9fe2e",
+  "latest_source_commit": "84a772a9d7db453d85aeae24bd73f76e89ec6ad3",
   "checks_at_shared_commit": {
     "linux_build": {
       "status": "passed",
@@ -1639,21 +1656,41 @@
   },
   "latest_common_source_commit": "95320fd29a8c5e56a651be1df791a2e7c8a9fe2e",
   "dependency_publication_ready": {
-    "status": "Prepared and validated locally; explicit push authorization required by repository instructions.",
+    "status": "Published with explicit maintainer authorization. DAF protected main required a pull request and ten successful required checks.",
+    "authorization": "Maintainer explicitly approved both dependency publications and subsequently authorized continuing 0.16 work without further approval. The release remains gated on the maintainer three-platform manual pass.",
     "daf": {
       "repository": "https://github.com/dusk-audio/DAF.git",
-      "current_remote_main": "a615d48734bd86ea9f9a23cd7df7872bcd5fd6d9",
-      "commit": "82fc7ce42faf241131006c7a6190e6656b682c06",
-      "action": "Fast-forward main by the reviewed Cocoa embedded-focus fix and regression test. No forced update."
+      "previous_remote_main": "a615d48734bd86ea9f9a23cd7df7872bcd5fd6d9",
+      "reviewed_commit": "82fc7ce42faf241131006c7a6190e6656b682c06",
+      "current_remote_main": "63e7c861461ff1c57cedc177fedfd946daf6941b",
+      "pull_request": "https://github.com/dusk-audio/DAF/pull/79",
+      "merged_at_utc": "2026-10-18T00:52:52Z",
+      "required_checks_passed": 10,
+      "published_tree_matches_reviewed_commit": true,
+      "action": "Normal protected pull-request merge after required checks; no administrator or force bypass."
     },
     "juce": {
       "repository": "https://github.com/dusk-audio/JUCE-wayland.git",
       "commit": "075eed7a1000b6b9dfce6aae93e7f2b82fa35f68",
       "tag": "dusk-wayland-v3",
-      "remote_tag_exists": false,
-      "action": "Create and publish the reviewed snapshot tag required by the existing CI pin. No Dusk Studio release tag."
+      "tag_object": "ce9a3dd564b448741f72aee5df6772933f06c491",
+      "remote_tag_exists": true,
+      "action": "Published annotated dependency snapshot tag. Dusk Studio release version and tags remain unchanged."
     },
-    "preflight": "Both local dependency trees clean. DAF fix parent equals current remote main; proposed JUCE tag absent. Recheck remote refs before publication.",
-    "preflight_log": "/tmp/dusk-016-dependency-publication-preflight.json"
-  }
+    "preflight_log": "/tmp/dusk-016-dependency-publication-preflight.json",
+    "historical_validation_bound": "Earlier Mac binaries and packages used reviewed DAF82fc7ce4, whose source tree equals published merge63e7c861. Earlier Linux/Windows artifacts used DAFa615d487; their recorded dependency bounds are retained."
+  },
+  "macos_regression_runner": {
+    "commit": "84a772a9d7db453d85aeae24bd73f76e89ec6ad3",
+    "problem": "Hardcoded developer checkout, DAF and build paths prevented using the marked dedicated validation tree for mandatory prepush.",
+    "result": "Dedicated source/helper/dependency/build overrides added, with marker, clean-tree and exact DAF checks before transfer. Mocked positive path tests include spaces and shell metacharacters; negative tests reject unmarked source, wrong/dirty DAF, missing helper and missing revision before transfer.",
+    "before_log": "/tmp/dusk-016-mac-runner-before.log",
+    "contract_log": "/tmp/dusk-016-mac-runner-contract-final.log",
+    "main_build_log": "/tmp/dusk-016-runner-main-build.log",
+    "contract_entries_passed": 2,
+    "contract_duration_seconds": 14.73,
+    "main_build": "PASS; no warning/error diagnostics in captured output",
+    "dedicated_node_prepush": "Pending"
+  },
+  "latest_product_source_commit": "95320fd29a8c5e56a651be1df791a2e7c8a9fe2e"
 }
