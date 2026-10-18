@@ -118,8 +118,9 @@ checks on `main`.
 ## Bug reports
 
 [Open an issue on GitHub.](https://github.com/dusk-audio/dusk-studio/issues)
-Patreon supporters and patrons can also DM via Patreon. One-time and lifetime
-licence holders get a direct support email link in their release-repo invite.
+Patrons ($10 tier) can also message directly on Patreon, and their reports are
+looked at first. One-time and lifetime licence holders get a direct support
+email link in their release-repo invite.
 
 ## Why
 
