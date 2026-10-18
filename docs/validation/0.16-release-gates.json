@@ -73,11 +73,23 @@
       "main": "3cc84a6f64d3549ff739e2fddf80262eb6b65842",
       "merge": "1a31d8ffebb5fcce0afda5ee39abbc77c8072073",
       "result": "Clean textual merge; all five staged files reviewed, with MANUAL supporter headings synchronized. Earlier full-branch hygiene audit through f6c3abe4 used actual merge base d7e8fa4e; incremental scenario and isolation diffs reviewed afterward."
+    },
+    "scenario_followups": {
+      "base": "8c940d3fe0ca852591c3ff72bda0414cb27de4e7",
+      "through": "266acbe5d36be443a5557e705ebe65062f74bbd9",
+      "result": "Independent two-pass source review found no actionable findings in setup, asynchronous readiness or cleanup. Live transport and all six saved loop/punch fields are restored independently. Autosave scratch is context-owned and its original directory is restored before deletion.",
+      "limits": "Read-only source review. The forced autosave assertion proves publication into session state, not persistence or recovery from disk."
+    },
+    "gui_cold_and_usb_evidence": {
+      "source_through": "266acbe5d36be443a5557e705ebe65062f74bbd9",
+      "result": "Independent audit found no concrete inaccuracies in source bounds, case totals, log and controller hashes, cold-driver reconstruction or physical-drive scope. Original and follow-up Mac failures have passing controls; complete-run failures remain explicit.",
+      "limits": "Mac launcher-only status, incomplete full GUI coverage, standalone benchmark limits and absent unplug proof remain recorded."
     }
   },
   "manual_sync": {
     "product_changes": "SFZ upgrade discovery and dropdown behavior documented in earlier commits.",
-    "latest_changes": "Settings menu/tab routes and the audio-settings figure caption corrected. CHANGELOG now explicitly discloses HTTPS repository/artwork requests and startup/session isolation. Existing transport alert quotes remain verbatim."
+    "latest_changes": "Settings menu/tab routes and the audio-settings figure caption corrected. CHANGELOG now explicitly discloses HTTPS repository/artwork requests and startup/session isolation. Existing transport alert quotes remain verbatim.",
+    "scenario_followups": "Test-only setup, readiness and isolation corrections plus internal validation evidence; MANUAL.md needs no change."
   },
   "hygiene": "Staged diff reviewed before every commit; load-bearing invariants retained.",
   "coverage": {
@@ -114,7 +126,7 @@
     {
       "issue": 870,
       "implemented_or_reviewed": "Reader pool implementation and independent RT review complete.",
-      "remaining": "Cold-cache 96/192 kHz and Pi measurements, misses/xruns and export checks."
+      "remaining": "Standalone cold-cache 96/192 kHz data and historical warm before/after comparison recorded. Full-engine/device and Pi measurements, rolling seeks and hardware XRUNs remain; the opening 4,096 export frames pass automated signal checks."
     },
     {
       "issue": 874,
@@ -144,17 +156,17 @@
     {
       "issue": 879,
       "implemented_or_reviewed": "Unavailable pinned versions require explicit relink.",
-      "remaining": "Windows filesystem regression and full CTest now pass; final live or physical-drive walkthrough remains."
+      "remaining": "Linux mounted physical USB Move and relink scratch-path controls pass. Physical disconnect/remount, other-platform drive checks and maintainer walkthrough remain."
     },
     {
       "issue": 880,
       "implemented_or_reviewed": "App-data library default and former-root discovery on upgrade implemented.",
-      "remaining": "Windows filesystem regression and full CTest now pass; final live or physical-drive walkthrough remains."
+      "remaining": "Linux mounted physical USB Move and relink scratch-path controls pass. Physical disconnect/remount, other-platform drive checks and maintainer walkthrough remain."
     },
     {
       "issue": 881,
       "implemented_or_reviewed": "Reader integration, seek recovery and offline priming implemented and reviewed.",
-      "remaining": "Cold high-rate/Pi measurements and first-second export proof."
+      "remaining": "Standalone cold high-rate reader proof and opening 4,096-frame export signal assertion pass. Full-engine/device/Pi and maintainer playback proof remain."
     },
     {
       "issue": 882,
@@ -188,10 +200,10 @@
     }
   ],
   "remaining_release_gates": [
-    "Final shipping-configuration and sanitizer CI on the final main candidate, refreshed package dry runs and cold-host package checks. Complete Linux/Mac prepush and Windows full/native/engine/GUI validation now pass at 54ef8312; current Mac foreground GUI also passes.",
+    "Final main shipping-configuration and sanitizer CI, refreshed package dry runs and cold-host package checks. Published 8c940d3f has seven successful required checks. New scenario fixture controls pass with their documented platform skips; full-run failures and controls are preserved in the GUI follow-up. An unobstructed complete Mac GUI run remains unproved.",
     "Live SFZ GUI and shipping-platform operations, pause/restart/resume, remaining license-policy checks, Mac Musical Artifacts service access, and Windows VSCO/VCSL with sufficient space. Sampled backend/verify/offline/render passes cover four providers on Linux and three each on Mac and Windows.",
-    "Physical external-drive tests.",
-    "Cold high-rate and Pi performance.",
+    "Remaining physical external-drive checks, including hot-unplug/remount and other platforms. Linux mounted-USB cross-filesystem Move and two relink scratch-path controls pass.",
+    "Full-engine/device and Pi performance, high-rate rolling seeks and measured hardware XRUNs. Eighteen accepted standalone cold-cache 96/192 kHz runs have correct samples and no uncovered misses; late starts and covered loop misses remain reported separately.",
     "Maintainer manual pass on Linux, macOS and Windows.",
     "Version bump and release tag only after the required maintainer signoff."
   ],
@@ -426,7 +438,11 @@
     "/var/tmp/dusk-prepush.LlcIlH/mac.log": "40c8c05459a3c17b9a3ec26191697e1079ab6e4c8b2a57bd7e022acb2939821f",
     "/tmp/dusk-016-integrated-macos-gui.log": "99d9aa904917976194aa7e3ccf8b7ac34e7d93125dc0eecb41846b3eef8890f6",
     "/tmp/dusk-016-integrated-macos-provenance.log": "19b8e39b1ecad888f9cb645bfce9b8bf6b830e617594aa9a0979d01293e57ace",
-    "/tmp/dusk-016-mac-prepush-helper-ninja-fix.log": "7a878aabea2f654b9e7a10a13cccfa960f778f08565445c525a7aaf43737357c"
+    "/tmp/dusk-016-mac-prepush-helper-ninja-fix.log": "7a878aabea2f654b9e7a10a13cccfa960f778f08565445c525a7aaf43737357c",
+    "docs/validation/0.16-gui-followup.json": "0b634cff6e1bcb2664b4c669d934e7a9fdea84c72301eee8927bc3e39ab01247",
+    "docs/validation/0.16-reader-pool-cold.json": "f1ac825f0e1da37b674cdfea145f21393776fcbfab7d2b60b9196c9fc4ce7b6b",
+    "docs/validation/0.16-reader-pool-cold-driver.diff": "a2d23da448f3a24ebfff1f4dba92531fe3cdf1ad21dbd365529a088338a58c6f",
+    "docs/validation/0.16-physical-usb.json": "c5060180d3f72893a851097719437ec293ae7ccdfa4b90a3644c47a6b671bb43"
   },
   "validation_transfer_block": {
     "reason": "Automatic approval review requires explicit authorization for each additional non-public source payload and destination. Rejected transfers were not performed or bypassed.",
@@ -493,9 +509,9 @@
     "macos": "Dedicated prepush app/test builds, 1708 CTest entries, self-test, 177 engine scenarios and four foreground mastering GUI cases pass at 54ef8312. Native CoreMIDI is enabled; native LV2 remains disabled. Three live SFZ providers and three native renders pass; Musical Artifacts is blocked by an external browser/anti-bot response. Earlier required native-state/package scopes remain separately bounded.",
     "windows": "Normal guarded app/test builds, 1697 CTest entries, strict ASIO, VST3/CLAP state checks, 177 engine scenarios and four interactive mastering GUI cases pass at 54ef8312. Three live SFZ providers and three native renders pass; VSCO installation remains unproved after storage-guard cancellations. Earlier startup-regression and MSI scopes remain separately bounded."
   },
-  "recorded_at_utc": "2026-10-18T02:20:08.467786+00:00",
+  "recorded_at_utc": "2026-10-18T04:04:00.519324+00:00",
   "shared_validation_commit": "0f86caa9eb6a3e7bb1f17b5a595f756a86183232",
-  "latest_source_commit": "54ef831271dd2416357d43366066e2e426f06ac6",
+  "latest_source_commit": "266acbe5d36be443a5557e705ebe65062f74bbd9",
   "checks_at_shared_commit": {
     "linux_build": {
       "status": "passed",
@@ -1822,5 +1838,77 @@
     "evidence": "docs/validation/0.16-platform-followup.json",
     "source_commit": "54ef831271dd2416357d43366066e2e426f06ac6",
     "summary": "Latest-head Windows CTest, strict ASIO/native state, 177 engine scenarios and four interactive GUI cases pass. Current Mac binary passes four foreground GUI cases. Live checks pass three providers on Mac (78 programs, three renders) and Windows (four programs, three renders); archive and installed-tree hashes match Linux. Mac Musical Artifacts is challenged by the service; Windows VSCO attempts stop at a validation free-space guard. Default paths, cold hosts, live resume/policy and physical-drive coverage remain open."
+  },
+  "latest_scenario_source_commit": "266acbe5d36be443a5557e705ebe65062f74bbd9",
+  "gui_followup": {
+    "evidence": "docs/validation/0.16-gui-followup.json",
+    "source_commit": "266acbe5d36be443a5557e705ebe65062f74bbd9",
+    "summary": "Three scenario-only corrections: establish MIDI mode before arming on output-only devices, exclude retained previews before asynchronous Record dispatch, and restore saved transport fields after autosave. Windows six-case recording validation passes with native exit 0. Forced autosave reproduces all four long-run Linux failures before correction; clean six-case regression passes afterward. Mac and Windows each pass three supported cases and skip three Linux X-server readback cases. Original 22 Mac failures and seven geometry-dependent follow-up failures all have passing focused controls. Full run results and missing coverage remain explicit.",
+    "limits": "Latest recorded complete Mac GUI run is239 pass, 7 fail and 20 skip; its seven failures pass at their earlier window position. The UserNotificationCenter window remains untouched. An unobstructed complete Mac GUI run is not claimed. Linux 260/4/2 full run precedes the autosave cleanup; its four failures are retained alongside the deterministic fixed controls."
+  },
+  "reader_pool_cold": {
+    "evidence": "docs/validation/0.16-reader-pool-cold.json",
+    "reproduction_diff": "docs/validation/0.16-reader-pool-cold-driver.diff",
+    "source_commit": "8c940d3fe0ca852591c3ff72bda0414cb27de4e7",
+    "attempts": 19,
+    "accepted_runs": 18,
+    "rates_hz": [
+      96000,
+      192000
+    ],
+    "wrong_source_frames": 0,
+    "uncovered_read_misses": 0,
+    "callback_duration_overruns": 0,
+    "covered_raw_loop_misses": 5113,
+    "starts_at_least_one_period_late": 44,
+    "device_xruns": null,
+    "limits": "Standalone Linux reader/pool workload. Linux page cache verified cold before metadata opens; ordinary initial/loop priming retained. Locate primes synchronously with pacing paused. Device caches uncontrolled; no DSP, audio device, rolling-seek or Pi result."
+  },
+  "physical_usb": {
+    "evidence": "docs/validation/0.16-physical-usb.json",
+    "source_commit": "9772a36091ec73addbcfc54659e658c1b247bd0d",
+    "summary": "Three SFZ GUI cases pass using owned scratch paths on a mounted physical USB ext4 drive. The storage Move case moves a synthetic installed pack from internal btrfs and loads its moved runtime; the two relink cases use USB scratch with private internal library paths. Owned fixtures cleaned; existing data and mounts unchanged.",
+    "limits": "No physical hot-unplug/remount or Mac/Windows physical-drive proof. Mac reports no external physical disk; Windows exposes fixed C: only with insufficient room for the large live-library matrix."
+  },
+  "ci_checkpoint": {
+    "source_commit": "8c940d3fe0ca852591c3ff72bda0414cb27de4e7",
+    "required_checks": [
+      {
+        "link": "https://github.com/dusk-audio/dusk-studio/actions/runs/39090430813/job/117565808419",
+        "name": "Build + tests (clang Release, macOS arm64)",
+        "state": "SUCCESS"
+      },
+      {
+        "link": "https://github.com/dusk-audio/dusk-studio/actions/runs/39090430846/job/117565808325",
+        "name": "Build + tests (GCC Release, Ubuntu 22.04, arm64)",
+        "state": "SUCCESS"
+      },
+      {
+        "link": "https://github.com/dusk-audio/dusk-studio/actions/runs/39090430903/job/117565808614",
+        "name": "De-JUCE ratchet",
+        "state": "SUCCESS"
+      },
+      {
+        "link": "https://github.com/dusk-audio/dusk-studio/actions/runs/39090430827/job/117565808786",
+        "name": "Catch2 tests (TSan, Ubuntu 22.04)",
+        "state": "SUCCESS"
+      },
+      {
+        "link": "https://github.com/dusk-audio/dusk-studio/actions/runs/39090430857/job/117565808686",
+        "name": "Catch2 tests (MSVC x64 Release, Windows)",
+        "state": "SUCCESS"
+      },
+      {
+        "link": "https://github.com/dusk-audio/dusk-studio/actions/runs/39090430903/job/117565808832",
+        "name": "Build + tests (GCC Release, Ubuntu 22.04, amd64)",
+        "state": "SUCCESS"
+      },
+      {
+        "link": "https://github.com/dusk-audio/dusk-studio/actions/runs/39090430827/job/117565809240",
+        "name": "Catch2 tests (ASan + UBSan, Ubuntu 22.04)",
+        "state": "SUCCESS"
+      }
+    ],
+    "scope": "Published-head checkpoint before these scenario commits. Required CI must run again after publication."
   }
 }

@@ -1,0 +1,71 @@
+{
+  "recorded_at_utc": "2026-10-18T03:43:30.724280+00:00",
+  "app_build_source_commit": "9772a36091ec73addbcfc54659e658c1b247bd0d",
+  "app_sha256": "22663c161de35ae192827f69f4bce52be47cd3fd88755c22646759b9520f44b7",
+  "product_source_commit": "1a31d8ffebb5fcce0afda5ee39abbc77c8072073",
+  "source_bound": "The later 99f2ac82 edit changes only MIDI-loop scenario readiness. The three SFZ scenarios and production source are unchanged.",
+  "host": "Linux x86_64 dev box",
+  "external_device_metadata_after_run": {
+    "name": "sda",
+    "type": "disk",
+    "tran": "usb",
+    "size": "476.9G",
+    "fstype": "ext4",
+    "mountpoints": [
+      "/run/media/marc/External"
+    ]
+  },
+  "internal_profile_mount_metadata_after_run": {
+    "filesystems": [
+      {
+        "source": "/dev/nvme0n1p2[/@/var]",
+        "fstype": "btrfs",
+        "target": "/var"
+      }
+    ]
+  },
+  "external_fixture": "/run/media/marc/External/dusk-016-validation.it1618",
+  "internal_profile": "/var/tmp/dusk-016-usb-profile.F5CbHs",
+  "internal_profile_parent_device": 55,
+  "external_mount_device": 2048,
+  "command": "env TMPDIR=/var/tmp bash /tmp/dusk-016-physical-usb-checks.sh",
+  "controller_sha256": "e07ce6bac1996eb65dc5e273f8d097f96b4cf9607b87c46ddb6f2fbbd5f42927",
+  "controller": "#!/usr/bin/env bash\nset -euo pipefail\ncd /home/marc/projects/DuskStudio\nsource scripts/regress/common.sh\nsource scripts/regress/xvfb.sh\nsource scripts/regress/scenarios.sh\nAPP_BIN=\"$PWD/build/DuskStudio_artefacts/Release/DuskStudio\"\nexternalMount=/run/media/marc/External\npython3 - \"$externalMount\" \"$PWD\" <<'PY'\nimport os,sys\nfrom pathlib import Path\nmount=Path(sys.argv[1]); repo=Path(sys.argv[2])\nassert mount.is_mount() and mount.stat().st_dev != repo.stat().st_dev\nv=os.statvfs(mount)\nassert v.f_bavail*v.f_frsize>100*1024*1024\nprint('External and repository devices differ:',mount.stat().st_dev,repo.stat().st_dev)\nPY\nusbFixtureRoot=$(mktemp -d \"$externalMount/dusk-016-validation.XXXXXX\")\ninternalProfile=$(mktemp -d /var/tmp/dusk-016-usb-profile.XXXXXX)\nprintf 'Dusk Studio 0.16 owned validation fixture\\n' > \"$usbFixtureRoot/.dusk-validation-owned\"\ncleanup() {\n duskUsbExit=$?\n trap - EXIT\n xvfb_session_stop || true\n null_audio_stop || true\n python3 - \"$usbFixtureRoot\" \"$internalProfile\" <<'PY'\nimport os,sys,shutil\nfrom pathlib import Path\np=Path(sys.argv[1]); profile=Path(sys.argv[2])\nassert p.parent==Path('/run/media/marc/External') and p.name.startswith('dusk-016-validation.')\nassert p.stat().st_uid==os.getuid() and (p/'.dusk-validation-owned').read_text()=='Dusk Studio 0.16 owned validation fixture\\n'\nprint('Owned USB entries remaining after app cleanup:',[x.name for x in p.iterdir()])\nshutil.rmtree(p)\nassert profile.parent==Path('/var/tmp') and profile.name.startswith('dusk-016-usb-profile.')\nassert profile.stat().st_uid==os.getuid()\nshutil.rmtree(profile)\nPY\n exit \"$duskUsbExit\"\n}\ntrap cleanup EXIT\nprintf 'external_fixture=%s\\ninternal_profile=%s\\n' \"$usbFixtureRoot\" \"$internalProfile\"\nfindmnt --json --target \"$usbFixtureRoot\" --output SOURCE,FSTYPE,TARGET,OPTIONS\nsha256sum \"$APP_BIN\"\nnull_audio_start\nsandbox_env \"$internalProfile\"\nxvfb_run 240 env -u DBUS_SESSION_BUS_ADDRESS \"${SANDBOX_ENV[@]}\" \"TMPDIR=$usbFixtureRoot\" \\\n \"DUSKSTUDIO_RUN_SCENARIOS=gui:gui.sfz_library_storage_move,gui.sfz_relink_installed_program,gui.sfz_failed_relink_keeps_identity\" \\\n \"DUSKSTUDIO_FIXTURE_DIR=$SCENARIO_FIXTURE_ROOTS\" \"$APP_BIN\"\n",
+  "log": "/tmp/dusk-016-physical-usb-checks.log",
+  "log_sha256": "60e892b6da7d870f49b0cccf90372d5dc2118a45c3e734ad0c669192610e9a4a",
+  "result": {
+    "passed": 3,
+    "failed": 0,
+    "skipped": 0,
+    "native_app_exit_code": 0
+  },
+  "cases": [
+    {
+      "id": "gui.sfz_library_storage_move",
+      "milliseconds": 3918,
+      "scope": "Moves the installed synthetic SFZ fixture from the private internal configuration/data root on btrfs to the scenario scratch directory on the physical USB ext4 filesystem. Checks pack/locator/program identities, sample bytes, removal of the original pack, loading the moved sample runtime and exact configuration restoration."
+    },
+    {
+      "id": "gui.sfz_relink_installed_program",
+      "milliseconds": 3264,
+      "scope": "Relink success with scenario scratch on USB. Installed-library paths remain in the private internal profile; this is not a second cross-device pack move."
+    },
+    {
+      "id": "gui.sfz_failed_relink_keeps_identity",
+      "milliseconds": 2950,
+      "scope": "Relink failure preserves identity with scenario scratch on USB. Library unavailability is simulated within owned paths; the device stays mounted."
+    }
+  ],
+  "isolation": "Private HOME/config/music/runtime/XDG paths; private PipeWire null graph and Xvfb. Only a new owner-only USB fixture folder is created. The unchanged existing controller helpers supply the app fixture paths. The source uses a bounded synthetic RepositoryTransport, not live provider downloads.",
+  "cleanup": "Application removed all USB scenario content, leaving only the controller ownership marker. Controller verified its exact private path, owner and marker, then removed that folder and its own internal profile. Existing drive data and mounts were not changed.",
+  "other_platform_inventory": {
+    "macos": "diskutil list -plist external physical reports no external physical disks.",
+    "windows": "Only fixed NTFS C: reported, 5,741,268,992 bytes free at inventory; no external physical volume was exposed."
+  },
+  "limits": [
+    "One mounted physical USB drive and Linux ext4 only.",
+    "No physical hot-unplug, remount, drive replacement or USB power-loss proof.",
+    "No macOS/Windows physical-drive or shipping-package proof.",
+    "No default user-library-path proof: harness configuration/data are private and explicitly overridden."
+  ]
+}
