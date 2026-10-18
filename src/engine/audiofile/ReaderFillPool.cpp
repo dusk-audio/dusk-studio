@@ -39,7 +39,10 @@ ReaderFillPool::ReaderFillPool (unsigned count, bool startWorkers)
     }
     catch (...)
     {
-        stop.store (true, std::memory_order_release);
+        {
+            std::lock_guard<std::mutex> lock (mutex);
+            stop.store (true, std::memory_order_release);
+        }
         changed.notify_all();
         for (auto& worker : workers) worker.join();
         throw;
@@ -48,7 +51,10 @@ ReaderFillPool::ReaderFillPool (unsigned count, bool startWorkers)
 
 ReaderFillPool::~ReaderFillPool()
 {
-    stop.store (true, std::memory_order_release);
+    {
+        std::lock_guard<std::mutex> lock (mutex);
+        stop.store (true, std::memory_order_release);
+    }
     changed.notify_all();
     for (auto& worker : workers) worker.join();
     reset();
@@ -123,11 +129,17 @@ void ReaderFillPool::setPositionRt (std::int64_t frame) noexcept
 
 void ReaderFillPool::setLoopRt (bool enabled, std::int64_t start, std::int64_t end) noexcept
 {
+    enabled = enabled && end > start;
+    start = std::max<std::int64_t> (0, start);
+    if (loopEnabled.load (std::memory_order_relaxed) == enabled
+        && loopStart.load (std::memory_order_relaxed) == start
+        && loopEnd.load (std::memory_order_relaxed) == end)
+        return;
     loopGeneration.fetch_add (1, std::memory_order_acq_rel);
     std::atomic_thread_fence (std::memory_order_release);
-    loopStart.store (std::max<std::int64_t> (0, start), std::memory_order_relaxed);
+    loopStart.store (start, std::memory_order_relaxed);
     loopEnd.store (end, std::memory_order_relaxed);
-    loopEnabled.store (enabled && end > start, std::memory_order_relaxed);
+    loopEnabled.store (enabled, std::memory_order_relaxed);
     loopGeneration.fetch_add (1, std::memory_order_release);
 }
 
@@ -176,6 +188,8 @@ ReaderFillPool::Claim ReaderFillPool::claimNext()
     const auto at = position.load (std::memory_order_acquire);
     const auto loop = loopSnapshot();
     if (! loop.coherent) return {};
+    const auto now = std::chrono::steady_clock::now();
+    const auto behind = behindFrames.load (std::memory_order_acquire);
     Claim chosen;
     using Priority = std::tuple<int, std::int64_t, int, std::uint64_t>;
     Priority best { 3, 0, 0, 0 };
@@ -187,7 +201,10 @@ ReaderFillPool::Claim ReaderFillPool::claimNext()
         const bool near = eligible (entry, at, loop, sourceFrame);
         if (near)
         {
-            if (entry.failed) continue;
+            if (now < entry.retryAfter
+                || (at >= entry.timelineEnd
+                    && entry.timelineEnd > std::max<std::int64_t> (0, at - behind)))
+                continue;
             entry.reader->hintRt (sourceFrame);
             if (! entry.reader->needsFill()) continue;
         }
@@ -215,7 +232,8 @@ void ReaderFillPool::finishClaim (Entry& entry, bool failed) noexcept
 {
     {
         std::lock_guard<std::mutex> lock (mutex);
-        entry.failed = failed;
+        entry.retryAfter = failed ? std::chrono::steady_clock::now() + std::chrono::milliseconds (100)
+                                  : std::chrono::steady_clock::time_point {};
         entry.claimed = false;
     }
     changed.notify_all();
@@ -234,6 +252,8 @@ bool ReaderFillPool::pumpOnce()
             claim.entry->reader->hintRt (claim.sourceFrame);
             if (claim.entry->reader->fillOnce())
                 fillPasses.fetch_add (1, std::memory_order_relaxed);
+            else
+                failed = claim.entry->reader->needsFill();
         }
     }
     catch (...)
@@ -321,7 +341,10 @@ void ReaderFillPool::run()
     {
         if (pumpOnce()) continue;
         std::unique_lock<std::mutex> lock (mutex);
-        changed.wait_for (lock, std::chrono::milliseconds (10));
+        if (entries.empty())
+            changed.wait (lock, [&] { return stop.load (std::memory_order_acquire) || ! entries.empty(); });
+        else
+            changed.wait_for (lock, std::chrono::milliseconds (10));
         workerWakeups.fetch_add (1, std::memory_order_relaxed);
     }
 }

@@ -15,7 +15,9 @@
 #include "TapeStrip.h"
 #include "AuxView.h"
 #include "MasteringView.h"
-#include "PianoRollComponent.h"
+#if DUSKSTUDIO_HAS_NATIVE_UI
+ #include "imgui/DuskPanelWindow.h"
+#endif
 #include "ChannelEqEditor.h"
 #include "MidiBindingsPanel.h"
 #include "HardwareInsertEditor.h"
@@ -360,18 +362,10 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
         removeChildComponent (&m);
     };
 
-    // np-11/ed-05 are the same figure under two names: render once, copy to the
-    // alias. np-10/ed-04, the audio editor, is a native panel captured in
-    // captureNativePanels below.
     auto alias = [&] (const juce::String& from, const juce::String& to)
     {
         outDir.getChildFile (from).copyFileTo (outDir.getChildFile (to));
     };
-    {
-        PianoRollComponent pr (session, engine, 8, 0);
-        modalShot (pr, 1100, 680, "np-11-piano-roll.png", 500);
-    }
-    alias ("np-11-piano-roll.png", "ed-05-piano-roll-full.png");
     {
         MidiBindingsPanel p (session, engine, [] {});
         modalShot (p, MidiBindingsPanel::kPanelW, MidiBindingsPanel::kPanelH, "sync-01-mcu-bindings.png", 300);
@@ -667,6 +661,21 @@ void MainComponent::captureNativePanels (std::string outDir)
             self.engine.resumeProcessing();
         } });
     }
+
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    steps->push_back ({ 400, [] (MainComponent& self) { self.openPianoRoll (8, 0); } });
+    steps->push_back ({ 1000, [outDir] (MainComponent& self)
+    {
+        if (self.pianoRollShowing())
+            self.pianoRollWindow->captureNextFrameTo (outDir + "/np-11-piano-roll.ppm");
+    } });
+    steps->push_back ({ 1500, [dir] (MainComponent& self)
+    {
+        self.closePianoRoll();
+        dir.getChildFile ("np-11-piano-roll.ppm")
+           .copyFileTo (dir.getChildFile ("ed-05-piano-roll-full.ppm"));
+    } });
+   #endif
 
     // The audio editor on the first region, whose fades the figure shows. The
     // capture is asked for once the waveform peaks have had time to load.

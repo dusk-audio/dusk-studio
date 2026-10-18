@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "engine/sfz/SfzLibraryService.h"
+#include "foundation/AppConfigDir.h"
 #include "foundation/Fs.h"
 
 #include <archive.h>
@@ -11,6 +12,7 @@
 #include <array>
 #include <chrono>
 #include <condition_variable>
+#include <cstdlib>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -85,8 +87,43 @@ ProviderPack packFor (const std::string& bytes)
 struct Tree
 {
     Tree() : root (fs::canonical (dusk::fs::createUniqueTempDirectory ("dusk-sfz-service-"))) {}
-    ~Tree() { std::error_code ignored; fs::remove_all (root, ignored); }
+    ~Tree() { std::error_code ignored; fs::remove_all (dusk::fs::nativeIOPath (root), ignored); }
     fs::path root;
+};
+
+class ScopedConfigDirectory
+{
+public:
+    explicit ScopedConfigDirectory (const fs::path& directory)
+    {
+       #if defined(_WIN32)
+        const auto* existing = ::_wgetenv (L"DUSKSTUDIO_CONFIG_DIR");
+       #else
+        const auto* existing = std::getenv (dusk::fs::kConfigDirEnv);
+       #endif
+        hadPrevious = existing != nullptr;
+        if (existing != nullptr) previous = existing;
+       #if defined(_WIN32)
+        REQUIRE (::_wputenv_s (L"DUSKSTUDIO_CONFIG_DIR", directory.c_str()) == 0);
+       #else
+        REQUIRE (::setenv (dusk::fs::kConfigDirEnv, directory.c_str(), 1) == 0);
+       #endif
+    }
+    ~ScopedConfigDirectory()
+    {
+       #if defined(_WIN32)
+        ::_wputenv_s (L"DUSKSTUDIO_CONFIG_DIR", hadPrevious ? previous.c_str() : L"");
+       #else
+        if (hadPrevious) ::setenv (dusk::fs::kConfigDirEnv, previous.c_str(), 1);
+        else ::unsetenv (dusk::fs::kConfigDirEnv);
+       #endif
+    }
+    ScopedConfigDirectory (const ScopedConfigDirectory&) = delete;
+    ScopedConfigDirectory& operator= (const ScopedConfigDirectory&) = delete;
+
+private:
+    fs::path::string_type previous;
+    bool hadPrevious = false;
 };
 
 struct Reply
@@ -97,6 +134,7 @@ struct Reply
     std::size_t chunkBytes = 32768;
     std::function<void (std::size_t)> afterChunk {};
     bool hold = false;
+    OperationStatus endStatus = OperationStatus::Complete;
 };
 
 class ScriptedTransport final : public HttpTransport
@@ -131,7 +169,7 @@ public:
             if (reply.afterChunk) reply.afterChunk (offset + chunk.size());
         }
         if (control.status() != OperationStatus::Complete) return aborted();
-        return { OperationStatus::Complete, {} };
+        return { reply.endStatus, reply.endStatus == OperationStatus::Complete ? "" : "Connection interrupted" };
     }
 
     bool waitEntered (std::size_t count)
@@ -188,13 +226,24 @@ std::size_t ownedInstallFiles (const Tree& tree)
 {
     std::size_t count = 0;
     std::error_code error;
-    for (auto it = fs::recursive_directory_iterator (tree.root, error);
+    for (auto it = fs::recursive_directory_iterator (dusk::fs::nativeIOPath (tree.root), error);
          ! error && it != fs::recursive_directory_iterator(); it.increment (error))
     {
         const auto name = it->path().filename().u8string();
         if (name.rfind (".install-", 0) == 0 || name.find (".part") != std::string::npos) ++count;
     }
     return count;
+}
+
+void expireApiCache (const Tree& tree)
+{
+    for (const auto& entry : fs::directory_iterator (tree.root / ".repository-cache"))
+    {
+        if (entry.path().extension() != ".json") continue;
+        const auto json = dusk::json::Json::parse (dusk::fs::loadFileAsString (entry.path()), nullptr, false);
+        if (! json.is_discarded() && dusk::json::getString (json, "request_url").rfind ("https://api.github.com/", 0) == 0)
+            fs::last_write_time (entry.path(), fs::file_time_type::clock::now() - std::chrono::hours (1));
+    }
 }
 
 const std::string listing = R"([{"id":42,"name":"Service piano","author":"Fixture author","license":"cc-zero","formats":["sfz"]}])";
@@ -251,6 +300,206 @@ TEST_CASE ("SFZ library initialization and installed scans never contact a repos
     REQUIRE_FALSE (service.resume());
 }
 
+TEST_CASE ("SFZ library sweeps abandoned work without losing reusable downloads", "[sfz][service][storage][ipc]")
+{
+    Tree tree;
+    REQUIRE (fs::create_directory (tree.root / "packs"));
+    const auto cache = tree.root / ".repository-cache";
+    REQUIRE (fs::create_directory (cache));
+    const auto bytes = archiveBytes();
+    const auto normalizedPack = providerPackFromJson (providerPackToJson (packFor (bytes)));
+    REQUIRE (normalizedPack);
+    REQUIRE (normalizedPack.pack);
+    const auto pack = *normalizedPack.pack;
+    const auto part = cache / (hash (providerPackToJson (pack)) + ".part");
+    ScriptedTransport interrupted;
+    Reply prefix { bytes.substr (0, 64), 200,
+        { { "content-length", std::to_string (bytes.size()) }, { "etag", "\"version1\"" } } };
+    prefix.endStatus = OperationStatus::Failed;
+    interrupted.append (std::move (prefix));
+    REQUIRE (downloadFile (interrupted, { pack.downloadUrl, part, pack.expectedSha256, ArchiveLimits{}.maxArchiveBytes }).preservePart);
+    const auto staging = tree.root / (".install-" + std::string (32, 'a'));
+    const auto rollback = tree.root / (".install-" + std::string (32, 'b') + ".replaced");
+    const auto unrelated = tree.root / ".install-unrelated";
+    const auto uppercaseStage = tree.root / (".install-" + std::string (32, 'C'));
+    for (const auto& directory : { staging, rollback, unrelated, uppercaseStage })
+    {
+        REQUIRE (fs::create_directory (directory));
+        REQUIRE (dusk::fs::writeStringToFile (directory / "keep-or-sweep", "contents"));
+    }
+    const auto temporary = cache / (".cache-" + std::string (32, 'c'));
+    const auto invalid = cache / (std::string (64, 'd') + ".part");
+    const auto orphan = cache / (std::string (64, 'e') + ".part.resume.json");
+    const auto foreign = cache / ".cache-unrelated";
+    const auto uppercaseCache = cache / (".cache-" + std::string (32, 'D'));
+    for (const auto& file : { temporary, invalid, orphan, foreign, uppercaseCache })
+        REQUIRE (dusk::fs::writeStringToFile (file, "keep-or-sweep"));
+    const auto directoryPretendingToBeFile = cache / (".cache-" + std::string (32, 'f'));
+    REQUIRE (fs::create_directory (directoryPretendingToBeFile));
+    const auto uncertain = cache / (std::string (64, 'f') + ".part");
+    REQUIRE (fs::copy_file (part, uncertain));
+    auto sidecar = part; sidecar += ".resume.json";
+    auto uncertainSidecar = uncertain; uncertainSidecar += ".resume.json";
+    REQUIRE (fs::copy_file (sidecar, uncertainSidecar));
+    std::error_code linkError;
+    fs::create_hard_link (uncertainSidecar, cache / "unrelated-sidecar-link", linkError);
+    if (! linkError) REQUIRE (inspectDownloadPart (uncertain, ArchiveLimits{}.maxArchiveBytes) == DownloadPartState::Unavailable);
+    const auto outside = tree.root / "unrelated-target";
+    REQUIRE (fs::create_directory (outside));
+    REQUIRE (dusk::fs::writeStringToFile (outside / "keep", "contents"));
+    const auto symbolicStage = tree.root / (".install-" + std::string (32, '0'));
+    fs::create_directory_symlink (outside, symbolicStage, linkError);
+    const bool madeSymbolicStage = ! linkError;
+    const auto transport = std::make_shared<ScriptedTransport>();
+    LibraryService service (tree.root, transport);
+    REQUIRE (settled (service).state == LibraryState::Idle);
+    CHECK (transport->count() == 0);
+    CHECK_FALSE (fs::exists (staging));
+    CHECK_FALSE (fs::exists (temporary));
+    CHECK_FALSE (fs::exists (invalid));
+    CHECK_FALSE (fs::exists (orphan));
+    CHECK (fs::exists (rollback / "keep-or-sweep"));
+    CHECK (fs::exists (unrelated / "keep-or-sweep"));
+    CHECK (fs::exists (uppercaseStage / "keep-or-sweep"));
+    CHECK (fs::exists (foreign));
+    CHECK (fs::exists (uppercaseCache));
+    CHECK (fs::is_directory (directoryPretendingToBeFile));
+    CHECK (dusk::fs::loadFileAsString (uncertain) == bytes.substr (0, 64));
+    CHECK (fs::exists (uncertainSidecar));
+    CHECK (fs::exists (outside / "keep"));
+    if (madeSymbolicStage) CHECK (fs::is_symlink (fs::symlink_status (symbolicStage)));
+    CHECK (dusk::fs::loadFileAsString (part) == bytes.substr (0, 64));
+    transport->append ({ bytes.substr (64), 206,
+        { { "content-length", std::to_string (bytes.size() - 64) },
+          { "content-range", "bytes 64-" + std::to_string (bytes.size() - 1) + "/" + std::to_string (bytes.size()) },
+          { "etag", "\"version1\"" } } });
+    REQUIRE (service.install (pack));
+    REQUIRE (settled (service).state == LibraryState::Complete);
+    REQUIRE (transport->count() == 1);
+    CHECK (transport->request (0).headers.at ("range") == "bytes=64-");
+    CHECK (transport->request (0).headers.at ("if-range") == "\"version1\"");
+    CHECK (service.snapshot().installed.size() == 1);
+}
+
+TEST_CASE ("SFZ library startup cannot sweep directories with an active owner", "[sfz][service][storage][ipc]")
+{
+    Tree tree;
+    const auto cache = tree.root / ".repository-cache";
+    const auto temporary = cache / (".cache-" + std::string (32, 'a'));
+    const auto partial = cache / (std::string (64, 'b') + ".part");
+    fs::path staging;
+    const auto transport = std::make_shared<ScriptedTransport>();
+    {
+        PackStore active (tree.root);
+        std::string error;
+        staging = active.createStaging (error);
+        REQUIRE_FALSE (staging.empty());
+        REQUIRE (fs::create_directory (cache));
+        DirectoryLease repositoryOwner;
+        REQUIRE (repositoryOwner.acquire (cache, DirectoryLease::Access::Shared, error));
+        REQUIRE (dusk::fs::writeStringToFile (temporary, "active write"));
+        REQUIRE (dusk::fs::writeStringToFile (partial, "active download"));
+        LibraryService second (tree.root, transport);
+        REQUIRE (settled (second).state == LibraryState::Idle);
+        CHECK (fs::is_directory (staging));
+        CHECK (dusk::fs::loadFileAsString (temporary) == "active write");
+        CHECK (dusk::fs::loadFileAsString (partial) == "active download");
+        CHECK (transport->count() == 0);
+    }
+    LibraryService restarted (tree.root, transport);
+    REQUIRE (settled (restarted).state == LibraryState::Idle);
+    CHECK_FALSE (fs::exists (staging));
+    CHECK_FALSE (fs::exists (temporary));
+    CHECK_FALSE (fs::exists (partial));
+    CHECK (transport->count() == 0);
+   #if ! defined(_WIN32)
+    SECTION ("Repository work reacquires ownership after its directory is replaced")
+    {
+        fs::rename (cache, tree.root / "moved-cache");
+        REQUIRE (fs::create_directory (cache));
+        transport->append ({ listing });
+        REQUIRE (restarted.browse ("musical-artifacts"));
+        REQUIRE (settled (restarted).state == LibraryState::Complete);
+        DirectoryLease maintenance;
+        std::string error;
+        CHECK_FALSE (maintenance.acquire (cache, DirectoryLease::Access::Exclusive, error));
+        CHECK (error.empty());
+        CHECK (transport->count() == 1);
+    }
+   #endif
+}
+
+TEST_CASE ("SFZ library preserves saved downloads when its metadata cache is unavailable", "[sfz][service][storage][ipc]")
+{
+    Tree tree;
+    const auto configuration = tree.root / "configuration";
+    const auto library = tree.root / "library";
+    REQUIRE (fs::create_directory (configuration));
+    REQUIRE (fs::create_directory (library));
+    auto settings = configuration;
+    SECTION ("The configured data directory uses a plain parent") {}
+    SECTION ("The configured data directory may use a symbolic parent")
+    {
+        const auto alias = tree.root / "configuration-alias";
+        std::error_code error;
+        fs::create_directory_symlink (tree.root, alias, error);
+        if (error) SKIP ("The filesystem cannot create a symbolic-directory fixture");
+        settings = alias / "configuration";
+    }
+    const ScopedConfigDirectory isolated (settings);
+    REQUIRE (changeLibraryLocation ({}, library, false, {}, libraryLocationsFile()));
+    REQUIRE (fs::create_directory (library / ".downloads"));
+    const auto bytes = archiveBytes();
+    const auto normalizedPack = providerPackFromJson (providerPackToJson (packFor (bytes)));
+    REQUIRE (normalizedPack);
+    REQUIRE (normalizedPack.pack);
+    const auto pack = *normalizedPack.pack;
+    const auto part = library / ".downloads" / (hash (providerPackToJson (pack)) + ".part");
+    ScriptedTransport interrupted;
+    Reply first { bytes.substr (0, 64), 200,
+        { { "content-length", std::to_string (bytes.size()) }, { "etag", "\"version1\"" } } };
+    first.endStatus = OperationStatus::Failed;
+    interrupted.append (std::move (first));
+    const auto prefix = downloadFile (interrupted, { pack.downloadUrl, part, pack.expectedSha256, ArchiveLimits{}.maxArchiveBytes });
+    REQUIRE_FALSE (prefix);
+    REQUIRE (prefix.preservePart);
+    REQUIRE (ownedInstallFiles (tree) == 2);
+    const auto cache = configuration / "sfz-cache" / "repository";
+    REQUIRE (fs::create_directory (cache.parent_path()));
+    REQUIRE (dusk::fs::writeStringToFile (cache, "blocked"));
+    const auto transport = std::make_shared<ScriptedTransport>();
+    {
+        LibraryService service;
+        const auto initial = settled (service);
+        REQUIRE (initial.state == LibraryState::Failed);
+        CHECK (initial.failureKind == FailureKind::None);
+        REQUIRE (service.setTransportForTest (transport));
+        REQUIRE (service.install (pack));
+        const auto failed = settled (service);
+        REQUIRE (failed.state == LibraryState::Failed);
+        CHECK (failed.failureKind == FailureKind::None);
+        CHECK (transport->count() == 0);
+        REQUIRE (ownedInstallFiles (tree) == 2);
+    }
+    REQUIRE (fs::remove (cache));
+    transport->append ({ bytes.substr (64), 206,
+        { { "content-length", std::to_string (bytes.size() - 64) },
+          { "content-range", "bytes 64-" + std::to_string (bytes.size() - 1) + "/" + std::to_string (bytes.size()) },
+          { "etag", "\"version1\"" } } });
+    LibraryService restored;
+    REQUIRE (settled (restored).state == LibraryState::Idle);
+    REQUIRE (fs::is_directory (cache));
+    REQUIRE (restored.setTransportForTest (transport));
+    REQUIRE (restored.install (pack));
+    const auto result = settled (restored);
+    INFO (result.error);
+    REQUIRE (result.state == LibraryState::Complete);
+    REQUIRE (result.installed.size() == 1);
+    REQUIRE (transport->count() == 1);
+    CHECK (transport->request (0).headers.at ("range") == "bytes=64-");
+    CHECK (ownedInstallFiles (tree) == 0);
+}
+
 TEST_CASE ("SFZ service changes storage without replacing its worker or portable identities", "[sfz][service][storage][ipc]")
 {
     Tree source, destination;
@@ -302,13 +551,19 @@ TEST_CASE ("SFZ service changes storage without replacing its worker or portable
 TEST_CASE ("SFZ library installs a downloaded archive and publishes its portable locator", "[sfz][service][ipc]")
 {
     Tree tree;
+    auto root = tree.root;
+    SECTION ("Ordinary library path") {}
+    SECTION ("Deep library path")
+    {
+        for (int index = 0; index < 4; ++index) root /= std::string (72, char ('a' + index));
+    }
     const auto bytes = archiveBytes();
     auto pack = packFor (bytes);
     pack.presentation.artworkUrl = "https://fixtures.example/piano.png";
     pack.presentation.categoryHint = "piano";
     const auto transport = std::make_shared<ScriptedTransport>();
     transport->append ({ bytes, 200, { { "content-length", std::to_string (bytes.size()) } } });
-    LibraryService service (tree.root, transport);
+    LibraryService service (root, transport);
     settled (service);
     REQUIRE (service.install (pack));
     const auto result = settled (service);
@@ -319,9 +574,160 @@ TEST_CASE ("SFZ library installs a downloaded archive and publishes its portable
     REQUIRE (result.installed[0].archiveSha256 == hash (bytes));
     REQUIRE (transport->count() == 1);
     const auto locator = result.installed[0].locatorFor (result.installed[0].instruments.front());
-    PackStore offline (tree.root);
+    PackStore offline (root);
     REQUIRE (offline.resolve (locator));
     REQUIRE (ownedInstallFiles (tree) == 0);
+}
+
+TEST_CASE ("SFZ library verifies installed files without downloading or changing its receipt", "[sfz][service][ipc]")
+{
+    Tree tree;
+    const auto bytes = archiveBytes();
+    const auto transport = std::make_shared<ScriptedTransport>();
+    transport->append ({ bytes, 200, {} });
+    LibraryService service (tree.root, transport);
+    settled (service);
+    REQUIRE (service.install (packFor (bytes)));
+    const auto installed = settled (service);
+    REQUIRE (installed.state == LibraryState::Complete);
+    REQUIRE (installed.installed.size() == 1);
+    const auto selected = installed.installed.front();
+    const auto receiptPath = selected.directory / ".dusk-pack.json";
+    const auto receiptBytes = dusk::fs::loadFileAsString (receiptPath);
+    SECTION ("Matching installation") {}
+    SECTION ("Changed sample and successful retry clear the integrity failure")
+    {
+        const auto path = selected.directory / "Samples/tone.wav";
+        REQUIRE (dusk::fs::writeStringToFile (path, std::string (4096, 'y')));
+        REQUIRE (service.verify (selected));
+        const auto failed = settled (service);
+        CHECK (failed.state == LibraryState::Failed);
+        CHECK (failed.failureKind == FailureKind::Integrity);
+        CHECK (dusk::fs::loadFileAsString (receiptPath) == receiptBytes);
+        REQUIRE (dusk::fs::writeStringToFile (path, std::string (4096, 'x')));
+    }
+    SECTION ("Missing SFZ remains verifiable from the selected installation")
+    {
+        REQUIRE (fs::remove (selected.directory / "Piano.sfz"));
+        REQUIRE (service.verify (selected));
+        const auto failed = settled (service);
+        CHECK (failed.state == LibraryState::Failed);
+        CHECK (failed.failureKind == FailureKind::Integrity);
+        CHECK (dusk::fs::loadFileAsString (receiptPath) == receiptBytes);
+        CHECK (transport->count() == 1);
+        return;
+    }
+    SECTION ("Legacy installation reports verification unavailable")
+    {
+        auto receipt = dusk::json::Json::parse (receiptBytes);
+        receipt.erase ("installed_tree_sha256_v1");
+        const auto legacy = receipt.dump();
+        REQUIRE (dusk::fs::writeStringToFile (receiptPath, legacy));
+        REQUIRE (service.verify (selected));
+        const auto failed = settled (service);
+        CHECK (failed.state == LibraryState::Failed);
+        CHECK (failed.failureKind == FailureKind::None);
+        CHECK (failed.error.find ("unavailable") != std::string::npos);
+        CHECK (dusk::fs::loadFileAsString (receiptPath) == legacy);
+        CHECK (transport->count() == 1);
+        return;
+    }
+    SECTION ("Another library cannot be verified through this service")
+    {
+        auto outside = selected;
+        outside.directory = tree.root / "unregistered" / "packs" / selected.directory.filename();
+        REQUIRE (service.verify (outside));
+        const auto failed = settled (service);
+        CHECK (failed.state == LibraryState::Failed);
+        CHECK (failed.failureKind == FailureKind::None);
+        CHECK (failed.error.find ("registered") != std::string::npos);
+    }
+    SECTION ("Heavy work pauses verification until an explicit resume")
+    {
+        service.setHeavyWork (true);
+        REQUIRE (service.verify (selected));
+        CHECK (settled (service).state == LibraryState::Paused);
+        CHECK_FALSE (service.resume());
+        service.setHeavyWork (false);
+        CHECK (service.snapshot().state == LibraryState::Paused);
+        CHECK_FALSE (service.verify (selected));
+        REQUIRE (service.resume());
+        CHECK (settled (service).state == LibraryState::Complete);
+    }
+    SECTION ("Cancelling paused verification preserves installed files")
+    {
+        service.setHeavyWork (true);
+        REQUIRE (service.verify (selected));
+        CHECK (settled (service).state == LibraryState::Paused);
+        service.cancel();
+        CHECK (settled (service).state == LibraryState::Cancelled);
+        service.setHeavyWork (false);
+    }
+    REQUIRE (service.verify (selected));
+    const auto checked = settled (service);
+    CHECK (checked.state == LibraryState::Complete);
+    CHECK (checked.failureKind == FailureKind::None);
+    CHECK (checked.error == "Installed files match the installation record.");
+    CHECK (checked.installed.size() == 1);
+    CHECK (dusk::fs::loadFileAsString (receiptPath) == receiptBytes);
+    CHECK (transport->count() == 1);
+}
+
+TEST_CASE ("SFZ installed verification remains local when the metadata cache is unavailable", "[sfz][service][storage][ipc]")
+{
+    Tree tree;
+    const auto configuration = tree.root / "configuration";
+    const ScopedConfigDirectory isolated (configuration);
+    REQUIRE (fs::create_directory (tree.root / "library"));
+    auto configured = changeLibraryLocation ({}, tree.root / "library", false, {}, libraryLocationsFile());
+    REQUIRE (configured);
+    REQUIRE (configured.locations);
+    const auto descriptor = packFor (archiveBytes());
+    const auto publishFixture = [&] (const LibraryLocation& location)
+    {
+        PackStore store (location.root, location.marker);
+        std::string error;
+        const auto staging = store.createStaging (error);
+        REQUIRE_FALSE (staging.empty());
+        REQUIRE (dusk::fs::writeStringToFile (staging / "Piano.sfz", "<region>"));
+        auto published = store.publish (descriptor, descriptor.expectedSha256, staging, { "Piano.sfz" });
+        REQUIRE (published);
+        REQUIRE (published.pack);
+        return *published.pack;
+    };
+    const auto selected = publishFixture (configured.locations->active);
+    std::optional<InstalledPack> duplicate;
+    SECTION ("Active library") {}
+    SECTION ("Exact previous copy despite an active copy of the same identity")
+    {
+        REQUIRE (fs::create_directory (tree.root / "next-library"));
+        configured = changeLibraryLocation (*configured.locations, tree.root / "next-library", false,
+                                            {}, libraryLocationsFile());
+        REQUIRE (configured);
+        REQUIRE (configured.locations);
+        duplicate = publishFixture (configured.locations->active);
+        REQUIRE (dusk::fs::writeStringToFile (duplicate->directory / "Piano.sfz", "<global>"));
+    }
+    const auto cache = configuration / "sfz-cache" / "repository";
+    REQUIRE (fs::create_directories (cache.parent_path()));
+    REQUIRE (dusk::fs::writeStringToFile (cache, "blocked"));
+    const auto transport = std::make_shared<ScriptedTransport>();
+    LibraryService service;
+    CHECK (settled (service).state == LibraryState::Failed);
+    REQUIRE (service.setTransportForTest (transport));
+    REQUIRE (service.verify (selected));
+    const auto checked = settled (service);
+    INFO (checked.error);
+    CHECK (checked.state == LibraryState::Complete);
+    CHECK (checked.failureKind == FailureKind::None);
+    if (duplicate)
+    {
+        REQUIRE (service.verify (*duplicate));
+        const auto failed = settled (service);
+        CHECK (failed.state == LibraryState::Failed);
+        CHECK (failed.failureKind == FailureKind::Integrity);
+    }
+    CHECK (transport->count() == 0);
 }
 
 TEST_CASE ("SFZ library pauses before HTTP during heavy work and requires explicit resume", "[sfz][service][ipc]")
@@ -447,11 +853,17 @@ TEST_CASE ("SFZ library serializes requests and cancels a paused job without res
 TEST_CASE ("SFZ repository cache retains the last valid listing and supports explicit offline browsing", "[sfz][service][ipc]")
 {
     Tree tree;
+    auto root = tree.root;
+    SECTION ("Ordinary cache path") {}
+    SECTION ("Deep cache path")
+    {
+        for (int index = 0; index < 4; ++index) root /= std::string (72, char ('a' + index));
+    }
     const auto transport = std::make_shared<ScriptedTransport>();
     transport->append ({ listing, 200, { { "content-type", "application/json" } } });
     transport->append ({ "{broken JSON", 200, { { "content-type", "application/json" } } });
     {
-        LibraryService service (tree.root, transport);
+        LibraryService service (root, transport);
         settled (service);
         REQUIRE (service.browse ("musical-artifacts"));
         REQUIRE (settled (service).page.items.size() == 1);
@@ -465,7 +877,7 @@ TEST_CASE ("SFZ repository cache retains the last valid listing and supports exp
         REQUIRE (transport->count() == 2);
     }
     const auto offline = std::make_shared<ScriptedTransport>();
-    LibraryService restored (tree.root, offline);
+    LibraryService restored (root, offline);
     settled (restored);
     REQUIRE (offline->count() == 0);
     REQUIRE (restored.browse ("musical-artifacts", 1, {}, true));
@@ -473,6 +885,138 @@ TEST_CASE ("SFZ repository cache retains the last valid listing and supports exp
     REQUIRE (restored.browse ("musical-artifacts", 1, "uncached", true));
     REQUIRE (settled (restored).state == LibraryState::Failed);
     REQUIRE (offline->count() == 0);
+}
+
+TEST_CASE ("SFZ GitHub metadata freshness avoids repeated requests and repairs invalid caches", "[sfz][service][ipc]")
+{
+    Tree tree;
+    bool corrupt = false, expired = false;
+    SECTION ("Recent metadata is reused without a request") {}
+    SECTION ("A corrupt recent response is fetched again") { corrupt = true; }
+    SECTION ("Expired metadata is fetched again") { expired = true; }
+    const auto transport = std::make_shared<ScriptedTransport>();
+    transport->append ({ githubListing ("FreePats-Piano", 42, "freepats") });
+    LibraryService service (tree.root, transport);
+    settled (service);
+    REQUIRE (service.browse ("freepats"));
+    REQUIRE (settled (service).page.items.size() == 1);
+    if (corrupt)
+        for (const auto& entry : fs::directory_iterator (tree.root / ".repository-cache"))
+        {
+            if (entry.path().extension() != ".json") continue;
+            auto json = dusk::json::Json::parse (dusk::fs::loadFileAsString (entry.path()));
+            json["body"] = "[]";
+            REQUIRE (dusk::fs::writeStringToFile (entry.path(), json.dump()));
+        }
+    if (expired) expireApiCache (tree);
+    if (corrupt || expired) transport->append ({ githubListing ("FreePats-Flute", 44, "freepats") });
+    REQUIRE (service.browse ("freepats"));
+    const auto result = settled (service);
+    REQUIRE (result.state == LibraryState::Complete);
+    REQUIRE (result.page.items.size() == 1);
+    CHECK (result.page.items.front().packId == (corrupt || expired ? "44" : "42"));
+    CHECK (transport->count() == (corrupt || expired ? 2 : 1));
+}
+
+TEST_CASE ("SFZ repository revalidation sends saved ETags and retains the validated body", "[sfz][service][ipc]")
+{
+    Tree tree;
+    bool corrupt = false, updated = false;
+    SECTION ("The server confirms the saved representation") {}
+    SECTION ("A corrupt cached body triggers an unconditional repair") { corrupt = true; }
+    SECTION ("A not-modified response refreshes its validator and rate-limit metadata") { updated = true; }
+    const auto transport = std::make_shared<ScriptedTransport>();
+    transport->append ({ listing, 200, { { "ETag", "\"catalog-v1\"" }, { "X-RateLimit-Remaining", "59" } } });
+    transport->append ({ corrupt ? listing : std::string {}, corrupt ? 200 : 304,
+        { { "ETag", updated ? "\"catalog-v2\"" : "\"catalog-v1\"" }, { "X-RateLimit-Remaining", "58" } } });
+    {
+        LibraryService service (tree.root, transport);
+        settled (service);
+        REQUIRE (service.browse ("musical-artifacts"));
+        REQUIRE (settled (service).page.items.size() == 1);
+    }
+    if (corrupt)
+        for (const auto& entry : fs::directory_iterator (tree.root / ".repository-cache"))
+            if (entry.path().extension() == ".json")
+            {
+                auto json = dusk::json::Json::parse (dusk::fs::loadFileAsString (entry.path()));
+                json["body"] = "{broken JSON";
+                REQUIRE (dusk::fs::writeStringToFile (entry.path(), json.dump()));
+            }
+    LibraryService restored (tree.root, transport);
+    settled (restored);
+    REQUIRE (restored.browse ("musical-artifacts"));
+    const auto result = settled (restored);
+    REQUIRE (result.state == LibraryState::Complete);
+    REQUIRE (result.page.items.size() == 1);
+    CHECK (result.page.rateLimit.remaining == "58");
+    CHECK (transport->request (0).headers.count ("if-none-match") == 0);
+    if (corrupt) CHECK (transport->request (1).headers.count ("if-none-match") == 0);
+    else CHECK (transport->request (1).headers.at ("if-none-match") == "\"catalog-v1\"");
+    REQUIRE (restored.browse ("musical-artifacts", 1, {}, true));
+    const auto cached = settled (restored);
+    REQUIRE (cached.page.items.size() == 1);
+    CHECK (cached.page.rateLimit.remaining == "58");
+    CHECK (transport->count() == 2);
+    if (updated)
+    {
+        transport->append ({ {}, 304, {} });
+        REQUIRE (restored.browse ("musical-artifacts"));
+        REQUIRE (settled (restored).state == LibraryState::Complete);
+        CHECK (transport->request (2).headers.at ("if-none-match") == "\"catalog-v2\"");
+    }
+}
+
+TEST_CASE ("SFZ repository does not accept an unsolicited not-modified response", "[sfz][service][ipc]")
+{
+    Tree tree;
+    const auto transport = std::make_shared<ScriptedTransport>();
+    transport->append ({ {}, 304, {} });
+    LibraryService service (tree.root, transport);
+    settled (service);
+    REQUIRE (service.browse ("musical-artifacts"));
+    CHECK (settled (service).state == LibraryState::Failed);
+    REQUIRE (service.browse ("musical-artifacts", 1, {}, true));
+    CHECK (settled (service).state == LibraryState::Failed);
+    CHECK (transport->count() == 1);
+}
+
+TEST_CASE ("SFZ repository cache evicts old entries within count and byte limits", "[sfz][service][ipc]")
+{
+    Tree tree;
+    const auto cache = tree.root / ".repository-cache";
+    REQUIRE (fs::create_directory (cache));
+    std::size_t count = 257;
+    std::uintmax_t bytes = 1;
+    bool expired = false;
+    SECTION ("Entry count") {}
+    SECTION ("Total bytes") { count = 8; bytes = 9 * 1024 * 1024; }
+    SECTION ("Entries older than thirty days") { count = 1; expired = true; }
+    const auto now = fs::file_time_type::clock::now();
+    for (std::size_t i = 0; i < count; ++i)
+    {
+        const auto file = cache / (hash (std::to_string (i)) + ".json");
+        REQUIRE (dusk::fs::writeStringToFile (file, "x"));
+        fs::resize_file (file, bytes);
+        fs::last_write_time (file, now - std::chrono::hours (expired ? 24 * 31 : 1)
+                                      - std::chrono::seconds (count - i));
+    }
+    REQUIRE (dusk::fs::writeStringToFile (cache / "unrelated.json", "keep"));
+    const auto transport = std::make_shared<ScriptedTransport>();
+    transport->append ({ listing, 200, {} });
+    LibraryService service (tree.root, transport);
+    settled (service);
+    REQUIRE (service.browse ("musical-artifacts"));
+    REQUIRE (settled (service).state == LibraryState::Complete);
+    CHECK_FALSE (fs::exists (cache / (hash ("0") + ".json")));
+    CHECK (dusk::fs::loadFileAsString (cache / "unrelated.json") == "keep");
+    std::size_t remaining = 0;
+    std::uintmax_t total = 0;
+    for (const auto& entry : fs::directory_iterator (cache))
+        if (entry.path().extension() == ".json" && isSha256 (entry.path().stem().u8string()))
+        { ++remaining; total += entry.file_size(); }
+    CHECK (remaining <= 256);
+    CHECK (total <= 64 * 1024 * 1024);
 }
 
 TEST_CASE ("SFZ repository detail resolution can use validated cached metadata offline", "[sfz][service][ipc]")
@@ -556,8 +1100,70 @@ TEST_CASE ("SFZ library rejects bad download content without publishing or retai
     const auto result = settled (service);
     REQUIRE (result.state == LibraryState::Failed);
     REQUIRE_FALSE (result.error.empty());
+    CHECK (result.failureKind == FailureKind::Integrity);
     REQUIRE (result.installed.empty());
     REQUIRE (ownedInstallFiles (tree) == 0);
+    REQUIRE (service.requestInstalled());
+    const auto refreshed = settled (service);
+    CHECK (refreshed.state == LibraryState::Complete);
+    CHECK (refreshed.failureKind == FailureKind::None);
+}
+
+TEST_CASE ("SFZ library retains disk-full failures and completed downloads", "[sfz][service][ipc][sfz-service-disk-full]")
+{
+   #if defined(__linux__)
+    const auto* rootSetting = std::getenv ("DUSK_SFZ_CAPACITY_ROOT");
+    const auto* modeSetting = std::getenv ("DUSK_SFZ_CAPACITY_MODE");
+    if (! rootSetting || ! modeSetting) SKIP ("Requires the private tmpfs fixture from sfz_disk_full.sh");
+    const auto root = fs::canonical (rootSetting);
+    const std::string mode = modeSetting;
+    REQUIRE ((mode == "inodes" || mode == "bytes"));
+    REQUIRE (fs::is_empty (root));
+    REQUIRE (fs::space (root).capacity <= 64 * 1024);
+    const auto bytes = archiveBytes();
+    const auto normalized = providerPackFromJson (providerPackToJson (packFor (bytes)));
+    REQUIRE (normalized);
+    REQUIRE (normalized.pack);
+    const auto pack = *normalized.pack;
+    const auto transport = std::make_shared<ScriptedTransport>();
+    transport->append ({ bytes });
+    LibraryService service (root, transport);
+    const auto initial = settled (service);
+    if (mode == "inodes")
+    {
+        REQUIRE (initial.state == LibraryState::Failed);
+        CHECK (initial.failureKind == FailureKind::DiskFull);
+    }
+    else REQUIRE (initial.state == LibraryState::Idle);
+    REQUIRE (service.install (pack));
+    const auto failed = settled (service);
+    INFO (failed.error);
+    REQUIRE (failed.state == LibraryState::Failed);
+    CHECK (failed.failureKind == FailureKind::DiskFull);
+    CHECK (failed.installed.empty());
+    if (mode == "inodes") CHECK (transport->count() == 0);
+    else
+    {
+        const auto part = root / ".repository-cache" / (hash (providerPackToJson (pack)) + ".part");
+        REQUIRE (dusk::fs::loadFileAsString (part) == bytes);
+        REQUIRE (inspectDownloadPart (part, ArchiveLimits{}.maxArchiveBytes) == DownloadPartState::Reusable);
+        CHECK (transport->count() == 1);
+        for (const auto& entry : fs::directory_iterator (root))
+            CHECK (entry.path().filename().u8string().rfind (".install-", 0) != 0);
+        REQUIRE (service.requestInstalled());
+        const auto refreshed = settled (service);
+        CHECK (refreshed.state == LibraryState::Complete);
+        CHECK (refreshed.failureKind == FailureKind::None);
+        REQUIRE (service.install (pack));
+        const auto retried = settled (service);
+        CHECK (retried.state == LibraryState::Failed);
+        CHECK (retried.failureKind == FailureKind::DiskFull);
+        CHECK (transport->count() == 1);
+        CHECK (dusk::fs::loadFileAsString (part) == bytes);
+    }
+   #else
+    SKIP ("The bounded tmpfs fixture requires Linux user and mount namespaces");
+   #endif
 }
 
 TEST_CASE ("SFZ library resumes extraction from a completed locally verified part without HTTP", "[sfz][service][ipc]")
@@ -626,11 +1232,14 @@ TEST_CASE ("SFZ library removal forwards session usage and refreshes installed s
     REQUIRE (transport->count() == 1);
 }
 
-TEST_CASE ("SFZ library destruction cancels a paused install and releases its owned files", "[sfz][service][ipc]")
+TEST_CASE ("SFZ library shutdown preserves paused downloads unless explicitly cancelled", "[sfz][service][ipc]")
 {
     Tree tree;
     const auto bytes = archiveBytes();
     const auto transport = std::make_shared<ScriptedTransport>();
+    bool cancelBeforeShutdown = false;
+    SECTION ("Quit retains the validated prefix") {}
+    SECTION ("Cancel followed immediately by quit removes it") { cancelBeforeShutdown = true; }
     {
         LibraryService service (tree.root, transport);
         settled (service);
@@ -640,9 +1249,114 @@ TEST_CASE ("SFZ library destruction cancels a paused install and releases its ow
         REQUIRE (service.install (packFor (bytes)));
         REQUIRE (settled (service).state == LibraryState::Paused);
         REQUIRE (ownedInstallFiles (tree) == 2);
+        if (cancelBeforeShutdown) service.cancel();
     }
-    REQUIRE (ownedInstallFiles (tree) == 0);
+    REQUIRE (ownedInstallFiles (tree) == (cancelBeforeShutdown ? 0 : 2));
     REQUIRE (transport->count() == 1);
+    const auto resumed = std::make_shared<ScriptedTransport>();
+    if (cancelBeforeShutdown) resumed->append ({ bytes, 200, {} });
+    else resumed->append ({ bytes.substr (64), 206,
+        { { "content-length", std::to_string (bytes.size() - 64) },
+          { "content-range", "bytes 64-" + std::to_string (bytes.size() - 1) + "/" + std::to_string (bytes.size()) },
+          { "etag", "\"version1\"" } } });
+    LibraryService restored (tree.root, resumed);
+    settled (restored);
+    REQUIRE (restored.install (packFor (bytes)));
+    const auto result = settled (restored);
+    INFO (result.error);
+    REQUIRE (result.state == LibraryState::Complete);
+    REQUIRE (result.installed.size() == 1);
+    REQUIRE (resumed->count() == 1);
+    if (cancelBeforeShutdown) CHECK (resumed->request (0).headers.count ("range") == 0);
+    else
+    {
+        CHECK (resumed->request (0).headers.at ("range") == "bytes=64-");
+        CHECK (resumed->request (0).headers.at ("if-range") == "\"version1\"");
+    }
+    CHECK (dusk::fs::loadFileAsString (result.installed.front().directory / "Samples/tone.wav") == std::string (4096, 'x'));
+    CHECK (ownedInstallFiles (tree) == 0);
+}
+
+TEST_CASE ("SFZ library retries failed downloads using their saved validators", "[sfz][service][ipc]")
+{
+    Tree tree;
+    const auto bytes = archiveBytes();
+    const auto transport = std::make_shared<ScriptedTransport>();
+    Reply first { bytes.substr (0, 64), 200,
+        { { "content-length", std::to_string (bytes.size()) }, { "etag", "\"version1\"" } } };
+    first.endStatus = OperationStatus::Failed;
+    transport->append (std::move (first));
+    auto service = std::make_unique<LibraryService> (tree.root, transport);
+    settled (*service);
+    REQUIRE (service->install (packFor (bytes)));
+    REQUIRE (settled (*service).state == LibraryState::Failed);
+    REQUIRE (ownedInstallFiles (tree) == 2);
+    bool restartFresh = false;
+    SECTION ("Retry in the same service") {}
+    SECTION ("Retry after shutdown")
+    {
+        service.reset();
+        REQUIRE (ownedInstallFiles (tree) == 2);
+        service = std::make_unique<LibraryService> (tree.root, transport);
+        settled (*service);
+    }
+    SECTION ("Quit a paused retry before HTTP preserves the existing prefix")
+    {
+        service->setHeavyWork (true);
+        REQUIRE (service->install (packFor (bytes)));
+        REQUIRE (settled (*service).state == LibraryState::Paused);
+        REQUIRE (transport->count() == 1);
+        service.reset();
+        REQUIRE (ownedInstallFiles (tree) == 2);
+        service = std::make_unique<LibraryService> (tree.root, transport);
+        settled (*service);
+    }
+    SECTION ("Cancel a paused retry before HTTP and quit")
+    {
+        service->setHeavyWork (true);
+        REQUIRE (service->install (packFor (bytes)));
+        REQUIRE (settled (*service).state == LibraryState::Paused);
+        REQUIRE (transport->count() == 1);
+        service->cancel();
+        service.reset();
+        REQUIRE (ownedInstallFiles (tree) == 0);
+        service = std::make_unique<LibraryService> (tree.root, transport);
+        settled (*service);
+        restartFresh = true;
+    }
+    SECTION ("A mismatched resume validator discards the saved pair")
+    {
+        transport->append ({ bytes.substr (64), 206,
+            { { "content-length", std::to_string (bytes.size() - 64) },
+              { "content-range", "bytes 64-" + std::to_string (bytes.size() - 1) + "/" + std::to_string (bytes.size()) },
+              { "etag", "\"version2\"" } } });
+        REQUIRE (service->install (packFor (bytes)));
+        const auto rejected = settled (*service);
+        REQUIRE (rejected.state == LibraryState::Failed);
+        CHECK (rejected.error == "Download entity changed; restart the download");
+        REQUIRE (transport->count() == 2);
+        CHECK (transport->request (1).headers.at ("range") == "bytes=64-");
+        REQUIRE (ownedInstallFiles (tree) == 0);
+        restartFresh = true;
+    }
+    const auto retryRequest = transport->count();
+    if (restartFresh) transport->append ({ bytes, 200, {} });
+    else transport->append ({ bytes.substr (64), 206,
+        { { "content-length", std::to_string (bytes.size() - 64) },
+          { "content-range", "bytes 64-" + std::to_string (bytes.size() - 1) + "/" + std::to_string (bytes.size()) },
+          { "etag", "\"version1\"" } } });
+    REQUIRE (service->install (packFor (bytes)));
+    const auto result = settled (*service);
+    INFO (result.error);
+    REQUIRE (result.state == LibraryState::Complete);
+    REQUIRE (result.installed.size() == 1);
+    if (restartFresh) CHECK (transport->request (retryRequest).headers.count ("range") == 0);
+    else
+    {
+        CHECK (transport->request (retryRequest).headers.at ("range") == "bytes=64-");
+        CHECK (transport->request (retryRequest).headers.at ("if-range") == "\"version1\"");
+    }
+    CHECK (ownedInstallFiles (tree) == 0);
 }
 
 TEST_CASE ("SFZ library shutdown joins an idle worker after acknowledged jobs", "[sfz][service][ipc][sfz-shutdown]")
@@ -823,6 +1537,7 @@ TEST_CASE ("SFZ all repositories retains successful sources and reports source f
         appendAdditionalListings (transport);
         REQUIRE (service.browse ("all", 1, "Piano"));
         REQUIRE (settled (service).page.items.size() == 2);
+        expireApiCache (tree);
     }
     transport->append ({ githubListing(), githubFails ? 429 : 200, { { "retry-after", "25" } } });
     if (! githubFails) appendCatalogReply (transport);
@@ -875,6 +1590,7 @@ TEST_CASE ("SFZ all repositories keeps validated caches separate from failed sou
         appendAdditionalListings (transport);
         REQUIRE (service.browse ("all", 1, "Piano"));
         REQUIRE (settled (service).page.items.size() == 2);
+        expireApiCache (tree);
         transport->append ({ "{broken JSON" });
         transport->append ({ listing });
         appendAdditionalListings (transport);
@@ -921,6 +1637,7 @@ TEST_CASE ("SFZ all repositories interruption preserves the last complete page",
     settled (service);
     REQUIRE (service.browse ("all", 1, "Piano"));
     REQUIRE (settled (service).page.items.size() == 2);
+    expireApiCache (tree);
     bool pause = false, holdSecond = false;
     SECTION ("Cancel during the first source") {}
     SECTION ("Pause during the first source and resume") { pause = true; }

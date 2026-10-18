@@ -7,6 +7,18 @@
 
 namespace duskstudio
 {
+enum class SessionLoadFailure
+{
+    None, FileUnavailable, InvalidJson, NewerVersion, MigrationFailed
+};
+
+struct SessionLoadError
+{
+    SessionLoadFailure failure = SessionLoadFailure::None;
+    int fileVersion = 0;
+    int supportedVersion = 0;
+};
+
 // Serialise / restore a Session to/from JSON on disk. Save uses an atomic
 // write pattern (write to .tmp, move into place) so a crash mid-save never
 // produces a partial session.json. Load is best-effort - missing fields fall
@@ -15,9 +27,9 @@ class SessionSerializer
 {
 public:
     static bool save (const Session& session, const juce::File& target);
-    static bool load (Session& session,       const juce::File& source);
+    static bool load (Session& session,       const juce::File& source, SessionLoadError* error = nullptr);
     static bool save (const Session& session, const std::filesystem::path& target);
-    static bool load (Session& session,       const std::filesystem::path& source);
+    static bool load (Session& session,       const std::filesystem::path& source, SessionLoadError* error = nullptr);
 
     // Build the JSON snapshot without writing it. Lets the autosave path
     // hash the serialised state to skip redundant writes when nothing has

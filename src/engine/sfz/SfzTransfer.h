@@ -7,6 +7,7 @@
 #include <map>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace duskstudio::sfz
 {
@@ -20,7 +21,11 @@ struct HttpRequest
     long timeoutSeconds = 60;
     long lowSpeedBytesPerSecond = 128;
     long lowSpeedSeconds = 30;
+    std::vector<std::string> allowedHosts;
 };
+
+bool initializeHttpTransport();
+bool httpsUrlOnHosts (const std::string&, const std::vector<std::string>&);
 
 struct HttpResponse
 {
@@ -71,7 +76,13 @@ struct DownloadResult : OperationResult
 {
     std::string sha256;
     std::uint64_t bytes = 0;
+    bool preservePart = false;
 };
+
+enum class DownloadPartState { Reusable, Invalid, Unavailable };
+
+// Inspects metadata only; downloadFile rehashes completed content before reuse.
+DownloadPartState inspectDownloadPart (const std::filesystem::path&, std::uint64_t maxBytes);
 
 DownloadResult downloadFile (HttpTransport&, const DownloadRequest&,
                               const OperationControl& = {});

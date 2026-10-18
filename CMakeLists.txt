@@ -301,6 +301,11 @@ endif()
 # in that directory was in the default build to lose.
 add_subdirectory(${DUSKSTUDIO_JUCE_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/JUCE EXCLUDE_FROM_ALL)
 
+if(WIN32)
+    include(cmake/WindowsVBlankGuard.cmake)
+    duskstudio_guard_windows_vblank("${DUSKSTUDIO_JUCE_SOURCE_DIR}/modules/juce_gui_basics")
+endif()
+
 # App icon. JUCE bakes the PNG into platform-specific resources at
 # build time (.ico on Windows, .icns on macOS, embedded data block on
 # Linux). Same file is used for both BIG and SMALL - JUCE downscales
@@ -628,6 +633,7 @@ if(DUSKSTUDIO_ENABLE_NATIVE_UI)
     # of the stack stays behind DuskPanelWindow.
     target_sources(DuskStudio PRIVATE
         src/ui/imgui/AudioEditorView.cpp
+        src/ui/imgui/PianoRollView.cpp
         src/ui/imgui/AudioDeviceSelector.cpp
         src/ui/imgui/AudioSettingsView.cpp
         src/ui/imgui/ChannelCompView.cpp
@@ -636,6 +642,7 @@ if(DUSKSTUDIO_ENABLE_NATIVE_UI)
         src/ui/imgui/BuiltinUnitView.cpp
         src/ui/imgui/DafEditorHost.cpp
         src/ui/imgui/MasteringLimiterView.cpp
+        src/ui/imgui/MasteringPhaseView.cpp
         src/ui/imgui/PanelControls.cpp
         src/ui/imgui/SfzRepositoryView.cpp
         src/ui/imgui/SfzArtwork.cpp
@@ -760,10 +767,12 @@ target_sources(DuskStudio PRIVATE
     src/engine/scenario/cases/lv2_large_store_timing_bound.cpp
     src/engine/scenario/cases/lv2_params_numbering_stable.cpp
     src/engine/scenario/cases/lv2_worker_bounce.cpp
+    src/engine/scenario/cases/managed_sfz_relink.cpp
     src/engine/scenario/cases/markers.cpp
     src/engine/scenario/cases/midi_bindings.cpp
     src/engine/scenario/cases/midi_dropped_block_releases.cpp
     src/engine/scenario/cases/midi_insert_unfed_releases.cpp
+    src/engine/scenario/cases/midi_merge_pending.cpp
     src/engine/scenario/cases/midi_out_dense_block.cpp
     src/engine/scenario/cases/midi_panic_all_paths.cpp
     src/engine/scenario/cases/midi_route_change_releases.cpp
@@ -797,6 +806,7 @@ target_sources(DuskStudio PRIVATE
     src/dsp/MasterBus.cpp
     src/dsp/MasteringChain.cpp
     src/dsp/MasteringDigitalEq.cpp
+    src/dsp/PhaseAnalyzer.cpp
     src/dsp/Metronome.cpp
     src/session/MarkerEditActions.cpp
     src/session/RecentSessions.cpp
@@ -861,7 +871,7 @@ target_sources(DuskStudio PRIVATE
     src/ui/MasteringView.cpp
     src/ui/MasterStripComponent.cpp
     src/ui/MidiBindingsPanel.cpp
-    src/ui/PianoRollComponent.cpp
+    src/ui/PianoRollEdit.cpp
     src/ui/PluginPickerHelpers.cpp
     src/ui/PluginPickerPanel.cpp
     src/ui/PluginScanModal.cpp
@@ -972,11 +982,13 @@ target_sources(DuskStudio PRIVATE
     src/engine/sfz/SfzCatalog.cpp
     src/engine/sfz/SfzCatalogEnvelope.cpp
     src/engine/sfz/SfzTransfer.cpp
+    src/engine/sfz/SfzDirectoryLease.cpp
     src/engine/sfz/SfzArtworkCache.cpp
     src/engine/sfz/SfzArchive.cpp
     src/engine/sfz/SfzPathPolicy.cpp
     src/engine/sfz/SfzProvider.cpp
     src/engine/sfz/SfzPackStore.cpp
+    src/engine/sfz/SfzPackIntegrity.cpp
     src/engine/sfz/SfzPackIndex.cpp
     src/engine/sfz/SfzLibraryLocations.cpp
     src/engine/sfz/SfzLibraryService.cpp)

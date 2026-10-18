@@ -1,5 +1,6 @@
 #include "SfzLibraryService.h"
 #include "SfzCatalogJson.h"
+#include "../../foundation/AppConfigDir.h"
 #include "../../foundation/Fs.h"
 
 #include <sodium.h>
@@ -7,7 +8,6 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
-#include <fstream>
 #include <system_error>
 
 #if defined(__APPLE__)
@@ -23,6 +23,8 @@ namespace
 namespace fs = std::filesystem;
 using Json = dusk::json::Json;
 constexpr std::uint64_t kMaxCacheBody = 8 * 1024 * 1024;
+constexpr std::uint64_t kMaxCacheBytes = 64 * 1024 * 1024;
+constexpr std::size_t kMaxCacheEntries = 256;
 
 std::string digest (std::string_view text)
 {
@@ -34,12 +36,85 @@ std::string digest (std::string_view text)
     return hex.data();
 }
 
-bool plainDirectory (const fs::path& path)
+FailureKind storageFailureKind (const std::error_code& error)
+{
+    return error == std::errc::no_space_on_device ? FailureKind::DiskFull : FailureKind::None;
+}
+
+bool plainDirectory (const fs::path& path, std::error_code& error)
+{
+    const auto ioPath = dusk::fs::nativeIOPath (path);
+    fs::create_directory (ioPath, error);
+    if (error) return false;
+    return fs::is_directory (fs::symlink_status (ioPath, error)) && ! error;
+}
+
+bool lowerHex (std::string_view name)
+{
+    return std::all_of (name.begin(), name.end(), [] (char c)
+    { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); });
+}
+
+void removePlainFile (const fs::path& path)
 {
     std::error_code error;
-    fs::create_directory (path, error);
-    error.clear();
-    return fs::is_directory (fs::symlink_status (path, error)) && ! error;
+    const auto ioPath = dusk::fs::nativeIOPath (path);
+    if (! fs::is_regular_file (fs::symlink_status (ioPath, error)) || error) return;
+    if (fs::hard_link_count (ioPath, error) != 1 || error) return;
+    fs::remove (ioPath, error);
+}
+
+void sweepWorkDirectory (const fs::path& directory) noexcept
+{
+    try
+    {
+        DirectoryLease maintenance;
+        std::string ownershipError;
+        if (! maintenance.acquire (directory, DirectoryLease::Access::Exclusive, ownershipError)) return;
+        std::error_code error;
+        for (fs::directory_iterator it (dusk::fs::nativeIOPath (directory), error), end; ! error && it != end; it.increment (error))
+        {
+            const auto name = it->path().filename().u8string();
+            if (name.size() == 39 && name.compare (0, 7, ".cache-") == 0 && lowerHex (std::string_view (name).substr (7)))
+            {
+                removePlainFile (it->path());
+                continue;
+            }
+            const bool part = name.size() == 69 && name.compare (64, 5, ".part") == 0;
+            const bool sidecar = name.size() == 81 && name.compare (64, 17, ".part.resume.json") == 0;
+            if ((! part && ! sidecar) || ! lowerHex (std::string_view (name).substr (0, 64))) continue;
+            const auto path = directory / fs::u8path (name.substr (0, 69));
+            if (inspectDownloadPart (path, ArchiveLimits{}.maxArchiveBytes) != DownloadPartState::Invalid) continue;
+            removePlainFile (path);
+            auto metadata = path;
+            metadata += ".resume.json";
+            removePlainFile (metadata);
+        }
+    }
+    catch (...) {}
+}
+
+void sweepLibraryStaging (const LibraryLocation& location) noexcept
+{
+    try
+    {
+        if (! libraryLocationAvailable (location)) return;
+        DirectoryLease maintenance;
+        std::string ownershipError;
+        if (! maintenance.acquire (location.root, DirectoryLease::Access::Exclusive, ownershipError)
+            || ! libraryLocationAvailable (location)) return;
+        std::error_code error;
+        for (fs::directory_iterator it (dusk::fs::nativeIOPath (location.root), error), end; ! error && it != end; it.increment (error))
+        {
+            const auto name = it->path().filename().u8string();
+            if (name.size() != 41 || name.compare (0, 9, ".install-") != 0
+                || ! lowerHex (std::string_view (name).substr (9))) continue;
+            std::error_code entryError;
+            if (fs::is_directory (it->symlink_status (entryError)) && ! entryError)
+                fs::remove_all (it->path(), entryError);
+        }
+    }
+    catch (...) {}
 }
 
 bool atomicCacheWrite (const fs::path& target, const std::string& text)
@@ -49,7 +124,7 @@ bool atomicCacheWrite (const fs::path& target, const std::string& text)
     std::array<char, 33> name {};
     randombytes_buf (random.data(), random.size());
     sodium_bin2hex (name.data(), name.size(), random.data(), random.size());
-    const auto temporary = target.parent_path() / (std::string (".cache-") + name.data());
+    const auto temporary = dusk::fs::nativeIOPath (target.parent_path() / (std::string (".cache-") + name.data()));
     if (! dusk::fs::writeStringToFile (temporary, text))
     {
         std::error_code ignored;
@@ -58,7 +133,7 @@ bool atomicCacheWrite (const fs::path& target, const std::string& text)
     }
     std::error_code error;
 #if defined(_WIN32)
-    const bool replaced = MoveFileExW (temporary.c_str(), target.c_str(),
+    const bool replaced = MoveFileExW (temporary.c_str(), dusk::fs::nativeIOPath (target).c_str(),
                                        MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
 #else
     fs::rename (temporary, target, error);
@@ -68,9 +143,42 @@ bool atomicCacheWrite (const fs::path& target, const std::string& text)
     return replaced;
 }
 
-OperationResult interrupted (const OperationControl& control)
+void trimRepositoryCache (const fs::path& root)
 {
-    const auto status = control.status();
+    struct Entry { fs::path path; fs::file_time_type modified; std::uintmax_t bytes; };
+    std::vector<Entry> entries;
+    std::uintmax_t total = 0;
+    std::error_code error;
+    for (auto it = fs::directory_iterator (dusk::fs::nativeIOPath (root), error); ! error && it != fs::directory_iterator(); it.increment (error))
+    {
+        if (it->path().extension() != ".json" || ! isSha256 (it->path().stem().u8string())) continue;
+        std::error_code entryError;
+        if (! fs::is_regular_file (it->symlink_status (entryError)) || entryError) continue;
+        const auto size = it->file_size (entryError);
+        if (entryError) continue;
+        const auto modified = it->last_write_time (entryError);
+        if (entryError) continue;
+        if (size > kMaxCacheBytes)
+        {
+            fs::remove (it->path(), entryError);
+            continue;
+        }
+        entries.push_back ({ it->path(), modified, size });
+        total += size;
+    }
+    std::sort (entries.begin(), entries.end(), [] (const auto& a, const auto& b) { return a.modified < b.modified; });
+    std::size_t count = entries.size();
+    const auto oldest = fs::file_time_type::clock::now() - std::chrono::hours (24 * 30);
+    for (const auto& entry : entries)
+    {
+        if (entry.modified >= oldest && count <= kMaxCacheEntries && total <= kMaxCacheBytes) break;
+        std::error_code removeError;
+        if (fs::remove (entry.path, removeError)) { --count; total -= entry.bytes; }
+    }
+}
+
+OperationResult interrupted (OperationStatus status)
+{
     return { status, status == OperationStatus::Paused ? "SFZ library work is paused" : "SFZ library work was cancelled" };
 }
 
@@ -85,14 +193,16 @@ public:
     {
         const auto key = digest (Json { { "url", request.url }, { "headers", request.headers } }.dump());
         if (key.empty()) return { OperationStatus::Failed, "Cannot identify repository cache entry" };
-        const auto path = cache / (key + ".json");
+        const auto path = dusk::fs::nativeIOPath (cache / (key + ".json"));
         std::error_code cacheError;
         const auto modified = fs::last_write_time (path, cacheError);
-        const bool freshCatalog = ! cacheError
-            && request.url == "https://raw.githubusercontent.com/sfzinstruments/sfzinstruments.github.io/master/data/sfz/instruments.yml"
+        const auto freshness = request.url == "https://raw.githubusercontent.com/sfzinstruments/sfzinstruments.github.io/master/data/sfz/instruments.yml"
+            ? std::chrono::minutes (360) : request.url.rfind ("https://api.github.com/", 0) == 0
+                ? std::chrono::minutes (5) : std::chrono::minutes (0);
+        const bool fresh = ! cacheError
             && modified <= fs::file_time_type::clock::now()
-            && fs::file_time_type::clock::now() - modified < std::chrono::hours (6);
-        if (offlineOnly || freshCatalog)
+            && fs::file_time_type::clock::now() - modified < freshness;
+        if (offlineOnly)
         {
             std::error_code error;
             if (! fs::is_regular_file (fs::symlink_status (path, error)) || error
@@ -103,11 +213,12 @@ public:
             const auto& json = *parsed.root;
             const auto responseHeaders = json.find ("headers");
             const auto content = json.find ("body");
-            if (dusk::json::getInt (json, "schema", 0) != 1
+            if (dusk::json::getInt (json, "schema", 0) != 2
                 || dusk::json::getString (json, "request_url") != request.url
                 || responseHeaders == json.end() || ! responseHeaders->is_object()
                 || content == json.end() || ! content->is_string()
-                || content->get_ref<const std::string&>().size() > kMaxCacheBody)
+                || content->get_ref<const std::string&>().size() > kMaxCacheBody
+                || digest (content->get_ref<const std::string&>()) != dusk::json::getString (json, "body_sha256"))
                 return { OperationStatus::Failed, "Repository cache entry is invalid" };
             HttpResponse response { 200, dusk::json::getString (json, "response_url"), {} };
             std::size_t headerBytes = 0;
@@ -119,33 +230,87 @@ public:
                 if (headerBytes > 65536) return { OperationStatus::Failed, "Repository cache headers are too large" };
                 response.headers[it.key()] = value;
             }
-            if (control.status() != OperationStatus::Complete) return interrupted (control);
+            if (const auto status = control.status(); status != OperationStatus::Complete) return interrupted (status);
             if (! headers (response)) return { OperationStatus::Failed, "Cached repository response was rejected" };
             const auto& text = content->get_ref<const std::string&>();
             for (std::size_t offset = 0; offset < text.size(); offset += 32768)
             {
-                if (control.status() != OperationStatus::Complete) return interrupted (control);
+                if (const auto status = control.status(); status != OperationStatus::Complete) return interrupted (status);
                 if (! body (std::string_view (text).substr (offset, 32768)))
                     return { OperationStatus::Failed, "Cached repository response was rejected" };
             }
-            if (offlineOnly) usedCache = true;
+            usedCache = true;
             return { OperationStatus::Complete, {} };
         }
+        HttpResponse cachedResponse;
+        std::string cachedContent, etag;
+        CachedTransport saved (upstream, cache, true);
+        const auto cached = saved.perform (request, [&] (const HttpResponse& value)
+        {
+            cachedResponse = value;
+            const auto found = value.headers.find ("etag");
+            if (found != value.headers.end() && found->second.size() <= 1024
+                && found->second.find_first_of ("\r\n") == std::string::npos
+                && found->second.find ('\0') == std::string::npos) etag = found->second;
+            return true;
+        }, [&] (std::string_view bytes)
+        {
+            cachedContent.append (bytes.data(), bytes.size());
+            return true;
+        }, control);
+        const auto replay = [&] () -> OperationResult
+        {
+            if (const auto status = control.status(); status != OperationStatus::Complete) return interrupted (status);
+            if (! headers (cachedResponse)) return { OperationStatus::Failed, "Revalidated repository response was rejected" };
+            for (std::size_t offset = 0; offset < cachedContent.size(); offset += 32768)
+            {
+                if (const auto status = control.status(); status != OperationStatus::Complete) return interrupted (status);
+                if (! body (std::string_view (cachedContent).substr (offset, 32768)))
+                    return { OperationStatus::Failed, "Revalidated repository response was rejected" };
+            }
+            return { OperationStatus::Complete, {} };
+        };
+        if (cached && fresh) return replay();
+        auto conditional = request;
+        if (cached && ! etag.empty()) conditional.headers["if-none-match"] = etag;
         HttpResponse response;
         std::string content;
-        const auto result = upstream.perform (request,
-            [&] (const HttpResponse& value) { response = value; return headers (value); },
+        const auto result = upstream.perform (conditional,
+            [&] (const HttpResponse& value)
+            {
+                response = value;
+                HttpHeaders normalized;
+                for (const auto& item : value.headers)
+                    if (! normalized.emplace (dusk::text::toLowerCase (item.first), item.second).second) return false;
+                response.headers = std::move (normalized);
+                return response.statusCode == 304 || headers (response);
+            },
             [&] (std::string_view bytes)
             {
+                if (response.statusCode == 304) return bytes.empty();
                 if (bytes.size() > kMaxCacheBody - content.size()) return false;
                 content.append (bytes.data(), bytes.size());
                 return body (bytes);
             }, control);
+        if (result && response.statusCode == 304)
+        {
+            if (! cached || etag.empty()) return { OperationStatus::Failed, "Repository returned 304 without a validated cached response" };
+            for (const auto* name : { "etag", "last-modified", "link", "x-ratelimit-remaining", "x-ratelimit-reset", "retry-after" })
+            {
+                const auto found = response.headers.find (name);
+                if (found != response.headers.end()) cachedResponse.headers[name] = found->second;
+            }
+            const auto replayed = replay();
+            if (! replayed) return replayed;
+            response = std::move (cachedResponse);
+            content = std::move (cachedContent);
+        }
         if (result && response.statusCode == 200)
         {
-            Json entry { { "schema", 1 }, { "request_url", request.url },
+            const auto contentHash = digest (content);
+            Json entry { { "schema", 2 }, { "request_url", request.url },
                          { "response_url", response.url }, { "headers", response.headers },
-                         { "body", std::move (content) } };
+                         { "body_sha256", contentHash }, { "body", std::move (content) } };
             updates.emplace_back (path, entry.dump());
         }
         return result;
@@ -154,6 +319,8 @@ public:
     void commit()
     {
         for (const auto& update : updates) atomicCacheWrite (update.first, update.second);
+        updates.clear();
+        trimRepositoryCache (cache);
     }
 
     bool usedCache = false;
@@ -197,19 +364,20 @@ std::string rateLimitError (std::string error, const ProviderRateLimit& limit)
 } // namespace
 
 LibraryService::LibraryService()
-    : LibraryService (readLibraryLocations(), libraryLocationsFile(), {}) {}
+    : LibraryService (readLibraryLocations(), libraryLocationsFile(), {}, dusk::fs::appDataDir()) {}
 
 LibraryService::LibraryService (fs::path root, std::shared_ptr<HttpTransport> supplied)
-    : LibraryService (LibraryLocations { { std::move (root), {} }, {}, {} }, {}, std::move (supplied)) {}
+    : LibraryService (LibraryLocations { { std::move (root), {} }, {}, {} }, {}, std::move (supplied), {}) {}
 
-LibraryService::LibraryService (LibraryLocations configured, fs::path file, std::shared_ptr<HttpTransport> supplied)
+LibraryService::LibraryService (LibraryLocations configured, fs::path file, std::shared_ptr<HttpTransport> supplied,
+                                fs::path cacheDirectory)
     : store (configured.active.root, configured.active.marker),
       transport (supplied ? std::move (supplied) : std::make_shared<CurlTransport>()),
       locations (std::move (configured)), configurationFile (std::move (file)),
-      cacheRoot (configurationFile.empty() ? store.root() / ".repository-cache"
-                                          : configurationFile.parent_path() / "sfz-cache" / "repository"),
-      artworkCache (configurationFile.empty() ? store.root() / ".artwork-cache"
-                                              : configurationFile.parent_path() / "sfz-cache" / "artwork", transport),
+      cacheRoot (cacheDirectory.empty() ? store.root() / ".repository-cache"
+                                        : cacheDirectory / "sfz-cache" / "repository"),
+      artworkCache (cacheDirectory.empty() ? store.root() / ".artwork-cache"
+                                            : cacheDirectory / "sfz-cache" / "artwork", transport),
       worker ([this] { run(); }) {}
 
 LibraryService::~LibraryService()
@@ -218,7 +386,6 @@ LibraryService::~LibraryService()
     {
         const std::lock_guard<std::mutex> lock (mutex);
         stopping.store (true, std::memory_order_release);
-        cancelRequested.store (true, std::memory_order_release);
     }
     wake.notify_one();
     if (worker.joinable()) worker.join();
@@ -244,9 +411,18 @@ bool LibraryService::enqueue (Job job)
     {
         const std::lock_guard<std::mutex> lock (mutex);
         if (current.busy || paused || stopping.load (std::memory_order_acquire)) return false;
+        if (job.kind == JobKind::Install)
+        {
+            const auto key = digest (providerPackToJson (job.pack));
+            if (key.empty()) return false;
+            const auto downloads = configurationFile.empty() ? cacheRoot : store.root() / ".downloads";
+            job.part = downloads / (key + ".part");
+            job.preserveDownload = true;
+        }
         job.generation = ++current.generation;
         current.busy = true;
         current.error.clear();
+        current.failureKind = FailureKind::None;
         current.cachedResponse = false;
         current.progress = {};
         if (job.kind == JobKind::ChangeLocation) movingPacks.store (job.moveExisting, std::memory_order_release);
@@ -307,6 +483,14 @@ bool LibraryService::remove (InstalledPack pack, std::vector<ManagedSfzLocator> 
     return enqueue (std::move (job));
 }
 
+bool LibraryService::verify (InstalledPack pack)
+{
+    Job job;
+    job.kind = JobKind::Verify;
+    job.installed = std::move (pack);
+    return enqueue (std::move (job));
+}
+
 bool LibraryService::changeLocation (fs::path destination, bool moveExisting)
 {
     Job job;
@@ -327,6 +511,7 @@ bool LibraryService::resume()
         pending->generation = ++current.generation;
         current.busy = true;
         current.error.clear();
+        current.failureKind = FailureKind::None;
         cancelRequested.store (false, std::memory_order_release);
     }
     wake.notify_one();
@@ -357,19 +542,28 @@ void LibraryService::setState (std::uint64_t generation, LibraryState state)
     if (current.generation == generation) current.state = state;
 }
 
-void LibraryService::cleanInstall (Job& job) noexcept
+void LibraryService::cleanInstall (Job& job, bool removeDownload) noexcept
 {
-    std::error_code error;
-    if (! job.staging.empty()) fs::remove_all (job.staging, error);
-    job.staging.clear();
-    if (! job.part.empty())
+    try
     {
-        fs::remove (job.part, error);
-        auto sidecar = job.part;
-        sidecar += ".resume.json";
-        fs::remove (sidecar, error);
+        if ((! job.staging.empty() || ! job.part.empty()) && ! libraryLocationAvailable (locations.active)) return;
+        std::error_code error;
+        if (! job.staging.empty()) fs::remove_all (dusk::fs::nativeIOPath (job.staging), error);
+        job.staging.clear();
+        if (removeDownload && ! job.part.empty())
+        {
+            if (! fs::is_directory (fs::symlink_status (dusk::fs::nativeIOPath (job.part.parent_path()), error)) || error) return;
+            DirectoryLease cleanupLease;
+            std::string ownershipError;
+            if (! cleanupLease.acquire (job.part.parent_path(), DirectoryLease::Access::Shared, ownershipError)) return;
+            fs::remove (dusk::fs::nativeIOPath (job.part), error);
+            auto sidecar = job.part;
+            sidecar += ".resume.json";
+            fs::remove (dusk::fs::nativeIOPath (sidecar), error);
+            job.part.clear();
+        }
     }
-    job.part.clear();
+    catch (...) {}
 }
 
 OperationResult LibraryService::browseAll (const Job& job, const OperationControl& control)
@@ -403,10 +597,10 @@ OperationResult LibraryService::browseAll (const Job& job, const OperationContro
         if (page == 0) continue;
         for (;;)
         {
-            if (control.status() != OperationStatus::Complete) return interrupted (control);
+            if (const auto status = control.status(); status != OperationStatus::Complete) return interrupted (status);
             CachedTransport cached (*transport, cacheRoot, job.offlineOnly);
             auto result = browseProvider (cached, sources[i].id, page, job.query, control);
-            if (control.status() != OperationStatus::Complete) return interrupted (control);
+            if (const auto status = control.status(); status != OperationStatus::Complete) return interrupted (status);
             if (result.status == OperationStatus::Cancelled || result.status == OperationStatus::Paused)
                 return { result.status, result.error };
             if (! result)
@@ -438,7 +632,7 @@ OperationResult LibraryService::browseAll (const Job& job, const OperationContro
     session.pages.resize (job.page);
     if (combined.nextPage != 0) session.pages.push_back (std::move (cursors));
     const std::lock_guard<std::mutex> lock (mutex);
-    if (control.status() != OperationStatus::Complete) return interrupted (control);
+    if (const auto status = control.status(); status != OperationStatus::Complete) return interrupted (status);
     if (current.generation != job.generation) return { OperationStatus::Cancelled, {} };
     allBrowse = std::move (session);
     current.page = std::move (combined);
@@ -454,12 +648,12 @@ OperationResult LibraryService::execute (Job& job, const OperationControl& contr
         cleanInstall (job);
         return { OperationStatus::Cancelled, {} };
     }
-    if (control.status() != OperationStatus::Complete) return interrupted (control);
+    if (const auto status = control.status(); status != OperationStatus::Complete) return interrupted (status);
     if (job.kind == JobKind::ChangeLocation)
     {
         setState (job.generation, LibraryState::ChangingLocation);
         auto changed = changeLibraryLocation (locations, job.destination, job.moveExisting, control, configurationFile);
-        if (! changed || ! changed.locations) return { changed.status, changed.error };
+        if (! changed || ! changed.locations) return { changed.status, changed.error, changed.failureKind };
         locations = std::move (*changed.locations);
         store = PackStore (locations.active.root, locations.active.marker);
         const auto installed = installedLibraryPacks (locations);
@@ -493,7 +687,7 @@ OperationResult LibraryService::execute (Job& job, const OperationControl& contr
             if (result) cached.commit();
             while (result && ! job.query.empty() && result.items.empty() && result.nextPage != 0)
             {
-                if (control.status() != OperationStatus::Complete) return interrupted (control);
+                if (const auto status = control.status(); status != OperationStatus::Complete) return interrupted (status);
                 result = browseProvider (cached, job.sourceId, result.nextPage, job.query, control);
                 if (result) cached.commit();
             }
@@ -519,23 +713,24 @@ OperationResult LibraryService::execute (Job& job, const OperationControl& contr
     if (job.kind == JobKind::Install)
     {
         std::string error;
-        if (! store.initialize (error)) return { OperationStatus::Failed, error };
+        std::error_code nativeError;
+        if (! store.initialize (error, &nativeError))
+            return { OperationStatus::Failed, error, storageFailureKind (nativeError) };
         setState (job.generation, LibraryState::Downloading);
-        if (job.part.empty())
-        {
-            const auto key = digest (providerPackToJson (job.pack));
-            if (key.empty()) return { OperationStatus::Failed, "Cannot identify SFZ download" };
-            const auto downloads = configurationFile.empty() ? cacheRoot : store.root() / ".downloads";
-            if (! plainDirectory (downloads)) return { OperationStatus::Failed, "Cannot open the SFZ download directory" };
-            job.part = downloads / (key + ".part");
-        }
+        if (! plainDirectory (job.part.parent_path(), nativeError))
+            return { OperationStatus::Failed, "Cannot open the SFZ download directory", storageFailureKind (nativeError) };
+        DirectoryLease next;
+        if (! next.acquire (job.part.parent_path(), DirectoryLease::Access::Shared, error, &nativeError))
+            return { OperationStatus::Failed, error, storageFailureKind (nativeError) };
+        job.partLease = std::move (next);
         const auto downloaded = downloadFile (*transport,
             { job.pack.downloadUrl, job.part, job.pack.expectedSha256, ArchiveLimits{}.maxArchiveBytes }, control);
-        if (! downloaded) return { downloaded.status, downloaded.error };
-        if (control.status() != OperationStatus::Complete) return interrupted (control);
+        job.preserveDownload = downloaded.preservePart || static_cast<bool> (downloaded);
+        if (! downloaded) return { downloaded.status, downloaded.error, downloaded.failureKind };
+        if (const auto status = control.status(); status != OperationStatus::Complete) return interrupted (status);
         setState (job.generation, LibraryState::Extracting);
-        job.staging = store.createStaging (error);
-        if (job.staging.empty()) return { OperationStatus::Failed, error };
+        job.staging = store.createStaging (error, &nativeError);
+        if (job.staging.empty()) return { OperationStatus::Failed, error, storageFailureKind (nativeError) };
         ArchiveRequest request;
         request.archive = job.part;
         request.stagingDirectory = job.staging;
@@ -547,14 +742,16 @@ OperationResult LibraryService::execute (Job& job, const OperationControl& contr
         const auto extracted = extractZip (request, control);
         if (! extracted)
         {
+            if (extracted.status == OperationStatus::Failed && extracted.failureKind != FailureKind::DiskFull)
+                job.preserveDownload = false;
             std::error_code ignored;
-            fs::remove_all (job.staging, ignored);
+            fs::remove_all (dusk::fs::nativeIOPath (job.staging), ignored);
             job.staging.clear();
-            return { extracted.status, extracted.error };
+            return { extracted.status, extracted.error, extracted.failureKind };
         }
-        if (control.status() != OperationStatus::Complete) return interrupted (control);
-        const auto published = store.publish (job.pack, downloaded.sha256, job.staging, extracted.sfzPaths);
-        if (! published) return { published.status, published.error };
+        if (const auto status = control.status(); status != OperationStatus::Complete) return interrupted (status);
+        const auto published = store.publish (job.pack, downloaded.sha256, job.staging, extracted.sfzPaths, control);
+        if (! published) return { published.status, published.error, published.failureKind };
         cleanInstall (job);
         const auto installed = installedLibraryPacks (locations);
         const std::lock_guard<std::mutex> lock (mutex);
@@ -564,6 +761,20 @@ OperationResult LibraryService::execute (Job& job, const OperationControl& contr
             current.pack = job.pack;
         }
         return { OperationStatus::Complete, {} };
+    }
+    if (job.kind == JobKind::Verify)
+    {
+        setState (job.generation, LibraryState::Verifying);
+        auto registered = locations.previous;
+        registered.insert (registered.begin(), locations.active);
+        for (const auto& location : registered)
+            if (job.installed.directory.parent_path() == location.root / "packs")
+            {
+                auto result = PackStore (location.root, location.marker).verify (job.installed, control);
+                if (result) result.error = "Installed files match the installation record.";
+                return result;
+            }
+        return { OperationStatus::Failed, "The selected pack is outside the registered SFZ libraries" };
     }
     if (job.kind == JobKind::Remove)
     {
@@ -605,14 +816,45 @@ void LibraryService::run()
     setpriority (PRIO_PROCESS, 0, 10);
 #endif
     std::string initializationError = locations.error;
-    const bool initialized = initializationError.empty() && store.initialize (initializationError);
+    const auto sweepLocation = [] (const LibraryLocation& location)
+    {
+        sweepLibraryStaging (location);
+        if (! libraryLocationAvailable (location)) return;
+        sweepWorkDirectory (location.root / ".repository-cache");
+        sweepWorkDirectory (location.root / ".downloads");
+    };
+    if (initializationError.empty())
+    {
+        sweepLocation (locations.active);
+        for (const auto& previous : locations.previous) sweepLocation (previous);
+    }
+    std::error_code initializationCode;
+    const bool initialized = initializationError.empty() && store.initialize (initializationError, &initializationCode);
+    auto initializationKind = storageFailureKind (initializationCode);
     bool cacheReady = false;
+    DirectoryLease repositoryLease;
     if (initialized || ! configurationFile.empty())
     {
         std::error_code error;
-        fs::create_directories (cacheRoot.parent_path(), error);
-        cacheReady = plainDirectory (cacheRoot);
-        if (! cacheReady) initializationError = "Cannot open the SFZ repository cache directory";
+        fs::create_directories (dusk::fs::nativeIOPath (cacheRoot.parent_path()), error);
+        cacheReady = ! error && plainDirectory (cacheRoot, error);
+        if (cacheReady)
+        {
+            const auto canonical = fs::canonical (dusk::fs::nativeIOPath (cacheRoot), error);
+            cacheReady = ! error;
+            if (cacheReady) cacheRoot = canonical;
+        }
+        if (cacheReady)
+        {
+            sweepWorkDirectory (cacheRoot);
+            std::string ownershipError;
+            cacheReady = repositoryLease.acquire (cacheRoot, DirectoryLease::Access::Shared, ownershipError, &error);
+        }
+        if (! cacheReady)
+        {
+            initializationError = "Cannot open the SFZ repository cache directory";
+            initializationKind = storageFailureKind (error);
+        }
     }
     const auto installed = installedLibraryPacks (locations);
     {
@@ -624,6 +866,7 @@ void LibraryService::run()
         {
             current.state = LibraryState::Failed;
             current.error = initializationError;
+            current.failureKind = initializationKind;
         }
     }
     for (;;)
@@ -637,7 +880,7 @@ void LibraryService::run()
                 if (paused) { job = std::move (*paused); paused.reset(); }
                 else if (pending) { job = std::move (*pending); pending.reset(); }
                 lock.unlock();
-                cleanInstall (job);
+                cleanInstall (job, cancelRequested.load (std::memory_order_acquire) || job.kind == JobKind::Cleanup);
                 break;
             }
             job = std::move (*pending);
@@ -655,36 +898,54 @@ void LibraryService::run()
         OperationResult result;
         try
         {
-            result = cacheReady || job.kind == JobKind::ChangeLocation
-                ? execute (job, control)
-                : OperationResult { OperationStatus::Failed, initializationError };
+            DirectoryLease nextRepository;
+            std::string ownershipError;
+            std::error_code ownershipCode;
+            const bool usesRepository = job.kind == JobKind::Browse || job.kind == JobKind::Resolve;
+            if (cacheReady && usesRepository
+                && ! nextRepository.acquire (cacheRoot, DirectoryLease::Access::Shared, ownershipError, &ownershipCode))
+                result = { OperationStatus::Failed, ownershipError, storageFailureKind (ownershipCode) };
+            else
+            {
+                if (nextRepository) repositoryLease = std::move (nextRepository);
+                result = cacheReady || job.kind == JobKind::ChangeLocation || job.kind == JobKind::Verify
+                    ? execute (job, control)
+                    : OperationResult { OperationStatus::Failed, initializationError, initializationKind };
+            }
+        }
+        catch (const fs::filesystem_error& exception)
+        {
+            result = { OperationStatus::Failed, std::string ("SFZ library operation failed: ") + exception.what(),
+                       storageFailureKind (exception.code()) };
         }
         catch (const std::exception& exception)
         {
             result = { OperationStatus::Failed, std::string ("SFZ library operation failed: ") + exception.what() };
         }
-        if (result.status == OperationStatus::Paused)
-        {
-            std::error_code ignored;
-            if (! job.staging.empty()) fs::remove_all (job.staging, ignored);
-            job.staging.clear();
-        }
-        else if (result.status != OperationStatus::Complete) cleanInstall (job);
+        if (result.status != OperationStatus::Complete) cleanInstall (job, false);
         {
             std::unique_lock<std::mutex> lock (mutex);
-            if (result.status == OperationStatus::Paused
-                && (cancelRequested.load (std::memory_order_acquire)
-                    || stopping.load (std::memory_order_acquire)))
+            if (result.status != OperationStatus::Complete)
             {
-                result = { OperationStatus::Cancelled, {} };
-                lock.unlock();
-                cleanInstall (job);
-                lock.lock();
+                const bool cancelled = cancelRequested.load (std::memory_order_acquire);
+                const bool shuttingDown = stopping.load (std::memory_order_acquire);
+                if (cancelled || (result.status == OperationStatus::Paused && shuttingDown))
+                    result = { OperationStatus::Cancelled, {} };
+                if (! job.part.empty() && (cancelled || (result.status != OperationStatus::Paused
+                                                       && ! shuttingDown && ! job.preserveDownload)))
+                {
+                    lock.unlock();
+                    cleanInstall (job);
+                    lock.lock();
+                    if (cancelRequested.load (std::memory_order_acquire))
+                        result = { OperationStatus::Cancelled, {} };
+                }
             }
             if (current.generation == job.generation)
             {
                 current.state = stateFor (result.status);
                 current.error = result.error;
+                current.failureKind = result.failureKind;
                 current.busy = false;
                 if (result.status != OperationStatus::Paused
                     && (job.kind == JobKind::ChangeLocation || job.kind == JobKind::Cleanup))

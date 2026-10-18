@@ -4,8 +4,8 @@
 # release disk image instead of a source build.
 #
 # The node is key-auth only and never uses sudo. Its toolchain lives in ~/bin
-# and ~/tools, which is why every remote step goes through ~/mac-configure.sh
-# or exports PATH itself. There is no GNU timeout there, so remote deadlines
+# and ~/tools. The configure helper supplies its build flags. There is no
+# GNU timeout there, so remote deadlines
 # are a poll loop over a completion marker.
 
 set -euo pipefail
@@ -23,8 +23,20 @@ source "${REPO_ROOT}/scripts/regress/common.sh"
 REGRESS_PLATFORM=mac
 
 MAC_HOST="${DUSK_REGRESS_MAC_HOST:-marc@macbook-air.local}"
-MAC_REPO="src/dusk-studio"
-MAC_DAF="src/DAF"
+MAC_REPO="${DUSK_REGRESS_MAC_REPO:-src/dusk-studio}"
+MAC_DAF="${DUSK_REGRESS_MAC_DAF:-src/DAF}"
+MAC_CONFIGURE="${DUSK_REGRESS_MAC_CONFIGURE:-mac-configure.sh}"
+MAC_BUILD_DIR="${DUSK_REGRESS_MAC_BUILD_DIR:-build}"
+MAC_TEST_BUILD_DIR="${DUSK_REGRESS_MAC_TEST_BUILD_DIR:-build-tests}"
+MAC_DAF_REV="${DUSK_REGRESS_MAC_DAF_REV:-}"
+MAC_DEDICATED=0
+if [[ -n "${DUSK_REGRESS_MAC_REPO:-}" ]]; then
+    [[ -n "${DUSK_REGRESS_MAC_DAF:-}" && -n "${DUSK_REGRESS_MAC_CONFIGURE:-}" ]] \
+        || regress_die "a dedicated Mac repository requires explicit DAF and configure-helper paths"
+    [[ "$MAC_DAF_REV" =~ ^[0-9a-f]{40}$ ]] \
+        || regress_die "a dedicated Mac repository requires a 40-character DAF revision"
+    MAC_DEDICATED=1
+fi
 JOBS="${DUSK_JOBS:-5}"
 SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30)
 
@@ -48,7 +60,7 @@ REMOTE_BRANCH="regress-${HEAD_SHORT}"
 MAC_PREV_BRANCH=""
 MAC_PREV_COMMIT=""
 MAC_PREV_SUBMODULES=""
-MAC_HOME=""
+MAC_REMOTE_REPO=""
 MAC_RUN_TOKEN="regress-${HEAD_SHORT}-$$"
 MAC_RUN_STATE="$(mktemp "${TMPDIR:-/tmp}/dusk-mac-run.XXXXXX")"
 MAC_RUN_BLOCKED="${MAC_RUN_STATE}.blocked"
@@ -58,6 +70,16 @@ MAC_RUN_BLOCKED="${MAC_RUN_STATE}.blocked"
 MAC_SUPERVISOR=$(cat <<'REMOTE'
 set -euo pipefail
 token=$1
+for key in REGRESS_SOURCE REGRESS_DAF REGRESS_CONFIGURE; do
+    value=${!key}
+    [[ "$value" == /* ]] || printf -v "$key" '%s' "$HOME/$value"
+    export "$key"
+done
+for key in REGRESS_BUILD REGRESS_TEST_BUILD; do
+    value=${!key}
+    [[ "$value" == /* ]] || printf -v "$key" '%s' "$REGRESS_SOURCE/$value"
+    export "$key"
+done
 umask 077
 base="$HOME/.cache/dusk-regress"
 mkdir -p "$base"
@@ -141,7 +163,10 @@ DONOR_REV="$(tr -d '[:space:]' < DONOR_REV)"
 mac_run() {
     [[ ! -f "$MAC_RUN_BLOCKED" ]] || return 75
     local deadline="$1" command status=0
-    printf -v command 'exec bash -c %q dusk-regress %q' "$MAC_SUPERVISOR" "$MAC_RUN_TOKEN"
+    printf -v command 'exec env REGRESS_SOURCE=%q REGRESS_DAF=%q REGRESS_CONFIGURE=%q REGRESS_BUILD=%q REGRESS_TEST_BUILD=%q REGRESS_DAF_REV=%q REGRESS_DEDICATED=%q REGRESS_JOBS=%q REGRESS_COMMIT=%q REGRESS_DONOR=%q REGRESS_BRANCH=%q REGRESS_HOST=%q bash -c %q dusk-regress %q' \
+        "$MAC_REPO" "$MAC_DAF" "$MAC_CONFIGURE" "$MAC_BUILD_DIR" "$MAC_TEST_BUILD_DIR" \
+        "$MAC_DAF_REV" "$MAC_DEDICATED" "$JOBS" "$HEAD_SHA" "$DONOR_REV" "$REMOTE_BRANCH" \
+        "$MAC_HOST" "$MAC_SUPERVISOR" "$MAC_RUN_TOKEN"
     printf '%s\n' "$MAC_RUN_TOKEN" >"$MAC_RUN_STATE"
     timeout --foreground "$deadline" ssh "${SSH_OPTS[@]}" "$MAC_HOST" "$command" || status=$?
     if ((status != 0)); then
@@ -170,7 +195,7 @@ restore_branch() {
     printf '\n--- restoring %s to %s ---\n' "$MAC_HOST" "$label"
     mac_run 600 <<REMOTE || echo "warning: could not restore ${label}" >&2
 set -euo pipefail
-cd "\$HOME/${MAC_REPO}"
+cd "\$REGRESS_SOURCE"
 git checkout -q ${checkout_args}
 git branch -q -D "${REMOTE_BRANCH}" 2>/dev/null || true
 while read -r path sha; do
@@ -191,62 +216,81 @@ mac_cleanup() {
 trap mac_cleanup EXIT
 
 leg_preflight() {
-    mac_run 180 <<REMOTE
+    mac_run 180 <<'REMOTE'
 set -euo pipefail
-export PATH="\$HOME/bin:\$PATH"
-echo "macOS \$(sw_vers -productVersion), \$(uname -m)"
-cd "\$HOME/${MAC_REPO}"
+export PATH="$HOME/bin:$PATH"
+echo "macOS $(sw_vers -productVersion), $(uname -m)"
+cd "$REGRESS_SOURCE"
+if [[ "$REGRESS_DEDICATED" == 1 ]]; then
+    [[ "$(git config --bool dusk.validationWorktree || true)" == true ]] || {
+        echo "error: dedicated Mac source is not marked as a validation worktree" >&2
+        exit 1
+    }
+    [[ -x "$REGRESS_CONFIGURE" ]] || {
+        echo "error: dedicated configure helper is not executable: $REGRESS_CONFIGURE" >&2
+        exit 1
+    }
+    [[ -z "$(git -C "$REGRESS_DAF" status --porcelain --untracked-files=all)" &&
+       "$(git -C "$REGRESS_DAF" rev-parse HEAD)" == "$REGRESS_DAF_REV" ]] || {
+        echo "error: dedicated DAF is dirty or does not match $REGRESS_DAF_REV" >&2
+        exit 1
+    }
+fi
 # Submodule pointers are handled separately (they get synced to the pushed
 # commit and put back afterwards), so they must not count as local dirt. Edits
 # inside a submodule's own worktree would be lost by that sync, so they do.
-if [[ -n "\$(git status --porcelain --ignore-submodules=all)" ]]; then
-    echo "error: ${MAC_HOST}:${MAC_REPO} has local modifications; commit or clean it first" >&2
+if [[ -n "$(git status --porcelain --ignore-submodules=all)" ]]; then
+    echo "error: $REGRESS_HOST:$REGRESS_SOURCE has local modifications; commit or clean it first" >&2
     git status --short --ignore-submodules=all >&2
     exit 1
 fi
-if [[ -n "\$(git submodule foreach --recursive --quiet 'git status --porcelain' 2>/dev/null)" ]]; then
-    echo "error: ${MAC_HOST}:${MAC_REPO} has modified submodule worktrees; commit or clean them first" >&2
-    git submodule foreach --recursive --quiet 'git status --short | sed "s|^|  \$path: |"' >&2
+if [[ -n "$(git submodule foreach --recursive --quiet 'git status --porcelain' 2>/dev/null)" ]]; then
+    echo "error: $REGRESS_HOST:$REGRESS_SOURCE has modified submodule worktrees; commit or clean them first" >&2
+    git submodule foreach --recursive --quiet 'git status --short | sed "s|^|  $path: |"' >&2
     exit 1
 fi
-echo "regress:home \$HOME"
-echo "regress:branch \$(git rev-parse --abbrev-ref HEAD)"
-echo "regress:commit \$(git rev-parse HEAD)"
-git submodule status | awk '{ gsub(/^[-+U]/, "", \$1); print "regress:submodule", \$2, \$1 }'
+echo "regress:source $(pwd -P)"
+echo "regress:branch $(git rev-parse --abbrev-ref HEAD)"
+echo "regress:commit $(git rev-parse HEAD)"
+git submodule status | awk '{ gsub(/^[-+U]/, "", $1); print "regress:submodule", $2, $1 }'
 REMOTE
 }
 
 leg_push() {
-    git push --force "ssh://${MAC_HOST}${MAC_HOME}/${MAC_REPO}" \
+    git push --force "ssh://${MAC_HOST}${MAC_REMOTE_REPO}" \
         "HEAD:refs/heads/${REMOTE_BRANCH}"
 }
 
 leg_checkout() {
-    mac_run 900 <<REMOTE
+    mac_run 900 <<'REMOTE'
 set -euo pipefail
-cd "\$HOME/${MAC_REPO}"
-git checkout -q "${REMOTE_BRANCH}"
-[[ "\$(git rev-parse HEAD)" == "${HEAD_SHA}" ]] || {
-    echo "error: mac checkout \$(git rev-parse HEAD) != pushed ${HEAD_SHA}" >&2; exit 1; }
+cd "$REGRESS_SOURCE"
+git checkout -q "$REGRESS_BRANCH"
+[[ "$(git rev-parse HEAD)" == "$REGRESS_COMMIT" ]] || {
+    echo "error: mac checkout $(git rev-parse HEAD) != pushed $REGRESS_COMMIT" >&2; exit 1; }
 git submodule update --init --recursive
 git log --oneline -1
 git submodule status
 REMOTE
 }
 
-# CI builds against the tip of DAF main, so the node follows it. Best effort:
-# the node may be offline from GitHub, and a DAF behind main only matters for
-# the native UI, not for the DSP legs below.
+# Dedicated builds verify their pinned DAF checkout; the legacy node follows
+# main best-effort when it can reach GitHub.
 leg_daf() {
-    mac_run 900 <<REMOTE
+    mac_run 900 <<'REMOTE'
 set -euo pipefail
-cd "\$HOME/${MAC_DAF}"
-before="\$(git rev-parse --short HEAD)"
-if ! git pull -q --ff-only >/dev/null 2>&1; then
-    echo "warn: DAF could not follow main (left at \${before})"
+cd "$REGRESS_DAF"
+if [[ "$REGRESS_DEDICATED" == 1 ]]; then
+    [[ "$(git rev-parse HEAD)" == "$REGRESS_DAF_REV" ]]
+    echo "DAF $REGRESS_DAF_REV (verified dedicated checkout)"
     exit 0
 fi
-echo "DAF \$(git rev-parse --short HEAD) (was \${before})"
+before="$(git rev-parse --short HEAD)"
+if ! git pull -q --ff-only >/dev/null 2>&1; then
+    echo "warn: DAF could not follow main (left at ${before})"
+    exit 0
+fi
+echo "DAF $(git rev-parse --short HEAD) (was ${before})"
 REMOTE
 }
 
@@ -254,184 +298,182 @@ REMOTE
 # DUSK_PLUGINS_PATH would build whatever that checkout holds instead, and a
 # failure would then read as a Dusk Studio regression.
 leg_donor_check() {
-    mac_run 120 <<REMOTE
+    mac_run 120 <<'REMOTE'
 set -euo pipefail
-cd "\$HOME/${MAC_REPO}"
 rc=0
-for dir in build build-tests; do
-    cached="\$(sed -n 's/^DUSK_PLUGINS_PATH:[^=]*=//p' "\$dir/CMakeCache.txt" | head -1)"
-    if [[ -n "\$cached" ]]; then
-        echo "error: \$dir builds the donor from DUSK_PLUGINS_PATH='\$cached', not DONOR_REV" >&2
+for dir in "$REGRESS_BUILD" "$REGRESS_TEST_BUILD"; do
+    cached="$(sed -n 's/^DUSK_PLUGINS_PATH:[^=]*=//p' "$dir/CMakeCache.txt" | head -1)"
+    if [[ -n "$cached" ]]; then
+        echo "error: $dir builds the donor from DUSK_PLUGINS_PATH='$cached', not DONOR_REV" >&2
         rc=1
         continue
     fi
-    head="\$(git -C "\$dir/_deps/dusk-plugins" rev-parse HEAD 2>/dev/null || true)"
-    if [[ "\$head" != "${DONOR_REV}" ]]; then
-        echo "error: \$dir/_deps/dusk-plugins is at '\${head:-nothing}', DONOR_REV is ${DONOR_REV}" >&2
+    head="$(git -C "$dir/_deps/dusk-plugins" rev-parse HEAD 2>/dev/null || true)"
+    if [[ "$head" != "$REGRESS_DONOR" ]]; then
+        echo "error: $dir/_deps/dusk-plugins is at '${head:-nothing}', DONOR_REV is $REGRESS_DONOR" >&2
         rc=1
         continue
     fi
-    echo "\$dir: donor at DONOR_REV ${DONOR_REV:0:8}"
+    echo "$dir: donor at DONOR_REV ${REGRESS_DONOR:0:8}"
 done
-exit "\$rc"
+exit "$rc"
 REMOTE
 }
 
 leg_configure_app() {
-    mac_run 900 <<REMOTE
+    mac_run 900 <<'REMOTE'
 set -euo pipefail
-"\$HOME/mac-configure.sh" build
+"$REGRESS_CONFIGURE" "$REGRESS_BUILD" "-DDAF_PATH=$REGRESS_DAF" -UDUSK_PLUGINS_PATH
 REMOTE
 }
 
 leg_configure_tests() {
-    mac_run 900 <<REMOTE
+    mac_run 900 <<'REMOTE'
 set -euo pipefail
-"\$HOME/mac-configure.sh" build-tests -DDUSKSTUDIO_BUILD_TESTS=ON
+"$REGRESS_CONFIGURE" "$REGRESS_TEST_BUILD" "-DDAF_PATH=$REGRESS_DAF" -UDUSK_PLUGINS_PATH -DDUSKSTUDIO_BUILD_TESTS=ON
 REMOTE
 }
 
 leg_build_app() {
-    mac_run 5400 <<REMOTE
+    mac_run 5400 <<'REMOTE'
 set -euo pipefail
-export PATH="\$HOME/bin:\$PATH"
-cd "\$HOME/${MAC_REPO}"
-cmake --build build -j${JOBS}
+export PATH="$HOME/bin:$PATH"
+cd "$REGRESS_SOURCE"
+cmake --build "$REGRESS_BUILD" -j"$REGRESS_JOBS"
 REMOTE
 }
 
 leg_build_tests() {
-    mac_run 5400 <<REMOTE
+    mac_run 5400 <<'REMOTE'
 set -euo pipefail
-export PATH="\$HOME/bin:\$PATH"
-cd "\$HOME/${MAC_REPO}"
-cmake --build build-tests --target dusk-studio-tests -j${JOBS}
+export PATH="$HOME/bin:$PATH"
+cd "$REGRESS_SOURCE"
+cmake --build "$REGRESS_TEST_BUILD" --target dusk-studio-tests -j"$REGRESS_JOBS"
 REMOTE
 }
 
 leg_ctest() {
-    mac_run 1800 <<REMOTE
+    mac_run 1800 <<'REMOTE'
 set -euo pipefail
-export PATH="\$HOME/bin:\$PATH"
-cd "\$HOME/${MAC_REPO}"
-ctest --test-dir build-tests --output-on-failure
+export PATH="$HOME/bin:$PATH"
+cd "$REGRESS_SOURCE"
+ctest --test-dir "$REGRESS_TEST_BUILD" --output-on-failure
 REMOTE
 }
 
 # No GNU timeout on the node, so the self-test runs behind a marker-file poll.
 leg_selftest() {
-    mac_run 600 <<REMOTE
+    mac_run 600 <<'REMOTE'
 set -euo pipefail
-BIN="\$HOME/${MAC_REPO}/build/DuskStudio_artefacts/Release/DuskStudio.app/Contents/MacOS/DuskStudio"
-[[ -x "\$BIN" ]] || { echo "error: self-test binary missing: \$BIN" >&2; exit 1; }
-RC_FILE="\$(mktemp -t duskstudio-selftest-rc)"
-LOG_FILE="\$(mktemp -t duskstudio-selftest-log)"
-PID_FILE="\$(mktemp -t duskstudio-selftest-pid)"
+BIN="$REGRESS_BUILD/DuskStudio_artefacts/Release/DuskStudio.app/Contents/MacOS/DuskStudio"
+[[ -x "$BIN" ]] || { echo "error: self-test binary missing: $BIN" >&2; exit 1; }
+RC_FILE="$(mktemp -t duskstudio-selftest-rc)"
+LOG_FILE="$(mktemp -t duskstudio-selftest-log)"
+PID_FILE="$(mktemp -t duskstudio-selftest-pid)"
 CHILD=""
 # However the remote shell ends - done, timed out, or dropped with the ssh
 # session - the app goes and so do its files.
 cleanup() {
-    APP_PID="\$(cat "\$PID_FILE" 2>/dev/null || true)"
-    if [[ -n "\$APP_PID" && ! -f "\$RC_FILE" ]]; then kill -9 "\$APP_PID" 2>/dev/null || true; fi
-    if [[ -n "\$CHILD" ]]; then wait "\$CHILD" 2>/dev/null || true; fi
-    rm -f "\$RC_FILE" "\$LOG_FILE" "\$PID_FILE"
+    APP_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
+    if [[ -n "$APP_PID" && ! -f "$RC_FILE" ]]; then kill -9 "$APP_PID" 2>/dev/null || true; fi
+    if [[ -n "$CHILD" ]]; then wait "$CHILD" 2>/dev/null || true; fi
+    rm -f "$RC_FILE" "$LOG_FILE" "$PID_FILE"
 }
 trap cleanup EXIT
 trap 'exit 129' HUP INT TERM
-rm -f "\$RC_FILE"
+rm -f "$RC_FILE"
 # The subshell records the app's own pid: killing the subshell alone would
 # orphan a hung DuskStudio.
 (
     set +e
-    DUSKSTUDIO_RUN_SELFTEST=1 "\$BIN" >"\$LOG_FILE" 2>&1 &
-    APP=\$!
-    echo "\$APP" >"\$PID_FILE"
-    wait "\$APP"
-    APP_RC=\$?
-    echo "\$APP_RC" >"\$RC_FILE"
+    DUSKSTUDIO_RUN_SELFTEST=1 "$BIN" >"$LOG_FILE" 2>&1 &
+    APP=$!
+    echo "$APP" >"$PID_FILE"
+    wait "$APP"
+    APP_RC=$?
+    echo "$APP_RC" >"$RC_FILE"
 ) &
-CHILD=\$!
+CHILD=$!
 WAITED=0
-while [[ ! -f "\$RC_FILE" ]]; do
+while [[ ! -f "$RC_FILE" ]]; do
     if (( WAITED >= 420 )); then
-        APP_PID="\$(cat "\$PID_FILE" 2>/dev/null || true)"
-        [[ -n "\$APP_PID" ]] && kill -9 "\$APP_PID" 2>/dev/null || true
-        wait "\$CHILD" 2>/dev/null || true
+        APP_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
+        [[ -n "$APP_PID" ]] && kill -9 "$APP_PID" 2>/dev/null || true
+        wait "$CHILD" 2>/dev/null || true
         echo "error: self-test still running after 420 s" >&2
-        sed 's/^/  /' "\$LOG_FILE" >&2
+        sed 's/^/  /' "$LOG_FILE" >&2
         exit 124
     fi
     sleep 2
-    WAITED=\$(( WAITED + 2 ))
+    WAITED=$(( WAITED + 2 ))
 done
-wait "\$CHILD" 2>/dev/null || true
-RC="\$(cat "\$RC_FILE")"
-grep -E '^\[(PASS|FAIL|SKIP)\]|^Total' "\$LOG_FILE" || sed 's/^/  /' "\$LOG_FILE"
-exit "\$RC"
+wait "$CHILD" 2>/dev/null || true
+RC="$(cat "$RC_FILE")"
+grep -E '^\[(PASS|FAIL|SKIP)\]|^Total' "$LOG_FILE" || sed 's/^/  /' "$LOG_FILE"
+exit "$RC"
 REMOTE
 }
 
-# The scenario suite behind the same marker-file deadline as the self-test, and
-# headless for the same reason: this node cannot open a window over ssh. The
+# The scenario suite uses the same marker-file deadline as the self-test. The
 # fixtures come out of the node's build-tests tree, which the tests build has
 # already produced - every fixture target is a dependency of dusk-studio-tests.
 leg_scenarios() {
-    mac_run 900 <<REMOTE
+    mac_run 900 <<'REMOTE'
 set -euo pipefail
-REPO="\$HOME/${MAC_REPO}"
-BIN="\$REPO/build/DuskStudio_artefacts/Release/DuskStudio.app/Contents/MacOS/DuskStudio"
-[[ -x "\$BIN" ]] || { echo "error: scenario binary missing: \$BIN" >&2; exit 1; }
-SANDBOX_DIR="\$(mktemp -d -t duskstudio-scenarios-env)"
-RC_FILE="\$(mktemp -t duskstudio-scenarios-rc)"
-LOG_FILE="\$(mktemp -t duskstudio-scenarios-log)"
-PID_FILE="\$(mktemp -t duskstudio-scenarios-pid)"
+REPO="$REGRESS_SOURCE"
+BIN="$REGRESS_BUILD/DuskStudio_artefacts/Release/DuskStudio.app/Contents/MacOS/DuskStudio"
+[[ -x "$BIN" ]] || { echo "error: scenario binary missing: $BIN" >&2; exit 1; }
+SANDBOX_DIR="$(mktemp -d -t duskstudio-scenarios-env)"
+RC_FILE="$(mktemp -t duskstudio-scenarios-rc)"
+LOG_FILE="$(mktemp -t duskstudio-scenarios-log)"
+PID_FILE="$(mktemp -t duskstudio-scenarios-pid)"
 CHILD=""
 cleanup() {
-    APP_PID="\$(cat "\$PID_FILE" 2>/dev/null || true)"
-    if [[ -n "\$APP_PID" && ! -f "\$RC_FILE" ]]; then kill -9 "\$APP_PID" 2>/dev/null || true; fi
-    if [[ -n "\$CHILD" ]]; then wait "\$CHILD" 2>/dev/null || true; fi
-    rm -f "\$RC_FILE" "\$LOG_FILE" "\$PID_FILE"
-    rm -rf "\$SANDBOX_DIR"
+    APP_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
+    if [[ -n "$APP_PID" && ! -f "$RC_FILE" ]]; then kill -9 "$APP_PID" 2>/dev/null || true; fi
+    if [[ -n "$CHILD" ]]; then wait "$CHILD" 2>/dev/null || true; fi
+    rm -f "$RC_FILE" "$LOG_FILE" "$PID_FILE"
+    rm -rf "$SANDBOX_DIR"
 }
 trap cleanup EXIT
 trap 'exit 129' HUP INT TERM
-mkdir -m 700 "\$SANDBOX_DIR"/{home,config,data,cache,state,runtime}
-rm -f "\$RC_FILE"
+mkdir -m 700 "$SANDBOX_DIR"/{home,config,data,cache,state,runtime}
+rm -f "$RC_FILE"
 (
     set +e
-    env HOME="\$SANDBOX_DIR/home" \
-        XDG_CONFIG_HOME="\$SANDBOX_DIR/config" \
-        XDG_DATA_HOME="\$SANDBOX_DIR/data" \
-        XDG_CACHE_HOME="\$SANDBOX_DIR/cache" \
-        XDG_STATE_HOME="\$SANDBOX_DIR/state" \
-        XDG_RUNTIME_DIR="\$SANDBOX_DIR/runtime" \
+    env HOME="$SANDBOX_DIR/home" \
+        XDG_CONFIG_HOME="$SANDBOX_DIR/config" \
+        XDG_DATA_HOME="$SANDBOX_DIR/data" \
+        XDG_CACHE_HOME="$SANDBOX_DIR/cache" \
+        XDG_STATE_HOME="$SANDBOX_DIR/state" \
+        XDG_RUNTIME_DIR="$SANDBOX_DIR/runtime" \
         DUSKSTUDIO_RUN_SCENARIOS=all \
-        DUSKSTUDIO_FIXTURE_DIR="\$REPO/build-tests:\$REPO/tests/fixtures" \
-        "\$BIN" >"\$LOG_FILE" 2>&1 &
-    APP=\$!
-    echo "\$APP" >"\$PID_FILE"
-    wait "\$APP"
-    APP_RC=\$?
-    echo "\$APP_RC" >"\$RC_FILE"
+        DUSKSTUDIO_FIXTURE_DIR="$REGRESS_TEST_BUILD:$REPO/tests/fixtures" \
+        "$BIN" >"$LOG_FILE" 2>&1 &
+    APP=$!
+    echo "$APP" >"$PID_FILE"
+    wait "$APP"
+    APP_RC=$?
+    echo "$APP_RC" >"$RC_FILE"
 ) &
-CHILD=\$!
+CHILD=$!
 WAITED=0
-while [[ ! -f "\$RC_FILE" ]]; do
+while [[ ! -f "$RC_FILE" ]]; do
     if (( WAITED >= 600 )); then
-        APP_PID="\$(cat "\$PID_FILE" 2>/dev/null || true)"
-        [[ -n "\$APP_PID" ]] && kill -9 "\$APP_PID" 2>/dev/null || true
-        wait "\$CHILD" 2>/dev/null || true
+        APP_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
+        [[ -n "$APP_PID" ]] && kill -9 "$APP_PID" 2>/dev/null || true
+        wait "$CHILD" 2>/dev/null || true
         echo "error: scenario suite still running after 600 s" >&2
-        sed 's/^/  /' "\$LOG_FILE" >&2
+        sed 's/^/  /' "$LOG_FILE" >&2
         exit 124
     fi
     sleep 2
-    WAITED=\$(( WAITED + 2 ))
+    WAITED=$(( WAITED + 2 ))
 done
-wait "\$CHILD" 2>/dev/null || true
-RC="\$(cat "\$RC_FILE")"
-grep -E '^\[(PASS|FAIL|SKIP)\]|^=== scenarios: ' "\$LOG_FILE" || sed 's/^/  /' "\$LOG_FILE"
-exit "\$RC"
+wait "$CHILD" 2>/dev/null || true
+RC="$(cat "$RC_FILE")"
+grep -E '^\[(PASS|FAIL|SKIP)\]|^=== scenarios: ' "$LOG_FILE" || sed 's/^/  /' "$LOG_FILE"
+exit "$RC"
 REMOTE
 }
 
@@ -461,12 +503,12 @@ preflight_rc=0
 preflight_out="$(leg_preflight)" || preflight_rc=$?
 printf '%s\n' "$preflight_out"
 if ((preflight_rc == 0)); then
-    MAC_HOME="$(sed -n 's/^regress:home //p' <<<"$preflight_out" | head -1)"
+    MAC_REMOTE_REPO="$(sed -n 's/^regress:source //p' <<<"$preflight_out" | head -1)"
     MAC_PREV_BRANCH="$(sed -n 's/^regress:branch //p' <<<"$preflight_out" | head -1)"
     MAC_PREV_COMMIT="$(sed -n 's/^regress:commit //p' <<<"$preflight_out" | head -1)"
     MAC_PREV_SUBMODULES="$(sed -n 's/^regress:submodule //p' <<<"$preflight_out")"
-    [[ -n "$MAC_HOME" && -n "$MAC_PREV_BRANCH" && -n "$MAC_PREV_COMMIT" ]] \
-        || regress_die "preflight did not report the node's home directory, branch and commit"
+    [[ -n "$MAC_REMOTE_REPO" && -n "$MAC_PREV_BRANCH" && -n "$MAC_PREV_COMMIT" ]] \
+        || regress_die "preflight did not report the source directory, branch and commit"
     regress_record "mac-preflight" "PASS" "$((SECONDS - preflight_start))" \
         "was on ${MAC_PREV_BRANCH}"
 else
@@ -478,7 +520,11 @@ fi
 
 regress_leg "push-head" leg_push
 regress_leg "mac-checkout" leg_checkout
-regress_leg_soft "daf-main" leg_daf
+if ((MAC_DEDICATED)); then
+    regress_leg "daf-revision" leg_daf
+else
+    regress_leg_soft "daf-main" leg_daf
+fi
 
 regress_leg "configure-app" leg_configure_app
 regress_leg "configure-tests" leg_configure_tests
@@ -489,12 +535,8 @@ regress_leg "ctest" leg_ctest
 regress_leg "selftest" leg_selftest
 mac_scenarios_leg
 
-# Launching the GUI over ssh aborts in the main window constructor on this node
-# - it reproduces on main, so it is the environment, not the build. Run those
-# two by hand from a console session on the Air:
-#   cd ~/src/dusk-studio && ./build/DuskStudio_artefacts/Release/DuskStudio.app/Contents/MacOS/DuskStudio
-regress_skip "gui-launch" "ssh session cannot construct the main window; run from a console session"
-regress_skip "scenarios-gui" "ssh session cannot construct the main window; run from a console session on the Air"
+regress_skip "gui-launch" "foreground desktop session required for native GUI input"
+regress_skip "scenarios-gui" "foreground desktop session required for native GUI input"
 regress_skip "ipc-selftest" "Linux-only code path"
 
 regress_summary "regress mac"

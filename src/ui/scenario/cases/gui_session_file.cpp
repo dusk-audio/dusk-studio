@@ -633,14 +633,17 @@ const ScenarioRegistrar saveAsOtherSession { Scenario {
 std::optional<ScenarioResult> runOpenSessionFolder (GuiHost& host, ScenarioContext& ctx)
 {
     auto& session = ctx.session();
-    if (! ctx.engine().getTransport().isStopped() || ! host.modalStackEmpty())
-        return ScenarioResult::skip ("requires a stopped transport and no modal");
+    auto& engine = ctx.engine();
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty() || host.engineDetached()
+        || ! engine.isAudioCallbackRegistered() || engine.getCurrentSampleRate() <= 0.0 || engine.isProcessingSuspended())
+        return ScenarioResult::skip ("requires stopped live audio, no processing suspension and no modal");
     const auto originalDir = currentSessionDirectory (session);
     const auto restore = ctx.tempDir() / "restore.json";
     if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save session");
-    ctx.cleanup ([&host, &session, originalDir, restore]
+    ctx.cleanup ([&host, &session, &engine, originalDir, restore]
     {
         drainModals (host);
+        if (! engine.isAudioCallbackRegistered()) engine.reattachAudioCallback();
         reopenSavedSession (host, restore);
         applySessionDirectory (session, originalDir);
     });
@@ -679,9 +682,14 @@ std::optional<ScenarioResult> runOpenSessionFolder (GuiHost& host, ScenarioConte
         ctx.expect (host.clickFileBrowserControl (false), "the Open browser has no file list");
         host.pressPeerKey ("Home", 0);
     } });
-    steps->push_back ({ 200, [&host, &ctx]
-    { ctx.expect (host.clickModalButton ("Open"), "the Open browser has no Open button"); } });
-    steps->push_back ({ 1000, [&host, &ctx, &session, target]
+    steps->push_back ({ 200, [&host, &ctx, &engine]
+    {
+        engine.detachAudioCallback();
+        ctx.expect (! engine.isAudioCallbackRegistered() && engine.getCurrentSampleRate() <= 0.0,
+                    "the session-load fixture did not detach its callback");
+        ctx.expect (host.clickModalButton ("Open"), "the Open browser has no Open button");
+    } });
+    steps->push_back ({ 1000, [&host, &ctx, &session, &engine, target]
     {
         ctx.expect (host.modalStackEmpty(), "Open left '" + host.modalText() + "' up");
         ctx.expect (currentSessionDirectory (session) == target,
@@ -689,6 +697,9 @@ std::optional<ScenarioResult> runOpenSessionFolder (GuiHost& host, ScenarioConte
                         + host.statusMessage() + "'");
         ctx.expect (session.track (0).name.toStdString() == "Opened" && nearly (session.track (0).strip.faderDb.load(), -13.0f),
                     "the window does not hold the chosen session's track 1");
+        ctx.expect (! engine.isAudioCallbackRegistered() && engine.getCurrentSampleRate() <= 0.0,
+                    "opening a session reattached the deliberately detached audio callback");
+        ctx.expect (! engine.isProcessingSuspended(), "opening a session left processing suspended");
     } });
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;

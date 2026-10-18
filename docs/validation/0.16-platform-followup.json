@@ -1,0 +1,545 @@
+{
+  "recorded_at_utc": "2026-10-18T02:20:08.467786+00:00",
+  "source_commit": "54ef831271dd2416357d43366066e2e426f06ac6",
+  "product_source_commit": "1a31d8ffebb5fcce0afda5ee39abbc77c8072073",
+  "source_bound": "Product sources are unchanged from the integrated main merge through this source. Later documentation changes require their own prepush and CI; this record claims no future commit.",
+  "prepush": {
+    "source_commit": "54ef831271dd2416357d43366066e2e426f06ac6",
+    "status": "PASS",
+    "log": "/tmp/dusk-016-publish-prepush.log",
+    "linux": {
+      "ctest_entries": 1762,
+      "failed": 0,
+      "normal_seconds": 32.45,
+      "runner_limits_seconds": 32.14,
+      "engine_pass": 186,
+      "engine_fail": 0,
+      "engine_skip": 1,
+      "engine_skip_reason": "AU scanning is macOS only"
+    },
+    "macos": {
+      "ctest_entries": 1708,
+      "failed": 0,
+      "reported_ctest_skips": 2,
+      "seconds": 51.08,
+      "engine_pass": 177,
+      "engine_fail": 0,
+      "engine_skip": 9,
+      "native_coremidi_enabled": true,
+      "native_lv2_enabled": false
+    },
+    "raw_logs": [
+      "/var/tmp/dusk-prepush.FwpjPO/linux.log",
+      "/var/tmp/dusk-prepush.FwpjPO/mac.log"
+    ]
+  },
+  "windows": {
+    "source_commit": "54ef831271dd2416357d43366066e2e426f06ac6",
+    "ctest_entries": 1697,
+    "failed": 0,
+    "reported_ctest_skips": 5,
+    "ctest_seconds": 136.45,
+    "ctest_skips": [
+      "SFZ ZIP extraction distinguishes unavailable input from corrupt contents",
+      "SFZ pack publication rejects case-distinct license aliases",
+      "SFZ installed tree hashing refuses case-distinct aliases",
+      "SFZ library relocation never recreates a disconnected destination",
+      "SFZ library relocation rejects a replacement destination with a copied marker"
+    ],
+    "asio_enabled": true,
+    "native_vst3_state": {
+      "instance_assertions": 280,
+      "instance_cases": 2,
+      "slot_assertions": 37,
+      "slot_cases": 4
+    },
+    "native_clap_state": {
+      "pass": 1,
+      "fail": 0,
+      "skip": 0,
+      "required_track_and_aux_rejection_diagnostics": true
+    },
+    "engine": {
+      "pass": 177,
+      "fail": 0,
+      "skip": 9,
+      "native_exit_code": 0,
+      "skip_reasons": [
+        "Linux-only realtime CPU guard",
+        "Four absent native LV2 fixtures",
+        "Two Windows OOP scenarios require PID-based child tracking",
+        "AU scanning is macOS only",
+        "Native LV2 scanning disabled"
+      ],
+      "nested_selftest_skip": "Clone track native insert lacks DUSKSTUDIO_CLAP_STATE_FIXTURE; separate strict CLAP state validation is not this clone test."
+    },
+    "gui": {
+      "pass": 4,
+      "fail": 0,
+      "skip": 0,
+      "native_exit_code": 0,
+      "foreground_observed": true,
+      "app_sha256": "4397ed5137c14c2856153c243dc3a71d4a7dc55a5c324d94069f12fe5fa41c6d",
+      "tests_sha256": "27773b479fab12e882d4bdf5edfa93ccb9962d8521ad47e645a6c047eb812e71"
+    },
+    "first_engine_attempt": "134 pass, 0 fail, 52 skip with incomplete fixture roots; superseded by the complete-root run.",
+    "additional_fixture_limits": "Platform-gated capacity and filesystem sections may skip within an otherwise passing Catch case. Five reported CTest skips are not a complete count of skipped sections; historical focused-fixture bounds remain in the main ledger."
+  },
+  "macos_gui": {
+    "source_commit": "54ef831271dd2416357d43366066e2e426f06ac6",
+    "pass": 4,
+    "fail": 0,
+    "skip": 0,
+    "foreground_active": true,
+    "app_sha256": "d11be60a4cf472728f726a95c8cd8344faa6eb4b307a1eae977263ff9c3b4c7a",
+    "launcher_exit_code": 0,
+    "native_app_exit_code": null,
+    "profile": "/tmp/dusk-016-mac-agent.tcYpBE",
+    "limits": "Status 0 belongs to the open launcher; native process exit status was not retained. LaunchAgent removed after the private GUI run."
+  },
+  "live_sfz": {
+    "linux_evidence": "docs/validation/0.16-sfz-live-current.json",
+    "linux_live_source_commit": "1a31d8ffebb5fcce0afda5ee39abbc77c8072073",
+    "macos": {
+      "source_commit": "54ef831271dd2416357d43366066e2e426f06ac6",
+      "archive": "/tmp/dusk-016-mac-live-evidence-final.tar",
+      "archive_sha256": "5da526c268754d54e020874b918a74ba6b3a6b71c24a9a48c5469e3c72330e9c",
+      "sources": [
+        {
+          "source": "sfzinstruments",
+          "pack": "Ixox.Flute",
+          "release_id": "0cc54468bb0d2d9b32921958585caad65ba8df21",
+          "license_id": "CC-BY-4.0",
+          "license_evidence_sha256": "9ba9550ad48438d0836ddab3da480b3b69ffa0aac7b7878b5a0039e7ab429411",
+          "installed_programs_verified_and_resolved_offline": 1,
+          "archive_sha256": "60a0f8f0514ce0de920853433c05fcb3524bab435d5822c3c95caa0cf0d1da5a",
+          "installed_tree_sha256": "3840fdab2faef916b0a217178c75c1492c9ed42766fd586a8e58066bc2caee4c",
+          "archive_and_tree_hashes_match_linux": true,
+          "selected_native_render": {
+            "program": "/Users/marc/dusk-016-validation-deps/live-sfz.bTXuZQ/library-sfzinstruments/packs/911e6df902daf1981f2fd6f9b398e1736e0092a73bd12c7409e8b459d06502a9/Ixox Flute.sfz",
+            "exit_code": 0,
+            "peak": 0.272146,
+            "rms": 0.073317,
+            "bypassed": 0,
+            "auto_bypassed": 0
+          }
+        },
+        {
+          "source": "freepats",
+          "pack": "bagpipe",
+          "release_id": "496f2f6e82f226d650e270c0f0ad5febbebec249",
+          "license_id": "CC0-1.0",
+          "license_evidence_sha256": "a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499",
+          "installed_programs_verified_and_resolved_offline": 2,
+          "archive_sha256": "55288963571c38565a61248c6f994003b846b3931eca101ecb5b01a31b247b34",
+          "installed_tree_sha256": "c4ed6c3ed39bb3df8668700adec9c0ab4bb2d1e2ea11b5b711f983453b3ae6cf",
+          "archive_and_tree_hashes_match_linux": true,
+          "selected_native_render": {
+            "program": "/Users/marc/dusk-016-validation-deps/live-sfz.bTXuZQ/library-freepats/packs/e4283d7db102ed23fe4776a5036672f35236d952a77167bc7ff9c6cdcfd43ccd/Bagpipe 20260806.sfz",
+            "exit_code": 0,
+            "peak": 0.681072,
+            "rms": 0.146829,
+            "bypassed": 0,
+            "auto_bypassed": 0
+          }
+        },
+        {
+          "source": "versilian",
+          "pack": "VSCO-2-CE",
+          "release_id": "28092772094b2d9f1148d84cea97f4545b8c687d",
+          "license_id": "CC0-1.0",
+          "license_evidence_sha256": "36ffd9dc085d529a7e60e1276d73ae5a030b020313e6c5408593a6ae2af39673",
+          "installed_programs_verified_and_resolved_offline": 75,
+          "archive_sha256": "1f34a21b9dc8bc7646f4b7e9bb26ad0d20e4a400a69a6a47ea783c6162e3bde2",
+          "installed_tree_sha256": "5655ef61f9cf233a486508b7ae0d3877a8d6d59ac4812d04d0724ea2de23bf88",
+          "archive_and_tree_hashes_match_linux": true,
+          "selected_native_render": {
+            "program": "/Users/marc/dusk-016-validation-deps/live-sfz.bTXuZQ/library-versilian/packs/4295241b8e04076123ef205908593cf50f863c74748acad6e8890d6e90466d17/BassoonStac.sfz",
+            "exit_code": 0,
+            "peak": 0.332893,
+            "rms": 0.055805,
+            "bypassed": 0,
+            "auto_bypassed": 0
+          }
+        }
+      ],
+      "member_sha256": {
+        "dusk-016-live-sfz.cpp": "b915b1c333a3c166b4d88eda1b65b90eaebae7a615eb217129c274f5925cab10",
+        "freepats-browse.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "freepats-browse.json": "ef32d1e0210f5efeae2a27d71c61939141a27244176cd5e8999dc8e3b8c91649",
+        "freepats-descriptor.json": "2f6d2515f2a38a8eb08eed1e957d53e1a1e6ee448139e08227ca9d727bfcfe87",
+        "freepats-install.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "freepats-install.json": "6dafb935fe451d109c368bf6b372479fbc547ab5285f17d572c4e676c21814c2",
+        "freepats-render.log": "c59d967e9cb61f0cfeed810c2d12665f7658a1dc1b92a85a2374cc9c1a31887a",
+        "freepats-resolve.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "freepats-resolve.json": "2f6d2515f2a38a8eb08eed1e957d53e1a1e6ee448139e08227ca9d727bfcfe87",
+        "freepats-selected.json": "4e791f76c22a7cf0472e15ce97b0ac7e42e2f87b856936de43e975f0497f6cea",
+        "musical-artifacts-browse-default.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "musical-artifacts-browse-default.json": "a2dd82ac60f0ac14dbb0e04367ce1e92278c28fc9a94442ac060525e8588892b",
+        "musical-artifacts-browse.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "musical-artifacts-browse.json": "a2dd82ac60f0ac14dbb0e04367ce1e92278c28fc9a94442ac060525e8588892b",
+        "musical-artifacts-selected.json": "18282d1e30b79dcaad9df3b0efcebc7d4cc86d905a4b053e5ced469dab2b0551",
+        "provenance.sha256": "6b4a2b60eb81689b6025632b836eef315a80f4c9cf55e9c53aa487376ef45cb9",
+        "render-results-sfzinstruments-freepats.json": "7c6dba1a739489dd9956fdd59222b5129e33d7332decc11cc406629b1e8b5c4f",
+        "render-results-versilian.json": "357650828f8f6205df1a9d854231c261ab678cbffc791925d977bff0bb8b2ca0",
+        "render.py": "5009b509e17bcb769f2a94b36b0fc4dc0aa6430b4f9649c4f185faf579a787c7",
+        "run.sh": "a26addd0efa4170ae46b09c793fdd4c268480cad08602764a55c19638637c032",
+        "sfzinstruments-browse.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "sfzinstruments-browse.json": "8997725f3df4f9bebb2439f6b8486d87b58b4823307824201869c813e908c853",
+        "sfzinstruments-descriptor.json": "3d37c5577f73fc215717cc97eaae34b0fd14cc3a85f93c627843b853b1c29cd4",
+        "sfzinstruments-install.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "sfzinstruments-install.json": "fd79940bee137d5ea770b25f99535494c1e46e504ac68dbe0ba99786fc518261",
+        "sfzinstruments-render.log": "423b0d27ded812ee4e511391a3271b8e09d7f9f1afb2878d0a90f3c0816ca411",
+        "sfzinstruments-resolve.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "sfzinstruments-resolve.json": "3d37c5577f73fc215717cc97eaae34b0fd14cc3a85f93c627843b853b1c29cd4",
+        "sfzinstruments-selected.json": "c3efe8e06fb6df373ed022df5c42c1bd31c88a7aa0c8a1821fe3badef80d6666",
+        "source.txt": "dea6e71cbfedf807888aa68a2118d070cdfe9b752628fa7c6824f5761fc08abb",
+        "versilian-browse.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "versilian-browse.json": "06872127353d9825ffb01074d3ea83df1d4e09af22191d65d89a964e14259e43",
+        "versilian-descriptor.json": "7fbbae2c79154c31ca4eed7ecd37bd4002e6953eb48a73f5120253f0c2dbc6aa",
+        "versilian-install.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "versilian-install.json": "9c14b89ebf3581ee6efe84d32b4664315b76139e240aa4f79774ca62e0a593cb",
+        "versilian-render.log": "860f15788671e3fa58a286f3367a207df343d32fc7860f7a428a7014b268ef3f",
+        "versilian-resolve.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "versilian-selected.json": "8b19e3615212da8558e21c81a6ff6e00bfa7a6109fa7cfd344cb17884e9a4345",
+        "library-freepats/packs/e4283d7db102ed23fe4776a5036672f35236d952a77167bc7ff9c6cdcfd43ccd/.dusk-pack.json": "45f3a3e861d1c46f2ff374263458819db66bac929a1dacd8c48b8259ad9a165b",
+        "library-sfzinstruments/packs/911e6df902daf1981f2fd6f9b398e1736e0092a73bd12c7409e8b459d06502a9/.dusk-pack.json": "7958933347c6df0f7635b83bdc7aff376d8db00f428ef96370604ce13eeafcf5",
+        "library-versilian/packs/4295241b8e04076123ef205908593cf50f863c74748acad6e8890d6e90466d17/.dusk-pack.json": "a24b6178d31d828248c7d4597db162512bf5c61cdce76e28708a03e77faf02e6"
+      },
+      "app_sha256": "d11be60a4cf472728f726a95c8cd8344faa6eb4b307a1eae977263ff9c3b4c7a",
+      "render_app_hash_unchanged": true,
+      "native_coremidi_enabled": true,
+      "native_lv2_enabled": false,
+      "successful_providers": 3,
+      "installed_programs_verified_and_resolved_offline": 78,
+      "selected_native_renders": 3,
+      "blocked_sources": [
+        {
+          "source": "musical-artifacts",
+          "result": "External browser/anti-bot response; install and native render not attempted",
+          "search_response": {
+            "complete": false,
+            "error": "Repository returned a browser or anti-bot page. Open the source website; automated downloads are unavailable.",
+            "items": [],
+            "next_page": 0
+          },
+          "default_catalog_response": {
+            "complete": false,
+            "error": "Repository returned a browser or anti-bot page. Open the source website; automated downloads are unavailable.",
+            "items": [],
+            "next_page": 0
+          }
+        }
+      ],
+      "provenance_sha256": {
+        "/Users/marc/dusk-016-validation-deps/live-sfz.bTXuZQ/live-sfz": "44a87c5ba5d1f1a83fd98287e915e9f9329d2e72afa60d15673ac33479665af5",
+        "/Users/marc/dusk-016-validation-deps/live-sfz.bTXuZQ/dusk-016-live-sfz.cpp": "b915b1c333a3c166b4d88eda1b65b90eaebae7a615eb217129c274f5925cab10",
+        "/Users/marc/dusk-386-current/build-prepush/CMakeFiles/DuskStudio.dir/src/engine/sfz/SfzArchive.cpp.o": "590cd2a739363f5136064f62e532c5ab4120e5cc14a2d8c3c1ad8ade21a91dce",
+        "/Users/marc/dusk-386-current/build-prepush/CMakeFiles/DuskStudio.dir/src/engine/sfz/SfzArtworkCache.cpp.o": "cf5d1de24222ac6296955b037801ec2cd9ebd38105da94b07459946aa835e2ee",
+        "/Users/marc/dusk-386-current/build-prepush/CMakeFiles/DuskStudio.dir/src/engine/sfz/SfzCatalog.cpp.o": "28ba29d07daac29d0fbc725c0d81fb803079786fd2f6dcc0e78589afe326b3a7",
+        "/Users/marc/dusk-386-current/build-prepush/CMakeFiles/DuskStudio.dir/src/engine/sfz/SfzCatalogEnvelope.cpp.o": "cd7b6430554ed2c357d9e93ddf60ae5fd60a4516519726b6249c4c07217d784c",
+        "/Users/marc/dusk-386-current/build-prepush/CMakeFiles/DuskStudio.dir/src/engine/sfz/SfzDirectoryLease.cpp.o": "6b37228efc1a63c8f14e4040c2bd5999048ff7abdf7664bbcda0bda2d40b3613",
+        "/Users/marc/dusk-386-current/build-prepush/CMakeFiles/DuskStudio.dir/src/engine/sfz/SfzLibrary.cpp.o": "c05e60fedbd19a7688cd8c7bc05a99d2640f486aeed16ae352042d95ea7e7a83",
+        "/Users/marc/dusk-386-current/build-prepush/CMakeFiles/DuskStudio.dir/src/engine/sfz/SfzLibraryLocations.cpp.o": "a7c41b1e80b8fc8fe52e236816763ff8e655232ec4fd673249d6b7376b307b66",
+        "/Users/marc/dusk-386-current/build-prepush/CMakeFiles/DuskStudio.dir/src/engine/sfz/SfzLibraryService.cpp.o": "d3b398613fbb720dea4f351d41d4966fd6bf90edcc64ad2244a8e86aa041df36",
+        "/Users/marc/dusk-386-current/build-prepush/CMakeFiles/DuskStudio.dir/src/engine/sfz/SfzPackIndex.cpp.o": "388132411536d4c4d67292a97267cc270588d40812130c4e240e7e37d7205b1f",
+        "/Users/marc/dusk-386-current/build-prepush/CMakeFiles/DuskStudio.dir/src/engine/sfz/SfzPackIntegrity.cpp.o": "9e688e381e515c424c0858bd9e01cb1af10711b52b9e7ff875d00ea2f2bdffd4",
+        "/Users/marc/dusk-386-current/build-prepush/CMakeFiles/DuskStudio.dir/src/engine/sfz/SfzPackStore.cpp.o": "562eb5dc9f81b5d8af31f66f15d0d6af2aaba87e7a490e39646b66f5d4e34303",
+        "/Users/marc/dusk-386-current/build-prepush/CMakeFiles/DuskStudio.dir/src/engine/sfz/SfzPathPolicy.cpp.o": "97dad1a3f497e08a0f9bbda3ad5883f592a5fae65c3f80f9aa302dbba9706db6",
+        "/Users/marc/dusk-386-current/build-prepush/CMakeFiles/DuskStudio.dir/src/engine/sfz/SfzProvider.cpp.o": "916a6a37977ff2fa9fb40b482d0472915c2cf6ded080b5dabfa4884d6c4e522f",
+        "/Users/marc/dusk-386-current/build-prepush/CMakeFiles/DuskStudio.dir/src/engine/sfz/SfzTransfer.cpp.o": "66df0a1ef59d7bb295e3bc66bc71db045622a03a69261bf221c27f22e4ce3053",
+        "/Users/marc/dusk-386-current/build-prepush/DuskStudio_artefacts/Release/DuskStudio.app/Contents/MacOS/DuskStudio": "d11be60a4cf472728f726a95c8cd8344faa6eb4b307a1eae977263ff9c3b4c7a"
+      }
+    },
+    "windows": {
+      "source_commit": "54ef831271dd2416357d43366066e2e426f06ac6",
+      "archive": "/tmp/dusk-016-windows-live-evidence-final.tar",
+      "archive_sha256": "c262185fa34768d7de03ba8954aeb7807fee147716813e8189476e4995ed75c7",
+      "sources": [
+        {
+          "source": "sfzinstruments",
+          "pack": "Ixox.Flute",
+          "release_id": "0cc54468bb0d2d9b32921958585caad65ba8df21",
+          "license_id": "CC-BY-4.0",
+          "license_evidence_sha256": "9ba9550ad48438d0836ddab3da480b3b69ffa0aac7b7878b5a0039e7ab429411",
+          "installed_programs_verified_and_resolved_offline": 1,
+          "archive_sha256": "60a0f8f0514ce0de920853433c05fcb3524bab435d5822c3c95caa0cf0d1da5a",
+          "installed_tree_sha256": "3840fdab2faef916b0a217178c75c1492c9ed42766fd586a8e58066bc2caee4c",
+          "archive_and_tree_hashes_match_linux": true,
+          "selected_native_render": {
+            "program": "C:\\Users\\marc\\dusk-016-validation-deps\\live-sfz-8ce8372a74b6405da4240656f22cf3f3\\library-sfzinstruments\\packs\\911e6df902daf1981f2fd6f9b398e1736e0092a73bd12c7409e8b459d06502a9\\Ixox Flute.sfz",
+            "exit_code": 0,
+            "peak": 0.272236,
+            "rms": 0.073318,
+            "bypassed": 0,
+            "auto_bypassed": 0
+          }
+        },
+        {
+          "source": "freepats",
+          "pack": "bagpipe",
+          "release_id": "496f2f6e82f226d650e270c0f0ad5febbebec249",
+          "license_id": "CC0-1.0",
+          "license_evidence_sha256": "a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499",
+          "installed_programs_verified_and_resolved_offline": 2,
+          "archive_sha256": "55288963571c38565a61248c6f994003b846b3931eca101ecb5b01a31b247b34",
+          "installed_tree_sha256": "c4ed6c3ed39bb3df8668700adec9c0ab4bb2d1e2ea11b5b711f983453b3ae6cf",
+          "archive_and_tree_hashes_match_linux": true,
+          "selected_native_render": {
+            "program": "C:\\Users\\marc\\dusk-016-validation-deps\\live-sfz-8ce8372a74b6405da4240656f22cf3f3\\library-freepats\\packs\\e4283d7db102ed23fe4776a5036672f35236d952a77167bc7ff9c6cdcfd43ccd\\Bagpipe 20260806.sfz",
+            "exit_code": 0,
+            "peak": 0.681366,
+            "rms": 0.146829,
+            "bypassed": 0,
+            "auto_bypassed": 0
+          }
+        },
+        {
+          "source": "musical-artifacts",
+          "pack": "Gordon\u2019s Whistle",
+          "release_id": "69244c80f12a198b13231c41f0117149a42ce567e0136795611703961837a5d0",
+          "license_id": "CC-BY-3.0",
+          "license_evidence_sha256": "c03a64c8205181867f66ed0fcee003709c8731ac5272e0b2a81d6612ed0f39a1",
+          "installed_programs_verified_and_resolved_offline": 1,
+          "archive_sha256": "69244c80f12a198b13231c41f0117149a42ce567e0136795611703961837a5d0",
+          "installed_tree_sha256": "83fc45df5a22b5ff259f2ec9c9def5419b6abb40638863bfe5978e6203cf2c6f",
+          "archive_and_tree_hashes_match_linux": true,
+          "selected_native_render": {
+            "program": "C:\\Users\\marc\\dusk-016-validation-deps\\live-sfz-8ce8372a74b6405da4240656f22cf3f3\\library-musical-artifacts\\packs\\d946804ba5d5ccfb39c2888c6fe0de43ffef50c0842e575a74c04bb6b949f262\\Gordon_s_Whistle.sfz",
+            "exit_code": 0,
+            "peak": 0.913389,
+            "rms": 0.155423,
+            "bypassed": 0,
+            "auto_bypassed": 0
+          }
+        }
+      ],
+      "member_sha256": {
+        "compile.cmd": "1e1ebfd8c438ef6cd4c46936671c49e2b50f28abddcb6dc2b8163e6552a87f98",
+        "compile.rsp": "c5d62c5446c72810380c5c66cb5d6bfada5d3cce56a206538fe2734e5665e319",
+        "dusk-016-live-sfz-space-guard.cpp": "3b3db5d4b2877748eaaaf5101b237b599a41fdb5a0047008588629fb1245be58",
+        "dusk-016-live-sfz.cpp": "b915b1c333a3c166b4d88eda1b65b90eaebae7a615eb217129c274f5925cab10",
+        "final-source-provenance.json": "d2f9f3107bde6ab45a9fa3435ef8be34595365a7f10677dd99ce32ef4f0707d4",
+        "freepats-browse.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "freepats-browse.json": "e4d9cb2a1af38a7fd77d7fa517f976d026458b433a1c9e036d02851e1114380e",
+        "freepats-descriptor.json": "dda54a7216640320b0eac514aa1ffffa003ade4261462ce0e18a279907e8b4d1",
+        "freepats-install.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "freepats-install.json": "3323d01595802cacdb10e198fb6f0637539c8c00b29b215f3562e65c7e5a89d0",
+        "freepats-render.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "freepats-render.log": "49b702f0b5a750bfc7abe720782fe1a13102ad47e36898e46beca1804d9ec42e",
+        "freepats-resolve.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "freepats-resolve.json": "dda54a7216640320b0eac514aa1ffffa003ade4261462ce0e18a279907e8b4d1",
+        "freepats-selected.json": "4e791f76c22a7cf0472e15ce97b0ac7e42e2f87b856936de43e975f0497f6cea",
+        "guarded-compile.cmd": "2c730d7320b9dec52887fb317c59d903d8c458593800e370e3ada59ee59c603d",
+        "guarded-compile.rsp": "7184345dce7e05df52807521aebdffd1c5aa4475e9683981dfb5e6ded5e03da6",
+        "guarded-helper-provenance.json": "21d53e2da8b2857ec3ba273e83f3478cbf0f3a5537d533db17123a240bb86491",
+        "live-sfz-space-guard.exe": "e33325e0f1691213b5d5d12ef108d07b576571f1f1278d0788c4cacf95782ba7",
+        "live-sfz.exe": "a874dac4b47a4a9b028eb58da942ea94b262160f9e296a170499e1c472e1c684",
+        "musical-artifacts-browse.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "musical-artifacts-browse.json": "bdd2b009ae451894fc9d8d64a21ef597c29cc763a4746b1548bb6801d9e699bb",
+        "musical-artifacts-descriptor.json": "1d6e49ef43b8e8eedd6e0a5be684cb84ffa72a42803c7b38cc077179a1045202",
+        "musical-artifacts-install.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "musical-artifacts-install.json": "148f9cf42b9d8b439b0bb1b93ebd49a0d2f0fecc3c92357d5c3afcaa89c4ff12",
+        "musical-artifacts-render.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "musical-artifacts-render.log": "463b1e6faed49d61e86673e8492b76d5f7aca9db6bb82748e1f0a2f5d3665207",
+        "musical-artifacts-resolve.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "musical-artifacts-resolve.json": "1d6e49ef43b8e8eedd6e0a5be684cb84ffa72a42803c7b38cc077179a1045202",
+        "musical-artifacts-selected.json": "18282d1e30b79dcaad9df3b0efcebc7d4cc86d905a4b053e5ced469dab2b0551",
+        "provenance.json": "0db0bb78c80b31935ec0fdbc5652c8ac3cd15e581f294486ef6bf09db2998327",
+        "render-results.json": "15dcea6787ff5a3d52f237cb6fd4d4b8166c9167a60fefe2604de205aacc5612",
+        "sfzinstruments-browse.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "sfzinstruments-browse.json": "c294fe7ce35088b65fe4136e3dd4b0e89ef64e523ab6962c932cb5913ed47f33",
+        "sfzinstruments-descriptor.json": "865cde792aa6faf89245eb4406cbd4d11b1c199c2bc03dbadc7c4c076d5b426a",
+        "sfzinstruments-install.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "sfzinstruments-install.json": "2d666c143250d7e8d78295c8819b75043393d933410f5b427fe959867a9c3a20",
+        "sfzinstruments-render.err": "93d69f1b5bc3b35428220a16976fb19500ab405b57dc13c7923a766d9a04de71",
+        "sfzinstruments-render.log": "7b55322aa07c44069639f29f54d832f772e3aa7300ba0953e84f151f46d50035",
+        "sfzinstruments-resolve.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "sfzinstruments-resolve.json": "865cde792aa6faf89245eb4406cbd4d11b1c199c2bc03dbadc7c4c076d5b426a",
+        "sfzinstruments-selected.json": "c3efe8e06fb6df373ed022df5c42c1bd31c88a7aa0c8a1821fe3badef80d6666",
+        "versilian-browse.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "versilian-browse.json": "59e0d4dfc541193e54a4010450a32e18b37f550c37941bf71e51a216e0ed4e2b",
+        "versilian-descriptor.json": "0c746ef408d2537f2a39fdac879b45bedf666fd00ed98855ef724a4437c69a32",
+        "versilian-install-compressed.err": "98f8b481f3627cced0738e073e8531643e8a1e49decb7120da0622d9bd4c54be",
+        "versilian-install-compressed.json": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "versilian-install.err": "98f8b481f3627cced0738e073e8531643e8a1e49decb7120da0622d9bd4c54be",
+        "versilian-install.json": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "versilian-resolve.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "versilian-resolve.json": "0c746ef408d2537f2a39fdac879b45bedf666fd00ed98855ef724a4437c69a32",
+        "versilian-selected.json": "8b19e3615212da8558e21c81a6ff6e00bfa7a6109fa7cfd344cb17884e9a4345",
+        "library-freepats/packs/e4283d7db102ed23fe4776a5036672f35236d952a77167bc7ff9c6cdcfd43ccd/.dusk-pack.json": "45f3a3e861d1c46f2ff374263458819db66bac929a1dacd8c48b8259ad9a165b",
+        "library-musical-artifacts/packs/d946804ba5d5ccfb39c2888c6fe0de43ffef50c0842e575a74c04bb6b949f262/.dusk-pack.json": "c631e15dc193f5b1207debb09cf38c5001514cf304fecadf1496b2755ddc146a",
+        "library-sfzinstruments/packs/911e6df902daf1981f2fd6f9b398e1736e0092a73bd12c7409e8b459d06502a9/.dusk-pack.json": "7958933347c6df0f7635b83bdc7aff376d8db00f428ef96370604ce13eeafcf5"
+      },
+      "provenance": {
+        "source": {
+          "revision": "54ef831271dd2416357d43366066e2e426f06ac6",
+          "clean": true
+        },
+        "app_sha256": "4397ed5137c14c2856153c243dc3a71d4a7dc55a5c324d94069f12fe5fa41c6d",
+        "daf": {
+          "revision": "63e7c861461ff1c57cedc177fedfd946daf6941b",
+          "clean": true
+        },
+        "juce": {
+          "revision": "51d11a2be6d5c97ccf12b4e5e827006e19f0555a",
+          "clean": true
+        },
+        "donor": {
+          "revision": "78abae748a32c5863f586ca174a47047a4d2c4a1",
+          "clean": true
+        },
+        "cache_options": [
+          "DAF_PATH:UNINITIALIZED=C:/Users/marc/dusk-016-validation-deps/DAF",
+          "DUSKSTUDIO_ENABLE_NATIVE_UI:BOOL=ON",
+          "DUSKSTUDIO_NATIVE_CLAP:BOOL=ON",
+          "DUSKSTUDIO_NATIVE_COREMIDI:BOOL=OFF",
+          "DUSKSTUDIO_REQUIRE_ASIO:UNINITIALIZED=ON",
+          "DUSK_PLUGINS_PATH:UNINITIALIZED=C:/Users/marc/dusk-016-validation-deps/plugins",
+          "JUCE_PATH:UNINITIALIZED=C:/Users/marc/JUCE-8.0.4",
+          "DUSKSTUDIO_RESOLVED_ASIO_SDK_PATH:INTERNAL=C:/Users/marc/SDKs/asiosdk"
+        ],
+        "free_bytes": 6103740416,
+        "tests_sha256": "27773b479fab12e882d4bdf5edfa93ccb9962d8521ad47e645a6c047eb812e71"
+      },
+      "app_sha256": "4397ed5137c14c2856153c243dc3a71d4a7dc55a5c324d94069f12fe5fa41c6d",
+      "render_app_hash_unchanged": true,
+      "successful_providers": 3,
+      "installed_programs_verified_and_resolved_offline": 4,
+      "selected_native_renders": 3,
+      "incomplete_sources": [
+        {
+          "source": "versilian",
+          "pack": "VSCO 2 CE",
+          "browse_and_resolve": "PASS",
+          "install_verify_offline": "NOT PROVEN",
+          "attempts": [
+            "Private uncompressed folder",
+            "Fresh private NTFS-compressed folder"
+          ],
+          "stop_reason": "Temporary validation helper cancelled when its free-space check failed or reported less than 1.5 GiB available. Numeric free space at cancellation was not retained.",
+          "native_helper_exit": 1,
+          "guard_bytes": 1610612736,
+          "published_receipt_present_after_attempts": false,
+          "limits": "No product defect inferred; no VCSL install or default-location/long-path validation."
+        }
+      ],
+      "provenance_sha256": {
+        "C:\\Users\\marc\\dusk-m3-validation\\source\\build-tests\\DuskStudio.dir\\Release\\SfzArchive.obj": "14713af32911ae1282e29968086c9e0564c28297cfa86f6e3c8c2db3f45baad8",
+        "C:\\Users\\marc\\dusk-m3-validation\\source\\build-tests\\DuskStudio.dir\\Release\\SfzArtworkCache.obj": "f0b00cb61b6ff314c63174138ba1378c38ba79ba6033ee02e40c35895de1f140",
+        "C:\\Users\\marc\\dusk-m3-validation\\source\\build-tests\\DuskStudio.dir\\Release\\SfzCatalog.obj": "de54319de44a28fba63d4705151263e70f4482cdaaaeb2a500f5e41c98dc8568",
+        "C:\\Users\\marc\\dusk-m3-validation\\source\\build-tests\\DuskStudio.dir\\Release\\SfzCatalogEnvelope.obj": "4ca09af3b3f90d5b34bec317e52136e68a78707333cb783fdec5a738fa798b22",
+        "C:\\Users\\marc\\dusk-m3-validation\\source\\build-tests\\DuskStudio.dir\\Release\\SfzDirectoryLease.obj": "ea1fd979c81859679ae12b085a0ea356473991ae1ea54a625bb06417baf7e86b",
+        "C:\\Users\\marc\\dusk-m3-validation\\source\\build-tests\\DuskStudio.dir\\Release\\SfzLibrary.obj": "eeb5a9875579abc38ad16f74d0c2f66c15bcb93fc08d69e718bc617f18235bdc",
+        "C:\\Users\\marc\\dusk-m3-validation\\source\\build-tests\\DuskStudio.dir\\Release\\SfzLibraryLocations.obj": "d3ff616742c7e355af3fcdfbf22e3fdb488e4111748a37fd48d64425c1e24881",
+        "C:\\Users\\marc\\dusk-m3-validation\\source\\build-tests\\DuskStudio.dir\\Release\\SfzLibraryService.obj": "2fcb127a4c0da5ef98520639847706d640d400f084ce38b03cf1316c2a9a6246",
+        "C:\\Users\\marc\\dusk-m3-validation\\source\\build-tests\\DuskStudio.dir\\Release\\SfzPackIndex.obj": "900c116a00b159f8e0dae1ec2450a451f409907dc3e0473da74c883bf2476b5c",
+        "C:\\Users\\marc\\dusk-m3-validation\\source\\build-tests\\DuskStudio.dir\\Release\\SfzPackIntegrity.obj": "335cd4a78da9efdb740c914dd69f541eb77d341b486bc7b8e63fc23b24e9ed47",
+        "C:\\Users\\marc\\dusk-m3-validation\\source\\build-tests\\DuskStudio.dir\\Release\\SfzPackStore.obj": "d70beb061b13f5ee474ccefcd37e42bd442b8f4426dae57c56290f76cf0ef18b",
+        "C:\\Users\\marc\\dusk-m3-validation\\source\\build-tests\\DuskStudio.dir\\Release\\SfzPathPolicy.obj": "8de26af6e429411332955de746eda55c7c8803d03a9cd598710843197a8963a9",
+        "C:\\Users\\marc\\dusk-m3-validation\\source\\build-tests\\DuskStudio.dir\\Release\\SfzProvider.obj": "812973a9eac3c00f563e978e698bf7a3d4e236dfe5efd05a33e0d0857859cd5a",
+        "C:\\Users\\marc\\dusk-m3-validation\\source\\build-tests\\DuskStudio.dir\\Release\\SfzTransfer.obj": "0a0dbe393ce0a837078138904168170390d3e426dd8e33a19c44465f2a156c51",
+        "C:\\Users\\marc\\dusk-016-validation-deps\\live-sfz-8ce8372a74b6405da4240656f22cf3f3\\live-sfz.exe": "a874dac4b47a4a9b028eb58da942ea94b262160f9e296a170499e1c472e1c684",
+        "C:\\Users\\marc\\dusk-016-validation-deps\\live-sfz-8ce8372a74b6405da4240656f22cf3f3\\dusk-016-live-sfz.cpp": "b915b1c333a3c166b4d88eda1b65b90eaebae7a615eb217129c274f5925cab10",
+        "C:\\Users\\marc\\dusk-m3-validation\\source\\build-tests\\DuskStudio_artefacts\\Release\\DuskStudio.exe": "4397ed5137c14c2856153c243dc3a71d4a7dc55a5c324d94069f12fe5fa41c6d"
+      }
+    },
+    "limits": [
+      "Sampled production backend and native rendering only; normal GUI, artwork, shipping packages and cold hosts remain unproved.",
+      "One program per successful provider rendered; every installed program was integrity-verified and resolved offline.",
+      "Primary-license versus provider-declared-license distinctions remain as recorded in the Linux evidence. Matching hashes do not add independent license verification.",
+      "Pause/restart/resume, physical external drives, default Windows VSCO/VCSL installs and live CC-BY-SA/restricted-license checks remain open."
+    ]
+  },
+  "ci_snapshot": {
+    "source_commit": "54ef831271dd2416357d43366066e2e426f06ac6",
+    "checks": [
+      {
+        "link": "https://github.com/dusk-audio/dusk-studio/actions/runs/39087289155/job/117556416157",
+        "name": "Build + tests (clang Release, macOS arm64)",
+        "state": "SUCCESS"
+      },
+      {
+        "link": "https://github.com/dusk-audio/dusk-studio/actions/runs/39087289182/job/117556415564",
+        "name": "Build + tests (GCC Release, Ubuntu 22.04, arm64)",
+        "state": "SUCCESS"
+      },
+      {
+        "link": "https://github.com/dusk-audio/dusk-studio/actions/runs/39087289192/job/117556415821",
+        "name": "De-JUCE ratchet",
+        "state": "SUCCESS"
+      },
+      {
+        "link": "https://github.com/dusk-audio/dusk-studio/actions/runs/39087289283/job/117556416214",
+        "name": "Catch2 tests (TSan, Ubuntu 22.04)",
+        "state": "SUCCESS"
+      },
+      {
+        "link": "https://github.com/dusk-audio/dusk-studio/actions/runs/39087289329/job/117556416114",
+        "name": "Catch2 tests (MSVC x64 Release, Windows)",
+        "state": "SUCCESS"
+      },
+      {
+        "link": "https://github.com/dusk-audio/dusk-studio/actions/runs/39087289283/job/117556416101",
+        "name": "Catch2 tests (ASan + UBSan, Ubuntu 22.04)",
+        "state": "IN_PROGRESS"
+      },
+      {
+        "link": "https://github.com/dusk-audio/dusk-studio/actions/runs/39087289192/job/117556415652",
+        "name": "Build + tests (GCC Release, Ubuntu 22.04, amd64)",
+        "state": "SUCCESS"
+      }
+    ],
+    "limits": "PR checks only; no final-main or future documentation-commit claim."
+  },
+  "operational_backup": {
+    "verified_files": 103,
+    "verified_bytes": 752753331,
+    "archive_sha256": "1bcacf65510f3317e8b43793e8067ad9f4f87c2b7d96669e0dd3d8d7a7af13f1",
+    "manifest_sha256": "96a90ab56592313324989c6bbbef7326cc30cd8845ce7fc2e51e8d87b7f58496",
+    "archive": "/home/marc/projects/DuskStudio/build/validation-backups/dusk-016-windows-owned-temp-backup.tar",
+    "persistent_copy_verified": true
+  },
+  "log_sha256": {
+    "/tmp/dusk-016-publish-prepush.log": "8824deea49cc6de3a7ca61c7a19aaeecfabf9dd0e6e1469bc74fc52f2490c0a7",
+    "/var/tmp/dusk-prepush.FwpjPO/linux.log": "648caef659e4a43696e1928485cf674586d5fb0b58b868cca05e7ac92660edc7",
+    "/var/tmp/dusk-prepush.FwpjPO/mac.log": "b0916cdd87d569f425605830a8562b859905618ec680c151a75eea93f7517511",
+    "/tmp/dusk-016-final-windows-validation.log": "528cb73e0fe4e0bea420454378fafc9943c3e22ab2cf9617cfb3e4c3b52d5bc5",
+    "/tmp/dusk-016-windows-engine-current.log": "deb55680abd46ac7b1e6a863cfebee33dc6e7d0599d403c2a958128a44924597",
+    "/tmp/dusk-016-windows-engine-complete.log": "3609ca9bde2432859930bc76359d03fcc96c5198179bb21481632dacb5801816",
+    "/tmp/dusk-016-windows-interactive-current.log": "c536da802b96f7ed2c250cfc1170731303719b23ed2ec5a9c749e45ffc9ba7de",
+    "/tmp/dusk-016-macos-current-gui.log": "5eaee3cb8974db6a56180850fc09f813e3430ac382cec5d45337d92de046aa4e",
+    "/tmp/dusk-016-mac-live-run.log": "b6f596fbf2e069875062bca7e315cdd3202d4a213a6971fb0294aa25bc179d67",
+    "/tmp/dusk-016-mac-live-versilian.log": "e6311dee717fda04c5878cc766893aa69b489a77de485f9114d324180afa5f39",
+    "/tmp/dusk-016-mac-live-render.log": "b91c09d9ab66e12a1770fc3b223a55d4eb33d46af2d3f6c063610dcaf5362331",
+    "/tmp/dusk-016-mac-live-versilian-render.log": "e5614bc432b3c3ad3d6a90475acbd1abb0b8eeef79ff61db865221606b9efb33",
+    "/tmp/dusk-016-windows-live-run.log": "07e3f8d48711361ae3277e2328c410e4c1e426cb98e83fdcf3ebc443f7812555",
+    "/tmp/dusk-016-windows-live-run-fixed.log": "55ff6ddb38acd476ac8cee5b1ce167d019814ec0a877a9b360236f2434e102bf",
+    "/tmp/dusk-016-windows-live-render.log": "49fdd78b8bcb6e3d714e9ec619d5c70969ead54a8e1ef40c3749c724c9767064",
+    "/tmp/dusk-016-windows-live-versilian-guarded.log": "582a399171b6e5c0b454cdb7a0deea5c3e9c8226135e30e76b58c98de48d8d74",
+    "/tmp/dusk-016-windows-live-versilian-compressed.log": "af481ec53fbda4ce06e16b6c9eeab017ecb0237c1ce7a08154f7cf2b99467000",
+    "/tmp/dusk-016-mac-live-evidence-final.tar": "5da526c268754d54e020874b918a74ba6b3a6b71c24a9a48c5469e3c72330e9c",
+    "/tmp/dusk-016-windows-live-evidence-final.tar": "c262185fa34768d7de03ba8954aeb7807fee147716813e8189476e4995ed75c7",
+    "/tmp/dusk-016-pr-required-docs-snapshot.json": "6477aac2ab8ccf855c64063abf61d114c7cdb619b89e6372197a91dc1fc30ef1",
+    "/tmp/dusk-016-windows-clean-owned.log": "aba8e160e2bd255960057fe79e8c9724fe35b62ad4df9f6f9d2d3ba00d0db716",
+    "/tmp/dusk-016-live-license-sa-selected.json": "e27ad6ae154d52d25229662aa5e714a4c2ff1bb2881c60619043eb837bf66a8d",
+    "/tmp/dusk-016-live-license-sa-resolve.err": "209b8811e373215532085c49fea12e88c67b4a356c3d157184f794182b482478"
+  },
+  "additional_license_probe": {
+    "source": "musical-artifacts",
+    "pack_id": "7002",
+    "listed_license": "CC-BY-SA-3.0",
+    "result": "Resolver refused unsupported direct HTTPS download; no install or license-policy acceptance proof."
+  },
+  "validation_harness_controls": [
+    {
+      "control": "First Windows provider helper compile",
+      "result": "Temporary response-file linker switches produced the default output filename instead of the expected helper filename. Corrected the driver to use /Fe; successful live checks use the separately hashed corrected executable.",
+      "log": "/tmp/dusk-016-windows-live-run.log"
+    },
+    {
+      "control": "First Windows engine run",
+      "result": "Incomplete fixture roots produced 134 passes and 52 skips. The complete-root run supersedes it with 177 passes and nine skips."
+    }
+  ]
+}

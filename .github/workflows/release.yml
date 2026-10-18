@@ -161,8 +161,8 @@ jobs:
         # already ships the alias — double-defining it would fail to compile.
         env:
           JUCE_MIRROR: https://github.com/dusk-audio/JUCE-wayland.git
-          JUCE_TAG: dusk-wayland-v2
-          JUCE_REV: 4d85afa175a45e0b5da11f9211de3ba88705588e
+          JUCE_TAG: dusk-wayland-v3
+          JUCE_REV: 075eed7a1000b6b9dfce6aae93e7f2b82fa35f68
         run: |
           set -euo pipefail
           git init -q "${RUNNER_TEMP}/JUCE-wayland"
@@ -564,7 +564,7 @@ jobs:
 
       - name: Build (Release)
         shell: bash
-        run: cmake --build build --config Release -j4
+        run: cmake --build build --config Release -j4 -- -p:CL_MPCount=1
 
       - name: Verify packaged Mesa selects llvmpipe
         shell: pwsh
@@ -603,7 +603,7 @@ jobs:
             grep -q "^${option}:BOOL=ON$" build-tests/CMakeCache.txt || {
               echo "::error::${option} was not enabled in the test configure" >&2; exit 1; }
           done
-          cmake --build build-tests --config Release --target dusk-studio-tests -j4
+          cmake --build build-tests --config Release --target dusk-studio-tests -j4 -- -p:CL_MPCount=1
           inventory="$(ctest --test-dir build-tests -N -C Release)"
           printf '%s\n' "$inventory"
           for required in \

@@ -1844,8 +1844,6 @@ bool JoinRegionsAction::undo()
     return true;
 }
 
-// RecordCommitAction
-
 bool MidiMergePassAction::apply (bool forward)
 {
     TrackSlotMask tracks {};
@@ -1858,7 +1856,7 @@ bool MidiMergePassAction::apply (bool forward)
     {
         session.track (diff.trackIndex).midiRegions.mutate (
             [&diff, forward] (std::vector<MidiRegion>& regions)
-            { regions = forward ? diff.after : diff.before; });
+            { regions = forward ? diff.after : diff.before; }, diff.capture);
         tracks[(std::size_t) diff.trackIndex] = true;
     }
     refreshPlayback (engine, tracks);

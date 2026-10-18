@@ -275,6 +275,7 @@ struct ListView
 // The list is presented in its incoming order (the SF2 editor sorts it
 // program-first so an instrument's bank variants group together).
 class DuskComboPanel final : public juce::Component,
+                             public ModalKeyClaimant,
                              private dusk::Timer
 {
 public:
@@ -459,6 +460,11 @@ public:
             if (flat.isSelectable (nh) && nh != flat.hovered) { flat.hovered = nh; announceActive(); }
         }
         repaint();
+    }
+
+    bool claimsKeyCode (int keyCode) const override
+    {
+        return keyCode == juce::KeyPress::homeKey;
     }
 
     bool keyPressed (const juce::KeyPress& k) override

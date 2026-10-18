@@ -2,11 +2,13 @@
 #include <catch2/generators/catch_generators.hpp>
 
 #include "engine/sfz/SfzLibraryLocations.h"
+#include "foundation/AppConfigDir.h"
 #include "foundation/Fs.h"
 
 #include <sodium.h>
 
 #include <array>
+#include <cstdlib>
 #include <filesystem>
 #include <string>
 
@@ -14,6 +16,42 @@ namespace
 {
 using namespace duskstudio::sfz;
 namespace fs = std::filesystem;
+
+class ScopedEnvironment
+{
+public:
+    ScopedEnvironment (const char* key, const fs::path& value) : name (key)
+    {
+       #if defined(_WIN32)
+        const auto* existing = ::_wgetenv (name.c_str());
+       #else
+        const auto* existing = std::getenv (name.c_str());
+       #endif
+        hadPrevious = existing != nullptr;
+        if (existing != nullptr) previous = existing;
+       #if defined(_WIN32)
+        REQUIRE (::_wputenv_s (name.c_str(), value.c_str()) == 0);
+       #else
+        REQUIRE (::setenv (name.c_str(), value.c_str(), 1) == 0);
+       #endif
+    }
+    ~ScopedEnvironment()
+    {
+       #if defined(_WIN32)
+        ::_wputenv_s (name.c_str(), hadPrevious ? previous.c_str() : L"");
+       #else
+        if (hadPrevious) ::setenv (name.c_str(), previous.c_str(), 1);
+        else ::unsetenv (name.c_str());
+       #endif
+    }
+    ScopedEnvironment (const ScopedEnvironment&) = delete;
+    ScopedEnvironment& operator= (const ScopedEnvironment&) = delete;
+
+private:
+    fs::path name;
+    fs::path::string_type previous;
+    bool hadPrevious = false;
+};
 
 std::string hash (const std::string& text)
 {
@@ -27,10 +65,19 @@ std::string hash (const std::string& text)
 
 struct LibraryTree
 {
-    LibraryTree() : root (fs::canonical (dusk::fs::createUniqueTempDirectory ("dusk-sfz-location-")))
+    explicit LibraryTree (bool deep = false)
+        : root (fs::canonical (dusk::fs::createUniqueTempDirectory ("dusk-sfz-location-")))
     {
-        REQUIRE (fs::create_directory (source));
-        REQUIRE (fs::create_directory (destination));
+        if (deep)
+        {
+            auto directory = root;
+            for (int index = 0; index < 4; ++index) directory /= std::string (72, char ('a' + index));
+            source = directory / "source";
+            destination = directory / fs::u8path (u8"External library Étude");
+            configuration = directory / "settings/locations.json";
+        }
+        REQUIRE (fs::create_directories (dusk::fs::nativeIOPath (source)));
+        REQUIRE (fs::create_directory (dusk::fs::nativeIOPath (destination)));
         const auto configured = changeLibraryLocation ({}, source, false, {}, configuration);
         REQUIRE (configured);
         REQUIRE (configured.locations);
@@ -39,8 +86,8 @@ struct LibraryTree
         std::string error;
         const auto staging = store.createStaging (error);
         REQUIRE_FALSE (staging.empty());
-        REQUIRE (fs::create_directory (staging / "Programs"));
-        REQUIRE (fs::create_directory (staging / "Samples"));
+        REQUIRE (fs::create_directory (dusk::fs::nativeIOPath (staging / "Programs")));
+        REQUIRE (fs::create_directory (dusk::fs::nativeIOPath (staging / "Samples")));
         REQUIRE (dusk::fs::writeStringToFile (staging / fs::u8path (u8"Programs/Étude.sfz"), "<region> sample=../Samples/tone.wav"));
         sample.assign (150000, 'a');
         REQUIRE (dusk::fs::writeStringToFile (staging / "Samples/tone.wav", sample));
@@ -60,7 +107,7 @@ struct LibraryTree
         REQUIRE (published.pack);
         pack = *published.pack;
     }
-    ~LibraryTree() { std::error_code ignored; fs::remove_all (root, ignored); }
+    ~LibraryTree() { std::error_code ignored; fs::remove_all (dusk::fs::nativeIOPath (root), ignored); }
     fs::path root;
     fs::path source = root / "source";
     fs::path destination = root / fs::u8path (u8"External library Étude");
@@ -69,11 +116,132 @@ struct LibraryTree
     InstalledPack pack;
     std::string sample;
 };
+
+#if ! defined(_WIN32)
+void checkDestinationDisconnection (bool replace)
+{
+    for (const bool betweenFiles : { false, true })
+    {
+        LibraryTree tree;
+        const auto configBefore = dusk::fs::loadFileAsString (tree.configuration);
+        bool changed = false;
+        const auto disconnect = [&]
+        {
+            if (changed) return;
+            const auto offline = tree.root / "disconnected destination";
+            fs::rename (tree.destination, offline);
+            if (replace)
+            {
+                REQUIRE (fs::create_directory (tree.destination));
+                REQUIRE (fs::create_directory (tree.destination / "packs"));
+                REQUIRE (fs::copy_file (offline / ".dusk-sfz-library", tree.destination / ".dusk-sfz-library"));
+            }
+            changed = true;
+        };
+        OperationControl control;
+        if (betweenFiles)
+            control.cancelled = [&]
+            {
+                if (! changed)
+                    for (const auto& entry : fs::directory_iterator (tree.destination))
+                        if (entry.path().filename().u8string().rfind (".install-", 0) == 0)
+                        { disconnect(); break; }
+                return false;
+            };
+        else control.progress = [&] (const auto&) { disconnect(); };
+        const auto result = changeLibraryLocation (tree.before, tree.destination, true, control, tree.configuration);
+        REQUIRE (changed);
+        REQUIRE_FALSE (result);
+        CHECK_FALSE (result.locations);
+        CHECK (dusk::fs::loadFileAsString (tree.configuration) == configBefore);
+        CHECK (dusk::fs::loadFileAsString (tree.pack.directory / "Samples/tone.wav") == tree.sample);
+        CHECK (result.failureKind == FailureKind::None);
+        CHECK (resolveLibraryInstrument (tree.before, tree.pack.locatorFor (tree.pack.instruments.front())).has_value());
+        if (replace)
+        {
+            CHECK (fs::is_empty (tree.destination / "packs"));
+            for (const auto& entry : fs::directory_iterator (tree.destination))
+                CHECK (entry.path().filename().u8string().rfind (".install-", 0) != 0);
+        }
+        else CHECK_FALSE (fs::exists (tree.destination));
+    }
+}
+#endif
 } // namespace
+
+TEST_CASE ("SFZ library defaults to application data while location settings stay in config", "[sfz][storage]")
+{
+    const auto root = dusk::fs::createUniqueTempDirectory ("dusk-sfz-default-location-");
+    REQUIRE_FALSE (root.empty());
+    const auto locations = readLibraryLocations (root / "absent.json");
+    std::error_code ignored;
+    fs::remove_all (root, ignored);
+    REQUIRE (locations.error.empty());
+    REQUIRE (locations.active.root == dusk::fs::appDataDir() / "sfz-library");
+    REQUIRE (libraryLocationsFile() == dusk::fs::appConfigDir() / "sfz-library-locations.json");
+}
+
+TEST_CASE ("SFZ library upgrades retain packs in the former default folder", "[sfz][storage]")
+{
+    LibraryTree tree;
+    const ScopedEnvironment specialLocations ("DUSKSTUDIO_TEST_SPECIAL_LOCATIONS_ROOT", tree.root);
+    const ScopedEnvironment noOverride ("DUSKSTUDIO_CONFIG_DIR", "");
+    const ScopedEnvironment noScenarios ("DUSKSTUDIO_RUN_SCENARIOS", "");
+    const ScopedEnvironment noSelfTest ("DUSKSTUDIO_RUN_SELFTEST", "0");
+    const auto formerRoot = dusk::fs::appConfigDir() / "sfz-library";
+    const auto dataRoot = dusk::fs::appDataDir() / "sfz-library";
+    REQUIRE (formerRoot != dataRoot);
+    REQUIRE (fs::create_directories (formerRoot.parent_path()));
+    fs::copy (tree.source, formerRoot, fs::copy_options::recursive);
+    REQUIRE (fs::remove (formerRoot / ".dusk-sfz-library"));
+    const auto locator = tree.pack.locatorFor (tree.pack.instruments.front());
+    auto expectedRoot = formerRoot;
+    auto activeRoot = dataRoot;
+    std::string configuration;
+    const auto encode = [] (const LibraryLocation& location)
+    { return dusk::json::Json { { "path", location.root.u8string() }, { "marker", location.marker } }; };
+    SECTION ("The old default did not need a locations file") {}
+    SECTION ("Saved external settings retain the former default as a previous root")
+    {
+        activeRoot = tree.source;
+        fs::remove_all (tree.source / "packs");
+        REQUIRE (fs::create_directory (tree.source / "packs"));
+        configuration = dusk::json::Json { { "schema", 1 }, { "active", encode (tree.before.active) },
+            { "previous", dusk::json::Json::array ({ encode ({ formerRoot, {} }) }) } }.dump();
+    }
+    SECTION ("The former default can remain the configured active root")
+    {
+        activeRoot = formerRoot;
+        configuration = dusk::json::Json { { "schema", 1 }, { "active", encode ({ formerRoot, {} }) },
+            { "previous", dusk::json::Json::array() } }.dump();
+    }
+    SECTION ("The new default takes precedence when both folders contain the same pack")
+    {
+        REQUIRE (fs::create_directories (dataRoot.parent_path()));
+        fs::copy (tree.source, dataRoot, fs::copy_options::recursive);
+        expectedRoot = dataRoot;
+    }
+    if (! configuration.empty())
+        REQUIRE (dusk::fs::writeStringToFile (libraryLocationsFile(), configuration));
+    const auto locations = readLibraryLocations();
+    REQUIRE (locations.error.empty());
+    CHECK (locations.active.root == activeRoot);
+    const auto installed = installedLibraryPacks (locations);
+    REQUIRE (installed.size() == 1);
+    const auto resolved = resolveLibraryInstrument (locations, locator);
+    REQUIRE (resolved);
+    CHECK (*resolved == expectedRoot / tree.pack.directory.lexically_relative (tree.source)
+        / fs::u8path (u8"Programs/Étude.sfz"));
+    CHECK (libraryLocatorForFile (locations, *resolved) == locator);
+    CHECK (dusk::fs::loadFileAsString (installed.front().directory / "Samples/tone.wav") == tree.sample);
+    CHECK (fs::is_directory (formerRoot / "packs"));
+    if (configuration.empty()) CHECK_FALSE (fs::exists (libraryLocationsFile()));
+    else CHECK (dusk::fs::loadFileAsString (libraryLocationsFile()) == configuration);
+}
 
 TEST_CASE ("SFZ library locations preserve identities across copies and future-download folders", "[sfz][storage]")
 {
-    LibraryTree tree;
+    LibraryTree tree (GENERATE (false, true));
     const auto locator = tree.pack.locatorFor (tree.pack.instruments.front());
     bool move = true;
     bool chained = false, incomplete = false;
@@ -84,25 +252,25 @@ TEST_CASE ("SFZ library locations preserve identities across copies and future-d
     {
         const auto alias = tree.root / "source alias";
         std::error_code error;
-        fs::create_directory_symlink (tree.source, alias, error);
+        fs::create_directory_symlink (dusk::fs::nativeIOPath (tree.source), alias, error);
         if (error) SKIP ("directory aliases are unavailable");
         tree.destination = alias;
     }
     SECTION ("A chained move does not require the disconnected emptied drive")
     {
         chained = true;
-        REQUIRE (fs::create_directory (tree.source / ".downloads"));
-        REQUIRE (fs::create_directory (tree.source / ".repository-cache"));
+        REQUIRE (fs::create_directory (dusk::fs::nativeIOPath (tree.source / ".downloads")));
+        REQUIRE (fs::create_directory (dusk::fs::nativeIOPath (tree.source / ".repository-cache")));
         REQUIRE (dusk::fs::writeStringToFile (tree.source / ".repository-cache/search.json", "cached listing"));
         REQUIRE (dusk::fs::writeStringToFile (tree.source / "unrelated.txt", "keep this file"));
     }
     SECTION ("An incomplete pack keeps its old root registered")
     {
         incomplete = true;
-        REQUIRE (fs::create_directory (tree.source / "packs/incomplete"));
+        REQUIRE (fs::create_directory (dusk::fs::nativeIOPath (tree.source / "packs/incomplete")));
         REQUIRE (dusk::fs::writeStringToFile (tree.source / "packs/incomplete/sample.wav", "user-owned sample"));
     }
-    const bool sameDirectory = fs::equivalent (tree.source, tree.destination);
+    const bool sameDirectory = fs::equivalent (dusk::fs::nativeIOPath (tree.source), dusk::fs::nativeIOPath (tree.destination));
     auto changed = changeLibraryLocation (tree.before, tree.destination, move, {}, tree.configuration);
     REQUIRE (changed);
     REQUIRE (changed.locations);
@@ -110,7 +278,7 @@ TEST_CASE ("SFZ library locations preserve identities across copies and future-d
     {
         REQUIRE (changed.locations->previous.empty());
         CHECK (dusk::fs::loadFileAsString (tree.source / "unrelated.txt") == "keep this file");
-        fs::rename (tree.source, tree.root / "disconnected old drive");
+        fs::rename (dusk::fs::nativeIOPath (tree.source), tree.root / "disconnected old drive");
         tree.destination = tree.root / "third library";
         REQUIRE (fs::create_directory (tree.destination));
         changed = changeLibraryLocation (*changed.locations, tree.destination, true, {}, tree.configuration);
@@ -120,7 +288,7 @@ TEST_CASE ("SFZ library locations preserve identities across copies and future-d
     }
     const auto restored = readLibraryLocations (tree.configuration);
     REQUIRE (restored.error.empty());
-    CHECK (restored.active.root == fs::canonical (tree.destination));
+    CHECK (restored.active.root == fs::canonical (dusk::fs::nativeIOPath (tree.destination)));
     REQUIRE (libraryLocationAvailable (restored.active));
     const auto installed = installedLibraryPacks (restored);
     REQUIRE (installed.size() == 1);
@@ -130,8 +298,8 @@ TEST_CASE ("SFZ library locations preserve identities across copies and future-d
     CHECK (libraryLocatorForFile (restored, *path) == locator);
     CHECK (dusk::fs::loadFileAsString (installed.front().directory / "Samples/tone.wav") == tree.sample);
     if (! sameDirectory)
-        CHECK (fs::exists (tree.pack.directory) == ! move);
-    if (move) CHECK (installed.front().directory.parent_path().parent_path() == fs::canonical (tree.destination));
+        CHECK (fs::exists (dusk::fs::nativeIOPath (tree.pack.directory)) == ! move);
+    if (move) CHECK (installed.front().directory.parent_path().parent_path() == fs::canonical (dusk::fs::nativeIOPath (tree.destination)));
     if (incomplete)
     {
         REQUIRE (restored.previous.size() == 1);
@@ -145,9 +313,9 @@ TEST_CASE ("SFZ library relocation failures retain the active configuration and 
     LibraryTree tree;
     const auto configBefore = dusk::fs::loadFileAsString (tree.configuration);
     auto file = tree.configuration;
+    auto failureKind = FailureKind::None;
     OperationControl control;
     bool cancelled = false;
-    bool removedDestination = false, replacedDestination = false;
     fs::path replacedStaging, removedStaging;
    #if defined(_WIN32)
     const bool betweenFiles = true;
@@ -189,6 +357,16 @@ TEST_CASE ("SFZ library relocation failures retain the active configuration and 
         const auto copy = tree.destination / "packs" / tree.pack.directory.filename();
         fs::copy (tree.pack.directory, copy, fs::copy_options::recursive);
         REQUIRE (dusk::fs::writeStringToFile (copy / "Samples/tone.wav", "different samples"));
+        failureKind = FailureKind::Integrity;
+    }
+    SECTION ("Equal-length destination corruption fails its content hash")
+    {
+        const auto prepared = changeLibraryLocation ({}, tree.destination, false, {}, {});
+        REQUIRE (prepared);
+        const auto copy = tree.destination / "packs" / tree.pack.directory.filename();
+        fs::copy (tree.pack.directory, copy, fs::copy_options::recursive);
+        REQUIRE (dusk::fs::writeStringToFile (copy / "Samples/tone.wav", std::string (tree.sample.size(), 'b')));
+        failureKind = FailureKind::Integrity;
     }
     SECTION ("A destination nested inside the source is rejected")
     {
@@ -200,28 +378,6 @@ TEST_CASE ("SFZ library relocation failures retain the active configuration and 
         std::error_code error;
         fs::create_symlink (tree.configuration, tree.pack.directory / "linked.json", error);
         if (error) SKIP ("symlink creation is unavailable");
-    }
-    SECTION ("A destination disconnected during transfer is never recreated")
-    {
-        atTransferCheckpoint ([&]
-        {
-            if (removedDestination) return;
-            fs::rename (tree.destination, tree.root / "disconnected destination");
-            removedDestination = true;
-        });
-    }
-    SECTION ("A replacement mount with a copied marker is rejected")
-    {
-        atTransferCheckpoint ([&]
-        {
-            if (replacedDestination) return;
-            const auto offline = tree.root / "disconnected destination";
-            fs::rename (tree.destination, offline);
-            REQUIRE (fs::create_directory (tree.destination));
-            REQUIRE (fs::create_directory (tree.destination / "packs"));
-            REQUIRE (fs::copy_file (offline / ".dusk-sfz-library", tree.destination / ".dusk-sfz-library"));
-            replacedDestination = true;
-        });
     }
     SECTION ("A missing staging directory is never recreated")
     {
@@ -249,15 +405,62 @@ TEST_CASE ("SFZ library relocation failures retain the active configuration and 
     CHECK_FALSE (result.locations);
     CHECK (dusk::fs::loadFileAsString (tree.configuration) == configBefore);
     CHECK (dusk::fs::loadFileAsString (tree.pack.directory / "Samples/tone.wav") == tree.sample);
+    CHECK (result.failureKind == failureKind);
     CHECK (resolveLibraryInstrument (tree.before, tree.pack.locatorFor (tree.pack.instruments.front())).has_value());
-    if (removedDestination) CHECK_FALSE (fs::exists (tree.destination));
-    else
-        for (const auto& entry : fs::directory_iterator (tree.destination))
-            if (entry.path() != replacedStaging)
-                CHECK (entry.path().filename().u8string().rfind (".install-", 0) != 0);
-    if (replacedDestination) CHECK (fs::is_empty (tree.destination / "packs"));
+    for (const auto& entry : fs::directory_iterator (tree.destination))
+        if (entry.path() != replacedStaging)
+            CHECK (entry.path().filename().u8string().rfind (".install-", 0) != 0);
     if (! removedStaging.empty()) CHECK_FALSE (fs::exists (removedStaging));
     if (! replacedStaging.empty()) CHECK (fs::is_empty (replacedStaging));
+}
+
+TEST_CASE ("SFZ library relocation never recreates a disconnected destination", "[sfz][storage][sfz-filesystem-fixture]")
+{
+   #if defined(_WIN32)
+    SKIP ("Windows directory ownership prevents renaming an active library");
+   #else
+    checkDestinationDisconnection (false);
+   #endif
+}
+
+TEST_CASE ("SFZ library relocation rejects a replacement destination with a copied marker", "[sfz][storage][sfz-filesystem-fixture]")
+{
+   #if defined(_WIN32)
+    SKIP ("Windows directory ownership prevents renaming an active library");
+   #else
+    checkDestinationDisconnection (true);
+   #endif
+}
+
+TEST_CASE ("SFZ relocation reports disk exhaustion without losing originals", "[sfz][storage][sfz-location-disk-full]")
+{
+   #if defined(__linux__)
+    const auto* rootSetting = std::getenv ("DUSK_SFZ_CAPACITY_ROOT");
+    const auto* modeSetting = std::getenv ("DUSK_SFZ_CAPACITY_MODE");
+    if (! rootSetting || ! modeSetting) SKIP ("Requires the private tmpfs fixture from sfz_disk_full.sh");
+    const auto destination = fs::canonical (rootSetting);
+    const std::string mode = modeSetting;
+    REQUIRE ((mode == "inodes" || mode == "bytes"));
+    REQUIRE (fs::is_empty (destination));
+    REQUIRE (fs::space (destination).capacity <= 64 * 1024);
+    LibraryTree tree;
+    const auto configuration = dusk::fs::loadFileAsString (tree.configuration);
+    const auto changed = changeLibraryLocation (tree.before, destination, true, {}, tree.configuration);
+    INFO (changed.error);
+    REQUIRE (changed.status == OperationStatus::Failed);
+    CHECK (changed.failureKind == FailureKind::DiskFull);
+    CHECK (changed.error == (mode == "inodes" ? "Cannot mark the selected SFZ library folder"
+                                             : "Cannot write the destination SFZ file"));
+    CHECK_FALSE (changed.locations);
+    CHECK (dusk::fs::loadFileAsString (tree.configuration) == configuration);
+    CHECK (dusk::fs::loadFileAsString (tree.pack.directory / "Samples/tone.wav") == tree.sample);
+    CHECK (resolveLibraryInstrument (tree.before, tree.pack.locatorFor (tree.pack.instruments.front())));
+    for (const auto& entry : fs::directory_iterator (destination))
+        CHECK (entry.path().filename().u8string().rfind (".install-", 0) != 0);
+    if (fs::is_directory (destination / "packs")) CHECK (fs::is_empty (destination / "packs"));
+   #else
+    SKIP ("The bounded tmpfs fixture requires Linux user and mount namespaces");
+   #endif
 }
 
 TEST_CASE ("SFZ external library markers prevent writes to a disconnected mount point", "[sfz][storage]")

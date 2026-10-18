@@ -105,19 +105,34 @@ TEST_CASE ("Reader keeps the old immutable window while a replacement is staged"
     auto reader = file.reader();
     reader->fillNow();
     Block block;
-    for (int pass = 0; pass < 2; ++pass)
+    SECTION ("A complete replacement stays unpublished until filled")
     {
+        for (int pass = 0; pass < 2; ++pass)
+        {
+            reader->hintRt (22000);
+            REQUIRE (reader->fillOnce());
+            CHECK_FALSE (reader->holds (22000, 512));
+            REQUIRE (reader->readRt (block.pointers.data(), kChannels, 0, 512));
+            block.check (0);
+        }
         reader->hintRt (22000);
         REQUIRE (reader->fillOnce());
-        CHECK_FALSE (reader->holds (22000, 512));
-        REQUIRE (reader->readRt (block.pointers.data(), kChannels, 0, 512));
-        block.check (0);
+        CHECK_FALSE (reader->holds (0, 512));
+        REQUIRE (reader->readRt (block.pointers.data(), kChannels, 22000, 512));
+        block.check (22000);
     }
-    reader->hintRt (22000);
-    REQUIRE (reader->fillOnce());
-    CHECK_FALSE (reader->holds (0, 512));
-    REQUIRE (reader->readRt (block.pointers.data(), kChannels, 22000, 512));
-    block.check (22000);
+    SECTION ("A short read publishes its valid prefix and retains the channel stride")
+    {
+        const auto headerBytes = std::filesystem::file_size (file.path) - kFrames * kChannels * sizeof (float);
+        std::filesystem::resize_file (file.path, headerBytes + 24000 * kChannels * sizeof (float));
+        reader->hintRt (22000);
+        CHECK_FALSE (reader->fillOnce());
+        REQUIRE (reader->readRt (block.pointers.data(), kChannels, 22000, 512));
+        block.check (22000);
+        CHECK_FALSE (reader->holds (24000, 1));
+        CHECK_FALSE (reader->readRt (block.pointers.data(), kChannels, 23800, 512));
+        block.check (23800, 200);
+    }
 }
 
 TEST_CASE ("Reader low-water refill preserves current audio until publication",
@@ -128,12 +143,22 @@ TEST_CASE ("Reader low-water refill preserves current audio until publication",
     reader->fillNow();
     reader->hintRt (12000);
     CHECK (reader->needsFill());
-    REQUIRE (reader->fillOnce());
-    CHECK (reader->holds (0, 20000));
-    reader->fillNow();
-    CHECK_FALSE (reader->holds (0, 1));
-    CHECK (reader->holds (12000, 20000));
     Block block;
+    SECTION ("A complete replacement advances the window")
+    {
+        REQUIRE (reader->fillOnce());
+        CHECK (reader->holds (0, 20000));
+        reader->fillNow();
+        CHECK_FALSE (reader->holds (0, 1));
+        CHECK (reader->holds (12000, 20000));
+    }
+    SECTION ("A short replacement cannot discard longer resident audio")
+    {
+        const auto headerBytes = std::filesystem::file_size (file.path) - kFrames * kChannels * sizeof (float);
+        std::filesystem::resize_file (file.path, headerBytes + 12100 * kChannels * sizeof (float));
+        CHECK_FALSE (reader->fillOnce());
+        CHECK (reader->holds (0, 20000));
+    }
     REQUIRE (reader->readRt (block.pointers.data(), kChannels, 12000, 512));
     block.check (12000);
 }
@@ -195,6 +220,11 @@ TEST_CASE ("Fill pool prioritizes near readers and evicts outside its horizon",
     CHECK_FALSE (pool.pumpOnce());
     CHECK (pool.stats().workers == 0);
     CHECK (pool.stats().residentReaders == 2);
+
+    pool.setPositionRt (2500);
+    CHECK_FALSE (pool.pumpOnce());
+    CHECK (active->holds (0, 128));
+    CHECK (future->holds (0, 128));
 
     pool.setPositionRt (10000);
     REQUIRE (pool.pumpOnce());
@@ -278,7 +308,10 @@ TEST_CASE ("Fill pool retains loop-start readers near a wrap only",
     auto reader = file.reader (129);
     ReaderFillPool pool (3, false);
     pool.configure (1000.0);
-    pool.add (*reader, 1000, 2000, 7000);
+    int regionLength = 1000;
+    SECTION ("A full loop-head region") {}
+    SECTION ("A one-frame loop-head region") { regionLength = 1; }
+    pool.add (*reader, 1000, 1000 + regionLength, 7000);
     pool.setLoopRt (true, 1000, 10000);
     pool.setPositionRt (9500);
     REQUIRE (pool.pumpOnce());

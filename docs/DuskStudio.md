@@ -208,7 +208,7 @@ AudioCallback (one buffer, e.g. 256 samples):
 10. If recording MIDI: push captured MIDI events to session model (non-RT thread)
 ```
 
-**Disk streaming**: playback readers share three fill workers (the pool clamps worker counts to 2-4). Readers retain their file handles, but sample memory is resident only near the playhead, normally about three seconds ahead and two seconds behind. Workers publish immutable sample windows and retire old windows after real-time readers leave them. The audio callback only copies available samples and publishes position hints through atomics; it performs no disk I/O, locking or worker wakeup. Message-thread seeks prime the destination before publishing it. Loop-start caches and explicit non-real-time priming cover loop wraps and offline renders.
+**Disk streaming**: playback readers share three fill workers (the pool clamps worker counts to 2-4). Readers retain their file handles, but sample memory is resident only near the playhead, normally about three seconds ahead and two seconds behind. Workers publish immutable sample windows and retire old windows after real-time readers leave them. The audio callback only copies available samples and publishes position hints through atomics; it performs no disk I/O, locking or worker wakeup. Rolling seeks publish a target consumed at the next callback boundary; they never suspend capture or prime disk readers on the message thread. Loop-start caches and explicit non-real-time priming cover loop wraps and offline renders.
 
 Recording writers remain separate from this reader pool. Buffer preparation and filling happen outside the audio callback.
 
@@ -589,7 +589,7 @@ The channel strip is completely unaware that its audio came from a plugin rather
 
 #### **Managed SFZ repository instruments**
 
-The SFZ Manager has Installed and Online views, reached from the insert chooser and multi-sample editor. It also opens the local folder library and file browser for SFZ, SF2 and ARIA bank files, replacing the insert chooser's separate Soundfont action. SFZ Instruments, Musical Artifacts, FreePats and Versilian Studios are external sources, not a Dusk-hosted catalog. Resolve explicit Creative Commons licensing before download and display its constraints. GitHub archives are pinned to a commit and receive a locally computed archive SHA-256; verify a published upstream SHA-256 when the source supplies one. ZIP entries must use stored or deflate compression so supported packs are identical across platforms. Versilian is restricted to the official VSCO 2 CE and VCSL collections and resolves their latest stable SFZ release tags before pinning the commit; their raw-sample default branches are not installable SFZ releases.
+The SFZ Manager has Installed and Online views, reached from the insert chooser and multi-sample editor. It also opens the local folder library and file browser for SFZ, SF2 and ARIA bank files, replacing the insert chooser's separate Soundfont action. SFZ Instruments, Musical Artifacts, FreePats and Versilian Studios are external sources, not a Dusk-hosted catalog. Resolve explicit Creative Commons licensing before download: offer CC0, CC BY and CC BY-SA, refuse all NonCommercial and NoDerivatives variants, and display attribution and ShareAlike requirements. Check named license documents and sample sidecars at the pinned revision and again in staging; refuse conflicting or unrecognized declarations, more than 32 documents, any document over 200,000 bytes, or more than 2 MiB combined. Verify the extracted GitHub primary document against its resolved hash. Existing installed receipts remain usable without repeating download admission. GitHub archives are pinned to a commit and receive a locally computed archive SHA-256; verify a published upstream SHA-256 when the source supplies one. ZIP entries must use stored or deflate compression so supported packs are identical across platforms. Versilian is restricted to the official VSCO 2 CE and VCSL collections and resolves their latest stable SFZ release tags before pinning the commit; their raw-sample default branches are not installable SFZ releases.
 
 Online defaults to All repositories, combining all sources under one search while preserving each result's source and each provider's pagination. A source-specific selection narrows the search. Partial failures report the affected repository while retaining successful results; cached searches use only saved provider responses and report missing caches.
 
@@ -597,11 +597,13 @@ Show source-provided stars or favorites as popularity counts, preserving unavail
 
 Both tabs expose category grouping and a selected-instrument image. Installed browsing lists and counts packs, with each pack counted once per category. An ARIA bank program index selects normal entrypoints without changing raw receipt identities; a full-file option retains internal candidates. Search includes source descriptions and the SFZ Instruments community catalog descriptions. Derive categories from instrument names before collection context, and use the cached row category for its preview. All instruments has no image until an instrument is selected. Cache grouped rows between service generations and clip lists to visible rows; local search never rescans packs. Use declared repository images, falling back to bundled licensed instrument cutouts with no AI-generated artwork. A separate service-owned low-priority worker decodes bounded images and maintains a 24-image memory cache and a 64 MiB / 256-image disk cache. Installed and cached selections never fetch artwork; failures leave the category preview available. Stale selection generations cannot publish over the current image.
 
-One owned worker fetches bounded metadata and streams archives, checks portable paths and extraction limits, then atomically publishes a complete staged pack. Recording, bounce and freeze pause library work; resuming is explicit. Cancellation cleans unfinished state. Cached listings are available offline, and neither startup nor session restoration contacts a provider.
+One owned worker fetches bounded metadata and streams archives, checks portable paths and extraction limits, then atomically publishes a complete staged pack. Recording, bounce and freeze pause library work; resuming is explicit. Explicit cancellation cleans unfinished state; validated partial downloads survive transport failure and shutdown, and pack transfers have stall limits without a total time cap. Cached listings are available offline, and neither startup nor session restoration contacts a provider.
 
 Settings uses top tabs, including an SFZ Library tab for the download folder. Changing folders can retain previous roots for existing packs or explicitly move them after copying and verification. External roots require their stored marker; an absent drive never silently creates a replacement library. Moving refuses current or pending managed instruments, preserves portable identities and keeps originals until the new files and configuration are safely committed.
 
-Session format 11 stores managed source, pack, release, actual archive digest, instrument identity and relative SFZ entrypoint. Versions coexist; an absent pack leaves its slot offline with the identity intact. Direct local files keep their file reference. Removal refuses packs used by the current session or a pending load.
+Installed packs expose **Verify installed files**, a local comparison against the versioned file-tree digest recorded during installation. It never downloads, changes pack files or replaces the baseline. Older receipts without a digest remain usable but cannot be verified. Heavy work pauses verification; explicit Resume restarts the scan, and Cancel leaves installed files unchanged. A match reports only that files match their installation record. Repairing changed content requires preserving wanted edits, unloading the pack, then Remove and Download; downloading over a valid receipt reuses it.
+
+Session format 11 stores managed source, pack, release, actual archive digest, instrument identity and relative SFZ entrypoint. Versions coexist; an absent pack leaves its slot offline with the identity intact. An explicit SFZ Manager relink may select another installed version of the same source/pack, preserving controls and changing the identity only after a successful load. Direct local files keep their file reference. Removal refuses packs used by the current session or a pending load.
 
 Instrument priming is asynchronous. The current instrument plays until a short ownership swap; retired resources are destroyed after the processing gate. Request, session and slot generations reject stale completions, and changed device settings require re-priming.
 
@@ -835,6 +837,49 @@ While a bounce is running:
 * The bounce thread reads from a snapshot of the session model (regions, automation, plugin state) taken at bounce start. Live edits during bounce do not affect the in-flight render.
 * Recording is disabled during bounce (the RECORD button is greyed out). Trying to record cancels the bounce with a confirmation prompt.
 * Saving the session is allowed during bounce; the bounce thread holds its snapshot independently.
+
+### **10. Mastering analysis (`src/dsp/`, `src/ui/`)**
+
+MASTERING plays one stereo mix file through the digital EQ, multiband compressor
+and brickwall limiter. A fourth native **Phase** panel measures the post-limiter
+signal without changing the chain output or latency. Wide windows show all four
+modules; compact windows select one full-width module. Covering dialogs must keep
+native children hidden across layout changes, including a cover opened while no
+native module was visible.
+
+The audio producer copies stereo samples into a bounded, preallocated SPSC feed.
+Rate, generation and sequence metadata identify discontinuities without resetting
+FIFO storage under the consumer. Seeks, reader gaps, gated callbacks and offline
+renders must not join unrelated analysis windows. Offline renders never populate
+the live feed. The view owns a JUCE-free `PhaseAnalyzer`, drains a bounded snapshot
+from its 30 Hz message-thread timer, and discards hidden/export backlogs. Native
+child recreation preserves the analyzer and held evidence.
+
+The analyzer uses Hann-windowed FFTs, log-spaced bands from 20 Hz to 20 kHz,
+Q-dependent spectral weights and exponentially smoothed cross/auto spectra.
+**Bands** (4-64, default 16), **Q** (0.25-8, default 2) and **Average** (50-5000 ms,
+default 500 ms) save as `phase_bands`, `phase_q` and `phase_averaging_ms` in the
+session's `mastering` object. Missing fields restore their defaults. Meter values,
+held evidence, display mode and live Mono monitoring are runtime state.
+
+Correlation bars show -1 to +1 per band and overall, with held minima. Negative
+correlation sustained for 250 ms of analyzed audio sets a sticky band warning.
+Reset, a new source or a band-count change clears held evidence; ordinary playback
+discontinuities, Q changes and rate changes retain it. Silence and one-channel
+signals do not invent valid stereo correlation or coherence.
+
+The alternate **Coherence / time** display estimates magnitude-squared coherence
+from independent FFT windows with energy-weighted confidence. Its averaging time
+is at least eight FFT windows. Phase and delay require mature, coherent spectral
+support; a single tone cannot identify a unique delay. Wrapped offsets are
+ambiguous, and fitted R lag is bounded to plus or minus one-sixth of the FFT
+window. The panel exposes these limits and settling times instead of displaying
+unqualified timing estimates.
+
+Mono loss compares `(L+R)/2` energy with the mean stereo-channel energy. **Mono**
+smoothly folds only live monitoring after the stereo analysis and metering taps.
+The engine owns this unsaved switch until it is turned off or the app quits;
+offline exports stay stereo. Analysis performs no automatic phase correction.
 
 ## **Project Structure**
 

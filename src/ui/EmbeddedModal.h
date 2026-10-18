@@ -86,7 +86,12 @@ inline constexpr const char* kPluginEditorTag = "dusk_pluginEditor";
 class PluginEditorHider final
 {
 public:
+    PluginEditorHider() = default;
+    PluginEditorHider (const PluginEditorHider&) = delete;
+    PluginEditorHider& operator= (const PluginEditorHider&) = delete;
     ~PluginEditorHider() { restore(); }
+
+    static bool hasActiveSurface() noexcept { return activeSurfaces != 0; }
 
     // The default filter below: a covering surface is in every editor's way.
     struct EveryEditor
@@ -110,6 +115,8 @@ public:
                     ShouldHide shouldHide = {})
     {
         restore();   // defensive: idempotent
+        ++activeSurfaces;
+        registered = true;
         walk (root, skip, shouldHide);
     }
 
@@ -133,9 +140,17 @@ public:
             }
         }
         hidden_.clear();
+        if (registered)
+        {
+            registered = false;
+            --activeSurfaces;
+        }
     }
 
 private:
+    inline static unsigned activeSurfaces = 0;
+    bool registered = false;
+
     template <typename ShouldHide>
     void walk (juce::Component& c, const std::initializer_list<juce::Component*>& skip,
                const ShouldHide& shouldHide)

@@ -1,0 +1,171 @@
+{
+  "recorded_at_utc": "2026-10-17T08:26:27.040761+00:00",
+  "milestone": "0.16",
+  "issues": [
+    877,
+    882,
+    866,
+    886
+  ],
+  "branch": "fix/016-release-blockers",
+  "head": "b5cef09850380bf230da4ab3b2df2301d43de1bf",
+  "worktree_dirty": true,
+  "tracked_diff_sha256": "f074f80ab9e462ddb9f2788ab45aa73daedd21551749c338e031f29bb01852dc",
+  "source_sha256": {
+    "CHANGELOG.md": "6d8a2dd813caf91b5f8065fd37b0c933066e0e02bffbb6d42d70a38171122304",
+    "README.md": "5674ab92ff0e5ab5ddc3abc17270ac75806a396d5e3970c22bf6bd73278fbb1c",
+    "external/stb/README.md": "d530e8e6385ee4c614a877a24038520337792222fccb2130499bdcacd4186bc2",
+    "external/stb/stb_image.h": "2df44809cf130045787eaf99bf7e2f06a613039027d79ebdbc3f56852b320bed",
+    "src/engine/AudioEngine.cpp": "ac65baf603583e2685b1df0994319df5a9ea4ddc977db2a64268dd5830033c99",
+    "src/engine/AudioEngine.h": "3fdd0449b1d0ab3e3cefd8aef7b8ff9518f4eb323c695d9048a577dd328961ca",
+    "src/engine/MidiCaptureStream.cpp": "3ed8c4407ce21c96c5f47bd63b3195babcbc685e386ad5fb435b64b02be2c57d",
+    "src/engine/MidiCaptureStream.h": "559094beb749b70b3ef6ad3d6f1d03633ba49eeda8b239bc92d0cfb5ef6cddd7",
+    "src/engine/RecordManager.cpp": "0a791ebed7d9f545b7c283773d40765e7dfdae45505ce77b5a4c64b5e1704562",
+    "src/engine/RecordManager.h": "ba58f3aff1bb8da2ee4eac7c9f7635ad377e2ed8cf4a9ca058fef8501ce11fb5",
+    "src/engine/scenario/cases/MidiProbeHarness.h": "ee453ad1d2adabc92b4fc675021b638e37e60f470653af931de1b4f3b3c4728e",
+    "src/engine/scenario/cases/device_loss.cpp": "c7bc99fc18b1c132c936292164f8ff92869b67eb9c54f2caeccd506acbbb8d00",
+    "src/engine/scenario/cases/midi_panic_all_paths.cpp": "a5a2fe0625334470441f15db352ea9b4bcc182e819a168c935c02db1d53d75da",
+    "src/engine/scenario/cases/takes.cpp": "28bce765bb697c0b6b55c5d5822c5a47a252bfb1baa7551b3fda2f307d352c4d",
+    "src/ui/GuiScenarios.cpp": "0cbea4c8942890cc89e4ad5faec6ff443f2c5c44fa6152fc3884f603c6ec306a",
+    "src/ui/MainComponent.cpp": "05dbe0e3a8a4596fa43a347dec865171859ea67df04a48c7ba7fabc873ade552",
+    "src/ui/imgui/DuskPanelWindow.cpp": "e75229c278e3fc4abd418f9d48d9c6cfa85343abc10e2c93cb17083d6ae55bad",
+    "src/ui/imgui/DuskPanelWindow.h": "83453e44a413e6d2f7cb66e76b3214155c23e1d8af908cf55bff617e67a78227",
+    "src/ui/imgui/PianoRollView.cpp": "88c5afde118fd21a81eacdc21a64ffd570c0567a32cd6c7dd8d0b3378678ee44",
+    "src/ui/scenario/cases/gui_mastering_bounce.cpp": "9eea28633df5e0837243af5d20e34cb4f6c34cdac0025cd9123fec8764090003",
+    "src/ui/scenario/cases/gui_piano_roll.cpp": "e846bd5493e461fd0591d8f10109bf5c69994894909ce658b49182ab4403da20",
+    "src/ui/scenario/cases/gui_sfz_repository.cpp": "6e56219efde2a3f33abbdae941c909554e36e7aa019f2ed11705a933bc6d79ca",
+    "tests/CMakeLists.txt": "bf169c85741f7a53f6deaefded92fe3f43eabf750b23a8d90ea79e7744eb1aee",
+    "tests/audiofile_buffered_reader.cpp": "4648be5535637ea8b539f52e7af254e71aef422a65ea88d5c613124063a67f3c",
+    "tests/fixtures/artwork/README.md": "da966cd373687f6be8c79c48b282205e7c6e384ea785795a7fa70bcbe41cc308",
+    "tests/fixtures/artwork/single-pixel-progressive.jpg": "b1848be4d212fa9ebe3a14c590e3afe28ee528489ba3faccbfecbfe1c1a4945e",
+    "tests/fixtures/artwork/single-pixel.jpg": "d1904880645edb5b47a1ca7b63c521d5c083493a62341c2ec7c3fa3cc3817e3b",
+    "tests/fixtures/panic_probe_clap.cpp": "b35f963feaf3527d4d9c2ac484f3b5f2d308f542e36b93efecc1865f32a36318",
+    "tests/imgui_mastering_views.cpp": "f704a0ea3e4474b035aa897a48b7a2a635035b1b1312a41868995d6818c7c690",
+    "tests/manual_coverage.tsv": "f24f6fee70f5f2c3395d1b5a99993fbc93d757430025607702203c713da0881c",
+    "tests/midi_capture_stream.cpp": "890332efee94cf60eb50ea9f48dedcc97a8fdbef0dfa0ca389b09bbe158e72a4",
+    "tests/panic_probe_fixtures.cpp": "3e28cde30a05d69b75a881aeec1009343c16ce754e0415fe6ce4ee53224d3f9d",
+    "tests/playback_live_swap.cpp": "3b3c0f6b9b359dc36e02a1c7b0a1d971e4efdf49a102e49b2c86ad5620de650b",
+    "tests/record_midi_merge_capture.cpp": "feb34c3c88990f59ac310bc65ec2f4be993c29e36803d74b5f3e53f1decaf924",
+    "tests/release_mechanics.sh": "b31fff650910f9fbdfd0b23fe9b497bfb324dd8d459385d71f48f6c6dad4794f",
+    "tests/sfz_artwork_decode.cpp": "01e5264cb20d24a6f6765117271b37698d59b2bea705d22e4df1de361a9b88ce",
+    "tests/sfz_library_service.cpp": "0adcff4570b4329f0856f10bec4137969b1b2118db6b145dee6a4a454f0c1390"
+  },
+  "binary_sha256": "0dc2798eaef315233638e907a4318f2614c5b22ca57991b438dba59edc7c2cfb",
+  "test_binary_sha256": "7f59a2a361483f0bd13fbda27bd2948027ccb94f6eae549e9ee13e0c09ab129c",
+  "fixes": [
+    "Linear MIDI capture follows current punch-out, including disabling, extending and shortening it.",
+    "Preview keeps final-tick events in bounds and can shrink behind published progress.",
+    "Post-punch releases close captured notes at the boundary instead of reviving them when Punch is disabled.",
+    "JPEG decoding requires initialized frame components and complete scans before rendering or progressive refinement."
+  ],
+  "checks": {
+    "main_build": {
+      "command": "cmake --build build -j6",
+      "exit_code": 0,
+      "log": "/tmp/dusk-016-build-final.log"
+    },
+    "test_build": {
+      "command": "cmake --build build-tests --target dusk-studio-tests -j6",
+      "exit_code": 0
+    },
+    "ctest": {
+      "command": "ctest --test-dir build-tests --output-on-failure -j6",
+      "passed": 1752,
+      "failed": 0,
+      "seconds": 42.38
+    },
+    "focused_cpp": {
+      "passed": 58,
+      "assertions": 4762
+    },
+    "audio_selftest": {
+      "command": "scripts/run-selftest-xvfb.sh",
+      "exit_code": 0,
+      "dsp_failures": 0,
+      "note": "Private PipeWire graph. The optional UMC1820 ALSA open probe had no available device."
+    },
+    "final_recording_scenarios": {
+      "passed": 5,
+      "failed": 0,
+      "skipped": 0
+    },
+    "final_recording_gui": {
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0
+    },
+    "seeded_plugin_picker": {
+      "command": "tests/gui_plugin_picker.sh",
+      "isolated_launches": 3,
+      "scenario_passes": 6,
+      "failed": 0
+    },
+    "headless_suite": {
+      "passed": 186,
+      "failed": 0,
+      "skipped": 1,
+      "binary_sha256": "aaaa5e8800796ca8a94561464d4d97f6ccf3881ffd80cecdfda083b6de99779d",
+      "skipped_reason": "scan.cancel_au: AU scanning is macOS only"
+    },
+    "focused_gui": {
+      "passed": 10,
+      "failed": 0,
+      "skipped": 0,
+      "binary_sha256": "aaaa5e8800796ca8a94561464d4d97f6ccf3881ffd80cecdfda083b6de99779d"
+    },
+    "full_gui": {
+      "passed": 263,
+      "failed": 0,
+      "skipped": 3,
+      "instances": 1,
+      "budget_seconds": 1800,
+      "seconds": 868,
+      "binary_sha256": "aaaa5e8800796ca8a94561464d4d97f6ccf3881ffd80cecdfda083b6de99779d",
+      "application_exit_code": 0,
+      "leg_result": "PASS",
+      "runner_summary": "OK",
+      "skipped_cases": [
+        {
+          "name": "gui.oop_editor_closes_before_child",
+          "reason": "the sandbox child exited before the editor was closed, so the ordering could not be observed"
+        },
+        {
+          "name": "gui.pick_opens_native_editor",
+          "reason": "requires the seeded plugin-picker cache"
+        },
+        {
+          "name": "gui.plugin_picker_filter_and_load",
+          "reason": "requires the seeded plugin-picker cache"
+        }
+      ],
+      "outer_wrapper_exit_code": 2,
+      "wrapper_note": "The temporary wrapper was edited while running. After the complete passing GUI summary, it read appended script text, reran the seeded picker checks, then hit a shell syntax error. The current wrapper passes bash -n."
+    },
+    "manual_coverage": {
+      "behaviours": 634,
+      "auto": 560,
+      "partial": 22,
+      "manual": 16,
+      "gap": 0,
+      "not_applicable": 36
+    },
+    "juce_gate": {
+      "result": "PASS",
+      "coupled_files": 157,
+      "occurrences": 6882
+    },
+    "whitespace": "PASS",
+    "initial_gui_attempt": {
+      "result": "TIMEOUT",
+      "budget_seconds": 900,
+      "application_exit_code": 137,
+      "passed": 246,
+      "skipped": 3,
+      "scenario_assertion_failures": 0,
+      "note": "Incomplete run while the app rebuild competed for CPU. The later full single-instance run completed all 266 cases."
+    }
+  },
+  "evidence_scope_note": "The full GUI, ten-case GUI and complete headless runs preceded the final post-punch note-off clamp. The final build, C++ suite, audio self-test, five recording lifecycle scenarios, two recording GUI cases and seeded picker runs include that last adjustment.",
+  "remaining_release_validation": "https://github.com/dusk-audio/dusk-studio/issues/886",
+  "release_candidate": false
+}

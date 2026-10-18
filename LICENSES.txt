@@ -21,8 +21,8 @@ VENDORED DEPENDENCIES (compiled into the Dusk Studio binary)
 ------------------------------------------------------
 
 JUCE (audio framework)
-  Version  : 8.0.12 on Linux (dusk-audio/JUCE-wayland tag dusk-wayland-v2, rev
-             4d85afa175a45e0b5da11f9211de3ba88705588e — the JUCE_TAG / JUCE_REV
+  Version  : 8.0.12 on Linux (dusk-audio/JUCE-wayland tag dusk-wayland-v3, rev
+             075eed7a1000b6b9dfce6aae93e7f2b82fa35f68 - the JUCE_TAG / JUCE_REV
              pin in .github/workflows/linux-build.yml); 8.0.4 from upstream
              juce-framework/JUCE on the macOS and Windows runners
   License  : Dual-licensed — AGPLv3 (used here) OR JUCE Commercial. JUCE's
@@ -754,8 +754,8 @@ of trailing whitespace required by repository hygiene; where a header says
 "notice", only that complete notice is reproduced. Paths starting `modules/`
 are inside the JUCE tree
 Dusk Studio builds against on Linux — the
-dusk-audio/JUCE-wayland tag dusk-wayland-v2, rev
-4d85afa175a45e0b5da11f9211de3ba88705588e, JUCE 8.0.12. The per-platform version
+dusk-audio/JUCE-wayland tag dusk-wayland-v3, rev
+075eed7a1000b6b9dfce6aae93e7f2b82fa35f68, JUCE 8.0.12. The per-platform version
 inventory for those is in the JUCE entry above; upstream 8.0.4 on macOS and
 Windows carries the same licenses apart from the VST3 SDK, which is noted
 there.
@@ -2889,7 +2889,7 @@ That's all there is to it!
 --------------------------------------------------------------------------------
 JUCE-bundled VST3 SDK 3.8.0 — MIT
 modules/juce_audio_processors_headless/format_types/VST3_SDK/LICENSE.txt
-dusk-audio/JUCE-wayland rev 4d85afa175a45e0b5da11f9211de3ba88705588e
+dusk-audio/JUCE-wayland rev 075eed7a1000b6b9dfce6aae93e7f2b82fa35f68
 (Linux build only; JUCE 8.0.4 on macOS and Windows carries the older dual
 license described in the inventory)
 --------------------------------------------------------------------------------
@@ -2922,7 +2922,7 @@ SOFTWARE.
 --------------------------------------------------------------------------------
 JUCE-bundled LV2 SDK — ISC notices
 modules/juce_audio_processors_headless/format_types/LV2_SDK/<name>/COPYING
-dusk-audio/JUCE-wayland rev 4d85afa175a45e0b5da11f9211de3ba88705588e
+dusk-audio/JUCE-wayland rev 075eed7a1000b6b9dfce6aae93e7f2b82fa35f68
 The five COPYING files are byte-identical in upstream JUCE 8.0.4 rev
 51d11a2be6d5c97ccf12b4e5e827006e19f0555a. The identical lilv, serd and sord
 files are reproduced once.
@@ -7236,87 +7236,165 @@ You can contact the author at :
 SFZ Manager category artwork
 ----------------------------
 The PNG files in assets/sfz-instruments are adapted licensed photographs and
-conventional illustrations. Changes: crop, resize, rotation and hand-traced or
-uniform-color background removal. sfz_collection.png assembles the credited
-piano, violin and drum images. No AI generation.
-Each adapted image retains the indicated license.
+conventional illustrations. Changes are listed per image below. No AI generation.
+Each adapted image retains the indicated license. Dusk Audio dedicates the
+collection composition under CC0-1.0; its piano is CC0 and its violin and drum
+inputs are public domain.
 
-sfz_piano.png — Steinway & Sons concert grand piano, model D-274, manufactured at Steinway's factory in Hamburg, Germany.png
-Photo: © Copyright Steinway & Sons
-CC BY-SA 3.0: https://creativecommons.org/licenses/by-sa/3.0/
-https://commons.wikimedia.org/wiki/File:Steinway_%26_Sons_concert_grand_piano%2C_model_D-274%2C_manufactured_at_Steinway%27s_factory_in_Hamburg%2C_Germany.png
+Source revisions, output hashes, pinned preparation input URLs and hashes,
+polygon masks and retouch recipes are recorded in assets/sfz-instruments/credits.json.
+The nine images with preparation records can be reproduced with the recorded
+Pillow version using tools/prepare-sfz-artwork.py. Preparation instructions are
+in assets/sfz-instruments/CREDITS.md. The piano uses a Wikimedia PNG rendering;
+the microphone uses a 500-pixel JPEG preview. Their preparation input hashes
+identify those exact raster files. Retouched cutouts and collection components
+are pinned to repository commit 8158dd093f676ef5c569c5d31d81b61f0e386529.
 
-sfz_organ.png — Hammond c3 Emilio Muñoz.jpg
+sfz_piano.png - Piano.svg
+TheresaKnott
+CC0-1.0: https://creativecommons.org/publicdomain/zero/1.0/
+https://commons.wikimedia.org/wiki/File:Piano.svg
+https://commons.wikimedia.org/w/index.php?title=File:Piano.svg&oldid=866509947
+Changes: Used Wikimedia's raster rendering of the CC0 illustration; cropped to
+its transparent bounds and resized.
+
+sfz_organ.png - Hammond c3 Emilio Muñoz.jpg
 Dongui
 Public domain: https://creativecommons.org/publicdomain/mark/1.0/
 https://commons.wikimedia.org/wiki/File:Hammond_c3_Emilio_Mu%C3%B1oz.jpg
+Changes: Cropped, resized, and uniform background removed by conventional image
+processing; some instruments rotated for framing. No AI generation.
 
-sfz_strings.png — Violin-with-bow.png
+sfz_strings.png - Violin-with-bow.png
 Cornergraf
 Public domain: https://creativecommons.org/publicdomain/mark/1.0/
 https://commons.wikimedia.org/wiki/File:Violin-with-bow.png
+Changes: Cropped, resized, and uniform background removed by conventional image
+processing; some instruments rotated for framing. No AI generation.
 
-sfz_brass.png — French horn front.png
+sfz_brass.png - French horn front.png
 BenP
 CC BY 2.5: https://creativecommons.org/licenses/by/2.5/
 https://commons.wikimedia.org/wiki/File:French_horn_front.png
+Changes: Cropped, resized, and uniform background removed by conventional image
+processing; some instruments rotated for framing. No AI generation.
 
-sfz_woodwinds.png — Yamaha Flute YFL-874W.png
+sfz_woodwinds.png - Yamaha Flute YFL-874W.png
 Yamaha Corporation
 CC BY-SA 4.0: https://creativecommons.org/licenses/by-sa/4.0/
 https://commons.wikimedia.org/wiki/File:Yamaha_Flute_YFL-874W.png
+Changes: Cropped, resized, and uniform background removed by conventional image
+processing; some instruments rotated for framing. No AI generation.
 
-sfz_mallets.png — Marimba One 4000 Series.jpg
-Marimbaone
-CC BY-SA 3.0: https://creativecommons.org/licenses/by-sa/3.0/
-https://commons.wikimedia.org/wiki/File:Marimba_One_4000_Series.jpg
+sfz_mallets.png - Marimba MET MUS805A.jpg
+The Metropolitan Museum of Art
+CC0-1.0: https://creativecommons.org/publicdomain/zero/1.0/
+https://commons.wikimedia.org/wiki/File:Marimba_MET_MUS805A.jpg
+https://commons.wikimedia.org/w/index.php?title=File:Marimba_MET_MUS805A.jpg&oldid=1152590486
+Changes: Removed the background with manually traced polygon masks, cropped and
+resized.
 
-sfz_acoustic_guitar.png — C.F. Martin GRH 160 or 000-16RGT cropped.png
+sfz_acoustic_guitar.png - C.F. Martin GRH 160 or 000-16RGT cropped.png
 Jim Hutcheson
 CC BY 4.0: https://creativecommons.org/licenses/by/4.0/
 https://commons.wikimedia.org/wiki/File:C.F._Martin_GRH_160_or_000-16RGT_cropped.png
+Changes: Cropped, resized, and uniform background removed by conventional image
+processing; some instruments rotated for framing. No AI generation. Maker and
+model marks retouched with the recorded surface colors, cloned regions and
+masks.
 
-sfz_electric_guitar.png — UNIVOX Hi-Flier phase 4 from c.1977.jpg
+sfz_electric_guitar.png - UNIVOX Hi-Flier phase 4 from c.1977.jpg
 Patrick Mueller
 CC BY 2.0: https://creativecommons.org/licenses/by/2.0/
 https://commons.wikimedia.org/wiki/File:UNIVOX_Hi-Flier_phase_4_from_c.1977.jpg
+Changes: Cropped, resized, and uniform background removed by conventional image
+processing; some instruments rotated for framing. No AI generation. Maker and
+model marks retouched with the recorded surface colors, cloned regions and
+masks.
 
-sfz_bass.png — 70's Fender Jazz Bass.png
+sfz_bass.png - 70's Fender Jazz Bass.png
 Patrick Scales; Djhé
 Public domain: https://creativecommons.org/publicdomain/mark/1.0/
 https://commons.wikimedia.org/wiki/File:70%27s_Fender_Jazz_Bass.png
+Changes: Cropped, resized, and uniform background removed by conventional image
+processing; some instruments rotated for framing. No AI generation. Maker and
+model marks retouched with the recorded surface colors, cloned regions and
+masks.
 
-sfz_electric_piano.png — Rhodes MkI Stage 88 1970.jpg
+sfz_electric_piano.png - Rhodes MkI Stage 88 1970.jpg
 Docrobbie
 CC BY-SA 4.0: https://creativecommons.org/licenses/by-sa/4.0/
 https://commons.wikimedia.org/wiki/File:Rhodes_MkI_Stage_88_1970.jpg
+Changes: Cropped, resized, and uniform background removed by conventional image
+processing; some instruments rotated for framing. No AI generation. Maker and
+model marks retouched with the recorded surface colors, cloned regions and
+masks.
 
-sfz_synth.png — Yamaha DX7.jpg
+sfz_synth.png - Yamaha DX7.jpg
 Leo-setä; Clusternote
 CC BY 2.0: https://creativecommons.org/licenses/by/2.0/
 https://commons.wikimedia.org/wiki/File:Yamaha_DX7.jpg
+Changes: Cropped, resized, and uniform background removed by conventional image
+processing; some instruments rotated for framing. No AI generation. Maker and
+model marks retouched with the recorded surface colors, cloned regions and
+masks.
 
-sfz_voice.png — AKG C214 Condenser microphone.jpg
-Lucasbosch
-CC BY-SA 3.0: https://creativecommons.org/licenses/by-sa/3.0/
-https://commons.wikimedia.org/wiki/File:AKG_C214_Condenser_microphone.jpg
+sfz_voice.png - Microphone gooseneck.jpg
+Zzubnik
+Public domain: https://creativecommons.org/publicdomain/mark/1.0/
+https://commons.wikimedia.org/wiki/File:Microphone_gooseneck.jpg
+https://commons.wikimedia.org/w/index.php?title=File:Microphone_gooseneck.jpg&oldid=785217700
+Changes: Used Wikimedia's 500-pixel preview; removed the background with
+manually traced polygon masks, cropped and resized.
 
-sfz_world.png — Sitar3.jpg
+sfz_world.png - Sitar3.jpg
 Sathyadeep
 Public domain: https://creativecommons.org/publicdomain/mark/1.0/
 https://commons.wikimedia.org/wiki/File:Sitar3.jpg
+Changes: Cropped, resized, and uniform background removed by conventional image
+processing; some instruments rotated for framing. No AI generation.
 
-sfz_drums.png — Drumkit-icon.png
+sfz_drums.png - Drumkit-icon.png
 Mfaiiazi
 Public domain: https://creativecommons.org/publicdomain/mark/1.0/
 https://commons.wikimedia.org/wiki/File:Drumkit-icon.png
+Changes: Cropped, resized, and uniform background removed by conventional image
+processing; some instruments rotated for framing. No AI generation.
 
-sfz_percussion.png — Bongos.jpg
+sfz_percussion.png - Bongos.jpg
 Nicole Gordine
 CC BY 3.0: https://creativecommons.org/licenses/by/3.0/
 https://commons.wikimedia.org/wiki/File:Bongos.jpg
+Changes: Cropped, resized, and uniform background removed by conventional image
+processing; some instruments rotated for framing. No AI generation.
 
-sfz_collection.png — Instrument collection
-Photo: © Copyright Steinway & Sons; Cornergraf; Mfaiiazi
-CC BY-SA 3.0: https://creativecommons.org/licenses/by-sa/3.0/
+sfz_collection.png - Instrument collection
+TheresaKnott; Cornergraf; Mfaiiazi; Dusk Audio
+CC0-1.0: https://creativecommons.org/publicdomain/zero/1.0/
 See sfz_piano.png, sfz_strings.png and sfz_drums.png credits
+Changes: Assembled the credited CC0 piano illustration and public-domain violin
+and drum cutouts; Dusk Audio dedicates the composition under CC0-1.0.
+
+
+stb_image 2.30 - SFZ artwork decoder
+===================================
+Source: https://github.com/nothings/stb/blob/013ac3beddff3dbffafd5177e7972067cd2b5083/stb_image.h
+Vendored path: external/stb/stb_image.h
+License: MIT (alternative A)
+
+Copyright (c) 2017 Sean Barrett
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

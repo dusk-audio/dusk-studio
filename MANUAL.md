@@ -29,7 +29,7 @@ Dusk Studio includes:
 - Four aux return lanes, each with one plugin or hardware insert slot.
 - Four mix buses, each with a 3-band tone EQ, a highpass and a console-style bus compressor.
 - A master bus with tape saturation, a tube program EQ, bus compressor, and mono-sum check.
-- A dedicated mastering stage with 5-band digital EQ, multiband compressor, brick-wall limiter, and BS.1770 loudness metering.
+- A dedicated mastering stage with 5-band digital EQ, multiband compressor, brick-wall limiter, BS.1770 loudness metering, and multiband phase analysis with a Mono monitor.
 - VST3, LV2, AU, and CLAP plugin hosting, with optional out-of-process sandboxing for crash isolation. CLAP and VST3 — effects and instruments — run through Dusk Studio's own native hosts on Linux, macOS, and Windows; LV2 does on Linux and macOS, and Audio Units do on macOS. On Windows, LV2 plugins load through the standard plugin host.
 - External hardware insert per channel and per aux, with automatic latency measurement.
 - A multi-sampler that plays `.sfz` files and `.sf2` SoundFonts on MIDI tracks, both through the built-in sfizz engine (SF2 files are converted to SFZ on load — no external synth required).
@@ -70,9 +70,9 @@ The main window is laid out top to bottom: menu bar, stage selector (RECORDING /
 
 ## Pick an audio device
 
-Open **Settings → Audio…**. Choose your interface, sample rate, and block size. 48 kHz at 256 samples is a safe default; drop to 128 if your hardware can keep up and you need lower monitoring latency.
+Open **Settings → Settings...**, then select the **Audio** tab. Choose your interface, sample rate, and block size. 48 kHz at 256 samples is a safe default; drop to 128 if your hardware can keep up and you need lower monitoring latency.
 
-![Audio device panel with a real interface selected.](docs/images/qg-02-audio-settings.png)
+![Audio settings tab with device, sample rate and block size controls.](docs/images/qg-02-audio-settings.png)
 
 On Linux, the graph appears as "PipeWire" and raw hardware as "ALSA"; pick whichever owns your interface. On macOS, both Core Audio devices and any AVB / aggregate devices show up. On Windows, ASIO drivers appear ahead of WASAPI.
 
@@ -128,7 +128,7 @@ When the mix is where you want it, hit **Cmd+B** to open the bounce dialog. Pick
 
 ![Bounce dialog with a destination filename.](docs/images/qg-07-bounce-dialog.png)
 
-If you want the bounce to also pass through a mastering chain (5-band EQ, multiband compressor, brickwall limiter, LUFS metering), switch to **MASTERING** stage, click **Load latest mixdown** to pull in the bounce you just made (it looks for `mixdown.wav`, then `bounce.wav`, the bounce dialog's default name), dial the chain in, then **Export master…** to render the final file.
+If you want the bounce to also pass through a mastering chain (5-band EQ, multiband compressor, brickwall limiter, LUFS metering), switch to **MASTERING** stage, click **Load latest mixdown** to pull in the bounce you just made (it looks for `mixdown.wav`, then `bounce.wav`, the bounce dialog's default name), dial the chain in, then **Export master…** to render the final file. The **PHASE** panel checks stereo correlation by frequency band; its **Mono** switch lets you hear the fold-down without changing the exported file.
 
 That is the whole loop: arm → record → overdub → mix → bounce. Everything below in this manual is a deeper reference on one of those steps.
 
@@ -273,8 +273,9 @@ Assign a strip to one of eight fader groups (right-click the strip → **Fader g
 | 4   | 5-band digital EQ | Low shelf / 3 peaks / high shelf, ±12 dB per band.                                          |
 | 5   | Multiband compressor | Four bands with independent dynamics controls.                         |
 | 6   | Brickwall limiter | True-peak, 4× oversampled lookahead (see the mastering chapter).                            |
-| 7   | Loudness panel    | Momentary / short-term / integrated LUFS + True Peak (4× oversampled, BS.1770).             |
-| 8   | Export master…    | Renders the chain offline to a stereo file.                                                 |
+| 7   | Phase module     | Post-limiter correlation, coherence, timing and mono compatibility by frequency band.       |
+| 8   | Loudness panel    | Momentary / short-term / integrated LUFS + True Peak (4× oversampled, BS.1770).             |
+| 9   | Export master…    | Renders the chain offline to a stereo file.                                                 |
 
 ## The tape strip
 
@@ -344,7 +345,7 @@ chapter. Everything below is the long form.
   restores the software fallback.
 - **If the notepad ever takes Dusk Studio down with it**, it will not do so twice. A graphics driver that ends the application while the notepad is drawing its first frame leaves a marker behind, and the next launch refuses the notepad and names the renderer that did it. Upgrading to the packaged llvmpipe renderer automatically clears a marker written by an older release; markers created afterward remain guarded even if the renderer changes again. After any other graphics-driver change, delete the `notepad-first-frame` file in Dusk Studio's configuration folder to retry. Any build that encounters Mesa's GL-on-D3D12 OpenGL Compatibility Pack refuses it because it is known to end the application; install the graphics vendor's OpenGL driver instead. To keep the notepad switched off permanently, set `notepad_enabled=0` in `app-config.properties` in that same folder.
 
-Any modern multi-core CPU (Intel, AMD, or Apple Silicon) is sufficient for a 24-track session at 48 kHz. With **Multicore DSP** set to Auto (the default — see *Settings → Advanced*), the channel-strip work is shared across the available cores, so lower-power multi-core machines handle larger sessions more comfortably. The compressor and EQ on every channel are oversampled when the global oversampling factor is raised; expect roughly 2-3× the mix-engine CPU at 4× oversampling (keep oversampling at 1× on low-power machines).
+Any modern multi-core CPU (Intel, AMD, or Apple Silicon) is sufficient for a 24-track session at 48 kHz. With **Multicore DSP** set to Auto (the default — see the *Advanced* tab under *Settings → Settings...*), the channel-strip work is shared across the available cores, so lower-power multi-core machines handle larger sessions more comfortably. The compressor and EQ on every channel are oversampled when the global oversampling factor is raised; expect roughly 2-3× the mix-engine CPU at 4× oversampling (keep oversampling at 1× on low-power machines).
 
 ## Installing Dusk Studio
 
@@ -385,7 +386,7 @@ Current beta DMGs are not notarized. On recent macOS releases, the first-open ap
 5. Next to *"DuskStudio" was blocked to protect your Mac*, click **Open Anyway**.
 6. In the *Open "DuskStudio"?* dialog, click **Open Anyway**.
 7. Approve with Touch ID or an administrator password.
-8. Dusk Studio then asks for microphone access. The window opens behind the prompt with playback working, and until you answer the transport bar says **Waiting for microphone access. Answer the macOS prompt to record.** Click **Allow** and the input is added straight away, as long as nothing is playing, recording or bouncing and you have not picked a device in **Settings > Audio** in the meantime; otherwise choose the input there. If you click **Don't Allow**, Dusk Studio opens no input and the transport bar says **Microphone access is off. Allow Dusk Studio in System Settings > Privacy & Security > Microphone to record.** Turn it on there later, then quit and reopen Dusk Studio.
+8. Dusk Studio then asks for microphone access. The window opens behind the prompt with playback working, and until you answer the transport bar says **Waiting for microphone access. Answer the macOS prompt to record.** Click **Allow** and the input is added straight away, as long as nothing is playing, recording or bouncing and you have not picked a device in the **Audio** tab under **Settings → Settings...** in the meantime; otherwise choose the input there. If you click **Don't Allow**, Dusk Studio opens no input and the transport bar says **Microphone access is off. Allow Dusk Studio in System Settings > Privacy & Security > Microphone to record.** Turn it on there later, then quit and reopen Dusk Studio.
 9. Subsequent launches work normally; macOS only asks once per build.
 
 If you later install a newer build (different binary hash), the bypass dance repeats once for that new build.
@@ -458,7 +459,7 @@ Press **RECORDING** to focus the channel strips on input routing and arm control
 
 ## Configuring audio
 
-Open **Settings → Audio…** to choose your audio device. Use the tabs across the top to switch between Audio, Control Surface, MIDI Bindings, MIDI Sync, General, Advanced and SFZ Library. The panel remembers the last tab while Dusk Studio is open.
+Open **Settings → Settings...**, then select the **Audio** tab to choose your audio device. Use the tabs across the top to switch between Audio, Control Surface, MIDI Bindings, MIDI Sync, General, Advanced and SFZ Library. The panel remembers the last tab while Dusk Studio is open.
 
 ### Audio
 
@@ -468,7 +469,7 @@ Open **Settings → Audio…** to choose your audio device. Use the tabs across 
 - **Periods (Linux/ALSA only)**: how many buffers the ALSA driver keeps in flight. Two is the lowest-latency safe value; three or more is more robust on a busy machine.
 - **Active output channels**: the master mix uses outputs 1-2. If your interface has more outputs, tick the extra pairs here to open them — each pair then becomes selectable as an aux lane's **Output** (a headphone / cue feed). Off by default; the master stays stereo until you enable more.
 - **Main output**: which physical pair the master mix goes to. **1-2 (default)** in most rigs; move it to another pair (e.g. when you want outputs 1-2 free for a control-room or cue feed). Only pairs the device currently has open are listed. If an aux lane is routed to the same pair as the master, the two sum on that pair.
-- **Rescan devices**: re-enumerates every backend and every MIDI port, useful if you plugged in a USB interface after launch. MIDI controllers on Linux do not need it — see [MIDI hot-plug](#midi-hot-plug).
+- **Rescan devices**: re-enumerates every backend and every MIDI port, useful if you plugged in a USB interface after launch. MIDI port enumeration waits until the transport stops. MIDI controllers on Linux do not need it; see [MIDI hot-plug](#midi-hot-plug).
 - **First launch only**: with nothing saved yet, Dusk Studio picks an input device alongside the output when the backend offers one, so recording works without a trip to this panel first. It never touches a configuration you have already made: if you chose no input on purpose, it stays that way. If the device will not open with that input (a capture device on another card can refuse the output's sample rate, or be busy), Dusk Studio reopens the output on its own so playback keeps working, and when that output has no inputs of its own the transport bar says **No input device. Choose one in Settings > Audio.** until you pick one here. If even the output will not reopen, you get the same warning as when [no audio device opens at startup](#audio-device-in-use-or-wont-open-at-startup). At startup, when an open that pairs the output with an input fails as a whole, Dusk Studio opens that output on its own rather than leaving you with no device. On macOS the input waits for the microphone prompt: the output opens first, and the input follows once you click **Allow** (see the macOS steps under [Installing Dusk Studio](#installing-dusk-studio)).
 
 ### Control surface
@@ -548,7 +549,7 @@ Modal dialogs (audio settings, plugin picker, region editor, piano roll, import 
 
 The readout in the menu bar's right corner shows the device state (`Audio: 48 kHz 5.3 ms`) and the engine load (`DSP: 12% (0/0)`). The parenthesised pair counts audio dropouts: engine-side overruns / backend (driver) xruns. The segment turns red when load passes ~85% or either counter is non-zero. **Double-click the DSP readout to reset the counters** — useful after fixing whatever caused a dropout so you can watch for fresh ones.
 
-On Linux the readout can also end in `RT 1` (or a higher count). Under the limit RTKit and PipeWire set, a plug-in that holds a realtime audio thread for about 200 ms without a break has the system end Dusk Studio. Instead, the thread is moved to normal priority on the kernel's warning shortly before that, and the count says how many of those warnings came. A warning that reaches a thread not running at realtime priority moves nothing, but it is counted too. A Multicore DSP thread goes back to realtime priority by itself the next time the transport is stopped. The audio device's own thread stays at normal priority, so dropouts are more likely, until you open the device again in **Settings > Audio**. The double-click resets this count too.
+On Linux the readout can also end in `RT 1` (or a higher count). Under the limit RTKit and PipeWire set, a plug-in that holds a realtime audio thread for about 200 ms without a break has the system end Dusk Studio. Instead, the thread is moved to normal priority on the kernel's warning shortly before that, and the count says how many of those warnings came. A warning that reaches a thread not running at realtime priority moves nothing, but it is counted too. A Multicore DSP thread goes back to realtime priority by itself the next time the transport is stopped. The audio device's own thread stays at normal priority, so dropouts are more likely, until you open the device again in the **Audio** tab under **Settings → Settings...**. The double-click resets this count too.
 
 ## The four stages
 
@@ -570,8 +571,10 @@ Switching into or out of MASTERING force-stops the transport. The mix engine and
 From left to right:
 
 - **Stop** (■). Halts playback or recording and silences held notes in hosted
-  instruments even when their tracks are muted or excluded by solo. The playhead
-  goes back to where playback or the take began, or wherever **Playhead on Stop**
+  instruments even when their tracks are muted or excluded by solo. It sends a
+  controller reset, centred pitch bend and zero channel pressure on all MIDI
+  channels. The playhead goes back to where playback or the take began, or
+  wherever **Playhead on Stop**
   in Settings sends it. Press Stop again while stopped to return to bar 1. A stop
   that comes from MIDI clock or MTC chase leaves the playhead where the master
   stopped.
@@ -1090,11 +1093,11 @@ A full-width audio thumbnail of the loaded file. Click anywhere on the waveform 
 
 ## Mastering chain
 
-Three columns of DSP, each with its own enable toggle:
+The digital EQ, multiband compressor and limiter each have an enable toggle. A fourth **PHASE** panel measures the stereo output after the limiter. In a compact window, the picker above the panels shows one full-width module at a time: **Digital EQ**, **Multiband compressor**, **Limiter** or **Phase**.
 
 ### Digital 5-band EQ
 
-A clean linear-phase-style mastering EQ. A real-time spectrum analyzer (FFT)
+A clean digital mastering EQ. A real-time spectrum analyzer (FFT)
 draws the post-EQ frequency content behind the response curve; toggle it with
 the **FFT** button in the panel's top-left.
 
@@ -1125,9 +1128,30 @@ A true-peak brickwall limiter with lookahead. **Enabled by default.** It runs th
 
 The lookahead adds latency (set by the Lookahead control) on the mastering output. True-peak control is to 4× resolution; for very-high-frequency masters reserve a little extra ceiling headroom.
 
+### Phase module
+
+The **PHASE** panel measures the post-limiter stereo signal without changing it or adding latency. It refreshes at 30 Hz while the mastering view is visible. Its analysis settings save in the session; readings, held values, warnings, the selected display mode and the **Mono** monitor switch do not.
+
+- **Bands**: 4 to 64 logarithmic frequency bands from 20 Hz to 20 kHz, default **16**. Frequencies above the device's Nyquist limit are unavailable.
+- **Q**: **0.25 to 8**, default **2**. Higher values select narrower frequency regions; lower values give wider overlapping bands.
+- **Average**: **50 to 5000 ms**, default **500 ms**. This is the correlation time constant. A longer setting steadies the reading.
+- **Reset** clears held correlation minima and sticky warnings.
+
+**Correlation** shows one bar per band from -1 to +1. Negative values draw red; the grey mark holds the minimum. The smaller **Overall** bar measures the full available frequency range directly, so a healthy overall reading can still accompany a negative band. Click a band to read its frequency range, correlation, held minimum and **Mono loss**. Scroll the panel to reach all the readings in a short window.
+
+A band that stays below zero for 250 ms of analyzed audio gets a sticky **Out of phase: [low] to [high] Hz** warning. Silence alone does not create a warning. Warnings and minima survive seeks, stage changes and native-panel recreation; **Reset**, loading another source, or changing the band count clears them. Changing Q or the device rate starts the current estimates again while preserving held results. Missing reader blocks, interrupted playback and discarded backlogs also start a fresh analysis window. The panel reads **Warming up** until enough new audio has arrived.
+
+Choose **Coherence / time** for magnitude-squared coherence bars from 0 to 1 and the selected band's timing readings. High coherence means the channels share a stable relationship. Low coherence can be normal stereo width. Coherence needs sustained audio across independent FFT windows; it uses an averaging time of at least eight FFT windows, so it can take much longer to settle than **Average**, especially at low frequencies and high Q. The panel shows the actual FFT window and coherence averaging time; silence or a single brief sound cannot establish confidence.
+
+**Wrapped offset** expresses the L/R phase angle as milliseconds and cannot identify a unique delay. A single tone is ambiguous. **Fitted R lag** needs sustained coherent energy across enough frequencies and can remain unavailable on music or changing noise. Positive values mean R lags L. The supported fitted range is plus or minus one-sixth of the FFT window, shown in milliseconds; treat it as a bounded estimate, since larger delays can alias. The panel does not correct timing or polarity.
+
+**Mono loss** compares the energy of `(L+R)/2` with the mean stereo-channel energy. Identical channels read **0 dB**; more negative values mean more loss when folded. A polarity-inverted pair approaches complete cancellation. A signal on only one channel reads about **-3 dB**, with correlation and coherence unavailable. The **Overall** mono figure gives the same comparison across the full available range.
+
+**Mono** folds live monitoring to `(L+R)/2`, with a short smooth transition. The analysis tap and loudness meters stay stereo, and exported or bounced files are unchanged. This temporary monitor setting remains in effect until you switch it off or quit; it is not written to the session. Analysis pauses during master export and starts a fresh window afterwards.
+
 ## Loudness metering
 
-Right of the chain are three loudness readouts:
+The transport row above the chain shows four loudness readouts:
 
 - **Momentary LUFS** (400 ms window).
 - **Short-Term LUFS** (3 second window).
@@ -1173,6 +1197,8 @@ On Linux, plugging in a MIDI controller while Dusk Studio is running is enough �
 The one rule: the port list is only rebuilt while the transport is **stopped**. Plug something in mid-take and nothing happens until you hit stop, at which point it appears. That is deliberate. Rebuilding the port list briefly interrupts audio, so a controller waking up — or a USB hub blinking — can never put a hole in a take you are recording.
 
 On macOS and Windows, use **Rescan devices** in Audio Settings after plugging a controller in.
+
+Pressing **Rescan devices** during playback or recording also defers MIDI port enumeration until Stop, so it cannot interrupt the take.
 
 ## Arming a track
 
@@ -1223,7 +1249,7 @@ Silent audio passes remain available as takes. Empty MIDI passes are omitted bec
 
 **MIDI Merge** on the transport bar or piano-roll toolbar adds a MIDI performance to an existing unlocked region instead of replacing its notes and controls. It starts off and is saved with the session. Set it before recording; it cannot be changed during a take. Audio recording works as before.
 
-An overlapping region keeps its notes, channel controls and previous takes. Recording beyond either edge grows it without moving the existing performance in time. If there is no region to merge into, the pass creates one. In loop recording, each completed pass is one undo step, available while the transport is still rolling. Stopping adds the final partial pass as one step. Undoing a pass removes only that pass; Stop does not put it back. A pass with no recorded events adds no undo step.
+An overlapping region keeps its notes, channel controls and previous takes. Recording beyond either edge grows it without moving the existing performance or its previous takes in time. Incoming MIDI is audible while recording with Merge on even when **IN** is off, alongside the existing region. If there is no region to merge into, the pass creates one. Recorded notes join playback on the next loop pass, including a note at the loop start. In loop recording, each completed pass is one undo step, available while the transport is still rolling. Stopping adds the final partial pass as one step. Undoing a pass removes only that pass; Stop does not put it back. A pass with no recorded events adds no undo step.
 
 MIDI recording keeps notes, control changes, 14-bit pitch bend, channel pressure, polyphonic pressure and program changes. They are saved and played back with the region. The piano roll's CC lane edits control changes; the other channel controls play back unchanged.
 
@@ -1266,9 +1292,13 @@ With **MIDI Merge** off, MIDI tracks keep their own take history. Each MIDI regi
 
 Sessions saved by Dusk Studio 0.14 load with each region's old take history as takes on its track, numbered oldest first. The audio files are not touched. Sessions are now saved in format v11 to preserve the full MIDI channel performance and managed SFZ references. Dusk Studio 0.15.1 and earlier cannot open them, so keep a copy before saving if you still need an older version.
 
+Opening a newer format leaves the current session in place. The status bar reports **Session format [file version] is newer than supported format [supported version]. Upgrade Dusk Studio to open: [session name]**.
+
 ## Recording errors
 
 If Dusk Studio can't open a file for writing (full disk, permission denied, missing audio directory), the error is captured at record start and displayed as an alert before the take begins, listing the affected tracks. You don't lose a take thinking it was captured.
+
+If the audio device changes while Record starts, the take does not start. The alert says **Recording could not start because the audio device changed. Check Audio Settings, then press Record again.**
 
 If something goes wrong mid-take (ring-buffer overrun on a stressed disk, MIDI FIFO overflow), an alert appears when you press Stop. The portion of the take that was written successfully is preserved. In a loop take, a pass that hit a failed write is dropped whole, and the other passes are kept.
 
@@ -1624,7 +1654,7 @@ The keyboard is a transport-bar tool rather than part of the piano roll. With th
 
 Use **MIDI Merge** beside **Snap** in the piano-roll toolbar to change the same session setting as the transport button. Both buttons stay in sync, including after reopening the editor, and are disabled during recording.
 
-The roll draws incoming notes while recording, and a held note grows until you release it. This preview follows the recording playhead without editing the region or creating undo steps. With **MIDI Merge** on, completed loop passes update the merged region while recording continues, and the roll follows that region. With **MIDI Merge** off, a pass that covers the whole region the roll shows becomes a new take of that region, and on Stop the roll shows the new take, as the timeline does; undo and redo of the pass switch the roll between the takes. A pass that makes a region of its own takes the roll to that region, and undoing the pass brings the roll back to the region it showed before. If an undo leaves the track with no MIDI regions, the roll closes. **Alt+T** / **Alt+Shift+T** step through the takes of the region the roll shows.
+The roll draws incoming notes while recording, and a held note grows until you release it. Velocity and the selected CC controller also appear as preview bars in their lanes. These bars cannot be dragged. This preview follows the recording playhead without editing the region or creating undo steps. With **MIDI Merge** on, completed loop passes update the merged region while recording continues, and the roll follows that region. With **MIDI Merge** off, a pass that covers the whole region the roll shows becomes a new take of that region, and on Stop the roll shows the new take, as the timeline does; undo and redo of the pass switch the roll between the takes. A pass that makes a region of its own takes the roll to that region, and undoing the pass brings the roll back to the region it showed before. If an undo leaves the track with no MIDI regions, the roll closes. **Alt+T** / **Alt+Shift+T** step through the takes of the region the roll shows.
 
 ## Navigation
 
@@ -1734,7 +1764,7 @@ Plugin scan results are cached in:
 
 The native hosts keep their own sidecar caches next to it (`clap-cache.json` and `vst3-native-cache.json` on every OS, `lv2-native-cache.json` on Linux and macOS, `au-native-cache.json` on macOS), rebuilt by the same **Scan plugins** button. Existing XML sidecars are used as a fallback whenever the matching JSON cache cannot be loaded, including when it is absent, malformed, or unusable; subsequent scans write JSON. The native LV2 scan reads only the bundles' manifests, and the native AU scan reads the macOS Audio Component registry metadata; neither scan instantiates plugin code, so a broken plugin cannot crash that scan and is simply skipped (or reported when you try to load it).
 
-To re-scan on every launch, enable **Settings → General → Scan plugins on startup**. It uses the same progress window, cancels the same way, and reports what it found to the session log rather than to an alert.
+To re-scan on every launch, open **Settings → Settings...**, select **General**, and enable **Scan plugins on startup**. It uses the same progress window, cancels the same way, and reports what it found to the session log rather than to an alert.
 
 A plugin that never finishes being probed — most often one waiting on a licence or authorisation dialog it cannot show during a scan — is given 30 seconds and then ended, so the scan moves on to the next one. A standard-host plugin is quarantined at that point and skipped by every later scan; the alert at the end of a **Scan plugins** run says how many are quarantined and which file to delete to probe them again. CLAP and VST3 bundles read by Dusk Studio's own hosts are only skipped, and are probed again on the next scan.
 
@@ -1961,11 +1991,13 @@ Click a track's **Insert** slot and choose **SFZ Manager...** to load an instrum
 
 **SFZ Manager...** in the soundfont editor or a track's Insert menu opens the manager. The **Installed** tab lists downloaded instrument packs, and **Online** browses Creative Commons SFZ instruments from external repositories. **Local SFZ folders** opens the folder library for `.sfz` and `.sf2` files already on this computer; its **Open local file...** button also accepts ARIA `.bank.xml` manifests. **Browse...** in the soundfont editor opens a file directly.
 
+![SFZ Manager Installed tab with a downloaded pack and its programs.](docs/images/ms-03-sfz-installed.png)
+
 Both tabs have an instrument preview above a grouped browser. Choose **Piano**, **Drum Kit**, **Acoustic Guitar** or another category to narrow the current list; **All instruments** restores it and leaves the preview blank until you select an instrument. On smaller windows the category list becomes a dropdown. **Installed** lists each downloaded pack once, and category counts count packs rather than SFZ files. **Search installed instruments** matches pack names, program names and saved descriptions without rescanning. Select a pack and choose its **Program**: when an ARIA bank declares its programs, the normal list uses those declarations and hides internal mapping fragments. **Show all SFZ files** exposes the full extracted file list when needed. Without usable bank metadata, all discovered SFZ candidates remain available.
 
-The preview uses repository artwork when the source declares a suitable image. Otherwise it shows a licensed instrument cutout for the category. Image decoding and downloads run in the background, with bounded memory and disk caches. Installed and cached browsing reuse saved images without network requests; an uncached or unavailable image uses the category cutout. Older installations without saved artwork metadata use the same category for their list grouping and cutout, including patches with generic filenames. Image credits are included in **LICENSES.txt**.
+The preview uses repository artwork from GitHub raw/user-content hosts or Musical Artifacts' own hosts when the source declares a suitable image. Redirects must stay on those hosts. Otherwise it shows a licensed instrument cutout for the category. Image decoding and downloads run in the background, with bounded memory and disk caches. Installed and cached browsing reuse saved images without network requests; an uncached or unavailable image uses the category cutout. Older installations without saved artwork metadata use the same category for their list grouping and cutout, including patches with generic filenames. Image credits are included in **LICENSES.txt**.
 
-![Instrument library](docs/images/ms-02-sfz-library.png)
+![Local SFZ folders](docs/images/ms-02-sfz-library.png)
 
 The local folder library looks in a short list of standard locations for your platform, plus any folder you add with **Add folder...**. On Linux that includes the directories distribution packages install into, so a machine with a packaged General MIDI bank shows something the first time it opens. Your added folders are remembered per machine, not per session.
 
@@ -1977,19 +2009,39 @@ In **Online**, **All repositories** is selected by default: enter an optional se
 
 **FreePats** offers its Creative Commons instrument repositories. **Versilian Studios** offers the official **VSCO 2 Community Edition** and **Versilian Community Sample Library** collections, using their latest stable SFZ releases. Round-robin sampling varies by instrument and articulation; a collection's inclusion does not mean every patch has round robins.
 
-Select a pack on the left to see its license, contents and download action on the right. Check its license before pressing **Download**. Creative Commons licenses can require attribution or restrict commercial use or derivatives; read the displayed license before using a pack. A pack's size can be unknown until it downloads.
+![SFZ Manager Online tab with repository results and license details.](docs/images/ms-04-sfz-online.png)
+
+Recent GitHub metadata may be reused for five minutes to reduce repository requests; community catalog descriptions may be reused for six hours. Saved repository responses are limited to 64 MiB and 256 entries. Responses older than 30 days are removed as the library updates, so **Browse cached** may require a new online search for an older listing. Repository and artwork caches stay in the platform's Dusk Studio data directory, even when the library uses an external drive.
+
+The default downloaded library is `~/.local/share/Dusk Studio/sfz-library` on Linux (`XDG_DATA_HOME` overrides `~/.local/share`), `%LOCALAPPDATA%\Dusk Studio\sfz-library` on Windows, and `~/Library/Application Support/Dusk Studio/sfz-library` on macOS. The **SFZ Library** tab in **Settings → Settings...** lets you choose another folder, including an external drive.
+
+After upgrading, packs in the former default configuration folder remain available in place. New downloads use the data folder unless you have already chosen a download location; saved locations keep their existing folders.
+
+Select a pack on the left to see its license, contents and download action on the right. **Declared license** reports the source's license declaration. Only CC0, CC BY and CC BY-SA packs are offered for download. NonCommercial and NoDerivatives packs are refused, including when their restrictions are discovered on selection. Previously installed instruments remain available under their original licenses. Read the displayed attribution and ShareAlike requirements before using a pack. A pack's size can be unknown until it downloads.
+
+Installation checks `LICENSE`, `LICENCE` and `COPYING` documents, licensing directories and `.license` or `.licence` sample sidecars. Conflicting or unrecognized declarations are refused. A pack can contain at most 32 such documents, with a 200,000-byte limit per document and a 2 MiB combined limit. For GitHub packs, the extracted primary license must match the document shown before download.
+
+At startup, the library removes abandoned installation folders and temporary repository and artwork files when no running owner holds their directory. Reusable partial downloads and files that cannot be inspected safely are kept. Installed packs and repair rollback folders are preserved.
 
 GitHub stars and Musical Artifacts favorites appear when supplied by the source. These counts indicate popularity, not a sound-quality rating. **Listen to demo** opens a published audio or video demo in your browser without downloading or installing the instrument pack. **More demos** lists additional demos when available. Some packs have no published demo; the library then displays **No source demo available.** If you decide against a downloaded pack, unload its instruments from the current session and use **Remove** in **Installed**.
 
 **Version and download details** shows the source revision and archive verification information. The library adapts to the main window's available space, with separate scrolling for the pack list and details. Download progress and pause, resume or error messages appear in its status bar.
 
-Downloads use HTTPS. SFZ Instruments, FreePats and Versilian Studios archives are pinned to a GitHub commit; GitHub does not supply an archive SHA-256, so Dusk Studio computes one for the local installation receipt. Musical Artifacts downloads are checked against the published SHA-256 when one is available. ZIP packs must use stored or deflate compression on every platform. Archives are unpacked into a staging folder with path and size checks, and appear in **Installed** only after installation finishes.
+**Not enough disk space** means the library could not create or finish writing its files, or extraction needs more free space. Free space and retry; if the library could not initialize, restart Dusk Studio first. **Instrument pack verification failed** means a download failed a digest, ZIP integrity or transfer-length check, installed files differ from their installation record, or a library move failed its copied-file checks. For a failed move, keep the originals and choose another destination. For a failed download, download that version again; if it fails again, check the pack's source. Both messages keep the original diagnostic below the heading.
 
-Library work pauses during recording, bounce or freeze. Press **Resume** afterwards to continue; it does not resume by itself. **Cancel** removes the unfinished download. In **Installed**, select an instrument and press **Load** to put it on the track. **Remove** deletes a pack only when the current session and pending loads are not using it.
+In **Installed**, select a pack and press **Verify installed files** to check its files against the digest recorded when it was installed. This works offline, downloads nothing and leaves the files and receipt unchanged. Progress appears below **Verifying installed files...**; success reports **Installed files match the installation record.** Older installations without a recorded file digest remain usable, but verification is unavailable. Recording, bounce and freeze pause the check; **Resume** restarts the scan, and **Cancel** leaves installed files untouched. Verification compares files with the local installation record; it does not authenticate that record with the source.
 
-Installed versions coexist. A session references the exact source, pack, version, archive digest and instrument path, so another computer can resolve the same installed pack without matching the original absolute path. If that pack is missing, the slot stays offline and keeps its reference. Opening a session never downloads instruments or browses a repository. Files opened directly remain file references unless they belong to a known installed pack.
+Downloads use direct HTTPS connections to public addresses; SFZ requests do not use environment proxy settings. SFZ Instruments, FreePats and Versilian Studios archives are pinned to a GitHub commit; GitHub does not supply an archive SHA-256, so Dusk Studio computes one for the local installation receipt. Musical Artifacts downloads are checked against the published SHA-256 when one is available. ZIP packs must use stored or deflate compression on every platform. Entries exceeding a 1000:1 expansion ratio are refused. Before extraction, the library checks free space for the declared contents, file overhead and a 64 MiB reserve. Files appear in **Installed** only after installation finishes; another application can still consume space during installation.
+
+Library work pauses during recording, bounce or freeze. Press **Resume** afterwards to continue; it does not resume by itself. Partial downloads and their validators survive a connection failure or quitting the app. A completed download is also kept if extraction runs out of disk space. Free space and choose **Download** for the same version to retry extraction without downloading the archive again. An unfinished download continues through a validated range request; if the source changed, it starts again. Downloads have no total time limit, but a stalled connection fails. **Cancel** removes the unfinished download. In **Installed**, select an instrument and press **Load** to put it on the track. **Remove** deletes a pack only when the current session and pending loads are not using it.
+
+Switching to Mastering or losing the audio device ends the take and releases the recording pause. Queued instrument loads can proceed when a working audio device is available; paused library work still waits for **Resume**.
+
+Installed versions coexist. A session references the exact source, pack, version, archive digest and instrument path, so another computer can resolve the same installed pack without matching the original absolute path. If that pack is missing, the slot stays offline and keeps its reference. Reconnect its library drive, or open **SFZ Manager**, select an installed version of the same source and pack, choose its **Program**, then press **Relink this slot**. Relinking explicitly changes the saved version and keeps the instrument controls; the sound may differ between versions. A failed or cancelled relink preserves the old reference. Opening a session never downloads instruments or browses a repository. Files opened directly remain file references unless they belong to a known installed pack.
 
 Instrument replacement is prepared in the background while the current instrument keeps playing. A failed replacement leaves it playing, and an older request cannot replace a newer selection.
+
+Downloading the same pack version again repairs a missing or damaged installation receipt. An installation with a valid receipt is reused, including any changed samples. To replace files after a failed installed-file check, first keep any edits you need, unload the pack's instruments, then use **Remove** and **Download** again.
 
 When a `.sf2` holds more than one preset (most GM/GS/XG SoundFonts do), a **preset picker** appears. Click it to open a filterable browser: start typing to filter presets by name or number, or read across the columns. Presets are grouped program-first — an instrument and its bank variations list together, drum kits last — each shown as `program [bank] name`.
 
@@ -2048,7 +2100,7 @@ The measured latency is stored per insert and applied as an internal delay line 
 
 To slave Dusk Studio to an external master (drum machine, sequencer, or another DAW):
 
-1. Open **Settings → MIDI Sync**.
+1. Open **Settings → Settings...**, then select the **MIDI Sync** tab.
 2. Set **Sync source input** to the MIDI port the master is sending Clock on.
 3. Enable **Chase transport (Start/Stop)** if you want Dusk Studio to also follow the master's transport.
 
@@ -2084,7 +2136,7 @@ Dusk Studio emits quarter-frame messages while rolling, plus a full-frame sysex 
 
 To control Dusk Studio from an external surface (tested against the Tascam DP-24SD):
 
-1. Open **Settings → Control surface**.
+1. Open **Settings → Settings...**, then select the **Control Surface** tab.
 2. Set **MCU input** to the surface's MIDI output.
 3. Set **MCU output** to the surface's MIDI input.
 
@@ -2170,7 +2222,7 @@ Right-click the binding in the MIDI Bindings panel to change its mode.
 
 ## The MIDI Bindings panel
 
-Open from **Settings → MIDI bindings…**.
+Open **Settings → Settings...**, then select the **MIDI Bindings** tab.
 
 Each row shows:
 
@@ -2406,7 +2458,7 @@ Shortcuts use **Cmd** on macOS and **Ctrl** on Linux and Windows unless noted.
 
 ## Piano roll
 
-The piano roll modal captures its own keypresses first (see `PianoRollComponent::keyPressed`); the table below is the full set.
+The piano roll handles its editing keys before the window's other shortcuts; the table below lists them.
 
 | Shortcut                          | Action                                                       |
 | --------------------------------- | ------------------------------------------------------------ |
@@ -2429,7 +2481,7 @@ The piano roll modal captures its own keypresses first (see `PianoRollComponent:
 | **Home** / **End**                | Jump view to region start / end                              |
 | **Cmd+]** / **Cmd+[**             | Next / previous MIDI region                                  |
 | **[** / **]**                     | Set the loop in / out point at the edit cursor (**Shift** = punch in / out) |
-| **Esc**                           | Close modal                                                  |
+| **Esc**                           | Close a popup first; otherwise clear the selection, then close the roll |
 
 ## Notepad
 
@@ -2477,7 +2529,7 @@ An open chord slot takes the keys instead:
 
 ## Notes on shortcut design
 
-- Shortcuts that would conflict with a focused text field always defer to the text field. You can edit a track label or type into the BPM spinner without accidentally arming a track or starting playback. An open dropdown in Audio settings keeps the keyboard too: Home and End highlight its first and last choices, and Enter selects the highlighted choice. Session shortcuts resume after the dropdown closes.
+- Shortcuts that would conflict with a focused text field always defer to the text field. You can edit a track label or type into the BPM spinner without accidentally arming a track or starting playback. An open dropdown keeps its navigation keys too: Home and End highlight its first and last choices, and Enter selects the highlighted choice. Audio settings dropdowns also keep session shortcuts until the dropdown closes.
 - **M** drops a marker at the playhead, not mute; per-track mute is **X** to avoid the clash with the marker action.
 - Plain **B** taps tempo; **Cmd+B** triggers Bounce (Logic convention).
 - While a prompt that decides what happens to your session is up, no shortcut works: the unsaved-changes prompt when you quit, open or start another session, **Recover from autosave?**, and the Startup dialog, which decides which session there is to work on. **Space** and **R** do nothing until you answer it. A control surface or a MIDI binding can still start a take behind it, and so can **R** in the Save As browser that **Save** opens for a session you have never saved; **Save** stops that take first and saves it with the session. **Escape** still does whatever that prompt allows.
@@ -2569,13 +2621,13 @@ On Linux, launching Dusk Studio from a terminal prints the full embed sequence, 
 A plugin is using more than 60% (or 85% in OOP mode) of the audio buffer time for four blocks in a row, and has been bypassed for safety.
 
 - Right-click the slot and choose **Re-enable plugin**.
-- If it auto-bypasses again, the plugin is too expensive for the current buffer size. Raise the buffer size in **Settings → Audio**, or use a less expensive plugin.
+- If it auto-bypasses again, the plugin is too expensive for the current buffer size. Raise the buffer size in the **Audio** tab under **Settings → Settings...**, or use a less expensive plugin.
 
 ## Pops, clicks, or glitches
 
-- Raise the audio device's block size in **Settings → Audio**.
+- Raise the audio device's block size in the **Audio** tab under **Settings → Settings...**.
 - On Linux, raise the ALSA period count from 2 to 3.
-- Reduce the effect oversampling to 1× in **Settings → Advanced**.
+- Reduce the effect oversampling to 1× in the **Advanced** tab under **Settings → Settings...**.
 - Check that no track is clipping (red bar at the top of the input meter).
 - Close other CPU-heavy programs.
 
@@ -2607,7 +2659,7 @@ If your audio interface goes away while Dusk Studio is running — USB cable yan
 - Surfaces a banner: *"The active audio device has disconnected. Open Audio Settings to select a new device."*
 - Leaves your session untouched on disk and in memory.
 
-Reconnect the interface (or pick a different device in **Settings → Audio**), and the engine re-prepares every channel strip and aux at the new sample rate / block size automatically. No restart required.
+Reconnect the interface (or pick a different device in the **Audio** tab under **Settings → Settings...**), and the engine re-prepares every channel strip and aux at the new sample rate / block size automatically. No restart required.
 
 If the disconnect happened during a take, the WAV that was being written is committed up to the last full audio block. The region is added to your timeline at the take start position — same as if you'd pressed Stop manually. The session save / autosave path is independent of the audio device.
 
@@ -2621,7 +2673,7 @@ If the interface saved in your settings is held by another application when Dusk
 - If that lands on a **different** working device or backend, you keep working and see *"Your saved audio setup for … could not be opened … Audio has switched to …"*. Your saved setup is **not** changed — it's tried again on the next launch once you free it.
 - If nothing opens, you get a clear warning. With no device open the playhead and meters won't move, recording is disabled, and plugin and soundfont loading is refused — the channel strips take their sample rate and block size from the running device, so there is nothing to prepare an insert against until one opens. The timeline and the piano roll still show and edit the session, timed at the rate the device last ran at; with none since launch, at the rate the session was saved at (48 kHz for a new one). Files you import are converted to that rate, and a Mackie surface's timecode counts at it.
 
-Either way, free the device in the other app (or run `pactl suspend-sink <sink-name> 1` to release a PipeWire/PulseAudio hold), then pick it again in **Settings → Audio**. Your saved setup returns automatically next launch once it's free.
+Either way, free the device in the other app (or run `pactl suspend-sink <sink-name> 1` to release a PipeWire/PulseAudio hold), then pick it again in the **Audio** tab under **Settings → Settings...**. Your saved setup returns automatically next launch once it's free.
 
 # Accessibility
 
@@ -2749,7 +2801,7 @@ Two variants:
 ### Supporters
 
 - **When**: Settings → Supporters.
-- **Shows**: the Patreon supporters who fund development, grouped by tier (Champions / Patrons / Supporters / Hugs, plus past supporters). Scrolls when the list outgrows the panel.
+- **Shows**: the Patreon supporters who fund development, grouped under Patrons, Supporters, Founding Supporters and Past Supporters. Scrolls when the list outgrows the panel.
 - **Buttons**: Close (or click outside / Esc).
 
 ## Import / Export
@@ -2975,6 +3027,12 @@ The hardware-insert ping reports its result inline on the editor (not a modal), 
 | Limiter   | Ceiling                          | −12 to 0 dB   | −0.3 dB     |
 | Limiter   | Drive                            | 0 to +20 dB   | 0 dB        |
 | Limiter   | Release                          | 10–1000 ms     | 100 ms      |
+| Phase     | Bands                            | 4–64          | 16          |
+| Phase     | Q                                | 0.25–8        | 2           |
+| Phase     | Average                          | 50–5000 ms    | 500 ms      |
+| Phase     | Display                          | Correlation / Coherence / time | Correlation |
+| Phase     | Mono monitor                     | Off / On      | Off         |
+| Phase     | Reset                            | Clear minima and warnings |             |
 
 The multiband compressor has four bands: Low, Low-Mid, High-Mid and High. These are the editor's control ranges; the DSP keeps each crossover at least 1.5 times the preceding crossover. At least two bands must remain enabled.
 
@@ -3029,7 +3087,7 @@ The multiband compressor has four bands: Low, Low-Mid, High-Mid and High. These 
 
 **Mackie Control (MCU).** A protocol for control surfaces with motorised faders and bank-of-eight ergonomics.
 
-**Mastering chain.** A separate signal flow that processes a finished mix file through dedicated EQ, compression, and limiting.
+**Mastering chain.** A separate signal flow that processes a finished mix file through dedicated EQ, compression, and limiting, followed by loudness and multiband phase analysis.
 
 **OOP plugin sandbox.** Out-of-process plugin hosting. Each loaded plugin runs in a child process so a crash does not take the DAW with it.
 

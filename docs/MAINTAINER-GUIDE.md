@@ -134,11 +134,12 @@ That round-trip — **UI writes atom → audio reads atom → audio writes meter
 | A channel strip's DSP (EQ/comp/fader/sends) | [src/dsp/ChannelStrip.cpp](../src/dsp/ChannelStrip.cpp) |
 | A bus or master DSP | [src/dsp/BusStrip.cpp](../src/dsp/BusStrip.cpp), [src/dsp/MasterBus.cpp](../src/dsp/MasterBus.cpp) |
 | The mastering chain (EQ/comp/limiter/LUFS) | [src/dsp/MasteringChain.cpp](../src/dsp/MasteringChain.cpp), [src/dsp/BrickwallLimiter.cpp](../src/dsp/BrickwallLimiter.cpp) |
+| Mastering phase analysis and live Mono | [src/dsp/PhaseAnalysisFeed.h](../src/dsp/PhaseAnalysisFeed.h), [src/dsp/PhaseAnalyzer.cpp](../src/dsp/PhaseAnalyzer.cpp), [src/ui/MasteringView.cpp](../src/ui/MasteringView.cpp), [src/ui/imgui/MasteringPhaseView.cpp](../src/ui/imgui/MasteringPhaseView.cpp) |
 | What gets saved/loaded | [src/session/Session.h](../src/session/Session.h) (the data) + [src/session/SessionSerializer.cpp](../src/session/SessionSerializer.cpp) (the JSON) |
 | A mixer strip's look or controls | [src/ui/ChannelStripComponent.cpp](../src/ui/ChannelStripComponent.cpp) (5000 lines — the biggest file) |
 | The overall window layout / view switching | [src/ui/MainComponent.cpp](../src/ui/MainComponent.cpp) |
 | The arrangement / timeline / regions | [src/ui/TapeStrip.cpp](../src/ui/TapeStrip.cpp) |
-| The MIDI piano-roll editor | [src/ui/PianoRollComponent.cpp](../src/ui/PianoRollComponent.cpp) |
+| The MIDI piano-roll editor | [src/ui/imgui/PianoRollView.cpp](../src/ui/imgui/PianoRollView.cpp) (native view) + [src/ui/PianoRollEdit.cpp](../src/ui/PianoRollEdit.cpp) (edit logic) |
 | The audio region editor (fades/trim/take lanes) | [src/ui/imgui/AudioEditorView.cpp](../src/ui/imgui/AudioEditorView.cpp) |
 | Transport buttons / clock / tempo | [src/ui/TransportBar.cpp](../src/ui/TransportBar.cpp), [src/engine/Transport.h](../src/engine/Transport.h) |
 | Recording to disk | [src/engine/RecordManager.cpp](../src/engine/RecordManager.cpp) |
@@ -182,7 +183,7 @@ DuskStudioApp (JUCE app)              src/DuskStudioApp.cpp
 3. **MIDI sync in/out** — chase incoming MIDI Clock/MTC if slaving; emit clock/MTC if mastering.
 4. **MIDI controller bindings** — route learned CC/notes to fader/pan/mute/solo/plugin atoms.
 5. **Automation routing** — per track, evaluate the automation lane at the playhead and publish `live*` atoms (the strip reads these, not the raw param, when in Read/Touch).
-6. **Mastering-stage shortcut** — if the user is in the Mastering view, read the bounced stereo file → `MasteringChain` → out, and return early. The whole live mixer below is skipped.
+6. **Mastering-stage shortcut** — if the user is in the Mastering view, read the bounced stereo file through `MasteringChain`, then apply the live-only Mono fold and output it. The chain copies post-limiter stereo into the preallocated `PhaseAnalysisFeed`; FFT analysis runs in the view's 30 Hz message-thread timer. Offline exports skip the live feed and Mono fold. Playback interval, control revision, reader-gap and gated-callback metadata prevent discontinuous windows from being joined. The whole live mixer below is skipped.
 7. **Clear mix/bus/aux buffers** (SIMD).
 8. **Per-track loop (×24):** resolve input (playback file via `PlaybackEngine`, live device input, or silence) → `ChannelStrip::processAndAccumulate(...)` which runs HPF→EQ→comp→pan/fader→sends and **accumulates** into the master mix and any assigned bus/aux buffers. Records the input to disk if armed.
 9. **Bus loop (×4):** `BusStrip::processInPlace` (EQ+comp), accumulate into master. Skipped if the bus is silent (cheap peak check first).
@@ -491,6 +492,29 @@ the `windows-tests.yml` run builds the MSVC artifact the guest tests. Green here
 means CI should find nothing new, so a branch needs one CI round rather than
 several, and pushes are batched, because each one cancels the macOS job in
 progress (about 45 minutes on a cold cache) and starts it again.
+
+The Mac source leg can use a dedicated validation tree:
+
+```bash
+DUSK_REGRESS_MAC_REPO=dusk-386-current \
+DUSK_REGRESS_MAC_DAF=dusk-016-validation-deps/DAF \
+DUSK_REGRESS_MAC_DAF_REV='<40-character-commit>' \
+DUSK_REGRESS_MAC_CONFIGURE=dusk-016-prepush-configure.sh \
+DUSK_REGRESS_MAC_BUILD_DIR=build-prepush \
+DUSK_REGRESS_MAC_TEST_BUILD_DIR=build-prepush-tests \
+TMPDIR=/var/tmp scripts/regress.sh prepush
+```
+
+Source, DAF and helper paths are absolute or relative to the remote home;
+build paths are absolute or relative to the selected source. Explicit source
+selection requires `git config dusk.validationWorktree true`, clean source and
+DAF trees, the exact DAF revision, and an explicit configure helper. These
+checks run before transferring HEAD. The dedicated DAF checkout is verified
+without pulling it. The helper receives the absolute build directory as its
+first argument, followed by CMake options including the selected DAF path and
+removal of `DUSK_PLUGINS_PATH`. It must configure the selected source with the
+node's toolchain flags; the runner also exports its absolute path as
+`REGRESS_SOURCE`. Donor checks still require the fetched `DONOR_REV` checkout.
 
 `all` routes each option to the platform that owns it, so one command line can
 carry Linux, macOS and Windows options at once. An option no platform claims is
@@ -822,6 +846,13 @@ through `auto`.
 checklist item to the scenario, black-box leg or unit test that covers it, or
 says why it stays manual. When a fix lands, land its scenario (or extend one)
 and update that table in the same change.
+
+`docs/capture-screenshots.sh` also runs `gui.sfz_repository_workflow` in a
+separate isolated app process. Setting `DUSKSTUDIO_SCENARIO_CAPTURE_DIR` exports
+its Installed and Online native frames before case cleanup; the script converts
+them to the manual's PNGs. Do not combine that scenario with
+`DUSKSTUDIO_CAPTURE_DIR`, which starts the general capture harness in the same
+process.
 
 ### macOS
 

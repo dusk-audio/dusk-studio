@@ -7,8 +7,8 @@
 #include <filesystem>
 #include <string>
 
-// The one directory Dusk Studio keeps its per-user files in: window state,
-// app config, recent sessions, the audio device choice, plugin caches, logs.
+// Per-user settings: window state, app config, recent sessions, the audio
+// device choice, plugin caches and logs. Sample libraries use appDataDir().
 //
 // DUSKSTUDIO_CONFIG_DIR names it outright. Without it, a scenario or self-test
 // run gets a fresh directory of its own, removed at exit, so a harness run
@@ -81,6 +81,15 @@ inline std::filesystem::path appConfigDir()
                                 isHarnessRun (std::getenv ("DUSKSTUDIO_RUN_SCENARIOS"),
                                               std::getenv ("DUSKSTUDIO_RUN_SELFTEST")),
                                 userConfigDir(),
+                                detail::harnessConfigDir);
+}
+
+inline std::filesystem::path appDataDir()
+{
+    return resolveAppConfigDir (detail::configDirOverride(),
+                                isHarnessRun (std::getenv ("DUSKSTUDIO_RUN_SCENARIOS"),
+                                              std::getenv ("DUSKSTUDIO_RUN_SELFTEST")),
+                                userDataDir(),
                                 detail::harnessConfigDir);
 }
 } // namespace dusk::fs

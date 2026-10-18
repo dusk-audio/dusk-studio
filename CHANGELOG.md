@@ -9,6 +9,11 @@ canonical source.
 
 ### Added
 
+- **Mastering phase analysis.** A fourth native panel shows correlation,
+  coherence, phase offsets and mono loss across 4 to 64 frequency bands.
+  Held minima and warnings retain passages that cancel in mono. Bands, Q and
+  averaging save with the session; a temporary Mono monitor leaves exports
+  stereo. Compact windows show one mastering module at a time.
 - **MIDI Merge.** Matching toggles in the transport and piano-roll toolbar add
   each MIDI performance to an existing region, growing it and keeping its earlier
   notes, controls and takes. Each completed loop pass is one undo step while
@@ -19,10 +24,16 @@ canonical source.
   alone, and the roll follows the region a merge updates.
 - **Creative Commons SFZ repositories.** Browse SFZ Instruments, Musical
   Artifacts, FreePats and Versilian Studios from the instrument library, check a
-  pack's license, and download it to Installed. Downloads can pause, resume and
-  cancel. Installed versions coexist, and sessions find the same pack on another
-  machine without its old absolute path. Missing packs stay offline without
-  downloading on session load.
+  pack's license, and download it to Installed. Only CC0, CC BY and CC BY-SA
+  packs are offered; NonCommercial and NoDerivatives packs are refused.
+  SFZ Manager makes HTTPS requests when you browse repositories, view pack
+  details, download packs or fetch online artwork. It makes no repository
+  requests at startup or during session restore.
+  Downloads can pause, resume and cancel; validated partial downloads survive
+  a connection failure or quitting. Installed versions coexist, and
+  sessions find the same pack on another machine without its old absolute path.
+  Missing packs stay offline without downloading on session load. Explicit
+  relinking selects an installed version of the same pack and keeps its controls.
   A larger, responsive browser shows source stars or favorites and opens
   published demos before downloading an instrument pack. Both tabs group
   instruments by type, show repository artwork or licensed instrument cutouts,
@@ -32,6 +43,7 @@ canonical source.
   page progress and repository labels; one unavailable source leaves the others'
   results usable. Versilian offers the official VSCO 2 CE and VCSL SFZ releases.
 - **Settings tabs and SFZ storage.** Top tabs replace the long settings page.
+  Downloaded packs default to the platform's application data directory.
   Choose a download folder on an external drive, keep existing packs in place or
   move them after copying and verification. Session instrument references survive
   the move, and disconnected drives are reported.
@@ -39,8 +51,44 @@ canonical source.
   playback keep pitch bend, channel and polyphonic pressure, and program changes
   alongside notes and CCs.
 
+### Changed
+
+- **Session format 11.** New saves preserve the complete MIDI channel
+  performance and managed SFZ references. Dusk Studio 0.15.1 and earlier cannot
+  open them. Keep a copy before saving if you need an older version.
+- **Shared audio reader workers.** Three workers fill immutable playback
+  windows near the playhead and release distant sample buffers. Seeking primes
+  the new position before it becomes audible; loop and offline render paths
+  keep their read-ahead coverage.
+- **Background instrument replacement.** The current instrument keeps playing
+  while its replacement loads. Failed and stale requests leave it in place,
+  and retired instruments are destroyed after the audio swap.
+- **Exact recording offset.** Type a sample value or adjust it one sample at a
+  time with minus and plus buttons.
+- **SFZ Manager entry point.** The insert chooser opens one manager for online,
+  downloaded and local instruments. Its separate Soundfont choice is removed;
+  local SFZ, SF2 and ARIA bank files remain available through the manager.
+
 ### Fixed
 
+- **Sandboxed plugin editors on X11.** Editors open when optional window-manager
+  properties are absent, and closing an editor leaves its host child alive until
+  the plugin is unloaded.
+- **Dropdown keyboard navigation.** Home highlights the first dropdown choice
+  instead of seeking the transport. Mastering dropdowns retain keyboard focus
+  after a covered native panel closes.
+- **Existing SFZ libraries.** Packs in the former default configuration folder
+  remain available after upgrading to the application data default. Saved
+  external-library settings keep their previous built-in folder too.
+- **MIDI punch-out.** Linear MIDI takes stop capturing at punch-out with MIDI
+  Merge on or off. Post-roll notes and controls stay out of the preview and
+  recorded region, and held notes end at the punch boundary. Turning Punch off
+  or changing punch-out during a take updates MIDI capture at the next block.
+  Notes released after punch-out stay ended if Punch is later switched off.
+- **Malformed SFZ artwork.** JPEG marker errors, incomplete component scans and
+  premature scan ends are rejected instead of rendering uninitialized pixels.
+- **Piano roll controls.** Zoom Fit fits long regions to the full grid width,
+  and shifted bracket shortcuts work with hexadecimal window key codes.
 - **PDC changes during playback.** Tracks already playing without compensation
   wait for silence before adding delay. Silent and muted tracks adopt the new
   compensation when their audio resumes.
@@ -55,11 +103,6 @@ canonical source.
   SFZ mappings remain accessible through Show all SFZ files.
 - **SFZ description search.** Search includes community catalog descriptions,
   including Swirly Drums when searching for Brushes.
-- **Exact recording offset.** Type a sample value or adjust it one sample at a
-  time with minus and plus buttons.
-- **SFZ Manager entry point.** The insert chooser opens one manager for online,
-  downloaded and local instruments. Its separate Soundfont choice is removed;
-  local SFZ, SF2 and ARIA bank files remain available through the manager.
 - **SFZ preview selection.** Generic patch names in older installed packs use
   their pack's instrument category, matching the browser list. All instruments
   has no placeholder image. Image edges no longer sample neighboring atlas pixels.
@@ -70,13 +113,6 @@ canonical source.
   including when the parent window receives the search field's keyboard input.
 - **SFZ instrument captions.** Crowded ARIA skin labels stay centred over their
   controls and fit between adjacent captions, keeping drum-kit text readable.
-- **Shared audio reader workers.** Three workers fill immutable playback
-  windows near the playhead and release distant sample buffers. Seeking primes
-  the new position before it becomes audible; loop and offline render paths
-  keep their read-ahead coverage.
-- **Background instrument replacement.** The current instrument keeps playing
-  while its replacement loads. Failed and stale requests leave it in place,
-  and retired instruments are destroyed after the audio swap.
 - **MIDI device refresh preserves audio state.** It keeps a deliberately
   detached callback detached and no longer re-prepares the whole engine,
   changing a no-device import's timeline rate or clearing a finished master

@@ -1075,7 +1075,7 @@ void Lv2Instance::processBlock (const hosting::PortBuffers& io) noexcept
                        ? lv2_atom_pad_size ((uint32_t) sizeof (LV2_Atom_Event) + (uint32_t) numBytes)
                        : 0;
         };
-        const size_t resetBytes = (size_t) midi::kHangingResetMessageCount * midiEventBytes (nullptr, 3);
+        const size_t resetBytes = (size_t) midi::kTransportStopResetMessageCount * midiEventBytes (nullptr, 3);
         auto appendEvent = [&] (int64_t frames, uint32_t type,
                                 const uint8_t* data, uint32_t size, size_t limit)
         {
@@ -1090,7 +1090,7 @@ void Lv2Instance::processBlock (const hosting::PortBuffers& io) noexcept
             std::memcpy (ev + 1, data, size);
             seq->atom.size += padded;
         };
-        // Patches leave the MIDI room for at least the hanging reset.
+        // UI atoms must not consume the transport reset's capacity.
         impl->atomRing.drain ([&] (const Impl::AtomBlob& blob)
         {
             // blob is a full atom (header + body); re-emit as header + payload.

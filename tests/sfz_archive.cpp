@@ -10,6 +10,7 @@
 #include <clocale>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <string>
 #include <system_error>
 #include <utility>
@@ -32,7 +33,7 @@ struct ScratchTree
     ~ScratchTree()
     {
         std::error_code error;
-        std::filesystem::remove_all (root, error);
+        std::filesystem::remove_all (dusk::fs::nativeIOPath (root), error);
     }
     std::filesystem::path root;
 };
@@ -125,7 +126,7 @@ ArchiveRequest requestFor (ScratchTree& tree, const std::vector<unsigned char>& 
 
 std::string readFile (const std::filesystem::path& path)
 {
-    std::ifstream stream (path, std::ios::binary);
+    std::ifstream stream (dusk::fs::nativeIOPath (path), std::ios::binary);
     return { std::istreambuf_iterator<char> (stream), std::istreambuf_iterator<char>() };
 }
 
@@ -169,7 +170,8 @@ TEST_CASE ("SFZ portable paths reject escape and Windows aliases")
     for (const std::string path : { "", "/piano.sfz", "\\\\server\\piano.sfz", "C:/piano.sfz",
                                    "../piano.sfz", "a/../piano.sfz", "./piano.sfz", "a//piano.sfz",
                                    "a\\piano.sfz", "a/piano.sfz.", "a /piano.sfz", "CON.sfz",
-                                   "a/Lpt1.wav", "COM¹.wav", "piano:stream.sfz", "a/piano?.sfz" })
+                                   "a/Lpt1.wav", "COM¹.wav", "a/COM0.wav", "lpt0.sfz", "CONIN$.sfz", "a/conout$.wav",
+                                   "piano:stream.sfz", "a/piano?.sfz" })
     {
         CAPTURE (path);
         CHECK_FALSE (validateRelativePath (path, error));
@@ -178,6 +180,8 @@ TEST_CASE ("SFZ portable paths reject escape and Windows aliases")
     CHECK_FALSE (validateRelativePath (std::string ("a\0b.sfz", 7), error));
     CHECK_FALSE (validateRelativePath (std::string ("a\x1f" "b.sfz", 7), error));
     CHECK_FALSE (validateRelativePath (std::string ("a\xc0\xaf" "b.sfz", 8), error));
+    for (const std::string path : { "COM10.sfz", "LPT10.wav", "COM0X.sfz", "CONINPUT.sfz" })
+        CHECK (validateRelativePath (path, error));
     CHECK (validateRelativePath (u8"Étude/ピアノ.sfz", error));
     CHECK (error.empty());
 }
@@ -204,6 +208,11 @@ TEST_CASE ("SFZ ZIP extraction strips only the expected root and verifies its li
     std::string entrypoint;
     SECTION ("Composed Unicode pathname") { entrypoint = u8"Étude.sfz"; }
     SECTION ("Decomposed Unicode pathname") { entrypoint = u8"E\u0301tude.sfz"; }
+    SECTION ("Deep Unicode pathname")
+    {
+        for (int index = 0; index < 4; ++index) entrypoint += std::string (72, char ('a' + index)) + '/';
+        entrypoint += u8"音色.sfz";
+    }
     auto request = requestFor (tree, zip ({
         { "pack-release/", {}, true }, { "pack-release/" + entrypoint, instrument },
         { "pack-release/Samples/tone.wav", "sample bytes" }, { "pack-release/LICENSE", license }
@@ -399,6 +408,57 @@ TEST_CASE ("SFZ ZIP extraction enforces declared byte file and path limits")
     CHECK_FALSE (std::filesystem::exists (request.stagingDirectory));
 }
 
+TEST_CASE ("SFZ ZIP extraction bounds expansion before creating staging")
+{
+    ScratchTree tree;
+    auto bytes = zip ({ { "piano.sfz", "instrument" } }, true);
+    const auto local = signature (bytes, 0x04034b50);
+    const auto central = signature (bytes, 0x02014b50);
+    bool boundary = false;
+    std::uint64_t compressed = 1;
+    SECTION ("One byte above the default ratio") {}
+    SECTION ("A nonempty member declares no compressed bytes") { compressed = 0; }
+    SECTION ("A stored member at the configured ratio is allowed")
+    {
+        boundary = true;
+        bytes = zip ({ { "piano.sfz", "instrument" } });
+    }
+    if (! boundary)
+    {
+        put (bytes, local + 18, compressed, 4);
+        put (bytes, central + 20, compressed, 4);
+        put (bytes, local + 22, 1001, 4);
+        put (bytes, central + 24, 1001, 4);
+    }
+    auto request = requestFor (tree, bytes);
+    if (boundary) request.limits.maxCompressionRatio = 1;
+    const auto result = extractZip (request);
+    if (boundary)
+    {
+        REQUIRE (result);
+        CHECK (readFile (request.stagingDirectory / "piano.sfz") == "instrument");
+    }
+    else
+    {
+        CHECK_FALSE (result);
+        CHECK (result.error == "ZIP compression ratio exceeds the expansion limit");
+        CHECK_FALSE (std::filesystem::exists (request.stagingDirectory));
+    }
+}
+
+TEST_CASE ("SFZ ZIP extraction checks available space before creating staging")
+{
+    ScratchTree tree;
+    auto request = requestFor (tree, zip ({ { "piano.sfz", "instrument" } }));
+    request.limits.freeSpaceReserveBytes = std::numeric_limits<std::uint64_t>::max();
+    const auto result = extractZip (request);
+    CHECK_FALSE (result);
+    CHECK (result.error == "Insufficient free space for the expanded SFZ pack");
+    CHECK (result.failureKind == FailureKind::DiskFull);
+    CHECK_FALSE (std::filesystem::exists (request.stagingDirectory));
+    CHECK (std::filesystem::is_regular_file (request.archive));
+}
+
 TEST_CASE ("SFZ ZIP extraction enforces actual bytes when ZIP declared sizes lie")
 {
     ScratchTree tree;
@@ -421,7 +481,32 @@ TEST_CASE ("SFZ ZIP extraction rejects corrupt member data")
     const auto extras = std::size_t (bytes[local + 28]) + (std::size_t (bytes[local + 29]) << 8);
     bytes[local + 30 + names + extras] ^= 1;
     const auto request = requestFor (tree, bytes);
-    CHECK (extractZip (request).status == OperationStatus::Failed);
+    const auto result = extractZip (request);
+    CHECK (result.status == OperationStatus::Failed);
+    CHECK (result.failureKind == FailureKind::Integrity);
+}
+
+TEST_CASE ("SFZ ZIP extraction distinguishes unavailable input from corrupt contents", "[sfz-filesystem-fixture]")
+{
+   #if defined(_WIN32)
+    SKIP ("Windows keeps an open archive protected against concurrent truncation");
+   #else
+    ScratchTree tree;
+    const auto request = requestFor (tree, zip ({ { "piano.sfz", std::string (512 * 1024, 'x') } }));
+    bool truncated = false;
+    OperationControl control;
+    control.progress = [&] (const OperationProgress& progress)
+    {
+        if (truncated || progress.completedBytes == 0) return;
+        std::filesystem::resize_file (request.archive, 0);
+        truncated = true;
+    };
+    const auto result = extractZip (request, control);
+    REQUIRE (truncated);
+    CHECK (result.status == OperationStatus::Failed);
+    CHECK (result.failureKind == FailureKind::None);
+    CHECK (result.error.find ("Cannot read ZIP payload") != std::string::npos);
+   #endif
 }
 
 TEST_CASE ("SFZ ZIP extraction refuses fake and truncated ZIP payloads")

@@ -51,8 +51,10 @@ inline int pumpUntilSilent (ScenarioContext& ctx, int trackIndex, int maxBlocks)
 
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
 constexpr const char* kPanicProbeClapId = "studio.dusk.test.panic-probe";
+constexpr const char* kMidiPrimaryPanicProbeClapId = "studio.dusk.test.panic-probe-midi-primary";
 
-inline bool loadPanicProbe (ScenarioContext& ctx, int trackIndex, std::string& errorOut)
+inline bool loadPanicProbe (ScenarioContext& ctx, int trackIndex, std::string& errorOut,
+                            const char* pluginId = kPanicProbeClapId)
 {
     const auto fixture = ctx.fixture ("panic_probe.clap");
     if (! fixture)
@@ -62,7 +64,7 @@ inline bool loadPanicProbe (ScenarioContext& ctx, int trackIndex, std::string& e
     }
     return ctx.engine().getChannelStrip (trackIndex).getNativeClapSlot().load (
         *fixture, ScenarioContext::kSampleRate, ScenarioContext::kBlockSize,
-        errorOut, kPanicProbeClapId);
+        errorOut, pluginId);
 }
 
 // The fixture publishes its event counters as read-only parameters; -1 means

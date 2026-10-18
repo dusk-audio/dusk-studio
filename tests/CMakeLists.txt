@@ -17,6 +17,7 @@ if(catch2_POPULATED AND IS_DIRECTORY "${catch2_SOURCE_DIR}")
 endif()
 
 add_executable(dusk-studio-tests
+    main.cpp
     # Shared native-host foundation (PortLayout / PortBuffers / INativeInstance)
     # is header-only + platform-neutral, so it links in the base target.
     hosting_port_layout.cpp
@@ -43,15 +44,18 @@ add_executable(dusk-studio-tests
     sfz_library_locations.cpp
     sfz_library_service.cpp
     sfz_artwork_cache.cpp
+    sfz_directory_lease.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzLibrary.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzCatalog.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzCatalogEnvelope.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzTransfer.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzDirectoryLease.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzArtworkCache.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzArchive.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzPathPolicy.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzProvider.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzPackStore.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzPackIntegrity.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzPackIndex.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzLibraryLocations.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzLibraryService.cpp
@@ -80,6 +84,7 @@ add_executable(dusk-studio-tests
     midi_merge.cpp
     midi_channel_playback.cpp
     midi_capture_stream.cpp
+    midi_merge_playback.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/MidiCaptureStream.cpp
     atomic_park.cpp
     audio_worker_pool.cpp
@@ -287,6 +292,8 @@ endif()
 # CMakeLists and shared with the app target.
 target_sources(dusk-studio-tests PRIVATE
     fft_pffft_parity.cpp
+    phase_analyzer.cpp
+    ${CMAKE_SOURCE_DIR}/src/dsp/PhaseAnalyzer.cpp
     ${CMAKE_SOURCE_DIR}/src/foundation/Fft.cpp)
 target_link_libraries(dusk-studio-tests PRIVATE dusk-pffft)
 
@@ -307,6 +314,7 @@ target_sources(dusk-studio-tests PRIVATE
     foundation_audio_math.cpp
     foundation_int_delay_line.cpp
     foundation_spsc_index_fifo.cpp
+    phase_analysis_feed.cpp
     bus_tone_eq.cpp
     ${CMAKE_SOURCE_DIR}/src/dsp/BusToneEq.cpp
     foundation_lagrange_interpolator.cpp
@@ -409,11 +417,6 @@ if(EXISTS "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui/DearImGui/imgui.h")
     target_include_directories(dusk-studio-tests SYSTEM PRIVATE
         ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui
         ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/dusk)
-    if(TARGET DuskStudioBinaryIcon AND EXISTS "${DUSKSTUDIO_DAF_SOURCE_DIR}/dgl/src/nanovg/stb_image.h")
-        target_sources(dusk-studio-tests PRIVATE sfz_artwork_decode.cpp ${CMAKE_SOURCE_DIR}/src/ui/imgui/SfzArtwork.cpp)
-        target_include_directories(dusk-studio-tests SYSTEM PRIVATE "${DUSKSTUDIO_DAF_SOURCE_DIR}/dgl")
-        target_link_libraries(dusk-studio-tests PRIVATE DuskStudioBinaryIcon)
-    endif()
     # Dear ImGui is vendored third-party code and does not build clean under this
     # target's warning set. The app silences it the same way for dgl-opengl3.
     set_source_files_properties(
@@ -422,6 +425,11 @@ if(EXISTS "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui/DearImGui/imgui.h")
         ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui/DearImGui/imgui_tables.cpp
         ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui/DearImGui/imgui_widgets.cpp
         PROPERTIES COMPILE_OPTIONS "$<IF:$<CXX_COMPILER_ID:MSVC>,/w,-w>")
+endif()
+
+if(TARGET DuskStudioBinaryIcon)
+    target_sources(dusk-studio-tests PRIVATE sfz_artwork_decode.cpp ${CMAKE_SOURCE_DIR}/src/ui/imgui/SfzArtwork.cpp)
+    target_link_libraries(dusk-studio-tests PRIVATE DuskStudioBinaryIcon)
 endif()
 
 target_compile_definitions(dusk-studio-tests PRIVATE
@@ -737,6 +745,7 @@ if(DUSKSTUDIO_NATIVE_VST3)
         vst3_bundle_load.cpp
         vst3_hostcontext_lifetime.cpp
         vst3_instance_process.cpp
+        support/AllocationObserver.cpp
         vst3_native_slot.cpp
         vst3_scanner.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/vst3/Vst3Bundle.cpp
@@ -771,7 +780,7 @@ if(DUSKSTUDIO_NATIVE_AU)
 endif()
 
 target_link_libraries(dusk-studio-tests PRIVATE
-    Catch2::Catch2WithMain
+    Catch2::Catch2
     ${CMAKE_DL_LIBS}   # dl: ClapBundle dlopen
     juce::juce_audio_basics
     juce::juce_audio_formats
@@ -853,7 +862,9 @@ if (_duskstudio_ipc_test_enabled)
     add_dependencies(dusk-studio-tests dusk-studio-plugin-host)
 endif()
 
-target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_TESTS=1)
+target_compile_definitions(dusk-studio-tests PRIVATE
+    DUSKSTUDIO_TESTS=1
+    DUSKSTUDIO_SFZ_LICENSE_FIXTURES=\"${CMAKE_CURRENT_SOURCE_DIR}/fixtures/licenses\")
 
 # UniversalCompressor (multi-comp donor) tests — gated on the donor being
 # available. Mirrors the main app's DUSK_PLUGINS_PATH wiring exactly so the
@@ -877,6 +888,7 @@ if(DUSK_PLUGINS_PATH)
         $<$<BOOL:${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}>:${CMAKE_SOURCE_DIR}/src/ui/imgui/BuiltinUnitView.cpp>
         $<$<BOOL:${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}>:${CMAKE_SOURCE_DIR}/src/ui/imgui/MasteringEqView.cpp>
         $<$<BOOL:${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}>:${CMAKE_SOURCE_DIR}/src/ui/imgui/MasteringLimiterView.cpp>
+        $<$<BOOL:${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}>:${CMAKE_SOURCE_DIR}/src/ui/imgui/MasteringPhaseView.cpp>
         dsp_stereo_oversampler.cpp
         oversampling_fanout.cpp
         console_saturation.cpp
@@ -978,12 +990,25 @@ catch_discover_tests(dusk-studio-tests
 catch_discover_tests(dusk-studio-tests
     TEST_SPEC "[host-limits]"
     EXTRA_ARGS --allow-running-no-tests)
+# Capacity cases run with a private tmpfs in sfz-disk-full; ordinary discovery
+# must also accept their fixture-dependent skip.
+catch_discover_tests(dusk-studio-tests
+    TEST_SPEC "[sfz-disk-full],[sfz-service-disk-full],[sfz-location-disk-full],[sfz-store-disk-full]"
+    EXTRA_ARGS --allow-running-no-tests
+    PROPERTIES RUN_SERIAL TRUE)
+# Case-distinct names, links and concurrent truncation may be unavailable. Isolate skips so Catch2
+# cannot rerun shared rejection assertions without a fixture section.
+# Keep only fatal setup assertions before SKIP: the regex overrides exit status.
+catch_discover_tests(dusk-studio-tests
+    TEST_SPEC "[sfz-filesystem-fixture]"
+    EXTRA_ARGS --allow-running-no-tests
+    PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:")
+catch_discover_tests(dusk-studio-tests
+    TEST_SPEC "~[alsa]~[ipc]~[host-limits]~[sfz-disk-full]~[sfz-location-disk-full]~[sfz-store-disk-full]~[sfz-filesystem-fixture]")
 # [ipc] cases start plug-in hosts and assert on bounded response times. Run
 # them serially so other cases cannot starve their control threads.
 catch_discover_tests(dusk-studio-tests
-    TEST_SPEC "~[alsa]~[ipc]~[host-limits]")
-catch_discover_tests(dusk-studio-tests
-    TEST_SPEC "[ipc]~[sfz-shutdown]"
+    TEST_SPEC "[ipc]~[sfz-shutdown]~[sfz-service-disk-full]"
     PROPERTIES RUN_SERIAL TRUE)
 catch_discover_tests(dusk-studio-tests
     TEST_SPEC "[sfz-shutdown]"
@@ -1004,11 +1029,22 @@ if(APPLE)
     endif()
 endif()
 
+add_test(NAME windows-vblank-guard-contract
+    COMMAND "${CMAKE_COMMAND}" "-DREPO_ROOT=${CMAKE_SOURCE_DIR}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/windows_vblank_guard.cmake")
+
 # Exercise the real release-version insertion script against an isolated fixture,
 # and pin the private-release fan-in and single-publisher contract. The release
 # script is Unix-only.
 if(UNIX)
     find_program(DUSKSTUDIO_BASH_EXECUTABLE bash)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND DUSKSTUDIO_BASH_EXECUTABLE)
+        add_test(NAME sfz-disk-full
+            COMMAND "${DUSKSTUDIO_BASH_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/sfz_disk_full.sh"
+                    "$<TARGET_FILE:dusk-studio-tests>")
+        set_tests_properties(sfz-disk-full PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
+    endif()
     find_package(Python3 COMPONENTS Interpreter QUIET)
     if(DUSKSTUDIO_BASH_EXECUTABLE AND Python3_Interpreter_FOUND)
         add_test(NAME package-contents-checker

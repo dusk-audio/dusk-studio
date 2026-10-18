@@ -29,12 +29,13 @@ bool reservedBasename (std::string_view segment)
     while (! name.empty() && (name.back() == ' ' || name.back() == '.'))
         name.remove_suffix (1);
     if (equalsAscii (name, "CON") || equalsAscii (name, "PRN")
-        || equalsAscii (name, "AUX") || equalsAscii (name, "NUL")) return true;
+        || equalsAscii (name, "AUX") || equalsAscii (name, "NUL")
+        || equalsAscii (name, "CONIN$") || equalsAscii (name, "CONOUT$")) return true;
     if (name.size() < 4
         || (! equalsAscii (name.substr (0, 3), "COM")
             && ! equalsAscii (name.substr (0, 3), "LPT"))) return false;
     const auto suffix = name.substr (3);
-    return (suffix.size() == 1 && suffix[0] >= '1' && suffix[0] <= '9')
+    return (suffix.size() == 1 && suffix[0] >= '0' && suffix[0] <= '9')
         || (suffix.size() == 2 && static_cast<unsigned char> (suffix[0]) == 0xc2
             && (static_cast<unsigned char> (suffix[1]) == 0xb9
                 || static_cast<unsigned char> (suffix[1]) == 0xb2

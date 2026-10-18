@@ -1,7 +1,9 @@
 #pragma once
 
 #include "../session/MidiPlayback.h"
+#include "../session/MidiMerge.h"
 #include "../session/Session.h"
+#include "MidiMergePlayback.h"
 
 #include <algorithm>
 #include <array>
@@ -22,6 +24,7 @@ struct ControllerChase
 
     std::array<MidiPlaybackRegion::Controller, kKeys> event {};
     std::array<std::int64_t, kKeys> at {};
+    std::array<std::size_t, kKeys> region {};
     std::array<bool, kKeys>         seen {};
     std::array<bool, kKeys>         explicitAtStart {};
     std::array<int, kKeys>          keys {};
@@ -58,8 +61,8 @@ struct NoteCount
         ++total;
     }
 
-    // A note-on adds its key, a note-off (or a note-on at velocity 0) takes
-    // one away; anything else is not a note.
+    // Call in timestamp order, including channel resets, so a note wholly
+    // inside one block leaves no held count behind.
     void hear (std::uint8_t status, std::uint8_t key, std::uint8_t velocity) noexcept
     {
         const int kind = status & 0xF0;
@@ -70,6 +73,15 @@ struct NoteCount
         {
             --count[at];
             --total;
+        }
+        else if (kind == 0xb0 && (key == 120 || key == 123) && total > 0)
+        {
+            const auto first = (std::size_t) (status & 15) * 128;
+            for (auto i = first; i < first + 128; ++i)
+            {
+                total -= count[i];
+                count[i] = 0;
+            }
         }
     }
 
@@ -152,6 +164,76 @@ inline bool takeScans (int& scans, int n) noexcept
     scans -= n;
     return true;
 }
+
+struct PendingCapture
+{
+    const MidiMergePlayback* playback = nullptr;
+    MidiCaptureStamp consumed;
+    int playbackPass = 0;
+    int targetRegion = -1;
+    std::int64_t timelineStart = 0, offsetTicks = 0;
+
+    bool locateTarget (const MidiTimeline& timeline, std::int64_t captureStart, std::int64_t captureEnd,
+                       double capturedRate, float capturedBpm, int& scans) noexcept
+    {
+        consumed = timeline.capture;
+        timelineStart = captureStart;
+        offsetTicks = 0;
+        targetRegion = -1;
+        if (playback == nullptr) return true;
+        if (timeline.placement.size() > (std::size_t) std::max (0, scans))
+        {
+            scans = 0;
+            return false;
+        }
+        scans -= (int) timeline.placement.size();
+        const int target = findMidiMergeTarget (timeline.placement, captureStart, captureEnd);
+        targetRegion = target >= 0 ? target : (int) timeline.size();
+        if (target < 0) return true;
+        const auto& place = timeline.placement[(std::size_t) target];
+        if (place.muted) { playback = nullptr; return true; }
+        const auto offset = samplesToTicks (captureStart - place.timelineStart, capturedRate, capturedBpm);
+        timelineStart = place.timelineStart - ticksToSamples (std::max<std::int64_t> (0, -offset),
+                                                             capturedRate, capturedBpm);
+        offsetTicks = std::max<std::int64_t> (0, offset);
+        return true;
+    }
+
+    bool regionAfter (std::size_t a, std::size_t b, const MidiTimeline& timeline) const noexcept
+    {
+        const auto startOf = [&] (std::size_t region) noexcept
+        { return (int) region == targetRegion ? timelineStart : timeline.placement[region].timelineStart; };
+        return startOf (a) > startOf (b) || (startOf (a) == startOf (b) && a > b);
+    }
+
+    template <typename Visit>
+    Outcome notes (int& scans, Visit&& visit) const noexcept
+    {
+        if (playback == nullptr) return Outcome::complete;
+        auto outcome = Outcome::complete;
+        const bool done = playback->forEachNote (consumed, playbackPass, scans, [&] (MidiNote note) noexcept
+        {
+            note.startTick += offsetTicks;
+            outcome = visit (note);
+            return outcome == Outcome::complete;
+        });
+        return ! done && outcome == Outcome::complete ? Outcome::scanBudgetSpent : outcome;
+    }
+
+    template <typename Visit>
+    Outcome controls (int& scans, Visit&& visit) const noexcept
+    {
+        if (playback == nullptr) return Outcome::complete;
+        auto outcome = Outcome::complete;
+        const bool done = playback->forEachControl (consumed, playbackPass, scans, [&] (MidiCc control) noexcept
+        {
+            control.atTick += offsetTicks;
+            outcome = visit (control);
+            return outcome == Outcome::complete;
+        });
+        return ! done && outcome == Outcome::complete ? Outcome::scanBudgetSpent : outcome;
+    }
+};
 
 // The latest a region can end that starts at or before `start` and is at most
 // `lengthSamples` (without a tempo map) or `lengthTicks` (with one) long. The
@@ -256,10 +338,17 @@ template <typename Emit>
 Outcome scheduleSpan (const MidiTimeline& timeline,
                       const TempoMap* map, double sampleRate, float bpm,
                       const Span& span, int& scans, ControllerChase& chase,
-                      Emit&& emit) noexcept
+                      Emit&& emit, const PendingCapture* pending = nullptr) noexcept
 {
+    auto capture = pending != nullptr ? *pending : PendingCapture {};
+    if (capture.playback == nullptr || ! capture.playback->hasEligible (capture.consumed, capture.playbackPass, scans))
+    {
+        if (scans <= 0) return Outcome::scanBudgetSpent;
+        capture = {};
+    }
     const auto take = [&scans] (int n) noexcept { return takeScans (scans, n); };
     const TempoMap* tempoMap = (map != nullptr && ! map->empty()) ? map : nullptr;
+    const RegionClock captureClock (tempoMap, sampleRate, bpm, capture.timelineStart);
     const auto clockOf = [&] (const MidiRegionPlacement& place) noexcept
     {
         return RegionClock (tempoMap, sampleRate, bpm, place.timelineStart);
@@ -341,13 +430,15 @@ Outcome scheduleSpan (const MidiTimeline& timeline,
                 if (next != from)
                 {
                     const auto at = clock.at ((next - 1)->tick);
-                    if (! chase.seen[key] || at > chase.at[key])
+                    if (! chase.seen[key] || at > chase.at[key]
+                        || (at == chase.at[key] && capture.regionAfter (region, chase.region[key], timeline)))
                     {
                         if (! chase.seen[key])
                             chase.keys[(std::size_t) chase.keyCount++] = (int) key;
                         chase.seen[key] = true;
                         chase.at[key] = at;
                         chase.event[key] = *(next - 1);
+                        chase.region[key] = region;
                     }
                 }
                 if (end > span.start && next != to && clock.at (next->tick) == span.start)
@@ -355,6 +446,26 @@ Outcome scheduleSpan (const MidiTimeline& timeline,
             }
         }
         scans += chaseScans;
+        const auto capturedControls = capture.controls (scans, [&] (const MidiCc& control) noexcept
+        {
+            const auto at = captureClock.at (control.atTick);
+            const auto key = (std::size_t) control.laneKey();
+            if (at == span.start) chase.explicitAtStart[key] = true;
+            if (at < span.start && (! chase.seen[key] || at > chase.at[key]
+                || (at == chase.at[key]
+                    && ((int) chase.region[key] == capture.targetRegion
+                        || capture.regionAfter ((std::size_t) capture.targetRegion, chase.region[key], timeline)))))
+            {
+                if (! chase.seen[key]) chase.keys[(std::size_t) chase.keyCount++] = (int) key;
+                chase.seen[key] = true;
+                chase.at[key] = at;
+                chase.region[key] = (std::size_t) capture.targetRegion;
+                chase.event[key] = { control.atTick, (std::uint8_t) (control.channel - 1),
+                    (std::uint8_t) control.controller, (std::uint16_t) control.value, control.kind };
+            }
+            return Outcome::complete;
+        });
+        if (capturedControls != Outcome::complete) return capturedControls;
     }
 
     // A bank selection must precede its program, including when one is
@@ -376,30 +487,71 @@ Outcome scheduleSpan (const MidiTimeline& timeline,
     const auto chasedValues = chasedControllers (false);
     if (chasedValues != Outcome::complete) return chasedValues;
 
-    const auto controllers = eachRegion ([&] (std::size_t region) noexcept
+    const auto explicitControllers = [&] (int programs) noexcept
     {
-        const auto& events = timeline.events (region);
-        if (events.controllers.empty()) return Outcome::complete;
-        const auto& place = timeline.placement[region];
-        const auto clock = clockOf (place);
-        const auto end = regionEnd (place, clock);
-        if (! overlapsSpan (place, end)) return Outcome::complete;
-        if (! take (searchCost (events.controllers.size()))) return Outcome::scanBudgetSpent;
-        for (auto c = firstFrom (events.controllers, clock, [] (const auto& e) { return e.tick; });
-             c != events.controllers.end(); ++c)
+        const auto fromRegion = [&] (std::size_t region) noexcept
         {
-            if (! take (1)) return Outcome::scanBudgetSpent;
-            const auto at = clock.at (c->tick);
-            if (at >= span.end || at >= end) break;
-            const auto message = c->message();
-            if (! emit (message.statusByte(), message.dataByte1(), message.dataByte2(), at - span.start))
-                return Outcome::eventRefused;
-        }
-        return Outcome::complete;
-    });
-    if (controllers != Outcome::complete) return controllers;
+            const auto& events = timeline.events (region);
+            if (events.controllers.empty()) return Outcome::complete;
+            const auto& place = timeline.placement[region];
+            const auto clock = clockOf (place);
+            const auto end = regionEnd (place, clock);
+            if (! overlapsSpan (place, end)) return Outcome::complete;
+            if (! take (searchCost (events.controllers.size()))) return Outcome::scanBudgetSpent;
+            for (auto c = firstFrom (events.controllers, clock, [] (const auto& e) { return e.tick; });
+                 c != events.controllers.end(); ++c)
+            {
+                if (! take (1)) return Outcome::scanBudgetSpent;
+                const auto at = clock.at (c->tick);
+                if (at >= span.end || at >= end) break;
+                const auto message = c->message();
+                if (programs >= 0 && (message.kind == MidiCc::Kind::ProgramChange) != (programs != 0)) continue;
+                if (! emit (message.statusByte(), message.dataByte1(), message.dataByte2(), at - span.start))
+                    return Outcome::eventRefused;
+            }
+            return Outcome::complete;
+        };
+        const auto capturedGroup = [&] () noexcept
+        {
+            if (capture.targetRegion >= 0 && (std::size_t) capture.targetRegion < timeline.size())
+            {
+                const auto original = fromRegion ((std::size_t) capture.targetRegion);
+                if (original != Outcome::complete) return original;
+            }
+            return capture.controls (scans, [&] (const MidiCc& control) noexcept
+            {
+                const auto at = captureClock.at (control.atTick);
+                if ((control.kind == MidiCc::Kind::ProgramChange) != (programs != 0) || at < span.start || at >= span.end)
+                    return Outcome::complete;
+                return emit (control.statusByte(), control.dataByte1(), control.dataByte2(), at - span.start)
+                    ? Outcome::complete : Outcome::eventRefused;
+            });
+        };
+        bool captured = capture.playback == nullptr;
+        const auto controllers = eachRegion ([&] (std::size_t region) noexcept
+        {
+            if (! captured && ((int) region == capture.targetRegion
+                               || capture.regionAfter (region, (std::size_t) capture.targetRegion, timeline)))
+            {
+                captured = true;
+                const auto result = capturedGroup();
+                if (result != Outcome::complete) return result;
+            }
+            if (capture.playback != nullptr && (int) region == capture.targetRegion) return Outcome::complete;
+            return fromRegion (region);
+        });
+        if (controllers != Outcome::complete) return controllers;
+        return captured ? Outcome::complete : capturedGroup();
+    };
+    const auto values = explicitControllers (capture.playback != nullptr ? 0 : -1);
+    if (values != Outcome::complete) return values;
     const auto chasedPrograms = chasedControllers (true);
     if (chasedPrograms != Outcome::complete) return chasedPrograms;
+    if (capture.playback != nullptr)
+    {
+        const auto programs = explicitControllers (1);
+        if (programs != Outcome::complete) return programs;
+    }
 
     const auto releases = eachRegion ([&] (std::size_t region) noexcept
     {
@@ -437,6 +589,14 @@ Outcome scheduleSpan (const MidiTimeline& timeline,
         return Outcome::complete;
     });
     if (releases != Outcome::complete) return releases;
+    const auto capturedReleases = capture.notes (scans, [&] (const MidiNote& note) noexcept
+    {
+        const auto end = captureClock.at (note.startTick + note.lengthInTicks);
+        if (end < span.start || end >= span.end) return Outcome::complete;
+        return emit ((std::uint8_t) (0x80 | (note.channel - 1)), (std::uint8_t) note.noteNumber, 0,
+                     end - span.start) ? Outcome::complete : Outcome::eventRefused;
+    });
+    if (capturedReleases != Outcome::complete) return capturedReleases;
 
     if (span.chase)
     {
@@ -472,9 +632,18 @@ Outcome scheduleSpan (const MidiTimeline& timeline,
             return Outcome::complete;
         });
         if (held != Outcome::complete) return held;
+        const auto capturedHeld = capture.notes (scans, [&] (const MidiNote& note) noexcept
+        {
+            const auto end = captureClock.at (note.startTick + note.lengthInTicks);
+            if (captureClock.at (note.startTick) >= span.start || end <= span.start || end <= span.collapseUntil)
+                return Outcome::complete;
+            return emit ((std::uint8_t) (0x90 | (note.channel - 1)), (std::uint8_t) note.noteNumber,
+                         (std::uint8_t) note.velocity, 0) ? Outcome::complete : Outcome::eventRefused;
+        });
+        if (capturedHeld != Outcome::complete) return capturedHeld;
     }
 
-    return eachRegion ([&] (std::size_t region) noexcept
+    const auto onsets = eachRegion ([&] (std::size_t region) noexcept
     {
         const auto& events = timeline.events (region);
         if (events.notes.empty()) return Outcome::complete;
@@ -500,6 +669,17 @@ Outcome scheduleSpan (const MidiTimeline& timeline,
                 return Outcome::eventRefused;
         }
         return Outcome::complete;
+    });
+    if (onsets != Outcome::complete) return onsets;
+    return capture.notes (scans, [&] (const MidiNote& note) noexcept
+    {
+        const auto at = captureClock.at (note.startTick);
+        if (at < span.start || at >= span.end
+            || (at < span.collapseUntil
+                && captureClock.at (note.startTick + note.lengthInTicks) <= span.collapseUntil))
+            return Outcome::complete;
+        return emit ((std::uint8_t) (0x90 | (note.channel - 1)), (std::uint8_t) note.noteNumber,
+                     (std::uint8_t) note.velocity, at - span.start) ? Outcome::complete : Outcome::eventRefused;
     });
 }
 
@@ -528,7 +708,7 @@ template <typename Emit>
 Outcome releaseStranded (const MidiTimeline& timeline,
                          const TempoMap* map, double sampleRate, float bpm,
                          std::int64_t at, int& scans, NoteCount& sounding, NoteCount& held,
-                         Emit&& emit) noexcept
+                         Emit&& emit, const PendingCapture* pending = nullptr) noexcept
 {
     if (sounding.total == 0) return Outcome::complete;
     const TempoMap* tempoMap = (map != nullptr && ! map->empty()) ? map : nullptr;
@@ -549,6 +729,17 @@ Outcome releaseStranded (const MidiTimeline& timeline,
         });
     });
     if (! read) return Outcome::scanBudgetSpent;
+    if (pending != nullptr)
+    {
+        const RegionClock clock (tempoMap, sampleRate, bpm, pending->timelineStart);
+        const auto capturedHeld = pending->notes (scans, [&] (const MidiNote& note) noexcept
+        {
+            if (clock.at (note.startTick) < at && clock.at (note.startTick + note.lengthInTicks) >= at)
+                held.add (NoteCount::keyOf ((std::uint8_t) (note.channel - 1), (std::uint8_t) note.noteNumber));
+            return Outcome::complete;
+        });
+        if (capturedHeld != Outcome::complete) return capturedHeld;
+    }
     return releaseBeyond (sounding, held, emit);
 }
 } // namespace duskstudio::midischedule

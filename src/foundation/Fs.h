@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -8,6 +9,7 @@
 #include <fstream>
 #include <memory>
 #include <string>
+#include <system_error>
 #include <vector>
 
 #include "Text.h"
@@ -19,7 +21,6 @@
  #include <windows.h>
  #include <shlobj.h>
 #else
- #include <cerrno>
  #include <pwd.h>
  #include <sys/stat.h>
  #include <unistd.h>
@@ -34,27 +35,90 @@
 // used inline as std::filesystem at call sites, so they live no helper here.
 namespace dusk::fs
 {
+inline std::filesystem::path absolutePathForInspection (const std::filesystem::path& path, std::error_code& error)
+{
+    error.clear();
+    if (path.empty()) { error = std::make_error_code (std::errc::invalid_argument); return {}; }
+    auto logical = path;
+   #if defined(_WIN32)
+    const auto& spelling = path.native();
+    if (spelling.compare (0, 4, L"\\\\?\\") == 0)
+    {
+        if (spelling.size() >= 8 && (spelling[4] == L'U' || spelling[4] == L'u')
+            && (spelling[5] == L'N' || spelling[5] == L'n') && (spelling[6] == L'C' || spelling[6] == L'c')
+            && spelling[7] == L'\\') logical = std::filesystem::path (L"\\\\" + spelling.substr (8));
+        else if (spelling.size() >= 7 && spelling[5] == L':' && spelling[6] == L'\\')
+            logical = std::filesystem::path (spelling.substr (4));
+        else { error = std::make_error_code (std::errc::invalid_argument); return {}; }
+    }
+    logical.make_preferred();
+   #endif
+    if (logical.is_absolute()) return logical;
+    // GetFullPathNameW would erase link components followed by "..".
+    auto base = std::filesystem::current_path (error);
+    if (error) return {};
+   #if defined(_WIN32)
+    if (logical.has_root_name() && logical.root_name() != base.root_name())
+        base = std::filesystem::absolute (logical.root_name(), error);
+    if (error) return {};
+   #endif
+    return base / logical;
+}
+
+inline std::filesystem::path nativeIOPath (const std::filesystem::path& path)
+{
+    if (path.empty()) return path;
+   #if defined(_WIN32)
+    if (path.native().compare (0, 4, L"\\\\?\\") == 0) return std::filesystem::path (path).make_preferred();
+    auto absolute = std::filesystem::absolute (path).lexically_normal();
+    const auto full = absolute.make_preferred().native();
+    if (full.compare (0, 2, L"\\\\") == 0) return std::filesystem::path (L"\\\\?\\UNC\\" + full.substr (2));
+    return std::filesystem::path (L"\\\\?\\" + full);
+   #else
+    return path;
+   #endif
+}
+
 inline std::string loadFileAsString (const std::filesystem::path& path)
 {
-    std::ifstream in (path, std::ios::binary);
+    std::ifstream in (nativeIOPath (path), std::ios::binary);
     if (! in) return {};
     return std::string (std::istreambuf_iterator<char> (in), std::istreambuf_iterator<char>());
 }
 
-inline bool writeStringToFile (const std::filesystem::path& path, std::string_view text)
+inline bool writeStringToFile (const std::filesystem::path& path, std::string_view text,
+                               std::error_code* nativeError = nullptr)
 {
-    std::ofstream out (path, std::ios::binary | std::ios::trunc);
-    if (! out) return false;
+    if (nativeError) nativeError->clear();
+    const auto failed = [&]
+    {
+        if (nativeError) *nativeError = { errno ? errno : EIO, std::generic_category() };
+        return false;
+    };
+    const auto ioPath = nativeIOPath (path);
+    errno = 0;
+    std::ofstream out (ioPath, std::ios::binary | std::ios::trunc);
+    if (! out) return failed();
+    errno = 0;
     out.write (text.data(), (std::streamsize) text.size());
-    out.flush();   // surface disk-full / write errors that only appear at flush
-    return (bool) out;
+    if (! out) return failed();
+    errno = 0;
+    out.flush();
+    if (! out) return failed();
+    errno = 0;
+    out.close();
+    return out ? true : failed();
 }
 
 inline std::int64_t fileSize (const std::filesystem::path& path) noexcept
 {
-    std::error_code ec;
-    const auto sz = std::filesystem::file_size (path, ec);
-    return ec ? 0 : (std::int64_t) sz;
+    try
+    {
+        std::error_code ec;
+        const auto sz = std::filesystem::file_size (nativeIOPath (path), ec);
+        return ec ? 0 : (std::int64_t) sz;
+    }
+    catch (...) { return 0; }
 }
 
 // glob with '*' (any run) and '?' (one char), case-insensitive, matching JUCE.
@@ -307,6 +371,26 @@ inline std::filesystem::path userConfigDir()
  #else
     return resolveXdgFolder ("XDG_CONFIG_HOME", home / ".config");
  #endif
+#endif
+}
+
+inline std::filesystem::path userDataDir()
+{
+    if (const auto testPath = detail::testSpecialLocation ("Data"); ! testPath.empty())
+        return testPath;
+#if defined(_WIN32)
+    return detail::knownFolderPath (FOLDERID_LocalAppData);
+#elif defined(__APPLE__)
+    const auto home = userHomeDir();
+    return home.empty() ? std::filesystem::path {} : home / "Library" / "Application Support";
+#else
+    if (const char* value = std::getenv ("XDG_DATA_HOME"))
+    {
+        const auto path = std::filesystem::u8path (value);
+        if (path.is_absolute()) return path;
+    }
+    const auto home = userHomeDir();
+    return home.empty() ? std::filesystem::path {} : home / ".local" / "share";
 #endif
 }
 

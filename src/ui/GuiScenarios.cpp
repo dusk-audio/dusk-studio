@@ -2,6 +2,7 @@
 #include "BounceDialog.h"
 #if DUSKSTUDIO_HAS_NATIVE_UI
  #include "imgui/AudioEditorView.h"
+ #include "imgui/PianoRollView.h"
  #include "imgui/DuskPanelWindow.h"
  #include "imgui/StartupView.h"
 #endif
@@ -9,7 +10,7 @@
 #include "AuxLaneComponent.h"
 #include "DimOverlay.h"
 #include "AuxView.h"
-#include "PianoRollComponent.h"
+#include "PianoRollEdit.h"
 #include "PluginPickerPanel.h"
 #include "TapeStrip.h"
 #include "BusComponent.h"
@@ -163,14 +164,6 @@ void dispatchFileLeave (Component& component, void (Component::*leave) (const Fi
     (component.*leave) (Files {});
 }
 
-template <typename Peer, typename Source, typename Point, typename Time, typename Wheel>
-void dispatchWheel (Peer& peer, void (Peer::*handler) (Source, Point, Time, const Wheel&, int),
-                    float x, float y, std::int64_t time, float delta)
-{
-    Wheel wheel {};
-    wheel.deltaY = delta;
-    (peer.*handler) (Source::mouse, Point (x, y) * peer.getComponent().getDesktopScaleFactor(), time, wheel, 0);
-}
 } // namespace
 
 struct MainComponent::ScenarioStripHandle final : scenario::StripHandle
@@ -527,6 +520,13 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
 
     bool pressKey (const std::string& description, char text) override
     {
+        if (owner.masteringView != nullptr && owner.masteringView->phaseKeyForScenario (description))
+            return true;
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        if (owner.pianoRollShowing() && owner.pianoRoll->capturesKeyboard()
+            && owner.pianoRollWindow->hasKeyboardForScenario())
+            return owner.pianoRollWindow->inputForScenario (description);
+       #endif
         const bool handled = dispatchKey (owner, &MainComponent::keyPressed, description, text);
         owner.keyStateChanged (false);
         expectAudioEditorShellKey();
@@ -539,6 +539,8 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
        #if DUSKSTUDIO_HAS_NATIVE_UI
         if (owner.audioEditorShowing())
             owner.audioEditorWindow->expectInputForScenario();
+        if (owner.pianoRollShowing())
+            owner.pianoRollWindow->expectInputForScenario();
        #endif
     }
 
@@ -739,6 +741,14 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
        #endif
         return {};
     }
+    std::uint64_t audioEditorCompletedFrames() const override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        if (owner.audioEditorShowing())
+            return owner.audioEditorWindow->completedFramesForScenario();
+       #endif
+        return 0;
+    }
     std::vector<int> audioEditorTakePoint (const std::string& kind, std::uint64_t take,
                                            std::int64_t sample) const override
     {
@@ -819,9 +829,9 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     {
         if (owner.pianoRoll != nullptr) return false;
         owner.openPianoRoll (track, region);
-        return owner.pianoRoll != nullptr;
+        return owner.pianoRollShowing();
     }
-    void closePiano() override { owner.closePianoRoll(); }
+    void closePiano() override { owner.destroyPianoRoll(); }
     bool pressPeerKey (const std::string& description, char text) override
     {
         const bool handled = holdPeerKey (description, text);
@@ -830,6 +840,13 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     }
     bool holdPeerKey (const std::string& description, char text) override
     {
+        if (owner.masteringView != nullptr && owner.masteringView->phaseKeyForScenario (description))
+            return true;
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        if (owner.pianoRollShowing() && owner.pianoRoll->capturesKeyboard()
+            && owner.pianoRollWindow->hasKeyboardForScenario())
+            return owner.pianoRollWindow->inputForScenario (description);
+       #endif
         auto* peer = owner.getPeer();
         if (peer == nullptr) return false;
         using Peer = std::remove_pointer_t<decltype (peer)>;
@@ -858,14 +875,50 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         dispatchMouseButton (*peer, &Peer::handleMouseEvent, x, y, down, time, modifiers);
         return true;
     }
-    bool pianoPointer (int x, int y, bool down, int modifiers = 0)
+    bool pianoPointer (float x, float y, bool down, int modifiers = 0)
     {
-        auto* editor = owner.pianoRoll.get();
-        if (editor == nullptr) return false;
-        const auto point = owner.getTopLevelComponent()->getLocalPoint (editor,
-            editor->getLocalBounds().getTopLeft().translated (x, y)).toFloat();
-        return pointerAt (point.x, point.y, down, modifiers);
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        if (! owner.pianoRollShowing() || owner.pianoRoll == nullptr) return false;
+        const auto point = owner.pianoRoll->bodyPointForScenario ({ x, y });
+        return owner.pianoRollWindow->pointerControlForScenario (
+            "at:" + std::to_string (point.x) + "," + std::to_string (point.y), 0.5f, down, modifiers);
+       #else
+        (void) x; (void) y; (void) down; (void) modifiers; return false;
+       #endif
     }
+    bool clickPianoControl (const std::string& name)
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        return owner.pianoRollShowing() && owner.pianoRollWindow->clickControlForScenario (name);
+       #else
+        (void) name;
+        return false;
+       #endif
+    }
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    bool capturePianoPixels (const std::filesystem::path& scratch, int& width, int& height,
+                             std::vector<unsigned char>& pixels)
+    {
+        if (! owner.pianoRollShowing() || owner.pianoRoll == nullptr) return false;
+        const auto file = scratch.string();
+        if (! platform::captureNativeWindowToPpm (owner.pianoRollWindow->nativeWindowHandleForScenario(), file))
+            return false;
+        std::FILE* in = std::fopen (file.c_str(), "rb");
+        if (in == nullptr) return false;
+        int maxValue = 0;
+        const bool header = std::fscanf (in, "P6 %d %d %d", &width, &height, &maxValue) == 3
+                         && std::fgetc (in) != EOF && width > 0 && height > 0 && maxValue == 255;
+        pixels.resize (header ? (std::size_t) width * (std::size_t) height * 3 : 0);
+        const bool read = header && std::fread (pixels.data(), 1, pixels.size(), in) == pixels.size();
+        std::fclose (in);
+        return read;
+    }
+    bool pianoDrag (ImVec2 start, ImVec2 end)
+    {
+        return pianoPointer (start.x, start.y, true) && pianoPointer (end.x, end.y, true)
+            && pianoPointer (end.x, end.y, false);
+    }
+   #endif
     bool setTimelineShown (bool shown) override
     {
         const bool original = owner.tapeStripExpanded;
@@ -1025,6 +1078,11 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     }
     bool contextMenuItemEnabled (const std::string& text) const override
     {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        ImVec2 point;
+        if (owner.pianoRollShowing() && owner.pianoRoll->controlPointForScenario ("menu:" + text, point, 0.5f))
+            return true;
+       #endif
         int x = 0, y = 0;
         return contextMenuItemPointForScenario (text, x, y);
     }
@@ -1147,33 +1205,55 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     }
     bool clickPianoCcToggle() override
     {
-        if (owner.pianoRoll == nullptr) return false;
-        const auto point = owner.pianoRoll->ccTogglePointForScenario();
-        return pianoPointer (point.x, point.y, true) && pianoPointer (point.x, point.y, false);
+        return clickPianoControl ("toggle-cc");
     }
     bool pianoCcPointer (std::int64_t tick, int value, bool down) override
     {
-        if (owner.pianoRoll == nullptr) return false;
-        const auto point = owner.pianoRoll->ccPointForScenario (tick, value);
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        if (! owner.pianoRollShowing()) return false;
+        ImVec2 point;
+        if (! owner.pianoRoll->notePointForScenario (tick, 60, point)) return false;
+        const auto lane = owner.pianoRoll->laneBoundsForScenario (true);
+        if (lane[3] <= 0) return false;
+        point.y = static_cast<float> (lane[1] + lane[3] - static_cast<double> (value) / 127 * lane[3]);
         return pianoPointer (point.x, point.y, down);
+       #else
+        (void) tick; (void) value; (void) down; return false;
+       #endif
     }
     bool pianoNotePointer (std::int64_t tick, int pitch, bool down, int modifiers) override
     {
-        if (owner.pianoRoll == nullptr) return false;
-        const auto point = owner.pianoRoll->notePointForScenario (tick, pitch);
-        return pianoPointer (point.x, point.y, down, modifiers);
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        ImVec2 point;
+        return owner.pianoRollShowing() && owner.pianoRoll->notePointForScenario (tick, pitch, point)
+            && pianoPointer (point.x, point.y, down, modifiers);
+       #else
+        (void) tick; (void) pitch; (void) down; (void) modifiers; return false;
+       #endif
     }
     std::vector<int> pianoSelection() const override
     {
-        return owner.pianoRoll != nullptr ? owner.pianoRoll->selectionForScenario() : std::vector<int> {};
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        return owner.pianoRollShowing() ? owner.pianoRoll->selectionForScenario() : std::vector<int> {};
+       #else
+        return {};
+       #endif
     }
     std::int64_t pianoEditCursor() const override
     {
-        return owner.pianoRoll != nullptr ? owner.pianoRoll->editCursorForScenario() : -1;
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        return owner.pianoRollShowing() ? owner.pianoRoll->editCursorForScenario() : -1;
+       #else
+        return -1;
+       #endif
     }
     int pianoCcController() const override
     {
-        return owner.pianoRoll != nullptr ? owner.pianoRoll->ccControllerForScenario() : -1;
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        return owner.pianoRollShowing() ? owner.pianoRoll->optionsForScenario()[2] : -1;
+       #else
+        return -1;
+       #endif
     }
 
     bool clickTimeFormat() override
@@ -1187,20 +1267,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
 
     bool clickPianoMidiMerge() override
     {
-        auto* piano = owner.pianoRoll.get();
-        if (piano == nullptr || ! piano->isShowing()) return false;
-        for (auto* child : piano->getChildren())
-            if (auto* button = dynamic_cast<decltype (owner.hdrChaseBtn)*> (child);
-                button != nullptr && button->getButtonText() == "MIDI Merge")
-            {
-                if (! button->isShowing() || ! button->isEnabled()
-                    || ! piano->getLocalBounds().contains (button->getBounds()) || button->getWidth() < 90)
-                    return false;
-                const auto point = owner.getTopLevelComponent()->getLocalPoint (
-                    button, button->getLocalBounds().getCentre()).toFloat();
-                return clickAt (point.x, point.y, 1);
-            }
-        return false;
+        return clickPianoControl ("midi-merge");
     }
     std::array<int, 4> midiMergeControls() const override
     {
@@ -1220,7 +1287,14 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
                 }
         };
         inspect (owner.transportBar.get(), 0, 64);
-        inspect (owner.pianoRoll.get(), 2, 90);
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        if (owner.pianoRollShowing())
+        {
+            const auto piano = owner.pianoRoll->mergeStateForScenario();
+            states[2] = piano[0];
+            states[3] = piano[1];
+        }
+       #endif
         return states;
     }
 
@@ -1401,6 +1475,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
        #if DUSKSTUDIO_HAS_NATIVE_UI
         if (owner.audioEditorShowing() && clickAudioEditorControl ("menu:" + text))
             return true;
+        if (clickPianoControl ("menu:" + text)) return true;
        #endif
         int x = 0, y = 0;
         if (! contextMenuItemPointForScenario (text, x, y)) return false;
@@ -1455,7 +1530,14 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         return shown != nullptr && (shown == body || body->isParentOf (shown));
     }
 
-    std::vector<std::string> contextMenuItems() const override { return contextMenuItemsForScenario(); }
+    std::vector<std::string> contextMenuItems() const override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        if (owner.pianoRollShowing() && owner.pianoRoll->popupForScenario())
+            return owner.pianoRoll->menuItemsForScenario();
+       #endif
+        return contextMenuItemsForScenario();
+    }
 
     // Just inside the window's top-left corner, which a centred body and its
     // frame leave uncovered.
@@ -1672,6 +1754,15 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         window->setSize (width, height);
         return window->getWidth() == width && window->getHeight() == height;
     }
+    bool setMainWindowMinimumWidth (int width) override
+    {
+        auto* window = owner.getTopLevelComponent();
+        auto* peer = window != nullptr ? window->getPeer() : nullptr;
+        auto* limits = peer != nullptr ? peer->getConstrainer() : nullptr;
+        if (limits == nullptr) return false;
+        limits->setMinimumWidth (std::max (1, width));
+        return true;
+    }
     int tapeExpansionState() const override
     {
         const bool displayed = owner.tapeStrip->isVisible() && ! owner.tapeStrip->getBounds().isEmpty();
@@ -1681,62 +1772,60 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     { return (owner.hdrChaseBtn.getToggleState() ? 2 : 0) + (owner.tapeStrip->isChaseEnabled() ? 1 : 0); }
     bool openRegionEditor (int track, int region, bool midi) override
     {
-        if (midi) { owner.openPianoRoll (track, region); return owner.pianoRoll != nullptr; }
+        if (midi) { owner.openPianoRoll (track, region); return owner.pianoRollShowing(); }
         owner.openAudioEditor (track, region);
         return owner.audioEditorOpen();
     }
     int regionEditorChase() const override
     {
-        if (owner.pianoRoll != nullptr)
-        {
-            for (auto* child : owner.pianoRoll->getChildren())
-                if (const auto* button = dynamic_cast<const decltype (owner.hdrChaseBtn)*> (child))
-                    if (button->getButtonText() == "Chase") return button->getToggleState() ? 1 : 0;
-            return -1;
-        }
        #if DUSKSTUDIO_HAS_NATIVE_UI
+        if (owner.pianoRollShowing()) return owner.pianoRoll->chaseEnabled() ? 1 : 0;
         if (owner.audioEditorShowing() && owner.audioEditorView != nullptr)
             return owner.audioEditorView->chaseEnabled() ? 1 : 0;
-       #endif
         return -1;
+       #else
+        return -1;
+       #endif
     }
     bool focusPiano() override
     {
-        auto* editor = owner.pianoRoll.get();
-        if (editor == nullptr || ! editor->isShowing()) return false;
-        const auto local = editor->getLocalBounds().getTopLeft().translated (3, 3);
-        const auto point = owner.getTopLevelComponent()->getLocalPoint (editor, local).toFloat();
-        return clickAt (point.x, point.y, 1);
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        return owner.pianoRollShowing() && owner.pianoRollWindow->focusForScenario();
+       #else
+        return false;
+       #endif
     }
     std::array<int, 4> pianoOptions() const override
     {
-        return owner.pianoRoll != nullptr ? owner.pianoRoll->optionsForScenario() : std::array<int, 4> {};
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        return owner.pianoRollShowing() ? owner.pianoRoll->optionsForScenario() : std::array<int, 4> {};
+       #else
+        return {};
+       #endif
     }
     std::array<double, 4> pianoViewport() const override
     {
-        return owner.pianoRoll != nullptr ? owner.pianoRoll->viewportForScenario() : std::array<double, 4> {};
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        return owner.pianoRollShowing() ? owner.pianoRoll->viewportForScenario() : std::array<double, 4> {};
+       #else
+        return {};
+       #endif
     }
     bool scrollPiano (float delta, bool command, bool shift, bool smooth) override
     {
-        auto* editor = owner.pianoRoll.get();
-        auto* peer = owner.getPeer();
-        if (editor == nullptr || ! editor->isShowing() || peer == nullptr) return false;
-        const auto point = owner.getTopLevelComponent()->getLocalPoint (editor, editor->gridPointForScenario()).toFloat();
-        using Peer = std::remove_pointer_t<decltype (peer)>;
-        const auto time = std::chrono::duration_cast<std::chrono::milliseconds> (
-            std::chrono::system_clock::now().time_since_epoch()).count();
-        dispatchMouseWheel (*peer, &Peer::handleMouseEvent, &Peer::handleMouseWheel,
-                            point.x, point.y, delta, command, shift, smooth, time);
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        if (! owner.pianoRollShowing() || ! owner.pianoRoll->wheelForScenario (delta, command, shift, smooth, false)) return false;
+        owner.pianoRollWindow->expectInputForScenario();
         return true;
+       #else
+        (void) delta; (void) command; (void) shift; (void) smooth; return false;
+       #endif
     }
     bool clickPianoFit() override
     {
-        auto* editor = owner.pianoRoll.get();
-        if (editor == nullptr || ! editor->isShowing()) return false;
-        const auto point = owner.getTopLevelComponent()->getLocalPoint (editor, editor->fitPointForScenario()).toFloat();
-        return clickAt (point.x, point.y, 1);
+        return clickPianoControl ("zoom-fit");
     }
-    void closeRegionEditors() override { owner.closePianoRoll(); owner.destroyAudioEditor(); }
+    void closeRegionEditors() override { owner.destroyPianoRoll(); owner.destroyAudioEditor(); }
     bool setStripCompact (int track, bool compact) override
     {
         auto* strip = owner.consoleView->getStripComponent (track);
@@ -1954,11 +2043,18 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
 
     bool modalStackEmpty() const override
     {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        if (owner.pianoRollShowing() && owner.pianoRoll->popupForScenario()) return false;
+       #endif
         return EmbeddedModal::activeModalStack().empty();
     }
     int modalCount() const override
     {
-        return (int) EmbeddedModal::activeModalStack().size();
+        int count = static_cast<int> (EmbeddedModal::activeModalStack().size());
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        if (owner.pianoRollShowing() && owner.pianoRoll->popupForScenario()) ++count;
+       #endif
+        return count;
     }
 
     bool clickMasteringTarget() override
@@ -1976,6 +2072,50 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         const auto point = owner.getTopLevelComponent()->getLocalPoint (
             view, view->compPresetPointForScenario()).toFloat();
         return clickAt (point.x, point.y, 1);
+    }
+    bool masteringPhasePointer (const std::string& control, float position, bool pressed, int modifiers) override
+    {
+        return owner.masteringView != nullptr
+            && owner.masteringView->phasePointerForScenario (control, position, pressed, modifiers);
+    }
+    void resetMasteringPhasePanel() override
+    {
+        if (owner.masteringView != nullptr) owner.masteringView->resetPhasePanelForScenario();
+    }
+    bool masteringPhaseCapturesKeyboard() const override
+    {
+        return owner.masteringView != nullptr && owner.masteringView->phaseCapturesKeyboardForScenario();
+    }
+    bool masteringPhaseHasKeyboard() const override
+    {
+        return owner.masteringView != nullptr && owner.masteringView->phaseHasKeyboardForScenario();
+    }
+    bool typeInMasteringPhase (const std::string& text) override
+    {
+        return owner.masteringView != nullptr && owner.masteringView->phaseTypeForScenario (text);
+    }
+    const PhaseAnalyzer::Report* masteringPhaseReport() const override
+    {
+        return owner.masteringView != nullptr ? &owner.masteringView->phaseReportForScenario() : nullptr;
+    }
+    bool clickMasteringModulePicker() override
+    {
+        auto* view = owner.masteringView.get();
+        if (view == nullptr || ! view->compactModuleShownForScenario()) return false;
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (view, view->compactModulePointForScenario()).toFloat();
+        return clickAt (point.x, point.y, 1);
+    }
+    bool masteringModulePickerShown() const override
+    {
+        return owner.masteringView != nullptr && owner.masteringView->compactModuleShownForScenario();
+    }
+    int masteringModuleIndex() const override
+    {
+        return owner.masteringView != nullptr ? owner.masteringView->compactModuleIndexForScenario() : -1;
+    }
+    void restoreMasteringModule (int index) override
+    {
+        if (owner.masteringView != nullptr) owner.masteringView->restoreCompactModuleForScenario (index);
     }
     int masteringPanelsOpen() const override
     {
@@ -2460,79 +2600,96 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
 
     int pianoVelocityHeight() const override
     {
-        return owner.pianoRoll != nullptr ? owner.pianoRoll->velocityBoundsForScenario().getHeight() : 0;
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        return owner.pianoRollShowing() ? static_cast<int> (std::lround (
+            owner.pianoRoll->laneBoundsForScenario (false)[3] / owner.pianoRoll->scaleForScenario())) : 0;
+       #else
+        return 0;
+       #endif
     }
 
     bool dragPianoVelocity (std::int64_t tick, float fraction) override
     {
-        auto* piano = owner.pianoRoll.get();
-        if (piano == nullptr || ! piano->isShowing()) return false;
-        const auto bounds = piano->velocityBoundsForScenario();
-        const auto local = piano->notePointForScenario (tick, 60).withY (bounds.getCentreY());
-        const auto start = owner.getTopLevelComponent()->getLocalPoint (piano, local).toFloat();
-        const auto end = owner.getTopLevelComponent()->getLocalPoint (piano,
-            local.withY (bounds.getBottom() - static_cast<int> (fraction * static_cast<float> (bounds.getHeight())))).toFloat();
-        return dragAt (start.x, start.y, end.x, end.y);
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        if (! owner.pianoRollShowing()) return false;
+        ImVec2 point;
+        if (! owner.pianoRoll->notePointForScenario (tick, 60, point)) return false;
+        const auto lane = owner.pianoRoll->laneBoundsForScenario (false);
+        if (lane[3] <= 0) return false;
+        return pianoDrag ({ point.x, static_cast<float> (lane[1] + lane[3] * 0.5) },
+            { point.x, static_cast<float> (lane[1] + lane[3] * (1 - fraction)) });
+       #else
+        (void) tick; (void) fraction; return false;
+       #endif
     }
 
     bool resizePianoVelocity (int pixels) override
     {
-        auto* piano = owner.pianoRoll.get();
-        if (piano == nullptr || ! piano->isShowing()) return false;
-        const auto bounds = piano->velocityBoundsForScenario();
-        const auto start = owner.getTopLevelComponent()->getLocalPoint (piano,
-            bounds.getTopLeft().translated (20, -2)).toFloat();
-        return dragAt (start.x, start.y, start.x, start.y - static_cast<float> (pixels));
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        if (! owner.pianoRollShowing()) return false;
+        const auto lane = owner.pianoRoll->laneBoundsForScenario (false);
+        if (lane[3] <= 0) return false;
+        const auto scale = owner.pianoRoll->scaleForScenario();
+        const ImVec2 start { static_cast<float> (lane[0]) + 20 * scale, static_cast<float> (lane[1]) - 2 * scale };
+        return pianoDrag (start, { start.x, start.y - static_cast<float> (pixels) * scale });
+       #else
+        (void) pixels; return false;
+       #endif
     }
 
     bool togglePianoCc() override
     {
-        if (owner.pianoRoll == nullptr) return false;
-        owner.pianoRoll->toggleCcForScenario();
-        return true;
+        return clickPianoControl ("toggle-cc");
     }
 
     int pianoCcHeight() const override
     {
-        return owner.pianoRoll != nullptr ? owner.pianoRoll->ccBoundsForScenario().getHeight() : 0;
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        return owner.pianoRollShowing() ? static_cast<int> (std::lround (
+            owner.pianoRoll->laneBoundsForScenario (true)[3] / owner.pianoRoll->scaleForScenario())) : 0;
+       #else
+        return 0;
+       #endif
     }
 
     bool dragPianoCc (std::int64_t tick, float fraction) override
     {
-        auto* piano = owner.pianoRoll.get();
-        if (piano == nullptr || ! piano->isShowing()) return false;
-        const auto bounds = piano->ccBoundsForScenario();
-        if (bounds.isEmpty()) return false;
-        const auto local = piano->notePointForScenario (tick, 60).withY (bounds.getCentreY());
-        const auto start = owner.getTopLevelComponent()->getLocalPoint (piano, local).toFloat();
-        const auto end = owner.getTopLevelComponent()->getLocalPoint (piano,
-            local.withY (bounds.getBottom() - static_cast<int> (fraction * static_cast<float> (bounds.getHeight())))).toFloat();
-        return dragAt (start.x, start.y, end.x, end.y);
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        if (! owner.pianoRollShowing()) return false;
+        ImVec2 point;
+        if (! owner.pianoRoll->notePointForScenario (tick, 60, point)) return false;
+        const auto lane = owner.pianoRoll->laneBoundsForScenario (true);
+        if (lane[3] <= 0) return false;
+        return pianoDrag ({ point.x, static_cast<float> (lane[1] + lane[3] * 0.5) },
+            { point.x, static_cast<float> (lane[1] + lane[3] * (1 - fraction)) });
+       #else
+        (void) tick; (void) fraction; return false;
+       #endif
     }
 
     bool resizePianoCc (int pixels) override
     {
-        auto* piano = owner.pianoRoll.get();
-        if (piano == nullptr || ! piano->isShowing()) return false;
-        const auto bounds = piano->ccBoundsForScenario();
-        if (bounds.isEmpty()) return false;
-        const auto start = owner.getTopLevelComponent()->getLocalPoint (piano,
-            bounds.getTopLeft().translated (20, -2)).toFloat();
-        return dragAt (start.x, start.y, start.x, start.y - static_cast<float> (pixels));
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        if (! owner.pianoRollShowing()) return false;
+        const auto lane = owner.pianoRoll->laneBoundsForScenario (true);
+        if (lane[3] <= 0) return false;
+        const auto scale = owner.pianoRoll->scaleForScenario();
+        const ImVec2 start { static_cast<float> (lane[0]) + 20 * scale, static_cast<float> (lane[1]) - 2 * scale };
+        return pianoDrag (start, { start.x, start.y - static_cast<float> (pixels) * scale });
+       #else
+        (void) pixels; return false;
+       #endif
     }
 
     bool wheelPianoVelocity (float delta) override
     {
-        auto* piano = owner.pianoRoll.get();
-        auto* peer = owner.getPeer();
-        if (piano == nullptr || ! piano->isShowing() || peer == nullptr) return false;
-        using Peer = std::remove_pointer_t<decltype (peer)>;
-        const auto point = owner.getTopLevelComponent()->getLocalPoint (piano,
-            piano->velocityBoundsForScenario().getCentre()).toFloat();
-        const auto time = std::chrono::duration_cast<std::chrono::milliseconds> (
-            std::chrono::system_clock::now().time_since_epoch()).count();
-        dispatchWheel (*peer, &Peer::handleMouseWheel, point.x, point.y, time, delta);
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        if (! owner.pianoRollShowing() || ! owner.pianoRoll->wheelForScenario (delta, false, false, false, true)) return false;
+        owner.pianoRollWindow->expectInputForScenario();
         return true;
+       #else
+        (void) delta; return false;
+       #endif
     }
 
     bool doubleClickAudioRegion (int track, int region) override
@@ -2586,37 +2743,27 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
        #endif
     }
     void openPianoRoll (int track, int region) override { owner.openPianoRoll (track, region); }
-    void closePianoRoll() override { owner.closePianoRoll(); }
+    void closePianoRoll() override { owner.destroyPianoRoll(); }
     int pianoRollRegion() const override { return owner.pianoRollRegionIdx; }
-    bool pianoRollOpen() const override { return owner.pianoRoll != nullptr; }
+    bool pianoRollOpen() const override { return owner.pianoRollShowing(); }
     int pianoRowOnScreen (int pitch, const std::filesystem::path& scratch) override
     {
-        auto* piano = owner.pianoRoll.get();
-        auto* peer = owner.getPeer();
-        if (piano == nullptr || ! piano->isShowing() || peer == nullptr) return -1;
-        const auto file = scratch.string();
-        if (! platform::captureNativeWindowToPpm (reinterpret_cast<std::uintptr_t> (peer->getNativeHandle()), file))
-            return -1;
-        std::FILE* in = std::fopen (file.c_str(), "rb");
-        if (in == nullptr) return -1;
-        int width = 0, height = 0, maxValue = 0;
-        const bool header = std::fscanf (in, "P6 %d %d %d", &width, &height, &maxValue) == 3
-                         && std::fgetc (in) != EOF && width > 0 && height > 0;
-        std::vector<unsigned char> pixels (header ? (std::size_t) width * (std::size_t) height * 3 : 0);
-        const bool read = header && std::fread (pixels.data(), 1, pixels.size(), in) == pixels.size();
-        std::fclose (in);
-        if (! read) return -1;
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        auto* piano = owner.pianoRoll;
+        if (! owner.pianoRollShowing() || piano == nullptr) return -1;
+        int width = 0, height = 0;
+        std::vector<unsigned char> pixels;
+        if (! capturePianoPixels (scratch, width, height, pixels)) return -1;
 
-        auto* top = owner.getTopLevelComponent();
-        const double scale = (double) width / (double) std::max (1, top->getWidth());
-        const auto rowPoint = top->getLocalPoint (piano, piano->notePointForScenario (0, pitch));
-        const auto gridLeft = top->getLocalPoint (piano, piano->getLocalBounds().getTopLeft()
-                                                             .translated (PianoRollComponent::kKeyboardWidth + 2, 0));
-        const auto gridRight = top->getLocalPoint (piano, piano->getLocalBounds().getTopRight().translated (-4, 0));
-        const int y = (int) std::lround (rowPoint.y * scale);
-        const int x0 = std::max (0, (int) std::lround (gridLeft.x * scale));
-        const int x1 = std::min (width, (int) std::lround (gridRight.x * scale));
-        if (y < 0 || y >= height) return -1;
+        ImVec2 row;
+        if (! piano->notePointForScenario (0, pitch, row)) return -1;
+        const auto grid = piano->gridBoundsForScenario();
+        if (row.y < grid[1] || row.y >= grid[1] + grid[3]) return -1;
+        const auto scale = piano->scaleForScenario();
+        const int y = static_cast<int> (std::lround (row.y));
+        const int x0 = std::max (0, static_cast<int> (std::lround (grid[0] + 2 * scale)));
+        const int x1 = std::min (width, static_cast<int> (std::lround (grid[0] + grid[2] - 4 * scale)));
+        if (y < 0 || y >= height || x0 >= x1) return -1;
 
         // Note fills are saturated hues; the grid, its lines and the 1 px
         // cursors are grey or too thin to count.
@@ -2636,15 +2783,53 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
             run = 0;
         }
         return notes;
+       #else
+        (void) pitch; (void) scratch;
+        return -1;
+       #endif
+    }
+    int pianoLaneValueOnScreen (bool cc, std::int64_t tick, const std::filesystem::path& scratch) override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        auto* piano = owner.pianoRoll;
+        if (! owner.pianoRollShowing() || piano == nullptr) return -1;
+        ImVec2 point;
+        if (! piano->notePointForScenario (tick, 60, point)) return -1;
+        const auto area = piano->laneBoundsForScenario (cc);
+        const int x = static_cast<int> (std::lround (point.x));
+        if (area[3] <= 0 || x < area[0] || x >= area[0] + area[2]) return -1;
+        int width = 0, height = 0;
+        std::vector<unsigned char> pixels;
+        if (! capturePianoPixels (scratch, width, height, pixels) || x < 0 || x >= width) return -1;
+        const int top = std::max (0, static_cast<int> (std::ceil (area[1])));
+        const int bottom = std::min (height, static_cast<int> (std::ceil (area[1] + area[3])));
+        for (int y = top; y < bottom; ++y)
+        {
+            const auto* pixel = &pixels[((std::size_t) y * (std::size_t) width + (std::size_t) x) * 3];
+            const int high = std::max ({ pixel[0], pixel[1], pixel[2] });
+            const int low = std::min ({ pixel[0], pixel[1], pixel[2] });
+            if (high - low > 60 && high > 90)
+                return std::clamp (static_cast<int> (std::lround (127 * (area[1] + area[3] - y) / area[3])), 0, 127);
+        }
+        return 0;
+       #else
+        (void) cc; (void) tick; (void) scratch;
+        return -1;
+       #endif
     }
     bool clickPianoGrid (std::int64_t tick, int pitch) override
     {
-        auto* piano = owner.pianoRoll.get();
-        if (piano == nullptr || ! piano->isShowing()) return false;
-        const auto local = piano->notePointForScenario (tick, pitch);
-        if (! piano->getLocalBounds().contains (local)) return false;
-        const auto point = owner.getTopLevelComponent()->getLocalPoint (piano, local).toFloat();
-        return clickAt (point.x, point.y, 1);
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        if (! owner.pianoRollShowing()) return false;
+        ImVec2 point;
+        if (! owner.pianoRoll->notePointForScenario (tick, pitch, point)) return false;
+        const auto grid = owner.pianoRoll->gridBoundsForScenario();
+        if (point.x < grid[0] || point.x >= grid[0] + grid[2]
+            || point.y < grid[1] || point.y >= grid[1] + grid[3]) return false;
+        return pianoPointer (point.x, point.y, true) && pianoPointer (point.x, point.y, false);
+       #else
+        (void) tick; (void) pitch; return false;
+       #endif
     }
     bool doubleClickMidiRegion (int track, int region) override
     {
@@ -2657,8 +2842,43 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
 
     bool pressPianoRollKey (const std::string& description) override
     {
-        return owner.pianoRoll != nullptr && owner.pianoRoll->isShowing()
-            && dispatchKey (*owner.pianoRoll, &PianoRollComponent::keyPressed, description, 0);
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        if (! owner.pianoRollShowing()) return false;
+        const bool handled = owner.pianoRoll->handleShellKey (description, false);
+        owner.pianoRollWindow->expectInputForScenario();
+        return handled;
+       #else
+        (void) description; return false;
+       #endif
+    }
+
+    bool inputPianoRoll (const std::string& description) override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        return owner.pianoRollShowing() && owner.pianoRollWindow->inputForScenario (description);
+       #else
+        (void) description;
+        return false;
+       #endif
+    }
+    bool pianoKeyboardFocus (bool focused) override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        if (! owner.pianoRollShowing()) return false;
+        owner.pianoRollWindow->expectInputForScenario();
+        return owner.pianoRollWindow->keyboardFocusForScenario (focused);
+       #else
+        (void) focused;
+        return false;
+       #endif
+    }
+    bool pianoNativeWindowOpen() const override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        return owner.pianoRollWindow != nullptr && owner.pianoRollWindow->isOpen();
+       #else
+        return false;
+       #endif
     }
 
     bool loadMasteringFile (const std::filesystem::path& path) override
@@ -2848,7 +3068,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
             stack.back()->close();
         abandonPendingFlows();
 
-        owner.closePianoRoll();
+        owner.destroyPianoRoll();
         owner.destroyAudioEditor();
         owner.closeAudioSettings();
         // Cancelled before the button comes up, so the release drops nothing.
@@ -2905,7 +3125,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
 
         owner.engine.getUndoManager().clearUndoHistory();
         owner.focusMainCanvas();
-        PianoRollComponent::clearClipboardForScenario();
+        PianoRollEdit::clipboard.clear();
 
         if (scenario::currentSessionDirectory (owner.session) != launch.sessionDir)
             scenario::applySessionDirectory (owner.session, launch.sessionDir);

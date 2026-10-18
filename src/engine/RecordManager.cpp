@@ -2,6 +2,7 @@
 #include "audiofile/FileWriter.h"
 #include "../session/TakeComp.h"
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <limits>
@@ -17,6 +18,7 @@ namespace
 // MIDI regions still carry their own take history. Repeated punch-recording
 // in one spot would otherwise grow it without bound; the oldest entries go.
 constexpr int kMaxMidiTakesPerRegion = 8;
+std::atomic<std::uint64_t> nextMidiCaptureGestureId { 1 };
 
 void trimMidiTakeHistory (MidiRegion& region) noexcept
 {
@@ -225,6 +227,32 @@ void RecordManager::waitForAudioThreadToLeave() const
     }
 }
 
+RecordManager::PreparedMidiCapture::PreparedMidiCapture() = default;
+RecordManager::PreparedMidiCapture::~PreparedMidiCapture() = default;
+RecordManager::PreparedMidiCapture::PreparedMidiCapture (PreparedMidiCapture&&) noexcept = default;
+RecordManager::PreparedMidiCapture& RecordManager::PreparedMidiCapture::operator= (PreparedMidiCapture&&) noexcept = default;
+
+RecordManager::PreparedMidiCapture RecordManager::prepareMidiCapture (bool loopCapture)
+{
+    PreparedMidiCapture prepared;
+    prepared.merge = session.midiMergeEnabled.load (std::memory_order_relaxed);
+    prepared.loop = loopCapture;
+    if (active.load (std::memory_order_acquire)) return prepared;
+    for (int t = 0; t < Session::kNumTracks; ++t)
+    {
+        const auto& track = session.track (t);
+        if (! track.recordArmed.load (std::memory_order_relaxed)
+            || track.frozen.load (std::memory_order_relaxed)
+            || track.mode.load (std::memory_order_relaxed) != (int) Track::Mode::Midi)
+            continue;
+        auto& cap = prepared.captures[(std::size_t) t];
+        cap = std::make_unique<PerTrackMidi> (prepared.merge);
+        if (prepared.merge && prepared.loop)
+            cap->pendingPlayback = std::make_unique<MidiMergePlayback>();
+    }
+    return prepared;
+}
+
 bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
                                     int latencyOffsetSamples)
 {
@@ -235,6 +263,17 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
 bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
                                     int latencyOffsetSamples,
                                     const LoopCapturePlan& loopCapturePlan)
+{
+    auto prepared = prepareMidiCapture (loopCapturePlan.enabled);
+    return startRecording (sampleRate, startSample, latencyOffsetSamples,
+                           loopCapturePlan, std::move (prepared));
+}
+
+bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
+                                    int latencyOffsetSamples,
+                                    const LoopCapturePlan& loopCapturePlan,
+                                    PreparedMidiCapture&& prepared,
+                                    std::optional<std::int64_t> linearMidiEndSample)
 {
     if (active.load (std::memory_order_relaxed))
         return true;
@@ -257,16 +296,31 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
         return false;
     }
 
+    const bool merge = session.midiMergeEnabled.load (std::memory_order_relaxed);
+    if (prepared.merge != merge || prepared.loop != loopCapturePlan.enabled) return false;
+    for (int t = 0; t < Session::kNumTracks; ++t)
+    {
+        const auto& track = session.track (t);
+        const bool needsMidi = track.recordArmed.load (std::memory_order_relaxed)
+            && ! track.frozen.load (std::memory_order_relaxed)
+            && track.mode.load (std::memory_order_relaxed) == (int) Track::Mode::Midi;
+        if (needsMidi != (prepared.captures[(std::size_t) t] != nullptr)) return false;
+    }
+
     auto audioDir = session.getAudioDirectory();
     if (! audioDir.exists())
         audioDir.createDirectory();
 
     recordStartSample = startSample;
+    linearMidiCaptureLength.store (! loopCapturePlan.enabled && linearMidiEndSample
+        ? std::max<std::int64_t> (0, *linearMidiEndSample - startSample) : -1,
+        std::memory_order_relaxed);
     recordSampleRate  = sampleRate;
     recordTempoBpm = session.tempoBpm.load (std::memory_order_relaxed);
-    midiMergeCapture = session.midiMergeEnabled.load (std::memory_order_relaxed);
+    midiMergeCapture = merge;
     capturedMidiTrackMask = 0;
     nextMidiGroupOrdinal = 1;
+    midiCaptureGestureId = nextMidiCaptureGestureId.fetch_add (1, std::memory_order_relaxed);
     midiCompletedOrdinals = {};
     for (auto& pending : pendingMidiPasses) pending.clear();
     for (auto& preview : lastMidiPreviews) preview.reset();
@@ -283,12 +337,6 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
     activeCaptureTrackMask.store (0, std::memory_order_relaxed);
     activeMidiCaptureTrackMask.store (0, std::memory_order_relaxed);
     activeStereoCaptureTrackMask.store (0, std::memory_order_relaxed);
-
-    // Reset the per-track audio-thread counters before the audio
-    // callback can start writing - the counter readout at stopRecording
-    // depends on a clean slate per take.
-    for (auto& c : writeMidiBlockCalls)
-        c.store (0, std::memory_order_relaxed);
 
     const auto stamp = juce::Time::getCurrentTime().formatted ("%Y%m%d-%H%M%S");
 
@@ -314,27 +362,23 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
 
         const int trackMode = session.track (t).mode.load (std::memory_order_relaxed);
 
-        // MIDI tracks: spin up the MIDI capture FIFO and skip the WAV
-        // writer entirely. The audio thread will push events into the
-        // FIFO via writeMidiBlock; stopRecording drains it into a
-        // MidiRegion and pushes onto track.midiRegions.
         if (trackMode == (int) Track::Mode::Midi)
         {
-            auto cap = std::make_unique<PerTrackMidi> (midiMergeCapture);
+            auto& cap = prepared.captures[(std::size_t) t];
             cap->fifo.reset();
             cap->stream.configure ([sampleRate, bpm = recordTempoBpm] (std::int64_t sample)
             {
                 return samplesToTicks (sample, sampleRate, bpm);
             }, loopPlan.enabled ? loopPlan.captureEndSample - loopPlan.captureStartSample : 0);
-            midiCaptures[(size_t) t] = std::move (cap);
+            if (midiMergeCapture && loopPlan.enabled)
+            {
+                cap->pendingPlayback->configure (midiCaptureGestureId,
+                    loopPlan.captureEndSample - loopPlan.captureStartSample,
+                    [sampleRate, bpm = recordTempoBpm] (std::int64_t sample)
+                    { return samplesToTicks (sample, sampleRate, bpm); });
+            }
             captureTrackMask |= std::uint32_t { 1 } << t;
             midiCaptureTrackMask |= std::uint32_t { 1 } << t;
-            std::fprintf (stderr,
-                          "[Dusk Studio/RecordManager] startRecording: track %d set up MIDI capture "
-                          "(midiInputIndex=%d, midiChannel=%d).\n",
-                          t + 1,
-                          session.track (t).midiInputIndex.load (std::memory_order_relaxed),
-                          session.track (t).midiChannel.load (std::memory_order_relaxed));
             continue;
         }
 
@@ -377,13 +421,8 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
             continue;
         }
 
-        // Ring sized to hold ~4 s at the active sample rate so a brief
-        // disk stall (NFS hiccup, drive spindown) doesn't push the
-        // audio callback into dropped writes. Scaled by sampleRate so a
-        // 48k session doesn't pay the 12× memory tax of a 96k worst-
-        // case constant: ≈ 1.5 MB / track @ 48k stereo vs ≈ 3 MB @ 96k.
-        // Floor at 65536 samples to guarantee a safety margin even on
-        // exotic low-rate setups.
+        // Four seconds at the active rate tolerates brief disk stalls without
+        // reserving high-rate capacity for low-rate sessions.
         const int kRingFrames = std::max (65536, (int) (sampleRate * 4.0));
 
         // The ThreadedFileWriter ctor allocates a multi-MB ring per track, the
@@ -414,8 +453,6 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
                     drainPool.remove (w->writer.get());
                     w.reset();
                 }
-            for (auto& cap : midiCaptures)
-                cap.reset();
             activeCaptureTrackMask.store (0, std::memory_order_relaxed);
             activeMidiCaptureTrackMask.store (0, std::memory_order_relaxed);
             activeStereoCaptureTrackMask.store (0, std::memory_order_relaxed);
@@ -445,6 +482,7 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
         return false;
     }
 
+    midiCaptures.swap (prepared.captures);
     activeCaptureTrackMask.store (captureTrackMask, std::memory_order_relaxed);
     capturedMidiTrackMask = midiCaptureTrackMask;
     activeMidiCaptureTrackMask.store (midiCaptureTrackMask, std::memory_order_relaxed);
@@ -551,10 +589,11 @@ void RecordManager::collectMidiPasses (int trackIndex)
 
 void RecordManager::serviceMidiCapture()
 {
+    const auto linearLength = linearMidiCaptureLength.load (std::memory_order_relaxed);
     for (int track = 0; track < Session::kNumTracks; ++track)
         if (auto& cap = midiCaptures[(size_t) track])
         {
-            cap->stream.service();
+            cap->stream.service (linearLength);
             collectMidiPasses (track);
         }
 }
@@ -572,6 +611,7 @@ std::vector<RecordManager::CapturedMidiPassGroup> RecordManager::takeMidiPassGro
     while (nextMidiGroupOrdinal <= minimumCompleted)
     {
         CapturedMidiPassGroup group;
+        group.gestureId = midiCaptureGestureId;
         group.passOrdinal = nextMidiGroupOrdinal++;
         group.timelineStart = midiCaptureTimelineStart();
         group.capturedSampleRate = recordSampleRate;
@@ -607,6 +647,9 @@ void RecordManager::stopRecording (std::int64_t endSample)
 
     int finalMidiOrdinal = 1;
     auto finalMidiEnd = std::max<std::int64_t> (0, endSample - recordStartSample);
+    const auto linearLength = linearMidiCaptureLength.load (std::memory_order_relaxed);
+    if (linearLength >= 0)
+        finalMidiEnd = std::min (finalMidiEnd, linearLength);
     if (loopPlan.enabled)
     {
         finalMidiOrdinal = std::max (1, lastCapturedLoopSpan.passOrdinal);
@@ -673,7 +716,8 @@ void RecordManager::stopRecording (std::int64_t endSample)
     // ordering doesn't matter, but doing MIDI first keeps the two paths
     // visibly separate and the failure cases isolated.
     const float bpm = session.tempoBpm.load (std::memory_order_relaxed);
-    const std::int64_t totalSamples = std::max ((std::int64_t) 0, endSample - recordStartSample);
+    const std::int64_t totalSamples = loopPlan.enabled
+        ? std::max<std::int64_t> (0, endSample - recordStartSample) : finalMidiEnd;
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
         auto& cap = midiCaptures[(size_t) t];
@@ -684,12 +728,6 @@ void RecordManager::stopRecording (std::int64_t endSample)
             continue;
         }
 
-        // Drain the lock-free FIFO into a flat vector so we can sort by
-        // sample-position before pairing Note On/Off events. Per JUCE's
-        // contract events arrive in sample order within a single block,
-        // but sample positions across blocks are monotonic so the FIFO
-        // order is already correct - we still copy into a vector to allow
-        // the linear note-pairing pass below.
         const int avail = cap->fifo.getNumReady();
         std::vector<PerTrackMidi::RawEvent> drained;
         drained.reserve ((size_t) avail);
@@ -698,21 +736,6 @@ void RecordManager::stopRecording (std::int64_t endSample)
         for (int i = 0; i < sz1; ++i) drained.push_back (cap->events[(size_t) (s1 + i)]);
         for (int i = 0; i < sz2; ++i) drained.push_back (cap->events[(size_t) (s2 + i)]);
         cap->fifo.finishedRead (sz1 + sz2);
-
-        // Diagnostic: how many MIDI events did we actually capture for
-        // this track? 0 means perTrackMidiScratch was empty across the
-        // whole take - usually means the track's midiInputIndex was -1
-        // (no MIDI input picked in the dropdown), so the per-track filter
-        // never copied any events into the scratch even though the chord
-        // analyzer (which reads engine-wide perInputMidi) might have
-        // shown chords.
-        std::fprintf (stderr,
-                      "[Dusk Studio/RecordManager] Track %d MIDI capture: %d events drained, "
-                      "writeMidiBlock-calls=%d, %d total samples, midiInputIndex=%d\n",
-                      t + 1, (int) drained.size(),
-                      writeMidiBlockCalls[(size_t) t].load (std::memory_order_relaxed),
-                      (int) totalSamples,
-                      session.track (t).midiInputIndex.load (std::memory_order_relaxed));
 
         if (drained.empty())
         {
@@ -1215,6 +1238,15 @@ void RecordManager::stopRecording (std::int64_t endSample)
     }
 }
 
+void RecordManager::setLinearMidiCaptureEndSample (std::optional<std::int64_t> endSample) noexcept
+{
+    AudioInFlightScope guard (audioInFlight);
+    if (! active.load (std::memory_order_seq_cst) || loopPlan.enabled) return;
+    linearMidiCaptureLength.store (endSample
+        ? std::max<std::int64_t> (0, *endSample - recordStartSample) : -1,
+        std::memory_order_relaxed);
+}
+
 template <typename MidiEvents>
 void RecordManager::writeMidiBlockImpl (int trackIndex,
                                         const MidiEvents& events,
@@ -1227,12 +1259,12 @@ void RecordManager::writeMidiBlockImpl (int trackIndex,
     if (trackIndex < 0 || trackIndex >= Session::kNumTracks) return;
     auto& cap = midiCaptures[(size_t) trackIndex];
     if (cap == nullptr) return;
-    writeMidiBlockCalls[(size_t) trackIndex].fetch_add (1, std::memory_order_relaxed);
     const auto& selectedLoopSpan = explicitLoopSpan != nullptr
                                  ? *explicitLoopSpan : currentLoopSpan;
     if (loopPlan.enabled && (selectedLoopSpan.passOrdinal < 1 || selectedLoopSpan.numSamples <= 0))
         return;
     const int passOrdinal = loopPlan.enabled ? selectedLoopSpan.passOrdinal : 1;
+    const auto linearLength = linearMidiCaptureLength.load (std::memory_order_relaxed);
 
     for (const auto meta : events)
     {
@@ -1263,13 +1295,26 @@ void RecordManager::writeMidiBlockImpl (int trackIndex,
                 || meta.samplePosition
                      >= selectedLoopSpan.inputOffset + selectedLoopSpan.numSamples))
             continue;
-        const auto samplePos = loopPlan.enabled
+        auto samplePos = loopPlan.enabled
             ? (selectedLoopSpan.timelineStart - loopPlan.captureStartSample
                + meta.samplePosition - selectedLoopSpan.inputOffset)
             : (blockStartFromRecord + meta.samplePosition);
         if (samplePos < 0) continue;
-        cap->stream.pushEvent (passOrdinal, samplePos, status,
-                               (std::uint8_t) raw[1], sz == 3 ? (std::uint8_t) raw[2] : 0);
+        if (linearLength >= 0 && samplePos >= linearLength)
+        {
+            if (statusType != 0x80 && ! (statusType == 0x90 && raw[2] == 0)) continue;
+            samplePos = linearLength;
+        }
+        const auto second = sz == 3 ? (std::uint8_t) raw[2] : std::uint8_t { 0 };
+        const bool retained = cap->stream.pushEvent (passOrdinal, samplePos, status,
+                                                      (std::uint8_t) raw[1], second);
+        if (cap->pendingPlayback)
+        {
+            if (retained)
+                cap->pendingPlayback->pushEvent (passOrdinal, samplePos, status, (std::uint8_t) raw[1], second);
+            else
+                cap->pendingPlayback->recoverGap();
+        }
         if (midiMergeCapture) continue;
 
         int needed = 1;
@@ -1312,10 +1357,15 @@ void RecordManager::writeMidiBlockImpl (int trackIndex,
         slot.passOrdinal = loopPlan.enabled ? selectedLoopSpan.passOrdinal : 0;
         cap->fifo.finishedWrite (needed);
     }
-    const auto end = loopPlan.enabled
+    auto end = loopPlan.enabled
         ? selectedLoopSpan.timelineStart - loopPlan.captureStartSample + selectedLoopSpan.numSamples
         : blockStartFromRecord + std::max (0, numSamples);
-    cap->stream.publishProgress (passOrdinal, end, loopPlan.enabled && selectedLoopSpan.endsPass);
+    if (linearLength >= 0)
+        end = std::min (end, linearLength);
+    const bool complete = loopPlan.enabled && selectedLoopSpan.endsPass;
+    cap->stream.publishProgress (passOrdinal, end, complete);
+    if (cap->pendingPlayback)
+        cap->pendingPlayback->publishProgress (passOrdinal, end, complete);
     cap->lastPassOrdinal = passOrdinal;
     cap->lastEndSample = std::max<std::int64_t> (0, end);
 }

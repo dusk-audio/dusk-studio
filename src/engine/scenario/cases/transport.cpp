@@ -1,12 +1,15 @@
 #include "../Scenario.h"
 #include "../ScenarioContext.h"
 #include "../../AudioEngine.h"
+#include "../../audiofile/FileReader.h"
 #include "../../../session/MidiBindings.h"
 #include "../../../session/Session.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <filesystem>
 #include <string>
 #include <utility>
 
@@ -328,6 +331,55 @@ ScenarioResult chaseStopLeavesPlayhead (ScenarioContext& ctx)
     return ctx.verdict();
 }
 
+ScenarioResult seeksKeepCaptureRunning (ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+    auto& session = ctx.session();
+    ctx.keep (session.countInEnabled);
+    ctx.keep (session.preRollEnabled);
+    ctx.keep (session.postRollEnabled);
+    session.countInEnabled.store (false);
+    session.preRollEnabled.store (false);
+    session.postRollEnabled.store (false);
+    transport.setLoopEnabled (false);
+    transport.setPunchEnabled (false);
+    armTrack (ctx);
+    transport.setPlayhead (kSecond);
+    engine.record();
+    if (! ctx.expect (transport.isRecording(), "Record did not start before seeking"))
+        return ctx.verdict();
+
+    const auto suspends = engine.getProcessingSuspendCount();
+    const auto gated = engine.getGatedBlockCount();
+    constexpr int kSeeks = 32;
+    std::chrono::steady_clock::duration locateTime {};
+    for (int i = 0; i < kSeeks; ++i)
+    {
+        const auto target = (i % 2 == 0 ? 1 : 10) * kSecond;
+        const auto before = std::chrono::steady_clock::now();
+        transport.locate (target);
+        locateTime += std::chrono::steady_clock::now() - before;
+        ctx.expect (transport.getPlayhead() == target, "seek did not reach its requested position");
+        ctx.pump (1);
+    }
+    ctx.expect (engine.getProcessingSuspendCount() == suspends, "seeking gated the recording callback");
+    ctx.expect (engine.getGatedBlockCount() == gated, "a seek silenced a capture block");
+    ctx.expect (transport.getRollStart() == kSecond, "seeking moved the take's roll start");
+    ctx.note ("mean locate us: " + std::to_string (
+        std::chrono::duration<double, std::micro> (locateTime).count() / kSeeks));
+    engine.stop();
+    const auto& takes = session.track (kTrack).takes;
+    if (ctx.expect (takes.size() == 1, "seeking did not preserve one continuous take"))
+    {
+        const auto reader = dusk::audio::FileReader::open (
+            std::filesystem::u8path (takes.back().file.getFullPathName().toStdString()));
+        ctx.expect (reader != nullptr && reader->info().numFrames == kSeeks * ScenarioContext::kBlockSize,
+                    "the take lost captured frames while seeking");
+    }
+    return ctx.verdict();
+}
+
 std::optional<ScenarioResult> run (ScenarioResult (*body) (ScenarioContext&), ScenarioContext& ctx)
 {
     return body (ctx);
@@ -351,5 +403,8 @@ const ScenarioRegistrar shortLoopRegistrar { Scenario {
 const ScenarioRegistrar chaseRegistrar { Scenario {
     "transport.chase_stop_leaves_playhead", { "transport", "sync" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (chaseStopLeavesPlayhead, ctx); } } };
+const ScenarioRegistrar seekCaptureRegistrar { Scenario {
+    "transport.seeks_keep_capture_running", { "transport", "record", "playback" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (seeksKeepCaptureRunning, ctx); } } };
 } // namespace
 } // namespace duskstudio::scenario

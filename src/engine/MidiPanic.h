@@ -12,6 +12,7 @@ namespace duskstudio::midi
 // tracked, so all 16 are swept - the synth ignores the redundant ones in the
 // same process pass.
 constexpr int kHangingResetMessageCount = 16 * 3;
+constexpr int kTransportStopResetMessageCount = kHangingResetMessageCount + 16 * 3;
 
 // Hands each message of the reset, in order, to fn (data, numBytes), which
 // returns false to stop. False when it stopped.
@@ -39,6 +40,28 @@ inline bool emitHangingReset (dusk::MidiBuffer& out, int sampleOffset) noexcept
 {
     return forEachHangingResetMessage ([&out, sampleOffset] (const std::uint8_t* data, int numBytes)
                                        { return out.addEvent (data, numBytes, sampleOffset); });
+}
+
+template <typename Fn>
+inline bool forEachTransportStopResetMessage (Fn&& fn) noexcept
+{
+    if (! forEachHangingResetMessage (fn)) return false;
+    for (std::uint8_t channel = 0; channel < 16; ++channel)
+    {
+        const std::array<std::uint8_t, 3> controllers { (std::uint8_t) (0xB0 | channel), 121, 0 };
+        const std::array<std::uint8_t, 3> pitch { (std::uint8_t) (0xE0 | channel), 0, 64 };
+        const std::array<std::uint8_t, 2> pressure { (std::uint8_t) (0xD0 | channel), 0 };
+        if (! fn (controllers.data(), (int) controllers.size())
+            || ! fn (pitch.data(), (int) pitch.size())
+            || ! fn (pressure.data(), (int) pressure.size())) return false;
+    }
+    return true;
+}
+
+inline bool emitTransportStopReset (dusk::MidiBuffer& out, int sampleOffset) noexcept
+{
+    return forEachTransportStopResetMessage ([&out, sampleOffset] (const std::uint8_t* data, int numBytes)
+                                            { return out.addEvent (data, numBytes, sampleOffset); });
 }
 
 // The live MIDI a track takes in one block: its input, the on-screen keyboard

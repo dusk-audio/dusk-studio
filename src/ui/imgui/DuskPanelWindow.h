@@ -31,6 +31,9 @@ struct KeyChord
 // modifier it does not know.
 std::optional<KeyChord> parseKeyDescription (const std::string& description);
 
+// Shell names differ from ImGui's debug names. Empty for modifiers and unmapped keys.
+std::string shellKeyName (ImGuiKey key);
+
 // The shell shortcut a panel passes on for a key: a bare transport key, Shift with a
 // bracket for the punch pair, or the command key with Z, Y, S or Q for Undo, Redo,
 // Save, Save As and Quit. Empty for every other key, which the panel keeps.
@@ -186,9 +189,9 @@ public:
 
     // A key the shell received, as JUCE's KeyPress describes it, with the character it
     // types (0 for none). True when the view captures the keyboard (capturesKeyboard),
-    // so the shell must not act on the key. The key is replayed into the child only
-    // while the child does not hold the keyboard, which a Windows child never does; one
-    // that does got the key itself, so replaying it would type it twice.
+    // so the shell must not act on the key. macOS offers key equivalents to the parent
+    // before the native first responder, so claimed keys always need replay there.
+    // Other platforms replay only while the child does not hold the keyboard.
     bool offerShellKey (const std::string& description, std::uint32_t character);
 
     // A key the shell received that the view keeps (keepsKey), replayed into the child.
@@ -218,8 +221,13 @@ public:
     // Tells the child it gained or lost the keyboard, as the platform does when the
     // focus moves.
     bool keyboardFocusForScenario (bool focused);
+    bool focusForScenario();
+    bool hasKeyboardForScenario() const noexcept;
+    std::uint64_t completedFramesForScenario() const noexcept;
+    bool capturesKeyboardForScenario() const noexcept;
     // How often a field or menu opening has asked the system to focus the child.
     int keyboardRequestsForScenario() const noexcept;
+    std::uintptr_t nativeWindowHandleForScenario() const noexcept;
     // Counts input that reached the panel by another road, a key the shell passed
     // on, as input still to be drawn.
     void expectInputForScenario();

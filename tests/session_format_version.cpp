@@ -7,6 +7,8 @@
 #include <juce_core/juce_core.h>
 #include <nlohmann/json.hpp>
 
+#include <filesystem>
+#include <fstream>
 #include <memory>
 
 namespace
@@ -102,12 +104,8 @@ TEST_CASE ("SessionSerializer stamps the current version on a session carrying b
     using duskstudio::Session;
     using duskstudio::SessionSerializer;
 
-    // The highest format the last released reader accepts. v0.13.2 has no
-    // built-in model, ignores builtin_id / builtin_state, and rewrites
-    // session.json from its own model on save, so a session holding built-ins
-    // must carry a version that build refuses. Dropping the format back to
-    // this number trips the check below.
-    constexpr int kLastReleasedReaderMaxVersion = 6;
+    // 0.15.1 reads through format 10 and would discard managed SFZ identities.
+    constexpr int kLastReleasedReaderMaxVersion = 10;
 
     const auto dir = makeTempSessionDir();
     const auto target = dir.getChildFile ("session.json");
@@ -166,4 +164,86 @@ TEST_CASE ("SessionSerializer refuses a future session before touching the live 
     CHECK (live.missingAudioFilesAfterLoad.size() == 1);
 
     dir.deleteRecursively();
+}
+
+TEST_CASE ("SessionSerializer explains rejected loads and clears stale errors", "[session][serializer][version]")
+{
+    using namespace duskstudio;
+    const auto dir = makeTempSessionDir();
+    const auto target = dir.getChildFile ("session.json");
+    const auto path = std::filesystem::u8path (target.getFullPathName().toStdString());
+    auto live = std::make_unique<Session>();
+    live->track (0).name = "Keep this session";
+    SessionLoadError error { SessionLoadFailure::NewerVersion, 999, 999 };
+
+    CHECK_FALSE (SessionSerializer::load (*live, path, &error));
+    CHECK (error.failure == SessionLoadFailure::FileUnavailable);
+    CHECK (error.fileVersion == 0);
+    CHECK (error.supportedVersion == 11);
+    CHECK (live->track (0).name == "Keep this session");
+
+    writeRaw (target, "not JSON");
+    CHECK_FALSE (SessionSerializer::load (*live, target, &error));
+    CHECK (error.failure == SessionLoadFailure::InvalidJson);
+    CHECK (error.fileVersion == 0);
+    CHECK (live->track (0).name == "Keep this session");
+
+    writeRaw (target, R"({"version":12,"tracks":[{"name":"Future"}]})");
+    CHECK_FALSE (SessionSerializer::load (*live, path, &error));
+    CHECK (error.failure == SessionLoadFailure::NewerVersion);
+    CHECK (error.fileVersion == 12);
+    CHECK (error.supportedVersion == 11);
+    CHECK (live->track (0).name == "Keep this session");
+
+    writeRaw (target, R"({"version":0,"tracks":[{"name":"Unsupported migration"}]})");
+    CHECK_FALSE (SessionSerializer::load (*live, target, &error));
+    CHECK (error.failure == SessionLoadFailure::MigrationFailed);
+    CHECK (error.fileVersion == 0);
+    CHECK (error.supportedVersion == 11);
+    CHECK (live->track (0).name == "Keep this session");
+
+    writeRaw (target, R"({"version":11,"tracks":[{"name":"Loaded"}]})");
+    REQUIRE (SessionSerializer::load (*live, target, &error));
+    CHECK (error.failure == SessionLoadFailure::None);
+    CHECK (error.fileVersion == 11);
+    CHECK (error.supportedVersion == 11);
+    CHECK (live->track (0).name == "Loaded");
+    dir.deleteRecursively();
+}
+
+TEST_CASE ("SessionSerializer loads an unchanged format-10 file written by released 0.15.1", "[session][serializer][version]")
+{
+    using namespace duskstudio;
+    using Catch::Matchers::WithinAbs;
+    const auto fixture = std::filesystem::u8path (DUSKSTUDIO_SOURCE_DIR)
+        / "tests/fixtures/sessions/v0.15.1-format10.json";
+    std::ifstream input (fixture, std::ios::binary);
+    REQUIRE (input.is_open());
+    const auto original = nlohmann::json::parse (input);
+    REQUIRE (original["version"].get<int>() == 10);
+    REQUIRE (original["tracks"].size() == 24);
+    REQUIRE_FALSE (original["mastering"].contains ("phase_bands"));
+    REQUIRE_FALSE (original["mastering"].contains ("phase_q"));
+    REQUIRE_FALSE (original["mastering"].contains ("phase_averaging_ms"));
+
+    auto loaded = std::make_unique<Session>();
+    loaded->mastering().phase.bands.store (64);
+    loaded->mastering().phase.q.store (8.0f);
+    loaded->mastering().phase.averagingMs.store (5000.0f);
+    SessionLoadError error;
+    REQUIRE (SessionSerializer::load (*loaded, fixture, &error));
+    REQUIRE (error.failure == SessionLoadFailure::None);
+    CHECK (error.fileVersion == 10);
+    CHECK_THAT (loaded->sessionSampleRate, WithinAbs (48000.0, 1.0e-6));
+    CHECK_THAT (loaded->track (0).strip.faderDb.load(), WithinAbs (-3.0f, 1.0e-6f));
+    CHECK (loaded->mastering().phase.bands.load() == 16);
+    CHECK_THAT (loaded->mastering().phase.q.load(), WithinAbs (2.0f, 1.0e-6f));
+    CHECK_THAT (loaded->mastering().phase.averagingMs.load(), WithinAbs (500.0f, 1.0e-6f));
+    CHECK_FALSE (loaded->mastering().eqEnabled.load());
+    CHECK_FALSE (loaded->mastering().compEnabled.load());
+    CHECK (loaded->mastering().limiterEnabled.load());
+    const auto saved = nlohmann::json::parse (SessionSerializer::serialize (*loaded).toStdString());
+    CHECK (saved["version"].get<int>() == 11);
+    CHECK_THAT (saved["tracks"][0]["fader_db"].get<float>(), WithinAbs (-3.0f, 1.0e-6f));
+    CHECK_THAT (saved["session_sample_rate"].get<double>(), WithinAbs (48000.0, 1.0e-6));
 }

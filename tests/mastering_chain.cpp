@@ -218,6 +218,79 @@ TEST_CASE ("MasteringChain: hot input stays finite and at/below the ceiling",
     REQUIRE (steadyPeakR <= ceiling * 1.04f);
 }
 
+TEST_CASE ("MasteringChain: phase capture observes the stereo output without changing it",
+           "[MasteringChain][phase]")
+{
+    duskstudio::MasteringParams params;
+    params.limiterDriveDb.store (6.0f, std::memory_order_relaxed);
+    duskstudio::MasteringChain measured, reference;
+    measured.bind (params);
+    reference.bind (params);
+    measured.prepare (kSr, kBlock);
+    reference.prepare (kSr, kBlock);
+    const int latency = measured.getLatencySamples();
+    REQUIRE (latency == reference.getLatencySamples());
+    std::vector<float> left (kBlock), right (kBlock), refL (kBlock), refR (kBlock);
+    std::vector<float> feedL (kBlock), feedR (kBlock);
+    auto& feed = measured.getPhaseFeed();
+    duskstudio::PhaseAnalysisFeed::Chunk previous;
+    float outputPeak = 0.0f, stereoDifference = 0.0f;
+    for (int block = 0; block < 24; ++block)
+    {
+        for (int i = 0; i < kBlock; ++i)
+        {
+            const double time = (block * kBlock + i) / kSr;
+            left[(size_t) i] = refL[(size_t) i] = 1.5f * (float) std::sin (time * 6283.185307);
+            right[(size_t) i] = refR[(size_t) i] = 0.75f * (float) std::cos (time * 4398.229715);
+        }
+        measured.processInPlace (left.data(), right.data(), kBlock);
+        reference.processInPlace (refL.data(), refR.data(), kBlock, false);
+        const auto chunk = feed.read (feedL.data(), feedR.data(), kBlock);
+        REQUIRE (chunk.samples == kBlock);
+        REQUIRE_THAT (chunk.sampleRate, WithinAbs (kSr, 1.0e-6));
+        if (block > 0)
+        {
+            REQUIRE (chunk.generation == previous.generation);
+            REQUIRE (chunk.sequence == previous.sequence + kBlock);
+        }
+        for (int i = 0; i < kBlock; ++i)
+        {
+            const auto index = (size_t) i;
+            REQUIRE_THAT (feedL[index], WithinAbs (left[index], 1.0e-6));
+            REQUIRE_THAT (feedR[index], WithinAbs (right[index], 1.0e-6));
+            REQUIRE_THAT (left[index], WithinAbs (refL[index], 1.0e-6));
+            REQUIRE_THAT (right[index], WithinAbs (refR[index], 1.0e-6));
+            outputPeak = std::max (outputPeak, std::abs (left[index]));
+            stereoDifference = std::max (stereoDifference, std::abs (left[index] - right[index]));
+        }
+        previous = chunk;
+    }
+    REQUIRE (outputPeak > 0.1f);
+    REQUIRE (stereoDifference > 0.1f);
+    REQUIRE (measured.getLatencySamples() == latency);
+    REQUIRE (reference.getPhaseFeed().pendingSamples() == 0);
+
+    measured.processInPlace (left.data(), right.data(), kBlock, false);
+    REQUIRE (feed.pendingSamples() == 0);
+    measured.processInPlace (left.data(), right.data(), kBlock);
+    const auto resumed = feed.read (feedL.data(), feedR.data(), kBlock);
+    REQUIRE (resumed.samples == kBlock);
+    REQUIRE (resumed.generation != previous.generation);
+    REQUIRE (resumed.sequence == 0);
+
+    measured.processInPlace (left.data(), right.data(), kBlock);
+    measured.prepare (96000.0, kBlock);
+    measured.processInPlace (left.data(), right.data(), kBlock);
+    const auto old = feed.read (feedL.data(), feedR.data(), kBlock);
+    REQUIRE (old.samples == kBlock);
+    REQUIRE (old.generation == resumed.generation);
+    REQUIRE_THAT (old.sampleRate, WithinAbs (kSr, 1.0e-6));
+    const auto prepared = feed.read (feedL.data(), feedR.data(), kBlock);
+    REQUIRE (prepared.samples == kBlock);
+    REQUIRE (prepared.generation != old.generation);
+    REQUIRE_THAT (prepared.sampleRate, WithinAbs (96000.0, 1.0e-6));
+}
+
 #if DUSKSTUDIO_HAS_DUSK_DSP
 namespace
 {

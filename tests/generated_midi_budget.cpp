@@ -3,6 +3,7 @@
 #include "engine/GeneratedMidiBudget.h"
 #include "foundation/MidiBuffer.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 
@@ -11,8 +12,15 @@ using duskstudio::GeneratedMidiBudget;
 TEST_CASE ("Generated MIDI structural reset releases its reserved capacity",
            "[audio-engine][midi][budget]")
 {
-    constexpr int eventBytes = 9;
-    constexpr int resetBytes = 48 * eventBytes;
+    constexpr int eventBytes = duskstudio::kGeneratedEventBytes;
+    int resetBytes = duskstudio::kHangingResetBytes;
+    bool transportStop = false;
+    SECTION ("loop and seek reset") {}
+    SECTION ("transport Stop expression reset")
+    {
+        resetBytes = duskstudio::kTransportStopResetBytes;
+        transportStop = true;
+    }
     GeneratedMidiBudget budget (resetBytes + 2 * eventBytes);
 
     REQUIRE (budget.reserveStructural (resetBytes));
@@ -26,13 +34,48 @@ TEST_CASE ("Generated MIDI structural reset releases its reserved capacity",
     CHECK (budget.spendDiscretionary (eventBytes));
     CHECK (budget.spendDiscretionary (eventBytes));
     CHECK_FALSE (budget.spendDiscretionary (eventBytes));
+
+    dusk::MidiBuffer reset;
+    reset.reserveBytes ((std::size_t) resetBytes);
+    REQUIRE ((transportStop ? duskstudio::midi::emitTransportStopReset (reset, 17)
+                            : duskstudio::midi::emitHangingReset (reset, 17)));
+    int count = 0, actualBytes = 0;
+    for (const auto message : reset)
+    {
+        CHECK (message.samplePosition == 17);
+        actualBytes += (int) dusk::MidiBuffer::recordBytes (message.numBytes);
+        if (count < duskstudio::midi::kHangingResetMessageCount)
+        {
+            const std::array<int, 3> controllers { 64, 123, 120 };
+            REQUIRE (message.numBytes == 3);
+            CHECK (message.data[0] == (0xB0 | (count / 3)));
+            CHECK (message.data[1] == controllers[(std::size_t) (count % 3)]);
+            CHECK (message.data[2] == 0);
+        }
+        else
+        {
+            const int index = count - duskstudio::midi::kHangingResetMessageCount;
+            const int channel = index / 3;
+            const std::array<int, 3> statuses { 0xB0, 0xE0, 0xD0 };
+            REQUIRE (message.numBytes == (index % 3 == 2 ? 2 : 3));
+            CHECK (message.data[0] == (statuses[(std::size_t) (index % 3)] | channel));
+            CHECK (message.data[1] == (index % 3 == 0 ? 121 : 0));
+            if (message.numBytes == 3) CHECK (message.data[2] == (index % 3 == 1 ? 64 : 0));
+        }
+        ++count;
+    }
+    CHECK (count == (transportStop ? duskstudio::midi::kTransportStopResetMessageCount
+                                   : duskstudio::midi::kHangingResetMessageCount));
+    CHECK (actualBytes == resetBytes - (transportStop ? 16 : 0));
 }
 
 TEST_CASE ("Generated MIDI structural reset consumption is all or nothing",
            "[audio-engine][midi][budget]")
 {
-    constexpr int eventBytes = 9;
-    constexpr int resetBytes = 48 * eventBytes;
+    constexpr int eventBytes = duskstudio::kGeneratedEventBytes;
+    int resetBytes = duskstudio::kHangingResetBytes;
+    SECTION ("loop and seek reset") {}
+    SECTION ("transport Stop expression reset") { resetBytes = duskstudio::kTransportStopResetBytes; }
     GeneratedMidiBudget budget (resetBytes - eventBytes);
 
     CHECK_FALSE (budget.reserveStructural (resetBytes));

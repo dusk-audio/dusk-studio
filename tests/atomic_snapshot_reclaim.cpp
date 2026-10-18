@@ -144,18 +144,22 @@ TEST_CASE ("MidiRegionSnapshot: the audio side never reads the regions the messa
     MidiRegionSnapshot snapshot;
     REQUIRE (snapshot.read() != nullptr);
     CHECK (snapshot.read()->size() == 0);
+    CHECK (snapshot.read()->capture.gestureId == 0);
 
     MidiRegion region;
     region.timelineStart = 1000;
     region.lengthInSamples = 4800;
     region.lengthInTicks = 48;
     region.notes.push_back ({ 1, 60, 100, 0, 10 });
-    snapshot.publish (std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { region, region }));
+    snapshot.publish (std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { region, region }),
+                      { 12, 2 });
     // Holds what it reads the way the audio callback does.
     const SnapshotReadScope reading;
     const auto* timeline = snapshot.read();
     REQUIRE (timeline->size() == 2);
     CHECK (timeline->placement[1].timelineStart == 1000);
+    CHECK (timeline->capture.gestureId == 12);
+    CHECK (timeline->capture.consumedThroughPass == 2);
 
     // Edits to the message thread's regions reach the audio side only when
     // handed over: placements through editedInPlace(), which keeps the events
@@ -178,12 +182,30 @@ TEST_CASE ("MidiRegionSnapshot: the audio side never reads the regions the messa
     CHECK (moved->placement[0].timelineStart == 1000);
     CHECK (moved->playback[1] == timeline->playback[1]);
     CHECK (moved->byStart == std::vector<std::uint32_t> { 0 });   // the muted one does not play
+    CHECK (moved->capture.gestureId == 12);
+    CHECK (moved->capture.consumedThroughPass == 2);
 
     snapshot.mutate ([] (std::vector<MidiRegion>&) {});
     REQUIRE (snapshot.read() != moved);
     CHECK (snapshot.read()->events (1).notes.empty());
     CHECK (snapshot.read()->placement[1].timelineStart == 9000);
     CHECK (snapshot.generation() == 3);
+    CHECK (snapshot.read()->capture.consumedThroughPass == 2);
+
+    snapshot.mutate ([] (auto& current) { current[0].notes.clear(); }, { 12, 4 });
+    CHECK (snapshot.read()->events (0).notes.empty());
+    CHECK (snapshot.read()->capture.consumedThroughPass == 4);
+    CHECK (timeline->capture.consumedThroughPass == 2);
+
+    snapshot.mutate ([&region] (auto& current) { current[0] = region; }, { 12, 1 });
+    CHECK (snapshot.read()->events (0).notes.size() == 1);
+    CHECK (snapshot.read()->capture.consumedThroughPass == 4);
+    snapshot.mutate ([] (auto&) {}, { 13, 1 });
+    CHECK (snapshot.read()->capture.gestureId == 13);
+    CHECK (snapshot.read()->capture.consumedThroughPass == 1);
+    snapshot.mutate ([] (auto&) {}, { 12, 9 });
+    CHECK (snapshot.read()->capture.gestureId == 13);
+    CHECK (snapshot.read()->capture.consumedThroughPass == 1);
 }
 
 TEST_CASE ("MidiRegionSnapshot: a staged copy lands without freeing until reclaimed", "[snapshot][midi]")
@@ -193,7 +215,7 @@ TEST_CASE ("MidiRegionSnapshot: a staged copy lands without freeing until reclai
     region.lengthInTicks = 48;
     region.notes.push_back ({ 1, 60, 100, 0, 10 });
     MidiRegionSnapshot from, to;
-    from.publish (std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { region }));
+    from.publish (std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { region }), { 34, 2 });
     region.notes.front().noteNumber = 62;
     to.publish (std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { region, region }));
     // No read scope is open, so only the landing itself keeps this alive.
@@ -202,10 +224,14 @@ TEST_CASE ("MidiRegionSnapshot: a staged copy lands without freeing until reclai
     auto staged = MidiRegionSnapshot::stage (from);
     REQUIRE (staged.timeline != nullptr);
     CHECK (staged.timeline->playback[0] == from.read()->playback[0]);
+    CHECK (staged.timeline->capture.gestureId == 34);
+    CHECK (staged.timeline->capture.consumedThroughPass == 2);
 
     to.land (staged);
     CHECK (to.read()->size() == 1);
     CHECK (to.read()->events (0).notes.front().key == 60);
+    CHECK (to.read()->capture.gestureId == 34);
+    CHECK (to.read()->capture.consumedThroughPass == 2);
     CHECK (to.current().size() == 1);
     // What the landing replaced is still there: the regions in the stage, the
     // timeline among the retired values.

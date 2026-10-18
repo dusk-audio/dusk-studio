@@ -4,6 +4,7 @@
 #include "../../foundation/AutoResetEvent.h"
 
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -16,6 +17,12 @@ class BufferedFileReader
 {
 public:
     enum class Fill { Background, Manual };
+
+    struct ReadCoverage
+    {
+        std::int64_t startFrame = 0;
+        std::int64_t endFrame = 0;
+    };
 
     static constexpr std::int64_t kDefaultWindowFrames = 96000;
     static constexpr std::int64_t kFillChunkFrames = 8192;
@@ -32,8 +39,10 @@ public:
     bool isManual() const noexcept { return fillMode == Fill::Manual; }
 
     // RT: immutable snapshots, silence for missing frames, no disk or wakeup.
+    // Coverage describes the file frames copied from that same snapshot.
     bool readRt (float* const* dest, int numDestCh,
-                 std::int64_t startFrame, std::int64_t numFrames) noexcept;
+                 std::int64_t startFrame, std::int64_t numFrames,
+                 ReadCoverage* coverage = nullptr) noexcept;
 
     void hintRt (std::int64_t startFrame) noexcept;
     std::int64_t hint() const noexcept;
@@ -41,6 +50,10 @@ public:
 
     // Non-RT: prefetch also wakes the owned Background worker.
     void prefetch (std::int64_t startFrame) noexcept;
+
+    // Non-RT, serialized with all external filling and prefetch calls. Switching
+    // to Manual joins the owned worker before returning its filling ownership.
+    void setFillMode (Fill);
 
     // Exactly one filling owner. Manual callers/pools serialize these methods.
     // Each fillOnce reads at most kFillChunkFrames; fillNow primes a full window.
@@ -58,6 +71,7 @@ private:
     {
         std::int64_t startFrame = 0;
         std::int64_t numFrames = 0;
+        std::int64_t stride = 0;
         std::vector<float> data;
     };
 
@@ -73,17 +87,17 @@ private:
     FileInfo fileInfo;
     const int channels;
     const std::int64_t capacity;
-    const Fill fillMode;
+    Fill fillMode;
 
     std::unique_ptr<Window> currentWindow;
     std::unique_ptr<Window> stagingWindow;
     std::vector<float*> fillDest;
     std::int64_t stagingFilled = 0;
+    std::chrono::steady_clock::time_point nextFillAttempt {};
 
     std::atomic<const Window*> publishedWindow { nullptr };
     mutable std::atomic<unsigned> activeReads { 0 };
     std::atomic<std::int64_t> hintFrame { 0 };
-    std::atomic<std::int64_t> failedHint { -1 };
     std::atomic<std::size_t> allocated { 0 };
     std::atomic<std::uint64_t> misses { 0 };
 

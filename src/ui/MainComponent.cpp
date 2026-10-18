@@ -13,7 +13,6 @@
  #define DUSKSTUDIO_HAS_BINARY_ICON 0
 #endif
 #include "DuskFileBrowser.h"
-#include "../engine/sfz/SfzLibraryService.h"
 #include "SaveTargetChecks.h"
 #include "AuxView.h"
 #include "BounceDialog.h"
@@ -23,8 +22,10 @@
 #include "SupportersPanel.h"
 #include "MidiBindingsPanel.h"
 #include "SelfTestPanel.h"
+#include "UpdateChecker.h"
 #if DUSKSTUDIO_HAS_NATIVE_UI
  #include "imgui/AudioEditorView.h"
+ #include "imgui/PianoRollView.h"
  #include "imgui/AudioSettingsView.h"
  #include "imgui/StartupView.h"
  #include "imgui/VirtualKeyboardView.h"
@@ -40,12 +41,10 @@
 #include "DimOverlay.h"
 #include "DuskAlerts.h"
 #include "EmbeddedModal.h"
-#include "PianoRollComponent.h"
 #include "PlatformWindowing.h"
 #include "TunerOverlay.h"
 #include "../session/SessionTemplates.h"
 #include "MasteringView.h"
-#include "UpdateChecker.h"
 #include "SystemStatusBar.h"
 #include "TapeStrip.h"
 #include "TrackMoveUndo.h"
@@ -68,6 +67,7 @@
 #include "../engine/audiofile/FileReader.h"
 #include "../engine/audiofile/FileWriter.h"
 #include "../engine/midi/MidiFileReader.h"
+#include "../engine/sfz/SfzLibraryService.h"
 #include "../foundation/AppConfigDir.h"
 #include "../foundation/AppMusicDir.h"
 #include "../foundation/PlanarBuffer.h"
@@ -836,33 +836,39 @@ MainComponent::MainComponent()
     engine.onTracksMoved = [this] (const TrackMovePlan& plan) { followTrackMove (plan); };
     engine.onBeforeRecordCommit = [this] (std::uint32_t capturedTracks)
     {
+        const juce::Component::SafePointer<MainComponent> safeThis (this);
        #if DUSKSTUDIO_HAS_NATIVE_UI
         if (audioEditorView != nullptr && audioEditorTrackIdx >= 0 && audioEditorTrackIdx < Session::kNumTracks
             && (capturedTracks & (std::uint32_t { 1 } << audioEditorTrackIdx)) != 0)
             audioEditorView->yieldDragToRecordCommit();
-       #endif
         const int rollTrack = pianoRoll != nullptr ? pianoRollTrackIdx : -1;
         const bool rollCaptured = rollTrack >= 0 && rollTrack < Session::kNumTracks
                                && (capturedTracks & (std::uint32_t { 1 } << rollTrack)) != 0;
+        if (rollCaptured) pianoRoll->yieldDragToRecordCommit();
+        const auto rollGeneration = pianoRollGeneration;
         const auto rollEdits = rollCaptured ? session.track (rollTrack).midiRegions.edits() : 0u;
         const bool mergeCapture = engine.getRecordManager().isMidiMergeCapture();
-        // The take lands once this returns, and a picker up over the window
-        // counts what each track holds.
-        const juce::Component::SafePointer<MainComponent> safeThis (this);
-        dusk::callAsync ([safeThis, rollCaptured, rollTrack, rollEdits, mergeCapture]
+        dusk::callAsync ([safeThis, rollCaptured, rollGeneration, rollTrack, rollEdits, mergeCapture]
         {
             auto* self = safeThis.getComponent();
             if (self == nullptr) return;
             self->refreshImportPickers();
-            if (! mergeCapture && rollCaptured && self->pianoRoll != nullptr && self->pianoRollTrackIdx == rollTrack
+            if (! mergeCapture && rollCaptured && self->pianoRollShowing() && self->pianoRollGeneration == rollGeneration
+                && self->pianoRollTrackIdx == rollTrack
                 && self->session.track (rollTrack).midiRegions.edits() != rollEdits)
                 self->pianoRoll->showCommittedRegion();
         });
+       #else
+        dusk::callAsync ([safeThis]
+        { if (auto* self = safeThis.getComponent()) self->refreshImportPickers(); });
+       #endif
     };
     engine.onMidiPassCommitted = [this] (int trackIndex, int regionIndex)
     {
-        if (pianoRoll != nullptr && pianoRollTrackIdx == trackIndex)
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        if (pianoRollShowing() && pianoRollTrackIdx == trackIndex)
             pianoRoll->showCommittedRegion (regionIndex);
+       #endif
         refreshImportPickers();
     };
     tapeStrip->onFilesDropped = [this] (juce::Array<juce::File> files,
@@ -1034,25 +1040,7 @@ MainComponent::MainComponent()
     {
         yieldNotepadWindow();
        #if DUSKSTUDIO_HAS_NATIVE_UI
-        // Every native view is an opaque child over the shell, so a modal that opens
-        // behind one is invisible and unclickable - not just the notepad. The panels
-        // that a user opened deliberately step aside the way it does. The startup
-        // dialog is left alone: dismissing it would spend the session choice nobody
-        // has made yet, and it is never up alongside these.
-        closeVirtualKeyboard();
-        closeAudioSettings();
-        closeAudioEditor();
-        if (consoleView != nullptr)
-        {
-            for (int t = 0; t < Session::kNumTracks; ++t)
-                if (auto* strip = consoleView->getStripComponent (t))
-                {
-                    strip->closeCompEditorPopup();
-                    strip->closeBuiltinEditorPopup();
-                }
-            if (auto* master = consoleView->getMasterStripComponent())
-                master->closeTapeEditor();
-        }
+        closeNativePanelsForModal();
        #endif
     };
 
@@ -1302,6 +1290,7 @@ MainComponent::~MainComponent()
     audioSettingsHandOff = nullptr;
     audioSettingsWindow.reset();
     audioSettingsDim.reset();
+    virtualKeyboardView = nullptr;
     virtualKeyboardWindow.reset();
     virtualKeyboardDim.reset();
     // The editor's view reads the session and the engine every frame and owns
@@ -1309,6 +1298,9 @@ MainComponent::~MainComponent()
     audioEditorView = nullptr;
     audioEditorWindow.reset();
     audioEditorDim.reset();
+    pianoRoll = nullptr;
+    pianoRollWindow.reset();
+    pianoRollDim.reset();
    #endif
     importTargetModal    .closeAndDeleteBodyNow();
     shortcutsModal       .closeAndDeleteBodyNow();
@@ -1382,6 +1374,10 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         && audioSettingsWindow->offerShellKey (key.getTextDescription().toStdString(),
             static_cast<std::uint32_t> (key.getTextCharacter())))
         return true;
+    if (! modalUp && masteringView != nullptr && masteringView->isShowing()
+        && masteringView->offerPhaseKey (key.getTextDescription().toStdString(),
+                                        static_cast<std::uint32_t> (key.getTextCharacter())))
+        return true;
     if (! modalUp && consoleView != nullptr)
         for (int track = 0; track < Session::kNumTracks; ++track)
             if (auto* strip = consoleView->getStripComponent (track);
@@ -1404,6 +1400,19 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     {
         closeVirtualKeyboard();
         return true;
+    }
+    if (pianoRollShowing() && pianoRoll != nullptr && ! pianoRollForwardingKey
+        && ! modalUp && (panelKeys == imgui::PanelShellKeys::all
+            || (virtualKeyboardWindow != nullptr && virtualKeyboardWindow->isOpen())))
+    {
+        const auto description = key.getTextDescription().toStdString();
+        if (pianoRollWindow->offerShellKey (description, static_cast<std::uint32_t> (key.getTextCharacter())))
+            return true;
+        const auto now = std::chrono::steady_clock::now();
+        const bool repeat = description == editorKeyHeld && now - editorKeyHeldAt < std::chrono::seconds (1);
+        editorKeyHeld = description;
+        editorKeyHeldAt = now;
+        if (pianoRoll->handleShellKey (description, repeat)) return true;
     }
    #endif
     if (modalUp || panelKeys != imgui::PanelShellKeys::all || tuner != nullptr)
@@ -1502,7 +1511,6 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     if (code == 'G' && noMods)
     {
         session.editMode = EditMode::Grab;
-        if (pianoRoll   != nullptr) pianoRoll->syncEditModeToolbar();
         if (tapeStrip   != nullptr) { tapeStrip->refreshModeCursor(); tapeStrip->repaint(); }
         return true;
     }
@@ -1590,12 +1598,16 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     // timeline toggle, hence the Alt modifier.
     if (code == 'T' && mods.isAltDown() && ! cmd)
     {
-        if (pianoRoll != nullptr) pianoRoll->followRegionEdits();
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        if (pianoRollShowing()) pianoRoll->followRegionEdits();
+       #endif
         const bool rollOpen = pianoRoll != nullptr;
         const bool cycled = tapeStrip != nullptr
             && (rollOpen ? tapeStrip->cycleMidiTake (pianoRollTrackIdx, pianoRollRegionIdx, ! shift)
                          : tapeStrip->cycleSelectedMidiTake (! shift));
+       #if DUSKSTUDIO_HAS_NATIVE_UI
         if (cycled && rollOpen) pianoRoll->showSwappedTake();
+       #endif
         if (cycled)
             return true;
     }
@@ -4528,10 +4540,18 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     const auto previousDir = session.getSessionDirectory();
     session.setSessionDirectory (dir);
 
-    if (! SessionSerializer::load (session, sourceJson))
+    SessionLoadError loadError;
+    if (! SessionSerializer::load (session, sourceJson, &loadError))
     {
         session.setSessionDirectory (previousDir);
-        setStatusForPath ("Load failed", sourceJson);
+        if (loadError.failure == SessionLoadFailure::NewerVersion)
+        {
+            const auto message = "Session format " + std::to_string (loadError.fileVersion)
+                + " is newer than supported format " + std::to_string (loadError.supportedVersion)
+                + ". Upgrade Dusk Studio to open";
+            setStatusForPath (message.c_str(), sourceJson);
+        }
+        else setStatusForPath ("Load failed", sourceJson);
         return false;
     }
     const auto tAfterParse = juce::Time::getMillisecondCounterHiRes();
@@ -4689,24 +4709,10 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     // was rebuilt during deserialize; this is the engine-side half).
     engine.reapplyFreezeState();
 
-    // Re-resolve MIDI input routing from the just-loaded session. The load
-    // restores the saved identifiers (MCU input, sync source, per-track MIDI
-    // in) but NOT the runtime index each maps to, so without this the MCU
-    // surface (and track MIDI inputs) stay dead until the user re-picks the
-    // device in Settings. Use the LIGHTWEIGHT per-track re-resolve - the full
-    // refreshMidiInputs() hot-plug path detaches/reattaches the audio callback
-    // and disables/re-enables every MIDI device, which froze the UI for a few
-    // seconds on every load. The physical devices are unchanged since startup,
-    // so the banks are valid; MCU + sync re-resolve happens in
-    // openConfiguredMidiOutputs() below.
+    // Resolve saved identifiers against the existing banks without reopening
+    // every MIDI device during session load.
     engine.reresolveTrackMidiFromSession();
-
-    // Open MIDI output ports for any tracks the loaded session had
-    // routed. Done here (not in the engine constructor) so startup
-    // never blocks on snd_seq_connect_to for ports nobody uses.
-    // Safely variant: the audio callback is live on the load path (the
-    // lightweight reresolve above doesn't detach), so the bank open must.
-    engine.openConfiguredMidiOutputsSafely();
+    engine.openConfiguredMidiOutputs();
     const auto tAfterMidiOuts = juce::Time::getMillisecondCounterHiRes();
 
     // Reconstruct the console so all controls reflect the freshly
@@ -6267,214 +6273,219 @@ void MainComponent::cleanOutUnreferencedFiles()
                        /*destructive*/ true);
 }
 
-namespace
+#if DUSKSTUDIO_HAS_NATIVE_UI
+void MainComponent::closeNativePanelsForModal (bool keepPianoRoll)
 {
-// Editor expand/collapse timing. Open is a touch slower than close so the
-// panel "blooms" out of the region but dismisses crisply.
-constexpr int kEditorOpenMs  = 180;
-constexpr int kEditorCloseMs = 150;
-
-// A start rect is only animatable when it's on-screen and big enough that the
-// editor's resized() math has something to chew on; otherwise snap to final.
-bool editorStartRectUsable (juce::Rectangle<int> r) noexcept
-{
-    return ! r.isEmpty() && r.getWidth() >= 2 && r.getHeight() >= 2;
-}
-
-// One-shot timer that fires `fn` once after `ms` then idles. Owned by
-// MainComponent so it outlives the ComponentAnimator's collapse run.
-class OneShotTimer final : public dusk::Timer
-{
-public:
-    OneShotTimer (int ms, std::function<void()> f) : fn (std::move (f)) { startTimer (ms); }
-    void timerCallback() override
+    closeVirtualKeyboard();
+    closeAudioSettings();
+    closeAudioEditor();
+    if (! keepPianoRoll) closePianoRoll();
+    if (consoleView != nullptr)
     {
-        stopTimer();
-        auto f = fn;
-        fn = nullptr;
-        if (f) f();
-    }
-private:
-    std::function<void()> fn;
-};
-
-// Fade the dim in; scale the editor out of `startRect` into `finalBounds`.
-// Editor + dim must already be visible children. Falls back to a hard snap
-// when the source rect is off-screen / degenerate.
-void animateEditorOpen (juce::Component& editor, juce::Component& dim,
-                        juce::Rectangle<int> finalBounds,
-                        juce::Rectangle<int> startRect)
-{
-    auto& animator = juce::Desktop::getInstance().getAnimator();
-    dim.setAlpha (0.0f);
-    animator.animateComponent (&dim, dim.getBounds(), 1.0f, kEditorOpenMs, false, 1.0, 0.0);
-
-    if (editorStartRectUsable (startRect))
-    {
-        editor.setBounds (startRect);
-        animator.animateComponent (&editor, finalBounds, 1.0f, kEditorOpenMs, false, 1.0, 0.0);
-    }
-    else
-    {
-        editor.setBounds (finalBounds);
-        editor.setAlpha (1.0f);
+        for (int t = 0; t < Session::kNumTracks; ++t)
+            if (auto* strip = consoleView->getStripComponent (t))
+            {
+                strip->closeCompEditorPopup();
+                strip->closeBuiltinEditorPopup();
+            }
+        if (auto* master = consoleView->getMasterStripComponent()) master->closeTapeEditor();
     }
 }
-} // namespace
+#endif
 
 void MainComponent::openPianoRoll (int trackIdx, int regionIdx)
 {
-    // Frozen tracks are edit-locked: their MIDI is baked into the rendered WAV,
-    // so editing notes would silently desync the audio. Block the editor (the
-    // single entry point for every MIDI-edit gesture) until the user unfreezes.
-    if (trackIdx >= 0 && trackIdx < Session::kNumTracks
-        && session.track (trackIdx).frozen.load (std::memory_order_relaxed))
+    if (trackIdx < 0 || trackIdx >= Session::kNumTracks || regionIdx < 0
+        || regionIdx >= static_cast<int> (session.track (trackIdx).midiRegions.current().size())) return;
+    if (session.track (trackIdx).frozen.load (std::memory_order_relaxed))
     {
-        showDuskAlert (*this, "Track is frozen",
-                        "Unfreeze this track to edit its MIDI.");
+        showDuskAlert (*this, "Track is frozen", "Unfreeze this track to edit its MIDI.");
         return;
     }
-
-    // Drop any pending collapse-teardown so a stale timer can't tear down
-    // the editor we're about to open (swap mid-collapse).
-    editorTeardownTimer.reset();
-
-    // Remember the tapestrip's edit tool before any modal can change it.
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    setStatusText ("Piano roll unavailable: built without the native UI");
+   #else
     snapshotEditModeForModal();
-
-    // Mutually exclusive with the audio editor. Opening the piano roll
-    // tears down any open audio editor first.
     destroyAudioEditor();
-
-    // Toggle vs swap. Clicking the SAME region while the roll is already
-    // open dismisses it (a second click on a region is naturally read as
-    // "I'm done"); clicking a DIFFERENT region tears the current roll
-    // down and re-opens on the new target so the user doesn't have to
-    // dismiss-then-click.
-    if (pianoRoll != nullptr)
+    if (pianoRollShowing() && pianoRollTrackIdx == trackIdx && pianoRollRegionIdx == regionIdx)
     {
-        const bool sameRegion = (pianoRollTrackIdx == trackIdx
-                                  && pianoRollRegionIdx == regionIdx);
-        if (sameRegion) { closePianoRollAnimated(); return; }
         closePianoRoll();
+        return;
     }
-
-    pianoRoll = std::make_unique<PianoRollComponent> (session, engine, trackIdx, regionIdx);
-    pianoRollTrackIdx  = trackIdx;
-    pianoRollRegionIdx = regionIdx;
-    pianoRollDim = std::make_unique<DimOverlay> (0.80f);
-
-    // Sized as a centred panel that leaves a small inset on each side so
-    // the dimmed backdrop is still visible (helps users see they're in a
-    // modal). The inset shrinks on small windows so the roll always has
-    // a workable surface even on a 1280-wide screen.
-    const auto bounds = getLocalBounds();
-    const int inset = std::max (24, std::min (bounds.getWidth(), bounds.getHeight()) / 16);
-    const auto rollBounds = bounds.reduced (inset);
-
-    juce::Rectangle<int> startRect;
-    if (tapeStrip != nullptr)
+    destroyPianoRoll();
+    auto* const topLevel = getTopLevelComponent();
+    const auto parentHandle = topLevel != nullptr ? embedscale::nativeParentHandle (*topLevel) : 0;
+    if (parentHandle == 0)
     {
-        const auto rr = tapeStrip->midiRegionScreenRect (trackIdx, regionIdx);
-        if (! rr.isEmpty())
-            startRect = getLocalArea (tapeStrip.get(), rr);
+        setStatusText ("Piano roll unavailable: main window is not ready");
+        scheduleEditModeRestore();
+        return;
     }
-
-    pianoRollDim->setBounds (bounds);
-    pianoRollDim->onClick = [this] { closePianoRollAnimated(); };
-    addAndMakeVisible (pianoRollDim.get());
-
-    pianoRoll->onCloseRequested = [this] { closePianoRollAnimated(); };
-    pianoRoll->onUndoRequested = [this] (bool redo) { undoOrRedo (redo); };
-    pianoRoll->onRegionChanged = [this] (int newIdx) { pianoRollRegionIdx = newIdx; };
-    // Deferred: the roll calls this from its own timer or key handling.
-    pianoRoll->onRegionsGone = [this] { closePianoRoll (true); };
-    pianoRoll->onMouseMovedForCursor =
-        [this] (juce::Component& src, juce::Point<int> localInSrc, EditMode m,
-                juce::Range<int> cutLine)
-        {
-            if (cursorOverlay != nullptr)
-                cursorOverlay->setMousePosition (src, localInSrc, m, cutLine);
-        };
-    pianoRoll->onMouseExitedForCursor =
-        [this] { if (cursorOverlay != nullptr) cursorOverlay->clearMousePosition(); };
-    pianoRoll->onNavigateToRegion = [this] (int t, int newIdx)
+    if (auto hook = EmbeddedModal::beforeModalShown()) hook();
+    pianoRollWindow = std::make_unique<imgui::DuskPanelWindow> (
+        "dusk-studio-piano-roll", "piano-roll", "Piano roll");
+    pianoRollWindow->setShellKeys (imgui::PanelShellKeys::all);
+    const juce::Component::SafePointer<MainComponent> safeThis (this);
+    const auto generation = ++pianoRollGeneration;
+    imgui::PianoRollHost host;
+    host.navigateToRegion = [safeThis, generation] (int t, int r)
     {
-        // Close + reopen on the new region. Same-track only; the
-        // editor already validated the bounds before calling.
-        // Deferred: the call arrives from the editor's own keyPressed
-        // frame - closing in place would destroy the component (and the
-        // invoked std::function) while both are still on the stack.
-        juce::Component::SafePointer<MainComponent> safe (this);
-        dusk::callAsync ([safe, t, newIdx]
+        dusk::callAsync ([safeThis, generation, t, r]
         {
-            if (auto* self = safe.getComponent())
+            if (auto* self = safeThis.getComponent())
             {
-                self->closePianoRoll();
-                self->openPianoRoll (t, newIdx);
+                if (! self->pianoRollShowing() || self->pianoRollGeneration != generation) return;
+                self->destroyPianoRoll();
+                self->openPianoRoll (t, r);
             }
         });
     };
-    addAndMakeVisible (pianoRoll.get());
-    pianoRoll->grabKeyboardFocus();
-
-    animateEditorOpen (*pianoRoll, *pianoRollDim, rollBounds, startRect);
+    host.regionChanged = [this] (int r) { pianoRollRegionIdx = r; };
+    host.regionsGone = [this] { closePianoRoll(); };
+    host.undo = [this] (bool redo) { undoOrRedo (redo); };
+    host.covered = [this]
+    { return pianoRollClosing || (virtualKeyboardWindow != nullptr && virtualKeyboardWindow->isOpen()); };
+    host.keyboardOwnsKey = [this] (const imgui::KeyChord& key)
+    {
+        return pianoRollClosing || (virtualKeyboardView != nullptr && virtualKeyboardWindow->isOpen()
+            && virtualKeyboardView->keepsKey (key));
+    };
+    host.keyboardClaimsShortcut = [this] (imgui::ShellShortcut key)
+    {
+        return pianoRollClosing || (virtualKeyboardView != nullptr && virtualKeyboardWindow->isOpen()
+            && virtualKeyboardView->claimsShortcut (key));
+    };
+    host.dismissCover = [safeThis]
+    {
+        dusk::callAsync ([safeThis]
+        { if (auto* self = safeThis.getComponent()) self->closeVirtualKeyboard(); });
+    };
+    host.unhandledKey = [safeThis, generation] (const imgui::KeyChord& chord)
+    {
+       #if ! defined (__APPLE__)
+        if (chord.super) return false;
+       #endif
+        const auto keyName = imgui::shellKeyName (chord.key);
+        if (keyName.empty()) return false;
+        std::string description;
+        if (chord.ctrl) description += "ctrl + ";
+        if (chord.super) description += "command + ";
+        if (chord.alt) description += "alt + ";
+        if (chord.shift) description += "shift + ";
+        description += keyName;
+        // A native frame must unwind before a shell action can replace its window.
+        dusk::callAsync ([safeThis, generation, description, question = chord.key == ImGuiKey_Slash && chord.shift]
+        {
+            if (auto* self = safeThis.getComponent())
+            {
+                if (! self->pianoRollShowing() || self->pianoRollGeneration != generation) return;
+                const auto key = juce::KeyPress::createFromDescription (description);
+                const auto forwarded = juce::KeyPress (key.getKeyCode(), key.getModifiers(),
+                    question ? '?' : key.getTextCharacter());
+                const juce::ScopedValueSetter<bool> forwarding (self->pianoRollForwardingKey, true);
+                self->keyPressed (forwarded);
+            }
+        });
+        return true;
+    };
+    auto view = imgui::makePianoRollView (session, engine, trackIdx, regionIdx, std::move (host));
+    pianoRoll = view.get();
+    pianoRollWindow->setView (std::move (view));
+    pianoRollTrackIdx = trackIdx;
+    pianoRollRegionIdx = regionIdx;
+    pianoRollClosing = false;
+    pianoRollDim = std::make_unique<DimOverlay> (pianoRollWindow->dimAlpha());
+    pianoRollDim->onClick = [this] { closePianoRoll(); };
+    imgui::DuskPanelWindow::Callbacks callbacks;
+    callbacks.dismissed = [this] { closePianoRoll(); };
+    callbacks.closed = [this] { finishPianoRollClose(); reclaimFocusFromNotepad(); };
+    callbacks.shortcut = [safeThis] (imgui::ShellShortcut shortcut)
+    {
+        dispatchShellShortcut (shortcut);
+        dusk::callAsync ([safeThis]
+        { if (auto* self = safeThis.getComponent()) self->editorKeyHeld.clear(); });
+    };
+    callbacks.geometry = [this]
+    {
+        auto* const top = getTopLevelComponent();
+        if (top == nullptr || pianoRollWindow == nullptr) return imgui::DuskPanelWindow::Geometry {};
+        const auto bounds = top->getLocalBounds();
+        const auto logical = bounds.reduced (std::max (24, std::min (bounds.getWidth(), bounds.getHeight()) / 16));
+        if (pianoRoll != nullptr)
+        {
+            const auto plate = pianoRollWindow->plateSize();
+            const auto body = pianoRoll->preferredSize();
+            pianoRoll->setAvailableSize (
+                static_cast<float> (logical.getWidth()) - (static_cast<float> (plate.width) - body.x),
+                static_cast<float> (logical.getHeight()) - (static_cast<float> (plate.height) - body.y));
+        }
+        if (pianoRollDim != nullptr)
+        {
+            pianoRollDim->setBounds (bounds);
+            pianoRollDim->setNativeChildArea (logical.expanded (1));
+        }
+        const auto g = embedscale::childGeometryFor (*top, logical);
+        return imgui::DuskPanelWindow::Geometry { g.x, g.y, g.width, g.height, g.scale };
+    };
+    const auto geometry = callbacks.geometry();
+    pianoRollWindow->setCallbacks (std::move (callbacks));
+    topLevel->addAndMakeVisible (pianoRollDim.get());
+    pianoRollHider.hideUnder (*topLevel, { pianoRollDim.get() });
+    if (! pianoRollWindow->open (parentHandle, geometry))
+    {
+        const auto why = pianoRollWindow->lastOpenFailure();
+        pianoRoll = nullptr;
+        pianoRollWindow.reset();
+        finishPianoRollClose();
+        setStatusText (why.empty() ? "Piano roll unavailable: this display cannot carry it" : why.c_str());
+    }
+   #endif
 }
 
-void MainComponent::closePianoRoll (bool deferDestruction)
+void MainComponent::closePianoRoll()
 {
-    // Cancel any in-flight collapse animation BEFORE resetting - the
-    // ComponentAnimator holds raw pointers and would tick into freed
-    // memory otherwise (false = leave at current pos, don't snap).
-    auto& animator = juce::Desktop::getInstance().getAnimator();
-    if (pianoRoll != nullptr) animator.cancelAnimation (pianoRoll.get(), false);
-    if (pianoRollDim != nullptr) animator.cancelAnimation (pianoRollDim.get(), false);
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    if (! pianoRollShowing()) return;
+    pianoRoll->yieldDragToRecordCommit();
+    pianoRollClosing = true;
+    pianoRollWindow->close();
+   #endif
+}
 
-    // Clear the shared CursorOverlay first - JUCE doesn't fire
-    // mouseExit on a component being removed, so the editor's
-    // onMouseExitedForCursor callback won't run on its own. Without
-    // this, the painted glyph stays stuck at the last position and
-    // (on Linux) the native cursor stays hidden because the
-    // setNativeCursorVisible(true) transition never fires.
-    if (cursorOverlay != nullptr) cursorOverlay->clearMousePosition();
-    if (pianoRoll != nullptr) removeChildComponent (pianoRoll.get());
-    if (pianoRollDim != nullptr) removeChildComponent (pianoRollDim.get());
-    if (deferDestruction && pianoRoll != nullptr)
-        dusk::callAsync ([doomed = std::shared_ptr<PianoRollComponent> (std::move (pianoRoll))] {});
-    pianoRoll.reset();
+void MainComponent::destroyPianoRoll()
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    if (pianoRollWindow == nullptr) return;
+    const bool wasOpen = pianoRollWindow->isOpen();
+    pianoRoll = nullptr;
+    pianoRollWindow.reset();
+    if (wasOpen) finishPianoRollClose();
+   #endif
+}
+
+bool MainComponent::pianoRollShowing() const noexcept
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    return pianoRollWindow != nullptr && pianoRollWindow->isOpen() && ! pianoRollClosing;
+   #else
+    return false;
+   #endif
+}
+
+#if DUSKSTUDIO_HAS_NATIVE_UI
+void MainComponent::finishPianoRollClose()
+{
+    pianoRoll = nullptr;
+    pianoRollClosing = false;
     pianoRollDim.reset();
-    pianoRollTrackIdx  = -1;
+    pianoRollHider.restore();
+    pianoRollTrackIdx = -1;
     pianoRollRegionIdx = -1;
-    // The editor's toolbar may have changed session.editMode while open;
-    // refresh the strip's native cursor so it reflects the mode immediately
-    // rather than waiting for the first mouse move over the strip.
+    editorKeyHeld.clear();
     if (tapeStrip != nullptr) { tapeStrip->refreshModeCursor(); tapeStrip->repaint(); }
     scheduleEditModeRestore();
 }
-
-void MainComponent::closePianoRollAnimated()
-{
-    if (pianoRoll == nullptr) return;
-
-    juce::Rectangle<int> startRect;
-    if (tapeStrip != nullptr)
-    {
-        const auto rr = tapeStrip->midiRegionScreenRect (pianoRollTrackIdx, pianoRollRegionIdx);
-        if (! rr.isEmpty())
-            startRect = getLocalArea (tapeStrip.get(), rr);
-    }
-    // No usable target rect (region scrolled off): skip the collapse and
-    // tear down immediately.
-    if (! editorStartRectUsable (startRect)) { closePianoRoll(); return; }
-
-    if (cursorOverlay != nullptr) cursorOverlay->clearMousePosition();
-    auto& animator = juce::Desktop::getInstance().getAnimator();
-    animator.animateComponent (pianoRoll.get(), startRect, 0.0f, kEditorCloseMs, false, 1.0, 0.0);
-    if (pianoRollDim != nullptr)
-        animator.animateComponent (pianoRollDim.get(), pianoRollDim->getBounds(), 0.0f,
-                                   kEditorCloseMs, false, 1.0, 0.0);
-    editorTeardownTimer = std::make_unique<OneShotTimer> (kEditorCloseMs, [this] { closePianoRoll(); });
-}
+#endif
 
 void MainComponent::openAudioEditor (int trackIdx, int regionIdx)
 {
@@ -6492,13 +6503,10 @@ void MainComponent::openAudioEditor (int trackIdx, int regionIdx)
    #if ! DUSKSTUDIO_HAS_NATIVE_UI
     setStatusText ("Audio editor unavailable: built without the native UI");
    #else
-    // Drop any pending collapse-teardown (see openPianoRoll).
-    editorTeardownTimer.reset();
-
     // Remember the tapestrip's edit tool before any modal can change it.
     snapshotEditModeForModal();
 
-    if (pianoRoll != nullptr) closePianoRoll();
+    destroyPianoRoll();
 
     // A second double-click on the region being edited reads as "done"; any other
     // region replaces the editor.
@@ -6877,7 +6885,7 @@ void MainComponent::closeForTrackMove (const TrackMovePlan& plan)
     if (tapeStrip != nullptr) tapeStrip->prepareForTrackMove();
     // The piano roll may be the one whose undo is moving the tracks. The audio
     // editor stays up and follows its track instead.
-    if (pianoRoll != nullptr && moves (pianoRollTrackIdx)) closePianoRoll (true);
+    if (pianoRoll != nullptr && moves (pianoRollTrackIdx)) closePianoRoll();
     if (tuner != nullptr && moves (session.tuneTrackIndex.load (std::memory_order_relaxed))) closeTuner();
     if (consoleView != nullptr) consoleView->closeTrackEditors (plan);
 }
@@ -6917,7 +6925,9 @@ void MainComponent::undoOrRedo (bool redo)
         }
     }
     undoOrExplain (engine, *this, redo);
-    if (pianoRoll != nullptr) pianoRoll->followRegionEdits();
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    if (pianoRollShowing()) pianoRoll->followRegionEdits();
+   #endif
     refreshImportPickers();
 }
 
@@ -6935,12 +6945,6 @@ void MainComponent::closeVirtualKeyboard()
     if (virtualKeyboardWindow == nullptr || ! virtualKeyboardWindow->isOpen())
         return;
 
-    // Every route out of the keyboard ends here - the toggle, Escape and the click
-    // outside the plate, the modal yield, and the close a graphics failure forces -
-    // so the in-flight step-record chord state is reset here rather than at one of
-    // them. Stale held-counters would otherwise survive to the next open.
-    if (pianoRoll != nullptr)
-        pianoRoll->resetStepRecordState();
     virtualKeyboardWindow->close();
    #endif
 }
@@ -6976,8 +6980,8 @@ void MainComponent::toggleVirtualKeyboard()
         return;
     }
 
-    if (auto hook = EmbeddedModal::beforeModalShown())
-        hook();
+    yieldNotepadWindow();
+    closeNativePanelsForModal (true);
 
     if (virtualKeyboardWindow == nullptr)
     {
@@ -6989,6 +6993,8 @@ void MainComponent::toggleVirtualKeyboard()
         callbacks.dismissed = [this] { closeVirtualKeyboard(); };
         callbacks.closed = [this]
         {
+            virtualKeyboardView = nullptr;
+            if (pianoRollShowing()) pianoRoll->resetStepRecordState();
             virtualKeyboardDim.reset();
             virtualKeyboardHider.restore();
             reclaimFocusFromNotepad();
@@ -7020,20 +7026,22 @@ void MainComponent::toggleVirtualKeyboard()
     // a MidiNote at the playhead. The roll's stepRecordNoteOn / Off handle the
     // chord-aware playhead advance.
     juce::Component::SafePointer<MainComponent> safeThis (this);
-    virtualKeyboardWindow->setView (imgui::makeVirtualKeyboardView (
+    auto keyboardView = imgui::makeVirtualKeyboardView (
         engine,
         [safeThis] (int note, int velocity, int)
         {
             if (auto* self = safeThis.getComponent())
-                if (self->pianoRoll != nullptr)
+                if (self->pianoRollShowing())
                     self->pianoRoll->stepRecordNoteOn (note, velocity);
         },
         [safeThis] (int note, int)
         {
             if (auto* self = safeThis.getComponent())
-                if (self->pianoRoll != nullptr)
+                if (self->pianoRollShowing())
                     self->pianoRoll->stepRecordNoteOff (note);
-        }));
+        });
+    virtualKeyboardView = keyboardView.get();
+    virtualKeyboardWindow->setView (std::move (keyboardView));
 
     const auto plate = virtualKeyboardWindow->plateSize();
     const auto logical = embedscale::centredChildBounds (*topLevel, plate.width,
@@ -7051,6 +7059,7 @@ void MainComponent::toggleVirtualKeyboard()
                                        { geometry.x, geometry.y, geometry.width,
                                          geometry.height, geometry.scale }))
     {
+        virtualKeyboardView = nullptr;
         virtualKeyboardDim.reset();
         virtualKeyboardHider.restore();
         const auto& why = virtualKeyboardWindow->lastOpenFailure();

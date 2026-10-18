@@ -105,8 +105,8 @@ jobs:
         # Linux workflows.
         env:
           JUCE_MIRROR: https://github.com/dusk-audio/JUCE-wayland.git
-          JUCE_TAG: dusk-wayland-v2
-          JUCE_REV: 4d85afa175a45e0b5da11f9211de3ba88705588e
+          JUCE_TAG: dusk-wayland-v3
+          JUCE_REV: 075eed7a1000b6b9dfce6aae93e7f2b82fa35f68
         run: |
           set -euo pipefail
           git init -q "${RUNNER_TEMP}/JUCE-wayland"
@@ -128,11 +128,8 @@ jobs:
 
       - name: Configure tests (TSan, RelWithDebInfo)
         # GCC 11's runtime cannot observe pthread_cond_clockwait in timed C++ waits.
-        # RelWithDebInfo preserves -O2 (so the optimiser-driven memory
-        # ordering the engine relies on is the one TSan inspects) plus
-        # -g (so race reports resolve to file:line). Debug would be
-        # easier to read but inhibits the inlining + reordering that's
-        # the actual production codegen.
+        # RelWithDebInfo checks optimized GCC 12 code with line information.
+        # Release Linux jobs separately build with Ubuntu 22.04's GCC 11.
         run: |
           cmake -S . -B build-tsan -G Ninja \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
@@ -238,8 +235,8 @@ jobs:
       - name: Clone JUCE (Dusk-owned Wayland mirror, pinned)
         env:
           JUCE_MIRROR: https://github.com/dusk-audio/JUCE-wayland.git
-          JUCE_TAG: dusk-wayland-v2
-          JUCE_REV: 4d85afa175a45e0b5da11f9211de3ba88705588e
+          JUCE_TAG: dusk-wayland-v3
+          JUCE_REV: 075eed7a1000b6b9dfce6aae93e7f2b82fa35f68
         run: |
           set -euo pipefail
           git init -q "${RUNNER_TEMP}/JUCE-wayland"
