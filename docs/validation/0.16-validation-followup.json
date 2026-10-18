@@ -262,7 +262,16 @@
     "/tmp/dusk-016-sanitizer-order-before.log": "bed8838711ca1533ae28553728887ca19cc893e481110542242fd907f9291b10",
     "/tmp/dusk-016-sanitizer-order-after.log": "a4d28502f31983582bae3a6465a0c694ec9097bdffe7887e88d76b2915f046f5",
     "/tmp/dusk-016-longpath-ci-status-47d144d6.json": "37fa6290f2b19021f74b97d9a392b25f4159e2f073e7d4ee72e8bfce8129d158",
-    "/tmp/dusk-016-macos-feature-cache-final47.txt": "262336925d3da7a9b1b9097e63def07e81a775927a27323957520a1a8b008033"
+    "/tmp/dusk-016-macos-feature-cache-final47.txt": "262336925d3da7a9b1b9097e63def07e81a775927a27323957520a1a8b008033",
+    "/tmp/dusk-016-asan-29-failed-job-sanitized.log": "07dab9778a362bb15dab73580441537b6f0732ad025fd207693d4818d6e953bb",
+    "/tmp/dusk-016-pr895-buffer-failure-state.json": "d21eff60d7bb02ef8fe95cdb16dd69e06a69d992bc49f7c98480cd36f51e6b28",
+    "/tmp/dusk-016-buffer-before-results.json": "56f514eaa4628ce8484df170184ed45d682ec5a5d55f177f2a855d372d950a7b",
+    "/tmp/dusk-016-buffer-before-growth.log": "8e035e31e7c4176f96266cba250ba1196385ee7a621f4695eb70fcf233f97319",
+    "/tmp/dusk-016-buffer-before-copy.log": "55dcfe7b9fd3818d1421e92b63526f5c5b57c4c8e9001350db03c29904038174",
+    "/tmp/dusk-016-buffer-before-all-recover.log": "497d3e3aff4e342a8e2a5a384c3f183c5c27b058c7aa68492e62f5040e49330d",
+    "/tmp/dusk-016-buffer-after.log": "db56ea37bbe7577e15a7217f381a784f2a6996d5efad8b802479f99e406f55ff",
+    "/tmp/dusk-016-buffer-harness-build.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/tmp/dusk-016-buffer-after-build.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
   "long_path_full_followup": {
     "source_commit": "47d144d6315bc6ca5c89bfdf6de2327ed25a4d28",
@@ -367,6 +376,36 @@
       "Microreproducer uses the real sampler ThreadPool header, not the full application.",
       "Extracted GCC12/libstdc++12/libtsan12 use host glibc2.44/startup objects rather than the exact Ubuntu22.04 image.",
       "No suppression, sleep, sampler lifetime edit or retry-based acceptance. Full application/CI results are tracked separately in PR895."
+    ]
+  },
+  "sampler_buffer_undefined_behavior": {
+    "sampler_commit": "51600e9f7f1ebde24b7b2915da4d78dec19b27c6",
+    "sampler_pr": "https://github.com/dusk-audio/dusk-fizz/pull/5",
+    "exposed_by": "Complete ASan/UBSan dependency instrumentation after the sanitizer ordering correction.",
+    "ci_failure": {
+      "source": "29bfe1e9c7f51cb2a6123ccbe48fb5d3a6cbbeba",
+      "run": 39132007959,
+      "job": 117688915857,
+      "test_failures": 25,
+      "distinct_diagnostic_signatures": 1,
+      "cause": "Initial Buffer<float> growth calls memcpy with null source and zero bytes before SFZ parsing."
+    },
+    "correction": "Skip memory copies when the source buffer has zero elements in resize, copy construction and copy assignment. Ownership, allocation, alignment and accounting are unchanged.",
+    "regression": {
+      "runtime": "host GCC16 ASan and UBSan",
+      "runner": "Repository Catch2 single-header main, compiled without sanitizers; BufferT translation unit including Buffer.h compiled with ASan/UBSan at O1.",
+      "before_growth_native_exit": -6,
+      "before_empty_copy_native_exit": -6,
+      "additional_control": "UBSan recovery diagnostics identify resize, copy construction and assignment; all assertions complete, then sandbox LeakSanitizer fails under ptrace. This is a diagnostic control, not a pass.",
+      "after_native_exit": 0,
+      "after_cases": 18,
+      "after_assertions": 3601,
+      "leak_detection": true,
+      "sandbox": "Successful post-fix run is outside sandbox so LeakSanitizer can inspect threads."
+    },
+    "limits": [
+      "Focused buffer proof does not replace the complete Dusk suite or cross-platform CI.",
+      "No sanitizer exclusions, suppressions or lifetime/threading changes."
     ]
   }
 }
