@@ -486,6 +486,20 @@ const ScenarioRegistrar pianoWheelSizes { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runPianoWheelSizes (host, ctx); }
 } };
 
+#if DUSKSTUDIO_HAS_NATIVE_UI
+// Asked of the display server: a native child that Win32 stacks under the roll
+// leaves the dim up with no keyboard in it, missing its clicks while its notes
+// still play. The keyboard covers the roll's centre, so the roll reads as covered.
+void expectKeyboardOverRoll (GuiHost& host, ScenarioContext& ctx, const std::string& when)
+{
+    const int keyboard = host.panelTopmostAtCentre ("virtual-keyboard");
+    if (keyboard == -2) return;
+    ctx.expect (keyboard == 1, "the virtual keyboard is not the topmost window at its centre " + when);
+    ctx.expect (host.panelTopmostAtCentre ("piano-roll") == 0,
+                "the piano roll is not under the virtual keyboard " + when);
+}
+#endif
+
 std::optional<ScenarioResult> runPianoStepRecord (GuiHost& host, ScenarioContext& ctx)
 {
    #if ! DUSKSTUDIO_HAS_NATIVE_UI
@@ -506,7 +520,9 @@ std::optional<ScenarioResult> runPianoStepRecord (GuiHost& host, ScenarioContext
     const auto restore = ctx.tempDir() / "restore.json";
     if (! SessionSerializer::save (session, restore))
         return ScenarioResult::fail ("could not save the initial session");
-    ctx.cleanup ([&host, &session, &transport, originalDir, originalStage, originalPosition, restore]
+    const auto window = host.mainWindowSize();
+    if (window.size() < 4) return ScenarioResult::fail ("the main window reported no size");
+    ctx.cleanup ([&host, &session, &transport, originalDir, originalStage, originalPosition, restore, window]
     {
         host.closeVirtualKeyboard();
         host.closeRegionEditors();
@@ -514,6 +530,7 @@ std::optional<ScenarioResult> runPianoStepRecord (GuiHost& host, ScenarioContext
         applySessionDirectory (session, originalDir);
         transport.setPlayhead (originalPosition);
         host.switchToStage (guiStage (originalStage));
+        host.resizeMainWindow (window[0], window[1]);
     });
     const auto rate = engine.getCurrentSampleRate();
     MidiRegion region;
@@ -532,6 +549,7 @@ std::optional<ScenarioResult> runPianoStepRecord (GuiHost& host, ScenarioContext
     steps->push_back ({ 300, [&host, &ctx]
     {
         ctx.expect (host.virtualKeyboardOpen(), "virtual keyboard did not open above the piano roll");
+        expectKeyboardOverRoll (host, ctx, "on opening");
         // A case cannot make the display server auto-repeat a key, so it reads the
         // flag that keeps a held key from reaching the panels as fresh presses.
         ctx.expect (host.panelKeyRepeat ("virtual-keyboard") == 1,
@@ -559,7 +577,7 @@ std::optional<ScenarioResult> runPianoStepRecord (GuiHost& host, ScenarioContext
                     "releasing the chord advanced before the next note");
         ctx.expect (host.inputVirtualKeyboard ("q"), "next chord key did not reach the native keyboard");
     } });
-    steps->push_back ({ 600, [&ctx, &session, &transport, centre, rate]
+    steps->push_back ({ 600, [&host, &ctx, &session, &transport, centre, rate, window]
     {
         const auto& regions = session.track (0).midiRegions.current();
         ctx.expect (regions.size() == 1 && regions.front().notes.size() == 3, "next chord did not insert a note");
@@ -572,9 +590,15 @@ std::optional<ScenarioResult> runPianoStepRecord (GuiHost& host, ScenarioContext
         }
         ctx.expect (transport.getPlayhead() == session.ticksToSamples (600, rate) && transport.isStopped(),
                     "step record changed the transport state or advanced the wrong distance");
+        expectKeyboardOverRoll (host, ctx, "after the chords");
+        const int width = window[0] - 120 >= window[2] ? window[0] - 120 : window[0] + 120;
+        ctx.expect (host.resizeMainWindow (width, window[1]), "the main window did not take the new width");
     } });
-    steps->push_back ({ 200, [&host, &ctx]
-    { ctx.expect (host.pressPeerKey ("K", 'k'), "K did not reach the piano roll a second time"); } });
+    steps->push_back ({ 400, [&host, &ctx]
+    {
+        expectKeyboardOverRoll (host, ctx, "after the window was resized");
+        ctx.expect (host.pressPeerKey ("K", 'k'), "K did not reach the piano roll a second time");
+    } });
     // The panel's close is deferred, so the verdict waits for it rather than
     // sampling after a fixed delay.
     runSteps (ctx, steps, [&host, &ctx]

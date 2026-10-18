@@ -2956,6 +2956,22 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         return -1;
        #endif
     }
+    int panelTopmostAtCentre (const std::string& panel) const override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        const auto* window = panel == "piano-roll"       ? owner.pianoRollWindow.get()
+                           : panel == "virtual-keyboard" ? owner.virtualKeyboardWindow.get()
+                                                         : nullptr;
+        const auto handle = window != nullptr ? window->nativeWindowHandleForScenario() : 0;
+        if (handle == 0) return -1;
+        const auto topmost = platform::topmostSiblingAtCentre (handle);
+        if (! topmost) return -2;
+        return *topmost == handle ? 1 : 0;
+       #else
+        (void) panel;
+        return -1;
+       #endif
+    }
     bool pianoNativeWindowOpen() const override
     {
        #if DUSKSTUDIO_HAS_NATIVE_UI

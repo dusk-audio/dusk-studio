@@ -30,6 +30,19 @@ const char* glString (unsigned int name)
     const auto* const value = reinterpret_cast<const char*> (glGetString (name));
     return value != nullptr ? value : "(null)";
 }
+
+// X11 and Cocoa stack a new child above its siblings. Win32 links a new WS_CHILD
+// below them and the framework only ever positions it with SWP_NOZORDER, so a panel
+// opened over another one would sit under it, invisible and missing its clicks.
+void raiseAboveSiblings (std::uintptr_t nativeWindow)
+{
+   #if defined (_WIN32)
+    ::SetWindowPos (reinterpret_cast<HWND> (nativeWindow), HWND_TOP, 0, 0, 0, 0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+   #else
+    (void) nativeWindow;
+   #endif
+}
 } // namespace
 
 struct DuskImGuiHost::Impl final : private dusk::Timer
@@ -172,6 +185,7 @@ struct DuskImGuiHost::Impl final : private dusk::Timer
             window->setSize (geometry.width, geometry.height);
            #endif
 
+            raiseAboveSiblings (window->getNativeWindowHandle());
             window->focus();
             appliedScaleFactor = window->getScaleFactor();
             embeddedParent = nativeParent;

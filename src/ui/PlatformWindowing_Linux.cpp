@@ -487,6 +487,57 @@ bool captureNativeWindowToPpm (std::uintptr_t nativeWindow, const std::string& p
     return written;
 }
 
+std::optional<std::uintptr_t> topmostSiblingAtCentre (std::uintptr_t nativeChild)
+{
+    if (nativeChild == 0)
+        return std::uintptr_t {};
+    auto* display = ::XOpenDisplay (nullptr);
+    if (display == nullptr)
+        return std::uintptr_t {};
+
+    std::uintptr_t topmost = 0;
+    {
+        const std::lock_guard<std::mutex> lock (editorTeardownTrapMutex);
+        ScopedCaptureErrorTrap errors (display);
+        ::Window root = 0, parent = 0, grandparent = 0;
+        ::Window* children = nullptr;
+        unsigned int count = 0;
+        ::XWindowAttributes child {};
+        if (::XGetWindowAttributes (display, (::Window) nativeChild, &child) != 0
+            && ::XQueryTree (display, (::Window) nativeChild, &root, &parent, &children, &count) != 0
+            && errors.ok() && parent != 0)
+        {
+            if (children != nullptr)
+                ::XFree (children);
+            children = nullptr;
+            // Attribute positions are the outer corner, border included.
+            const int x = child.x + child.border_width + child.width / 2;
+            const int y = child.y + child.border_width + child.height / 2;
+            // XQueryTree lists the children bottom to top.
+            if (::XQueryTree (display, parent, &root, &grandparent, &children, &count) != 0)
+            {
+                for (unsigned int i = count; i-- > 0 && topmost == 0;)
+                {
+                    ::XWindowAttributes sibling {};
+                    if (::XGetWindowAttributes (display, children[i], &sibling) == 0
+                        || sibling.map_state != IsViewable)
+                        continue;
+                    const int edge = 2 * sibling.border_width;
+                    if (x >= sibling.x && x < sibling.x + sibling.width + edge
+                        && y >= sibling.y && y < sibling.y + sibling.height + edge)
+                        topmost = (std::uintptr_t) children[i];
+                }
+                if (children != nullptr)
+                    ::XFree (children);
+            }
+            if (! errors.ok())
+                topmost = 0;
+        }
+    }
+    ::XCloseDisplay (display);
+    return topmost;
+}
+
 void runX11EditorTeardown (std::uint64_t editorWindowId,
                            const std::function<void()>& teardown)
 {

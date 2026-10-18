@@ -524,6 +524,10 @@ public:
     // system's key auto-repeat: 1 when it does, 0 when held keys reach it as fresh
     // presses, -1 when that panel has no window up.
     virtual int panelKeyRepeat (const std::string& panel) const = 0;
+    // Whether the display server stacks that panel's native window topmost at its own
+    // centre: 1 when it does, 0 when another window covers it there, -1 when that
+    // panel has no window up, -2 when the platform cannot say.
+    virtual int panelTopmostAtCentre (const std::string& panel) const = 0;
     virtual bool doubleClickAudioRegion (int track, int region) = 0;
     // Modifiers as pianoNotePointer takes them: 1 Shift, 2 Cmd/Ctrl.
     virtual bool clickAudioRegion (int track, int region, bool right = false, int modifiers = 0) = 0;

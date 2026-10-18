@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <optional>
 #include <string>
 
 // Forward-decl in the juce namespace so createInProcessEditorHost's
@@ -74,6 +75,17 @@ double nativeViewBackingScale (void* nativeViewHandle);
 //        viewable or the file cannot be written.
 // macOS / Windows: false; nothing captures there.
 bool captureNativeWindowToPpm (std::uintptr_t nativeWindow, const std::string& path);
+
+// Of a native child window and its siblings, the one the display server stacks
+// topmost at the child's centre: the window a click there reaches. GUI scenarios
+// use it to prove a panel opened over another one is not underneath it.
+//
+// Linux: XQueryTree's bottom-to-top child list of the parent, on a connection of
+//        its own.
+// Win:   ChildWindowFromPointEx on the parent, which walks its children top down.
+// macOS: empty, not read there. Elsewhere 0 when the window is gone or
+//        the query failed.
+std::optional<std::uintptr_t> topmostSiblingAtCentre (std::uintptr_t nativeChild);
 
 // Tap Escape at a window through the display server, so it arrives the way a
 // key the user presses does: queued on the application's own connection and
