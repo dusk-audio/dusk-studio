@@ -4,9 +4,10 @@
 #include "../engine/AudioEngine.h"
 #include "../foundation/MessageThread.h"
 
+#include <array>
+#include <cstdint>
 #include <string>
 #include <string_view>
-#include <array>
 
 namespace duskstudio
 {
@@ -93,6 +94,9 @@ public:
         midiMergeToggle.triggerClick();
         return true;
     }
+    const auto& midiMergeButtonForScenario() const noexcept { return midiMergeToggle; }
+    // The toggle's mean painted colour as ARGB, in whatever state it holds now.
+    std::uint32_t midiMergePaintForScenario();
     bool clickKeyboardForScenario()
     {
         if (! keyboardButton.isShowing()) return false;
@@ -118,9 +122,9 @@ public:
     // the tuner itself.
     int getUtilityClusterLeftX() const noexcept { return notepadButton.getX(); }
 
-    // MainComponent clamps the centered stage-tab overlay against this
-    // so RECORDING/MIXING/MASTERING/AUX never slide left over the clock.
-    int getClockRightX() const noexcept { return clockLabel.getRight(); }
+    // Right edge of the left cluster, which ends with MIDI Merge after the
+    // clock. MainComponent keeps the centred bank overlay right of this.
+    int getLeftClusterRightX() const noexcept { return midiMergeToggle.getRight(); }
 
     // Below this width SNAP->S, TIMELINE->chevron, the clock shrinks, and
     // MainComponent's bank overlay uses its compact layout so the transport

@@ -936,6 +936,12 @@ DuskPanelWindow::DuskPanelWindow (std::string className, std::string logTag,
     DuskImGuiHost::Callbacks callbacks;
     callbacks.createWidget = [this] (DGL::Window& window) -> std::unique_ptr<DGL::TopLevelWidget>
     {
+        // X11 delivers a held key's auto-repeat as release/press pairs, and Dear ImGui
+        // applies one transition per key per frame, so on slow frames the pairs queue
+        // up and a released key keeps reading down: a held virtual keyboard key sounds
+        // its note again after release. Dear ImGui repeats held keys itself. The
+        // notepad keeps the system repeat, which is what repeats a held letter there.
+        window.setIgnoringKeyRepeat (true);
         auto widget = std::unique_ptr<Impl::PanelWidget> (new Impl::PanelWidget (window, *impl));
         impl->panelWidget = widget.get();
         impl->buildFonts (static_cast<float> (window.getScaleFactor()));
@@ -1140,6 +1146,11 @@ bool DuskPanelWindow::capturesKeyboardForScenario() const noexcept
 int DuskPanelWindow::keyboardRequestsForScenario() const noexcept
 {
     return impl->keyboardRequests;
+}
+bool DuskPanelWindow::ignoresKeyRepeatForScenario() const noexcept
+{
+    const auto* window = impl->host.window();
+    return window != nullptr && window->isIgnoringKeyRepeat();
 }
 std::uintptr_t DuskPanelWindow::nativeWindowHandleForScenario() const noexcept
 {

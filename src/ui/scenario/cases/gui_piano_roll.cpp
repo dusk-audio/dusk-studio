@@ -532,6 +532,11 @@ std::optional<ScenarioResult> runPianoStepRecord (GuiHost& host, ScenarioContext
     steps->push_back ({ 300, [&host, &ctx]
     {
         ctx.expect (host.virtualKeyboardOpen(), "virtual keyboard did not open above the piano roll");
+        // A case cannot make the display server auto-repeat a key, so it reads the
+        // flag that keeps a held key from reaching the panels as fresh presses.
+        ctx.expect (host.panelKeyRepeat ("virtual-keyboard") == 1,
+                    "the virtual keyboard takes the system's key repeat, so a held key can sound twice");
+        ctx.expect (host.panelKeyRepeat ("piano-roll") == 1, "the piano roll takes the system's key repeat");
         ctx.expect (host.inputVirtualKeyboard ("z") && host.inputVirtualKeyboard ("x"),
                     "chord keys did not reach the native keyboard");
     } });

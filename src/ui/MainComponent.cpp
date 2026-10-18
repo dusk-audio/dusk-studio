@@ -2229,18 +2229,19 @@ void MainComponent::resized()
 
     syncBankButtons (needsBanking ? numBanks : 0);
     const int bankY = rowBounds.getY() + (rowBounds.getHeight() - kBankBtnH) / 2;
-    const int clockRight = rowBounds.getX()
-                         + (transportBar != nullptr ? transportBar->getClockRightX() : 0);
+    const int leftClusterRight = rowBounds.getX()
+                         + (transportBar != nullptr ? transportBar->getLeftClusterRightX() : 0);
     const int utilityLeft = rowBounds.getX()
                          + (transportBar != nullptr ? transportBar->getUtilityClusterLeftX()
                                                       : rowBounds.getWidth());
-    const int bankBandLeft  = clockRight + 12;
+    const int bankBandLeft  = leftClusterRight + 12;
     const int bankBandRight = utilityLeft - 12;
     const int bankBandW = std::max (0, bankBandRight - bankBandLeft);
 
     // Up to eight three-strip pages can exist at the minimum window width.
-    // Fit their buttons inside the actual clock-to-tuner band: reduce the gap
-    // first, then the button width. Labels below follow the resulting width.
+    // Fit their buttons inside the actual band between MIDI Merge and the
+    // notepad: reduce the gap first, then the button width. Labels below
+    // follow the resulting width.
     const auto pageButtons = needsBanking
                            ? consolelayout::fitPageButtons (bankBandW, numBanks,
                                                             preferredBankBtnW,
@@ -2251,14 +2252,14 @@ void MainComponent::resized()
     const int bankClusterW = pageButtons.clusterWidth;
 
     // The toolbar joins the group only with the tape strip open AND when the
-    // combined group still fits between the clock and the BPM / tuner cluster.
+    // combined group still fits between MIDI Merge and the BPM / tuner cluster.
     const bool wantToolbar = ! inFullscreenView && tapeStrip != nullptr && tapeStripExpanded;
     int  groupW = bankClusterW;
     bool toolbarVisible = false;
     if (wantToolbar)
     {
         const int combinedW = bankClusterW + (needsBanking ? kBankToolbarGap : 0) + kHdrClusterW;
-        const int gX = std::max (clockRight + 12, stageCentreX - combinedW / 2);
+        const int gX = std::max (leftClusterRight + 12, stageCentreX - combinedW / 2);
         if (gX + combinedW <= utilityLeft - 12)
         {
             toolbarVisible = true;
@@ -2266,7 +2267,7 @@ void MainComponent::resized()
         }
     }
 
-    // Centre the group under the stage selector, clamped past the clock.
+    // Centre the group under the stage selector, clamped past MIDI Merge.
     const int groupX = std::clamp (stageCentreX - groupW / 2,
                                    bankBandLeft,
                                    std::max (bankBandLeft, bankBandRight - groupW));

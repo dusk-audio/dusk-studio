@@ -1265,6 +1265,47 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     bool clickMidiMerge() override
     { return owner.transportBar != nullptr && owner.transportBar->clickMidiMergeForScenario(); }
 
+    std::vector<std::string> midiMergeObstructions() const override
+    {
+        if (owner.transportBar == nullptr) return { "there is no transport bar" };
+        const auto& toggle = owner.transportBar->midiMergeButtonForScenario();
+        if (! toggle.isShowing()) return { "the toggle is not showing" };
+        std::vector<std::string> found;
+        const auto name = [] (const auto& button)
+        {
+            const auto text = button.getButtonText().toStdString();
+            return "\"" + (text.empty() ? button.getName().toStdString() : text) + "\"";
+        };
+        const auto area = owner.getLocalArea (&toggle, toggle.getLocalBounds());
+        const auto overlaps = [this, &found, &name, area] (const auto& button)
+        {
+            if (button.isShowing() && owner.getLocalArea (&button, button.getLocalBounds()).intersects (area))
+                found.push_back ("the " + name (button) + " button is laid over it");
+        };
+        for (const auto& bank : owner.bankButtons) overlaps (*bank);
+        for (const auto* button : { &owner.hdrSnapBtn, &owner.hdrSnapResBtn, &owner.hdrZoomOutBtn,
+                                    &owner.hdrZoomInBtn, &owner.hdrZoomFitBtn, &owner.hdrChaseBtn,
+                                    &owner.recordingStageBtn, &owner.mixingStageBtn,
+                                    &owner.masteringStageBtn, &owner.auxStageBtn })
+            overlaps (*button);
+        auto* top = owner.getTopLevelComponent();
+        const auto centre = top->getLocalPoint (&toggle, toggle.getLocalBounds().getCentre());
+        const auto* shown = top->getComponentAt (centre);
+        if (shown != &toggle)
+        {
+            const auto* button = dynamic_cast<const decltype (owner.hdrChaseBtn)*> (shown);
+            found.push_back ("a click on its centre lands on "
+                             + (shown == nullptr ? std::string ("nothing")
+                                : button != nullptr ? "the " + name (*button) + " button"
+                                : "\"" + shown->getName().toStdString() + "\""));
+        }
+        return found;
+    }
+    std::uint32_t midiMergePaint() override
+    {
+        return owner.transportBar != nullptr ? owner.transportBar->midiMergePaintForScenario() : 0;
+    }
+
     bool clickPianoMidiMerge() override
     {
         return clickPianoControl ("midi-merge");
@@ -2870,6 +2911,19 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
        #else
         (void) focused;
         return false;
+       #endif
+    }
+    int panelKeyRepeat (const std::string& panel) const override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        const auto* window = panel == "piano-roll"       ? owner.pianoRollWindow.get()
+                           : panel == "virtual-keyboard" ? owner.virtualKeyboardWindow.get()
+                                                         : nullptr;
+        if (window == nullptr || ! window->isOpen()) return -1;
+        return window->ignoresKeyRepeatForScenario() ? 1 : 0;
+       #else
+        (void) panel;
+        return -1;
        #endif
     }
     bool pianoNativeWindowOpen() const override

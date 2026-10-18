@@ -93,6 +93,9 @@ canonical source.
   premature scan ends are rejected instead of rendering uninitialized pixels.
 - **Piano roll controls.** Zoom Fit fits long regions to the full grid width,
   and shifted bracket shortcuts work with hexadecimal window key codes.
+- **Held virtual keyboard keys on Linux.** A key held past the system's
+  auto-repeat delay plays one note. Step record no longer inserts a second
+  note, and recording no longer leaves short repeated notes after release.
 - **PDC changes during playback.** Tracks already playing without compensation
   wait for silence before adding delay. Silent and muted tracks adopt the new
   compensation when their audio resumes.

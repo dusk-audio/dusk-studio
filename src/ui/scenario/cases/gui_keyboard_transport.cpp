@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -1663,6 +1664,89 @@ const ScenarioRegistrar punchMenu { Scenario {
     "gui.punch_menu", { "gui", "transport" }, Needs::Engine | Needs::Gui,
     {}, {}, 15000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runPunchMenu (host, ctx); }
+} };
+
+// How much brighter a lit transport toggle paints than an unlit one, on average.
+constexpr double kToggleOnLift = 40.0;
+
+// The page buttons and the timeline toolbar share the transport row with MIDI Merge,
+// centred under the stage tabs and pushed left toward the toggle when the window is
+// too narrow to centre them. However far they are pushed, the toggle stays uncovered
+// and takes a click on its centre, and its on state reads apart from off.
+std::optional<ScenarioResult> runMidiMergeTransportLayout (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    if (! ctx.engine().getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires stopped transport and no modal");
+    const auto window = host.mainWindowSize();
+    if (window.size() < 4) return ScenarioResult::fail ("the main window reported no size");
+    ctx.keep (session.midiMergeEnabled);
+    keepStage (host, ctx);
+    const bool timeline = host.setTimelineShown (false);
+    ctx.cleanup ([&host, window, timeline]
+    {
+        host.resizeMainWindow (window[0], window[1]);
+        host.setTimelineShown (timeline);
+    });
+    session.midiMergeEnabled.store (false);
+    host.switchToStage (GuiHost::Stage::Recording);
+    const int height = std::max (window[1], window[3]);
+    std::vector<int> widths { window[2], std::max (window[2], 1440), window[0] };
+    widths.erase (std::unique (widths.begin(), widths.end()), widths.end());
+    auto steps = std::make_shared<std::vector<Step>>();
+    for (const int width : widths)
+        for (const bool shown : { false, true })
+        {
+            const auto where = std::to_string (width) + " px with the timeline " + (shown ? "open" : "closed");
+            steps->push_back ({ 0, [&host, &ctx, width, height, shown, where]
+            {
+                ctx.expect (host.resizeMainWindow (width, height), "the window could not be sized to " + where);
+                host.setTimelineShown (shown);
+            } });
+            steps->push_back ({ 300, [&host, &ctx, where]
+            {
+                for (const auto& line : host.midiMergeObstructions())
+                    ctx.expect (false, "MIDI Merge at " + where + ": " + line);
+            }, [&host, width]
+            {
+                const auto size = host.mainWindowSize();
+                return size.size() >= 1 && size[0] == width;
+            }, "the window never took " + where });
+        }
+    const auto lit = [&host] (bool on) { return [&host, on] { return host.midiMergeControls()[0] == (on ? 1 : 0); }; };
+    auto off = std::make_shared<std::uint32_t> (0);
+    steps->push_back ({ 0, [&host, &ctx, off]
+    {
+        *off = host.midiMergePaint();
+        ctx.expect (host.clickMidiMerge(), "the transport MIDI Merge toggle was not clickable");
+    }, lit (false), "the transport toggle did not start off" });
+    steps->push_back ({ 100, [&host, &ctx, &session, off]
+    {
+        ctx.expect (session.midiMergeEnabled.load(), "the transport toggle did not enable MIDI Merge");
+        const auto on = host.midiMergePaint();
+        const auto brightness = [] (std::uint32_t argb)
+        {
+            return 0.299 * ((argb >> 16) & 0xff) + 0.587 * ((argb >> 8) & 0xff) + 0.114 * (argb & 0xff);
+        };
+        char text[96];
+        std::snprintf (text, sizeof text, "off paints #%06x and on #%06x", (unsigned) (*off & 0xffffff),
+                       (unsigned) (on & 0xffffff));
+        ctx.expect (*off != 0 && on != 0, std::string ("the toggle painted nothing: ") + text);
+        ctx.expect (brightness (on) - brightness (*off) >= kToggleOnLift,
+                    std::string ("MIDI Merge on does not stand out from off: ") + text);
+        ctx.expect (host.clickMidiMerge(), "the transport MIDI Merge toggle did not take a second click");
+    }, lit (true), "the transport toggle did not turn on" });
+    steps->push_back ({ 0, [&ctx, &session]
+    { ctx.expect (! session.midiMergeEnabled.load(), "the second click did not turn MIDI Merge off"); },
+        lit (false), "the transport toggle did not turn back off" });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar midiMergeTransportLayout { Scenario {
+    "gui.midi_merge_transport_layout", { "gui", "transport", "midi" }, Needs::Engine | Needs::Gui,
+    {}, {}, 30000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runMidiMergeTransportLayout (host, ctx); }
 } };
 
 std::optional<ScenarioResult> runTransportKeys (GuiHost& host, ScenarioContext& ctx)
