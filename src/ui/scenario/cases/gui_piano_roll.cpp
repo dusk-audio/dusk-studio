@@ -1667,7 +1667,10 @@ std::optional<ScenarioResult> beginNativePianoCase (GuiHost& host, ScenarioConte
                   editMode = session.editMode, snap = session.midiEditorSnap,
                   position = transport.getPlayhead(), loop = transport.isLoopEnabled(),
                   loopIn = transport.getLoopStart(), loopOut = transport.getLoopEnd(),
-                  punch = transport.isPunchEnabled(), punchIn = transport.getPunchIn(), punchOut = transport.getPunchOut()]
+                  punch = transport.isPunchEnabled(), punchIn = transport.getPunchIn(), punchOut = transport.getPunchOut(),
+                  savedLoopStart = session.savedLoopStart, savedLoopEnd = session.savedLoopEnd,
+                  savedLoopEnabled = session.savedLoopEnabled, savedPunchIn = session.savedPunchIn,
+                  savedPunchOut = session.savedPunchOut, savedPunchEnabled = session.savedPunchEnabled]
     {
         engine.stop();
         host.closeVirtualKeyboard();
@@ -1683,6 +1686,12 @@ std::optional<ScenarioResult> beginNativePianoCase (GuiHost& host, ScenarioConte
         transport.setPunchRange (punchIn, punchOut);
         transport.setPunchEnabled (punch);
         host.switchToStage (guiStage (stage));
+        session.savedLoopStart = savedLoopStart;
+        session.savedLoopEnd = savedLoopEnd;
+        session.savedLoopEnabled = savedLoopEnabled;
+        session.savedPunchIn = savedPunchIn;
+        session.savedPunchOut = savedPunchOut;
+        session.savedPunchEnabled = savedPunchEnabled;
     });
     const auto rate = engine.getTimelineSampleRate();
     MidiRegion first;
@@ -2198,9 +2207,13 @@ std::optional<ScenarioResult> runPianoLoopKeysWithoutDevice (GuiHost& host, Scen
     auto& track = session.track (0);
     ctx.keep (track.mode);
     ctx.keep (track.frozen);
-    ctx.cleanup ([&host, &engine, &track, &transport, regions = track.midiRegions.current(),
+    ctx.cleanup ([&host, &engine, &session, &track, &transport,
+                  directory = currentSessionDirectory (session), regions = track.midiRegions.current(),
                   loop = transport.isLoopEnabled(), loopStart = transport.getLoopStart(), loopEnd = transport.getLoopEnd(),
-                  punch = transport.isPunchEnabled(), punchIn = transport.getPunchIn(), punchOut = transport.getPunchOut()]
+                  punch = transport.isPunchEnabled(), punchIn = transport.getPunchIn(), punchOut = transport.getPunchOut(),
+                  savedLoopStart = session.savedLoopStart, savedLoopEnd = session.savedLoopEnd,
+                  savedLoopEnabled = session.savedLoopEnabled, savedPunchIn = session.savedPunchIn,
+                  savedPunchOut = session.savedPunchOut, savedPunchEnabled = session.savedPunchEnabled]
     {
         host.closePiano();
         if (! engine.isAudioCallbackRegistered()) engine.reattachAudioCallback();
@@ -2209,7 +2222,15 @@ std::optional<ScenarioResult> runPianoLoopKeysWithoutDevice (GuiHost& host, Scen
         transport.setLoopEnabled (loop);
         transport.setPunchRange (punchIn, punchOut);
         transport.setPunchEnabled (punch);
+        applySessionDirectory (session, directory);
+        session.savedLoopStart = savedLoopStart;
+        session.savedLoopEnd = savedLoopEnd;
+        session.savedLoopEnabled = savedLoopEnabled;
+        session.savedPunchIn = savedPunchIn;
+        session.savedPunchOut = savedPunchOut;
+        session.savedPunchEnabled = savedPunchEnabled;
     });
+    ctx.setSessionDirectory (ctx.tempDir() / "autosave");
     track.mode.store ((int) Track::Mode::Midi);
     track.frozen.store (false);
     MidiRegion region;
@@ -2259,7 +2280,7 @@ std::optional<ScenarioResult> runPianoLoopKeysWithoutDevice (GuiHost& host, Scen
     steps->push_back ({ 150, [press] { press (2880, "shift + " + keyCodeDescription ('{')); } });
     steps->push_back ({ 150, [click] { click (4800); } });
     steps->push_back ({ 150, [press] { press (4800, "shift + " + keyCodeDescription ('}')); } });
-    steps->push_back ({ 150, [&host, &ctx, &transport, sampleAt]
+    steps->push_back ({ 150, [&host, &ctx, &session, &transport, sampleAt]
     {
         ctx.expect (transport.getPunchIn() == sampleAt (2880) && transport.getPunchOut() == sampleAt (4800)
                         && transport.isPunchEnabled(),
@@ -2268,6 +2289,9 @@ std::optional<ScenarioResult> runPianoLoopKeysWithoutDevice (GuiHost& host, Scen
                         + " to " + std::to_string (sampleAt (4800)));
         for (const auto* invalid : { "#", "#7bz", "#100000000", "#80", "#-1" })
             ctx.expect (! host.pressPianoRollKey (invalid), "the piano roll accepted malformed key " + std::string (invalid));
+        host.autosaveTick();
+        ctx.expect (session.savedLoopEnabled && session.savedPunchEnabled,
+                    "autosave did not publish the temporary loop and punch settings");
     } });
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
