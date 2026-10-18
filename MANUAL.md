@@ -70,9 +70,9 @@ The main window is laid out top to bottom: menu bar, stage selector (RECORDING /
 
 ## Pick an audio device
 
-Open **Settings → Audio…**. Choose your interface, sample rate, and block size. 48 kHz at 256 samples is a safe default; drop to 128 if your hardware can keep up and you need lower monitoring latency.
+Open **Settings → Settings...**, then select the **Audio** tab. Choose your interface, sample rate, and block size. 48 kHz at 256 samples is a safe default; drop to 128 if your hardware can keep up and you need lower monitoring latency.
 
-![Audio device panel with a real interface selected.](docs/images/qg-02-audio-settings.png)
+![Audio settings tab with device, sample rate and block size controls.](docs/images/qg-02-audio-settings.png)
 
 On Linux, the graph appears as "PipeWire" and raw hardware as "ALSA"; pick whichever owns your interface. On macOS, both Core Audio devices and any AVB / aggregate devices show up. On Windows, ASIO drivers appear ahead of WASAPI.
 
@@ -345,7 +345,7 @@ chapter. Everything below is the long form.
   restores the software fallback.
 - **If the notepad ever takes Dusk Studio down with it**, it will not do so twice. A graphics driver that ends the application while the notepad is drawing its first frame leaves a marker behind, and the next launch refuses the notepad and names the renderer that did it. Upgrading to the packaged llvmpipe renderer automatically clears a marker written by an older release; markers created afterward remain guarded even if the renderer changes again. After any other graphics-driver change, delete the `notepad-first-frame` file in Dusk Studio's configuration folder to retry. Any build that encounters Mesa's GL-on-D3D12 OpenGL Compatibility Pack refuses it because it is known to end the application; install the graphics vendor's OpenGL driver instead. To keep the notepad switched off permanently, set `notepad_enabled=0` in `app-config.properties` in that same folder.
 
-Any modern multi-core CPU (Intel, AMD, or Apple Silicon) is sufficient for a 24-track session at 48 kHz. With **Multicore DSP** set to Auto (the default — see *Settings → Advanced*), the channel-strip work is shared across the available cores, so lower-power multi-core machines handle larger sessions more comfortably. The compressor and EQ on every channel are oversampled when the global oversampling factor is raised; expect roughly 2-3× the mix-engine CPU at 4× oversampling (keep oversampling at 1× on low-power machines).
+Any modern multi-core CPU (Intel, AMD, or Apple Silicon) is sufficient for a 24-track session at 48 kHz. With **Multicore DSP** set to Auto (the default — see the *Advanced* tab under *Settings → Settings...*), the channel-strip work is shared across the available cores, so lower-power multi-core machines handle larger sessions more comfortably. The compressor and EQ on every channel are oversampled when the global oversampling factor is raised; expect roughly 2-3× the mix-engine CPU at 4× oversampling (keep oversampling at 1× on low-power machines).
 
 ## Installing Dusk Studio
 
@@ -386,7 +386,7 @@ Current beta DMGs are not notarized. On recent macOS releases, the first-open ap
 5. Next to *"DuskStudio" was blocked to protect your Mac*, click **Open Anyway**.
 6. In the *Open "DuskStudio"?* dialog, click **Open Anyway**.
 7. Approve with Touch ID or an administrator password.
-8. Dusk Studio then asks for microphone access. The window opens behind the prompt with playback working, and until you answer the transport bar says **Waiting for microphone access. Answer the macOS prompt to record.** Click **Allow** and the input is added straight away, as long as nothing is playing, recording or bouncing and you have not picked a device in **Settings > Audio** in the meantime; otherwise choose the input there. If you click **Don't Allow**, Dusk Studio opens no input and the transport bar says **Microphone access is off. Allow Dusk Studio in System Settings > Privacy & Security > Microphone to record.** Turn it on there later, then quit and reopen Dusk Studio.
+8. Dusk Studio then asks for microphone access. The window opens behind the prompt with playback working, and until you answer the transport bar says **Waiting for microphone access. Answer the macOS prompt to record.** Click **Allow** and the input is added straight away, as long as nothing is playing, recording or bouncing and you have not picked a device in the **Audio** tab under **Settings → Settings...** in the meantime; otherwise choose the input there. If you click **Don't Allow**, Dusk Studio opens no input and the transport bar says **Microphone access is off. Allow Dusk Studio in System Settings > Privacy & Security > Microphone to record.** Turn it on there later, then quit and reopen Dusk Studio.
 9. Subsequent launches work normally; macOS only asks once per build.
 
 If you later install a newer build (different binary hash), the bypass dance repeats once for that new build.
@@ -459,7 +459,7 @@ Press **RECORDING** to focus the channel strips on input routing and arm control
 
 ## Configuring audio
 
-Open **Settings → Audio…** to choose your audio device. Use the tabs across the top to switch between Audio, Control Surface, MIDI Bindings, MIDI Sync, General, Advanced and SFZ Library. The panel remembers the last tab while Dusk Studio is open.
+Open **Settings → Settings...**, then select the **Audio** tab to choose your audio device. Use the tabs across the top to switch between Audio, Control Surface, MIDI Bindings, MIDI Sync, General, Advanced and SFZ Library. The panel remembers the last tab while Dusk Studio is open.
 
 ### Audio
 
@@ -549,7 +549,7 @@ Modal dialogs (audio settings, plugin picker, region editor, piano roll, import 
 
 The readout in the menu bar's right corner shows the device state (`Audio: 48 kHz 5.3 ms`) and the engine load (`DSP: 12% (0/0)`). The parenthesised pair counts audio dropouts: engine-side overruns / backend (driver) xruns. The segment turns red when load passes ~85% or either counter is non-zero. **Double-click the DSP readout to reset the counters** — useful after fixing whatever caused a dropout so you can watch for fresh ones.
 
-On Linux the readout can also end in `RT 1` (or a higher count). Under the limit RTKit and PipeWire set, a plug-in that holds a realtime audio thread for about 200 ms without a break has the system end Dusk Studio. Instead, the thread is moved to normal priority on the kernel's warning shortly before that, and the count says how many of those warnings came. A warning that reaches a thread not running at realtime priority moves nothing, but it is counted too. A Multicore DSP thread goes back to realtime priority by itself the next time the transport is stopped. The audio device's own thread stays at normal priority, so dropouts are more likely, until you open the device again in **Settings > Audio**. The double-click resets this count too.
+On Linux the readout can also end in `RT 1` (or a higher count). Under the limit RTKit and PipeWire set, a plug-in that holds a realtime audio thread for about 200 ms without a break has the system end Dusk Studio. Instead, the thread is moved to normal priority on the kernel's warning shortly before that, and the count says how many of those warnings came. A warning that reaches a thread not running at realtime priority moves nothing, but it is counted too. A Multicore DSP thread goes back to realtime priority by itself the next time the transport is stopped. The audio device's own thread stays at normal priority, so dropouts are more likely, until you open the device again in the **Audio** tab under **Settings → Settings...**. The double-click resets this count too.
 
 ## The four stages
 
@@ -1764,7 +1764,7 @@ Plugin scan results are cached in:
 
 The native hosts keep their own sidecar caches next to it (`clap-cache.json` and `vst3-native-cache.json` on every OS, `lv2-native-cache.json` on Linux and macOS, `au-native-cache.json` on macOS), rebuilt by the same **Scan plugins** button. Existing XML sidecars are used as a fallback whenever the matching JSON cache cannot be loaded, including when it is absent, malformed, or unusable; subsequent scans write JSON. The native LV2 scan reads only the bundles' manifests, and the native AU scan reads the macOS Audio Component registry metadata; neither scan instantiates plugin code, so a broken plugin cannot crash that scan and is simply skipped (or reported when you try to load it).
 
-To re-scan on every launch, enable **Settings → General → Scan plugins on startup**. It uses the same progress window, cancels the same way, and reports what it found to the session log rather than to an alert.
+To re-scan on every launch, open **Settings → Settings...**, select **General**, and enable **Scan plugins on startup**. It uses the same progress window, cancels the same way, and reports what it found to the session log rather than to an alert.
 
 A plugin that never finishes being probed — most often one waiting on a licence or authorisation dialog it cannot show during a scan — is given 30 seconds and then ended, so the scan moves on to the next one. A standard-host plugin is quarantined at that point and skipped by every later scan; the alert at the end of a **Scan plugins** run says how many are quarantined and which file to delete to probe them again. CLAP and VST3 bundles read by Dusk Studio's own hosts are only skipped, and are probed again on the next scan.
 
@@ -2013,7 +2013,7 @@ In **Online**, **All repositories** is selected by default: enter an optional se
 
 Recent GitHub metadata may be reused for five minutes to reduce repository requests; community catalog descriptions may be reused for six hours. Saved repository responses are limited to 64 MiB and 256 entries. Responses older than 30 days are removed as the library updates, so **Browse cached** may require a new online search for an older listing. Repository and artwork caches stay in the platform's Dusk Studio data directory, even when the library uses an external drive.
 
-The default downloaded library is `~/.local/share/Dusk Studio/sfz-library` on Linux (`XDG_DATA_HOME` overrides `~/.local/share`), `%LOCALAPPDATA%\Dusk Studio\sfz-library` on Windows, and `~/Library/Application Support/Dusk Studio/sfz-library` on macOS. **Settings > SFZ Library** lets you choose another folder, including an external drive.
+The default downloaded library is `~/.local/share/Dusk Studio/sfz-library` on Linux (`XDG_DATA_HOME` overrides `~/.local/share`), `%LOCALAPPDATA%\Dusk Studio\sfz-library` on Windows, and `~/Library/Application Support/Dusk Studio/sfz-library` on macOS. The **SFZ Library** tab in **Settings → Settings...** lets you choose another folder, including an external drive.
 
 After upgrading, packs in the former default configuration folder remain available in place. New downloads use the data folder unless you have already chosen a download location; saved locations keep their existing folders.
 
@@ -2100,7 +2100,7 @@ The measured latency is stored per insert and applied as an internal delay line 
 
 To slave Dusk Studio to an external master (drum machine, sequencer, or another DAW):
 
-1. Open **Settings → MIDI Sync**.
+1. Open **Settings → Settings...**, then select the **MIDI Sync** tab.
 2. Set **Sync source input** to the MIDI port the master is sending Clock on.
 3. Enable **Chase transport (Start/Stop)** if you want Dusk Studio to also follow the master's transport.
 
@@ -2136,7 +2136,7 @@ Dusk Studio emits quarter-frame messages while rolling, plus a full-frame sysex 
 
 To control Dusk Studio from an external surface (tested against the Tascam DP-24SD):
 
-1. Open **Settings → Control surface**.
+1. Open **Settings → Settings...**, then select the **Control Surface** tab.
 2. Set **MCU input** to the surface's MIDI output.
 3. Set **MCU output** to the surface's MIDI input.
 
@@ -2222,7 +2222,7 @@ Right-click the binding in the MIDI Bindings panel to change its mode.
 
 ## The MIDI Bindings panel
 
-Open from **Settings → MIDI bindings…**.
+Open **Settings → Settings...**, then select the **MIDI Bindings** tab.
 
 Each row shows:
 
@@ -2621,13 +2621,13 @@ On Linux, launching Dusk Studio from a terminal prints the full embed sequence, 
 A plugin is using more than 60% (or 85% in OOP mode) of the audio buffer time for four blocks in a row, and has been bypassed for safety.
 
 - Right-click the slot and choose **Re-enable plugin**.
-- If it auto-bypasses again, the plugin is too expensive for the current buffer size. Raise the buffer size in **Settings → Audio**, or use a less expensive plugin.
+- If it auto-bypasses again, the plugin is too expensive for the current buffer size. Raise the buffer size in the **Audio** tab under **Settings → Settings...**, or use a less expensive plugin.
 
 ## Pops, clicks, or glitches
 
-- Raise the audio device's block size in **Settings → Audio**.
+- Raise the audio device's block size in the **Audio** tab under **Settings → Settings...**.
 - On Linux, raise the ALSA period count from 2 to 3.
-- Reduce the effect oversampling to 1× in **Settings → Advanced**.
+- Reduce the effect oversampling to 1× in the **Advanced** tab under **Settings → Settings...**.
 - Check that no track is clipping (red bar at the top of the input meter).
 - Close other CPU-heavy programs.
 
@@ -2659,7 +2659,7 @@ If your audio interface goes away while Dusk Studio is running — USB cable yan
 - Surfaces a banner: *"The active audio device has disconnected. Open Audio Settings to select a new device."*
 - Leaves your session untouched on disk and in memory.
 
-Reconnect the interface (or pick a different device in **Settings → Audio**), and the engine re-prepares every channel strip and aux at the new sample rate / block size automatically. No restart required.
+Reconnect the interface (or pick a different device in the **Audio** tab under **Settings → Settings...**), and the engine re-prepares every channel strip and aux at the new sample rate / block size automatically. No restart required.
 
 If the disconnect happened during a take, the WAV that was being written is committed up to the last full audio block. The region is added to your timeline at the take start position — same as if you'd pressed Stop manually. The session save / autosave path is independent of the audio device.
 
@@ -2673,7 +2673,7 @@ If the interface saved in your settings is held by another application when Dusk
 - If that lands on a **different** working device or backend, you keep working and see *"Your saved audio setup for … could not be opened … Audio has switched to …"*. Your saved setup is **not** changed — it's tried again on the next launch once you free it.
 - If nothing opens, you get a clear warning. With no device open the playhead and meters won't move, recording is disabled, and plugin and soundfont loading is refused — the channel strips take their sample rate and block size from the running device, so there is nothing to prepare an insert against until one opens. The timeline and the piano roll still show and edit the session, timed at the rate the device last ran at; with none since launch, at the rate the session was saved at (48 kHz for a new one). Files you import are converted to that rate, and a Mackie surface's timecode counts at it.
 
-Either way, free the device in the other app (or run `pactl suspend-sink <sink-name> 1` to release a PipeWire/PulseAudio hold), then pick it again in **Settings → Audio**. Your saved setup returns automatically next launch once it's free.
+Either way, free the device in the other app (or run `pactl suspend-sink <sink-name> 1` to release a PipeWire/PulseAudio hold), then pick it again in the **Audio** tab under **Settings → Settings...**. Your saved setup returns automatically next launch once it's free.
 
 # Accessibility
 

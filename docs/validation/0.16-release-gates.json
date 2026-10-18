@@ -53,7 +53,8 @@
       "latest_through": "95320fd29a8c5e56a651be1df791a2e7c8a9fe2e",
       "latest_result": "Independent read-only audit confirmed fresh Mac 1708-entry CTest and four-case GUI results, package hashes/scope, source bounds and validation log hashes. Corrected one stale audit sentence: the Mac startup-guard transfer is explicitly approved and completed; no payload approval remains pending. Dependency publication preflight was added after that audit and locally verified.",
       "publication_and_runner_result": "Independent audit confirmed ten successful required DAF checks, protected merge63e7c861, reviewed-tree equality, JUCE annotated tag object and peeled075eed7a target, runner build/contracts and all140 recorded log hashes. Historical platform/package source and dependency bounds retained.",
-      "live_result": "Independent read-only audit confirmed four installs, license/receipt distinctions, 79 offline identities, four final renders, source bounds and stated limitations. Negative-control evidence files were added after that audit and locally hashed."
+      "live_result": "Independent read-only audit confirmed four installs, license/receipt distinctions, 79 offline identities, four final renders, source bounds and stated limitations. Negative-control evidence files were added after that audit and locally hashed.",
+      "platform_followup_result": "Independent audit confirmed current Windows 1697-entry CTest, 177/0/9 engine and 4/0/0 native-exit0 GUI results. Confirmed Mac 3-provider/78-program/3-render and Windows 3-provider/4-program/3-render bounds. Mac default-catalog error JSON and current-binary GUI results were captured afterward; final evidence preserves source-specific limits and helper cancellation controls."
     },
     "windows_startup_integration": {
       "through": "95320fd29a8c5e56a651be1df791a2e7c8a9fe2e",
@@ -76,7 +77,7 @@
   },
   "manual_sync": {
     "product_changes": "SFZ upgrade discovery and dropdown behavior documented in earlier commits.",
-    "latest_changes": "Supporter group headings from main are synchronized in MANUAL.md in merge 1a31d8ff. Scenario path assertions and regression-runner isolation are internal test/tooling changes; no additional MANUAL edit required."
+    "latest_changes": "Settings menu/tab routes and the audio-settings figure caption corrected. CHANGELOG now explicitly discloses HTTPS repository/artwork requests and startup/session isolation. Existing transport alert quotes remain verbatim."
   },
   "hygiene": "Staged diff reviewed before every commit; load-bearing invariants retained.",
   "coverage": {
@@ -93,7 +94,7 @@
     {
       "issue": 804,
       "implemented_or_reviewed": "External SFZ sources implemented; issue wording needs reconciliation with revised Creative Commons source policy.",
-      "remaining": "Linux backend samples pass for all four live sources, including install/verify, 79 offline program identities and four native renders. Normal GUI, shipping packages and other supported systems remain."
+      "remaining": "Live backend evidence now covers four sources on Linux, three on Mac and three on Windows. Mac Musical Artifacts and Windows VSCO remain incomplete; normal GUI, shipping packages, default Windows VSCO/VCSL paths and live resume remain."
     },
     {
       "issue": 825,
@@ -108,7 +109,7 @@
     {
       "issue": 866,
       "implemented_or_reviewed": "GUI isolation, dropdown focus and frame readiness fixes committed. X11 sandbox child crash and logical/native focus race reproduced and fixed. Cocoa focus-event regression and fix proven; four clean foreground Mac mastering GUI checks pass. Windows VBlank startup crash fixed in the normal build; full/native tests pass. Four Windows interactive mastering GUI checks pass with app exit0.",
-      "remaining": "Complete shipping-configuration/sanitizer CI, latest Windows source refresh, cold-host package checks and maintainer walkthrough. Reviewed dependency fixes are published; Linux/Mac prepush and four foreground Mac GUI cases pass."
+      "remaining": "Final shipping/sanitizer CI, cold-host package checks and maintainer walkthrough. Latest-head Windows full/native, 177 engine and four GUI cases pass; latest Mac binary passes four foreground GUI cases."
     },
     {
       "issue": 870,
@@ -138,7 +139,7 @@
     {
       "issue": 878,
       "implemented_or_reviewed": "Durable SFZ downloads and explicit resume implemented.",
-      "remaining": "Live VSCO-2-CE install, verification and 75 offline identities pass on Linux. Pause, restart/resume and recovery across supported systems remain."
+      "remaining": "Live VSCO-2-CE install, verification and 75 offline identities pass on Linux and Mac. Windows attempts stop at the validation free-space guard. Pause, restart/resume and recovery across supported systems remain."
     },
     {
       "issue": 879,
@@ -167,13 +168,13 @@
     },
     {
       "issue": 884,
-      "implemented_or_reviewed": "Manual figures refreshed and all 42 image references resolve.",
-      "remaining": "Final metadata/version/date update after release gates."
+      "implemented_or_reviewed": "Manual figures refreshed, all 42 image references resolve, HTTPS behavior disclosed, and Settings menu/tab directions plus the figure caption synchronized.",
+      "remaining": "Close after integration merge; final version/date metadata remains a release-step gate."
     },
     {
       "issue": 885,
-      "implemented_or_reviewed": "Tracked smaller findings implemented; deferred DSP restart remains idle-only and requires reattachment after detachment.",
-      "remaining": "Record intended restart behavior and final platform evidence."
+      "implemented_or_reviewed": "All 16 smaller findings reconciled against current sources/tests. Deferred DSP restart intentionally detaches around DSP/worker mutation, only on its owner thread while stopped, registered, unsuspended and outside render/device lifecycle. Regression preserves deliberate callback detachment.",
+      "remaining": "Close after integration merge; independent source audit and current platform evidence complete."
     },
     {
       "issue": 886,
@@ -187,8 +188,8 @@
     }
   ],
   "remaining_release_gates": [
-    "Final shipping-configuration and full sanitizer CI with published dependencies; latest Windows source refresh and cold-host package checks. Linux/Mac prepush passes at f628ee124505d8fa53f081bb66982f3b817ad61c.",
-    "Live SFZ GUI and shipping-platform operations, pause/restart/resume and remaining license-policy checks. Sampled Linux backend browse/license/install/verify/offline identities and four native renders pass for all four sources at 1a31d8ff.",
+    "Final shipping-configuration and sanitizer CI on the final main candidate, refreshed package dry runs and cold-host package checks. Complete Linux/Mac prepush and Windows full/native/engine/GUI validation now pass at 54ef8312; current Mac foreground GUI also passes.",
+    "Live SFZ GUI and shipping-platform operations, pause/restart/resume, remaining license-policy checks, Mac Musical Artifacts service access, and Windows VSCO/VCSL with sufficient space. Sampled backend/verify/offline/render passes cover four providers on Linux and three each on Mac and Windows.",
     "Physical external-drive tests.",
     "Cold high-rate and Pi performance.",
     "Maintainer manual pass on Linux, macOS and Windows.",
@@ -488,13 +489,13 @@
     "0ed2f709": "macOS CTest passed; Linux full GUI exposed focus race fixed in 0f86caa9. Windows compilation finished but link found stale libsodium cache path. Previous tarball and DMG dry runs passed contents/version/selftest checks."
   },
   "platform_status": {
-    "linux": "App/test builds, 1762 CTest entries twice (including CI realtime/memlock limits), self-test, IPC, 186 engine scenarios and black-box legs pass at f628ee124505d8fa53f081bb66982f3b817ad61c. Sampled live backends for all four SFZ providers and four native renders pass at 1a31d8ff. Earlier full GUI and package scopes remain separately bounded.",
-    "macos": "Dedicated prepush app/test builds, 1708 CTest entries, self-test and 177 engine scenarios pass at f628ee124505d8fa53f081bb66982f3b817ad61c. Native CoreMIDI is enabled; native LV2 remains disabled. Four foreground mastering GUI cases pass at product-equivalent 1a31d8ff. Earlier required native-state/package scopes remain separately bounded.",
-    "windows": "Normal guarded app/test builds, 1697 CTest entries, focused SFZ, strict ASIO and VST3/CLAP state checks pass at 95320fd2. Original service-session startup regression passes with zero captured access violations. All four interactive mastering GUI checks pass in session1, app exit0, pinned Mesa renderer. Refreshed MSI contents/version/legal checks pass; current app and pinned Mesa hashes verified inside the package."
+    "linux": "App/test builds, 1762 CTest entries twice (including CI realtime/memlock limits), self-test, IPC, 186 engine scenarios and black-box legs pass at 54ef8312. Sampled live backends for all four SFZ providers and four native renders pass at product-equivalent 1a31d8ff. Earlier full GUI and package scopes remain separately bounded.",
+    "macos": "Dedicated prepush app/test builds, 1708 CTest entries, self-test, 177 engine scenarios and four foreground mastering GUI cases pass at 54ef8312. Native CoreMIDI is enabled; native LV2 remains disabled. Three live SFZ providers and three native renders pass; Musical Artifacts is blocked by an external browser/anti-bot response. Earlier required native-state/package scopes remain separately bounded.",
+    "windows": "Normal guarded app/test builds, 1697 CTest entries, strict ASIO, VST3/CLAP state checks, 177 engine scenarios and four interactive mastering GUI cases pass at 54ef8312. Three live SFZ providers and three native renders pass; VSCO installation remains unproved after storage-guard cancellations. Earlier startup-regression and MSI scopes remain separately bounded."
   },
-  "recorded_at_utc": "2026-10-18T01:33:01.055768+00:00",
+  "recorded_at_utc": "2026-10-18T02:20:08.467786+00:00",
   "shared_validation_commit": "0f86caa9eb6a3e7bb1f17b5a595f756a86183232",
-  "latest_source_commit": "f628ee124505d8fa53f081bb66982f3b817ad61c",
+  "latest_source_commit": "54ef831271dd2416357d43366066e2e426f06ac6",
   "checks_at_shared_commit": {
     "linux_build": {
       "status": "passed",
@@ -1683,7 +1684,7 @@
       "external_observer_limit": "Separate external observer returned0 without an AppKit initialization/positive control; not used to infer the product failure."
     }
   },
-  "latest_common_source_commit": "95320fd29a8c5e56a651be1df791a2e7c8a9fe2e",
+  "latest_common_source_commit": "54ef831271dd2416357d43366066e2e426f06ac6",
   "dependency_publication_ready": {
     "status": "Published with explicit maintainer authorization. DAF protected main required a pull request and ten successful required checks.",
     "authorization": "Maintainer explicitly approved both dependency publications and subsequently authorized continuing 0.16 work without further approval. The release remains gated on the maintainer three-platform manual pass.",
@@ -1733,16 +1734,16 @@
   },
   "latest_product_source_commit": "1a31d8ffebb5fcce0afda5ee39abbc77c8072073",
   "prepush_validation": {
-    "commit": "f628ee124505d8fa53f081bb66982f3b817ad61c",
+    "commit": "54ef831271dd2416357d43366066e2e426f06ac6",
     "status": "PASS",
-    "log": "/tmp/dusk-016-isolated-prepush.log",
-    "linux_log": "/var/tmp/dusk-prepush.UcmyRp/linux.log",
-    "macos_log": "/var/tmp/dusk-prepush.UcmyRp/mac.log",
+    "log": "/tmp/dusk-016-publish-prepush.log",
+    "linux_log": "/var/tmp/dusk-prepush.FwpjPO/linux.log",
+    "macos_log": "/var/tmp/dusk-prepush.FwpjPO/mac.log",
     "linux": {
       "ctest_entries": 1762,
       "failed": 0,
-      "ctest_seconds": 32.94,
-      "ctest_runner_limits_seconds": 31.85,
+      "ctest_seconds": 32.45,
+      "ctest_runner_limits_seconds": 32.14,
       "engine_scenarios": {
         "passed": 186,
         "failed": 0,
@@ -1784,6 +1785,11 @@
       "source": "f628ee124505d8fa53f081bb66982f3b817ad61c",
       "result": "Complete aggregate prepush passes after result isolation.",
       "log": "/tmp/dusk-016-isolated-prepush.log"
+    },
+    {
+      "source": "54ef831271dd2416357d43366066e2e426f06ac6",
+      "result": "Exact published-head aggregate prepush passes. Linux 1762 entries twice, Mac 1708; current Windows and Mac GUI follow-up recorded separately.",
+      "log": "/tmp/dusk-016-publish-prepush.log"
     }
   ],
   "integrated_macos_gui": {
@@ -1811,5 +1817,10 @@
     "installed_programs_verified_and_resolved_offline": 79,
     "selected_programs_rendered": 4,
     "scope": "Sampled production backend and native-render paths; normal GUI, packaged/other platforms, artwork and pause/restart are not proven."
+  },
+  "platform_followup": {
+    "evidence": "docs/validation/0.16-platform-followup.json",
+    "source_commit": "54ef831271dd2416357d43366066e2e426f06ac6",
+    "summary": "Latest-head Windows CTest, strict ASIO/native state, 177 engine scenarios and four interactive GUI cases pass. Current Mac binary passes four foreground GUI cases. Live checks pass three providers on Mac (78 programs, three renders) and Windows (four programs, three renders); archive and installed-tree hashes match Linux. Mac Musical Artifacts is challenged by the service; Windows VSCO attempts stop at a validation free-space guard. Default paths, cold hosts, live resume/policy and physical-drive coverage remain open."
   }
 }

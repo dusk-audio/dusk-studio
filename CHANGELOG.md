@@ -26,6 +26,9 @@ canonical source.
   Artifacts, FreePats and Versilian Studios from the instrument library, check a
   pack's license, and download it to Installed. Only CC0, CC BY and CC BY-SA
   packs are offered; NonCommercial and NoDerivatives packs are refused.
+  SFZ Manager makes HTTPS requests when you browse repositories, view pack
+  details, download packs or fetch online artwork. It makes no repository
+  requests at startup or during session restore.
   Downloads can pause, resume and cancel; validated partial downloads survive
   a connection failure or quitting. Installed versions coexist, and
   sessions find the same pack on another machine without its old absolute path.
