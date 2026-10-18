@@ -493,6 +493,29 @@ means CI should find nothing new, so a branch needs one CI round rather than
 several, and pushes are batched, because each one cancels the macOS job in
 progress (about 45 minutes on a cold cache) and starts it again.
 
+The Mac source leg can use a dedicated validation tree:
+
+```bash
+DUSK_REGRESS_MAC_REPO=dusk-386-current \
+DUSK_REGRESS_MAC_DAF=dusk-016-validation-deps/DAF \
+DUSK_REGRESS_MAC_DAF_REV='<40-character-commit>' \
+DUSK_REGRESS_MAC_CONFIGURE=dusk-016-prepush-configure.sh \
+DUSK_REGRESS_MAC_BUILD_DIR=build-prepush \
+DUSK_REGRESS_MAC_TEST_BUILD_DIR=build-prepush-tests \
+TMPDIR=/var/tmp scripts/regress.sh prepush
+```
+
+Source, DAF and helper paths are absolute or relative to the remote home;
+build paths are absolute or relative to the selected source. Explicit source
+selection requires `git config dusk.validationWorktree true`, clean source and
+DAF trees, the exact DAF revision, and an explicit configure helper. These
+checks run before transferring HEAD. The dedicated DAF checkout is verified
+without pulling it. The helper receives the absolute build directory as its
+first argument, followed by CMake options including the selected DAF path and
+removal of `DUSK_PLUGINS_PATH`. It must configure the selected source with the
+node's toolchain flags; the runner also exports its absolute path as
+`REGRESS_SOURCE`. Donor checks still require the fetched `DONOR_REV` checkout.
+
 `all` routes each option to the platform that owns it, so one command line can
 carry Linux, macOS and Windows options at once. An option no platform claims is
 a usage error rather than a silently ignored word. `--release-run` goes to all
