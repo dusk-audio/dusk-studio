@@ -1036,6 +1036,20 @@ for guide_name in ("BUILDING-LINUX.md", "BUILDING-WINDOWS.md"):
     )
 windows_guide = (source_root / "docs" / "BUILDING-WINDOWS.md").read_text(encoding="utf-8")
 cmake_source = (source_root / "CMakeLists.txt").read_text(encoding="utf-8")
+juce_setup = cmake_source.index("add_subdirectory(${DUSKSTUDIO_JUCE_SOURCE_DIR}")
+dependency_setups = (
+    cmake_source.index('add_subdirectory("${DUSKSTUDIO_DAF_SOURCE_DIR}"'),
+    cmake_source.index("add_subdirectory(external/dusk-fizz"),
+    cmake_source.index("add_subdirectory(tests)"),
+)
+for sanitizer in ("address,undefined", "thread"):
+    for operation in ("compile", "link"):
+        setup = cmake_source.index(f"add_{operation}_options(-fsanitize={sanitizer}")
+        assert juce_setup < setup < min(dependency_setups), (
+            f"{sanitizer} {operation} options must follow JUCE's configure-time "
+            "helper and precede compiled dependencies so their synchronization "
+            "and memory accesses are instrumented"
+        )
 assert "DUSKSTUDIO_REQUIRE_ASIO=OFF" not in cmake_source, (
     "CMake must not offer an ASIO-less Windows build"
 )

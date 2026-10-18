@@ -1,5 +1,7 @@
 #pragma once
 
+#include "../../foundation/Fs.h"
+
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
@@ -32,7 +34,7 @@ public:
             return false;
         }
         std::error_code ec;
-        if (! std::filesystem::is_regular_file (p, ec))
+        if (! std::filesystem::is_regular_file (dusk::fs::nativeIOPath (p), ec))
         {
             errorOut = "file does not exist: " + path;
             return false;

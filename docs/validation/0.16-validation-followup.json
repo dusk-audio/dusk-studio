@@ -1,0 +1,411 @@
+{
+  "purpose": "Historical completed validation at 3755, focused Windows long-path regression proof, and completed full-platform/live-render follow-up at 47d144d6. Current release status is issue #886.",
+  "integration": {
+    "baseRefOid": "3cc84a6f64d3549ff739e2fddf80262eb6b65842",
+    "headRefOid": "3755ab1e9691a79c2460bd232904f9a6e5e23738",
+    "mergeCommit": {
+      "oid": "751ff296ffee014f5b4528800ff08396f2245481"
+    },
+    "mergedAt": "2026-10-18T04:46:33Z",
+    "state": "MERGED",
+    "url": "https://github.com/dusk-audio/dusk-studio/pull/891"
+  },
+  "tested_commit": "3755ab1e9691a79c2460bd232904f9a6e5e23738",
+  "merge_tree_equal": true,
+  "main_jobs_at_merge": [
+    {
+      "headSha": "751ff296ffee014f5b4528800ff08396f2245481",
+      "jobs": [
+        {
+          "name": "Catch2 tests (ASan + UBSan, Ubuntu 22.04)",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/dusk-audio/dusk-studio/actions/runs/39098262677/job/117589082636",
+          "databaseId": 117589082636
+        },
+        {
+          "name": "Catch2 tests (TSan, Ubuntu 22.04)",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/dusk-audio/dusk-studio/actions/runs/39098262677/job/117589082867",
+          "databaseId": 117589082867
+        }
+      ],
+      "url": "https://github.com/dusk-audio/dusk-studio/actions/runs/39098262677"
+    },
+    {
+      "headSha": "751ff296ffee014f5b4528800ff08396f2245481",
+      "jobs": [
+        {
+          "name": "Catch2 tests (MSVC x64 Release, Windows)",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/dusk-audio/dusk-studio/actions/runs/39098262089/job/117589081288",
+          "databaseId": 117589081288
+        }
+      ],
+      "url": "https://github.com/dusk-audio/dusk-studio/actions/runs/39098262089"
+    },
+    {
+      "headSha": "751ff296ffee014f5b4528800ff08396f2245481",
+      "jobs": [
+        {
+          "name": "Build + tests (GCC Release, Ubuntu 22.04, arm64)",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/dusk-audio/dusk-studio/actions/runs/39098262167/job/117589081733",
+          "databaseId": 117589081733
+        }
+      ],
+      "url": "https://github.com/dusk-audio/dusk-studio/actions/runs/39098262167"
+    },
+    {
+      "headSha": "751ff296ffee014f5b4528800ff08396f2245481",
+      "jobs": [
+        {
+          "name": "De-JUCE ratchet",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/dusk-audio/dusk-studio/actions/runs/39098262073/job/117589081362",
+          "databaseId": 117589081362
+        },
+        {
+          "name": "Build + tests (GCC Release, Ubuntu 22.04, amd64)",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/dusk-audio/dusk-studio/actions/runs/39098262073/job/117589081436",
+          "databaseId": 117589081436
+        }
+      ],
+      "url": "https://github.com/dusk-audio/dusk-studio/actions/runs/39098262073"
+    },
+    {
+      "headSha": "751ff296ffee014f5b4528800ff08396f2245481",
+      "jobs": [
+        {
+          "name": "Build + tests (clang Release, macOS arm64)",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/dusk-audio/dusk-studio/actions/runs/39098262176/job/117589081654",
+          "databaseId": 117589081654
+        }
+      ],
+      "url": "https://github.com/dusk-audio/dusk-studio/actions/runs/39098262176"
+    }
+  ],
+  "macos_full_gui": {
+    "verified": true,
+    "source": "3755ab1e9691a79c2460bd232904f9a6e5e23738",
+    "pass_count": 251,
+    "fail_count": 0,
+    "skip_count": 15,
+    "distinct_case_ids": 266,
+    "instances": 1,
+    "app_sha256": "bd6ea35f65e0a5b530aa62c200fc96d8da6c16da50d39d65cc9fd9dac0f0dfc1",
+    "log_sha256": "62402e652dee5f7ded0c41e8642129ae622624a714b0ba5d9e1e9a5d2785cba8",
+    "profile": "/private/tmp/dusk-016-mac-package-full-3755.kB8HQ1",
+    "wrapper_exit": 1,
+    "wrapper_failure": "Stale expected counts 246/0/20; app completed all 266 cases with 251/0/15.",
+    "launcher_exit": 0,
+    "native_app_exit": null,
+    "newly_passing_input_cases": [
+      "gui.audio_editor_record_stop_cancels_drag",
+      "gui.clean_out_while_recording",
+      "gui.prompt_save_keeps_bound_take",
+      "gui.record_key_draws_region",
+      "gui.unsaved_session_spares_untitled"
+    ],
+    "skips": {
+      "gui.clap_no_window_message": "only the Linux host looks for a plug-in window in the container",
+      "gui.dsp_readout_realtime_count": "the realtime CPU-time guard is Linux-only",
+      "gui.import_target_short_window": "the window cannot be made shorter than the picker here",
+      "gui.lv2_editor_reflects_state": "missing fixture: file_state.lv2",
+      "gui.lv2_midi_learn": "missing fixture: file_state.lv2",
+      "gui.midi_io_selectors": "virtual MIDI destination fixture requires ALSA sequencer",
+      "gui.piano_live_recording_preview": "requires the native virtual keyboard and X server readback",
+      "gui.piano_roll_follows_take": "reads the window back through the X server",
+      "gui.piano_roll_keeps_its_region": "reads the window back through the X server",
+      "gui.piano_roll_shows_each_take": "reads the window back through the X server",
+      "gui.pick_opens_native_editor": "requires the seeded plugin-picker cache",
+      "gui.plugin_editor_tab_left_alone": "needs the Linux CLAP fixture",
+      "gui.plugin_picker_filter_and_load": "requires the seeded plugin-picker cache",
+      "gui.settings_rescan_devices": "requires native settings and ALSA sequencer",
+      "gui.tape_repaints_unannounced_regions": "the tape strip repaints with nothing changed on this display, so an unannounced change cannot be told apart"
+    }
+  },
+  "macos_limits": [
+    "Native LV2 disabled locally.",
+    "Ad-hoc, local-host package; no Developer ID, notarization or cold-host proof.",
+    "GUI native exit was not captured; parsed case verdicts and launcher state retained."
+  ],
+  "linux_full_gui": {
+    "pass": 264,
+    "fail": 0,
+    "skip": 2,
+    "seconds": 875,
+    "instances": 1,
+    "skip_controls": "Seeded picker/settings legs pass afterward"
+  },
+  "windows_live_vsco": {
+    "native_exit": 0,
+    "programs": 75,
+    "tree_sha256": "5655ef61f9cf233a486508b7ae0d3877a8d6d59ac4812d04d0724ea2de23bf88",
+    "storage": "Temporary QEMU USB disk, serial DUSK016S3755, NTFS D:. Not physical USB.",
+    "installed_tree_files_including_receipt": 3274,
+    "installed_tree_bytes_including_receipt": 3238137027,
+    "payload_regular_files": 3273,
+    "payload_bytes": 3238104268,
+    "receipt_bytes": 32759,
+    "provenance_naming_limit": "Raw archive provenance payloadFiles/payloadBytes include the receipt; normalized counts above distinguish them.",
+    "evidence_archive_sha256": "ffc9d077079d2949fcfd42955ec10ccf50b2c63ec854068bdd1fc57b6eb6edd9",
+    "evidence_archive_path": "/tmp/dusk-016-windows-vsco-3755-evidence.tar",
+    "downloaded_archive_sha256": "1f34a21b9dc8bc7646f4b7e9bb26ad0d20e4a400a69a6a47ea783c6162e3bde2"
+  },
+  "windows_selected_renders": 4,
+  "windows_deep_install": {
+    "programs": 75,
+    "complete": true,
+    "root_characters": 191,
+    "sfz_path_characters": 278,
+    "downloaded_archive_sha256": "1f34a21b9dc8bc7646f4b7e9bb26ad0d20e4a400a69a6a47ea783c6162e3bde2",
+    "tree_sha256": "5655ef61f9cf233a486508b7ae0d3877a8d6d59ac4812d04d0724ea2de23bf88",
+    "native_install_exit": 0,
+    "native_render_exit_before_fix": 1
+  },
+  "long_path_regression": {
+    "source_commit": "021134fae6bcea9cd781ca67c1ebf9204c88a643",
+    "sampler_commit": "f54eaed2d8f7c53d12f2afea7a553350344879fc",
+    "sampler_pr": "https://github.com/dusk-audio/dusk-fizz/pull/4",
+    "windows_before": "Real-sample regression fails at bundle validation; first two-guard candidate then fails at canonicalized SFZ open.",
+    "native_probes": "MSVC canonicalization strips the extended prefix. Extended paths containing parent components fail until normalized.",
+    "windows_focused": {
+      "pass": 1,
+      "assertions": 24658,
+      "sections": 4,
+      "native_exit": 0,
+      "captured_log_prefix_bytes": 29955,
+      "log_source": "/tmp/dusk-016-windows-longpath-v2.log"
+    },
+    "linux_multisample": {
+      "pass": 33,
+      "assertions": 25237,
+      "native_exit": 0
+    },
+    "coverage": "Short/long paths, real WAV output, direct/parent-relative includes and samples, logical saved-path restoration.",
+    "limits": [
+      "Focused proof at this snapshot; full platform and live-render follow-up is tracked in issue #894.",
+      "Unicode, UNC, SF2 long paths, symlink-plus-parent traversal and restored-instance rendering are unproved."
+    ]
+  },
+  "pi": {
+    "status": "Deferred by explicit maintainer request on 2026-10-18; no Pi available.",
+    "follow_up": "https://github.com/dusk-audio/dusk-studio/issues/893",
+    "limit": "ARM CI build/tests pass; no Pi performance claim. Other full-engine/device/XRUN gates remain."
+  },
+  "manual_audit": "The scenario follow-ups are test-only; the product correction changes internal file access for documented SFZ loading. Controls, defaults, supported formats and session schema are unchanged. MANUAL.md needed no further change.",
+  "hygiene": "Independent two-pass code review and diff hygiene passed for Dusk and sampler changes; no new JUCE coupling or diagnostic code.",
+  "log_retention": "Historical input logs retained locally under build/validation-final-3755/raw, final47 inputs under build/validation-final-47d144d6/raw, and sanitizer diagnosis summaries under build/validation-sanitizer-instrumentation-504a4340. Original paths retain provenance.",
+  "release_limits": [
+    "Version remains 0.15.1; no tag or release workflow run.",
+    "Local Mac native LV2 is disabled, GUI native exit uncaptured, and ad-hoc local packages are not cold-host shipping-artifact proof.",
+    "Windows test storage is an owned virtual USB NTFS disk, not a physical device or the default library location.",
+    "Default Windows VSCO/VCSL, Mac Musical Artifacts service access, other live GUI/resume/policy operations, physical drive checks, full-engine/device/XRUN measurements and the maintainer manual passes remain release gates."
+  ],
+  "evidence_input_sha256": {
+    "/tmp/dusk-016-final-fixtures-prepush.log": "80da4e98bd8728f99c2f7aa2d0f203f4dc31042465fc23bb70b4481b2c6ab06d",
+    "/var/tmp/dusk-prepush.9QrwwY/linux.log": "f8f025a30c57c00221f4a9019ee5828e0a604832781b41df7b446778793f9219",
+    "/var/tmp/dusk-prepush.9QrwwY/mac.log": "00e569a367a0eb16b921414847797e6f39dd2cce853d81fd72ac955bc7e159ed",
+    "/tmp/dusk-016-final-fixtures-linux-package-build.log": "3117d5cc6ea098af6af36c12ea79beec41f0f1cb98a1b143ea97f57a24afc253",
+    "/tmp/dusk-016-final-fixtures-linux-package.log": "3a0062dcca878ddf78c4fb286afd2cefbad9c31c6e6d310da483edf4305f2565",
+    "/tmp/dusk-016-final-fixtures-windows-validation.log": "f04a68fbe5f4aad011c7aa137b581cecc1c2af24103ba07bf902ea1a63858f96",
+    "/tmp/dusk-016-macos-package-3755.log": "815cd50fc7175c671206a65b0138bee75557a0b1903768def8e18afea64a3c45",
+    "/tmp/dusk-016-macos-package-stage-3755.log": "58b52943e2c1ab4b5b86fcc92eaea2165f763a62b6be917d28a4ddfc9d6b795e",
+    "/tmp/dusk-016-macos-package-gui-a-3755.log": "2e20f3f5bc68d70026b8f51d8aaba68017ab7c9bdeea51aca8cb93884f2eeda5",
+    "/tmp/dusk-016-macos-package-gui-b-3755.log": "7485bdb8d27e5bd61fcdde247930238730b613b8a01ca0f3fcc1764025558b74",
+    "/tmp/dusk-016-windows-live-space-trace.log": "c10d2ce251799c028be1be518997374bb038bd5d70d02e4b46b0a510ee0e7fa7",
+    "/tmp/dusk-016-windows-live-compressed-retry-3755.log": "9c015a1826ba9737b752556c208197171ced13670cee6dd1344f3d19b17a5c34",
+    "/tmp/dusk-016-windows-live-scratch-3755.log": "7b4ee0176ad6b03e825464630c5491f9dfe654068e82d73d8b7977e5c3f978dd",
+    "/tmp/dusk-016-windows-live-render-all-3755.log": "d4f9d271382eea258db6efa5f153b99296ed7a1af39631afb6b9218166afe26d",
+    "/tmp/dusk-016-windows-archive-owned-3755.log": "4907064290228933ffb1221d6f437f669483c651be5ddfb4265471ed98192dd3",
+    "/tmp/dusk-016-windows-clean-owned-3755.log": "dc8e4025c5810f2644b39f6d977beac01246b5d27d3ca2a82786d50aed052285",
+    "/tmp/dusk-016-windows-format-superfloppy.log": "e84e8f770477e87ef08e6d47628bc1430b96fe64c8285d9d7636e8c5a82c8e7d",
+    "/tmp/dusk-016-macos-package-full-3755.log": "62402e652dee5f7ded0c41e8642129ae622624a714b0ba5d9e1e9a5d2785cba8",
+    "/tmp/dusk-016-verify-mac-full-3755.py": "b66f7869bfed27f9ac1d3bc1903b0b23a62aa0be72644fd4bd18b5f66b07b4c4",
+    "/tmp/dusk-016-main-ci-jobs-751f.json": "a6cfece7897b7c3229b91a7e78486442d9a1ee266224b150a592a665dbb1a198",
+    "/tmp/dusk-016-windows-live-long-3755.log": "557572704b8e467dede05ba7b626cffdbce761f95b37529ba4c3ff9e84992d43",
+    "/tmp/dusk-016-windows-live-long-render-3755.log": "d6f0a47a0a34d10070169313257031d802e90ccbd4c599a996dc6656d297d47e",
+    "/tmp/dusk-016-windows-long-path-native-probe.log": "1386f24f80d79094ccd20723c1de1f752470bc6c152bf7d96110bd5864bd8837",
+    "/tmp/dusk-016-windows-canonical-query.log": "9b74641b81c101c9782aa0ecb04c9c8aa77b590df1db8b9d850d3d8858569ae3",
+    "/tmp/dusk-016-windows-canonical-dot-query.log": "f4b12b1e8953b690fbe5b55f30ffe0a8d3038cffd627c26289b57709ca616422",
+    "/tmp/dusk-016-windows-longpath-before-retry.log": "a33cac4277ef812e0acb208416ddc862526673871738ebe2761b143f209206b2",
+    "/tmp/dusk-016-windows-longpath-after.log": "deefe928b209f37fcc8071c599b280061712714119f2ca8252b3de8a17acaae0",
+    "/tmp/dusk-016-windows-longpath-v2-focused.log": "4d63bc89c5c69992a197340065cedb25ccd56abfde59c16b4332fa87aba7b99e",
+    "/tmp/dusk-016-longpath-v2-multisample-linux.log": "a44672d98b3df98921b24951b9f503cecf22161caee9bc59ac8627eeb16dc151",
+    "/tmp/dusk-016-longpath-final-prepush-retry.log": "2dd5186b1d467353246e72caf702fa3708611b9a72458c7e4d56541b6fde316a",
+    "/var/tmp/dusk-prepush.UtcKxP/linux.log": "4a8f783732c36c5618a89a6581919b94e70260ea8c2a1deb55b2c811f51c214b",
+    "/var/tmp/dusk-prepush.UtcKxP/mac.log": "f8d9793f32b0c67c435c669e38b9a6305579b29816e6f295316e95b780f6afe5",
+    "/tmp/dusk-016-longpath-final-windows-validation.log": "45531ac270be1f0f058668db72d04e2e96bd98779948e56cc52028f387fb2a0b",
+    "/tmp/dusk-016-windows-render-long-fixed.log": "63e3355ba7a3a03709aca2fdf1bef181b118f58e7e68a3dcbaedfb9a4b2c4f1a",
+    "/tmp/dusk-016-windows-render-all-final.log": "d4f9d271382eea258db6efa5f153b99296ed7a1af39631afb6b9218166afe26d",
+    "/tmp/dusk-016-windows-longpath-final-evidence.tar": "0b7161ec0b7e18e4044663177146657f823ba70965e1dd7227aacb47635415aa",
+    "/tmp/dusk-016-windows-scratch-detach-final.json": "418c380f59a8c4a7716948ab4373ac65aeea34942eeb2c45c0c0df7511c24dae",
+    "/tmp/dusk-016-windows-scratch-detach-guest-final.json": "612c5a641ccb1fbb58eed63b2ca32b7d91101d9db3d795cb7ac747e376e24c58",
+    "/tmp/dusk-016-windows-scratch-detach-preflight-final.json": "6c28c8c978dc32ff959910f46a72244f994425ef2f77d403036c36d996263722",
+    "/tmp/dusk-016-windows-dismount-scratch-final.ps1": "295adefbfa7fd12dee77c3111cf8b8fd8ca0b1dd316804b0a3733c7aaf13750b",
+    "/tmp/dusk-016-windows-dismount-scratch-final.log": "bc5519f957ead9c627411c3b07eb7cd0d0d3a25d2fd79142d95dd47a75c884ba",
+    "/tmp/dusk-016-longpath-tsan-job-sanitized.log": "8a776b12bd0b7592e2c86e38cd171d0ee48e8dd6bf900e7ee5127935fd67d2c6",
+    "/tmp/dusk-016-tsan-instrumentation-proof/summary.json": "76bc5c98e2bbb0870b49179ad6df7366e381318cf02af4917f58c39baff25f27",
+    "/tmp/dusk-016-tsan-instrumentation-proof/evidence-manifest.json": "e93c4adf7a3bf0b66ff6ac1b8879fa7f72742e7a730d9663e01188ed60892e09",
+    "/tmp/dusk-016-sanitizer-generated-coverage.json": "82f6bb7bbb83aebbd1191c3aa4f4cea137617fdb163ca82bced2d6776bc1c537",
+    "/tmp/dusk-016-sanitizer-all-command-coverage.json": "8e7edffdb9030cac49aa2d53617b8d90ae8c109c899c61c0c3a8c02c25880dcf",
+    "/tmp/dusk-016-sanitizer-filepool-symbols.json": "7ea478e6f421542ce04984cf14043b0674d6072463f6be795704a229db425ad4",
+    "/tmp/dusk-016-sanitizer-order-before.log": "bed8838711ca1533ae28553728887ca19cc893e481110542242fd907f9291b10",
+    "/tmp/dusk-016-sanitizer-order-after.log": "a4d28502f31983582bae3a6465a0c694ec9097bdffe7887e88d76b2915f046f5",
+    "/tmp/dusk-016-longpath-ci-status-47d144d6.json": "37fa6290f2b19021f74b97d9a392b25f4159e2f073e7d4ee72e8bfce8129d158",
+    "/tmp/dusk-016-macos-feature-cache-final47.txt": "262336925d3da7a9b1b9097e63def07e81a775927a27323957520a1a8b008033",
+    "/tmp/dusk-016-asan-29-failed-job-sanitized.log": "07dab9778a362bb15dab73580441537b6f0732ad025fd207693d4818d6e953bb",
+    "/tmp/dusk-016-pr895-buffer-failure-state.json": "d21eff60d7bb02ef8fe95cdb16dd69e06a69d992bc49f7c98480cd36f51e6b28",
+    "/tmp/dusk-016-buffer-before-results.json": "56f514eaa4628ce8484df170184ed45d682ec5a5d55f177f2a855d372d950a7b",
+    "/tmp/dusk-016-buffer-before-growth.log": "8e035e31e7c4176f96266cba250ba1196385ee7a621f4695eb70fcf233f97319",
+    "/tmp/dusk-016-buffer-before-copy.log": "55dcfe7b9fd3818d1421e92b63526f5c5b57c4c8e9001350db03c29904038174",
+    "/tmp/dusk-016-buffer-before-all-recover.log": "497d3e3aff4e342a8e2a5a384c3f183c5c27b058c7aa68492e62f5040e49330d",
+    "/tmp/dusk-016-buffer-after.log": "db56ea37bbe7577e15a7217f381a784f2a6996d5efad8b802479f99e406f55ff",
+    "/tmp/dusk-016-buffer-harness-build.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/tmp/dusk-016-buffer-after-build.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "long_path_full_followup": {
+    "source_commit": "47d144d6315bc6ca5c89bfdf6de2327ed25a4d28",
+    "sampler_commit": "f54eaed2d8f7c53d12f2afea7a553350344879fc",
+    "prepush": {
+      "result": "OK",
+      "linux_ctest": [
+        {
+          "cases": 1762,
+          "seconds": 32.54
+        },
+        {
+          "cases": 1762,
+          "seconds": 36.31
+        }
+      ],
+      "macos_ctest": {
+        "cases": 1708,
+        "seconds": 53.01
+      },
+      "linux_engine_scenarios": {
+        "pass": 186,
+        "fail": 0,
+        "skip": 1
+      },
+      "macos_engine_scenarios": {
+        "pass": 177,
+        "fail": 0,
+        "skip": 9
+      },
+      "macos_native_lv2": false,
+      "macos_core_midi": true
+    },
+    "windows_ctest": {
+      "cases": 1697,
+      "fail": 0,
+      "seconds": 150.4
+    },
+    "windows_ctest_capability_skips": 5,
+    "windows_app_sha256": "27cea9366ca5033bdcc05687c0697fff1bae8eeee2fa0f1bc39453cdb8fa74b3",
+    "windows_provider_render_native_exits": {
+      "sfzinstruments": 0,
+      "freepats": 0,
+      "musical-artifacts": 0,
+      "versilian": 0
+    },
+    "windows_long_sfz_render": {
+      "characters": 278,
+      "native_exit": 0,
+      "peak": 0.33313,
+      "rms": 0.05581,
+      "bypass": 0
+    },
+    "windows_evidence_archive_sha256": "0b7161ec0b7e18e4044663177146657f823ba70965e1dd7227aacb47635415aa",
+    "windows_evidence_archive_members": 24,
+    "windows_virtual_scratch_disk": {
+      "serial": "DUSK016S3755",
+      "flushed_dismounted_detached": true,
+      "guest_serial_absent": true,
+      "persistent_vm_configuration_unchanged": true,
+      "image_retained": "/var/tmp/dusk-016-win-scratch.xfilrwxz/scratch.qcow2",
+      "physical_drive_measurement": false
+    },
+    "ci_at_this_source": {
+      "required_pass": 6,
+      "required_fail": 1,
+      "failing_check": "TSan",
+      "job": "https://github.com/dusk-audio/dusk-studio/actions/runs/39129247702/job/117680825873",
+      "status": "Diagnosis: sampler dependency instrumentation omitted. Correction is subsequent work, not part of this source."
+    },
+    "limits": [
+      "Historical Mac full GUI inventory remains a 3755 run, separate from the 47d144d6 unit/engine suite.",
+      "The final app performs the live renders; install/verify/offline identity helper results remain bounded to historical 3755 source.",
+      "Default Windows library location, VCSL payloads and physical USB operations remain unproved."
+    ]
+  },
+  "sanitizer_dependency_diagnosis": {
+    "correction_commit": "504a4340b1fc8da2a7ab82825de1382f4526c43f",
+    "cause": "Directory sanitizer options were applied after sampler dependency creation, omitting worker/future instrumentation and hiding its synchronization from TSan.",
+    "correction": "Apply sanitizer compile/link options after JUCE helper setup and before DAF, sampler and test subdirectories.",
+    "regression_contract": "release-mechanics-contract fails with the old option placement and passes with the corrected placement.",
+    "fresh_generated_c_family_commands": 1279,
+    "fresh_generated_commands_all_instrumented": true,
+    "global_c_and_cxx_flags": "Empty; sanitizer options inherited through directory scope.",
+    "filepool_object_tsan_symbols": {
+      "retained_old_build": 0,
+      "corrected_fresh_build": 30
+    },
+    "controlled_gcc12_cmake_matrix": {
+      "late_order_race_processes": 20,
+      "late_order_total_processes": 20,
+      "early_order_race_processes": 0,
+      "early_order_total_processes": 20,
+      "early_order_completed_allocation_cycles": 2000,
+      "modes": [
+        "retained future",
+        "ready future erased then dispatcher joined"
+      ]
+    },
+    "independent_corroboration": "Direct GCC12 and GCC16 matrices produce the same result.",
+    "limits": [
+      "Microreproducer uses the real sampler ThreadPool header, not the full application.",
+      "Extracted GCC12/libstdc++12/libtsan12 use host glibc2.44/startup objects rather than the exact Ubuntu22.04 image.",
+      "No suppression, sleep, sampler lifetime edit or retry-based acceptance. Full application/CI results are tracked separately in PR895."
+    ]
+  },
+  "sampler_buffer_undefined_behavior": {
+    "sampler_commit": "51600e9f7f1ebde24b7b2915da4d78dec19b27c6",
+    "sampler_pr": "https://github.com/dusk-audio/dusk-fizz/pull/5",
+    "exposed_by": "Complete ASan/UBSan dependency instrumentation after the sanitizer ordering correction.",
+    "ci_failure": {
+      "source": "29bfe1e9c7f51cb2a6123ccbe48fb5d3a6cbbeba",
+      "run": 39132007959,
+      "job": 117688915857,
+      "test_failures": 25,
+      "distinct_diagnostic_signatures": 1,
+      "cause": "Initial Buffer<float> growth calls memcpy with null source and zero bytes before SFZ parsing."
+    },
+    "correction": "Skip memory copies when the source buffer has zero elements in resize, copy construction and copy assignment. Ownership, allocation, alignment and accounting are unchanged.",
+    "regression": {
+      "runtime": "host GCC16 ASan and UBSan",
+      "runner": "Repository Catch2 single-header main, compiled without sanitizers; BufferT translation unit including Buffer.h compiled with ASan/UBSan at O1.",
+      "before_growth_native_exit": -6,
+      "before_empty_copy_native_exit": -6,
+      "additional_control": "UBSan recovery diagnostics identify resize, copy construction and assignment; all assertions complete, then sandbox LeakSanitizer fails under ptrace. This is a diagnostic control, not a pass.",
+      "after_native_exit": 0,
+      "after_cases": 18,
+      "after_assertions": 3601,
+      "leak_detection": true,
+      "sandbox": "Successful post-fix run is outside sandbox so LeakSanitizer can inspect threads."
+    },
+    "limits": [
+      "Focused buffer proof does not replace the complete Dusk suite or cross-platform CI.",
+      "No sanitizer exclusions, suppressions or lifetime/threading changes."
+    ]
+  }
+}

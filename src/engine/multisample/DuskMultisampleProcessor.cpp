@@ -1,6 +1,7 @@
 #include "DuskMultisampleProcessor.h"
 #include "Sf2ToSfz.h"
 #include "Sf2PresetSort.h"
+#include "../../foundation/Fs.h"
 #include "../../foundation/MessageThread.h"
 #include "../../foundation/ScopedNoDenormals.h"
 
@@ -551,7 +552,10 @@ bool DuskMultisampleProcessor::loadSfzFile (const juce::File& sfz,
         errorMessage = "Internal: sfizz synth not initialised";
         return false;
     }
-    if (! sfz.existsAsFile())
+    const auto ioPath = dusk::fs::nativeIOPath (
+        std::filesystem::u8path (sfz.getFullPathName().toStdString()));
+    std::error_code fileError;
+    if (! std::filesystem::is_regular_file (ioPath, fileError))
     {
         errorMessage = "File does not exist: " + sfz.getFullPathName();
         lastLoadError = errorMessage;
