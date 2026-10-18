@@ -30,7 +30,7 @@ permissions:
 jobs:
   build:
     name: Build + tests (clang Release, macOS arm64)
-    runs-on: macos-14
+    runs-on: macos-15
     env:
       # CMakeLists.txt auto-detects ccache (find_program -> sets
       # CMAKE_CXX_COMPILER_LAUNCHER), so just installing it + caching its
@@ -72,7 +72,7 @@ jobs:
           # The workflow hash covers the build recipe (configure flags,
           # deployment target), so a recipe edit rebuilds instead of linking
           # the stale cached library.
-          key: libsodium-macos-14-${{ env.SODIUM_VERSION }}-${{ steps.compiler.outputs.hash }}-${{ hashFiles('.github/workflows/macos-build.yml') }}
+          key: libsodium-macos-15-${{ env.SODIUM_VERSION }}-${{ steps.compiler.outputs.hash }}-${{ hashFiles('.github/workflows/macos-build.yml') }}
 
       - name: Build static libsodium (pinned)
         # Homebrew's bottle is built for the runner OS, newer than the app's
@@ -137,9 +137,9 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-macos-14-${{ github.sha }}
+          key: ccache-macos-15-${{ github.sha }}
           restore-keys: |
-            ccache-macos-14-
+            ccache-macos-15-
 
       - name: Clone JUCE 8.0.4 (upstream)
         run: |
@@ -252,7 +252,7 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-macos-14-${{ github.sha }}
+          key: ccache-macos-15-${{ github.sha }}
 
       - name: Save static libsodium (main only)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.sodium-cache.outputs.cache-hit != 'true'
@@ -266,7 +266,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh cache list --repo "$GITHUB_REPOSITORY" --key ccache-macos-14- \
+          gh cache list --repo "$GITHUB_REPOSITORY" --key ccache-macos-15- \
               --sort created_at --order desc --limit 100 --json id \
             | jq -r '.[1:][].id' \
             | while IFS= read -r id; do
