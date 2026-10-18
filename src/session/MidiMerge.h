@@ -9,20 +9,32 @@
 
 namespace duskstudio
 {
+// The unlocked region a pass over [start, end) joins: the one holding `start`
+// (the last in order where several are stacked there), else the first one the
+// pass reaches. The audio thread asks too, so this stays one allocation-free pass.
 template <typename Regions>
 int findMidiMergeTarget (const Regions& regions, std::int64_t start, std::int64_t end) noexcept
 {
     if (end <= start) return -1;
+    int reached = -1;
+    std::int64_t reachedStart = 0;
     for (int i = (int) regions.size() - 1; i >= 0; --i)
     {
         const auto& region = regions[(std::size_t) i];
-        if (! region.locked && region.lengthInSamples > 0 && end > region.timelineStart
-            && (start < region.timelineStart
-                || (std::uint64_t) start - (std::uint64_t) region.timelineStart
-                     < (std::uint64_t) region.lengthInSamples))
+        if (region.locked || region.lengthInSamples <= 0 || end <= region.timelineStart) continue;
+        if (start < region.timelineStart)
+        {
+            if (reached < 0 || region.timelineStart < reachedStart)
+            {
+                reached = i;
+                reachedStart = region.timelineStart;
+            }
+        }
+        else if ((std::uint64_t) start - (std::uint64_t) region.timelineStart
+                 < (std::uint64_t) region.lengthInSamples)
             return i;
     }
-    return -1;
+    return reached;
 }
 
 struct MidiMergeResult
