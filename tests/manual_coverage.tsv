@@ -415,7 +415,7 @@ The audio region editor > Take lanes	a promote over a locked region and any take
 
 The piano roll	double-click a MIDI region opens it	auto	scenario:gui.piano_roll_navigation		actual peer double-click on a timeline MIDI region opens the piano roll
 The piano roll > Layout	toolbar, ruler, keyboard, grid, velocity strip, CC lane	manual			layout; checked by screenshot review
-The piano roll > Creating notes	Draw-mode click creates a note at the snap length and velocity 100	auto	scenario:gui.piano_note_creation		actual empty-grid clicks at two snap resolutions and with snap off, onset, pitch, duration and velocity
+The piano roll > Creating notes	Draw-mode click creates a note at the snap length and velocity 100	auto	scenario:gui.piano_note_creation		actual empty-grid clicks at two snap resolutions and with snap off, onset, pitch, duration and velocity; off-grid clicks either side of a cell midpoint start at the nearest grid line, and with snap off the onset is the clicked tick within two pixels
 The piano roll > Selecting and moving	click, Shift-click, Cmd-click, drag, resize, rubber band, delete	auto	scenario:gui.piano_selection
 The piano roll > Transposing and nudging	arrows transpose a semitone and nudge a grid step; Shift+arrows an octave and a beat	auto	scenario:gui.piano_roll_note_keys		selects two notes in the real editor, dispatches all four arrows and their Shift chords, checks exact note fields and reverses each edit with command-Z
 The piano roll > Velocity	velocity bars 1-127; resizable strip	auto	scenario:gui.piano_velocity		peer drags clamp velocity at 1 and 127 without changing neighboring notes; top-edge drags and wheel gestures resize the strip both ways

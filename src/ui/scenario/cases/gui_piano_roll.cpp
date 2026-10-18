@@ -2389,17 +2389,39 @@ std::optional<ScenarioResult> runPianoNoteCreation (GuiHost& host, ScenarioConte
             ctx.expect (note.noteNumber == 64 && note.startTick == 960 && note.lengthInTicks == 240 && note.velocity == 100,
                         "changing snap did not change the next note's duration");
         }
+    } });
+    // On the eighth-note grid 1450 is nearer 1440 and 1580 nearer 1680.
+    steps->push_back ({ 500, [&host, &ctx]
+    { ctx.expect (host.clickPianoGrid (1450, 72), "the first off-grid note cell was not visible"); } });
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.clickPianoGrid (1580, 74), "the second off-grid note cell was not visible"); } });
+    steps->push_back ({ 100, [&host, &ctx, &track]
+    {
+        const auto& regions = track.midiRegions.current();
+        if (ctx.expect (regions.size() == 1 && regions[0].notes.size() == 4, "the off-grid clicks did not create two notes"))
+        {
+            ctx.expect (regions[0].notes[2].startTick == 1440,
+                        "a click before a cell's midpoint did not start at the nearest grid line");
+            ctx.expect (regions[0].notes[3].startTick == 1680,
+                        "a click past a cell's midpoint did not start at the nearest grid line");
+        }
         ctx.expect (host.pressPianoRollKey ("0"), "the free-grid key was not handled");
     } });
     steps->push_back ({ 500, [&host, &ctx]
-    { ctx.expect (host.clickPianoGrid (1200, 67), "the free-grid note cell was not visible"); } });
-    steps->push_back ({ 100, [&ctx, &track]
+    { ctx.expect (host.clickPianoGrid (1250, 67), "the free-grid note cell was not visible"); } });
+    steps->push_back ({ 100, [&host, &ctx, &track]
     {
         const auto& regions = track.midiRegions.current();
-        if (ctx.expect (regions.size() == 1 && regions[0].notes.size() == 3, "the free-grid click did not create a third note"))
-            ctx.expect (regions[0].notes[2].noteNumber == 67 && regions[0].notes[2].lengthInTicks == 480
-                        && regions[0].notes[2].velocity == 100,
+        if (ctx.expect (regions.size() == 1 && regions[0].notes.size() == 5, "the free-grid click did not create a fifth note"))
+        {
+            const auto& note = regions[0].notes[4];
+            ctx.expect (note.noteNumber == 67 && note.lengthInTicks == 480 && note.velocity == 100,
                         "snap-off note creation did not retain the quarter-note default");
+            const double tolerance = 2.0 / std::max (1.0e-6, host.pianoViewport()[0]);
+            ctx.expect (std::abs (static_cast<double> (note.startTick) - 1250.0) <= tolerance,
+                        "with snap off the note did not start where the click landed: tick "
+                            + std::to_string (note.startTick));
+        }
     } });
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
