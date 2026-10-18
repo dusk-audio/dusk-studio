@@ -192,13 +192,17 @@ std::optional<ScenarioResult> managedRelink (ScenarioContext& ctx, RelinkResult 
                     }
                     else ctx.expect (state->success, "explicit relink failed: " + state->error);
                     ctx.expect (current.nativeMultisampleLocator == replacement, "relink did not replace the saved identity");
-                    const auto resolvedPath = (state->installed->directory / "Piano.sfz").u8string();
-                    ctx.expect (current.nativeMultisamplePath.toStdString() == resolvedPath,
-                                "relink retained the old session path");
+                    const auto resolvedPath = dusk::fs::nativeIOPath (state->installed->directory / "Piano.sfz");
+                    const auto savedPath = dusk::fs::nativeIOPath (std::filesystem::u8path (current.nativeMultisamplePath.toStdString()));
+                    std::error_code savedPathError;
+                    ctx.expect (std::filesystem::equivalent (savedPath, resolvedPath, savedPathError) && ! savedPathError,
+                                "relink did not save the installed instrument path");
                     const auto* instance = engine.getChannelStrip (kTrack).getNativeMultisampleSlot().getInstance();
                     if (ctx.expect (instance && instance->hasLoadedRuntime(), "relinked instrument is offline"))
                     {
-                        ctx.expect (instance->getLoadedPathSnapshot() == resolvedPath,
+                        const auto loadedPath = dusk::fs::nativeIOPath (std::filesystem::u8path (instance->getLoadedPathSnapshot()));
+                        std::error_code loadedPathError;
+                        ctx.expect (std::filesystem::equivalent (loadedPath, resolvedPath, loadedPathError) && ! loadedPathError,
                                     "relink loaded the path from the stale state blob");
                         const auto& controls = instance->getOverrides();
                         ctx.expect (std::abs (controls.masterVolDb.load() + 13.0f) < 1.0e-6f
