@@ -8,6 +8,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <thread>
 #include <vector>
 #include <utility>
 #include "../dsp/AuxLaneStrip.h"
@@ -19,6 +20,7 @@
 #include "../dsp/PitchDetector.h"
 #include "../foundation/IntDelayLine.h"
 #include "../foundation/MessageThread.h"
+#include "../foundation/SmoothedValue.h"
 #include "../foundation/TransportPosition.h"
 #include "MidiSyncReceiver.h"
 #include "MidiTimeCodeReceiver.h"
@@ -100,6 +102,11 @@ public:
         return earlyOutBlocks.load (std::memory_order_relaxed);
     }
 
+    std::uint64_t getProcessingSuspendCount() const noexcept
+    {
+        return processingSuspends.load (std::memory_order_relaxed);
+    }
+
     // True between suspendProcessing() and resumeProcessing(). Acquire pairs
     // with the release in resumeProcessing so a reader that sees "running"
     // also sees the state the resume published.
@@ -130,6 +137,7 @@ public:
     bool isAudioCallbackRegistered() const { return deviceManager.containsCallback (this); }
     void observeAudioRegistrationForScenario (std::function<void (bool)> observer)
     { audioRegistrationObserver = std::move (observer); }
+    void servicePlaybackForScenario() { servicePlayback(); }
 
     // Track FREEZE (message thread). The render is ASYNC (BounceEngine::
     // startFreeze on a worker thread) so a long render never wedges the UI, so
@@ -188,7 +196,9 @@ public:
         std::optional<sfz::ManagedSfzLocator> locator = {},
         std::function<void (bool, std::string)> onDone = {}, int presetIndex = -1,
         bool restoring = false, std::vector<std::uint8_t> state = {},
-        std::function<void()> beforeCommit = {});
+        std::function<void()> beforeCommit = {}, bool preserveSavedState = false);
+    bool requestManagedSfzRelink (int trackIndex, sfz::ManagedSfzLocator replacement,
+        std::function<void (bool, std::string)> onDone = {}, std::function<void()> beforeCommit = {});
     void cancelNativeMultisampleLoad (int trackIndex);
     void serviceMultisampleLoads();
     bool hasPendingMultisampleLoads() const;
@@ -205,6 +215,8 @@ public:
     PluginManager&    getPluginManager()   noexcept { return pluginManager; }
     MasteringPlayer&  getMasteringPlayer() noexcept { return masteringPlayer; }
     MasteringChain&   getMasteringChain()  noexcept { return masteringChain; }
+    bool getMasteringMonoMonitor() const noexcept { return masteringMonoMonitor.load (std::memory_order_relaxed); }
+    void setMasteringMonoMonitor (bool mono) noexcept { masteringMonoMonitor.store (mono, std::memory_order_relaxed); }
     MasterBus&        getMasterBus()       noexcept { return master; }
     Metronome&        getMetronome()       noexcept { return metronome; }
 
@@ -285,15 +297,9 @@ public:
         midiOut.installBackend (std::move (backend));
     }
 
-    // Open the MIDI output every track is routed to. Called once after
-    // SessionSerializer::load resolves identifiers. Message-thread only.
-    // Caller MUST have the audio callback detached (startup pre-attach path).
+    // Open restored track, sync and MCU output ports. Message-thread only;
+    // output availability is published atomically to the audio thread.
     void openConfiguredMidiOutputs();
-
-    // Same, but for live callers (session load) where the audio callback is
-    // attached: detaches it around the bank mutation so the audio thread
-    // never reads the output bank mid-open. Message-thread only.
-    void openConfiguredMidiOutputsSafely();
 
     juce::UndoManager& getUndoManager() noexcept { return undoManager; }
 
@@ -774,6 +780,12 @@ private:
     std::atomic<unsigned> assetRenderHolds { 0 };
     std::mutex assetPauseMutex;
     void updateAssetWorkPause() noexcept;
+    const std::thread::id ownerThread = std::this_thread::get_id();
+    // Restarting DSP must not re-enter the device manager's callback iteration.
+    std::atomic<unsigned> deviceLifecycleDepth { 0 };
+    std::atomic<std::int64_t> pendingDeviceStopSample { -1 };
+    void requestDeviceStopFinalization();
+    void finishPendingDeviceStop();
 #if DUSKSTUDIO_HAS_MULTISAMPLE
     struct MultisampleLoadState;
     std::unique_ptr<MultisampleLoadState> multisampleLoads;
@@ -788,6 +800,11 @@ private:
 
     MasteringPlayer  masteringPlayer;
     MasteringChain   masteringChain;
+    std::atomic<bool> masteringMonoMonitor { false };
+    dusk::audio::SmoothedValue<float> masteringMonoMix;
+    MasteringPlayer::BlockInfo previousPhaseBlock;
+    std::int64_t phaseGatedBlockCount = 0;
+    bool phaseContinuityValid = false;
     Metronome        metronome;
 
     // Lock-free tempo-map snapshot for the audio thread (MIDI scheduler +
@@ -1202,6 +1219,7 @@ private:
     // touches until resume.
     std::atomic<bool>   processingSuspended { false };
     std::atomic<int>    callbacksInFlight   { 0 };
+    std::atomic<std::uint64_t> processingSuspends { 0 };
     // Silent-output diagnostics. The audio callback only bumps these atomics
     // (RT-safe); diagTimer drains them on the message thread and emits the
     // stderr line - stdio locks must never touch the audio thread. A silent-

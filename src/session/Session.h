@@ -24,6 +24,7 @@
 #include "MidiBindings.h"
 #include "SessionLayout.h"
 #include "TrackMove.h"
+#include "MasteringPhaseParams.h"
 #include "../engine/PluginDescriptor.h"
 #include "../engine/StopBehavior.h"
 #include "../engine/sfz/ManagedSfzLocator.h"
@@ -820,15 +821,17 @@ struct MidiRegion
 
 inline MidiRegionPlacement placementOf (const MidiRegion& region) noexcept
 {
-    return { region.timelineStart, region.lengthInSamples, region.lengthInTicks, region.muted };
+    return { region.timelineStart, region.lengthInSamples, region.lengthInTicks, region.muted, region.locked };
 }
 
 // A timeline for `regions`: each region's events copied out and sorted, unless
 // `sameEvents` hands it the ones it already has. Message thread.
 inline std::unique_ptr<MidiTimeline> buildMidiTimeline (const std::vector<MidiRegion>& regions,
-                                                        const MidiTimeline* sameEvents = nullptr)
+                                                        const MidiTimeline* sameEvents = nullptr,
+                                                        MidiCaptureStamp capture = {})
 {
     auto timeline = std::make_unique<MidiTimeline>();
+    timeline->capture = capture;
     timeline->playback.reserve (regions.size());
     timeline->placement.reserve (regions.size());
     for (std::size_t i = 0; i < regions.size(); ++i)
@@ -864,11 +867,12 @@ public:
     // published. Adding or removing a region takes a publish.
     std::vector<MidiRegion>& currentMutable() noexcept { return *regions; }
 
-    void publish (std::unique_ptr<std::vector<MidiRegion>> fresh)
+    void publish (std::unique_ptr<std::vector<MidiRegion>> fresh, MidiCaptureStamp capture = {})
     {
         assert (fresh != nullptr && "MidiRegionSnapshot::publish requires a non-null value");
         if (fresh == nullptr) return;
-        timeline.publish (buildMidiTimeline (*fresh));
+        capture.include (timeline.current().capture);
+        timeline.publish (buildMidiTimeline (*fresh, nullptr, capture));
         regions = std::move (fresh);
         editCount.fetch_add (1, std::memory_order_release);
     }
@@ -881,7 +885,7 @@ public:
     {
         assert (timeline.current().size() == regions->size() && "an edit in place cannot add or remove a region");
         if (timeline.current().size() != regions->size()) return;
-        timeline.publish (buildMidiTimeline (*regions, &timeline.current()));
+        timeline.publish (buildMidiTimeline (*regions, &timeline.current(), timeline.current().capture));
         editCount.fetch_add (1, std::memory_order_release);
     }
 
@@ -892,11 +896,11 @@ public:
     std::uint32_t edits() const noexcept { return editCount.load (std::memory_order_acquire); }
 
     template <typename Fn>
-    void mutate (Fn&& fn)
+    void mutate (Fn&& fn, MidiCaptureStamp capture = {})
     {
         auto fresh = std::make_unique<std::vector<MidiRegion>> (current());
         fn (*fresh);
-        publish (std::move (fresh));
+        publish (std::move (fresh), capture);
     }
 
     // mutate() for an edit that moves, resizes or mutes regions and leaves
@@ -923,7 +927,8 @@ public:
         const auto& published = from.timeline.current();
         assert (published.size() == staged.regions->size() && "stage() needs the regions as last published");
         staged.timeline = buildMidiTimeline (*staged.regions,
-                                             published.size() == staged.regions->size() ? &published : nullptr);
+                                             published.size() == staged.regions->size() ? &published : nullptr,
+                                             published.capture);
         return staged;
     }
 
@@ -1591,6 +1596,8 @@ struct MasteringParams
     // Lookahead, ms. More lookahead = the gain finishes ramping further ahead
     // of the peak (cleaner transients) at the cost of more latency.
     std::atomic<float> limiterLookaheadMs { 2.0f };
+
+    MasteringPhaseParams phase;
 
     mutable std::atomic<float> meterPostMasterLDb  { -100.0f };
     mutable std::atomic<float> meterPostMasterRDb  { -100.0f };

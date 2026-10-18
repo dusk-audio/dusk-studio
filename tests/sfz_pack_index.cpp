@@ -16,12 +16,12 @@ namespace fs = std::filesystem;
 struct IndexTree
 {
     IndexTree() : root (fs::canonical (dusk::fs::createUniqueTempDirectory ("dusk-sfz-index-"))) {}
-    ~IndexTree() { std::error_code ignored; fs::remove_all (root, ignored); }
+    ~IndexTree() { std::error_code ignored; fs::remove_all (dusk::fs::nativeIOPath (root), ignored); }
 
     void write (const std::string& path, const std::string& contents)
     {
         std::error_code error;
-        fs::create_directories ((root / fs::u8path (path)).parent_path(), error);
+        fs::create_directories (dusk::fs::nativeIOPath ((root / fs::u8path (path)).parent_path()), error);
         REQUIRE_FALSE (error);
         REQUIRE (dusk::fs::writeStringToFile (root / fs::u8path (path), contents));
     }
@@ -101,15 +101,21 @@ TEST_CASE ("SFZ browser programs project ARIA declarations without changing rece
 TEST_CASE ("SFZ browser programs merge all usable banks and resolve nested portable paths", "[sfz][index]")
 {
     IndexTree tree;
+    std::string collection = "Collection/";
+    SECTION ("Ordinary collection path") {}
+    SECTION ("Deep collection path")
+    {
+        for (int index = 0; index < 4; ++index) collection += std::string (72, char ('a' + index)) + '/';
+    }
     tree.instrument ("Programs/first.sfz");
-    tree.instrument (u8"Collection/Programs/Étude.sfz");
+    tree.instrument (collection + u8"Programs/Étude.sfz");
     tree.instrument ("Programs/last.sfz");
     tree.instrument ("standalone.sfz");
     tree.write ("a.bank.xml", "<AriaBank>" + bankProgram ("Programs/first.sfz", "First") + "</AriaBank>");
     tree.write ("b.bank.xml", "<AriaBank>" + bankProgram ("PROGRAMS/FIRST.SFZ", "Duplicate") + "</AriaBank>");
     tree.write ("Banks/relative.bank.xml", "<AriaBank>"
                 + bankProgram ("../Programs/last.sfz", "Last") + "</AriaBank>");
-    tree.write ("Collection/c.BANK.XML", "<Key>another key</Key><AriaBank>"
+    tree.write (collection + "c.BANK.XML", "<Key>another key</Key><AriaBank>"
                 + bankProgram (u8"Programs\\ÉTUDE.sfz", "Nested &quot;study&quot;") + "</AriaBank>");
     tree.write ("broken.bank.xml", "<AriaBank><AriaProgram>");
     const auto programs = indexPackPrograms (tree.root, tree.instruments);

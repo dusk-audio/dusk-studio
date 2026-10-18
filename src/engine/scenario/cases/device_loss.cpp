@@ -4,6 +4,8 @@
 #include "../../RecordManager.h"
 #include "../../device/DeviceManager.h"
 #include "../../device/IODevice.h"
+#include "../../sfz/SfzLibraryService.h"
+#include "../../../foundation/Fs.h"
 #include "../../../session/Session.h"
 
 #include <cstdint>
@@ -11,6 +13,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace duskstudio::scenario
@@ -233,6 +236,169 @@ ScenarioResult noDeviceRefusesRecord (ScenarioContext& ctx)
                 "a take file was written with no audio device open");
     return ctx.verdict();
 }
+
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+enum class TakeEnd { Mastering, DeviceStop, DeviceLost, ForeignDeviceStop, OfflineDetach };
+
+std::optional<ScenarioResult> interruptedTakeResumesAssets (ScenarioContext& ctx, TakeEnd route)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    ctx.cleanup ([&engine, &session, tempo = session.tempoMap]
+    {
+        session.tempoMap = tempo;
+        engine.publishTempoMap();
+    });
+    ctx.keep (session.tempoBpm);
+    ctx.keep (session.midiMergeEnabled);
+    ctx.keep (session.countInEnabled);
+    ctx.keep (session.lastRecordPointSamples);
+    restoreOfflinePrepare (ctx);
+    const auto previousStage = engine.getStage();
+    ctx.cleanup ([&engine, route, previousStage, registered = engine.isAudioCallbackRegistered()]
+    {
+        engine.setOfflineRenderActive (false);
+        engine.stop();
+        if (route == TakeEnd::DeviceStop)
+        {
+            engine.reattachAudioCallback();
+            engine.servicePlaybackForScenario();
+        }
+        if (! registered) engine.detachAudioCallback();
+        engine.setStage (previousStage);
+        engine.cancelNativeMultisampleLoad (kTrack + 1);
+        engine.getSfzLibrary().cancel();
+    });
+    const auto soundfont = ctx.tempDir() / "resume.sfz";
+    if (! ctx.expect (dusk::fs::writeStringToFile (soundfont, "<region> sample=*sine key=60"),
+                      "could not create the asset-resume instrument")) return ctx.verdict();
+    struct LoadState { bool done = false, succeeded = false; std::string error; };
+    const auto load = std::make_shared<LoadState>();
+    ctx.waitUntil ([&engine] { return ! engine.getSfzLibrary().snapshot().busy; }, 5000,
+        [&ctx, &engine, route, soundfont, load]
+        {
+            StubDevice device { ScenarioContext::kSampleRate, ScenarioContext::kBlockSize };
+            engine.audioDeviceAboutToStart (&device);
+            engine.getDeviceManager().clearDeviceChangePendingForTest();
+            armTrack (ctx);
+            ctx.session().tempoBpm.store (120.0f);
+            ctx.session().tempoMap.clear();
+            engine.publishTempoMap();
+            ctx.session().midiMergeEnabled.store (true);
+            ctx.session().countInEnabled.store (false);
+            ctx.session().track (kTrack).mode.store ((int) Track::Mode::Midi);
+            ctx.session().track (kTrack).midiInputIndex.store (engine.getVirtualKeyboardInputIndex());
+            ctx.session().track (kTrack).midiChannel.store (1);
+            ctx.session().track (kTrack + 1).mode.store ((int) Track::Mode::Midi);
+            engine.getTransport().setPlayhead (kTakeStart);
+            engine.record();
+            if (! ctx.expect (engine.getRecordManager().isActive(), "the interrupted take did not start"))
+            { ctx.complete (ctx.verdict()); return; }
+            dusk::MidiBuffer notes;
+            const std::uint8_t down[] { 0x90, 60, 100 }, up[] { 0x80, 60, 0 };
+            notes.addEvent (down, 3, 0);
+            notes.addEvent (up, 3, 100);
+            ctx.pumpWithMidi (engine.getVirtualKeyboardInputIndex(), std::move (notes));
+            ctx.pump (1);
+            ctx.expect (engine.requestNativeMultisampleLoad (kTrack + 1, soundfont, {},
+                [load] (bool success, std::string error)
+                { load->done = true; load->succeeded = success; load->error = std::move (error); }),
+                "a take did not accept a queued instrument load");
+            ctx.expect (engine.getSfzLibrary().requestInstalled(), "could not queue library work during the take");
+            ctx.waitUntil ([&engine] { const auto state = engine.getSfzLibrary().snapshot();
+                return ! state.busy && state.state == sfz::LibraryState::Paused; }, 5000,
+                [&ctx, &engine, route, load]
+                {
+                    engine.serviceMultisampleLoads();
+                    ctx.expect (! load->done && engine.hasPendingMultisampleLoads(),
+                                "instrument loading did not wait for the take");
+                    ctx.expect (! engine.getSfzLibrary().resume(), "library work resumed during recording");
+                    if (route == TakeEnd::Mastering) engine.setStage (AudioEngine::Stage::Mastering);
+                    else if (route == TakeEnd::DeviceStop)
+                    {
+                        if (! ctx.expect (! engine.isAudioCallbackRegistered(), "the stub device unexpectedly registered a callback"))
+                        { ctx.complete (ctx.verdict()); return; }
+                        engine.restartDspWhenIdle();
+                        engine.audioDeviceStopped();
+                        ctx.expect (! engine.isAudioCallbackRegistered(), "DSP restart re-entered the stopped callback");
+                    }
+                    else if (route == TakeEnd::DeviceLost) engine.onDeviceManagerChanged();
+                    else if (route == TakeEnd::OfflineDetach)
+                    {
+                        engine.setOfflineRenderActive (true);
+                        engine.detachAudioCallback();
+                        ctx.expect (! engine.getRecordManager().isActive(), "offline handoff left the take unpublished");
+                        engine.setOfflineRenderActive (false);
+                    }
+                    else
+                    {
+                        std::thread stopped ([&engine] { engine.audioDeviceStopped(); });
+                        stopped.join();
+                        ctx.expect (engine.getRecordManager().isActive(), "a foreign stopped callback destroyed the capture");
+                        engine.getRecordManager().serviceMidiCapture();
+                        ctx.expect (engine.getRecordManager().midiCapturePreview (kTrack) != nullptr,
+                                    "the owner could not inspect capture before deferred finalization");
+                    }
+                    const auto yielded = std::make_shared<bool> (false);
+                    ctx.later (0, [yielded] { *yielded = true; });
+                    ctx.waitUntil ([&engine, yielded] { return *yielded && engine.getTransport().isStopped()
+                        && ! engine.getRecordManager().isActive(); }, 5000,
+                        [&ctx, &engine, route, load]
+                        {
+                            engine.servicePlaybackForScenario();
+                            if (route == TakeEnd::DeviceStop)
+                            {
+                                ctx.expect (! engine.isAudioCallbackRegistered(), "deferred DSP restart reattached a detached callback");
+                                engine.reattachAudioCallback();
+                                engine.servicePlaybackForScenario();
+                                ctx.expect (engine.isAudioCallbackRegistered(), "DSP restart lost an explicitly restored callback");
+                                engine.detachAudioCallback();
+                            }
+                            const auto& regions = ctx.session().track (kTrack).midiRegions.current();
+                            ctx.expect (regions.size() == 1 && regions.front().timelineStart == kTakeStart
+                                        && regions.front().lengthInTicks == 10 && regions.front().lengthInSamples == 500
+                                        && regions.front().notes == std::vector<MidiNote> { { 1, 60, 100, 0, 2 } },
+                                        "take finalization lost or retimed the captured MIDI after the device stopped");
+                            ctx.expect (engine.getSfzLibrary().resume(), "take finalization left library work paused");
+                            if (engine.getCurrentSampleRate() <= 0.0)
+                            {
+                                StubDevice reconnected { ScenarioContext::kSampleRate, ScenarioContext::kBlockSize };
+                                engine.audioDeviceAboutToStart (&reconnected);
+                            }
+                            ctx.waitUntil ([&engine, load]
+                            {
+                                engine.serviceMultisampleLoads();
+                                return load->done && ! engine.hasPendingMultisampleLoads()
+                                    && ! engine.getSfzLibrary().snapshot().busy;
+                            }, 5000, [&ctx, &engine, load]
+                            {
+                                ctx.expect (load->succeeded, "queued instrument did not load after the take: " + load->error);
+                                ctx.expect (engine.getSfzLibrary().snapshot().state == sfz::LibraryState::Complete,
+                                            "library work did not finish after explicit Resume");
+                                ctx.complete (ctx.verdict());
+                            }, "asset work did not finish after take finalization");
+                        }, "the interrupted take did not finalize on its owner thread");
+                }, "library work did not enter its recording pause");
+        }, "the asset-resume scenario found a busy library");
+    return std::nullopt;
+}
+
+const ScenarioRegistrar masteringAssetsRegistrar { Scenario {
+    "device.mastering_switch_resumes_assets", { "device", "record", "sfz" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return interruptedTakeResumesAssets (ctx, TakeEnd::Mastering); } } };
+const ScenarioRegistrar stoppedAssetsRegistrar { Scenario {
+    "device.stop_resumes_assets", { "device", "record", "sfz" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return interruptedTakeResumesAssets (ctx, TakeEnd::DeviceStop); } } };
+const ScenarioRegistrar lostAssetsRegistrar { Scenario {
+    "device.loss_resumes_assets", { "device", "record", "sfz" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return interruptedTakeResumesAssets (ctx, TakeEnd::DeviceLost); } } };
+const ScenarioRegistrar foreignStopRegistrar { Scenario {
+    "device.foreign_stop_defers_capture_finalization", { "device", "record", "midi", "sfz" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return interruptedTakeResumesAssets (ctx, TakeEnd::ForeignDeviceStop); } } };
+const ScenarioRegistrar offlineDetachRegistrar { Scenario {
+    "device.offline_handoff_finalizes_capture", { "device", "record", "midi", "sfz", "bounce" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return interruptedTakeResumesAssets (ctx, TakeEnd::OfflineDetach); } } };
+#endif
 
 const ScenarioRegistrar lossRegistrar { Scenario {
     "device.loss_stops_and_commits", { "device", "record", "transport" }, Needs::Engine, {},

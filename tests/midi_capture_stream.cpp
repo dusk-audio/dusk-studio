@@ -1,7 +1,9 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include "engine/MidiCaptureStream.h"
 
+#include <algorithm>
 #include <cstdint>
 
 using namespace duskstudio;
@@ -9,29 +11,99 @@ using namespace duskstudio;
 TEST_CASE ("MIDI capture preview extends held notes only through published progress",
            "[recording][midi][capture-stream]")
 {
-    MidiCaptureStream stream;
-    stream.configure ([] (std::int64_t sample) { return sample / 2; });
-    const auto initialGeneration = stream.preview().generation;
-    REQUIRE (stream.pushEvent (1, 10, 0x92, 64, 87));
-    REQUIRE (stream.publishProgress (1, 30, false));
-    REQUIRE (stream.service());
-    const auto first = stream.preview();
-    REQUIRE (first.generation > initialGeneration);
-    REQUIRE (first.passOrdinal == 1);
-    REQUIRE (first.lengthInSamples == 30);
-    REQUIRE (first.lengthInTicks == 15);
-    REQUIRE (first.notes == std::vector<MidiNote> { { 3, 64, 87, 5, 10 } });
-    REQUIRE (stream.takeCompleted().empty());
-    REQUIRE_FALSE (stream.service());
-    REQUIRE (stream.preview().generation == first.generation);
+    SECTION ("Held lengths follow progress and stop growing after release")
+    {
+        MidiCaptureStream stream;
+        stream.configure ([] (std::int64_t sample) { return sample / 2; });
+        const auto initialGeneration = stream.preview().generation;
+        REQUIRE (stream.pushEvent (1, 10, 0x92, 64, 87));
+        REQUIRE (stream.publishProgress (1, 30, false));
+        REQUIRE (stream.service());
+        const auto first = stream.preview();
+        REQUIRE (first.generation > initialGeneration);
+        REQUIRE (first.passOrdinal == 1);
+        REQUIRE (first.lengthInSamples == 30);
+        REQUIRE (first.lengthInTicks == 15);
+        REQUIRE (first.notes == std::vector<MidiNote> { { 3, 64, 87, 5, 10 } });
+        REQUIRE (stream.takeCompleted().empty());
+        REQUIRE_FALSE (stream.service());
+        REQUIRE (stream.preview().generation == first.generation);
 
-    REQUIRE (stream.publishProgress (1, 50, false));
-    stream.service();
-    REQUIRE (stream.preview().notes == std::vector<MidiNote> { { 3, 64, 87, 5, 20 } });
-    REQUIRE (stream.pushEvent (1, 60, 0x82, 64, 0));
-    REQUIRE (stream.publishProgress (1, 80, false));
-    stream.service();
-    REQUIRE (stream.preview().notes == std::vector<MidiNote> { { 3, 64, 87, 5, 25 } });
+        REQUIRE (stream.publishProgress (1, 50, false));
+        stream.service();
+        REQUIRE (stream.preview().notes == std::vector<MidiNote> { { 3, 64, 87, 5, 20 } });
+        REQUIRE (stream.pushEvent (1, 60, 0x82, 64, 0));
+        REQUIRE (stream.publishProgress (1, 80, false));
+        stream.service();
+        REQUIRE (stream.preview().notes == std::vector<MidiNote> { { 3, 64, 87, 5, 25 } });
+    }
+    SECTION ("Progress reuses closed-note and controller history")
+    {
+        MidiCaptureStream stream;
+        constexpr int history = 512;
+        for (int i = 0; i < history; ++i)
+        {
+            REQUIRE (stream.pushEvent (1, i * 4, 0x90, 60, 100));
+            REQUIRE (stream.pushEvent (1, i * 4 + 1, 0x80, 60, 0));
+            REQUIRE (stream.pushEvent (1, i * 4 + 2, 0xb0, 1, (std::uint8_t) (i & 127)));
+        }
+        REQUIRE (stream.pushEvent (1, history * 4, 0x90, 67, 90));
+        REQUIRE (stream.publishProgress (1, history * 4 + 10, false));
+        REQUIRE (stream.service());
+        const auto first = stream.preview();
+        REQUIRE (first.notes.size() == history + 1);
+        REQUIRE (first.ccs.size() == history);
+        const auto* noteStorage = stream.preview().notes.data();
+        const auto* controlStorage = stream.preview().ccs.data();
+        const auto noteCapacity = stream.preview().notes.capacity();
+        const auto controlCapacity = stream.preview().ccs.capacity();
+        for (int progress = 11; progress <= 30; ++progress)
+        {
+            REQUIRE (stream.publishProgress (1, history * 4 + progress, false));
+            REQUIRE (stream.service());
+            const auto& preview = stream.preview();
+            REQUIRE (preview.notes.data() == noteStorage);
+            REQUIRE (preview.ccs.data() == controlStorage);
+            REQUIRE (preview.notes.capacity() == noteCapacity);
+            REQUIRE (preview.ccs.capacity() == controlCapacity);
+            REQUIRE (preview.notes.size() == first.notes.size());
+            REQUIRE (std::equal (first.notes.begin(), first.notes.end() - 1, preview.notes.begin()));
+            REQUIRE (preview.ccs == first.ccs);
+            REQUIRE (preview.notes.back() == MidiNote { 1, 67, 90, history * 4, progress });
+            REQUIRE (preview.lengthInSamples == history * 4 + progress);
+            REQUIRE (preview.lengthInTicks == history * 4 + progress);
+            REQUIRE (preview.generation > first.generation);
+            REQUIRE (std::is_sorted (preview.notes.begin(), preview.notes.end(),
+                                     [] (const auto& a, const auto& b) { return a.startTick < b.startTick; }));
+        }
+    }
+    SECTION ("Only the held note grows when retriggers share its rounded tick")
+    {
+        MidiCaptureStream stream;
+        stream.configure ([] (std::int64_t sample) { return sample / 10; });
+        REQUIRE (stream.pushEvent (1, 0, 0x90, 60, 100));
+        REQUIRE (stream.pushEvent (1, 1, 0x80, 60, 0));
+        REQUIRE (stream.pushEvent (1, 2, 0x90, 60, 100));
+        REQUIRE (stream.pushEvent (1, 2, 0x90, 60, 100));
+        REQUIRE (stream.publishProgress (1, 5, false));
+        REQUIRE (stream.service());
+        REQUIRE (stream.preview().notes == std::vector<MidiNote> (3, { 1, 60, 100, 0, 1 }));
+        REQUIRE (stream.publishProgress (1, 20, false));
+        REQUIRE (stream.service());
+        REQUIRE (stream.preview().notes == std::vector<MidiNote> {
+            { 1, 60, 100, 0, 1 }, { 1, 60, 100, 0, 1 }, { 1, 60, 100, 0, 2 } });
+    }
+    SECTION ("Progress reveals a held onset at the previous bound")
+    {
+        MidiCaptureStream stream;
+        REQUIRE (stream.pushEvent (1, 10, 0x90, 60, 100));
+        REQUIRE (stream.publishProgress (1, 10, false));
+        REQUIRE (stream.service());
+        REQUIRE (stream.preview().notes.empty());
+        REQUIRE (stream.publishProgress (1, 11, false));
+        REQUIRE (stream.service());
+        REQUIRE (stream.preview().notes == std::vector<MidiNote> { { 1, 60, 100, 10, 1 } });
+    }
 }
 
 TEST_CASE ("MIDI capture service drains its initial snapshot before later completion",
@@ -198,26 +270,62 @@ TEST_CASE ("MIDI capture decodes every tagged channel control and filters malfor
 TEST_CASE ("MIDI capture overflow retains queued data and truncates a dropped note release",
            "[recording][midi][capture-stream]")
 {
-    MidiCaptureStream stream (3);
-    stream.configure ({}, 100);
-    REQUIRE (stream.pushEvent (1, 0, 0x90, 60, 100));
-    REQUIRE (stream.publishProgress (1, 10, false));
-    REQUIRE (stream.pushEvent (1, 8, 0xb0, 7, 100));
-    REQUIRE_FALSE (stream.pushEvent (1, 20, 0x80, 60, 0));
-    REQUIRE_FALSE (stream.publishProgress (1, 100, true));
-    REQUIRE (stream.overflowCount() == 2);
-    stream.service();
-    const auto passes = stream.takeCompleted();
-    REQUIRE (passes.size() == 1);
-    REQUIRE (passes[0].lengthInSamples == 100);
-    REQUIRE (passes[0].notes == std::vector<MidiNote> { { 1, 60, 100, 0, 10 } });
-    REQUIRE (passes[0].ccs == std::vector<MidiCc> { { 1, 7, 100, 8 } });
-    REQUIRE (stream.preview().passOrdinal == 2);
-    REQUIRE (stream.preview().notes.empty());
-    stream.pushEvent (2, 30, 0x90, 64, 80);
-    stream.publishProgress (2, 40, false);
-    stream.service();
-    REQUIRE (stream.preview().notes == std::vector<MidiNote> { { 1, 64, 80, 30, 10 } });
+    SECTION ("Dropped progress preserves a held note until Stop")
+    {
+        MidiCaptureStream stream (1);
+        REQUIRE (stream.pushEvent (1, 0, 0x90, 60, 100));
+        REQUIRE_FALSE (stream.publishProgress (1, 10, false));
+        stream.service();
+        stream.sealFinal (1, 20);
+        REQUIRE (stream.overflowCount() == 0);
+        const auto passes = stream.takeCompleted();
+        REQUIRE (passes.size() == 1);
+        REQUIRE (passes[0].notes == std::vector<MidiNote> { { 1, 60, 100, 0, 20 } });
+    }
+    SECTION ("Dropped completion preserves the held note and its next-pass carry")
+    {
+        MidiCaptureStream stream (1);
+        stream.configure ({}, 100);
+        REQUIRE (stream.pushEvent (1, 0, 0x90, 60, 100));
+        REQUIRE_FALSE (stream.publishProgress (1, 100, true));
+        stream.service();
+        const auto passes = stream.takeCompleted();
+        REQUIRE (passes.size() == 1);
+        REQUIRE (passes[0].notes == std::vector<MidiNote> { { 1, 60, 100, 0, 100 } });
+        REQUIRE (stream.publishProgress (2, 25, false));
+        stream.service();
+        REQUIRE (stream.preview().notes == std::vector<MidiNote> { { 1, 60, 100, 0, 25 } });
+        REQUIRE (stream.pushEvent (2, 30, 0x80, 60, 0));
+        REQUIRE_FALSE (stream.publishProgress (2, 40, false));
+        stream.sealFinal (2, 50);
+        const auto final = stream.takeCompleted();
+        REQUIRE (final.size() == 1);
+        REQUIRE (final[0].notes == std::vector<MidiNote> { { 1, 60, 100, 0, 30 } });
+        REQUIRE (stream.overflowCount() == 0);
+    }
+    SECTION ("A dropped note release truncates the held note")
+    {
+        MidiCaptureStream stream (3);
+        stream.configure ({}, 100);
+        REQUIRE (stream.pushEvent (1, 0, 0x90, 60, 100));
+        REQUIRE (stream.publishProgress (1, 10, false));
+        REQUIRE (stream.pushEvent (1, 8, 0xb0, 7, 100));
+        REQUIRE_FALSE (stream.pushEvent (1, 20, 0x80, 60, 0));
+        REQUIRE_FALSE (stream.publishProgress (1, 100, true));
+        REQUIRE (stream.overflowCount() == 1);
+        stream.service();
+        const auto passes = stream.takeCompleted();
+        REQUIRE (passes.size() == 1);
+        REQUIRE (passes[0].lengthInSamples == 100);
+        REQUIRE (passes[0].notes == std::vector<MidiNote> { { 1, 60, 100, 0, 10 } });
+        REQUIRE (passes[0].ccs == std::vector<MidiCc> { { 1, 7, 100, 8 } });
+        REQUIRE (stream.preview().passOrdinal == 2);
+        REQUIRE (stream.preview().notes.empty());
+        stream.pushEvent (2, 30, 0x90, 64, 80);
+        stream.publishProgress (2, 40, false);
+        stream.service();
+        REQUIRE (stream.preview().notes == std::vector<MidiNote> { { 1, 64, 80, 30, 10 } });
+    }
 }
 
 TEST_CASE ("MIDI capture gaps cannot pair later note-offs with stale held notes",
@@ -247,6 +355,7 @@ TEST_CASE ("MIDI capture recovers several dropped empty loop completions exactly
     REQUIRE (stream.publishProgress (1, 100, true));
     REQUIRE_FALSE (stream.publishProgress (2, 100, true));
     REQUIRE_FALSE (stream.publishProgress (3, 100, true));
+    REQUIRE (stream.overflowCount() == 0);
     stream.service();
     const auto passes = stream.takeCompleted();
     REQUIRE (passes.size() == 3);
@@ -309,6 +418,24 @@ TEST_CASE ("MIDI capture configure resets an earlier gesture including its overf
 TEST_CASE ("MIDI capture retains events before a sample boundary that rounds to the final tick",
            "[recording][midi][capture-stream]")
 {
+    MidiCaptureStream bounded;
+    const bool loop = GENERATE (false, true);
+    bounded.configure ([] (std::int64_t sample) { return (sample + 5) / 10; }, loop ? 50 : 0);
+    bounded.pushEvent (1, 48, 0x90, 60, 100);
+    bounded.pushEvent (1, 49, 0x80, 60, 0);
+    bounded.pushEvent (1, 49, 0x90, 64, 90);
+    bounded.pushEvent (1, 49, 0xe0, 1, 64);
+    bounded.publishProgress (1, 50, false);
+    bounded.service (loop ? -1 : 50);
+    CHECK (bounded.preview().lengthInTicks == 5);
+    CHECK (bounded.preview().notes == std::vector<MidiNote> {
+        { 1, 60, 100, 4, 1 }, { 1, 64, 90, 4, 1 } });
+    CHECK (bounded.preview().ccs == std::vector<MidiCc> {
+        { 1, 0, 8193, 4, MidiCc::Kind::PitchBend } });
+    bounded.publishProgress (1, 50, false);
+    bounded.service (loop ? -1 : 50);
+    CHECK (bounded.preview().notes[1] == MidiNote { 1, 64, 90, 4, 1 });
+
     MidiCaptureStream stream;
     stream.configure ([] (std::int64_t sample) { return (sample + 5) / 10; });
     stream.pushEvent (1, 48, 0x90, 60, 100);

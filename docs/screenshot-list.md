@@ -1,6 +1,6 @@
 # Dusk Studio — Manual Screenshot List
 
-The 39 unique PNGs referenced by `MANUAL.md` (40 refs, because
+The 41 unique PNGs referenced by `MANUAL.md` (42 refs, because
 `np-09-tape-strip.png` is used twice), plus `np-12-notepad.png`, whose embed is
 pulled until it is reshot, and the captured figures `MANUAL.md` does not
 reference. Capture target: `docs/images/<name>.png`. Filenames must match the
@@ -17,6 +17,13 @@ The harness drives the real app via `DUSKSTUDIO_CAPTURE_DIR` (see
 the notepad is manual — it is a native window the harness cannot reach — with
 notes below.
 
+SFZ Manager's Installed and Online figures come from a separate
+`gui.sfz_repository_workflow` run with fixture responses and
+`DUSKSTUDIO_SCENARIO_CAPTURE_DIR` set. Its native PPM exports survive scenario
+cleanup and are converted alongside the other panels. Each app run gets private
+HOME, config, music and runtime directories and uses the same private null-audio
+graph. The two harnesses never run in the same app process.
+
 Panels ported to the native GUI stack are still automatic, by a different route:
 `createComponentSnapshot` cannot reach a framework child, so those panels read
 their own steady frame back as a PPM and the script converts it. Their figures
@@ -24,8 +31,8 @@ are taken at the end of the run, after the bounce phase, which leaves the input
 meter reading - so the harness parks the compressor panel's meters at rest
 before capturing it, because that figure is of the panel and not of a signal.
 The startup dialog, the virtual keyboard, the audio settings panel and the audio
-editor have no meters to settle. The settings panel is taller than a 1200 px display can grant,
-so its figure is the panel scrolled to the top, which is what opening it shows.
+editor have no meters to settle. The settings figure shows the Audio tab;
+the other sections are reached through the tabs along the top.
 
 **Capture conventions (manual shots)**
 
@@ -78,14 +85,16 @@ so its figure is the panel scrolled to the top, which is what opening it shows.
 | `vkb-01-virtual-keyboard.png`   | L595   | ✅   | Virtual MIDI keyboard. Native panel, same route as `fx-02-comp.png`. |
 | `fx-03-tape.png`                | L976   | ✅   | Master tape editor: Tape Machine 2's own editor, read back from its window once painted, same route as the built-in units' plug-in editors. |
 | `mm-01-automation-modes.png`    | L1598  | ✅   | A fader's automation-mode label (READ / WRITE / TOUCH).   |
-| `mm-02-mastering-chain.png`     | L1059  | ✅   | Mastering chain with EQ, comp, and limiter engaged.       |
+| `mm-02-mastering-chain.png`     | L1059  | Yes  | Mastering chain with EQ, comp, limiter and Phase panels. |
 | `pl-01-plugin-picker.png`       | L1672  | ✅   | Plugin picker panel populated.                            |
 | `bi-01-utility.png`             | L1745  | ✅   | The Utility unit's editor. One figure per built-in unit: the harness loads each onto track 1's insert and shoots it through the panel window the user opens. |
 | `bi-02-reverb.png`              | L1770  | ✅   | The DuskVerb 2 unit's editor. Same route as `bi-01-utility.png`. |
 | `bi-03-tape-echo.png`           | L1797  | ✅   | The Tape Echo 2 unit's editor. Same route as `bi-01-utility.png`. |
 | `bi-04-tape.png`                | L1825  | ✅   | The Tape Machine 2 unit's editor. Same route as `bi-01-utility.png`. |
 | `bi-05-sunset.png`              | L1835  | ✅   | The Sunset instrument's editor. Same route as `bi-01-utility.png`. |
-| `ms-02-sfz-library.png`         | L1925  | ✅   | Instrument library listing a fixture tree of soundfonts.  |
+| `ms-02-sfz-library.png`         | -      | ✅   | Local SFZ folders listing a fixture tree of soundfonts. |
+| `ms-03-sfz-installed.png`       | -      | ✅   | SFZ Manager Installed tab with the fixture pack, programs and protected used version. |
+| `ms-04-sfz-online.png`          | -      | ✅   | SFZ Manager Online tab with four fixture repositories and a selected licensed pack. |
 | `pl-04-hw-insert.png`           | L1943  | ✅   | Hardware insert editor with I/O pickers and Ping button.  |
 | `sync-01-mcu-bindings.png`      | L2060  | ✅   | MIDI Bindings panel populated with a few learned bindings.|
 | `bnc-01-bounce-dialog.png`      | L2196  | ✅   | Bounce dialog (file picker + progress). (No format options — see note.) |

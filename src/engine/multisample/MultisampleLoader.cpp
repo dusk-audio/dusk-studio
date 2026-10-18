@@ -113,7 +113,7 @@ MultisampleLoader::Result MultisampleLoader::primeRequest (Request request)
         const auto resolved = sfz::resolveLibraryInstrument (locations, *input.locator);
         if (resolved) input.path = *resolved;
         else result.error = locations.error.empty()
-            ? "This SFZ pack version is unavailable. Reconnect its library drive or open SFZ Manager to install it."
+            ? "This SFZ pack version is unavailable. Reconnect its library drive, or open SFZ Manager, select an installed version of the same pack and choose Relink this slot."
             : locations.error;
     }
     else

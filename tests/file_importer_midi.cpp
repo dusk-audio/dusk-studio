@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <initializer_list>
 #include <vector>
 
 using namespace duskstudio;
@@ -185,4 +186,60 @@ TEST_CASE ("importMidi rejects files it cannot use", "[import][midi]")
     req.source     = empty.file;
     req.sessionBpm = 0.0f;
     REQUIRE_FALSE (fileimport::importMidi (req).ok);
+}
+
+TEST_CASE ("importMidi preserves channel controls and two-byte running status", "[import][midi]")
+{
+    ByteWriter track;
+    const auto event = [&] (std::initializer_list<int> bytes)
+    {
+        track.u8 (24);
+        for (const auto byte : bytes) track.u8 (byte);
+    };
+    event ({ 0xb2, 7, 91 });
+    event ({ 10, 65 });
+    event ({ 0xe0, 0, 0 });
+    event ({ 0, 64 });
+    event ({ 127, 127 });
+    event ({ 0xdf, 12 });
+    event ({ 66 });
+    event ({ 0xaf, 60, 44 });
+    event ({ 0xc3, 23 });
+    event ({ 24 });
+    event ({ 0x90, 60, 99 });
+    event ({ 0x80, 60, 0 });
+    event ({ 0xff, 0x2f, 0 });
+
+    ByteWriter file;
+    file.tag ("MThd"); file.u32 (6); file.u16 (0); file.u16 (1); file.u16 (96);
+    file.tag ("MTrk"); file.u32 (static_cast<std::uint32_t> (track.bytes.size()));
+    file.bytes.insert (file.bytes.end(), track.bytes.begin(), track.bytes.end());
+    const ScopedMidiFile source (file.bytes);
+    fileimport::MidiImportRequest req;
+    req.source = source.file;
+    req.sessionSampleRate = 48000.0;
+    req.sessionBpm = 120.0f;
+    req.timelineStart = 4567;
+    const auto result = fileimport::importMidi (req);
+    REQUIRE (result.ok);
+    CHECK (result.region.timelineStart == 4567);
+    CHECK (result.region.lengthInTicks == 1560);
+
+    using Kind = MidiCc::Kind;
+    const std::vector<MidiCc> expected {
+        { 3, 7, 91, 120, Kind::ControlChange },
+        { 3, 10, 65, 240, Kind::ControlChange },
+        { 1, 0, 0, 360, Kind::PitchBend },
+        { 1, 0, 8192, 480, Kind::PitchBend },
+        { 1, 0, 16383, 600, Kind::PitchBend },
+        { 16, 0, 12, 720, Kind::ChannelPressure },
+        { 16, 0, 66, 840, Kind::ChannelPressure },
+        { 16, 60, 44, 960, Kind::PolyPressure },
+        { 4, 0, 23, 1080, Kind::ProgramChange },
+        { 4, 0, 24, 1200, Kind::ProgramChange }
+    };
+    CHECK (result.region.ccs == expected);
+    REQUIRE (result.region.notes.size() == 1);
+    const MidiNote expectedNote { 1, 60, 99, 1320, 120 };
+    CHECK (result.region.notes.front() == expectedNote);
 }

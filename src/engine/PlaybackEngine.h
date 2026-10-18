@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <vector>
 #include "audiofile/BufferedFileReader.h"
 #include "audiofile/ReaderFillPool.h"
 #include "../foundation/PlanarBuffer.h"
@@ -174,11 +175,9 @@ private:
         // audible dropout at the top of every cycle. These hold
         // the region's raw source samples for the timeline window
         // [loopCacheTimelineStart, +loopCacheLen), filled on the message
-        // thread in preparePlayback while the audio thread is guaranteed
-        // out (streamsActive false). The audio thread serves reads from
-        // here while the reader re-warms. Stale-guarded: readSpanForTrack
-        // only uses the cache when the window matches the loop start it
-        // was primed for.
+        // thread before publication. The audio thread serves reads from here
+        // while the reader re-warms. Its absolute timeline samples remain
+        // valid when the loop range changes.
         std::vector<float> loopCacheL, loopCacheR;
         std::int64_t        loopCacheTimelineStart = -1;
         int                loopCacheLen           = 0;
@@ -192,6 +191,7 @@ private:
         PerTrackStream& operator= (const PerTrackStream&) = delete;
 
         std::vector<RegionStream> regions;  // sorted by timelineStart
+        bool loopCacheReady = true;
     };
 
     // One track's streams. While they are live, the audio thread owns `current`
@@ -219,6 +219,11 @@ private:
         TakeId auditioned = 0;
     };
     std::array<PendingSwap, Session::kNumTracks> pending;
+    std::array<Audition, Session::kNumTracks> requestedAudition {};
+    // A capture plan keeps its loop head even when the live brackets move.
+    std::atomic<std::int64_t> effectiveLoopStart { -1 };
+    std::int64_t cachedLoopStart = -1;
+    std::chrono::steady_clock::time_point nextLoopCacheAttempt {};
     bool synchronousReaders = false;
 
     // One track's streams, readers opened and warmed at `warmAt`, loop cache
@@ -232,8 +237,9 @@ private:
     void freeSlot (TrackSlot& slot);
 
     // One track's streams summed into outL / outR, loop-aware as readForTrack
-    // describes. The outputs must be cleared first.
-    void readStream (PerTrackStream& stream, std::int64_t playheadSamples, float* outL, float* outR,
+    // describes. Returns the first incomplete span's offset, or numSamples.
+    // The outputs must be cleared first.
+    int readStream (PerTrackStream& stream, std::int64_t playheadSamples, float* outL, float* outR,
                      int numSamples, std::int64_t loopStart, std::int64_t loopEnd) noexcept;
 
     // The track whose streams play an auditioned take, which
@@ -247,16 +253,16 @@ private:
     // One linear (non-wrapping) read span summed into the output at
     // outOffset. The public readForTrack handles clearing, the in-flight
     // guard and loop splitting, then delegates here per span.
-    void readSpanForTrack (PerTrackStream& slot, std::int64_t spanStart,
+    int readSpanForTrack (PerTrackStream& slot, std::int64_t spanStart,
                            float* outL, float* outR, int outOffset,
                            int numSamples) noexcept;
 
-    // Fill one track's loop-start caches for the given loop range. Message
+    // Fill one track's loop-start caches for the given head. Message
     // thread, before the audio thread can see the streams.
-    static void primeLoopCache (PerTrackStream& stream, std::int64_t loopStart, std::int64_t loopEnd);
+    static bool primeLoopCache (PerTrackStream& stream, std::int64_t loopStart);
 
     // Audio thread bumps audioInFlight BEFORE inspecting streamsActive /
-    // streams[] and decrements on exit. stopPlayback clears streamsActive
+    // the live streams and decrements on exit. stopPlayback clears streamsActive
     // then spins until zero before destroying the readers. Closes the UAF
     // window where a callback that latched Playing is still summing
     // regions while the message thread tears the streams down.

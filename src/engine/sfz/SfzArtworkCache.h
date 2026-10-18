@@ -36,7 +36,7 @@ public:
     ~ArtworkCache();
     // Fallback bytes are immutable application resources and outlive this cache.
     void request (std::string key, std::string url, std::string_view fallback,
-                  ArtworkDecoder, bool allowNetwork);
+                  ArtworkDecoder, bool allowNetwork, std::string sourceId);
     ArtworkSnapshot snapshot() const;
     void cancel();
     void setTransport (std::shared_ptr<HttpTransport>);
@@ -46,7 +46,7 @@ private:
     struct Request
     {
         std::uint64_t generation;
-        std::string key, url;
+        std::string key, url, sourceId;
         std::string_view fallback;
         ArtworkDecoder decode;
         bool allowNetwork;

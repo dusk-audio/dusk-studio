@@ -1,5 +1,7 @@
 #pragma once
 
+#include "../dsp/PhaseAnalyzer.h"
+
 #include <cstdint>
 #include <filesystem>
 #include <array>
@@ -167,6 +169,7 @@ public:
     virtual bool openAudioEditorOnTakes (int track) = 0;
     // Take ids in lane order, newest first; empty when the editor shows no lanes.
     virtual std::vector<std::uint64_t> audioEditorTakeLanes() const = 0;
+    virtual std::uint64_t audioEditorCompletedFrames() const = 0;
     // In the frame audioEditorPointer takes: "lane" is a take's waveform at a timeline
     // sample; "name", "audition", "delete", "confirm" and "cancel" its header controls.
     // Empty while the lane or the control is off screen.
@@ -363,6 +366,8 @@ public:
     // Sizes the main window, in the units mainWindowSize gives; the runner puts the
     // launch size back after the case.
     virtual bool resizeMainWindow (int width, int height) = 0;
+    // A layout probe must restore the original limit before it completes.
+    virtual bool setMainWindowMinimumWidth (int width) = 0;
     virtual int tapeExpansionState() const = 0;
     virtual int timelineChaseState() const = 0;
     virtual bool openRegionEditor (int track, int region, bool midi) = 0;
@@ -407,7 +412,17 @@ public:
     virtual bool clickMasteringTarget() = 0;
     // The multiband comp's preset picker; false when this build lays out none.
     virtual bool clickMasteringCompPreset() = 0;
-    // How many of the mastering stage's two native panels are open, or -1 when
+    virtual bool masteringPhasePointer (const std::string& control, float position, bool pressed, int modifiers = 0) = 0;
+    virtual void resetMasteringPhasePanel() = 0;
+    virtual bool masteringPhaseCapturesKeyboard() const = 0;
+    virtual bool masteringPhaseHasKeyboard() const = 0;
+    virtual bool typeInMasteringPhase (const std::string& text) = 0;
+    virtual const PhaseAnalyzer::Report* masteringPhaseReport() const = 0;
+    virtual bool clickMasteringModulePicker() = 0;
+    virtual bool masteringModulePickerShown() const = 0;
+    virtual int masteringModuleIndex() const = 0;
+    virtual void restoreMasteringModule (int index) = 0;
+    // How many of the mastering stage's three native panels are open, or -1 when
     // this build has none. Zero while the stage is not up.
     virtual int masteringPanelsOpen() const = 0;
     // Pixels around the multiband comp's editor that nothing painted, or -1
@@ -478,6 +493,7 @@ public:
     // repainted still shows what it last drew. `scratch` is a file it may write.
     // -1 when the window cannot be read back (no roll, or not Linux).
     virtual int pianoRowOnScreen (int pitch, const std::filesystem::path& scratch) = 0;
+    virtual int pianoLaneValueOnScreen (bool cc, std::int64_t tick, const std::filesystem::path& scratch) = 0;
     virtual bool clickPianoGrid (std::int64_t tick, int pitch) = 0;
     virtual bool dragPianoVelocity (std::int64_t tick, float fraction) = 0;
     virtual bool resizePianoVelocity (int pixels) = 0;
@@ -489,6 +505,11 @@ public:
     virtual int pianoCcHeight() const = 0;
     virtual void closePianoRoll() = 0;
     virtual bool pressPianoRollKey (const std::string& description) = 0;
+    // Queued into the native child; pressPianoRollKey applies edits synchronously.
+    virtual bool inputPianoRoll (const std::string& description) = 0;
+    virtual bool pianoKeyboardFocus (bool focused) = 0;
+    // Includes the deferred close, until the native child is gone.
+    virtual bool pianoNativeWindowOpen() const = 0;
     virtual bool doubleClickAudioRegion (int track, int region) = 0;
     // Modifiers as pianoNotePointer takes them: 1 Shift, 2 Cmd/Ctrl.
     virtual bool clickAudioRegion (int track, int region, bool right = false, int modifiers = 0) = 0;

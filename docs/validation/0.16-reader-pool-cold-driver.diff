@@ -1,0 +1,152 @@
+--- tools/reader-pool-benchmark.cpp
++++ cold-reader-benchmark.cpp
+@@ -30,0 +31,4 @@
++#include <fcntl.h>
++#include <sys/mman.h>
++#include <sys/stat.h>
++#include <unistd.h>
+@@ -40 +44,4 @@
+-constexpr std::int64_t kRate = 48000;
++#ifndef DUSK_READER_BENCH_RATE
++#define DUSK_READER_BENCH_RATE 48000
++#endif
++constexpr std::int64_t kRate = DUSK_READER_BENCH_RATE;
+@@ -75 +82 @@
+-                         "Regions must be a multiple of 24. Runs use 48 kHz/256-frame pacing.\n";
++                         "Regions must be a multiple of 24. Rate is fixed at compile time; 256-frame pacing.\n";
+@@ -93 +100 @@
+-std::int16_t sourcePcm (int channel, std::int64_t frame) noexcept
++std::int16_t sourcePcm (int channel, std::int64_t frame, std::size_t source) noexcept
+@@ -95,2 +102,6 @@
+-    const auto code = (frame * (channel == 0 ? 73 : 151) + (channel == 0 ? 101 : 701)) % 60001;
+-    return (std::int16_t) (code - 30000);
++    auto bits = (std::uint64_t) frame + (std::uint64_t) source * 0x9e3779b97f4a7c15ULL
++              + (std::uint64_t) (channel + 1) * 0xd1b54a32d192ed03ULL;
++    bits = (bits ^ (bits >> 30)) * 0xbf58476d1ce4e5b9ULL;
++    bits = (bits ^ (bits >> 27)) * 0x94d049bb133111ebULL;
++    bits ^= bits >> 31;
++    return (std::int16_t) ((int) (bits >> 48) - 32768);
+@@ -99 +110 @@
+-float sourceSample (int channel, std::int64_t frame) noexcept
++float sourceSample (int channel, std::int64_t frame, std::size_t source) noexcept
+@@ -101 +112 @@
+-    return (float) sourcePcm (channel, frame) / 32768.0f;
++    return (float) sourcePcm (channel, frame, source) / 32768.0f;
+@@ -107 +118 @@
+-    SampleWave()
++    explicit SampleWave (std::size_t count)
+@@ -123 +134,5 @@
+-        try { write(); }
++        try
++        {
++            for (std::size_t i = 0; i < count; ++i) write (i);
++            for (std::size_t i = 0; i < count; ++i) evictAndVerify (i);
++        }
+@@ -138 +153,6 @@
+-    std::filesystem::path path() const { return directory / "shared-stereo.wav"; }
++    std::filesystem::path path (std::size_t source) const
++    {
++        return directory / ("source-" + std::to_string (source) + ".wav");
++    }
++    std::size_t checkedPages = 0;
++    std::size_t residentPages = 0;
+@@ -141 +161 @@
+-    void write()
++    void evictAndVerify (std::size_t source)
+@@ -143 +163,26 @@
+-        std::ofstream stream (path(), std::ios::binary);
++        const int fd = ::open (path (source).c_str(), O_RDONLY | O_CLOEXEC);
++        if (fd < 0) throw std::runtime_error ("could not open cache-control file");
++        struct stat info {};
++        if (::fstat (fd, &info) != 0 || ::fsync (fd) != 0
++            || ::posix_fadvise (fd, 0, 0, POSIX_FADV_DONTNEED) != 0)
++        {
++            ::close (fd);
++            throw std::runtime_error ("could not sync/evict benchmark file");
++        }
++        const auto length = (std::size_t) info.st_size;
++        void* mapping = ::mmap (nullptr, length, PROT_NONE, MAP_SHARED, fd, 0);
++        ::close (fd);
++        if (mapping == MAP_FAILED) throw std::runtime_error ("could not map cache-control file");
++        const auto pageSize = (std::size_t) ::sysconf (_SC_PAGESIZE);
++        std::vector<unsigned char> pages ((length + pageSize - 1) / pageSize);
++        const int checked = ::mincore (mapping, length, pages.data());
++        ::munmap (mapping, length);
++        if (checked != 0) throw std::runtime_error ("could not inspect cache residency");
++        checkedPages += pages.size();
++        for (auto page : pages) residentPages += page & 1;
++        if (residentPages != 0) throw std::runtime_error ("benchmark files are not fully cold before open");
++    }
++
++    void write (std::size_t source)
++    {
++        std::ofstream stream (path (source), std::ios::binary);
+@@ -167 +212 @@
+-                    const auto value = (std::uint16_t) sourcePcm (c, from + f);
++                    const auto value = (std::uint16_t) sourcePcm (c, from + f, source);
+@@ -213 +258 @@
+-    explicit Streams (const Options& settings) : settings (settings)
++    explicit Streams (const Options& settings) : settings (settings), wave (settings.regions)
+@@ -222 +267 @@
+-            auto raw = dusk::audio::FileReader::open (wave.path());
++            auto raw = dusk::audio::FileReader::open (wave.path (i));
+@@ -241,0 +287,3 @@
++    std::size_t checkedColdPages() const noexcept { return wave.checkedPages; }
++    std::size_t residentColdPages() const noexcept { return wave.residentPages; }
++
+@@ -344,2 +391,0 @@
+-        auto direct = dusk::audio::FileReader::open (wave.path());
+-        if (direct == nullptr) throw std::runtime_error ("could not open loop-cache source");
+@@ -347,0 +394,2 @@
++            auto direct = dusk::audio::FileReader::open (wave.path ((std::size_t) track));
++            if (direct == nullptr) throw std::runtime_error ("could not open loop-cache source");
+@@ -422,0 +471,3 @@
++    std::vector<double> callbackStartLatenessUs;
++    std::uint64_t startsAtLeastOnePeriodLate = 0;
++    std::uint64_t callbackDurationOverruns = 0;
+@@ -446,0 +498 @@
++    result.callbackStartLatenessUs.reserve (settings.blocks);
+@@ -531,0 +584,3 @@
++        result.callbackStartLatenessUs.push_back (std::max (0.0,
++            std::chrono::duration<double, std::micro> (callbackStart - deadline).count()));
++        result.startsAtLeastOnePeriodLate += callbackStart >= deadline + period ? 1 : 0;
+@@ -532,0 +588 @@
++        result.callbackDurationOverruns += callbackEnd - callbackStart >= period ? 1 : 0;
+@@ -548 +604,2 @@
+-                        const auto expected = sourceSample (c, segment.timelineFrame % kClipFrames + f);
++                        const auto expected = sourceSample (c, segment.timelineFrame % kClipFrames + f,
++                            (std::size_t) (segment.timelineFrame / kClipFrames) * kTracks + (std::size_t) track);
+@@ -569 +626,4 @@
+-                    const auto expected = (double) sourceSample (c, segment.timelineFrame % kClipFrames + f) * kTracks;
++                    float expectedMix = 0.0f;
++                    for (int track = 0; track < kTracks; ++track)
++                        expectedMix += sourceSample (c, segment.timelineFrame % kClipFrames + f,
++                            (std::size_t) (segment.timelineFrame / kClipFrames) * kTracks + (std::size_t) track);
+@@ -572 +632 @@
+-                    result.referenceChecksum += expected * weight;
++                    result.referenceChecksum += (double) expectedMix * weight;
+@@ -620 +680 @@
+-std::string report (const Options& settings, const Measurements& result)
++std::string report (const Options& settings, const Measurements& result, const Streams& streams)
+@@ -639,0 +700,4 @@
++         << "  \"sample_files\":" << settings.regions << ",\n"
++         << "  \"input_bytes\":" << settings.regions * (kClipFrames * 4 + 44) << ",\n"
++         << "  \"pages_checked_before_open\":" << streams.checkedColdPages() << ",\n"
++         << "  \"resident_pages_before_open\":" << streams.residentColdPages() << ",\n"
+@@ -648,0 +713,6 @@
++         << "  \"callback_start_lateness_us\":" << timingJson (result.callbackStartLatenessUs) << ",\n"
++         << "  \"starts_at_least_one_period_late\":" << result.startsAtLeastOnePeriodLate << ",\n"
++         << "  \"callback_duration_overruns\":" << result.callbackDurationOverruns << ",\n"
++         << "  \"device_xruns\":null,\n"
++         << "  \"locate_kind\":" << (settings.mode == "locate"
++                ? "\"synchronous_explicit_priming_with_pacing_paused\"" : "null") << ",\n"
+@@ -680 +750 @@
+-         << "  \"notes\":\"Shared warm-page-cache PCM16 input; paced standalone reader and mix workload, no device or DSP. "
++         << "  \"notes\":\"Distinct PCM16 files, fsync/fadvise DONTNEED/mincore verified cold before metadata open; normal initial reader and loop priming retained. Paced standalone reader and mix workload, no device or DSP; device xruns unmeasured. "
+@@ -695 +765 @@
+-        const auto json = report (settings, result);
++        const auto json = report (settings, result, streams);
+@@ -706 +776,2 @@
+-            || ! std::isfinite (result.checksum) || result.unexpectedWrongFrames != 0
++            || ! std::isfinite (result.checksum) || result.wrongSourceFrames != 0
++            || result.uncoveredReadMisses != 0

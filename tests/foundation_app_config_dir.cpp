@@ -105,6 +105,7 @@ TEST_CASE ("A scenario run gets one private config directory for the whole proce
     REQUIRE (dir != dusk::fs::userConfigDir() / "Dusk Studio");
     REQUIRE (stdfs::is_directory (dir));
     REQUIRE (dusk::fs::appConfigDir() == dir);
+    REQUIRE (dusk::fs::appDataDir() == dir);
 }
 
 TEST_CASE ("DUSKSTUDIO_CONFIG_DIR names the config directory", "[appconfigdir]")
@@ -113,6 +114,33 @@ TEST_CASE ("DUSKSTUDIO_CONFIG_DIR names the config directory", "[appconfigdir]")
     const ScopedEnv override (dusk::fs::kConfigDirEnv, chosen.u8string());
     const ScopedEnv scenarios ("DUSKSTUDIO_RUN_SCENARIOS", "all");
     REQUIRE (dusk::fs::appConfigDir() == chosen);
+    REQUIRE (dusk::fs::appDataDir() == chosen);
+}
+
+TEST_CASE ("Application data uses the platform data directory outside harness runs", "[appconfigdir][fs]")
+{
+    const ScopedEnv noOverride (dusk::fs::kConfigDirEnv, "");
+    const ScopedEnv noScenarios ("DUSKSTUDIO_RUN_SCENARIOS", "");
+    const ScopedEnv noSelfTest ("DUSKSTUDIO_RUN_SELFTEST", "0");
+#if defined(_WIN32)
+    REQUIRE (dusk::fs::userDataDir() == dusk::fs::detail::knownFolderPath (FOLDERID_LocalAppData));
+#elif defined(__APPLE__)
+    REQUIRE (dusk::fs::userDataDir() == dusk::fs::userHomeDir() / "Library" / "Application Support");
+#else
+    const auto chosen = stdfs::temp_directory_path() / "dusk-app-data-xdg";
+    auto expected = dusk::fs::userHomeDir() / ".local" / "share";
+    std::string dataHome;
+    SECTION ("An absolute XDG_DATA_HOME need not already exist")
+    {
+        dataHome = chosen.u8string();
+        expected = chosen;
+    }
+    SECTION ("A relative XDG_DATA_HOME uses the default") { dataHome = "relative-data"; }
+    SECTION ("An empty XDG_DATA_HOME uses the default") {}
+    const ScopedEnv data ("XDG_DATA_HOME", dataHome);
+    REQUIRE (dusk::fs::userDataDir() == expected);
+#endif
+    REQUIRE (dusk::fs::appDataDir() == dusk::fs::userDataDir() / "Dusk Studio");
 }
 
 TEST_CASE ("A normal launch keeps its sessions under the user's Music folder", "[appconfigdir]")

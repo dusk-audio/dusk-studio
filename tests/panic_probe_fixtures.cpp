@@ -15,6 +15,9 @@
  #include "engine/MidiPanic.h"
  #include "engine/vst3/NativeVst3Slot.h"
  #include "engine/vst3/Vst3Bundle.h"
+ #include "engine/vst3/Vst3ParameterChanges.h"
+ #include "fixtures/MappedVst3Probe.h"
+ #include "support/AllocationObserver.h"
 #endif
 
 #include <array>
@@ -104,10 +107,10 @@ struct ClapProbe
     duskstudio::clap::NativeClapSlot slot;
     std::array<float, kBlock> inL {}, inR {}, outL {}, outR {};
 
-    bool load (const char* bundle)
+    bool load (const char* bundle, const char* pluginId = "")
     {
         std::string error;
-        return slot.load (std::filesystem::u8path (bundle), 48000.0, kBlock, error);
+        return slot.load (std::filesystem::u8path (bundle), 48000.0, kBlock, error, pluginId);
     }
 
     const clap_plugin_t* plugin()
@@ -176,12 +179,19 @@ TEST_CASE ("panic-probe CLAP fixture loads as an instrument with read-only count
            "[clap][fixture][panic]")
 {
     ClapProbe probe;
-    REQUIRE (probe.load (DUSKSTUDIO_PANIC_PROBE_CLAP_FIXTURE_PATH));
+    const char* pluginId = "";
+    int latency = 0;
+    SECTION ("default zero-latency probe") {}
+    SECTION ("immutable latency probe") { pluginId = "studio.dusk.test.panic-probe-latency-400"; latency = 400; }
+    SECTION ("immutable MIDI-primary probe") { pluginId = "studio.dusk.test.panic-probe-midi-primary"; }
+    REQUIRE (probe.load (DUSKSTUDIO_PANIC_PROBE_CLAP_FIXTURE_PATH, pluginId));
     REQUIRE (probe.slot.isLoadedInstrument());
-    REQUIRE (probe.slot.paramCount() == 5);
+    REQUIRE (probe.slot.getLatencySamples() == latency);
+    REQUIRE (probe.slot.paramCount() == 13);
 
     for (const char* name : { "voicesHeld", "chokesSeen", "cc120Seen", "cc123Seen",
-                              "noteOffsSeen" })
+                              "noteOffsSeen", "noteOnsSeen", "lastNoteOnOffset", "lastNoteOffOffset",
+                              "cc121Seen", "pitchCentersSeen", "pressureZerosSeen", "bentChannels", "pressedChannels" })
     {
         INFO ("counter: " << name);
         REQUIRE_THAT (probe.counter (name), WithinAbs (0.0, 1.0e-9));
@@ -204,20 +214,31 @@ TEST_CASE ("panic-probe CLAP fixture tracks voices on both note ports",
 
     ClapEventList on;
     on.addNote (CLAP_EVENT_NOTE_ON, 0, 0, 60);
+    on.events[0].note.header.time = 5;
     REQUIRE_THAT (probe.runRaw (on), WithinAbs (0.1, 1.0e-6));
     REQUIRE_THAT (probe.counter ("voicesHeld"), WithinAbs (1.0, 1.0e-9));
 
     ClapEventList onSecondPort;
     onSecondPort.addNote (CLAP_EVENT_NOTE_ON, 1, 0, 64);
+    onSecondPort.events[0].note.header.time = 7;
     REQUIRE_THAT (probe.runRaw (onSecondPort), WithinAbs (0.2, 1.0e-6));
     REQUIRE_THAT (probe.counter ("voicesHeld"), WithinAbs (2.0, 1.0e-9));
+    REQUIRE_THAT (probe.counter ("noteOnsSeen"), WithinAbs (2.0, 1.0e-9));
+    REQUIRE_THAT (probe.counter ("lastNoteOnOffset"), WithinAbs (7.0, 1.0e-9));
+    onSecondPort.events[0].note.header.time = 9;
+    REQUIRE_THAT (probe.runRaw (onSecondPort), WithinAbs (0.2, 1.0e-6));
+    REQUIRE_THAT (probe.counter ("noteOnsSeen"), WithinAbs (3.0, 1.0e-9));
+    REQUIRE_THAT (probe.counter ("lastNoteOnOffset"), WithinAbs (9.0, 1.0e-9));
 
     ClapEventList off;
     off.addNote (CLAP_EVENT_NOTE_OFF, 0, 0, 60);
     off.addNote (CLAP_EVENT_NOTE_OFF, 1, 0, 64);
+    off.events[0].note.header.time = 10;
+    off.events[1].note.header.time = 12;
     REQUIRE_THAT (probe.runRaw (off), WithinAbs (0.0, 1.0e-6));
     REQUIRE_THAT (probe.counter ("voicesHeld"), WithinAbs (0.0, 1.0e-9));
     REQUIRE_THAT (probe.counter ("noteOffsSeen"), WithinAbs (2.0, 1.0e-9));
+    REQUIRE_THAT (probe.counter ("lastNoteOffOffset"), WithinAbs (12.0, 1.0e-9));
     REQUIRE_THAT (probe.counter ("chokesSeen"), WithinAbs (0.0, 1.0e-9));
 }
 
@@ -282,7 +303,10 @@ TEST_CASE ("panic-probe CLAP fixture counts raw MIDI on its MIDI-dialect port",
     ClapEventList notes;
     notes.addMidi (1, 0x90, 60, 100);
     notes.addMidi (1, 0x90, 64, 100);
+    notes.events[1].midi.header.time = 9;
     REQUIRE_THAT (probe.runRaw (notes), WithinAbs (0.2, 1.0e-6));
+    REQUIRE_THAT (probe.counter ("noteOnsSeen"), WithinAbs (2.0, 1.0e-9));
+    REQUIRE_THAT (probe.counter ("lastNoteOnOffset"), WithinAbs (9.0, 1.0e-9));
 
     SECTION ("CC 120 silences every voice")
     {
@@ -309,9 +333,38 @@ TEST_CASE ("panic-probe CLAP fixture counts raw MIDI on its MIDI-dialect port",
         ClapEventList off;
         off.addMidi (1, 0x80, 60, 0);
         off.addMidi (1, 0x90, 64, 0);
+        off.events[1].midi.header.time = 15;
         REQUIRE_THAT (probe.runRaw (off), WithinAbs (0.0, 1.0e-6));
         REQUIRE_THAT (probe.counter ("noteOffsSeen"), WithinAbs (2.0, 1.0e-9));
+        REQUIRE_THAT (probe.counter ("lastNoteOffOffset"), WithinAbs (15.0, 1.0e-9));
         REQUIRE_THAT (probe.counter ("voicesHeld"), WithinAbs (0.0, 1.0e-9));
+    }
+
+    SECTION ("expression values and neutral messages are observed on every channel")
+    {
+        ClapEventList expression;
+        for (int channel = 0; channel < 16; ++channel)
+        {
+            expression.addMidi (1, (std::uint8_t) (0xE0 | channel), 127, 127);
+            expression.addMidi (1, (std::uint8_t) (0xD0 | channel), 90, 0);
+        }
+        probe.runRaw (expression);
+        REQUIRE_THAT (probe.counter ("bentChannels"), WithinAbs (65535.0, 1.0e-9));
+        REQUIRE_THAT (probe.counter ("pressedChannels"), WithinAbs (65535.0, 1.0e-9));
+
+        ClapEventList reset;
+        for (int channel = 0; channel < 16; ++channel)
+        {
+            reset.addMidi (1, (std::uint8_t) (0xB0 | channel), 121, 0);
+            reset.addMidi (1, (std::uint8_t) (0xE0 | channel), 0, 64);
+            reset.addMidi (1, (std::uint8_t) (0xD0 | channel), 0, 0);
+        }
+        probe.runRaw (reset);
+        REQUIRE_THAT (probe.counter ("cc121Seen"), WithinAbs (16.0, 1.0e-9));
+        REQUIRE_THAT (probe.counter ("pitchCentersSeen"), WithinAbs (16.0, 1.0e-9));
+        REQUIRE_THAT (probe.counter ("pressureZerosSeen"), WithinAbs (16.0, 1.0e-9));
+        REQUIRE_THAT (probe.counter ("bentChannels"), WithinAbs (0.0, 1.0e-9));
+        REQUIRE_THAT (probe.counter ("pressedChannels"), WithinAbs (0.0, 1.0e-9));
     }
 }
 
@@ -319,21 +372,48 @@ TEST_CASE ("the host turns a hosted panic into a choke on every CLAP note port",
            "[clap][fixture][panic]")
 {
     ClapProbe probe;
-    REQUIRE (probe.load (DUSKSTUDIO_PANIC_PROBE_CLAP_FIXTURE_PATH));
+    bool midiPrimary = false;
+    SECTION ("CLAP-only primary") {}
+    SECTION ("MIDI and CLAP primary") { midiPrimary = true; }
+    REQUIRE (probe.load (DUSKSTUDIO_PANIC_PROBE_CLAP_FIXTURE_PATH,
+                        midiPrimary ? "studio.dusk.test.panic-probe-midi-primary" : ""));
 
     dusk::MidiBuffer notes;
     addMidi (notes, 0x90, 60, 100);
+    if (midiPrimary)
+    {
+        addMidi (notes, 0xe0, 0, 65);
+        const std::array<std::uint8_t, 2> pressure { 0xd0, 80 };
+        notes.addEvent (pressure.data(), (int) pressure.size(), 0);
+    }
     REQUIRE_THAT (probe.runHosted (notes), WithinAbs (0.1, 1.0e-6));
     REQUIRE_THAT (probe.counter ("voicesHeld"), WithinAbs (1.0, 1.0e-9));
 
     dusk::MidiBuffer panic;
     addMidi (panic, 0xB0, 120, 0);
+    if (midiPrimary)
+    {
+        REQUIRE_THAT (probe.counter ("bentChannels"), WithinAbs (1.0, 1.0e-9));
+        REQUIRE_THAT (probe.counter ("pressedChannels"), WithinAbs (1.0, 1.0e-9));
+        addMidi (panic, 0xb0, 121, 0);
+        addMidi (panic, 0xe0, 0, 64);
+        const std::array<std::uint8_t, 2> pressure { 0xd0, 0 };
+        panic.addEvent (pressure.data(), (int) pressure.size(), 0);
+    }
     REQUIRE_THAT (probe.runHosted (panic), WithinAbs (0.0, 1.0e-6));
     REQUIRE_THAT (probe.counter ("voicesHeld"), WithinAbs (0.0, 1.0e-9));
     // One choke per CLAP note port, which is what makes a CLAP-only port
     // reachable by a panic at all.
     REQUIRE_THAT (probe.counter ("chokesSeen"), WithinAbs (2.0, 1.0e-9));
     REQUIRE_THAT (probe.counter ("noteOffsSeen"), WithinAbs (0.0, 1.0e-9));
+    if (midiPrimary)
+    {
+        REQUIRE_THAT (probe.counter ("cc121Seen"), WithinAbs (1.0, 1.0e-9));
+        REQUIRE_THAT (probe.counter ("pitchCentersSeen"), WithinAbs (1.0, 1.0e-9));
+        REQUIRE_THAT (probe.counter ("pressureZerosSeen"), WithinAbs (1.0, 1.0e-9));
+        REQUIRE_THAT (probe.counter ("bentChannels"), WithinAbs (0.0, 1.0e-9));
+        REQUIRE_THAT (probe.counter ("pressedChannels"), WithinAbs (0.0, 1.0e-9));
+    }
 }
 
 TEST_CASE ("a hosted CLAP block bigger than the host's event list still ends its notes",
@@ -462,12 +542,15 @@ struct Vst3Probe
 {
     duskstudio::vst3::Vst3Bundle bundle;
     duskstudio::vst3::NativeVst3Slot slot;
-    std::array<float, kBlock> inL {}, inR {}, outL {}, outR {};
+    std::array<float, 128> inL {}, inR {}, outL {}, outR {};
     std::string heldNotesParam;
     uint32_t heldNotesId = 0;
+    int blockFrames = kBlock;
 
-    bool load()
+    bool load (const char* name = "Dusk Panic Probe Fixture", int frames = kBlock)
     {
+        if (frames <= 0 || frames > (int) outL.size()) return false;
+        blockFrames = frames;
         const std::filesystem::path module =
             std::filesystem::u8path (DUSKSTUDIO_PANIC_PROBE_VST3_FIXTURE_PATH);
         std::string error;
@@ -475,9 +558,9 @@ struct Vst3Probe
 
         std::string classId;
         for (const auto& plugin : bundle.plugins())
-            if (plugin.isInstrument) { classId = plugin.id; break; }
+            if (plugin.isInstrument && plugin.name == name) { classId = plugin.id; break; }
         if (classId.empty()) return false;
-        if (! slot.load (module, 48000.0, kBlock, error, classId)) return false;
+        if (! slot.load (module, 48000.0, blockFrames, error, classId)) return false;
 
         for (int i = 0; i < slot.paramCount(); ++i)
             if (const auto* info = slot.paramInfo (i); info != nullptr && info->isReadOnly)
@@ -495,14 +578,32 @@ struct Vst3Probe
         inR.fill (0.0f);
         outL.fill (0.0f);
         outR.fill (0.0f);
-        slot.processStereo (inL.data(), inR.data(), outL.data(), outR.data(), kBlock, midi);
-        return outL[kBlock - 1];
+        slot.processStereo (inL.data(), inR.data(), outL.data(), outR.data(), blockFrames, midi);
+        return outL[(std::size_t) blockFrames - 1];
     }
 
     double heldNotes()
     {
         double value = -1.0;
         slot.getParamValue (heldNotesId, value);
+        return value;
+    }
+
+    double noteOffsSeen()
+    {
+        for (int i = 0; i < slot.paramCount(); ++i)
+            if (const auto* info = slot.paramInfo (i); info != nullptr && info->name == "Note Offs Seen")
+            {
+                double value = -1.0;
+                if (slot.getParamValue (info->id, value)) return value * 65535.0;
+            }
+        return -1.0;
+    }
+
+    double normalized (std::uint32_t id)
+    {
+        double value = -1.0;
+        slot.getParamValue (id, value);
         return value;
     }
 };
@@ -553,6 +654,36 @@ TEST_CASE ("a hosted VST3 block bigger than the host's event list still ends its
     // Past the host's 1024-event list either way.
     constexpr int kFlood = 2000;
 
+    SECTION ("a panic backlog drains without MIDI input and excludes new onsets during recovery")
+    {
+        dusk::MidiBuffer repeated;
+        for (int i = 0; i < 1024; ++i) addMidi (repeated, 0x90, 60, 100);
+        probe.run (&repeated);
+        probe.run (&repeated);
+        dusk::MidiBuffer later;
+        addMidi (later, 0x90, 61, 100);
+        probe.run (&later);
+        REQUIRE_THAT (probe.heldNotes(), WithinAbs (2.0 / 16.0, 1.0e-6));
+
+        dusk::MidiBuffer stop;
+        REQUIRE (duskstudio::midi::emitTransportStopReset (stop, 0));
+        probe.run (&stop);
+        REQUIRE_THAT (probe.heldNotes(), WithinAbs (1.0 / 16.0, 1.0e-6));
+        REQUIRE_THAT (probe.noteOffsSeen(), WithinAbs (1024.0, 1.0e-6));
+        probe.run (nullptr);
+        REQUIRE_THAT (probe.heldNotes(), WithinAbs (1.0 / 16.0, 1.0e-6));
+        REQUIRE_THAT (probe.noteOffsSeen(), WithinAbs (2048.0, 1.0e-6));
+
+        dusk::MidiBuffer incoming;
+        addMidi (incoming, 0x90, 62, 100);
+        probe.run (&incoming);
+        REQUIRE_THAT (probe.heldNotes(), WithinAbs (0.0, 1.0e-6));
+        REQUIRE_THAT (probe.noteOffsSeen(), WithinAbs (2049.0, 1.0e-6));
+        probe.run (&incoming);
+        REQUIRE_THAT (probe.heldNotes(), WithinAbs (1.0 / 16.0, 1.0e-6));
+        return;
+    }
+
     SECTION ("a flood of other notes between a note's start and its end")
     {
         dusk::MidiBuffer block;
@@ -566,6 +697,9 @@ TEST_CASE ("a hosted VST3 block bigger than the host's event list still ends its
 
     SECTION ("more note-offs than the host can carry")
     {
+        bool stopPacket = false;
+        SECTION ("hanging-note fallback") {}
+        SECTION ("Stop expression fallback") { stopPacket = true; }
         dusk::MidiBuffer start;
         addMidiAt (start, 0x90, 60, 100, 0);
         probe.run (&start);
@@ -573,11 +707,13 @@ TEST_CASE ("a hosted VST3 block bigger than the host's event list still ends its
 
         // Keys other than the held one, then its own note-off last.
         dusk::MidiBuffer block;
+        if (stopPacket) REQUIRE (duskstudio::midi::emitTransportStopReset (block, 0));
         for (int i = 0; i < kFlood; ++i)
             addMidiAt (block, 0x80, (std::uint8_t) (61 + i % 60), 0, i * (kBlock - 1) / kFlood);
         addMidiAt (block, 0x80, 60, 0, kBlock - 1);
         probe.run (&block);
         REQUIRE_THAT (probe.heldNotes(), WithinAbs (0.0, 1.0e-6));
+        REQUIRE_THAT (probe.noteOffsSeen(), WithinAbs (1.0, 1.0e-6));
     }
 }
 
@@ -615,5 +751,115 @@ TEST_CASE ("a hosted VST3 block that resets and then plays a dense run keeps its
     addMidi (off, 0x80, 60, 0);
     probe.run (&off);
     REQUIRE_THAT (probe.heldNotes(), WithinAbs (0.0, 1.0e-6));
+}
+
+TEST_CASE ("mapped VST3 parameters allocate no storage on their first populated block",
+           "[vst3][fixture][midi][allocation]")
+{
+    namespace Probe = duskstudio::test::mappedvst3;
+    Vst3Probe probe;
+    REQUIRE (probe.load (Probe::kName, 128));
+    REQUIRE (probe.slot.getInstance()->midiCcMappingCount() == 112);
+    probe.slot.setParamValue (Probe::parameterId (15, Probe::Sustain), 0.75);
+
+    dusk::MidiBuffer block;
+    for (int channel = 0; channel < Probe::kChannels; ++channel)
+        for (int point = 7; point >= 0; --point)
+        {
+            const int at = point * 7;
+            addMidiAt (block, (std::uint8_t) (0xB0 | channel), 1, (std::uint8_t) (10 + point), at);
+            const int bend = 1000 + point * 100;
+            addMidiAt (block, (std::uint8_t) (0xE0 | channel), (std::uint8_t) (bend & 127),
+                       (std::uint8_t) (bend >> 7), at);
+            const std::array<std::uint8_t, 2> pressure { (std::uint8_t) (0xD0 | channel), (std::uint8_t) (20 + point) };
+            REQUIRE (block.addEvent (pressure.data(), 2, at));
+        }
+    addMidiAt (block, 0xB0, 1, 99, 49);
+
+    for (int pass = 0; pass < 2; ++pass)
+    {
+        std::size_t allocations = 0;
+        {
+            duskstudio::test::AllocationObserver observer;
+            probe.run (&block);
+            allocations = observer.count();
+        }
+        REQUIRE (allocations == 0);
+        REQUIRE_THAT (probe.normalized (Probe::PointsSeen) * Probe::kCounterScale,
+                      WithinAbs (pass == 0 ? 385.0 : 384.0, 1.0e-6));
+        REQUIRE_THAT (probe.normalized (Probe::QueueErrors), WithinAbs (0.0, 1.0e-9));
+        for (const auto id : { Probe::ModulationPoints, Probe::PitchPoints, Probe::PressurePoints })
+            REQUIRE_THAT (probe.normalized (id) * Probe::kCounterScale, WithinAbs (8.0, 1.0e-6));
+        for (const auto id : { Probe::ModulationOffset, Probe::PitchOffset, Probe::PressureOffset })
+            REQUIRE_THAT (probe.normalized (id) * Probe::kCounterScale, WithinAbs (49.0, 1.0e-6));
+        for (int channel = 0; channel < Probe::kChannels; ++channel)
+        {
+            REQUIRE_THAT (probe.normalized (Probe::parameterId (channel, Probe::Modulation)),
+                          WithinAbs ((channel == 0 ? 99.0 : 17.0) / 127.0, 1.0e-9));
+            REQUIRE_THAT (probe.normalized (Probe::parameterId (channel, Probe::PitchBend)), WithinAbs (1700.0 / 16383.0, 1.0e-9));
+            REQUIRE_THAT (probe.normalized (Probe::parameterId (channel, Probe::Pressure)), WithinAbs (27.0 / 127.0, 1.0e-9));
+        }
+        REQUIRE_THAT (probe.normalized (Probe::parameterId (15, Probe::Sustain)), WithinAbs (0.75, 1.0e-9));
+    }
+    probe.run (nullptr);
+    REQUIRE_THAT (probe.normalized (Probe::PointsSeen), WithinAbs (0.0, 1.0e-9));
+}
+
+TEST_CASE ("a refused mapped VST3 panic releases notes immediately and retries expression",
+           "[vst3][fixture][panic][midi][allocation]")
+{
+    namespace Probe = duskstudio::test::mappedvst3;
+    Vst3Probe probe;
+    REQUIRE (probe.load (Probe::kName, 128));
+    dusk::MidiBuffer start;
+    addMidi (start, 0x90, 60, 100);
+    REQUIRE_THAT (probe.run (&start), WithinAbs (0.1, 1.0e-6));
+
+    dusk::MidiBuffer block;
+    addMidi (block, 0xB0, 123, 0);
+    std::size_t points = 1;
+    const auto capacity = duskstudio::vst3::detail::kParameterPointCapacity;
+    for (int at = 0; at < 127 && points < capacity; ++at)
+        for (int channel = 0; channel < Probe::kChannels && points < capacity; ++channel)
+            for (std::size_t ctrl = Probe::Sustain; ctrl < Probe::kControllers.size() && points < capacity; ++ctrl)
+            {
+                if (at == 0 && channel == 0 && ctrl == Probe::AllNotesOff) continue;
+                const auto status = (std::uint8_t) ((ctrl == Probe::PitchBend ? 0xE0 : ctrl == Probe::Pressure ? 0xD0 : 0xB0) | channel);
+                const std::array<std::uint8_t, 3> bytes {
+                    status, (std::uint8_t) (ctrl == Probe::PitchBend || ctrl == Probe::Pressure ? 0 : Probe::kControllers[ctrl]),
+                    (std::uint8_t) (ctrl == Probe::PitchBend ? 64 : 0)
+                };
+                REQUIRE (block.addEvent (bytes.data(), ctrl == Probe::Pressure ? 2 : 3, at));
+                ++points;
+            }
+    REQUIRE (points == capacity);
+    addMidiAt (block, 0xB0, 120, 0, 127);
+    addMidiAt (block, 0x90, 61, 100, 127);
+    std::size_t allocations = 0;
+    {
+        duskstudio::test::AllocationObserver observer;
+        probe.run (&block);
+        allocations = observer.count();
+    }
+    REQUIRE (allocations == 0);
+    REQUIRE_THAT (probe.noteOffsSeen(), WithinAbs (1.0, 1.0e-6));
+    REQUIRE_THAT (probe.heldNotes(), WithinAbs (0.0, 1.0e-6));
+    REQUIRE_THAT (probe.normalized (Probe::PointsSeen) * Probe::kCounterScale, WithinAbs ((double) capacity, 1.0e-6));
+    REQUIRE_THAT (probe.normalized (Probe::QueueErrors), WithinAbs (0.0, 1.0e-9));
+
+    bool retryWithOnset = false;
+    SECTION ("deferred reset needs no MIDI input") {}
+    SECTION ("new onsets wait until the deferred reset completes") { retryWithOnset = true; }
+    {
+        duskstudio::test::AllocationObserver observer;
+        probe.run (retryWithOnset ? &start : nullptr);
+        allocations = observer.count();
+    }
+    REQUIRE (allocations == 0);
+    REQUIRE_THAT (probe.heldNotes(), WithinAbs (0.0, 1.0e-6));
+    REQUIRE_THAT (probe.normalized (Probe::PointsSeen) * Probe::kCounterScale, WithinAbs (6.0, 1.0e-6));
+    REQUIRE_THAT (probe.normalized (Probe::QueueErrors), WithinAbs (0.0, 1.0e-9));
+    REQUIRE_THAT (probe.run (&start), WithinAbs (0.1, 1.0e-6));
+    REQUIRE_THAT (probe.heldNotes(), WithinAbs (1.0 / 16.0, 1.0e-6));
 }
 #endif // DUSKSTUDIO_HAS_NATIVE_VST3

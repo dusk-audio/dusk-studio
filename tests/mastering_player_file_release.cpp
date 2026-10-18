@@ -238,3 +238,93 @@ TEST_CASE ("MasteringPlayer closes unloaded files while an audio thread plays", 
     CHECK (renamedAway (exact));
     CHECK (renamedAway (resampled));
 }
+
+TEST_CASE ("MasteringPlayer reports source continuity from the block it processes", "[mastering][phase]")
+{
+    const test::TempDirectory dir ("dusk-mastering-block-info");
+    constexpr std::int64_t kFrames = 8192;
+    const auto wav = writeWav (dir.path() / "mix.wav", 48000.0, kFrames);
+    MasteringPlayer player;
+    player.prepare (kBlock, 48000.0);
+    REQUIRE (player.loadFile (toFile (wav)));
+    std::vector<float> left ((size_t) kBlock), right ((size_t) kBlock);
+    const auto paused = player.process (left.data(), right.data(), kBlock);
+    REQUIRE (paused.stable);
+    REQUIRE_FALSE (paused.playing);
+
+    const auto nextBlock = [&]
+    {
+        REQUIRE (player.primeOfflineBlock (kBlock));
+        const auto block = player.process (left.data(), right.data(), kBlock);
+        REQUIRE (block.stable);
+        REQUIRE (block.completeSourceRead);
+        return block;
+    };
+    player.play();
+    auto first = nextBlock();
+    REQUIRE (first.playing);
+    REQUIRE (first.revision != paused.revision);
+    REQUIRE (first.sourceStart == 0);
+    REQUIRE (first.sourceEnd == kBlock);
+    auto second = nextBlock();
+    REQUIRE (second.revision == first.revision);
+    REQUIRE (second.sourceStart == first.sourceEnd);
+    REQUIRE (second.sourceEnd == 2 * kBlock);
+
+    player.setPlayhead (second.sourceEnd);
+    auto samePositionSeek = nextBlock();
+    REQUIRE (samePositionSeek.sourceStart == second.sourceEnd);
+    REQUIRE (samePositionSeek.revision != second.revision);
+    player.stop();
+    player.play();
+    auto restarted = nextBlock();
+    REQUIRE (restarted.sourceStart == samePositionSeek.sourceEnd);
+    REQUIRE (restarted.revision != samePositionSeek.revision);
+
+    player.setPlayhead (256);
+    const auto seek = nextBlock();
+    REQUIRE (seek.sourceStart == 256);
+    REQUIRE (seek.sourceEnd == 256 + kBlock);
+    REQUIRE (seek.revision != restarted.revision);
+    REQUIRE (player.loadFile (toFile (wav)));
+    player.play();
+    const auto reload = nextBlock();
+    REQUIRE (reload.sourceStart == 0);
+    REQUIRE (reload.revision != seek.revision);
+
+    player.prepare (kBlock, 96000.0);
+    const auto prepared = nextBlock();
+    REQUIRE (prepared.sourceStart == reload.sourceEnd);
+    REQUIRE (prepared.sourceEnd > prepared.sourceStart);
+    REQUIRE (prepared.sourceEnd - prepared.sourceStart < kBlock);
+    REQUIRE (prepared.revision != reload.revision);
+
+    player.setPlayhead (kFrames - 128);
+    const auto tail = nextBlock();
+    REQUIRE (tail.sourceStart == kFrames - 128);
+    REQUIRE (tail.sourceEnd == kFrames);
+    REQUIRE_FALSE (player.isPlaying());
+    const auto ended = nextBlock();
+    REQUIRE_FALSE (ended.playing);
+    REQUIRE (ended.revision == tail.revision);
+    REQUIRE_FALSE (player.loadFile (toFile (dir.path() / "missing.wav")));
+    const auto missing = player.process (left.data(), right.data(), kBlock);
+    REQUIRE (missing.stable);
+    REQUIRE_FALSE (missing.playing);
+    REQUIRE (missing.revision != ended.revision);
+    REQUIRE_FALSE (player.process (left.data(), right.data(), 0).stable);
+
+    const auto longFrames = 3 * dusk::audio::BufferedFileReader::kDefaultWindowFrames;
+    const auto longWav = writeWav (dir.path() / "long.wav", 48000.0, longFrames);
+    player.prepare (kBlock, 48000.0);
+    REQUIRE (player.loadFile (toFile (longWav)));
+    REQUIRE (player.primeOfflineBlock (kBlock));
+    player.setPlayhead (longFrames - kBlock);
+    player.play();
+    const auto unavailable = player.process (left.data(), right.data(), kBlock);
+    REQUIRE (unavailable.stable);
+    REQUIRE (unavailable.playing);
+    REQUIRE_FALSE (unavailable.completeSourceRead);
+    REQUIRE (unavailable.sourceStart == longFrames - kBlock);
+    REQUIRE (unavailable.sourceEnd == longFrames);
+}

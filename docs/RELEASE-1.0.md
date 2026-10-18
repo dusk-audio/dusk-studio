@@ -3,10 +3,11 @@
 1.0 ships on the current framework stack. The re-platforming campaign onto DAF
 resumes after 1.0 as the 1.1+ H-series. No work
 lands before 1.0 whose main effect is reducing framework coupling, unless it
-fixes a bug that blocks the release.
+fixes a release blocker or belongs to the explicitly approved 0.16 piano-roll
+port in #875.
 
 This file is the plan of record for the 1.0 milestone. It carries the
-definition of done, the triage of every open issue, the ordered work plan, the
+definition of done, the original issue triage, the ordered work plan, the
 release checklist, and the out-of-scope list.
 
 ## Definition of done
@@ -71,7 +72,9 @@ Each line below is a check somebody can run and get a yes or a no.
 
 ## Triage
 
-Every open issue, one bucket each; completed release work is marked done.
+This table records the original 1.0 planning decisions; it is not a live list of
+open issues. GitHub milestones are authoritative. The [0.16 milestone](https://github.com/dusk-audio/dusk-studio/milestone/9)
+tracks the release blockers and final validation that must finish before its tag.
 
 | # | Title | Bucket | Reason |
 |---|---|---|---|
@@ -121,9 +124,8 @@ Every open issue, one bucket each; completed release work is marked done.
 | 534 | Define the 1.0 package contents and verify all three packagers | done | Implemented and closed: shared contents contract and verification for all three packagers. |
 | 535 | Local instrument browser for soundfonts on disk | done | Local browsing shipped in 0.14; #804 adds repository browsing alongside it in 0.16. |
 | 536 | Walk the demo path on packaged builds and file what it snags on | 1.0 | Individual demo-path bugs have been fixed one at a time. Nobody has walked the whole path on a shipped build. |
-| 586 | Multi-Comp 2 donor prerequisites | deferred (1.1) | Moved to 1.1 with #342. |
 | 605 | Self-test coverage across CI platforms | 1.0 | macOS CI and the Linux and macOS release jobs now run it; the Windows leg stays manual (see the checklist). |
-| 804 | SFZ library: online catalog, downloads and portable locators | 0.16 (implemented) | Four external Creative Commons sources, verified installation, portable references and asynchronous loading. |
+| 804 | SFZ library: online catalog, downloads and portable locators | 0.16 (validation pending) | Four external Creative Commons sources, staged installation, portable references and asynchronous loading; follow-up fixes and final validation remain on milestone 0.16. |
 | 606 | Built-in suite placeholder in package contract | 1.0 | The contract listed plugin files the in-binary suite never produces. |
 | 607 | Signing wording in release docs | 1.0 | README, QUICKSTART and MANUAL described all builds as unsigned after the workflow gained signing. |
 | 608 | Release-plan status drift | 1.0 | This document listed #531 to #534 as open after they shipped. |
@@ -287,7 +289,9 @@ licence position in LICENSES.txt and does not change for 1.0.
 
 Follow MAINTAINER-GUIDE Part 10 exactly. In short:
 
-1. Finish the changelog section, run `scripts/bump-version.sh`.
+1. Finish the changelog section, then run `scripts/bump-version.sh` with the
+   version and an explicit reviewed release-notes summary, including any
+   session-format warning.
 2. Date the heading, run `scripts/release-metadata-check.sh`, run the Patreon
    freshness check from the primary checkout.
 3. Rebuild app and tests, run the full suite, the coupling gate, and the
@@ -325,14 +329,15 @@ release.
 ## Out of scope for 1.0
 
 - Anything whose main effect is reducing framework coupling. The whole
-  H-series (#294 through #314) is deferred. The donor-core moves are not in
+  H-series (#294 through #314) is deferred, except for the bounded piano-roll
+  work approved in #875. The donor-core moves are not in
   that class. #340 is in 1.0 because the built-in colour insert needs the Tape
   Machine 2 core and the master bus cannot run a different core from the same
   donor path. #341 is in 1.0 so the EQ ships its V2 tone rather than one
   voicing replaced in the first point release. Both landed with a tone
   regression pinning the new voicing.
-- Compressors on the Multi-Comp 2 core (#342, with the donor prerequisites in
-  #586). The core is not finished in the plugins repo, so 1.0 ships the
+- Compressors on the Multi-Comp 2 core (#342). The core is not finished in the
+  plugins repo, so 1.0 ships the
   current compressor core and the swap moves to 1.1.
 - DAF is consumed, not reworked. It is the one framework repository, with pugl
   and the widget kit in-tree, and consuming it is how the native notepad UI and

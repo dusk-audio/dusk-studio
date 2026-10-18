@@ -67,7 +67,7 @@ std::string sizeLabel (std::uint64_t bytes)
     return text;
 }
 
-const char* stateLabel (LibraryState state, bool busy)
+const char* stateLabel (LibraryState state, bool busy, sfz::FailureKind failure)
 {
     switch (state)
     {
@@ -77,12 +77,26 @@ const char* stateLabel (LibraryState state, bool busy)
         case LibraryState::Resolving: return "Checking version and license...";
         case LibraryState::Downloading: return "Downloading instrument pack...";
         case LibraryState::Extracting: return "Installing instrument pack...";
+        case LibraryState::Verifying: return "Verifying installed files...";
         case LibraryState::ChangingLocation: return "Updating SFZ library location...";
         case LibraryState::Paused: return "Library work paused";
-        case LibraryState::Failed: return "Library operation could not finish";
+        case LibraryState::Failed:
+            if (failure == sfz::FailureKind::DiskFull) return "Not enough disk space";
+            if (failure == sfz::FailureKind::Integrity) return "Instrument pack verification failed";
+            return "Library operation could not finish";
         case LibraryState::Cancelled: return "Library operation cancelled";
         default: return busy ? "Updating library..." : "Ready";
     }
+}
+
+const char* failureGuidance (const sfz::LibrarySnapshot& snapshot)
+{
+    if (snapshot.state != LibraryState::Failed) return "";
+    if (snapshot.failureKind == sfz::FailureKind::DiskFull)
+        return "Free disk space, then retry. If library initialization failed, restart Dusk Studio first.";
+    if (snapshot.failureKind == sfz::FailureKind::Integrity)
+        return "For changed installed files, keep edits you need, unload the pack, Remove it and Download again. During a library move, keep the originals and choose another destination. For a failed download, try again or check the pack's source.";
+    return "";
 }
 
 class SfzRepositoryView final : public DuskPanelView
@@ -91,9 +105,12 @@ public:
     SfzRepositoryView (sfz::LibraryService& s,
         std::function<void (const sfz::InstalledPack&, const sfz::ProviderInstrument&)> load,
         std::function<std::vector<sfz::ManagedSfzLocator>()> used,
-        std::function<void (std::string)> source, std::function<void()> local)
+        std::function<void (std::string)> source, std::function<void()> local,
+        std::optional<sfz::ManagedSfzLocator> missing,
+        std::function<void (const sfz::InstalledPack&, const sfz::ProviderInstrument&)> relink)
         : service (s), onLoad (std::move (load)), inUse (std::move (used)),
-          openSource (std::move (source)), openLocalFolders (std::move (local)), sources (sfz::providerSources())
+          openSource (std::move (source)), openLocalFolders (std::move (local)),
+          offlineLocator (std::move (missing)), onRelink (std::move (relink)), sources (sfz::providerSources())
     {
         sources.insert (sources.begin(), { sfz::kAllRepositoriesSourceId, "All repositories", {} });
     }
@@ -123,6 +140,7 @@ public:
         if (now >= nextSnapshotPoll)
         {
             cachedSnapshot = service.snapshot();
+            cachedInUse = inUse ? inUse() : std::vector<sfz::ManagedSfzLocator> {};
             nextSnapshotPoll = now + std::chrono::milliseconds (100);
         }
         const auto& snapshot = cachedSnapshot;
@@ -155,10 +173,16 @@ public:
             };
             float footerHeight = snapshot.busy || snapshot.state == LibraryState::Paused
                 ? ImGui::GetFrameHeight() : ImGui::GetTextLineHeight();
-            if (snapshot.state == LibraryState::Downloading || snapshot.state == LibraryState::Extracting)
+            if (snapshot.state == LibraryState::Failed)
+                footerHeight = std::max (footerHeight,
+                    ImGui::CalcTextSize (stateLabel (snapshot.state, snapshot.busy, snapshot.failureKind),
+                        nullptr, false, ImGui::GetContentRegionAvail().x).y);
+            if (snapshot.state == LibraryState::Downloading || snapshot.state == LibraryState::Extracting
+                || snapshot.state == LibraryState::Verifying)
                 footerHeight += ctx.s (22) + ImGui::GetStyle().ItemSpacing.y;
             if (snapshot.state == LibraryState::Paused) footerHeight += extraHeight (kPauseMessage);
-            else if (snapshot.state != LibraryState::Cancelled) footerHeight += extraHeight (snapshot.error);
+            else if (snapshot.state != LibraryState::Cancelled && snapshot.state != LibraryState::Complete)
+                footerHeight += extraHeight (snapshot.error) + extraHeight (failureGuidance (snapshot));
             footerHeight += extraHeight (notice) + ctx.s (4);
             footerHeight = std::clamp (footerHeight, ctx.s (32),
                 std::max (ctx.s (32), ImGui::GetContentRegionAvail().y * 0.4f));
@@ -179,7 +203,7 @@ public:
     }
 
 private:
-    enum class Intent { None, Browse, Resolve, Install, Refresh, Remove };
+    enum class Intent { None, Browse, Resolve, Install, Refresh, Remove, Verify };
     struct BrowserRow
     {
         std::size_t pack = 0;
@@ -270,13 +294,13 @@ private:
     }
 
     void drawPreview (dw::Context& ctx, float height, const std::string& key, const std::string& title,
-                      sfz::InstrumentCategory category, const std::string& url, bool allowNetwork)
+                      sfz::InstrumentCategory category, const std::string& url, bool allowNetwork, const std::string& sourceId)
     {
-        const auto request = key + "|" + std::to_string (static_cast<int> (category)) + "|" + url + (allowNetwork ? "|online" : "|cached");
+        const auto request = key + "|" + sourceId + "|" + std::to_string (static_cast<int> (category)) + "|" + url + (allowNetwork ? "|online" : "|cached");
         if (request != artworkRequest)
         {
             artworkRequest = request;
-            service.artwork().request (request, url, instrumentArtwork (category), decodeInstrumentArtwork, allowNetwork);
+            service.artwork().request (request, url, instrumentArtwork (category), decodeInstrumentArtwork, allowNetwork, sourceId);
         }
         const auto artwork = service.artwork().snapshot();
         const bool ready = artwork.key == request && artwork.pixels;
@@ -472,6 +496,7 @@ private:
                 installedQuery.fill (0); installedCategory = -1; installedFilterDirty = true;
                 notice = "Pack installed. Choose an SFZ file in Installed to load it.";
             }
+            else if (pendingIntent == Intent::Verify) notice = snapshot.error;
         }
         pendingIntent = Intent::None;
     }
@@ -633,7 +658,8 @@ private:
             }
             if (selectedSummary || onlineCategory >= 0)
                 drawPreview (ctx, std::min (ctx.s (164), bodyHeight * 0.30f),
-                    selectedSummary ? summaryKey (*selectedSummary) : "online-category", title, category, imageUrl, ! pageCached);
+                    selectedSummary ? summaryKey (*selectedSummary) : "online-category", title, category, imageUrl, ! pageCached,
+                    selectedSummary ? selectedSummary->sourceId : std::string {});
             else clearPreview (std::min (ctx.s (164), bodyHeight * 0.30f));
             beginCategoryList (ctx, onlineCategory, onlineCounts, results.size());
             filterRows (onlineRows, onlineCategory, visibleOnline, onlineFilterDirty);
@@ -694,7 +720,7 @@ private:
             if (resolved)
             {
                 ImGui::TextColored (ImGui::ColorConvertU32ToFloat4 (consolePalette().eqAccent),
-                                    "Verified license: %s", resolved->license.id.c_str());
+                                    "Declared license: %s", resolved->license.id.c_str());
                 muted (sizeLabel (resolved->advertisedBytes) + (resolutionCached ? "  |  Cached details" : ""));
                 bool installed = false;
                 for (const auto& pack : snapshot.installed)
@@ -803,7 +829,8 @@ private:
             }
             if (selectedRow || installedCategory >= 0)
                 drawPreview (ctx, std::min (ctx.s (164), bodyHeight * 0.30f),
-                    selectedRow ? packKey (*selected) + "/" + selectedInstrument : "installed-category", title, category, imageUrl, false);
+                    selectedRow ? packKey (*selected) + "/" + selectedInstrument : "installed-category", title, category, imageUrl, false,
+                    selectedRow ? selected->provider.sourceId : std::string {});
             else clearPreview (std::min (ctx.s (164), bodyHeight * 0.30f));
             beginCategoryList (ctx, installedCategory, installedCounts, snapshot.installed.size());
             filterRows (installedRows, installedCategory, visibleInstalled, installedFilterDirty, installedQuery.data());
@@ -855,7 +882,7 @@ private:
                 heading (ctx, displayTitle (selected->provider.displayName, selected->provider.sourceId));
                 muted (sourceName (selected->provider.sourceId));
                 ImGui::TextColored (ImGui::ColorConvertU32ToFloat4 (consolePalette().eqAccent),
-                                    "Verified license: %s", selected->provider.license.id.c_str());
+                                    "Declared license: %s", selected->provider.license.id.c_str());
                 if (selected->programs.size() < selected->instruments.size())
                 {
                     ImGui::Checkbox ("Show all SFZ files", &showAllFiles);
@@ -892,6 +919,22 @@ private:
                     ImGui::EndCombo();
                 }
                 ImGui::EndDisabled();
+                if (offlineLocator && selected->provider.sourceId == offlineLocator->sourceId
+                    && selected->provider.packId == offlineLocator->packId)
+                {
+                    ImGui::TextWrapped ("This slot references an unavailable version of this pack. Relinking changes its saved version and preserves its instrument controls; the sound may differ.");
+                    if (button ("relink", "Relink this slot", available && instrument && static_cast<bool> (onRelink)))
+                    {
+                        const auto callback = onRelink;
+                        const auto pack = *selected;
+                        const auto entry = *instrument;
+                        deferred = [callback, pack, entry] { callback (pack, entry); };
+                    }
+                }
+                if (button ("verify", "Verify installed files", available && ! selected->installedTreeSha256.empty()))
+                    start (Intent::Verify, [&] { return service.verify (*selected); });
+                if (selected->installedTreeSha256.empty())
+                    ImGui::TextWrapped ("File verification is unavailable for this installation because it has no recorded file digest.");
                 if (button ("load", "Load", available && instrument && static_cast<bool> (onLoad), { ctx.s (140), ctx.s (40) }, true))
                 {
                     const auto callback = onLoad;
@@ -900,14 +943,13 @@ private:
                     deferred = [callback, pack, entry] { callback (pack, entry); };
                 }
                 if (ImGui::GetContentRegionAvail().x >= ctx.s (280)) ImGui::SameLine();
-                const auto used = inUse ? inUse() : std::vector<sfz::ManagedSfzLocator>{};
-                const bool referenced = std::any_of (used.begin(), used.end(), [&] (const auto& locator)
+                const bool referenced = std::any_of (cachedInUse.begin(), cachedInUse.end(), [&] (const auto& locator)
                 {
                     return locator.sourceId == selected->provider.sourceId && locator.packId == selected->provider.packId
                         && locator.releaseId == selected->provider.releaseId && locator.archiveSha256 == selected->archiveSha256;
                 });
                 if (button ("remove", "Remove", available && ! referenced && static_cast<bool> (inUse)))
-                    start (Intent::Remove, [&] { return service.remove (*selected, used); });
+                    start (Intent::Remove, [&] { return service.remove (*selected, inUse()); });
                 if (referenced) ImGui::TextWrapped ("This version is used by the current session. Unload its instruments before removing it.");
                 if (! inUse) ImGui::TextWrapped ("Session use cannot be checked, so Remove is unavailable.");
                 if (showAllFiles && instrument && instrument->candidateOnly)
@@ -938,7 +980,9 @@ private:
     {
         if (ImGui::BeginChild ("##sfz-library-status", { 0, height }, ImGuiChildFlags_None))
         {
-            ImGui::TextUnformatted (stateLabel (snapshot.state, snapshot.busy));
+            const auto* statusText = stateLabel (snapshot.state, snapshot.busy, snapshot.failureKind);
+            if (snapshot.state == LibraryState::Failed) ImGui::TextWrapped ("%s", statusText);
+            else ImGui::TextUnformatted (statusText);
             if (snapshot.state == LibraryState::Paused)
             {
                 ImGui::SameLine();
@@ -954,7 +998,8 @@ private:
                 ImGui::SameLine();
                 if (button ("cancel", "Cancel")) { service.cancel(); frameMutation = true; }
             }
-            if (snapshot.state == LibraryState::Downloading || snapshot.state == LibraryState::Extracting)
+            if (snapshot.state == LibraryState::Downloading || snapshot.state == LibraryState::Extracting
+                || snapshot.state == LibraryState::Verifying)
             {
                 const float fraction = snapshot.progress.totalBytes == 0 ? 0.0f
                     : static_cast<float> (std::min (1.0, static_cast<double> (snapshot.progress.completedBytes) / static_cast<double> (snapshot.progress.totalBytes)));
@@ -969,6 +1014,8 @@ private:
             if (! snapshot.error.empty() && snapshot.state != LibraryState::Paused
                 && snapshot.state != LibraryState::Cancelled && snapshot.state != LibraryState::Complete)
                 ImGui::TextWrapped ("%s", snapshot.error.c_str());
+            const auto* guidance = failureGuidance (snapshot);
+            if (*guidance != '\0') ImGui::TextWrapped ("%s", guidance);
             if (! notice.empty()) ImGui::TextWrapped ("%s", notice.c_str());
         }
         ImGui::EndChild();
@@ -979,6 +1026,8 @@ private:
     std::function<std::vector<sfz::ManagedSfzLocator>()> inUse;
     std::function<void (std::string)> openSource;
     std::function<void()> openLocalFolders;
+    std::optional<sfz::ManagedSfzLocator> offlineLocator;
+    std::function<void (const sfz::InstalledPack&, const sfz::ProviderInstrument&)> onRelink;
     std::vector<sfz::ProviderSource> sources;
     std::vector<sfz::ProviderSummary> results;
     std::vector<BrowserRow> onlineRows, installedRows;
@@ -989,6 +1038,7 @@ private:
     bool onlineRowsDirty = true, installedWasBusy = false;
     std::uint64_t installedGeneration = UINT64_MAX;
     sfz::LibrarySnapshot cachedSnapshot;
+    std::vector<sfz::ManagedSfzLocator> cachedInUse;
     std::chrono::steady_clock::time_point nextSnapshotPoll {};
     AtlasImage preview;
     std::vector<unsigned char> previewCanvas = std::vector<unsigned char> (512 * 320 * 4);
@@ -1016,9 +1066,11 @@ std::unique_ptr<DuskPanelView> makeSfzRepositoryView (
     std::function<void (const sfz::InstalledPack&, const sfz::ProviderInstrument&)> onLoad,
     std::function<std::vector<sfz::ManagedSfzLocator>()> inUse,
     std::function<void (std::string)> openSource,
-    std::function<void()> openLocalFolders)
+    std::function<void()> openLocalFolders, std::optional<sfz::ManagedSfzLocator> offlineLocator,
+    std::function<void (const sfz::InstalledPack&, const sfz::ProviderInstrument&)> onRelink)
 {
     return std::make_unique<SfzRepositoryView> (service, std::move (onLoad), std::move (inUse),
-                                               std::move (openSource), std::move (openLocalFolders));
+                                               std::move (openSource), std::move (openLocalFolders),
+                                               std::move (offlineLocator), std::move (onRelink));
 }
 } // namespace duskstudio::imgui

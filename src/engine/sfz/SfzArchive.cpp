@@ -3,6 +3,7 @@
 #endif
 
 #include "SfzArchive.h"
+#include "../../foundation/Fs.h"
 
 #include <archive.h>
 #include <archive_entry.h>
@@ -97,14 +98,6 @@ private:
 };
 
 #if defined(_WIN32)
-std::wstring windowsPath (const std::filesystem::path& path)
-{
-    auto full = std::filesystem::absolute (path).lexically_normal().wstring();
-    if (full.compare (0, 4, L"\\\\?\\") == 0) return full;
-    if (full.compare (0, 2, L"\\\\") == 0) return L"\\\\?\\UNC\\" + full.substr (2);
-    return L"\\\\?\\" + full;
-}
-
 struct Handle
 {
     HANDLE value = INVALID_HANDLE_VALUE;
@@ -159,7 +152,7 @@ public:
     explicit Input (const std::filesystem::path& path)
     {
        #if defined(_WIN32)
-        handle = Handle (CreateFileW (windowsPath (path).c_str(), GENERIC_READ,
+        handle = Handle (CreateFileW (dusk::fs::nativeIOPath (path).c_str(), GENERIC_READ,
             FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
         LARGE_INTEGER length {};
         valid = handle.value != INVALID_HANDLE_VALUE
@@ -209,6 +202,7 @@ public:
             std::min<std::uint64_t> (input.buffer.size(), input.size - input.cursor));
         if (! input.readAt (input.cursor, input.buffer.data(), bytes))
         {
+            input.readFailed = true;
             archive_set_error (reader, EIO, "Cannot read ZIP payload");
             return -1;
         }
@@ -236,6 +230,7 @@ public:
     }
 
     bool valid = false;
+    bool readFailed = false;
     std::uint64_t size = 0;
 
 private:
@@ -251,12 +246,12 @@ public:
     {
         if (! root.is_absolute()) return;
        #if defined(_WIN32)
-        if (! CreateDirectoryW (windowsPath (root).c_str(), nullptr)
-            && GetLastError() != ERROR_ALREADY_EXISTS) return;
+        if (! CreateDirectoryW (dusk::fs::nativeIOPath (root).c_str(), nullptr)
+            && GetLastError() != ERROR_ALREADY_EXISTS) { recordFileFailure(); return; }
         handle = openDirectory (root);
         if (handle.value == INVALID_HANDLE_VALUE) return;
         WIN32_FIND_DATAW entry {};
-        const auto search = FindFirstFileW (windowsPath (root / L"*").c_str(), &entry);
+        const auto search = FindFirstFileW (dusk::fs::nativeIOPath (root / L"*").c_str(), &entry);
         if (search == INVALID_HANDLE_VALUE)
         {
             valid = GetLastError() == ERROR_FILE_NOT_FOUND;
@@ -271,7 +266,7 @@ public:
         if (valid && GetLastError() != ERROR_NO_MORE_FILES) valid = false;
         FindClose (search);
        #else
-        if (::mkdir (root.c_str(), 0700) != 0 && errno != EEXIST) return;
+        if (::mkdir (root.c_str(), 0700) != 0 && errno != EEXIST) { recordFileFailure(); return; }
         handle = Handle (::open (root.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
         if (handle.value < 0) return;
         const int copy = ::dup (handle.value);
@@ -290,6 +285,7 @@ public:
 
     bool create (const std::string& relative, bool directory)
     {
+        failureKind = FailureKind::None;
         output = Handle {};
         parents.clear();
         if (! valid) return false;
@@ -312,14 +308,15 @@ public:
             current /= std::filesystem::u8path (part);
             if (last && ! directory)
             {
-                output = Handle (CreateFileW (windowsPath (current).c_str(), GENERIC_WRITE,
+                output = Handle (CreateFileW (dusk::fs::nativeIOPath (current).c_str(), GENERIC_WRITE,
                     0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT,
                     nullptr));
+                if (output.value == INVALID_HANDLE_VALUE) recordFileFailure();
                 return output.value != INVALID_HANDLE_VALUE
                     && ordinaryHandle (output.value, false);
             }
-            if (! CreateDirectoryW (windowsPath (current).c_str(), nullptr)
-                && GetLastError() != ERROR_ALREADY_EXISTS) return false;
+            if (! CreateDirectoryW (dusk::fs::nativeIOPath (current).c_str(), nullptr)
+                && GetLastError() != ERROR_ALREADY_EXISTS) { recordFileFailure(); return false; }
             auto child = openDirectory (current);
             if (child.value == INVALID_HANDLE_VALUE || ! rememberDirectory (child, spelling))
                 return false;
@@ -329,10 +326,11 @@ public:
             {
                 output = Handle (::openat (parent.value, part.c_str(),
                     O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600));
+                if (output.value < 0) recordFileFailure();
                 return output.value >= 0;
             }
             if (::mkdirat (parent.value, part.c_str(), 0700) != 0 && errno != EEXIST)
-                return false;
+            { recordFileFailure(); return false; }
             auto child = Handle (::openat (parent.value, part.c_str(),
                 O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
             if (child.value < 0 || ! rememberDirectory (child, spelling)) return false;
@@ -353,13 +351,15 @@ public:
            #if defined(_WIN32)
             DWORD count = 0;
             if (! WriteFile (output.value, data + done,
-                             static_cast<DWORD> (bytes - done), &count, nullptr)
-                || count == 0) return false;
+                             static_cast<DWORD> (bytes - done), &count, nullptr))
+            { recordFileFailure(); return false; }
+            if (count == 0) return false;
             done += count;
            #else
             const auto count = ::write (output.value, data + done, bytes - done);
             if (count < 0 && errno == EINTR) continue;
-            if (count <= 0) return false;
+            if (count < 0) { recordFileFailure(); return false; }
+            if (count == 0) return false;
             done += static_cast<std::size_t> (count);
            #endif
         }
@@ -372,7 +372,9 @@ public:
         if (output.value != INVALID_HANDLE_VALUE)
         {
             const bool flushed = FlushFileBuffers (output.value) != 0;
+            if (! flushed) recordFileFailure();
             const bool closed = CloseHandle (output.value) != 0;
+            if (! closed) recordFileFailure();
             output.value = INVALID_HANDLE_VALUE;
             parents.clear();
             return flushed && closed;
@@ -381,7 +383,9 @@ public:
         if (output.value >= 0)
         {
             const bool flushed = ::fsync (output.value) == 0;
+            if (! flushed) recordFileFailure();
             const bool closed = ::close (output.value) == 0;
+            if (! closed) recordFileFailure();
             output.value = -1;
             return flushed && closed;
         }
@@ -390,8 +394,19 @@ public:
     }
 
     bool valid = false;
+    FailureKind failureKind = FailureKind::None;
 
 private:
+    void recordFileFailure() noexcept
+    {
+       #if defined(_WIN32)
+        const auto error = GetLastError();
+        if (error == ERROR_DISK_FULL || error == ERROR_HANDLE_DISK_FULL) failureKind = FailureKind::DiskFull;
+       #else
+        if (errno == ENOSPC) failureKind = FailureKind::DiskFull;
+       #endif
+    }
+
     bool rememberDirectory (const Handle& directory, const std::string& spelling)
     {
         std::array<std::uint64_t, 2> identity {};
@@ -414,7 +429,7 @@ private:
    #if defined(_WIN32)
     static Handle openDirectory (const std::filesystem::path& path)
     {
-        Handle opened (CreateFileW (windowsPath (path).c_str(), GENERIC_READ,
+        Handle opened (CreateFileW (dusk::fs::nativeIOPath (path).c_str(), GENERIC_READ,
             FILE_SHARE_READ, nullptr, OPEN_EXISTING,
             FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
         if (opened.value != INVALID_HANDLE_VALUE && ! ordinaryHandle (opened.value, true))
@@ -539,12 +554,13 @@ bool zip64Extra (const std::vector<unsigned char>& extra, std::string_view name,
 
 bool preflight (Input& input, const ArchiveRequest& request,
                 const OperationControl& control, std::vector<ZipEntry>& entries,
-                ArchiveResult& result)
+                std::uint64_t& nodeCount, ArchiveResult& result)
 {
-    const auto fail = [&] (const char* error) { result.error = error; return false; };
+    const auto fail = [&] (const char* error, FailureKind kind = FailureKind::None)
+    { result.error = error; result.failureKind = kind; return false; };
     if (! input.valid) return fail ("Cannot open a regular ZIP archive");
     if (input.size > request.limits.maxArchiveBytes) return fail ("ZIP exceeds archive byte limit");
-    if (input.size < 22) return fail ("Not a ZIP archive");
+    if (input.size < 22) return fail ("Not a ZIP archive", FailureKind::Integrity);
     const auto tailBytes = static_cast<std::size_t> (
         std::min<std::uint64_t> (input.size, 22 + 65535));
     std::vector<unsigned char> tail (tailBytes);
@@ -555,7 +571,7 @@ bool preflight (Input& input, const ArchiveRequest& request,
     {
         if (little32 (tail.data() + end) == 0x06054b50
             && little16 (tail.data() + end + 20) == tailBytes - end - 22) break;
-        if (end == 0) return fail ("Missing ZIP end directory");
+        if (end == 0) return fail ("Missing ZIP end directory", FailureKind::Integrity);
         --end;
     }
     const auto* eocd = tail.data() + end;
@@ -659,6 +675,9 @@ bool preflight (Input& input, const ArchiveRequest& request,
         if (entry.expanded > request.limits.maxFileBytes
             || entry.expanded > request.limits.maxExpandedBytes - declaredBytes)
             return fail ("ZIP declared size exceeds the expanded byte limit");
+        if (entry.expanded != 0 && (compressed == 0
+            || (entry.expanded - 1) / compressed >= request.limits.maxCompressionRatio))
+            return fail ("ZIP compression ratio exceeds the expansion limit");
         if (entry.directory && entry.expanded != 0) return fail ("ZIP directory contains data");
         declaredBytes += entry.expanded;
 
@@ -692,7 +711,7 @@ bool preflight (Input& input, const ArchiveRequest& request,
         if ((flags & 8) == 0 && (ignoredExpanded != entry.expanded
                                 || ignoredCompressed != compressed
                                 || little32 (local.data() + 14) != little32 (header.data() + 16)))
-            return fail ("ZIP local sizes or checksum disagree with its directory");
+            return fail ("ZIP local sizes or checksum disagree with its directory", FailureKind::Integrity);
         ranges.emplace_back (localOffset, localOffset + headerBytes + compressed);
         if (request.expectedRoot.empty()) entry.relative = path;
         else if (path == request.expectedRoot && entry.directory) entry.relative.clear();
@@ -708,6 +727,7 @@ bool preflight (Input& input, const ArchiveRequest& request,
     std::sort (ranges.begin(), ranges.end());
     for (std::size_t i = 1; i < ranges.size(); ++i)
         if (ranges[i].first < ranges[i - 1].second) return fail ("ZIP entry data overlaps");
+    nodeCount = nodes.size();
     return true;
 }
 
@@ -737,10 +757,11 @@ bool sfzName (const std::string& path)
 ArchiveResult extractZip (const ArchiveRequest& request, const OperationControl& control)
 {
     ArchiveResult result;
-    const auto fail = [&result] (std::string error)
+    const auto fail = [&result] (std::string error, FailureKind kind = FailureKind::None)
     {
         result.status = OperationStatus::Failed;
         result.error = std::move (error);
+        result.failureKind = kind;
         return result;
     };
     try
@@ -760,14 +781,24 @@ ArchiveResult extractZip (const ArchiveRequest& request, const OperationControl&
                 return fail ("Invalid expected SFZ entrypoint");
         Input input (request.archive);
         std::vector<ZipEntry> entries;
-        if (! preflight (input, request, control, entries, result)) return result;
+        std::uint64_t nodeCount = 0;
+        if (! preflight (input, request, control, entries, nodeCount, result)) return result;
         std::uint64_t totalBytes = 0;
         for (const auto& entry : entries) totalBytes += entry.expanded;
+        std::error_code spaceError;
+        const auto spacePath = request.stagingDirectory.parent_path();
+        const auto space = std::filesystem::space (dusk::fs::nativeIOPath (spacePath), spaceError);
+        if (spaceError) return fail ("Cannot determine free space for SFZ installation: " + spaceError.message());
+        const auto allocationOverhead = nodeCount * 4096;
+        if (request.limits.freeSpaceReserveBytes > space.available
+            || allocationOverhead > space.available - request.limits.freeSpaceReserveBytes
+            || totalBytes > space.available - request.limits.freeSpaceReserveBytes - allocationOverhead)
+            return fail ("Insufficient free space for the expanded SFZ pack", FailureKind::DiskFull);
         // libarchive converts header names through CTYPE even when ZIP names are UTF-8.
         const ScopedUtf8Locale utf8;
         if (! utf8.valid) return fail ("Cannot enable UTF-8 ZIP pathname decoding");
         Staging staging (request.stagingDirectory);
-        if (! staging.valid) return fail ("Staging directory is not empty or cannot be safely opened");
+        if (! staging.valid) return fail ("Staging directory is not empty or cannot be safely opened", staging.failureKind);
         std::unique_ptr<struct archive, decltype (&archive_read_free)> reader (
             archive_read_new(), archive_read_free);
         if (! reader || archive_read_support_format_zip_seekable (reader.get()) != ARCHIVE_OK
@@ -794,7 +825,8 @@ ArchiveResult extractZip (const ArchiveRequest& request, const OperationControl&
             if (readStatus != ARCHIVE_OK || decoded == nullptr)
             {
                 const auto* detail = archive_error_string (reader.get());
-                return fail (std::string ("ZIP entry cannot be decoded") + (detail ? std::string (": ") + detail : ""));
+                return fail (std::string ("ZIP entry cannot be decoded") + (detail ? std::string (": ") + detail : ""),
+                             input.readFailed ? FailureKind::None : FailureKind::Integrity);
             }
             if ((archive_format (reader.get()) & ARCHIVE_FORMAT_BASE_MASK) != ARCHIVE_FORMAT_ZIP
                 || archive_entry_is_encrypted (decoded) != 0
@@ -815,7 +847,7 @@ ArchiveResult extractZip (const ArchiveRequest& request, const OperationControl&
                 || static_cast<std::uint64_t> (archive_entry_size (decoded)) != entry.expanded)
                 return fail ("ZIP decoder type or size disagrees with its directory");
             if (! entry.relative.empty() && ! staging.create (entry.relative, entry.directory))
-                return fail ("Cannot create a contained staging path");
+                return fail ("Cannot create a contained staging path", staging.failureKind);
             if (entry.directory)
             {
                 if (archive_read_data (reader.get(), chunk.data(), chunk.size()) != 0)
@@ -832,7 +864,8 @@ ArchiveResult extractZip (const ArchiveRequest& request, const OperationControl&
                 status = control.status();
                 if (status != OperationStatus::Complete) { result.status = status; return result; }
                 const auto bytes = archive_read_data (reader.get(), chunk.data(), chunk.size());
-                if (bytes < 0) return fail ("ZIP data or checksum is invalid");
+                if (bytes < 0) return fail (input.readFailed ? "Cannot read ZIP payload" : "ZIP data or checksum is invalid",
+                    input.readFailed ? FailureKind::None : FailureKind::Integrity);
                 if (bytes == 0) break;
                 const auto count = static_cast<std::uint64_t> (bytes);
                 if (count > entry.expanded - fileBytes
@@ -840,7 +873,7 @@ ArchiveResult extractZip (const ArchiveRequest& request, const OperationControl&
                     || count > request.limits.maxExpandedBytes - result.expandedBytes)
                     return fail ("ZIP actual data exceeds the expanded byte limit");
                 if (! staging.write (chunk.data(), static_cast<std::size_t> (bytes)))
-                    return fail ("Cannot write staging file");
+                    return fail ("Cannot write staging file", staging.failureKind);
                 if (license && crypto_hash_sha256_update (&hash, chunk.data(),
                                                           static_cast<unsigned long long> (bytes)) != 0)
                     return fail ("Cannot checksum license");
@@ -849,8 +882,8 @@ ArchiveResult extractZip (const ArchiveRequest& request, const OperationControl&
                 if (control.progress)
                     control.progress ({ result.expandedBytes, totalBytes, result.files });
             }
-            if (fileBytes != entry.expanded || ! staging.closeFile())
-                return fail ("ZIP entry length or staging flush failed");
+            if (fileBytes != entry.expanded) return fail ("ZIP entry length is invalid", FailureKind::Integrity);
+            if (! staging.closeFile()) return fail ("Cannot flush staging file", staging.failureKind);
             if (license)
             {
                 std::array<unsigned char, crypto_hash_sha256_BYTES> digest {};
@@ -858,7 +891,7 @@ ArchiveResult extractZip (const ArchiveRequest& request, const OperationControl&
                 if (crypto_hash_sha256_final (&hash, digest.data()) != 0)
                     return fail ("Cannot finalize license checksum");
                 sodium_bin2hex (hex.data(), hex.size(), digest.data(), digest.size());
-                if (request.licenseSha256 != hex.data()) return fail ("License SHA-256 mismatch");
+                if (request.licenseSha256 != hex.data()) return fail ("License SHA-256 mismatch", FailureKind::Integrity);
                 licenseFound = true;
             }
             ++result.files;

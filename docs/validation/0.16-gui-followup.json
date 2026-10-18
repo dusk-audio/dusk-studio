@@ -1,0 +1,1592 @@
+{
+  "recorded_at_utc": "2026-10-18T04:04:28.575350+00:00",
+  "scope": "GUI fixture and native-window interference follow-up. Product behavior and release version are unchanged.",
+  "product_source_commit": "1a31d8ffebb5fcce0afda5ee39abbc77c8072073",
+  "fixture_commits": [
+    "9772a36091ec73addbcfc54659e658c1b247bd0d",
+    "99f2ac828a59b255893392fd07e8dd99fd66151b"
+  ],
+  "macos": {
+    "initial_full": {
+      "source_commit": "8c940d3fe0ca852591c3ff72bda0414cb27de4e7",
+      "source_bound": "Binary built by 8c prepush; source checkout restored to54ef8312 before launch. Product source identical.",
+      "passed": 224,
+      "failed": 22,
+      "skipped": 20,
+      "log": "/tmp/dusk-016-macos-full-gui.log",
+      "log_sha256": "e1f3fda97c4e546b5c9b740b55881327ab66d7ee697a8b13cc9b60c4a3791300",
+      "cases": [
+        {
+          "id": "gui.audio_editor_record_stop_cancels_drag",
+          "status": "SKIP",
+          "detail": ": requires a running audio device with an input to record from"
+        },
+        {
+          "id": "gui.clap_no_window_message",
+          "status": "SKIP",
+          "detail": ": only the Linux host looks for a plug-in window in the container"
+        },
+        {
+          "id": "gui.clean_out_while_recording",
+          "status": "SKIP",
+          "detail": ": requires a running audio device with an input to record from"
+        },
+        {
+          "id": "gui.dsp_readout_realtime_count",
+          "status": "SKIP",
+          "detail": ": the realtime CPU-time guard is Linux-only"
+        },
+        {
+          "id": "gui.file_browser_held_up",
+          "status": "FAIL",
+          "detail": ": two Up clicks during a held check did not reach the folder two levels up (3390 ms)"
+        },
+        {
+          "id": "gui.import_target_short_window",
+          "status": "SKIP",
+          "detail": ": the window cannot be made shorter than the picker here"
+        },
+        {
+          "id": "gui.lv2_editor_reflects_state",
+          "status": "SKIP",
+          "detail": ": missing fixture: file_state.lv2"
+        },
+        {
+          "id": "gui.lv2_midi_learn",
+          "status": "SKIP",
+          "detail": ": missing fixture: file_state.lv2"
+        },
+        {
+          "id": "gui.marker_key_prompt_and_pill",
+          "status": "FAIL",
+          "detail": ": the marker menu has no Rename item (3156 ms)"
+        },
+        {
+          "id": "gui.mastering_follows_session",
+          "status": "FAIL",
+          "detail": ": timed out after 60000 ms (63427 ms)"
+        },
+        {
+          "id": "gui.mastering_transport",
+          "status": "FAIL",
+          "detail": ": the waveform click did not seek to its horizontal position (2331 ms)"
+        },
+        {
+          "id": "gui.midi_bindings_panel",
+          "status": "FAIL",
+          "detail": ": Remove did not remove only its own binding (6590 ms)"
+        },
+        {
+          "id": "gui.midi_io_selectors",
+          "status": "SKIP",
+          "detail": ": virtual MIDI destination fixture requires ALSA sequencer"
+        },
+        {
+          "id": "gui.midi_merge_grows_region",
+          "status": "FAIL",
+          "detail": ": recording did not start (3409 ms)"
+        },
+        {
+          "id": "gui.midi_merge_loops",
+          "status": "FAIL",
+          "detail": ": the next loop pass or its IN setting did not arrive (5117 ms)"
+        },
+        {
+          "id": "gui.piano_live_recording_preview",
+          "status": "SKIP",
+          "detail": ": requires the native virtual keyboard and X server readback"
+        },
+        {
+          "id": "gui.piano_midi_merge_toggle",
+          "status": "FAIL",
+          "detail": ": both MIDI Merge buttons did not disable during recording (4348 ms)"
+        },
+        {
+          "id": "gui.piano_roll_follows_take",
+          "status": "SKIP",
+          "detail": ": reads the window back through the X server"
+        },
+        {
+          "id": "gui.piano_roll_keeps_its_region",
+          "status": "SKIP",
+          "detail": ": reads the window back through the X server"
+        },
+        {
+          "id": "gui.piano_roll_shows_each_take",
+          "status": "SKIP",
+          "detail": ": reads the window back through the X server"
+        },
+        {
+          "id": "gui.pick_opens_native_editor",
+          "status": "SKIP",
+          "detail": ": requires the seeded plugin-picker cache"
+        },
+        {
+          "id": "gui.plugin_editor_tab_left_alone",
+          "status": "SKIP",
+          "detail": ": needs the Linux CLAP fixture"
+        },
+        {
+          "id": "gui.plugin_picker_filter_and_load",
+          "status": "SKIP",
+          "detail": ": requires the seeded plugin-picker cache"
+        },
+        {
+          "id": "gui.prompt_save_keeps_bound_take",
+          "status": "SKIP",
+          "detail": ": requires a running audio device with an input to record from"
+        },
+        {
+          "id": "gui.record_key_draws_region",
+          "status": "SKIP",
+          "detail": ": requires a running audio device with an input to record from"
+        },
+        {
+          "id": "gui.recording_setup_alert",
+          "status": "FAIL",
+          "detail": ": the setup failure did not name the two failed tracks (7 ms)"
+        },
+        {
+          "id": "gui.recording_setup_alert_key",
+          "status": "FAIL",
+          "detail": ": the setup failure did not name the two failed tracks (2 ms)"
+        },
+        {
+          "id": "gui.region_menu_items",
+          "status": "FAIL",
+          "detail": ": region menu item is unavailable: Loop region (5373 ms)"
+        },
+        {
+          "id": "gui.region_split_duplicate_keys",
+          "status": "FAIL",
+          "detail": ": Cmd+D was not handled (1748 ms)"
+        },
+        {
+          "id": "gui.region_take_controls",
+          "status": "FAIL",
+          "detail": ": alt + T was not handled (6373 ms)"
+        },
+        {
+          "id": "gui.settings_rescan_devices",
+          "status": "SKIP",
+          "detail": ": requires native settings and ALSA sequencer"
+        },
+        {
+          "id": "gui.sfz_repository_workflow",
+          "status": "FAIL",
+          "detail": ": Clear did not unload the old instrument and managed locator (9901 ms)"
+        },
+        {
+          "id": "gui.tape_locked_regions_stay",
+          "status": "FAIL",
+          "detail": ": the same drag did not move the MIDI region once unlocked (2719 ms)"
+        },
+        {
+          "id": "gui.tape_repaints_unannounced_regions",
+          "status": "SKIP",
+          "detail": ": the tape strip repaints with nothing changed on this display, so an unannounced change cannot be told apart"
+        },
+        {
+          "id": "gui.tape_ruler",
+          "status": "FAIL",
+          "detail": ": loop does not match the dragged range (2732 ms)"
+        },
+        {
+          "id": "gui.timeline_track_multiselect",
+          "status": "FAIL",
+          "detail": ": a selected region did not light its track (selected: 20 22 23) (19138 ms)"
+        },
+        {
+          "id": "gui.timeline_track_name",
+          "status": "FAIL",
+          "detail": ": a name click still waiting to page took the selection back (5760 ms)"
+        },
+        {
+          "id": "gui.timeline_without_device",
+          "status": "FAIL",
+          "detail": ": double-clicking the MIDI region with no device running did not open it (1138 ms)"
+        },
+        {
+          "id": "gui.tuner_keys",
+          "status": "FAIL",
+          "detail": ": Delete with the tuner closed did not remove the selected region (1146 ms)"
+        },
+        {
+          "id": "gui.unsaved_session_spares_untitled",
+          "status": "SKIP",
+          "detail": ": requires an input device with capture channels"
+        },
+        {
+          "id": "gui.virtual_keyboard_holds_keys",
+          "status": "FAIL",
+          "detail": ": Delete with the virtual keyboard closed did not remove the selected region (826 ms)"
+        },
+        {
+          "id": "gui.virtual_keyboard_keys",
+          "status": "FAIL",
+          "detail": ": Record did not start with the keyboard open (2910 ms)"
+        }
+      ],
+      "case_listing_scope": "Failed/skipped only for full runs; all focused verdicts otherwise.",
+      "app_sha256": "2a884a16d3c306ee1b6a568301226821c824ebe14f43eab4d83b31c202a207a6",
+      "native_exit_code": null,
+      "exit_scope": "Only the open launcher/job exit was retained; no native Dusk exit claim."
+    },
+    "fresh_four_before": {
+      "source_commit": "8c940d3fe0ca852591c3ff72bda0414cb27de4e7",
+      "source_bound": "Same unchanged 8c binary, checkout 54ef8312.",
+      "passed": 0,
+      "failed": 4,
+      "skipped": 0,
+      "log": "/tmp/dusk-016-macos-focused-baseline.log",
+      "log_sha256": "404018d7ec734f0faeab20e728dab1f7754bb2dd47ad393e4ad36e34bf399dd6",
+      "cases": [
+        {
+          "id": "gui.file_browser_held_up",
+          "status": "FAIL",
+          "detail": ": two Up clicks during a held check did not reach the folder two levels up (3380 ms)"
+        },
+        {
+          "id": "gui.marker_key_prompt_and_pill",
+          "status": "FAIL",
+          "detail": ": the marker menu has no Rename item (3166 ms)"
+        },
+        {
+          "id": "gui.mastering_transport",
+          "status": "FAIL",
+          "detail": ": the waveform click did not seek to its horizontal position (2313 ms)"
+        },
+        {
+          "id": "gui.midi_bindings_panel",
+          "status": "FAIL",
+          "detail": ": Remove did not remove only its own binding (6600 ms)"
+        }
+      ],
+      "case_listing_scope": "Failed/skipped only for full runs; all focused verdicts otherwise.",
+      "app_sha256": "2a884a16d3c306ee1b6a568301226821c824ebe14f43eab4d83b31c202a207a6",
+      "native_exit_code": null,
+      "exit_scope": "Only the open launcher/job exit was retained; no native Dusk exit claim."
+    },
+    "diagnostic_four_before": {
+      "source_commit": "54ef831271dd2416357d43366066e2e426f06ac6",
+      "source_bound": "Temporary input/folder diagnostic patch only.",
+      "passed": 0,
+      "failed": 4,
+      "skipped": 0,
+      "log": "/tmp/dusk-016-macos-input-trace.log",
+      "log_sha256": "6cb3dc30dc2c7b721d4143c79bbe3d6d9dff1912d0456cea96cc25ebd9f3728a",
+      "cases": [
+        {
+          "id": "gui.file_browser_held_up",
+          "status": "FAIL",
+          "detail": ": two Up clicks during a held check did not reach the folder two levels up (3384 ms)"
+        },
+        {
+          "id": "gui.marker_key_prompt_and_pill",
+          "status": "FAIL",
+          "detail": ": the marker menu has no Rename item (3158 ms)"
+        },
+        {
+          "id": "gui.mastering_transport",
+          "status": "FAIL",
+          "detail": ": the waveform click did not seek to its horizontal position (2263 ms)"
+        },
+        {
+          "id": "gui.midi_bindings_panel",
+          "status": "FAIL",
+          "detail": ": Remove did not remove only its own binding (6564 ms)"
+        }
+      ],
+      "case_listing_scope": "Failed/skipped only for full runs; all focused verdicts otherwise.",
+      "app_sha256": "c968deeca0a70d3362d3259380c081d6431af4c631754f12c1b4a230501ace5a",
+      "native_exit_code": null,
+      "exit_scope": "Only the open launcher/job exit was retained; no native Dusk exit claim."
+    },
+    "diagnostic_four_wide": {
+      "source_commit": "54ef831271dd2416357d43366066e2e426f06ac6",
+      "source_bound": "Same diagnostic binary; window0,62,1920,928.",
+      "passed": 4,
+      "failed": 0,
+      "skipped": 0,
+      "log": "/tmp/dusk-016-macos-input-trace-wide.log",
+      "log_sha256": "ed43ca53c92bd94f90990cf5f516f8f283863a52f7ca3c8808b4a70b1016c407",
+      "cases": [
+        {
+          "id": "gui.file_browser_held_up",
+          "status": "PASS",
+          "detail": "(2595 ms)"
+        },
+        {
+          "id": "gui.marker_key_prompt_and_pill",
+          "status": "PASS",
+          "detail": "(3152 ms)"
+        },
+        {
+          "id": "gui.mastering_transport",
+          "status": "PASS",
+          "detail": "(2316 ms)"
+        },
+        {
+          "id": "gui.midi_bindings_panel",
+          "status": "PASS",
+          "detail": "(6613 ms)"
+        }
+      ],
+      "case_listing_scope": "Failed/skipped only for full runs; all focused verdicts otherwise.",
+      "app_sha256": "c968deeca0a70d3362d3259380c081d6431af4c631754f12c1b4a230501ace5a",
+      "native_exit_code": null,
+      "exit_scope": "Only the open launcher/job exit was retained; no native Dusk exit claim."
+    },
+    "diagnostic_remaining_wide": {
+      "source_commit": "54ef831271dd2416357d43366066e2e426f06ac6",
+      "source_bound": "Same diagnostic binary; window0,62,1920,928. SFZ Browse remained covered.",
+      "passed": 11,
+      "failed": 1,
+      "skipped": 0,
+      "log": "/tmp/dusk-016-macos-input-trace-remaining.log",
+      "log_sha256": "01c34f1f0204feaca64b2bf973ad10978756f0e58c37132e86876b9f973e5241",
+      "cases": [
+        {
+          "id": "gui.mastering_follows_session",
+          "status": "PASS",
+          "detail": "(1630 ms)"
+        },
+        {
+          "id": "gui.region_menu_items",
+          "status": "PASS",
+          "detail": "(5375 ms)"
+        },
+        {
+          "id": "gui.region_split_duplicate_keys",
+          "status": "PASS",
+          "detail": "(1757 ms)"
+        },
+        {
+          "id": "gui.region_take_controls",
+          "status": "PASS",
+          "detail": "(6388 ms)"
+        },
+        {
+          "id": "gui.sfz_repository_workflow",
+          "status": "FAIL",
+          "detail": ": Browse did not open a settled soundfont browser (11427 ms)"
+        },
+        {
+          "id": "gui.tape_locked_regions_stay",
+          "status": "PASS",
+          "detail": "(2743 ms)"
+        },
+        {
+          "id": "gui.tape_ruler",
+          "status": "PASS",
+          "detail": "(2773 ms)"
+        },
+        {
+          "id": "gui.timeline_track_multiselect",
+          "status": "PASS",
+          "detail": "(19206 ms)"
+        },
+        {
+          "id": "gui.timeline_track_name",
+          "status": "PASS",
+          "detail": "(5767 ms)"
+        },
+        {
+          "id": "gui.timeline_without_device",
+          "status": "PASS",
+          "detail": "(1160 ms)"
+        },
+        {
+          "id": "gui.tuner_keys",
+          "status": "PASS",
+          "detail": "(1140 ms)"
+        },
+        {
+          "id": "gui.virtual_keyboard_holds_keys",
+          "status": "PASS",
+          "detail": "(860 ms)"
+        }
+      ],
+      "case_listing_scope": "Failed/skipped only for full runs; all focused verdicts otherwise.",
+      "app_sha256": "c968deeca0a70d3362d3259380c081d6431af4c631754f12c1b4a230501ace5a",
+      "native_exit_code": null,
+      "exit_scope": "Only the open launcher/job exit was retained; no native Dusk exit claim."
+    },
+    "clean_output_only_and_sfz": {
+      "source_commit": "9772a36091ec73addbcfc54659e658c1b247bd0d",
+      "source_bound": "Checkout 54ef8312 plus exact two-file 9772a360 fixture patch; diagnostics removed; window180,62,1740,928.",
+      "passed": 7,
+      "failed": 0,
+      "skipped": 0,
+      "log": "/tmp/dusk-016-macos-output-only.log",
+      "log_sha256": "2a0285927ce75536153f5ccd8289512bc480379d5c0cbb87e7ee3cf8c0338081",
+      "cases": [
+        {
+          "id": "gui.midi_merge_grows_region",
+          "status": "PASS",
+          "detail": "(2332 ms)"
+        },
+        {
+          "id": "gui.midi_merge_loops",
+          "status": "PASS",
+          "detail": "(13095 ms)"
+        },
+        {
+          "id": "gui.piano_midi_merge_toggle",
+          "status": "PASS",
+          "detail": "(374 ms)"
+        },
+        {
+          "id": "gui.virtual_keyboard_keys",
+          "status": "PASS",
+          "detail": "(3166 ms)"
+        },
+        {
+          "id": "gui.recording_setup_alert",
+          "status": "PASS",
+          "detail": "(8 ms)"
+        },
+        {
+          "id": "gui.recording_setup_alert_key",
+          "status": "PASS",
+          "detail": "(5 ms)"
+        },
+        {
+          "id": "gui.sfz_repository_workflow",
+          "status": "PASS",
+          "detail": "(6087 ms)"
+        }
+      ],
+      "case_listing_scope": "Failed/skipped only for full runs; all focused verdicts otherwise.",
+      "app_sha256": "2e0c9d6f7aa66550c7dba1415c80deea0271dff581847f3ec2f0b51f102d7a58",
+      "native_exit_code": null,
+      "exit_scope": "Only the open launcher/job exit was retained; no native Dusk exit claim."
+    },
+    "full_after_output_only_fix": {
+      "source_commit": "9772a36091ec73addbcfc54659e658c1b247bd0d",
+      "source_bound": "Clean committed source/build. Window180,62,1740,928 resolves original targets but obstructs seven different cases.",
+      "passed": 239,
+      "failed": 7,
+      "skipped": 20,
+      "log": "/tmp/dusk-016-macos-full-gui-fixed.log",
+      "log_sha256": "0a58c12d9aa39d980cb1a849762686b80d922f649b44f57315d4abf144924b79",
+      "cases": [
+        {
+          "id": "gui.audio_editor_record_stop_cancels_drag",
+          "status": "SKIP",
+          "detail": ": requires a running audio device with an input to record from"
+        },
+        {
+          "id": "gui.aux_pick_shows_builtin_editor",
+          "status": "FAIL",
+          "detail": ": picking DuskVerb 2 on the aux lane never brought its editor up (15028 ms)"
+        },
+        {
+          "id": "gui.bus_hpf_knob",
+          "status": "FAIL",
+          "detail": ": the bus EQ menu has no Reset EQ (1753 ms)"
+        },
+        {
+          "id": "gui.clap_no_window_message",
+          "status": "SKIP",
+          "detail": ": only the Linux host looks for a plug-in window in the container"
+        },
+        {
+          "id": "gui.clean_out_while_recording",
+          "status": "SKIP",
+          "detail": ": requires a running audio device with an input to record from"
+        },
+        {
+          "id": "gui.dsp_readout_realtime_count",
+          "status": "SKIP",
+          "detail": ": the realtime CPU-time guard is Linux-only"
+        },
+        {
+          "id": "gui.import_target_short_window",
+          "status": "SKIP",
+          "detail": ": the window cannot be made shorter than the picker here"
+        },
+        {
+          "id": "gui.lv2_editor_reflects_state",
+          "status": "SKIP",
+          "detail": ": missing fixture: file_state.lv2"
+        },
+        {
+          "id": "gui.lv2_midi_learn",
+          "status": "SKIP",
+          "detail": ": missing fixture: file_state.lv2"
+        },
+        {
+          "id": "gui.mastering_combo_keeps_panels",
+          "status": "FAIL",
+          "detail": ": the preset picker did not open (1029 ms)"
+        },
+        {
+          "id": "gui.mastering_compact_cover",
+          "status": "FAIL",
+          "detail": ": the compressor preset popup never opened (4153 ms)"
+        },
+        {
+          "id": "gui.midi_io_selectors",
+          "status": "SKIP",
+          "detail": ": virtual MIDI destination fixture requires ALSA sequencer"
+        },
+        {
+          "id": "gui.piano_live_recording_preview",
+          "status": "SKIP",
+          "detail": ": requires the native virtual keyboard and X server readback"
+        },
+        {
+          "id": "gui.piano_roll_follows_take",
+          "status": "SKIP",
+          "detail": ": reads the window back through the X server"
+        },
+        {
+          "id": "gui.piano_roll_keeps_its_region",
+          "status": "SKIP",
+          "detail": ": reads the window back through the X server"
+        },
+        {
+          "id": "gui.piano_roll_shows_each_take",
+          "status": "SKIP",
+          "detail": ": reads the window back through the X server"
+        },
+        {
+          "id": "gui.pick_opens_builtin_editor",
+          "status": "FAIL",
+          "detail": ": replacing Utility with Tape Echo 2 left its editor closed (15115 ms)"
+        },
+        {
+          "id": "gui.pick_opens_native_editor",
+          "status": "SKIP",
+          "detail": ": requires the seeded plugin-picker cache"
+        },
+        {
+          "id": "gui.plugin_editor_tab_left_alone",
+          "status": "SKIP",
+          "detail": ": needs the Linux CLAP fixture"
+        },
+        {
+          "id": "gui.plugin_picker_filter_and_load",
+          "status": "SKIP",
+          "detail": ": requires the seeded plugin-picker cache"
+        },
+        {
+          "id": "gui.prompt_save_keeps_bound_take",
+          "status": "SKIP",
+          "detail": ": requires a running audio device with an input to record from"
+        },
+        {
+          "id": "gui.punch_menu",
+          "status": "FAIL",
+          "detail": ": the Punch submenu did not set the selected roll duration (7062 ms)"
+        },
+        {
+          "id": "gui.record_key_draws_region",
+          "status": "SKIP",
+          "detail": ": requires a running audio device with an input to record from"
+        },
+        {
+          "id": "gui.region_menu_locked_refuses",
+          "status": "FAIL",
+          "detail": ": the region menu did not open (2154 ms)"
+        },
+        {
+          "id": "gui.settings_rescan_devices",
+          "status": "SKIP",
+          "detail": ": requires native settings and ALSA sequencer"
+        },
+        {
+          "id": "gui.tape_repaints_unannounced_regions",
+          "status": "SKIP",
+          "detail": ": the tape strip repaints with nothing changed on this display, so an unannounced change cannot be told apart"
+        },
+        {
+          "id": "gui.unsaved_session_spares_untitled",
+          "status": "SKIP",
+          "detail": ": requires an input device with capture channels"
+        }
+      ],
+      "case_listing_scope": "Failed/skipped only for full runs; all focused verdicts otherwise.",
+      "app_sha256": "2e0c9d6f7aa66550c7dba1415c80deea0271dff581847f3ec2f0b51f102d7a58",
+      "native_exit_code": null,
+      "exit_scope": "Only the open launcher/job exit was retained; no native Dusk exit claim."
+    },
+    "latest_nine": {
+      "source_commit": "99f2ac828a59b255893392fd07e8dd99fd66151b",
+      "source_bound": "Clean committed source/build; window0,62,1440,928. Two MIDI recording cases and all seven geometry-dependent failures pass.",
+      "passed": 9,
+      "failed": 0,
+      "skipped": 0,
+      "log": "/tmp/dusk-016-macos-recording-final.log",
+      "log_sha256": "314dd70118b588f046b709b67f7563b9550423e1b51424211d3504e8539c406e",
+      "cases": [
+        {
+          "id": "gui.midi_merge_grows_region",
+          "status": "PASS",
+          "detail": "(2313 ms)"
+        },
+        {
+          "id": "gui.midi_merge_loops",
+          "status": "PASS",
+          "detail": "(13159 ms)"
+        },
+        {
+          "id": "gui.aux_pick_shows_builtin_editor",
+          "status": "PASS",
+          "detail": "(55 ms)"
+        },
+        {
+          "id": "gui.bus_hpf_knob",
+          "status": "PASS",
+          "detail": "(1742 ms)"
+        },
+        {
+          "id": "gui.mastering_combo_keeps_panels",
+          "status": "PASS",
+          "detail": "(1026 ms)"
+        },
+        {
+          "id": "gui.mastering_compact_cover",
+          "status": "PASS",
+          "detail": "(4132 ms)"
+        },
+        {
+          "id": "gui.pick_opens_builtin_editor",
+          "status": "PASS",
+          "detail": "(214 ms)"
+        },
+        {
+          "id": "gui.punch_menu",
+          "status": "PASS",
+          "detail": "(7066 ms)"
+        },
+        {
+          "id": "gui.region_menu_locked_refuses",
+          "status": "PASS",
+          "detail": "(2148 ms)"
+        }
+      ],
+      "case_listing_scope": "Failed/skipped only for full runs; all focused verdicts otherwise.",
+      "app_sha256": "f592b325c710bd1c99f45aedd6e39ebd73c86478f92ba3687b3acbb2fd89e9d8",
+      "native_exit_code": null,
+      "exit_scope": "Only the open launcher/job exit was retained; no native Dusk exit claim."
+    },
+    "covering_native_window": {
+      "owner": "UserNotificationCenter",
+      "bounds": {
+        "x": 830,
+        "y": 188,
+        "width": 260,
+        "height": 250
+      },
+      "layer": 8,
+      "alpha": 1,
+      "metadata_log": "/tmp/dusk-016-macos-covering-window.jsonl",
+      "metadata_sha256": "7384790856da8519cb038770feed92d860b85e7fb0048ccb69bdd3c6faf58046",
+      "contents_read": false,
+      "changed_or_answered": false
+    },
+    "input_delivery_evidence": {
+      "diagnostic_patch": "/tmp/dusk-016-mac-input-diagnostic.patch",
+      "patch_sha256": "3a2d4a182ea9aadf82b702596da218e34b0e94522b71297c1ae11890757a3d02",
+      "mechanism": "Synthetic dispatch returns successfully, but the native peer rejects covered points and no component receives mouseDown. Repositioning the same binary makes the four cases pass.",
+      "rejected_screen_points": {
+        "Up": [
+          1074,
+          308
+        ],
+        "marker_menu": [
+          886,
+          198
+        ],
+        "waveform": [
+          1070,
+          291
+        ],
+        "Remove": [
+          958,
+          348
+        ],
+        "SFZ_Browse_in_wide_control": [
+          1024,
+          422
+        ]
+      },
+      "diagnostics_removed": true
+    },
+    "classification": "All original 22 failures pass in focused controls after correcting six recording fixtures and moving covered click targets. All seven different failures in the wider full run pass at their earlier window position. An unobstructed complete run remains unproved; the system window was left untouched.",
+    "clean_autosave_regression": {
+      "source_commit": "99f2ac828a59b255893392fd07e8dd99fd66151b",
+      "source_bound": "Final autosave fixture patch on 99f2ac82, diagnostics removed. Three native/X-server readback cases skip outside Linux where applicable.",
+      "passed": 3,
+      "failed": 0,
+      "skipped": 3,
+      "log": "/tmp/dusk-016-macos-autosave-final.log",
+      "log_sha256": "442b9f6462b167393c340b0857f850dc6b297287b73a6fb2d52708fc8dc68358",
+      "cases": [
+        {
+          "id": "gui.piano_loop_keys_without_device",
+          "status": "PASS",
+          "detail": "(1804 ms)"
+        },
+        {
+          "id": "gui.piano_options",
+          "status": "PASS",
+          "detail": "(2829 ms)"
+        },
+        {
+          "id": "gui.piano_roll_follows_take",
+          "status": "SKIP",
+          "detail": ": reads the window back through the X server"
+        },
+        {
+          "id": "gui.piano_roll_keeps_its_region",
+          "status": "SKIP",
+          "detail": ": reads the window back through the X server"
+        },
+        {
+          "id": "gui.piano_roll_shows_each_take",
+          "status": "SKIP",
+          "detail": ": reads the window back through the X server"
+        },
+        {
+          "id": "gui.piano_step_record_while_recording",
+          "status": "PASS",
+          "detail": "(3145 ms)"
+        }
+      ],
+      "case_listing_scope": "Failed/skipped only for full runs; all focused verdicts otherwise.",
+      "app_sha256": "5d48657ee573b541072dd967bd1b7ad2f598ae9a86641122b4d9b3aeef88412a",
+      "native_exit_code": null,
+      "exit_scope": "Only the open launcher/job exit was retained; no native Dusk exit claim."
+    }
+  },
+  "windows": {
+    "six_before_readiness_guard": {
+      "source_commit": "9772a36091ec73addbcfc54659e658c1b247bd0d",
+      "source_bound": "",
+      "passed": 5,
+      "failed": 1,
+      "skipped": 0,
+      "log": "/tmp/dusk-016-windows-output-only-gui.log",
+      "log_sha256": "8a5563b1206aa17e51cc8c600862404813c6746a5442270b849a4a9ef44cf621",
+      "cases": [
+        {
+          "id": "gui.midi_merge_grows_region",
+          "status": "PASS",
+          "detail": "(2240 ms)"
+        },
+        {
+          "id": "gui.midi_merge_loops",
+          "status": "FAIL",
+          "detail": ": loop passes stopped the transport (14173 ms)"
+        },
+        {
+          "id": "gui.piano_midi_merge_toggle",
+          "status": "PASS",
+          "detail": "(2446 ms)"
+        },
+        {
+          "id": "gui.virtual_keyboard_keys",
+          "status": "PASS",
+          "detail": "(3901 ms)"
+        },
+        {
+          "id": "gui.recording_setup_alert",
+          "status": "PASS",
+          "detail": "(353 ms)"
+        },
+        {
+          "id": "gui.recording_setup_alert_key",
+          "status": "PASS",
+          "detail": "(339 ms)"
+        }
+      ],
+      "case_listing_scope": "Failed/skipped only for full runs; all focused verdicts otherwise.",
+      "app_sha256": "c0125737ae3db4bd9b894464a3504209b8ed5219f963937650f326538ea11a15",
+      "native_result": {
+        "exit": 1,
+        "error": null,
+        "foreground_samples": [
+          {
+            "second": 2,
+            "process": 10232,
+            "validation_app_is_foreground": false,
+            "window": 459392
+          },
+          {
+            "second": 9,
+            "process": 6428,
+            "validation_app_is_foreground": true,
+            "window": 393928
+          }
+        ],
+        "app_session": 1,
+        "launcher_session": 1,
+        "app_pid": 6428
+      }
+    },
+    "loop_alone_before": {
+      "source_commit": "9772a36091ec73addbcfc54659e658c1b247bd0d",
+      "source_bound": "",
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "log": "/tmp/dusk-016-windows-loop-alone.log",
+      "log_sha256": "d61d29bc3f73bb320258bced7e9ef7017c2a1f4bf9d8a118567f41ae71206a77",
+      "cases": [
+        {
+          "id": "gui.midi_merge_loops",
+          "status": "PASS",
+          "detail": "(14155 ms)"
+        }
+      ],
+      "case_listing_scope": "Failed/skipped only for full runs; all focused verdicts otherwise.",
+      "app_sha256": "c0125737ae3db4bd9b894464a3504209b8ed5219f963937650f326538ea11a15",
+      "native_result": {
+        "exit": 0,
+        "error": null,
+        "foreground_samples": [
+          {
+            "second": 2,
+            "process": 304,
+            "validation_app_is_foreground": false,
+            "window": 590466
+          },
+          {
+            "second": 9,
+            "process": 2460,
+            "validation_app_is_foreground": true,
+            "window": 393862
+          }
+        ],
+        "app_session": 1,
+        "launcher_session": 1,
+        "app_pid": 2460
+      }
+    },
+    "predecessor_pair_before": [
+      {
+        "source_commit": "9772a36091ec73addbcfc54659e658c1b247bd0d",
+        "source_bound": "",
+        "passed": 1,
+        "failed": 1,
+        "skipped": 0,
+        "log": "/tmp/dusk-016-windows-loop-pair-before-1.log",
+        "log_sha256": "0afd3b9393e351c0ca3b5c258b2b0e92a0a27938717a1d55fefb447371be27f8",
+        "cases": [
+          {
+            "id": "gui.midi_merge_grows_region",
+            "status": "PASS",
+            "detail": "(2230 ms)"
+          },
+          {
+            "id": "gui.midi_merge_loops",
+            "status": "FAIL",
+            "detail": ": loop passes stopped the transport (14232 ms)"
+          }
+        ],
+        "case_listing_scope": "Failed/skipped only for full runs; all focused verdicts otherwise.",
+        "app_sha256": "c0125737ae3db4bd9b894464a3504209b8ed5219f963937650f326538ea11a15",
+        "native_result": {
+          "exit": 1,
+          "error": null,
+          "foreground_samples": [
+            {
+              "second": 2,
+              "process": 8792,
+              "validation_app_is_foreground": false,
+              "window": 721442
+            },
+            {
+              "second": 9,
+              "process": 9004,
+              "validation_app_is_foreground": true,
+              "window": 1441810
+            }
+          ],
+          "app_session": 1,
+          "launcher_session": 1,
+          "app_pid": 9004
+        }
+      },
+      {
+        "source_commit": "9772a36091ec73addbcfc54659e658c1b247bd0d",
+        "source_bound": "",
+        "passed": 1,
+        "failed": 1,
+        "skipped": 0,
+        "log": "/tmp/dusk-016-windows-loop-pair-before-2.log",
+        "log_sha256": "77351de14e7ab0f236581614749a409f3e5d80ddceb274770b8f5c44172f9d42",
+        "cases": [
+          {
+            "id": "gui.midi_merge_grows_region",
+            "status": "PASS",
+            "detail": "(2268 ms)"
+          },
+          {
+            "id": "gui.midi_merge_loops",
+            "status": "FAIL",
+            "detail": ": loop passes stopped the transport (14456 ms)"
+          }
+        ],
+        "case_listing_scope": "Failed/skipped only for full runs; all focused verdicts otherwise.",
+        "app_sha256": "c0125737ae3db4bd9b894464a3504209b8ed5219f963937650f326538ea11a15",
+        "native_result": {
+          "exit": 1,
+          "error": null,
+          "foreground_samples": [
+            {
+              "second": 2,
+              "process": 8124,
+              "validation_app_is_foreground": false,
+              "window": 852682
+            },
+            {
+              "second": 9,
+              "process": 5920,
+              "validation_app_is_foreground": true,
+              "window": 524474
+            }
+          ],
+          "app_session": 1,
+          "launcher_session": 1,
+          "app_pid": 5920
+        }
+      },
+      {
+        "source_commit": "9772a36091ec73addbcfc54659e658c1b247bd0d",
+        "source_bound": "",
+        "passed": 1,
+        "failed": 1,
+        "skipped": 0,
+        "log": "/tmp/dusk-016-windows-loop-pair-before-3.log",
+        "log_sha256": "37d551ab89aa1d5b5812498289f9354b67a32320cffc79a724f409f4935ecb97",
+        "cases": [
+          {
+            "id": "gui.midi_merge_grows_region",
+            "status": "PASS",
+            "detail": "(2236 ms)"
+          },
+          {
+            "id": "gui.midi_merge_loops",
+            "status": "FAIL",
+            "detail": ": loop passes stopped the transport (14198 ms)"
+          }
+        ],
+        "case_listing_scope": "Failed/skipped only for full runs; all focused verdicts otherwise.",
+        "app_sha256": "c0125737ae3db4bd9b894464a3504209b8ed5219f963937650f326538ea11a15",
+        "native_result": {
+          "exit": 1,
+          "error": null,
+          "foreground_samples": [
+            {
+              "second": 2,
+              "process": 8564,
+              "validation_app_is_foreground": false,
+              "window": 787058
+            },
+            {
+              "second": 9,
+              "process": 8764,
+              "validation_app_is_foreground": true,
+              "window": 1049272
+            }
+          ],
+          "app_session": 1,
+          "launcher_session": 1,
+          "app_pid": 8764
+        }
+      }
+    ],
+    "predecessor_pair_after": [
+      {
+        "source_commit": "99f2ac828a59b255893392fd07e8dd99fd66151b",
+        "source_bound": "Checkout 9772a360 plus exact committed 99f2ac82 readiness patch.",
+        "passed": 2,
+        "failed": 0,
+        "skipped": 0,
+        "log": "/tmp/dusk-016-windows-loop-pair-after-1.log",
+        "log_sha256": "a3cf40445df1f64cfebc7606d563e7d85bb7961d6df1ce3d2c94e3225c588d09",
+        "cases": [
+          {
+            "id": "gui.midi_merge_grows_region",
+            "status": "PASS",
+            "detail": "(2133 ms)"
+          },
+          {
+            "id": "gui.midi_merge_loops",
+            "status": "PASS",
+            "detail": "(14088 ms)"
+          }
+        ],
+        "case_listing_scope": "Failed/skipped only for full runs; all focused verdicts otherwise.",
+        "app_sha256": "09940d3f9752ff12e3921062e272db3348f77e4c27a9e7f37e5effb4acf138ca",
+        "native_result": {
+          "exit": 0,
+          "error": null,
+          "foreground_samples": [
+            {
+              "second": 2,
+              "process": 7348,
+              "validation_app_is_foreground": false,
+              "window": 983586
+            },
+            {
+              "second": 9,
+              "process": 9716,
+              "validation_app_is_foreground": true,
+              "window": 721540
+            }
+          ],
+          "app_session": 1,
+          "launcher_session": 1,
+          "app_pid": 9716
+        }
+      },
+      {
+        "source_commit": "99f2ac828a59b255893392fd07e8dd99fd66151b",
+        "source_bound": "Checkout 9772a360 plus exact committed 99f2ac82 readiness patch.",
+        "passed": 2,
+        "failed": 0,
+        "skipped": 0,
+        "log": "/tmp/dusk-016-windows-loop-pair-after-2.log",
+        "log_sha256": "459ed090dc0d551fb7f850f1147f4dfaf6ac989f70b07134e0a60d5040142fed",
+        "cases": [
+          {
+            "id": "gui.midi_merge_grows_region",
+            "status": "PASS",
+            "detail": "(2276 ms)"
+          },
+          {
+            "id": "gui.midi_merge_loops",
+            "status": "PASS",
+            "detail": "(13999 ms)"
+          }
+        ],
+        "case_listing_scope": "Failed/skipped only for full runs; all focused verdicts otherwise.",
+        "app_sha256": "09940d3f9752ff12e3921062e272db3348f77e4c27a9e7f37e5effb4acf138ca",
+        "native_result": {
+          "exit": 0,
+          "error": null,
+          "foreground_samples": [
+            {
+              "second": 2,
+              "process": 8308,
+              "validation_app_is_foreground": false,
+              "window": 1901276
+            },
+            {
+              "second": 9,
+              "process": 9344,
+              "validation_app_is_foreground": true,
+              "window": 1770034
+            }
+          ],
+          "app_session": 1,
+          "launcher_session": 1,
+          "app_pid": 9344
+        }
+      },
+      {
+        "source_commit": "99f2ac828a59b255893392fd07e8dd99fd66151b",
+        "source_bound": "Checkout 9772a360 plus exact committed 99f2ac82 readiness patch.",
+        "passed": 2,
+        "failed": 0,
+        "skipped": 0,
+        "log": "/tmp/dusk-016-windows-loop-pair-after-3.log",
+        "log_sha256": "57b47112b8b97aa8b85d791c76c4376237329a593799237e430ae67a0f8af482",
+        "cases": [
+          {
+            "id": "gui.midi_merge_grows_region",
+            "status": "PASS",
+            "detail": "(2250 ms)"
+          },
+          {
+            "id": "gui.midi_merge_loops",
+            "status": "PASS",
+            "detail": "(14077 ms)"
+          }
+        ],
+        "case_listing_scope": "Failed/skipped only for full runs; all focused verdicts otherwise.",
+        "app_sha256": "09940d3f9752ff12e3921062e272db3348f77e4c27a9e7f37e5effb4acf138ca",
+        "native_result": {
+          "exit": 0,
+          "error": null,
+          "foreground_samples": [
+            {
+              "second": 2,
+              "process": 1832,
+              "validation_app_is_foreground": false,
+              "window": 1049286
+            },
+            {
+              "second": 9,
+              "process": 7048,
+              "validation_app_is_foreground": true,
+              "window": 983660
+            }
+          ],
+          "app_session": 1,
+          "launcher_session": 1,
+          "app_pid": 7048
+        }
+      }
+    ],
+    "six_at_clean_commit": {
+      "source_commit": "99f2ac828a59b255893392fd07e8dd99fd66151b",
+      "source_bound": "",
+      "passed": 6,
+      "failed": 0,
+      "skipped": 0,
+      "log": "/tmp/dusk-016-windows-recording-final.log",
+      "log_sha256": "4511995061cd089dc28a9a7d01e4251ca8eb47dad6b362c1310ac7d4d8f671b2",
+      "cases": [
+        {
+          "id": "gui.midi_merge_grows_region",
+          "status": "PASS",
+          "detail": "(2240 ms)"
+        },
+        {
+          "id": "gui.midi_merge_loops",
+          "status": "PASS",
+          "detail": "(14669 ms)"
+        },
+        {
+          "id": "gui.piano_midi_merge_toggle",
+          "status": "PASS",
+          "detail": "(2530 ms)"
+        },
+        {
+          "id": "gui.virtual_keyboard_keys",
+          "status": "PASS",
+          "detail": "(3839 ms)"
+        },
+        {
+          "id": "gui.recording_setup_alert",
+          "status": "PASS",
+          "detail": "(346 ms)"
+        },
+        {
+          "id": "gui.recording_setup_alert_key",
+          "status": "PASS",
+          "detail": "(370 ms)"
+        }
+      ],
+      "case_listing_scope": "Failed/skipped only for full runs; all focused verdicts otherwise.",
+      "app_sha256": "fef4763911c3ad8e1aea5d22307c8b0e84bbcb329beae354dbd28974ac4e4c03",
+      "native_result": {
+        "exit": 0,
+        "error": null,
+        "foreground_samples": [
+          {
+            "second": 2,
+            "process": 9076,
+            "validation_app_is_foreground": false,
+            "window": 983670
+          },
+          {
+            "second": 9,
+            "process": 4440,
+            "validation_app_is_foreground": true,
+            "window": 1835728
+          }
+        ],
+        "app_session": 1,
+        "launcher_session": 1,
+        "app_pid": 4440
+      }
+    },
+    "asio_metadata": {
+      "asio_enabled": true,
+      "asio_required": true,
+      "volumes": [
+        {
+          "filesystem": "NTFS",
+          "drive": "C",
+          "drive_type": "Fixed",
+          "free": 5741268992,
+          "size": 67528290304
+        }
+      ],
+      "source": "99f2ac828a59b255893392fd07e8dd99fd66151b"
+    },
+    "readiness_mechanism": "The preceding case retains a sealed pass-1 preview after Stop. Record click dispatch is asynchronous; the old predicate could accept that preview before recording started. Requiring Recording after servicing the preview excludes it. Exact Windows message ordering was not traced.",
+    "clean_autosave_regression": {
+      "source_commit": "99f2ac828a59b255893392fd07e8dd99fd66151b",
+      "source_bound": "Final autosave fixture patch on 99f2ac82, diagnostics removed. Three native/X-server readback cases skip outside Linux where applicable.",
+      "passed": 3,
+      "failed": 0,
+      "skipped": 3,
+      "log": "/tmp/dusk-016-windows-autosave-final.log",
+      "log_sha256": "24039f5a1dc5d1f525a6f4a13f4fbff59e3c13e0560a18c6dfaebcfd84c1ffec",
+      "cases": [
+        {
+          "id": "gui.piano_loop_keys_without_device",
+          "status": "PASS",
+          "detail": "(2940 ms)"
+        },
+        {
+          "id": "gui.piano_options",
+          "status": "PASS",
+          "detail": "(4512 ms)"
+        },
+        {
+          "id": "gui.piano_roll_follows_take",
+          "status": "SKIP",
+          "detail": ": reads the window back through the X server"
+        },
+        {
+          "id": "gui.piano_roll_keeps_its_region",
+          "status": "SKIP",
+          "detail": ": reads the window back through the X server"
+        },
+        {
+          "id": "gui.piano_roll_shows_each_take",
+          "status": "SKIP",
+          "detail": ": reads the window back through the X server"
+        },
+        {
+          "id": "gui.piano_step_record_while_recording",
+          "status": "PASS",
+          "detail": "(4342 ms)"
+        }
+      ],
+      "case_listing_scope": "Failed/skipped only for full runs; all focused verdicts otherwise.",
+      "app_sha256": "17c4ea6f057754239dbd18afd1054faa9ad4633e921a1a050e7647923bbd445b",
+      "native_result": {
+        "exit": 0,
+        "error": null,
+        "foreground_samples": [
+          {
+            "second": 2,
+            "process": 8184,
+            "validation_app_is_foreground": false,
+            "window": 1245730
+          },
+          {
+            "second": 9,
+            "process": 2008,
+            "validation_app_is_foreground": true,
+            "window": 1049220
+          }
+        ],
+        "app_session": 1,
+        "launcher_session": 1,
+        "app_pid": 2008
+      }
+    }
+  },
+  "linux": {
+    "six_output_only_fixtures": {
+      "source_commit": "9772a36091ec73addbcfc54659e658c1b247bd0d",
+      "source_bound": "Working source 8c plus exact two-file 9772a360 fixture correction; native binary hash was not retained for this focused run.",
+      "passed": 6,
+      "failed": 0,
+      "skipped": 0,
+      "log": "/tmp/dusk-016-fixture-focused-linux.log",
+      "log_sha256": "f67933e5be3296ba097b3d911b6651b891be4b31e6fc8f11d441487b57eed2b1",
+      "cases": [
+        {
+          "id": "gui.midi_merge_grows_region",
+          "status": "PASS",
+          "detail": "(2329 ms)"
+        },
+        {
+          "id": "gui.midi_merge_loops",
+          "status": "PASS",
+          "detail": "(13229 ms)"
+        },
+        {
+          "id": "gui.piano_midi_merge_toggle",
+          "status": "PASS",
+          "detail": "(735 ms)"
+        },
+        {
+          "id": "gui.virtual_keyboard_keys",
+          "status": "PASS",
+          "detail": "(3248 ms)"
+        },
+        {
+          "id": "gui.recording_setup_alert",
+          "status": "PASS",
+          "detail": "(6 ms)"
+        },
+        {
+          "id": "gui.recording_setup_alert_key",
+          "status": "PASS",
+          "detail": "(3 ms)"
+        }
+      ],
+      "case_listing_scope": "Failed/skipped only for full runs; all focused verdicts otherwise."
+    },
+    "full_before_autosave_cleanup": {
+      "source_commit": "9772a36091ec73addbcfc54659e658c1b247bd0d",
+      "source_bound": "One GUI app instance on private PipeWire/Xvfb. Additional picker/settings fresh-profile legs pass; a settings-defaults subprocess reports ALSA fallback, so private audio isolation is not claimed for every seeded leg.",
+      "passed": 260,
+      "failed": 4,
+      "skipped": 2,
+      "log": "/tmp/dusk-016-output-only-single-instance-linux.log",
+      "log_sha256": "ad3472314199cf38c5fe007198e1460b50dfd7518e3015cdc36a90e93595d581",
+      "cases": [
+        {
+          "id": "gui.piano_roll_follows_take",
+          "status": "FAIL",
+          "detail": ": pass 1 did not land where it should (11220 ms)"
+        },
+        {
+          "id": "gui.piano_roll_keeps_its_region",
+          "status": "FAIL",
+          "detail": ": Alt+T right after an undo did not step the region the roll went to (8882 ms)"
+        },
+        {
+          "id": "gui.piano_roll_shows_each_take",
+          "status": "FAIL",
+          "detail": ": pass 1 did not land where it should (9406 ms)"
+        },
+        {
+          "id": "gui.piano_step_record_while_recording",
+          "status": "FAIL",
+          "detail": ": the take does not hold just the played note (3399 ms)"
+        },
+        {
+          "id": "gui.pick_opens_native_editor",
+          "status": "SKIP",
+          "detail": ": requires the seeded plugin-picker cache"
+        },
+        {
+          "id": "gui.plugin_picker_filter_and_load",
+          "status": "SKIP",
+          "detail": ": requires the seeded plugin-picker cache"
+        }
+      ],
+      "case_listing_scope": "Failed/skipped only for full runs; all focused verdicts otherwise."
+    },
+    "four_fresh": {
+      "source_commit": "9772a36091ec73addbcfc54659e658c1b247bd0d",
+      "source_bound": "Same unrelinked 9772a360 binary;99f2ac82 source edit was not built yet.",
+      "passed": 4,
+      "failed": 0,
+      "skipped": 0,
+      "log": "/tmp/dusk-016-linux-piano-takes-fresh.log",
+      "log_sha256": "0025973768989bd47128fb7e9b26aa12c16caf53884e3f5e1fbafebbdd3d87ba",
+      "cases": [
+        {
+          "id": "gui.piano_roll_follows_take",
+          "status": "PASS",
+          "detail": "(11214 ms)"
+        },
+        {
+          "id": "gui.piano_roll_keeps_its_region",
+          "status": "PASS",
+          "detail": "(8716 ms)"
+        },
+        {
+          "id": "gui.piano_roll_shows_each_take",
+          "status": "PASS",
+          "detail": "(9242 ms)"
+        },
+        {
+          "id": "gui.piano_step_record_while_recording",
+          "status": "PASS",
+          "detail": "(3246 ms)"
+        }
+      ],
+      "case_listing_scope": "Failed/skipped only for full runs; all focused verdicts otherwise."
+    },
+    "forced_autosave_before": {
+      "source_commit": "99f2ac828a59b255893392fd07e8dd99fd66151b",
+      "source_bound": "Private-directory forced autosave regression plus temporary six-field diagnostics; owner cleanup uncorrected.",
+      "passed": 2,
+      "failed": 4,
+      "skipped": 0,
+      "log": "/tmp/dusk-016-linux-autosave-before.log",
+      "log_sha256": "095109261272ccb07badcc96f8a400082cccce02da8b6c1851574e240f2fdce5",
+      "cases": [
+        {
+          "id": "gui.piano_loop_keys_without_device",
+          "status": "PASS",
+          "detail": "(2119 ms)"
+        },
+        {
+          "id": "gui.piano_options",
+          "status": "PASS",
+          "detail": "(3131 ms)"
+        },
+        {
+          "id": "gui.piano_roll_follows_take",
+          "status": "FAIL",
+          "detail": ": pass 1 did not land where it should (10949 ms)"
+        },
+        {
+          "id": "gui.piano_roll_keeps_its_region",
+          "status": "FAIL",
+          "detail": ": Alt+T right after an undo did not step the region the roll went to (8492 ms)"
+        },
+        {
+          "id": "gui.piano_roll_shows_each_take",
+          "status": "FAIL",
+          "detail": ": pass 1 did not land where it should (9084 ms)"
+        },
+        {
+          "id": "gui.piano_step_record_while_recording",
+          "status": "FAIL",
+          "detail": ": the take does not hold just the played note (3286 ms)"
+        }
+      ],
+      "case_listing_scope": "Failed/skipped only for full runs; all focused verdicts otherwise."
+    },
+    "forced_autosave_after": {
+      "source_commit": "99f2ac828a59b255893392fd07e8dd99fd66151b",
+      "source_bound": "Same regression and diagnostics plus final cleanup correction.",
+      "passed": 6,
+      "failed": 0,
+      "skipped": 0,
+      "log": "/tmp/dusk-016-linux-autosave-after.log",
+      "log_sha256": "df1a6ce936819839ec0b27fc72dde912cc5ee6dc1242e91626e7e94c1c7a9897",
+      "cases": [
+        {
+          "id": "gui.piano_loop_keys_without_device",
+          "status": "PASS",
+          "detail": "(2124 ms)"
+        },
+        {
+          "id": "gui.piano_options",
+          "status": "PASS",
+          "detail": "(3037 ms)"
+        },
+        {
+          "id": "gui.piano_roll_follows_take",
+          "status": "PASS",
+          "detail": "(11154 ms)"
+        },
+        {
+          "id": "gui.piano_roll_keeps_its_region",
+          "status": "PASS",
+          "detail": "(8606 ms)"
+        },
+        {
+          "id": "gui.piano_roll_shows_each_take",
+          "status": "PASS",
+          "detail": "(9200 ms)"
+        },
+        {
+          "id": "gui.piano_step_record_while_recording",
+          "status": "PASS",
+          "detail": "(3284 ms)"
+        }
+      ],
+      "case_listing_scope": "Failed/skipped only for full runs; all focused verdicts otherwise."
+    },
+    "autosave_state_trace": {
+      "entry_saved": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "before_cleanup_saved": [
+        192000,
+        384000,
+        1,
+        240000,
+        336000,
+        1
+      ],
+      "after_cleanup_saved": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "live_entry_and_cleanup": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "field_order": [
+        "loopStart",
+        "loopEnd",
+        "loopEnabled",
+        "punchIn",
+        "punchOut",
+        "punchEnabled"
+      ],
+      "scope": "Forced reproduction matches all four long-run failures. An autosave tick was not captured in the original long run."
+    },
+    "cleanup_mechanism": "Autosave publishes temporary live loop/punch into Session saved fields. Fixture owners restored live values only; subsequent session-save/reload reactivated the stale saved fields. Both owners preserve all six saved fields, and the forced autosave writes only to a scenario-owned directory.",
+    "cleanup_candidate_patch_sha256": "f57b45f1939357b4fe6f7c5960ff8e1e0f6eb8e4d05eacd0532b9a6abb9473e8",
+    "clean_regression": {
+      "source_commit": "99f2ac828a59b255893392fd07e8dd99fd66151b",
+      "source_bound": "Final autosave fixture patch on 99f2ac82, diagnostics removed. Three native/X-server readback cases skip outside Linux where applicable.",
+      "passed": 6,
+      "failed": 0,
+      "skipped": 0,
+      "log": "/tmp/dusk-016-linux-autosave-clean.log",
+      "log_sha256": "bcc42e1ee630dd069026935d2eef6120df13baead0082ce2524a43ba41fdf05d",
+      "cases": [
+        {
+          "id": "gui.piano_loop_keys_without_device",
+          "status": "PASS",
+          "detail": "(2201 ms)"
+        },
+        {
+          "id": "gui.piano_options",
+          "status": "PASS",
+          "detail": "(3145 ms)"
+        },
+        {
+          "id": "gui.piano_roll_follows_take",
+          "status": "PASS",
+          "detail": "(11192 ms)"
+        },
+        {
+          "id": "gui.piano_roll_keeps_its_region",
+          "status": "PASS",
+          "detail": "(8433 ms)"
+        },
+        {
+          "id": "gui.piano_roll_shows_each_take",
+          "status": "PASS",
+          "detail": "(9226 ms)"
+        },
+        {
+          "id": "gui.piano_step_record_while_recording",
+          "status": "PASS",
+          "detail": "(3271 ms)"
+        }
+      ],
+      "case_listing_scope": "Failed/skipped only for full runs; all focused verdicts otherwise."
+    }
+  },
+  "limits": [
+    "macOS native LV2 is disabled locally; shipping CI is separate.",
+    "Fixture/platform skips are missing coverage, not passes.",
+    "No cold-host package, physical hot-unplug or maintainer manual pass is implied."
+  ],
+  "prepush_before_autosave_cleanup": {
+    "commit": "9772a36091ec73addbcfc54659e658c1b247bd0d",
+    "status": "PASS",
+    "log": "/tmp/dusk-016-output-only-prepush.log",
+    "log_sha256": "1254ab07dc64bb3dbd5c9604eb3496789228b4e2feabe8a682a77917502947e1",
+    "linux_entries_twice": 1762,
+    "linux_seconds": [
+      32.97,
+      31.94
+    ],
+    "macos_entries": 1708,
+    "macos_seconds": 51.42,
+    "linux_log_sha256": "bd8045a3c49b2b81ce4d9b00607c759676500b6929710ec345504f45c432637f",
+    "macos_log_sha256": "5624d76aabb77c176d02721045554c3b087cf237f57219ce93fbb897a19d8880",
+    "scope": "Builds, tests, self-test, engine and black-box legs. Full GUI results are separate."
+  },
+  "autosave_cleanup_commit": "266acbe5d36be443a5557e705ebe65062f74bbd9"
+}

@@ -74,6 +74,14 @@ bool renameSucceeds (const std::filesystem::path& from, const std::filesystem::p
     return ! ec;
 }
 
+bool widenMasteringWindow (GuiHost& host, ScenarioContext& ctx)
+{
+    const auto size = host.mainWindowSize();
+    if (size.size() < 2) return false;
+    ctx.cleanup ([&host, size] { host.resizeMainWindow (size[0], size[1]); });
+    return host.resizeMainWindow (std::max (1440, size[0]), std::max (900, size[1]));
+}
+
 std::optional<ScenarioResult> runMasteringExportWorkflow (GuiHost& host, ScenarioContext& ctx)
 {
     auto& engine = ctx.engine();
@@ -488,6 +496,8 @@ std::optional<ScenarioResult> runMasteringComboKeepsPanels (GuiHost& host, Scena
         return ScenarioResult::skip ("requires stopped transport and mastering player");
     if (! host.canEmbedPluginEditors())
         return ScenarioResult::skip ("requires a window the native mastering panels can embed into");
+    if (! widenMasteringWindow (host, ctx))
+        return ScenarioResult::fail ("could not widen the mastering workspace");
     const auto originalStage = engine.getStage();
     host.switchToStage (GuiHost::Stage::Mastering);
     ctx.cleanup ([&host, originalStage]
@@ -496,12 +506,12 @@ std::optional<ScenarioResult> runMasteringComboKeepsPanels (GuiHost& host, Scena
         host.switchToStage (guiStage (originalStage));
     });
 
-    // The stage opens both framework children from its own message-loop sync,
+    // The stage opens its framework children from its own message-loop sync,
     // so the case starts once they are up.
     ctx.waitUntil ([&host]
                    {
                        const int open = host.masteringPanelsOpen();
-                       return open < 0 || open == 2;
+                       return open < 0 || open == 3;
                    }, 15000,
                    [&host, &ctx]
     {
@@ -521,19 +531,19 @@ std::optional<ScenarioResult> runMasteringComboKeepsPanels (GuiHost& host, Scena
         steps->push_back ({ 400, [&host, &ctx]
         {
             ctx.expect (! host.modalStackEmpty(), "the preset picker did not open");
-            ctx.expect (host.masteringPanelsOpen() == 2,
-                        "the open preset popup took the mastering EQ / limiter panels down");
+            ctx.expect (host.masteringPanelsOpen() == 3,
+                        "the open preset popup took a native mastering panel down");
             ctx.expect (host.pressPeerKey ("escape"), "the preset popup did not handle Escape");
         } });
         steps->push_back ({ 400, [&host, &ctx]
         {
             ctx.expect (host.modalStackEmpty(), "Escape left the preset popup open");
-            ctx.expect (host.masteringPanelsOpen() == 2,
-                        "the mastering EQ / limiter panels did not survive the preset popup");
+            ctx.expect (host.masteringPanelsOpen() == 3,
+                        "a native mastering panel did not survive the preset popup");
         } });
         runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     },
-    "the mastering EQ and limiter panels never opened");
+    "the native mastering panels never opened");
     return std::nullopt;
 }
 
@@ -543,6 +553,315 @@ const ScenarioRegistrar masteringComboKeepsPanels { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runMasteringComboKeepsPanels (host, ctx); }
 } };
 
+std::optional<ScenarioResult> runMasteringPhasePanel (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& player = engine.getMasteringPlayer();
+    auto& params = ctx.session().mastering();
+    if (! engine.getTransport().isStopped() || player.isPlaying() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires stopped transport and no modal");
+    if (! host.canEmbedPluginEditors() || host.engineDetached() || ! engine.isAudioCallbackRegistered()
+        || engine.getCurrentSampleRate() <= 0.0)
+        return ScenarioResult::skip ("requires native panels and a running audio callback");
+    if (! widenMasteringWindow (host, ctx))
+        return ScenarioResult::fail ("could not widen the mastering workspace");
+    const auto originalStage = engine.getStage();
+    const auto originalFile = player.getLoadedFile();
+    const auto originalSource = params.sourceFile;
+    const auto originalPosition = player.getPlayhead();
+    const bool originalMono = engine.getMasteringMonoMonitor();
+    ctx.cleanup ([&host, &engine, &player, &params, originalStage, originalFile, originalSource, originalPosition, originalMono]
+    {
+        player.stop();
+        host.resetMasteringPhasePanel();
+        drainModals (host);
+        if (originalFile.existsAsFile()) player.loadFile (originalFile);
+        else player.unloadFile();
+        player.setPlayhead (originalPosition);
+        params.sourceFile = originalSource;
+        engine.setMasteringMonoMonitor (originalMono);
+        host.refreshMasteringSource();
+        host.switchToStage (guiStage (originalStage));
+    });
+    ctx.keep (params.phase.bands);
+    ctx.keep (params.phase.q);
+    ctx.keep (params.phase.averagingMs);
+    ctx.keep (params.eqEnabled);
+    ctx.keep (params.compEnabled);
+    ctx.keep (params.limiterEnabled);
+    params.phase.bands.store (4);
+    params.phase.q.store (0.25f);
+    params.phase.averagingMs.store (50.0f);
+    params.eqEnabled.store (false);
+    params.compEnabled.store (false);
+    params.limiterEnabled.store (false);
+    engine.setMasteringMonoMonitor (false);
+    const auto source = ctx.tempDir() / "inverted-stereo.wav";
+    std::vector<float> left (480000), right (left.size());
+    std::uint32_t noise = 0x12345u;
+    for (size_t i = 0; i < left.size(); ++i)
+    {
+        noise = noise * 1664525u + 1013904223u;
+        left[i] = ((float) (noise >> 8) / 8388608.0f - 1.0f) * 0.1f;
+        right[i] = -left[i];
+    }
+    dusk::audio::WriteSpec spec;
+    spec.sampleRate = 48000.0;
+    spec.bitsPerSample = 32;
+    auto writer = dusk::audio::FileWriter::create (source, spec);
+    const float* channels[] = { left.data(), right.data() };
+    if (writer == nullptr || ! writer->write (channels, 2, (std::int64_t) left.size()) || ! writer->flush())
+        return ScenarioResult::fail ("could not write the inverted stereo mix");
+    writer.reset();
+    host.switchToStage (GuiHost::Stage::Mastering);
+    if (! host.loadMasteringFile (source)) return ScenarioResult::fail ("could not load the inverted stereo mix");
+    ctx.waitUntil ([&host]
+    {
+        if (host.masteringPanelsOpen() < 0) return true;
+        const auto* report = host.masteringPhaseReport();
+        return host.masteringPanelsOpen() == 3 && report != nullptr && report->settings.bands == 4
+            && std::abs (report->settings.q - 0.25f) < 1.0e-5f
+            && std::abs (report->settings.averagingMs - 50.0f) < 1.0e-3f
+            && ! report->broadband.minimumValid && ! report->broadband.flagged;
+    }, 15000,
+                  [&host, &ctx, &player]
+    {
+        if (host.masteringPanelsOpen() < 0)
+        {
+            ctx.complete (ScenarioResult::skip ("this build has no native mastering panels"));
+            return;
+        }
+        if (! ctx.expect (host.clickMasteringButton ("Play"), "Play was unavailable"))
+        {
+            ctx.complete (ctx.verdict());
+            return;
+        }
+        ctx.waitUntil ([&host]
+        {
+            const auto* report = host.masteringPhaseReport();
+            return report != nullptr && report->frames > 0 && report->broadband.correlationValid
+                && report->broadband.correlation < -0.99 && report->broadband.minimumValid
+                && report->broadband.flagged;
+        }, 15000, [&host, &ctx, &player]
+        {
+            player.stop();
+            auto steps = std::make_shared<std::vector<Step>>();
+            steps->push_back ({ 300, [&host] { host.switchToStage (GuiHost::Stage::Mixing); } });
+            steps->push_back ({ 200, [&host] { host.switchToStage (GuiHost::Stage::Mastering); },
+                               [&host] { return host.masteringPanelsOpen() == 0; }, "mastering children stayed open" });
+            steps->push_back ({ 200, [&host, &ctx]
+            {
+                const auto* report = host.masteringPhaseReport();
+                ctx.expect (report != nullptr && report->broadband.minimumValid && report->broadband.flagged
+                            && report->broadband.minimumCorrelation < -0.99,
+                            "native child recreation lost held phase evidence");
+            }, [&host] { return host.masteringPanelsOpen() == 3; }, "mastering children did not reopen" });
+            const auto click = [&] (std::string control, float position = 0.5f, int modifiers = 0)
+            {
+                steps->push_back ({ 100, [&host, &ctx, control, position, modifiers]
+                { ctx.expect (host.masteringPhasePointer (control, position, true, modifiers), "phase press unavailable: " + control); } });
+                steps->push_back ({ 100, [&host, &ctx, control, position, modifiers]
+                { ctx.expect (host.masteringPhasePointer (control, position, false, modifiers), "phase release unavailable: " + control); } });
+            };
+            click ("mode");
+            steps->push_back ({ 100, [&host, &ctx]
+            { ctx.expect (host.pressPeerKey ("escape"), "Phase menu did not keep Escape"); },
+                               [&host]
+            {
+               #if defined (__APPLE__)
+                if (! host.masteringPhaseHasKeyboard()) return false;
+               #endif
+                return host.masteringPhaseCapturesKeyboard();
+            }, "Phase menu never captured the keyboard" });
+            steps->push_back ({ 100, [] {}, [&host] { return ! host.masteringPhaseCapturesKeyboard(); },
+                               "Escape left the Phase menu active" });
+            click ("mono");
+            steps->push_back ({ 100, [&ctx]
+            { ctx.expect (ctx.engine().getMasteringMonoMonitor(), "Mono control did not change the live monitor"); } });
+            click ("reset");
+            steps->push_back ({ 100, [&host, &ctx]
+            {
+                const auto* report = host.masteringPhaseReport();
+                ctx.expect (report != nullptr && ! report->broadband.minimumValid && ! report->broadband.flagged,
+                            "Reset left held phase evidence");
+            } });
+            click ("bands", 1.0f);
+            click ("q", 1.0f);
+            click ("averaging", 1.0f);
+            steps->push_back ({ 200, [&host, &ctx]
+            {
+                const auto& settings = ctx.session().mastering().phase;
+                ctx.expect (settings.bands.load() == 64 && std::abs (settings.q.load() - 8.0f) < 1.0e-5f
+                            && std::abs (settings.averagingMs.load() - 5000.0f) < 1.0e-3f,
+                            "native Phase controls did not reach their documented upper bounds");
+                ctx.expect (host.masteringPanelsOpen() == 3, "Phase interaction closed a native module");
+            }, [&host]
+            {
+                const auto* report = host.masteringPhaseReport();
+                return report != nullptr && report->settings.bands == 64
+                    && std::abs (report->settings.q - 8.0f) < 1.0e-5f
+                    && std::abs (report->settings.averagingMs - 5000.0f) < 1.0e-3f;
+            }, "the host analyzer did not follow the native settings" });
+            click ("q", 0.5f, 2);
+            steps->push_back ({ 100, [&host, &ctx]
+            {
+                // Clear the field's initial selection so Select All must reach it.
+                ctx.expect (host.pressPeerKey ("cursor right"), "Q entry did not keep Right");
+            }, [&host]
+            {
+               #if defined (__APPLE__)
+                if (! host.masteringPhaseHasKeyboard()) return false;
+               #endif
+                return host.masteringPhaseCapturesKeyboard();
+            }, "Q text entry never captured the keyboard" });
+            steps->push_back ({ 100, [&host, &ctx]
+            { ctx.expect (host.pressPeerKey (commandChord ('A')), "Q entry did not keep Select All"); } });
+            steps->push_back ({ 100, [&host, &ctx]
+            { ctx.expect (host.typeInMasteringPhase ("3.5"), "Q entry did not accept text"); } });
+            steps->push_back ({ 100, [&host, &ctx]
+            { ctx.expect (host.pressPeerKey ("return"), "Q entry did not keep Return"); } });
+            steps->push_back ({ 200, [&host, &ctx]
+            {
+                ctx.expect (std::abs (ctx.session().mastering().phase.q.load() - 3.5f) < 1.0e-5f,
+                            "parent-routed Select All and Return did not commit Q text");
+                ctx.expect (host.masteringPanelsOpen() == 3, "Q entry closed a native module");
+            }, [&host] { return ! host.masteringPhaseCapturesKeyboard(); }, "Q entry kept the keyboard after Return" });
+            runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+        }, "live mastering never produced a valid negative correlation and sticky warning");
+    }, "the native mastering panels never opened");
+    return std::nullopt;
+}
+
+std::optional<ScenarioResult> runMasteringCompactCover (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    if (! engine.getTransport().isStopped() || engine.getMasteringPlayer().isPlaying() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires stopped transport and no modal");
+    if (! host.canEmbedPluginEditors()) return ScenarioResult::skip ("requires native panel embedding");
+    const auto size = host.mainWindowSize();
+    if (size.size() < 4) return ScenarioResult::fail ("window limits are unavailable");
+    const auto originalStage = engine.getStage();
+    host.switchToStage (GuiHost::Stage::Mastering);
+    const int originalModule = host.masteringModuleIndex();
+    ctx.cleanup ([&host, size, originalStage, originalModule]
+    {
+        drainModals (host);
+        host.restoreMasteringModule (originalModule);
+        host.setMainWindowMinimumWidth (size[2]);
+        host.resizeMainWindow (size[0], size[1]);
+        host.switchToStage (guiStage (originalStage));
+    });
+    if (host.masteringPanelsOpen() < 0) return ScenarioResult::skip ("this build has no native mastering panels");
+    host.restoreMasteringModule (3);
+    if (! host.setMainWindowMinimumWidth (900) || ! host.resizeMainWindow (1040, std::max (900, size[1])))
+        return ScenarioResult::fail ("could not request the compact workspace");
+    const int wide = std::max (1440, size[0]), height = std::max (900, size[1]);
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.masteringPhasePointer ("mode", 0.5f, true), "Phase mode press is unavailable"); },
+                       [&host] { return host.masteringModulePickerShown() && host.masteringPanelsOpen() == 1; },
+                       "compact Phase panel never opened" });
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.masteringPhasePointer ("mode", 0.5f, false), "Phase mode release is unavailable"); } });
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.pressPeerKey ("escape"), "Phase menu did not accept Escape"); },
+                       [&host] { return host.masteringPhaseCapturesKeyboard() && host.masteringPhaseHasKeyboard(); },
+                       "Phase menu never received native keyboard focus" });
+    steps->push_back ({ 100, [] {},
+                       [&host] { return ! host.masteringPhaseCapturesKeyboard() && host.masteringPhaseHasKeyboard(); },
+                       "Escape did not leave keyboard focus on the Phase child" });
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.clickMasteringModulePicker(), "compact module picker is unavailable"); },
+                       [&host] { return host.masteringModulePickerShown(); }, "workspace never became compact" });
+    steps->push_back ({ 100, [&host, &ctx]
+    {
+        ctx.expect (host.modalHasKeyboardFocus(), "compact module menu did not own keyboard focus");
+        ctx.expect (host.pressPeerKey ("home", 0), "compact module Home was unavailable");
+        ctx.expect (host.pressPeerKey ("cursor down", 0), "compact compressor choice was unavailable");
+        ctx.expect (host.pressPeerKey ("return", '\r'), "compact module Return was unavailable");
+    }, [&host]
+    {
+        return host.modalCount() > 0 && host.modalHasKeyboardFocus() && host.masteringPanelsOpen() == 0;
+    }, "compact module choices never received focus after native teardown" });
+    steps->push_back ({ 300, [&host, &ctx]
+    { ctx.expect (host.clickMasteringButton ("Load mix..."), "Load mix was unavailable"); },
+                       [&host] { return host.masteringModuleIndex() == 1 && host.masteringPanelsOpen() == 0; },
+                       "compact compressor selection left native children up" });
+    steps->push_back ({ 100, [&host, &ctx, wide, height]
+    { ctx.expect (host.resizeMainWindow (wide, height), "could not widen beneath the file browser"); },
+                       [&host] { return ! host.modalStackEmpty(); }, "the file browser never opened" });
+    steps->push_back ({ 400, [&host, &ctx]
+    {
+        ctx.expect (! host.modalStackEmpty(), "wide resize dismissed the file browser");
+        ctx.expect (host.masteringPanelsOpen() == 0, "resizing with zero hide tokens opened native children above the browser");
+        ctx.expect (host.pressPeerKey ("escape"), "the file browser did not accept Escape");
+    } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickMasteringButton ("Load mix..."), "second Load mix was unavailable"); },
+                       [&host] { return host.modalStackEmpty() && host.masteringPanelsOpen() == 3; },
+                       "native children did not appear after the cover closed" });
+    steps->push_back ({ 100, [&host, &ctx, height]
+    { ctx.expect (host.resizeMainWindow (1040, height), "could not narrow beneath the file browser"); },
+                       [&host] { return ! host.modalStackEmpty(); }, "the second file browser never opened" });
+    steps->push_back ({ 400, [&host, &ctx]
+    {
+        ctx.expect (! host.modalStackEmpty(), "compact resize dismissed the file browser");
+        ctx.expect (host.masteringModulePickerShown() && host.masteringPanelsOpen() == 0,
+                    "compact resize reopened a covered child");
+        ctx.expect (host.pressPeerKey ("escape"), "the second file browser did not accept Escape");
+    } });
+    steps->push_back ({ 400, [&host, &ctx]
+    {
+        ctx.expect (host.masteringModuleIndex() == 1 && host.masteringPanelsOpen() == 0,
+                    "closing the cover re-showed unselected compact modules");
+        ctx.expect (host.clickMasteringModulePicker(), "module picker did not return");
+    }, [&host] { return host.modalStackEmpty(); }, "the second cover never closed" });
+    steps->push_back ({ 100, [&host, &ctx]
+    {
+        ctx.expect (host.pressPeerKey ("end", 0), "compact Phase choice was unavailable");
+        ctx.expect (host.pressPeerKey ("return", '\r'), "compact Phase Return was unavailable");
+    }, [&host]
+    {
+        return host.modalCount() > 0 && host.modalHasKeyboardFocus() && host.masteringPanelsOpen() == 0;
+    }, "compact module choices never regained keyboard focus" });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.masteringModuleIndex() == 3, "Phase was not selected"); },
+                       [&host] { return host.masteringPanelsOpen() == 1; }, "compact Phase child did not open" });
+    steps->push_back ({ 100, [&host, &ctx, wide, height]
+    { ctx.expect (host.resizeMainWindow (wide, height), "could not restore the wide workspace"); } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickMasteringCompPreset(), "wide compressor preset picker is unavailable"); },
+                       [&host] { return host.masteringPanelsOpen() == 3; }, "wide native children did not return" });
+    steps->push_back ({ 300, [&host, &ctx, height]
+    {
+        ctx.expect (! host.modalStackEmpty(), "the compressor preset popup never opened");
+        ctx.expect (host.masteringPanelsOpen() == 3, "opening the preset popup closed an uncovered panel");
+        ctx.expect (host.resizeMainWindow (1040, height), "could not narrow beneath the preset popup");
+    } });
+    steps->push_back ({ 400, [&host, &ctx]
+    {
+        ctx.expect (! host.modalStackEmpty(), "narrowing dismissed the preset popup");
+        ctx.expect (host.masteringModulePickerShown() && host.masteringPanelsOpen() == 0,
+                    "a resized native panel covered the open preset popup");
+        ctx.expect (host.pressPeerKey ("escape"), "the preset popup did not accept Escape");
+    } });
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.masteringModuleIndex() == 3, "the preset popup changed the compact selection"); },
+                       [&host] { return host.modalStackEmpty() && host.masteringPanelsOpen() == 1; },
+                       "the compact Phase child did not return after closing the preset popup" });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar masteringPhasePanel { Scenario {
+    "gui.mastering_phase_panel", { "gui", "mastering", "phase" }, Needs::Engine | Needs::Gui,
+    {}, {}, 60000, [] (GuiHost& host, ScenarioContext& ctx) { return runMasteringPhasePanel (host, ctx); }
+} };
+const ScenarioRegistrar masteringCompactCover { Scenario {
+    "gui.mastering_compact_cover", { "gui", "mastering", "phase" }, Needs::Engine | Needs::Gui,
+    {}, {}, 60000, [] (GuiHost& host, ScenarioContext& ctx) { return runMasteringCompactCover (host, ctx); }
+} };
+
 // Linux leaves an unpainted area dark and macOS leaves it white, so the check
 // reads the page's own render rather than the screen.
 std::optional<ScenarioResult> runMasteringCompPanelPainted (GuiHost& host, ScenarioContext& ctx)
@@ -550,6 +869,8 @@ std::optional<ScenarioResult> runMasteringCompPanelPainted (GuiHost& host, Scena
     auto& engine = ctx.engine();
     if (! engine.getTransport().isStopped() || engine.getMasteringPlayer().isPlaying())
         return ScenarioResult::skip ("requires stopped transport and mastering player");
+    if (! widenMasteringWindow (host, ctx))
+        return ScenarioResult::fail ("could not widen the mastering workspace");
     const auto originalStage = engine.getStage();
     host.switchToStage (GuiHost::Stage::Mastering);
     ctx.cleanup ([&host, originalStage] { host.switchToStage (guiStage (originalStage)); });

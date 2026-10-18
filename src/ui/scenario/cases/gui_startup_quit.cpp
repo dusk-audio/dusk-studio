@@ -789,6 +789,9 @@ std::optional<ScenarioResult> runStartupCancel (GuiHost& host, ScenarioContext& 
     const auto corrupt = ctx.tempDir() / "corrupt" / "session.json";
     std::filesystem::create_directories (corrupt.parent_path());
     std::ofstream (corrupt) << "not a session";
+    const auto future = ctx.tempDir() / "future" / "session.json";
+    std::filesystem::create_directories (future.parent_path());
+    std::ofstream (future) << R"({"version":9999,"tracks":[{"name":"From the future"}]})";
     // Recent rows: a folder with no session.json, and a session whose autosave
     // differs from it, which raises the recovery prompt.
     const auto noSession = ctx.tempDir() / "no-session";
@@ -869,9 +872,20 @@ std::optional<ScenarioResult> runStartupCancel (GuiHost& host, ScenarioContext& 
         shown ("Open session.json", "OPEN of an unreadable session");
         browse (corrupt, "Open");
     } });
-    steps->push_back ({ 700, [&host, &ctx, failed]
+    steps->push_back ({ 700, [failed, click]
     {
         failed ("Load failed", "an OPEN of an unreadable session");
+        click ("tab-open");
+    } });
+    steps->push_back ({ 600, [shown, browse, future]
+    {
+        shown ("Open session.json", "OPEN of a newer session format");
+        browse (future, "Open");
+    } });
+    steps->push_back ({ 700, [&host, &ctx, failed]
+    {
+        failed ("Session format 9999 is newer than supported format 11. Upgrade Dusk Studio to open",
+                "an OPEN of a newer session format");
         host.closeStartupDialog();
         ctx.expect (host.clickFileMenu(), "the File menu is unavailable");
     } });

@@ -83,7 +83,7 @@ deeper accessibility.
 | Plugin offline-state preservation (missing plugin doesn't wipe save) | Working |
 | Out-of-process plugin sandbox, audio, opt-in (Linux + macOS + Windows) | Working |
 | Out-of-process plugin sandbox, editor embed (Linux XEmbed, Windows SetParent, macOS in-process shell) | Working |
-| Mastering view (waveform + 5-band EQ + multiband comp + brick-wall limiter + BS.1770) | Working |
+| Mastering view (waveform + 5-band EQ + multiband comp + brick-wall limiter + BS.1770 + multiband phase / Mono monitor) | Working |
 | Offline bounce / mixdown export (master) | Working |
 | Single-pass stem export (tracks + buses + aux returns) | Working |
 | Realtime bounce (hardware inserts print wet) | Working |
@@ -109,7 +109,7 @@ deeper accessibility.
 | Signed `SHA256SUMS` per release | Working (a tag cannot publish without it) |
 | Deeper a11y (full screen-reader labels + keyboard-only mixer nav) | Floor only |
 
-The C++ suite declares 1686 Catch2 test cases across 272 test source files.
+The C++ suite declares 1776 Catch2 test cases across 276 test source files.
 Linux amd64, Linux arm64 and macOS build and run it on every push; Windows runs
 it on every push and PR; ThreadSanitizer and ASan plus UBSan run it on every
 push and PR. All of those, plus the framework-coupling ratchet, are required
@@ -222,7 +222,7 @@ src/
   ui/          # MainComponent, ConsoleView, channel/aux/master strips, mastering view
     imgui/     # native surfaces: startup, audio settings, audio editor, unit editors, keyboard
   util/        # native log storage + CrashHandler signal reports
-tests/         # 1686 Catch2 test cases declared in C++ (session, recording, MIDI, IPC, DSP)
+tests/         # 1776 Catch2 test cases declared in C++ (session, recording, MIDI, IPC, DSP)
 packaging/     # .desktop, AppStream, MIME, macOS bundle, for tarball + DMG builds
 docs/          # maintainer guide, the 1.0 plan, migration plans
   DuskStudio.md  # authoritative product spec

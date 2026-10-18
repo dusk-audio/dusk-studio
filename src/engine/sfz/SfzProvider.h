@@ -2,8 +2,9 @@
 
 #include "SfzTransfer.h"
 
-#include <optional>
+#include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -73,7 +74,14 @@ struct ProviderPackResult : OperationResult
     ProviderRateLimit rateLimit;
 };
 
+inline constexpr std::size_t kMaxLicenseBytes = 200000;
+inline constexpr std::size_t kMaxLicenseDocuments = 32;
+inline constexpr std::size_t kMaxCombinedLicenseBytes = 2 * 1048576;
+bool isPackLicenseDocument (std::string_view path);
+OperationResult validatePackLicenseDocument (const ProviderLicense&, std::string_view path, std::string_view text);
+
 std::vector<ProviderSource> providerSources();
+std::vector<std::string> artworkHostsForSource (std::string_view sourceId);
 ProviderPageResult browseProvider (HttpTransport&, const std::string& sourceId,
                                    unsigned page = 1, const std::string& query = {},
                                    const OperationControl& = {});
@@ -81,5 +89,6 @@ ProviderPackResult resolveProviderPack (HttpTransport&, const ProviderSummary&,
                                        const OperationControl& = {});
 
 std::string providerPackToJson (const ProviderPack&);
-ProviderPackResult providerPackFromJson (std::string_view);
+enum class PackDescriptorUse { Download, InstalledReceipt };
+ProviderPackResult providerPackFromJson (std::string_view, PackDescriptorUse = PackDescriptorUse::Download);
 } // namespace duskstudio::sfz

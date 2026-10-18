@@ -6,9 +6,8 @@
 namespace duskstudio
 {
 // The transport a hosted plug-in sees for one block, from the engine's transport,
-// the session tempo and the device rate. Dusk Studio has no time signature yet, so
-// every plug-in is told 4/4 (TransportPosition's default). Audio-thread safe: the
-// transport reads are relaxed atomic loads.
+// the session tempo and the device rate. It uses the committed audio position;
+// a seek requested during this block belongs to the next one.
 inline dusk::TransportPosition snapshotTransport (const Transport& transport,
                                                   double bpm, double sampleRate) noexcept
 {
@@ -16,7 +15,7 @@ inline dusk::TransportPosition snapshotTransport (const Transport& transport,
     position.isPlaying     = transport.isPlaying();
     position.isRecording   = transport.isRecording();
     position.bpm           = bpm;
-    position.timeInSamples = transport.getPlayhead();
+    position.timeInSamples = transport.getCommittedPlayhead();
     if (sampleRate > 0.0)
         position.timeInSeconds = (double) position.timeInSamples / sampleRate;
     if (sampleRate > 0.0 && bpm > 0.0)

@@ -551,6 +551,9 @@ TEST_CASE ("loading a session without a mastering section resets the chain",
     m.limiterMode      .store (2);
     m.limiterStereoLink.store (false);
     m.limiterLookaheadMs.store (8.0f);
+    m.phase.bands.store (64);
+    m.phase.q.store (8.0f);
+    m.phase.averagingMs.store (5000.0f);
     m.targetPresetIndex.store (3);
 
     const auto target = dir.getChildFile ("session.json");
@@ -594,13 +597,16 @@ TEST_CASE ("loading a session without a mastering section resets the chain",
     REQUIRE_THAT (m.limiterLookaheadMs.load(), WithinAbs (def.limiterLookaheadMs.load(), 1e-6f));
     REQUIRE (m.limiterMode.load()       == def.limiterMode.load());
     REQUIRE (m.limiterStereoLink.load() == def.limiterStereoLink.load());
+    REQUIRE (m.phase.bands.load() == 16);
+    REQUIRE_THAT (m.phase.q.load(), WithinAbs (2.0f, 1e-6));
+    REQUIRE_THAT (m.phase.averagingMs.load(), WithinAbs (500.0f, 1e-6));
     REQUIRE (m.targetPresetIndex.load() == def.targetPresetIndex.load());
 }
 
 // Mastering follows the master strip rather than the per-track fill: a section
 // that IS there describes the chain, and a key it omits keeps the live value.
-// The limiter is the exception - it postdates the section, so a file written
-// before it must not inherit one.
+// Limiter and Phase keys reset when absent, including in older sessions with
+// a mastering section.
 TEST_CASE ("a partial mastering section retains the keys it omits",
            "[session][serializer]")
 {
@@ -616,6 +622,9 @@ TEST_CASE ("a partial mastering section retains the keys it omits",
     m.eqOutputGainDb  .store (2.0f);
     m.compRatio       .store (8.0f);
     m.limiterCeilingDb.store (-6.0f);
+    m.phase.bands.store (64);
+    m.phase.q.store (8.0f);
+    m.phase.averagingMs.store (5000.0f);
 
     const auto target = dir.getChildFile ("session.json");
     target.replaceWithText (
@@ -631,6 +640,9 @@ TEST_CASE ("a partial mastering section retains the keys it omits",
     REQUIRE (m.eqEnabled.load());
     REQUIRE_THAT (m.eqLfBoost.load(), WithinAbs (5.0f, 1e-6f));
     REQUIRE_THAT (m.limiterCeilingDb.load(), WithinAbs (def.limiterCeilingDb.load(), 1e-6f));
+    REQUIRE (m.phase.bands.load() == 16);
+    REQUIRE_THAT (m.phase.q.load(), WithinAbs (2.0f, 1e-6));
+    REQUIRE_THAT (m.phase.averagingMs.load(), WithinAbs (500.0f, 1e-6));
 }
 
 // Transport had the same presence check around it, with a wider blast radius:

@@ -31,7 +31,7 @@ publisher; choose More info, then Run anyway.
 
 ## 2. Pick your audio device
 
-Settings, then Settings..., and look at the Audio block at the top.
+Open Settings, then Settings..., and select the **Audio** tab.
 
 ![Audio settings](docs/images/qg-02-audio-settings.png)
 

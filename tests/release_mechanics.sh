@@ -89,6 +89,21 @@ printf '%s\n' \
     '    VERSION=0.0.1   # this release' \
     > "$FIXTURE/packaging/RELEASE-NOTES.md"
 
+NO_NOTES_ERROR="$SCRATCH/no-notes-error.txt"
+cp "$FIXTURE/packaging/RELEASE-NOTES.md" "$SCRATCH/notes-before.md"
+cp "$FIXTURE/packaging/DuskStudio.appdata.xml" "$SCRATCH/appdata-before.xml"
+if (cd "$FIXTURE" && bash scripts/bump-version.sh 9.9.9 >/dev/null 2>"$NO_NOTES_ERROR"); then
+    echo "FAIL: omitting release notes must be rejected" >&2
+    exit 1
+fi
+if ! grep -qF 'explicit release notes are required' "$NO_NOTES_ERROR" \
+    || [[ "$(cat "$FIXTURE/VERSION")" != "0.0.0" ]] \
+    || ! cmp -s "$FIXTURE/packaging/RELEASE-NOTES.md" "$SCRATCH/notes-before.md" \
+    || ! cmp -s "$FIXTURE/packaging/DuskStudio.appdata.xml" "$SCRATCH/appdata-before.xml"; then
+    echo "FAIL: omitted notes must leave release metadata untouched" >&2
+    exit 1
+fi
+
 WHITESPACE_ERROR="$SCRATCH/whitespace-notes-error.txt"
 if (cd "$FIXTURE" \
     && bash scripts/bump-version.sh 9.9.9 '' \
@@ -881,6 +896,16 @@ assert re.search(
     windows_pr_build.group("body"),
 ), "Windows PR CI must compile both the app and test targets"
 
+assert re.search(
+    r"(?m)^\s*run: cmake --build build --config Release -j4 -- -p:CL_MPCount=1\s*$",
+    release_workflow,
+), "Windows release app builds must bound MSBuild and compiler concurrency"
+assert re.search(
+    r"(?m)^\s*cmake --build build-tests --config Release --target dusk-studio-tests "
+    r"-j4 -- -p:CL_MPCount=1\s*$",
+    release_workflow,
+), "Windows release test builds must bound MSBuild and compiler concurrency"
+
 file_importer_tests = (
     "FileImporter: transient file locks retry but remain bounded",
     "FileImporter: 44.1k mono -> 48k session preserves length",
@@ -1027,12 +1052,13 @@ assert "Windows builds without ASIO are not supported." in cmake_source
 assert "target_compile_definitions(DuskStudio PRIVATE JUCE_ASIO=1)" in cmake_source
 readme = (source_root / "README.md").read_text(encoding="utf-8")
 test_sources = sorted((source_root / "tests").glob("*.cpp"))
-test_case_pattern = re.compile(r"^\s*TEST_CASE\s*\(", re.MULTILINE)
-test_case_count = sum(
+test_case_pattern = re.compile(r"^\s*(?:TEST_CASE|TEST_CASE_METHOD|SCENARIO)\s*\(", re.MULTILINE)
+test_case_counts = [
     len(test_case_pattern.findall(path.read_text(encoding="utf-8")))
     for path in test_sources
-)
-test_source_count = len(test_sources)
+]
+test_case_count = sum(test_case_counts)
+test_source_count = sum(count > 0 for count in test_case_counts)
 suite_summaries = re.findall(
     r"^The C\+\+ suite declares \d+ Catch2 test cases across "
     r"\d+ test source files\.",

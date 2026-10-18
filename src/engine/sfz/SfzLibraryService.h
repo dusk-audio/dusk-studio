@@ -20,7 +20,7 @@ inline constexpr const char* kAllRepositoriesSourceId = "all";
 
 enum class LibraryState
 {
-    Idle, Browsing, Resolving, Downloading, Extracting, ChangingLocation, Paused, Complete, Failed, Cancelled
+    Idle, Browsing, Resolving, Downloading, Extracting, Verifying, ChangingLocation, Paused, Complete, Failed, Cancelled
 };
 
 struct LibrarySnapshot
@@ -31,6 +31,7 @@ struct LibrarySnapshot
     bool cachedResponse = false;
     OperationProgress progress;
     std::string error;
+    FailureKind failureKind = FailureKind::None;
     ProviderPageResult page;
     std::optional<ProviderPack> pack;
     std::vector<InstalledPack> installed;
@@ -55,6 +56,7 @@ public:
     void cancel();
     bool requestInstalled();
     bool remove (InstalledPack, std::vector<ManagedSfzLocator> inUse);
+    bool verify (InstalledPack);
     bool changeLocation (std::filesystem::path destination, bool moveExisting);
     bool isMovingPacks() const noexcept { return movingPacks.load (std::memory_order_acquire); }
     bool setTransportForTest (std::shared_ptr<HttpTransport>);
@@ -67,8 +69,9 @@ public:
     LibrarySnapshot snapshot() const;
 
 private:
-    LibraryService (LibraryLocations, std::filesystem::path configurationFile, std::shared_ptr<HttpTransport>);
-    enum class JobKind { Browse, Resolve, Install, Installed, Remove, Cleanup, ChangeLocation };
+    LibraryService (LibraryLocations, std::filesystem::path configurationFile, std::shared_ptr<HttpTransport>,
+                    std::filesystem::path cacheDirectory);
+    enum class JobKind { Browse, Resolve, Install, Installed, Remove, Verify, Cleanup, ChangeLocation };
     struct Job
     {
         JobKind kind = JobKind::Installed;
@@ -77,11 +80,13 @@ private:
         unsigned page = 1;
         bool offlineOnly = false;
         bool moveExisting = false;
+        bool preserveDownload = false;
         ProviderSummary summary;
         ProviderPack pack;
         InstalledPack installed;
         std::vector<ManagedSfzLocator> inUse;
         std::filesystem::path part, staging, destination;
+        DirectoryLease partLease;
     };
 
     struct BrowseSession
@@ -96,7 +101,7 @@ private:
     OperationResult execute (Job&, const OperationControl&);
     OperationResult browseAll (const Job&, const OperationControl&);
     void setState (std::uint64_t generation, LibraryState);
-    void cleanInstall (Job&) noexcept;
+    void cleanInstall (Job&, bool removeDownload = true) noexcept;
 
     PackStore store;
     std::shared_ptr<HttpTransport> transport;

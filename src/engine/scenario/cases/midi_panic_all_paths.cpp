@@ -58,7 +58,7 @@ ScenarioResult runPanic (ScenarioContext& ctx)
     for (const int t : kProbeTracks)
     {
         std::string error;
-        if (! ctx.expect (midiprobe::loadPanicProbe (ctx, t, error),
+        if (! ctx.expect (midiprobe::loadPanicProbe (ctx, t, error, midiprobe::kMidiPrimaryPanicProbeClapId),
                           std::string ("the ") + trackLabel (t)
                               + " track could not load the probe"))
         {
@@ -67,42 +67,73 @@ ScenarioResult runPanic (ScenarioContext& ctx)
         }
     }
 
-    engine.play();
-    // The transport start is itself a playhead discontinuity, so let its own
-    // panic pass before the notes that this scenario measures go in.
-    ctx.pump (kSettleBlocks);
-
-    dusk::MidiBuffer notes;
-    midiprobe::addMessage (notes, 0x90, 60, 100);
-    midiprobe::addMessage (notes, 0x90, 67, 100);
-    ctx.pumpWithMidi (input, std::move (notes));
-    ctx.pump (1);
-
-    noteCounters (ctx, "held");
-    for (const int t : kProbeTracks)
-        ctx.expect (midiprobe::counter (ctx, t, "voicesHeld") > 0.0,
-                    std::string ("the ") + trackLabel (t)
-                        + " track's instrument never received the notes");
-    ctx.expect (engine.getChannelStrip (kOpenTrack).getOutLDb() > -60.0f,
-                "the audible track produced no output while holding voices");
-
-    engine.stop();
-    ctx.pump (kSettleBlocks);
-
-    noteCounters (ctx, "after stop");
-    for (const int t : kProbeTracks)
+    ctx.cleanup ([&engine]
     {
-        ctx.expect (midiprobe::counter (ctx, t, "voicesHeld") <= 0.0,
-                    std::string ("the ") + trackLabel (t)
-                        + " track kept its voices through the panic");
-        ctx.expect (midiprobe::counter (ctx, t, "chokesSeen") >= 1.0,
-                    std::string ("the panic never reached the ") + trackLabel (t) + " track");
+        for (const int t : kProbeTracks)
+            engine.setTrackMidiCapacityForTest (t, dusk::kMidiRoutingBlockBytes);
+        engine.stop();
+    });
+    for (const bool overflow : { false, true })
+    {
+        ctx.note (overflow ? "Stop with overflowing live MIDI" : "Stop with ordinary live MIDI");
+        engine.play();
+        ctx.pump (kSettleBlocks);
+
+        dusk::MidiBuffer notes;
+        midiprobe::addMessage (notes, 0x90, 60, 100);
+        midiprobe::addMessage (notes, 0x90, 67, 100);
+        for (int channel = 0; channel < 16; ++channel)
+        {
+            midiprobe::addMessage (notes, (std::uint8_t) (0xE0 | channel), 127, 127);
+            const std::uint8_t pressure[] { (std::uint8_t) (0xD0 | channel), 90 };
+            notes.addEvent (pressure, 2, 0);
+        }
+        ctx.pumpWithMidi (input, std::move (notes));
+        ctx.pump (1);
+
+        noteCounters (ctx, "held");
+        for (const int t : kProbeTracks)
+        {
+            ctx.expect (midiprobe::counter (ctx, t, "voicesHeld") > 0.0,
+                        std::string ("the ") + trackLabel (t) + " track's instrument never received the notes");
+            ctx.expect ((int) midiprobe::counter (ctx, t, "bentChannels") == 65535
+                        && (int) midiprobe::counter (ctx, t, "pressedChannels") == 65535,
+                        std::string ("expression never reached every channel on the ") + trackLabel (t) + " track");
+        }
+        ctx.expect (engine.getChannelStrip (kOpenTrack).getOutLDb() > -60.0f,
+                    "the audible track produced no output while holding voices");
+
+        if (overflow)
+            for (const int t : kProbeTracks) engine.setTrackMidiCapacityForTest (t, 1536);
+        engine.stop();
+        if (overflow)
+        {
+            dusk::MidiBuffer burst;
+            for (int i = 0; i < 200; ++i)
+                midiprobe::addMessage (burst, 0xB0, 1, (std::uint8_t) (i & 127));
+            ctx.pumpWithMidi (input, std::move (burst));
+        }
+        ctx.pump (kSettleBlocks);
+
+        noteCounters (ctx, "after stop");
+        for (const int t : kProbeTracks)
+        {
+            ctx.expect (midiprobe::counter (ctx, t, "voicesHeld") <= 0.0,
+                        std::string ("the ") + trackLabel (t) + " track kept its voices through the panic");
+            ctx.expect (midiprobe::counter (ctx, t, "chokesSeen") >= 1.0,
+                        std::string ("the panic never reached the ") + trackLabel (t) + " track");
+            ctx.expect ((int) midiprobe::counter (ctx, t, "bentChannels") == 0
+                        && (int) midiprobe::counter (ctx, t, "pressedChannels") == 0,
+                        std::string ("Stop left expression active on the ") + trackLabel (t) + " track");
+            for (const auto* name : { "cc121Seen", "pitchCentersSeen", "pressureZerosSeen" })
+                ctx.expect (midiprobe::counter (ctx, t, name) >= (overflow ? 32.0 : 16.0),
+                            std::string ("Stop omitted ") + name + " on the " + trackLabel (t) + " track");
+            engine.setTrackMidiCapacityForTest (t, dusk::kMidiRoutingBlockBytes);
+        }
+        const int silentAfter = midiprobe::pumpUntilSilent (ctx, kOpenTrack, kSilenceBlocks);
+        ctx.note ("the audible track fell silent " + std::to_string (silentAfter) + " blocks after the panic");
+        ctx.expect (silentAfter >= 0, "the audible track was still producing output after the panic");
     }
-    const int silentAfter = midiprobe::pumpUntilSilent (ctx, kOpenTrack, kSilenceBlocks);
-    ctx.note ("the audible track fell silent " + std::to_string (silentAfter)
-              + " blocks after the panic");
-    ctx.expect (silentAfter >= 0,
-                "the audible track was still producing output after the panic");
 
     return ctx.verdict();
 }

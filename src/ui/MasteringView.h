@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
+#include <array>
 #include <memory>
 #include <cstdint>
 #include <filesystem>
@@ -12,6 +13,7 @@
 #include "../engine/audiofile/WaveformPeaks.h"
 #include "../session/Session.h"
 #include "../foundation/MessageThread.h"
+#include "../dsp/PhaseAnalyzer.h"
 
 namespace duskstudio
 {
@@ -46,8 +48,8 @@ private:
 };
 
 // Mastering-stage workspace. Loads stereo WAV (typically the freshest
-// mixdown), plays through MasteringChain (Tube EQ -> bus comp ->
-// brickwall limiter), shows post-limiter peak meters + comp/limiter GR.
+// mixdown), plays through MasteringChain (digital EQ -> multiband comp ->
+// brickwall limiter), shows post-limiter phase, loudness and dynamics meters.
 // Export = engine's BounceEngine in Mastering mode.
 class MasteringView final : public juce::Component, private dusk::Timer
 {
@@ -85,9 +87,21 @@ public:
     // Pixels of the multiband comp panel, outside the donor editor, that nothing
     // painted; -1 while the page is not on screen.
     int unpaintedCompPanelPixelsForScenario();
-    // How many of the two framework children are up, or -1 when this build has
+    // How many of the three framework children are up, or -1 when this build has
     // no native panels to open.
     int nativePanelsOpenForScenario() const;
+    bool offerPhaseKey (const std::string& description, std::uint32_t character);
+    bool phaseKeyForScenario (const std::string& description);
+    bool phaseCapturesKeyboardForScenario() const;
+    bool phaseHasKeyboardForScenario() const;
+    bool phaseTypeForScenario (const std::string& text);
+    void resetPhasePanelForScenario();
+    bool phasePointerForScenario (const std::string& control, float position, bool pressed, int modifiers = 0);
+    const PhaseAnalyzer::Report& phaseReportForScenario() const { return phaseAnalyzer.report(); }
+    bool compactModuleShownForScenario() const { return compactPanelCombo.isShowing(); }
+    int compactModuleIndexForScenario() const { return compactPanelCombo.getSelectedId() - 1; }
+    auto compactModulePointForScenario() const { return compactPanelCombo.getBounds().getCentre(); }
+    void restoreCompactModuleForScenario (int index) { compactPanelCombo.setSelectedId (index + 1); resized(); }
     std::string targetTextForScenario() const { return masteringTargetCombo.getText().toStdString(); }
     void restoreTargetForScenario (int index) { masteringTargetCombo.setSelectedId (index + 1); }
     std::string loudnessTextForScenario (bool peak) const
@@ -100,7 +114,7 @@ public:
         return label.findColour (decltype (lufsI)::backgroundColourId).getARGB();
     }
 
-    // Screenshot harness only. The stage's EQ and limiter panels are framework children,
+    // Screenshot harness only. The stage's EQ, limiter and Phase panels are framework children,
     // which the JUCE snapshot path cannot reach, so each reads its own steady frame back
     // into `dir` and reports where it belongs inside this view for the caller to paste
     // it into the snapshot.
@@ -113,13 +127,15 @@ public:
 
 private:
     void timerCallback() override;
+    void updatePhaseAnalysis();
     void updateLabels (const std::string& rejectedPick = {});
     std::uint64_t labelSourceGeneration = 0;
 
-    // Open or close the two native panels to match the stage. Coalesced onto the next
+    // Open or close the native panels to match the stage. Coalesced onto the next
     // message-loop tick, because the visibility change that asks for one arrives from
     // inside an EmbeddedModal teardown, which is no place to build a GL context.
     void scheduleNativePanelSync();
+    void syncNativePanelVisibility();
     void applyNativePanelSync();
 
     void doLoadPrompt();
@@ -159,6 +175,11 @@ private:
     juce::TextButton exportButton { "Export master..." };
 
     std::unique_ptr<WaveformDisplay>   waveform;
+    DuskComboBox compactPanelCombo;
+    PhaseAnalyzer phaseAnalyzer;
+    std::array<float, 4096> phaseLeft {}, phaseRight {};
+    std::uint64_t phaseSourceGeneration = 0, phaseFeedGeneration = 0, phaseNextSequence = 0;
+    bool phaseActive = false, phaseStreamValid = false;
 
     // EQ = curve + band controls, Limiter = Waves L4-style; both are native framework
     // children over the shell, placed on their proxy's rectangle. Comp embeds ONLY the
@@ -169,8 +190,10 @@ private:
    #if DUSKSTUDIO_HAS_NATIVE_UI
     std::unique_ptr<imgui::DuskPanelWindow> eqWindow;
     std::unique_ptr<imgui::DuskPanelWindow> limiterWindow;
+    std::unique_ptr<imgui::DuskPanelWindow> phaseWindow;
     NativePanelProxy eqProxy;
     NativePanelProxy limiterProxy;
+    NativePanelProxy phaseProxy;
     bool nativeSyncPending = false;
    #endif
 
@@ -182,7 +205,7 @@ private:
     // header the EQ + limiter editors now use, so all three sections match.
     std::unique_ptr<class CompHeaderButton>       compHeaderBtn;
     // Last compEnabled state pushed to compHeaderBtn - the button only repaints
-    // on its own click, so the 20 Hz timer watches this to pick up external
+    // on its own click, so the 30 Hz timer watches this to pick up external
     // changes (e.g. session load).
     bool compHeaderEnabledSeen { false };
 

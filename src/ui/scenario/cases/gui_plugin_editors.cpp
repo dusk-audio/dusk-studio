@@ -450,8 +450,6 @@ struct SandboxState
     bool loadOk = false;
     std::string loadError;
     int childPid = -1;
-    bool editorOpenFailed = false;
-    bool childDiedEarly = false;
 };
 
 std::optional<ScenarioResult> runOopEditorClosesBeforeChild (GuiHost& host, ScenarioContext& ctx)
@@ -470,6 +468,9 @@ std::optional<ScenarioResult> runOopEditorClosesBeforeChild (GuiHost& host, Scen
     if (strip == nullptr)
         return ScenarioResult::skip ("the console has no strip to drive");
 
+    if (! host.canEmbedPluginEditors())
+        return ScenarioResult::skip ("this display cannot embed plug-in editors");
+
     auto& engine = ctx.engine();
     auto& manager = engine.getPluginManager();
     auto& slot = engine.getChannelStrip (kStripIndex).getPluginSlot();
@@ -485,7 +486,7 @@ std::optional<ScenarioResult> runOopEditorClosesBeforeChild (GuiHost& host, Scen
         HostFile (HostString::fromUTF8 (fixture->u8string().c_str())),
         ScenarioContext::kSampleRate, ScenarioContext::kBlockSize, loadError);
     if (probe == nullptr)
-        return ScenarioResult::skip ("the fixture did not load through the JUCE host: "
+        return ScenarioResult::fail ("the fixture did not load through the JUCE host: "
                                      + loadError.toStdString());
     const auto descriptor = manager.descriptorForInstance (*probe);
     probe.reset();
@@ -513,7 +514,7 @@ std::optional<ScenarioResult> runOopEditorClosesBeforeChild (GuiHost& host, Scen
     {
         if (! state->loadOk || ! slot.isRemote())
         {
-            ctx.complete (ScenarioResult::skip (
+            ctx.complete (ScenarioResult::fail (
                 "the slot never went out of process: " + state->loadError));
             return;
         }
@@ -529,43 +530,25 @@ std::optional<ScenarioResult> runOopEditorClosesBeforeChild (GuiHost& host, Scen
         strip->refreshInsertButton();
 
         auto steps = std::make_shared<std::vector<Step>>();
-        steps->push_back ({ 200, [&ctx, strip, state]
+        steps->push_back ({ 200, [&ctx, strip]
         {
-            if (! strip->openEditor())
-            {
-                ctx.note ("the sandboxed editor did not come up on this display");
-                state->editorOpenFailed = true;
-            }
+            ctx.expect (strip->openEditor(), "the sandboxed editor did not open");
         } });
-        steps->push_back ({ 600, [&host, strip] { strip->closeEditor(); dismissAlert (host); } });
-        steps->push_back ({ 300, [&slot, state]
+        steps->push_back ({ 600, [&host, strip] { strip->closeEditor(); dismissAlert (host); },
+                            [strip] { return strip->hasOpenEditor(); },
+                            "the sandboxed editor never stayed open" });
+        steps->push_back ({ 300, [&ctx, &slot, state]
         {
-            // A child that died on its own makes everything below trivially
-            // true, so the ordering has to be reported as unobserved instead.
-            state->childDiedEarly = slot.wasCrashed() || ! slot.isRemote();
+            ctx.expect (! slot.wasCrashed(), "the sandbox child crashed before unloading");
+            ctx.expect (slot.isRemote(), "the slot stopped hosting its sandbox child before unloading");
+            ctx.expect (slot.getRemoteChildPid() == state->childPid, "the sandbox child changed before unloading");
+            ctx.expect (! oopstub::processGone (state->childPid), "the sandbox child exited before its editor closed");
+            ctx.expect (slot.hideRemoteEditor(), "the sandbox child did not answer after its editor closed");
             slot.unload();
-        } });
+        }, [strip] { return ! strip->hasOpenEditor(); }, "the sandboxed editor never closed" });
 
         runSteps (ctx, steps, [&ctx, &host, strip, &slot, state]
         {
-            if (state->childDiedEarly)
-            {
-                strip->refreshInsertButton();
-                ctx.complete (ScenarioResult::skip (
-                    "the sandbox child exited before the editor was closed, so the "
-                    "ordering could not be observed"));
-                return;
-            }
-
-            if (state->editorOpenFailed)
-            {
-                strip->refreshInsertButton();
-                ctx.complete (host.canEmbedPluginEditors()
-                    ? ScenarioResult::fail ("the sandboxed editor did not open")
-                    : ScenarioResult::skip ("this display cannot embed plug-in editors"));
-                return;
-            }
-
             // The child must be gone once the slot is, and the editor must have
             // let go before it: a surviving child would keep an editor window
             // alive over a slot that no longer exists.

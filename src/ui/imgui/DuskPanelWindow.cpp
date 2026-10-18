@@ -14,9 +14,11 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <charconv>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <system_error>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -120,11 +122,12 @@ struct NamedKey
     const char* name;
     ImGuiKey key;
     unsigned int code;
+    bool forwardToShell = true;
 };
 
-const std::array<NamedKey, 23>& namedKeys()
+const std::array<NamedKey, 34>& namedKeys()
 {
-    static const std::array<NamedKey, 23> keys { {
+    static const std::array<NamedKey, 34> keys { {
         { "spacebar", ImGuiKey_Space, DGL::kKeySpace },
         { "space", ImGuiKey_Space, DGL::kKeySpace },
         { "return", ImGuiKey_Enter, DGL::kKeyEnter },
@@ -148,6 +151,17 @@ const std::array<NamedKey, 23>& namedKeys()
         { "numpad add", ImGuiKey_KeypadAdd, DGL::kKeyPadAdd },
         { "numpad -", ImGuiKey_KeypadSubtract, DGL::kKeyPadSubtract },
         { "numpad subtract", ImGuiKey_KeypadSubtract, DGL::kKeyPadSubtract },
+        { "left ctrl", ImGuiKey_LeftCtrl, DGL::kKeyControlL, false },
+        { "right ctrl", ImGuiKey_RightCtrl, DGL::kKeyControlR, false },
+        { "left alt", ImGuiKey_LeftAlt, DGL::kKeyAltL, false },
+        { "right alt", ImGuiKey_RightAlt, DGL::kKeyAltR, false },
+        { "left shift", ImGuiKey_LeftShift, DGL::kKeyShiftL, false },
+        { "right shift", ImGuiKey_RightShift, DGL::kKeyShiftR, false },
+        { "left super", ImGuiKey_LeftSuper, DGL::kKeySuperL, false },
+        { "right super", ImGuiKey_RightSuper, DGL::kKeySuperR, false },
+        { "caps lock", ImGuiKey_CapsLock, DGL::kKeyCapsLock, false },
+        { "num lock", ImGuiKey_NumLock, DGL::kKeyNumLock, false },
+        { "scroll lock", ImGuiKey_ScrollLock, DGL::kKeyScrollLock, false },
     } };
     return keys;
 }
@@ -272,6 +286,22 @@ DGL::MouseCursor frameworkCursor (ImGuiMouseCursor cursor)
 }
 } // namespace
 
+std::string shellKeyName (ImGuiKey key)
+{
+    if (key >= ImGuiKey_A && key <= ImGuiKey_Z)
+        return std::string (1, static_cast<char> ('a' + key - ImGuiKey_A));
+    if (key >= ImGuiKey_0 && key <= ImGuiKey_9)
+        return std::string (1, static_cast<char> ('0' + key - ImGuiKey_0));
+    if (key == ImGuiKey_KeypadEnter) return "return";
+    for (const auto& printable : printableKeys())
+        if (printable.key == key)
+            return std::string (1, printable.character);
+    for (const auto& named : namedKeys())
+        if (named.key == key && named.forwardToShell)
+            return named.name;
+    return {};
+}
+
 std::optional<KeyChord> parseKeyDescription (const std::string& description)
 {
     std::vector<std::string> parts;
@@ -292,7 +322,7 @@ std::optional<KeyChord> parseKeyDescription (const std::string& description)
     };
 
     KeyChord chord;
-    const auto name = parts.back();
+    auto name = parts.back();
     parts.pop_back();
     for (const auto& part : parts)
     {
@@ -303,6 +333,16 @@ std::optional<KeyChord> parseKeyDescription (const std::string& description)
         else if (modifier == "command" || modifier == "cmd")
             (commandIsSuper() ? chord.super : chord.ctrl) = true;
         else return std::nullopt;
+    }
+
+    if (name.size() > 1 && name.front() == '#')
+    {
+        unsigned int code = 0;
+        const auto* end = name.data() + name.size();
+        const auto parsed = std::from_chars (name.data() + 1, end, code, 16);
+        if (parsed.ec != std::errc {} || parsed.ptr != end || code > 0x7f)
+            return std::nullopt;
+        name.assign (1, static_cast<char> (code));
     }
 
     if (name.size() == 1)
@@ -628,6 +668,7 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
                 } drawing;
                 DGL::ImGuiTopLevelWidget::onDisplay();
             }
+            ++owner.completedFrames;
             owner.captureFrameIfAsked (static_cast<int> (getWidth()),
                                        static_cast<int> (getHeight()));
         }
@@ -640,6 +681,14 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
             if (key.key == 0)
                 return false;
             key.mod = frameworkModifiers (chord.shift, chord.ctrl, chord.super, chord.alt);
+            switch (chord.key)
+            {
+                case ImGuiKey_LeftCtrl: case ImGuiKey_RightCtrl: key.mod |= DGL::kModifierControl; break;
+                case ImGuiKey_LeftAlt: case ImGuiKey_RightAlt: key.mod |= DGL::kModifierAlt; break;
+                case ImGuiKey_LeftShift: case ImGuiKey_RightShift: key.mod |= DGL::kModifierShift; break;
+                case ImGuiKey_LeftSuper: case ImGuiKey_RightSuper: key.mod |= DGL::kModifierSuper; break;
+                default: break;
+            }
             key.press = true;
             onKeyboard (key);
             keyReleases.push_back (key.key);
@@ -865,6 +914,7 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
     PanelShellKeys shellKeys = PanelShellKeys::all;
     std::string capturePath;
     int framesDrawn = 0;
+    std::uint64_t completedFrames = 0;
     DuskImGuiHost host;
 };
 
@@ -998,8 +1048,10 @@ bool DuskPanelWindow::offerShellKey (const std::string& description, std::uint32
 {
     if (! isOpen() || impl->view == nullptr || impl->panelWidget == nullptr || ! impl->view->capturesKeyboard())
         return false;
-    if (! impl->panelWidget->hasKeyboard())
-        impl->panelWidget->replayShellKey (description, character);
+   #if ! defined (__APPLE__)
+    if (impl->panelWidget->hasKeyboard()) return true;
+   #endif
+    impl->panelWidget->replayShellKey (description, character);
     return true;
 }
 
@@ -1065,9 +1117,34 @@ bool DuskPanelWindow::keyboardFocusForScenario (bool focused)
     impl->panelWidget->focusForScenario (focused);
     return true;
 }
+bool DuskPanelWindow::focusForScenario()
+{
+    if (! isOpen() || impl->panelWidget == nullptr || impl->host.window() == nullptr) return false;
+    impl->host.window()->focus();
+    impl->panelWidget->focusForScenario (true);
+    impl->panelWidget->noteScenarioInput();
+    return true;
+}
+bool DuskPanelWindow::hasKeyboardForScenario() const noexcept
+{
+    return isOpen() && impl->panelWidget != nullptr && impl->panelWidget->hasKeyboard();
+}
+std::uint64_t DuskPanelWindow::completedFramesForScenario() const noexcept
+{
+    return impl->completedFrames;
+}
+bool DuskPanelWindow::capturesKeyboardForScenario() const noexcept
+{
+    return isOpen() && impl->view != nullptr && impl->view->capturesKeyboard();
+}
 int DuskPanelWindow::keyboardRequestsForScenario() const noexcept
 {
     return impl->keyboardRequests;
+}
+std::uintptr_t DuskPanelWindow::nativeWindowHandleForScenario() const noexcept
+{
+    const auto* window = impl->host.window();
+    return window != nullptr ? window->getNativeWindowHandle() : 0;
 }
 void DuskPanelWindow::expectInputForScenario()
 {

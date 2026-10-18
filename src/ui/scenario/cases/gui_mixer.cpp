@@ -768,6 +768,8 @@ std::optional<ScenarioResult> runSettingsRescan (GuiHost& host, ScenarioContext&
     (void) ctx;
     return ScenarioResult::skip ("requires native settings and ALSA sequencer");
    #else
+    if (! ctx.engine().getTransport().isStopped())
+        return ScenarioResult::skip ("requires stopped transport");
     snd_seq_t* raw = nullptr;
     if (snd_seq_open (&raw, "default", SND_SEQ_OPEN_DUPLEX, SND_SEQ_NONBLOCK) < 0)
         return ScenarioResult::skip ("ALSA sequencer is unavailable");
@@ -776,6 +778,19 @@ std::optional<ScenarioResult> runSettingsRescan (GuiHost& host, ScenarioContext&
     snd_seq_set_client_name (seq.get(), name.c_str());
     auto port = std::make_shared<int> (-1);
     auto& engine = ctx.engine();
+    ctx.cleanup ([&session = ctx.session()] { session.recomputeRtCounters(); });
+    ctx.keep (ctx.session().countInEnabled);
+    ctx.keep (ctx.session().lastRecordPointSamples);
+    ctx.keep (ctx.session().track (0).mode);
+    ctx.keep (ctx.session().track (0).midiInputIndex);
+    for (int index = 0; index < Session::kNumTracks; ++index)
+    {
+        auto& armed = ctx.session().track (index).recordArmed;
+        ctx.keep (armed);
+        armed.store (false);
+    }
+    ctx.session().countInEnabled.store (false);
+    const auto suspends = std::make_shared<std::uint64_t> (0);
     const auto originalPosition = engine.getTransport().getPlayhead();
     ctx.cleanup ([&host, &engine, seq, port, originalPosition]
     {
@@ -795,7 +810,12 @@ std::optional<ScenarioResult> runSettingsRescan (GuiHost& host, ScenarioContext&
     steps->push_back ({ 100, [&host, &ctx, &engine]
     {
         ctx.expect (host.openAudioSettings(), "native audio settings did not open");
-        engine.play();
+        auto& track = ctx.session().track (0);
+        track.mode.store ((int) Track::Mode::Midi);
+        track.midiInputIndex.store (engine.getVirtualKeyboardInputIndex());
+        track.recordArmed.store (true);
+        ctx.session().recomputeRtCounters();
+        engine.record();
     } });
     steps->push_back ({ 200, [seq, port, &ctx]
     {
@@ -804,25 +824,24 @@ std::optional<ScenarioResult> runSettingsRescan (GuiHost& host, ScenarioContext&
             SND_SEQ_PORT_TYPE_MIDI_GENERIC | SND_SEQ_PORT_TYPE_APPLICATION);
         ctx.expect (*port >= 0, "could not create the private MIDI destination");
     } });
-    steps->push_back ({ 700, [&ctx, &engine, listed]
+    steps->push_back ({ 700, [&ctx, &engine, listed, suspends]
     {
-        ctx.expect (engine.getTransport().isPlaying(), "fixture was not playing");
+        ctx.expect (engine.getTransport().isRecording(), "fixture was not recording");
         ctx.expect (! listed(), "automatic hot-plug refreshed the port before Rescan");
+        *suspends = engine.getProcessingSuspendCount();
     } });
-    // The settings window lays its controls out and acts on a click in its own
-    // frames. Rescanning again lists the same ports, so pressing Rescan as soon
-    // as it is drawn, and once more if the list has not moved, cannot change
-    // the verdict.
     pushSettingsTab (*steps, host, "audio");
     steps->push_back ({ 0, [] {}, [&host] { return host.clickAudioSettingsControl ("rescan"); },
                         "Rescan devices button was not drawn" });
-    steps->push_back ({ 0, [&host, &engine]
+    steps->push_back ({ 200, [&ctx, &engine, listed, suspends]
     {
-        host.closeAudioSettings();
+        ctx.expect (engine.getTransport().isRecording(), "Rescan ended the take");
+        ctx.expect (! listed(), "explicit Rescan rebuilt MIDI ports during the take");
+        ctx.expect (engine.getProcessingSuspendCount() == *suspends, "explicit Rescan suspended audio during the take");
         engine.stop();
-    },
-    listed, "Rescan devices did not enumerate the new MIDI destination",
-    [&host] { host.clickAudioSettingsControl ("rescan"); } });
+    } });
+    steps->push_back ({ 0, [&host] { host.closeAudioSettings(); },
+                       listed, "the deferred Rescan did not enumerate the new MIDI destination after Stop" });
     steps->push_back ({ 0, [] {}, [&host] { return ! host.audioSettingsOpen(); },
                        "audio settings did not finish closing" });
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
@@ -976,6 +995,40 @@ std::optional<ScenarioResult> runMidiSelectors (GuiHost& host, ScenarioContext& 
     [&engine, noticesBefore]
     { return engine.midiHotplugNoticesForScenario() > noticesBefore && engine.midiHotplugSettledForScenario(); },
     "the hot-plug refresh for the private MIDI destination never finished" });
+    steps->push_back ({ 0, [&track, &engine, &ctx, keyboard, keyboardId, destination, destinationId]
+    {
+        track.midiInputIndex.store (keyboard);
+        track.midiInputIdentifier = keyboardId;
+        track.midiChannel.store (0);
+        track.midiOutputIndex.store (destination);
+        track.midiOutputIdentifier = destinationId;
+        const auto registered = engine.isAudioCallbackRegistered();
+        const auto rate = engine.getCurrentSampleRate();
+        const auto suspends = engine.getProcessingSuspendCount();
+        engine.openConfiguredMidiOutputs();
+        ctx.expect (registered && engine.isAudioCallbackRegistered() && std::abs (engine.getCurrentSampleRate() - rate) < 0.5,
+                    "opening configured MIDI outputs changed the live audio callback");
+        ctx.expect (engine.getProcessingSuspendCount() == suspends && ! engine.isProcessingSuspended(),
+                    "opening configured MIDI outputs suspended audio processing");
+        const std::uint8_t message[] = { 0xb2, 116, 49 };
+        engine.postVirtualKeyboardMidi (message, 3);
+    } });
+    steps->push_back ({ 0, [] {}, [seq]
+    {
+        snd_seq_event_t* event = nullptr;
+        while (snd_seq_event_input (seq.get(), &event) >= 0)
+            if (event != nullptr && event->type == SND_SEQ_EVENT_CONTROLLER
+                && event->data.control.channel == 2 && event->data.control.param == 116 && event->data.control.value == 49)
+                return true;
+        return false;
+    }, "the configured MIDI output did not receive its first message" });
+    steps->push_back ({ 0, [&track]
+    {
+        track.midiInputIndex.store (-1);
+        track.midiInputIdentifier.clear();
+        track.midiOutputIndex.store (-1);
+        track.midiOutputIdentifier.clear();
+    } });
     pick (*steps, 0, keyboard + 1, [&track, keyboard] { return track.midiInputIndex.load() == keyboard; },
           "input picker did not select the virtual keyboard");
     pick (*steps, 1, 3, [&track] { return track.midiChannel.load() == 3; }, "channel picker did not select channel 3");
