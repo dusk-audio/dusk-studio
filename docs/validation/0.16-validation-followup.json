@@ -1,5 +1,5 @@
 {
-  "purpose": "Historical completed validation at 3755, plus focused regression proof for the subsequent Windows long-path fix. Current release status is issue #886.",
+  "purpose": "Historical completed validation at 3755, focused Windows long-path regression proof, and completed full-platform/live-render follow-up at 47d144d6. Current release status is issue #886.",
   "integration": {
     "baseRefOid": "3cc84a6f64d3549ff739e2fddf80262eb6b65842",
     "headRefOid": "3755ab1e9691a79c2460bd232904f9a6e5e23738",
@@ -204,7 +204,7 @@
   },
   "manual_audit": "The scenario follow-ups are test-only; the product correction changes internal file access for documented SFZ loading. Controls, defaults, supported formats and session schema are unchanged. MANUAL.md needed no further change.",
   "hygiene": "Independent two-pass code review and diff hygiene passed for Dusk and sampler changes; no new JUCE coupling or diagnostic code.",
-  "log_retention": "Completed input logs are retained locally under build/validation-final-3755/raw; source /tmp and /var/tmp names above retain their original provenance.",
+  "log_retention": "Historical input logs retained locally under build/validation-final-3755/raw, final47 inputs under build/validation-final-47d144d6/raw, and sanitizer diagnosis summaries under build/validation-sanitizer-instrumentation-504a4340. Original paths retain provenance.",
   "release_limits": [
     "Version remains 0.15.1; no tag or release workflow run.",
     "Local Mac native LV2 is disabled, GUI native exit uncaptured, and ad-hoc local packages are not cold-host shipping-artifact proof.",
@@ -240,6 +240,133 @@
     "/tmp/dusk-016-windows-longpath-before-retry.log": "a33cac4277ef812e0acb208416ddc862526673871738ebe2761b143f209206b2",
     "/tmp/dusk-016-windows-longpath-after.log": "deefe928b209f37fcc8071c599b280061712714119f2ca8252b3de8a17acaae0",
     "/tmp/dusk-016-windows-longpath-v2-focused.log": "4d63bc89c5c69992a197340065cedb25ccd56abfde59c16b4332fa87aba7b99e",
-    "/tmp/dusk-016-longpath-v2-multisample-linux.log": "a44672d98b3df98921b24951b9f503cecf22161caee9bc59ac8627eeb16dc151"
+    "/tmp/dusk-016-longpath-v2-multisample-linux.log": "a44672d98b3df98921b24951b9f503cecf22161caee9bc59ac8627eeb16dc151",
+    "/tmp/dusk-016-longpath-final-prepush-retry.log": "2dd5186b1d467353246e72caf702fa3708611b9a72458c7e4d56541b6fde316a",
+    "/var/tmp/dusk-prepush.UtcKxP/linux.log": "4a8f783732c36c5618a89a6581919b94e70260ea8c2a1deb55b2c811f51c214b",
+    "/var/tmp/dusk-prepush.UtcKxP/mac.log": "f8d9793f32b0c67c435c669e38b9a6305579b29816e6f295316e95b780f6afe5",
+    "/tmp/dusk-016-longpath-final-windows-validation.log": "45531ac270be1f0f058668db72d04e2e96bd98779948e56cc52028f387fb2a0b",
+    "/tmp/dusk-016-windows-render-long-fixed.log": "63e3355ba7a3a03709aca2fdf1bef181b118f58e7e68a3dcbaedfb9a4b2c4f1a",
+    "/tmp/dusk-016-windows-render-all-final.log": "d4f9d271382eea258db6efa5f153b99296ed7a1af39631afb6b9218166afe26d",
+    "/tmp/dusk-016-windows-longpath-final-evidence.tar": "0b7161ec0b7e18e4044663177146657f823ba70965e1dd7227aacb47635415aa",
+    "/tmp/dusk-016-windows-scratch-detach-final.json": "418c380f59a8c4a7716948ab4373ac65aeea34942eeb2c45c0c0df7511c24dae",
+    "/tmp/dusk-016-windows-scratch-detach-guest-final.json": "612c5a641ccb1fbb58eed63b2ca32b7d91101d9db3d795cb7ac747e376e24c58",
+    "/tmp/dusk-016-windows-scratch-detach-preflight-final.json": "6c28c8c978dc32ff959910f46a72244f994425ef2f77d403036c36d996263722",
+    "/tmp/dusk-016-windows-dismount-scratch-final.ps1": "295adefbfa7fd12dee77c3111cf8b8fd8ca0b1dd316804b0a3733c7aaf13750b",
+    "/tmp/dusk-016-windows-dismount-scratch-final.log": "bc5519f957ead9c627411c3b07eb7cd0d0d3a25d2fd79142d95dd47a75c884ba",
+    "/tmp/dusk-016-longpath-tsan-job-sanitized.log": "8a776b12bd0b7592e2c86e38cd171d0ee48e8dd6bf900e7ee5127935fd67d2c6",
+    "/tmp/dusk-016-tsan-instrumentation-proof/summary.json": "76bc5c98e2bbb0870b49179ad6df7366e381318cf02af4917f58c39baff25f27",
+    "/tmp/dusk-016-tsan-instrumentation-proof/evidence-manifest.json": "e93c4adf7a3bf0b66ff6ac1b8879fa7f72742e7a730d9663e01188ed60892e09",
+    "/tmp/dusk-016-sanitizer-generated-coverage.json": "82f6bb7bbb83aebbd1191c3aa4f4cea137617fdb163ca82bced2d6776bc1c537",
+    "/tmp/dusk-016-sanitizer-all-command-coverage.json": "8e7edffdb9030cac49aa2d53617b8d90ae8c109c899c61c0c3a8c02c25880dcf",
+    "/tmp/dusk-016-sanitizer-filepool-symbols.json": "7ea478e6f421542ce04984cf14043b0674d6072463f6be795704a229db425ad4",
+    "/tmp/dusk-016-sanitizer-order-before.log": "bed8838711ca1533ae28553728887ca19cc893e481110542242fd907f9291b10",
+    "/tmp/dusk-016-sanitizer-order-after.log": "a4d28502f31983582bae3a6465a0c694ec9097bdffe7887e88d76b2915f046f5",
+    "/tmp/dusk-016-longpath-ci-status-47d144d6.json": "37fa6290f2b19021f74b97d9a392b25f4159e2f073e7d4ee72e8bfce8129d158",
+    "/tmp/dusk-016-macos-feature-cache-final47.txt": "262336925d3da7a9b1b9097e63def07e81a775927a27323957520a1a8b008033"
+  },
+  "long_path_full_followup": {
+    "source_commit": "47d144d6315bc6ca5c89bfdf6de2327ed25a4d28",
+    "sampler_commit": "f54eaed2d8f7c53d12f2afea7a553350344879fc",
+    "prepush": {
+      "result": "OK",
+      "linux_ctest": [
+        {
+          "cases": 1762,
+          "seconds": 32.54
+        },
+        {
+          "cases": 1762,
+          "seconds": 36.31
+        }
+      ],
+      "macos_ctest": {
+        "cases": 1708,
+        "seconds": 53.01
+      },
+      "linux_engine_scenarios": {
+        "pass": 186,
+        "fail": 0,
+        "skip": 1
+      },
+      "macos_engine_scenarios": {
+        "pass": 177,
+        "fail": 0,
+        "skip": 9
+      },
+      "macos_native_lv2": false,
+      "macos_core_midi": true
+    },
+    "windows_ctest": {
+      "cases": 1697,
+      "fail": 0,
+      "seconds": 150.4
+    },
+    "windows_ctest_capability_skips": 5,
+    "windows_app_sha256": "27cea9366ca5033bdcc05687c0697fff1bae8eeee2fa0f1bc39453cdb8fa74b3",
+    "windows_provider_render_native_exits": {
+      "sfzinstruments": 0,
+      "freepats": 0,
+      "musical-artifacts": 0,
+      "versilian": 0
+    },
+    "windows_long_sfz_render": {
+      "characters": 278,
+      "native_exit": 0,
+      "peak": 0.33313,
+      "rms": 0.05581,
+      "bypass": 0
+    },
+    "windows_evidence_archive_sha256": "0b7161ec0b7e18e4044663177146657f823ba70965e1dd7227aacb47635415aa",
+    "windows_evidence_archive_members": 24,
+    "windows_virtual_scratch_disk": {
+      "serial": "DUSK016S3755",
+      "flushed_dismounted_detached": true,
+      "guest_serial_absent": true,
+      "persistent_vm_configuration_unchanged": true,
+      "image_retained": "/var/tmp/dusk-016-win-scratch.xfilrwxz/scratch.qcow2",
+      "physical_drive_measurement": false
+    },
+    "ci_at_this_source": {
+      "required_pass": 6,
+      "required_fail": 1,
+      "failing_check": "TSan",
+      "job": "https://github.com/dusk-audio/dusk-studio/actions/runs/39129247702/job/117680825873",
+      "status": "Diagnosis: sampler dependency instrumentation omitted. Correction is subsequent work, not part of this source."
+    },
+    "limits": [
+      "Historical Mac full GUI inventory remains a 3755 run, separate from the 47d144d6 unit/engine suite.",
+      "The final app performs the live renders; install/verify/offline identity helper results remain bounded to historical 3755 source.",
+      "Default Windows library location, VCSL payloads and physical USB operations remain unproved."
+    ]
+  },
+  "sanitizer_dependency_diagnosis": {
+    "correction_commit": "504a4340b1fc8da2a7ab82825de1382f4526c43f",
+    "cause": "Directory sanitizer options were applied after sampler dependency creation, omitting worker/future instrumentation and hiding its synchronization from TSan.",
+    "correction": "Apply sanitizer compile/link options after JUCE helper setup and before DAF, sampler and test subdirectories.",
+    "regression_contract": "release-mechanics-contract fails with the old option placement and passes with the corrected placement.",
+    "fresh_generated_c_family_commands": 1279,
+    "fresh_generated_commands_all_instrumented": true,
+    "global_c_and_cxx_flags": "Empty; sanitizer options inherited through directory scope.",
+    "filepool_object_tsan_symbols": {
+      "retained_old_build": 0,
+      "corrected_fresh_build": 30
+    },
+    "controlled_gcc12_cmake_matrix": {
+      "late_order_race_processes": 20,
+      "late_order_total_processes": 20,
+      "early_order_race_processes": 0,
+      "early_order_total_processes": 20,
+      "early_order_completed_allocation_cycles": 2000,
+      "modes": [
+        "retained future",
+        "ready future erased then dispatcher joined"
+      ]
+    },
+    "independent_corroboration": "Direct GCC12 and GCC16 matrices produce the same result.",
+    "limits": [
+      "Microreproducer uses the real sampler ThreadPool header, not the full application.",
+      "Extracted GCC12/libstdc++12/libtsan12 use host glibc2.44/startup objects rather than the exact Ubuntu22.04 image.",
+      "No suppression, sleep, sampler lifetime edit or retry-based acceptance. Full application/CI results are tracked separately in PR895."
+    ]
   }
 }
