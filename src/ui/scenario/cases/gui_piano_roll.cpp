@@ -780,11 +780,11 @@ std::optional<ScenarioResult> runMidiMergeLoops (GuiHost& host, ScenarioContext&
         const std::uint8_t message[] { status, first, second };
         engine.postVirtualKeyboardMidi (message, (status == 0xc0 || status == 0xd0) ? 2 : 3);
     };
-    const auto passReady = [&engine] (int ordinal)
+    const auto passReady = [&engine, &transport] (int ordinal)
     {
         engine.serviceMidiRecording();
         const auto* preview = engine.getRecordManager().midiCapturePreview (0);
-        return preview != nullptr && preview->passOrdinal >= ordinal;
+        return transport.isRecording() && preview != nullptr && preview->passOrdinal >= ordinal;
     };
     auto consumed = std::make_shared<MidiCaptureStamp>();
     const auto check = [&ctx, &track, seed, consumed] (int passes)
