@@ -121,7 +121,7 @@ public:
     void showSwappedTake() override;
     void stepRecordNoteOn (int noteNumber, int velocity) override;
     void stepRecordNoteOff (int noteNumber) override;
-    void resetStepRecordState() noexcept override;
+    void stepRecordKeyboardClosed() noexcept override;
 
     std::array<double, 4> viewportForScenario() const override
     { return { pixelsPerTick, static_cast<double> (scrollX), static_cast<double> (scrollY), grid.w }; }
@@ -296,7 +296,8 @@ private:
     int scaleRoot = 0;
     bool keySnap = true, chase = false;
     int stepRecordHeld = 0;
-    bool stepRecordChordHad = false;
+    bool stepRecordChordHad = false, stepRecordReopened = false;
+    std::int64_t stepRecordAt = 0;
     Box grid, rulerArea, velocityArea, ccArea, rubberBand;
     struct Control { std::string name; Box box; bool enabled; };
     std::vector<Control> controls;
@@ -1604,6 +1605,8 @@ void PianoRollViewImpl::showSwappedTake()
 
 void PianoRollViewImpl::showRegion (int newRegionIdx)
 {
+    if (newRegionIdx != regionIdx)
+        stepRecordChordHad = false;
     regionIdx = newRegionIdx;
     cancelPopups = true;
     leftForTake.valid = false;
@@ -1643,15 +1646,20 @@ void PianoRollViewImpl::stepRecordNoteOn (int noteNumber, int velocity)
         ? snapTicks
         : (kMidiTicksPerQuarter / 4);
 
-    if (stepRecordHeld == 0 && stepRecordChordHad)
+    // After the keyboard closes and reopens, a playhead the user moved meanwhile is
+    // the new entry point rather than a place to step on from.
+    const auto playhead = engine.getTransport().getPlayhead();
+    if (stepRecordHeld == 0 && stepRecordChordHad
+        && (! stepRecordReopened || playhead == stepRecordAt))
     {
-        const auto playhead   = engine.getTransport().getPlayhead();
         const auto playheadTick = session.samplesToTicks (playhead, sr);
         const std::int64_t advanceSamples =
             session.ticksToSamples (playheadTick + stepTicks, sr) - playhead;
         engine.getTransport().setPlayhead (playhead + advanceSamples);
-        stepRecordChordHad = false;
     }
+    if (stepRecordHeld == 0)
+        stepRecordChordHad = false;
+    stepRecordReopened = false;
 
     const auto nowPlayhead = engine.getTransport().getPlayhead();
     if (nowPlayhead - r->timelineStart < 0) return;
@@ -1677,6 +1685,7 @@ void PianoRollViewImpl::stepRecordNoteOn (int noteNumber, int velocity)
     pushNoteEdit (before, "Step record note");
     ++stepRecordHeld;
     stepRecordChordHad = true;
+    stepRecordAt = nowPlayhead;
 }
 
 void PianoRollViewImpl::stepRecordNoteOff (int )
@@ -1686,10 +1695,10 @@ void PianoRollViewImpl::stepRecordNoteOff (int )
 
 }
 
-void PianoRollViewImpl::resetStepRecordState() noexcept
+void PianoRollViewImpl::stepRecordKeyboardClosed() noexcept
 {
-    stepRecordHeld     = 0;
-    stepRecordChordHad = false;
+    stepRecordHeld = 0;
+    stepRecordReopened = stepRecordChordHad;
 }
 
 bool PianoRollViewImpl::isInScale (int noteNumber) const noexcept

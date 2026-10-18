@@ -1,4 +1,5 @@
 #include "../GuiScenarioSupport.h"
+#include "../../AppConfig.h"
 #include "../../../engine/McuController.h"
 #include "../../../engine/McuProtocol.h"
 #include "../../../engine/audiofile/FileWriter.h"
@@ -2340,6 +2341,106 @@ const ScenarioRegistrar mcuTimecodeWithoutDevice { Scenario {
     "gui.mcu_timecode_without_device", { "gui", "mcu" }, Needs::Engine | Needs::Gui,
     {}, {}, 5000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runMcuTimecodeWithoutDevice (host, ctx); }
+} };
+
+std::optional<ScenarioResult> runPianoStepRecordReopen (GuiHost& host, ScenarioContext& ctx)
+{
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("requires the native virtual keyboard");
+   #else
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& transport = engine.getTransport();
+    const int centre = appconfig::getVkbCentreNote();
+    if (! transport.isStopped() || host.virtualKeyboardOpen())
+        return ScenarioResult::skip ("requires stopped transport and a closed virtual keyboard");
+    if (centre < 0 || centre > 115) return ScenarioResult::skip ("requires the typing notes below MIDI 128");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto originalStage = engine.getStage();
+    const auto originalPosition = transport.getPlayhead();
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    ctx.cleanup ([&host, &session, &transport, originalDir, originalStage, originalPosition, restore]
+    {
+        host.closeVirtualKeyboard();
+        host.closeRegionEditors();
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+        transport.setPlayhead (originalPosition);
+        host.switchToStage (guiStage (originalStage));
+    });
+    const auto rate = engine.getCurrentSampleRate();
+    MidiRegion region;
+    region.lengthInTicks = 240;
+    region.lengthInSamples = session.ticksToSamples (240, rate);
+    session.track (0).mode.store ((int) Track::Mode::Midi);
+    session.track (0).midiRegions.publish (
+        std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { region }));
+    host.switchToStage (GuiHost::Stage::Recording);
+    transport.setPlayhead (session.ticksToSamples (480, rate));
+
+    const auto open = [&host] { return host.virtualKeyboardOpen(); };
+    const auto closed = [&host] { return ! host.virtualKeyboardOpen(); };
+    const auto pressK = [&host, &ctx] { ctx.expect (host.pressPeerKey ("K", 'k'), "K did not reach the piano roll"); };
+    const auto play = [&host, &ctx] (const char* keys)
+    {
+        for (const char* key = keys; *key != 0; ++key)
+            ctx.expect (host.inputVirtualKeyboard (std::string (1, *key)), "a key did not reach the native keyboard");
+    };
+    const auto lastNoteAt = [&ctx, &session, &transport, rate] (std::size_t count, int pitch, std::int64_t tick,
+                                                              const std::string& what)
+    {
+        const auto& regions = session.track (0).midiRegions.current();
+        if (! ctx.expect (regions.size() == 1 && regions.front().notes.size() == count, what + ": wrong note count"))
+            return;
+        const auto& note = regions.front().notes.back();
+        ctx.expect (note.noteNumber == pitch && note.startTick == tick,
+                    what + ": the note landed at tick " + std::to_string (note.startTick));
+        ctx.expect (transport.getPlayhead() == session.ticksToSamples (tick, rate) && transport.isStopped(),
+                    what + ": the playhead is not at the note");
+    };
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.openRegionEditor (0, 0, true), "piano roll did not open"); } });
+    steps->push_back ({ 200, pressK });
+    steps->push_back ({ 0, [play] { play ("zx"); }, open, "the virtual keyboard did not open" });
+    steps->push_back ({ 600, [lastNoteAt, pressK, centre]
+    {
+        lastNoteAt (2, centre + 2, 480, "the chord");
+        pressK();
+    } });
+    steps->push_back ({ 200, pressK, closed, "K did not close the virtual keyboard" });
+    steps->push_back ({ 0, [play] { play ("q"); }, open, "K did not reopen the virtual keyboard" });
+    steps->push_back ({ 600, [lastNoteAt, pressK, centre]
+    {
+        lastNoteAt (3, centre + 12, 600, "the first note after reopening the keyboard");
+        pressK();
+    } });
+    steps->push_back ({ 200, [&session, &transport, pressK, rate]
+    {
+        transport.setPlayhead (session.ticksToSamples (960, rate));
+        pressK();
+    }, closed, "K did not close the virtual keyboard a second time" });
+    steps->push_back ({ 0, [play] { play ("z"); }, open, "K did not open the virtual keyboard a third time" });
+    steps->push_back ({ 600, [lastNoteAt, pressK, centre]
+    {
+        lastNoteAt (4, centre, 960, "the first note after moving the playhead");
+        pressK();
+    } });
+    runSteps (ctx, steps, [&ctx, closed]
+    { ctx.waitUntil (closed, 3000, [&ctx] { ctx.complete (ctx.verdict()); }, "K did not close the virtual keyboard"); });
+    return std::nullopt;
+   #endif
+}
+
+const ScenarioRegistrar pianoStepRecordReopen { Scenario {
+    "gui.piano_step_record_reopen", { "gui", "piano", "midi", "keyboard" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runPianoStepRecordReopen (host, ctx); }
 } };
 } // namespace
 } // namespace duskstudio::scenario::gui

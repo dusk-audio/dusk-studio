@@ -6995,7 +6995,7 @@ void MainComponent::toggleVirtualKeyboard()
         callbacks.closed = [this]
         {
             virtualKeyboardView = nullptr;
-            if (pianoRollShowing()) pianoRoll->resetStepRecordState();
+            if (pianoRollShowing()) pianoRoll->stepRecordKeyboardClosed();
             virtualKeyboardDim.reset();
             virtualKeyboardHider.restore();
             reclaimFocusFromNotepad();

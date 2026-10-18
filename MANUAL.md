@@ -1646,6 +1646,8 @@ The note-creation grid is set from the toolbar dropdown; there is no keyboard sh
 
 With the piano roll open, virtual-keyboard notes enter at the transport playhead. Notes held together share that position. After all keys are released, the first note of the next chord advances the playhead by one snap step before inserting. This is the fastest way to enter a chord progression without playing in real time.
 
+Closing and reopening the keyboard keeps the step: the next note still advances one snap step. If you move the playhead while the keyboard is closed, the next note enters at the new position instead.
+
 Step record is off while the transport is recording: the keyboard's notes enter the recorded performance. They do not become separate step-record edits of the region the roll shows.
 
 The keyboard is a transport-bar tool rather than part of the piano roll. With the piano roll open, press **K** to open it over the roll; the ⌨ button sits under the piano roll's dim, and a click there closes the piano roll instead. While it is open it takes over the letter and digit keys in its layout, and **K** again closes it. See *The virtual keyboard* for the details.

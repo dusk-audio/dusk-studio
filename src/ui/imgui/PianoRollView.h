@@ -47,7 +47,7 @@ public:
     virtual void yieldDragToRecordCommit() = 0;
     virtual void stepRecordNoteOn (int note, int velocity) = 0;
     virtual void stepRecordNoteOff (int note) = 0;
-    virtual void resetStepRecordState() noexcept = 0;
+    virtual void stepRecordKeyboardClosed() noexcept = 0;
     virtual bool handleShellKey (const std::string& description, bool repeat) = 0;
     virtual bool chaseEnabled() const = 0;
 
