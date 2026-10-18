@@ -606,6 +606,8 @@ std::optional<ScenarioResult> beginMidiCaptureCase (GuiHost& host, ScenarioConte
     ctx.keep (session.midiMergeEnabled);
     ctx.keep (session.tempoBpm);
     ctx.keep (session.lastRecordPointSamples);
+    track.mode.store ((int) Track::Mode::Midi);
+    track.frozen.store (false);
     for (int index = 0; index < Session::kNumTracks; ++index)
     {
         const bool armed = session.track (index).recordArmed.load();
@@ -648,8 +650,6 @@ std::optional<ScenarioResult> beginMidiCaptureCase (GuiHost& host, ScenarioConte
     session.midiMergeEnabled.store (false);
     session.tempoBpm.store (120.0f);
     session.tempoMap.clear();
-    track.mode.store ((int) Track::Mode::Midi);
-    track.frozen.store (false);
     track.midiInputIndex.store (engine.getVirtualKeyboardInputIndex());
     track.midiChannel.store (1);
     seed.lengthInSamples = session.ticksToSamples (seed.lengthInTicks, engine.getCurrentSampleRate());
@@ -2682,6 +2682,8 @@ std::optional<ScenarioResult> runVirtualKeyboardKeys (GuiHost& host, ScenarioCon
     ctx.keep (track.frozen);
     ctx.keep (track.midiInputIndex);
     ctx.keep (track.midiChannel);
+    track.mode.store ((int) Track::Mode::Midi);
+    track.frozen.store (false);
     for (int index = 0; index < Session::kNumTracks; ++index)
     {
         const bool armed = session.track (index).recordArmed.load();
@@ -2707,8 +2709,6 @@ std::optional<ScenarioResult> runVirtualKeyboardKeys (GuiHost& host, ScenarioCon
     });
     engine.stop();
     session.countInEnabled.store (false);
-    track.mode.store ((int) Track::Mode::Midi);
-    track.frozen.store (false);
     track.midiInputIndex.store (keyboardInput);
     track.midiChannel.store (1);
     track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>>());

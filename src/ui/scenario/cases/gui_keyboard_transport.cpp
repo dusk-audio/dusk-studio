@@ -1110,6 +1110,8 @@ std::optional<ScenarioResult> runRecordingSetupAlert (GuiHost& host, ScenarioCon
     auto& engine = ctx.engine();
     ctx.keep (session.countInEnabled);
     session.countInEnabled.store (false);
+    ctx.keep (session.deviceCaptureChannels);
+    session.deviceCaptureChannels.store (1);
     for (int index = 0; index < Session::kNumTracks; ++index)
     {
         const bool armed = session.track (index).recordArmed.load();
