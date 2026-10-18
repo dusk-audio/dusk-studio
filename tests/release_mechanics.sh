@@ -944,9 +944,6 @@ asan_job = asan_job_match.group("body")
 intentional_leak_tests = (
     "NativeInsertSlot bumps its generation on every identity change",
     "AlsaAudioIODevice: wedged I/O thread leaks the device, never frees it",
-    "TapeMachineDSP nulls against the JUCE donor at 1x",
-    "TapeMachineDSP tracks the JUCE donor within tolerance at 2x and 4x",
-    "TapeMachineDSP latency is stable per oversampling factor",
 )
 for required in (
     "DUSKSTUDIO_ENABLE_ASAN=ON",
@@ -971,7 +968,7 @@ leak_enabled_step = workflow_step(
     asan_job, "Run suite with LeakSanitizer enabled"
 )
 assert f"-E {intentional_leak_filter}" in leak_enabled_step, (
-    "LeakSanitizer-enabled CTest must exclude exactly the five documented tests"
+    "LeakSanitizer-enabled CTest must exclude exactly the documented intentional leaks"
 )
 assert "detect_leaks=0" not in leak_enabled_step, (
     "LeakSanitizer-enabled CTest must not disable leak detection"
@@ -984,7 +981,7 @@ assert "detect_leaks=0" in intentional_leak_step, (
     "the intentional-leak rerun must disable LeakSanitizer"
 )
 assert f"-R {intentional_leak_filter}" in intentional_leak_step, (
-    "the leak-disabled CTest must rerun exactly the five documented tests"
+    "the leak-disabled CTest must rerun exactly the documented intentional leaks"
 )
 
 # Source-built libsodium must come from the release asset hosted alongside the

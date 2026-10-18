@@ -187,9 +187,7 @@ jobs:
     runs-on: ubuntu-22.04
 
     env:
-      # LeakSanitizer stays enabled for the general suite. The five tests that
-      # deliberately park live allocations for shutdown safety are rerun in a
-      # separate step with leak detection disabled only for those processes.
+      # Leak detection stays on except for the two intentional shutdown-safety leaks.
       ASAN_OPTIONS: "halt_on_error=1:abort_on_error=1:detect_leaks=1:symbolize=1"
       UBSAN_OPTIONS: "halt_on_error=1:abort_on_error=1:print_stacktrace=1"
       ASAN_SYMBOLIZER_PATH: /usr/bin/llvm-symbolizer
@@ -274,22 +272,18 @@ jobs:
         run: cmake --build build-asan --target dusk-studio-tests -j6
 
       - name: Run suite with LeakSanitizer enabled
-        # These are the only tests whose contract intentionally retains a live
-        # allocation after exit: NativeInsertSlot parks an instance whose
-        # shutdown cannot be trusted, ALSA parks a device still referenced by a
-        # detached formerly wedged I/O thread, and the three TapeMachine donor
-        # parity cases keep JUCE's message-loop initialiser alive so its timer
-        # cannot race teardown. Every other test runs with leak detection on.
+        # NativeInsertSlot parks instances with untrusted shutdown; ALSA retains
+        # devices still referenced by detached, formerly wedged I/O threads.
         run: |
           ctest --test-dir build-asan --output-on-failure --parallel 4 \
-            -E '^(NativeInsertSlot bumps its generation on every identity change|AlsaAudioIODevice: wedged I/O thread leaks the device, never frees it|TapeMachineDSP nulls against the JUCE donor at 1x|TapeMachineDSP tracks the JUCE donor within tolerance at 2x and 4x|TapeMachineDSP latency is stable per oversampling factor)$'
+            -E '^(NativeInsertSlot bumps its generation on every identity change|AlsaAudioIODevice: wedged I/O thread leaks the device, never frees it)$'
 
       - name: Run leak-for-safety tests under ASan + UBSan
         env:
           ASAN_OPTIONS: "halt_on_error=1:abort_on_error=1:detect_leaks=0:symbolize=1"
         run: |
           ctest --test-dir build-asan --output-on-failure \
-            -R '^(NativeInsertSlot bumps its generation on every identity change|AlsaAudioIODevice: wedged I/O thread leaks the device, never frees it|TapeMachineDSP nulls against the JUCE donor at 1x|TapeMachineDSP tracks the JUCE donor within tolerance at 2x and 4x|TapeMachineDSP latency is stable per oversampling factor)$'
+            -R '^(NativeInsertSlot bumps its generation on every identity change|AlsaAudioIODevice: wedged I/O thread leaks the device, never frees it)$'
 
       - name: ccache stats
         if: always()
