@@ -31,6 +31,7 @@ def running(pid):
 
 with tempfile.TemporaryDirectory(prefix="dusk-regress-contract-") as scratch:
     root = Path(scratch)
+    child_environment = dict(os.environ, DUSK_REGRESS_RECORD_FILE=str(root / "results.tsv"))
     scripts = root / "scripts"
     runners = scripts / "regress"
     runners.mkdir(parents=True)
@@ -50,6 +51,7 @@ with tempfile.TemporaryDirectory(prefix="dusk-regress-contract-") as scratch:
         )
     process = subprocess.Popen(
         ["bash", str(scripts / "regress.sh"), "prepush"],
+        env=child_environment,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         start_new_session=True,
     )
@@ -104,7 +106,7 @@ with tempfile.TemporaryDirectory(prefix="dusk-regress-contract-") as scratch:
         path = mocks / name
         path.write_text(contents)
         path.chmod(0o755)
-    environment = dict(os.environ, HOME=str(remote_home),
+    environment = dict(child_environment, HOME=str(remote_home),
                        PATH=f"{mocks}:{os.environ['PATH']}")
     process = subprocess.Popen(
         ["/bin/bash", str(scripts / "regress.sh"), "prepush"], env=environment,
@@ -135,7 +137,7 @@ with tempfile.TemporaryDirectory(prefix="dusk-regress-contract-") as scratch:
         process.wait()
 
     cache = root / "cache" / "gui-case-ms.tsv"
-    environment = dict(os.environ, DUSK_REGRESS_TEST_ROOT=str(repo),
+    environment = dict(child_environment, DUSK_REGRESS_TEST_ROOT=str(repo),
                        DUSK_REGRESS_TEST_CACHE=str(cache))
     harness = r'''
 set -euo pipefail
@@ -222,7 +224,7 @@ else:
     fake_app.chmod(0o755)
     remote_tmp = root / "remote-tmp"
     remote_tmp.mkdir()
-    environment = dict(os.environ, HOME=str(remote_home), PATH=f"{mocks}:{os.environ['PATH']}",
+    environment = dict(child_environment, HOME=str(remote_home), PATH=f"{mocks}:{os.environ['PATH']}",
                        REGRESS_TEST_TRACE=str(trace), REGRESS_TEST_MARKER="true",
                        REGRESS_TEST_DAF_HEAD="2" * 40, REGRESS_TEST_DAF_ROOT=str(configured_daf),
                        REGRESS_TEST_TMP=str(remote_tmp),
