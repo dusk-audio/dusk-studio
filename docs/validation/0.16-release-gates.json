@@ -3,6 +3,7 @@
   "branch": "fix/016-release-blockers",
   "release_version_unchanged": "0.15.1",
   "published": false,
+  "scope_followup": "2026-10-18 acceptance audit separates completed bug scopes #874/#878/#879 from broader release checks in #804/#886. Other snapshot fields retain their recorded source and time bounds.",
   "review": {
     "full_branch": {
       "base": "3cc84a6f",
@@ -131,7 +132,7 @@
     {
       "issue": 874,
       "implemented_or_reviewed": "Restricted SFZ licenses refused by provider and publication tests.",
-      "remaining": "Four live samples use CC0 or CC BY and preserve license evidence. Live CC-BY-SA/restricted-policy and shipping-platform checks remain."
+      "remaining": "Original provider-test and documentation acceptance is complete. Live CC BY-SA/restricted-policy and shipping-platform checks remain broader release gates in #804/#886."
     },
     {
       "issue": 875,
@@ -151,12 +152,12 @@
     {
       "issue": 878,
       "implemented_or_reviewed": "Durable SFZ downloads and explicit resume implemented.",
-      "remaining": "Live VSCO-2-CE install, verification and 75 offline identities pass on Linux and Mac. Windows attempts stop at the validation free-space guard. Pause, restart/resume and recovery across supported systems remain."
+      "remaining": "Original timeout, durable-prefix, restart, retry and cancellation acceptance is complete in the cross-platform tests. Live large-pack interruption and recovery across supported systems remain broader release gates in #804/#886."
     },
     {
       "issue": 879,
       "implemented_or_reviewed": "Unavailable pinned versions require explicit relink.",
-      "remaining": "Linux mounted physical USB Move and relink scratch-path controls pass. Physical disconnect/remount, other-platform drive checks and maintainer walkthrough remain."
+      "remaining": "Original acceptance is complete through the explicitly permitted same-pack relink workflow. Physical disconnect/remount, other-platform drive checks and restored-instance audio remain broader release gates in #804/#886."
     },
     {
       "issue": 880,

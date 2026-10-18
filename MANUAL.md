@@ -1566,7 +1566,7 @@ To build a comp, see *Splicing a vocal comp from multiple takes* in Tips and rec
 
 # The piano roll
 
-![Piano roll with notes, a CC ramp, and scale highlight.](docs/images/ed-05-piano-roll-full.png)
+![Piano roll with MIDI notes and the velocity lane.](docs/images/ed-05-piano-roll-full.png)
 
 Double-click a MIDI region to open the piano roll as a centred modal.
 
