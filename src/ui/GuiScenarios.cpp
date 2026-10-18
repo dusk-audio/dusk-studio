@@ -2858,6 +2858,36 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         return -1;
        #endif
     }
+    int pianoControlPeakOnScreen (const std::string& control, const std::filesystem::path& scratch) override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        auto* piano = owner.pianoRoll;
+        if (! owner.pianoRollShowing() || piano == nullptr) return -1;
+        const auto box = piano->controlBoundsForScenario (control);
+        if (box[2] <= 0 || box[3] <= 0) return -1;
+        int width = 0, height = 0;
+        std::vector<unsigned char> pixels;
+        if (! capturePianoPixels (scratch, width, height, pixels)) return -1;
+        // Inset past the outline, which is drawn the same either way.
+        const auto inset = 3 * piano->scaleForScenario();
+        const int x0 = std::max (0, static_cast<int> (std::ceil (box[0] + inset)));
+        const int y0 = std::max (0, static_cast<int> (std::ceil (box[1] + inset)));
+        const int x1 = std::min (width, static_cast<int> (std::floor (box[0] + box[2] - inset)));
+        const int y1 = std::min (height, static_cast<int> (std::floor (box[1] + box[3] - inset)));
+        if (x0 >= x1 || y0 >= y1) return -1;
+        int peak = 0;
+        for (int y = y0; y < y1; ++y)
+            for (int x = x0; x < x1; ++x)
+            {
+                const auto* p = &pixels[((std::size_t) y * (std::size_t) width + (std::size_t) x) * 3];
+                peak = std::max ({ peak, (int) p[0], (int) p[1], (int) p[2] });
+            }
+        return peak;
+       #else
+        (void) control; (void) scratch;
+        return -1;
+       #endif
+    }
     bool clickPianoGrid (std::int64_t tick, int pitch) override
     {
        #if DUSKSTUDIO_HAS_NATIVE_UI

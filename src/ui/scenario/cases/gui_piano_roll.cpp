@@ -715,11 +715,18 @@ std::optional<ScenarioResult> runPianoMidiMergeToggle (GuiHost& host, ScenarioCo
     steps->push_back ({ 0, [&host, &ctx]
     { ctx.expect (host.clickPianoMidiMerge(), "the smaller MIDI editor toggle was not clickable"); },
         [controls] { return controls (false, true); }, "MIDI Merge did not turn off in the smaller editor", {}, 4000 });
-    steps->push_back ({ 0, [&host, &ctx]
-    { ctx.expect (host.clickRecord(), "Record was unavailable with the MIDI editor open"); },
-        [controls] { return controls (true, true); }, "MIDI Merge did not turn back on", {}, 4000 });
-    steps->push_back ({ 0, [&host, &ctx, &session, &engine]
+    const auto lit = std::make_shared<std::pair<int, std::uint32_t>>();
+    steps->push_back ({ 0, [&host, &ctx, lit]
     {
+        *lit = { host.pianoControlPeakOnScreen ("midi-merge", ctx.tempDir() / "merge.ppm"), host.midiMergePaint() };
+        ctx.expect (host.clickRecord(), "Record was unavailable with the MIDI editor open");
+    }, [controls] { return controls (true, true); }, "MIDI Merge did not turn back on", {}, 4000 });
+    steps->push_back ({ 0, [&host, &ctx, &session, &engine, lit]
+    {
+        const auto locked = host.pianoControlPeakOnScreen ("midi-merge", ctx.tempDir() / "merge.ppm");
+        if (lit->first < 0 || locked < 0) ctx.note ("the piano-roll MIDI Merge look needs the window read back");
+        else ctx.expect (locked + 64 < lit->first, "the piano-roll MIDI Merge still looked enabled during recording");
+        ctx.expect (host.midiMergePaint() != lit->second, "the transport MIDI Merge still looked enabled during recording");
         ctx.expect (! host.clickPianoMidiMerge() && ! host.clickMidiMerge(), "MIDI Merge was editable during recording");
         ctx.expect (session.midiMergeEnabled.load(), "recording changed MIDI Merge");
         engine.pressStop();

@@ -61,6 +61,7 @@ public:
     virtual ImVec2 bodyPointForScenario (ImVec2 nativePoint) const = 0;
     virtual float scaleForScenario() const = 0;
     virtual std::array<int, 2> mergeStateForScenario() const = 0;
+    virtual std::array<double, 4> controlBoundsForScenario (const std::string& name) const = 0;
     virtual bool popupForScenario() const = 0;
     virtual std::vector<std::string> menuItemsForScenario() const = 0;
     virtual bool wheelForScenario (float delta, bool command, bool shift, bool smooth, bool lane) = 0;
