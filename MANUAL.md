@@ -2801,7 +2801,7 @@ Two variants:
 ### Supporters
 
 - **When**: Settings → Supporters.
-- **Shows**: the Patreon supporters who fund development, grouped by tier (Champions / Patrons / Supporters / Hugs, plus past supporters). Scrolls when the list outgrows the panel.
+- **Shows**: the Patreon supporters who fund development, grouped under Patrons, Supporters, Founding Supporters and Past Supporters. Scrolls when the list outgrows the panel.
 - **Buttons**: Close (or click outside / Esc).
 
 ## Import / Export

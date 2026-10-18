@@ -27,15 +27,15 @@ Authoritative spec: [DuskStudio.md](docs/DuskStudio.md).
 
 ## Get Dusk Studio
 
-Beta, and paid licences are available now. Buy at
-[duskaudio.com](https://duskaudio.com).
+Beta. Official builds are available to
+[Patreon members](https://www.patreon.com/cw/DuskAudio/membership) from $5 a
+month. Licences go on sale at 1.0.
 
 The source on this repo is GPL, so building it yourself costs nothing but
 compile time. What you pay for is a packaged, ready-to-run build plus support
-access: Patreon tiers from $5 a month, a $49 one-time licence for the current
-major version, or $89 for every future major version. There is a 30-day
-guarantee, and the founder pricing rises at 1.0. Full terms, tiers and what
-each one includes are in [PRICING.md](docs/PRICING.md).
+access: Patreon tiers from $5 a month now, and from 1.0 a one-time licence for
+the current major version or a lifetime licence for every future one. Full
+terms, tiers and what each one includes are in [PRICING.md](docs/PRICING.md).
 
 **First launch:** beta builds are ad-hoc signed on macOS and unsigned on
 Windows, so Gatekeeper and SmartScreen warn the first time you open one.
@@ -280,5 +280,5 @@ Dusk Studio ships under a **dual access model**:
   not for the code; the source stays open. Self-builders get no support, but the
   binary is the same.
 
-Full terms in [PRICING.md](docs/PRICING.md). Buy at
-[duskaudio.com](https://duskaudio.com).
+Full terms in [PRICING.md](docs/PRICING.md). Builds are on
+[Patreon](https://www.patreon.com/cw/DuskAudio/membership) during the beta.
