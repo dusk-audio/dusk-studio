@@ -313,7 +313,7 @@ Assign a strip to one of eight fader groups (right-click the strip → **Fader g
 | --- | --------------- | --------------------------------------------------------------------------------- |
 | 1   | Keyboard        | Labels C rows with pitch names.                                                   |
 | 2   | Note grid       | Click an empty cell to create a note at the active velocity.                      |
-| 3   | Selected note   | Velocity shown next to the head. Drag to move; drag edges to trim.                |
+| 3   | Selected note   | Highlighted in the grid; **Vel: N** appears in the status bar. Drag to move; drag edges to trim. |
 | 4   | Velocity strip  | Drag the per-note bars to set velocity per note.                                  |
 | 5   | CC lane         | Pick a controller with **L**; draw events with the mouse.                         |
 | 6   | Scale highlight | Set root + mode with **S**. Rows outside the scale are dimmed in the grid.        |
@@ -1572,6 +1572,8 @@ To build a comp, see *Splicing a vocal comp from multiple takes* in Tips and rec
 
 Double-click a MIDI region to open the piano roll as a centred modal.
 
+A locked region stays visible and selectable, and its notes can be copied. Editing, deleting and step recording are blocked. Use the bottom-row **Lock** button or the region menu to unlock it before editing.
+
 ## Layout
 
 ```
@@ -2019,7 +2021,7 @@ Recent GitHub metadata may be reused for five minutes to reduce repository reque
 
 The default downloaded library is `~/.local/share/Dusk Studio/sfz-library` on Linux (`XDG_DATA_HOME` overrides `~/.local/share`), `%LOCALAPPDATA%\Dusk Studio\sfz-library` on Windows, and `~/Library/Application Support/Dusk Studio/sfz-library` on macOS. The **SFZ Library** tab in **Settings → Settings...** lets you choose another folder, including an external drive.
 
-After upgrading, packs in the former default configuration folder remain available in place. New downloads use the data folder unless you have already chosen a download location; saved locations keep their existing folders.
+Packs already stored in the configuration folder remain available in place. New downloads use the data folder unless you have already chosen a download location; saved locations keep their existing folders.
 
 Select a pack on the left to see its license, contents and download action on the right. **Declared license** reports the source's license declaration. Only CC0, CC BY and CC BY-SA packs are offered for download. NonCommercial and NoDerivatives packs are refused, including when their restrictions are discovered on selection. Previously installed instruments remain available under their original licenses. Read the displayed attribution and ShareAlike requirements before using a pack. A pack's size can be unknown until it downloads.
 
@@ -2226,7 +2228,7 @@ Right-click the binding in the MIDI Bindings panel to change its mode.
 
 ## The MIDI Bindings panel
 
-Open **Settings → Settings...**, then select the **MIDI Bindings** tab.
+Open **Settings → Settings...**, select the **MIDI Bindings** tab, then click **MIDI Bindings...** to open the panel.
 
 Each row shows:
 

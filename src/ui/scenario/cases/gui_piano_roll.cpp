@@ -321,6 +321,16 @@ std::optional<ScenarioResult> runPianoViewport (GuiHost& host, ScenarioContext& 
     steps->push_back ({ 150, [&host, &ctx, before]
     {
         ctx.expect (std::abs (host.pianoViewport()[0] - (*before)[0]) < 1.0e-6, "minus did not restore the zoom");
+        ctx.expect (host.inputPianoRoll ("numpad +"), "keypad zoom-in was not delivered");
+    } });
+    steps->push_back ({ 150, [&host, &ctx, before]
+    {
+        ctx.expect (host.pianoViewport()[0] > (*before)[0], "keypad plus did not zoom in");
+        ctx.expect (host.inputPianoRoll ("numpad -"), "keypad zoom-out was not delivered");
+    } });
+    steps->push_back ({ 150, [&host, &ctx, before]
+    {
+        ctx.expect (std::abs (host.pianoViewport()[0] - (*before)[0]) < 1.0e-6, "keypad minus did not restore the zoom");
         *before = host.pianoViewport();
         ctx.expect (host.scrollPiano (notch (-1.0f), false, false, false), "vertical wheel was not delivered");
     } });
@@ -546,7 +556,7 @@ std::optional<ScenarioResult> runPianoStepRecord (GuiHost& host, ScenarioContext
     { ctx.expect (host.openRegionEditor (0, 0, true), "piano roll did not open"); } });
     steps->push_back ({ 200, [&host, &ctx]
     { ctx.expect (host.pressPeerKey ("K", 'k'), "K did not reach the piano roll"); } });
-    steps->push_back ({ 300, [&host, &ctx]
+    steps->push_back ({ 300, [&host, &ctx, &session]
     {
         ctx.expect (host.virtualKeyboardOpen(), "virtual keyboard did not open above the piano roll");
         expectKeyboardOverRoll (host, ctx, "on opening");
@@ -555,6 +565,15 @@ std::optional<ScenarioResult> runPianoStepRecord (GuiHost& host, ScenarioContext
         ctx.expect (host.panelKeyRepeat ("virtual-keyboard") == 1,
                     "the virtual keyboard takes the system's key repeat, so a held key can sound twice");
         ctx.expect (host.panelKeyRepeat ("piano-roll") == 1, "the piano roll takes the system's key repeat");
+        session.track (0).midiRegions.mutate ([] (auto& regions) { regions.front().locked = true; });
+        ctx.expect (host.inputVirtualKeyboard ("z") && host.inputVirtualKeyboard ("x"),
+                    "locked-region notes did not reach the native keyboard");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, &session, &transport, rate]
+    {
+        ctx.expect (session.track (0).midiRegions.current().front().notes.empty(), "step record edited a locked region");
+        ctx.expect (transport.getPlayhead() == session.ticksToSamples (480, rate), "locked step record advanced the playhead");
+        session.track (0).midiRegions.mutate ([] (auto& regions) { regions.front().locked = false; });
         ctx.expect (host.inputVirtualKeyboard ("z") && host.inputVirtualKeyboard ("x"),
                     "chord keys did not reach the native keyboard");
     } });
@@ -2635,12 +2654,17 @@ std::optional<ScenarioResult> runPianoEditKeys (GuiHost& host, ScenarioContext& 
         ctx.expect (host.pianoNotePointer (300, 60, true), "the first note was not clickable");
         host.pianoNotePointer (300, 60, false);
     } });
-    steps->push_back ({ 150, [&ctx, &host, command, selectAll]
+    steps->push_back ({ 150, [&ctx, &host, &track, notes, original, command, selectAll]
     {
         ctx.expect (host.pianoSelection() == std::vector<int> { 0 },
                     "clicking the first note did not select it alone");
         selectAll();
+        track.midiRegions.mutate ([] (auto& regions) { regions.front().locked = true; });
         ctx.expect (command ('c'), "Copy was not handled");
+        ctx.expect (command ('v') && host.pressPeerKey ("backspace", '\b')
+                    && host.pressPeerKey ("cursor up"), "locked editing keys were not handled");
+        ctx.expect (notes() == original, "piano-roll edits changed a locked region");
+        track.midiRegions.mutate ([] (auto& regions) { regions.front().locked = false; });
         ctx.expect (command ('v'), "Paste was not handled");
     } });
     steps->push_back ({ 150, [&ctx, &host, notes, original, command]

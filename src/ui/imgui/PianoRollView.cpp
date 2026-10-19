@@ -609,8 +609,8 @@ private:
             { edit.nudgeSelectedTicks (r.notes, r.lengthInTicks, k.key == ImGuiKey_LeftArrow ? -step : step); });
             return true;
         }
-        if (! k.alt && k.key == ImGuiKey_Equal) { zoomByFactor (1.15f); return true; }
-        if (bare && k.key == ImGuiKey_Minus) { zoomByFactor (1.0f / 1.15f); return true; }
+        if (! k.alt && (k.key == ImGuiKey_Equal || k.key == ImGuiKey_KeypadAdd)) { zoomByFactor (1.15f); return true; }
+        if (bare && (k.key == ImGuiKey_Minus || k.key == ImGuiKey_KeypadSubtract)) { zoomByFactor (1.0f / 1.15f); return true; }
         if (k.shift && ! k.alt && k.key == ImGuiKey_G) { glue(); return true; }
         if (! bare) return false;
         if (k.key >= ImGuiKey_1 && k.key <= ImGuiKey_6)
@@ -1405,7 +1405,7 @@ private:
             }
             if (kind == Popup::note)
             {
-                ImGui::Text ("Note Properties (%zu notes)", edit.selectedNotes.size());
+                ImGui::Text ("Note Properties (%zu %s)", edit.selectedNotes.size(), edit.selectedNotes.size() == 1 ? "note" : "notes");
                 if (beginMenu ("Channel", editable()))
                 {
                     for (int ch = 1; ch <= 16; ++ch)

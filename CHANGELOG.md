@@ -40,7 +40,9 @@ canonical source.
   published demos before downloading an instrument pack. Both tabs group
   instruments by type, show repository artwork or licensed instrument cutouts,
   and reuse background image caches. Installed search includes program names and
-  descriptions without rescanning packs.
+  descriptions without rescanning packs. Each pack counts once per category,
+  with ARIA program choices and access to internal mappings. Enter and keypad
+  Enter submit searches. ZIP packs use portable stored or deflate compression.
   All repositories is the default search, combining all four sources with separate
   page progress and repository labels; one unavailable source leaves the others'
   results usable. Versilian offers the official VSCO 2 CE and VCSL SFZ releases.
@@ -48,7 +50,9 @@ canonical source.
   Downloaded packs default to the platform's application data directory.
   Choose a download folder on an external drive, keep existing packs in place or
   move them after copying and verification. Session instrument references survive
-  the move, and disconnected drives are reported.
+  the move, and disconnected drives are reported. Moves support FAT32 drives and
+  keep originals until verification succeeds. Packs in an existing configuration
+  folder remain available in place; saved locations retain their folders.
 - **Complete MIDI channel controls.** Recording, import, session save and
   playback keep pitch bend, channel and polyphonic pressure, and program changes
   alongside notes and CCs.
@@ -68,6 +72,12 @@ canonical source.
 - **Background instrument replacement.** The current instrument keeps playing
   while its replacement loads. Failed and stale requests leave it in place,
   and retired instruments are destroyed after the audio swap.
+- **Native piano roll.** The piano roll uses the native renderer. Locked
+  regions allow selection and copying while blocking edits and step recording.
+- **MIDI Stop and device changes.** Stop resets controllers, centres pitch bend
+  and clears channel pressure on all 16 instrument channels. Explicit MIDI
+  rescans wait for Stop. Recording refuses a device change during preparation
+  with an alert instead of starting an invalid take.
 - **Exact recording offset.** Type a sample value or adjust it one sample at a
   time with minus and plus buttons.
 - **SFZ Manager entry point.** The insert chooser opens one manager for online,
@@ -76,9 +86,10 @@ canonical source.
 
 ### Fixed
 
-- **SFZ libraries on Windows FAT32 drives.** Moving an installed library accepts
-  the directory identity change caused by publication while still detecting a
-  replaced destination and preserving originals when verification fails.
+- **SFZ session restoration.** Missing instruments raise one detailed alert
+  while preserving their saved references and controls. Resolving an installed
+  pack on another computer does not mark an unchanged session as edited. Renders refuse
+  pending soundfont loads rather than printing a silent or stale instrument.
 - **MIDI recording with tempo changes.** Recorded notes and controls follow the
   tempo map, and MIDI Merge keeps the timing of existing events and takes when
   growing a region. Notes heard on the next loop pass match the committed pass.
@@ -91,9 +102,6 @@ canonical source.
 - **Dropdown keyboard navigation.** Home highlights the first dropdown choice
   instead of seeking the transport. Mastering dropdowns retain keyboard focus
   after a covered native panel closes.
-- **Existing SFZ libraries.** Packs in the former default configuration folder
-  remain available after upgrading to the application data default. Saved
-  external-library settings keep their previous built-in folder too.
 - **Windows SFZ paths.** Instruments in long folders can open their SFZ files,
   included files and relative samples beyond the legacy 260-character limit.
 - **Sampler buffers.** Empty buffers initialize and copy without undefined
@@ -103,10 +111,9 @@ canonical source.
   recorded region, and held notes end at the punch boundary. Turning Punch off
   or changing punch-out during a take updates MIDI capture at the next block.
   Notes released after punch-out stay ended if Punch is later switched off.
-- **Malformed SFZ artwork.** JPEG marker errors, incomplete component scans and
-  premature scan ends are rejected instead of rendering uninitialized pixels.
 - **Piano roll controls.** Zoom Fit fits long regions to the full grid width,
-  and shifted bracket shortcuts work with hexadecimal window key codes.
+  keypad plus and minus zoom again, and shifted bracket shortcuts work with
+  hexadecimal window key codes. Note Properties uses the singular for one note.
 - **Held virtual keyboard keys on Linux.** A key held past the system's
   auto-repeat delay plays one note. Step record no longer inserts a second
   note, and recording no longer leaves short repeated notes after release.
@@ -118,23 +125,11 @@ canonical source.
   compensation when their audio resumes.
 - **Sampler shutdown.** File-loading workers use atomic stop flags, removing a
   race when an instrument is replaced or destroyed.
-- **Portable SFZ ZIP compression.** Stored and deflate entries install on every
-  platform; packs using other compression methods are refused before extraction.
 - **Settings dropdown keys.** Open dropdowns keep Home and End for navigating
   their choices, preventing repeated Home events through the main window.
-- **Installed SFZ counts and programs.** Each installed pack counts once per
-  category. ARIA bank declarations supply its normal program choices; internal
-  SFZ mappings remain accessible through Show all SFZ files.
-- **SFZ description search.** Search includes community catalog descriptions,
-  including Swirly Drums when searching for Brushes.
-- **SFZ preview selection.** Generic patch names in older installed packs use
-  their pack's instrument category, matching the browser list. All instruments
-  has no placeholder image. Image edges no longer sample neighboring atlas pixels.
 - **SFZ playback volume.** Fresh instruments apply the displayed master volume
   before their first note. The default 0 dB previously left sfizz's −7.35 dB
   initial attenuation in place until the volume control was moved.
-- **SFZ search keyboard submission.** Enter and keypad Enter start the search,
-  including when the parent window receives the search field's keyboard input.
 - **SFZ instrument captions.** Crowded ARIA skin labels stay centred over their
   controls and fit between adjacent captions, keeping drum-kit text readable.
 - **MIDI device refresh preserves audio state.** It keeps a deliberately
