@@ -1,0 +1,875 @@
+{
+  "release": "0.16.0",
+  "recorded_at_utc": "2026-10-19T19:32:57.567557+00:00",
+  "ready_to_tag": false,
+  "branch": "fix/016-release-review",
+  "source_commit": "3f8fb3ab27abdbfa0e1596027b0d76acdcfc80c0",
+  "sampler_commit": "f92e07104495bbd645325ff62c1a6c8bae3ad428",
+  "purpose": "Follow-up to external review #899-907 and automatic macOS permission handling. Source validation, not release approval.",
+  "scope_of_document_commit": "Evidence only; product source and tests remain at source_commit. Earlier validation documents remain historical.",
+  "source_provenance": {
+    "source_commit": "3f8fb3ab27abdbfa0e1596027b0d76acdcfc80c0",
+    "recorded_at_utc": "2026-10-19T19:20:34.592517+00:00",
+    "dirty_paths": [],
+    "source_sha256": {
+      "src/engine/AudioEngine.cpp": "268f285403dd74fc1c842a41a2384e33c5be0cedf6bbb9b585718ca75d6264a8",
+      "src/engine/AudioEngine.h": "2c138b19a73a5a6ef8db5d0443c8abf813bfae849cc9f5fa5095e0388cf9a998",
+      "src/engine/BounceEngine.cpp": "7cc38c622d00f8d4642082ca7dc490a658edce2a3afbf3f53b7537b443a71aaa",
+      "src/engine/MidiMergePlayback.h": "1258774af89f29af24d9f2747aec1f8c43e1bd152a7bb27c93bc85077b7d50df",
+      "src/engine/MidiTimelineSchedule.h": "bb7811e0bf7697f03c70ac3a3377efcc6a7f9e01507058598bba9df1083559e9",
+      "src/engine/RecordManager.cpp": "190df054ce1d388e7d1e661cd0ee10eed8d28886843b571e3f21b4715e3d4efb",
+      "src/engine/sfz/SfzProvider.cpp": "321cca8ba1f4100c6db08283e7c5289dfef5057d14198ed9864e4242ebc90079",
+      "src/ui/ChannelStripComponent.cpp": "a1f8f0f28ab89d8d7b992c804835c722360104f19d8ee7de3b78b2dbb332c969",
+      "src/ui/imgui/MasteringPhaseView.cpp": "7507acdc5daeabbd489748700a6910853484b4babfa4a33e6e343f03b2838622",
+      "src/ui/imgui/PianoRollView.cpp": "06880d7f3900b546108ce3f8bd643110ecf0d759dbc80973bebeee9c1ad4c872",
+      "src/ui/scenario/cases/gui_sfz_repository.cpp": "61a8a2daaf78829e7f0f8f1db0046ea5315b9ba7f20f4d0e8d4ab78277348a35",
+      "src/ui/scenario/cases/gui_piano_roll.cpp": "bda25cbbb45d4998944a8eee24c50dc0d310195dbfcdc760727eb66976a2470c",
+      "tests/sfz_provider.cpp": "00715dd664b07bb76a7c6400be6347b805866d73c44aaaafa19fbe499cced211",
+      "tests/midi_merge_playback.cpp": "6d353ba2930571a5506603040726aa3ea0c9070e931810c7ef4e0c89c4ea9d35",
+      "tests/midi_timeline_schedule.cpp": "e28f3454807195bf6432e42b41d44600aee02814c45d7e92165d5b024d7575c2",
+      "tests/record_midi_merge_capture.cpp": "d52a480ff44b5a136ab9ec480b52329cf11d702b3ebfbd9ccfb1a7ba53c07aec",
+      "tests/imgui_mastering_views.cpp": "b98d2e0c0c04821d3d3cc07290ca541164973533f8d29793e11bad4eacd724dc",
+      "MANUAL.md": "ac6e5e4ed4d6ada403296daf2895859cbab1e022320996188e31cfd9dee02ca0",
+      "CHANGELOG.md": "da6ade3d0b99683494cd9ad794e45dc1dffa77185cfe6b6c6c340a4d43b9ec2f",
+      "README.md": "dbcda691b20f7271c4b22816f7968f81c75671f1a49a43ed9080e6891250431e",
+      "tests/manual_coverage.tsv": "b4eb40a0913e8c211493b8e41216d16c007eac05211bb7b4861c30f2f4110b01",
+      "tests/multisample_loader.cpp": "eab96cc14874f4167a833d0c71eaa2290658ccb21d6a424a7efca58e88a189db",
+      "LICENSES.txt": "5073d8160a29026916de19ce946ddfd9aa429407ac25914a9ca9f04e6a263777",
+      "external/dusk-fizz/src/sfizz/sfizz_wrapper.cpp": "aa1ac56dba72d86aae78a0cfcfea8938d4ca7993087043a5cf4a7d82e10f346f",
+      "src/ui/imgui/DuskPanelWindow.h": "46a86019d2ad77ccbebeae2c3be8842f27f132f5b5da221aad18224ecf72a7c6",
+      "src/ui/imgui/DuskPanelWindow.cpp": "f530fbbf19b9f5029657b2aa123e8beab8ae9bae3c28e1acdbfcb6494b492b0b",
+      "src/ui/imgui/VirtualKeyboardView.cpp": "fcc3b9d40676bd8c19932935aa390ac2f2a6ef559acb57e966d1b40762801a27",
+      "src/ui/imgui/PianoRollView.h": "9893ae530516f2f74b16c474f8717190b6c908d62ab5250dcc908e463335b4f1",
+      "src/ui/MainComponent.cpp": "f8144f4378a0aab76731b2c83af73d2c99649da013b421efbda9cab0bc5bdd48",
+      "src/ui/scenario/cases/gui_mastering_bounce.cpp": "3bb9700a94b620f450624ed0acb51d7246581953c046d19d68a19eda4b5f9fbd",
+      "scripts/regress/mac/allow-prompts.js": "431f9e0c6f316d5d7a8ff6834161430c6966a8ba60d1bfc0c8852267121a3988",
+      "tests/mac_permission_prompts.js": "adcd8c3e43820b0fac6f115ca411383f4984228021cbd0f99b2424aaf2522146",
+      "CLAUDE.md": "0b0566bbd3609a4a40403042888343fb6cc7c7a1bc750a09f947dca1d471f17b",
+      "docs/MAINTAINER-GUIDE.md": "39e0aa1ec2b1ba63f79dd0f87ff32ec13e5457883e73b69ceb8c080153171bce"
+    },
+    "sampler_commit": "f92e07104495bbd645325ff62c1a6c8bae3ad428"
+  },
+  "issue_dispositions": {
+    "900": {
+      "status": "fixed, focused Linux engine scenarios passed",
+      "commits": [
+        "dd78768f"
+      ],
+      "proof": [
+        "900-before/output.log",
+        "900-final/output.log"
+      ],
+      "behavior": "Pending restore or replacement refuses all render starts before output, acceptance or holds; audible retry succeeds."
+    },
+    "901": {
+      "status": "fixed, focused Linux GUI scenarios passed",
+      "commits": [
+        "f5d38224",
+        "f28976e1"
+      ],
+      "proof": [
+        "901-before-final/output.log",
+        "901-after/output.log",
+        "901-superseded-before/output.log",
+        "901-superseded-after/output.log"
+      ],
+      "behavior": "One detailed alert after current restore requests settle; loading labels remain live; session or slot supersession excludes obsolete failures."
+    },
+    "902": {
+      "status": "fixed, focused Linux GUI scenarios passed",
+      "commits": [
+        "cf906f02"
+      ],
+      "proof": [
+        "902-before/output.log",
+        "902-after/output.log"
+      ],
+      "behavior": "Managed restoration uses the local resolved runtime without rewriting the foreign persisted fallback path; no false autosave, quit prompt or recovery, while real edits still prompt."
+    },
+    "903": {
+      "status": "fixed, focused unit tests passed",
+      "commits": [
+        "7b8716a6",
+        "b09c6f85"
+      ],
+      "proof": [
+        "903-before.log",
+        "903-final.log",
+        "903-credit-before.log",
+        "903-credit-final.log"
+      ],
+      "behavior": "Restricted spaced, wrapped or formatted CC declarations and explicit commercial-use prohibition are refused; genuine NC/ND author credits remain allowed. 629 assertions in three existing test cases."
+    },
+    "904": {
+      "status": "report contradicted by main source guard and new regression test; no product change",
+      "commits": [
+        "a263c3ee"
+      ],
+      "proof": [
+        "904-proof.log"
+      ],
+      "behavior": "Main 774d8419 and current RecordManager skip events with samplePos outside the take before tick clamping. New test checks shortened, zero and pre-start stops in both modes: 33 assertions."
+    },
+    "905": {
+      "status": "reproduced and fixed, focused unit and initial engine tests passed",
+      "commits": [
+        "ee0f39b7"
+      ],
+      "proof": [
+        "905-before.log",
+        "905-dense-before.log",
+        "905-final-focused.log",
+        "905-engine/output.log"
+      ],
+      "behavior": "Preallocated note/control indexes and conservative controller time-chunk bounds avoid repeated irrelevant scans at loop seams, retaining all event payloads. Tests cover 6000 and 60000 controls, partial consumption/wrapping, metadata reuse, overflow/recovery and narrow tempo-map windows with positive offset. 1324 assertions in three cases. Deep seeks into huge pending history remain subject to the documented fixed work budget."
+    },
+    "906": {
+      "status": "Original display-loss trigger unresolved; complete historical clean runs and latest failed test attempt retained separately.",
+      "proof": [
+        "owned-display-loss/output.log",
+        "owned-display-loss/exit.json",
+        "owned-display-loss/teardown.json",
+        "owned-display-loss-v2/output.log",
+        "owned-display-loss-v2/exit.json",
+        "owned-display-loss-v2/memory.jsonl",
+        "full-gui-gdb/output.log",
+        "full-gui-gdb/summary.json",
+        "full-gui-gdb/inventory-check.json",
+        "full-gui-gdb/child-exit.json",
+        "full-gui-gdb/memory.jsonl",
+        "full-gui-gdb/inferior-limits.txt",
+        "full-gui-gdb/xvfb.log",
+        "full-gui-gdb-labels/summary.json",
+        "full-gui-gdb-piano-release/summary.json"
+      ],
+      "findings": [
+        "Original hidden crash report contains XPending, _XEventsQueued, _XIOError and libc exit handling before exception termination.",
+        "No original Xvfb log survives; exact 8162114e executable unavailable for exact symbolication.",
+        "Later-binary address comparison suggests unfinished scenario cleanup during static destruction, which is an inference, not a proven original allocation site.",
+        "Original launcher was edited while running; this explains a later shell parse error/missing receipt, not the X11-loss trigger.",
+        "No journal/cgroup evidence of a host OOM kill; waveform allocation source audit found bounded buffers.",
+        "Controlled follow-up timeline run with only its private Xvfb terminated captured _XIOError followed by std::system_error (Invalid argument) during exit; this demonstrates an abnormal display-loss cleanup failure, not the original bad_alloc allocation.",
+        "A second controlled display-loss run captured _XIOError and stalled until its owned 120-second timeout (124); no bad_alloc caught. Owned inferior was confirmed exited. These failed injected runs are not clean GUI passes."
+      ]
+    },
+    "907": {
+      "status": "documentation and polish corrected, focused Linux GUI passed",
+      "commits": [
+        "b90b2e72"
+      ],
+      "proof": [
+        "907-phase-gui/output.log"
+      ],
+      "behavior": "Locked piano behavior and velocity caption documented, MIDI Bindings entry step corrected, changelog classifications/content aligned, keypad zoom restored, singular Note Properties corrected. Direct HTTPS/proxy/TLS/socket-wiring row honestly partial."
+    },
+    "899": {
+      "status": "local fixes reviewed; publication, required CI, merge and fresh merged-main release gates outstanding",
+      "proof": []
+    }
+  },
+  "separate_ui_review": {
+    "commits": [
+      "578d4a0d",
+      "8e054a2f",
+      "87b78abd"
+    ],
+    "findings_fixed": [
+      "Phase knob wheel also scrolled its child panel",
+      "macOS numeric-entry modifier hint incorrect"
+    ],
+    "proof": [
+      "phase-wheel-before.log",
+      "phase-wheel-after.log",
+      "907-phase-gui/output.log"
+    ],
+    "limits": [
+      "Source and automated interaction review; maintainer visual walkthrough still owed.",
+      "Historical Windows maximized-window cleanup failure remains retained; isolated and repeat passes do not explain it."
+    ]
+  },
+  "bookkeeping": {
+    "catch_cases": 1789,
+    "catch_source_files": 276,
+    "ctest_entries_linux": 1775,
+    "manual_behaviors": 641,
+    "manual_headings": 241,
+    "manual_status": {
+      "auto": 566,
+      "partial": 23,
+      "manual": 16,
+      "gap": 0,
+      "n/a": 36
+    },
+    "juce_files": 157,
+    "juce_uses": 6881
+  },
+  "linux": {
+    "main_build": {
+      "result": "pass",
+      "command": "cmake --build build -j6",
+      "new_warnings": 0,
+      "proof": "popup-wait-main-confirm.log"
+    },
+    "normal_ctest": {
+      "pass": 1775,
+      "fail": 0,
+      "skip": 0,
+      "proof": "prepush-allow-linux.log"
+    },
+    "sanitizer_source_commit": "f5ddf1bd3d327c58d993ff86bb5d3ce4b76364d2",
+    "sanitizer_source_limit": "Subsequent commits alter a GUI scenario, JavaScript tests/helper and documentation; the narrow unit targets have identical compiled sources.",
+    "asan_ubsan": {
+      "leak_enabled_pass": 1773,
+      "leak_enabled_seconds": 389.91,
+      "leak_disabled_safety_pass": 2,
+      "leak_disabled_seconds": 4.23,
+      "fail": 0,
+      "exceptions": [
+        "NativeInsertSlot identity-generation change intentionally retains an instance",
+        "ALSA wedged I/O teardown intentionally retains the device"
+      ]
+    },
+    "tsan": {
+      "pass": 1775,
+      "fail": 0,
+      "skip": 0,
+      "seconds": 174.99,
+      "suppression_file": "tools/tsan_suppressions.txt",
+      "exclusions": []
+    },
+    "full_gui_historical_clean": {
+      "source": "2fbe8057be64926d3b7c1d34ba5c1fa194d812ad",
+      "expected_cases": 271,
+      "passed": 269,
+      "failed": 0,
+      "skipped": 2,
+      "native_child": {
+        "child_status": 0
+      },
+      "debugger": {
+        "debugger_or_timeout_status": 0
+      },
+      "teardown": {
+        "launcher_status": 0,
+        "xvfb_alive_before_teardown": true,
+        "xvfb_wait_status": 0
+      },
+      "bad_alloc_caught": false,
+      "x11_io_failure_caught": false,
+      "memory_samples": 539,
+      "maxima": {
+        "VmRSS": 468056,
+        "VmHWM": 468056,
+        "VmSize": 2313568,
+        "VmPeak": 2313568,
+        "Threads": 156
+      },
+      "oom_events_first": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 680",
+      "oom_events_last": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 682",
+      "app_sha256": "beee9830125b560ea03662f5f04f4ea5eefe29e4f8360a3abd675928510f49d4",
+      "timeline_track_move": "[PASS] gui.timeline_track_move (21668 ms)"
+    },
+    "full_gui_latest_attempt": {
+      "source": "f5ddf1bd3d327c58d993ff86bb5d3ce4b76364d2",
+      "expected_cases": 271,
+      "passed": 268,
+      "failed": 1,
+      "skipped": 2,
+      "failures": [
+        "[FAIL] gui.mastering_compact_cover: the compressor preset popup never opened (6166 ms)"
+      ],
+      "native_child": {
+        "child_status": 1
+      },
+      "debugger": {
+        "debugger_or_timeout_status": 1
+      },
+      "teardown": {
+        "launcher_status": 1,
+        "xvfb_alive_before_teardown": true,
+        "xvfb_wait_status": 0
+      },
+      "bad_alloc_caught": false,
+      "x11_io_failure_caught": false,
+      "memory_samples": 515,
+      "maxima": {
+        "VmRSS": 460752,
+        "VmHWM": 460752,
+        "VmSize": 2227384,
+        "VmPeak": 2313556,
+        "Threads": 139
+      },
+      "oom_events_first": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 691",
+      "oom_events_last": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 692",
+      "app_sha256": "25763ac954c1521e1d858309287b70b03fde82c1e3807ca2b54ea911266a9ce9",
+      "timeline_track_move": "[PASS] gui.timeline_track_move (21615 ms)"
+    },
+    "latest_gui_followup": "The sole full-run failure was asynchronous popup setup in gui.mastering_compact_cover. Commit 7b39e4ae waits for actual popup/panel state. This is not a claim that the entire latest GUI inventory ran clean.",
+    "normal_slow_native_followup": {
+      "pass": 3,
+      "fail": 0,
+      "skip": 0,
+      "native_child": {
+        "child_status": 0
+      },
+      "teardown": {
+        "launcher_status": 0,
+        "xvfb_alive_before_teardown": true,
+        "xvfb_wait_status": 0
+      }
+    },
+    "asan_gui_focused_followup": {
+      "pass": 3,
+      "fail": 0,
+      "skip": 0,
+      "native_child": {
+        "child_status": 0
+      },
+      "teardown": {
+        "launcher_status": 0,
+        "xvfb_alive_before_teardown": true,
+        "xvfb_wait_status": 0
+      }
+    },
+    "asan_whole_app_attempt": {
+      "source_commit": "f5ddf1bd3d327c58d993ff86bb5d3ce4b76364d2",
+      "app_sha256": "558bea12296fdbdf1afbed850cded92cbce8642e2dce0a1c664ce2b463c9414c",
+      "engine": {
+        "pass": 6,
+        "fail": 0
+      },
+      "timeline": {
+        "pass": 10,
+        "fail": 0
+      },
+      "controls": {
+        "pass": 15,
+        "fail": 2
+      },
+      "sanitizer_diagnostics": false,
+      "failures": [
+        "gui.piano_viewport exceeded its existing deadline while several validation workloads ran; focused quiet rerun passed without source changes",
+        "gui.mastering_compact_cover read asynchronous popup/panel transitions too early; corrected by 7b39e4ae"
+      ],
+      "limit": "Failed combined controls run remains a failure; focused follow-up passed all three cases without sanitizer diagnostics. App integration leak detection was disabled; the unit suite used the explicit leak policy above."
+    }
+  },
+  "mac": {
+    "source_commit": "3f8fb3ab27abdbfa0e1596027b0d76acdcfc80c0",
+    "cross_driver_seconds": 66.2,
+    "ctest": {
+      "pass": 1719,
+      "fail": 0,
+      "skip": 2,
+      "total": 1721,
+      "seconds": 53.24,
+      "skips": [
+        "case-distinct publication license aliases",
+        "case-distinct installed-tree aliases"
+      ]
+    },
+    "focused": {
+      "cases": 11,
+      "assertions": 2136
+    },
+    "native_au": {
+      "cases": 5,
+      "assertions": 493
+    },
+    "engine_clap": {
+      "pass": 1,
+      "fail": 0,
+      "skip": 0
+    },
+    "gui": {
+      "pass": 20,
+      "fail": 0,
+      "skip": 0,
+      "receipt": {
+        "source": "3f8fb3ab27abdbfa0e1596027b0d76acdcfc80c0",
+        "app_sha256": "122f843fdc0fddd81f2c7c5c4b726f30ffafdf4f4f39b76108c1e7b43995a47c",
+        "pid": 98852,
+        "native_exit": 0,
+        "foreground_samples": [
+          {
+            "second": 2,
+            "stdout": "",
+            "stderr": "{\"pid\":98852,\"bundle\":\"audio.dusk.studio\"}\n"
+          },
+          {
+            "second": 9,
+            "stdout": "",
+            "stderr": "{\"pid\":98852,\"bundle\":\"audio.dusk.studio\"}\n"
+          },
+          {
+            "second": 15,
+            "stdout": "",
+            "stderr": "{\"pid\":98852,\"bundle\":\"audio.dusk.studio\"}\n"
+          },
+          {
+            "second": 30,
+            "stdout": "",
+            "stderr": "{\"pid\":98852,\"bundle\":\"audio.dusk.studio\"}\n"
+          },
+          {
+            "second": 45,
+            "stdout": "",
+            "stderr": "{\"pid\":98852,\"bundle\":\"audio.dusk.studio\"}\n"
+          },
+          {
+            "second": 60,
+            "stdout": "",
+            "stderr": "{\"pid\":98852,\"bundle\":\"audio.dusk.studio\"}\n"
+          },
+          {
+            "second": 75,
+            "stdout": "",
+            "stderr": "{\"pid\":98852,\"bundle\":\"audio.dusk.studio\"}\n"
+          },
+          {
+            "second": 90,
+            "stdout": "",
+            "stderr": "{\"pid\":98852,\"bundle\":\"audio.dusk.studio\"}\n"
+          },
+          {
+            "second": 105,
+            "stdout": "",
+            "stderr": "{\"pid\":98852,\"bundle\":\"audio.dusk.studio\"}\n"
+          }
+        ],
+        "error": null,
+        "activation_requests": [
+          {
+            "second": 2,
+            "stdout": "",
+            "stderr": "{\"pid\":98852,\"activated\":true}\n",
+            "status": 0
+          },
+          {
+            "second": 9,
+            "stdout": "",
+            "stderr": "{\"pid\":98852,\"activated\":true}\n",
+            "status": 0
+          }
+        ],
+        "binary_unchanged": true
+      }
+    },
+    "app_sha256": "122f843fdc0fddd81f2c7c5c4b726f30ffafdf4f4f39b76108c1e7b43995a47c",
+    "tests_sha256": "8acaf5d9d818dd0a18ec5b26a1132d324cd732b56518586888069262220a8fb6",
+    "configuration_limit": "Native LV2 disabled in the dedicated local configuration; this is not complete shipping-configuration validation."
+  },
+  "windows": {
+    "source_commit": "3f8fb3ab27abdbfa0e1596027b0d76acdcfc80c0",
+    "cross_driver_seconds": 205.1,
+    "asio_required": true,
+    "ctest": {
+      "pass": 1705,
+      "fail": 0,
+      "skip": 5,
+      "total": 1710,
+      "seconds": 151.04,
+      "skips": [
+        "ZIP unavailable-input/corrupt-input distinction",
+        "case-distinct publication license aliases",
+        "case-distinct installed-tree aliases",
+        "disconnected relocation destination",
+        "replacement relocation destination with copied marker"
+      ]
+    },
+    "focused": {
+      "cases": 11,
+      "assertions": 2136
+    },
+    "native_vst3": [
+      {
+        "cases": 2,
+        "assertions": 280
+      },
+      {
+        "cases": 4,
+        "assertions": 37
+      }
+    ],
+    "engine_clap": {
+      "pass": 1,
+      "fail": 0,
+      "skip": 0
+    },
+    "gui": {
+      "pass": 20,
+      "fail": 0,
+      "skip": 0,
+      "receipt": {
+        "exit": 0,
+        "error": null,
+        "foreground_samples": [
+          {
+            "second": 2,
+            "process": 6832,
+            "validation_app_is_foreground": false,
+            "window": 327868
+          },
+          {
+            "second": 9,
+            "process": 5020,
+            "validation_app_is_foreground": true,
+            "window": 7537630
+          }
+        ],
+        "app_session": 1,
+        "launcher_session": 1,
+        "app_pid": 5020
+      }
+    },
+    "focused_engine": {
+      "pass": 6,
+      "fail": 0,
+      "skip": 0,
+      "receipt": {
+        "native_exit": 0,
+        "app_sha256": "642b1bcc1e795831bd83a01c05e3b660443287dde7f404b529c20f229754fc7b",
+        "source": "3f8fb3ab27abdbfa0e1596027b0d76acdcfc80c0",
+        "pid": 6072
+      }
+    },
+    "app_sha256": "642b1bcc1e795831bd83a01c05e3b660443287dde7f404b529c20f229754fc7b",
+    "tests_sha256": "6f51e698715acccc0223231b2ed0865b214347121d21ff5e785c6a6b447ab803",
+    "configuration_limit": "GUI used verified Mesa software OpenGL on the VM; physical-device and shipping CI checks remain separate."
+  },
+  "prepush": {
+    "source_commit": "3f8fb3ab27abdbfa0e1596027b0d76acdcfc80c0",
+    "result": "regress prepush: OK",
+    "temporary_mac_branch": "regress-3f8fb3ab",
+    "github_push": false,
+    "mac_previous_checkout_restored": true,
+    "limits": [
+      "macOS foreground GUI is skipped by prepush; separately validated above",
+      "macOS native LV2 and Linux-only cases skipped where unavailable",
+      "performance suite and release-metadata/ruleset/freshness gates not requested by prepush"
+    ]
+  },
+  "sampler_label_lifetime": {
+    "status": "Fixed and reviewed; focused regression, sanitizer units and native GUI checks passed. Earlier failed attempts remain retained.",
+    "main_commit": "2fbe8057be64926d3b7c1d34ba5c1fa194d812ad",
+    "sampler_commit": "f92e07104495bbd645325ff62c1a6c8bae3ad428",
+    "sampler_branch": "fix/label-text-lifetime",
+    "before_sampler": "51600e9f7f1ebde24b7b2915da4d78dec19b27c6",
+    "defect": "Both C label text getters copied their vector then returned a c_str into the destroyed temporary. GUI ASan caught getControlCcLabels while opening a relinked editor. Two const-reference bindings retain synth-owned text.",
+    "proof_before": [
+      "asan-gui-before-label-fix/output.log",
+      "sfizz-labels-before-final.log"
+    ],
+    "proof_after": [
+      "sfizz-labels-after.log",
+      "sfizz-labels-ctest.log",
+      "sfizz-labels-contracts-committed.log"
+    ],
+    "focused_assertions": 26,
+    "focused_cases": 1,
+    "normal_linux_ctest": {
+      "pass": 1775,
+      "fail": 0,
+      "seconds": 33.31
+    },
+    "manual_sync": "Internal memory-lifetime fix with existing UI behavior; MANUAL requires no change. CHANGELOG, README counts and all 15 sampler license revisions updated.",
+    "hygiene": "Both staged diffs reviewed before local commits; no added comments, Unicode typography, debug code or new abstraction.",
+    "relation_to_906": "Separate proven memory bug; original X11-loss trigger in #906 remains unexplained."
+  },
+  "piano_chord_followup": {
+    "commits": [
+      "7556b19b",
+      "f5ddf1bd"
+    ],
+    "status": "Fixed and reviewed; final Linux sanitizer units and Mac/Windows native checks passed.",
+    "cause": "Two different defects: the scenario fence observed raw events before the keyboard six-frame sounding-note release, and step recording decremented accepted held notes for rejected note-offs regardless of source identity.",
+    "fix": "Scenario completion waits for all held keyboard sources to release. Step recording keeps accepted held counts per pitch and original MIDI channel; MainComponent preserves the source channel. Keyboard close clears every count. Existing stored-note channel remains 1.",
+    "regressions": "Production-view checks cover rejected-note releases, overlapping accepted pitches, all-released advance and identical pitches on different channels. Three piano cases passed in the final Mac/Windows GUI groups and final ASan controls group.",
+    "manual_sync": "Internal chord accounting restores existing MANUAL Step record promise; no control, shortcut, default, range or schema change. CHANGELOG updated.",
+    "hygiene": "Full staged diff and Codex read-only review passed before each local commit; no unused code, narrative comments, new Unicode source typography or attribution.",
+    "proof": [
+      "piano-rejected-release-before/output.log",
+      "piano-channel-before/output.log",
+      "piano-channel-after/output.log",
+      "piano-channel-after/child-exit.json",
+      "asan-piano-distinct-pitch/output.log",
+      "asan-piano-distinct-pitch/child-exit.json"
+    ]
+  },
+  "popup_synchronization_followup": {
+    "commit": "7b39e4ae",
+    "scope": "GUI test synchronization only",
+    "change": "Bounded prerequisites observe popup creation and completion of pending native-panel closure before resizing or asserting. Assertions, delays and deadlines are not relaxed.",
+    "validation": "Three native cases at 100ms frames and three focused ASan cases pass; corrected compact-cover case also passes on Mac and Windows."
+  },
+  "permission_automation": {
+    "commit": "3f8fb3ab",
+    "helper": "scripts/regress/mac/allow-prompts.js",
+    "authorization": "Maintainer explicitly requested automatic Allow selection for future testing; standing scope recorded in AGENTS instructions.",
+    "scope": "Only the owned, sole Dusk Studio validation process, exact executable and bundle identity; English microphone/removable-volume requests with exact Allow button.",
+    "policy_checks": {
+      "permission_scope": 18,
+      "process_ownership": 5,
+      "process_exit": 2
+    },
+    "native_preflight": "Accessibility and System Events available; exited-process probe passed.",
+    "live_confirmation": {
+      "pid": 98852,
+      "source": "3f8fb3ab27abdbfa0e1596027b0d76acdcfc80c0",
+      "requests": {
+        "98852.3": {
+          "service": "kTCCServiceMicrophone",
+          "prompt": "2026-10-19 15:22:18.428 Df tccd[3230:17e7d20] [com.apple.TCC:access] AUTHREQ_PROMPTING: msgID=98852.3, service=kTCCServiceMicrophone, subject=Sub:{audio.dusk.studio}Resp:{TCCDProcess: identifier=audio.dusk.studio, pid=98852, auid=501, euid=501, binary_path=/Users/marc/dusk-386-current/build-prepush-tests/DuskStudio_artefacts/Release/DuskStudio.app/Contents/MacOS/DuskStudio},",
+          "results": [
+            "2026-10-19 15:22:18.872 Df tccd[3230:17e7d20] [com.apple.TCC:access] AUTHREQ_RESULT: msgID=98852.3, authValue=2, authReason=2, authVersion=1, desired_auth=0, error=(null),"
+          ],
+          "auth_values": [
+            2
+          ]
+        },
+        "462.1000": {
+          "service": "kTCCServiceSystemPolicyRemovableVolumes",
+          "prompt": "2026-10-19 15:23:10.174 Df tccd[3230:17e9818] [com.apple.TCC:access] AUTHREQ_PROMPTING: msgID=462.1000, service=kTCCServiceSystemPolicyRemovableVolumes, subject=Sub:{audio.dusk.studio}Resp:{TCCDProcess: identifier=audio.dusk.studio, pid=98852, auid=501, euid=501, binary_path=/Users/marc/dusk-386-current/build-prepush-tests/DuskStudio_artefacts/Release/DuskStudio.app/Contents/MacOS/DuskStudio},",
+          "results": [
+            "2026-10-19 15:23:10.862 Df tccd[3230:17e9818] [com.apple.TCC:access] AUTHREQ_RESULT: msgID=462.1000, authValue=2, authReason=2, authVersion=1, desired_auth=0, error=(null),"
+          ],
+          "auth_values": [
+            2
+          ]
+        }
+      },
+      "automatic_actions": [
+        {
+          "action": "allow",
+          "service": "microphone",
+          "pid": 98852,
+          "executable": "/Users/marc/dusk-386-current/build-prepush-tests/DuskStudio_artefacts/Release/DuskStudio.app/Contents/MacOS/DuskStudio"
+        },
+        {
+          "action": "allow",
+          "service": "removable-volumes",
+          "pid": 98852,
+          "executable": "/Users/marc/dusk-386-current/build-prepush-tests/DuskStudio_artefacts/Release/DuskStudio.app/Contents/MacOS/DuskStudio"
+        }
+      ],
+      "handler_exit": {
+        "status": 0
+      },
+      "app_native_exit": 0
+    },
+    "system_policy_changes": "None; normal permission buttons were clicked. No TCC database edits, resets or bypasses.",
+    "future_testing": "Use alongside the owned foreground Mac GUI runner as documented in docs/MAINTAINER-GUIDE.md; standing agent instructions preserve this approval across rebuilds."
+  },
+  "remaining_release_gates": [
+    "Maintainer walkthrough on Linux, macOS and Windows, including first-second export listening and Phase/SFZ/settings UI (#886).",
+    "Required sanitizer CI after publication; local sanitizer execution and enabled native checks do not replace shipping CI.",
+    "Publish and review the branch, required checks and Codex review, merge, then fresh release dry run and packaged regressions on final main (#899).",
+    "Live Musical Artifacts on macOS remains service-blocked; no bypass.",
+    "SFZ library umbrella #804 and reader-performance acceptance #870 remain open with their evidence limits.",
+    "Tag/version bump/release flow require maintainer authorization; version remains 0.15.1.",
+    "Publish reviewed sampler fork commit f92e0710 before parent branch CI can fetch its new submodule pin; neither repository has been pushed.",
+    "Resolve the original X11 display-loss trigger or explicitly adjudicate the remaining #906 gap; clean later runs do not establish its root cause."
+  ],
+  "manual_sync": "MANUAL updated for render refusal/loading alerts, Phase modifier and piano/settings corrections. MIDI scan indexes and generation filtering restore existing behavior without new controls/defaults/schema, so those internal fixes require no extra manual wording. The alert-wait follow-up changes only GUI test synchronization; the documented loading-alert behavior remains accurate and requires no edit. Sampler text lifetime and accepted-note accounting restore documented behavior. Popup synchronization and permission automation are test tooling; maintainer instructions updated, with no new product controls to document.",
+  "hygiene": "Entire staged diffs reviewed before local commits, including this evidence record; no attribution, dead code, narrative source comments, speculative shims or new Unicode source typography.",
+  "publication": {
+    "main_checkpoint": "774d8419",
+    "github_changes_posted": false,
+    "root_branch": "fix/016-release-review",
+    "sampler_branch": "fix/label-text-lifetime",
+    "required_order": "Publish the reviewed sampler commit before root-branch CI fetches its pin. Explicit push approval remains required."
+  },
+  "retained_artifact_sha256": {
+    "build/validation-016-followup/900-before/output.log": "b0839d912838202f7f31ea45e4db8535d585ed8c9dbd948a9fa1234942bdbc23",
+    "build/validation-016-followup/900-final/output.log": "56b6d577eeb18d5fd5ae1fb0284c3591a3bd445973545432e9083614515c6458",
+    "build/validation-016-followup/901-after/output.log": "cb3a8649fcda8170518a1162b5f204dbda05d248742875fcbd9749ca9a5c5637",
+    "build/validation-016-followup/901-before-final/output.log": "18ee42912765309ddfb65355bba176f432232191b563fc0669e8bea19245afdb",
+    "build/validation-016-followup/901-superseded-after/output.log": "9de977713fd0b493ce5ce650e485be71582be2f9db49e6b7782b33f838500c1c",
+    "build/validation-016-followup/901-superseded-before/output.log": "3cf8abfbf47b82e5bfda4cf9ce067cb1da88fb525073aba64dc103c9fd1a0f93",
+    "build/validation-016-followup/902-after/output.log": "413cdbd10bc6dd739effd4fde3fb8507bed8c6ccdb6000ab6f051f687ae5e4f8",
+    "build/validation-016-followup/902-before/output.log": "5b569d80b09a61463796be5732f096cee29592595a230997d73572ff277e37b8",
+    "build/validation-016-followup/903-before.log": "c5c48ce768154b07ba4b62d36cdebf98988191d549461622d6745f036470acd8",
+    "build/validation-016-followup/903-credit-before.log": "fbdfaefba68f930a91b4d6dce0d29aa7e8bcc59d59727147a0376404b586be96",
+    "build/validation-016-followup/903-credit-final.log": "fb3a5db980abfa4478807c7f146d54256d31a35ebe31b4c4dda22183ca204679",
+    "build/validation-016-followup/903-final.log": "2683815e14a06ac4bbb2c7dcf59a6f314826836e63680b55c9baeab38f6f88fb",
+    "build/validation-016-followup/904-proof.log": "88e573ba530a2d615bf4a8254821902d52a6ff00cab30a8956a886243f92c0da",
+    "build/validation-016-followup/905-before.log": "8fff38e58d2b88dd58670657efa8e24c5acb11125dbaa9dd5c9d2c0cfb1f7d07",
+    "build/validation-016-followup/905-dense-before.log": "6abcf0dbb674836ecd50af42a66d1a7a7e8c35dc4c2f5bcf2c3e92e983e40cbd",
+    "build/validation-016-followup/905-engine/output.log": "9012d5bb058166913f757e2efdabad81ccfb414c249cb646ef57ba36011fd901",
+    "build/validation-016-followup/905-final-focused.log": "9c2c9a8cc7a99c785b3d67aa1a2d01e2ce0f2e089b708f12242538b161f2fbab",
+    "build/validation-016-followup/907-phase-gui/output.log": "318956ee9a5a6ed5cb9ae643ce24f2b60e8ed2cbbd79a8f9a79035052f3a4c27",
+    "build/validation-016-followup/allow-source.json": "f9420ae197863db1dd763189005768050a44d222f4d3f09c70032a4c833d0fd5",
+    "build/validation-016-followup/asan-app-piano-release-run.json": "33bce137b042db25544492aca558675618a5fb94bab77f57f20c0a25589ecce6",
+    "build/validation-016-followup/asan-gui-before-label-fix/output.log": "570ed23a3146c9e2c8a8c0ab93132e2acf54e295a4b78656d2fa9db0be8e7b8a",
+    "build/validation-016-followup/asan-piano-distinct-pitch/child-exit.json": "72ffd1b2704e90435d7d63f22169b5173a0265dc4617546d5167addfe65f5312",
+    "build/validation-016-followup/asan-piano-distinct-pitch/output.log": "0fbfa32b19c105adaf8da96e9b420071f51c3fe2445dc242606423e65ba667d0",
+    "build/validation-016-followup/asan-piano-release-engine/child-exit.json": "72ffd1b2704e90435d7d63f22169b5173a0265dc4617546d5167addfe65f5312",
+    "build/validation-016-followup/asan-piano-release-engine/exit.json": "ead61968b1ab2c26a266d01546eea828c77a169952b946b39aad90c824dc6117",
+    "build/validation-016-followup/asan-piano-release-engine/output.log": "203bd5db3e2737ebf39fc35f0d60fb2496a45eb2bc4c07949f8f7d4a05f8a423",
+    "build/validation-016-followup/asan-piano-release-engine/teardown.json": "8abf375ea10558e1f2f0ab7eaf9061d3a5e4ab61c80145927b58bdfe57b84bd1",
+    "build/validation-016-followup/asan-piano-release-engine/xvfb.log": "08b85afd1599440aaecfc4319b8080b6da8a5e9b067be6dea62f71f979701a84",
+    "build/validation-016-followup/asan-piano-release-gui-controls/child-exit.json": "7de90a8766ccb2d276e85315b52046f9c2eaf30b00db537eb1fd1c4c0b6e33a5",
+    "build/validation-016-followup/asan-piano-release-gui-controls/exit.json": "f6bd746db1abf79fceeebccc2438a89c7f70f2d0d7c3eb55f53a6377db39b35e",
+    "build/validation-016-followup/asan-piano-release-gui-controls/output.log": "3108ff650cc32cc58deed6922ebc3b7b0adf308acfae44d6aaa8170bbf619a29",
+    "build/validation-016-followup/asan-piano-release-gui-controls/teardown.json": "a76b0028329b4eb68203437f4c0b9d9812c7e73c6f6cead527b7316b599d0540",
+    "build/validation-016-followup/asan-piano-release-gui-controls/xvfb.log": "08b85afd1599440aaecfc4319b8080b6da8a5e9b067be6dea62f71f979701a84",
+    "build/validation-016-followup/asan-piano-release-gui-timeline/child-exit.json": "72ffd1b2704e90435d7d63f22169b5173a0265dc4617546d5167addfe65f5312",
+    "build/validation-016-followup/asan-piano-release-gui-timeline/exit.json": "ead61968b1ab2c26a266d01546eea828c77a169952b946b39aad90c824dc6117",
+    "build/validation-016-followup/asan-piano-release-gui-timeline/output.log": "e682362c206c38a35270269897062af37136dc3b1ccad0cc273d2257338e9c41",
+    "build/validation-016-followup/asan-piano-release-gui-timeline/teardown.json": "8abf375ea10558e1f2f0ab7eaf9061d3a5e4ab61c80145927b58bdfe57b84bd1",
+    "build/validation-016-followup/asan-piano-release-gui-timeline/xvfb.log": "08b85afd1599440aaecfc4319b8080b6da8a5e9b067be6dea62f71f979701a84",
+    "build/validation-016-followup/full-gui-gdb-labels/binary-sha256.txt": "f2bf5a6bbe5096c43756dd23147c54f20e987c887f273273251f77fdfa454ead",
+    "build/validation-016-followup/full-gui-gdb-labels/child-exit.json": "72ffd1b2704e90435d7d63f22169b5173a0265dc4617546d5167addfe65f5312",
+    "build/validation-016-followup/full-gui-gdb-labels/exit.json": "63d1acb94d4b8a8262c6204007a570bd25e086c444b54e44ec63fc725335da31",
+    "build/validation-016-followup/full-gui-gdb-labels/inferior-limits.txt": "d09cf7fb780122eff41c6aacfe1b44445162ee03e50c03a4cf25dfb7fb198268",
+    "build/validation-016-followup/full-gui-gdb-labels/inventory-check.json": "b53dd6a33f441f9bc4968993841a14a64a5980df899f581eca04fa2cd7cbc53b",
+    "build/validation-016-followup/full-gui-gdb-labels/memory.jsonl": "ce11de6f77e2e14ee4c940a775ca36bcf689e931bb905761ae91f24f6e9933aa",
+    "build/validation-016-followup/full-gui-gdb-labels/output.log": "7c3d2c4b864f2709905e32e086f25ae5e0fee71cfdb6c41bb17d358429a740e6",
+    "build/validation-016-followup/full-gui-gdb-labels/source.txt": "96c39551f83dee15c68b0df1ad1bf1bebf486e39629e4cfd76c77f4da81ab363",
+    "build/validation-016-followup/full-gui-gdb-labels/summary.json": "a8d606f6879e56d4604d1a2b9a88e65c9cffb7ec20cebe9c8d3b4c910a66eecf",
+    "build/validation-016-followup/full-gui-gdb-labels/teardown.json": "8abf375ea10558e1f2f0ab7eaf9061d3a5e4ab61c80145927b58bdfe57b84bd1",
+    "build/validation-016-followup/full-gui-gdb-labels/working-tree.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "build/validation-016-followup/full-gui-gdb-labels/xvfb.log": "3f80f4f692c1b70d1a5d7d47d7366108e2c6889297b74bd12f2c7822b340e333",
+    "build/validation-016-followup/full-gui-gdb-piano-release/binary-sha256.txt": "c57540d8441a7546095d4e03f393776953e04d3e59d8c9f8f99808e8aa285e3d",
+    "build/validation-016-followup/full-gui-gdb-piano-release/child-exit.json": "7de90a8766ccb2d276e85315b52046f9c2eaf30b00db537eb1fd1c4c0b6e33a5",
+    "build/validation-016-followup/full-gui-gdb-piano-release/exit.json": "efa3069c69a4e92afed512dd494e34dbb151db5ac105dfbabf9f44e14b729b82",
+    "build/validation-016-followup/full-gui-gdb-piano-release/inferior-limits.txt": "d09cf7fb780122eff41c6aacfe1b44445162ee03e50c03a4cf25dfb7fb198268",
+    "build/validation-016-followup/full-gui-gdb-piano-release/inventory-check.json": "dc9a59cf791ee006f80d26966c06fdb6723a78d5642c96253c6a8501f1c394cd",
+    "build/validation-016-followup/full-gui-gdb-piano-release/memory.jsonl": "c8121b732e062ca12f4a84c1fd85a9a1070a3cc2481f4d6cfa47853283939810",
+    "build/validation-016-followup/full-gui-gdb-piano-release/output.log": "00fe19c43254a0341b7578f09eac50816a353d5d59c5fcebe5b3ff52bf74e052",
+    "build/validation-016-followup/full-gui-gdb-piano-release/source.txt": "620c4948caa4965cc33e31fb9a6ee0ae51359ae6860b74e73129b75be6e65a6d",
+    "build/validation-016-followup/full-gui-gdb-piano-release/summary.json": "b564b4c397aa5d0aa36e0c0b66ba50091909ba18dac64c2c7293030fa4c751bc",
+    "build/validation-016-followup/full-gui-gdb-piano-release/teardown.json": "a76b0028329b4eb68203437f4c0b9d9812c7e73c6f6cead527b7316b599d0540",
+    "build/validation-016-followup/full-gui-gdb-piano-release/working-tree.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "build/validation-016-followup/full-gui-gdb-piano-release/xvfb.log": "3f80f4f692c1b70d1a5d7d47d7366108e2c6889297b74bd12f2c7822b340e333",
+    "build/validation-016-followup/full-gui-gdb/child-exit.json": "72ffd1b2704e90435d7d63f22169b5173a0265dc4617546d5167addfe65f5312",
+    "build/validation-016-followup/full-gui-gdb/inferior-limits.txt": "d09cf7fb780122eff41c6aacfe1b44445162ee03e50c03a4cf25dfb7fb198268",
+    "build/validation-016-followup/full-gui-gdb/inventory-check.json": "b53dd6a33f441f9bc4968993841a14a64a5980df899f581eca04fa2cd7cbc53b",
+    "build/validation-016-followup/full-gui-gdb/memory.jsonl": "075467a3bb8ef964a22f24c62ab5963a0570d550a082100ae741500354459099",
+    "build/validation-016-followup/full-gui-gdb/output.log": "0a622aa23579d3dcda1657603823178beaef94868211c62d1452062852897237",
+    "build/validation-016-followup/full-gui-gdb/summary.json": "39467fba4c7a58d4d2d7e3571d4d476af4740baa5084c315cb0006093e3d89b0",
+    "build/validation-016-followup/full-gui-gdb/xvfb.log": "3f80f4f692c1b70d1a5d7d47d7366108e2c6889297b74bd12f2c7822b340e333",
+    "build/validation-016-followup/harnesses/cross-alert-wait.sh": "0ceafc6f23d1c122f878a74f6326a9791c314b30adf13a107cc3fbe439f712b2",
+    "build/validation-016-followup/harnesses/cross-allow.sh": "6882dec977e2be6c583f93c480478dd4052067baf521d100ff2a190c83d9276d",
+    "build/validation-016-followup/harnesses/cross-final.sh": "01566410713302227de51aa2bdd7833208de1a4c21535e7ae69c75be820107fd",
+    "build/validation-016-followup/harnesses/cross-labels.sh": "cc81639862e9551c5230bdaa170263e549b7417ccb103d27688c3b87a5b1ac90",
+    "build/validation-016-followup/harnesses/cross-piano-release.sh": "542062adc078ae413b79960752aa67e7daf071814fb24113d15257d421fdf446",
+    "build/validation-016-followup/harnesses/cross.sh": "509a5410493111cca1cec923a21b7c325ef9ae0e21c240e6a9225d0dc60783c9",
+    "build/validation-016-followup/harnesses/engine-mac-final.py": "56db347fd080a1336ab46daeb12656b7c2302f4a755cc5e6cc242f5277cad33e",
+    "build/validation-016-followup/harnesses/engine-win-alert-wait.ps1": "f2d365e5625c80dfca0adec3375cb91b1d567d3a0eee88dde706c7f8ab38aecb",
+    "build/validation-016-followup/harnesses/engine-win-allow.ps1": "fd5b64f967b312db7cb42d7420fae51fcaa6667a9b535a084f0731e7e45d1c41",
+    "build/validation-016-followup/harnesses/engine-win-labels.ps1": "66e4065cf3e70fd46e121201c51335eac88fb82d91cd6908004790a83df5f59b",
+    "build/validation-016-followup/harnesses/engine-win-piano-release.ps1": "2f9b1ecfe6d49b0c0e24fde5f75ab5891aac65f8bcdb44f5d312ea0a292aa252",
+    "build/validation-016-followup/harnesses/engine-win.ps1": "e42692676eaca73e7e3eb212a917273c7e48e6bd364527586b130a740a7447f0",
+    "build/validation-016-followup/harnesses/finalize-evidence.py": "b9b87ea3dc735a96d23e907be6dd9c37398529f0c0caaf1e53b4f30a2ff34f6a",
+    "build/validation-016-followup/harnesses/full-gui-gdb-labels.sh": "e0f1d69e6b0caf93e68956351c51810d0e1c178393b51b52523e945c3ec4428b",
+    "build/validation-016-followup/harnesses/full-gui-gdb-piano-release.sh": "b8a1c4cee3d54f55b345e902874acd9d170b351d36e6d74fc13d4bfcda7ca8e1",
+    "build/validation-016-followup/harnesses/full-gui-gdb.sh": "2447cddb63dd314b99dab295620d0595c94f88fb3874f4e38756dc0e3d2418f1",
+    "build/validation-016-followup/harnesses/gui-mac-alert-wait.sh": "ee59f9f87b83ff0fd584335375d9e1ab09130658c71c9f40519e4955b3e1c60c",
+    "build/validation-016-followup/harnesses/gui-mac-allow.sh": "0954ceac5f59f38a8d05d8d578e211c2146fed6651575f1118be741b420866fd",
+    "build/validation-016-followup/harnesses/gui-mac-final.sh": "59f5f590b61d721d04bc33663bf4a59bec88f666cb756bfd20f379cd5eced08c",
+    "build/validation-016-followup/harnesses/gui-mac-foreground.sh": "adf21bd85cec94b3fe44e8e332ac4fc62ee4cc05fb5998257cd419a6530f2730",
+    "build/validation-016-followup/harnesses/gui-mac-labels.sh": "3e46bdc0f592e1f3edebf79025e67b8d75e4a32767100c1cd8b789397e770189",
+    "build/validation-016-followup/harnesses/gui-mac-piano-release.sh": "7563d99d857fd29a7a40e3c659fbad1fb4e4472567742da75c9d5e58cae89559",
+    "build/validation-016-followup/harnesses/gui-win-alert-wait.ps1": "29fe7455315e16cc194f7f6c094d127ef4a0eccbb47e640acd5c717855273cb0",
+    "build/validation-016-followup/harnesses/gui-win-allow.ps1": "989fca680bc0ae864fcb31a7bfd6ebf09bbb0417b571280a15678f7a9c627a44",
+    "build/validation-016-followup/harnesses/gui-win-labels.ps1": "29fe7455315e16cc194f7f6c094d127ef4a0eccbb47e640acd5c717855273cb0",
+    "build/validation-016-followup/harnesses/gui-win-piano-release.ps1": "989fca680bc0ae864fcb31a7bfd6ebf09bbb0417b571280a15678f7a9c627a44",
+    "build/validation-016-followup/harnesses/gui-win.ps1": "29fe7455315e16cc194f7f6c094d127ef4a0eccbb47e640acd5c717855273cb0",
+    "build/validation-016-followup/harnesses/hold-x11-child-status.py": "9f36ebbc7cd5e4d1f298c5b9f18e4119bd6ee0cde3c7e0f1fe431136e6a42b65",
+    "build/validation-016-followup/harnesses/mac-allow-confirm.py": "0d95fd0f416482f506e58718a28bc38aba2c4061d00d20239af463c1e0738d1a",
+    "build/validation-016-followup/harnesses/mac-allow-lifecycle-probe.js": "9351712fb18e1c6a7b75b4a0ce5089afd5868db0bfc78b3b1f700e0715e3edce",
+    "build/validation-016-followup/harnesses/mac-allow-progress.py": "1d2025bff5ddcae0b3436a9ac0631607421661661621dd57ef850bbf055f7b58",
+    "build/validation-016-followup/harnesses/mac-piano-release-progress.py": "79faadfd31963526b47177aaf10b298193bcc4ac553013c4b5666ec0cddccff7",
+    "build/validation-016-followup/harnesses/memory-sampler.py": "033aceba0bd9b033a1de83bec72e14b0e8bda87d037458777d0b887f6df32e6f",
+    "build/validation-016-followup/harnesses/owned-display-loss-v2.sh": "50fa68bc141413d0a58e94f210ec95ae90746942833594f58bd46ac57e51d829",
+    "build/validation-016-followup/harnesses/owned-display-loss.sh": "03aca244b91927869bf62d5b20b08239e2ab755a93066c821229fb683f1fa295",
+    "build/validation-016-followup/harnesses/run-asan-app-labels-split.py": "c97044d9a16657bfc947f4da853e14dea3ee68ed963ded9c9927ae60ef718bc2",
+    "build/validation-016-followup/harnesses/run-asan-app-labels.py": "00402219d904c1445776804423a34cac56da5fdab5fe097a62d76b99e57685eb",
+    "build/validation-016-followup/harnesses/run-asan-app-piano-release.py": "f8b1e1e3eb77f0422ad75b06abe86195b5120f74eea4824d25d8fa0ef4a65ae4",
+    "build/validation-016-followup/harnesses/run-asan-app.py": "4a7d8738d526db67d29029550560d9f2b8551d987293b5a393945774c4e2a845",
+    "build/validation-016-followup/harnesses/run-asan-scenarios-budgeted.sh": "f0449d03223ff1fa4c62bde01c2ecd1df84a047c08799dcc84614d67ffeaaf05",
+    "build/validation-016-followup/harnesses/run-asan-scenarios.sh": "5ce70474e42023a0b67c39f622662bf70747ae23baab31bb3ab3b1c7992a4c37",
+    "build/validation-016-followup/harnesses/run-asan-tests-piano-release.sh": "67d2de68bc5de21d0df0d4abe1d85f87dce635d961a8b33192057c87d84ce720",
+    "build/validation-016-followup/harnesses/run-asan-tests.sh": "eadb9da06936f12dee2ab600595146204b024195a5416817a0f5acd5e3cf9fce",
+    "build/validation-016-followup/harnesses/stage-mac-alert-wait.sh": "51f59c6fb19f8373af2af30cea5645c80db2b1a044dacfcd80551858ddfb3411",
+    "build/validation-016-followup/harnesses/stage-mac-allow.sh": "907c41fc3707a82dd320cfdc1e527de60609775883ae52615e8c94877fe8a9f2",
+    "build/validation-016-followup/harnesses/stage-mac-final.sh": "f9dad1d3d8bc797b7190228a227c042fdcd1f4c7bfb72920fc012749123dc02b",
+    "build/validation-016-followup/harnesses/stage-mac-labels.sh": "49c7e8eace29323b3618d0cf531f05c2b372f640754c6198da5aedbf0e3d1f88",
+    "build/validation-016-followup/harnesses/stage-mac-piano-release.sh": "31ad765d5995d901c6eb660b4fbeea69f80a511adf5c80fdd863930341e2b074",
+    "build/validation-016-followup/harnesses/stage-mac.sh": "7dfce83b1b60cc83a8594feec6666b9872fdb3238f9959bb6f86ff7cc836e934",
+    "build/validation-016-followup/harnesses/stage-win-alert-wait.ps1": "4056f8fb989356ebe0b9227c3a325c4fa034f6031a4ead6af7b3e435358b5cd4",
+    "build/validation-016-followup/harnesses/stage-win-allow.ps1": "f3fab2b48fbb0a3bba39de59a1f365b22a62af4187be331f5063e10d3074c278",
+    "build/validation-016-followup/harnesses/stage-win-final.ps1": "f22ed218bae0fb96245f829c918dbdabe123da804f5cf8b4cdae451160920f6f",
+    "build/validation-016-followup/harnesses/stage-win-labels.ps1": "2c0cd202381440245b88e792e97bc28e5f70d408810d1ba70d049c423b1b28a1",
+    "build/validation-016-followup/harnesses/stage-win-piano-release.ps1": "5b823e43028257e81c9ece55ded06acef5fced1806fef6210b553596e5064676",
+    "build/validation-016-followup/harnesses/stage-win.ps1": "074a8eca88d6508f459e7e66439ac7808f2d9215e8b77ce229debd35a31ee709",
+    "build/validation-016-followup/harnesses/write-evidence.py": "5e2025fe6007f46e7457ced67c4992c679f305be7ec9e561183e939dcd498fa2",
+    "build/validation-016-followup/labels-source.json": "64f2194f3b7f9e182eb8fc996a92a637b0bf8cb90c27a6302dbdb42737cccf10",
+    "build/validation-016-followup/mac-allow-confirmation.log": "b4bb6346515ad4a6ddf38c65dac5dd69e41612e8b290c8d3abe2aca0640ea9d3",
+    "build/validation-016-followup/mac-allow-cross.log": "ad5607ee6c663b848322b0cb3e786d0dd705f2a2e2045a27999456849e80a208",
+    "build/validation-016-followup/mac-allow-gui.log": "9093d11d002bdef296289616e33f5e4bfd8d2128ca78d3c7f951fb6844f004d0",
+    "build/validation-016-followup/mac-allow-helper-preflight.log": "1002deb0ed011f868968e338f6d3ed924b3a98598074198dfe66b3b0cfc73047",
+    "build/validation-016-followup/mac-allow-lifecycle-probe-fixed.log": "7517d594efbf8332c600dae9174f43e5c85fd0545025c5a1a9e5dad9e1749877",
+    "build/validation-016-followup/mac-allow-lifecycle-probe.log": "6016088f27015b630ae4101559b6c01f6bda8168016536a10a72a81841d18940",
+    "build/validation-016-followup/mac-allow-native-proof.tar": "53603b9f1c7dde26425281ff379cb858df719bdd718aff212bc8bb84d29c2fdd",
+    "build/validation-016-followup/mac-allow-policy-tests.log": "10332468edd23b1cd766e4cb9d1dac602ff58bc6e8b64a27bdf3368bc389c2d8",
+    "build/validation-016-followup/mac-allow-progress-1.log": "57ccb47093754f5c94da8d532d44491d72133aff232497f551ab0e257f165ae8",
+    "build/validation-016-followup/mac-allow-progress-2.log": "d168d1d8d25ffa855254caadaa9b549f7f5147052f25aee6802d04b15134cbc2",
+    "build/validation-016-followup/mac-allow-stage.log": "f6196f052bf0b6d13d179a57edf72176efe9967cfecff8016340ae1889f2af2d",
+    "build/validation-016-followup/owned-display-loss-v2/exit.json": "90effd1a10ed48f59e62f52e7355c8865630de718bf5b4277b7d23b3d40203ed",
+    "build/validation-016-followup/owned-display-loss-v2/memory.jsonl": "b76d25939bee23874beef6712ad91014ac9e2504b3a8da98aa6c5f1a951992fb",
+    "build/validation-016-followup/owned-display-loss-v2/output.log": "fca34d3c2901e730b23c64105636dd8a806535b8d58966b2b4bfc5b7423282bf",
+    "build/validation-016-followup/owned-display-loss/exit.json": "efa3069c69a4e92afed512dd494e34dbb151db5ac105dfbabf9f44e14b729b82",
+    "build/validation-016-followup/owned-display-loss/output.log": "3541db09c971e410468039417bc36723a37c8faaeaf4dea198a5eeea9b40e7cf",
+    "build/validation-016-followup/owned-display-loss/teardown.json": "3eeebece99e943ffd202574d6a6a2b115d4d2a771de2714c730ad802b63a40e1",
+    "build/validation-016-followup/phase-wheel-after.log": "f9a9d96a3693eb60d62f57cf978a0fc6ae6b77826813dfa0b2e628e84bf72d88",
+    "build/validation-016-followup/phase-wheel-before.log": "bdbaff2cb8a7da3e9cc19cf3506977fa5e73a33af2c2f3d4ff343ede301c734f",
+    "build/validation-016-followup/piano-channel-after/child-exit.json": "72ffd1b2704e90435d7d63f22169b5173a0265dc4617546d5167addfe65f5312",
+    "build/validation-016-followup/piano-channel-after/output.log": "83cf4d14bc4ccadbc8be96e690e59ddaede2fef722a42a7938432627ae16dab1",
+    "build/validation-016-followup/piano-channel-before/output.log": "ce3c1e43d3396ab46054818a3632be0c2e179c17dfbd82cb645666a821ba1d0f",
+    "build/validation-016-followup/piano-rejected-release-before/output.log": "13f9513ae81b97f2379bb8280dc4530a939e66c5533f20d20b189e757cbc5973",
+    "build/validation-016-followup/piano-release-after-build.log": "f7a8eff5638a79248d0587b0f18307a30d1c32e12e5d7a82d4ef5237190e519e",
+    "build/validation-016-followup/piano-release-asan-build.log": "8583cd65eb3523d3a924611a9630b0a87b310513cdaa87aee1174728141b539c",
+    "build/validation-016-followup/piano-release-asan-ctest-exit.json": "7684da4c6886361c17c3ca48fd3f302aad54d3829628d5e8ca89f4d8c80ec726",
+    "build/validation-016-followup/piano-release-asan-ctest-leaks.log": "2cddca4ad2edf6b897a2bdf57fd9bac3005dc8c7fe713d664021ebe2f44e8394",
+    "build/validation-016-followup/piano-release-asan-ctest-safety-leaks.log": "31dda0cd407bc81ca0365cc353161628dd90ad544f20af8ebaff83b7fd2060d4",
+    "build/validation-016-followup/piano-release-asan-unit-build.log": "d586c65dbf1a0b8ade63a6574ba30c37dfaba84025a48f4d17a993a11dcc4e31",
+    "build/validation-016-followup/piano-release-before-build.log": "0eb5976801ade23ef22668763c220f2683539fb0b83edc50c66d1b783ba0cf67",
+    "build/validation-016-followup/piano-release-source.json": "7d000a0c4881a0ff1e4178b4fc5e6110e94aea163de969e415f990fcf071f622",
+    "build/validation-016-followup/piano-release-tsan-build.log": "74fe1af05a785a5ba496593bc377122af7828e219e33f4ae3ed0590e416ee5c2",
+    "build/validation-016-followup/piano-release-tsan-ctest.log": "cde767d2809d0aafc70425647fb8c17f37c2c3879e3f868f37b6e324de4cc548",
+    "build/validation-016-followup/popup-wait-asan-build.log": "1d95a1c76299393790f0ce8e60c44468c0c9b499d903adb8fdd8e9aac91aa723",
+    "build/validation-016-followup/popup-wait-asan-focused-launch.log": "479fbe058263835899c58ccdc9d6469e7beb3939dec72d4a7607f06583173f61",
+    "build/validation-016-followup/popup-wait-asan-focused/child-exit.json": "72ffd1b2704e90435d7d63f22169b5173a0265dc4617546d5167addfe65f5312",
+    "build/validation-016-followup/popup-wait-asan-focused/exit.json": "ead61968b1ab2c26a266d01546eea828c77a169952b946b39aad90c824dc6117",
+    "build/validation-016-followup/popup-wait-asan-focused/output.log": "fd6f0b7a6c21b99078781f2a216569ad5eea012b6a06c38530aa27e2979ede49",
+    "build/validation-016-followup/popup-wait-asan-focused/teardown.json": "8abf375ea10558e1f2f0ab7eaf9061d3a5e4ab61c80145927b58bdfe57b84bd1",
+    "build/validation-016-followup/popup-wait-asan-focused/xvfb.log": "3f80f4f692c1b70d1a5d7d47d7366108e2c6889297b74bd12f2c7822b340e333",
+    "build/validation-016-followup/popup-wait-main-build.log": "66c34323fd29314fe58944931e7d78557537a16428fc94d1a52937654af5d11e",
+    "build/validation-016-followup/popup-wait-main-confirm.log": "c78391558783409153f47199cb164fc4f7b6ee8175d656cfda034065f05708af",
+    "build/validation-016-followup/popup-wait-slow-native-launch.log": "cf49f929d039d6d67134f42c83ebc1220e36a40c517f3a22ee6305179da84a3f",
+    "build/validation-016-followup/popup-wait-slow-native/child-exit.json": "72ffd1b2704e90435d7d63f22169b5173a0265dc4617546d5167addfe65f5312",
+    "build/validation-016-followup/popup-wait-slow-native/exit.json": "ead61968b1ab2c26a266d01546eea828c77a169952b946b39aad90c824dc6117",
+    "build/validation-016-followup/popup-wait-slow-native/output.log": "fa72af4f9d12c875a236a547ab05ecbe9982b8652d36cf803d28a1a8c785dd13",
+    "build/validation-016-followup/popup-wait-slow-native/teardown.json": "8abf375ea10558e1f2f0ab7eaf9061d3a5e4ab61c80145927b58bdfe57b84bd1",
+    "build/validation-016-followup/popup-wait-slow-native/xvfb.log": "3f80f4f692c1b70d1a5d7d47d7366108e2c6889297b74bd12f2c7822b340e333",
+    "build/validation-016-followup/prepush-allow-linux.log": "f3e687aa3d77d09a2f7bb0266e77fc848e7c3737e47ecdfb2709a6f923772cee",
+    "build/validation-016-followup/prepush-allow-mac.log": "c419d723753bb4453880a74d0e487f40bae995c1ca7c40f99a93ef5d34e6540c",
+    "build/validation-016-followup/prepush-allow.log": "7891dfb629886ff9874ccbe0e80163e020d9c3d9a427d4bd2f8fcdd522726d4d",
+    "build/validation-016-followup/readiness-allow.bundle": "0d893b407f02f64060eb8e075691be18e2ec5426b49d93c08a0d5589901e1f09",
+    "build/validation-016-followup/readiness-labels.bundle": "0d941f362f8e4c7a591c54e4874705b6b1ad5114493a53f802449460d0aa7e04",
+    "build/validation-016-followup/readiness-piano-release.bundle": "be137adc29715e48310c9bee2184651d11cd2e7598f6b60f41a8dc6f1e00aafe",
+    "build/validation-016-followup/sampler-labels.bundle": "464c29c33c4852e889ba8db78e79602fbf34f843d4e444c3ed5d01ff5a7d33ab",
+    "build/validation-016-followup/sfizz-labels-after.log": "e2287921646509b0a1bde8c26747065678a2a6ac619fc1a2b638d672ae0b5e63",
+    "build/validation-016-followup/sfizz-labels-before-final.log": "cbbdcd8ed4e9c934655c674cb17455fd335417b0ccc68d88ebc7eeb778b6062d",
+    "build/validation-016-followup/sfizz-labels-contracts-committed.log": "136f05e92dd050d8b51cc927a96cbbe85a0ceed11c5382c7219aa943354a0b82",
+    "build/validation-016-followup/sfizz-labels-ctest.log": "3685771a69891f2f473f455a1ea0d61f8aca7473c11fee7f8ea88bdf005c566e",
+    "build/validation-016-followup/windows-allow-cross.log": "9d75bd0910f20af980bb0891dc516d3c69323a0d483e3740fe894ca9fd2075ed",
+    "build/validation-016-followup/windows-allow-engine.log": "ad0b3bba056c751ae2a5655c1ed44ae679cb15352b2e74e2231327aea99c2f36",
+    "build/validation-016-followup/windows-allow-gui.log": "ac33f4e9c241f3859cf6e52e22005c60e291787b51b8e699b89cab884b62e1f6",
+    "build/validation-016-followup/windows-allow-native-engine-proof.tar": "636bcb632007400626b407fa2da6562b87c1e7bc1fdc9a099cac0e001769eb6d",
+    "build/validation-016-followup/windows-allow-native-gui-proof.tar": "28e2d0b0ba51e3c88439a845bbba32632c1d74c7254d4e1cd0002800449fe2ba",
+    "build/validation-016-followup/windows-allow-stage.log": "741f5251e2b6e6a1c8b47147abc9228e8085c969b865363262e8679053e5c452"
+  }
+}
