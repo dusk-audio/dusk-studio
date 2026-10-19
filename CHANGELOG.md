@@ -91,6 +91,8 @@ canonical source.
 
 ### Fixed
 
+- **Autosave recovery during shutdown.** Recovery actions retain their session
+  paths if the dialog is destroyed immediately while message posting is stopped.
 - **Empty LV2 state.** Saving a plug-in with no state properties avoids an
   invalid memory operation in the bundled LV2 library.
 - **Step-record chords.** Releasing a note rejected by a locked region keeps

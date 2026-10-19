@@ -563,9 +563,9 @@ public:
         cancelButton  .setColour (juce::TextButton::buttonColourId,  juce::Colour (0xff2a2a30));
         cancelButton  .setColour (juce::TextButton::textColourOffId, juce::Colour (0xffe0e0e0));
 
-        recoverButton.onClick = [this] { if (onRecover) onRecover(); };
-        loadButton   .onClick = [this] { if (onLoad)    onLoad();    };
-        cancelButton .onClick = [this] { if (onCancel)  onCancel();  };
+        recoverButton.onClick = [this] { const auto action = onRecover; if (action) action(); };
+        loadButton   .onClick = [this] { const auto action = onLoad;    if (action) action(); };
+        cancelButton .onClick = [this] { const auto action = onCancel;  if (action) action(); };
 
         addAndMakeVisible (recoverButton);
         addAndMakeVisible (loadButton);
@@ -4469,7 +4469,7 @@ bool MainComponent::answerRecoveryPrompt (int choice)
 {
     auto* prompt = dynamic_cast<AutosaveRecoveryDialog*> (recoveryModal.getBody());
     if (prompt == nullptr) return false;
-    auto& press = choice == 0 ? prompt->onRecover
+    const auto press = choice == 0 ? prompt->onRecover
                 : choice == 1 ? prompt->onLoad
                               : prompt->onCancel;
     if (press) press();
