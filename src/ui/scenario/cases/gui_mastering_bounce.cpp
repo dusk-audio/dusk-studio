@@ -806,7 +806,10 @@ std::optional<ScenarioResult> runMasteringCompactCover (GuiHost& host, ScenarioC
         ctx.expect (! host.modalStackEmpty(), "wide resize dismissed the file browser");
         ctx.expect (host.masteringPanelsOpen() == 0, "resizing with zero hide tokens opened native children above the browser");
         ctx.expect (host.pressPeerKey ("escape"), "the file browser did not accept Escape");
-    } });
+    }, [&host]
+    {
+        return ! host.modalStackEmpty() && ! host.masteringModulePickerShown() && host.masteringPanelsOpen() == 0;
+    }, "wide layout did not settle beneath the file browser" });
     steps->push_back ({ 200, [&host, &ctx]
     { ctx.expect (host.clickMasteringButton ("Load mix..."), "second Load mix was unavailable"); },
                        [&host] { return host.modalStackEmpty() && host.masteringPanelsOpen() == 3; },
@@ -820,13 +823,19 @@ std::optional<ScenarioResult> runMasteringCompactCover (GuiHost& host, ScenarioC
         ctx.expect (host.masteringModulePickerShown() && host.masteringPanelsOpen() == 0,
                     "compact resize reopened a covered child");
         ctx.expect (host.pressPeerKey ("escape"), "the second file browser did not accept Escape");
-    } });
+    }, [&host]
+    {
+        return ! host.modalStackEmpty() && host.masteringModulePickerShown() && host.masteringPanelsOpen() == 0;
+    }, "compact layout did not settle beneath the file browser" });
     steps->push_back ({ 400, [&host, &ctx]
     {
         ctx.expect (host.masteringModuleIndex() == 1 && host.masteringPanelsOpen() == 0,
                     "closing the cover re-showed unselected compact modules");
         ctx.expect (host.clickMasteringModulePicker(), "module picker did not return");
-    }, [&host] { return host.modalStackEmpty(); }, "the second cover never closed" });
+    }, [&host]
+    {
+        return host.modalStackEmpty() && host.masteringModulePickerShown() && host.masteringPanelsOpen() == 0;
+    }, "the second cover never closed in the compact layout" });
     steps->push_back ({ 100, [&host, &ctx]
     {
         ctx.expect (host.pressPeerKey ("end", 0), "compact Phase choice was unavailable");
@@ -845,10 +854,9 @@ std::optional<ScenarioResult> runMasteringCompactCover (GuiHost& host, ScenarioC
                        [&host] { return host.masteringPanelsOpen() == 3; }, "wide native children did not return" });
     steps->push_back ({ 300, [&host, &ctx, height]
     {
-        ctx.expect (! host.modalStackEmpty(), "the compressor preset popup never opened");
         ctx.expect (host.masteringPanelsOpen() == 3, "opening the preset popup closed an uncovered panel");
         ctx.expect (host.resizeMainWindow (1040, height), "could not narrow beneath the preset popup");
-    } });
+    }, [&host] { return ! host.modalStackEmpty(); }, "the compressor preset popup never opened" });
     steps->push_back ({ 400, [&host, &ctx]
     {
         ctx.expect (! host.modalStackEmpty(), "narrowing dismissed the preset popup");
