@@ -72,6 +72,56 @@ MidiMergePlayback pendingLoop (std::int64_t length)
 }
 } // namespace
 
+TEST_CASE ("dense pending MIDI controls do not exhaust the loop-seam note budget",
+           "[midi][schedule][merge][issue-905]")
+{
+    const int controlCount = GENERATE (6000, 60000);
+    auto pending = pendingLoop (4000000);
+    pending.pushEvent (1, 0, 0x90, 60, 100);
+    for (int i = 0; i < controlCount; ++i)
+        pending.pushEvent (1, 50 * (i + 1), 0xd0, (std::uint8_t) (i & 127), 0);
+    pending.pushEvent (1, 3500000, 0x80, 60, 0);
+    pending.publishProgress (1, 4000000, true);
+    int controls = 0, payloadScans = 131072;
+    bool intact = true;
+    REQUIRE (pending.forEachControl ({}, 2, payloadScans, [&] (const MidiCc& control)
+    {
+        intact &= control.statusByte() == 0xd0 && control.value == (controls & 127)
+            && control.atTick == controls + 1;
+        ++controls;
+        return true;
+    }));
+    REQUIRE (controls == controlCount);
+    REQUIRE (intact);
+    Timeline timeline;
+    midischedule::PendingCapture overlay;
+    overlay.playback = &pending;
+    overlay.playbackPass = 2;
+    int scans = 32768;
+    REQUIRE (overlay.locateTarget (*timeline.published, 0, 4000000, kRate, kBpm, scans));
+    std::vector<Event> events;
+    REQUIRE (timeline.play (0, 1, true, events, scans, &overlay) == midischedule::Outcome::complete);
+    REQUIRE (events.size() == 1);
+    CHECK (events.front().status == 0x90);
+    CHECK (events.front().data1 == 60);
+    midischedule::NoteCount sounding, held;
+    sounding.hear (events.front().status, events.front().data1, events.front().data2);
+    events.clear();
+    scans = 32768;
+    REQUIRE (midischedule::releaseStranded (*timeline.published, nullptr, kRate, kBpm, 1,
+        scans, sounding, held, [&events] (std::uint8_t status, std::uint8_t key, std::uint8_t value, std::int64_t at)
+        { events.push_back ({ status, key, value, at }); return true; }, &overlay) == midischedule::Outcome::complete);
+    REQUIRE (timeline.play (1, 2, false, events, scans, &overlay) == midischedule::Outcome::complete);
+    CHECK (events.empty());
+    CHECK (sounding.total == 1);
+    scans = 32768;
+    REQUIRE (timeline.play (3500000, 3500001, false, events, scans, &overlay) == midischedule::Outcome::complete);
+    REQUIRE (events.size() == 1);
+    CHECK (events.front().status == 0x80);
+    CHECK (events.front().data1 == 60);
+    CHECK (events.front().at == 3500000);
+}
+
 TEST_CASE ("pending MIDI Merge reaches the next pass within a block or a latency window",
            "[midi][schedule][merge]")
 {
@@ -238,9 +288,10 @@ TEST_CASE ("pending MIDI uses the merge target's rounded origin and mute policy"
 }
 
 TEST_CASE ("pending and committed MIDI Merge share tempo-map origins and event timing",
-           "[midi][schedule][merge][tempo]")
+           "[midi][schedule][merge][tempo][issue-905]")
 {
     constexpr std::int64_t start = 36000, length = 48000;
+    const std::int64_t targetStart = GENERATE (60017, 0);
     TempoMap map;
     map.setPoints ({ { 0, 120.0f }, { 48000, 60.0f } });
     const auto origin = map.samplesToTicks (start, kRate);
@@ -252,9 +303,9 @@ TEST_CASE ("pending and committed MIDI Merge share tempo-map origins and event t
     pending.pushEvent (1, 24000, 0x80, 60, 0);
     pending.publishProgress (1, length, true);
     MidiRegion target;
-    target.timelineStart = 60017;
-    target.lengthInTicks = 480;
-    target.lengthInSamples = 47983;
+    target.timelineStart = targetStart;
+    target.lengthInTicks = targetStart == 0 ? 1920 : 480;
+    target.lengthInSamples = targetStart == 0 ? 144000 : 47983;
     target.notes.push_back ({ 1, 64, 80, 0, 120 });
     auto timeline = buildMidiTimeline ({ target });
     midischedule::PendingCapture overlay;
@@ -262,20 +313,25 @@ TEST_CASE ("pending and committed MIDI Merge share tempo-map origins and event t
     overlay.playbackPass = 2;
     int scans = 32768;
     REQUIRE (overlay.locateTarget (*timeline, start, start + length, kRate, kBpm, scans, &map));
-    const auto play = [&] (const auto* capture)
+    if (targetStart == 0) CHECK (overlay.offsetTicks > 0);
+    const auto play = [&] (const auto* capture, std::int64_t from, std::int64_t to, bool chased)
     {
         std::vector<Event> events;
         midischedule::ControllerChase chase;
         REQUIRE (midischedule::scheduleSpan (*timeline, &map, kRate, kBpm,
-            { start, 120000, false }, scans, chase,
+            { from, to, chased }, scans, chase,
             [&] (std::uint8_t s, std::uint8_t d1, std::uint8_t d2, std::int64_t at)
-            { events.push_back ({ s, d1, d2, start + at }); return true; }, capture)
+            { events.push_back ({ s, d1, d2, from + at }); return true; }, capture)
             == midischedule::Outcome::complete);
         std::stable_sort (events.begin(), events.end(),
                           [] (const auto& a, const auto& b) { return a.at < b.at; });
         return events;
     };
-    const auto before = play (&overlay);
+    const auto before = play (&overlay, start, 120000, false);
+    std::vector<std::vector<Event>> pendingWindows;
+    for (const auto at : { 53999, 54000, 54001 })
+        for (const bool chased : { false, true })
+            pendingWindows.push_back (play (&overlay, at, at + 1, chased));
     MidiRegion pass;
     pass.lengthInTicks = 600;
     pass.notes.push_back ({ 1, 60, 100, 120, 240 });
@@ -283,8 +339,8 @@ TEST_CASE ("pending and committed MIDI Merge share tempo-map origins and event t
     const midischedule::RegionClock clock (&map, kRate, kBpm, target.timelineStart);
     REQUIRE (mergeMidiPassAt (target, pass, start, clock).changed);
     timeline = buildMidiTimeline ({ target });
-    const auto after = play ((const midischedule::PendingCapture*) nullptr);
-    REQUIRE (before.size() == 5);
+    const auto after = play ((const midischedule::PendingCapture*) nullptr, start, 120000, false);
+    REQUIRE (before.size() == (targetStart == 0 ? 3 : 5));
     REQUIRE (after.size() == before.size());
     for (std::size_t i = 0; i < before.size(); ++i)
     {
@@ -295,6 +351,17 @@ TEST_CASE ("pending and committed MIDI Merge share tempo-map origins and event t
     }
     CHECK (before[0].at == 42000);
     CHECK (before[1].at == 54000);
+    std::size_t window = 0;
+    for (const auto at : { 53999, 54000, 54001 })
+        for (const bool chased : { false, true })
+        {
+            const auto committed = play ((const midischedule::PendingCapture*) nullptr, at, at + 1, chased);
+            const auto& pendingWindow = pendingWindows[window++];
+            REQUIRE (committed.size() == pendingWindow.size());
+            for (std::size_t i = 0; i < committed.size(); ++i)
+                CHECK (std::tie (committed[i].status, committed[i].data1, committed[i].data2, committed[i].at)
+                    == std::tie (pendingWindow[i].status, pendingWindow[i].data1, pendingWindow[i].data2, pendingWindow[i].at));
+        }
 }
 
 TEST_CASE ("MIDI Merge target selection follows current mapped duration after a tempo edit",

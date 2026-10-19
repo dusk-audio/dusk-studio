@@ -353,8 +353,8 @@ struct PendingCapture
         return ! done && outcome == Outcome::complete ? Outcome::scanBudgetSpent : outcome;
     }
 
-    template <typename Visit>
-    Outcome controls (int& scans, Visit&& visit) const noexcept
+    template <typename Visit, typename Overlaps>
+    Outcome controls (int& scans, Visit&& visit, Overlaps&& overlaps) const noexcept
     {
         if (playback == nullptr) return Outcome::complete;
         auto outcome = Outcome::complete;
@@ -363,6 +363,9 @@ struct PendingCapture
             control.atTick += offsetTicks;
             outcome = visit (control);
             return outcome == Outcome::complete;
+        }, [&] (std::int64_t first, std::int64_t last) noexcept
+        {
+            return overlaps (first + offsetTicks, last + offsetTicks);
         });
         return ! done && outcome == Outcome::complete ? Outcome::scanBudgetSpent : outcome;
     }
@@ -597,6 +600,9 @@ Outcome scheduleSpan (const MidiTimeline& timeline,
                     (std::uint8_t) control.controller, (std::uint16_t) control.value, control.kind };
             }
             return Outcome::complete;
+        }, [&] (std::int64_t first, std::int64_t) noexcept
+        {
+            return captureClock.at (first) <= span.start;
         });
         if (capturedControls != Outcome::complete) return capturedControls;
     }
@@ -658,6 +664,9 @@ Outcome scheduleSpan (const MidiTimeline& timeline,
                     return Outcome::complete;
                 return emit (control.statusByte(), control.dataByte1(), control.dataByte2(), at - span.start)
                     ? Outcome::complete : Outcome::eventRefused;
+            }, [&] (std::int64_t first, std::int64_t last) noexcept
+            {
+                return captureClock.at (last) >= span.start && captureClock.at (first) < span.end;
             });
         };
         bool captured = capture.playback == nullptr;
