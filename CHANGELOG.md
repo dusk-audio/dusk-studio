@@ -91,6 +91,9 @@ canonical source.
 
 ### Fixed
 
+- **LV2 instrument classification.** The fallback host refreshes embedded LV2
+  definitions before discovery so instruments retain their MIDI-track identity
+  on computers without system LV2 definitions.
 - **Windows LV2 folders.** Scanning, loading and saving LV2 plug-ins use Unicode
   file paths, including plug-ins inside custom folders with accented names.
 - **Autosave recovery during shutdown.** Recovery actions retain their session

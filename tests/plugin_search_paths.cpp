@@ -206,6 +206,7 @@ TEST_CASE ("Nested custom LV2 bundles prime the parent scanner and fresh scan ch
     std::string error;
     REQUIRE (paths::save (roots, error));
     juce::LV2PluginFormat format;
+    duskstudio::juce_compat::initializeLv2Format (format);
     duskstudio::juce_compat::primeCustomLv2 (format, roots);
     juce::KnownPluginList known;
     juce::PluginDirectoryScanner scanner (known, format,
@@ -219,6 +220,7 @@ TEST_CASE ("Nested custom LV2 bundles prime the parent scanner and fresh scan ch
     CHECK (fixture->numInputChannels == 1);
     CHECK (fixture->numOutputChannels == 1);
     juce::LV2PluginFormat fresh;
+    duskstudio::juce_compat::initializeLv2Format (fresh);
     duskstudio::juce_compat::primeCustomLv2 (fresh, paths::load());
     juce::OwnedArray<juce::PluginDescription> descriptions;
     fresh.findAllTypesForFile (descriptions, uri);
@@ -251,10 +253,12 @@ TEST_CASE ("Nested custom LV2 bundles prime the parent scanner and fresh scan ch
     fs::copy (fs::u8path (DUSKSTUDIO_MIDI_PROBE_LV2_FIXTURE_PATH),
               bundle.parent_path() / "Runtime.lv2", fs::copy_options::recursive);
     juce::LV2PluginFormat runtimeFormat;
+    duskstudio::juce_compat::initializeLv2Format (runtimeFormat);
     duskstudio::juce_compat::primeCustomLv2 (runtimeFormat, roots);
     juce::OwnedArray<juce::PluginDescription> runtimeDescriptions;
     runtimeFormat.findAllTypesForFile (runtimeDescriptions, "urn:duskstudio:test:midi-probe");
     REQUIRE (runtimeDescriptions.size() == 1);
+    CHECK (runtimeDescriptions[0]->isInstrument);
     duskstudio::ipc::RemotePluginConnection connection;
     REQUIRE (connection.connect (DUSKSTUDIO_PLUGIN_HOST_PATH, "--ipc-host", error));
     int inputs = 0, outputs = 0, latency = 0;
@@ -269,6 +273,7 @@ TEST_CASE ("Nested custom LV2 bundles prime the parent scanner and fresh scan ch
     format.findAllTypesForFile (retained, uri);
     CHECK (retained.size() == 1);
     juce::LV2PluginFormat restarted;
+    duskstudio::juce_compat::initializeLv2Format (restarted);
     duskstudio::juce_compat::primeCustomLv2 (restarted, paths::load());
     juce::OwnedArray<juce::PluginDescription> removed;
     restarted.findAllTypesForFile (removed, uri);
