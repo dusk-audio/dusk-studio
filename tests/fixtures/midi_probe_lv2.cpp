@@ -99,7 +99,7 @@ const LV2_Descriptor descriptor {
 };
 } // namespace
 
-extern "C" LV2_SYMBOL_EXPORT
+LV2_SYMBOL_EXPORT
 const LV2_Descriptor* lv2_descriptor (uint32_t index)
 {
     return index == 0 ? &descriptor : nullptr;
