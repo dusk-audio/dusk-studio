@@ -99,7 +99,7 @@ std::string waveBytes()
     return bytes;
 }
 
-std::string zipBytes (const std::string& root)
+std::string zipBytes (const std::string& root, const std::string& first = "One", const std::string& second = "Two")
 {
     std::string bytes (128 * 1024, '\0');
     std::size_t written = 0;
@@ -114,8 +114,8 @@ std::string zipBytes (const std::string& root)
         { "Instruments/Two.sfz", "<region> sample=../Samples/tone.wav key=61\n" },
         { "Mappings/One.sfz", "<global> volume=-3\n" },
         { "Fixture.bank.xml", "<?xml version=\"1.0\"?><Key/><AriaBank>"
-            "<AriaProgram name=\"One\"><AriaElement path=\"Instruments/One.sfz\"/></AriaProgram>"
-            "<AriaProgram name=\"Two\"><AriaElement path=\"Instruments/Two.sfz\"/></AriaProgram></AriaBank>" },
+            "<AriaProgram name=\"" + first + "\"><AriaElement path=\"Instruments/One.sfz\"/></AriaProgram>"
+            "<AriaProgram name=\"" + second + "\"><AriaElement path=\"Instruments/Two.sfz\"/></AriaProgram></AriaBank>" },
         { "Samples/tone.wav", waveBytes() }
     };
     for (const auto& member : members)
@@ -538,14 +538,14 @@ void pushStart (std::vector<Step>& steps, GuiHost& host, ScenarioContext& ctx, c
     steps.push_back ({ 0, [&host, &ctx, state]
     {
         ctx.expect (state->transport->requests.load() == 0, "opening Installed started an HTTP request");
-        ctx.expect (! host.sfzLibraryPointer (kStripIndex, "preview", 0.5f, false), "All instruments displayed a placeholder image in Installed");
-    } });
+    }, [&host] { return host.sfzLibraryPointer (kStripIndex, "preview-category-collection", 0.5f, false); },
+    "Installed did not display the instrument library overview", {}, kSettleBoundMs });
     pushClick (steps, host, ctx, "online-tab");
     steps.push_back ({ 0, [&host, &ctx, state]
     {
         ctx.expect (state->transport->requests.load() == 0, "opening Online started an HTTP request");
-        ctx.expect (! host.sfzLibraryPointer (kStripIndex, "preview", 0.5f, false), "All instruments displayed a placeholder image in Online");
-    } });
+    }, [&host] { return host.sfzLibraryPointer (kStripIndex, "preview-category-collection", 0.5f, false); },
+    "Online did not display the instrument library overview", {}, kSettleBoundMs });
     pushClick (steps, host, ctx, "query");
     steps.push_back ({ 0, [&host, &ctx, state, searchKey, fromShell]
     {
@@ -704,25 +704,27 @@ std::optional<ScenarioResult> runSearchKey (GuiHost& host, ScenarioContext& ctx,
     return std::nullopt;
 }
 
-std::optional<ScenarioResult> runArtworkCategories (GuiHost& host, ScenarioContext& ctx)
+std::optional<ScenarioResult> runArtworkCategories (GuiHost& host, ScenarioContext& ctx, bool brass = false)
 {
     if (! ctx.engine().getTransport().isStopped() || ! host.modalStackEmpty())
         return ScenarioResult::skip ("requires stopped transport and no modal");
     auto state = prepare (host, ctx, "artwork-categories");
     if (! state) return ctx.verdict();
+    if (brass) state->transport->archive = zipBytes (state->transport->name + "-" + state->transport->commit, "Trumpet", "Tuba");
     state->capture = ctx.tempDir() / "sfz-drum-category.png";
     state->compactCapture = ctx.tempDir() / "sfz-all-instruments.png";
     state->onlineCapture = ctx.tempDir() / "sfz-all-online.png";
     auto steps = std::make_shared<std::vector<Step>>();
     pushStart (*steps, host, ctx, state);
-    steps->push_back ({ 0, [&ctx, state]
+    steps->push_back ({ 0, [&ctx, state, brass]
     {
         auto& service = ctx.engine().getSfzLibrary();
         const auto snapshot = service.snapshot();
         if (! ctx.expect (snapshot.pack.has_value(), "artwork fixture pack was not resolved")) return;
         auto pack = *snapshot.pack;
-        pack.displayName = "Karoryfer Big Rusty Drums";
+        pack.displayName = brass ? "Brass" : "Karoryfer Big Rusty Drums";
         pack.presentation = {};
+        if (brass) pack.presentation.artworkUrl = state->transport->artworkUrl();
         state->generation = snapshot.generation;
         ctx.expect (service.install (std::move (pack)), "legacy artwork fixture installation was rejected");
     } });
@@ -734,38 +736,57 @@ std::optional<ScenarioResult> runArtworkCategories (GuiHost& host, ScenarioConte
         return ! snapshot.busy && snapshot.generation > state->generation;
     }, "legacy artwork fixture did not finish", {}, kSettleBoundMs });
     pushClick (*steps, host, ctx, "installed-tab");
-    pushCategory (*steps, host, ctx, "drums");
+    pushCategory (*steps, host, ctx, brass ? "brass" : "drums");
     pushInstalledSelection (*steps, host, ctx, state);
-    steps->push_back ({ 0, [&ctx, state]
+    steps->push_back ({ 0, [&ctx, state, brass]
     {
         ctx.expect (state->installed.has_value() && state->installed->provider.presentation.categoryHint.empty()
-            && state->installed->provider.presentation.artworkUrl.empty(), "fixture did not represent an older receipt without artwork metadata");
+            && (brass || state->installed->provider.presentation.artworkUrl.empty()), "fixture did not represent its expected artwork metadata");
         state->requests = state->transport->requests.load();
     } });
     steps->push_back ({ 0, [&host] { host.sfzLibraryPointer (kStripIndex, "installed-tab", 0.5f, false); },
-    [&host] { return host.sfzLibraryPointer (kStripIndex, "preview-category-drums", 0.5f, false); },
+    [&host, brass] { return host.sfzLibraryPointer (kStripIndex, brass ? "preview-artwork-sfz_trumpet_png" : "preview-category-drums", 0.5f, false); },
     "generic patch names did not inherit their drum-pack artwork category", {}, kSettleBoundMs });
     steps->push_back ({ 100, [&host, state] { host.captureSfzLibrary (kStripIndex, state->capture); } });
     steps->push_back ({ 0, [] {}, [state] { std::error_code error; return fs::is_regular_file (state->capture, error); },
     "drum category capture did not arrive" });
+    steps->push_back ({ 0, [&ctx, state, brass]
+    { exportCapture (ctx, state->capture, brass ? "sfz-trumpet.ppm" : "sfz-drums.ppm"); } });
+    if (brass)
+    {
+        const auto tubaCapture = ctx.tempDir() / "sfz-tuba.ppm";
+        pushClick (*steps, host, ctx, "instrument");
+        pushClick (*steps, host, ctx, "instrument-choice-1");
+        steps->push_back ({ 0, [&host, tubaCapture]
+            { host.sfzLibraryPointer (kStripIndex, "installed-tab", 0.5f, false); host.captureSfzLibrary (kStripIndex, tubaCapture); },
+            [&host] { return host.sfzLibraryPointer (kStripIndex, "preview-artwork-sfz_tuba_png", 0.5f, false); },
+            "a brass pack cover overrode the selected Tuba program", {}, kSettleBoundMs });
+        steps->push_back ({ 0, [&ctx, tubaCapture] { exportCapture (ctx, tubaCapture, "sfz-tuba.ppm"); },
+            [tubaCapture] { std::error_code error; return fs::is_regular_file (tubaCapture, error); },
+            "Tuba preview capture did not arrive", {}, kSettleBoundMs });
+    }
     pushCategory (*steps, host, ctx, "all", [state] { return state->initialInstalled + 1; });
     steps->push_back ({ 0, [&host, &ctx, state]
     {
-        ctx.expect (! host.sfzLibraryPointer (kStripIndex, "preview", 0.5f, false), "All instruments retained the selected drum image");
         ctx.expect (state->transport->requests.load() == state->requests, "installed category selection contacted a repository");
+        host.sfzLibraryPointer (kStripIndex, "installed-tab", 0.5f, false);
         host.captureSfzLibrary (kStripIndex, state->compactCapture);
-    } });
+    }, [&host] { return host.sfzLibraryPointer (kStripIndex, "preview-category-collection", 0.5f, false); },
+    "All instruments did not restore the library overview", {}, kSettleBoundMs });
     steps->push_back ({ 0, [] {}, [state] { std::error_code error; return fs::is_regular_file (state->compactCapture, error); },
-    "blank Installed preview capture did not arrive" });
+    "Installed overview capture did not arrive" });
+    steps->push_back ({ 0, [&ctx, state] { exportCapture (ctx, state->compactCapture, "sfz-installed-overview.ppm"); } });
     pushClick (*steps, host, ctx, "online-tab");
     pushCategory (*steps, host, ctx, "all");
-    steps->push_back ({ 0, [&host, &ctx, state]
+    steps->push_back ({ 0, [&host, state]
     {
-        ctx.expect (! host.sfzLibraryPointer (kStripIndex, "preview", 0.5f, false), "All instruments retained an online image");
+        host.sfzLibraryPointer (kStripIndex, "online-tab", 0.5f, false);
         host.captureSfzLibrary (kStripIndex, state->onlineCapture);
-    } });
+    }, [&host] { return host.sfzLibraryPointer (kStripIndex, "preview-category-collection", 0.5f, false); },
+    "Online did not restore the library overview", {}, kSettleBoundMs });
     steps->push_back ({ 0, [] {}, [state] { std::error_code error; return fs::is_regular_file (state->onlineCapture, error); },
-    "blank Online preview capture did not arrive" });
+    "Online overview capture did not arrive" });
+    steps->push_back ({ 0, [&ctx, state] { exportCapture (ctx, state->onlineCapture, "sfz-online-overview.ppm"); } });
     pushFinish (*steps, host, ctx, state);
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
@@ -1823,7 +1844,7 @@ std::optional<ScenarioResult> runRestoreFailures (GuiHost&, ScenarioContext&) { 
 std::optional<ScenarioResult> runPortableRestore (GuiHost&, ScenarioContext&) { return ScenarioResult::skip ("SFZ support is not built"); }
 std::optional<ScenarioResult> runRelink (GuiHost&, ScenarioContext&, bool) { return ScenarioResult::skip ("SFZ support is not built"); }
 std::optional<ScenarioResult> runSearchKey (GuiHost&, ScenarioContext&, bool) { return ScenarioResult::skip ("SFZ support is not built"); }
-std::optional<ScenarioResult> runArtworkCategories (GuiHost&, ScenarioContext&) { return ScenarioResult::skip ("SFZ support is not built"); }
+std::optional<ScenarioResult> runArtworkCategories (GuiHost&, ScenarioContext&, bool = false) { return ScenarioResult::skip ("SFZ support is not built"); }
 std::optional<ScenarioResult> runWorkflow (GuiHost&, ScenarioContext&) { return ScenarioResult::skip ("SFZ support is not built"); }
 std::optional<ScenarioResult> runStorageMove (GuiHost&, ScenarioContext&) { return ScenarioResult::skip ("SFZ support is not built"); }
 std::optional<ScenarioResult> runPauseCancel (GuiHost&, ScenarioContext&) { return ScenarioResult::skip ("SFZ support is not built"); }
@@ -1835,7 +1856,11 @@ const ScenarioRegistrar workflow { Scenario {
 } };
 const ScenarioRegistrar artworkCategories { Scenario {
     "gui.sfz_artwork_categories", { "gui", "sfz", "repository", "multisample" }, Needs::Engine | Needs::Gui,
-    {}, {}, 60000, runArtworkCategories
+    {}, {}, 60000, [] (GuiHost& host, ScenarioContext& ctx) { return runArtworkCategories (host, ctx); }
+} };
+const ScenarioRegistrar artworkSubtypes { Scenario {
+    "gui.sfz_artwork_subtypes", { "gui", "sfz", "repository", "multisample" }, Needs::Engine | Needs::Gui,
+    {}, {}, 60000, [] (GuiHost& host, ScenarioContext& ctx) { return runArtworkCategories (host, ctx, true); }
 } };
 const ScenarioRegistrar storageMove { Scenario {
     "gui.sfz_library_storage_move", { "gui", "sfz", "repository", "multisample", "settings" }, Needs::Engine | Needs::Gui,

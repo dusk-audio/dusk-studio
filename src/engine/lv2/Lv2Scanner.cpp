@@ -1,4 +1,5 @@
 #include "Lv2Scanner.h"
+#include "../PluginSearchPaths.h"
 
 #include <lilv/lilv.h>
 
@@ -12,6 +13,14 @@ std::vector<ScannedLv2> Lv2Scanner::scan (const std::atomic<bool>* abort)
     LilvWorld* world = lilv_world_new();
     if (world == nullptr) return found;
     lilv_world_load_all (world);   // $LV2_PATH, else the spec default directories
+    for (const auto& bundle : pluginpaths::findBundles (pluginpaths::load(), ".lv2", abort))
+    {
+        if (abort != nullptr && abort->load (std::memory_order_relaxed)) break;
+        const auto path = bundle.u8string() + "/";
+        LilvNode* uri = lilv_new_file_uri (world, nullptr, path.c_str());
+        if (uri != nullptr) lilv_world_load_bundle (world, uri);
+        lilv_node_free (uri);
+    }
 
     const LilvPlugins* all = lilv_world_get_all_plugins (world);
     LILV_FOREACH (plugins, it, all)

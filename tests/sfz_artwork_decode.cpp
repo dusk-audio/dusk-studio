@@ -25,6 +25,32 @@ TEST_CASE ("SFZ category photographs decode to bounded opaque thumbnails", "[sfz
             if (pixels->rgba[alpha] != 255) FAIL ("thumbnail lost opacity");
         REQUIRE (std::any_of (pixels->rgba.begin(), pixels->rgba.end(), [] (unsigned char value) { return value > 32 && value < 255; }));
     }
+    for (const auto* name : { "Upright Bass", "Harp", "Cello", "Banjo", "Mandolin", "Ukulele", "Accordion", "Harmonica",
+                              "Saxophone", "Clarinet", "Bassoon", "Oboe", "Trumpet", "Trombone", "Tuba", "Harpsichord",
+                              "Vibraphone", "Glockenspiel", "Steelpan", "Handpan", "Koto", "Tubular Bells", "Bells" })
+    {
+        INFO (name);
+        const auto category = duskstudio::sfz::instrumentCategory (name);
+        const auto bytes = duskstudio::imgui::instrumentArtwork (category, name);
+        REQUIRE_FALSE (bytes.empty());
+        const auto pixels = duskstudio::imgui::decodeInstrumentArtwork (bytes);
+        REQUIRE (pixels);
+        CHECK (pixels->width == 512);
+        CHECK (pixels->height == 320);
+        CHECK (bytes != duskstudio::imgui::instrumentArtwork (category));
+    }
+    using C = duskstudio::sfz::InstrumentCategory;
+    using duskstudio::imgui::instrumentArtworkResource;
+    CHECK (std::string (instrumentArtworkResource (C::Strings, "Cello")) == "sfz_cello_png");
+    CHECK (std::string (instrumentArtworkResource (C::Brass, "Trumpet")) == "sfz_trumpet_png");
+    CHECK (std::string (instrumentArtworkResource (C::Mallets, "Bells")) == "sfz_handbell_png");
+    CHECK (std::string (instrumentArtworkResource (C::Mallets, "Tubular Bells")) == "sfz_tubular_bells_png");
+    CHECK (std::string (instrumentArtworkResource (C::Woodwinds, "Default", "Woodwinds/Clarinet.sfz")) == "sfz_clarinet_png");
+    CHECK (std::string (instrumentArtworkResource (C::Synth, "Synth Bass")) == "sfz_synth_png");
+    CHECK (std::string (instrumentArtworkResource (C::World, "Duduk")) == "sfz_collection_png");
+    CHECK (std::string (instrumentArtworkResource (C::Strings, "Violin", "Strings/Harp ensemble/Violin.sfz")) == "sfz_strings_png");
+    CHECK (std::string (instrumentArtworkResource (C::Brass, "French Horn", "Brass/Trumpet and Horn/Horn.sfz")) == "sfz_brass_png");
+    CHECK (std::string (instrumentArtworkResource (C::Strings, "Winter Gift", "solo cello")) == "sfz_cello_png");
 }
 
 TEST_CASE ("SFZ artwork decoder rejects malformed and excessive images", "[sfz][artwork]")

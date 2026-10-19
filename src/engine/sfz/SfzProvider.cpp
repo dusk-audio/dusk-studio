@@ -1,5 +1,6 @@
 #include "SfzProvider.h"
 #include "SfzCatalogJson.h"
+#include "SfzInstrumentCategory.h"
 #include "SfzPathPolicy.h"
 
 #include <sodium.h>
@@ -728,23 +729,17 @@ ProviderPackResult githubPack (HttpTransport& transport, const ProviderSummary& 
         if (sfzPath (path) && ! addInstrument (pack, path, paths)) return fail ("Repository has unsafe or ambiguous SFZ paths");
     }
     if (pack.instruments.empty()) return fail ("Repository contains no SFZ files at the pinned revision");
-    int bestImage = 0;
     for (const auto& image : regularFiles)
     {
+        if (! pack.presentation.artworkUrl.empty()) break;
         const auto name = lower (image);
         const auto extension = name.substr (name.find_last_of ('.') == std::string::npos ? name.size() : name.find_last_of ('.'));
         if (extension != ".png" && extension != ".jpg" && extension != ".jpeg") continue;
-        if (name.find ("gui/") != std::string::npos || name.find ("skin") != std::string::npos
-            || name.find ("knob") != std::string::npos || name.find ("button") != std::string::npos) continue;
-        int score = name.find ('/') == std::string::npos ? 1 : 0;
-        for (const auto* term : { "cover", "preview", "photo", "thumbnail", "banner", "logo" })
-            if (name.find (term) != std::string::npos) score += 4;
-        if (score > bestImage)
-        {
-            bestImage = score;
-            pack.presentation.artworkUrl = "https://raw.githubusercontent.com/" + std::string (owner)
-                + "/" + summary.locator + "/" + revision + "/" + encode (image, true);
-        }
+        const auto leaf = name.substr (name.find_last_of ('/') == std::string::npos ? 0 : name.find_last_of ('/') + 1);
+        if (leaf != "cover" + extension && leaf != "instrument" + extension) continue;
+        if (! isInstrumentArtworkPath (name)) continue;
+        pack.presentation.artworkUrl = "https://raw.githubusercontent.com/" + std::string (owner)
+            + "/" + summary.locator + "/" + revision + "/" + encode (image, true);
     }
     // The VCSL SFZ release predates its LICENSE file; its archived README carries the CC0 grant.
     const bool hasLicenseFile = std::any_of (regularFiles.begin(), regularFiles.end(), [] (const std::string& path)
@@ -970,6 +965,50 @@ std::vector<std::string> artworkHostsForSource (std::string_view source)
         return { "raw.githubusercontent.com", "user-images.githubusercontent.com", "repository-images.githubusercontent.com",
                  "avatars.githubusercontent.com" };
     return {};
+}
+
+bool isInstrumentArtworkPath (std::string_view path)
+{
+    const auto scheme = path.find ("://");
+    if (scheme != std::string_view::npos)
+    {
+        const auto slash = path.find ('/', scheme + 3);
+        path = slash == std::string_view::npos ? std::string_view {} : path.substr (slash);
+    }
+    path = path.substr (0, path.find_first_of ("?#"));
+    const auto hex = [] (char c)
+    {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        return -1;
+    };
+    std::string decoded;
+    for (std::size_t i = 0; i < path.size(); ++i)
+    {
+        if (path[i] == '%' && i + 2 < path.size() && hex (path[i + 1]) >= 0 && hex (path[i + 2]) >= 0)
+        {
+            decoded += static_cast<char> (hex (path[i + 1]) * 16 + hex (path[i + 2]));
+            i += 2;
+        }
+        else decoded += path[i];
+    }
+    if (instrumentWordsContain (instrumentWords (decoded),
+        { "logo", "banner", "diagram", "waveform", "screenshot", "knob" })) return false;
+    for (std::size_t at = 0; at < decoded.size();)
+    {
+        const auto slash = decoded.find ('/', at);
+        const auto words = instrumentWords (decoded.substr (at, slash == std::string::npos ? slash : slash - at));
+        if (words.rfind (" gui ", 0) == 0 || words.rfind (" skin ", 0) == 0 || words.rfind (" skins ", 0) == 0) return false;
+        auto controlWords = words;
+        for (const auto instrument : { std::string_view (" button accordion "), std::string_view (" button accordions ") })
+            for (auto pos = controlWords.find (instrument); pos != std::string::npos; pos = controlWords.find (instrument, pos))
+                controlWords.replace (pos, instrument.size(), " ");
+        if (instrumentWordsContain (controlWords, { "button" })) return false;
+        if (slash == std::string::npos) break;
+        at = slash + 1;
+    }
+    return true;
 }
 
 ProviderPageResult browseProvider (HttpTransport& transport, const std::string& sourceId,

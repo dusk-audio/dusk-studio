@@ -18,6 +18,8 @@
 #include "BounceDialog.h"
 #include "RenderInProgress.h"
 #include "PluginScanModal.h"
+#include "PluginPickerHelpers.h"
+#include "../engine/PluginSearchPaths.h"
 #include "ShortcutsPanel.h"
 #include "SupportersPanel.h"
 #include "MidiBindingsPanel.h"
@@ -2605,6 +2607,54 @@ void MainComponent::openAudioSettings()
                 }
                 back->openAudioSettings();
             });
+        });
+    };
+    host.choosePluginFolder = [safeThis]
+    {
+        auto* self = safeThis.getComponent();
+        if (self == nullptr) return;
+        self->handOffAudioSettings ([safeThis]
+        {
+            auto* owner = safeThis.getComponent();
+            if (owner == nullptr) return;
+            filebrowser::Options options;
+            options.title = "Add plug-in folder";
+            options.selectDirectories = true;
+            const auto roots = pluginpaths::load();
+            if (! roots.empty())
+            {
+                using Folder = decltype (options.initialFileOrDirectory);
+                options.initialFileOrDirectory = Folder (roots.back().u8string().c_str());
+            }
+            filebrowser::open (*owner, std::move (options), [safeThis] (auto folder)
+            {
+                auto* back = safeThis.getComponent();
+                if (back == nullptr) return;
+                if (folder.isDirectory())
+                {
+                    auto updatedFolders = pluginpaths::load();
+                    updatedFolders.push_back (std::filesystem::u8path (folder.getFullPathName().toStdString()));
+                    std::string error;
+                    if (! pluginpaths::save (updatedFolders, error))
+                    {
+                        showDuskAlert (*back, "Plug-in folders", error, [safeThis]
+                        { if (auto* settings = safeThis.getComponent()) settings->openAudioSettings(); });
+                        return;
+                    }
+                }
+                back->openAudioSettings();
+            });
+        });
+    };
+    host.scanPlugins = [safeThis]
+    {
+        auto* self = safeThis.getComponent();
+        if (self == nullptr) return;
+        self->handOffAudioSettings ([safeThis]
+        {
+            if (auto* owner = safeThis.getComponent())
+                pluginpicker::runScanModal (owner->engine.getPluginManager(), owner, [safeThis]
+                { if (auto* settings = safeThis.getComponent()) settings->openAudioSettings(); });
         });
     };
     host.alert = [safeThis] (std::string title, std::string message)

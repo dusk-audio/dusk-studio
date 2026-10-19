@@ -484,5 +484,2059 @@
         }
       ]
     }
+  },
+  {
+    "file": "sfz_upright_bass.png",
+    "title": "Double bass 1.svg",
+    "author": "papapishu",
+    "license": "CC0-1.0",
+    "source": "https://commons.wikimedia.org/wiki/File:Double_bass_1.svg",
+    "source_snapshot": "https://commons.wikimedia.org/w/index.php?title=File%3ADouble_bass_1.svg&oldid=976353832",
+    "original": "https://upload.wikimedia.org/wikipedia/commons/3/3b/Double_bass_1.svg",
+    "date": "2010-08-01",
+    "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+    "changes": "Conventional masking, background removal, framing, rotation or recoloring as recorded in assets/sfz-instruments/credits.json; cropped and resized. No AI generation.",
+    "sha256": "5bcb55b455e67e86d5139ebfa9b93525cfcf576ed4fdb7821590efd50496ad74",
+    "preparation": {
+      "tool": "tools/prepare-sfz-artwork.py",
+      "pillow_version": "12.3.0",
+      "input": {
+        "file": "upright-bass.png",
+        "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/3b/Double_bass_1.svg/500px-Double_bass_1.svg.png",
+        "sha256": "a2bb7b9b889a2de931cbf1cc56d8a0c275513d4c83fc389f3ab9ff75deb3c0ae"
+      },
+      "fit": [
+        512,
+        512
+      ]
+    }
+  },
+  {
+    "file": "sfz_harp.png",
+    "title": "Harfe-Museum für Kunst und Gewerbe Hamburg-1995.245.png",
+    "author": "Museum für Kunst und Gewerbe Hamburg",
+    "license": "CC0-1.0",
+    "source": "https://commons.wikimedia.org/wiki/File:Harfe-Museum_f%C3%BCr_Kunst_und_Gewerbe_Hamburg-1995.245.png",
+    "source_snapshot": "https://commons.wikimedia.org/w/index.php?title=File%3AHarfe-Museum_f%C3%BCr_Kunst_und_Gewerbe_Hamburg-1995.245.png&oldid=1030054601",
+    "original": "https://upload.wikimedia.org/wikipedia/commons/4/44/Harfe-Museum_f%C3%BCr_Kunst_und_Gewerbe_Hamburg-1995.245.png",
+    "date": "2017-06-26",
+    "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+    "changes": "Conventional masking, background removal, framing, rotation or recoloring as recorded in assets/sfz-instruments/credits.json; cropped and resized. No AI generation.",
+    "sha256": "b5dab24944dab45bece6a815d5a1e3eb4d849e0793937c5952a38621ffdba27e",
+    "preparation": {
+      "tool": "tools/prepare-sfz-artwork.py",
+      "pillow_version": "12.3.0",
+      "input": {
+        "file": "harp.png",
+        "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/44/Harfe-Museum_f%C3%BCr_Kunst_und_Gewerbe_Hamburg-1995.245.png/330px-Harfe-Museum_f%C3%BCr_Kunst_und_Gewerbe_Hamburg-1995.245.png",
+        "sha256": "76abd752db61317352fc8b050a683358585b32489ecf1422035ae804b1c9e066"
+      },
+      "fit": [
+        512,
+        512
+      ]
+    }
+  },
+  {
+    "file": "sfz_cello.png",
+    "title": "Cello front side.png",
+    "author": "Georg Feitscher",
+    "license": "CC BY 3.0",
+    "source": "https://commons.wikimedia.org/wiki/File:Cello_front_side.png",
+    "source_snapshot": "https://commons.wikimedia.org/w/index.php?title=File%3ACello_front_side.png&oldid=970192307",
+    "original": "https://upload.wikimedia.org/wikipedia/commons/5/5f/Cello_front_side.png",
+    "date": "2010-02-12",
+    "license_url": "https://creativecommons.org/licenses/by/3.0",
+    "changes": "Conventional masking, background removal, framing, rotation or recoloring as recorded in assets/sfz-instruments/credits.json; cropped and resized. No AI generation.",
+    "sha256": "49ecaa9201744f08216320cf38dc45251f1daeeeeccec0bca6c95cd0395cc725",
+    "preparation": {
+      "tool": "tools/prepare-sfz-artwork.py",
+      "pillow_version": "12.3.0",
+      "input": {
+        "file": "cello.png",
+        "url": "https://upload.wikimedia.org/wikipedia/commons/5/5f/Cello_front_side.png",
+        "sha256": "a568f862ac5f633cf86a6bf8a4c4f8b73e9e29ae8c75bc6688981379ca7db722"
+      },
+      "fit": [
+        512,
+        512
+      ],
+      "keep_polygons": [
+        [
+          [
+            0,
+            0
+          ],
+          [
+            260,
+            0
+          ],
+          [
+            260,
+            705
+          ],
+          [
+            0,
+            705
+          ]
+        ]
+      ]
+    }
+  },
+  {
+    "file": "sfz_banjo.png",
+    "title": "White Banjo.svg",
+    "author": "Zwitt95",
+    "license": "CC BY-SA 3.0",
+    "source": "https://commons.wikimedia.org/wiki/File:White_Banjo.svg",
+    "source_snapshot": "https://commons.wikimedia.org/w/index.php?title=File%3AWhite_Banjo.svg&oldid=1228899551",
+    "original": "https://upload.wikimedia.org/wikipedia/commons/b/b3/White_Banjo.svg",
+    "date": "2012-08-14",
+    "license_url": "https://creativecommons.org/licenses/by-sa/3.0",
+    "changes": "Conventional masking, background removal, framing, rotation or recoloring as recorded in assets/sfz-instruments/credits.json; cropped and resized. No AI generation.",
+    "sha256": "d1ffc5132ed0b19cae0574db6c9268e91865b8ec79b60a71db25ba265b552ef7",
+    "preparation": {
+      "tool": "tools/prepare-sfz-artwork.py",
+      "pillow_version": "12.3.0",
+      "input": {
+        "file": "banjo.png",
+        "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/b3/White_Banjo.svg/960px-White_Banjo.svg.png",
+        "sha256": "e3699feb5324edf9e509d8192e94e2d8b645ffb3e30c3f492c0c6432995a6257"
+      },
+      "fit": [
+        512,
+        512
+      ],
+      "tint": [
+        212,
+        195,
+        159
+      ]
+    }
+  },
+  {
+    "file": "sfz_mandolin.png",
+    "title": "Mandolin.png",
+    "author": "Arik Kerman",
+    "license": "CC BY-SA 4.0",
+    "source": "https://commons.wikimedia.org/wiki/File:Mandolin.png",
+    "source_snapshot": "https://commons.wikimedia.org/w/index.php?title=File%3AMandolin.png&oldid=1042041521",
+    "original": "https://upload.wikimedia.org/wikipedia/commons/3/31/Mandolin.png",
+    "date": "2022-02-03",
+    "license_url": "https://creativecommons.org/licenses/by-sa/4.0",
+    "changes": "Conventional masking, background removal, framing, rotation or recoloring as recorded in assets/sfz-instruments/credits.json; cropped and resized. No AI generation.",
+    "sha256": "567bfb0b6c6b78cc406fed80d1039cd3e58cd45ff1e7b887d1c2badbe5c15d3b",
+    "preparation": {
+      "tool": "tools/prepare-sfz-artwork.py",
+      "pillow_version": "12.3.0",
+      "input": {
+        "file": "mandolin.png",
+        "url": "https://upload.wikimedia.org/wikipedia/commons/3/31/Mandolin.png",
+        "sha256": "cafdce92191cabd40867bc5f04dbcf7233ee1a68c20761b4eaf59272649fb66c"
+      },
+      "fit": [
+        512,
+        512
+      ],
+      "keep_polygons": [
+        [
+          [
+            125,
+            5
+          ],
+          [
+            140,
+            6
+          ],
+          [
+            148,
+            20
+          ],
+          [
+            141,
+            78
+          ],
+          [
+            125,
+            98
+          ],
+          [
+            122,
+            164
+          ],
+          [
+            142,
+            172
+          ],
+          [
+            164,
+            202
+          ],
+          [
+            179,
+            246
+          ],
+          [
+            180,
+            286
+          ],
+          [
+            160,
+            316
+          ],
+          [
+            131,
+            332
+          ],
+          [
+            97,
+            325
+          ],
+          [
+            77,
+            308
+          ],
+          [
+            66,
+            280
+          ],
+          [
+            70,
+            234
+          ],
+          [
+            86,
+            194
+          ],
+          [
+            107,
+            169
+          ],
+          [
+            107,
+            96
+          ],
+          [
+            105,
+            77
+          ],
+          [
+            107,
+            31
+          ],
+          [
+            115,
+            7
+          ]
+        ]
+      ],
+      "background": {
+        "color": [
+          220,
+          220,
+          220
+        ],
+        "tolerance": 55
+      }
+    }
+  },
+  {
+    "file": "sfz_ukulele.png",
+    "title": "Ukulele4.png",
+    "author": "Kollektives Schreiben",
+    "license": "Public domain",
+    "source": "https://commons.wikimedia.org/wiki/File:Ukulele4.png",
+    "source_snapshot": "https://commons.wikimedia.org/w/index.php?title=File%3AUkulele4.png&oldid=1276815950",
+    "original": "https://upload.wikimedia.org/wikipedia/commons/1/14/Ukulele4.png",
+    "date": "2018-03-22",
+    "license_url": "https://creativecommons.org/publicdomain/mark/1.0/",
+    "changes": "Conventional masking, background removal, framing, rotation or recoloring as recorded in assets/sfz-instruments/credits.json; cropped and resized. No AI generation.",
+    "sha256": "c8e93e29bb842b35c3fc0e253b841e85dfdc7ac33fe89109357d9241b0cd227c",
+    "preparation": {
+      "tool": "tools/prepare-sfz-artwork.py",
+      "pillow_version": "12.3.0",
+      "input": {
+        "file": "ukulele.png",
+        "url": "https://upload.wikimedia.org/wikipedia/commons/1/14/Ukulele4.png",
+        "sha256": "c9cccfc0c149440a4138e592932dcec942de02b55358de99b4b50fd4e14d63a6"
+      },
+      "fit": [
+        512,
+        512
+      ]
+    }
+  },
+  {
+    "file": "sfz_accordion.png",
+    "title": "Accordion.svg",
+    "author": "ArtFavor",
+    "license": "CC0-1.0",
+    "source": "https://commons.wikimedia.org/wiki/File:Accordion.svg",
+    "source_snapshot": "https://commons.wikimedia.org/w/index.php?title=File%3AAccordion.svg&oldid=989782465",
+    "original": "https://upload.wikimedia.org/wikipedia/commons/3/39/Accordion.svg",
+    "date": "2010-08-02",
+    "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+    "changes": "Conventional masking, background removal, framing, rotation or recoloring as recorded in assets/sfz-instruments/credits.json; cropped and resized. No AI generation.",
+    "sha256": "e5777b62754b87603ec00646349532a14d7e5a162f0f9ef66f8f6bb70e4a9025",
+    "preparation": {
+      "tool": "tools/prepare-sfz-artwork.py",
+      "pillow_version": "12.3.0",
+      "input": {
+        "file": "accordion.png",
+        "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/39/Accordion.svg/960px-Accordion.svg.png",
+        "sha256": "d8fee8fda81d79e1d3c591f409c22f80d5ee0c3142fb0dc12a80ed8df1bd537d"
+      },
+      "fit": [
+        512,
+        512
+      ]
+    }
+  },
+  {
+    "file": "sfz_harmonica.png",
+    "title": "Harmonica.svg",
+    "author": "Sarah A Morrigan / missiridia",
+    "license": "CC0-1.0",
+    "source": "https://commons.wikimedia.org/wiki/File:Harmonica.svg",
+    "source_snapshot": "https://commons.wikimedia.org/w/index.php?title=File%3AHarmonica.svg&oldid=995710934",
+    "original": "https://upload.wikimedia.org/wikipedia/commons/1/1b/Harmonica.svg",
+    "date": "2010-08-01",
+    "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+    "changes": "Conventional masking, background removal, framing, rotation or recoloring as recorded in assets/sfz-instruments/credits.json; cropped and resized. No AI generation.",
+    "sha256": "6203a6e163064f4965c2ec732eeb6b0773fe79b92bdd78fdd6958cb25cfadd4d",
+    "preparation": {
+      "tool": "tools/prepare-sfz-artwork.py",
+      "pillow_version": "12.3.0",
+      "input": {
+        "file": "harmonica.png",
+        "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/1b/Harmonica.svg/500px-Harmonica.svg.png",
+        "sha256": "1b4c61160417683c05b08d80dd36e8bb9ca90d9aaafadc87d1d5d8ad54d5d931"
+      },
+      "fit": [
+        512,
+        512
+      ]
+    }
+  },
+  {
+    "file": "sfz_saxophone.png",
+    "title": "Yamaha Saxophone YAS-62.png",
+    "author": "File:Yamaha Saxophone YAS-62.tif: Yamaha Corporation; remove backround: Habitator terrae",
+    "license": "CC BY-SA 4.0",
+    "source": "https://commons.wikimedia.org/wiki/File:Yamaha_Saxophone_YAS-62.png",
+    "source_snapshot": "https://commons.wikimedia.org/w/index.php?title=File%3AYamaha_Saxophone_YAS-62.png&oldid=926933807",
+    "original": "https://upload.wikimedia.org/wikipedia/commons/3/3e/Yamaha_Saxophone_YAS-62.png",
+    "date": "2018-11-22",
+    "license_url": "https://creativecommons.org/licenses/by-sa/4.0",
+    "changes": "Conventional masking, background removal, framing, rotation or recoloring as recorded in assets/sfz-instruments/credits.json; cropped and resized. No AI generation.",
+    "sha256": "cad4a777175a0e4ede62ad50b42f8e2ad7b05b587389f384b869ad09602c85a6",
+    "preparation": {
+      "tool": "tools/prepare-sfz-artwork.py",
+      "pillow_version": "12.3.0",
+      "input": {
+        "file": "saxophone.png",
+        "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/3e/Yamaha_Saxophone_YAS-62.png/330px-Yamaha_Saxophone_YAS-62.png",
+        "sha256": "49be3733223905c122c5982cb2118b44fa0b60ab87baae622f920c1c96c6c3c7"
+      },
+      "fit": [
+        512,
+        512
+      ],
+      "background": {
+        "color": [
+          255,
+          255,
+          255
+        ],
+        "tolerance": 18
+      }
+    }
+  },
+  {
+    "file": "sfz_clarinet.png",
+    "title": "Yamaha Clarinet YCL-457II-22.png",
+    "author": "File:Yamaha Clarinet YCL-457II-22.tiff: Yamaha Corporation; remove backround: Habitator terrae",
+    "license": "CC BY-SA 4.0",
+    "source": "https://commons.wikimedia.org/wiki/File:Yamaha_Clarinet_YCL-457II-22.png",
+    "source_snapshot": "https://commons.wikimedia.org/w/index.php?title=File%3AYamaha_Clarinet_YCL-457II-22.png&oldid=1212935488",
+    "original": "https://upload.wikimedia.org/wikipedia/commons/0/0d/Yamaha_Clarinet_YCL-457II-22.png",
+    "date": "2018-11-18",
+    "license_url": "https://creativecommons.org/licenses/by-sa/4.0",
+    "changes": "Conventional masking, background removal, framing, rotation or recoloring as recorded in assets/sfz-instruments/credits.json; cropped and resized. No AI generation.",
+    "sha256": "6f0a5b207e5a897e1aaaa50fda4c99b674c6e32e7ec70a4c017fe53e19372a32",
+    "preparation": {
+      "tool": "tools/prepare-sfz-artwork.py",
+      "pillow_version": "12.3.0",
+      "input": {
+        "file": "clarinet.png",
+        "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/0d/Yamaha_Clarinet_YCL-457II-22.png/120px-Yamaha_Clarinet_YCL-457II-22.png",
+        "sha256": "db097e1518f6c05b0c35ffd14fed131c4ab462b8184189dad036c8fdac4c831e"
+      },
+      "fit": [
+        512,
+        512
+      ],
+      "rotate": 65
+    }
+  },
+  {
+    "file": "sfz_bassoon.png",
+    "title": "Yamaha Bassoon YFG-812 II.tif",
+    "author": "Yamaha Corporation",
+    "license": "CC BY-SA 4.0",
+    "source": "https://commons.wikimedia.org/wiki/File:Yamaha_Bassoon_YFG-812_II.tif",
+    "source_snapshot": "https://commons.wikimedia.org/w/index.php?title=File%3AYamaha_Bassoon_YFG-812_II.tif&oldid=824627482",
+    "original": "https://upload.wikimedia.org/wikipedia/commons/4/45/Yamaha_Bassoon_YFG-812_II.tif",
+    "date": "2017-02-12",
+    "license_url": "https://creativecommons.org/licenses/by-sa/4.0",
+    "changes": "Conventional masking, background removal, framing, rotation or recoloring as recorded in assets/sfz-instruments/credits.json; cropped and resized. No AI generation.",
+    "sha256": "060c2669eac56967d4146789037917a6889b81232c38fd9b0d28912c407cf0f6",
+    "preparation": {
+      "tool": "tools/prepare-sfz-artwork.py",
+      "pillow_version": "12.3.0",
+      "input": {
+        "file": "bassoon.jpg",
+        "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/45/Yamaha_Bassoon_YFG-812_II.tif/lossy-page1-120px-Yamaha_Bassoon_YFG-812_II.tif.jpg",
+        "sha256": "9fc5b375bc4869d292e14ab3dc5a016393c9ac94bbe01d7b843988d864c350b4"
+      },
+      "fit": [
+        512,
+        512
+      ],
+      "background": {
+        "color": [
+          255,
+          255,
+          255
+        ],
+        "tolerance": 28
+      },
+      "rotate": 65
+    }
+  },
+  {
+    "file": "sfz_oboe.png",
+    "title": "Oboe.png",
+    "author": "man ichihara ; Photographed and edited by fi:Käyttäjä:Aquazer.",
+    "license": "CC BY-SA 3.0",
+    "source": "https://commons.wikimedia.org/wiki/File:Oboe.png",
+    "source_snapshot": "https://commons.wikimedia.org/w/index.php?title=File%3AOboe.png&oldid=946967623",
+    "original": "https://upload.wikimedia.org/wikipedia/commons/b/b6/Oboe.png",
+    "date": "2007-04-24",
+    "license_url": "https://creativecommons.org/licenses/by-sa/3.0/",
+    "changes": "Conventional masking, background removal, framing, rotation or recoloring as recorded in assets/sfz-instruments/credits.json; cropped and resized. No AI generation.",
+    "sha256": "b2a7824796445350a1d6feebb1d2c01a4e12e9e4a9e63c9995a7a44b44b5ab42",
+    "preparation": {
+      "tool": "tools/prepare-sfz-artwork.py",
+      "pillow_version": "12.3.0",
+      "input": {
+        "file": "oboe.png",
+        "url": "https://upload.wikimedia.org/wikipedia/commons/b/b6/Oboe.png",
+        "sha256": "a0b5f3c015bef36ee0b9de120a3207d70091ab638626813847b659ed4f42d891"
+      },
+      "fit": [
+        512,
+        512
+      ],
+      "rotate": 65
+    }
+  },
+  {
+    "file": "sfz_trumpet.png",
+    "title": "Trumpet 1.png",
+    "author": "PJ, background cropped by EWikist",
+    "license": "CC BY-SA 3.0",
+    "source": "https://commons.wikimedia.org/wiki/File:Trumpet_1.png",
+    "source_snapshot": "https://commons.wikimedia.org/w/index.php?title=File%3ATrumpet_1.png&oldid=1125647411",
+    "original": "https://upload.wikimedia.org/wikipedia/commons/3/30/Trumpet_1.png",
+    "date": "2010-08-30",
+    "license_url": "https://creativecommons.org/licenses/by-sa/3.0/",
+    "changes": "Conventional masking, background removal, framing, rotation or recoloring as recorded in assets/sfz-instruments/credits.json; cropped and resized. No AI generation.",
+    "sha256": "b405f562586e1d220f1cedd0342a17e9da59c41d0850abee1cbccd89612c27b2",
+    "preparation": {
+      "tool": "tools/prepare-sfz-artwork.py",
+      "pillow_version": "12.3.0",
+      "input": {
+        "file": "trumpet.png",
+        "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/30/Trumpet_1.png/960px-Trumpet_1.png",
+        "sha256": "1f9c5939dcf911d7b62b27528175cb8f7f1613d4ef9542bc3c63d5193ccd971a"
+      },
+      "fit": [
+        512,
+        512
+      ]
+    }
+  },
+  {
+    "file": "sfz_trombone.png",
+    "title": "WANZ Instrument 2024-09 IMG 7771 tenor trombone.png",
+    "author": "Debbie Rawson (photograph); Jonathanischoice (uploader); funded by Wikimedia Aotearoa New Zealand",
+    "license": "CC BY 4.0",
+    "source": "https://commons.wikimedia.org/wiki/File:WANZ_Instrument_2024-09_IMG_7771_tenor_trombone.png",
+    "source_snapshot": "https://commons.wikimedia.org/w/index.php?title=File%3AWANZ_Instrument_2024-09_IMG_7771_tenor_trombone.png&oldid=1185831342",
+    "original": "https://upload.wikimedia.org/wikipedia/commons/8/82/WANZ_Instrument_2024-09_IMG_7771_tenor_trombone.png",
+    "date": "2024-09-16",
+    "license_url": "https://creativecommons.org/licenses/by/4.0",
+    "changes": "Conventional masking, background removal, framing, rotation or recoloring as recorded in assets/sfz-instruments/credits.json; cropped and resized. No AI generation.",
+    "sha256": "52865ae9bc64b05381edc8aef1b1d70bfe06c2885d83ae5aa36194c6808c01ed",
+    "preparation": {
+      "tool": "tools/prepare-sfz-artwork.py",
+      "pillow_version": "12.3.0",
+      "input": {
+        "file": "trombone.png",
+        "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/8/82/WANZ_Instrument_2024-09_IMG_7771_tenor_trombone.png/330px-WANZ_Instrument_2024-09_IMG_7771_tenor_trombone.png",
+        "sha256": "3257e84ab9dd7169680593eefb29fd2bb0ffee6e35c91a0c1b5e7fde2cfcb8d3"
+      },
+      "fit": [
+        512,
+        512
+      ],
+      "keep_polygons": [
+        [
+          [
+            142,
+            3
+          ],
+          [
+            162,
+            1
+          ],
+          [
+            175,
+            11
+          ],
+          [
+            178,
+            29
+          ],
+          [
+            179,
+            234
+          ],
+          [
+            187,
+            265
+          ],
+          [
+            207,
+            281
+          ],
+          [
+            192,
+            287
+          ],
+          [
+            141,
+            285
+          ],
+          [
+            132,
+            281
+          ],
+          [
+            148,
+            267
+          ],
+          [
+            159,
+            245
+          ],
+          [
+            165,
+            41
+          ],
+          [
+            162,
+            20
+          ],
+          [
+            151,
+            14
+          ],
+          [
+            141,
+            22
+          ],
+          [
+            137,
+            47
+          ],
+          [
+            137,
+            157
+          ],
+          [
+            130,
+            168
+          ],
+          [
+            126,
+            424
+          ],
+          [
+            119,
+            451
+          ],
+          [
+            108,
+            456
+          ],
+          [
+            99,
+            448
+          ],
+          [
+            97,
+            431
+          ],
+          [
+            107,
+            180
+          ],
+          [
+            106,
+            161
+          ],
+          [
+            116,
+            157
+          ],
+          [
+            125,
+            162
+          ],
+          [
+            130,
+            161
+          ],
+          [
+            130,
+            24
+          ],
+          [
+            135,
+            8
+          ]
+        ]
+      ],
+      "clear_polygons": [
+        [
+          [
+            143,
+            27
+          ],
+          [
+            159,
+            24
+          ],
+          [
+            164,
+            35
+          ],
+          [
+            159,
+            231
+          ],
+          [
+            143,
+            245
+          ]
+        ],
+        [
+          [
+            112,
+            190
+          ],
+          [
+            120,
+            190
+          ],
+          [
+            115,
+            425
+          ],
+          [
+            108,
+            438
+          ],
+          [
+            106,
+            429
+          ]
+        ]
+      ],
+      "rotate": 65,
+      "background": {
+        "color": [
+          246,
+          243,
+          240
+        ],
+        "tolerance": 20
+      }
+    }
+  },
+  {
+    "file": "sfz_tuba.png",
+    "title": "Tuba Melton Meinl Weston.png",
+    "author": "Buffet Crampon",
+    "license": "CC BY-SA 4.0",
+    "source": "https://commons.wikimedia.org/wiki/File:Tuba_Melton_Meinl_Weston.png",
+    "source_snapshot": "https://commons.wikimedia.org/w/index.php?title=File%3ATuba_Melton_Meinl_Weston.png&oldid=1142043340",
+    "original": "https://upload.wikimedia.org/wikipedia/commons/1/11/Tuba_Melton_Meinl_Weston.png",
+    "date": "2024-05-25",
+    "license_url": "https://creativecommons.org/licenses/by-sa/4.0",
+    "changes": "Conventional masking, background removal, framing, rotation or recoloring as recorded in assets/sfz-instruments/credits.json; cropped and resized. No AI generation.",
+    "sha256": "14012fe4262115c678eff757497e6e7d6f0d12eec5ccc10119c63d01c8f49dc9",
+    "preparation": {
+      "tool": "tools/prepare-sfz-artwork.py",
+      "pillow_version": "12.3.0",
+      "input": {
+        "file": "tuba.png",
+        "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/11/Tuba_Melton_Meinl_Weston.png/500px-Tuba_Melton_Meinl_Weston.png",
+        "sha256": "27a3b171223eef994bf5eeff6af445c8cdbdc96dfaefd2dd9e278dd01a7648dc"
+      },
+      "fit": [
+        512,
+        512
+      ],
+      "background": {
+        "color": [
+          255,
+          255,
+          255
+        ],
+        "tolerance": 18
+      }
+    }
+  },
+  {
+    "file": "sfz_harpsichord.png",
+    "title": "Harpsichord VitalJulianFrey.jpg",
+    "author": "FREYmanagement",
+    "license": "CC BY-SA 3.0",
+    "source": "https://commons.wikimedia.org/wiki/File:Harpsichord_VitalJulianFrey.jpg",
+    "source_snapshot": "https://commons.wikimedia.org/w/index.php?title=File%3AHarpsichord_VitalJulianFrey.jpg&oldid=1269653743",
+    "original": "https://upload.wikimedia.org/wikipedia/commons/d/df/Harpsichord_VitalJulianFrey.jpg",
+    "date": "2008-06-20",
+    "license_url": "https://creativecommons.org/licenses/by-sa/3.0",
+    "changes": "Conventional masking, background removal, framing, rotation or recoloring as recorded in assets/sfz-instruments/credits.json; cropped and resized. No AI generation.",
+    "sha256": "2bd0da137b694f62a96963a64ada93e9a620cc92977c20602fadd2ea075df2e9",
+    "preparation": {
+      "tool": "tools/prepare-sfz-artwork.py",
+      "pillow_version": "12.3.0",
+      "input": {
+        "file": "harpsichord.jpg",
+        "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/df/Harpsichord_VitalJulianFrey.jpg/500px-Harpsichord_VitalJulianFrey.jpg",
+        "sha256": "d8e0f725e63a539e396678f94d48eed078c5a1094ebaee39a0b4f6f819754116"
+      },
+      "fit": [
+        512,
+        512
+      ],
+      "background": {
+        "color": [
+          255,
+          255,
+          255
+        ],
+        "tolerance": 18
+      }
+    }
+  },
+  {
+    "file": "sfz_vibraphone.png",
+    "title": "Soprano vibraphone (from Emil Richards Collection).jpg",
+    "author": "Xylosmygame at English Wikipedia",
+    "license": "CC BY-SA 3.0",
+    "source": "https://commons.wikimedia.org/wiki/File:Soprano_vibraphone_(from_Emil_Richards_Collection).jpg",
+    "source_snapshot": "https://commons.wikimedia.org/w/index.php?title=File%3ASoprano_vibraphone_%28from_Emil_Richards_Collection%29.jpg&oldid=1148324838",
+    "original": "https://upload.wikimedia.org/wikipedia/commons/f/fa/Soprano_vibraphone_%28from_Emil_Richards_Collection%29.jpg",
+    "date": "2012-09-03",
+    "license_url": "https://creativecommons.org/licenses/by-sa/3.0",
+    "changes": "Conventional masking, background removal, framing, rotation or recoloring as recorded in assets/sfz-instruments/credits.json; cropped and resized. No AI generation.",
+    "sha256": "a5282cd80b952ab9c541d8a9f0c5595e2a9543aeb2329312ef8277b01b93afb8",
+    "preparation": {
+      "tool": "tools/prepare-sfz-artwork.py",
+      "pillow_version": "12.3.0",
+      "input": {
+        "file": "vibraphone.jpg",
+        "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/fa/Soprano_vibraphone_%28from_Emil_Richards_Collection%29.jpg/500px-Soprano_vibraphone_%28from_Emil_Richards_Collection%29.jpg",
+        "sha256": "262f488d1a0ff67623552cc75705128ae3b97101eade26709b2ead5e1284f2ff"
+      },
+      "fit": [
+        512,
+        512
+      ],
+      "keep_polygons": [
+        [
+          [
+            7,
+            155
+          ],
+          [
+            62,
+            80
+          ],
+          [
+            63,
+            77
+          ],
+          [
+            90,
+            37
+          ],
+          [
+            115,
+            24
+          ],
+          [
+            143,
+            25
+          ],
+          [
+            145,
+            32
+          ],
+          [
+            172,
+            30
+          ],
+          [
+            220,
+            39
+          ],
+          [
+            285,
+            44
+          ],
+          [
+            350,
+            47
+          ],
+          [
+            451,
+            65
+          ],
+          [
+            479,
+            73
+          ],
+          [
+            494,
+            117
+          ],
+          [
+            493,
+            164
+          ],
+          [
+            477,
+            168
+          ],
+          [
+            484,
+            332
+          ],
+          [
+            471,
+            332
+          ],
+          [
+            465,
+            289
+          ],
+          [
+            280,
+            282
+          ],
+          [
+            287,
+            331
+          ],
+          [
+            276,
+            332
+          ],
+          [
+            261,
+            281
+          ],
+          [
+            57,
+            272
+          ],
+          [
+            51,
+            326
+          ],
+          [
+            44,
+            332
+          ],
+          [
+            35,
+            332
+          ],
+          [
+            42,
+            315
+          ],
+          [
+            49,
+            268
+          ],
+          [
+            51,
+            212
+          ],
+          [
+            17,
+            190
+          ]
+        ]
+      ],
+      "clear_polygons": [
+        [
+          [
+            65,
+            226
+          ],
+          [
+            249,
+            173
+          ],
+          [
+            253,
+            258
+          ],
+          [
+            61,
+            253
+          ]
+        ],
+        [
+          [
+            322,
+            173
+          ],
+          [
+            460,
+            170
+          ],
+          [
+            461,
+            252
+          ]
+        ],
+        [
+          [
+            284,
+            180
+          ],
+          [
+            444,
+            264
+          ],
+          [
+            282,
+            262
+          ]
+        ],
+        [
+          [
+            71,
+            282
+          ],
+          [
+            256,
+            289
+          ],
+          [
+            267,
+            328
+          ],
+          [
+            54,
+            328
+          ]
+        ],
+        [
+          [
+            297,
+            293
+          ],
+          [
+            459,
+            294
+          ],
+          [
+            465,
+            328
+          ],
+          [
+            290,
+            328
+          ]
+        ]
+      ]
+    }
+  },
+  {
+    "file": "sfz_glockenspiel.png",
+    "title": "Glockenspiel-malletech.jpg",
+    "author": "flamurai",
+    "license": "Public domain",
+    "source": "https://commons.wikimedia.org/wiki/File:Glockenspiel-malletech.jpg",
+    "source_snapshot": "https://commons.wikimedia.org/w/index.php?title=File%3AGlockenspiel-malletech.jpg&oldid=1239179923",
+    "original": "https://upload.wikimedia.org/wikipedia/commons/6/6e/Glockenspiel-malletech.jpg",
+    "date": "2006-05-20",
+    "license_url": "https://creativecommons.org/publicdomain/mark/1.0/",
+    "changes": "Conventional masking, background removal, framing, rotation or recoloring as recorded in assets/sfz-instruments/credits.json; cropped and resized. No AI generation.",
+    "sha256": "d06b2b991d54b493ca73a5461cdd03adaa3db0c05f3a470374d598844319e7ea",
+    "preparation": {
+      "tool": "tools/prepare-sfz-artwork.py",
+      "pillow_version": "12.3.0",
+      "input": {
+        "file": "glockenspiel.jpg",
+        "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/6e/Glockenspiel-malletech.jpg/500px-Glockenspiel-malletech.jpg",
+        "sha256": "2da64de1092faa490f6b718dbe78ea43f37697464e03f0fd47e2c51fec352dd6"
+      },
+      "fit": [
+        512,
+        512
+      ],
+      "background": {
+        "color": [
+          255,
+          255,
+          255
+        ],
+        "tolerance": 18
+      }
+    }
+  },
+  {
+    "file": "sfz_steelpan.png",
+    "title": "Steel Pan.png",
+    "author": "J dahlia",
+    "license": "CC BY-SA 4.0",
+    "source": "https://commons.wikimedia.org/wiki/File:Steel_Pan.png",
+    "source_snapshot": "https://commons.wikimedia.org/w/index.php?title=File%3ASteel_Pan.png&oldid=506232778",
+    "original": "https://upload.wikimedia.org/wikipedia/commons/4/49/Steel_Pan.png",
+    "date": "2018-12-06",
+    "license_url": "https://creativecommons.org/licenses/by-sa/4.0",
+    "changes": "Conventional masking, background removal, framing, rotation or recoloring as recorded in assets/sfz-instruments/credits.json; cropped and resized. No AI generation.",
+    "sha256": "03d97067b3bc5c8dadb105da1237f20439777b4e4d97a7fd01702f063e158b60",
+    "preparation": {
+      "tool": "tools/prepare-sfz-artwork.py",
+      "pillow_version": "12.3.0",
+      "input": {
+        "file": "steelpan.png",
+        "url": "https://upload.wikimedia.org/wikipedia/commons/4/49/Steel_Pan.png",
+        "sha256": "6c45345f16cb6f913d43c5afac944db798cc6f717585f09a4df230e56e378e00"
+      },
+      "fit": [
+        512,
+        512
+      ],
+      "saturation": 0.05
+    }
+  },
+  {
+    "file": "sfz_handpan.png",
+    "title": "Handpan.jpg",
+    "author": "Pensierarte",
+    "license": "CC BY-SA 3.0",
+    "source": "https://commons.wikimedia.org/wiki/File:Handpan.jpg",
+    "source_snapshot": "https://commons.wikimedia.org/w/index.php?title=File%3AHandpan.jpg&oldid=709962177",
+    "original": "https://upload.wikimedia.org/wikipedia/commons/a/a3/Handpan.jpg",
+    "date": "2018-07-02",
+    "license_url": "https://creativecommons.org/licenses/by-sa/3.0",
+    "changes": "Conventional masking, background removal, framing, rotation or recoloring as recorded in assets/sfz-instruments/credits.json; cropped and resized. No AI generation.",
+    "sha256": "f1a4a756fbab3881fa04f5807089164f4975c54445dfbffcda0936bcb69783c1",
+    "preparation": {
+      "tool": "tools/prepare-sfz-artwork.py",
+      "pillow_version": "12.3.0",
+      "input": {
+        "file": "handpan.jpg",
+        "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/a3/Handpan.jpg/960px-Handpan.jpg",
+        "sha256": "27a843a9c174774d73caa34d8d9c0c1a75f9d8d537bd4130f7b78bdd919958b4"
+      },
+      "fit": [
+        512,
+        512
+      ],
+      "keep_polygons": [
+        [
+          [
+            810,
+            360
+          ],
+          [
+            809,
+            390
+          ],
+          [
+            805,
+            419
+          ],
+          [
+            798,
+            448
+          ],
+          [
+            790,
+            476
+          ],
+          [
+            778,
+            503
+          ],
+          [
+            765,
+            530
+          ],
+          [
+            749,
+            554
+          ],
+          [
+            731,
+            578
+          ],
+          [
+            711,
+            600
+          ],
+          [
+            689,
+            620
+          ],
+          [
+            666,
+            638
+          ],
+          [
+            641,
+            654
+          ],
+          [
+            615,
+            667
+          ],
+          [
+            588,
+            679
+          ],
+          [
+            559,
+            687
+          ],
+          [
+            531,
+            694
+          ],
+          [
+            501,
+            698
+          ],
+          [
+            472,
+            699
+          ],
+          [
+            443,
+            698
+          ],
+          [
+            413,
+            694
+          ],
+          [
+            385,
+            687
+          ],
+          [
+            356,
+            679
+          ],
+          [
+            329,
+            667
+          ],
+          [
+            303,
+            654
+          ],
+          [
+            278,
+            638
+          ],
+          [
+            255,
+            620
+          ],
+          [
+            233,
+            600
+          ],
+          [
+            213,
+            578
+          ],
+          [
+            195,
+            554
+          ],
+          [
+            179,
+            530
+          ],
+          [
+            166,
+            503
+          ],
+          [
+            154,
+            476
+          ],
+          [
+            146,
+            448
+          ],
+          [
+            139,
+            419
+          ],
+          [
+            135,
+            390
+          ],
+          [
+            134,
+            360
+          ],
+          [
+            135,
+            330
+          ],
+          [
+            139,
+            301
+          ],
+          [
+            146,
+            272
+          ],
+          [
+            154,
+            244
+          ],
+          [
+            166,
+            217
+          ],
+          [
+            179,
+            190
+          ],
+          [
+            195,
+            166
+          ],
+          [
+            213,
+            142
+          ],
+          [
+            233,
+            120
+          ],
+          [
+            255,
+            100
+          ],
+          [
+            278,
+            82
+          ],
+          [
+            303,
+            66
+          ],
+          [
+            329,
+            53
+          ],
+          [
+            356,
+            41
+          ],
+          [
+            385,
+            33
+          ],
+          [
+            413,
+            26
+          ],
+          [
+            443,
+            22
+          ],
+          [
+            472,
+            21
+          ],
+          [
+            501,
+            22
+          ],
+          [
+            531,
+            26
+          ],
+          [
+            559,
+            33
+          ],
+          [
+            588,
+            41
+          ],
+          [
+            615,
+            53
+          ],
+          [
+            641,
+            66
+          ],
+          [
+            666,
+            82
+          ],
+          [
+            689,
+            100
+          ],
+          [
+            711,
+            120
+          ],
+          [
+            731,
+            142
+          ],
+          [
+            749,
+            166
+          ],
+          [
+            765,
+            191
+          ],
+          [
+            778,
+            217
+          ],
+          [
+            790,
+            244
+          ],
+          [
+            798,
+            272
+          ],
+          [
+            805,
+            301
+          ],
+          [
+            809,
+            330
+          ]
+        ]
+      ]
+    }
+  },
+  {
+    "file": "sfz_koto.png",
+    "title": "Koto MET DP148476.jpg",
+    "author": "Gotō Teijō / Gotō Yūjō",
+    "license": "CC0-1.0",
+    "source": "https://commons.wikimedia.org/wiki/File:Koto_MET_DP148476.jpg",
+    "source_snapshot": "https://commons.wikimedia.org/w/index.php?title=File%3AKoto_MET_DP148476.jpg&oldid=1153348730",
+    "original": "https://upload.wikimedia.org/wikipedia/commons/0/0f/Koto_MET_DP148476.jpg",
+    "date": "2017-04-09",
+    "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+    "changes": "Conventional masking, background removal, framing, rotation or recoloring as recorded in assets/sfz-instruments/credits.json; cropped and resized. No AI generation.",
+    "sha256": "a27ed017719840fdcef88920244b27af1cb362a9bfc0aad024c82bad4b9e5877",
+    "preparation": {
+      "tool": "tools/prepare-sfz-artwork.py",
+      "pillow_version": "12.3.0",
+      "input": {
+        "file": "koto.jpg",
+        "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/0f/Koto_MET_DP148476.jpg/960px-Koto_MET_DP148476.jpg",
+        "sha256": "13e7db63d490a51f5c4c5b43d6609309ec552bbce4022fd2ccf1b7ac303628ba"
+      },
+      "fit": [
+        512,
+        512
+      ],
+      "keep_polygons": [
+        [
+          [
+            144,
+            246
+          ],
+          [
+            765,
+            246
+          ],
+          [
+            788,
+            252
+          ],
+          [
+            825,
+            250
+          ],
+          [
+            849,
+            266
+          ],
+          [
+            858,
+            308
+          ],
+          [
+            853,
+            320
+          ],
+          [
+            137,
+            328
+          ],
+          [
+            127,
+            320
+          ],
+          [
+            131,
+            276
+          ]
+        ]
+      ]
+    }
+  },
+  {
+    "file": "sfz_tubular_bells.png",
+    "title": "Yamaha Deagan chimes (from LA Percussion Rentals).jpg",
+    "author": "Xylosmygame at English Wikipedia",
+    "license": "CC BY-SA 3.0",
+    "source": "https://commons.wikimedia.org/wiki/File:Yamaha_Deagan_chimes_(from_LA_Percussion_Rentals).jpg",
+    "source_snapshot": "https://commons.wikimedia.org/w/index.php?title=File%3AYamaha_Deagan_chimes_%28from_LA_Percussion_Rentals%29.jpg&oldid=1231982576",
+    "original": "https://upload.wikimedia.org/wikipedia/commons/5/53/Yamaha_Deagan_chimes_%28from_LA_Percussion_Rentals%29.jpg",
+    "date": "2014-07-28",
+    "license_url": "https://creativecommons.org/licenses/by-sa/3.0",
+    "changes": "Conventional masking, background removal, framing, rotation or recoloring as recorded in assets/sfz-instruments/credits.json; cropped and resized. No AI generation.",
+    "sha256": "900c46dd92ede4d624a29775d5a9d3154b0f841a2a8f7fce7f96e5c4b21d0bee",
+    "preparation": {
+      "tool": "tools/prepare-sfz-artwork.py",
+      "pillow_version": "12.3.0",
+      "input": {
+        "file": "tubular-bells.jpg",
+        "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/53/Yamaha_Deagan_chimes_%28from_LA_Percussion_Rentals%29.jpg/500px-Yamaha_Deagan_chimes_%28from_LA_Percussion_Rentals%29.jpg",
+        "sha256": "c53aacf7999eba4c46fac23ab4901f4c45cd91dcac746a5d1bc7cf5d13fb83f6"
+      },
+      "fit": [
+        512,
+        512
+      ],
+      "keep_polygons": [
+        [
+          [
+            86,
+            119
+          ],
+          [
+            87,
+            84
+          ],
+          [
+            109,
+            40
+          ],
+          [
+            139,
+            36
+          ],
+          [
+            141,
+            30
+          ],
+          [
+            178,
+            31
+          ],
+          [
+            177,
+            37
+          ],
+          [
+            211,
+            29
+          ],
+          [
+            213,
+            22
+          ],
+          [
+            251,
+            22
+          ],
+          [
+            251,
+            29
+          ],
+          [
+            291,
+            20
+          ],
+          [
+            294,
+            16
+          ],
+          [
+            334,
+            17
+          ],
+          [
+            335,
+            22
+          ],
+          [
+            359,
+            17
+          ],
+          [
+            360,
+            11
+          ],
+          [
+            391,
+            10
+          ],
+          [
+            391,
+            20
+          ],
+          [
+            428,
+            14
+          ],
+          [
+            431,
+            9
+          ],
+          [
+            437,
+            11
+          ],
+          [
+            433,
+            78
+          ],
+          [
+            424,
+            109
+          ],
+          [
+            418,
+            312
+          ],
+          [
+            433,
+            314
+          ],
+          [
+            433,
+            371
+          ],
+          [
+            421,
+            375
+          ],
+          [
+            417,
+            637
+          ],
+          [
+            430,
+            664
+          ],
+          [
+            427,
+            731
+          ],
+          [
+            409,
+            768
+          ],
+          [
+            412,
+            809
+          ],
+          [
+            403,
+            839
+          ],
+          [
+            386,
+            844
+          ],
+          [
+            372,
+            837
+          ],
+          [
+            363,
+            810
+          ],
+          [
+            364,
+            794
+          ],
+          [
+            354,
+            795
+          ],
+          [
+            349,
+            781
+          ],
+          [
+            356,
+            757
+          ],
+          [
+            352,
+            738
+          ],
+          [
+            329,
+            785
+          ],
+          [
+            316,
+            800
+          ],
+          [
+            139,
+            766
+          ],
+          [
+            125,
+            754
+          ],
+          [
+            116,
+            738
+          ],
+          [
+            114,
+            727
+          ],
+          [
+            97,
+            720
+          ],
+          [
+            95,
+            726
+          ],
+          [
+            83,
+            727
+          ],
+          [
+            66,
+            738
+          ],
+          [
+            66,
+            775
+          ],
+          [
+            51,
+            789
+          ],
+          [
+            42,
+            782
+          ],
+          [
+            44,
+            752
+          ],
+          [
+            31,
+            727
+          ],
+          [
+            28,
+            714
+          ],
+          [
+            75,
+            653
+          ],
+          [
+            84,
+            613
+          ],
+          [
+            88,
+            369
+          ],
+          [
+            82,
+            365
+          ],
+          [
+            82,
+            319
+          ],
+          [
+            90,
+            312
+          ],
+          [
+            92,
+            123
+          ]
+        ]
+      ],
+      "clear_polygons": [
+        [
+          [
+            112,
+            112
+          ],
+          [
+            131,
+            111
+          ],
+          [
+            131,
+            307
+          ],
+          [
+            110,
+            308
+          ]
+        ],
+        [
+          [
+            389,
+            111
+          ],
+          [
+            407,
+            110
+          ],
+          [
+            405,
+            309
+          ],
+          [
+            391,
+            310
+          ]
+        ],
+        [
+          [
+            251,
+            551
+          ],
+          [
+            333,
+            501
+          ],
+          [
+            351,
+            509
+          ],
+          [
+            348,
+            642
+          ],
+          [
+            251,
+            624
+          ]
+        ],
+        [
+          [
+            146,
+            724
+          ],
+          [
+            329,
+            756
+          ],
+          [
+            316,
+            789
+          ],
+          [
+            137,
+            756
+          ]
+        ],
+        [
+          [
+            116,
+            403
+          ],
+          [
+            122,
+            403
+          ],
+          [
+            122,
+            661
+          ],
+          [
+            106,
+            693
+          ]
+        ]
+      ],
+      "patches": [
+        {
+          "polygon": [
+            [
+              317,
+              324
+            ],
+            [
+              378,
+              324
+            ],
+            [
+              378,
+              335
+            ],
+            [
+              317,
+              335
+            ]
+          ],
+          "color": [
+            203,
+            202,
+            194
+          ]
+        },
+        {
+          "polygon": [
+            [
+              323,
+              377
+            ],
+            [
+              363,
+              377
+            ],
+            [
+              363,
+              390
+            ],
+            [
+              323,
+              390
+            ]
+          ],
+          "color": [
+            210,
+            210,
+            207
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "file": "sfz_handbell.png",
+    "title": "Petite cloche manuelle.jpg",
+    "author": "M0tty",
+    "license": "CC BY-SA 4.0",
+    "source": "https://commons.wikimedia.org/wiki/File:Petite_cloche_manuelle.jpg",
+    "source_snapshot": "https://commons.wikimedia.org/w/index.php?title=File%3APetite_cloche_manuelle.jpg&oldid=1053990107",
+    "original": "https://upload.wikimedia.org/wikipedia/commons/9/91/Petite_cloche_manuelle.jpg",
+    "date": "2015-07-13",
+    "license_url": "https://creativecommons.org/licenses/by-sa/4.0",
+    "changes": "Conventional masking, background removal, framing, rotation or recoloring as recorded in assets/sfz-instruments/credits.json; cropped and resized. No AI generation.",
+    "sha256": "6e90dc548656535f41170207864f6417416574b36225a0f59125e6e31f7b2740",
+    "preparation": {
+      "tool": "tools/prepare-sfz-artwork.py",
+      "pillow_version": "12.3.0",
+      "input": {
+        "file": "handbell.jpg",
+        "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/91/Petite_cloche_manuelle.jpg/500px-Petite_cloche_manuelle.jpg",
+        "sha256": "5d03e074fe0387235aa579c5adb6ce3a8fb192377f2a36a79d88e190d46b2add"
+      },
+      "fit": [
+        512,
+        512
+      ],
+      "background": {
+        "color": [
+          255,
+          255,
+          255
+        ],
+        "tolerance": 12
+      },
+      "keep_polygons": [
+        [
+          [
+            145,
+            72
+          ],
+          [
+            158,
+            74
+          ],
+          [
+            171,
+            87
+          ],
+          [
+            182,
+            104
+          ],
+          [
+            214,
+            114
+          ],
+          [
+            265,
+            123
+          ],
+          [
+            279,
+            139
+          ],
+          [
+            286,
+            151
+          ],
+          [
+            298,
+            148
+          ],
+          [
+            309,
+            152
+          ],
+          [
+            394,
+            150
+          ],
+          [
+            425,
+            147
+          ],
+          [
+            437,
+            152
+          ],
+          [
+            439,
+            163
+          ],
+          [
+            430,
+            175
+          ],
+          [
+            396,
+            179
+          ],
+          [
+            313,
+            170
+          ],
+          [
+            301,
+            174
+          ],
+          [
+            286,
+            170
+          ],
+          [
+            279,
+            192
+          ],
+          [
+            267,
+            211
+          ],
+          [
+            224,
+            224
+          ],
+          [
+            193,
+            241
+          ],
+          [
+            172,
+            259
+          ],
+          [
+            153,
+            268
+          ],
+          [
+            137,
+            265
+          ],
+          [
+            123,
+            249
+          ],
+          [
+            112,
+            226
+          ],
+          [
+            106,
+            192
+          ],
+          [
+            106,
+            157
+          ],
+          [
+            112,
+            122
+          ],
+          [
+            123,
+            90
+          ],
+          [
+            135,
+            76
+          ]
+        ]
+      ]
+    }
   }
 ]

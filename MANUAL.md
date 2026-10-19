@@ -459,7 +459,7 @@ Press **RECORDING** to focus the channel strips on input routing and arm control
 
 ## Configuring audio
 
-Open **Settings → Settings...**, then select the **Audio** tab to choose your audio device. Use the tabs across the top to switch between Audio, Control Surface, MIDI Bindings, MIDI Sync, General, Advanced and SFZ Library. The panel remembers the last tab while Dusk Studio is open.
+Open **Settings → Settings...**, then select the **Audio** tab to choose your audio device. Use the tabs across the top to switch between Audio, Control Surface, MIDI Bindings, MIDI Sync, General, Advanced, SFZ Library and Plug-ins. The panel remembers the last tab while Dusk Studio is open.
 
 ### Audio
 
@@ -514,6 +514,12 @@ All seven are saved with the session, so a project that syncs to an external clo
 **SFZ download location** shows the folder used for downloaded instrument packs. **Change folder...** lets you select an existing folder on this computer or an external drive. With **Move existing installed packs** unchecked, only future downloads use the new folder; existing packs remain available from their previous folders.
 
 Check **Move existing installed packs** before changing folders to relocate the current library too. Unload managed instruments first. Dusk Studio copies and verifies the packs before removing their originals, and keeps their portable session references intact. Recording or rendering pauses the operation; resume or cancel it from this tab afterwards. An unavailable external drive is reported rather than replaced with an empty local library. Reconnect it to use its instruments, or choose another folder for future downloads.
+
+### Plug-ins
+
+**Add folder...** adds a custom plug-in search folder for this computer. CLAP, VST3 and LV2 scans include its subfolders as well as the standard platform locations. Added folders are remembered across restarts; adding the same folder again keeps one entry. Audio Units use macOS registration independently of this list.
+
+Choose **Scan plugins** to discover newly installed plug-ins. The scan can be cancelled, keeping completed results, and Settings returns after its completion notice closes. **Remove** takes a folder out of future scans without deleting files or unloading a plug-in already in use. Restart Dusk Studio after removing an LV2 folder to clear its loaded discovery metadata. Unavailable folders stay in the list; reconnect them before scanning.
 
 \newpage
 
@@ -1999,9 +2005,9 @@ Click a track's **Insert** slot and choose **SFZ Manager...** to load an instrum
 
 ![SFZ Manager Installed tab with a downloaded pack and its programs.](docs/images/ms-03-sfz-installed.png)
 
-Both tabs have an instrument preview above a grouped browser. Choose **Piano**, **Drum Kit**, **Acoustic Guitar** or another category to narrow the current list; **All instruments** restores it and leaves the preview blank until you select an instrument. On smaller windows the category list becomes a dropdown. **Installed** lists each downloaded pack once, and category counts count packs rather than SFZ files. **Search installed instruments** matches pack names, program names and saved descriptions without rescanning. Select a pack and choose its **Program**: when an ARIA bank declares its programs, the normal list uses those declarations and hides internal mapping fragments. **Show all SFZ files** exposes the full extracted file list when needed. Without usable bank metadata, all discovered SFZ candidates remain available.
+Both tabs have an instrument preview above a grouped browser. Choose **Piano**, **Drum Kit**, **Acoustic Guitar** or another category to narrow the current list; **All instruments** restores it and shows a library overview illustration until you select an instrument. On smaller windows the category list becomes a dropdown. **Installed** lists each downloaded pack once, and category counts count packs rather than SFZ files. **Search installed instruments** matches pack names, program names and saved descriptions without rescanning. Select a pack and choose its **Program**: when an ARIA bank declares its programs, the normal list uses those declarations and hides internal mapping fragments. **Show all SFZ files** exposes the full extracted file list when needed. Without usable bank metadata, all discovered SFZ candidates remain available.
 
-The preview uses repository artwork from GitHub raw/user-content hosts or Musical Artifacts' own hosts when the source declares a suitable image. Redirects must stay on those hosts. Otherwise it shows a licensed instrument cutout for the category. Image decoding and downloads run in the background, with bounded memory and disk caches. Installed and cached browsing reuse saved images without network requests; an uncached or unavailable image uses the category cutout. Older installations without saved artwork metadata use the same category for their list grouping and cutout, including patches with generic filenames. Image credits are included in **LICENSES.txt**.
+The preview uses repository artwork from GitHub raw/user-content hosts or Musical Artifacts' own hosts when the source declares a suitable image. Redirects must stay on those hosts. Otherwise it selects a licensed instrument cutout from the instrument name, using its path and saved metadata when the name is generic. The bundled set includes cello, upright bass, several brass and woodwind instruments, bells, mallets, guitars and world instruments. A known instrument name takes precedence over folder names. Packs containing different instruments use the selected program’s cutout instead of applying one pack cover to every program; logos and interface diagrams are excluded. Image decoding and downloads run in the background, with bounded memory and disk caches. Installed and cached browsing reuse saved images without network requests; an uncached or unavailable image uses the category cutout. Older installations without saved artwork metadata use the same category for their list grouping and cutout, including patches with generic filenames. Image credits are included in **LICENSES.txt**.
 
 ![Local SFZ folders](docs/images/ms-02-sfz-library.png)
 

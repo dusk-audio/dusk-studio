@@ -886,6 +886,7 @@ target_sources(DuskStudio PRIVATE
     src/ui/scenario/cases/gui_mixer.cpp
     src/ui/scenario/cases/gui_piano_roll.cpp
     src/ui/scenario/cases/gui_plugin_editors.cpp
+    src/ui/scenario/cases/gui_plugin_folders.cpp
     src/ui/scenario/cases/gui_regions_markers.cpp
     src/ui/scenario/cases/gui_session_file.cpp
     src/ui/scenario/cases/gui_sfz_repository.cpp

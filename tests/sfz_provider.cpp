@@ -932,6 +932,21 @@ TEST_CASE ("SFZ cached descriptors validate paths, pins, and license receipts of
 
 TEST_CASE ("SFZ repository artwork uses declared images and immutable repository paths", "[sfz][provider][artwork]")
 {
+    CHECK_FALSE (isInstrumentArtworkPath ("https://raw.githubusercontent.com/vendor/pack/logo/cover.png"));
+    CHECK_FALSE (isInstrumentArtworkPath ("https://raw.githubusercontent.com/vendor/pack/Library%20logo.png"));
+    CHECK (isInstrumentArtworkPath ("https://raw.githubusercontent.com/vendor/pack/Images/cover.png"));
+    CHECK (isInstrumentArtworkPath ("https://raw.githubusercontent.com/vendor/DuskGui/main/Images/DuskGui.png"));
+    CHECK (isInstrumentArtworkPath ("https://raw.githubusercontent.com/vendor/button-accordion/main/Images/cover.png"));
+    CHECK (isInstrumentArtworkPath ("Images/button-accordion.png"));
+    CHECK (isInstrumentArtworkPath ("Images/Button%20accordion.png"));
+    CHECK (isInstrumentArtworkPath ("Images/button-accordions.png"));
+    CHECK_FALSE (isInstrumentArtworkPath ("Images/Buttons/cover.png"));
+    CHECK_FALSE (isInstrumentArtworkPath ("Images/play-button.png"));
+    CHECK_FALSE (isInstrumentArtworkPath ("button-accordion/Buttons/cover.png"));
+    CHECK_FALSE (isInstrumentArtworkPath ("Images/button-accordion-play-button.png"));
+    CHECK_FALSE (isInstrumentArtworkPath ("Images/GUI/cover.png"));
+    CHECK_FALSE (isInstrumentArtworkPath ("Images/GUI-panel/cover.png"));
+    CHECK_FALSE (isInstrumentArtworkPath ("Images/Skins/cover.png"));
     FakeTransport transport;
     auto summary = githubSummary();
     transport.replies = githubReplies();
@@ -942,6 +957,22 @@ TEST_CASE ("SFZ repository artwork uses declared images and immutable repository
         REQUIRE (result);
         REQUIRE (result.pack);
         CHECK (result.pack->presentation.artworkUrl == "https://raw.githubusercontent.com/sfzinstruments/Grand-Piano/" + kCommit + "/Images/cover.png");
+    }
+    SECTION ("Logos and arbitrary repository pictures are not instrument artwork")
+    {
+        for (const auto* path : { "logo.png", "banner.jpg", "diagram.png", "Images/preview-waveform.png", "logo/cover.png", "GUI/instrument.jpg" })
+            transport.replies[2].json["tree"].push_back ({ { "path", path }, { "type", "blob" }, { "mode", "100644" } });
+        const auto result = resolveProviderPack (transport, summary);
+        REQUIRE (result);
+        CHECK (result.pack->presentation.artworkUrl.empty());
+    }
+    SECTION ("Explicit repository artwork takes precedence over guessed cover files")
+    {
+        transport.replies[0].json["image_url"] = "https://raw.githubusercontent.com/sfzinstruments/Grand-Piano/" + kCommit + "/declared.jpg";
+        transport.replies[2].json["tree"].push_back ({ { "path", "Images/cover.png" }, { "type", "blob" }, { "mode", "100644" } });
+        const auto result = resolveProviderPack (transport, summary);
+        REQUIRE (result);
+        CHECK (result.pack->presentation.artworkUrl == transport.replies[0].json["image_url"].get<std::string>());
     }
     SECTION ("Author-prefixed catalog instruments use the image actually declared by their page")
     {

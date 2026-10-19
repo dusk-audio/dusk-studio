@@ -1141,6 +1141,7 @@ std::uint32_t handleLoadPlugin (HostState& host,
     // null pointer with an orphaned ownedInstance, which silences the slot
     // until some later RPC happens to republish it.
     juce::String errorMsg;
+    if (desc.pluginFormatName == "LV2") duskstudio::juce_compat::primeCustomLv2 (host.formatManager);
     auto fresh = host.formatManager.createPluginInstance (
         desc, hdr.sampleRate, hdr.blockSize, errorMsg);
 
@@ -1833,6 +1834,7 @@ int runScan (int argc, const char* const* argv) noexcept
     }
 
     juce::OwnedArray<juce::PluginDescription> found;
+    if (formatName == "LV2") duskstudio::juce_compat::primeCustomLv2 (fm);
     chosen->findAllTypesForFile (found, fileOrId);   // may crash/hang - that is the point
 
     const auto payload = duskstudio::scanproto::makePayload (

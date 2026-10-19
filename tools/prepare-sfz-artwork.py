@@ -14,7 +14,7 @@ import json
 from pathlib import Path
 
 import PIL
-from PIL import Image, ImageChops, ImageDraw, ImageFilter
+from PIL import Image, ImageChops, ImageDraw, ImageEnhance, ImageFilter
 
 
 def digest(data):
@@ -40,6 +40,28 @@ def cutout(image, preparation):
     for polygon in preparation.get('clear_polygons', []):
         ImageDraw.Draw(mask).polygon([tuple(point) for point in polygon], fill=0)
     image.putalpha(mask)
+    return image
+
+
+def remove_background(image, background):
+    target, tolerance = background['color'], background['tolerance']
+    width, height = image.size
+    pixels = image.load()
+    visited = set()
+    pending = [(x, y) for x in range(width) for y in (0, height - 1)]
+    pending += [(x, y) for y in range(height) for x in (0, width - 1)]
+    while pending:
+        x, y = pending.pop()
+        if (x, y) in visited:
+            continue
+        visited.add((x, y))
+        pixel = pixels[x, y]
+        if max(abs(pixel[c] - target[c]) for c in range(3)) > tolerance:
+            continue
+        pixels[x, y] = (*pixel[:3], 0)
+        for nx, ny in ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)):
+            if 0 <= nx < width and 0 <= ny < height:
+                pending.append((nx, ny))
     return image
 
 
@@ -85,9 +107,19 @@ def main():
                 image.alpha_composite(part, tuple(component['at']))
         else:
             image = load_input(args.input_dir, preparation['input'])
+            if 'background' in preparation:
+                image = remove_background(image, preparation['background'])
             if 'keep_polygons' in preparation:
                 image = cutout(image, preparation)
             image = retouch(image, preparation.get('patches', []))
+            if 'saturation' in preparation:
+                image = ImageEnhance.Color(image).enhance(preparation['saturation'])
+            if 'tint' in preparation:
+                tinted = Image.new('RGBA', image.size, tuple(preparation['tint']) + (255,))
+                tinted.putalpha(image.getchannel('A'))
+                image = tinted
+            if 'rotate' in preparation:
+                image = image.rotate(preparation['rotate'], resample=Image.Resampling.BICUBIC, expand=True)
             if 'fit' in preparation:
                 image = image.crop(image.getchannel('A').getbbox())
                 image.thumbnail(tuple(preparation['fit']), Image.Resampling.LANCZOS)

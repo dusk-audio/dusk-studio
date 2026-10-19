@@ -552,6 +552,7 @@ int PluginManager::scanInstalledPlugins (
             knownPluginList, deadMansPedalFile);
 
     int added = 0;
+    const auto customFolders = pluginpaths::load();
     const auto& formats = formatManager.getFormats();
     const int   numFormats = formats.size();
     bool aborted = false;
@@ -561,9 +562,9 @@ int PluginManager::scanInstalledPlugins (
         auto* format = formats[fi];
         if (format == nullptr) continue;
 
-        // Default search paths per format - JUCE pulls these from the OS
-        // standard locations (e.g. /usr/lib/vst3, ~/.vst3, /usr/lib/lv2).
-        const auto searchPaths = format->getDefaultLocationsToSearch();
+        juce_compat::primeCustomLv2 (*format, customFolders, abort);
+        if (abort != nullptr && abort->load (std::memory_order_relaxed)) { aborted = true; break; }
+        const auto searchPaths = juce_compat::pluginSearchLocations (*format, customFolders);
         if (searchPaths.getNumPaths() == 0) continue;
 
         juce::PluginDirectoryScanner scanner (knownPluginList, *format,
@@ -641,7 +642,7 @@ int PluginManager::scanInstalledPlugins (
                 if (format->getName() == entry.first)
                 {
                     entry.second = format->searchPathsForPlugins (
-                        format->getDefaultLocationsToSearch(), /*recursive*/ true,
+                        juce_compat::pluginSearchLocations (*format, customFolders), /*recursive*/ true,
                         /*allowAsync*/ false);
                     break;
                 }
@@ -758,7 +759,8 @@ void PluginManager::scanClapPlugins (const std::atomic<bool>* abort)
     // message thread can't stall behind this thread's file I/O.
     std::vector<PluginDescriptor> fresh;
     bool cancelled = false;
-    for (const auto& path : clap::ClapScanner::findClapFiles (clap::ClapScanner::defaultSearchPaths()))
+    for (const auto& path : pluginpaths::findBundles (
+             pluginpaths::extend (clap::ClapScanner::defaultSearchPaths(), pluginpaths::load()), ".clap", abort))
     {
         // Between bundles as well as inside one, or a cancel would still have to
         // wait out every remaining bundle in this phase.
@@ -774,7 +776,7 @@ void PluginManager::scanClapPlugins (const std::atomic<bool>* abort)
     // `fresh` REPLACES the previous results, so publishing a run that stopped
     // early would drop every bundle after the stop from the picker and from the
     // cache on disk. Keep what the last complete scan found instead.
-    if (cancelled) return;
+    if (cancelled || (abort != nullptr && abort->load (std::memory_order_relaxed))) return;
 
     {
         const juce::ScopedLock sl (nativeDescriptionsLock);
@@ -939,7 +941,8 @@ void PluginManager::scanVst3NativePlugins (const std::atomic<bool>* abort)
 #if DUSKSTUDIO_HAS_NATIVE_VST3
     std::vector<PluginDescriptor> fresh;
     bool cancelled = false;
-    for (const auto& path : vst3::Vst3Scanner::findVst3Bundles (vst3::Vst3Scanner::defaultSearchPaths()))
+    for (const auto& path : pluginpaths::findBundles (
+             pluginpaths::extend (vst3::Vst3Scanner::defaultSearchPaths(), pluginpaths::load()), ".vst3", abort))
     {
         // See scanClapPlugins: a cancel must not wait out the remaining bundles,
         // and a phase that stopped early must not replace the cached results.
@@ -951,7 +954,7 @@ void PluginManager::scanVst3NativePlugins (const std::atomic<bool>* abort)
         if (outcome == NativeScanOutcome::NoSandbox)
             nativescan::appendVst3Rows (path, fresh);   // no sandbox available - in-process
     }
-    if (cancelled) return;
+    if (cancelled || (abort != nullptr && abort->load (std::memory_order_relaxed))) return;
 
     {
         const juce::ScopedLock sl (nativeDescriptionsLock);
@@ -1075,6 +1078,7 @@ PluginManager::createPluginInstance (const PluginDescriptor& desc,
                                       double sampleRate, int blockSize,
                                       juce::String& errorMessage)
 {
+    if (desc.formatName == "LV2") juce_compat::primeCustomLv2 (formatManager);
     auto instance = formatManager.createPluginInstance (
         toJuceDescription (desc), sampleRate, blockSize, errorMessage);
     if (instance == nullptr)
@@ -1088,6 +1092,7 @@ void PluginManager::createPluginInstanceAsync (
     const PluginDescriptor& desc, double sampleRate, int blockSize,
     std::function<void (std::unique_ptr<juce::AudioPluginInstance>, juce::String)> callback)
 {
+    if (desc.formatName == "LV2") juce_compat::primeCustomLv2 (formatManager);
     // Off-thread creation for slow-to-instantiate formats. JUCE runs the
     // format's createInstance on a background thread when the format reports
     // requiresUnblockedMessageThreadDuringCreation() == false, then fires this

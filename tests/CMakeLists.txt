@@ -74,6 +74,7 @@ add_executable(dusk-studio-tests
     ${CMAKE_SOURCE_DIR}/src/engine/NativePluginCache.cpp
     plugin_scan_protocol.cpp
     plugin_backing_check.cpp
+    plugin_search_paths.cpp
     default_input_choice.cpp
     session_tick_conversion.cpp
     tempo_map_conversion.cpp
@@ -436,6 +437,7 @@ target_compile_definitions(dusk-studio-tests PRIVATE
     DUSKSTUDIO_VERSION_STRING="${PROJECT_VERSION}"
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
+    JUCE_PLUGINHOST_LV2=1
     JUCE_STANDALONE_APPLICATION=1
     $<$<BOOL:${DUSKSTUDIO_JUCE_HAS_FREE_ADD_FORMATS}>:DUSKSTUDIO_JUCE_HAS_FREE_ADD_FORMATS=1>
     DUSKSTUDIO_SOURCE_DIR="${CMAKE_SOURCE_DIR}")

@@ -39,14 +39,19 @@ canonical source.
   A larger, responsive browser shows source stars or favorites and opens
   published demos before downloading an instrument pack. Both tabs group
   instruments by type, show repository artwork or licensed instrument cutouts,
-  and reuse background image caches. Installed search includes program names and
+  and reuse background image caches. The 39-image set adds cello, brass,
+  woodwind, bell and other instrument cutouts. Selected programs take precedence
+  over collection covers and unrelated repository logos. All instruments shows
+  a library overview. Installed search includes program names and
   descriptions without rescanning packs. Each pack counts once per category,
   with ARIA program choices and access to internal mappings. Enter and keypad
   Enter submit searches. ZIP packs use portable stored or deflate compression.
   All repositories is the default search, combining all four sources with separate
   page progress and repository labels; one unavailable source leaves the others'
   results usable. Versilian offers the official VSCO 2 CE and VCSL SFZ releases.
-- **Settings tabs and SFZ storage.** Top tabs replace the long settings page.
+- **Settings tabs and SFZ storage.** A larger panel and graphite/gold tabs match
+  the DAW. A Plug-ins page adds custom CLAP, VST3 and LV2 search folders with
+  recursive discovery and direct scanning. Top tabs replace the long settings page.
   Downloaded packs default to the platform's application data directory.
   Choose a download folder on an external drive, keep existing packs in place or
   move them after copying and verification. Session instrument references survive
