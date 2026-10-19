@@ -509,6 +509,34 @@ if(DUSKSTUDIO_NATIVE_CLAP)
     target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_HAS_NATIVE_CLAP=1)
 endif()
 
+if(NOT DUSKSTUDIO_NATIVE_LV2)
+    set(DUSKSTUDIO_MIDI_PROBE_LV2_BUNDLE
+        "${CMAKE_CURRENT_BINARY_DIR}/midi-probe-fixture.lv2")
+    file(MAKE_DIRECTORY "${DUSKSTUDIO_MIDI_PROBE_LV2_BUNDLE}")
+    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/midi_probe_manifest.ttl" manifest)
+    string(REPLACE "midi_probe_fixture.so" "midi_probe_fixture${CMAKE_SHARED_MODULE_SUFFIX}" manifest "${manifest}")
+    file(CONFIGURE OUTPUT "${DUSKSTUDIO_MIDI_PROBE_LV2_BUNDLE}/manifest.ttl" CONTENT "${manifest}" @ONLY)
+    configure_file(fixtures/midi_probe_plugin.ttl
+        "${DUSKSTUDIO_MIDI_PROBE_LV2_BUNDLE}/midi_probe_plugin.ttl" COPYONLY)
+    add_library(dusk-studio-midi-probe-lv2-fixture MODULE fixtures/midi_probe_lv2.cpp)
+    set_target_properties(dusk-studio-midi-probe-lv2-fixture PROPERTIES
+        PREFIX ""
+        OUTPUT_NAME "midi_probe_fixture"
+        LIBRARY_OUTPUT_DIRECTORY "$<1:${DUSKSTUDIO_MIDI_PROBE_LV2_BUNDLE}>"
+        RUNTIME_OUTPUT_DIRECTORY "$<1:${DUSKSTUDIO_MIDI_PROBE_LV2_BUNDLE}>")
+    target_compile_features(dusk-studio-midi-probe-lv2-fixture PRIVATE cxx_std_17)
+    if(TARGET juce_audio_processors_headless)
+        set(lv2Module juce_audio_processors_headless)
+    else()
+        set(lv2Module juce_audio_processors)
+    endif()
+    target_include_directories(dusk-studio-midi-probe-lv2-fixture PRIVATE
+        "${DUSKSTUDIO_JUCE_SOURCE_DIR}/modules/${lv2Module}/format_types/LV2_SDK/lv2")
+    set_property(SOURCE plugin_search_paths.cpp APPEND PROPERTY COMPILE_DEFINITIONS
+        DUSKSTUDIO_MIDI_PROBE_LV2_FIXTURE_PATH="${DUSKSTUDIO_MIDI_PROBE_LV2_BUNDLE}")
+    add_dependencies(dusk-studio-tests dusk-studio-midi-probe-lv2-fixture)
+endif()
+
 # Native LV2 host — lilv/suil (ISC), ON when the dev libs are present (detected in
 # the top-level CMakeLists; PkgConfig::LILV etc. are GLOBAL imported targets).
 if(DUSKSTUDIO_NATIVE_LV2)

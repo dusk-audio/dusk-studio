@@ -91,6 +91,8 @@ canonical source.
 
 ### Fixed
 
+- **Windows LV2 folders.** Scanning, loading and saving LV2 plug-ins use Unicode
+  file paths, including plug-ins inside custom folders with accented names.
 - **Autosave recovery during shutdown.** Recovery actions retain their session
   paths if the dialog is destroyed immediately while message posting is stopped.
 - **Empty LV2 state.** Saving a plug-in with no state properties avoids an

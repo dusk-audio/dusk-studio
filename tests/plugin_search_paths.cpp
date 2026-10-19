@@ -5,6 +5,10 @@
 #include "engine/ipc/PluginScanProtocol.h"
 #include "engine/ipc/RemotePluginConnection.h"
 
+#if defined(_WIN32)
+#include "../cmake/JuceLv2WindowsPaths.h"
+#endif
+
 #include <future>
 
 namespace
@@ -151,13 +155,44 @@ TEST_CASE ("Invalid plugin folder settings do not create search roots", "[plugin
 TEST_CASE ("Nested custom LV2 bundles prime the parent scanner and fresh scan child", "[plugins][paths][ipc]")
 {
     Tree tree;
+   #if defined(_WIN32)
+    const auto configDirectory = tree.root / fs::u8path ("config \xc3\xa9 \xe9\x9f\xb3\xe8\x89\xb2");
+    const ConfigOverride config (configDirectory);
+   #else
     const ConfigOverride config (tree.root / "config");
+   #endif
    #if defined(_WIN32)
     const auto custom = fs::u8path ("Plug-ins \xc3\xa9; collection");
    #else
     const auto custom = fs::u8path ("Plug-ins \xc3\xa9: collection");
    #endif
     const auto bundle = tree.directory (custom / "Vendor" / "Nested" / "Fixture.lv2");
+   #if defined(_WIN32)
+    namespace wide = duskstudio::lv2WindowsPaths;
+    std::unique_ptr<char, decltype (&std::free)> expanded (
+        wide::expandEnvironment ("%DUSKSTUDIO_CONFIG_DIR%\\LV2"), &std::free);
+    REQUIRE (expanded != nullptr);
+    CHECK (fs::u8path (expanded.get()) == configDirectory / "LV2");
+    const auto sample = bundle / fs::u8path ("sample \xe9\x9f\xb3\xe8\x89\xb2.bin");
+    const auto sampleName = sample.u8string();
+    std::unique_ptr<FILE, decltype (&std::fclose)> file (wide::openFile (sampleName.c_str(), "wb"), &std::fclose);
+    REQUIRE (file != nullptr);
+    REQUIRE (std::fwrite ("sample", 1, 6, file.get()) == 6);
+    file.reset();
+    struct _stat64 info {};
+    REQUIRE (wide::fileInfo (sampleName.c_str(), &info) == 0);
+    CHECK (info.st_size == 6);
+    CHECK (wide::pathAccess (sampleName.c_str(), 0) == 0);
+    std::vector<std::string> names;
+    const auto bundleName = bundle.u8string();
+    wide::forEachDirectory (bundleName.c_str(), &names, [] (const char*, const char* name, void* data)
+    { static_cast<std::vector<std::string>*> (data)->emplace_back (name); });
+    CHECK (std::find (names.begin(), names.end(), sample.filename().u8string()) != names.end());
+    CHECK (wide::removeFile (sampleName.c_str()) == 0);
+    const auto directoryName = (bundle / fs::u8path ("folder \xe9\x9f\xb3\xe8\x89\xb2")).u8string();
+    REQUIRE (wide::makeDirectory (directoryName.c_str()) == 0);
+    CHECK (wide::removeDirectory (directoryName.c_str()) != FALSE);
+   #endif
     const std::string uri = "urn:duskstudio:test:custom-paths";
     REQUIRE (dusk::fs::writeStringToFile (bundle / "manifest.ttl", R"ttl(
 @prefix lv2: <http://lv2plug.in/ns/lv2core#> .
