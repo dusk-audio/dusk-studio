@@ -647,7 +647,8 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
             }
             if (quietFrames < kSettledFrames)
             {
-                if (ImGui::GetCurrentContext()->InputEventsQueue.Size > 0)
+                if (ImGui::GetCurrentContext()->InputEventsQueue.Size > 0
+                    || (owner.view != nullptr && ! owner.view->inputSettledForScenario()))
                     quietFrames = 0;
                 else if (++quietFrames == kSettledFrames)
                 {
