@@ -742,12 +742,18 @@ private:
 #if DUSKSTUDIO_HAS_MULTISAMPLE
 struct AudioEngine::MultisampleLoadState
 {
+    struct RestoreFailure
+    {
+        std::size_t trackIndex;
+        std::uint64_t requestGeneration, slotGeneration;
+        PluginLoadFailure failure;
+    };
     MultisampleLoader worker;
     std::uint64_t sessionGeneration = 1;
     std::array<std::uint64_t, Session::kNumTracks> generations {};
     std::array<bool, Session::kNumTracks> pending {};
     std::array<std::optional<MultisampleLoader::Request>, Session::kNumTracks> deferred;
-    std::vector<PluginLoadFailure> restoreFailures;
+    std::vector<RestoreFailure> restoreFailures;
 };
 #endif
 
@@ -2064,7 +2070,7 @@ void AudioEngine::serviceMultisampleLoads()
             PluginLoadFailure failure { dusk::text::format ("Track %d", request.trackIndex + 1),
                 request.path.stem().u8string(), "multisample", result.error };
             lastPluginLoadFailures.push_back (failure);
-            loads.restoreFailures.push_back (std::move (failure));
+            loads.restoreFailures.push_back ({ index, request.requestGeneration, request.slotGeneration, std::move (failure) });
             broadcastChange();
         }
         if (request.onDone) request.onDone (loaded, result.error);
@@ -2073,8 +2079,13 @@ void AudioEngine::serviceMultisampleLoads()
         && std::none_of (loads.deferred.begin(), loads.deferred.end(),
                         [] (const auto& request) { return request && request->restoring; }))
     {
-        auto failures = std::exchange (loads.restoreFailures, {});
-        if (onPluginRestoreAlert_) onPluginRestoreAlert_ (std::move (failures));
+        auto completed = std::exchange (loads.restoreFailures, {});
+        std::vector<PluginLoadFailure> failures;
+        for (auto& entry : completed)
+            if (entry.requestGeneration == loads.generations[entry.trackIndex]
+                && entry.slotGeneration == getStrip (static_cast<int> (entry.trackIndex)).getNativeMultisampleSlot().generation())
+                failures.push_back (std::move (entry.failure));
+        if (! failures.empty() && onPluginRestoreAlert_) onPluginRestoreAlert_ (std::move (failures));
     }
 }
 #endif

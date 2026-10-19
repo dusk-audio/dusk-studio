@@ -1531,6 +1531,37 @@ std::optional<ScenarioResult> runRestoreFailures (GuiHost& host, ScenarioContext
         ctx.expect (host.modalStackEmpty() && ctx.engine().getLastPluginLoadFailures().empty(),
                     "a cancelled session's restore raised a stale alert");
     }, [&ctx] { return ! ctx.engine().hasPendingMultisampleLoads(); }, "cancelled restore work did not drain" });
+    auto firstFailed = std::make_shared<bool> (false);
+    steps->push_back ({ 0, [&ctx, held, firstFailed]
+    {
+        for (int index = 0; index < 2; ++index)
+            ctx.session().track (index).nativeMultisamplePath =
+                (ctx.tempDir() / ("Missing" + std::to_string (index) + ".sfz")).u8string();
+        ctx.expect (ctx.engine().requestNativeMultisampleLoad (0, ctx.tempDir() / "Missing0.sfz", {},
+            [&ctx, held, firstFailed] (bool loaded, std::string)
+            {
+                ctx.expect (! loaded, "the missing instrument unexpectedly loaded");
+                ctx.engine().setAssetRenderActive (true); *held = true;
+                ctx.expect (ctx.engine().requestNativeMultisampleLoad (1, ctx.tempDir() / "Missing1.sfz",
+                    {}, {}, -1, true), "could not queue the remaining restore");
+                *firstFailed = true;
+            }, -1, true), "could not start the partially completed restore");
+    } });
+    steps->push_back ({ 0, [&host, &ctx, held]
+    {
+        ctx.expect (host.modalStackEmpty() && ctx.engine().hasPendingMultisampleLoad (1),
+                    "a partial restore did not wait for the remaining track");
+        ctx.engine().cancelNativeMultisampleLoad (0);
+        ctx.session().track (0).nativeMultisamplePath = {};
+        ctx.engine().setAssetRenderActive (false); *held = false;
+    }, [firstFailed] { return *firstFailed; }, "the first partial restore did not fail" });
+    steps->push_back ({ 100, [&host, &ctx]
+    {
+        const auto text = host.modalText();
+        ctx.expect (text.find ("Track 2") != std::string::npos && text.find ("Track 1") == std::string::npos,
+                    "the restore alert retained a superseded failure: " + text);
+        if (! host.modalStackEmpty()) ctx.expect (host.clickModalButton ("OK"), "could not dismiss the remaining restore alert");
+    }, [&ctx] { return ! ctx.engine().hasPendingMultisampleLoads(); }, "the remaining partial restore did not settle" });
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
 }
