@@ -667,17 +667,38 @@
     "Live Musical Artifacts on macOS remains service-blocked; no bypass.",
     "SFZ library umbrella #804 and reader-performance acceptance #870 remain open with their evidence limits.",
     "Tag/version bump/release flow require maintainer authorization; version remains 0.15.1.",
-    "Publish reviewed sampler fork commit f92e0710 before parent branch CI can fetch its new submodule pin; neither repository has been pushed.",
     "Resolve the original X11 display-loss trigger or explicitly adjudicate the remaining #906 gap; clean later runs do not establish its root cause."
   ],
   "manual_sync": "MANUAL updated for render refusal/loading alerts, Phase modifier and piano/settings corrections. MIDI scan indexes and generation filtering restore existing behavior without new controls/defaults/schema, so those internal fixes require no extra manual wording. The alert-wait follow-up changes only GUI test synchronization; the documented loading-alert behavior remains accurate and requires no edit. Sampler text lifetime and accepted-note accounting restore documented behavior. Popup synchronization and permission automation are test tooling; maintainer instructions updated, with no new product controls to document.",
   "hygiene": "Entire staged diffs reviewed before local commits, including this evidence record; no attribution, dead code, narrative source comments, speculative shims or new Unicode source typography.",
   "publication": {
     "main_checkpoint": "774d8419",
-    "github_changes_posted": false,
+    "github_changes_posted": true,
     "root_branch": "fix/016-release-review",
     "sampler_branch": "fix/label-text-lifetime",
-    "required_order": "Publish the reviewed sampler commit before root-branch CI fetches its pin. Explicit push approval remains required."
+    "required_order": "Sampler commit published and verified fetchable. Root-branch publication, required CI and merge remain pending; explicit root-branch push approval is still required.",
+    "remote_pin_audit": {
+      "checked_at_utc": "2026-10-19T21:04:26.750053+00:00",
+      "remote": "https://github.com/dusk-audio/dusk-fizz.git",
+      "commit": "f92e07104495bbd645325ff62c1a6c8bae3ad428",
+      "branch": "refs/heads/fix/label-text-lifetime",
+      "status": "passed: published pin is advertised and fetchable from fresh repositories",
+      "advertised_ref_for_commit": true,
+      "fresh_fetch_exit": 0,
+      "fresh_submodule_update_exit": 0,
+      "resolved_commit": "f92e07104495bbd645325ff62c1a6c8bae3ad428",
+      "push_authorized": true,
+      "sampler_ci": "No branch workflow runs reported after publication; no CI pass claimed.",
+      "required_ci_submodule_checkout": "pending: parent branch has not been published; fresh local submodule checkout passed",
+      "prepush_evidence": "Existing regress prepush: OK at source 3f8fb3ab covered the unchanged sampler commit; retained log and sampler source hashes verified before push.",
+      "previous_failed_fetch": {
+        "checked_at_utc": "2026-10-19T21:01:21.523571+00:00",
+        "fresh_fetch_exit": 128,
+        "fresh_fetch_error": "fatal: remote error: upload-pack: not our ref f92e07104495bbd645325ff62c1a6c8bae3ad428"
+      }
+    },
+    "root_branch_published": false,
+    "sampler_branch_published": true
   },
   "retained_artifact_sha256": {
     "build/validation-016-followup/900-before/output.log": "b0839d912838202f7f31ea45e4db8535d585ed8c9dbd948a9fa1234942bdbc23",
