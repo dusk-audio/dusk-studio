@@ -91,6 +91,8 @@ canonical source.
 
 ### Fixed
 
+- **Empty LV2 state.** Saving a plug-in with no state properties avoids an
+  invalid memory operation in the bundled LV2 library.
 - **Step-record chords.** Releasing a note rejected by a locked region keeps
   later accepted notes held together at the same position.
 - **SFZ controller labels.** Instrument labels remain valid while the editor
