@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include "engine/MidiTimelineSchedule.h"
 #include "engine/LoopTimeline.h"
@@ -328,6 +329,92 @@ TEST_CASE ("MIDI Merge target selection follows current mapped duration after a 
     CHECK (overlay.targetRegion == expected);
     CHECK (midischedule::findMergeTarget (timeline->placement, start, start + 10000, &map, kRate, kBpm)
            == (expected == 0 ? 0 : -1));
+}
+
+TEST_CASE ("Indexed MIDI merge targets retain exact mapped rounding and stack priority",
+           "[midi][schedule][merge][tempo]")
+{
+    std::mt19937 random (731);
+    TempoMap map;
+    map.setPoints ({ { 0, 127.3f }, { 47999, 60.0f }, { 48101, 300.0f }, { 96001, 91.7f } });
+    std::vector<MidiRegion> regions (20);
+    for (auto& region : regions)
+    {
+        region.timelineStart = (std::int64_t) (random() % 110000);
+        region.lengthInTicks = (std::int64_t) (random() % 1200);
+        region.lengthInSamples = 1000;
+        region.muted = random() % 3 == 0;
+        region.locked = random() % 5 == 0;
+    }
+    regions[0].timelineStart = regions[1].timelineStart = 48017;
+    regions[0].lengthInTicks = regions[1].lengthInTicks = 480;
+    regions[0].locked = regions[1].locked = false;
+    regions[1].muted = true;
+    regions[2].timelineStart = 0;
+    regions[2].lengthInTicks = 8;
+    regions[2].locked = false;
+    const auto timeline = buildMidiTimeline (regions);
+    REQUIRE (timeline->mergeByStart.size() == regions.size());
+    const bool constant = GENERATE (false, true);
+    if (constant) map.setPoints ({ { 0, 120.0f } });
+    for (double rate : { 960.0, 8000.0, 44100.0, 48000.0, 192000.0 })
+        for (int probe = 0; probe < 160; ++probe)
+        {
+            std::int64_t start = (std::int64_t) (random() % 150000);
+            if (probe == 159) start = -1;
+            if (probe < 60)
+            {
+                const auto& region = regions[(std::size_t) probe / 3];
+                const midischedule::RegionClock clock (&map, rate, 120.0f, region.timelineStart);
+                start = clock.at (region.lengthInTicks) + probe % 3 - 1;
+            }
+            const auto end = start + 2000;
+            const int expected = midischedule::findMergeTarget (regions, start, end, &map, rate, 120.0f);
+            int scans = 32768;
+            const auto found = midischedule::findMergeTarget (*timeline, start, end, &map, rate, 120.0f, scans);
+            CAPTURE (rate, start, expected);
+            REQUIRE (found.complete);
+            CHECK (found.target == expected);
+        }
+    for (bool locked : { false, true })
+    {
+        regions[1].locked = locked;
+        const auto stacked = buildMidiTimeline ({ regions[0], regions[1] });
+        for (std::int64_t start : { 36000, 48017 })
+        {
+            int scans = 32768;
+            const auto found = midischedule::findMergeTarget (*stacked, start, 150000, &map, 48000.0, 120.0f, scans);
+            REQUIRE (found.complete);
+            CHECK (found.target == (locked ? 0 : 1));
+        }
+    }
+}
+
+TEST_CASE ("Mapped MIDI merge target work stays bounded for dense expired regions",
+           "[midi][schedule][merge][tempo]")
+{
+    std::vector<MidiRegion> regions (1024);
+    std::vector<TempoPoint> points;
+    for (std::size_t i = 0; i < regions.size(); ++i)
+    {
+        regions[i].timelineStart = (std::int64_t) i * 48000;
+        regions[i].lengthInTicks = 480;
+        regions[i].lengthInSamples = 24000;
+        points.push_back ({ (std::int64_t) i * 48000, i % 2 == 0 ? 120.0f : 60.0f });
+    }
+    TempoMap map;
+    map.setPoints (points);
+    const auto timeline = buildMidiTimeline (regions);
+    int scans = 32768;
+    midischedule::MergeTargetWork work;
+    const auto found = midischedule::findMergeTarget (*timeline, 50000000, 50010000, &map, kRate, kBpm, scans, &work);
+    REQUIRE (found.complete);
+    CHECK (found.target == -1);
+    CHECK (work.regions <= regions.size() + 1);
+    CHECK (work.mapPoints <= 10 * points.size());
+    CHECK (work.inverseQueries <= 5);
+    scans = 100;
+    CHECK_FALSE (midischedule::findMergeTarget (*timeline, 50000000, 50010000, &map, kRate, kBpm, scans).complete);
 }
 
 TEST_CASE ("pending MIDI follows the region a pass starts in, as its commit does",
