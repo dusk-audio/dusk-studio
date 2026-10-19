@@ -86,6 +86,8 @@ canonical source.
 
 ### Fixed
 
+- **SFZ controller labels.** Instrument labels remain valid while the editor
+  reads them, preventing corrupted captions and possible crashes.
 - **SFZ session restoration.** Missing instruments raise one detailed alert
   while preserving their saved references and controls. Resolving an installed
   pack on another computer does not mark an unchanged session as edited. Renders refuse
