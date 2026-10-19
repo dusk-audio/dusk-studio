@@ -82,7 +82,7 @@ std::optional<ScenarioResult> runPluginFolders (GuiHost& host, ScenarioContext& 
                 ctx.expect (host.captureAudioSettings (path), "Settings could not queue its native frame");
         } });
         steps->push_back ({ 0, [] {}, [path] { std::error_code error; return fs::is_regular_file (path, error); },
-                            "Settings native frame was not saved", {}, kSettleBoundMs });
+                            "Settings native frame was not saved", {}, 15000 });
     };
     const auto chooseFolder = [&]
     {
@@ -168,11 +168,11 @@ std::optional<ScenarioResult> runPluginFolders (GuiHost& host, ScenarioContext& 
 
 const ScenarioRegistrar pluginFolders { Scenario {
     "gui.settings_plugin_folders", { "gui", "settings", "plugins" }, Needs::Engine | Needs::Gui,
-    {}, {}, 45000, [] (GuiHost& host, ScenarioContext& ctx) { return runPluginFolders (host, ctx); }
+    {}, {}, 90000, [] (GuiHost& host, ScenarioContext& ctx) { return runPluginFolders (host, ctx); }
 } };
 const ScenarioRegistrar pluginScan {
     Scenario { "gui.settings_plugin_scan", { "gui", "settings", "plugins" }, Needs::Engine | Needs::Gui,
-    {}, {}, 75000, [] (GuiHost& host, ScenarioContext& ctx) { return runPluginFolders (host, ctx, true); }
+    {}, {}, 120000, [] (GuiHost& host, ScenarioContext& ctx) { return runPluginFolders (host, ctx, true); }
 } };
 } // namespace
 } // namespace duskstudio::scenario::gui

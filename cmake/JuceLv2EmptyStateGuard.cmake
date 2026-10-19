@@ -35,6 +35,8 @@ function(duskstudio_guard_juce_lv2_empty_state)
     set(supportCopy "${copyDirectory}/juce_LV2SupportLibs.cpp")
     set(wrapperCopy "${copyDirectory}/${module}_lv2_libs.cpp")
     file(READ "${supportFile}" support)
+    string(REPLACE "#include \"LV2_SDK/"
+        "#include \"${moduleDirectory}/format_types/LV2_SDK/" support "${support}")
     if(WIN32)
         include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/JuceLv2WindowsPaths.cmake")
         duskstudio_juce_lv2_windows_paths("${moduleDirectory}" "${copyDirectory}")
