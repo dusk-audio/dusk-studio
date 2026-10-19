@@ -226,6 +226,56 @@ TEST_CASE ("RecordManager linear MIDI capture clips preview and commits at punch
     }
 }
 
+TEST_CASE ("RecordManager discards MIDI events beyond the final linear take boundary",
+           "[recording][recordmanager][midi][merge][issue-904]")
+{
+    const bool merge = GENERATE (false, true);
+    const std::int64_t stoppedAt = GENERATE (150, 100, 90);
+    CAPTURE (merge, stoppedAt);
+    CaptureFixture fixture (merge);
+    REQUIRE (fixture.manager.startRecording (kSampleRate, 100));
+    dusk::MidiBuffer captured;
+    addMessage (captured, 0x90, 60, 100, 10);
+    addMessage (captured, 0xb0, 1, 30, 20);
+    addMessage (captured, 0x90, 64, 90, 50);
+    addMessage (captured, 0xb0, 1, 40, 50);
+    addMessage (captured, 0x90, 67, 80, 70);
+    addMessage (captured, 0xb0, 1, 50, 80);
+    addMessage (captured, 0x80, 60, 0, 90);
+    fixture.manager.writeMidiBlock (0, captured, 0, nullptr, 100);
+    fixture.manager.serviceMidiCapture();
+    fixture.manager.stopRecording (stoppedAt);
+    const auto groups = fixture.manager.takeMidiPassGroups();
+    const auto& regions = fixture.session.track (0).midiRegions.current();
+    const bool hasTake = stoppedAt > 100;
+    if (! hasTake)
+    {
+        CHECK (regions.empty());
+        CHECK (fixture.manager.getLastCommitDiff().empty());
+        for (const auto& group : groups) CHECK (group.tracks.empty());
+        return;
+    }
+    const std::vector<MidiNote> expectedNotes { { 1, 60, 100, 10, 40 } };
+    const std::vector<MidiCc> expectedControls { { 1, 1, 30, 20 } };
+    if (merge)
+    {
+        REQUIRE (groups.size() == 1);
+        REQUIRE (groups.front().tracks.size() == 1);
+        CHECK (groups.front().tracks.front().pass.notes == expectedNotes);
+        CHECK (groups.front().tracks.front().pass.ccs == expectedControls);
+        CHECK (regions.empty());
+    }
+    else
+    {
+        CHECK (groups.empty());
+        REQUIRE (regions.size() == 1);
+        CHECK (regions.front().lengthInSamples == 50);
+        CHECK (regions.front().notes == expectedNotes);
+        CHECK (regions.front().ccs == expectedControls);
+        CHECK (fixture.manager.getLastCommitDiff().size() == 1);
+    }
+}
+
 TEST_CASE ("RecordManager linear MIDI capture follows punch changes during recording",
            "[recording][recordmanager][midi][merge][punch]")
 {
