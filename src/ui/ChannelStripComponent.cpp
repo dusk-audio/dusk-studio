@@ -1774,6 +1774,9 @@ void ChannelStripComponent::openPluginPicker()
                                     {
                                         auto* self = safe.getComponent();
                                         if (self == nullptr) return;
+   #if DUSKSTUDIO_HAS_MULTISAMPLE
+                                        self->engine.cancelNativeMultisampleLoad (self->trackIndex);
+   #endif
                                         // Picking a plugin flips the strip back to Plugin mode
                                         // (overriding any prior Hardware selection on this slot).
                                         auto& chStrip = self->engine.getChannelStrip (self->trackIndex);
@@ -1955,6 +1958,9 @@ void ChannelStripComponent::openPluginPicker()
 
 void ChannelStripComponent::openHardwareInsertEditor()
 {
+   #if DUSKSTUDIO_HAS_MULTISAMPLE
+    engine.cancelNativeMultisampleLoad (trackIndex);
+   #endif
     // Replacing an offline native placeholder with hardware is an explicit
     // recovery choice. Clear the preserved native reference first; otherwise
     // its failure flag wins the slot label/menu and the next save resurrects
@@ -1996,6 +2002,9 @@ void ChannelStripComponent::openHardwareInsertEditor()
 
 void ChannelStripComponent::removeHardwareInsert()
 {
+   #if DUSKSTUDIO_HAS_MULTISAMPLE
+    engine.cancelNativeMultisampleLoad (trackIndex);
+   #endif
     // The crossfade gate ramps the insert out click-free on the mode flip;
     // enabled=false parks the params so a later re-engage starts clean.
     engine.getChannelStrip (trackIndex)
@@ -2006,6 +2015,9 @@ void ChannelStripComponent::removeHardwareInsert()
 
 void ChannelStripComponent::unloadPluginSlot()
 {
+   #if DUSKSTUDIO_HAS_MULTISAMPLE
+    engine.cancelNativeMultisampleLoad (trackIndex);
+   #endif
     // Close any open editor BEFORE the plugin is destroyed - the editor
     // holds a reference back to the AudioProcessor and would crash on
     // teardown otherwise.
@@ -3697,6 +3709,7 @@ void ChannelStripComponent::syncMultisampleEditorOwner()
 
 void ChannelStripComponent::drainMultisampleLoads()
 {
+    engine.cancelNativeMultisampleLoad (trackIndex);
     engine.getChannelStrip (trackIndex).getNativeMultisampleSlot().drainPendingLoads();
 }
 

@@ -436,7 +436,8 @@ const ScenarioRegistrar vst3MidiLearn { Scenario {
     }
 } };
 
-std::optional<ScenarioResult> runSoundfontConversion (GuiHost& host, ScenarioContext& ctx)
+std::optional<ScenarioResult> runSoundfontConversion (GuiHost& host, ScenarioContext& ctx,
+                                                    bool replaceWithHardware = false)
 {
    #if ! DUSKSTUDIO_HAS_MULTISAMPLE
     (void) host;
@@ -453,6 +454,10 @@ std::optional<ScenarioResult> runSoundfontConversion (GuiHost& host, ScenarioCon
     if (strip.getPluginSlot().isLoaded()) return ScenarioResult::skip ("requires an empty standard plugin slot");
     const auto originalDir = currentSessionDirectory (session);
     const auto originalStage = engine.getStage();
+    const auto originalMode = track.mode.load();
+    const auto originalMidiInput = track.midiInputIndex.load();
+    const auto originalMonitor = track.inputMonitor.load();
+    const auto rendering = std::make_shared<bool> (false);
     const auto restore = ctx.tempDir() / "restore.json";
     const auto soundfont = ctx.tempDir() / "Conversion fixture.sfz";
     const auto bank = ctx.tempDir() / "Conversion fixture.bank.xml";
@@ -462,10 +467,12 @@ std::optional<ScenarioResult> runSoundfontConversion (GuiHost& host, ScenarioCon
             "<AriaBank name=\"Conversion\"><AriaProgram name=\"Sine\">"
             "<AriaElement path=\"Conversion fixture.sfz\"/></AriaProgram></AriaBank>"))
         return ScenarioResult::fail ("could not prepare the soundfont fixture");
-    ctx.cleanup ([&host, &session, originalDir, originalStage, restore]
+    ctx.cleanup ([&host, &engine, &session, originalDir, originalStage, restore, rendering]
     {
+        host.closeSfzLibrary (0);
         if (auto* component = host.strip (0)) component->closeEditor();
         drainModals (host);
+        if (*rendering) { engine.setAssetRenderActive (false); *rendering = false; }
         host.openSession (restore);
         applySessionDirectory (session, originalDir);
         host.switchToStage (guiStage (originalStage));
@@ -505,8 +512,49 @@ std::optional<ScenarioResult> runSoundfontConversion (GuiHost& host, ScenarioCon
         for (const char ch : bank.string())
             host.pressPeerKey (ch == ' ' ? "Space" : std::string (1, ch), ch);
     } });
-    steps->push_back ({ 200, [&host, &ctx]
-    { ctx.expect (host.clickModalButton ("Open"), "Open did not accept the soundfont path"); } });
+    steps->push_back ({ 200, [&host, &ctx, &engine, rendering, replaceWithHardware]
+    {
+        if (replaceWithHardware) { engine.setAssetRenderActive (true); *rendering = true; }
+        ctx.expect (host.clickModalButton ("Open"), "Open did not accept the soundfont path");
+    } });
+    if (replaceWithHardware)
+    {
+        steps->push_back ({ 0, [&host, &ctx, &engine]
+        {
+            ctx.expect (engine.hasPendingMultisampleLoads(), "the SFZ request was not pending before replacement");
+            host.closeSfzLibrary (0);
+        } });
+        steps->push_back ({ 0, [&host, &ctx]
+        { ctx.expect (host.clickInsert (0), "the pending SFZ load blocked the insert chooser"); },
+        [&host] { return ! host.sfzLibraryOpen (0) && host.modalStackEmpty(); },
+        "closing SFZ Manager did not restore the strip controls" });
+        steps->push_back ({ 0, [&host, &ctx]
+        { ctx.expect (host.clickModalButton ("Hardware Insert"), "the insert chooser did not offer hardware"); },
+        [&host] { return ! host.modalStackEmpty(); }, "the insert chooser did not open" });
+        steps->push_back ({ 0, [&ctx, &engine, &strip, rendering]
+        {
+            ctx.expect (strip.insertMode.load() == ChannelStrip::kInsertHardware,
+                        "the hardware selection did not change the insert mode");
+            engine.setAssetRenderActive (false); *rendering = false;
+        } });
+        steps->push_back ({ 0, [&ctx, &track, &strip, originalMode, originalMidiInput, originalMonitor]
+        {
+            ctx.expect (strip.insertMode.load() == ChannelStrip::kInsertHardware,
+                        "the cancelled SFZ completion replaced the hardware insert");
+            ctx.expect (! strip.isNativeMultisampleLoaded() && track.nativeMultisamplePath.isEmpty()
+                        && ! track.nativeMultisampleLocator,
+                        "the cancelled SFZ completion installed its instrument");
+            ctx.expect (track.mode.load() == originalMode && track.midiInputIndex.load() == originalMidiInput
+                        && track.inputMonitor.load() == originalMonitor,
+                        "the cancelled SFZ completion converted the audio track to MIDI");
+        }, [&engine]
+        {
+            engine.serviceMultisampleLoads();
+            return ! engine.hasPendingMultisampleLoads();
+        }, "the superseded SFZ worker request did not drain" });
+        runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+        return std::nullopt;
+    }
     steps->push_back ({ 1200, [&ctx, &engine, &track, &strip, soundfont]
     {
         ctx.expect (strip.isNativeMultisampleLoaded(), "soundfont was not loaded");
@@ -530,6 +578,12 @@ const ScenarioRegistrar soundfontConversion { Scenario {
     "gui.soundfont_conversion", { "gui", "plugins", "midi" }, Needs::Engine | Needs::Gui,
     {}, {}, 15000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runSoundfontConversion (host, ctx); }
+} };
+
+const ScenarioRegistrar soundfontInsertSuperseded { Scenario {
+    "gui.soundfont_insert_superseded", { "gui", "plugins", "midi", "multisample" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runSoundfontConversion (host, ctx, true); }
 } };
 
 std::optional<ScenarioResult> runPluginBrowseFile (GuiHost& host, ScenarioContext& ctx)

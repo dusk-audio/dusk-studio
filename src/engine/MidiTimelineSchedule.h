@@ -132,12 +132,31 @@ struct RegionClock
                               : regionStart + ticksToSamples (tick, sampleRate, bpm);
     }
 
+    std::int64_t tickAt (std::int64_t sample) const noexcept
+    {
+        return map != nullptr ? map->samplesToTicks (sample, sampleRate) - regionStartTick
+                              : samplesToTicks (sample - regionStart, sampleRate, bpm);
+    }
+
     const TempoMap* map;
     double          sampleRate;
     float           bpm;
     std::int64_t    regionStart;
     std::int64_t    regionStartTick;
 };
+
+template <typename Regions>
+int findMergeTarget (const Regions& regions, std::int64_t start, std::int64_t end,
+                     const TempoMap* map, double sampleRate, float bpm) noexcept
+{
+    return findMidiMergeTarget (regions, start, end, [&] (const auto& region) noexcept
+    {
+        return map != nullptr && ! map->empty()
+            ? RegionClock (map, sampleRate, bpm, region.timelineStart).at (region.lengthInTicks)
+                - region.timelineStart
+            : region.lengthInSamples;
+    });
+}
 
 // Probes a binary search over n events makes.
 inline int searchCost (std::size_t n) noexcept
@@ -174,7 +193,8 @@ struct PendingCapture
     std::int64_t timelineStart = 0, offsetTicks = 0;
 
     bool locateTarget (const MidiTimeline& timeline, std::int64_t captureStart, std::int64_t captureEnd,
-                       double capturedRate, float capturedBpm, int& scans) noexcept
+                       double sampleRate, float bpm, int& scans,
+                       const TempoMap* tempoMap = nullptr) noexcept
     {
         consumed = timeline.capture;
         timelineStart = captureStart;
@@ -187,14 +207,17 @@ struct PendingCapture
             return false;
         }
         scans -= (int) timeline.placement.size();
-        const int target = findMidiMergeTarget (timeline.placement, captureStart, captureEnd);
+        const int target = findMergeTarget (timeline.placement, captureStart, captureEnd,
+                                           tempoMap, sampleRate, bpm);
         targetRegion = target >= 0 ? target : (int) timeline.size();
         if (target < 0) return true;
         const auto& place = timeline.placement[(std::size_t) target];
         if (place.muted) { playback = nullptr; return true; }
-        const auto offset = samplesToTicks (captureStart - place.timelineStart, capturedRate, capturedBpm);
-        timelineStart = place.timelineStart - ticksToSamples (std::max<std::int64_t> (0, -offset),
-                                                             capturedRate, capturedBpm);
+        const RegionClock clock (tempoMap != nullptr && ! tempoMap->empty() ? tempoMap : nullptr,
+                                 sampleRate, bpm, place.timelineStart);
+        const auto offset = clock.tickAt (captureStart);
+        if (offset < 0) timelineStart = clock.at (offset);
+        else timelineStart = place.timelineStart;
         offsetTicks = std::max<std::int64_t> (0, offset);
         return true;
     }

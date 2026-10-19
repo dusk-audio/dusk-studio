@@ -2283,7 +2283,8 @@ void AudioEngine::serviceMidiRecording()
             auto before = track.midiRegions.current();
             auto after = before;
             const auto passEnd = group.timelineStart + captured.pass.lengthInSamples;
-            int targetIndex = findMidiMergeTarget (after, group.timelineStart, passEnd);
+            int targetIndex = midischedule::findMergeTarget (after, group.timelineStart, passEnd,
+                                                            &session.tempoMap, sr, bpm);
             if (targetIndex < 0)
             {
                 targetIndex = (int) after.size();
@@ -2297,13 +2298,10 @@ void AudioEngine::serviceMidiRecording()
             pass.notes = captured.pass.notes;
             pass.ccs = captured.pass.ccs;
             pass.lengthInTicks = captured.pass.lengthInTicks;
-            const auto merged = mergeMidiPass (target, pass,
-                samplesToTicks (group.timelineStart - target.timelineStart,
-                               group.capturedSampleRate, group.capturedBpm));
+            const midischedule::RegionClock clock (session.tempoMap.empty() ? nullptr : &session.tempoMap,
+                                                   sr, bpm, target.timelineStart);
+            const auto merged = mergeMidiPassAt (target, pass, group.timelineStart, clock);
             if (! merged.changed) continue;
-            target.timelineStart -= ticksToSamples (merged.leadingTicks,
-                                                    group.capturedSampleRate, group.capturedBpm);
-            target.lengthInSamples = ticksToSamples (target.lengthInTicks, sr, bpm);
             diffs.push_back ({ captured.trackIndex, std::move (before), std::move (after),
                               { group.gestureId, group.passOrdinal } });
             committed.emplace_back (captured.trackIndex, targetIndex);
@@ -6656,8 +6654,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             }
         };
 
-        auto scheduleTimelineMidi = [&] (MidiMergePlayback* pendingPlayback,
-                                         double capturedRate, float capturedBpm) noexcept
+        auto scheduleTimelineMidi = [&] (MidiMergePlayback* pendingPlayback) noexcept
         {
             // Acquire tempo before the snapshot whose positions it publishes.
             const float bpm = schedulesTimelineMidi ? session.tempoBpm.load (std::memory_order_acquire) : 0.0f;
@@ -6701,8 +6698,8 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             midischedule::PendingCapture pending;
             pending.playback = pendingPlayback;
             if (! pending.locateTarget (midiTimeline, loopRecordPlan.captureStartSample,
-                                        loopRecordPlan.captureEndSample, capturedRate, capturedBpm,
-                                        midiScheduleScansRemaining))
+                                        loopRecordPlan.captureEndSample, sr, bpm,
+                                        midiScheduleScansRemaining, useMap ? tm : nullptr))
             {
                 midiEventsDropped = true;
                 return;
@@ -6849,7 +6846,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         if (loopRecordingActive && capturesLiveMidi)
             recordManager.withPendingMidiPlayback (t, scheduleTimelineMidi);
         else
-            scheduleTimelineMidi (nullptr, 0.0, 0.0f);
+            scheduleTimelineMidi (nullptr);
 
         if (midiTrack && ! midiEventsDropped)
         {

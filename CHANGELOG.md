@@ -71,6 +71,12 @@ canonical source.
 
 ### Fixed
 
+- **MIDI recording with tempo changes.** Recorded notes and controls follow the
+  tempo map, and MIDI Merge keeps the timing of existing events and takes when
+  growing a region. Notes heard on the next loop pass match the committed pass.
+- **Insert changes during soundfont loading.** Choosing hardware, replacing an
+  insert or removing it cancels an earlier soundfont request, so its completion
+  cannot replace the newer choice or convert the track to MIDI.
 - **Sandboxed plugin editors on X11.** Editors open when optional window-manager
   properties are absent, and closing an editor leaves its host child alive until
   the plugin is unloaded.

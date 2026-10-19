@@ -1,9 +1,56 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include "session/MidiMerge.h"
 #include "session/Session.h"
+#include "engine/MidiTimelineSchedule.h"
 
 using namespace duskstudio;
+
+TEST_CASE ("MIDI merge preserves absolute event timing and take history through a tempo map",
+           "[midi][merge][tempo]")
+{
+    TempoMap map;
+    map.setPoints ({ { 0, 120.0f }, { 48000, 60.0f } });
+    const bool mapped = GENERATE (false, true);
+    const bool growLeft = GENERATE (false, true);
+    const bool tempoLock = GENERATE (false, true);
+    const std::int64_t rounding = GENERATE (0, 17, 40);
+    CAPTURE (mapped, growLeft, tempoLock, rounding);
+    const TempoMap* tempo = mapped ? &map : nullptr;
+    MidiRegion target;
+    target.timelineStart = (growLeft ? 60000 : 36000) + rounding;
+    target.tempoLock = tempoLock;
+    target.lengthInTicks = 480;
+    target.notes.push_back ({ 1, 64, 100, 120, 120 });
+    target.ccs.push_back ({ 1, 7, 90, 240 });
+    target.previousTakes.push_back ({ 360, { { 2, 67, 80, 120, 60 } }, { { 2, 11, 75, 240 } }, {} });
+    const auto before = target;
+    const midischedule::RegionClock clock (tempo, 48000.0, 120.0f, target.timelineStart);
+    MidiRegion pass;
+    pass.lengthInTicks = 600;
+    pass.notes.push_back ({ 1, 60, 100, 120, 120 });
+    pass.ccs.push_back ({ 1, 1, 70, 240 });
+    const auto passStart = growLeft ? 36000 : 60000;
+    REQUIRE (mergeMidiPassAt (target, pass, passStart, clock).changed);
+    const midischedule::RegionClock after (tempo, 48000.0, 120.0f, target.timelineStart);
+    const auto oldNote = std::find_if (target.notes.begin(), target.notes.end(),
+                                     [] (const MidiNote& note) { return note.noteNumber == 64; });
+    REQUIRE (oldNote != target.notes.end());
+    CHECK (after.at (oldNote->startTick) == clock.at (before.notes[0].startTick));
+    CHECK (after.at (oldNote->startTick + oldNote->lengthInTicks)
+           == clock.at (before.notes[0].startTick + before.notes[0].lengthInTicks));
+    const auto oldCc = std::find_if (target.ccs.begin(), target.ccs.end(),
+                                   [] (const MidiCc& cc) { return cc.controller == 7; });
+    REQUIRE (oldCc != target.ccs.end());
+    CHECK (after.at (oldCc->atTick) == clock.at (before.ccs[0].atTick));
+    const auto& take = target.previousTakes[0];
+    CHECK (after.at (take.notes[0].startTick) == clock.at (before.previousTakes[0].notes[0].startTick));
+    CHECK (after.at (take.ccs[0].atTick) == clock.at (before.previousTakes[0].ccs[0].atTick));
+    CHECK (after.at (take.lengthInTicks) == clock.at (before.previousTakes[0].lengthInTicks));
+    CHECK (target.lengthInSamples == after.at (target.lengthInTicks) - target.timelineStart);
+    CHECK (target.tempoLock == tempoLock);
+}
 
 TEST_CASE ("MIDI merge rebases a pass and preserves the existing performance",
            "[midi][merge]")

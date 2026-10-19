@@ -236,6 +236,100 @@ TEST_CASE ("pending MIDI uses the merge target's rounded origin and mute policy"
     }
 }
 
+TEST_CASE ("pending and committed MIDI Merge share tempo-map origins and event timing",
+           "[midi][schedule][merge][tempo]")
+{
+    constexpr std::int64_t start = 36000, length = 48000;
+    TempoMap map;
+    map.setPoints ({ { 0, 120.0f }, { 48000, 60.0f } });
+    const auto origin = map.samplesToTicks (start, kRate);
+    MidiMergePlayback pending;
+    pending.configure (42, length, [&] (std::int64_t sample)
+    { return map.samplesToTicks (start + sample, kRate) - origin; });
+    pending.pushEvent (1, 6000, 0x90, 60, 100);
+    pending.pushEvent (1, 18000, 0xb0, 7, 90);
+    pending.pushEvent (1, 24000, 0x80, 60, 0);
+    pending.publishProgress (1, length, true);
+    MidiRegion target;
+    target.timelineStart = 60017;
+    target.lengthInTicks = 480;
+    target.lengthInSamples = 47983;
+    target.notes.push_back ({ 1, 64, 80, 0, 120 });
+    auto timeline = buildMidiTimeline ({ target });
+    midischedule::PendingCapture overlay;
+    overlay.playback = &pending;
+    overlay.playbackPass = 2;
+    int scans = 32768;
+    REQUIRE (overlay.locateTarget (*timeline, start, start + length, kRate, kBpm, scans, &map));
+    const auto play = [&] (const auto* capture)
+    {
+        std::vector<Event> events;
+        midischedule::ControllerChase chase;
+        REQUIRE (midischedule::scheduleSpan (*timeline, &map, kRate, kBpm,
+            { start, 120000, false }, scans, chase,
+            [&] (std::uint8_t s, std::uint8_t d1, std::uint8_t d2, std::int64_t at)
+            { events.push_back ({ s, d1, d2, start + at }); return true; }, capture)
+            == midischedule::Outcome::complete);
+        std::stable_sort (events.begin(), events.end(),
+                          [] (const auto& a, const auto& b) { return a.at < b.at; });
+        return events;
+    };
+    const auto before = play (&overlay);
+    MidiRegion pass;
+    pass.lengthInTicks = 600;
+    pass.notes.push_back ({ 1, 60, 100, 120, 240 });
+    pass.ccs.push_back ({ 1, 7, 90, 300 });
+    const midischedule::RegionClock clock (&map, kRate, kBpm, target.timelineStart);
+    REQUIRE (mergeMidiPassAt (target, pass, start, clock).changed);
+    timeline = buildMidiTimeline ({ target });
+    const auto after = play ((const midischedule::PendingCapture*) nullptr);
+    REQUIRE (before.size() == 5);
+    REQUIRE (after.size() == before.size());
+    for (std::size_t i = 0; i < before.size(); ++i)
+    {
+        CHECK (after[i].status == before[i].status);
+        CHECK (after[i].data1 == before[i].data1);
+        CHECK (after[i].data2 == before[i].data2);
+        CHECK (after[i].at == before[i].at);
+    }
+    CHECK (before[0].at == 42000);
+    CHECK (before[1].at == 54000);
+}
+
+TEST_CASE ("MIDI Merge target selection follows current mapped duration after a tempo edit",
+           "[midi][schedule][merge][tempo]")
+{
+    constexpr std::int64_t captureStart = 60000;
+    TempoMap map;
+    map.setPoints ({ { 0, 120.0f } });
+    MidiMergePlayback pending;
+    pending.configure (42, 10000, [] (std::int64_t sample)
+    { return samplesToTicks (sample, kRate, 120.0f); });
+    MidiRegion target;
+    target.timelineStart = 48000;
+    target.lengthInSamples = 24000;
+    target.lengthInTicks = 480;
+    auto timeline = buildMidiTimeline ({ target });
+    int expected = 0;
+    SECTION ("a slower marker expands the sounding region past its cached end")
+    {
+        map.setPoints ({ { 0, 120.0f }, { 48000, 60.0f } });
+    }
+    SECTION ("a faster marker ends the sounding region before its cached end")
+    {
+        map.setPoints ({ { 0, 120.0f }, { 48000, 300.0f } });
+        expected = 1;
+    }
+    midischedule::PendingCapture overlay;
+    overlay.playback = &pending;
+    int scans = 32768;
+    const auto start = expected == 0 ? captureStart + 20000 : captureStart;
+    REQUIRE (overlay.locateTarget (*timeline, start, start + 10000, kRate, kBpm, scans, &map));
+    CHECK (overlay.targetRegion == expected);
+    CHECK (midischedule::findMergeTarget (timeline->placement, start, start + 10000, &map, kRate, kBpm)
+           == (expected == 0 ? 0 : -1));
+}
+
 TEST_CASE ("pending MIDI follows the region a pass starts in, as its commit does",
            "[midi][schedule][merge]")
 {

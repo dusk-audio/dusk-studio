@@ -3,6 +3,7 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "engine/RecordManager.h"
+#include "engine/MidiTimelineSchedule.h"
 #include "session/Session.h"
 
 #include <algorithm>
@@ -119,7 +120,7 @@ TEST_CASE ("RecordManager snapshots MIDI merge mode and previews both capture mo
     fixture.session.midiMergeEnabled.store (! merge, std::memory_order_relaxed);
     REQUIRE (fixture.manager.isMidiMergeCapture() == merge);
     REQUIRE (fixture.manager.midiCaptureTimelineStart() == 1000);
-    fixture.manager.withPendingMidiPlayback (0, [] (auto* pending, double, float)
+    fixture.manager.withPendingMidiPlayback (0, [] (auto* pending)
     { CHECK (pending == nullptr); });
     dusk::MidiBuffer held;
     addMessage (held, 0x90, 64, 100, 10);
@@ -321,11 +322,9 @@ TEST_CASE ("RecordManager waits for every captured MIDI track before publishing 
     REQUIRE (groups[0].tracks[1].trackIndex == 1);
     REQUIRE (groups[0].tracks[0].pass.notes[0].noteNumber == 60);
     REQUIRE (groups[0].tracks[1].pass.notes[0].noteNumber == 64);
-    fixture.manager.withPendingMidiPlayback (0, [gesture] (auto* pending, double sr, float bpm)
+    fixture.manager.withPendingMidiPlayback (0, [gesture] (auto* pending)
     {
         REQUIRE (pending != nullptr);
-        CHECK_THAT (sr, WithinAbs (kSampleRate, 1.0e-9));
-        CHECK_THAT ((double) bpm, WithinAbs (120.0, 1.0e-9));
         std::vector<MidiNote> notes;
         int scans = 100;
         REQUIRE (pending->forEachNote ({}, 3, scans, [&notes] (const auto& note)
@@ -355,7 +354,7 @@ TEST_CASE ("RecordManager waits for every captured MIDI track before publishing 
     fixture.manager.stopRecording (200);
     REQUIRE (fixture.manager.takeMidiPassGroups().empty());
     bool stoppedVisited = false;
-    fixture.manager.withPendingMidiPlayback (0, [&stoppedVisited] (auto* pending, double, float)
+    fixture.manager.withPendingMidiPlayback (0, [&stoppedVisited] (auto* pending)
     {
         stoppedVisited = true;
         CHECK (pending == nullptr);
@@ -560,7 +559,7 @@ TEST_CASE ("RecordManager MIDI merge reports stream overflow without legacy reco
         fixture.manager.writeMidiBlock (0, buffer, 0, &span, count);
         bool present = false, overflow = false, eligible = false, iterated = false, notesMatch = true;
         int notes = 0;
-        fixture.manager.withPendingMidiPlayback (0, [&] (auto* pending, double, float)
+        fixture.manager.withPendingMidiPlayback (0, [&] (auto* pending)
         {
             if (pending == nullptr) return;
             present = true;
@@ -641,4 +640,128 @@ TEST_CASE ("RecordManager MIDI merge coordination excludes armed tracks without 
     REQUIRE (groups[0].tracks[0].trackIndex == 0);
     fixture.manager.stopRecording (200);
     REQUIRE (fixture.manager.takeMidiPassGroups().empty());
+}
+
+TEST_CASE ("MIDI capture uses the tempo map at its timeline origin across tempo changes",
+           "[recording][recordmanager][midi][merge][tempo]")
+{
+    const bool merge = GENERATE (false, true);
+    const bool loop = GENERATE (false, true);
+    CAPTURE (merge, loop);
+    CaptureFixture fixture (merge);
+    fixture.session.tempoMap.setPoints ({ { 0, 120.0f }, { 48000, 60.0f } });
+    constexpr double rate = 48000.0;
+    constexpr std::int64_t start = 36000, length = 48000;
+    const RecordManager::LoopCapturePlan plan = loop
+        ? RecordManager::LoopCapturePlan { true, start, start + length, start, start + length }
+        : RecordManager::LoopCapturePlan {};
+    REQUIRE (fixture.manager.startRecording (rate, start, 0, plan));
+    auto buffer = note (60, 6000, 24000);
+    addMessage (buffer, 0xb0, 7, 90, 18000);
+    auto span = fixture.manager.coordinateLoopCaptureSpan (1, start, 0, (int) length);
+    if (loop) fixture.manager.beginLoopCaptureSpan (span);
+    fixture.manager.writeMidiBlock (0, buffer, 0, loop ? &span : nullptr, (int) length);
+    fixture.manager.serviceMidiCapture();
+    const auto* preview = fixture.manager.midiCapturePreview (0);
+    REQUIRE (preview != nullptr);
+    if (! loop)
+    {
+        CHECK (preview->lengthInTicks == 600);
+        CHECK (preview->notes == std::vector<MidiNote> { { 1, 60, 100, 120, 240 } });
+        CHECK (preview->ccs == std::vector<MidiCc> { { 1, 7, 90, 300 } });
+    }
+    if (merge && loop)
+        fixture.manager.withPendingMidiPlayback (0, [&] (auto* pending)
+        {
+            REQUIRE (pending != nullptr);
+            std::vector<MidiNote> notes;
+            std::vector<MidiCc> ccs;
+            int scans = 32768;
+            REQUIRE (pending->forEachNote ({}, 2, scans, [&] (const auto& n)
+            { notes.push_back (n); return true; }));
+            REQUIRE (pending->forEachControl ({}, 2, scans, [&] (const auto& c)
+            { ccs.push_back (c); return true; }));
+            CHECK (notes == std::vector<MidiNote> { { 1, 60, 100, 120, 240 } });
+            CHECK (ccs == std::vector<MidiCc> { { 1, 7, 90, 300 } });
+        });
+    fixture.manager.stopRecording (start + length);
+    if (merge)
+    {
+        const auto groups = fixture.manager.takeMidiPassGroups();
+        REQUIRE (groups.size() == 1);
+        REQUIRE (groups[0].tracks.size() == 1);
+        CHECK (groups[0].tracks[0].pass.lengthInTicks == 600);
+        CHECK (groups[0].tracks[0].pass.notes == std::vector<MidiNote> { { 1, 60, 100, 120, 240 } });
+        CHECK (groups[0].tracks[0].pass.ccs == std::vector<MidiCc> { { 1, 7, 90, 300 } });
+    }
+    else
+    {
+        const auto& regions = fixture.session.track (0).midiRegions.current();
+        REQUIRE (regions.size() == 1);
+        CHECK (regions[0].lengthInTicks == 600);
+        CHECK (regions[0].notes == std::vector<MidiNote> { { 1, 60, 100, 120, 240 } });
+        CHECK (regions[0].ccs == std::vector<MidiCc> { { 1, 7, 90, 300 } });
+    }
+}
+
+TEST_CASE ("MIDI capture retains its immutable tempo clock when the session map is edited",
+           "[recording][recordmanager][midi][merge][tempo]")
+{
+    CaptureFixture fixture (true);
+    fixture.session.tempoMap.setPoints ({ { 0, 120.0f }, { 48000, 60.0f } });
+    REQUIRE (fixture.manager.startRecording (48000.0, 48000));
+    fixture.session.tempoMap.setPoints ({ { 0, 180.0f } });
+    fixture.manager.writeMidiBlock (0, note (60, 12000, 24000), 0, nullptr, 48000);
+    fixture.manager.stopRecording (96000);
+    const auto groups = fixture.manager.takeMidiPassGroups();
+    REQUIRE (groups.size() == 1);
+    REQUIRE (groups[0].tracks.size() == 1);
+    CHECK (groups[0].tracks[0].pass.lengthInTicks == 480);
+    CHECK (groups[0].tracks[0].pass.notes == std::vector<MidiNote> { { 1, 60, 100, 120, 120 } });
+}
+
+TEST_CASE ("Pending MIDI Merge uses the current playback clock after a constant-tempo edit",
+           "[recording][recordmanager][midi][merge][tempo]")
+{
+    CaptureFixture fixture (true);
+    const RecordManager::LoopCapturePlan plan { true, 24000, 48000, 24000, 48000 };
+    REQUIRE (fixture.manager.startRecording (48000.0, 24000, 0, plan));
+    const auto span = fixture.manager.coordinateLoopCaptureSpan (1, 24000, 0, 24000);
+    fixture.manager.beginLoopCaptureSpan (span);
+    fixture.manager.writeMidiBlock (0, note (60, 0, 12000), 0, &span, 24000);
+    fixture.session.tempoBpm.store (60.0f);
+    MidiRegion target;
+    target.lengthInTicks = 1920;
+    target.lengthInSamples = 192000;
+    const auto timeline = buildMidiTimeline ({ target });
+    const midischedule::RegionClock clock (nullptr, 48000.0, 60.0f, 0);
+    fixture.manager.withPendingMidiPlayback (0, [&] (auto* pending)
+    {
+        REQUIRE (pending != nullptr);
+        midischedule::PendingCapture overlay;
+        overlay.playback = pending;
+        overlay.playbackPass = 2;
+        int scans = 32768;
+        REQUIRE (overlay.locateTarget (*timeline, 24000, 48000, 48000.0,
+                                      fixture.session.tempoBpm.load(), scans));
+        CHECK (overlay.offsetTicks == 240);
+        const auto outcome = overlay.notes (scans, [&] (const MidiNote& n)
+        {
+            CHECK (clock.at (n.startTick) == 24000);
+            CHECK (clock.at (n.startTick + n.lengthInTicks) == 48000);
+            return midischedule::Outcome::complete;
+        });
+        REQUIRE (outcome == midischedule::Outcome::complete);
+    });
+    fixture.manager.stopRecording (48000);
+    const auto groups = fixture.manager.takeMidiPassGroups();
+    REQUIRE (groups.size() == 1);
+    REQUIRE (groups[0].tracks.size() == 1);
+    MidiRegion pass;
+    pass.lengthInTicks = groups[0].tracks[0].pass.lengthInTicks;
+    pass.notes = groups[0].tracks[0].pass.notes;
+    REQUIRE (mergeMidiPassAt (target, pass, groups[0].timelineStart, clock).changed);
+    REQUIRE (target.notes.size() == 1);
+    CHECK (clock.at (target.notes[0].startTick) == 24000);
+    CHECK (clock.at (target.notes[0].startTick + target.notes[0].lengthInTicks) == 48000);
 }
