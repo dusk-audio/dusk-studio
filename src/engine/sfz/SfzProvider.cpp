@@ -554,7 +554,8 @@ std::optional<CcLicense> licenseText (const std::string& text, const std::string
         }
         wording += ' ';
         for (const auto* restriction : { "noncommercial", "non commercial", "noderivatives", "noderivs",
-                                        " by nc ", " by nd ", "commercial use is not permitted",
+                                        " cc by nc ", " cc by nd ", " creative commons by nc ", " creative commons by nd ",
+                                        "commercial use is not permitted",
                                         "no derivatives", "no derivative works", "no modifications",
                                         "no commercial use", "not for commercial", "personal use only" })
             if (wording.find (restriction) != std::string::npos) return {};

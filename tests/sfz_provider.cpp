@@ -539,6 +539,8 @@ TEST_CASE ("SFZ Instruments does not accept SPDX hints without actual matching l
     { transport.replies = githubReplies (kLicenseText + "except the choir, which is CC BY-ND 4.0"); }
     SECTION ("A spaced NonCommercial ShareAlike identifier conflicts with the primary grant")
     { transport.replies = githubReplies (kLicenseText + "except the organ, CC BY-NC-SA 4.0"); }
+    SECTION ("A spelled-out Creative Commons prefix still declares restricted terms")
+    { transport.replies = githubReplies (kLicenseText + "Audio recordings use Creative Commons BY-ND 4.0."); }
     SECTION ("A spaced and wrapped restricted identifier conflicts with the primary grant")
     { transport.replies = githubReplies (kLicenseText + "CC\tBY -\nND 4.0"); }
     SECTION ("Markdown formatting does not hide a restricted identifier")
@@ -600,6 +602,8 @@ TEST_CASE ("SFZ Instruments accepts formal Creative Commons license text", "[sfz
     { transport.replies = githubReplies (kLicenseText + "Commercial use is not restricted."); }
     SECTION ("An author name is not a restricted license declaration")
     { transport.replies = githubReplies (kLicenseText + "Produced by NCK Audio."); }
+    SECTION ("Author initials matching license abbreviations remain allowed")
+    { transport.replies = githubReplies (kLicenseText + "Produced by NC Audio. Artwork by ND Studio."); }
     SECTION ("A matching sample-specific secondary grant is retained")
     {
         transport.replies = githubReplies();
