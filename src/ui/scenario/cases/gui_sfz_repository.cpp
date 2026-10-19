@@ -1514,9 +1514,9 @@ std::optional<ScenarioResult> runRestoreFailures (GuiHost& host, ScenarioContext
                 && track.nativeMultisampleStateBase64 == "c2F2ZWQ=" && track.nativeMultisamplePath.isNotEmpty(),
                 "a failed asynchronous restore lost its saved identity or controls");
         }
-        if (host.modalStackEmpty()) { ctx.complete (ctx.verdict()); return; }
         ctx.expect (host.clickModalButton ("OK"), "could not dismiss the restore alert");
-    }, [&ctx] { return ! ctx.engine().hasPendingMultisampleLoads(); }, "missing instruments did not settle" });
+    }, [&host, &ctx] { return ! ctx.engine().hasPendingMultisampleLoads() && ! host.modalStackEmpty(); },
+       "missing instruments did not show their restore alert" });
     steps->push_back ({ 150, [&host, &ctx, held, missing, blank]
     {
         ctx.expect (host.modalStackEmpty(), "the restore raised a second alert");
@@ -1560,8 +1560,9 @@ std::optional<ScenarioResult> runRestoreFailures (GuiHost& host, ScenarioContext
         const auto text = host.modalText();
         ctx.expect (text.find ("Track 2") != std::string::npos && text.find ("Track 1") == std::string::npos,
                     "the restore alert retained a superseded failure: " + text);
-        if (! host.modalStackEmpty()) ctx.expect (host.clickModalButton ("OK"), "could not dismiss the remaining restore alert");
-    }, [&ctx] { return ! ctx.engine().hasPendingMultisampleLoads(); }, "the remaining partial restore did not settle" });
+        ctx.expect (host.clickModalButton ("OK"), "could not dismiss the remaining restore alert");
+    }, [&host, &ctx] { return ! ctx.engine().hasPendingMultisampleLoads() && ! host.modalStackEmpty(); },
+       "the remaining partial restore did not show its alert" });
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
 }
