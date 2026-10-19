@@ -9,6 +9,7 @@
 #include "../../audiofile/FileWriter.h"
 #include "../../../dsp/ChannelStrip.h"
 #include "../../../foundation/AutoResetEvent.h"
+#include "../../../foundation/Fs.h"
 #include "../../../session/Session.h"
 
 #include <algorithm>
@@ -2274,6 +2275,99 @@ std::optional<ScenarioResult> exportMasterDither (ScenarioContext& ctx)
     });
 }
 
+std::optional<ScenarioResult> pendingInstrumentRefusesRender (ScenarioContext& ctx, bool restoring)
+{
+   #if DUSKSTUDIO_HAS_MULTISAMPLE
+    auto& engine = ctx.engine();
+    auto& track = ctx.session().track (0);
+    const auto path = ctx.tempDir() / "pending.sfz";
+    if (! dusk::fs::writeStringToFile (path, "<region> sample=*sine key=60"))
+        return ScenarioResult::fail ("could not write the pending instrument");
+    ctx.keep (engine.getChannelStrip (0).insertMode);
+    ctx.keep (track.mode);
+    ctx.keep (track.frozen);
+    ctx.cleanup ([&engine, &track, regions = track.midiRegions.current(),
+                  savedPath = track.nativeMultisamplePath, locator = track.nativeMultisampleLocator,
+                  state = track.nativeMultisampleStateBase64]
+    {
+        engine.cancelNativeMultisampleLoad (0);
+        engine.suspendProcessing();
+        engine.getChannelStrip (0).unloadNativeMultisample();
+        engine.resumeProcessing();
+        track.nativeMultisamplePath = savedPath;
+        track.nativeMultisampleLocator = locator;
+        track.nativeMultisampleStateBase64 = state;
+        track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (regions));
+    });
+    track.mode.store ((int) Track::Mode::Midi);
+    track.frozen.store (false);
+    MidiRegion region;
+    region.lengthInSamples = 48000;
+    region.lengthInTicks = 1920;
+    region.notes.push_back ({ 1, 60, 100, 0, 960 });
+    track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (1, region));
+    auto held = std::make_shared<bool> (true);
+    engine.setAssetRenderActive (true);
+    ctx.cleanup ([&engine, held] { if (*held) engine.setAssetRenderActive (false); });
+    if (! engine.requestNativeMultisampleLoad (0, path, {}, {}, -1, restoring))
+        return ScenarioResult::fail ("could not queue the pending instrument");
+    ctx.expect (engine.hasPendingMultisampleLoads(), "the instrument was not pending");
+    auto bounce = std::make_shared<BounceEngine> (engine, ctx.session());
+    ctx.cleanup ([bounce] { bounce->cancel(); });
+    auto accepted = std::make_shared<int> (0);
+    bounce->onAccepted = [accepted] { ++*accepted; };
+    const auto output = ctx.tempDir() / "render.wav";
+    const auto file = sessionFile (output);
+    const std::string sentinel = "existing output must survive refusal";
+    if (! dusk::fs::writeStringToFile (output, sentinel))
+        return ScenarioResult::fail ("could not seed the existing output");
+    for (int attempt = 0; attempt < 6; ++attempt)
+    {
+        const bool started = attempt == 5
+            ? bounce->startFreeze (0, file, 48000, kRate, 256)
+            : bounce->start (file, kRate, 256, 0.0,
+                attempt == 2 ? BounceEngine::Mode::MasteringChain
+                    : attempt == 1 || attempt == 4 ? BounceEngine::Mode::Stems : BounceEngine::Mode::MasterMix,
+                BounceEngine::Format::Wav, 320, 24, attempt == 3 || attempt == 4);
+        ctx.expect (! started, "render accepted a pending instrument at attempt " + std::to_string (attempt));
+        if (started)
+        {
+            bounce->cancel();
+            ctx.waitUntil ([bounce] { return ! bounce->isRendering(); }, kRenderTimeoutMs,
+                [&ctx] { ctx.complete (ctx.verdict()); }, "the wrongly accepted render did not stop");
+            return std::nullopt;
+        }
+        ctx.expect (bounce->getLastError() == "Wait for soundfont loading to finish, then render again.",
+                    "the refusal did not explain how to retry");
+        ctx.expect (! bounce->isRendering() && *accepted == 0, "refusal changed render state or accepted the target");
+        ctx.expect (dusk::fs::loadFileAsString (output) == sentinel, "refusal changed the existing output");
+    }
+    engine.setAssetRenderActive (false);
+    *held = false;
+    ctx.waitUntil ([&engine] { engine.serviceMultisampleLoads(); return ! engine.hasPendingMultisampleLoads(); },
+        10000, [&ctx, &engine]
+        {
+            if (! ctx.expect (engine.getChannelStrip (0).getNativeMultisampleSlot().getInstance() != nullptr,
+                              "the instrument did not load after refusal"))
+            { ctx.complete (ctx.verdict()); return; }
+            const auto rendered = ctx.tempDir() / "loaded.wav";
+            Render render;
+            render.tailSeconds = 0.0;
+            renderThen (ctx, rendered, render, [&ctx, rendered] (bool ok, const std::string& error)
+            {
+                ctx.expect (ok, "the loaded instrument could not render: " + error);
+                const auto audio = readBack (rendered);
+                ctx.expect (audio && audio->peak() > 0.001f, "the loaded instrument rendered silently");
+                ctx.complete (ctx.verdict());
+            });
+        }, "the pending instrument did not settle");
+    return std::nullopt;
+   #else
+    (void) ctx; (void) restoring;
+    return ScenarioResult::skip ("built without native multisample instruments");
+   #endif
+}
+
 const ScenarioRegistrar mixRegistrar { Scenario {
     "bounce.master_mix_file", { "bounce" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return masterMixFile (ctx); }, 120000 } };
@@ -2353,6 +2447,12 @@ const ScenarioRegistrar exportRegistrar { Scenario {
 const ScenarioRegistrar monoMonitorRegistrar { Scenario {
     "mastering.mono_monitor_keeps_export_stereo", { "mastering", "phase", "bounce" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return masteringMonoMonitor (ctx); }, 240000 } };
+const ScenarioRegistrar pendingRestoreRegistrar { Scenario {
+    "bounce.pending_sfz_restore_refuses_render", { "bounce", "freeze", "sfz", "issue-900" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return pendingInstrumentRefusesRender (ctx, true); }, 120000 } };
+const ScenarioRegistrar pendingReplacementRegistrar { Scenario {
+    "bounce.pending_sfz_replacement_refuses_render", { "bounce", "freeze", "sfz", "issue-900" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return pendingInstrumentRefusesRender (ctx, false); }, 120000 } };
 const ScenarioRegistrar phaseContinuityRegistrar { Scenario {
     "mastering.phase_tracks_playback_continuity", { "mastering", "phase" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return masteringPhaseContinuity (ctx); } } };

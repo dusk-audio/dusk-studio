@@ -2327,6 +2327,8 @@ Dusk Studio detaches from the realtime audio device and renders the project offl
 
 A render that cannot open a file it has to write, such as a read-only `mixdown.wav`, stops there, leaves that file exactly as it was, and its dialog reads "Could not write [file]: [reason]". A render that fails deletes only the files it created or overwrote: a stem bounce that stops at a stem it cannot open removes the stems it had already opened and leaves that stem and the ones after it alone. Freeze follows the same rule.
 
+If a soundfont is still loading, a bounce, mixdown, stem bounce, master export or freeze cannot start: "Wait for soundfont loading to finish, then render again." Wait for the instrument to finish loading and retry; existing output files stay untouched.
+
 While a bounce, mixdown, stem bounce, master export or freeze is rendering, **Save** and **Save As…** do nothing but put "Session not saved: finish or cancel the render first" in the status bar, since saving pauses the audio engine the render is using. While a DP-24/32 import runs they do the same with "Session not saved: finish or cancel the DP import first", since the import writes into the session's audio folder as it was when the import started.
 
 When **Mixdown**, **Bounce…** or **Bounce stems…** writes over the file loaded as the mix on the **MASTERING** stage, the stage lets go of the mix while the render runs and loads the new file when you close the finished render. A render that is cancelled, or fails after it has started writing, deletes what it had written, so the stage then reads "Failed to load: [path]". A render that cannot start, such as a realtime bounce asked for while the transport is rolling, leaves the mix loaded where it was.
