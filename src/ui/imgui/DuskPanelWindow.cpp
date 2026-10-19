@@ -454,7 +454,7 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
             click.absolutePos = motion.pos;
             click.press = true;
             onMouse (click);
-            releasePending = true;
+            releasePending = point;
         }
 
         // Both clicks are queued at once: the view takes one button event a frame and
@@ -632,11 +632,17 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
                 key.key = code;
                 onKeyboard (key);
             }
-            if (releasePending)
+            if (const auto point = std::exchange (releasePending, std::nullopt))
             {
-                releasePending = false;
+                // Native focus can move the pointer between a scenario's press and release.
+                MotionEvent motion;
+                motion.pos = { point->x, point->y };
+                motion.absolutePos = motion.pos;
+                onMotion (motion);
                 MouseEvent release;
                 release.button = DGL::kMouseButtonLeft;
+                release.pos = motion.pos;
+                release.absolutePos = motion.pos;
                 onMouse (release);
             }
             if (quietFrames < kSettledFrames)
@@ -705,7 +711,7 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
 
         Impl& owner;
         bool keyboardFocused = false;
-        bool releasePending = false;
+        std::optional<ImVec2> releasePending;
         int quietFrames = kSettledFrames;
         bool holdNextFrame = false;
         std::chrono::steady_clock::time_point unseenSince;
