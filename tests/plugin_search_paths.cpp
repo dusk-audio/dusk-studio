@@ -14,7 +14,11 @@ namespace paths = duskstudio::pluginpaths;
 struct Tree
 {
     fs::path root = dusk::fs::createUniqueTempDirectory ("dusk-plugin-paths-");
-    Tree() { REQUIRE (! root.empty()); }
+    Tree()
+    {
+        REQUIRE (! root.empty());
+        root = fs::canonical (root);
+    }
     ~Tree() { std::error_code error; fs::remove_all (root, error); }
     fs::path directory (const fs::path& relative)
     {
