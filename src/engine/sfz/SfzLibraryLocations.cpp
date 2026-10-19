@@ -165,6 +165,50 @@ bool renamePath (const fs::path& source, const fs::path& target, std::error_code
 #endif
 }
 
+enum class DirectoryPublication { Failed, Unverified, Complete };
+
+DirectoryPublication publishDirectory (DirectoryGuard& directory, const fs::path& target, std::error_code& error)
+{
+#if defined(_WIN32)
+    struct Handle
+    {
+        HANDLE value;
+        ~Handle() { if (value != INVALID_HANDLE_VALUE) CloseHandle (value); }
+    } handle { CreateFileW (dusk::fs::nativeIOPath (directory.path).c_str(), FILE_READ_ATTRIBUTES,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+        FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr) };
+    if (handle.value == INVALID_HANDLE_VALUE)
+    {
+        error = { static_cast<int> (GetLastError()), std::system_category() };
+        return DirectoryPublication::Failed;
+    }
+    const auto identity = [&] () -> std::optional<DirectoryIdentity>
+    {
+        BY_HANDLE_FILE_INFORMATION info {};
+        if (GetFileInformationByHandle (handle.value, &info) == 0)
+        {
+            error = { static_cast<int> (GetLastError()), std::system_category() };
+            return {};
+        }
+        if ((info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0
+            || (info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) return {};
+        return DirectoryIdentity { info.dwVolumeSerialNumber,
+            (std::uint64_t (info.nFileIndexHigh) << 32) | info.nFileIndexLow };
+    };
+    if (identity() != directory.identity) return DirectoryPublication::Failed;
+#endif
+    if (! renamePath (directory.path, target, error)) return DirectoryPublication::Failed;
+    directory.path = target;
+#if defined(_WIN32)
+    // FAT directory IDs can change on rename. Follow the retained handle,
+    // then verify the published path still names that same directory.
+    const auto publishedIdentity = identity();
+    if (! publishedIdentity) return DirectoryPublication::Unverified;
+    directory.identity = *publishedIdentity;
+#endif
+    return directory.matches() ? DirectoryPublication::Complete : DirectoryPublication::Unverified;
+}
+
 bool createDirectoriesDurably (const fs::path& path, std::error_code& error)
 {
     error.clear();
@@ -664,9 +708,10 @@ LocationChangeResult changeLibraryLocation (const LibraryLocations& before, cons
                 if (! sourcePack || ! sourceLibrary->matches() || ! destinationLibrary->matches())
                     return fail ("An SFZ library drive disconnected or changed during the move");
                 const auto published = target / "packs" / pack.directory.filename();
+                std::optional<DirectoryGuard> publishedDirectory;
                 if (fs::exists (dusk::fs::nativeIOPath (published), error))
                 {
-                    const auto publishedDirectory = guardDirectory (published);
+                    publishedDirectory = guardDirectory (published);
                     if (! publishedDirectory) return fail ("The destination SFZ version is not a plain directory");
                     if (publishedDirectory->identity == sourcePack->identity) continue;
                     const auto verified = transferPack (pack.directory, *publishedDirectory, *destinationLibrary, false, control, completed);
@@ -684,18 +729,20 @@ LocationChangeResult changeLibraryLocation (const LibraryLocations& before, cons
                     if (! verified) { result.status = verified.status; return fail (verified.error, verified.failureKind); }
                     if (! destinationLibrary->matches() || ! stagingDirectory->matches())
                         return fail ("The destination SFZ drive disconnected during the move");
-                    if (! renamePath (staging, published, error))
+                    const auto publication = publishDirectory (rollback.paths.back(), published, error);
+                    if (publication == DirectoryPublication::Failed)
                         return fail ("Cannot publish the relocated SFZ pack", storageFailureKind (error));
-                    rollback.paths.back().path = published;
-                    if (! destinationLibrary->matches() || ! rollback.paths.back().matches()
+                    if (publication != DirectoryPublication::Complete
+                        || ! destinationLibrary->matches() || ! rollback.paths.back().matches()
                         || ! syncPath (packsPath, true, error) || ! syncPath (target, true, error))
                     {
                         rollback.committed = true;
                         return fail ("Cannot confirm durable publication of the SFZ pack; copies and originals were kept", storageFailureKind (error));
                     }
+                    publishedDirectory = rollback.paths.back();
                 }
-                const auto publishedDirectory = guardDirectory (published);
-                if (! publishedDirectory) return fail ("The relocated SFZ pack is no longer available; originals were kept");
+                if (! publishedDirectory || ! publishedDirectory->matches())
+                    return fail ("The relocated SFZ pack is no longer available; originals were kept");
                 originals.push_back ({ *sourceLibrary, *sourcePack, *publishedDirectory, pack });
             }
         }

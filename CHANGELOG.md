@@ -71,6 +71,9 @@ canonical source.
 
 ### Fixed
 
+- **SFZ libraries on Windows FAT32 drives.** Moving an installed library accepts
+  the directory identity change caused by publication while still detecting a
+  replaced destination and preserving originals when verification fails.
 - **MIDI recording with tempo changes.** Recorded notes and controls follow the
   tempo map, and MIDI Merge keeps the timing of existing events and takes when
   growing a region. Notes heard on the next loop pass match the committed pass.
