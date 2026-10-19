@@ -35,15 +35,20 @@ struct ConfigOverride
     explicit ConfigOverride (const fs::path& directory)
     {
        #if defined(_WIN32)
-        const auto* value = ::_wgetenv (L"DUSKSTUDIO_CONFIG_DIR");
-       #else
-        const auto* value = std::getenv ("DUSKSTUDIO_CONFIG_DIR");
-       #endif
-        existed = value != nullptr;
-        if (value != nullptr) previous = value;
-       #if defined(_WIN32)
+        std::size_t length = 0;
+        REQUIRE (::_wgetenv_s (&length, nullptr, 0, L"DUSKSTUDIO_CONFIG_DIR") == 0);
+        existed = length > 0;
+        if (existed)
+        {
+            previous.resize (length);
+            REQUIRE (::_wgetenv_s (&length, previous.data(), previous.size(), L"DUSKSTUDIO_CONFIG_DIR") == 0);
+            previous.resize (length - 1);
+        }
         REQUIRE (::_wputenv_s (L"DUSKSTUDIO_CONFIG_DIR", directory.c_str()) == 0);
        #else
+        const auto* value = std::getenv ("DUSKSTUDIO_CONFIG_DIR");
+        existed = value != nullptr;
+        if (value != nullptr) previous = value;
         REQUIRE (::setenv ("DUSKSTUDIO_CONFIG_DIR", directory.c_str(), 1) == 0);
        #endif
     }

@@ -15,7 +15,14 @@ std::optional<ScenarioResult> runPluginFolders (GuiHost& host, ScenarioContext& 
     (void) scan;
     return ScenarioResult::skip ("requires native settings");
    #else
-    if (scan && std::getenv ("DUSKSTUDIO_SETTINGS_SCAN_TEST") == nullptr)
+   #if defined(_WIN32)
+    std::size_t scanVariableSize = 0;
+    ::getenv_s (&scanVariableSize, nullptr, 0, "DUSKSTUDIO_SETTINGS_SCAN_TEST");
+    const bool isolatedScan = scanVariableSize > 0;
+   #else
+    const bool isolatedScan = std::getenv ("DUSKSTUDIO_SETTINGS_SCAN_TEST") != nullptr;
+   #endif
+    if (scan && ! isolatedScan)
         return ScenarioResult::skip ("requires an isolated profile with DUSKSTUDIO_SETTINGS_SCAN_TEST set");
     if (! ctx.engine().getTransport().isStopped() || ! host.modalStackEmpty() || host.audioSettingsOpen())
         return ScenarioResult::skip ("requires stopped transport and no open dialog");
@@ -35,9 +42,23 @@ std::optional<ScenarioResult> runPluginFolders (GuiHost& host, ScenarioContext& 
     const auto folder = ctx.tempDir() / "Custom plug-in library";
     if (! fs::create_directory (folder)) return ScenarioResult::fail ("could not create the custom folder fixture");
     auto captures = ctx.tempDir();
-    if (const auto* location = std::getenv ("DUSKSTUDIO_SETTINGS_CAPTURE_DIR"))
+    fs::path captureFolder;
+   #if defined(_WIN32)
+    std::size_t captureVariableSize = 0;
+    ::_wgetenv_s (&captureVariableSize, nullptr, 0, L"DUSKSTUDIO_SETTINGS_CAPTURE_DIR");
+    std::wstring location (captureVariableSize, L'\0');
+    if (captureVariableSize > 0
+        && ::_wgetenv_s (&captureVariableSize, location.data(), location.size(), L"DUSKSTUDIO_SETTINGS_CAPTURE_DIR") == 0)
     {
-        captures = fs::u8path (location);
+        location.resize (captureVariableSize - 1);
+        captureFolder = location;
+    }
+   #else
+    if (const auto* location = std::getenv ("DUSKSTUDIO_SETTINGS_CAPTURE_DIR")) captureFolder = fs::u8path (location);
+   #endif
+    if (! captureFolder.empty())
+    {
+        captures = captureFolder;
         std::error_code captureError;
         fs::create_directories (captures, captureError);
         if (captureError) return ScenarioResult::fail ("could not create the settings capture folder");
