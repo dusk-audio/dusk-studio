@@ -747,6 +747,7 @@ struct AudioEngine::MultisampleLoadState
     std::array<std::uint64_t, Session::kNumTracks> generations {};
     std::array<bool, Session::kNumTracks> pending {};
     std::array<std::optional<MultisampleLoader::Request>, Session::kNumTracks> deferred;
+    std::vector<PluginLoadFailure> restoreFailures;
 };
 #endif
 
@@ -1956,6 +1957,12 @@ bool AudioEngine::hasPendingMultisampleLoads() const
                         [] (bool pending) { return pending; });
 }
 
+bool AudioEngine::hasPendingMultisampleLoad (int trackIndex) const
+{
+    return trackIndex >= 0 && trackIndex < Session::kNumTracks
+        && multisampleLoads->pending[static_cast<std::size_t> (trackIndex)];
+}
+
 void AudioEngine::serviceMultisampleLoads()
 {
     if (recordManager.isActive() || offlineRenderActive.load (std::memory_order_acquire)
@@ -2054,11 +2061,20 @@ void AudioEngine::serviceMultisampleLoads()
         else if (request.restoring)
         {
             strip.markNativeMultisampleRestoreFailed();
-            lastPluginLoadFailures.push_back ({ dusk::text::format ("Track %d", request.trackIndex + 1),
-                request.path.stem().u8string(), "multisample", result.error });
+            PluginLoadFailure failure { dusk::text::format ("Track %d", request.trackIndex + 1),
+                request.path.stem().u8string(), "multisample", result.error };
+            lastPluginLoadFailures.push_back (failure);
+            loads.restoreFailures.push_back (std::move (failure));
             broadcastChange();
         }
         if (request.onDone) request.onDone (loaded, result.error);
+    }
+    if (! loads.restoreFailures.empty()
+        && std::none_of (loads.deferred.begin(), loads.deferred.end(),
+                        [] (const auto& request) { return request && request->restoring; }))
+    {
+        auto failures = std::exchange (loads.restoreFailures, {});
+        if (onPluginRestoreAlert_) onPluginRestoreAlert_ (std::move (failures));
     }
 }
 #endif
@@ -3213,6 +3229,7 @@ void AudioEngine::consumePluginStateAfterLoad()
     ++multisampleLoads->sessionGeneration;
     multisampleLoads->worker.cancelAll();
     multisampleLoads->pending.fill (false);
+    multisampleLoads->restoreFailures.clear();
     for (auto& request : multisampleLoads->deferred) request.reset();
 #endif
     // Mirror of publish: read the (just-deserialised) strings on each track

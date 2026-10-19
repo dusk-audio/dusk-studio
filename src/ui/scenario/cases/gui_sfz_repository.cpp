@@ -1442,6 +1442,99 @@ std::optional<ScenarioResult> runPauseCancel (GuiHost& host, ScenarioContext& ct
     return std::nullopt;
 }
 
+std::optional<ScenarioResult> runRestoreFailures (GuiHost& host, ScenarioContext& ctx)
+{
+    if (! ctx.engine().getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires stopped transport and no modal");
+    const auto restore = ctx.tempDir() / "restore.json";
+    const auto missing = ctx.tempDir() / "missing.json";
+    const auto blank = ctx.tempDir() / "blank.json";
+    const auto originalDirectory = currentSessionDirectory (ctx.session());
+    auto held = std::make_shared<bool> (false);
+    if (! SessionSerializer::save (ctx.session(), restore))
+        return ScenarioResult::fail ("could not save the original session");
+    auto fixture = std::make_unique<Session>();
+    if (! SessionSerializer::save (*fixture, blank))
+        return ScenarioResult::fail ("could not save the blank session");
+    for (int index = 0; index < 2; ++index)
+    {
+        auto& track = fixture->track (index);
+        track.mode.store (static_cast<int> (Track::Mode::Midi));
+        track.nativeMultisamplePath = (ctx.tempDir() / ("Missing" + std::to_string (index) + ".sfz")).u8string();
+        track.nativeMultisampleStateBase64 = "c2F2ZWQ=";
+        ManagedSfzLocator locator;
+        locator.sourceId = "musical-artifacts";
+        locator.packId = "994901";
+        locator.releaseId = locator.archiveSha256 = std::string (64, 'a');
+        locator.instrumentId = "missing-" + std::to_string (index);
+        locator.relativePath = "Missing" + std::to_string (index) + ".sfz";
+        track.nativeMultisampleLocator = std::move (locator);
+    }
+    if (! SessionSerializer::save (*fixture, missing))
+        return ScenarioResult::fail ("could not save the missing-instrument session");
+    ctx.cleanup ([&host, &ctx, held, restore, originalDirectory]
+    {
+        ctx.engine().cancelNativeMultisampleLoad (0);
+        ctx.engine().cancelNativeMultisampleLoad (1);
+        if (*held) { ctx.engine().setAssetRenderActive (false); *held = false; }
+        drainModals (host);
+        reopenSavedSession (host, restore);
+        applySessionDirectory (ctx.session(), originalDirectory);
+    });
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 0, [&host, &ctx, held, missing]
+    {
+        ctx.engine().setAssetRenderActive (true); *held = true;
+        ctx.expect (host.openSession (missing), "could not open the missing-instrument session");
+    } });
+    steps->push_back ({ 150, [&host, &ctx, held]
+    {
+        ctx.expect (ctx.engine().hasPendingMultisampleLoads(), "the restore was not pending during the render hold");
+        ctx.expect (host.modalStackEmpty(), "a held restore raised an early alert");
+        for (int index = 0; index < 2; ++index)
+        {
+            auto* strip = host.strip (index);
+            ctx.expect (strip && strip->insertLabel().find ("(loading)") != std::string::npos,
+                        "a pending restore was labelled offline instead of loading");
+        }
+        ctx.engine().setAssetRenderActive (false); *held = false;
+    } });
+    steps->push_back ({ 100, [&host, &ctx]
+    {
+        const auto text = host.modalText();
+        ctx.expect (text.find ("Plug-in unavailable") != std::string::npos
+                    && text.find ("Track 1") != std::string::npos && text.find ("Track 2") != std::string::npos
+                    && text.find ("multisample") != std::string::npos && text.find ("Relink this slot") != std::string::npos,
+                    "the asynchronous restore did not show one detailed alert for both missing packs: " + text);
+        ctx.engine().publishPluginStateForSave (true);
+        for (int index = 0; index < 2; ++index)
+        {
+            const auto& track = ctx.session().track (index);
+            ctx.expect (track.nativeMultisampleLocator && track.nativeMultisampleLocator->packId == "994901"
+                && track.nativeMultisampleStateBase64 == "c2F2ZWQ=" && track.nativeMultisamplePath.isNotEmpty(),
+                "a failed asynchronous restore lost its saved identity or controls");
+        }
+        if (host.modalStackEmpty()) { ctx.complete (ctx.verdict()); return; }
+        ctx.expect (host.clickModalButton ("OK"), "could not dismiss the restore alert");
+    }, [&ctx] { return ! ctx.engine().hasPendingMultisampleLoads(); }, "missing instruments did not settle" });
+    steps->push_back ({ 150, [&host, &ctx, held, missing, blank]
+    {
+        ctx.expect (host.modalStackEmpty(), "the restore raised a second alert");
+        ctx.engine().setAssetRenderActive (true); *held = true;
+        ctx.expect (host.openSession (missing) && ctx.engine().hasPendingMultisampleLoads(),
+                    "could not start the cancelled restore");
+        ctx.expect (host.openSession (blank), "could not supersede the pending restore with a new session");
+        ctx.engine().setAssetRenderActive (false); *held = false;
+    } });
+    steps->push_back ({ 150, [&host, &ctx]
+    {
+        ctx.expect (host.modalStackEmpty() && ctx.engine().getLastPluginLoadFailures().empty(),
+                    "a cancelled session's restore raised a stale alert");
+    }, [&ctx] { return ! ctx.engine().hasPendingMultisampleLoads(); }, "cancelled restore work did not drain" });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
 std::optional<ScenarioResult> runPortableRestore (GuiHost& host, ScenarioContext& ctx)
 {
     if (! ctx.engine().getTransport().isStopped() || ! host.modalStackEmpty())
@@ -1694,6 +1787,7 @@ std::optional<ScenarioResult> runRelink (GuiHost& host, ScenarioContext& ctx, bo
     return std::nullopt;
 }
 #else
+std::optional<ScenarioResult> runRestoreFailures (GuiHost&, ScenarioContext&) { return ScenarioResult::skip ("SFZ support is not built"); }
 std::optional<ScenarioResult> runPortableRestore (GuiHost&, ScenarioContext&) { return ScenarioResult::skip ("SFZ support is not built"); }
 std::optional<ScenarioResult> runRelink (GuiHost&, ScenarioContext&, bool) { return ScenarioResult::skip ("SFZ support is not built"); }
 std::optional<ScenarioResult> runSearchKey (GuiHost&, ScenarioContext&, bool) { return ScenarioResult::skip ("SFZ support is not built"); }
@@ -1718,6 +1812,10 @@ const ScenarioRegistrar storageMove { Scenario {
 const ScenarioRegistrar pauseCancel { Scenario {
     "gui.sfz_repository_pause_cancel", { "gui", "sfz", "repository", "multisample" }, Needs::Engine | Needs::Gui,
     {}, {}, 150000, runPauseCancel
+} };
+const ScenarioRegistrar restoreFailures { Scenario {
+    "gui.sfz_restore_failures_are_reported", { "gui", "sfz", "session", "issue-901" }, Needs::Engine | Needs::Gui,
+    {}, {}, 30000, runRestoreFailures
 } };
 const ScenarioRegistrar portableRestore { Scenario {
     "gui.sfz_portable_restore_stays_saved", { "gui", "sfz", "session", "issue-902" }, Needs::Engine | Needs::Gui,

@@ -202,6 +202,7 @@ public:
     void cancelNativeMultisampleLoad (int trackIndex);
     void serviceMultisampleLoads();
     bool hasPendingMultisampleLoads() const;
+    bool hasPendingMultisampleLoad (int trackIndex) const;
 #endif
 
     Session&          getSession()        noexcept { return session; }

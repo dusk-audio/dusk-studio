@@ -2335,6 +2335,18 @@ void ChannelStripComponent::refreshPluginSlotButton()
               "replace or remove it."
             : "Click to toggle the plug-in editor; right-click for Replace / Remove.");
     };
+   #if DUSKSTUDIO_HAS_MULTISAMPLE
+    if (engine.hasPendingMultisampleLoad (trackIndex))
+    {
+        const auto name = std::filesystem::u8path (track.nativeMultisamplePath.toStdString()).stem().u8string();
+        const auto label = (name.empty() ? std::string ("Soundfont") : name) + " (loading)";
+        pluginSlotButton.setTooltip ("The soundfont is loading. Wait for loading to finish before rendering.");
+        if (label == lastSlotName) return;
+        lastSlotName = label;
+        pluginSlotButton.setButtonText (label);
+        return;
+    }
+   #endif
     // Native CLAP insert - name from the loaded .clap bundle. The JUCE pluginSlot is
     // empty for a native insert, so this must precede the slot-based bookkeeping below
     // (which would otherwise mislabel "Insert" and drop the live clap editor). Linux-only.
