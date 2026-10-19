@@ -685,9 +685,19 @@ std::optional<ScenarioResult> runMasteringPhasePanel (GuiHost& host, ScenarioCon
                 ctx.expect (report != nullptr && ! report->broadband.minimumValid && ! report->broadband.flagged,
                             "Reset left held phase evidence");
             } });
-            click ("bands", 1.0f);
-            click ("q", 1.0f);
-            click ("averaging", 1.0f);
+            const auto enterValue = [&] (const char* control, std::string value)
+            {
+                click (control, 0.5f, 2);
+                steps->push_back ({ 100, [&host, &ctx, value]
+                { ctx.expect (host.typeInMasteringPhase (value), "Phase value entry did not accept text"); },
+                                   [&host] { return host.masteringPhaseCapturesKeyboard(); },
+                                   "Phase value entry never captured the keyboard" });
+                steps->push_back ({ 100, [&host, &ctx]
+                { ctx.expect (host.pressPeerKey ("return"), "Phase value entry did not keep Return"); } });
+            };
+            enterValue ("bands", "64");
+            enterValue ("q", "8");
+            enterValue ("averaging", "5000");
             steps->push_back ({ 200, [&host, &ctx]
             {
                 const auto& settings = ctx.session().mastering().phase;
@@ -757,10 +767,11 @@ std::optional<ScenarioResult> runMasteringCompactCover (GuiHost& host, ScenarioC
         return ScenarioResult::fail ("could not request the compact workspace");
     const int wide = std::max (1440, size[0]), height = std::max (900, size[1]);
     auto steps = std::make_shared<std::vector<Step>>();
-    steps->push_back ({ 100, [&host, &ctx]
-    { ctx.expect (host.masteringPhasePointer ("mode", 0.5f, true), "Phase mode press is unavailable"); },
-                       [&host] { return host.masteringModulePickerShown() && host.masteringPanelsOpen() == 1; },
-                       "compact Phase panel never opened" });
+    steps->push_back ({ 100, [] {}, [&host]
+    {
+        return host.masteringModuleIndex() == 3 && host.masteringModulePickerShown()
+            && host.masteringPanelsOpen() == 1 && host.masteringPhasePointer ("mode", 0.5f, true);
+    }, "compact Phase mode control never became ready" });
     steps->push_back ({ 100, [&host, &ctx]
     { ctx.expect (host.masteringPhasePointer ("mode", 0.5f, false), "Phase mode release is unavailable"); } });
     steps->push_back ({ 100, [&host, &ctx]

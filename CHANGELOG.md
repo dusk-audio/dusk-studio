@@ -13,7 +13,9 @@ canonical source.
   coherence, phase offsets and mono loss across 4 to 64 frequency bands.
   Held minima and warnings retain passages that cancel in mono. Bands, Q and
   averaging save with the session; a temporary Mono monitor leaves exports
-  stereo. Compact windows show one mastering module at a time.
+  stereo. Compact windows show one mastering module at a time. A resizable,
+  frequency-labelled segmented graph, blue rotary controls and concise readouts
+  match the mastering console; settling guidance and held warnings open in Details.
 - **MIDI Merge.** Matching toggles in the transport and piano-roll toolbar add
   each MIDI performance to an existing region, growing it and keeping its earlier
   notes, controls and takes. Each completed loop pass is one undo step while
