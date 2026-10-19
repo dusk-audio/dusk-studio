@@ -55,6 +55,9 @@ canonical source.
 
 ### Changed
 
+- **Mastering workspace balance.** A narrower multiband compressor gives more
+  room to the limiter and Phase display. Subdued compressor buttons, matching
+  header spacing and a tighter playback area give the modules equal prominence.
 - **Session format 11.** New saves preserve the complete MIDI channel
   performance and managed SFZ references. Dusk Studio 0.15.1 and earlier cannot
   open them. Keep a copy before saving if you need an older version.

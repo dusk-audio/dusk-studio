@@ -457,8 +457,8 @@ std::optional<ScenarioResult> runMasteringTargets (GuiHost& host, ScenarioContex
             char integratedText[32], peakText[32];
             std::snprintf (integratedText, sizeof (integratedText), "I %6.1f LUFS", lufs);
             std::snprintf (peakText, sizeof (peakText), "TP %5.1f dBTP", truePeak);
-            const std::string shownIntegrated = band == 3 ? "I     -" : integratedText;
-            const std::string shownPeak = band == 3 ? "TP   -" : peakText;
+            const std::string shownIntegrated = band == 3 ? "I   - LUFS" : integratedText;
+            const std::string shownPeak = band == 3 ? "TP - dBTP" : peakText;
             const bool neutral = index == 0 || band == 3;
             const std::array<std::uint32_t, 3> colours { 0xff1a3a1a, 0xff3a3a1a, 0xff3a1a1a };
             const std::uint32_t integrated = neutral ? 0xff1a2228 : colours[(std::size_t) band];

@@ -2142,10 +2142,7 @@ void MainComponent::resized()
     }
     else
     {
-        // In mastering / aux the transport bar is hidden; the stage selector
-        // still needs a row to live on. Reserve the same height so the stage
-        // row doesn't jump positions when the user switches stages.
-        rowBounds = area.removeFromTop (kRowH);
+        rowBounds = inMastering ? area.withHeight (kRowH) : area.removeFromTop (kRowH);
     }
 
     constexpr int kStageBtnH = 28;

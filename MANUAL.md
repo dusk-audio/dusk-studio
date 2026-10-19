@@ -1081,7 +1081,7 @@ The **MASTERING** stage is a separate signal path. It does not play your tracks;
 - **Load mix...**: opens a file chooser for WAV, AIFF, or FLAC files.
 - **Load latest mixdown**: loads `mixdown.wav` from the session folder (what **Mixdown** writes), or `bounce.wav`, the bounce dialog's default name, if there is no mixdown.
 
-The source file path is displayed below the buttons. A file that will not load leaves the mix you had loaded in place, still playing if it was, and the line reads "Failed to load: [path]" with the file you picked until the source changes.
+The source file path is displayed beside the loading buttons. A file that will not load leaves the mix you had loaded in place, still playing if it was, and the line reads "Failed to load: [path]" with the file you picked until the source changes.
 
 ## Transport
 
@@ -1094,6 +1094,8 @@ A full-width audio thumbnail of the loaded file. Click anywhere on the waveform 
 ## Mastering chain
 
 The digital EQ, multiband compressor and limiter each have an enable toggle. A fourth **PHASE** panel measures the stereo output after the limiter. In a compact window, the picker above the panels shows one full-width module at a time: **Digital EQ**, **Multiband compressor**, **Limiter** or **Phase**.
+
+Wide windows give the EQ and compressor similar widths, with additional space for the limiter meters and Phase frequency display. The panels share header height and spacing. The compressor uses subdued band buttons; colored meter outlines identify the bands, and an engaged **S** button highlights a soloed band. Bypassing the compressor dims its header while leaving its controls available for editing.
 
 ### Digital 5-band EQ
 

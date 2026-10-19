@@ -31,6 +31,24 @@ namespace
 template <typename T>
 inline T jlimit (T lo, T hi, T value) noexcept { return std::clamp (value, lo, std::max (lo, hi)); }
 
+#if DUSKSTUDIO_HAS_DUSK_DSP
+void styleMasteringCompressor (juce::Component& panel, bool engaged)
+{
+    using Button = juce::TextButton;
+    using Colour = juce::Colour;
+    for (int i = 0; i < panel.getNumChildComponents(); ++i)
+        if (auto* button = dynamic_cast<Button*> (panel.getChildComponent (i)))
+        {
+            const bool solo = button->getButtonText() == "S";
+            button->setColour (Button::buttonColourId, Colour (0xff25252e));
+            button->setColour (Button::buttonOnColourId,
+                               Colour (solo ? 0xff756335 : engaged ? 0xff394153 : 0xff303039));
+            button->setColour (Button::textColourOffId, Colour (0xffb0b0ba));
+            button->setColour (Button::textColourOnId, Colour (0xffe0e0e6));
+        }
+}
+#endif
+
 #if DUSKSTUDIO_HAS_NATIVE_UI
 // Where a panel's framework child belongs, from the rectangle its proxy occupies in the
 // stage.
@@ -356,8 +374,8 @@ MasteringView::MasteringView (Session& s, AudioEngine& e)
             if (compHeaderBtn != nullptr) compHeaderBtn->repaint();
         });
     compHeaderBtn->setLabelText ("MULTIBAND COMP");
-    compHeaderBtn->setAccentColour (juce::Colour (0xffe0c050));   // gold - comp
     compHeaderEnabledSeen = session.mastering().compEnabled.load (std::memory_order_relaxed);
+    compHeaderBtn->setAlpha (compHeaderEnabledSeen ? 1.0f : 0.65f);
     compPanelWrapper->addAndMakeVisible (compHeaderBtn.get());
 
     // Embed ONLY the donor's MultibandCompressorPanel rather than the full
@@ -370,6 +388,7 @@ MasteringView::MasteringView (Session& s, AudioEngine& e)
     if (auto* compProc = engine.getMasteringChain().getCompProcessor())
     {
         compEditor = std::make_unique<MultibandCompressorPanel> (compProc->getParameters());
+        styleMasteringCompressor (*compEditor, compHeaderEnabledSeen);
         compPanelWrapper->addAndMakeVisible (compEditor.get());
     }
 
@@ -883,9 +902,9 @@ void MasteringView::resized()
     const int totalW    = std::max (0, panelsRow.getWidth() - 3 * kPanelGap);
     // The donor compressor has seven fixed 55px knobs, plus the wrapper's insets.
     const int spare    = std::max (0, totalW - kEqMin - kCompMin - kLimiterMin - kPhaseMin);
-    const int eqW      = kEqMin + (int) std::round (spare * 0.36);
-    const int compW    = kCompMin + (int) std::round (spare * 0.42);
-    const int limW     = kLimiterMin + (int) std::round (spare * 0.10);
+    const int eqW      = kEqMin + (int) std::round (spare * 0.38);
+    const int compW    = kCompMin + (int) std::round (spare * 0.20);
+    const int limW     = kLimiterMin + (int) std::round (spare * 0.17);
 
     auto eqPanel = panelsRow, compPanel = panelsRow, limPanel = panelsRow;
     auto phasePanel = panelsRow;
@@ -921,10 +940,10 @@ void MasteringView::resized()
         compPanelWrapper->setBounds (compPanel);
         auto inner = compPanelWrapper->getLocalBounds().reduced (8);
         // Title bar (full width), then a centred preset picker row beneath it.
-        auto headerRow = inner.removeFromTop (20);
+        auto headerRow = inner.removeFromTop (22);
         if (compHeaderBtn != nullptr) compHeaderBtn->setBounds (headerRow);
 #if DUSKSTUDIO_HAS_DUSK_DSP
-        inner.removeFromTop (6);
+        inner.removeFromTop (8);
         auto presetRow = inner.removeFromTop (24);
         const int capW    = 52;
         const int dropW   = std::min (190, presetRow.getWidth() - capW - 6);
@@ -945,7 +964,7 @@ void MasteringView::resized()
             compPresetCombo.setBounds (cluster);
         }
 #endif
-        inner.removeFromTop (4);
+        inner.removeFromTop (8);
         if (compEditor != nullptr)
             compEditor->setBounds (inner);
     }
@@ -1028,7 +1047,10 @@ void MasteringView::timerCallback()
     if (compOn != compHeaderEnabledSeen)
     {
         compHeaderEnabledSeen = compOn;
-        if (compHeaderBtn != nullptr) compHeaderBtn->repaint();
+        if (compHeaderBtn != nullptr) compHeaderBtn->setAlpha (compOn ? 1.0f : 0.65f);
+#if DUSKSTUDIO_HAS_DUSK_DSP
+        if (compEditor != nullptr) styleMasteringCompressor (*compEditor, compOn);
+#endif
     }
 
 #if DUSKSTUDIO_HAS_DUSK_DSP
@@ -1056,11 +1078,9 @@ void MasteringView::timerCallback()
                                                  m.meterLimiterGrDb.load()),
                       juce::dontSendNotification);
 
-    // LUFS / true peak. -100 sentinel renders as "-" (em-dash via UTF-8
-    // so JUCE doesn't decode it as Latin-1 mojibake).
     auto fmtLufs = [] (float v)
     {
-        if (v <= -99.0f) return juce::String (juce::CharPointer_UTF8 ("    -"));
+        if (v <= -99.0f) return juce::String ("  - LUFS");
         return juce::String::formatted ("%6.1f LUFS", v);
     };
     lufsM.setText ("M " + fmtLufs (m.meterMomentaryLufs.load()),  juce::dontSendNotification);
@@ -1070,7 +1090,7 @@ void MasteringView::timerCallback()
     lufsI.setText ("I " + fmtLufs (iLufs), juce::dontSendNotification);
 
     const float tp = m.meterTruePeakDb.load();
-    truePeak.setText (tp <= -99.0f ? juce::String (juce::CharPointer_UTF8 ("TP   -"))
+    truePeak.setText (tp <= -99.0f ? juce::String ("TP - dBTP")
                                    : juce::String::formatted ("TP %5.1f dBTP", tp),
                        juce::dontSendNotification);
 
