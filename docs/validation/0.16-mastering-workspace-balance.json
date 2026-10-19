@@ -1,0 +1,145 @@
+{
+  "recorded_at_utc": "2026-10-19T14:14:59.470043+00:00",
+  "product_source": "8e054a2f8acdc95e13004e898e07980d6f7a6f9b",
+  "branch": "fix/016-release-review",
+  "purpose": "Mastering workspace visual balance iteration; not release approval. The earlier 0.16 release-review record remains a separate commit-bound checkpoint.",
+  "changes": [
+    "Approximately 31/30/18/21 percent EQ/compressor/limiter/Phase widths at 1920px; existing 401px compressor minimum preserved.",
+    "Subdued compressor button fills, distinct solo highlight, gold header underline removed and bypass header dimmed.",
+    "22px header heights and 8px following gaps; unused 44px Mastering transport reservation removed.",
+    "LUFS and dBTP units retained in empty readings; existing target-color GUI assertions preserved."
+  ],
+  "scope": "Existing compressor band-enable and band-selection rows, meters, parameter bindings and DSP retained. Four source files and MANUAL/CHANGELOG changed; no native compressor rewrite.",
+  "linux": {
+    "app_build": "pass; no new warnings in changed code",
+    "ctest": {
+      "entries": 1771,
+      "passed": 1771,
+      "failed": 0,
+      "skipped": 0
+    },
+    "focused_gui": {
+      "passed": 11,
+      "failed": 0,
+      "skipped": 0,
+      "native_exit": 0,
+      "evidence": "build/validation-mastering-balance/gui-final"
+    },
+    "initial_gui": {
+      "passed": 10,
+      "failed": 1,
+      "skipped": 0,
+      "native_exit": 1,
+      "reason": "Existing test expected unitless empty meter labels. Only the expected strings were updated to match the new UI copy; color/state assertions unchanged.",
+      "evidence": "build/validation-mastering-balance/gui"
+    },
+    "app_sha256": "588546271b3141efdef24cced4d8a719402bcb776012e57c112e26bd75595767"
+  },
+  "macos": {
+    "app_and_test_builds": "pass",
+    "ctest": {
+      "entries": 1717,
+      "passed": 1715,
+      "failed": 0,
+      "skipped": 2,
+      "skipped_cases": [
+        "SFZ pack publication rejects case-distinct license aliases",
+        "SFZ installed tree hashing refuses case-distinct aliases"
+      ]
+    },
+    "focused_phase_tests": "3 cases, 109 assertions passed",
+    "app_sha256": "7ed36d1f5eff04851e36aed77e9b0997a70ecbc6b4f734549de0401b382f8ea8",
+    "limits": "Native LV2 remains disabled in the existing validation configuration. Native GUI scenarios were not rerun on macOS for this iteration."
+  },
+  "windows": {
+    "app_and_test_builds": "pass; ASIO enabled and verified by cross-platform driver",
+    "ctest": {
+      "entries": 1706,
+      "passed": 1701,
+      "failed": 0,
+      "skipped": 5,
+      "skipped_cases": [
+        "SFZ ZIP extraction distinguishes unavailable input from corrupt contents",
+        "SFZ pack publication rejects case-distinct license aliases",
+        "SFZ installed tree hashing refuses case-distinct aliases",
+        "SFZ library relocation never recreates a disconnected destination",
+        "SFZ library relocation rejects a replacement destination with a copied marker"
+      ]
+    },
+    "focused_phase_tests": "3 cases, 109 assertions passed",
+    "app_sha256": "a35ce2e4fa1487a54fba2291aed23be02a0b59321d9ef02df50a6ad806eced17",
+    "test_binary_sha256": "c9ce96c804dbe2e41d10193b0b053faeaa7b76bda3750dad33e19123b8766769",
+    "initial_gui": {
+      "passed": 10,
+      "failed": 1,
+      "skipped": 0,
+      "native_exit": 1,
+      "failure": "gui.mastering_transport functional assertions passed, then strict cleanup detected unexpected native maximization: 1920x1129 at 0,23 instead of 1440x1128 at 240,31.",
+      "evidence": "build/validation-mastering-balance/windows-gui.log",
+      "profile": "C:\\Users\\marc\\AppData\\Local\\Temp\\dusk-016-release-review-gui-b04379dede134397bc6a4dad2a2f043e"
+    },
+    "unchanged_isolated_transport": {
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "native_exit": 0,
+      "evidence": "build/validation-mastering-balance/windows-transport-isolated.log"
+    },
+    "unchanged_gui_repeat": {
+      "passed": 11,
+      "failed": 0,
+      "skipped": 0,
+      "native_exit": 0,
+      "evidence": "build/validation-mastering-balance/windows-gui-repeat.log",
+      "profile": "C:\\Users\\marc\\AppData\\Local\\Temp\\dusk-016-release-review-gui-7fa2e9d8df094c73a256341376ffd6b6"
+    },
+    "limit": "The initial maximization is unexplained. Read-only source review found no ordinary stage-layout path to maximization. No product fix or external-input cause is claimed; native window-command tracing would be needed if it recurs."
+  },
+  "contracts": {
+    "juce_gate": "157 coupled files, 6881 uses; pass",
+    "manual_coverage": "638 behaviors: 564 auto, 22 partial, 16 manual, 0 gap, 36 n/a; pass",
+    "readme_counts": "No TEST_CASE declarations added or removed; release mechanics contract passed in full CTest."
+  },
+  "manual_sync": "MANUAL.md describes the balanced module row, subdued compressor buttons and bypass header; corrected source-filename placement. CHANGELOG updated.",
+  "hygiene": "Staged diffs reviewed before commit; no added code comments, Unicode typography, attribution, debug logging, dead code or speculative helper. JUCE count unchanged.",
+  "visual_qa": {
+    "result": "pass for inspected Linux wide/compact captures",
+    "report": "build/validation-mastering-balance/design-qa.md",
+    "wide_preview": "build/validation-mastering-balance/mastering-wide.png",
+    "compact_preview": "build/validation-mastering-balance/mastering-compact.png"
+  },
+  "remaining_release_scope": "This focused UI iteration does not clear earlier release gates, including the unexplained Linux allocation failure, shipping/sanitizer CI, maintainer walkthrough and small-buffer listening acceptance.",
+  "retained_artifact_sha256": {
+    "build/validation-mastering-balance/build.log": "9fa39bf62ef160f2d3ffccd7d74ec7f35ebab81692d954e78c9742843c2cd3fa",
+    "build/validation-mastering-balance/build-final.log": "7c8c0c991aac22a7366e8617a4e4653543236705b79ff8d7627a3ecd17316fbf",
+    "build/validation-mastering-balance/test-build.log": "65e149bb9afe06bd2642c338de5d086fc1d069e5b836f0d7242febdf6127600c",
+    "build/validation-mastering-balance/ctest.log": "327a5fa5ada93b033dcfa0bd161a6106fe76d786e1d4819723b78baf617e66f7",
+    "build/validation-mastering-balance/macos-build-ctest.log": "aafc9cef9056734ebb2a3d6034a2ed8b0d23372fb64cb1358efb60f219df8122",
+    "build/validation-mastering-balance/macos-provenance.log": "224aebae4ad0f1d2eb4c46707487223656e4a393ce9868c906d23e80c973bd4f",
+    "build/validation-mastering-balance/windows-build-ctest.log": "7b0eb0c5be35028ed59bd409601e62b45cf18609f36f7e44afff49e419b931a5",
+    "build/validation-mastering-balance/windows-gui.log": "3a31e2f534936f04b7ac0d5d10e241aace1e643dacb2d22581eeddb2ed9877e5",
+    "build/validation-mastering-balance/windows-transport-isolated.log": "fe526ac8e7baac2fc9f39e9de6def0f3ce8b152f7b9bed327c0315afb2b5ccea",
+    "build/validation-mastering-balance/windows-gui-repeat.log": "9a9383b52f070726aba90a690caa7ea2a8dba4af668271a499ef9e20bf358c96",
+    "build/validation-mastering-balance/gui/output.log": "3200ae1e6231651745bab5cecb5b33da717c615581c77b9694c45c8dbd1e8cc2",
+    "build/validation-mastering-balance/gui/exit.json": "f6bd746db1abf79fceeebccc2438a89c7f70f2d0d7c3eb55f53a6377db39b35e",
+    "build/validation-mastering-balance/gui-final/output.log": "0fd225bee9a44d0a610a1be580f9fd92d57c20d1443585cc1be2825607c568a6",
+    "build/validation-mastering-balance/gui-final/exit.json": "ead61968b1ab2c26a266d01546eea828c77a169952b946b39aad90c824dc6117",
+    "build/validation-mastering-balance/mastering-wide.png": "ca540de1c697ba2c8560ca7e6e0b6e9eaf7d59cf26b98c9d6fc35d00b35466e1",
+    "build/validation-mastering-balance/mastering-compact.png": "8c30c2a8d6f51e3be70d1624b9a39ea3c1095aed59060bae47049cb3b10bd65a",
+    "build/validation-mastering-balance/design-qa.md": "b7c07ec46d92331ff0b5f73e5c249106a7e33567762dfa5a7d88d3c0b699fe0a",
+    "build/validation-mastering-balance/binaries/DuskStudio-linux": "588546271b3141efdef24cced4d8a719402bcb776012e57c112e26bd75595767",
+    "build/validation-mastering-balance/harnesses/dusk-mastering-balance-capture.sh": "efc3ce2e064bf6cfeef7cc2108950c5979dd95e96d2cfa4b84dc740743a01141",
+    "build/validation-mastering-balance/harnesses/dusk-mastering-balance-gui.sh": "48ebf8819f6341f444f7d028ff817ad7e21d4bbc77dc919e9ce15f6be7f6a8cc",
+    "build/validation-mastering-balance/harnesses/dusk-mastering-balance-gui-final.sh": "78fbd74af6e2bcb1240d4490c1a3d1fcc2eb32bb34f436848df37a467c183db9",
+    "build/validation-mastering-balance/harnesses/dusk-mastering-balance-cross.sh": "0a64f1390a403cbdbd8e1207c729de75623e6231bd94a6936d3e8a9d47a77960",
+    "build/validation-mastering-balance/harnesses/dusk-mastering-balance-stage-win.ps1": "2f77d11691972427adb62b19de95225c1d0522f3dcc61751cedb872a9d06d97a",
+    "build/validation-mastering-balance/harnesses/dusk-mastering-balance-win-gui.ps1": "52b948adaf7e20aa379054b23a74792d643fe060c10f04768c77e634663135f1",
+    "build/validation-mastering-balance/harnesses/dusk-mastering-balance-win-transport.ps1": "35cafc58ce38a9f332330fa04d9c14de6379173891b67cd74562da7ea8344adb",
+    "build/validation-mastering-balance/harnesses/dusk-016-hold-x11-native.py": "8d3bab6006fa49425712b2ff529c00aa37313ad06e32dc65821c097438d86d26",
+    "build/validation-mastering-balance/gui-final/frames/frame-3.png": "204b2721801e94a772b8bf0baba758ac669f192c3141fecaf452b4762092a265",
+    "build/validation-mastering-balance/gui-final/frames/frame-8.png": "e04a778ba0ca762348d98d83241f18ae42422c7b5abf964951f506b63364be54",
+    "build/validation-mastering-balance/gui-final/frames/frame-14.png": "f3db4a72b88601b4dc387d3c379f0a58fee26df692bccd5c9f595b7c56435549",
+    "build/validation-mastering-balance/capture/mm-02-mastering-chain.png": "4ba524c129807ed2e0e626b207c26ad031e2f56750bf6b70fbcaeba68f4146dc"
+  },
+  "transfer_bundle_sha256": "0054f9b996c1c42985dccb9b76677968a489a495421a97ccec9863e517b9fb45"
+}
