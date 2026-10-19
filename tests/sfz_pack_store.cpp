@@ -406,7 +406,7 @@ TEST_CASE ("SFZ pack storage reports real filesystem capacity failures", "[sfz][
    #endif
 }
 
-TEST_CASE ("SFZ pack publication rejects incomplete or ambiguous extracted entrypoints", "[sfz][store]")
+TEST_CASE ("SFZ pack publication rejects incomplete or ambiguous extracted entrypoints", "[sfz][store][issue-903]")
 {
     StoreTree tree;
     PackStore store (tree.root);
@@ -431,6 +431,12 @@ TEST_CASE ("SFZ pack publication rejects incomplete or ambiguous extracted entry
     { REQUIRE (dusk::fs::writeStringToFile (staging / "Samples/LICENSE.txt", "https://creativecommons.org/licenses/by-nc/4.0/")); }
     SECTION ("Restricted sidecar license")
     { REQUIRE (dusk::fs::writeStringToFile (staging / "Samples/tone.wav.license", "https://creativecommons.org/licenses/by-nd/4.0/")); }
+    SECTION ("Spaced NoDerivatives sidecar restriction")
+    { REQUIRE (dusk::fs::writeStringToFile (staging / "Samples/tone.wav.license", pack.license.text + " except the choir, CC BY-ND 4.0")); }
+    SECTION ("Spaced NonCommercial ShareAlike sidecar restriction")
+    { REQUIRE (dusk::fs::writeStringToFile (staging / "Samples/tone.wav.license", pack.license.text + " except the organ, CC BY-NC-SA 4.0")); }
+    SECTION ("Sidecar prohibits commercial use in prose")
+    { REQUIRE (dusk::fs::writeStringToFile (staging / "Samples/LICENSE.txt", pack.license.text + " Commercial use is not permitted.")); }
     SECTION ("Conflicting allowed license")
     { REQUIRE (dusk::fs::writeStringToFile (staging / "Samples/COPYING", "https://creativecommons.org/licenses/by/4.0/")); }
     SECTION ("Unknown license in a licensing directory")

@@ -545,14 +545,16 @@ std::optional<CcLicense> licenseText (const std::string& text, const std::string
     }
     if (downloadLicenseAllowed (*actual))
     {
-        std::string wording;
-        wording.reserve (content.size());
+        std::string wording { " " };
+        wording.reserve (content.size() + 2);
         for (const auto c : content)
         {
-            const bool space = c == '-' || c == '\r' || c == '\n' || c == '\t' || c == ' ';
-            if (! space || wording.empty() || wording.back() != ' ') wording += space ? ' ' : c;
+            const bool word = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
+            if (word || wording.back() != ' ') wording += word ? c : ' ';
         }
+        wording += ' ';
         for (const auto* restriction : { "noncommercial", "non commercial", "noderivatives", "noderivs",
+                                        " by nc ", " by nd ", "commercial use is not permitted",
                                         "no derivatives", "no derivative works", "no modifications",
                                         "no commercial use", "not for commercial", "personal use only" })
             if (wording.find (restriction) != std::string::npos) return {};
