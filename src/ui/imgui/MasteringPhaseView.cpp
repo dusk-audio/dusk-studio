@@ -38,7 +38,8 @@ public:
 
     bool controlPointForScenario (const std::string& name, ImVec2& point, float fraction) const override
     {
-        static constexpr const char* names[] = { "reset", "mono", "mode", "bands", "q", "averaging", "band" };
+        static constexpr const char* names[] = { "reset", "mono", "mode", "bands", "q", "averaging", "band",
+                                                "bands-knob", "q-knob", "averaging-knob" };
         for (size_t i = 0; i < controls.size(); ++i)
             if (name == names[i] && controls[i].last.x > controls[i].first.x)
             {
@@ -178,8 +179,10 @@ private:
         style.fill = kAccent;
         const auto knob = dw::knob (ctx, id, { at.x + width * 0.5f, at.y + ctx.s (16.0f) + radius },
                                     radius, value, range, defaultValue, style);
+        ImGui::SetItemKeyOwner (ImGuiKey_MouseWheelY);
+        controls[index + 4] = { ImGui::GetItemRectMin(), ImGui::GetItemRectMax() };
         if (knob.changed) value = index == 3 ? std::round (knob.value) : knob.value;
-        formTooltip ("Drag or scroll to adjust; double-click to reset. Ctrl-click the value to type.");
+        formTooltip ("Drag or scroll to adjust; double-click to reset. Cmd-click on macOS or Ctrl-click elsewhere to type a value.");
         ImGui::SetCursorScreenPos ({ at.x + ctx.s (3.0f), at.y + ctx.s (68.0f) });
         ImGui::SetNextItemWidth (width - ctx.s (6.0f));
         ImGui::PushID (id);
@@ -358,7 +361,7 @@ private:
     PhaseAnalyzer& analyzer;
     std::function<bool()> getMono;
     std::function<void (bool)> setMono;
-    std::array<Rect, 7> controls {};
+    std::array<Rect, 10> controls {};
     Rect viewport;
     int mode = 0, selectedBand = 0;
     bool popupOpen = false, popupWasOpen = false;

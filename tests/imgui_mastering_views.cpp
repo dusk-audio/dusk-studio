@@ -447,6 +447,39 @@ TEST_CASE ("the mastering Phase controls wire settings monitoring reset and keyb
         REQUIRE_FALSE (mono);
         REQUIRE (monoWrites == 2);
     }
+    SECTION ("Wheeling visible knobs changes their value without scrolling the short panel")
+    {
+        panel.setSize ({ 260.0f, 260.0f });
+        panel.movePointer ({ 20.0f, 100.0f });
+        panel.frame (*view);
+        panel.frame (*view);
+        ImVec2 point;
+        for (int step = 0; step < 20; ++step)
+        {
+            if (view->controlPointForScenario ("q-knob", point) && point.y > 30.0f && point.y < 230.0f) break;
+            panel.scroll (-1.0f);
+            panel.frame (*view);
+            panel.frame (*view);
+        }
+        REQUIRE (view->controlPointForScenario ("q-knob", point));
+        for (const auto* name : { "bands-knob", "q-knob", "averaging-knob" })
+        {
+            REQUIRE (view->controlPointForScenario (name, point));
+            const auto previous = params.snapshot();
+            panel.movePointer (point);
+            panel.frame (*view);
+            panel.frame (*view);
+            panel.scroll (1.0f);
+            panel.frame (*view);
+            panel.frame (*view);
+            ImVec2 after;
+            REQUIRE (view->controlPointForScenario (name, after));
+            REQUIRE_THAT (after.y, Catch::Matchers::WithinAbs (point.y, 0.01f));
+            if (std::string (name) == "bands-knob") REQUIRE (params.bands.load() > previous.bands);
+            else if (std::string (name) == "q-knob") REQUIRE (params.q.load() > previous.q);
+            else REQUIRE (params.averagingMs.load() > previous.averagingMs);
+        }
+    }
     SECTION ("Typed control values clamp to both bounds without reconfiguring the borrowed analyzer")
     {
         const auto enter = [&] (const char* name, const char* text)
