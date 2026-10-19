@@ -2018,7 +2018,8 @@ void AudioEngine::serviceMultisampleLoads()
         auto& track = session.track (request.trackIndex);
         if (loaded)
         {
-            track.nativeMultisamplePath = request.path.u8string();
+            if (! request.restoring || ! request.locator)
+                track.nativeMultisamplePath = request.path.u8string();
             track.nativeMultisampleLocator = request.locator;
             if (! request.restoring && ! request.preserveSavedState) track.nativeMultisampleStateBase64.clear();
             track.nativeClapPath.clear(); track.nativeClapPluginId.clear(); track.nativeClapStateBase64.clear();

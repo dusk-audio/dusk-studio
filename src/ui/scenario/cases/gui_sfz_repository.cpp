@@ -1442,6 +1442,93 @@ std::optional<ScenarioResult> runPauseCancel (GuiHost& host, ScenarioContext& ct
     return std::nullopt;
 }
 
+std::optional<ScenarioResult> runPortableRestore (GuiHost& host, ScenarioContext& ctx)
+{
+    if (! ctx.engine().getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires stopped transport and no modal");
+    auto state = prepare (host, ctx, "portable-restore");
+    if (! state) return ctx.verdict();
+    const auto directory = ctx.tempDir() / "portable-session";
+    const auto sessionJson = directory / "session.json";
+    const auto autosave = directory / "session.json.autosave";
+    const auto foreignPath = (ctx.tempDir() / "other-computer" / "Piano.sfz").u8string();
+    auto steps = std::make_shared<std::vector<Step>>();
+    pushStart (*steps, host, ctx, state);
+    pushWorkClick (*steps, host, ctx, state, "enabled-download", LibraryState::Complete);
+    pushInstalledSelection (*steps, host, ctx, state);
+    steps->push_back ({ 0, [&host, &ctx, state, directory, sessionJson, foreignPath]
+    {
+        if (! ctx.expect (state->installed.has_value(), "portable restore fixture was not installed"))
+        { ctx.complete (ctx.verdict()); return; }
+        const auto& pack = *state->installed;
+        const auto& instrument = pack.instruments.front();
+        std::string error;
+        auto primed = NativeMultisampleSlot::prime (pack.directory / instrument.relativePath,
+            ctx.engine().getCurrentSampleRate(), ctx.engine().getCurrentBlockSize(), error);
+        if (! ctx.expect (static_cast<bool> (primed), "could not prime the portable controls: " + error))
+        { ctx.complete (ctx.verdict()); return; }
+        primed.instance->getOverrides().masterVolDb.store (-13.0f);
+        primed.instance->getOverrides().masterTuneCents.store (27.0f);
+        primed.instance->getOverrides().polyphony.store (29);
+        std::vector<std::uint8_t> bytes;
+        if (! ctx.expect (primed.instance->saveState (bytes), "could not save the portable controls"))
+        { ctx.complete (ctx.verdict()); return; }
+        auto& track = ctx.session().track (kStripIndex);
+        track.mode.store (static_cast<int> (Track::Mode::Midi));
+        track.nativeMultisamplePath = foreignPath;
+        track.nativeMultisampleLocator = pack.locatorFor (instrument);
+        track.nativeMultisampleStateBase64 = dusk::base64::encode (bytes.data(), bytes.size());
+        host.closeSfzLibrary (kStripIndex);
+        std::error_code ec;
+        fs::create_directories (directory, ec);
+        if (! ctx.expect (! ec && SessionSerializer::save (ctx.session(), sessionJson), "could not save the portable session")
+            || ! ctx.expect (host.openSession (sessionJson), "could not open the portable session"))
+            ctx.complete (ctx.verdict());
+    } });
+    steps->push_back ({ 0, [&host, &ctx, state, sessionJson, autosave, foreignPath]
+    {
+        auto& track = ctx.session().track (kStripIndex);
+        auto& slot = ctx.engine().getChannelStrip (kStripIndex).getNativeMultisampleSlot();
+        auto* instance = slot.getInstance();
+        bool clean = ctx.expect (instance && instance->hasLoadedRuntime(), "the portable instrument did not load");
+        clean &= ctx.expect (track.nativeMultisamplePath.toStdString() == foreignPath,
+                             "portable restore rewrote the saved absolute path");
+        const auto& pack = *state->installed;
+        clean &= ctx.expect (sameFile (slot.getLoadedSoundfontPath(), pack.directory / pack.instruments.front().relativePath),
+                             "portable restore did not resolve the installed file");
+        clean &= ctx.expect (track.nativeMultisampleLocator == pack.locatorFor (pack.instruments.front()),
+                             "portable restore changed the managed identity");
+        if (instance)
+            clean &= ctx.expect (nearly (instance->getOverrides().masterVolDb.load(), -13.0f)
+                && nearly (instance->getOverrides().masterTuneCents.load(), 27.0f)
+                && instance->getOverrides().polyphony.load() == 29, "portable restore lost the saved controls");
+        host.autosaveTick();
+        clean &= ctx.expect (! fs::exists (autosave), "portable restore wrote a spurious autosave");
+        const bool asked = host.requestQuit();
+        clean &= ctx.expect (! asked, "portable restore triggered an unsaved-changes prompt");
+        if (asked) host.clickModalButton ("Cancel");
+        if (! clean) { ctx.complete (ctx.verdict()); return; }
+        ctx.expect (host.openSession (sessionJson) && host.modalStackEmpty(), "portable reopen offered recovery");
+    }, [&ctx]
+    {
+        ctx.engine().serviceMultisampleLoads();
+        return ! ctx.engine().hasPendingMultisampleLoads();
+    }, "portable instrument restoration did not settle" });
+    steps->push_back ({ 0, [&host, &ctx, autosave]
+    {
+        ctx.session().track (kStripIndex).strip.faderDb.store (-7.0f);
+        host.autosaveTick();
+        ctx.expect (fs::exists (autosave), "a real edit after portable restore was not autosaved");
+        ctx.expect (host.requestQuit(), "a real edit after portable restore did not ask before quitting");
+        ctx.expect (host.clickModalButton ("Cancel"), "could not cancel the real edit's quit prompt");
+        std::error_code ec;
+        fs::remove (autosave, ec);
+    }, [&ctx] { return ! ctx.engine().hasPendingMultisampleLoads(); }, "portable reopen did not settle" });
+    pushFinish (*steps, host, ctx, state);
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
 std::optional<ScenarioResult> runRelink (GuiHost& host, ScenarioContext& ctx, bool fail)
 {
     if (! ctx.engine().getTransport().isStopped() || ! host.modalStackEmpty())
@@ -1607,6 +1694,7 @@ std::optional<ScenarioResult> runRelink (GuiHost& host, ScenarioContext& ctx, bo
     return std::nullopt;
 }
 #else
+std::optional<ScenarioResult> runPortableRestore (GuiHost&, ScenarioContext&) { return ScenarioResult::skip ("SFZ support is not built"); }
 std::optional<ScenarioResult> runRelink (GuiHost&, ScenarioContext&, bool) { return ScenarioResult::skip ("SFZ support is not built"); }
 std::optional<ScenarioResult> runSearchKey (GuiHost&, ScenarioContext&, bool) { return ScenarioResult::skip ("SFZ support is not built"); }
 std::optional<ScenarioResult> runArtworkCategories (GuiHost&, ScenarioContext&) { return ScenarioResult::skip ("SFZ support is not built"); }
@@ -1630,6 +1718,10 @@ const ScenarioRegistrar storageMove { Scenario {
 const ScenarioRegistrar pauseCancel { Scenario {
     "gui.sfz_repository_pause_cancel", { "gui", "sfz", "repository", "multisample" }, Needs::Engine | Needs::Gui,
     {}, {}, 150000, runPauseCancel
+} };
+const ScenarioRegistrar portableRestore { Scenario {
+    "gui.sfz_portable_restore_stays_saved", { "gui", "sfz", "session", "issue-902" }, Needs::Engine | Needs::Gui,
+    {}, {}, 90000, runPortableRestore
 } };
 const ScenarioRegistrar relinkInstalled { Scenario {
     "gui.sfz_relink_installed_program", { "gui", "sfz", "repository", "multisample" }, Needs::Engine | Needs::Gui,
