@@ -1,5 +1,5 @@
 {
-  "recorded_at_utc": "2026-10-19T04:39:06.788557+00:00",
+  "recorded_at_utc": "2026-10-19T11:14:30.536735+00:00",
   "branch": "fix/016-release-review",
   "reviewed_base": "774d8419f0e65c011342bacd55943d194a52bed3",
   "final_product_source": "d5d190a92fe79256626f2aada6143b6121399f18",
@@ -122,20 +122,36 @@
       ]
     },
     "final_storage_gui": {
-      "status": "clean-rerun-pending-permission-resolution",
-      "attempt": {
-        "passed": 2,
-        "failed": 1,
-        "skipped": 0,
-        "skip_reasons": []
-      },
+      "status": "passed",
       "source": "d5d190a92fe79256626f2aada6143b6121399f18",
-      "failure": "gui.sfz_library_storage_move timed out after 1869757 ms, beyond its 90000 ms deadline. The two relink cases passed.",
-      "os_evidence": "tccd logged a removable-volume authorization prompt after the rebuilt ad-hoc signature failed to match the existing grant. No reply to the renewed permission question has been received.",
-      "retained_profile": "build/validation-release-review/macos-final-focused-gui",
+      "app_sha256": "bb465da44ef4c20a49dd6546884c1679acd95f1a1b0a5a9ef21959c5488b00f4",
+      "clean_rerun": {
+        "passed": 3,
+        "failed": 0,
+        "skipped": 0
+      },
+      "wrapper_exit": 0,
       "native_app_exit": null,
-      "wrapper_exit": 1,
-      "owned_process": "PID 43088 no longer matched the validation executable at the post-timeout inspection."
+      "profile": "/private/tmp/dusk-016-release-review-gui.8nryiD",
+      "retained_profile": "build/validation-release-review/macos-final-focused-gui/allowed",
+      "permission": "User confirmed selecting Allow for the rebuilt app; fresh run completed without a permission timeout.",
+      "prior_attempt": {
+        "status": "clean-rerun-pending-permission-resolution",
+        "attempt": {
+          "passed": 2,
+          "failed": 1,
+          "skipped": 0,
+          "skip_reasons": []
+        },
+        "source": "d5d190a92fe79256626f2aada6143b6121399f18",
+        "failure": "gui.sfz_library_storage_move timed out after 1869757 ms, beyond its 90000 ms deadline. The two relink cases passed.",
+        "os_evidence": "tccd logged a removable-volume authorization prompt after the rebuilt ad-hoc signature failed to match the existing grant. No reply to the renewed permission question has been received.",
+        "retained_profile": "build/validation-release-review/macos-final-focused-gui",
+        "native_app_exit": null,
+        "wrapper_exit": 1,
+        "owned_process": "PID 43088 no longer matched the validation executable at the post-timeout inspection.",
+        "recorded_at_utc": "2026-10-19T04:39:06.788557+00:00"
+      }
     },
     "limits": [
       "Native LV2 disabled in this validation cache; not a complete shipping configuration.",
@@ -192,16 +208,31 @@
     "linux_and_macos": "Production Move, missing-volume identity/state preservation and exact silence, then same-volume reconnect and nonzero native audio PASS; owned fixtures cleaned after token/volume checks.",
     "details": "build/validation-release-review/usb/summary.json",
     "windows": {
-      "status": "waiting-for-user-physical-unplug",
+      "status": "missing-check-passed-waiting-for-physical-reconnect",
       "fixed_production_move_and_baseline_audio": "PASS",
       "helper_source": "Initial candidate plus the exact final SfzLibraryLocations.cpp bytes, independently compiled; input hashes and CRLF normalization checked.",
       "final_override_sha256": "0863e011ce6065c478dec92f079bdad37e0446e9a71b6b1ee9ff991d3b03f20d",
-      "missing_and_reconnected_checks": "Not run; neither gate supplied.",
+      "missing_and_reconnected_checks": "Fresh native missing-state check passed after physical removal was confirmed by host USB serial disappearance and Windows disk/PnP disappearance. Reconnect remains pending.",
       "fixed_catch_fat32_rerun": "Linked, not run; deferred until drive reconnect to avoid racing physical ejection.",
       "checkpoint": "build/validation-release-review/usb/windows/checkpoint-physical-3",
       "checkpoint_time_utc": "2026-10-19T04:33:00.0034113Z",
-      "estimated_unplug_wait_deadline_utc": "2026-10-19T05:02:35.7226035Z",
-      "after_deadline": "Recheck the owned process and restart an owned run before supplying any physical gate; elapsed time is not a user confirmation."
+      "original_wait": "Original helper expired overnight before the user reply. Its failure remains recorded. A private continuation driver restores the hash-verified original locator, native state and private library configuration in a fresh process.",
+      "continuation_source_sha256": "888218ce496c212682e9d00f915252484bb58245e84d57098d3a348196d53b41",
+      "physical_control": "C:\\Users\\marc\\dusk-016-validation-deps\\usb-reconnect-20261018-1\\fat32-override-2\\resume-20261019-2",
+      "missing_result": {
+        "identity_preserved": true,
+        "state_preserved": true,
+        "runtime_loaded": false,
+        "failed_commit_rejected": true,
+        "frames": 256,
+        "peak": 0.0,
+        "fallback_directory_created": false
+      },
+      "preliminary_observation": "The first response corresponded to No Media while the USB adapter was still enumerated. After clarification the user physically removed it; fresh native missing-state assertions ran after both host and Windows confirmed disappearance. The preliminary continuation was stopped with an explicit controller-abort reason.",
+      "continuation_binary_sha256": "41384572b96cbd2c584e7e703d0f2d434d8f01b1a34caf70f0a110ef596bf192",
+      "continuation_manifest": "build/validation-release-review/usb/windows/continuation-20261019/build-manifest.json",
+      "physical_missing_report": "build/validation-release-review/usb/windows/continuation-20261019/resume-20261019-2/01-ready-to-reconnect.json",
+      "physical_missing_report_sha256": "1634ec370672e5e3a2373891d447c5eaf28ad9dc4440de2c2182da451fd0f971"
     },
     "limits": "Linux/macOS native helper exit statuses were not retained; terminal assertion reports passed. Windows wrapper retains native status.",
     "linux_and_macos_source": "f097217fbb56a32b74e927b71bc56acdb3ca6c30"
@@ -727,8 +758,7 @@
   "manual_sync": "Internal timing, ownership and publication fixes restore behavior already described in MANUAL.md; no new control, shortcut, default, unit, schema or format. MANUAL unchanged. Diagnostic opt-in flags documented in MAINTAINER-GUIDE.",
   "hygiene": "Staged diffs reviewed before every commit; only load-bearing RT/ownership comments retained; ASCII added code comments/strings; no attribution trailers.",
   "remaining_release_gates": [
-    "Finish Windows physical USB missing/reconnect checks and the fixed FAT32 Catch rerun, then run the full interactive Windows GUI suite.",
-    "Resolve rebuilt-app removable-volume permission on Mac, then cleanly rerun the three final storage GUI cases. The timed-out attempt remains a failed run.",
+    "Finish Windows physical USB reconnect/recovery and the fixed FAT32 Catch rerun, then run the full interactive Windows GUI suite.",
     "Maintainer walkthrough on Linux, macOS and Windows (user confirmed not yet done).",
     "Final unpublished candidate still needs shipping-configuration and full-suite sanitizer CI, refreshed packages and cold-host package checks. The Mac validation build has native LV2 disabled.",
     "Mac Musical Artifacts live service returns a browser/anti-bot response; normal live GUI and remaining live license-policy/shipping-platform acceptance are not supplied by the backend helpers.",
@@ -954,7 +984,32 @@
     "build/validation-release-review/macos-final-focused-gui/inventory.log": "b45f0e49bbcccdcfdcecd144f519fb8bd4aa94729b6cc63c845d8427297650e5",
     "build/validation-release-review/macos-final-focused-gui/job-state.log": "e6194e4f0ffcee9bee4b9b88964a66e0e7ca15401c92f5e72d3f26c3d0078b23",
     "build/validation-release-review/macos-final-focused-gui/output.log": "9a65814be8327ce261c7f4fe5c391aaf26aa0e9973e4dfebf80f55f928e9c8ad",
-    "build/validation-release-review/macos-final-focused-gui/tcc-timeout-profile.tar.gz": "71c2cde5cde957c0f9020a343de01d142f6f1dbf93ee9ada9e6272bb63caef59"
+    "build/validation-release-review/macos-final-focused-gui/tcc-timeout-profile.tar.gz": "71c2cde5cde957c0f9020a343de01d142f6f1dbf93ee9ada9e6272bb63caef59",
+    "build/validation-release-review/logs/dusk-016-fat32-mac-gui-allowed.log": "2fab17a5b7e59d7dfdfa2424da856afba65aa745372ec52dd6d275c971b4759e",
+    "build/validation-release-review/harnesses/dusk-016-usb-continue.cpp": "888218ce496c212682e9d00f915252484bb58245e84d57098d3a348196d53b41",
+    "build/validation-release-review/harnesses/dusk-016-build-usb-continuation.ps1": "90008ec8277b693dff66775cd6048799d048cd09934b7bf3d711bc4fa115455b",
+    "build/validation-release-review/harnesses/dusk-016-launch-usb-physical-continuation.ps1": "b2b7433792756db0dae2dda27cceb4b1b69a06ad4f3c09a76bef7f9cc21dfd8e",
+    "build/validation-release-review/harnesses/dusk-016-gate-windows-usb-physical-missing.ps1": "b5736a680cee1e886c156aadb5ca82f1d2375aa79265100876be67fe7ee3ad40",
+    "build/validation-release-review/macos-final-focused-gui/allowed/profile.tar.gz": "65e48c197f003f920a6b2f2e7d4fd30343de94ca5d61ebe06b83ca4af420d1b4",
+    "build/validation-release-review/macos-final-focused-gui/allowed/output.log": "c504e75484c0e0ea8a5c6b574d2ee0a1cb2019e4d4d9cfcf5bd7ec1b5a5481ed",
+    "build/validation-release-review/macos-final-focused-gui/allowed/error.log": "be963d634fa0041f71c0ec116f8ebb4b16501b1beed7c1995fa99194f18bbc67",
+    "build/validation-release-review/macos-final-focused-gui/allowed/agent.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "build/validation-release-review/macos-final-focused-gui/allowed/agent-error.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "build/validation-release-review/macos-final-focused-gui/allowed/inventory.log": "b45f0e49bbcccdcfdcecd144f519fb8bd4aa94729b6cc63c845d8427297650e5",
+    "build/validation-release-review/macos-final-focused-gui/allowed/job-state.log": "e92951e0af2805bc6015d4aa6b2f9c4f877eaab727abb528377bab9945ab0e12",
+    "build/validation-release-review/usb/windows/expiry-check.json": "c46ee6bfb420e20496821aae94ea52b66c349c281483ab2ee8465408730fcfe1",
+    "build/validation-release-review/usb/windows/absence-detail.json": "444b84e95153ebb9c60ac1fa936129f2612fe17ea6a2bf3e4f1c26dc823c9450",
+    "build/validation-release-review/usb/windows/host-physical-absence-20261019.json": "23ce37be7841f6324b407ca971b30af11a5374dabcf71ef2398c2568d2d01aca",
+    "build/validation-release-review/usb/windows/absence-after-physical-reply.json": "e9c8e9ff77da1b2e57b16bd41c927bf5dd85ba98c39d015d324c6fc4ddaefad2",
+    "build/validation-release-review/logs/dusk-016-build-usb-continuation-transfer-failure.log": "98fd29ac0583157c9fe259067022d7a22e3578567ea7596f0ce9d5ea8640f028",
+    "build/validation-release-review/logs/dusk-016-build-usb-continuation.log": "bdbd199a66d13e68f5f1001f580cab3d9ede7e92780ad9f8922961f04a21b825",
+    "build/validation-release-review/logs/dusk-016-launch-usb-continuation-negative-control-launcher-failure.log": "66f53b40117931585fff630f343fb409195b82c6ca2b73253dd1c36d5033b779",
+    "build/validation-release-review/logs/dusk-016-windows-physical-missing.log": "2d78858351106879e16dfc881e54126044ff9c6818c38d0df0b48d95c770e10e",
+    "build/validation-release-review/usb/windows/continuation-20261019/build-manifest.json": "36f10e095d93e9cfee9081ffef493274a71816d24edbd185ae61495873275989",
+    "build/validation-release-review/usb/windows/continuation-20261019/physical-launch.json": "a1b48548e812492cde7368de4f4285dbabb5b11faacde7f65e48a4b728e7b081",
+    "build/validation-release-review/usb/windows/continuation-20261019/resume-20261019-2/00-ready-to-unplug.json": "1cfb12b4cffa4ea1da88a608026762aade9dcd5e9e009ea1a20dc35ed5c07079",
+    "build/validation-release-review/usb/windows/continuation-20261019/resume-20261019-2/01-ready-to-reconnect.json": "1634ec370672e5e3a2373891d447c5eaf28ad9dc4440de2c2182da451fd0f971",
+    "build/validation-release-review/usb/windows/continuation-20261019/resume-20261019-2/root-physical-absence-check.json": "38e4ca2eaa3f2a89a8db9aa795e7cfc7ae297f263efbcac9dd0629144d91af40"
   },
   "purpose": "Local release-review checkpoint. Pending physical, GUI and release acceptance gates remain open; this is not release approval.",
   "initial_candidate_source": "f097217fbb56a32b74e927b71bc56acdb3ca6c30",
