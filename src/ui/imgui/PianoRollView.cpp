@@ -119,8 +119,8 @@ public:
     void followRegionEdits() override;
     void showCommittedRegion (int index) override;
     void showSwappedTake() override;
-    void stepRecordNoteOn (int noteNumber, int velocity) override;
-    void stepRecordNoteOff (int noteNumber) override;
+    void stepRecordNoteOn (int noteNumber, int velocity, int channel) override;
+    void stepRecordNoteOff (int noteNumber, int channel) override;
     void stepRecordKeyboardClosed() noexcept override;
 
     std::array<double, 4> viewportForScenario() const override
@@ -295,7 +295,7 @@ private:
     Scale scale = Scale::Off;
     int scaleRoot = 0;
     bool keySnap = true, chase = false;
-    int stepRecordHeld = 0;
+    std::array<int, kNumKeys * 16> stepRecordHeld {};
     bool stepRecordChordHad = false, stepRecordReopened = false;
     std::int64_t stepRecordAt = 0;
     Box grid, rulerArea, velocityArea, ccArea, rubberBand;
@@ -1632,7 +1632,7 @@ void PianoRollViewImpl::showCommittedRegion (int committedIndex)
     leftForTake = left;
 }
 
-void PianoRollViewImpl::stepRecordNoteOn (int noteNumber, int velocity)
+void PianoRollViewImpl::stepRecordNoteOn (int noteNumber, int velocity, int channel)
 {
 
     if (engine.getTransport().isRecording() || ! editable()) return;
@@ -1649,7 +1649,9 @@ void PianoRollViewImpl::stepRecordNoteOn (int noteNumber, int velocity)
     // After the keyboard closes and reopens, a playhead the user moved meanwhile is
     // the new entry point rather than a place to step on from.
     const auto playhead = engine.getTransport().getPlayhead();
-    if (stepRecordHeld == 0 && stepRecordChordHad
+    const bool chordHeld = std::any_of (stepRecordHeld.begin(), stepRecordHeld.end(),
+                                       [] (int count) { return count > 0; });
+    if (! chordHeld && stepRecordChordHad
         && (! stepRecordReopened || playhead == stepRecordAt))
     {
         const auto playheadTick = session.samplesToTicks (playhead, sr);
@@ -1657,7 +1659,7 @@ void PianoRollViewImpl::stepRecordNoteOn (int noteNumber, int velocity)
             session.ticksToSamples (playheadTick + stepTicks, sr) - playhead;
         engine.getTransport().setPlayhead (playhead + advanceSamples);
     }
-    if (stepRecordHeld == 0)
+    if (! chordHeld)
         stepRecordChordHad = false;
     stepRecordReopened = false;
 
@@ -1683,21 +1685,26 @@ void PianoRollViewImpl::stepRecordNoteOn (int noteNumber, int velocity)
     r->notes.push_back (n);
 
     pushNoteEdit (before, "Step record note");
-    ++stepRecordHeld;
+    const auto heldIndex = (std::size_t) (std::clamp (channel, 1, 16) - 1) * kNumKeys
+                            + (std::size_t) n.noteNumber;
+    ++stepRecordHeld[heldIndex];
     stepRecordChordHad = true;
     stepRecordAt = nowPlayhead;
 }
 
-void PianoRollViewImpl::stepRecordNoteOff (int )
+void PianoRollViewImpl::stepRecordNoteOff (int noteNumber, int channel)
 {
-    if (stepRecordHeld > 0)
-        --stepRecordHeld;
-
+    if (noteNumber < 0 || noteNumber >= kNumKeys) return;
+    const auto heldIndex = (std::size_t) (std::clamp (channel, 1, 16) - 1) * kNumKeys
+                            + (std::size_t) noteNumber;
+    auto& held = stepRecordHeld[heldIndex];
+    if (held > 0)
+        --held;
 }
 
 void PianoRollViewImpl::stepRecordKeyboardClosed() noexcept
 {
-    stepRecordHeld = 0;
+    stepRecordHeld.fill (0);
     stepRecordReopened = stepRecordChordHad;
 }
 

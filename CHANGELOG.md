@@ -86,6 +86,8 @@ canonical source.
 
 ### Fixed
 
+- **Step-record chords.** Releasing a note rejected by a locked region keeps
+  later accepted notes held together at the same position.
 - **SFZ controller labels.** Instrument labels remain valid while the editor
   reads them, preventing corrupted captions and possible crashes.
 - **SFZ session restoration.** Missing instruments raise one detailed alert

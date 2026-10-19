@@ -7026,17 +7026,17 @@ void MainComponent::toggleVirtualKeyboard()
     juce::Component::SafePointer<MainComponent> safeThis (this);
     auto keyboardView = imgui::makeVirtualKeyboardView (
         engine,
-        [safeThis] (int note, int velocity, int)
+        [safeThis] (int note, int velocity, int channel)
         {
             if (auto* self = safeThis.getComponent())
                 if (self->pianoRollShowing())
-                    self->pianoRoll->stepRecordNoteOn (note, velocity);
+                    self->pianoRoll->stepRecordNoteOn (note, velocity, channel);
         },
-        [safeThis] (int note, int)
+        [safeThis] (int note, int channel)
         {
             if (auto* self = safeThis.getComponent())
                 if (self->pianoRollShowing())
-                    self->pianoRoll->stepRecordNoteOff (note);
+                    self->pianoRoll->stepRecordNoteOff (note, channel);
         });
     virtualKeyboardView = keyboardView.get();
     virtualKeyboardWindow->setView (std::move (keyboardView));

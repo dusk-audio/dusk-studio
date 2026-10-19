@@ -8,6 +8,7 @@
 
 #if DUSKSTUDIO_HAS_NATIVE_UI
  #include "../../imgui/DuskPanelWindow.h"
+ #include "../../imgui/PianoRollView.h"
 #endif
 
 #include <algorithm>
@@ -551,6 +552,49 @@ std::optional<ScenarioResult> runPianoStepRecord (GuiHost& host, ScenarioContext
         std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { region }));
     host.switchToStage (GuiHost::Stage::Recording);
     transport.setPlayhead (session.ticksToSamples (480, rate));
+    {
+        auto roll = imgui::makePianoRollView (session, engine, 0, 0, {});
+        session.track (0).midiRegions.mutate ([] (auto& regions) { regions.front().locked = true; });
+        roll->stepRecordNoteOn (60, 100, 1);
+        session.track (0).midiRegions.mutate ([] (auto& regions) { regions.front().locked = false; });
+        roll->stepRecordNoteOn (62, 100, 1);
+        roll->stepRecordNoteOff (60, 1);
+        roll->stepRecordNoteOn (64, 100, 1);
+        const auto& notes = session.track (0).midiRegions.current().front().notes;
+        ctx.expect (notes.size() == 2 && notes[0].startTick == notes[1].startTick,
+                    "a rejected note release split an accepted chord");
+        roll->stepRecordNoteOn (62, 100, 1);
+        roll->stepRecordNoteOff (62, 1);
+        roll->stepRecordNoteOff (64, 1);
+        roll->stepRecordNoteOff (60, 1);
+        roll->stepRecordNoteOn (65, 100, 1);
+        const auto& heldNotes = session.track (0).midiRegions.current().front().notes;
+        ctx.expect (heldNotes.size() == 4 && heldNotes.front().startTick == heldNotes.back().startTick,
+                    "overlapping copies of a pitch released the chord early");
+        roll->stepRecordNoteOff (62, 1);
+        roll->stepRecordNoteOff (65, 1);
+        roll->stepRecordNoteOn (67, 100, 1);
+        const auto& nextNotes = session.track (0).midiRegions.current().front().notes;
+        ctx.expect (nextNotes.size() == 5 && nextNotes.back().startTick == nextNotes.front().startTick + 120,
+                    "the next chord did not advance after all accepted notes released");
+        roll->stepRecordKeyboardClosed();
+        session.track (0).midiRegions.publish (
+            std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { region }));
+        transport.setPlayhead (session.ticksToSamples (480, rate));
+        session.track (0).midiRegions.mutate ([] (auto& regions) { regions.front().locked = true; });
+        roll->stepRecordNoteOn (60, 100, 1);
+        session.track (0).midiRegions.mutate ([] (auto& regions) { regions.front().locked = false; });
+        roll->stepRecordNoteOn (60, 100, 2);
+        roll->stepRecordNoteOff (60, 1);
+        roll->stepRecordNoteOn (64, 100, 2);
+        const auto& channelNotes = session.track (0).midiRegions.current().front().notes;
+        ctx.expect (channelNotes.size() == 2 && channelNotes.front().startTick == channelNotes.back().startTick,
+                    "a rejected release on another MIDI channel split the chord");
+        roll->stepRecordKeyboardClosed();
+        session.track (0).midiRegions.publish (
+            std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { region }));
+        transport.setPlayhead (session.ticksToSamples (480, rate));
+    }
     auto steps = std::make_shared<std::vector<Step>>();
     steps->push_back ({ 200, [&host, &ctx]
     { ctx.expect (host.openRegionEditor (0, 0, true), "piano roll did not open"); } });
