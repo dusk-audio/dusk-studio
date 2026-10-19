@@ -516,6 +516,19 @@ removal of `DUSK_PLUGINS_PATH`. It must configure the selected source with the
 node's toolchain flags; the runner also exports its absolute path as
 `REGRESS_SOURCE`. Donor checks still require the fetched `DONOR_REV` checkout.
 
+For foreground source validation on macOS, run
+`scripts/regress/mac/allow-prompts.js` through `/usr/bin/osascript -l JavaScript`
+in the logged-in user's SSH session. Start it alongside the app, passing the
+validation runner's PID file, the absolute path to its
+`DuskStudio.app/Contents/MacOS/DuskStudio` binary, and a lifetime in seconds
+(default 600, maximum 3600). The helper verifies the PID, executable and bundle
+identity before selecting **Allow** in Dusk Studio microphone or removable-volume
+dialogs. Each action is logged as JSON, and the helper exits when that app exits.
+Use this only with the maintainer's permission to grant those requests.
+`--check-access` checks the required Accessibility and System Events access
+without clicking. Run `node tests/mac_permission_prompts.js` when changing its
+dialog matching or process ownership checks.
+
 `all` routes each option to the platform that owns it, so one command line can
 carry Linux, macOS and Windows options at once. An option no platform claims is
 a usage error rather than a silently ignored word. `--release-run` goes to all
