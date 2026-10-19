@@ -599,6 +599,21 @@ Its raw read-miss count is measured before loop-start cache coverage. The
 standalone workload below separately checks uncovered misses and source phase.
 Use the private-display isolation described above when running the app on Linux.
 
+To measure the full mixer on an audio interface, add
+`DUSKSTUDIO_PERF_USE_DEVICE=1`, `DUSKSTUDIO_PERF_DEVICE_BACKEND` and
+`DUSKSTUDIO_PERF_DEVICE_NAME`, with private `DUSKSTUDIO_CONFIG_DIR` and
+`DUSKSTUDIO_MUSIC_DIR` directories. `DUSKSTUDIO_PERF_DEVICE_RATE`,
+`DUSKSTUDIO_PERF_DEVICE_BUFFER` and `DUSKSTUDIO_PERF_DEVICE_DURATION_MS`
+default to 48000, 256 and 10000. Use a session and source audio made at the
+requested rate. The device must match the requested backend, name, rate and
+buffer size. The run uses output channels only and reports engine and backend
+XRUN deltas, reader misses and fill errors, callback progress and output peak.
+`locate` performs three seeks while device callbacks continue, within the
+measured wall-clock interval. Run these measurements with the host idle and
+retain unavailable-device or unsupported-rate results. Output peak and reader
+misses supplement the standalone source-phase checks; they do not prove that
+every output frame is correct.
+
 For an isolated reader comparison, build the standalone workload:
 
 ```bash
