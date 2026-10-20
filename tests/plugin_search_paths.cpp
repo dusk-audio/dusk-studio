@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "engine/PluginSearchPaths.h"
 #include "engine/JuceCompat.h"
@@ -265,6 +266,8 @@ TEST_CASE ("Nested custom LV2 bundles prime the parent scanner and fresh scan ch
    #if defined(DUSKSTUDIO_MIDI_PROBE_LV2_FIXTURE_PATH)
     fs::copy (fs::u8path (DUSKSTUDIO_MIDI_PROBE_LV2_FIXTURE_PATH),
               bundle.parent_path() / "Runtime.lv2", fs::copy_options::recursive);
+    REQUIRE (dusk::fs::writeStringToFile (
+        bundle.parent_path() / "Runtime.lv2" / "require-creator-thread", "1"));
     RegisteredLv2Format runtimeRegistered;
     auto& runtimeFormat = *runtimeRegistered.format;
     duskstudio::juce_compat::primeCustomLv2 (runtimeFormat, roots);
@@ -276,10 +279,37 @@ TEST_CASE ("Nested custom LV2 bundles prime the parent scanner and fresh scan ch
     REQUIRE (connection.connect (DUSKSTUDIO_PLUGIN_HOST_PATH, "--ipc-host", error));
     int inputs = 0, outputs = 0, latency = 0;
     bool instrument = false;
-    REQUIRE (connection.loadPlugin (runtimeDescriptions[0]->createXml()->toString().toStdString(), 48000.0, 64,
+    const auto xml = runtimeDescriptions[0]->createXml()->toString().toStdString();
+    REQUIRE (connection.loadPlugin (xml, 48000.0, 64,
                                      inputs, outputs, latency, instrument, error));
     CHECK (outputs == 2);
     CHECK (instrument);
+    for (const double rate : { 44100.0, 96000.0, 48000.0 })
+    {
+        REQUIRE (connection.prepareToPlay (rate, 64, error));
+        std::vector<std::uint8_t> state;
+        REQUIRE (connection.getState (state, error));
+        REQUIRE_FALSE (state.empty());
+        REQUIRE (connection.setState (state.data(), static_cast<std::uint32_t> (state.size()), error));
+        dusk::MidiBuffer midi;
+        const std::uint8_t note[] { 0x90, 60, 100 };
+        midi.addEvent (note, sizeof (note), 0);
+        REQUIRE (connection.processBlockSync (nullptr, 0, 2, 64, midi, 500'000'000LL));
+        CHECK_THAT (connection.readOutChannel (0)[0], Catch::Matchers::WithinAbs (0.1, 1.0e-6));
+    }
+    REQUIRE (connection.loadPlugin (xml, 48000.0, 64,
+                                    inputs, outputs, latency, instrument, error));
+    REQUIRE (connection.release (error));
+    CHECK_FALSE (connection.prepareToPlay (48000.0, 64, error));
+    REQUIRE (connection.loadPlugin (xml, 48000.0, 64,
+                                    inputs, outputs, latency, instrument, error));
+    dusk::MidiBuffer reloadedMidi;
+    const std::uint8_t reloadedNote[] { 0x90, 64, 100 };
+    reloadedMidi.addEvent (reloadedNote, sizeof (reloadedNote), 0);
+    REQUIRE (connection.processBlockSync (nullptr, 0, 2, 64, reloadedMidi, 500'000'000LL));
+    CHECK_THAT (connection.readOutChannel (0)[0], Catch::Matchers::WithinAbs (0.1, 1.0e-6));
+    REQUIRE (connection.release (error));
+    REQUIRE (connection.release (error));
    #endif
     REQUIRE (paths::save ({}, error));
     juce::OwnedArray<juce::PluginDescription> retained;

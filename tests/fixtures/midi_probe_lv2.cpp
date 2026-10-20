@@ -6,7 +6,11 @@
 
 #include <array>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <thread>
 
 // An LV2 instrument that holds a voice per sounding key and plays a DC level of
 // 0.1 per voice, so a test reads from its output what the host delivered.
@@ -14,8 +18,19 @@ namespace
 {
 constexpr const char* kPluginUri = "urn:duskstudio:test:midi-probe";
 
+void checkLifecycleThread (bool required)
+{
+    static const auto creator = std::this_thread::get_id();
+    if (required && std::this_thread::get_id() != creator)
+    {
+        std::fputs ("LV2 lifecycle moved off its creator thread\n", stderr);
+        std::abort();
+    }
+}
+
 struct Instance
 {
+    bool checkThread = false;
     const LV2_Atom_Sequence* events = nullptr;
     float* outL = nullptr;
     float* outR = nullptr;
@@ -38,9 +53,13 @@ struct Instance
     }
 };
 
-LV2_Handle instantiate (const LV2_Descriptor*, double, const char*,
+LV2_Handle instantiate (const LV2_Descriptor*, double, const char* bundlePath,
                         const LV2_Feature* const* features)
 {
+    std::error_code error;
+    const bool checkThread = std::filesystem::is_regular_file (
+        std::filesystem::u8path (bundlePath) / "require-creator-thread", error);
+    checkLifecycleThread (checkThread);
     const LV2_URID_Map* map = nullptr;
     for (std::size_t i = 0; features != nullptr && features[i] != nullptr; ++i)
         if (std::strcmp (features[i]->URI, LV2_URID__map) == 0)
@@ -48,6 +67,7 @@ LV2_Handle instantiate (const LV2_Descriptor*, double, const char*,
     if (map == nullptr) return nullptr;
 
     auto* self = new Instance;
+    self->checkThread = checkThread;
     self->midiEvent = map->map (map->handle, LV2_MIDI__MidiEvent);
     return self;
 }
@@ -92,7 +112,12 @@ void run (LV2_Handle instance, uint32_t frames)
     }
 }
 
-void cleanup (LV2_Handle instance) { delete static_cast<Instance*> (instance); }
+void cleanup (LV2_Handle instance)
+{
+    auto* self = static_cast<Instance*> (instance);
+    checkLifecycleThread (self->checkThread);
+    delete self;
+}
 
 const LV2_Descriptor descriptor {
     kPluginUri, &instantiate, &connectPort, nullptr, &run, nullptr, &cleanup, nullptr

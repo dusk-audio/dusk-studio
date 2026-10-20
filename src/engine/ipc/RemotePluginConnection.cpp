@@ -440,11 +440,10 @@ bool RemotePluginConnection::sendAndAwaitReply (OpCode op,
         errorOut = "reply opcode mismatch";
         return false;
     }
-    // The park timeout is terminal - the child answered and then exited. The
-    // message-thread timeout is not: the child is alive and still processing
-    // audio, so it only latches the wedged flag, which the next clean reply
-    // clears.
-    if (hdrOut.status == kControlStatusWorkerParkTimeout)
+    // Park and lifecycle failures are terminal. An editor dispatch timeout
+    // leaves audio running and latches only the wedged flag, which the next
+    // clean reply clears.
+    if (hdrOut.status == kControlStatusWorkerParkTimeout || hdrOut.status == kControlStatusLifecycleFailed)
         crashed.store (true, std::memory_order_release);
     else if (hdrOut.status == kControlStatusMessageThreadTimeout)
         messageThreadWedged.store (true, std::memory_order_release);

@@ -39,4 +39,15 @@ TEST_CASE ("OOP control replies correlate requests and validate their shape",
     error.clear();
     REQUIRE_FALSE (connection.ping (500, error));
     REQUIRE (error == "Ping reply payload size mismatch");
+
+    REQUIRE_FALSE (connection.release (error));
+    CHECK (connection.isMessageThreadWedged());
+    CHECK_FALSE (connection.isCrashed());
+    REQUIRE (connection.ping (500, error));
+    CHECK_FALSE (connection.isMessageThreadWedged());
+    REQUIRE_FALSE (connection.prepareToPlay (48000.0, 64, error));
+    CHECK (error == "PrepareToPlay status != 0");
+    CHECK (connection.isCrashed());
+    CHECK_FALSE (connection.isMessageThreadWedged());
+    CHECK_FALSE (connection.pollReaper());
 }

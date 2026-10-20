@@ -91,6 +91,9 @@ canonical source.
 
 ### Fixed
 
+- **Sandboxed plug-in lifecycle.** Preparation and state changes run on the
+  message thread while audio processing is parked, preventing races with
+  queued LV2 UI updates when loading or changing the sample rate.
 - **LV2 instrument classification.** The fallback host refreshes embedded LV2
   definitions before discovery so instruments retain their MIDI-track identity
   on computers without system LV2 definitions.
