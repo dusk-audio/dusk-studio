@@ -5,13 +5,6 @@
 
 namespace duskstudio::juce_compat
 {
-inline void initializeLv2Format (juce::AudioPluginFormat& format)
-{
-    if (format.getName() != "LV2") return;
-    // JUCE loads embedded LV2 specifications after its initial class table.
-    format.searchPathsForPlugins (format.getDefaultLocationsToSearch(), true, false);
-}
-
 // One-call shim hiding the AudioPluginFormatManager::addDefaultFormats
 // vs the wayland fork's free addDefaultFormatsToManager() split.
 // DUSKSTUDIO_JUCE_HAS_FREE_ADD_FORMATS is set by CMake at configure time
@@ -34,7 +27,11 @@ inline void addDefaultFormats (juce::AudioPluginFormatManager& fm)
     fm.addDefaultFormats();
    #endif
     for (auto* format : fm.getFormats())
-        if (format != nullptr) initializeLv2Format (*format);
+        if (format != nullptr && format->getName() == "LV2")
+        {
+            // JUCE loads embedded LV2 specifications after its initial class table.
+            format->searchPathsForPlugins (format->getDefaultLocationsToSearch(), true, false);
+        }
 }
 
 inline auto pluginSearchLocations (juce::AudioPluginFormat& format,
