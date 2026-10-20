@@ -124,9 +124,13 @@ JUCE (audio framework)
                                src/zix file). Versions are the ones JUCE records
                                in format_types/LV2_SDK/juce_lv2_config.h; lv2
                                and sratom carry no version macro there.
-                               Dusk Studio guards Lilv's empty-property sort in
-                               a build-tree copy; the shared JUCE checkout is
-                               unchanged (cmake/JuceLv2EmptyStateGuard.cmake).
+                               Dusk Studio guards Lilv's empty-property sort
+                               and routes Windows filesystem calls through
+                               UTF-8-aware helpers in build-tree copies. The
+                               original notices are retained and the shared
+                               JUCE checkout is unchanged (see
+                               cmake/JuceLv2EmptyStateGuard.cmake and
+                               cmake/JuceLv2WindowsPaths.cmake).
              The macOS and Windows runners build against upstream JUCE 8.0.4,
              an older release that vendors older copies. Read out of the 8.0.4
              tag's own version headers, the two columns are:
