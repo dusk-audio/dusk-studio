@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
+#include <cstdint>
 
 namespace duskstudio
 {
@@ -32,5 +33,6 @@ public:
 
 private:
     bool gridBrowser = false;
+    std::uint64_t popupGeneration = 0;
 };
 } // namespace duskstudio
