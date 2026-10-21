@@ -70,6 +70,14 @@ using HostFile   = std::decay_t<decltype (std::declval<const Session&>().getSess
 using HostString = std::decay_t<decltype (std::declval<const Session&>()
                                               .getSessionDirectory().getFullPathName())>;
 
+struct ScenarioInputScope
+{
+    explicit ScenarioInputScope (bool& value) : flag (value), previous (std::exchange (value, true)) {}
+    ~ScenarioInputScope() { flag = previous; }
+    bool& flag;
+    bool previous;
+};
+
 HostFile hostFile (const std::filesystem::path& path)
 {
     return HostFile (HostString::fromUTF8 (path.u8string().c_str()));
@@ -867,6 +875,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     }
     bool pointerAt (float x, float y, bool down, int modifiers = 0)
     {
+        const ScenarioInputScope input (owner.guiScenarioPointerInput);
         auto* peer = owner.getPeer();
         if (peer == nullptr) return false;
         using Peer = std::remove_pointer_t<decltype (peer)>;

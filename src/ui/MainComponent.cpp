@@ -4116,13 +4116,12 @@ void MainComponent::requestQuit()
 
     if (! dirty)
     {
-        // No unsaved changes - quit through the same staged-shutdown
-        // path the dirty flow uses, so the engine is quiesced and
-        // window peers tear down in a deterministic order. Bypassing
-        // beginSafeShutdown here historically left the audio callback
-        // attached during MainWindow destruction, which raced plugin
-        // editor / native-peer teardown.
-        beginSafeShutdown();
+        // Injected input still holds the scenario host and context on its stack.
+        SafePointer<MainComponent> safe (this);
+        dusk::callAsync ([safe]
+        {
+            if (safe != nullptr) safe->beginSafeShutdown();
+        });
         return;
     }
 
@@ -4177,16 +4176,21 @@ void MainComponent::requestQuit()
     };
     dialog->onSave = [safeThis]
     {
+        const bool fromScenario = safeThis != nullptr && safeThis->guiScenarioPointerInput;
         // saveSessionAndThen handles both the sync (existing dir) and
         // async (Save As file chooser) paths. Close the modal first so
         // the chooser, if it opens, isn't fighting our overlay for
         // input. On save success, quit; on failure (chooser cancel,
         // disk error) the user is left in the app as it was before Quit.
-        dusk::callAsync ([safeThis]
+        dusk::callAsync ([safeThis, fromScenario]
         {
             auto* self = safeThis.getComponent();
             if (self == nullptr) return;
             self->quitModal.close();
+
+            // Injected Save clicks keep their driver for Save As cancellation.
+            if (! fromScenario)
+                self->guiRun.reset();
 
             // Quiesce engine BEFORE saveSessionAndThen, as shutdown
             // would. stopTimer prevents the autosave timer from re-
@@ -4202,7 +4206,10 @@ void MainComponent::requestQuit()
                 if (s == nullptr) return;
                 if (ok)
                 {
-                    s->beginSafeShutdown();
+                    dusk::callAsync ([safeThis]
+                    {
+                        if (safeThis != nullptr) safeThis->beginSafeShutdown();
+                    });
                     return;
                 }
                 if (s->quitSaveSerial != serial)
@@ -4256,6 +4263,12 @@ void MainComponent::beginSafeShutdown()
         return;
     }
     shutdownInProgress = true;
+
+    if (guiRun != nullptr)
+    {
+        guiRun.reset();
+        engineDetached = ! engine.isAudioCallbackRegistered();
+    }
 
     shutdown::emitPhase ("phase 1: stop autosave timer");
     stopTimer();

@@ -117,6 +117,7 @@ private:
         void operator() (GuiRun*) const;
     };
     std::unique_ptr<GuiRun, GuiRunDeleter> guiRun;
+    bool guiScenarioPointerInput = false;
     void restoreUiScaleForScenario (float scale);
     struct ScenarioStripHandle;
     struct ScenarioAuxLaneHandle;

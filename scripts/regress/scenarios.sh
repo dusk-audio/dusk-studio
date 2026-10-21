@@ -43,6 +43,7 @@ SCENARIO_BB_LEG_NAMES=(
     bb-damaged-recent
     bb-clean-quit
     bb-interrupted-gui-suite
+    bb-interrupted-gui-save
     bb-keyboard-quit
     bb-window-close
     bb-quit-twice
@@ -623,11 +624,58 @@ bb_interrupted_gui_suite_body() {
     fi
     kill -TERM "${BB_PID[A]}" || return 1
     bb_wait_exit A 30 || return 1
-    bb_assert_order A "${BB_SHUTDOWN_ORDER[@]}" || return 1
+    bb_assert_order A "[Dusk Studio/scenario] window cleanup audio=live" \
+        "${BB_SHUTDOWN_ORDER[@]}" || return 1
     if grep -qE '^=== scenarios:|^\[(PASS|FAIL|SKIP)\] gui.window_keys' "$BB_SDIR/A.out"; then
         bb_fail "the interrupted suite reported completion"
         return 1
     fi
+}
+
+leg_bb_interrupted_gui_save() {
+    bb_begin bb-interrupted-gui-save 120 || return 1
+    local rc=0
+    bb_interrupted_gui_save_body || rc=$?
+    bb_end "$rc"
+}
+
+bb_interrupted_gui_save_body() {
+    bb_spawn A "DUSKSTUDIO_RUN_SCENARIOS=gui:gui.interrupted_quit_save" \
+        "DUSKSTUDIO_QUIT_AFTER_MS=" "DUSKSTUDIO_RUN_SELFTEST=" -- || return 1
+    bb_wait_marker A "[Dusk Studio/scenario] external quit ready" 60 || return 1
+    kill -TERM "${BB_PID[A]}" || return 1
+    bb_wait_marker A "[Dusk Studio/scenario] external quit prompt ready" 30 || return 1
+    local window="" id width="" height="" key value
+    while read -r id; do
+        if [[ "$(DISPLAY="$XVFB_DISPLAY" timeout 5 xdotool getwindowname "$id" 2>/dev/null)" == "Dusk Studio" ]]; then
+            window="$id"
+            break
+        fi
+    done < <(DISPLAY="$XVFB_DISPLAY" timeout 5 xdotool search --onlyvisible --pid "${BB_PID[A]}")
+    [[ -n "$window" ]] || { bb_fail "main window not found"; return 1; }
+    while IFS='=' read -r key value; do
+        case "$key" in WIDTH) width="$value" ;; HEIGHT) height="$value" ;; esac
+    done < <(DISPLAY="$XVFB_DISPLAY" timeout 5 xdotool getwindowgeometry --shell "$window")
+    [[ "$width" =~ ^[0-9]+$ && "$height" =~ ^[0-9]+$ ]] || return 1
+    DISPLAY="$XVFB_DISPLAY" timeout 5 xdotool windowfocus --sync "$window" || return 1
+    # The centred 440x200 quit dialog puts Save 141px right and 58px down from the window centre.
+    DISPLAY="$XVFB_DISPLAY" timeout 5 xdotool mousemove --window "$window" \
+        "$((width / 2 + 141))" "$((height / 2 + 58))" click 1 || return 1
+    bb_wait_exit A 30 || return 1
+    bb_assert_order A "[Dusk Studio/scenario] interrupted save cleanup audio=live" \
+        "phase 1: stop autosave timer" "phase 3: audio callback already detached (skipping)" \
+        "phase 3b: release plugin resources (setActive(false) on each)" \
+        "phase 7b: posting systemRequestedQuit" || return 1
+    if grep -qE '^=== scenarios:|^\[(PASS|FAIL|SKIP)\] gui.interrupted_quit_save' "$BB_SDIR/A.out"; then
+        bb_fail "the interrupted suite reported completion"
+        return 1
+    fi
+    python3 - "$BB_SDIR/music/Interrupted quit/session.json" <<'PY'
+import json, math, sys
+with open(sys.argv[1]) as saved:
+    session = json.load(saved)
+assert math.isclose(session['tracks'][0]['fader_db'], -19.0, abs_tol=1e-6)
+PY
 }
 
 leg_bb_clean_quit() {
@@ -1154,6 +1202,12 @@ regress_scenarios_run() {
         regress_leg "bb-interrupted-gui-suite" leg_bb_interrupted_gui_suite
     else
         regress_skip "bb-interrupted-gui-suite" "needs the gui.window_keys scenario"
+    fi
+
+    if command -v xdotool >/dev/null 2>&1 && scenarios_has_case "gui.interrupted_quit_save"; then
+        regress_leg "bb-interrupted-gui-save" leg_bb_interrupted_gui_save
+    else
+        regress_skip "bb-interrupted-gui-save" "needs xdotool and the gui.interrupted_quit_save scenario"
     fi
 
     if scenarios_has_case "gui.quit_during_mixdown"; then

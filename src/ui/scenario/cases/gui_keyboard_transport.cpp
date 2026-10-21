@@ -6,6 +6,7 @@
 #include "../../../engine/audiofile/FileReader.h"
 #include "../../../dsp/ChannelStrip.h"
 #include "../../../session/SessionSerializer.h"
+#include "../../../foundation/AppMusicDir.h"
 
 #include <algorithm>
 #include <array>
@@ -827,13 +828,18 @@ const ScenarioRegistrar unarmedRecord { Scenario {
 
 std::optional<ScenarioResult> runWindowKeys (GuiHost& host, ScenarioContext& ctx)
 {
+    auto& engine = ctx.engine();
     const bool fullscreen = host.fullScreen();
     const bool expanded = host.timelineViewMatches (true);
-    ctx.cleanup ([&host, fullscreen, expanded]
+    ctx.cleanup ([&host, &engine, fullscreen, expanded]
     {
         host.closeTopModal();
         if (host.fullScreen() != fullscreen) host.pressKey ("F11");
         if (! host.timelineViewMatches (expanded)) host.pressKey ("T", 't');
+        std::fprintf (stderr, "[Dusk Studio/scenario] window cleanup audio=%s\n",
+                      engine.isAudioCallbackRegistered() && engine.getCurrentSampleRate() > 0.0
+                          ? "live" : "stopped");
+        std::fflush (stderr);
     });
     // macOS animates into and out of full screen: the state flips when the
     // animation starts, and a toggle made before it ends is dropped. So each
@@ -881,6 +887,41 @@ const ScenarioRegistrar windowKeys { Scenario {
     "gui.window_keys", { "gui", "keyboard" }, Needs::Engine | Needs::Gui,
     {}, {}, 15000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runWindowKeys (host, ctx); }
+} };
+
+const ScenarioRegistrar interruptedQuitSave { Scenario {
+    "gui.interrupted_quit_save", { "helper" }, Needs::Engine | Needs::Gui,
+    {}, {}, 30000,
+    [] (GuiHost& host, ScenarioContext& ctx) -> std::optional<ScenarioResult>
+    {
+        auto& engine = ctx.engine();
+        if (! engine.isAudioCallbackRegistered() || engine.getCurrentSampleRate() <= 0.0)
+            return ScenarioResult::skip ("requires a running audio device");
+        const auto music = dusk::fs::appMusicDir();
+        if (music.empty()) return ScenarioResult::skip ("requires a Music folder");
+        const auto saved = music / "Interrupted quit" / "session.json";
+        std::filesystem::create_directories (saved.parent_path());
+        if (! SessionSerializer::save (ctx.session(), saved) || ! host.openSession (saved)
+            || ! host.sessionOnDisk())
+            return ScenarioResult::fail ("could not open the saved session");
+        ctx.session().track (0).strip.faderDb.store (-19.0f);
+        ctx.cleanup ([&engine]
+        {
+            std::fprintf (stderr, "[Dusk Studio/scenario] interrupted save cleanup audio=%s\n",
+                          engine.isAudioCallbackRegistered() && engine.getCurrentSampleRate() > 0.0
+                              ? "live" : "stopped");
+            std::fflush (stderr);
+        });
+        std::fprintf (stderr, "[Dusk Studio/scenario] external quit ready\n");
+        std::fflush (stderr);
+        ctx.waitUntil ([&host] { return host.modalText().rfind ("Save changes before quitting?", 0) == 0; },
+                       20000, []
+                       {
+                           std::fprintf (stderr, "[Dusk Studio/scenario] external quit prompt ready\n");
+                           std::fflush (stderr);
+                       }, "external quit did not open its prompt");
+        return std::nullopt;
+    }
 } };
 
 // A prompt deciding what happens to the session takes no shortcuts. R and Space
