@@ -4865,13 +4865,19 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     {
         auto* self = safeThis.getComponent();
         if (self == nullptr) return;
-        if (auto* peer = self->getPeer())
-            duskstudio::platform::bringWindowToFront (*peer);
-        // Bring the window forward always, but don't yank keyboard focus when a modal
-        // is up (a missing-plugin / missing-audio alert raised by the load) - that
-        // would steal focus from the dialog the user needs to dismiss.
-        if (juce::ModalComponentManager::getInstance()->getNumModalComponents() == 0)
+        bool modalOpen = ! EmbeddedModal::activeModalStack().empty()
+                      || juce::ModalComponentManager::getInstance()->getNumModalComponents() != 0;
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        modalOpen = modalOpen || imgui::DuskPanelWindow::hasOpenModal()
+                   || (self->notepadWindow != nullptr && self->notepadWindow->isOpen());
+       #endif
+        // Parent activation also takes native focus, so a newer dialog must keep it.
+        if (! modalOpen)
+        {
+            if (auto* peer = self->getPeer())
+                duskstudio::platform::bringWindowToFront (*peer);
             self->focusCanvasOrTopModal();
+        }
 
         // Pre-warm the AUX view if this session has any aux insert loaded. Building it
         // here (hidden) moves the AuxView construction + the native-CLAP gui->create off

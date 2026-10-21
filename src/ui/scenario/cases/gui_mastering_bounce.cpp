@@ -530,17 +530,32 @@ std::optional<ScenarioResult> runMasteringComboKeepsPanels (GuiHost& host, Scena
         // the checks sit far enough behind each click to catch it.
         steps->push_back ({ 400, [&host, &ctx]
         {
-            ctx.expect (! host.modalStackEmpty(), "the preset picker did not open");
             ctx.expect (host.masteringPanelsOpen() == 3,
                         "the open preset popup took a native mastering panel down");
             ctx.expect (host.pressPeerKey ("escape"), "the preset popup did not handle Escape");
-        } });
+        }, [&host] { return ! host.modalStackEmpty() && host.modalHasKeyboardFocus(); },
+                           "the preset picker did not receive keyboard focus" });
         steps->push_back ({ 400, [&host, &ctx]
         {
-            ctx.expect (host.modalStackEmpty(), "Escape left the preset popup open");
             ctx.expect (host.masteringPanelsOpen() == 3,
                         "a native mastering panel did not survive the preset popup");
-        } });
+            ctx.expect (host.clickMasteringCompPreset(), "the preset picker could not reopen after Escape");
+        }, [&host] { return host.modalStackEmpty(); }, "Escape left the preset popup open" });
+        steps->push_back ({ 100, [&host] { host.closeTopModal(); },
+                           [&host] { return ! host.modalStackEmpty() && host.modalHasKeyboardFocus(); },
+                           "the preset picker did not reopen after Escape" });
+        steps->push_back ({ 100, [&host, &ctx]
+        {
+            ctx.expect (host.clickMasteringCompPreset(), "the generically closed preset picker is unavailable");
+        }, [&host] { return host.modalStackEmpty(); }, "generic close left the preset picker open" });
+        steps->push_back ({ 100, [&host, &ctx]
+        {
+            ctx.expect (host.masteringPanelsOpen() == 3, "reopening the preset picker closed a native panel");
+            ctx.expect (host.pressPeerKey ("escape"), "the reopened preset picker did not handle Escape");
+        }, [&host] { return ! host.modalStackEmpty() && host.modalHasKeyboardFocus(); },
+                           "the generically closed preset picker did not reopen" });
+        steps->push_back ({ 100, [] {}, [&host] { return host.modalStackEmpty(); },
+                           "Escape left the reopened preset picker open" });
         runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     },
     "the native mastering panels never opened");

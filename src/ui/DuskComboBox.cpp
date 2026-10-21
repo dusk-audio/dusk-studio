@@ -285,12 +285,14 @@ public:
                      std::vector<Row> rows,
                      std::function<void (int)> onPick,
                      std::function<void()> onDismiss,
+                     std::function<void()> onDetached,
                      int maximumHeight,
                      int maximumWidth,
                      bool gridBrowser)
         : title (std::move (headerTitle)),
           onPickFn (std::move (onPick)),
-          onDismissFn (std::move (onDismiss))
+          onDismissFn (std::move (onDismiss)),
+          onDetachedFn (std::move (onDetached))
     {
         setOpaque (true);
         setWantsKeyboardFocus (true);
@@ -318,6 +320,18 @@ public:
     }
 
     ~DuskComboPanel() override { stopTimer(); }
+
+    void parentHierarchyChanged() override
+    {
+        if (getParentComponent() != nullptr)
+            wasAttached = true;
+        else if (wasAttached)
+        {
+            // Generic modal close detaches the body without dismissing it.
+            wasAttached = false;
+            if (onDetachedFn) onDetachedFn();
+        }
+    }
 
     void timerCallback() override
     {
@@ -1074,6 +1088,8 @@ private:
     juce::String title;
     std::function<void (int)> onPickFn;
     std::function<void()> onDismissFn;
+    std::function<void()> onDetachedFn;
+    bool wasAttached = false;
 
     bool useGrid = false;
     ListView flat;                 // used when !useGrid
@@ -1127,20 +1143,17 @@ void DuskComboBox::showPopup()
     if (parent == nullptr) parent = this;
 
     juce::Component::SafePointer<DuskComboBox> safeSelf (this);
-    auto dismiss = [safeSelf]
+    const auto generation = ++popupGeneration;
+    auto dismiss = []
     {
         sharedComboModal().close();
-        if (auto* s = safeSelf.getComponent())
-            s->hidePopup();
     };
     // Click-outside dismissal: close WITHOUT restoring focus so the control the
     // user clicked outside the popup keeps the focus it just took (useOverlay is
     // false here, so the click lands on a real sibling, not a dim overlay).
-    auto dismissOutside = [safeSelf]
+    auto dismissOutside = []
     {
         sharedComboModal().close (/*restoreFocus*/ false);
-        if (auto* s = safeSelf.getComponent())
-            s->hidePopup();
     };
     auto panel = std::make_unique<DuskComboPanel> (
         getName().isNotEmpty() ? getName() : juce::String(),
@@ -1153,12 +1166,6 @@ void DuskComboBox::showPopup()
             sharedComboModal().close();
             if (auto* s = safeSelf.getComponent())
             {
-                // Reset juce::ComboBox's internal `menuActive` flag so
-                // the next click reopens the popup. Without this the
-                // base class still thinks our (overridden) popup is up
-                // and showPopupIfNotActive short-circuits -> combo
-                // appears frozen after one selection.
-                s->hidePopup();
                 // Notify asynchronously. sendNotificationSync runs juce::
                 // ComboBox's post-action path (accessibility handler focus
                 // grab + dynamic_cast into the JUCE peer) inline, which has
@@ -1173,6 +1180,11 @@ void DuskComboBox::showPopup()
             }
         },
         dismiss,
+        [safeSelf, generation]
+        {
+            if (auto* s = safeSelf.getComponent(); s != nullptr && s->popupGeneration == generation)
+                s->hidePopup();
+        },
         juce::jmax (1, parent->getHeight() - 16),
         juce::jmax (1, parent->getWidth() - 16),
         gridBrowser);
