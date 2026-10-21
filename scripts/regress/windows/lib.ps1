@@ -171,6 +171,7 @@ function Get-RegressSnapshot {
         if (-not (Test-Path $dir)) { $rows += "$dir|absent|"; continue }
         Get-ChildItem -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue |
             ForEach-Object {
+                $_.Refresh()
                 $len = if ($_.PSIsContainer) { 'dir' } else { $_.Length }
                 $rows += "$($_.FullName)|$len|$($_.LastWriteTimeUtc.Ticks)"
             }
@@ -186,6 +187,9 @@ function Get-RegressSnapshot {
     # environment does not name them.
     Get-ChildItem -LiteralPath $env:TEMP -Force -ErrorAction SilentlyContinue |
         Where-Object { $_.Name -like 'dusk-studio-*' } |
-        ForEach-Object { $rows += "$($_.FullName)|temp|$($_.LastWriteTimeUtc.Ticks)" }
+        ForEach-Object {
+            $_.Refresh()
+            $rows += "$($_.FullName)|temp|$($_.LastWriteTimeUtc.Ticks)"
+        }
     return $rows
 }

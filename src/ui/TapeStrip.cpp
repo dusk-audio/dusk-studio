@@ -1397,6 +1397,8 @@ void TapeStrip::updatePlayheadBand()
 
 void TapeStrip::mouseDown (const juce::MouseEvent& e)
 {
+    // Deliver older edit notices before they can invalidate this click's new selection.
+    engine.getUndoManager().dispatchPendingMessages();
     trackMove = {};
     auto col = tracksColumnBounds();
     auto ruler = rulerBounds();
