@@ -1641,7 +1641,7 @@ const ScenarioRegistrar quitCancelsMixdown { Scenario {
 // For the bb-quit-during-mixdown leg only: Cmd+Q on a saved session while a
 // mixdown renders, which ends the process, so it never reports and the leg
 // reads the shutdown markers and the exit status instead. It registers no
-// cleanup, because the context outlives the window any cleanup would touch.
+// cleanup, because the scenario leaves its shutdown state for the quit path.
 std::optional<ScenarioResult> runQuitDuringMixdown (GuiHost& host, ScenarioContext& ctx)
 {
     auto& transport = ctx.engine().getTransport();
