@@ -3,6 +3,7 @@
   "branch": "fix/016-release-blockers",
   "release_version_unchanged": "0.15.1",
   "published": false,
+  "latest_candidate": "0.16-candidate-2f30004c.json",
   "scope_followup": "2026-10-18 acceptance audit separates completed bug scopes #874/#878/#879 from broader release checks in #804/#886. Other snapshot fields retain their recorded source and time bounds.",
   "review": {
     "full_branch": {

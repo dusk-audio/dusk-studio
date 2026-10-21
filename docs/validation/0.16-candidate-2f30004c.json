@@ -1,0 +1,148 @@
+{
+  "milestone": "0.16",
+  "status": "Dry run and package retests pass within the recorded limits; release gates remain open",
+  "source": {
+    "commit": "2f30004cab9d056f94d4905129f74c8103539956",
+    "tested_pr_head": "305abd8218ea6d5433c66c0b34db55769f7d22a6",
+    "identical_tree": "5e816a325be39c169f3c78528635376e18889893",
+    "version_unchanged": "0.15.1",
+    "daf": "ccd8665f7387024ce412e80a8b07c982ae92f5d4",
+    "donor": "78abae748a32c5863f586ca174a47047a4d2c4a1",
+    "linux_juce": "075eed7a1000b6b9dfce6aae93e7f2b82fa35f68",
+    "mac_windows_juce": "51d11a2be6d5c97ccf12b4e5e827006e19f0555a",
+    "bounds": "Candidate source and dependency receipts describe the packaged binaries; later validation-script edits do not change those binaries"
+  },
+  "evidence_root": "build/validation-packaged-2f30004c/",
+  "counts_order": "pass/fail/skip",
+  "main_ci": {
+    "result": "All seven jobs successful on merged main; includes ASan/UBSan, TSan and De-JUCE gate",
+    "linux": "https://github.com/dusk-audio/dusk-studio/actions/runs/39675135377",
+    "arm64": "https://github.com/dusk-audio/dusk-studio/actions/runs/39675135719",
+    "macos": "https://github.com/dusk-audio/dusk-studio/actions/runs/39675135348",
+    "windows": "https://github.com/dusk-audio/dusk-studio/actions/runs/39675135546",
+    "sanitizers": "https://github.com/dusk-audio/dusk-studio/actions/runs/39675135577",
+    "receipt": "main-ci-verified-jobs.json"
+  },
+  "release_dry_run": {
+    "url": "https://github.com/dusk-audio/dusk-studio/actions/runs/39675554729",
+    "event": "workflow_dispatch",
+    "head": "2f30004cab9d056f94d4905129f74c8103539956",
+    "jobs": "7/7 success; release-jobs-final.json",
+    "actual_publish_step": "SKIPPED in assembly job119510840529",
+    "tag_or_publication_performed": false,
+    "ctest_linux_x64": "1781/0/0 of1781",
+    "ctest_linux_arm64": "1781/0/0 of1781",
+    "ctest_macos": "1757/0/2 of1759; case-distinct license/tree alias skips",
+    "ctest_windows": "1711/0/5 of1716; exact skips retained in release-windows-job.log",
+    "manifest": "All five payloads checked OK; canonical SHA256SUMS signed and verified against packaging/release-signing.pub",
+    "signing_fingerprint": "5F80A0053B2F7481DF0A303477A891C01B55C206",
+    "signature_limit": "Assembly log proof; detached signature was not separately uploaded as an artifact",
+    "platform_signing": "macOS app ad-hoc signed; Developer ID/notarization/Gatekeeper steps skipped. Windows MSI unsigned; Authenticode steps skipped",
+    "arm64_limit": "Build/tests/package evidence; no Pi runtime or performance claim"
+  },
+  "verified_payload_sha256": {
+    "MANUAL.pdf": "dd48446203f55ff3dbdbf692576e08b59d7e92e4e61c8e11f9f1a9c6cb08a1d7",
+    "dusk-studio-0.15.1-Linux-aarch64.tar.xz": "d4a25bcf5807ddf2de8e25401eddbb20bc5b7f1ae3e6901a2e7361bc8875c269",
+    "dusk-studio-0.15.1-Linux-x86_64.tar.xz": "dcc071c29752cf70b17bea930a1c139fc6264bcf2a81c7ecfa7a62040e21c490",
+    "dusk-studio-0.15.1-Windows-x64.msi": "c6e6c5a2fee6eeef46f318c00eca759f59d83f07b9238a0ac49a9c6c3e5d54ab",
+    "dusk-studio-0.15.1-macOS-arm64.dmg": "eb175f6de84c350a140aa6f918b1a4e2345cc48cc9b03541619b95bf8a45285f"
+  },
+  "package_retests": {
+    "integrity": "All five downloaded ZIP digests match release-artifacts-observed.json; CRC and local payload hashes independently rechecked",
+    "linux": {
+      "runner_exit": 0,
+      "headless": "189/0/1; exact190/190 ordered inventory",
+      "gui": "271/0/3; exact unique274/274 identities across two shards",
+      "native_status": "Suite runner accepted exit0; scratch status files removed. Independent ordered GUI native exit0 recorded below",
+      "supplements": "Seeded picker2/0/0; settings defaults PASS; selftest/IPC and blackbox legs PASS",
+      "raw": "linux-package-fresh-2/output.log; package-legs.tsv; ordinary-exit.json",
+      "limits": "Package mode skips build, CTest and performance; GUI skips and separate CI evidence retained"
+    },
+    "macos": {
+      "headless": "185/0/4; exact189/189 ordered inventory; native exit0",
+      "gui": "261/0/13; exact274/274 ordered inventory; native exit0",
+      "foreground": "216/216 samples match owned PID60776 and exact installed executable; samples0.004..954.829s during958.838s run",
+      "permissions": "One authorized microphone Allow during separate warmup; bound PID/executable receipt retained",
+      "raw": "mac-package-result.json; mac-attempt2-remote/headless/suite.log; mac-attempt2-remote/gui/{stdout.log,result.json}",
+      "acceptance": "mac-root-acceptance.json",
+      "cleanup": "Original isolated checkout restored; owned processes/agents/mount gone; installed package retained",
+      "limits": "Sampled foreground observations and platform skips; ad-hoc signature is not Developer ID/notarization proof"
+    },
+    "windows": {
+      "headless": "180/0/9; exact189/189 ordered native catalog inventory; native exit0",
+      "gui": "255/0/19; exact274/274 ordered native catalog inventory; native exit0",
+      "settings_defaults": "6/6 PASS; each native exit0; three repetitions with setting disabled and enabled",
+      "controller_exit": 0,
+      "raw": "windows-evidence/posts/scenarios-{headless,gui}.log; windows-evidence/report.log; windows-native-catalog/posts/catalog-receipt.json",
+      "acceptance": "windows-root-inventory-acceptance.json; windows-inventory-check.json",
+      "integrity": "Same installed executable before/after native catalog; original suite report and isolation baseline unchanged",
+      "limits": "IPC selftest skipped for #504; no native LV2/seeded picker coverage; installed unsigned package retained"
+    }
+  },
+  "linux_full_ordered_gdb": {
+    "gui": "274/0/0; exact274/274 inventory in catalog order",
+    "native_exit": 0,
+    "debugger_exit": 0,
+    "original_wrapper_exit": 1,
+    "corrected_verifier_exit": 0,
+    "app_rerun": false,
+    "correction": "Original substring checker matched quoted GDB commands. Anchored emitted-line verifier and positive/negative controls pass on unchanged raw output",
+    "traps": "No emitted allocation/XIO trap; no timeout; archive/binaries unchanged",
+    "metrics": "497 samples; maximum RSS471688KiB, swap0; cgroup OOM event deltas0",
+    "raw": "linux-ordered-fresh-1/{output.log,inferior-exit.json,child-exit.json,inventory-check-anchored.json}; linux-ordered-root-acceptance.json",
+    "limit": "Current run did not reproduce #906; sampled metrics do not reconstruct historical allocations/limits"
+  },
+  "display_loss_followup": {
+    "current_package_injection": "Owned Xvfb loss in timeline slice: native exit1 about0.0519s after first XIO; no emitted throw/abort; binaries unchanged",
+    "injection_receipt": "build/validation-906-xio-2f30004c/current-package-1/observation-receipt.json",
+    "existing_behavior_guard": "PASS(test exit0): active GuiRun on unchanged packaged app exits1 in same integer second",
+    "guard_receipt": "display-loss-alsa-isolated.json; display-loss-alsa-isolated.log",
+    "guard_app_sha256": "e203faca7c21bf80edcc78563e12fad18ad28bcae6f894b7fd011b0b74a4b498",
+    "guard_source_sha256": {
+      "tests/blackbox_display_loss.sh": "211af88f68de616ce3eeb2710928fdc981ecc2453ad00d5a48ccf116478148f1",
+      "scripts/regress/scenarios.sh": "2828221e6ef7b25f7242c23fdf4c651adff9df1bfa1465380b9c78a03a7890ed"
+    },
+    "audio_isolation": "Private null PipeWire; child-only empty ALSA config. alsa-denied-probe.json passes for libasound1.2.16.1 name-based control/PCM opens; full-app hardware syscalls and arbitrary direct device opens were not traced",
+    "observations": "No exception/abort, normal-cleanup, completion marker or crash report observed",
+    "retained_earlier_guard": "display-loss-existing-behavior.json: prior test a18f839c/helper2828221e PASS on same app hash; separate inherited-Xvfb-survival control passed",
+    "retained_baseline": "display-loss-blackbox-baseline.json: native1/0integerseconds; initial test failed only because a newly proposed diagnostic was absent",
+    "hypothesis": "#911 moving static GuiRun ownership into MainComponent may explain why abnormal cleanup no longer reproduces; this is unproven",
+    "limit": "Injected fatal-display behavior only; neither original allocation cause nor why historical X11 was lost is established; #906 remains open"
+  },
+  "retained_attempts": [
+    "linux-package-fresh-1: prelaunch network failure; no app launched",
+    "mac-attempt1-native-result.json and mac-attempt1-evidence.tgz: helper activation before AppKit registration, native-9, zero scenarios; corrected guard precedes passing attempt2",
+    "linux-ordered-fresh-1: original wrapper1 and false-positive verdict retained alongside anchored verification0; no app rerun",
+    "Historical #906 and concurrent sanitizer popup/editor-close failures retain their earlier source/attempt bounds; later serial success does not establish their cause"
+  ],
+  "remaining_release_gates": [
+    "#804: final-candidate live four-repository GUI/license/download/pause-resume/install/load/play acceptance on all three OSes; prior Windows default VSCO/VCSL and three-OS physical unplug/reconnect proof retain their historical source bounds",
+    "#870/#886: maintainer review of existing full-engine/device, rolling-seek and cold96/192kHz data, including low-buffer failures, plus final-candidate listening/performance acceptance; prior results retain their bounds; Pi hardware deferred to #893",
+    "#886: maintainer Linux/macOS/Windows walkthrough, Phase UI, cold-host and release administration checks",
+    "#906: historical allocation remains unexplained; current passing and injected-display evidence do not close it",
+    "Maintainer signoff and explicit direction before version bump, tag or publication"
+  ],
+  "proof_sha256": {
+    "release-run-final.json": "0e0f58e0f0606f592cb4c172d719114103fad68c6781bf1c69c97359e2cba486",
+    "release-jobs-final.json": "e86f213a4ca41db91702a89934a0b42564fd06c9d234bde1a171298e5bdf6552",
+    "main-ci-verified-jobs.json": "a7bcfa60dc063601051b5eab2f010291547f4cd6970cbb994daa61512410dbfb",
+    "release-assembly-job.log": "b519b5078be7778757dc76b9d27d17ac53ac1e9dabb8cd8cff77b5cb44661c54",
+    "LOCAL-PAYLOAD-SHA256SUMS": "6ea20d57ffc4627c9760e397521cbcf35e20f2d46c5e0c472a2295ce9d362c9e",
+    "linux-package-fresh-2/output.log": "2b0a313a9efb58d8841e271a06cb7f004de511bfca758c35b06e32f30847d4d8",
+    "linux-ordered-fresh-1/output.log": "0413d8c86ceca8fe2300ce0fd82fdbfe85684c2abee8f425af8c66999f235722",
+    "linux-ordered-root-acceptance.json": "d94f06d1afae74152f60d63c9cab84e39dbf662526422c7028ef0c82decb30bf",
+    "mac-package-result.json": "92dc03a7e791ee36a3af5f6b83f6619df5562ac4417dd3435137df52eb334594",
+    "mac-attempt2-remote/gui/result.json": "78cc57030a02309caf8bc83256a618cb469e501ebd8a3b7be13f0673816df7ae",
+    "mac-root-acceptance.json": "6c2b22d6abe8b3309d68ebfb063a11db6faa4b728da516545cf65f05ccd34105",
+    "windows-inventory-check.json": "6d86bce341bbc4f3d5e43adb510308c93a8e3846ee34ec5fef59f6583533e49c",
+    "windows-evidence/report.log": "ef65c7b1d1ef36136ca0f0cc76645cb90e98fca79f076b9583bf677b76535d7f",
+    "windows-root-inventory-acceptance.json": "cd628f7e9d93c02f0601b31a708c08c987ae80a3ed99da6c6f6382a26ec36e6b",
+    "display-loss-blackbox-baseline.json": "93070d950b8a5f87b32e7f9f567d248564a832a6b6ffc444b6067deea0b3dd70",
+    "display-loss-existing-behavior.json": "1431cf5fcb5a368289452306c62f3df11f0904c5e30ac231a4ea8a27dc5a765f",
+    "display-loss-alsa-isolated.json": "48b905e690e08031b53898a5550ebb92ae5f253ae93a485cee6c711da482f3dd",
+    "display-loss-alsa-isolated.log": "c1fb9450af541a0ba0224ae67a48cea67128ecdb2dff648767e09388562fe4c1",
+    "alsa-denied-probe.json": "797ee3dcf84d62a5990b3d8cef35347b060eb70085c00949f460eda72f4c5c7d"
+  },
+  "injection_receipt_sha256": "20c195ef1fb4832a44c716982ce7e667a482f0c1e7a9bbae1d3edde0cf06a111",
+  "historical_record": "0.16-release-gates.json retains its original historical fields and source/time bounds"
+}
