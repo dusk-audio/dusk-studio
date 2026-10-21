@@ -126,6 +126,7 @@ jobs:
           echo "VCPKG_PREFIX=${GITHUB_WORKSPACE//\\//}/vcpkg_installed/x64-windows-static" >> "$GITHUB_ENV"
 
       - name: Set up sccache
+        id: sccache
         uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
         with:
           version: v0.16.0
@@ -171,7 +172,7 @@ jobs:
         run: cmake --build build-tests --target DuskStudio dusk-studio-tests -j4
 
       - name: sccache stats
-        if: always()
+        if: ${{ !cancelled() && steps.sccache.outcome == 'success' }}
         shell: bash
         run: sccache --show-stats
 

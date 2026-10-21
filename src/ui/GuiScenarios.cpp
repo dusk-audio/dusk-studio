@@ -3188,9 +3188,9 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
 
     void resetForScenario() override
     {
-        // A scenario's own windows, or anything else on the desktop, can take the
-        // front from the main window; injected input needs it back.
-        if (auto* peer = owner.getPeer(); peer != nullptr && ! peer->isFocused())
+        // A focused native child can make the peer report focus until teardown
+        // leaves the keyboard at the pointer root. Transfer it to the parent first.
+        if (auto* peer = owner.getPeer())
             platform::bringWindowToFront (*peer);
 
         auto& stack = EmbeddedModal::activeModalStack();
