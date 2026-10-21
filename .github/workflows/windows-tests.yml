@@ -53,6 +53,10 @@ jobs:
           submodules: recursive
           persist-credentials: false
 
+      - name: Check regression profile snapshots
+        shell: powershell
+        run: .\tests\windows_regress_snapshot.ps1
+
       - name: Clone JUCE 8.0.4
         shell: bash
         run: |
