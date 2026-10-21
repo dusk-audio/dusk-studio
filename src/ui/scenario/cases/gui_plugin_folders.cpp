@@ -39,7 +39,7 @@ std::optional<ScenarioResult> runPluginFolders (GuiHost& host, ScenarioContext& 
     });
     std::string settingsError;
     if (! pluginpaths::save ({}, settingsError)) return ScenarioResult::fail (settingsError);
-    const auto folder = ctx.tempDir() / "Custom plug-in library";
+    const auto folder = fs::canonical (ctx.tempDir()) / "Custom plug-in library";
     if (! fs::create_directory (folder)) return ScenarioResult::fail ("could not create the custom folder fixture");
     auto captures = ctx.tempDir();
     fs::path captureFolder;
