@@ -1970,8 +1970,11 @@ std::optional<ScenarioResult> runPianoNativeShortcuts (GuiHost& host, ScenarioCo
     steps->push_back ({ 0, [&host, &ctx]
     {
         ctx.expect (host.pianoNativeWindowOpen(), "closing the keyboard destroyed the piano child");
-        ctx.expect (host.inputPianoRoll (commandChord ('A')), "the uncovered piano child did not receive Select All");
+        ctx.expect (host.focusPiano(), "the uncovered piano child could not regain focus");
     }, [&host] { return ! host.virtualKeyboardOpen(); }, "the keyboard did not finish closing" });
+    // Pump the uncovering focus events before injecting the next synthetic key.
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.inputPianoRoll (commandChord ('A')), "the uncovered piano child did not receive Select All"); } });
     steps->push_back ({ 0, [&host, &ctx]
     {
         ctx.expect (host.pianoSelection() == std::vector<int> { 0, 1, 2 }, "the uncovered piano child did not select its notes");
