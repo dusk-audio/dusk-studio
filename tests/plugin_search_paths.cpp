@@ -10,7 +10,11 @@
 #include "../cmake/JuceLv2WindowsPaths.h"
 #endif
 
+#include <functional>
 #include <future>
+#include <memory>
+#include <optional>
+#include <stdexcept>
 
 namespace
 {
@@ -18,7 +22,7 @@ namespace fs = std::filesystem;
 namespace paths = duskstudio::pluginpaths;
 struct RegisteredLv2Format
 {
-    juce::AudioPluginFormatManager manager;
+    duskstudio::juce_compat::FormatManager manager;
     juce::AudioPluginFormat* format = nullptr;
     RegisteredLv2Format()
     {
@@ -28,6 +32,29 @@ struct RegisteredLv2Format
         REQUIRE (format != nullptr);
     }
 };
+
+struct CountingLv2Format : juce::LV2PluginFormat
+{
+    void findAllTypesForFile (juce::OwnedArray<juce::PluginDescription>&, const juce::String&) override
+    {
+        ++visits;
+        if (onPrime) onPrime();
+    }
+    int visits = 0;
+    std::function<void()> onPrime;
+};
+
+CountingLv2Format& addCountingLv2 (juce::AudioPluginFormatManager& manager)
+{
+    auto format = std::make_unique<CountingLv2Format>();
+    auto& result = *format;
+   #if DUSKSTUDIO_JUCE_HAS_FREE_ADD_FORMATS
+    manager.addFormat (std::move (format));
+   #else
+    manager.addFormat (format.release());
+   #endif
+    return result;
+}
 
 struct Tree
 {
@@ -80,6 +107,92 @@ struct ConfigOverride
        #endif
     }
 };
+}
+
+TEST_CASE ("Custom LV2 priming caches roots for each format lifetime", "[plugins][paths]")
+{
+    Tree tree;
+    ConfigOverride config (tree.directory ("config"));
+    const paths::Roots roots { tree.directory ("custom") };
+    tree.directory ("custom/nested/First.lv2");
+    std::string error;
+    REQUIRE (paths::save (roots, error));
+    duskstudio::juce_compat::FormatManager manager;
+    auto& format = addCountingLv2 (manager);
+    duskstudio::juce_compat::primeCustomLv2 (manager);
+    REQUIRE (format.visits == 1);
+    duskstudio::juce_compat::primeCustomLv2 (manager);
+    CHECK (format.visits == 1);
+
+    SECTION ("new manager lifetimes prime independently")
+    {
+        std::optional<duskstudio::juce_compat::FormatManager> fresh;
+        for (int lifetime = 0; lifetime < 2; ++lifetime)
+        {
+            fresh.emplace();
+            auto& other = addCountingLv2 (*fresh);
+            duskstudio::juce_compat::primeCustomLv2 (*fresh);
+            CHECK (other.visits == 1);
+            fresh.reset();
+        }
+    }
+    SECTION ("changed and empty roots invalidate priming")
+    {
+        REQUIRE (paths::save ({}, error));
+        duskstudio::juce_compat::primeCustomLv2 (manager);
+        REQUIRE (paths::save (roots, error));
+        duskstudio::juce_compat::primeCustomLv2 (manager);
+        CHECK (format.visits == 2);
+        const paths::Roots other { tree.directory ("other") };
+        tree.directory ("other/Second.lv2");
+        REQUIRE (paths::save (other, error));
+        duskstudio::juce_compat::primeCustomLv2 (manager);
+        CHECK (format.visits == 3);
+    }
+    SECTION ("explicit refresh discovers new bundles under unchanged roots")
+    {
+        tree.directory ("custom/new/Second.lv2");
+        duskstudio::juce_compat::primeCustomLv2 (manager);
+        CHECK (format.visits == 1);
+        duskstudio::juce_compat::primeCustomLv2 (manager, roots, true);
+        CHECK (format.visits == 3);
+        duskstudio::juce_compat::primeCustomLv2 (manager);
+        CHECK (format.visits == 3);
+    }
+    SECTION ("reconnected roots retry discovery")
+    {
+        const auto unplugged = tree.root / "unplugged";
+        fs::rename (roots.front(), unplugged);
+        duskstudio::juce_compat::primeCustomLv2 (manager);
+        CHECK (format.visits == 1);
+        fs::rename (unplugged, roots.front());
+        duskstudio::juce_compat::primeCustomLv2 (manager);
+        CHECK (format.visits == 2);
+    }
+    SECTION ("cancellation does not commit partial priming")
+    {
+        std::atomic<bool> abort { true };
+        duskstudio::juce_compat::primeCustomLv2 (manager, roots, true, &abort);
+        CHECK (format.visits == 1);
+        abort.store (false);
+        tree.directory ("custom/new/Second.lv2");
+        format.onPrime = [&] { abort.store (true); };
+        duskstudio::juce_compat::primeCustomLv2 (manager, roots, true, &abort);
+        CHECK (format.visits == 2);
+        format.onPrime = {};
+        abort.store (false);
+        duskstudio::juce_compat::primeCustomLv2 (manager, roots, false, &abort);
+        CHECK (format.visits == 4);
+    }
+    SECTION ("exceptions leave priming retryable")
+    {
+        format.onPrime = [] { throw std::runtime_error ("metadata failure"); };
+        CHECK_THROWS_AS (duskstudio::juce_compat::primeCustomLv2 (manager, roots, true), std::runtime_error);
+        CHECK (format.visits == 2);
+        format.onPrime = {};
+        duskstudio::juce_compat::primeCustomLv2 (manager);
+        CHECK (format.visits == 3);
+    }
 }
 
 TEST_CASE ("Custom plugin folders persist Unicode and unavailable locations", "[plugins][paths]")

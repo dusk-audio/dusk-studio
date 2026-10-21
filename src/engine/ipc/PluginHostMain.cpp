@@ -816,7 +816,7 @@ struct HostState
     ipcp::InterprocessSignal commandSignal;
     ipcp::InterprocessSignal replySignal;
 
-    juce::AudioPluginFormatManager formatManager;
+    duskstudio::juce_compat::FormatManager formatManager;
     juce::KnownPluginList knownList;
 
     PluginInstancePtr ownedInstance;
@@ -1901,7 +1901,7 @@ int runScan (int argc, const char* const* argv) noexcept
     // MessageManager to dispatch to.
     juce::ScopedJuceInitialiser_GUI juceInit;
 
-    juce::AudioPluginFormatManager fm;
+    duskstudio::juce_compat::FormatManager fm;
     duskstudio::juce_compat::addDefaultFormats (fm);
 
     juce::AudioPluginFormat* chosen = nullptr;

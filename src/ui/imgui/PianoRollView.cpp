@@ -496,7 +496,8 @@ private:
     static bool repeats (ImGuiKey key)
     {
         return key == ImGuiKey_LeftArrow || key == ImGuiKey_RightArrow || key == ImGuiKey_UpArrow
-            || key == ImGuiKey_DownArrow || key == ImGuiKey_Equal || key == ImGuiKey_Minus;
+            || key == ImGuiKey_DownArrow || key == ImGuiKey_Equal || key == ImGuiKey_Minus
+            || key == ImGuiKey_KeypadAdd || key == ImGuiKey_KeypadSubtract;
     }
     bool dispatchKey (const KeyChord& key)
     {

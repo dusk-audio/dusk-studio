@@ -553,6 +553,8 @@ int PluginManager::scanInstalledPlugins (
 
     int added = 0;
     const auto customFolders = pluginpaths::load();
+    // Explicit scans must discover bundles added under unchanged roots.
+    juce_compat::primeCustomLv2 (formatManager, customFolders, true, abort);
     const auto& formats = formatManager.getFormats();
     const int   numFormats = formats.size();
     bool aborted = false;
@@ -562,7 +564,6 @@ int PluginManager::scanInstalledPlugins (
         auto* format = formats[fi];
         if (format == nullptr) continue;
 
-        juce_compat::primeCustomLv2 (*format, customFolders, abort);
         if (abort != nullptr && abort->load (std::memory_order_relaxed)) { aborted = true; break; }
         const auto searchPaths = juce_compat::pluginSearchLocations (*format, customFolders);
         if (searchPaths.getNumPaths() == 0) continue;

@@ -118,6 +118,13 @@ constexpr ImageResource kImages[] {
 };
 static_assert (sizeof (kImages) / sizeof (kImages[0]) == sfz::kInstrumentCategories.size());
 
+enum class Detail : std::size_t
+{
+    UprightBass, Harp, Cello, Banjo, Mandolin, Ukulele, Accordion, Harmonica,
+    Saxophone, Clarinet, Bassoon, Oboe, Trumpet, Trombone, Tuba, Harpsichord,
+    Vibraphone, Glockenspiel, Steelpan, Handpan, Koto, TubularBells, Handbell, Count
+};
+
 constexpr ImageResource kDetailImages[] {
     { "sfz_upright_bass_png", "papapishu; CC0-1.0. Sources and adaptations: LICENSES.txt." },
     { "sfz_harp_png", "Museum f\u00fcr Kunst und Gewerbe Hamburg; CC0-1.0. Sources and adaptations: LICENSES.txt." },
@@ -143,6 +150,12 @@ constexpr ImageResource kDetailImages[] {
     { "sfz_tubular_bells_png", "Xylosmygame at English Wikipedia; CC BY-SA 3.0. Sources and adaptations: LICENSES.txt." },
     { "sfz_handbell_png", "M0tty; CC BY-SA 4.0. Sources and adaptations: LICENSES.txt." },
 };
+static_assert (sizeof (kDetailImages) / sizeof (kDetailImages[0]) == static_cast<std::size_t> (Detail::Count));
+
+const ImageResource& detail (Detail image)
+{
+    return kDetailImages[static_cast<std::size_t> (image)];
+}
 
 const ImageResource& artworkEntry (sfz::InstrumentCategory category, std::string_view name, std::string_view context)
 {
@@ -154,45 +167,45 @@ const ImageResource& artworkEntry (sfz::InstrumentCategory category, std::string
         switch (category)
         {
             case C::Bass:
-                if (has ({ "upright bass", "double bass", "contrabass" })) return &kDetailImages[0];
+                if (has ({ "upright bass", "double bass", "contrabass" })) return &detail (Detail::UprightBass);
                 break;
             case C::Strings:
-                if (has ({ "harp" })) return &kDetailImages[1];
-                if (has ({ "cello", "violoncello" })) return &kDetailImages[2];
+                if (has ({ "harp" })) return &detail (Detail::Harp);
+                if (has ({ "cello", "violoncello" })) return &detail (Detail::Cello);
                 break;
             case C::AcousticGuitar:
-                if (has ({ "banjo", "ganjo" })) return &kDetailImages[3];
-                if (has ({ "mandolin" })) return &kDetailImages[4];
-                if (has ({ "ukulele", "uke" })) return &kDetailImages[5];
+                if (has ({ "banjo", "ganjo" })) return &detail (Detail::Banjo);
+                if (has ({ "mandolin" })) return &detail (Detail::Mandolin);
+                if (has ({ "ukulele", "uke" })) return &detail (Detail::Ukulele);
                 break;
             case C::World:
-                if (has ({ "accordion", "bandoneon", "concertina" })) return &kDetailImages[6];
-                if (has ({ "harmonica", "mouth organ" })) return &kDetailImages[7];
-                if (has ({ "koto" })) return &kDetailImages[20];
+                if (has ({ "accordion", "bandoneon", "concertina" })) return &detail (Detail::Accordion);
+                if (has ({ "harmonica", "mouth organ" })) return &detail (Detail::Harmonica);
+                if (has ({ "koto" })) return &detail (Detail::Koto);
                 break;
             case C::Woodwinds:
-                if (has ({ "saxophone", "sax" })) return &kDetailImages[8];
-                if (has ({ "clarinet" })) return &kDetailImages[9];
-                if (has ({ "bassoon" })) return &kDetailImages[10];
-                if (has ({ "oboe", "english horn", "cor anglais" })) return &kDetailImages[11];
+                if (has ({ "saxophone", "sax" })) return &detail (Detail::Saxophone);
+                if (has ({ "clarinet" })) return &detail (Detail::Clarinet);
+                if (has ({ "bassoon" })) return &detail (Detail::Bassoon);
+                if (has ({ "oboe", "english horn", "cor anglais" })) return &detail (Detail::Oboe);
                 break;
             case C::Brass:
-                if (has ({ "trumpet", "cornet", "flugelhorn" })) return &kDetailImages[12];
-                if (has ({ "trombone" })) return &kDetailImages[13];
-                if (has ({ "tuba", "euphonium" })) return &kDetailImages[14];
+                if (has ({ "trumpet", "cornet", "flugelhorn" })) return &detail (Detail::Trumpet);
+                if (has ({ "trombone" })) return &detail (Detail::Trombone);
+                if (has ({ "tuba", "euphonium" })) return &detail (Detail::Tuba);
                 break;
             case C::Piano:
-                if (has ({ "harpsichord", "spinet" })) return &kDetailImages[15];
+                if (has ({ "harpsichord", "spinet" })) return &detail (Detail::Harpsichord);
                 break;
             case C::Mallets:
-                if (has ({ "vibraphone", "vibes" })) return &kDetailImages[16];
-                if (has ({ "glockenspiel", "glock" })) return &kDetailImages[17];
-                if (has ({ "tubular bell", "chime", "carillon" })) return &kDetailImages[21];
-                if (has ({ "bell", "handbell" })) return &kDetailImages[22];
+                if (has ({ "vibraphone", "vibes" })) return &detail (Detail::Vibraphone);
+                if (has ({ "glockenspiel", "glock" })) return &detail (Detail::Glockenspiel);
+                if (has ({ "tubular bell", "chime", "carillon" })) return &detail (Detail::TubularBells);
+                if (has ({ "bell", "handbell" })) return &detail (Detail::Handbell);
                 break;
             case C::Percussion:
-                if (has ({ "handpan", "hang drum" })) return &kDetailImages[19];
-                if (has ({ "steelpan", "steel pan", "steel drum" })) return &kDetailImages[18];
+                if (has ({ "handpan", "hang drum" })) return &detail (Detail::Handpan);
+                if (has ({ "steelpan", "steel pan", "steel drum" })) return &detail (Detail::Steelpan);
                 break;
             case C::ElectricPiano: case C::Organ: case C::Drums: case C::ElectricGuitar:
             case C::Synth: case C::Voice: case C::Collection: case C::Other: break;

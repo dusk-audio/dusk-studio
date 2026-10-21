@@ -1,7 +1,6 @@
 #pragma once
 
-#include <juce_audio_processors/juce_audio_processors.h>
-
+#include "JuceCompat.h"
 #include "PluginDescriptor.h"
 
 #include <atomic>
@@ -116,7 +115,7 @@ public:
                               const std::atomic<bool>* abort = nullptr);
 
 private:
-    juce::AudioPluginFormatManager formatManager;
+    juce_compat::FormatManager formatManager;
     juce::KnownPluginList knownPluginList;
 
     mutable juce::CriticalSection nativeDescriptionsLock;

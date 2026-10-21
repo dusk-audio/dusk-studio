@@ -91,6 +91,9 @@ canonical source.
 
 ### Fixed
 
+- **Custom LV2 loading.** Reusing a format avoids repeated folder walks;
+  explicit scans, changed folders and reconnected roots refresh discovery.
+- **Piano-roll keypad zoom.** Holding keypad plus or minus repeats zoom.
 - **Sandboxed plug-in lifecycle.** Preparation and state changes run on the
   message thread while audio processing is parked, preventing races with
   queued LV2 UI updates when loading or changing the sample rate.

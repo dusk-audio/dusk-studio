@@ -3,6 +3,9 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "PluginSearchPaths.h"
 
+#include <map>
+#include <mutex>
+
 namespace duskstudio::juce_compat
 {
 // One-call shim hiding the AudioPluginFormatManager::addDefaultFormats
@@ -58,16 +61,45 @@ inline void primeCustomLv2 (juce::AudioPluginFormat& format, const pluginpaths::
     }
 }
 
-inline void primeCustomLv2 (juce::AudioPluginFormatManager& manager)
+class FormatManager : public juce::AudioPluginFormatManager
 {
-    const auto custom = pluginpaths::load();
-    if (custom.empty()) return;
+    struct PrimedRoots
+    {
+        pluginpaths::Roots roots;
+        std::vector<bool> available;
+    };
+    std::mutex lv2PrimingMutex;
+    std::map<const void*, PrimedRoots> primedLv2Roots;
+    friend void primeCustomLv2 (FormatManager&, const pluginpaths::Roots&, bool, const std::atomic<bool>*);
+};
+
+inline void primeCustomLv2 (FormatManager& manager, const pluginpaths::Roots& custom,
+                            bool refresh = false, const std::atomic<bool>* abort = nullptr)
+{
+    const std::lock_guard<std::mutex> lock (manager.lv2PrimingMutex);
+    const auto cancelled = [&] { return abort != nullptr && abort->load (std::memory_order_relaxed); };
+    if (cancelled()) return;
+    FormatManager::PrimedRoots state { pluginpaths::normalize (custom), {} };
+    for (const auto& root : state.roots)
+    {
+        std::error_code error;
+        state.available.push_back (std::filesystem::is_directory (root, error));
+    }
     for (auto* format : manager.getFormats())
         if (format != nullptr && format->getName() == "LV2")
         {
-            // URI creation uses this format's world, including in fresh sandbox children.
-            primeCustomLv2 (*format, custom);
-            break;
+            const auto primed = manager.primedLv2Roots.find (format);
+            if (! refresh && primed != manager.primedLv2Roots.end()
+                && primed->second.roots == state.roots && primed->second.available == state.available) continue;
+            manager.primedLv2Roots.erase (format);
+            primeCustomLv2 (*format, state.roots, abort);
+            if (cancelled()) return;
+            manager.primedLv2Roots.emplace (format, state);
         }
+}
+
+inline void primeCustomLv2 (FormatManager& manager)
+{
+    primeCustomLv2 (manager, pluginpaths::load());
 }
 } // namespace duskstudio::juce_compat

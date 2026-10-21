@@ -305,6 +305,20 @@ std::optional<ScenarioResult> runPianoViewport (GuiHost& host, ScenarioContext& 
     session.track (0).midiRegions.publish (
         std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { region }));
     host.switchToStage (GuiHost::Stage::Recording);
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    {
+        auto roll = imgui::makePianoRollView (session, engine, 0, 0, {});
+        const auto initialZoom = roll->viewportForScenario()[0];
+        ctx.expect (roll->handleShellKey ("=", true), "repeated equals was not handled");
+        const auto zoomed = roll->viewportForScenario()[0];
+        ctx.expect (zoomed > initialZoom, "repeated equals did not zoom in");
+        ctx.expect (roll->handleShellKey ("numpad +", true), "repeated keypad plus was not handled");
+        const auto keypadZoom = roll->viewportForScenario()[0];
+        ctx.expect (keypadZoom > zoomed, "repeated keypad plus did not zoom in");
+        ctx.expect (roll->handleShellKey ("numpad -", true), "repeated keypad minus was not handled");
+        ctx.expect (roll->viewportForScenario()[0] < keypadZoom, "repeated keypad minus did not zoom out");
+    }
+   #endif
     auto before = std::make_shared<std::array<double, 4>>();
     auto steps = std::make_shared<std::vector<Step>>();
     steps->push_back ({ 150, [&host, &ctx]

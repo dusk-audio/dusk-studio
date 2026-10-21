@@ -619,7 +619,7 @@
       "requests": {
         "98852.3": {
           "service": "kTCCServiceMicrophone",
-          "prompt": "2026-10-19 15:22:18.428 Df tccd[3230:17e7d20] [com.apple.TCC:access] AUTHREQ_PROMPTING: msgID=98852.3, service=kTCCServiceMicrophone, subject=Sub:{audio.dusk.studio}Resp:{TCCDProcess: identifier=audio.dusk.studio, pid=98852, auid=501, euid=501, binary_path=/Users/marc/dusk-386-current/build-prepush-tests/DuskStudio_artefacts/Release/DuskStudio.app/Contents/MacOS/DuskStudio},",
+          "prompt": "2026-10-19 15:22:18.428 Df tccd[3230:17e7d20] [com.apple.TCC:access] AUTHREQ_PROMPTING: msgID=98852.3, service=kTCCServiceMicrophone, subject=Sub:{audio.dusk.studio}Resp:{TCCDProcess: identifier=audio.dusk.studio, pid=98852, auid=501, euid=501, binary_path=<build-root>/DuskStudio_artefacts/Release/DuskStudio.app/Contents/MacOS/DuskStudio},",
           "results": [
             "2026-10-19 15:22:18.872 Df tccd[3230:17e7d20] [com.apple.TCC:access] AUTHREQ_RESULT: msgID=98852.3, authValue=2, authReason=2, authVersion=1, desired_auth=0, error=(null),"
           ],
@@ -629,7 +629,7 @@
         },
         "462.1000": {
           "service": "kTCCServiceSystemPolicyRemovableVolumes",
-          "prompt": "2026-10-19 15:23:10.174 Df tccd[3230:17e9818] [com.apple.TCC:access] AUTHREQ_PROMPTING: msgID=462.1000, service=kTCCServiceSystemPolicyRemovableVolumes, subject=Sub:{audio.dusk.studio}Resp:{TCCDProcess: identifier=audio.dusk.studio, pid=98852, auid=501, euid=501, binary_path=/Users/marc/dusk-386-current/build-prepush-tests/DuskStudio_artefacts/Release/DuskStudio.app/Contents/MacOS/DuskStudio},",
+          "prompt": "2026-10-19 15:23:10.174 Df tccd[3230:17e9818] [com.apple.TCC:access] AUTHREQ_PROMPTING: msgID=462.1000, service=kTCCServiceSystemPolicyRemovableVolumes, subject=Sub:{audio.dusk.studio}Resp:{TCCDProcess: identifier=audio.dusk.studio, pid=98852, auid=501, euid=501, binary_path=<build-root>/DuskStudio_artefacts/Release/DuskStudio.app/Contents/MacOS/DuskStudio},",
           "results": [
             "2026-10-19 15:23:10.862 Df tccd[3230:17e9818] [com.apple.TCC:access] AUTHREQ_RESULT: msgID=462.1000, authValue=2, authReason=2, authVersion=1, desired_auth=0, error=(null),"
           ],
@@ -643,13 +643,13 @@
           "action": "allow",
           "service": "microphone",
           "pid": 98852,
-          "executable": "/Users/marc/dusk-386-current/build-prepush-tests/DuskStudio_artefacts/Release/DuskStudio.app/Contents/MacOS/DuskStudio"
+          "executable": "<build-root>/DuskStudio_artefacts/Release/DuskStudio.app/Contents/MacOS/DuskStudio"
         },
         {
           "action": "allow",
           "service": "removable-volumes",
           "pid": 98852,
-          "executable": "/Users/marc/dusk-386-current/build-prepush-tests/DuskStudio_artefacts/Release/DuskStudio.app/Contents/MacOS/DuskStudio"
+          "executable": "<build-root>/DuskStudio_artefacts/Release/DuskStudio.app/Contents/MacOS/DuskStudio"
         }
       ],
       "handler_exit": {
