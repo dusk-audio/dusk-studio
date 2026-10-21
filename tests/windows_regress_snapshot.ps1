@@ -2,7 +2,7 @@ param([string]$LibraryPath = (Join-Path $PSScriptRoot '../scripts/regress/window
 
 . $LibraryPath
 $ErrorActionPreference = 'Stop'
-$snapshotRoot = Join-Path (Get-Item -LiteralPath $env:TEMP).FullName ('dusk-regress-snapshot-' + [Guid]::NewGuid().ToString('N'))
+$snapshotRoot = Join-Path ([IO.Path]::GetFullPath((Get-Item -LiteralPath $env:TEMP).FullName)) ('dusk-regress-snapshot-' + [Guid]::NewGuid().ToString('N'))
 $originalTemp = $env:TEMP
 $watched = Join-Path $snapshotRoot 'watched'
 $privateTemp = Join-Path $snapshotRoot 'temp'
