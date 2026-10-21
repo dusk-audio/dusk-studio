@@ -55,7 +55,11 @@ jobs:
 
       - name: Check regression profile snapshots
         shell: powershell
-        run: .\tests\windows_regress_snapshot.ps1
+        run: |
+          foreach ($snapshotTemp in @($env:TEMP, $env:TEMP.ToLowerInvariant(), (Join-Path $env:TEMP '.'))) {
+            $env:TEMP = $snapshotTemp
+            .\tests\windows_regress_snapshot.ps1
+          }
 
       - name: Clone JUCE 8.0.4
         shell: bash

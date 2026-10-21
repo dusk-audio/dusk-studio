@@ -2,7 +2,7 @@ param([string]$LibraryPath = (Join-Path $PSScriptRoot '../scripts/regress/window
 
 . $LibraryPath
 $ErrorActionPreference = 'Stop'
-$snapshotRoot = Join-Path $env:TEMP ('dusk-regress-snapshot-' + [Guid]::NewGuid().ToString('N'))
+$snapshotRoot = Join-Path (Get-Item -LiteralPath $env:TEMP).FullName ('dusk-regress-snapshot-' + [Guid]::NewGuid().ToString('N'))
 $originalTemp = $env:TEMP
 $watched = Join-Path $snapshotRoot 'watched'
 $privateTemp = Join-Path $snapshotRoot 'temp'
@@ -33,6 +33,7 @@ try {
     }
     $first = Get-OwnedSnapshot
     $second = Get-OwnedSnapshot
+    Assert-Snapshot ($first.Count -ge 2) 'The snapshot missed owned fixture entries'
     Assert-Snapshot (($first -join "`n") -eq ($second -join "`n")) `
         'An unchanged filesystem produced different snapshots after cold directory enumeration'
 
@@ -59,7 +60,7 @@ try {
     $afterTemp = @(Get-OwnedSnapshot | Where-Object { $_.StartsWith($tempChild + '|temp|') })
     Assert-Snapshot (($beforeTemp -join "`n") -ne ($afterTemp -join "`n")) `
         'The snapshot missed a real change in a watched temporary directory'
-    Write-Output 'Windows regression snapshots: 6 checks passed'
+    Write-Output 'Windows regression snapshots: 7 checks passed'
 } finally {
     $env:TEMP = $originalTemp
     if (Test-Path -LiteralPath $snapshotRoot) { Remove-Item -LiteralPath $snapshotRoot -Recurse -Force }
