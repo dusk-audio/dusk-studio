@@ -729,8 +729,12 @@ std::optional<ScenarioResult> runAudioEditorHoldsTimelineKeys (GuiHost& host, Sc
     });
 
     auto steps = std::make_shared<std::vector<Step>>();
-    steps->push_back ({ 300, [&host, &ctx]
-    { ctx.expect (host.clickAudioRegion (0, 0), "could not select the region on the timeline"); } });
+    steps->push_back ({ 300, [&host, &ctx, &engine]
+    {
+        engine.getUndoManager().clearUndoHistory();
+        ctx.expect (host.clickAudioRegion (0, 0), "could not select the region on the timeline");
+        ctx.expect (host.tapeSelectedTracks() == std::vector<int> { 0 }, "the timeline click did not immediately select the track");
+    } });
     steps->push_back ({ 150, [&host, &ctx]
     {
         ctx.expect (host.tapeSelectedTracks() == std::vector<int> { 0 }, "the timeline click did not select the track");

@@ -91,6 +91,8 @@ canonical source.
 
 ### Fixed
 
+- **Timeline selection.** A new region click keeps its selection when an older
+  edit notification is still waiting to be delivered.
 - **Custom LV2 loading.** Reusing a format avoids repeated folder walks;
   explicit scans, changed folders and reconnected roots refresh discovery.
 - **Piano-roll keypad zoom.** Holding keypad plus or minus repeats zoom.
