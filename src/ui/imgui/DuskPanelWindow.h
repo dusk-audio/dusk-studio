@@ -165,6 +165,8 @@ public:
     // The strictest rule of every window open now.
     static PanelShellKeys openShellKeys() noexcept;
 
+    static bool hasOpenModal() noexcept;
+
     // The view is built before open() and released when the window closes.
     void setView (std::unique_ptr<DuskPanelView> view);
 

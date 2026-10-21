@@ -999,6 +999,14 @@ PanelShellKeys DuskPanelWindow::openShellKeys() noexcept
     return strictest;
 }
 
+bool DuskPanelWindow::hasOpenModal() noexcept
+{
+    for (const auto* window : liveWindows())
+        if (window->isOpen() && window->impl->view != nullptr && window->impl->view->wantsPlate())
+            return true;
+    return false;
+}
+
 void DuskPanelWindow::setView (std::unique_ptr<DuskPanelView> view)
 {
     impl->view = std::move (view);
