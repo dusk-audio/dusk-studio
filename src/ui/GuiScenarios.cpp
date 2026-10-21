@@ -3325,16 +3325,16 @@ std::vector<std::string> guiLaunchStateDiff (GuiHost& host) { return host.launch
 void guiResetForScenario (GuiHost& host) { host.resetForScenario(); }
 } // namespace scenario
 
-namespace
+struct MainComponent::GuiRun
 {
-struct GuiRun
-{
-    // Held as the interface, not the nested implementation: this is namespace
-    // scope, where that name is MainComponent's business alone.
     std::unique_ptr<scenario::GuiHost> host;
     std::unique_ptr<scenario::SuiteRunner> runner;
 };
-} // namespace
+
+void MainComponent::GuiRunDeleter::operator() (GuiRun* run) const
+{
+    delete run;
+}
 
 bool scenario::panelInputSeen()
 {
@@ -3345,21 +3345,9 @@ bool scenario::panelInputSeen()
    #endif
 }
 
-namespace
-{
-// One GUI suite per process - it ends by quitting the app - so a file-scope
-// holder is all the ownership the run needs, and MainComponent stays free of a
-// member only the harness would ever use.
-std::unique_ptr<GuiRun>& activeGuiRun()
-{
-    static std::unique_ptr<GuiRun> run;
-    return run;
-}
-} // namespace
-
 void MainComponent::runGuiScenarios (std::string spec)
 {
-    auto& run = activeGuiRun();
+    auto& run = guiRun;
     if (run != nullptr) return;
 
     // Injected input is dispatched through the window, and on macOS a window that
@@ -3368,7 +3356,7 @@ void MainComponent::runGuiScenarios (std::string spec)
     if (auto* peer = getPeer())
         platform::bringWindowToFront (*peer);
 
-    run = std::make_unique<GuiRun>();
+    run.reset (new GuiRun);
     run->host = std::make_unique<ScenarioGuiHost> (*this);
     run->runner = std::make_unique<scenario::SuiteRunner> (
         std::move (spec), *run->host, session, engine,

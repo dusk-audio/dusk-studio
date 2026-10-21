@@ -1228,6 +1228,7 @@ MainComponent::~MainComponent()
 {
     tearingDown = true;
     stopTimer();   // halt autosave before tearing down engine / session
+    guiRun.reset();
     engine.setPluginRestoreAlertSink ({});
     engine.onBeforeTracksMove = nullptr;
     engine.onTracksMoved = nullptr;
@@ -4229,6 +4230,8 @@ void MainComponent::requestQuit()
 
 void MainComponent::leakAllPluginInstancesForShutdown()
 {
+    // Scenario cleanups can still use the window, session and plugin instances.
+    guiRun.reset();
     engine.leakAllPluginInstancesForShutdown();
 }
 

@@ -42,6 +42,7 @@ SCENARIO_BB_LEG_NAMES=(
     bb-no-runtime-dir
     bb-damaged-recent
     bb-clean-quit
+    bb-interrupted-gui-suite
     bb-keyboard-quit
     bb-window-close
     bb-quit-twice
@@ -603,6 +604,32 @@ bb_window_close_body() {
     bb_assert_marker A "re-entry ignored: shutdown already in progress" || return 1
 }
 
+leg_bb_interrupted_gui_suite() {
+    bb_begin bb-interrupted-gui-suite 120 || return 1
+    local rc=0
+    bb_interrupted_gui_suite_body || rc=$?
+    bb_end "$rc"
+}
+
+bb_interrupted_gui_suite_body() {
+    bb_spawn A "DUSKSTUDIO_RUN_SCENARIOS=gui:gui.window_keys" \
+        "DUSKSTUDIO_QUIT_AFTER_MS=" "DUSKSTUDIO_RUN_SELFTEST=" -- || return 1
+    bb_wait_marker A "[RUN] gui.window_keys" 60 || return 1
+    # Interrupt the full-screen animation while its restoration cleanup is pending.
+    sleep 0.5
+    if grep -qE '^\[(PASS|FAIL|SKIP)\] gui.window_keys' "$BB_SDIR/A.out"; then
+        bb_fail "window_keys finished before it could be interrupted"
+        return 1
+    fi
+    kill -TERM "${BB_PID[A]}" || return 1
+    bb_wait_exit A 30 || return 1
+    bb_assert_order A "${BB_SHUTDOWN_ORDER[@]}" || return 1
+    if grep -qE '^=== scenarios:|^\[(PASS|FAIL|SKIP)\] gui.window_keys' "$BB_SDIR/A.out"; then
+        bb_fail "the interrupted suite reported completion"
+        return 1
+    fi
+}
+
 leg_bb_clean_quit() {
     bb_begin bb-clean-quit 240 || return 1
     local rc=0
@@ -1121,6 +1148,12 @@ regress_scenarios_run() {
     else
         regress_skip "bb-clean-quit" "needs DUSKSTUDIO_QUIT_AFTER_MS"
         regress_skip "bb-quit-twice" "needs DUSKSTUDIO_QUIT_AFTER_MS"
+    fi
+
+    if scenarios_has_case "gui.window_keys"; then
+        regress_leg "bb-interrupted-gui-suite" leg_bb_interrupted_gui_suite
+    else
+        regress_skip "bb-interrupted-gui-suite" "needs the gui.window_keys scenario"
     fi
 
     if scenarios_has_case "gui.quit_during_mixdown"; then

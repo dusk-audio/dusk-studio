@@ -111,6 +111,12 @@ private:
     // reach the views and the engine without opening either up to the rest of
     // the app; defined there and nowhere else.
     struct ScenarioGuiHost;
+    struct GuiRun;
+    struct GuiRunDeleter
+    {
+        void operator() (GuiRun*) const;
+    };
+    std::unique_ptr<GuiRun, GuiRunDeleter> guiRun;
     void restoreUiScaleForScenario (float scale);
     struct ScenarioStripHandle;
     struct ScenarioAuxLaneHandle;
