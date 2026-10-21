@@ -211,6 +211,7 @@ private:
         std::string title, subtitle;
         std::string searchText {};
         std::vector<sfz::InstrumentCategory> categories {};
+        bool mixedArtwork = false;
     };
 
     void rebuildInstalledRows (const sfz::LibrarySnapshot& snapshot)
@@ -229,9 +230,18 @@ private:
                 std::to_string (pack.programs.size()) + (pack.programs.size() == 1 ? " program | " : " programs | ")
                     + sourceName (pack.provider.sourceId) };
             std::set<sfz::InstrumentCategory> categories { category };
+            const std::string packArtwork = instrumentArtworkResource (category, pack.provider.displayName, pack.provider.presentation.categoryHint);
             for (const auto& instrument : pack.programs)
             {
-                categories.insert (sfz::instrumentCategory (instrument.name, instrument.relativePath + " " + context));
+                const auto programCategory = sfz::instrumentCategory (instrument.name, instrument.relativePath, context);
+                categories.insert (programCategory);
+                if (! pack.provider.presentation.artworkUrl.empty())
+                {
+                    const auto& artworkContext = sfz::instrumentCategory (instrument.relativePath) == sfz::InstrumentCategory::Other
+                        ? context : instrument.relativePath;
+                    row.mixedArtwork = row.mixedArtwork
+                        || packArtwork != instrumentArtworkResource (programCategory, instrument.name, artworkContext);
+                }
                 row.searchText += " " + instrument.name + " " + instrument.relativePath;
             }
             row.searchText += " " + pack.provider.presentation.categoryHint;
@@ -280,27 +290,22 @@ private:
                 visible.push_back (i);
     }
 
-    void clearPreview (float height)
+    void drawOverview (dw::Context& ctx, float height)
     {
-        if (! artworkRequest.empty())
-        {
-            service.artwork().cancel();
-            artworkRequest.clear();
-            previewPixels.reset();
-        }
-        ImGui::Dummy ({ ImGui::GetContentRegionAvail().x, height });
-        ImGui::TextUnformatted ("All instruments");
-        ImGui::Separator();
+        drawPreview (ctx, height, "all-instruments", "All instruments", sfz::InstrumentCategory::Collection, {}, false, {});
     }
 
     void drawPreview (dw::Context& ctx, float height, const std::string& key, const std::string& title,
-                      sfz::InstrumentCategory category, const std::string& url, bool allowNetwork, const std::string& sourceId)
+                      sfz::InstrumentCategory category, const std::string& url, bool allowNetwork, const std::string& sourceId,
+                      const std::string& instrumentContext = {})
     {
-        const auto request = key + "|" + sourceId + "|" + std::to_string (static_cast<int> (category)) + "|" + url + (allowNetwork ? "|online" : "|cached");
+        const auto* resource = instrumentArtworkResource (category, title, instrumentContext);
+        const auto imageUrl = sfz::isInstrumentArtworkPath (url) ? url : std::string {};
+        const auto request = key + "|" + sourceId + "|" + resource + "|" + imageUrl + (allowNetwork ? "|online" : "|cached");
         if (request != artworkRequest)
         {
             artworkRequest = request;
-            service.artwork().request (request, url, instrumentArtwork (category), decodeInstrumentArtwork, allowNetwork, sourceId);
+            service.artwork().request (request, imageUrl, instrumentArtwork (category, title, instrumentContext), decodeInstrumentArtwork, allowNetwork, sourceId);
         }
         const auto artwork = service.artwork().snapshot();
         const bool ready = artwork.key == request && artwork.pixels;
@@ -319,9 +324,10 @@ private:
         if (ready && previewPixels == artwork.pixels)
         {
             remember (artwork.sourceImage ? "preview-source" : "preview-generic");
+            if (! artwork.sourceImage) remember (std::string ("preview-artwork-") + resource);
             remember (std::string ("preview-category-") + sfz::kInstrumentCategories[static_cast<std::size_t> (category)].id);
         }
-        formTooltip (ready && artwork.sourceImage ? url.c_str() : instrumentArtworkCredit (category));
+        formTooltip (ready && artwork.sourceImage ? url.c_str() : instrumentArtworkCredit (category, title, instrumentContext));
         const auto caption = title.empty() ? std::string (sfz::kInstrumentCategories[static_cast<std::size_t> (category)].name) : title;
         const auto captionAt = ImGui::GetCursorScreenPos();
         const float captionWidth = ImGui::GetContentRegionAvail().x;
@@ -648,19 +654,20 @@ private:
         if (ImGui::BeginChild ("##sfz-online-sidebar", { listWidth, bodyHeight }, ImGuiChildFlags_Borders))
         {
             auto category = onlineCategory < 0 ? sfz::InstrumentCategory::Other : static_cast<sfz::InstrumentCategory> (onlineCategory);
-            std::string imageUrl, title;
+            std::string imageUrl, title, instrumentContext;
             if (selectedSummary)
             {
                 category = sfz::instrumentCategory (selectedSummary->locator + " " + selectedSummary->name,
                     selectedSummary->presentation.categoryHint + " " + selectedSummary->description);
                 title = displayTitle (selectedSummary->name, selectedSummary->sourceId);
+                instrumentContext = selectedSummary->presentation.categoryHint + " " + selectedSummary->description;
                 imageUrl = resolved ? resolved->presentation.artworkUrl : selectedSummary->presentation.artworkUrl;
             }
             if (selectedSummary || onlineCategory >= 0)
                 drawPreview (ctx, std::min (ctx.s (164), bodyHeight * 0.30f),
                     selectedSummary ? summaryKey (*selectedSummary) : "online-category", title, category, imageUrl, ! pageCached,
-                    selectedSummary ? selectedSummary->sourceId : std::string {});
-            else clearPreview (std::min (ctx.s (164), bodyHeight * 0.30f));
+                    selectedSummary ? selectedSummary->sourceId : std::string {}, instrumentContext);
+            else drawOverview (ctx, std::min (ctx.s (164), bodyHeight * 0.30f));
             beginCategoryList (ctx, onlineCategory, onlineCounts, results.size());
             filterRows (onlineRows, onlineCategory, visibleOnline, onlineFilterDirty);
             if (ImGui::BeginChild ("##sfz-online-list", { 0, 0 }, ImGuiChildFlags_None))
@@ -808,7 +815,7 @@ private:
         if (ImGui::BeginChild ("##sfz-installed-sidebar", { listWidth, bodyHeight }, ImGuiChildFlags_Borders))
         {
             auto category = installedCategory < 0 ? sfz::InstrumentCategory::Other : static_cast<sfz::InstrumentCategory> (installedCategory);
-            std::string imageUrl, title;
+            std::string imageUrl, title, instrumentContext;
             const BrowserRow* selectedRow = nullptr;
             for (const auto& entry : installedRows)
                 if (&snapshot.installed[entry.pack] == selected && ! selectedInstrument.empty())
@@ -822,16 +829,20 @@ private:
                     if (program.id == selectedInstrument)
                     {
                         title = program.name;
-                        category = sfz::instrumentCategory (program.name, program.relativePath + " "
-                            + selected->provider.displayName + " " + selected->provider.presentation.categoryHint);
+                        const auto packContext = selected->provider.displayName + " " + selected->provider.presentation.categoryHint;
+                        instrumentContext = sfz::instrumentCategory (program.relativePath) == sfz::InstrumentCategory::Other
+                            ? packContext : program.relativePath;
+                        category = sfz::instrumentCategory (program.name, program.relativePath, packContext);
                         break;
                     }
+                if (selectedRow->categories.size() > 1 || selectedRow->category == sfz::InstrumentCategory::Collection
+                    || category != selectedRow->category || selectedRow->mixedArtwork) imageUrl.clear();
             }
             if (selectedRow || installedCategory >= 0)
                 drawPreview (ctx, std::min (ctx.s (164), bodyHeight * 0.30f),
                     selectedRow ? packKey (*selected) + "/" + selectedInstrument : "installed-category", title, category, imageUrl, false,
-                    selectedRow ? selected->provider.sourceId : std::string {});
-            else clearPreview (std::min (ctx.s (164), bodyHeight * 0.30f));
+                    selectedRow ? selected->provider.sourceId : std::string {}, instrumentContext);
+            else drawOverview (ctx, std::min (ctx.s (164), bodyHeight * 0.30f));
             beginCategoryList (ctx, installedCategory, installedCounts, snapshot.installed.size());
             filterRows (installedRows, installedCategory, visibleInstalled, installedFilterDirty, installedQuery.data());
             if (selectedInstalled.empty()) selected = nullptr;
@@ -860,10 +871,10 @@ private:
                         selected = &pack;
                         for (const auto& program : pack.programs)
                         {
-                            const auto category = sfz::instrumentCategory (program.name, program.relativePath + " "
-                                + pack.provider.displayName + " " + pack.provider.presentation.categoryHint);
+                            const auto programCategory = sfz::instrumentCategory (program.name, program.relativePath,
+                                pack.provider.displayName + " " + pack.provider.presentation.categoryHint);
                             if (selectedInstrument.empty()) selectedInstrument = program.id;
-                            if (installedCategory >= 0 && static_cast<int> (category) == installedCategory)
+                            if (installedCategory >= 0 && static_cast<int> (programCategory) == installedCategory)
                             { selectedInstrument = program.id; break; }
                         }
                     }
@@ -885,7 +896,9 @@ private:
                                     "Declared license: %s", selected->provider.license.id.c_str());
                 if (selected->programs.size() < selected->instruments.size())
                 {
+                    ImGui::PushStyleVar (ImGuiStyleVar_FramePadding, { ctx.s (3), ctx.s (3) });
                     ImGui::Checkbox ("Show all SFZ files", &showAllFiles);
+                    ImGui::PopStyleVar();
                     remember ("show-all-files");
                     formTooltip ("Includes internal mappings and alternate files. The Program list uses the pack's declared bank programs.");
                 }

@@ -99,7 +99,7 @@ std::string waveBytes()
     return bytes;
 }
 
-std::string zipBytes (const std::string& root)
+std::string zipBytes (const std::string& root, const std::string& first = "One", const std::string& second = "Two")
 {
     std::string bytes (128 * 1024, '\0');
     std::size_t written = 0;
@@ -114,8 +114,8 @@ std::string zipBytes (const std::string& root)
         { "Instruments/Two.sfz", "<region> sample=../Samples/tone.wav key=61\n" },
         { "Mappings/One.sfz", "<global> volume=-3\n" },
         { "Fixture.bank.xml", "<?xml version=\"1.0\"?><Key/><AriaBank>"
-            "<AriaProgram name=\"One\"><AriaElement path=\"Instruments/One.sfz\"/></AriaProgram>"
-            "<AriaProgram name=\"Two\"><AriaElement path=\"Instruments/Two.sfz\"/></AriaProgram></AriaBank>" },
+            "<AriaProgram name=\"" + first + "\"><AriaElement path=\"Instruments/One.sfz\"/></AriaProgram>"
+            "<AriaProgram name=\"" + second + "\"><AriaElement path=\"Instruments/Two.sfz\"/></AriaProgram></AriaBank>" },
         { "Samples/tone.wav", waveBytes() }
     };
     for (const auto& member : members)
@@ -538,14 +538,14 @@ void pushStart (std::vector<Step>& steps, GuiHost& host, ScenarioContext& ctx, c
     steps.push_back ({ 0, [&host, &ctx, state]
     {
         ctx.expect (state->transport->requests.load() == 0, "opening Installed started an HTTP request");
-        ctx.expect (! host.sfzLibraryPointer (kStripIndex, "preview", 0.5f, false), "All instruments displayed a placeholder image in Installed");
-    } });
+    }, [&host] { return host.sfzLibraryPointer (kStripIndex, "preview-category-collection", 0.5f, false); },
+    "Installed did not display the instrument library overview", {}, kSettleBoundMs });
     pushClick (steps, host, ctx, "online-tab");
     steps.push_back ({ 0, [&host, &ctx, state]
     {
         ctx.expect (state->transport->requests.load() == 0, "opening Online started an HTTP request");
-        ctx.expect (! host.sfzLibraryPointer (kStripIndex, "preview", 0.5f, false), "All instruments displayed a placeholder image in Online");
-    } });
+    }, [&host] { return host.sfzLibraryPointer (kStripIndex, "preview-category-collection", 0.5f, false); },
+    "Online did not display the instrument library overview", {}, kSettleBoundMs });
     pushClick (steps, host, ctx, "query");
     steps.push_back ({ 0, [&host, &ctx, state, searchKey, fromShell]
     {
@@ -704,25 +704,27 @@ std::optional<ScenarioResult> runSearchKey (GuiHost& host, ScenarioContext& ctx,
     return std::nullopt;
 }
 
-std::optional<ScenarioResult> runArtworkCategories (GuiHost& host, ScenarioContext& ctx)
+std::optional<ScenarioResult> runArtworkCategories (GuiHost& host, ScenarioContext& ctx, bool brass = false)
 {
     if (! ctx.engine().getTransport().isStopped() || ! host.modalStackEmpty())
         return ScenarioResult::skip ("requires stopped transport and no modal");
     auto state = prepare (host, ctx, "artwork-categories");
     if (! state) return ctx.verdict();
+    if (brass) state->transport->archive = zipBytes (state->transport->name + "-" + state->transport->commit, "Trumpet", "Tuba");
     state->capture = ctx.tempDir() / "sfz-drum-category.png";
     state->compactCapture = ctx.tempDir() / "sfz-all-instruments.png";
     state->onlineCapture = ctx.tempDir() / "sfz-all-online.png";
     auto steps = std::make_shared<std::vector<Step>>();
     pushStart (*steps, host, ctx, state);
-    steps->push_back ({ 0, [&ctx, state]
+    steps->push_back ({ 0, [&ctx, state, brass]
     {
         auto& service = ctx.engine().getSfzLibrary();
         const auto snapshot = service.snapshot();
         if (! ctx.expect (snapshot.pack.has_value(), "artwork fixture pack was not resolved")) return;
         auto pack = *snapshot.pack;
-        pack.displayName = "Karoryfer Big Rusty Drums";
+        pack.displayName = brass ? "Brass" : "Karoryfer Big Rusty Drums";
         pack.presentation = {};
+        if (brass) pack.presentation.artworkUrl = state->transport->artworkUrl();
         state->generation = snapshot.generation;
         ctx.expect (service.install (std::move (pack)), "legacy artwork fixture installation was rejected");
     } });
@@ -734,38 +736,57 @@ std::optional<ScenarioResult> runArtworkCategories (GuiHost& host, ScenarioConte
         return ! snapshot.busy && snapshot.generation > state->generation;
     }, "legacy artwork fixture did not finish", {}, kSettleBoundMs });
     pushClick (*steps, host, ctx, "installed-tab");
-    pushCategory (*steps, host, ctx, "drums");
+    pushCategory (*steps, host, ctx, brass ? "brass" : "drums");
     pushInstalledSelection (*steps, host, ctx, state);
-    steps->push_back ({ 0, [&ctx, state]
+    steps->push_back ({ 0, [&ctx, state, brass]
     {
         ctx.expect (state->installed.has_value() && state->installed->provider.presentation.categoryHint.empty()
-            && state->installed->provider.presentation.artworkUrl.empty(), "fixture did not represent an older receipt without artwork metadata");
+            && (brass || state->installed->provider.presentation.artworkUrl.empty()), "fixture did not represent its expected artwork metadata");
         state->requests = state->transport->requests.load();
     } });
     steps->push_back ({ 0, [&host] { host.sfzLibraryPointer (kStripIndex, "installed-tab", 0.5f, false); },
-    [&host] { return host.sfzLibraryPointer (kStripIndex, "preview-category-drums", 0.5f, false); },
+    [&host, brass] { return host.sfzLibraryPointer (kStripIndex, brass ? "preview-artwork-sfz_trumpet_png" : "preview-category-drums", 0.5f, false); },
     "generic patch names did not inherit their drum-pack artwork category", {}, kSettleBoundMs });
     steps->push_back ({ 100, [&host, state] { host.captureSfzLibrary (kStripIndex, state->capture); } });
     steps->push_back ({ 0, [] {}, [state] { std::error_code error; return fs::is_regular_file (state->capture, error); },
     "drum category capture did not arrive" });
+    steps->push_back ({ 0, [&ctx, state, brass]
+    { exportCapture (ctx, state->capture, brass ? "sfz-trumpet.ppm" : "sfz-drums.ppm"); } });
+    if (brass)
+    {
+        const auto tubaCapture = ctx.tempDir() / "sfz-tuba.ppm";
+        pushClick (*steps, host, ctx, "instrument");
+        pushClick (*steps, host, ctx, "instrument-choice-1");
+        steps->push_back ({ 0, [&host, tubaCapture]
+            { host.sfzLibraryPointer (kStripIndex, "installed-tab", 0.5f, false); host.captureSfzLibrary (kStripIndex, tubaCapture); },
+            [&host] { return host.sfzLibraryPointer (kStripIndex, "preview-artwork-sfz_tuba_png", 0.5f, false); },
+            "a brass pack cover overrode the selected Tuba program", {}, kSettleBoundMs });
+        steps->push_back ({ 0, [&ctx, tubaCapture] { exportCapture (ctx, tubaCapture, "sfz-tuba.ppm"); },
+            [tubaCapture] { std::error_code error; return fs::is_regular_file (tubaCapture, error); },
+            "Tuba preview capture did not arrive", {}, kSettleBoundMs });
+    }
     pushCategory (*steps, host, ctx, "all", [state] { return state->initialInstalled + 1; });
     steps->push_back ({ 0, [&host, &ctx, state]
     {
-        ctx.expect (! host.sfzLibraryPointer (kStripIndex, "preview", 0.5f, false), "All instruments retained the selected drum image");
         ctx.expect (state->transport->requests.load() == state->requests, "installed category selection contacted a repository");
+        host.sfzLibraryPointer (kStripIndex, "installed-tab", 0.5f, false);
         host.captureSfzLibrary (kStripIndex, state->compactCapture);
-    } });
+    }, [&host] { return host.sfzLibraryPointer (kStripIndex, "preview-category-collection", 0.5f, false); },
+    "All instruments did not restore the library overview", {}, kSettleBoundMs });
     steps->push_back ({ 0, [] {}, [state] { std::error_code error; return fs::is_regular_file (state->compactCapture, error); },
-    "blank Installed preview capture did not arrive" });
+    "Installed overview capture did not arrive" });
+    steps->push_back ({ 0, [&ctx, state] { exportCapture (ctx, state->compactCapture, "sfz-installed-overview.ppm"); } });
     pushClick (*steps, host, ctx, "online-tab");
     pushCategory (*steps, host, ctx, "all");
-    steps->push_back ({ 0, [&host, &ctx, state]
+    steps->push_back ({ 0, [&host, state]
     {
-        ctx.expect (! host.sfzLibraryPointer (kStripIndex, "preview", 0.5f, false), "All instruments retained an online image");
+        host.sfzLibraryPointer (kStripIndex, "online-tab", 0.5f, false);
         host.captureSfzLibrary (kStripIndex, state->onlineCapture);
-    } });
+    }, [&host] { return host.sfzLibraryPointer (kStripIndex, "preview-category-collection", 0.5f, false); },
+    "Online did not restore the library overview", {}, kSettleBoundMs });
     steps->push_back ({ 0, [] {}, [state] { std::error_code error; return fs::is_regular_file (state->onlineCapture, error); },
-    "blank Online preview capture did not arrive" });
+    "Online overview capture did not arrive" });
+    steps->push_back ({ 0, [&ctx, state] { exportCapture (ctx, state->onlineCapture, "sfz-online-overview.ppm"); } });
     pushFinish (*steps, host, ctx, state);
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
@@ -1442,6 +1463,218 @@ std::optional<ScenarioResult> runPauseCancel (GuiHost& host, ScenarioContext& ct
     return std::nullopt;
 }
 
+std::optional<ScenarioResult> runRestoreFailures (GuiHost& host, ScenarioContext& ctx)
+{
+    if (! ctx.engine().getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires stopped transport and no modal");
+    const auto restore = ctx.tempDir() / "restore.json";
+    const auto missing = ctx.tempDir() / "missing.json";
+    const auto blank = ctx.tempDir() / "blank.json";
+    const auto originalDirectory = currentSessionDirectory (ctx.session());
+    auto held = std::make_shared<bool> (false);
+    if (! SessionSerializer::save (ctx.session(), restore))
+        return ScenarioResult::fail ("could not save the original session");
+    auto fixture = std::make_unique<Session>();
+    if (! SessionSerializer::save (*fixture, blank))
+        return ScenarioResult::fail ("could not save the blank session");
+    for (int index = 0; index < 2; ++index)
+    {
+        auto& track = fixture->track (index);
+        track.mode.store (static_cast<int> (Track::Mode::Midi));
+        track.nativeMultisamplePath = (ctx.tempDir() / ("Missing" + std::to_string (index) + ".sfz")).u8string();
+        track.nativeMultisampleStateBase64 = "c2F2ZWQ=";
+        ManagedSfzLocator locator;
+        locator.sourceId = "musical-artifacts";
+        locator.packId = "994901";
+        locator.releaseId = locator.archiveSha256 = std::string (64, 'a');
+        locator.instrumentId = "missing-" + std::to_string (index);
+        locator.relativePath = "Missing" + std::to_string (index) + ".sfz";
+        track.nativeMultisampleLocator = std::move (locator);
+    }
+    if (! SessionSerializer::save (*fixture, missing))
+        return ScenarioResult::fail ("could not save the missing-instrument session");
+    ctx.cleanup ([&host, &ctx, held, restore, originalDirectory]
+    {
+        ctx.engine().cancelNativeMultisampleLoad (0);
+        ctx.engine().cancelNativeMultisampleLoad (1);
+        if (*held) { ctx.engine().setAssetRenderActive (false); *held = false; }
+        drainModals (host);
+        reopenSavedSession (host, restore);
+        applySessionDirectory (ctx.session(), originalDirectory);
+    });
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 0, [&host, &ctx, held, missing]
+    {
+        ctx.engine().setAssetRenderActive (true); *held = true;
+        ctx.expect (host.openSession (missing), "could not open the missing-instrument session");
+    } });
+    steps->push_back ({ 150, [&host, &ctx, held]
+    {
+        ctx.expect (ctx.engine().hasPendingMultisampleLoads(), "the restore was not pending during the render hold");
+        ctx.expect (host.modalStackEmpty(), "a held restore raised an early alert");
+        for (int index = 0; index < 2; ++index)
+        {
+            auto* strip = host.strip (index);
+            ctx.expect (strip && strip->insertLabel().find ("(loading)") != std::string::npos,
+                        "a pending restore was labelled offline instead of loading");
+        }
+        ctx.engine().setAssetRenderActive (false); *held = false;
+    } });
+    steps->push_back ({ 100, [&host, &ctx]
+    {
+        const auto text = host.modalText();
+        ctx.expect (text.find ("Plug-in unavailable") != std::string::npos
+                    && text.find ("Track 1") != std::string::npos && text.find ("Track 2") != std::string::npos
+                    && text.find ("multisample") != std::string::npos && text.find ("Relink this slot") != std::string::npos,
+                    "the asynchronous restore did not show one detailed alert for both missing packs: " + text);
+        ctx.engine().publishPluginStateForSave (true);
+        for (int index = 0; index < 2; ++index)
+        {
+            const auto& track = ctx.session().track (index);
+            ctx.expect (track.nativeMultisampleLocator && track.nativeMultisampleLocator->packId == "994901"
+                && track.nativeMultisampleStateBase64 == "c2F2ZWQ=" && track.nativeMultisamplePath.isNotEmpty(),
+                "a failed asynchronous restore lost its saved identity or controls");
+        }
+        ctx.expect (host.clickModalButton ("OK"), "could not dismiss the restore alert");
+    }, [&host, &ctx] { return ! ctx.engine().hasPendingMultisampleLoads() && ! host.modalStackEmpty(); },
+       "missing instruments did not show their restore alert" });
+    steps->push_back ({ 150, [&host, &ctx, held, missing, blank]
+    {
+        ctx.expect (host.modalStackEmpty(), "the restore raised a second alert");
+        ctx.engine().setAssetRenderActive (true); *held = true;
+        ctx.expect (host.openSession (missing) && ctx.engine().hasPendingMultisampleLoads(),
+                    "could not start the cancelled restore");
+        ctx.expect (host.openSession (blank), "could not supersede the pending restore with a new session");
+        ctx.engine().setAssetRenderActive (false); *held = false;
+    } });
+    steps->push_back ({ 150, [&host, &ctx]
+    {
+        ctx.expect (host.modalStackEmpty() && ctx.engine().getLastPluginLoadFailures().empty(),
+                    "a cancelled session's restore raised a stale alert");
+    }, [&ctx] { return ! ctx.engine().hasPendingMultisampleLoads(); }, "cancelled restore work did not drain" });
+    auto firstFailed = std::make_shared<bool> (false);
+    steps->push_back ({ 0, [&ctx, held, firstFailed]
+    {
+        for (int index = 0; index < 2; ++index)
+            ctx.session().track (index).nativeMultisamplePath =
+                (ctx.tempDir() / ("Missing" + std::to_string (index) + ".sfz")).u8string();
+        ctx.expect (ctx.engine().requestNativeMultisampleLoad (0, ctx.tempDir() / "Missing0.sfz", {},
+            [&ctx, held, firstFailed] (bool loaded, std::string)
+            {
+                ctx.expect (! loaded, "the missing instrument unexpectedly loaded");
+                ctx.engine().setAssetRenderActive (true); *held = true;
+                ctx.expect (ctx.engine().requestNativeMultisampleLoad (1, ctx.tempDir() / "Missing1.sfz",
+                    {}, {}, -1, true), "could not queue the remaining restore");
+                *firstFailed = true;
+            }, -1, true), "could not start the partially completed restore");
+    } });
+    steps->push_back ({ 0, [&host, &ctx, held]
+    {
+        ctx.expect (host.modalStackEmpty() && ctx.engine().hasPendingMultisampleLoad (1),
+                    "a partial restore did not wait for the remaining track");
+        ctx.engine().cancelNativeMultisampleLoad (0);
+        ctx.session().track (0).nativeMultisamplePath = {};
+        ctx.engine().setAssetRenderActive (false); *held = false;
+    }, [firstFailed] { return *firstFailed; }, "the first partial restore did not fail" });
+    steps->push_back ({ 100, [&host, &ctx]
+    {
+        const auto text = host.modalText();
+        ctx.expect (text.find ("Track 2") != std::string::npos && text.find ("Track 1") == std::string::npos,
+                    "the restore alert retained a superseded failure: " + text);
+        ctx.expect (host.clickModalButton ("OK"), "could not dismiss the remaining restore alert");
+    }, [&host, &ctx] { return ! ctx.engine().hasPendingMultisampleLoads() && ! host.modalStackEmpty(); },
+       "the remaining partial restore did not show its alert" });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+std::optional<ScenarioResult> runPortableRestore (GuiHost& host, ScenarioContext& ctx)
+{
+    if (! ctx.engine().getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires stopped transport and no modal");
+    auto state = prepare (host, ctx, "portable-restore");
+    if (! state) return ctx.verdict();
+    const auto directory = ctx.tempDir() / "portable-session";
+    const auto sessionJson = directory / "session.json";
+    const auto autosave = directory / "session.json.autosave";
+    const auto foreignPath = (ctx.tempDir() / "other-computer" / "Piano.sfz").u8string();
+    auto steps = std::make_shared<std::vector<Step>>();
+    pushStart (*steps, host, ctx, state);
+    pushWorkClick (*steps, host, ctx, state, "enabled-download", LibraryState::Complete);
+    pushInstalledSelection (*steps, host, ctx, state);
+    steps->push_back ({ 0, [&host, &ctx, state, directory, sessionJson, foreignPath]
+    {
+        if (! ctx.expect (state->installed.has_value(), "portable restore fixture was not installed"))
+        { ctx.complete (ctx.verdict()); return; }
+        const auto& pack = *state->installed;
+        const auto& instrument = pack.instruments.front();
+        std::string error;
+        auto primed = NativeMultisampleSlot::prime (pack.directory / instrument.relativePath,
+            ctx.engine().getCurrentSampleRate(), ctx.engine().getCurrentBlockSize(), error);
+        if (! ctx.expect (static_cast<bool> (primed), "could not prime the portable controls: " + error))
+        { ctx.complete (ctx.verdict()); return; }
+        primed.instance->getOverrides().masterVolDb.store (-13.0f);
+        primed.instance->getOverrides().masterTuneCents.store (27.0f);
+        primed.instance->getOverrides().polyphony.store (29);
+        std::vector<std::uint8_t> bytes;
+        if (! ctx.expect (primed.instance->saveState (bytes), "could not save the portable controls"))
+        { ctx.complete (ctx.verdict()); return; }
+        auto& track = ctx.session().track (kStripIndex);
+        track.mode.store (static_cast<int> (Track::Mode::Midi));
+        track.nativeMultisamplePath = foreignPath;
+        track.nativeMultisampleLocator = pack.locatorFor (instrument);
+        track.nativeMultisampleStateBase64 = dusk::base64::encode (bytes.data(), bytes.size());
+        host.closeSfzLibrary (kStripIndex);
+        std::error_code ec;
+        fs::create_directories (directory, ec);
+        if (! ctx.expect (! ec && SessionSerializer::save (ctx.session(), sessionJson), "could not save the portable session")
+            || ! ctx.expect (host.openSession (sessionJson), "could not open the portable session"))
+            ctx.complete (ctx.verdict());
+    } });
+    steps->push_back ({ 0, [&host, &ctx, state, sessionJson, autosave, foreignPath]
+    {
+        auto& track = ctx.session().track (kStripIndex);
+        auto& slot = ctx.engine().getChannelStrip (kStripIndex).getNativeMultisampleSlot();
+        auto* instance = slot.getInstance();
+        bool clean = ctx.expect (instance && instance->hasLoadedRuntime(), "the portable instrument did not load");
+        clean &= ctx.expect (track.nativeMultisamplePath.toStdString() == foreignPath,
+                             "portable restore rewrote the saved absolute path");
+        const auto& pack = *state->installed;
+        clean &= ctx.expect (sameFile (slot.getLoadedSoundfontPath(), pack.directory / pack.instruments.front().relativePath),
+                             "portable restore did not resolve the installed file");
+        clean &= ctx.expect (track.nativeMultisampleLocator == pack.locatorFor (pack.instruments.front()),
+                             "portable restore changed the managed identity");
+        if (instance)
+            clean &= ctx.expect (nearly (instance->getOverrides().masterVolDb.load(), -13.0f)
+                && nearly (instance->getOverrides().masterTuneCents.load(), 27.0f)
+                && instance->getOverrides().polyphony.load() == 29, "portable restore lost the saved controls");
+        host.autosaveTick();
+        clean &= ctx.expect (! fs::exists (autosave), "portable restore wrote a spurious autosave");
+        const bool asked = host.requestQuit();
+        clean &= ctx.expect (! asked, "portable restore triggered an unsaved-changes prompt");
+        if (asked) host.clickModalButton ("Cancel");
+        if (! clean) { ctx.complete (ctx.verdict()); return; }
+        ctx.expect (host.openSession (sessionJson) && host.modalStackEmpty(), "portable reopen offered recovery");
+    }, [&ctx]
+    {
+        ctx.engine().serviceMultisampleLoads();
+        return ! ctx.engine().hasPendingMultisampleLoads();
+    }, "portable instrument restoration did not settle" });
+    steps->push_back ({ 0, [&host, &ctx, autosave]
+    {
+        ctx.session().track (kStripIndex).strip.faderDb.store (-7.0f);
+        host.autosaveTick();
+        ctx.expect (fs::exists (autosave), "a real edit after portable restore was not autosaved");
+        ctx.expect (host.requestQuit(), "a real edit after portable restore did not ask before quitting");
+        ctx.expect (host.clickModalButton ("Cancel"), "could not cancel the real edit's quit prompt");
+        std::error_code ec;
+        fs::remove (autosave, ec);
+    }, [&ctx] { return ! ctx.engine().hasPendingMultisampleLoads(); }, "portable reopen did not settle" });
+    pushFinish (*steps, host, ctx, state);
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
 std::optional<ScenarioResult> runRelink (GuiHost& host, ScenarioContext& ctx, bool fail)
 {
     if (! ctx.engine().getTransport().isStopped() || ! host.modalStackEmpty())
@@ -1607,9 +1840,11 @@ std::optional<ScenarioResult> runRelink (GuiHost& host, ScenarioContext& ctx, bo
     return std::nullopt;
 }
 #else
+std::optional<ScenarioResult> runRestoreFailures (GuiHost&, ScenarioContext&) { return ScenarioResult::skip ("SFZ support is not built"); }
+std::optional<ScenarioResult> runPortableRestore (GuiHost&, ScenarioContext&) { return ScenarioResult::skip ("SFZ support is not built"); }
 std::optional<ScenarioResult> runRelink (GuiHost&, ScenarioContext&, bool) { return ScenarioResult::skip ("SFZ support is not built"); }
 std::optional<ScenarioResult> runSearchKey (GuiHost&, ScenarioContext&, bool) { return ScenarioResult::skip ("SFZ support is not built"); }
-std::optional<ScenarioResult> runArtworkCategories (GuiHost&, ScenarioContext&) { return ScenarioResult::skip ("SFZ support is not built"); }
+std::optional<ScenarioResult> runArtworkCategories (GuiHost&, ScenarioContext&, bool = false) { return ScenarioResult::skip ("SFZ support is not built"); }
 std::optional<ScenarioResult> runWorkflow (GuiHost&, ScenarioContext&) { return ScenarioResult::skip ("SFZ support is not built"); }
 std::optional<ScenarioResult> runStorageMove (GuiHost&, ScenarioContext&) { return ScenarioResult::skip ("SFZ support is not built"); }
 std::optional<ScenarioResult> runPauseCancel (GuiHost&, ScenarioContext&) { return ScenarioResult::skip ("SFZ support is not built"); }
@@ -1621,7 +1856,11 @@ const ScenarioRegistrar workflow { Scenario {
 } };
 const ScenarioRegistrar artworkCategories { Scenario {
     "gui.sfz_artwork_categories", { "gui", "sfz", "repository", "multisample" }, Needs::Engine | Needs::Gui,
-    {}, {}, 60000, runArtworkCategories
+    {}, {}, 60000, [] (GuiHost& host, ScenarioContext& ctx) { return runArtworkCategories (host, ctx); }
+} };
+const ScenarioRegistrar artworkSubtypes { Scenario {
+    "gui.sfz_artwork_subtypes", { "gui", "sfz", "repository", "multisample" }, Needs::Engine | Needs::Gui,
+    {}, {}, 60000, [] (GuiHost& host, ScenarioContext& ctx) { return runArtworkCategories (host, ctx, true); }
 } };
 const ScenarioRegistrar storageMove { Scenario {
     "gui.sfz_library_storage_move", { "gui", "sfz", "repository", "multisample", "settings" }, Needs::Engine | Needs::Gui,
@@ -1630,6 +1869,14 @@ const ScenarioRegistrar storageMove { Scenario {
 const ScenarioRegistrar pauseCancel { Scenario {
     "gui.sfz_repository_pause_cancel", { "gui", "sfz", "repository", "multisample" }, Needs::Engine | Needs::Gui,
     {}, {}, 150000, runPauseCancel
+} };
+const ScenarioRegistrar restoreFailures { Scenario {
+    "gui.sfz_restore_failures_are_reported", { "gui", "sfz", "session", "issue-901" }, Needs::Engine | Needs::Gui,
+    {}, {}, 30000, runRestoreFailures
+} };
+const ScenarioRegistrar portableRestore { Scenario {
+    "gui.sfz_portable_restore_stays_saved", { "gui", "sfz", "session", "issue-902" }, Needs::Engine | Needs::Gui,
+    {}, {}, 90000, runPortableRestore
 } };
 const ScenarioRegistrar relinkInstalled { Scenario {
     "gui.sfz_relink_installed_program", { "gui", "sfz", "repository", "multisample" }, Needs::Engine | Needs::Gui,

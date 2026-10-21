@@ -270,6 +270,19 @@ bool BounceEngine::start (const juce::File& outFile, double sr, int bs, double t
 {
     if (rendering.load (std::memory_order_acquire)) return false;
 
+    const auto setStartError = [this] (const char* message)
+    {
+        const juce::ScopedLock lock (lastErrorLock);
+        lastError = message;
+    };
+   #if DUSKSTUDIO_HAS_MULTISAMPLE
+    if (engine.hasPendingMultisampleLoads())
+    {
+        setStartError ("Wait for soundfont loading to finish, then render again.");
+        return false;
+    }
+   #endif
+
     // FreezeTrack is reachable only through startFreeze(), which initialises
     // freezeTrackIndex / freezeLenSamples. Entering the generic path would run a
     // default-initialised (-1 / 0) freeze render.
@@ -356,11 +369,6 @@ bool BounceEngine::start (const juce::File& outFile, double sr, int bs, double t
     cancelRequested.store (false, std::memory_order_relaxed);
     progress.store (0.0f, std::memory_order_relaxed);
     renderedSamples.store (0, std::memory_order_relaxed);
-    const auto setStartError = [this] (const char* message)
-    {
-        const juce::ScopedLock lock (lastErrorLock);
-        lastError = message;
-    };
     setStartError ("");
     rendering.store (true, std::memory_order_relaxed);
 
@@ -1121,6 +1129,18 @@ bool BounceEngine::startFreeze (int trackIndex, const juce::File& outFile,
     if (rendering.load (std::memory_order_acquire))
         return false;
 
+    {
+        const juce::ScopedLock lock (lastErrorLock);
+       #if DUSKSTUDIO_HAS_MULTISAMPLE
+        if (engine.hasPendingMultisampleLoads())
+        {
+            lastError = "Wait for soundfont loading to finish, then render again.";
+            return false;
+        }
+       #endif
+        lastError.clear();
+    }
+
     outputFile       = outFile;
     renderSampleRate = (sampleRate > 0.0) ? sampleRate : engine.getCurrentSampleRate();
     if (renderSampleRate <= 0.0) renderSampleRate = 48000.0;
@@ -1133,7 +1153,6 @@ bool BounceEngine::startFreeze (int trackIndex, const juce::File& outFile,
     cancelRequested.store (false, std::memory_order_relaxed);
     progress.store (0.0f, std::memory_order_relaxed);
     renderedSamples.store (0, std::memory_order_relaxed);
-    { const juce::ScopedLock lock (lastErrorLock); lastError.clear(); }
     rendering.store (true, std::memory_order_relaxed);
 
     holdAssetRenderPause();

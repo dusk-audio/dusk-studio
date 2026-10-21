@@ -457,8 +457,8 @@ std::optional<ScenarioResult> runMasteringTargets (GuiHost& host, ScenarioContex
             char integratedText[32], peakText[32];
             std::snprintf (integratedText, sizeof (integratedText), "I %6.1f LUFS", lufs);
             std::snprintf (peakText, sizeof (peakText), "TP %5.1f dBTP", truePeak);
-            const std::string shownIntegrated = band == 3 ? "I     -" : integratedText;
-            const std::string shownPeak = band == 3 ? "TP   -" : peakText;
+            const std::string shownIntegrated = band == 3 ? "I   - LUFS" : integratedText;
+            const std::string shownPeak = band == 3 ? "TP - dBTP" : peakText;
             const bool neutral = index == 0 || band == 3;
             const std::array<std::uint32_t, 3> colours { 0xff1a3a1a, 0xff3a3a1a, 0xff3a1a1a };
             const std::uint32_t integrated = neutral ? 0xff1a2228 : colours[(std::size_t) band];
@@ -685,9 +685,19 @@ std::optional<ScenarioResult> runMasteringPhasePanel (GuiHost& host, ScenarioCon
                 ctx.expect (report != nullptr && ! report->broadband.minimumValid && ! report->broadband.flagged,
                             "Reset left held phase evidence");
             } });
-            click ("bands", 1.0f);
-            click ("q", 1.0f);
-            click ("averaging", 1.0f);
+            const auto enterValue = [&] (const char* control, std::string value)
+            {
+                click (control, 0.5f, 2);
+                steps->push_back ({ 100, [&host, &ctx, value]
+                { ctx.expect (host.typeInMasteringPhase (value), "Phase value entry did not accept text"); },
+                                   [&host] { return host.masteringPhaseCapturesKeyboard(); },
+                                   "Phase value entry never captured the keyboard" });
+                steps->push_back ({ 100, [&host, &ctx]
+                { ctx.expect (host.pressPeerKey ("return"), "Phase value entry did not keep Return"); } });
+            };
+            enterValue ("bands", "64");
+            enterValue ("q", "8");
+            enterValue ("averaging", "5000");
             steps->push_back ({ 200, [&host, &ctx]
             {
                 const auto& settings = ctx.session().mastering().phase;
@@ -757,10 +767,11 @@ std::optional<ScenarioResult> runMasteringCompactCover (GuiHost& host, ScenarioC
         return ScenarioResult::fail ("could not request the compact workspace");
     const int wide = std::max (1440, size[0]), height = std::max (900, size[1]);
     auto steps = std::make_shared<std::vector<Step>>();
-    steps->push_back ({ 100, [&host, &ctx]
-    { ctx.expect (host.masteringPhasePointer ("mode", 0.5f, true), "Phase mode press is unavailable"); },
-                       [&host] { return host.masteringModulePickerShown() && host.masteringPanelsOpen() == 1; },
-                       "compact Phase panel never opened" });
+    steps->push_back ({ 100, [] {}, [&host]
+    {
+        return host.masteringModuleIndex() == 3 && host.masteringModulePickerShown()
+            && host.masteringPanelsOpen() == 1 && host.masteringPhasePointer ("mode", 0.5f, true);
+    }, "compact Phase mode control never became ready" });
     steps->push_back ({ 100, [&host, &ctx]
     { ctx.expect (host.masteringPhasePointer ("mode", 0.5f, false), "Phase mode release is unavailable"); } });
     steps->push_back ({ 100, [&host, &ctx]
@@ -795,7 +806,10 @@ std::optional<ScenarioResult> runMasteringCompactCover (GuiHost& host, ScenarioC
         ctx.expect (! host.modalStackEmpty(), "wide resize dismissed the file browser");
         ctx.expect (host.masteringPanelsOpen() == 0, "resizing with zero hide tokens opened native children above the browser");
         ctx.expect (host.pressPeerKey ("escape"), "the file browser did not accept Escape");
-    } });
+    }, [&host]
+    {
+        return ! host.modalStackEmpty() && ! host.masteringModulePickerShown() && host.masteringPanelsOpen() == 0;
+    }, "wide layout did not settle beneath the file browser" });
     steps->push_back ({ 200, [&host, &ctx]
     { ctx.expect (host.clickMasteringButton ("Load mix..."), "second Load mix was unavailable"); },
                        [&host] { return host.modalStackEmpty() && host.masteringPanelsOpen() == 3; },
@@ -809,13 +823,19 @@ std::optional<ScenarioResult> runMasteringCompactCover (GuiHost& host, ScenarioC
         ctx.expect (host.masteringModulePickerShown() && host.masteringPanelsOpen() == 0,
                     "compact resize reopened a covered child");
         ctx.expect (host.pressPeerKey ("escape"), "the second file browser did not accept Escape");
-    } });
+    }, [&host]
+    {
+        return ! host.modalStackEmpty() && host.masteringModulePickerShown() && host.masteringPanelsOpen() == 0;
+    }, "compact layout did not settle beneath the file browser" });
     steps->push_back ({ 400, [&host, &ctx]
     {
         ctx.expect (host.masteringModuleIndex() == 1 && host.masteringPanelsOpen() == 0,
                     "closing the cover re-showed unselected compact modules");
         ctx.expect (host.clickMasteringModulePicker(), "module picker did not return");
-    }, [&host] { return host.modalStackEmpty(); }, "the second cover never closed" });
+    }, [&host]
+    {
+        return host.modalStackEmpty() && host.masteringModulePickerShown() && host.masteringPanelsOpen() == 0;
+    }, "the second cover never closed in the compact layout" });
     steps->push_back ({ 100, [&host, &ctx]
     {
         ctx.expect (host.pressPeerKey ("end", 0), "compact Phase choice was unavailable");
@@ -834,10 +854,9 @@ std::optional<ScenarioResult> runMasteringCompactCover (GuiHost& host, ScenarioC
                        [&host] { return host.masteringPanelsOpen() == 3; }, "wide native children did not return" });
     steps->push_back ({ 300, [&host, &ctx, height]
     {
-        ctx.expect (! host.modalStackEmpty(), "the compressor preset popup never opened");
         ctx.expect (host.masteringPanelsOpen() == 3, "opening the preset popup closed an uncovered panel");
         ctx.expect (host.resizeMainWindow (1040, height), "could not narrow beneath the preset popup");
-    } });
+    }, [&host] { return ! host.modalStackEmpty(); }, "the compressor preset popup never opened" });
     steps->push_back ({ 400, [&host, &ctx]
     {
         ctx.expect (! host.modalStackEmpty(), "narrowing dismissed the preset popup");

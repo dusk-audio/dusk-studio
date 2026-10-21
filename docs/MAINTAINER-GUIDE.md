@@ -516,6 +516,19 @@ removal of `DUSK_PLUGINS_PATH`. It must configure the selected source with the
 node's toolchain flags; the runner also exports its absolute path as
 `REGRESS_SOURCE`. Donor checks still require the fetched `DONOR_REV` checkout.
 
+For foreground source validation on macOS, run
+`scripts/regress/mac/allow-prompts.js` through `/usr/bin/osascript -l JavaScript`
+in the logged-in user's SSH session. Start it alongside the app, passing the
+validation runner's PID file, the absolute path to its
+`DuskStudio.app/Contents/MacOS/DuskStudio` binary, and a lifetime in seconds
+(default 600, maximum 3600). The helper verifies the PID, executable and bundle
+identity before selecting **Allow** in Dusk Studio microphone or removable-volume
+dialogs. Each action is logged as JSON, and the helper exits when that app exits.
+Use this only with the maintainer's permission to grant those requests.
+`--check-access` checks the required Accessibility and System Events access
+without clicking. Run `node tests/mac_permission_prompts.js` when changing its
+dialog matching or process ownership checks.
+
 `all` routes each option to the platform that owns it, so one command line can
 carry Linux, macOS and Windows options at once. An option no platform claims is
 a usage error rather than a silently ignored word. `--release-run` goes to all
@@ -598,6 +611,21 @@ full mixer without an audio device. `DUSKSTUDIO_PERF_READER_MODE` selects
 Its raw read-miss count is measured before loop-start cache coverage. The
 standalone workload below separately checks uncovered misses and source phase.
 Use the private-display isolation described above when running the app on Linux.
+
+To measure the full mixer on an audio interface, add
+`DUSKSTUDIO_PERF_USE_DEVICE=1`, `DUSKSTUDIO_PERF_DEVICE_BACKEND` and
+`DUSKSTUDIO_PERF_DEVICE_NAME`, with private `DUSKSTUDIO_CONFIG_DIR` and
+`DUSKSTUDIO_MUSIC_DIR` directories. `DUSKSTUDIO_PERF_DEVICE_RATE`,
+`DUSKSTUDIO_PERF_DEVICE_BUFFER` and `DUSKSTUDIO_PERF_DEVICE_DURATION_MS`
+default to 48000, 256 and 10000. Use a session and source audio made at the
+requested rate. The device must match the requested backend, name, rate and
+buffer size. The run uses output channels only and reports engine and backend
+XRUN deltas, reader misses and fill errors, callback progress and output peak.
+`locate` performs three seeks while device callbacks continue, within the
+measured wall-clock interval. Run these measurements with the host idle and
+retain unavailable-device or unsupported-rate results. Output peak and reader
+misses supplement the standalone source-phase checks; they do not prove that
+every output frame is correct.
 
 For an isolated reader comparison, build the standalone workload:
 

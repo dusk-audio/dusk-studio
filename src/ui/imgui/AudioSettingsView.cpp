@@ -1,9 +1,11 @@
 #include "AudioSettingsView.h"
 #include "AudioDeviceSelector.h"
 #include "PanelControls.h"
+#include "DuskTheme.h"
 #include "../AppConfig.h"
 #include "../../dsp/OutputPairRouting.h"
 #include "../../engine/AudioEngine.h"
+#include "../../engine/PluginSearchPaths.h"
 #include "../../engine/sfz/SfzLibraryService.h"
 #include "../../engine/device/DeviceManager.h"
 #include "../../engine/device/IODevice.h"
@@ -27,24 +29,24 @@ namespace
 {
 namespace dw = DuskWidgets;
 
-constexpr float kPanelW = 820.0f;
+constexpr float kPanelW = 1040.0f;
 constexpr float kInsetX = 12.0f;
 constexpr float kInsetY = 8.0f;
 constexpr float kLabelW = 220.0f;
 constexpr float kHeaderH = 24.0f;
 constexpr float kHeaderGapBottom = 4.0f;
-constexpr float kRowH = 30.0f;
-constexpr float kRowGap = 4.0f;
+constexpr float kRowH = 36.0f;
+constexpr float kRowGap = 8.0f;
 constexpr float kTallRowH = 32.0f;
 constexpr float kComboW = 320.0f;
 constexpr float kSliderW = 260.0f;
 constexpr float kControlInset = 4.0f;
 
-constexpr std::array<const char*, 7> kTabLabels {
-    "Audio", "Control Surface", "MIDI Bindings", "MIDI Sync", "General", "Advanced", "SFZ Library"
+constexpr std::array<const char*, 8> kTabLabels {
+    "Audio", "Control Surface", "MIDI Bindings", "MIDI Sync", "General", "Advanced", "SFZ Library", "Plug-ins"
 };
-constexpr std::array<const char*, 7> kTabControls {
-    "tab-audio", "tab-control-surface", "tab-midi-bindings", "tab-midi-sync", "tab-general", "tab-advanced", "tab-sfz-library"
+constexpr std::array<const char*, 8> kTabControls {
+    "tab-audio", "tab-control-surface", "tab-midi-bindings", "tab-midi-sync", "tab-general", "tab-advanced", "tab-sfz-library", "tab-plugins"
 };
 
 constexpr unsigned int kHintText = 0x909094ff;
@@ -101,6 +103,7 @@ public:
                            AudioSettingsHost hostCallbacks)
         : deviceManager (dm), engine (e), session (s), host (std::move (hostCallbacks))
     {
+        pluginFolders = pluginpaths::load();
         selector = std::make_unique<AudioDeviceSelector> (
             dm,
             [this] (std::string title, std::string message)
@@ -188,6 +191,9 @@ public:
         else if (control == "autosave") point = scenarioAutosave;
         else if (control == "tape-default") point = scenarioTape;
         else if (control == "follow-default") point = scenarioFollow;
+        else if (control == "plugin-folder-add") point = scenarioPluginAdd;
+        else if (control == "plugin-scan") point = scenarioPluginScan;
+        else if (control == "plugin-folder-remove") point = scenarioPluginRemove;
         else if (control == "ui-scale")
             point = { scenarioScaleFirst.x + (scenarioScaleLast.x - scenarioScaleFirst.x)
                         * std::clamp (position, 0.0f, 1.0f),
@@ -203,9 +209,10 @@ public:
     ImVec2 scenarioScaleFirst {}, scenarioScaleLast {};
     ImVec2 scenarioOffset {}, scenarioOffsetMinus {}, scenarioOffsetPlus {};
     ImVec2 scenarioSfzFolder {}, scenarioSfzMove {};
+    ImVec2 scenarioPluginAdd {}, scenarioPluginScan {}, scenarioPluginRemove {};
     std::array<ImVec2, kTabLabels.size()> scenarioTabs {};
 
-    ImVec2 preferredSize() const override { return ImVec2 (kPanelW, 420.0f); }
+    ImVec2 preferredSize() const override { return ImVec2 (kPanelW, 680.0f); }
 
     // Input processing closes popups and cancels text edits before draw observes them.
     bool capturesKeyboard() const override { return keyboardActive; }
@@ -219,53 +226,76 @@ public:
         scenarioMidiBindings = scenarioRescan = scenarioAutosave = scenarioTape = scenarioFollow = {};
         scenarioScaleFirst = scenarioScaleLast = scenarioOffset = scenarioOffsetMinus = scenarioOffsetPlus = {};
         scenarioSfzFolder = scenarioSfzMove = {};
+        scenarioPluginAdd = scenarioPluginScan = scenarioPluginRemove = {};
 
         ctx.dl->AddRectFilled (origin, ImVec2 (origin.x + size.x, origin.y + size.y),
                                ctx.theme->panelFill);
 
-        const ScopedFormStyle style (ctx);
+        auto fonts = *ctx.fonts;
+        fonts.band = fonts.label = fonts.textEntry != nullptr ? fonts.textEntry : ImGui::GetFont();
+        auto formContext = ctx;
+        formContext.fonts = &fonts;
+        const ScopedFormStyle style (formContext);
+        ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, { ctx.s (18), ctx.s (16) });
+        ImGui::PushStyleVar (ImGuiStyleVar_ItemSpacing, { ctx.s (8), ctx.s (4) });
+        ImGui::PushStyleVar (ImGuiStyleVar_FramePadding, { ctx.s (12), ctx.s (9) });
 
         ImGui::SetCursorScreenPos (origin);
-        if (! ImGui::BeginChild ("##audio-settings-body", size, ImGuiChildFlags_None,
+        if (! ImGui::BeginChild ("##audio-settings-body", size, ImGuiChildFlags_AlwaysUseWindowPadding,
                                  ImGuiWindowFlags_NoBackground))
         {
             ImGui::EndChild();
+            ImGui::PopStyleVar (3);
             return;
         }
 
         ImDrawList* const outer = ctx.dl;
         ctx.dl = ImGui::GetWindowDrawList();
 
-        if (ImGui::BeginTabBar ("##settings-tabs", ImGuiTabBarFlags_FittingPolicyResizeDown))
+        const auto title = ImGui::GetCursorScreenPos();
+        ctx.dl->AddText (fonts.title, ctx.s (22), title, ctx.theme->textBright, "Settings");
+        ImGui::Dummy ({ 1, ctx.s (30) });
+        if (pendingTab >= 0) selectedTab = pendingTab;
+        pendingTab = -1;
+        const float available = ImGui::GetContentRegionAvail().x;
+        float used = 0;
+        for (std::size_t i = 0; i < kTabLabels.size(); ++i)
         {
-            for (std::size_t i = 0; i < kTabLabels.size(); ++i)
+            const float width = ImGui::CalcTextSize (kTabLabels[i]).x + ctx.s (28);
+            if (used > 0 && used + ctx.s (8) + width <= available) ImGui::SameLine();
+            else used = 0;
+            const bool active = selectedTab == static_cast<int> (i);
+            if (active)
             {
-                const bool open = ImGui::BeginTabItem (kTabLabels[i], nullptr,
-                    pendingTab == static_cast<int> (i) ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None);
-                const auto first = ImGui::GetItemRectMin(), last = ImGui::GetItemRectMax();
-                if (ImGui::IsItemVisible()) scenarioTabs[i] = { (first.x + last.x) * 0.5f, (first.y + last.y) * 0.5f };
-                if (! open) continue;
-                if (selectedTab != static_cast<int> (i))
-                {
-                    selectedTab = static_cast<int> (i);
-                    if (host.tabChanged) host.tabChanged (selectedTab);
-                }
-                ImGui::PushID (static_cast<int> (i));
-                if (ImGui::BeginChild ("##settings-page", { 0, 0 }, ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground))
-                {
-                    ctx.dl = ImGui::GetWindowDrawList();
-                    drawSections (ctx, ImGui::GetCursorScreenPos(), ImGui::GetContentRegionAvail().x);
-                }
-                ImGui::EndChild();
-                ImGui::PopID();
-                ImGui::EndTabItem();
+                const auto accent = consolePalette().focusRing;
+                ImGui::PushStyleColor (ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4 (accent));
+                ImGui::PushStyleColor (ImGuiCol_ButtonHovered, ImGui::ColorConvertU32ToFloat4 (dw::brighter (accent, 0.15f)));
+                ImGui::PushStyleColor (ImGuiCol_ButtonActive, ImGui::ColorConvertU32ToFloat4 (dw::darker (accent, 0.1f)));
+                ImGui::PushStyleColor (ImGuiCol_Text, ImVec4 (0.07f, 0.07f, 0.08f, 1));
             }
-            pendingTab = -1;
-            ImGui::EndTabBar();
+            if (ImGui::Button (kTabLabels[i], { width, ctx.s (38) }))
+            {
+                selectedTab = static_cast<int> (i);
+                if (host.tabChanged) host.tabChanged (selectedTab);
+            }
+            const auto first = ImGui::GetItemRectMin(), last = ImGui::GetItemRectMax();
+            if (ImGui::IsItemVisible()) scenarioTabs[i] = { (first.x + last.x) * 0.5f, (first.y + last.y) * 0.5f };
+            if (active) ImGui::PopStyleColor (4);
+            used += width + (used > 0 ? ctx.s (8) : 0);
         }
+        ImGui::Separator();
+        ImGui::PushID (selectedTab);
+        if (ImGui::BeginChild ("##settings-page", { 0, 0 }, ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground))
+        {
+            formContext.dl = ImGui::GetWindowDrawList();
+            drawSections (formContext, ImGui::GetCursorScreenPos(), ImGui::GetContentRegionAvail().x);
+        }
+        ImGui::EndChild();
+        ImGui::PopID();
 
         ctx.dl = outer;
         ImGui::EndChild();
+        ImGui::PopStyleVar (3);
 
         popupOpen = ImGui::IsPopupOpen (nullptr, ImGuiPopupFlags_AnyPopupId
                                                  | ImGuiPopupFlags_AnyPopupLevel);
@@ -664,15 +694,77 @@ private:
 
         if (selectedTab == 6)
         {
-            drawSfzLibrary (ctx, { left, y }, innerW);
+            drawSfzLibrary (ctx, { left, y });
+            return;
+        }
+        if (selectedTab == 7)
+        {
+            drawPluginFolders (ctx, { left, y });
             return;
         }
         ImGui::SetCursorScreenPos ({ content.x, y });
         ImGui::Dummy ({ bodyW, 1.0f });
     }
 
-    void drawSfzLibrary (dw::Context& ctx, ImVec2 at, float width)
+    void drawPluginFolders (dw::Context& ctx, ImVec2 at)
     {
+        ImGui::PushStyleVar (ImGuiStyleVar_ItemSpacing, { ctx.s (8), ctx.s (12) });
+        const auto remember = [] (ImVec2& point)
+        {
+            const auto first = ImGui::GetItemRectMin(), last = ImGui::GetItemRectMax();
+            if (ImGui::IsItemVisible()) point = { (first.x + last.x) * 0.5f, (first.y + last.y) * 0.5f };
+        };
+        ImGui::SetCursorScreenPos (at);
+        ImGui::PushTextWrapPos (0.0f);
+        ImGui::TextUnformatted ("Plug-in search folders");
+        ImGui::TextWrapped ("Standard plug-in locations are always scanned. Add folders here for CLAP, VST3 and LV2 plug-ins stored elsewhere; subfolders are included.");
+       #if defined(__APPLE__)
+        ImGui::TextWrapped ("Audio Units are discovered through macOS registration, independently of this list.");
+       #endif
+        ImGui::Spacing();
+        if (ImGui::Button ("Add folder...", { ctx.s (150), ctx.s (36) }))
+            deferred ([this] { if (host.choosePluginFolder) host.choosePluginFolder(); });
+        remember (scenarioPluginAdd);
+        ImGui::SameLine();
+        if (ImGui::Button ("Scan plugins", { ctx.s (150), ctx.s (36) }))
+            deferred ([this] { if (host.scanPlugins) host.scanPlugins(); });
+        remember (scenarioPluginScan);
+        ImGui::TextWrapped ("Changes apply to the next scan. Removing a folder does not delete or unload its plug-ins.");
+        ImGui::TextWrapped ("Restart Dusk Studio after removing an LV2 folder to clear its loaded discovery metadata. Reconnect unavailable locations before scanning.");
+        ImGui::Separator();
+        const auto& roots = pluginFolders;
+        if (roots.empty()) ImGui::TextDisabled ("No additional folders. Standard locations are enabled.");
+        for (std::size_t i = 0; i < roots.size(); ++i)
+        {
+            ImGui::PushID (static_cast<int> (i));
+            if (ImGui::BeginTable ("##plugin-folder", 2, ImGuiTableFlags_SizingStretchProp))
+            {
+                ImGui::TableSetupColumn ("Folder", ImGuiTableColumnFlags_WidthStretch);
+                ImGui::TableSetupColumn ("Action", ImGuiTableColumnFlags_WidthFixed, ctx.s (100));
+                ImGui::TableNextColumn();
+                ImGui::TextWrapped ("%s", roots[i].u8string().c_str());
+                ImGui::TableNextColumn();
+                if (ImGui::Button ("Remove", { ctx.s (96), ctx.s (34) }))
+                {
+                    auto remaining = roots;
+                    remaining.erase (remaining.begin() + static_cast<std::ptrdiff_t> (i));
+                    std::string message;
+                    if (! pluginpaths::save (remaining, message))
+                        deferred ([this, message] { if (host.alert) host.alert ("Plug-in folders", message); });
+                    else deferred ([this, remaining] { pluginFolders = remaining; });
+                }
+                if (i == 0) remember (scenarioPluginRemove);
+                ImGui::EndTable();
+            }
+            ImGui::PopID();
+        }
+        ImGui::PopTextWrapPos();
+        ImGui::PopStyleVar();
+    }
+
+    void drawSfzLibrary (dw::Context& ctx, ImVec2 at)
+    {
+        ImGui::PushStyleVar (ImGuiStyleVar_ItemSpacing, { ctx.s (8), ctx.s (8) });
         const auto now = std::chrono::steady_clock::now();
         if (now >= nextLibraryPoll)
         {
@@ -684,12 +776,14 @@ private:
         ImGui::TextUnformatted ("SFZ download location");
         ImGui::Spacing();
         const auto path = librarySnapshot.locations.active.root.u8string();
-        ImGui::PushTextWrapPos (at.x + width);
+        ImGui::PushTextWrapPos (0.0f);
         ImGui::TextWrapped ("%s", path.empty() ? "No library folder is configured." : path.c_str());
         ImGui::Spacing();
         ImGui::TextWrapped ("Choose a folder on this computer or an external drive for downloaded SFZ packs.");
         ImGui::BeginDisabled (librarySnapshot.busy || librarySnapshot.state == sfz::LibraryState::Paused);
+        ImGui::PushStyleVar (ImGuiStyleVar_FramePadding, { ctx.s (3), ctx.s (3) });
         ImGui::Checkbox ("Move existing installed packs", &moveLibraryPacks);
+        ImGui::PopStyleVar();
         const auto remember = [] (ImVec2& point)
         {
             const auto first = ImGui::GetItemRectMin(), last = ImGui::GetItemRectMax();
@@ -726,6 +820,7 @@ private:
         }
         ImGui::PopTextWrapPos();
         ImGui::PopFont();
+        ImGui::PopStyleVar();
     }
 
     void drawHint (const dw::Context& ctx, ImVec2 at, float width, const char* text)
@@ -1059,6 +1154,7 @@ private:
     AudioEngine& engine;
     Session& session;
     AudioSettingsHost host;
+    pluginpaths::Roots pluginFolders;
     std::unique_ptr<AudioDeviceSelector> selector;
 
     // Handed to every deferred action so one queued behind a panel that closes first

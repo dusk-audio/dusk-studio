@@ -22,7 +22,9 @@ public:
     static constexpr std::size_t kDefaultCapacity = 65536;
 
     explicit MidiMergePlayback (std::size_t capacity = kDefaultCapacity)
-        : records (std::max<std::size_t> (1, capacity)) {}
+        : records (std::max<std::size_t> (1, capacity)),
+          noteIndex (records.size()), controlIndex (records.size()),
+          controlChunks (records.size() / kControlChunkSize + 2) {}
 
     void configure (std::uint64_t gesture, std::int64_t captureLength, SampleToTick conversion)
     {
@@ -31,6 +33,8 @@ public:
         sampleToTick = std::move (conversion);
         lengthTicks = std::max<std::int64_t> (1, ticksAt (length));
         head = tail = 0;
+        noteIndex.head = noteIndex.tail = 0;
+        controlIndex.head = controlIndex.tail = 0;
         held = {};
         heldCount = 0;
         currentPass = 1;
@@ -103,6 +107,19 @@ public:
                 past = middle;
         }
         head = first;
+        for (auto* index : { &noteIndex, &controlIndex })
+        {
+            auto from = index->head, to = index->tail;
+            while (from < to)
+            {
+                const auto middle = from + (to - from) / 2;
+                if (index->positions[(std::size_t) (middle % index->positions.size())] < head)
+                    from = middle + 1;
+                else
+                    to = middle;
+            }
+            index->head = from;
+        }
     }
 
     // Missing raw capture or a full bridge must never leave speculative
@@ -112,6 +129,8 @@ public:
         if (! available) return;
         available = false;
         head = tail;
+        noteIndex.head = noteIndex.tail;
+        controlIndex.head = controlIndex.tail;
         heldCount = 0;
         overflowed = true;
     }
@@ -140,13 +159,15 @@ public:
     {
         if (! available) return true;
         const int through = consumedPass (consumed);
-        for (auto i = head; i < tail; ++i)
+        std::uint64_t first = 0, past = 0;
+        if (! eligibleRange (noteIndex, through, playbackPass, scans, first, past)) return false;
+        for (auto i = first; i < past; ++i)
         {
             if (! takeScan (scans)) return false;
-            const auto& record = records[(std::size_t) (i % records.size())];
-            if (record.pass > through && record.pass < playbackPass && (record.status & 0xf0) == 0x90
-                && ! visit (MidiNote { (record.status & 15) + 1, record.first, record.second,
-                                      record.start, record.end - record.start }))
+            const auto at = noteIndex.positions[(std::size_t) (i % noteIndex.positions.size())];
+            const auto& record = records[(std::size_t) (at % records.size())];
+            if (! visit (MidiNote { (record.status & 15) + 1, record.first, record.second,
+                                   record.start, record.end - record.start }))
                 return false;
         }
         if (currentPass > through && currentPass < playbackPass && currentPass <= observedPass)
@@ -165,23 +186,78 @@ public:
     template <typename Visit>
     bool forEachControl (MidiCaptureStamp consumed, int playbackPass, int& scans, Visit&& visit) const noexcept
     {
+        return forEachControl (consumed, playbackPass, scans, std::forward<Visit> (visit),
+                               [] (std::int64_t, std::int64_t) noexcept { return true; });
+    }
+
+    template <typename Visit, typename Overlaps>
+    bool forEachControl (MidiCaptureStamp consumed, int playbackPass, int& scans,
+                         Visit&& visit, Overlaps&& overlaps) const noexcept
+    {
         if (! available) return true;
         const int through = consumedPass (consumed);
-        for (auto i = head; i < tail; ++i)
+        std::uint64_t first = 0, past = 0;
+        if (! eligibleRange (controlIndex, through, playbackPass, scans, first, past)) return false;
+        for (auto i = first; i < past;)
         {
             if (! takeScan (scans)) return false;
-            const auto& record = records[(std::size_t) (i % records.size())];
-            if (record.pass <= through || record.pass >= playbackPass || (record.status & 0xf0) == 0x90) continue;
-            const std::uint8_t bytes[] { record.status, record.first, record.second };
-            const int kind = record.status & 0xf0;
-            MidiCc control;
-            if (MidiCc::fromMessage (bytes, kind == 0xc0 || kind == 0xd0 ? 2 : 3, record.start, control)
-                && ! visit (control)) return false;
+            const auto end = std::min (past, i + kControlChunkSize - i % kControlChunkSize);
+            const auto& chunk = controlChunks[(std::size_t) ((i / kControlChunkSize) % controlChunks.size())];
+            if (! overlaps (chunk.minTick, chunk.maxTick)) { i = end; continue; }
+            for (; i < end; ++i)
+            {
+                if (! takeScan (scans)) return false;
+                const auto at = controlIndex.positions[(std::size_t) (i % controlIndex.positions.size())];
+                const auto& record = records[(std::size_t) (at % records.size())];
+                const std::uint8_t bytes[] { record.status, record.first, record.second };
+                const int kind = record.status & 0xf0;
+                MidiCc control;
+                if (MidiCc::fromMessage (bytes, kind == 0xc0 || kind == 0xd0 ? 2 : 3, record.start, control)
+                    && ! visit (control)) return false;
+            }
         }
         return true;
     }
 
 private:
+    static constexpr std::uint64_t kControlChunkSize = 64;
+    struct ControlChunk
+    {
+        std::int64_t minTick = 0, maxTick = 0;
+    };
+    struct RecordIndex
+    {
+        explicit RecordIndex (std::size_t capacity) : positions (capacity) {}
+        std::vector<std::uint64_t> positions;
+        std::uint64_t head = 0, tail = 0;
+    };
+
+    bool eligibleRange (const RecordIndex& index, int through, int playbackPass, int& scans,
+                        std::uint64_t& first, std::uint64_t& past) const noexcept
+    {
+        first = index.head;
+        past = index.tail;
+        while (first < past)
+        {
+            if (! takeScan (scans)) return false;
+            const auto middle = first + (past - first) / 2;
+            const auto at = index.positions[(std::size_t) (middle % index.positions.size())];
+            if (records[(std::size_t) (at % records.size())].pass <= through) first = middle + 1;
+            else past = middle;
+        }
+        auto from = first;
+        past = index.tail;
+        while (from < past)
+        {
+            if (! takeScan (scans)) return false;
+            const auto middle = from + (past - from) / 2;
+            const auto at = index.positions[(std::size_t) (middle % index.positions.size())];
+            if (records[(std::size_t) (at % records.size())].pass < playbackPass) from = middle + 1;
+            else past = middle;
+        }
+        return true;
+    }
+
     struct Record
     {
         std::int64_t start = 0, end = 0;
@@ -233,6 +309,19 @@ private:
             return;
         }
         records[(std::size_t) (tail % records.size())] = record;
+        auto& index = (record.status & 0xf0) == 0x90 ? noteIndex : controlIndex;
+        index.positions[(std::size_t) (index.tail % index.positions.size())] = tail;
+        if ((record.status & 0xf0) != 0x90)
+        {
+            auto& chunk = controlChunks[(std::size_t) ((index.tail / kControlChunkSize) % controlChunks.size())];
+            if (index.tail % kControlChunkSize == 0) chunk = { record.start, record.start };
+            else
+            {
+                chunk.minTick = std::min (chunk.minTick, record.start);
+                chunk.maxTick = std::max (chunk.maxTick, record.start);
+            }
+        }
+        ++index.tail;
         ++tail;
     }
 
@@ -260,6 +349,8 @@ private:
     }
 
     std::vector<Record> records;
+    RecordIndex noteIndex, controlIndex;
+    std::vector<ControlChunk> controlChunks;
     std::array<Held, 16 * 128> held {};
     std::array<int, 16 * 128> heldKeys {};
     SampleToTick sampleToTick;

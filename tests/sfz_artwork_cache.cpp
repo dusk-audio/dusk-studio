@@ -78,9 +78,44 @@ TEST_CASE ("SFZ categories recognize instrument names before collection context"
     CHECK (instrumentCategory ("Acoustic Guitar") == C::AcousticGuitar);
     CHECK (instrumentCategory ("Pizzicato", "Piano") == C::Strings);
     CHECK (instrumentCategory ("Program 01", "Woodwinds/Flute.sfz") == C::Woodwinds);
+    CHECK (instrumentCategory ("Program 01", "Woodwinds/Flute.sfz VCSL") == C::Woodwinds);
+    CHECK (instrumentCategory ("Default", "Woodwinds/Flute.sfz", "VCSL piano and woodwinds") == C::Woodwinds);
     CHECK (instrumentCategory ("VCSL", "piano and woodwinds") == C::Collection);
+    CHECK (instrumentCategory ("VCSL Cello") == C::Strings);
+    CHECK (instrumentCategory ("VSCO Trumpet") == C::Brass);
     CHECK (instrumentCategory ("Koto") == C::World);
     CHECK (instrumentCategory ("Unknown") == C::Other);
+    for (const auto* name : { "Upright Bass", "Electric Bass Guitar", "Acoustic Bass Guitar", "Double Bass", "Contrabass" })
+    {
+        CAPTURE (name);
+        CHECK (instrumentCategory (name, "Piano collection") == C::Bass);
+    }
+    for (const auto* name : { "Synth Bass", "DX7", "Minimoog", "Analog Strings", "Synth Choir" })
+    {
+        CAPTURE (name);
+        CHECK (instrumentCategory (name) == C::Synth);
+    }
+    for (const auto* name : { "Steel Drum", "Steelpan", "Handpan", "Hang Drum", "Djembe", "Cajon", "Timpani" })
+    {
+        CAPTURE (name);
+        CHECK (instrumentCategory (name) == C::Percussion);
+    }
+    for (const auto* name : { "Stratocaster", "Telecaster", "Les Paul", "ElectricGuitar" })
+    {
+        CAPTURE (name);
+        CHECK (instrumentCategory (name) == C::ElectricGuitar);
+    }
+    CHECK (instrumentCategory ("Bass Clarinet", "Bass collection") == C::Woodwinds);
+    CHECK (instrumentCategory ("Bass Trombone", "Bass collection") == C::Brass);
+    CHECK (instrumentCategory ("Harpsichord") == C::Piano);
+    CHECK (instrumentCategory ("Hurdy Gurdy") == C::World);
+    CHECK (instrumentCategory ("General MIDI Piano Strings and Drums") == C::Collection);
+    CHECK (instrumentCategory ("English Horn") == C::Woodwinds);
+    CHECK (instrumentCategory ("Cor Anglais") == C::Woodwinds);
+    CHECK (instrumentCategory ("Violoncello") == C::Strings);
+    CHECK (instrumentCategory ("Flugelhorn") == C::Brass);
+    CHECK (instrumentCategory ("Uke") == C::AcousticGuitar);
+    CHECK (instrumentCategory ("Mouth Organ") == C::World);
 }
 
 TEST_CASE ("SFZ artwork startup removes only abandoned owned image temporaries", "[sfz][artwork][ipc]")

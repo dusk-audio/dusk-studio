@@ -30,11 +30,12 @@ struct AudioSettingsHost
     // the pointer.
     std::function<void (float scale)> previewUiScale;
 
-    // Both of these are JUCE modals, which a framework child would bury: the shell
-    // takes the panel down, runs the modal, and brings the panel back.
+    // The shell closes this panel before opening another modal so the modal keeps focus.
     std::function<void()> openMidiBindings;
     std::function<void()> openSelfTest;
     std::function<void (bool moveExisting)> chooseSfzFolder;
+    std::function<void()> choosePluginFolder;
+    std::function<void()> scanPlugins;
 };
 
 std::unique_ptr<DuskPanelView> makeAudioSettingsView (device::DeviceManager& deviceManager,

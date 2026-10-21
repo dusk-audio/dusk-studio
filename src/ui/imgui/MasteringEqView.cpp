@@ -19,8 +19,8 @@ namespace dw = DuskWidgets;
 
 // MasteringEqEditor's geometry and palette, in design pixels.
 constexpr float kOuterInset = 8.0f;
-constexpr float kHeaderH = 20.0f;
-constexpr float kHeaderGap = 4.0f;
+constexpr float kHeaderH = 22.0f;
+constexpr float kHeaderGap = 8.0f;
 constexpr float kCurveGap = 4.0f;
 constexpr float kBandLabelH = 14.0f;
 constexpr float kMinPanelW = 300.0f;

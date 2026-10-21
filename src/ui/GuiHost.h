@@ -347,6 +347,7 @@ public:
     virtual bool clickAudioSettingsControl (const std::string& control) = 0;
     virtual bool inputAudioSettings (const std::string& input) = 0;
     virtual bool pointerAudioSettings (const std::string& control, float position, bool pressed) = 0;
+    virtual bool captureAudioSettings (const std::filesystem::path&) = 0;
     // The launch dialog over the running window, listing `sessions` as its
     // recents. With `runChoice` false the choice it is dismissed with is only
     // recorded, for startupChoice(): pressing Quit would otherwise end the run.

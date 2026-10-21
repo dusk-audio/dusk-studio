@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 #include <vector>
 
 using namespace duskstudio;
@@ -150,4 +151,132 @@ TEST_CASE ("Pending MIDI Merge storage and visits have bounded overload recovery
     pending.recoverGap();
     CHECK (pending.takeOverflow());
     CHECK (notesFor (pending, {}, 2).empty());
+}
+
+TEST_CASE ("Pending MIDI Merge kind indexes preserve payloads across consumption and wrapping",
+           "[midi][recording][merge][issue-905]")
+{
+    SECTION ("mixed records repeatedly wrap and early visitor refusal does not consume them")
+    {
+        MidiMergePlayback pending (8);
+        pending.configure (42, 100, {});
+        std::vector<MidiNote> expectedNotes;
+        std::vector<MidiCc> expectedControls;
+        const std::uint8_t messages[][3] { { 0xb0, 64, 127 }, { 0xe1, 1, 96 }, { 0xd2, 91, 0 },
+                                          { 0xa3, 60, 80 }, { 0xc4, 12, 0 } };
+        for (int pass = 1; pass <= 100; ++pass)
+        {
+            pending.discardConsumed ({ 42, pass - 2 });
+            if (pass > 2)
+            {
+                expectedNotes.erase (expectedNotes.begin());
+                expectedControls.erase (expectedControls.begin(), expectedControls.begin() + 2);
+            }
+            pending.pushEvent (pass, 0, 0x90, (std::uint8_t) (pass & 127), 100);
+            for (int event = 0; event < 2; ++event)
+            {
+                const auto& bytes = messages[(pass + event) % 5];
+                const int at = (pass * 37 + event * 23) % 100;
+                pending.pushEvent (pass, at, bytes[0], bytes[1], bytes[2]);
+                MidiCc control;
+                REQUIRE (MidiCc::fromMessage (bytes, (bytes[0] & 0xf0) == 0xc0 || (bytes[0] & 0xf0) == 0xd0 ? 2 : 3,
+                                              at, control));
+                expectedControls.push_back (control);
+            }
+            pending.pushEvent (pass, 30, 0x80, (std::uint8_t) (pass & 127), 0);
+            pending.publishProgress (pass, 100, true);
+            expectedNotes.push_back ({ 1, pass & 127, 100, 0, 30 });
+            CHECK_FALSE (pending.takeOverflow());
+            CHECK (notesFor (pending, {}, pass + 1) == expectedNotes);
+            int scans = 1000;
+            CHECK_FALSE (pending.forEachControl ({}, pass + 1, scans, [] (const auto&) { return false; }));
+            std::vector<MidiCc> actual;
+            REQUIRE (pending.forEachControl ({}, pass + 1, scans, [&] (const auto& control)
+            { actual.push_back (control); return true; }));
+            CHECK (actual == expectedControls);
+            const auto wanted = expectedControls.front().atTick;
+            std::vector<MidiCc> filtered, expectedFiltered;
+            for (const auto& control : expectedControls)
+                if (control.atTick == wanted) expectedFiltered.push_back (control);
+            REQUIRE (pending.forEachControl ({}, pass + 1, scans, [&] (const MidiCc& control)
+            {
+                if (control.atTick == wanted) filtered.push_back (control);
+                return true;
+            }, [wanted] (std::int64_t first, std::int64_t last) { return first <= wanted && last >= wanted; }));
+            CHECK (filtered == expectedFiltered);
+        }
+    }
+    SECTION ("filtered chunks agree with complete payloads across partial consumption and metadata reuse")
+    {
+        MidiMergePlayback pending (200);
+        pending.configure (42, 1000, {});
+        for (int pass = 1; pass <= 16; ++pass)
+        {
+            pending.discardConsumed ({ 42, pass - 2 });
+            const int base = pass % 2 == 0 ? 700 : 100;
+            for (int event = 0; event < 96; ++event)
+                pending.pushEvent (pass, base + (event * 17) % 96,
+                                   (std::uint8_t) (0xd0 | (pass & 15)), (std::uint8_t) ((event * 3) & 127), 0);
+            pending.publishProgress (pass, 1000, true);
+            CHECK_FALSE (pending.takeOverflow());
+            int scans = 10000;
+            std::vector<MidiCc> complete;
+            REQUIRE (pending.forEachControl ({}, pass + 1, scans, [&] (const MidiCc& control)
+            { complete.push_back (control); return true; }));
+            REQUIRE (complete.size() == (pass == 1 ? 96 : 192));
+            for (const auto window : { std::pair<int, int> { 0, 50 }, { 100, 200 }, { 700, 800 }, { 150, 751 } })
+            {
+                std::vector<MidiCc> expected, actual;
+                for (const auto& control : complete)
+                    if (control.atTick >= window.first && control.atTick < window.second) expected.push_back (control);
+                REQUIRE (pending.forEachControl ({}, pass + 1, scans, [&] (const MidiCc& control)
+                {
+                    if (control.atTick >= window.first && control.atTick < window.second) actual.push_back (control);
+                    return true;
+                }, [window] (std::int64_t first, std::int64_t last)
+                { return last >= window.first && first < window.second; }));
+                CHECK (actual == expected);
+            }
+        }
+    }
+    SECTION ("consumed and future controller history does not consume the note or control scan budget")
+    {
+        MidiMergePlayback pending (20000);
+        pending.configure (42, 20000, {});
+        for (int at = 0; at < 10000; ++at) pending.pushEvent (1, at, 0xd0, (std::uint8_t) (at & 127), 0);
+        pending.pushEvent (2, 1, 0x90, 60, 100);
+        pending.pushEvent (2, 2, 0x80, 60, 0);
+        for (int at = 0; at < 9998; ++at) pending.pushEvent (3, at, 0xe0, 0, 64);
+        CHECK (notesFor (pending, { 42, 1 }, 3, 128) == std::vector<MidiNote> { { 1, 60, 100, 1, 1 } });
+        int scans = 128, controls = 0;
+        REQUIRE (pending.forEachControl ({ 42, 1 }, 3, scans, [&] (const auto&) { ++controls; return true; }));
+        CHECK (controls == 0);
+    }
+    SECTION ("combined capacity, gap recovery and reconfiguration reset both views")
+    {
+        MidiMergePlayback pending (4);
+        pending.configure (42, 100, {});
+        for (int key = 60; key < 62; ++key)
+        {
+            pending.pushEvent (1, 0, 0x90, (std::uint8_t) key, 100);
+            pending.pushEvent (1, 10, 0xb0, 1, (std::uint8_t) key);
+            pending.pushEvent (1, 20, 0x80, (std::uint8_t) key, 0);
+        }
+        REQUIRE (notesFor (pending, {}, 2).size() == 2);
+        CHECK_FALSE (pending.takeOverflow());
+        pending.pushEvent (1, 30, 0xb0, 1, 0);
+        CHECK (pending.takeOverflow());
+        CHECK_FALSE (pending.takeOverflow());
+        CHECK (notesFor (pending, {}, 2).empty());
+        int scans = 100, controls = 0;
+        REQUIRE (pending.forEachControl ({}, 2, scans, [&] (const auto&) { ++controls; return true; }));
+        CHECK (controls == 0);
+        pending.configure (43, 100, {});
+        pending.pushEvent (1, 10, 0xb0, 1, 42);
+        REQUIRE (pending.forEachControl ({}, 2, scans, [&] (const auto&) { ++controls; return true; }));
+        CHECK (controls == 1);
+        pending.recoverGap();
+        REQUIRE (pending.forEachControl ({}, 2, scans, [&] (const auto&) { ++controls; return true; }));
+        CHECK (controls == 1);
+    }
 }

@@ -462,7 +462,7 @@ TEST_CASE ("SFZ Instruments resolves pinned archives with actual LICENSE bytes",
     REQUIRE (providerPackFromJson (providerPackToJson (pack)));
 }
 
-TEST_CASE ("SFZ Instruments does not accept SPDX hints without actual matching licenses", "[sfz][provider]")
+TEST_CASE ("SFZ Instruments does not accept SPDX hints without actual matching licenses", "[sfz][provider][issue-903]")
 {
     FakeTransport transport;
     bool combinedLimit = false;
@@ -477,6 +477,12 @@ TEST_CASE ("SFZ Instruments does not accept SPDX hints without actual matching l
     { secondaryLicense ("https://creativecommons.org/licenses/by-nc/4.0/"); }
     SECTION ("A sidecar declares NoDerivatives")
     { secondaryLicense ("https://creativecommons.org/licenses/by-nd/4.0/", "Samples/a.wav.license"); }
+    SECTION ("A sidecar declares spaced NoDerivatives")
+    { secondaryLicense (kLicenseText + "except the choir, which is CC BY-ND 4.0", "Samples/a.wav.license"); }
+    SECTION ("A sidecar declares spaced NonCommercial ShareAlike")
+    { secondaryLicense (kLicenseText + "except the organ, CC BY-NC-SA 4.0"); }
+    SECTION ("A sidecar prohibits commercial use in prose")
+    { secondaryLicense (kLicenseText + "Commercial use is not permitted."); }
     SECTION ("A differently named license document conflicts")
     { secondaryLicense ("https://creativecommons.org/licenses/by-sa/4.0/", "Samples/LICENCE-MAPPINGS"); }
     SECTION ("A document in a licensing directory is unestablished")
@@ -529,6 +535,20 @@ TEST_CASE ("SFZ Instruments does not accept SPDX hints without actual matching l
     { transport.replies = githubReplies (kLicenseText + "\nFor non-commercial\nuse only."); }
     SECTION ("Plain modification restrictions conflict with the grant")
     { transport.replies = githubReplies (kLicenseText + "\nNo derivative works are permitted."); }
+    SECTION ("A spaced NoDerivatives identifier conflicts with the primary grant")
+    { transport.replies = githubReplies (kLicenseText + "except the choir, which is CC BY-ND 4.0"); }
+    SECTION ("A spaced NonCommercial ShareAlike identifier conflicts with the primary grant")
+    { transport.replies = githubReplies (kLicenseText + "except the organ, CC BY-NC-SA 4.0"); }
+    SECTION ("A spelled-out Creative Commons prefix still declares restricted terms")
+    { transport.replies = githubReplies (kLicenseText + "Audio recordings use Creative Commons BY-ND 4.0."); }
+    SECTION ("A spaced and wrapped restricted identifier conflicts with the primary grant")
+    { transport.replies = githubReplies (kLicenseText + "CC\tBY -\nND 4.0"); }
+    SECTION ("Markdown formatting does not hide a restricted identifier")
+    { transport.replies = githubReplies (kLicenseText + "CC **BY-NC** 4.0"); }
+    SECTION ("A nonbreaking hyphen does not hide a restricted identifier")
+    { transport.replies = githubReplies (kLicenseText + "CC BY\xe2\x80\x91ND 4.0"); }
+    SECTION ("Commercial use is explicitly prohibited despite the primary grant")
+    { transport.replies = githubReplies (kLicenseText + "Commercial use is not permitted."); }
     SECTION ("A separate restricted SPDX declaration conflicts with CC0")
     {
         transport.replies = githubReplies ("Mapping files use CC0 1.0 Universal.\nAudio recordings use CC-BY-NC-4.0.");
@@ -561,7 +581,7 @@ TEST_CASE ("SFZ Instruments does not accept SPDX hints without actual matching l
     if (combinedLimit) CHECK (result.error.find ("combined size limit") != std::string::npos);
 }
 
-TEST_CASE ("SFZ Instruments accepts formal Creative Commons license text", "[sfz][provider]")
+TEST_CASE ("SFZ Instruments accepts formal Creative Commons license text", "[sfz][provider][issue-903]")
 {
     FakeTransport transport;
     const auto completeLicense = [&] (const char* file, const char* id)
@@ -578,6 +598,12 @@ TEST_CASE ("SFZ Instruments accepts formal Creative Commons license text", "[sfz
     { transport.replies = githubReplies ("Creative Commons Attribution 4.0 International Public License\nTerms follow.\n"); }
     SECTION ("A matching SPDX identifier agrees with the grant")
     { transport.replies = githubReplies (kLicenseText + "\nSPDX-License-Identifier: CC-BY-4.0."); }
+    SECTION ("An explicit commercial permission remains allowed")
+    { transport.replies = githubReplies (kLicenseText + "Commercial use is not restricted."); }
+    SECTION ("An author name is not a restricted license declaration")
+    { transport.replies = githubReplies (kLicenseText + "Produced by NCK Audio."); }
+    SECTION ("Author initials matching license abbreviations remain allowed")
+    { transport.replies = githubReplies (kLicenseText + "Produced by NC Audio. Artwork by ND Studio."); }
     SECTION ("A matching sample-specific secondary grant is retained")
     {
         transport.replies = githubReplies();
@@ -906,6 +932,21 @@ TEST_CASE ("SFZ cached descriptors validate paths, pins, and license receipts of
 
 TEST_CASE ("SFZ repository artwork uses declared images and immutable repository paths", "[sfz][provider][artwork]")
 {
+    CHECK_FALSE (isInstrumentArtworkPath ("https://raw.githubusercontent.com/vendor/pack/logo/cover.png"));
+    CHECK_FALSE (isInstrumentArtworkPath ("https://raw.githubusercontent.com/vendor/pack/Library%20logo.png"));
+    CHECK (isInstrumentArtworkPath ("https://raw.githubusercontent.com/vendor/pack/Images/cover.png"));
+    CHECK (isInstrumentArtworkPath ("https://raw.githubusercontent.com/vendor/DuskGui/main/Images/DuskGui.png"));
+    CHECK (isInstrumentArtworkPath ("https://raw.githubusercontent.com/vendor/button-accordion/main/Images/cover.png"));
+    CHECK (isInstrumentArtworkPath ("Images/button-accordion.png"));
+    CHECK (isInstrumentArtworkPath ("Images/Button%20accordion.png"));
+    CHECK (isInstrumentArtworkPath ("Images/button-accordions.png"));
+    CHECK_FALSE (isInstrumentArtworkPath ("Images/Buttons/cover.png"));
+    CHECK_FALSE (isInstrumentArtworkPath ("Images/play-button.png"));
+    CHECK_FALSE (isInstrumentArtworkPath ("button-accordion/Buttons/cover.png"));
+    CHECK_FALSE (isInstrumentArtworkPath ("Images/button-accordion-play-button.png"));
+    CHECK_FALSE (isInstrumentArtworkPath ("Images/GUI/cover.png"));
+    CHECK_FALSE (isInstrumentArtworkPath ("Images/GUI-panel/cover.png"));
+    CHECK_FALSE (isInstrumentArtworkPath ("Images/Skins/cover.png"));
     FakeTransport transport;
     auto summary = githubSummary();
     transport.replies = githubReplies();
@@ -916,6 +957,22 @@ TEST_CASE ("SFZ repository artwork uses declared images and immutable repository
         REQUIRE (result);
         REQUIRE (result.pack);
         CHECK (result.pack->presentation.artworkUrl == "https://raw.githubusercontent.com/sfzinstruments/Grand-Piano/" + kCommit + "/Images/cover.png");
+    }
+    SECTION ("Logos and arbitrary repository pictures are not instrument artwork")
+    {
+        for (const auto* path : { "logo.png", "banner.jpg", "diagram.png", "Images/preview-waveform.png", "logo/cover.png", "GUI/instrument.jpg" })
+            transport.replies[2].json["tree"].push_back ({ { "path", path }, { "type", "blob" }, { "mode", "100644" } });
+        const auto result = resolveProviderPack (transport, summary);
+        REQUIRE (result);
+        CHECK (result.pack->presentation.artworkUrl.empty());
+    }
+    SECTION ("Explicit repository artwork takes precedence over guessed cover files")
+    {
+        transport.replies[0].json["image_url"] = "https://raw.githubusercontent.com/sfzinstruments/Grand-Piano/" + kCommit + "/declared.jpg";
+        transport.replies[2].json["tree"].push_back ({ { "path", "Images/cover.png" }, { "type", "blob" }, { "mode", "100644" } });
+        const auto result = resolveProviderPack (transport, summary);
+        REQUIRE (result);
+        CHECK (result.pack->presentation.artworkUrl == transport.replies[0].json["image_url"].get<std::string>());
     }
     SECTION ("Author-prefixed catalog instruments use the image actually declared by their page")
     {

@@ -742,11 +742,18 @@ private:
 #if DUSKSTUDIO_HAS_MULTISAMPLE
 struct AudioEngine::MultisampleLoadState
 {
+    struct RestoreFailure
+    {
+        std::size_t trackIndex;
+        std::uint64_t requestGeneration, slotGeneration;
+        PluginLoadFailure failure;
+    };
     MultisampleLoader worker;
     std::uint64_t sessionGeneration = 1;
     std::array<std::uint64_t, Session::kNumTracks> generations {};
     std::array<bool, Session::kNumTracks> pending {};
     std::array<std::optional<MultisampleLoader::Request>, Session::kNumTracks> deferred;
+    std::vector<RestoreFailure> restoreFailures;
 };
 #endif
 
@@ -1956,6 +1963,12 @@ bool AudioEngine::hasPendingMultisampleLoads() const
                         [] (bool pending) { return pending; });
 }
 
+bool AudioEngine::hasPendingMultisampleLoad (int trackIndex) const
+{
+    return trackIndex >= 0 && trackIndex < Session::kNumTracks
+        && multisampleLoads->pending[static_cast<std::size_t> (trackIndex)];
+}
+
 void AudioEngine::serviceMultisampleLoads()
 {
     if (recordManager.isActive() || offlineRenderActive.load (std::memory_order_acquire)
@@ -2018,7 +2031,8 @@ void AudioEngine::serviceMultisampleLoads()
         auto& track = session.track (request.trackIndex);
         if (loaded)
         {
-            track.nativeMultisamplePath = request.path.u8string();
+            if (! request.restoring || ! request.locator)
+                track.nativeMultisamplePath = request.path.u8string();
             track.nativeMultisampleLocator = request.locator;
             if (! request.restoring && ! request.preserveSavedState) track.nativeMultisampleStateBase64.clear();
             track.nativeClapPath.clear(); track.nativeClapPluginId.clear(); track.nativeClapStateBase64.clear();
@@ -2053,11 +2067,25 @@ void AudioEngine::serviceMultisampleLoads()
         else if (request.restoring)
         {
             strip.markNativeMultisampleRestoreFailed();
-            lastPluginLoadFailures.push_back ({ dusk::text::format ("Track %d", request.trackIndex + 1),
-                request.path.stem().u8string(), "multisample", result.error });
+            PluginLoadFailure failure { dusk::text::format ("Track %d", request.trackIndex + 1),
+                request.path.stem().u8string(), "multisample", result.error };
+            lastPluginLoadFailures.push_back (failure);
+            loads.restoreFailures.push_back ({ index, request.requestGeneration, request.slotGeneration, std::move (failure) });
             broadcastChange();
         }
         if (request.onDone) request.onDone (loaded, result.error);
+    }
+    if (! loads.restoreFailures.empty()
+        && std::none_of (loads.deferred.begin(), loads.deferred.end(),
+                        [] (const auto& request) { return request && request->restoring; }))
+    {
+        auto completed = std::exchange (loads.restoreFailures, {});
+        std::vector<PluginLoadFailure> failures;
+        for (auto& entry : completed)
+            if (entry.requestGeneration == loads.generations[entry.trackIndex]
+                && entry.slotGeneration == getStrip (static_cast<int> (entry.trackIndex)).getNativeMultisampleSlot().generation())
+                failures.push_back (std::move (entry.failure));
+        if (! failures.empty() && onPluginRestoreAlert_) onPluginRestoreAlert_ (std::move (failures));
     }
 }
 #endif
@@ -2283,7 +2311,8 @@ void AudioEngine::serviceMidiRecording()
             auto before = track.midiRegions.current();
             auto after = before;
             const auto passEnd = group.timelineStart + captured.pass.lengthInSamples;
-            int targetIndex = findMidiMergeTarget (after, group.timelineStart, passEnd);
+            int targetIndex = midischedule::findMergeTarget (after, group.timelineStart, passEnd,
+                                                            &session.tempoMap, sr, bpm);
             if (targetIndex < 0)
             {
                 targetIndex = (int) after.size();
@@ -2297,13 +2326,10 @@ void AudioEngine::serviceMidiRecording()
             pass.notes = captured.pass.notes;
             pass.ccs = captured.pass.ccs;
             pass.lengthInTicks = captured.pass.lengthInTicks;
-            const auto merged = mergeMidiPass (target, pass,
-                samplesToTicks (group.timelineStart - target.timelineStart,
-                               group.capturedSampleRate, group.capturedBpm));
+            const midischedule::RegionClock clock (session.tempoMap.empty() ? nullptr : &session.tempoMap,
+                                                   sr, bpm, target.timelineStart);
+            const auto merged = mergeMidiPassAt (target, pass, group.timelineStart, clock);
             if (! merged.changed) continue;
-            target.timelineStart -= ticksToSamples (merged.leadingTicks,
-                                                    group.capturedSampleRate, group.capturedBpm);
-            target.lengthInSamples = ticksToSamples (target.lengthInTicks, sr, bpm);
             diffs.push_back ({ captured.trackIndex, std::move (before), std::move (after),
                               { group.gestureId, group.passOrdinal } });
             committed.emplace_back (captured.trackIndex, targetIndex);
@@ -3214,6 +3240,7 @@ void AudioEngine::consumePluginStateAfterLoad()
     ++multisampleLoads->sessionGeneration;
     multisampleLoads->worker.cancelAll();
     multisampleLoads->pending.fill (false);
+    multisampleLoads->restoreFailures.clear();
     for (auto& request : multisampleLoads->deferred) request.reset();
 #endif
     // Mirror of publish: read the (just-deserialised) strings on each track
@@ -6656,8 +6683,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             }
         };
 
-        auto scheduleTimelineMidi = [&] (MidiMergePlayback* pendingPlayback,
-                                         double capturedRate, float capturedBpm) noexcept
+        auto scheduleTimelineMidi = [&] (MidiMergePlayback* pendingPlayback) noexcept
         {
             // Acquire tempo before the snapshot whose positions it publishes.
             const float bpm = schedulesTimelineMidi ? session.tempoBpm.load (std::memory_order_acquire) : 0.0f;
@@ -6701,8 +6727,8 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             midischedule::PendingCapture pending;
             pending.playback = pendingPlayback;
             if (! pending.locateTarget (midiTimeline, loopRecordPlan.captureStartSample,
-                                        loopRecordPlan.captureEndSample, capturedRate, capturedBpm,
-                                        midiScheduleScansRemaining))
+                                        loopRecordPlan.captureEndSample, sr, bpm,
+                                        midiScheduleScansRemaining, useMap ? tm : nullptr))
             {
                 midiEventsDropped = true;
                 return;
@@ -6849,7 +6875,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         if (loopRecordingActive && capturesLiveMidi)
             recordManager.withPendingMidiPlayback (t, scheduleTimelineMidi);
         else
-            scheduleTimelineMidi (nullptr, 0.0, 0.0f);
+            scheduleTimelineMidi (nullptr);
 
         if (midiTrack && ! midiEventsDropped)
         {

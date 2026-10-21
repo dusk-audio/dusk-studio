@@ -447,13 +447,66 @@ TEST_CASE ("the mastering Phase controls wire settings monitoring reset and keyb
         REQUIRE_FALSE (mono);
         REQUIRE (monoWrites == 2);
     }
-    SECTION ("Sliders reach both documented bounds without reconfiguring the borrowed analyzer")
+    SECTION ("Wheeling visible knobs changes their value without scrolling the short panel")
     {
-        for (const auto* control : { "bands", "q", "averaging" }) panel.clickControl (*view, control, 1.0f);
+        panel.setSize ({ 260.0f, 260.0f });
+        panel.movePointer ({ 20.0f, 100.0f });
+        panel.frame (*view);
+        panel.frame (*view);
+        ImVec2 point;
+        for (int step = 0; step < 20; ++step)
+        {
+            if (view->controlPointForScenario ("q-knob", point) && point.y > 30.0f && point.y < 230.0f) break;
+            panel.scroll (-1.0f);
+            panel.frame (*view);
+            panel.frame (*view);
+        }
+        REQUIRE (view->controlPointForScenario ("q-knob", point));
+        for (const auto* name : { "bands-knob", "q-knob", "averaging-knob" })
+        {
+            REQUIRE (view->controlPointForScenario (name, point));
+            const auto previous = params.snapshot();
+            panel.movePointer (point);
+            panel.frame (*view);
+            panel.frame (*view);
+            panel.scroll (1.0f);
+            panel.frame (*view);
+            panel.frame (*view);
+            ImVec2 after;
+            REQUIRE (view->controlPointForScenario (name, after));
+            REQUIRE_THAT (after.y, Catch::Matchers::WithinAbs (point.y, 0.01f));
+            if (std::string (name) == "bands-knob") REQUIRE (params.bands.load() > previous.bands);
+            else if (std::string (name) == "q-knob") REQUIRE (params.q.load() > previous.q);
+            else REQUIRE (params.averagingMs.load() > previous.averagingMs);
+        }
+    }
+    SECTION ("Typed control values clamp to both bounds without reconfiguring the borrowed analyzer")
+    {
+        const auto enter = [&] (const char* name, const char* text)
+        {
+            const auto control = ImGui::GetIO().ConfigMacOSXBehaviors ? ImGuiMod_Super : ImGuiMod_Ctrl;
+            panel.key (control, true);
+            panel.frame (*view);
+            panel.clickControl (*view, name);
+            REQUIRE (view->capturesKeyboard());
+            panel.key (control, false);
+            panel.frame (*view);
+            panel.type (text);
+            panel.frame (*view);
+            panel.key (ImGuiKey_Enter, true);
+            panel.frame (*view);
+            panel.key (ImGuiKey_Enter, false);
+            panel.frame (*view);
+            panel.frame (*view);
+            REQUIRE_FALSE (view->capturesKeyboard());
+        };
+        enter ("bands", "128");
+        enter ("q", "16");
+        enter ("averaging", "10000");
         REQUIRE (params.bands.load() == 64);
         REQUIRE_THAT (params.q.load(), Catch::Matchers::WithinAbs (8.0f, 1.0e-6f));
         REQUIRE_THAT (params.averagingMs.load(), Catch::Matchers::WithinAbs (5000.0f, 1.0e-3f));
-        for (const auto* control : { "bands", "q", "averaging" }) panel.clickControl (*view, control, 0.0f);
+        for (const auto* control : { "bands", "q", "averaging" }) enter (control, "-100");
         requireUnchanged (params, before);
         requireUnchanged (analyzer.report().settings, before);
         REQUIRE (monoWrites == 0);
@@ -521,28 +574,31 @@ TEST_CASE ("the compact mastering Phase view scrolls clipped controls without ch
     panel.frame (*view);
     panel.frame (*view);
     ImVec2 reset, mono, band;
-    REQUIRE (view->controlPointForScenario ("reset", reset));
-    REQUIRE (view->controlPointForScenario ("mono", mono));
-    REQUIRE (std::abs (reset.x - mono.x) > 20.0f);
-    REQUIRE_FALSE (view->controlPointForScenario ("band", band));
-    for (int step = 0; step < 20 && ! view->controlPointForScenario ("band", band); ++step)
+    REQUIRE (view->controlPointForScenario ("band", band));
+    REQUIRE_FALSE (view->controlPointForScenario ("reset", reset));
+    REQUIRE_FALSE (view->controlPointForScenario ("mono", mono));
+    for (int step = 0; step < 20 && (view->controlPointForScenario ("band", band)
+                                   || ! view->controlPointForScenario ("reset", reset)); ++step)
     {
         panel.scroll (-1.0f);
         panel.frame (*view);
         panel.frame (*view);
     }
-    REQUIRE (view->controlPointForScenario ("band", band));
-    REQUIRE_FALSE (view->controlPointForScenario ("reset", reset));
+    REQUIRE (view->controlPointForScenario ("reset", reset));
+    REQUIRE (view->controlPointForScenario ("mono", mono));
+    REQUIRE (std::abs (reset.x - mono.x) > 20.0f);
+    REQUIRE_FALSE (view->controlPointForScenario ("band", band));
     REQUIRE (panel.renderedChildVertices() > 100);
-    for (int step = 0; step < 20 && ! view->controlPointForScenario ("reset", reset); ++step)
+    for (int step = 0; step < 20 && (view->controlPointForScenario ("reset", reset)
+                                   || ! view->controlPointForScenario ("band", band)); ++step)
     {
         panel.scroll (1.0f);
         panel.frame (*view);
         panel.frame (*view);
     }
-    REQUIRE (view->controlPointForScenario ("reset", reset));
-    REQUIRE (view->controlPointForScenario ("mono", mono));
-    REQUIRE_FALSE (view->controlPointForScenario ("band", band));
+    REQUIRE (view->controlPointForScenario ("band", band));
+    REQUIRE_FALSE (view->controlPointForScenario ("reset", reset));
+    REQUIRE_FALSE (view->controlPointForScenario ("mono", mono));
     requireUnchanged (params, before);
     REQUIRE (monoWrites == 0);
     REQUIRE (analyzer.report().frames == frames);

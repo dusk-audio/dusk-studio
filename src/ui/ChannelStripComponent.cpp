@@ -1774,6 +1774,9 @@ void ChannelStripComponent::openPluginPicker()
                                     {
                                         auto* self = safe.getComponent();
                                         if (self == nullptr) return;
+   #if DUSKSTUDIO_HAS_MULTISAMPLE
+                                        self->engine.cancelNativeMultisampleLoad (self->trackIndex);
+   #endif
                                         // Picking a plugin flips the strip back to Plugin mode
                                         // (overriding any prior Hardware selection on this slot).
                                         auto& chStrip = self->engine.getChannelStrip (self->trackIndex);
@@ -1955,6 +1958,9 @@ void ChannelStripComponent::openPluginPicker()
 
 void ChannelStripComponent::openHardwareInsertEditor()
 {
+   #if DUSKSTUDIO_HAS_MULTISAMPLE
+    engine.cancelNativeMultisampleLoad (trackIndex);
+   #endif
     // Replacing an offline native placeholder with hardware is an explicit
     // recovery choice. Clear the preserved native reference first; otherwise
     // its failure flag wins the slot label/menu and the next save resurrects
@@ -1996,6 +2002,9 @@ void ChannelStripComponent::openHardwareInsertEditor()
 
 void ChannelStripComponent::removeHardwareInsert()
 {
+   #if DUSKSTUDIO_HAS_MULTISAMPLE
+    engine.cancelNativeMultisampleLoad (trackIndex);
+   #endif
     // The crossfade gate ramps the insert out click-free on the mode flip;
     // enabled=false parks the params so a later re-engage starts clean.
     engine.getChannelStrip (trackIndex)
@@ -2006,6 +2015,9 @@ void ChannelStripComponent::removeHardwareInsert()
 
 void ChannelStripComponent::unloadPluginSlot()
 {
+   #if DUSKSTUDIO_HAS_MULTISAMPLE
+    engine.cancelNativeMultisampleLoad (trackIndex);
+   #endif
     // Close any open editor BEFORE the plugin is destroyed - the editor
     // holds a reference back to the AudioProcessor and would crash on
     // teardown otherwise.
@@ -2323,6 +2335,18 @@ void ChannelStripComponent::refreshPluginSlotButton()
               "replace or remove it."
             : "Click to toggle the plug-in editor; right-click for Replace / Remove.");
     };
+   #if DUSKSTUDIO_HAS_MULTISAMPLE
+    if (engine.hasPendingMultisampleLoad (trackIndex))
+    {
+        const auto name = std::filesystem::u8path (track.nativeMultisamplePath.toStdString()).stem().u8string();
+        const auto label = (name.empty() ? std::string ("Soundfont") : name) + " (loading)";
+        pluginSlotButton.setTooltip ("The soundfont is loading. Wait for loading to finish before rendering.");
+        if (label == lastSlotName) return;
+        lastSlotName = label;
+        pluginSlotButton.setButtonText (label);
+        return;
+    }
+   #endif
     // Native CLAP insert - name from the loaded .clap bundle. The JUCE pluginSlot is
     // empty for a native insert, so this must precede the slot-based bookkeeping below
     // (which would otherwise mislabel "Insert" and drop the live clap editor). Linux-only.
@@ -3697,6 +3721,7 @@ void ChannelStripComponent::syncMultisampleEditorOwner()
 
 void ChannelStripComponent::drainMultisampleLoads()
 {
+    engine.cancelNativeMultisampleLoad (trackIndex);
     engine.getChannelStrip (trackIndex).getNativeMultisampleSlot().drainPendingLoads();
 }
 

@@ -1,0 +1,247 @@
+{
+  "release": "0.16",
+  "ready_to_tag": false,
+  "recorded_at_utc": "2026-10-20T00:28:17.513959+00:00",
+  "branch": "fix/016-release-review",
+  "source_commit": "83d9e24008e1b2a1b051e825fa0ba55c5b760c50",
+  "scope_of_document_commit": "Validation record and license description only; product source bounds remain explicit.",
+  "previous_record": "docs/validation/0.16-readiness-followup.json",
+  "changes": [
+    "39 licensed SFZ instrument images, program-specific matching and neutral overview/fallback artwork.",
+    "Settings consistency, larger usable layout and persisted custom CLAP/VST3/LV2 search folders.",
+    "Guard empty Lilv state sorting, preserve Windows Unicode paths and initialize embedded LV2 classes before instrument discovery.",
+    "Retain recovery callbacks across immediate modal disposal.",
+    "Remove the redundant JUCE-facing initialization API; use existing format registration and test that production path."
+  ],
+  "sampler": {
+    "commit": "f92e07104495bbd645325ff62c1a6c8bae3ad428",
+    "remote": "https://github.com/dusk-audio/dusk-fizz.git",
+    "published_ref": "refs/heads/fix/label-text-lifetime",
+    "advertised_ref_and_fresh_fetch_verified": true,
+    "fresh_submodule_update_verified": true,
+    "ci_claim": "No sampler CI run was triggered; successful fresh fetching is separate evidence."
+  },
+  "checks": {
+    "linux": {
+      "ctest": {
+        "registered": 1780,
+        "passed": 1780,
+        "failed": 0,
+        "skipped": 0
+      },
+      "runner_limits_ctest": {
+        "registered": 1780,
+        "passed": 1780,
+        "failed": 0,
+        "skipped": 0
+      },
+      "focused": {
+        "cases": 17,
+        "assertions": 2424
+      },
+      "gui": {
+        "passed": 13,
+        "failed": 0,
+        "skipped": 0
+      },
+      "engine_scenarios": {
+        "passed": 189,
+        "failed": 0,
+        "skipped": 1
+      },
+      "native_state": {
+        "clap_engine_passed": 1,
+        "driver_seconds": 825.6,
+        "full_ctest_passed": 1780,
+        "full_ctest_seconds": 105.41
+      },
+      "configuration_limits": [
+        "Xvfb, software rendering and private null PipeWire graph for automated GUI.",
+        "One engine scenario is macOS-only AU scan cancellation."
+      ],
+      "app_sha256": "efeebb8dfaba74c769f9007453e6aaf84fcfb7c79576e084b8955449d849c9a6",
+      "host_sha256": "06c38b9a9cd8b0a72e2eb5dcf6f3edd3e9aaffede532dcf8e8a74be3bff90cc4"
+    },
+    "macos": {
+      "ctest": {
+        "registered": 1726,
+        "passed": 1724,
+        "failed": 0,
+        "skipped": 2
+      },
+      "focused": {
+        "cases": 17,
+        "assertions": 2424
+      },
+      "gui": {
+        "passed": 12,
+        "failed": 0,
+        "skipped": 0,
+        "foreground_verified": true,
+        "automatic_allow": [
+          "microphone",
+          "removable-volumes"
+        ]
+      },
+      "engine_scenarios": {
+        "passed": 180,
+        "failed": 0,
+        "skipped": 9
+      },
+      "native_state": {
+        "clap_engine_passed": 1,
+        "stock_au_cases": 5,
+        "stock_au_assertions": 493
+      },
+      "app_sha256": "622ca4f229c83a96ffbdb94837af1f2c71b2248df008cfc909026757b44a47f1",
+      "tests_sha256": "09705b61a8c10f09fb01300a9bcc5602fb8ad4b3a122c1ce921f59027938a841",
+      "configuration_limits": [
+        "Two case-distinct filesystem alias tests skipped.",
+        "Native LV2 disabled in validation cache; JUCE fallback real LV2 instrument fixture passed. This is not a complete shipping configuration.",
+        "Nine engine skips: four missing native-LV2 fixtures, native-LV2 scan cancellation, Linux-only realtime guard and three unsupported sandbox-stub scenarios."
+      ]
+    },
+    "windows": {
+      "ctest": {
+        "registered": 1715,
+        "passed": 1710,
+        "failed": 0,
+        "skipped": 5
+      },
+      "focused": {
+        "cases": 17,
+        "assertions": 2426
+      },
+      "gui": {
+        "passed": 12,
+        "failed": 0,
+        "skipped": 0,
+        "foreground_verified": true
+      },
+      "native_state": {
+        "clap_engine_passed": 1,
+        "vst3_instance_cases": 2,
+        "vst3_instance_assertions": 280,
+        "vst3_slot_cases": 4,
+        "vst3_slot_assertions": 37
+      },
+      "asio_enabled": true,
+      "app_sha256": "cc7d54907456799f61b0ec3e0a65968c426db71d4cbbba20c4263feb81884955",
+      "tests_sha256": "d38d987c5c40b6c83f5c3159e967e1a8da0c587907f6e3ed0eb22ee0b5cac334",
+      "configuration_limits": [
+        "Five skipped cases: ZIP input unavailability, two case-distinct filesystem aliases, disconnected relocation destination and copied-marker replacement destination.",
+        "VM software Mesa renderer and virtual audio do not replace physical hardware checks.",
+        "Live VST3 checks emitted a nonfatal DPF outparamsptr assertion while passing."
+      ]
+    }
+  },
+  "sanitizers": {
+    "source_commit": "83d9e24008e1b2a1b051e825fa0ba55c5b760c50",
+    "asan_ubsan_abort_on_error": true,
+    "full_with_lsan": {
+      "passed": 1778,
+      "failed": 0,
+      "seconds": 365.41
+    },
+    "intentional_retention_with_lsan_disabled": {
+      "passed": 2,
+      "failed": 0,
+      "seconds": 3.87
+    },
+    "gui_scan_with_matching_host": {
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "native_exit": 0,
+      "lsan_enabled": false
+    },
+    "gui_main": {
+      "source_commit": "0ea206db7fb2312085a7cf0bb8f10b855b244155",
+      "passed": 12,
+      "failed": 0,
+      "skipped": 0,
+      "native_exit": 0,
+      "lsan_enabled": false,
+      "limit": "UI product code unchanged at final source; this historical main GUI run is not relabeled as exact final source."
+    }
+  },
+  "prepush": {
+    "source_commit": "83d9e24008e1b2a1b051e825fa0ba55c5b760c50",
+    "result": "regress prepush: OK",
+    "platform_logs": "/var/tmp/dusk-prepush.XoBevG/{linux,mac}.log",
+    "not_requested": [
+      "performance",
+      "release metadata",
+      "GitHub ruleset",
+      "Patreon freshness"
+    ],
+    "gui_limit": "Headless Mac prepush skips GUI; separate foreground GUI runs provide the recorded coverage."
+  },
+  "review": {
+    "full_branch": "Two read-only Codex review passes through 5dfc6bf9, plus every subsequent production/build/test delta through 83d9e240. Findings fixed and re-reviewed.",
+    "evidence": "Independent read-only audit of final logs confirmed platform totals, source bounds, native results, skips and wrapper receipts."
+  },
+  "contracts": {
+    "catch_declarations": 1794,
+    "catch_source_files": 277,
+    "manual_behaviours": 645,
+    "manual_headings": 242,
+    "manual_auto": 569,
+    "manual_partial": 23,
+    "manual_manual": 16,
+    "manual_gap": 0,
+    "manual_na": 37,
+    "juce_files": 157,
+    "juce_uses": 6885,
+    "artwork_images": 39
+  },
+  "manual_sync": "Feature changes documented in MANUAL.md. Final loader/lifetime fixes restore existing behavior; initialization consolidation and fixtures are internal. Audited instrument/host wording, no further manual edits required.",
+  "hygiene": "Staged diffs reviewed before commits; whitespace/conflict-marker and JUCE/manual/release-mechanics contracts passed. No attribution trailers.",
+  "failed_attempt_dispositions": [
+    "Mac temporary path aliases failed three new assertions before canonicalizing the fixture root.",
+    "Windows real LV2 Unicode and instrument-classification failures reproduced and fixed; final parent/child/runtime checks passed.",
+    "Strict UBSan exposed qsort(NULL,0) in bundled Lilv; guarded build-tree copy passes strict full suite.",
+    "An undersized GUI timeout tore down its display early and exposed a recovery callback use-after-free; callbacks and owned harness lifetime fixed. This does not establish the original #906 cause.",
+    "Older JUCE support include relocation, duplicate extern and Windows extern-block insertion failures were fixed before final builds.",
+    "Historical ASan scan omitted its matching host sidecar; final 83d scan used the paired app/host and passed.",
+    "Mac GUI wrapper retained a 10-pass expectation after expansion to 11; native exit 0 and all 11 existing receipts revalidated against the same app hash. Original wrapper exit 1 retained separately.",
+    "Windows initial PowerShell wrapper was blocked before launching the app. Reviewed rerun used a process-only ExecutionPolicy Bypass; no persistent OS policy change."
+  ],
+  "publication": {
+    "root_pushed": false,
+    "root_draft_pr_created": false,
+    "sampler_pushed": true
+  },
+  "remaining_release_gates": [
+    "Maintainer manual walkthrough on Linux, macOS and Windows, including export listening and new UI (#886).",
+    "Required shipping-configuration and sanitizer CI after branch publication; merge review and fresh merged-main release dry run and packaged regressions (#899).",
+    "Live SFZ acceptance, including macOS Musical Artifacts; previous service attempt was blocked, not completed.",
+    "SFZ umbrella #804 and reader performance acceptance #870 retain their recorded evidence limits.",
+    "Original #906 display-loss trigger remains unresolved; later clean runs and two separate lifetime fixes do not prove its root cause.",
+    "No version bump, tag or release without maintainer signoff; version remains 0.15.1."
+  ],
+  "proof_root": "build/validation-sfz-settings/review-followup",
+  "retained_artifact_sha256": {
+    "prepush-83d9e240.log": "1caa92ca634fad9b7225dc2a30839a051e3f375b5be588f2b9c373e0c855d278",
+    "linux-native-83d.log": "18caee0bdb5bbf7b857bff01b048c1d2d95fef868d91008177bc7f36b916572b",
+    "mac-native-83d.log": "93ebda2e7760761804a94f78b03d988d8ac93ddc3f47a28dedeec25465c45d3c",
+    "windows-cross-83d9e240.log": "7c717e03e8cc45155f969656b1fcca80307f8983d9bbbb1fe0315e09d92890ac",
+    "linux-gui-main-83d.log": "4ceb5655ff229121ac96b14171adf14abf9ab40a94ebbbf3e5571627da6076d6",
+    "linux-gui-scan-83d.log": "4717390eb778273518459325257748d130e357d1f59400498508bba191204e3e",
+    "mac-gui-main-83d.log": "75e3992d219e19340aa80d59db4ea7b744b30d495b7cf6beb09c2002d861bd3a",
+    "mac-gui-main-83d-receipt.json": "767405f67ecc1e7192a6f1e9a21527e9e1e7bf31ee4bbda7c207a4d77af09680",
+    "mac-gui-scan-83d.log": "0247602e1eadd89ddcf8b35cebd74eebe6ef4c1d19bcaf0efb4abf920388e39e",
+    "windows-gui-main-83d-execution-policy.log": "adcb8453bc32cd1c197f77c16bf1780ff5b30a89a6b26eec79eaaa63fa883ea7",
+    "windows-gui-main-83d.log": "1b9ccc8c9db743ca8a9e937490acc453dcb60e4445294719fa0b9ad2e50b89dd",
+    "windows-gui-scan-83d.log": "0461f993e77377ea1baffddf156536d68ccc7d87e78f8f7391601dcfd2c844c9",
+    "asan-final-83d-build.log": "b96c4eae8f372d53896d66f948dec12af32c4ca52e3cec552403d0b8ce61e961",
+    "asan-final-83d-full.log": "a47d7b2f3a0ddd60e724a783668f7d295782c5623b8b1ab61ab9ce16d0acf49d",
+    "asan-final-83d-safety-leaks.log": "4bc6ec18880c2e6ae8159e4dd1d1152c8d0dfe2d46f128b3c9290dc66a506fc7",
+    "asan-gui-main-0ea.log": "f5c1b30632c25ad075f1be7f549db5078d822c57193413f02ff3de76f236b669",
+    "asan-gui-scan-83d.log": "706d9d12ecefbc96a5c0398b26c3187e02d64c844793423ac6cabf1209cf5502",
+    "published-pin-fetch.json": "0e2bfc5669090953c878030d6568f0c929521defbaf9f3ef9f4e521898116b8c",
+    "linux-captures-83d/settings-plugins.png": "34859b4bdf72f77e74833d89a86dc7ea98023e4de1c5f01f7fe167efd4dbf66d",
+    "linux-captures-83d/sfz-installed-overview.png": "cba239799859ccf857299f17454ab51debd4fe82ae8ad8dadd72734953747fd9",
+    "linux-captures-83d/sfz-tuba.png": "bfc2181e32f424d69aa7c6ed09fc6222e8760119ea823d52c606a3b441eb5b69"
+  }
+}

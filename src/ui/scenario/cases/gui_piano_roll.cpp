@@ -8,6 +8,7 @@
 
 #if DUSKSTUDIO_HAS_NATIVE_UI
  #include "../../imgui/DuskPanelWindow.h"
+ #include "../../imgui/PianoRollView.h"
 #endif
 
 #include <algorithm>
@@ -304,6 +305,20 @@ std::optional<ScenarioResult> runPianoViewport (GuiHost& host, ScenarioContext& 
     session.track (0).midiRegions.publish (
         std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { region }));
     host.switchToStage (GuiHost::Stage::Recording);
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    {
+        auto roll = imgui::makePianoRollView (session, engine, 0, 0, {});
+        const auto initialZoom = roll->viewportForScenario()[0];
+        ctx.expect (roll->handleShellKey ("=", true), "repeated equals was not handled");
+        const auto zoomed = roll->viewportForScenario()[0];
+        ctx.expect (zoomed > initialZoom, "repeated equals did not zoom in");
+        ctx.expect (roll->handleShellKey ("numpad +", true), "repeated keypad plus was not handled");
+        const auto keypadZoom = roll->viewportForScenario()[0];
+        ctx.expect (keypadZoom > zoomed, "repeated keypad plus did not zoom in");
+        ctx.expect (roll->handleShellKey ("numpad -", true), "repeated keypad minus was not handled");
+        ctx.expect (roll->viewportForScenario()[0] < keypadZoom, "repeated keypad minus did not zoom out");
+    }
+   #endif
     auto before = std::make_shared<std::array<double, 4>>();
     auto steps = std::make_shared<std::vector<Step>>();
     steps->push_back ({ 150, [&host, &ctx]
@@ -321,6 +336,16 @@ std::optional<ScenarioResult> runPianoViewport (GuiHost& host, ScenarioContext& 
     steps->push_back ({ 150, [&host, &ctx, before]
     {
         ctx.expect (std::abs (host.pianoViewport()[0] - (*before)[0]) < 1.0e-6, "minus did not restore the zoom");
+        ctx.expect (host.inputPianoRoll ("numpad +"), "keypad zoom-in was not delivered");
+    } });
+    steps->push_back ({ 150, [&host, &ctx, before]
+    {
+        ctx.expect (host.pianoViewport()[0] > (*before)[0], "keypad plus did not zoom in");
+        ctx.expect (host.inputPianoRoll ("numpad -"), "keypad zoom-out was not delivered");
+    } });
+    steps->push_back ({ 150, [&host, &ctx, before]
+    {
+        ctx.expect (std::abs (host.pianoViewport()[0] - (*before)[0]) < 1.0e-6, "keypad minus did not restore the zoom");
         *before = host.pianoViewport();
         ctx.expect (host.scrollPiano (notch (-1.0f), false, false, false), "vertical wheel was not delivered");
     } });
@@ -541,12 +566,55 @@ std::optional<ScenarioResult> runPianoStepRecord (GuiHost& host, ScenarioContext
         std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { region }));
     host.switchToStage (GuiHost::Stage::Recording);
     transport.setPlayhead (session.ticksToSamples (480, rate));
+    {
+        auto roll = imgui::makePianoRollView (session, engine, 0, 0, {});
+        session.track (0).midiRegions.mutate ([] (auto& regions) { regions.front().locked = true; });
+        roll->stepRecordNoteOn (60, 100, 1);
+        session.track (0).midiRegions.mutate ([] (auto& regions) { regions.front().locked = false; });
+        roll->stepRecordNoteOn (62, 100, 1);
+        roll->stepRecordNoteOff (60, 1);
+        roll->stepRecordNoteOn (64, 100, 1);
+        const auto& notes = session.track (0).midiRegions.current().front().notes;
+        ctx.expect (notes.size() == 2 && notes[0].startTick == notes[1].startTick,
+                    "a rejected note release split an accepted chord");
+        roll->stepRecordNoteOn (62, 100, 1);
+        roll->stepRecordNoteOff (62, 1);
+        roll->stepRecordNoteOff (64, 1);
+        roll->stepRecordNoteOff (60, 1);
+        roll->stepRecordNoteOn (65, 100, 1);
+        const auto& heldNotes = session.track (0).midiRegions.current().front().notes;
+        ctx.expect (heldNotes.size() == 4 && heldNotes.front().startTick == heldNotes.back().startTick,
+                    "overlapping copies of a pitch released the chord early");
+        roll->stepRecordNoteOff (62, 1);
+        roll->stepRecordNoteOff (65, 1);
+        roll->stepRecordNoteOn (67, 100, 1);
+        const auto& nextNotes = session.track (0).midiRegions.current().front().notes;
+        ctx.expect (nextNotes.size() == 5 && nextNotes.back().startTick == nextNotes.front().startTick + 120,
+                    "the next chord did not advance after all accepted notes released");
+        roll->stepRecordKeyboardClosed();
+        session.track (0).midiRegions.publish (
+            std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { region }));
+        transport.setPlayhead (session.ticksToSamples (480, rate));
+        session.track (0).midiRegions.mutate ([] (auto& regions) { regions.front().locked = true; });
+        roll->stepRecordNoteOn (60, 100, 1);
+        session.track (0).midiRegions.mutate ([] (auto& regions) { regions.front().locked = false; });
+        roll->stepRecordNoteOn (60, 100, 2);
+        roll->stepRecordNoteOff (60, 1);
+        roll->stepRecordNoteOn (64, 100, 2);
+        const auto& channelNotes = session.track (0).midiRegions.current().front().notes;
+        ctx.expect (channelNotes.size() == 2 && channelNotes.front().startTick == channelNotes.back().startTick,
+                    "a rejected release on another MIDI channel split the chord");
+        roll->stepRecordKeyboardClosed();
+        session.track (0).midiRegions.publish (
+            std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { region }));
+        transport.setPlayhead (session.ticksToSamples (480, rate));
+    }
     auto steps = std::make_shared<std::vector<Step>>();
     steps->push_back ({ 200, [&host, &ctx]
     { ctx.expect (host.openRegionEditor (0, 0, true), "piano roll did not open"); } });
     steps->push_back ({ 200, [&host, &ctx]
     { ctx.expect (host.pressPeerKey ("K", 'k'), "K did not reach the piano roll"); } });
-    steps->push_back ({ 300, [&host, &ctx]
+    steps->push_back ({ 300, [&host, &ctx, &session]
     {
         ctx.expect (host.virtualKeyboardOpen(), "virtual keyboard did not open above the piano roll");
         expectKeyboardOverRoll (host, ctx, "on opening");
@@ -555,6 +623,15 @@ std::optional<ScenarioResult> runPianoStepRecord (GuiHost& host, ScenarioContext
         ctx.expect (host.panelKeyRepeat ("virtual-keyboard") == 1,
                     "the virtual keyboard takes the system's key repeat, so a held key can sound twice");
         ctx.expect (host.panelKeyRepeat ("piano-roll") == 1, "the piano roll takes the system's key repeat");
+        session.track (0).midiRegions.mutate ([] (auto& regions) { regions.front().locked = true; });
+        ctx.expect (host.inputVirtualKeyboard ("z") && host.inputVirtualKeyboard ("x"),
+                    "locked-region notes did not reach the native keyboard");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, &session, &transport, rate]
+    {
+        ctx.expect (session.track (0).midiRegions.current().front().notes.empty(), "step record edited a locked region");
+        ctx.expect (transport.getPlayhead() == session.ticksToSamples (480, rate), "locked step record advanced the playhead");
+        session.track (0).midiRegions.mutate ([] (auto& regions) { regions.front().locked = false; });
         ctx.expect (host.inputVirtualKeyboard ("z") && host.inputVirtualKeyboard ("x"),
                     "chord keys did not reach the native keyboard");
     } });
@@ -2635,12 +2712,17 @@ std::optional<ScenarioResult> runPianoEditKeys (GuiHost& host, ScenarioContext& 
         ctx.expect (host.pianoNotePointer (300, 60, true), "the first note was not clickable");
         host.pianoNotePointer (300, 60, false);
     } });
-    steps->push_back ({ 150, [&ctx, &host, command, selectAll]
+    steps->push_back ({ 150, [&ctx, &host, &track, notes, original, command, selectAll]
     {
         ctx.expect (host.pianoSelection() == std::vector<int> { 0 },
                     "clicking the first note did not select it alone");
         selectAll();
+        track.midiRegions.mutate ([] (auto& regions) { regions.front().locked = true; });
         ctx.expect (command ('c'), "Copy was not handled");
+        ctx.expect (command ('v') && host.pressPeerKey ("backspace", '\b')
+                    && host.pressPeerKey ("cursor up"), "locked editing keys were not handled");
+        ctx.expect (notes() == original, "piano-roll edits changed a locked region");
+        track.midiRegions.mutate ([] (auto& regions) { regions.front().locked = false; });
         ctx.expect (command ('v'), "Paste was not handled");
     } });
     steps->push_back ({ 150, [&ctx, &host, notes, original, command]

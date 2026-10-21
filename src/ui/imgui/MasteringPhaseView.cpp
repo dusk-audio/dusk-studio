@@ -14,7 +14,9 @@ namespace
 {
 namespace dw = DuskWidgets;
 constexpr ImU32 kWarning = IM_COL32 (240, 112, 96, 255);
-constexpr ImU32 kHealthy = IM_COL32 (90, 200, 180, 255);
+constexpr ImU32 kHealthy = IM_COL32 (112, 194, 112, 255);
+constexpr ImU32 kAccent = IM_COL32 (90, 138, 208, 255);
+constexpr ImU32 kBright = IM_COL32 (224, 224, 230, 255);
 constexpr ImU32 kMuted = IM_COL32 (150, 150, 160, 255);
 
 struct Rect
@@ -36,7 +38,8 @@ public:
 
     bool controlPointForScenario (const std::string& name, ImVec2& point, float fraction) const override
     {
-        static constexpr const char* names[] = { "reset", "mono", "mode", "bands", "q", "averaging", "band" };
+        static constexpr const char* names[] = { "reset", "mono", "mode", "bands", "q", "averaging", "band",
+                                                "bands-knob", "q-knob", "averaging-knob" };
         for (size_t i = 0; i < controls.size(); ++i)
             if (name == names[i] && controls[i].last.x > controls[i].first.x)
             {
@@ -62,12 +65,12 @@ public:
         const ScopedFormStyle style (ctx);
         ImGui::SetCursorScreenPos (origin);
         if (ImGui::BeginChild ("##phase-body", size, ImGuiChildFlags_None,
-                               ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_AlwaysVerticalScrollbar))
+                               ImGuiWindowFlags_NoBackground))
         {
             auto* outer = ctx.dl;
             ctx.dl = ImGui::GetWindowDrawList();
             viewport = { ctx.dl->GetClipRectMin(), ctx.dl->GetClipRectMax() };
-            drawBody (ctx, ImGui::GetCursorScreenPos(), ImGui::GetContentRegionAvail().x);
+            drawBody (ctx, ImGui::GetCursorScreenPos(), { ImGui::GetContentRegionAvail().x, size.y });
             ctx.dl = outer;
         }
         ImGui::EndChild();
@@ -76,98 +79,204 @@ public:
     }
 
 private:
-    void drawBody (dw::Context& ctx, ImVec2 origin, float width)
+    void drawBody (dw::Context& ctx, ImVec2 origin, ImVec2 size)
     {
-        const float left = origin.x, right = origin.x + width;
-        const float row = ctx.s (24.0f), gap = ctx.s (4.0f);
-        float y = origin.y;
-        dw::text (ctx, ctx.fonts->pill, ctx.s (12.0f), { left, y + ctx.s (4.0f) }, ctx.s (60.0f),
-                  kHealthy, "PHASE", dw::Align::left);
-        if (width < ctx.s (202.0f)) y += row + gap;
-        controls[0] = { { right - ctx.s (142.0f), y }, { right - ctx.s (86.0f), y + row } };
-        if (formButton (ctx, "##phase-reset", controls[0].first, controls[0].last, "Reset"))
-            analyzer.resetHeld();
+        const float inset = ctx.s (8.0f), gap = ctx.s (8.0f), row = ctx.s (24.0f);
+        const float left = origin.x + inset, right = origin.x + size.x - inset;
+        const float width = right - left;
+        if (width < ctx.s (100.0f)) return;
+        const auto& report = analyzer.report();
+        float y = origin.y + inset;
+        ctx.dl->AddRectFilled ({ left, y }, { right, y + ctx.s (22.0f) }, ctx.theme->pillFill, ctx.s (4.0f));
+        ctx.dl->AddRect ({ left, y }, { right, y + ctx.s (22.0f) }, ctx.theme->pillBorder, ctx.s (4.0f));
+        ctx.dl->AddCircleFilled ({ left + ctx.s (10.0f), y + ctx.s (11.0f) }, ctx.s (4.0f),
+                                report.broadband.correlationValid ? kHealthy : ctx.theme->ledOff);
+        dw::text (ctx, ctx.fonts->pill, ctx.s (10.5f), { left, y + ctx.s (5.0f) }, width, kBright, "PHASE");
+        y += ctx.s (22.0f) + gap;
+        controls[2] = { { left, y }, { right, y + row } };
+        static constexpr const char* modes[] = { "Correlation", "Coherence / time" };
+        formCombo (ctx, "##phase-mode", controls[2].first, controls[2].last, modes, 2, mode);
+        y += row + gap;
+
+        const float graphHeight = std::max (ctx.s (152.0f), size.y - (y - origin.y) - ctx.s (304.0f));
+        drawBands (ctx, { left, y }, { right, y + graphHeight }, report);
+        y += graphHeight + gap;
+        drawBroadband (ctx, { left, y }, width, report.broadband);
+        y += ctx.s (44.0f) + gap;
+
+        controls[0] = { { left, y }, { left + ctx.s (62.0f), y + row } };
+        if (formButton (ctx, "##phase-reset", controls[0].first, controls[0].last, "Reset")) analyzer.resetHeld();
         formTooltip ("Clear held correlation minima and sticky warnings.");
         bool mono = getMono();
         controls[1] = { { right - ctx.s (78.0f), y }, { right, y + row } };
         if (formCheckbox (ctx, "##phase-mono", controls[1].first, row, "Mono", mono)) setMono (mono);
         formTooltip ("Fold live monitoring to (L+R)/2. Analysis and export stay stereo.");
         y += row + gap;
-        controls[2] = { { left, y }, { right, y + row } };
-        static constexpr const char* modes[] = { "Correlation", "Coherence / time" };
-        formCombo (ctx, "##phase-mode", controls[2].first, controls[2].last, modes, 2, mode);
-        y += row + gap;
+
         auto settings = params.snapshot();
-        const auto slider = [&] (size_t index, const char* label, const char* id, float& value,
-                                  float low, float high, const char* format)
-        {
-            formLabel (ctx, { left, y }, ctx.s (54.0f), row, label, dw::Align::left);
-            controls[index] = { { left + ctx.s (58.0f), y }, { right, y + row } };
-            const auto result = formSlider (ctx, id, controls[index].first, controls[index].last,
-                                            value, low, high, format);
-            y += row + gap;
-            return result.changed;
-        };
+        const float column = std::min (width / 3.0f, ctx.s (104.0f));
+        const float knobLeft = left + (width - column * 3.0f) * 0.5f;
         float bands = (float) settings.bands;
-        if (slider (3, "Bands", "##phase-bands", bands, 4.0f, 64.0f, "%.0f"))
+        if (drawControl (ctx, 3, "Bands", "##phase-bands", { knobLeft, y }, column,
+                         bands, dw::Range (4.0f, 64.0f), 16.0f, "%.0f", 1.0f))
             params.bands.store ((int) std::lround (bands), std::memory_order_relaxed);
-        if (slider (4, "Q", "##phase-q", settings.q, 0.25f, 8.0f, "%.2f"))
+        if (drawControl (ctx, 4, "Q", "##phase-q", { knobLeft + column, y }, column,
+                         settings.q, dw::Range::withMidPoint (0.25f, 8.0f, 2.0f), 2.0f, "%.2f", 0.01f))
             params.q.store (settings.q, std::memory_order_relaxed);
-        if (slider (5, "Average", "##phase-average", settings.averagingMs, 50.0f, 5000.0f, "%.0f ms"))
+        if (drawControl (ctx, 5, "Average", "##phase-average", { knobLeft + column * 2.0f, y }, column,
+                         settings.averagingMs, dw::Range::withMidPoint (50.0f, 5000.0f, 500.0f), 500.0f, "%.0f ms", 10.0f))
             params.averagingMs.store (settings.averagingMs, std::memory_order_relaxed);
         formTooltip ("Correlation time constant. Coherence averages at least eight FFT windows and needs sustained audio to settle.");
+        y += ctx.s (88.0f) + gap;
 
-        const auto& report = analyzer.report();
-        const float graphHeight = ctx.s (100.0f);
-        drawBands (ctx, { left + ctx.s (16.0f), y }, { right, y + graphHeight }, report);
-        y += graphHeight + gap;
-        drawBroadband (ctx, { left, y }, width, report.broadband);
-        y += ctx.s (26.0f);
+        const auto& band = report.bands[(size_t) selectedBand];
+        ctx.dl->AddLine ({ left, y }, { right, y }, ctx.theme->pillDivider);
+        y += ctx.s (8.0f);
+        char range[64];
+        std::snprintf (range, sizeof range, "%.0f to %.0f Hz", band.lowHz, band.highHz);
+        dw::text (ctx, ctx.fonts->pill, ctx.s (11.0f), { left, y }, width, kBright, range, dw::Align::left);
+        y += ctx.s (17.0f);
         ImGui::SetCursorScreenPos ({ left, y });
-        drawReadings (report);
+        if (mode == 0)
+        {
+            if (band.correlationValid) ImGui::Text ("Correlation %+.2f", band.correlation);
+            else ImGui::TextUnformatted ("Correlation --");
+            ImGui::SameLine();
+            if (band.minimumValid) ImGui::TextDisabled (" / min %+.2f", band.minimumCorrelation);
+            else ImGui::TextDisabled (" / min --");
+        }
+        else
+        {
+            if (band.coherenceValid) ImGui::Text ("Coherence %.2f", band.coherence);
+            else ImGui::TextUnformatted ("Coherence --");
+        }
+        if (band.monoValid) ImGui::Text ("Mono loss %.1f dB", band.monoLossDb);
+        else ImGui::TextUnformatted ("Mono loss --");
+        y = ImGui::GetCursorScreenPos().y + ctx.s (4.0f);
+        int warnings = 0;
+        for (int i = 0; i < report.settings.bands; ++i)
+            if (report.bands[(size_t) i].flagged) ++warnings;
+        ImGui::SetCursorScreenPos ({ left, y });
+        if (warnings > 0)
+        {
+            ImGui::PushStyleColor (ImGuiCol_Text, kWarning);
+            ImGui::Text ("%d held phase warning%s", warnings, warnings == 1 ? "" : "s");
+            ImGui::PopStyleColor();
+        }
+        else ImGui::TextDisabled ("No held phase warnings");
+        ImGui::SetCursorScreenPos ({ left, ImGui::GetCursorScreenPos().y + ctx.s (4.0f) });
+        if (ImGui::CollapsingHeader ("Details")) drawReadings (report);
+        ImGui::Dummy ({ 0.0f, inset });
+    }
+
+    bool drawControl (dw::Context& ctx, size_t index, const char* label, const char* id, ImVec2 at,
+                      float width, float& value, const dw::Range& range, float defaultValue,
+                      const char* format, float speed)
+    {
+        dw::text (ctx, ctx.fonts->caption, ctx.s (10.5f), at, width, kMuted, label);
+        const float radius = std::min (ctx.s (22.0f), width * 0.28f);
+        dw::KnobStyle style;
+        style.fill = kAccent;
+        const auto knob = dw::knob (ctx, id, { at.x + width * 0.5f, at.y + ctx.s (16.0f) + radius },
+                                    radius, value, range, defaultValue, style);
+        ImGui::SetItemKeyOwner (ImGuiKey_MouseWheelY);
+        controls[index + 4] = { ImGui::GetItemRectMin(), ImGui::GetItemRectMax() };
+        if (knob.changed) value = index == 3 ? std::round (knob.value) : knob.value;
+        formTooltip ("Drag or scroll to adjust; double-click to reset. Cmd-click on macOS or Ctrl-click elsewhere to type a value.");
+        ImGui::SetCursorScreenPos ({ at.x + ctx.s (3.0f), at.y + ctx.s (68.0f) });
+        ImGui::SetNextItemWidth (width - ctx.s (6.0f));
+        ImGui::PushID (id);
+        ImGui::PushStyleColor (ImGuiCol_FrameBg, IM_COL32 (24, 24, 32, 255));
+        const bool edited = ImGui::DragFloat ("##value", &value, speed, range.start, range.end, format,
+                                               ImGuiSliderFlags_AlwaysClamp);
+        ImGui::PopStyleColor();
+        ImGui::PopID();
+        controls[index] = { ImGui::GetItemRectMin(), ImGui::GetItemRectMax() };
+        if (edited && index == 3) value = std::round (value);
+        return knob.changed || edited;
     }
 
     void drawBands (dw::Context& ctx, ImVec2 tl, ImVec2 br, const PhaseAnalyzer::Report& report)
     {
+        const ImVec2 plot { tl.x + ctx.s (27.0f), tl.y + ctx.s (10.0f) };
+        const ImVec2 end { br.x - ctx.s (8.0f), br.y - ctx.s (23.0f) };
+        const float height = end.y - plot.y, width = end.x - plot.x;
         const int count = report.settings.bands;
         selectedBand = std::clamp (selectedBand, 0, count - 1);
-        const float zero = mode == 0 ? (tl.y + br.y) * 0.5f : br.y;
-        const float scale = mode == 0 ? (br.y - tl.y) * 0.5f : br.y - tl.y;
-        ctx.dl->AddRectFilled (tl, br, IM_COL32 (15, 17, 23, 255));
-        ctx.dl->AddLine ({ tl.x, zero }, { br.x, zero }, kMuted);
-        const float step = (br.x - tl.x) / (float) count;
+        const float zero = mode == 0 ? (plot.y + end.y) * 0.5f : end.y;
+        const float scale = mode == 0 ? height * 0.5f : height;
+        ctx.dl->AddRectFilled (tl, br, IM_COL32 (15, 17, 23, 255), ctx.s (3.0f));
+        ctx.dl->AddRect (tl, br, ctx.theme->pillDivider, ctx.s (3.0f));
+        for (int i = 0; i <= 4; ++i)
+        {
+            const float y = plot.y + height * (float) i / 4.0f;
+            ctx.dl->AddLine ({ plot.x, y }, { end.x, y }, IM_COL32 (43, 47, 54, 255));
+            if (i % 2 == 0 || height >= ctx.s (220.0f))
+            {
+                char label[12];
+                const float value = mode == 0 ? 1.0f - (float) i * 0.5f : 1.0f - (float) i * 0.25f;
+                std::snprintf (label, sizeof label, mode == 0 ? "%+.1f" : "%.2g", (double) value);
+                dw::text (ctx, ctx.fonts->caption, ctx.s (9.5f), { tl.x, y - ctx.s (5.0f) },
+                          ctx.s (23.0f), i == 2 && mode == 0 ? kBright : kMuted, label, dw::Align::right);
+            }
+        }
+        static constexpr float frequencies[] = { 20.0f, 100.0f, 1000.0f, 10000.0f, 20000.0f };
+        static constexpr const char* labels[] = { "20", "100", "1k", "10k", "20k Hz" };
+        for (size_t i = 0; i < std::size (frequencies); ++i)
+        {
+            if (i == 3 && width < ctx.s (300.0f)) continue;
+            const float x = plot.x + std::log10 (frequencies[i] / 20.0f) / 3.0f * width;
+            ctx.dl->AddLine ({ x, plot.y }, { x, end.y }, IM_COL32 (38, 42, 49, 255));
+            const float labelWidth = ctx.s (i == 4 ? 44.0f : 30.0f);
+            dw::text (ctx, ctx.fonts->caption, ctx.s (9.5f),
+                      { std::clamp (x - labelWidth * 0.5f, plot.x - ctx.s (8.0f), br.x - labelWidth), end.y + ctx.s (6.0f) },
+                      labelWidth, kMuted, labels[i]);
+        }
+        const float step = width / (float) count;
+        bool validReading = false;
         for (int i = 0; i < count; ++i)
         {
             const auto& band = report.bands[(size_t) i];
-            const float x = tl.x + i * step;
+            const float x = plot.x + (float) i * step;
+            const float inset = std::min (ctx.s (1.5f), step * 0.15f);
+            if (i == selectedBand)
+                ctx.dl->AddRectFilled ({ x, plot.y }, { x + step, end.y }, IM_COL32 (90, 138, 208, 24));
             const bool valid = mode == 0 ? band.correlationValid : band.coherenceValid;
             if (valid)
             {
-                const float value = (float) (mode == 0 ? band.correlation : band.coherence);
+                validReading = true;
+                const float value = std::clamp ((float) (mode == 0 ? band.correlation : band.coherence),
+                                                mode == 0 ? -1.0f : 0.0f, 1.0f);
                 const float at = zero - value * scale;
-                ctx.dl->AddRectFilled ({ x + step * 0.1f, std::min (zero, at) },
-                                       { x + step * 0.9f, std::max (zero, at) + ctx.s (0.5f) },
-                                       band.correlationValid && band.correlation < 0.0 ? kWarning : kHealthy);
+                const bool negative = mode == 0 && value < 0.0f;
+                const ImU32 top = negative ? kWarning : kHealthy;
+                const ImU32 bottom = negative ? IM_COL32 (161, 66, 59, 255) : IM_COL32 (192, 176, 77, 255);
+                const float barTop = std::min (zero, at), barBottom = std::max (zero, at);
+                ctx.dl->AddRectFilledMultiColor ({ x + inset, barTop }, { x + step - inset, barBottom },
+                                                 top, top, bottom, bottom);
+                for (float y = plot.y + ctx.s (7.0f); y < end.y; y += ctx.s (7.0f))
+                    if (y > barTop && y < barBottom)
+                        ctx.dl->AddLine ({ x + inset, y }, { x + step - inset, y },
+                                         IM_COL32 (15, 17, 23, 150), ctx.s (1.0f));
             }
             if (mode == 0 && band.minimumValid)
             {
                 const float at = zero - (float) band.minimumCorrelation * scale;
-                ctx.dl->AddLine ({ x, at }, { x + step, at }, kMuted);
+                ctx.dl->AddLine ({ x + inset, at }, { x + step - inset, at }, kBright, ctx.s (1.5f));
             }
             if (band.flagged)
-                ctx.dl->AddRectFilled ({ x, br.y - ctx.s (3.0f) }, { x + step, br.y }, kWarning);
-            if (i == selectedBand)
-                ctx.dl->AddRect ({ x, tl.y }, { x + step, br.y }, IM_COL32 (210, 220, 230, 255));
+                ctx.dl->AddRectFilled ({ x + inset, end.y + ctx.s (2.0f) },
+                                       { x + step - inset, end.y + ctx.s (4.0f) }, kWarning);
         }
-        dw::text (ctx, ctx.fonts->caption, ctx.s (9.0f), { tl.x - ctx.s (16.0f), tl.y },
-                  ctx.s (15.0f), kMuted, "+1");
-        dw::text (ctx, ctx.fonts->caption, ctx.s (9.0f), { tl.x - ctx.s (16.0f), br.y - ctx.s (10.0f) },
-                  ctx.s (15.0f), kMuted, mode == 0 ? "-1" : "0");
-        controls[6] = { tl, br };
-        dw::hitArea (ctx, "##phase-band", tl, br);
+        ctx.dl->AddLine ({ plot.x, zero }, { end.x, zero }, IM_COL32 (160, 166, 176, 255), ctx.s (1.0f));
+        if (! validReading)
+            dw::text (ctx, ctx.fonts->caption, ctx.s (11.0f), { plot.x, plot.y + height * 0.25f }, width,
+                      kMuted, report.warming ? "Warming up" : "No stereo reading");
+        controls[6] = { plot, end };
+        dw::hitArea (ctx, "##phase-band", plot, end);
         if (ImGui::IsItemHovered() || ImGui::IsItemActive())
         {
-            const int hovered = std::clamp ((int) ((ImGui::GetIO().MousePos.x - tl.x) / step), 0, count - 1);
+            const int hovered = std::clamp ((int) ((ImGui::GetIO().MousePos.x - plot.x) / step), 0, count - 1);
             if (ImGui::IsMouseClicked (ImGuiMouseButton_Left)) selectedBand = hovered;
             if (ImGui::IsItemHovered())
             {
@@ -184,12 +293,15 @@ private:
         char correlation[24] = "--", mono[24] = "--";
         if (reading.correlationValid) std::snprintf (correlation, sizeof correlation, "%+.2f", reading.correlation);
         if (reading.monoValid) std::snprintf (mono, sizeof mono, "%.1f dB", reading.monoLossDb);
-        char line[96];
-        std::snprintf (line, sizeof line, "Overall %s   Mono %s", correlation, mono);
-        dw::text (ctx, ctx.fonts->caption, ctx.s (10.5f), at, width, kMuted, line, dw::Align::left);
-        const ImVec2 tl { at.x, at.y + ctx.s (14.0f) }, br { at.x + width, at.y + ctx.s (21.0f) };
+        const float half = width * 0.5f;
+        dw::text (ctx, ctx.fonts->caption, ctx.s (10.0f), at, half, kMuted, "OVERALL", dw::Align::left);
+        dw::text (ctx, ctx.fonts->caption, ctx.s (10.0f), { at.x + half, at.y }, half, kMuted, "MONO LOSS", dw::Align::right);
+        dw::text (ctx, ctx.fonts->pill, ctx.s (17.0f), { at.x, at.y + ctx.s (13.0f) }, half,
+                  reading.correlationValid && reading.correlation < 0.0 ? kWarning : kBright, correlation, dw::Align::left);
+        dw::text (ctx, ctx.fonts->pill, ctx.s (17.0f), { at.x + half, at.y + ctx.s (13.0f) }, half, kBright, mono, dw::Align::right);
+        const ImVec2 tl { at.x, at.y + ctx.s (35.0f) }, br { at.x + width, at.y + ctx.s (43.0f) };
         const float zero = at.x + width * 0.5f;
-        ctx.dl->AddRectFilled (tl, br, IM_COL32 (15, 17, 23, 255));
+        ctx.dl->AddRectFilled (tl, br, IM_COL32 (15, 17, 23, 255), ctx.s (2.0f));
         if (reading.correlationValid)
         {
             const float end = zero + (float) reading.correlation * width * 0.5f;
@@ -200,7 +312,7 @@ private:
         if (reading.minimumValid)
         {
             const float held = zero + (float) reading.minimumCorrelation * width * 0.5f;
-            ctx.dl->AddLine ({ held, tl.y }, { held, br.y }, kMuted);
+            ctx.dl->AddLine ({ held, tl.y }, { held, br.y }, kBright);
         }
     }
 
@@ -249,7 +361,7 @@ private:
     PhaseAnalyzer& analyzer;
     std::function<bool()> getMono;
     std::function<void (bool)> setMono;
-    std::array<Rect, 7> controls {};
+    std::array<Rect, 10> controls {};
     Rect viewport;
     int mode = 0, selectedBand = 0;
     bool popupOpen = false, popupWasOpen = false;

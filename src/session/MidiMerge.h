@@ -12,8 +12,9 @@ namespace duskstudio
 // The unlocked region a pass over [start, end) joins: the one holding `start`
 // (the last in order where several are stacked there), else the first one the
 // pass reaches. The audio thread asks too, so this stays one allocation-free pass.
-template <typename Regions>
-int findMidiMergeTarget (const Regions& regions, std::int64_t start, std::int64_t end) noexcept
+template <typename Regions, typename LengthOf>
+int findMidiMergeTarget (const Regions& regions, std::int64_t start, std::int64_t end,
+                        LengthOf&& lengthOf) noexcept
 {
     if (end <= start) return -1;
     int reached = -1;
@@ -21,7 +22,9 @@ int findMidiMergeTarget (const Regions& regions, std::int64_t start, std::int64_
     for (int i = (int) regions.size() - 1; i >= 0; --i)
     {
         const auto& region = regions[(std::size_t) i];
-        if (region.locked || region.lengthInSamples <= 0 || end <= region.timelineStart) continue;
+        if (region.locked || end <= region.timelineStart) continue;
+        const auto length = lengthOf (region);
+        if (length <= 0) continue;
         if (start < region.timelineStart)
         {
             if (reached < 0 || region.timelineStart < reachedStart)
@@ -31,10 +34,17 @@ int findMidiMergeTarget (const Regions& regions, std::int64_t start, std::int64_
             }
         }
         else if ((std::uint64_t) start - (std::uint64_t) region.timelineStart
-                 < (std::uint64_t) region.lengthInSamples)
+                 < (std::uint64_t) length)
             return i;
     }
     return reached;
+}
+
+template <typename Regions>
+int findMidiMergeTarget (const Regions& regions, std::int64_t start, std::int64_t end) noexcept
+{
+    return findMidiMergeTarget (regions, start, end,
+                               [] (const auto& region) { return region.lengthInSamples; });
 }
 
 struct MidiMergeResult
@@ -102,5 +112,18 @@ MidiMergeResult mergeMidiPass (Performance& target, const Performance& pass,
     std::stable_sort (target.ccs.begin(), target.ccs.end(),
                       [] (const MidiCc& a, const MidiCc& b) { return a.atTick < b.atTick; });
     return { true, leading };
+}
+template <typename Performance, typename Clock>
+MidiMergeResult mergeMidiPassAt (Performance& target, const Performance& pass,
+                                 std::int64_t timelineStart, const Clock& clock)
+{
+    const auto result = mergeMidiPass (target, pass, clock.tickAt (timelineStart));
+    if (result.changed)
+    {
+        if (result.leadingTicks > 0) target.timelineStart = clock.at (-result.leadingTicks);
+        target.lengthInSamples = clock.at (target.lengthInTicks - result.leadingTicks)
+                               - target.timelineStart;
+    }
+    return result;
 }
 } // namespace duskstudio

@@ -117,18 +117,125 @@ constexpr ImageResource kImages[] {
     { "sfz_collection_png", "TheresaKnott; Cornergraf; Mfaiiazi; Dusk Audio; CC0-1.0. Sources and adaptations: LICENSES.txt." }
 };
 static_assert (sizeof (kImages) / sizeof (kImages[0]) == sfz::kInstrumentCategories.size());
+
+enum class Detail : std::size_t
+{
+    UprightBass, Harp, Cello, Banjo, Mandolin, Ukulele, Accordion, Harmonica,
+    Saxophone, Clarinet, Bassoon, Oboe, Trumpet, Trombone, Tuba, Harpsichord,
+    Vibraphone, Glockenspiel, Steelpan, Handpan, Koto, TubularBells, Handbell, Count
+};
+
+constexpr ImageResource kDetailImages[] {
+    { "sfz_upright_bass_png", "papapishu; CC0-1.0. Sources and adaptations: LICENSES.txt." },
+    { "sfz_harp_png", "Museum f\u00fcr Kunst und Gewerbe Hamburg; CC0-1.0. Sources and adaptations: LICENSES.txt." },
+    { "sfz_cello_png", "Georg Feitscher; CC BY 3.0. Sources and adaptations: LICENSES.txt." },
+    { "sfz_banjo_png", "Zwitt95; CC BY-SA 3.0. Sources and adaptations: LICENSES.txt." },
+    { "sfz_mandolin_png", "Arik Kerman; CC BY-SA 4.0. Sources and adaptations: LICENSES.txt." },
+    { "sfz_ukulele_png", "Kollektives Schreiben; Public domain. Sources and adaptations: LICENSES.txt." },
+    { "sfz_accordion_png", "ArtFavor; CC0-1.0. Sources and adaptations: LICENSES.txt." },
+    { "sfz_harmonica_png", "Sarah A Morrigan / missiridia; CC0-1.0. Sources and adaptations: LICENSES.txt." },
+    { "sfz_saxophone_png", "File:Yamaha Saxophone YAS-62.tif: Yamaha Corporation; remove backround: Habitator terrae; CC BY-SA 4.0. Sources and adaptations: LICENSES.txt." },
+    { "sfz_clarinet_png", "File:Yamaha Clarinet YCL-457II-22.tiff: Yamaha Corporation; remove backround: Habitator terrae; CC BY-SA 4.0. Sources and adaptations: LICENSES.txt." },
+    { "sfz_bassoon_png", "Yamaha Corporation; CC BY-SA 4.0. Sources and adaptations: LICENSES.txt." },
+    { "sfz_oboe_png", "man ichihara ; Photographed and edited by fi:K\u00e4ytt\u00e4j\u00e4:Aquazer.; CC BY-SA 3.0. Sources and adaptations: LICENSES.txt." },
+    { "sfz_trumpet_png", "PJ, background cropped by EWikist; CC BY-SA 3.0. Sources and adaptations: LICENSES.txt." },
+    { "sfz_trombone_png", "Debbie Rawson (photograph); Jonathanischoice (uploader); funded by Wikimedia Aotearoa New Zealand; CC BY 4.0. Sources and adaptations: LICENSES.txt." },
+    { "sfz_tuba_png", "Buffet Crampon; CC BY-SA 4.0. Sources and adaptations: LICENSES.txt." },
+    { "sfz_harpsichord_png", "FREYmanagement; CC BY-SA 3.0. Sources and adaptations: LICENSES.txt." },
+    { "sfz_vibraphone_png", "Xylosmygame at English Wikipedia; CC BY-SA 3.0. Sources and adaptations: LICENSES.txt." },
+    { "sfz_glockenspiel_png", "flamurai; Public domain. Sources and adaptations: LICENSES.txt." },
+    { "sfz_steelpan_png", "J dahlia; CC BY-SA 4.0. Sources and adaptations: LICENSES.txt." },
+    { "sfz_handpan_png", "Pensierarte; CC BY-SA 3.0. Sources and adaptations: LICENSES.txt." },
+    { "sfz_koto_png", "Got\u014d Teij\u014d / Got\u014d Y\u016bj\u014d; CC0-1.0. Sources and adaptations: LICENSES.txt." },
+    { "sfz_tubular_bells_png", "Xylosmygame at English Wikipedia; CC BY-SA 3.0. Sources and adaptations: LICENSES.txt." },
+    { "sfz_handbell_png", "M0tty; CC BY-SA 4.0. Sources and adaptations: LICENSES.txt." },
+};
+static_assert (sizeof (kDetailImages) / sizeof (kDetailImages[0]) == static_cast<std::size_t> (Detail::Count));
+
+const ImageResource& detail (Detail image)
+{
+    return kDetailImages[static_cast<std::size_t> (image)];
+}
+
+const ImageResource& artworkEntry (sfz::InstrumentCategory category, std::string_view name, std::string_view context)
+{
+    using C = sfz::InstrumentCategory;
+    const auto match = [&] (std::string_view value) -> const ImageResource*
+    {
+        const auto words = sfz::instrumentWords (value);
+        const auto has = [&] (std::initializer_list<const char*> terms) { return sfz::instrumentWordsContain (words, terms); };
+        switch (category)
+        {
+            case C::Bass:
+                if (has ({ "upright bass", "double bass", "contrabass" })) return &detail (Detail::UprightBass);
+                break;
+            case C::Strings:
+                if (has ({ "harp" })) return &detail (Detail::Harp);
+                if (has ({ "cello", "violoncello" })) return &detail (Detail::Cello);
+                break;
+            case C::AcousticGuitar:
+                if (has ({ "banjo", "ganjo" })) return &detail (Detail::Banjo);
+                if (has ({ "mandolin" })) return &detail (Detail::Mandolin);
+                if (has ({ "ukulele", "uke" })) return &detail (Detail::Ukulele);
+                break;
+            case C::World:
+                if (has ({ "accordion", "bandoneon", "concertina" })) return &detail (Detail::Accordion);
+                if (has ({ "harmonica", "mouth organ" })) return &detail (Detail::Harmonica);
+                if (has ({ "koto" })) return &detail (Detail::Koto);
+                break;
+            case C::Woodwinds:
+                if (has ({ "saxophone", "sax" })) return &detail (Detail::Saxophone);
+                if (has ({ "clarinet" })) return &detail (Detail::Clarinet);
+                if (has ({ "bassoon" })) return &detail (Detail::Bassoon);
+                if (has ({ "oboe", "english horn", "cor anglais" })) return &detail (Detail::Oboe);
+                break;
+            case C::Brass:
+                if (has ({ "trumpet", "cornet", "flugelhorn" })) return &detail (Detail::Trumpet);
+                if (has ({ "trombone" })) return &detail (Detail::Trombone);
+                if (has ({ "tuba", "euphonium" })) return &detail (Detail::Tuba);
+                break;
+            case C::Piano:
+                if (has ({ "harpsichord", "spinet" })) return &detail (Detail::Harpsichord);
+                break;
+            case C::Mallets:
+                if (has ({ "vibraphone", "vibes" })) return &detail (Detail::Vibraphone);
+                if (has ({ "glockenspiel", "glock" })) return &detail (Detail::Glockenspiel);
+                if (has ({ "tubular bell", "chime", "carillon" })) return &detail (Detail::TubularBells);
+                if (has ({ "bell", "handbell" })) return &detail (Detail::Handbell);
+                break;
+            case C::Percussion:
+                if (has ({ "handpan", "hang drum" })) return &detail (Detail::Handpan);
+                if (has ({ "steelpan", "steel pan", "steel drum" })) return &detail (Detail::Steelpan);
+                break;
+            case C::ElectricPiano: case C::Organ: case C::Drums: case C::ElectricGuitar:
+            case C::Synth: case C::Voice: case C::Collection: case C::Other: break;
+        }
+        return nullptr;
+    };
+    if (const auto* image = match (name)) return *image;
+    if (sfz::instrumentCategory (name) == C::Other)
+        if (const auto* image = match (context)) return *image;
+    if (category == C::World && ! name.empty() && ! sfz::instrumentWordsContain (sfz::instrumentWords (name), { "sitar" }))
+        return kImages[static_cast<std::size_t> (C::Collection)];
+    return kImages[static_cast<std::size_t> (category)];
+}
 } // namespace
 
-std::string_view instrumentArtwork (sfz::InstrumentCategory category)
+const char* instrumentArtworkResource (sfz::InstrumentCategory category, std::string_view name, std::string_view context)
+{
+    return artworkEntry (category, name, context).resource;
+}
+
+std::string_view instrumentArtwork (sfz::InstrumentCategory category, std::string_view name, std::string_view context)
 {
     int bytes = 0;
-    const auto* data = BinaryData::getNamedResource (kImages[static_cast<std::size_t> (category)].resource, bytes);
+    const auto* data = BinaryData::getNamedResource (artworkEntry (category, name, context).resource, bytes);
     return data != nullptr && bytes > 0 ? std::string_view (data, static_cast<std::size_t> (bytes)) : std::string_view {};
 }
 
-const char* instrumentArtworkCredit (sfz::InstrumentCategory category)
+const char* instrumentArtworkCredit (sfz::InstrumentCategory category, std::string_view name, std::string_view context)
 {
-    return kImages[static_cast<std::size_t> (category)].credit;
+    return artworkEntry (category, name, context).credit;
 }
 
 std::shared_ptr<const sfz::ArtworkPixels> decodeInstrumentArtwork (std::string_view bytes)

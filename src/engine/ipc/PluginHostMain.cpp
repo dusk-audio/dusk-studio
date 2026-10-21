@@ -43,8 +43,8 @@
 //   socket reader thread - reads length-prefixed control messages from
 //                          kChildInheritFd, dispatches them: LoadPlugin,
 //                          PrepareToPlay, Release, GetState, SetState.
-//                          Uses MessageManagerLock when calling APIs
-//                          that JUCE marks message-thread-only.
+//                          Posts lifecycle and editor calls to main,
+//                          parking the audio worker before live mutations.
 //   audio worker thread  - waits on cmdSeq, calls plugin->processBlock
 //                          when a command arrives. Lock-free read of the
 //                          atomic instance pointer so the parent's audio
@@ -529,8 +529,24 @@ int runIpcControlReplyStub (int argc, const char* const* argv) noexcept
         || wrongPayload.op != (std::uint32_t) OpCode::Ping)
         return 1;
     const std::uint8_t unexpectedPayload = 0;
-    return sendControlReply (channel, wrongPayload, 0,
-                             &unexpectedPayload, sizeof (unexpectedPayload)) ? 0 : 1;
+    if (! sendControlReply (channel, wrongPayload, 0, &unexpectedPayload, sizeof (unexpectedPayload)))
+        return 1;
+    ControlMsgHeader editorTimeout {};
+    if (! readRequest (editorTimeout, payload) || editorTimeout.op != (std::uint32_t) OpCode::Release
+        || ! sendControlReply (channel, editorTimeout, kControlStatusMessageThreadTimeout, nullptr, 0))
+        return 1;
+    ControlMsgHeader recovered {};
+    if (! readRequest (recovered, payload) || recovered.op != (std::uint32_t) OpCode::Ping
+        || ! sendControlReply (channel, recovered, 0, nullptr, 0))
+        return 1;
+    ControlMsgHeader lifecycleFailure {};
+    if (! readRequest (lifecycleFailure, payload) || lifecycleFailure.op != (std::uint32_t) OpCode::PrepareToPlay
+        || ! sendControlReply (channel, lifecycleFailure, kControlStatusLifecycleFailed, nullptr, 0))
+        return 1;
+    // Keep EOF from masking a missing terminal-status check in the parent.
+    char ignored = 0;
+    (void) ipcp::readExact (channel, &ignored, 1);
+    return 0;
 }
 
 // Test-only child for the parent's out-of-process load path. It answers
@@ -800,7 +816,7 @@ struct HostState
     ipcp::InterprocessSignal commandSignal;
     ipcp::InterprocessSignal replySignal;
 
-    juce::AudioPluginFormatManager formatManager;
+    duskstudio::juce_compat::FormatManager formatManager;
     juce::KnownPluginList knownList;
 
     PluginInstancePtr ownedInstance;
@@ -867,6 +883,10 @@ constexpr int kHostMessageThreadWaitMs = 2000;
 // builds its whole GUI inside createEditorIfNeeded. Its parent deadline is
 // 10 s, so it gets a longer ceiling of its own.
 constexpr int kHostEditorCreateWaitMs = 8000;
+// Load/state RPCs allow 30 s; loading also has two 2 s teardown hops.
+constexpr int kHostLifecycleWaitMs = 25000;
+constexpr int kHostPrepareWaitMs = 8000;
+std::thread::id hostMessageThreadId;
 
 enum class HostDispatchResult
 {
@@ -879,6 +899,18 @@ template <typename Fn>
 HostDispatchResult runOnHostMessageThreadAndWait (
     Fn&& fn, int timeoutMs = kHostMessageThreadWaitMs)
 {
+    if (std::this_thread::get_id() == hostMessageThreadId)
+    {
+        try
+        {
+            fn();
+            return HostDispatchResult::Done;
+        }
+        catch (...)
+        {
+            return HostDispatchResult::Failed;
+        }
+    }
     // Shared with the posted work rather than held on this frame: a timed-out
     // call returns while the message thread may still run that work later, and
     // it must not signal an event the socket thread has already destroyed.
@@ -944,14 +976,23 @@ HostDispatchResult destroyInstanceFromSocketThread (PluginInstancePtr victim)
 {
     if (victim == nullptr) return HostDispatchResult::Done;
 
-    // The posted work owns the instance outright: after a timeout this call
-    // returns while the message thread may still run later, so the pointer
-    // cannot stay tied to the socket thread's frame. shared_ptr because
-    // callAsync's std::function needs a copyable callable.
-    auto owned = std::make_shared<PluginInstancePtr> (std::move (victim));
+    // A refused post retains the instance until process exit rather than
+    // destroying it on the socket thread while UI callbacks may still use it.
+    auto* owned = victim.release();
     return runOnHostMessageThreadAndWait (
-        [owned] { destroyInstanceOnMessageThread (std::move (*owned)); });
+        [owned] { destroyInstanceOnMessageThread (PluginInstancePtr (owned)); });
 }
+
+struct PluginLoadResult
+{
+    PluginInstancePtr instance;
+    LoadPluginReply reply {};
+
+    ~PluginLoadResult()
+    {
+        (void) destroyInstanceFromSocketThread (std::move (instance));
+    }
+};
 
 #if JUCE_MAC
 // Drain cadence for the mirror queue. Matches the listener's per-param
@@ -1117,6 +1158,27 @@ std::uint32_t withParkedHostWorker (HostState& host, Fn&& fn)
     return 0;
 }
 
+template <typename Fn>
+std::uint32_t withParkedHostWorkerOnMessageThread (HostState& host, Fn&& fn,
+                                                  int timeoutMs = kHostLifecycleWaitMs)
+{
+    HostDispatchResult dispatched = HostDispatchResult::Failed;
+    const bool parked = duskstudio::ipc::withParkedWorker (
+        host.currentInstance, host.hdr->cmdSeq, host.hdr->replySeq, [&]
+        {
+            dispatched = runOnHostMessageThreadAndWait (std::forward<Fn> (fn), timeoutMs);
+        });
+    if (! parked || dispatched != HostDispatchResult::Done)
+    {
+        // Posted lifecycle work may outlive its deadline; the worker must stay
+        // parked and the child must exit before accepting another mutation.
+        host.hdr->state.store (kStateCrashed, std::memory_order_release);
+        return parked ? kControlStatusLifecycleFailed : kControlStatusWorkerParkTimeout;
+    }
+    host.currentInstance.store (host.ownedInstance.get(), std::memory_order_release);
+    return 0;
+}
+
 std::uint32_t handleLoadPlugin (HostState& host,
                                   const std::vector<std::uint8_t>& payload,
                                   std::vector<std::uint8_t>& replyOut)
@@ -1140,29 +1202,46 @@ std::uint32_t handleLoadPlugin (HostState& host,
     // failure then leaves the slot exactly as it was rather than parked on a
     // null pointer with an orphaned ownedInstance, which silences the slot
     // until some later RPC happens to republish it.
-    juce::String errorMsg;
-    auto fresh = host.formatManager.createPluginInstance (
-        desc, hdr.sampleRate, hdr.blockSize, errorMsg);
+    const auto deadline = std::chrono::steady_clock::now()
+                        + std::chrono::milliseconds (kHostLifecycleWaitMs);
+    if (desc.pluginFormatName == "LV2"
+        && runOnHostMessageThreadAndWait ([&host]
+        { duskstudio::juce_compat::primeCustomLv2 (host.formatManager); }, kHostLifecycleWaitMs)
+            != HostDispatchResult::Done)
+        return kControlStatusLifecycleFailed;
 
-    if (fresh == nullptr)
+    auto result = std::make_shared<PluginLoadResult>();
+    juce::String errorMsg;
+    // Some formats need main to remain unblocked while their factory completes.
+    result->instance = host.formatManager.createPluginInstance (
+        desc, hdr.sampleRate, hdr.blockSize, errorMsg);
+    if (result->instance == nullptr)
     {
         const auto bytes = errorMsg.toRawUTF8();
         replyOut.assign (bytes, bytes + std::strlen (bytes));
         return 3;
     }
-
-    fresh->setPlayConfigDetails (fresh->getTotalNumInputChannels(),
-                                  fresh->getTotalNumOutputChannels(),
-                                  hdr.sampleRate, hdr.blockSize);
-    fresh->prepareToPlay (hdr.sampleRate, hdr.blockSize);
-
-    LoadPluginReply reply {};
-    reply.numInChans     = fresh->getTotalNumInputChannels();
-    reply.numOutChans    = fresh->getTotalNumOutputChannels();
-    reply.latencySamples = fresh->getLatencySamples();
-    juce::PluginDescription loadedDescription;
-    fresh->fillInPluginDescription (loadedDescription);
-    reply.isInstrument = loadedDescription.isInstrument ? 1u : 0u;
+    const auto remainingMs = std::chrono::duration_cast<std::chrono::milliseconds> (
+        deadline - std::chrono::steady_clock::now()).count();
+    if (remainingMs <= 0) return kControlStatusLifecycleFailed;
+    const auto dispatched = runOnHostMessageThreadAndWait ([hdr, result]
+    {
+        auto& fresh = result->instance;
+        fresh->setPlayConfigDetails (fresh->getTotalNumInputChannels(),
+                                    fresh->getTotalNumOutputChannels(),
+                                    hdr.sampleRate, hdr.blockSize);
+        fresh->prepareToPlay (hdr.sampleRate, hdr.blockSize);
+        result->reply.numInChans     = fresh->getTotalNumInputChannels();
+        result->reply.numOutChans    = fresh->getTotalNumOutputChannels();
+        result->reply.latencySamples = fresh->getLatencySamples();
+        juce::PluginDescription loadedDescription;
+        fresh->fillInPluginDescription (loadedDescription);
+        result->reply.isInstrument = loadedDescription.isInstrument ? 1u : 0u;
+    }, static_cast<int> (remainingMs));
+    if (dispatched != HostDispatchResult::Done)
+        return kControlStatusLifecycleFailed;
+    auto fresh = std::move (result->instance);
+    const auto reply = result->reply;
 
     // The editor belongs to the instance about to be deposed, so it goes
     // before the swap - and before anything touches ownedInstance.
@@ -1244,12 +1323,12 @@ std::uint32_t handlePrepareToPlay (HostState& host,
     PrepareToPlayPayload p {};
     std::memcpy (&p, payload.data(), sizeof (p));
     if (host.ownedInstance == nullptr) return kControlStatusNoPluginLoaded;
-    return withParkedHostWorker (host, [&]
+    return withParkedHostWorkerOnMessageThread (host, [&host, p]
     {
         host.ownedInstance->prepareToPlay (p.sampleRate, p.blockSize);
         host.currentSampleRate = p.sampleRate;
         host.currentBlockSize  = p.blockSize;
-    });
+    }, kHostPrepareWaitMs);
 }
 
 std::uint32_t handleRelease (HostState& host)
@@ -1287,17 +1366,17 @@ std::uint32_t handleGetState (HostState& host,
                                 std::vector<std::uint8_t>& replyOut)
 {
     if (host.ownedInstance == nullptr) return 1;
-    juce::MemoryBlock mb;
-    const auto parkStatus = withParkedHostWorker (host, [&]
+    auto mb = std::make_shared<juce::MemoryBlock>();
+    auto* instance = host.ownedInstance.get();
+    const auto parkStatus = withParkedHostWorkerOnMessageThread (host, [instance, mb]
     {
-        const juce::MessageManagerLock mml;
-        host.ownedInstance->getStateInformation (mb);
+        instance->getStateInformation (*mb);
     });
     if (parkStatus != 0) return parkStatus;
-    if (mb.getSize() > kStateBytes) return 2;
+    if (mb->getSize() > kStateBytes) return 2;
     std::memcpy (static_cast<char*> (host.shm.data()) + kStateOffset,
-                  mb.getData(), mb.getSize());
-    const std::uint32_t sz = (std::uint32_t) mb.getSize();
+                  mb->getData(), mb->getSize());
+    const std::uint32_t sz = (std::uint32_t) mb->getSize();
     replyOut.resize (sizeof (sz));
     std::memcpy (replyOut.data(), &sz, sizeof (sz));
     return 0;
@@ -1311,11 +1390,13 @@ std::uint32_t handleSetState (HostState& host,
     std::uint32_t sz = 0;
     std::memcpy (&sz, payload.data(), sizeof (sz));
     if (sz > kStateBytes) return 3;
-    const auto parkStatus = withParkedHostWorker (host, [&]
+    std::vector<std::uint8_t> state (static_cast<std::size_t> (sz) + 1);
+    std::memcpy (state.data(), static_cast<const char*> (host.shm.data()) + kStateOffset, sz);
+    auto* instance = host.ownedInstance.get();
+    const auto parkStatus = withParkedHostWorkerOnMessageThread (host,
+        [instance, state = std::move (state), sz]
     {
-        const juce::MessageManagerLock mml;
-        host.ownedInstance->setStateInformation (
-            static_cast<const char*> (host.shm.data()) + kStateOffset, (int) sz);
+        instance->setStateInformation (state.data(), (int) sz);
     });
     return parkStatus;
 }
@@ -1617,6 +1698,7 @@ int runIpcHost (int argc, const char* const* argv) noexcept
    #endif
     juce::ScopedJuceInitialiser_GUI juceInit;
 
+    hostMessageThreadId = std::this_thread::get_id();
     duskstudio::juce_compat::addDefaultFormats (host.formatManager);
 
     {
@@ -1678,8 +1760,9 @@ int runIpcHost (int argc, const char* const* argv) noexcept
                 reply.empty() ? nullptr : reply.data(),
                 (std::uint32_t) reply.size());
 
-            if (status == kControlStatusWorkerParkTimeout)
+            if (status == kControlStatusWorkerParkTimeout || status == kControlStatusLifecycleFailed)
             {
+                host.hdr->state.store (kStateCrashed, std::memory_order_release);
                 host.replySignal.wake (&host.hdr->replySeq);
                 std::_Exit (EXIT_FAILURE);
             }
@@ -1818,7 +1901,7 @@ int runScan (int argc, const char* const* argv) noexcept
     // MessageManager to dispatch to.
     juce::ScopedJuceInitialiser_GUI juceInit;
 
-    juce::AudioPluginFormatManager fm;
+    duskstudio::juce_compat::FormatManager fm;
     duskstudio::juce_compat::addDefaultFormats (fm);
 
     juce::AudioPluginFormat* chosen = nullptr;
@@ -1833,6 +1916,7 @@ int runScan (int argc, const char* const* argv) noexcept
     }
 
     juce::OwnedArray<juce::PluginDescription> found;
+    if (formatName == "LV2") duskstudio::juce_compat::primeCustomLv2 (fm);
     chosen->findAllTypesForFile (found, fileOrId);   // may crash/hang - that is the point
 
     const auto payload = duskstudio::scanproto::makePayload (

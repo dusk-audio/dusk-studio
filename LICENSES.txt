@@ -124,6 +124,13 @@ JUCE (audio framework)
                                src/zix file). Versions are the ones JUCE records
                                in format_types/LV2_SDK/juce_lv2_config.h; lv2
                                and sratom carry no version macro there.
+                               Dusk Studio guards Lilv's empty-property sort
+                               and routes Windows filesystem calls through
+                               UTF-8-aware helpers in build-tree copies. The
+                               original notices are retained and the shared
+                               JUCE checkout is unchanged (see
+                               cmake/JuceLv2EmptyStateGuard.cmake and
+                               cmake/JuceLv2WindowsPaths.cmake).
              The macOS and Windows runners build against upstream JUCE 8.0.4,
              an older release that vendors older copies. Read out of the 8.0.4
              tag's own version headers, the two columns are:
@@ -176,7 +183,7 @@ Dusk Audio plugins (donor DSP cores)
 
 dusk-fizz (SFZ / SoundFont sampler engine — powers the multisample instrument)
   Version  : 1.2.3 lineage, submodule rev
-             51600e9f7f1ebde24b7b2915da4d78dec19b27c6
+             f92e07104495bbd645325ff62c1a6c8bae3ad428
   License  : BSD-2-Clause (external/dusk-fizz/LICENSE)
   Path     : external/dusk-fizz/ (git submodule, built as a static library)
   Fork home: https://github.com/dusk-audio/dusk-fizz (Dusk-maintained hard
@@ -3088,7 +3095,7 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 --------------------------------------------------------------------------------
 sfizz 1.2.3 — BSD-2-Clause
 external/dusk-fizz/LICENSE, submodule rev
-51600e9f7f1ebde24b7b2915da4d78dec19b27c6
+f92e07104495bbd645325ff62c1a6c8bae3ad428
 --------------------------------------------------------------------------------
 
 BSD 2-Clause License
@@ -3147,7 +3154,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 --------------------------------------------------------------------------------
 st_audiofile — BSD-2-Clause
 external/dusk-fizz/external/st_audiofile/LICENSE.md at sfizz submodule rev
-51600e9f7f1ebde24b7b2915da4d78dec19b27c6
+f92e07104495bbd645325ff62c1a6c8bae3ad428
 --------------------------------------------------------------------------------
 
 BSD 2-Clause License
@@ -3179,7 +3186,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 --------------------------------------------------------------------------------
 atomic_queue — MIT
 external/dusk-fizz/external/atomic_queue/LICENSE at sfizz submodule rev
-51600e9f7f1ebde24b7b2915da4d78dec19b27c6
+f92e07104495bbd645325ff62c1a6c8bae3ad428
 --------------------------------------------------------------------------------
 
 MIT License
@@ -3233,7 +3240,7 @@ SOFTWARE.
 --------------------------------------------------------------------------------
 jsl — Boost Software License 1.0
 external/dusk-fizz/external/jsl/LICENSE.md at sfizz submodule rev
-51600e9f7f1ebde24b7b2915da4d78dec19b27c6
+f92e07104495bbd645325ff62c1a6c8bae3ad428
 --------------------------------------------------------------------------------
 
 # Boost Software License - Version 1.0 - August 17th, 2003
@@ -3301,7 +3308,7 @@ freely, subject to the following restrictions:
 --------------------------------------------------------------------------------
 kiss_fft — BSD-3-Clause
 external/dusk-fizz/src/external/kiss_fft/COPYING at sfizz submodule rev
-51600e9f7f1ebde24b7b2915da4d78dec19b27c6
+f92e07104495bbd645325ff62c1a6c8bae3ad428
 --------------------------------------------------------------------------------
 
 Copyright (c) 2003-2010 Mark Borgerding
@@ -3319,7 +3326,7 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
 --------------------------------------------------------------------------------
 pugixml — MIT
 external/dusk-fizz/src/external/pugixml/LICENSE.md at sfizz submodule rev
-51600e9f7f1ebde24b7b2915da4d78dec19b27c6
+f92e07104495bbd645325ff62c1a6c8bae3ad428
 --------------------------------------------------------------------------------
 
 MIT License
@@ -3359,7 +3366,7 @@ Copyright (C) 2003, by Kristen Wegner (kristen@tima.net)
 --------------------------------------------------------------------------------
 spline — BSD-3-Clause repository license / Beer-Ware source notice
 external/dusk-fizz/src/external/spline/LICENSE at sfizz submodule rev
-51600e9f7f1ebde24b7b2915da4d78dec19b27c6
+f92e07104495bbd645325ff62c1a6c8bae3ad428
 --------------------------------------------------------------------------------
 
 BSD 3-Clause License
@@ -3400,7 +3407,7 @@ For more information visit www.rabiensoftware.com
 
 The compiled external/dusk-fizz/src/external/spline/spline/spline.cpp carries the
 same attribution and this distinct complete Beer-Ware permission notice at
-sfizz rev 51600e9f7f1ebde24b7b2915da4d78dec19b27c6:
+sfizz rev f92e07104495bbd645325ff62c1a6c8bae3ad428:
 
 "THE BEER-WARE LICENSE" (Revision 42): Devin Lane wrote this file. As long as you retain
 this notice you can do whatever you want with this stuff. If we meet some day, and you
@@ -3409,7 +3416,7 @@ think this stuff is worth it, you can buy me a beer in return.
 --------------------------------------------------------------------------------
 tunings — MIT
 external/dusk-fizz/src/external/tunings/LICENSE.md at sfizz submodule rev
-51600e9f7f1ebde24b7b2915da4d78dec19b27c6
+f92e07104495bbd645325ff62c1a6c8bae3ad428
 --------------------------------------------------------------------------------
 
 Copyright 2019-2020, Paul Walker
@@ -3423,7 +3430,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 --------------------------------------------------------------------------------
 cpuid — BSD-3-Clause
 external/dusk-fizz/src/external/cpuid/LICENSE.rst at sfizz submodule rev
-51600e9f7f1ebde24b7b2915da4d78dec19b27c6
+f92e07104495bbd645325ff62c1a6c8bae3ad428
 --------------------------------------------------------------------------------
 
 cpuid license
@@ -3461,7 +3468,7 @@ cpuid is provided under the "BSD (3-clause) License"::
 --------------------------------------------------------------------------------
 cpuid platform — BSD-3-Clause
 external/dusk-fizz/src/external/cpuid/platform/LICENSE.rst at sfizz submodule rev
-51600e9f7f1ebde24b7b2915da4d78dec19b27c6
+f92e07104495bbd645325ff62c1a6c8bae3ad428
 --------------------------------------------------------------------------------
 
 platform license
@@ -3499,7 +3506,7 @@ platform is provided under the "BSD (3-clause) License"::
 --------------------------------------------------------------------------------
 hiir — WTFPL version 2
 external/dusk-fizz/src/external/hiir/license.txt at sfizz submodule rev
-51600e9f7f1ebde24b7b2915da4d78dec19b27c6
+f92e07104495bbd645325ff62c1a6c8bae3ad428
 --------------------------------------------------------------------------------
 
         DO WHAT THE FUCK YOU WANT TO PUBLIC LICENSE
@@ -3577,7 +3584,7 @@ SPDX-License-Identifier: CC0-1.0
 --------------------------------------------------------------------------------
 cephes — redistribution permission (excerpt) and BSD-3-Clause wrapper
 external/dusk-fizz/external/cephes/LICENSE.txt at sfizz submodule rev
-51600e9f7f1ebde24b7b2915da4d78dec19b27c6
+f92e07104495bbd645325ff62c1a6c8bae3ad428
 --------------------------------------------------------------------------------
 
 ==== NOTE ====
@@ -3736,7 +3743,7 @@ nested submodule rev 78864a4a2e769e426be8cfd78ae7f5f72e236c33
 --------------------------------------------------------------------------------
 stb_vorbis 1.22 — MIT / public domain dual license
 external/dusk-fizz/external/st_audiofile/thirdparty/stb_vorbis/LICENSE at sfizz
-submodule rev 51600e9f7f1ebde24b7b2915da4d78dec19b27c6
+submodule rev f92e07104495bbd645325ff62c1a6c8bae3ad428
 --------------------------------------------------------------------------------
 
 This software is available under 2 licenses -- choose whichever you prefer.
@@ -7243,7 +7250,7 @@ inputs are public domain.
 
 Source revisions, output hashes, pinned preparation input URLs and hashes,
 polygon masks and retouch recipes are recorded in assets/sfz-instruments/credits.json.
-The nine images with preparation records can be reproduced with the recorded
+Images with preparation records can be reproduced with the recorded
 Pillow version using tools/prepare-sfz-artwork.py. Preparation instructions are
 in assets/sfz-instruments/CREDITS.md. The piano uses a Wikimedia PNG rendering;
 the microphone uses a 500-pixel JPEG preview. Their preparation input hashes
@@ -7374,6 +7381,168 @@ CC0-1.0: https://creativecommons.org/publicdomain/zero/1.0/
 See sfz_piano.png, sfz_strings.png and sfz_drums.png credits
 Changes: Assembled the credited CC0 piano illustration and public-domain violin
 and drum cutouts; Dusk Audio dedicates the composition under CC0-1.0.
+
+
+sfz_upright_bass.png - Double bass 1.svg
+papapishu
+CC0-1.0: https://creativecommons.org/publicdomain/zero/1.0/
+https://commons.wikimedia.org/wiki/File:Double_bass_1.svg
+https://commons.wikimedia.org/w/index.php?title=File%3ADouble_bass_1.svg&oldid=976353832
+Changes: Conventional masking, background removal, framing, rotation or recoloring as recorded in assets/sfz-instruments/credits.json; cropped and resized. No AI generation.
+
+sfz_harp.png - Harfe-Museum für Kunst und Gewerbe Hamburg-1995.245.png
+Museum für Kunst und Gewerbe Hamburg
+CC0-1.0: https://creativecommons.org/publicdomain/zero/1.0/
+https://commons.wikimedia.org/wiki/File:Harfe-Museum_f%C3%BCr_Kunst_und_Gewerbe_Hamburg-1995.245.png
+https://commons.wikimedia.org/w/index.php?title=File%3AHarfe-Museum_f%C3%BCr_Kunst_und_Gewerbe_Hamburg-1995.245.png&oldid=1030054601
+Changes: Conventional masking, background removal, framing, rotation or recoloring as recorded in assets/sfz-instruments/credits.json; cropped and resized. No AI generation.
+
+sfz_cello.png - Cello front side.png
+Georg Feitscher
+CC BY 3.0: https://creativecommons.org/licenses/by/3.0
+https://commons.wikimedia.org/wiki/File:Cello_front_side.png
+https://commons.wikimedia.org/w/index.php?title=File%3ACello_front_side.png&oldid=970192307
+Changes: Conventional masking, background removal, framing, rotation or recoloring as recorded in assets/sfz-instruments/credits.json; cropped and resized. No AI generation.
+
+sfz_banjo.png - White Banjo.svg
+Zwitt95
+CC BY-SA 3.0: https://creativecommons.org/licenses/by-sa/3.0
+https://commons.wikimedia.org/wiki/File:White_Banjo.svg
+https://commons.wikimedia.org/w/index.php?title=File%3AWhite_Banjo.svg&oldid=1228899551
+Changes: Conventional masking, background removal, framing, rotation or recoloring as recorded in assets/sfz-instruments/credits.json; cropped and resized. No AI generation.
+
+sfz_mandolin.png - Mandolin.png
+Arik Kerman
+CC BY-SA 4.0: https://creativecommons.org/licenses/by-sa/4.0
+https://commons.wikimedia.org/wiki/File:Mandolin.png
+https://commons.wikimedia.org/w/index.php?title=File%3AMandolin.png&oldid=1042041521
+Changes: Conventional masking, background removal, framing, rotation or recoloring as recorded in assets/sfz-instruments/credits.json; cropped and resized. No AI generation.
+
+sfz_ukulele.png - Ukulele4.png
+Kollektives Schreiben
+Public domain: https://creativecommons.org/publicdomain/mark/1.0/
+https://commons.wikimedia.org/wiki/File:Ukulele4.png
+https://commons.wikimedia.org/w/index.php?title=File%3AUkulele4.png&oldid=1276815950
+Changes: Conventional masking, background removal, framing, rotation or recoloring as recorded in assets/sfz-instruments/credits.json; cropped and resized. No AI generation.
+
+sfz_accordion.png - Accordion.svg
+ArtFavor
+CC0-1.0: https://creativecommons.org/publicdomain/zero/1.0/
+https://commons.wikimedia.org/wiki/File:Accordion.svg
+https://commons.wikimedia.org/w/index.php?title=File%3AAccordion.svg&oldid=989782465
+Changes: Conventional masking, background removal, framing, rotation or recoloring as recorded in assets/sfz-instruments/credits.json; cropped and resized. No AI generation.
+
+sfz_harmonica.png - Harmonica.svg
+Sarah A Morrigan / missiridia
+CC0-1.0: https://creativecommons.org/publicdomain/zero/1.0/
+https://commons.wikimedia.org/wiki/File:Harmonica.svg
+https://commons.wikimedia.org/w/index.php?title=File%3AHarmonica.svg&oldid=995710934
+Changes: Conventional masking, background removal, framing, rotation or recoloring as recorded in assets/sfz-instruments/credits.json; cropped and resized. No AI generation.
+
+sfz_saxophone.png - Yamaha Saxophone YAS-62.png
+File:Yamaha Saxophone YAS-62.tif: Yamaha Corporation; remove backround: Habitator terrae
+CC BY-SA 4.0: https://creativecommons.org/licenses/by-sa/4.0
+https://commons.wikimedia.org/wiki/File:Yamaha_Saxophone_YAS-62.png
+https://commons.wikimedia.org/w/index.php?title=File%3AYamaha_Saxophone_YAS-62.png&oldid=926933807
+Changes: Conventional masking, background removal, framing, rotation or recoloring as recorded in assets/sfz-instruments/credits.json; cropped and resized. No AI generation.
+
+sfz_clarinet.png - Yamaha Clarinet YCL-457II-22.png
+File:Yamaha Clarinet YCL-457II-22.tiff: Yamaha Corporation; remove backround: Habitator terrae
+CC BY-SA 4.0: https://creativecommons.org/licenses/by-sa/4.0
+https://commons.wikimedia.org/wiki/File:Yamaha_Clarinet_YCL-457II-22.png
+https://commons.wikimedia.org/w/index.php?title=File%3AYamaha_Clarinet_YCL-457II-22.png&oldid=1212935488
+Changes: Conventional masking, background removal, framing, rotation or recoloring as recorded in assets/sfz-instruments/credits.json; cropped and resized. No AI generation.
+
+sfz_bassoon.png - Yamaha Bassoon YFG-812 II.tif
+Yamaha Corporation
+CC BY-SA 4.0: https://creativecommons.org/licenses/by-sa/4.0
+https://commons.wikimedia.org/wiki/File:Yamaha_Bassoon_YFG-812_II.tif
+https://commons.wikimedia.org/w/index.php?title=File%3AYamaha_Bassoon_YFG-812_II.tif&oldid=824627482
+Changes: Conventional masking, background removal, framing, rotation or recoloring as recorded in assets/sfz-instruments/credits.json; cropped and resized. No AI generation.
+
+sfz_oboe.png - Oboe.png
+man ichihara ; Photographed and edited by fi:Käyttäjä:Aquazer.
+CC BY-SA 3.0: https://creativecommons.org/licenses/by-sa/3.0/
+https://commons.wikimedia.org/wiki/File:Oboe.png
+https://commons.wikimedia.org/w/index.php?title=File%3AOboe.png&oldid=946967623
+Changes: Conventional masking, background removal, framing, rotation or recoloring as recorded in assets/sfz-instruments/credits.json; cropped and resized. No AI generation.
+
+sfz_trumpet.png - Trumpet 1.png
+PJ, background cropped by EWikist
+CC BY-SA 3.0: https://creativecommons.org/licenses/by-sa/3.0/
+https://commons.wikimedia.org/wiki/File:Trumpet_1.png
+https://commons.wikimedia.org/w/index.php?title=File%3ATrumpet_1.png&oldid=1125647411
+Changes: Conventional masking, background removal, framing, rotation or recoloring as recorded in assets/sfz-instruments/credits.json; cropped and resized. No AI generation.
+
+sfz_trombone.png - WANZ Instrument 2024-09 IMG 7771 tenor trombone.png
+Debbie Rawson (photograph); Jonathanischoice (uploader); funded by Wikimedia Aotearoa New Zealand
+CC BY 4.0: https://creativecommons.org/licenses/by/4.0
+https://commons.wikimedia.org/wiki/File:WANZ_Instrument_2024-09_IMG_7771_tenor_trombone.png
+https://commons.wikimedia.org/w/index.php?title=File%3AWANZ_Instrument_2024-09_IMG_7771_tenor_trombone.png&oldid=1185831342
+Changes: Conventional masking, background removal, framing, rotation or recoloring as recorded in assets/sfz-instruments/credits.json; cropped and resized. No AI generation.
+
+sfz_tuba.png - Tuba Melton Meinl Weston.png
+Buffet Crampon
+CC BY-SA 4.0: https://creativecommons.org/licenses/by-sa/4.0
+https://commons.wikimedia.org/wiki/File:Tuba_Melton_Meinl_Weston.png
+https://commons.wikimedia.org/w/index.php?title=File%3ATuba_Melton_Meinl_Weston.png&oldid=1142043340
+Changes: Conventional masking, background removal, framing, rotation or recoloring as recorded in assets/sfz-instruments/credits.json; cropped and resized. No AI generation.
+
+sfz_harpsichord.png - Harpsichord VitalJulianFrey.jpg
+FREYmanagement
+CC BY-SA 3.0: https://creativecommons.org/licenses/by-sa/3.0
+https://commons.wikimedia.org/wiki/File:Harpsichord_VitalJulianFrey.jpg
+https://commons.wikimedia.org/w/index.php?title=File%3AHarpsichord_VitalJulianFrey.jpg&oldid=1269653743
+Changes: Conventional masking, background removal, framing, rotation or recoloring as recorded in assets/sfz-instruments/credits.json; cropped and resized. No AI generation.
+
+sfz_vibraphone.png - Soprano vibraphone (from Emil Richards Collection).jpg
+Xylosmygame at English Wikipedia
+CC BY-SA 3.0: https://creativecommons.org/licenses/by-sa/3.0
+https://commons.wikimedia.org/wiki/File:Soprano_vibraphone_(from_Emil_Richards_Collection).jpg
+https://commons.wikimedia.org/w/index.php?title=File%3ASoprano_vibraphone_%28from_Emil_Richards_Collection%29.jpg&oldid=1148324838
+Changes: Conventional masking, background removal, framing, rotation or recoloring as recorded in assets/sfz-instruments/credits.json; cropped and resized. No AI generation.
+
+sfz_glockenspiel.png - Glockenspiel-malletech.jpg
+flamurai
+Public domain: https://creativecommons.org/publicdomain/mark/1.0/
+https://commons.wikimedia.org/wiki/File:Glockenspiel-malletech.jpg
+https://commons.wikimedia.org/w/index.php?title=File%3AGlockenspiel-malletech.jpg&oldid=1239179923
+Changes: Conventional masking, background removal, framing, rotation or recoloring as recorded in assets/sfz-instruments/credits.json; cropped and resized. No AI generation.
+
+sfz_steelpan.png - Steel Pan.png
+J dahlia
+CC BY-SA 4.0: https://creativecommons.org/licenses/by-sa/4.0
+https://commons.wikimedia.org/wiki/File:Steel_Pan.png
+https://commons.wikimedia.org/w/index.php?title=File%3ASteel_Pan.png&oldid=506232778
+Changes: Conventional masking, background removal, framing, rotation or recoloring as recorded in assets/sfz-instruments/credits.json; cropped and resized. No AI generation.
+
+sfz_handpan.png - Handpan.jpg
+Pensierarte
+CC BY-SA 3.0: https://creativecommons.org/licenses/by-sa/3.0
+https://commons.wikimedia.org/wiki/File:Handpan.jpg
+https://commons.wikimedia.org/w/index.php?title=File%3AHandpan.jpg&oldid=709962177
+Changes: Conventional masking, background removal, framing, rotation or recoloring as recorded in assets/sfz-instruments/credits.json; cropped and resized. No AI generation.
+
+sfz_koto.png - Koto MET DP148476.jpg
+Gotō Teijō / Gotō Yūjō
+CC0-1.0: https://creativecommons.org/publicdomain/zero/1.0/
+https://commons.wikimedia.org/wiki/File:Koto_MET_DP148476.jpg
+https://commons.wikimedia.org/w/index.php?title=File%3AKoto_MET_DP148476.jpg&oldid=1153348730
+Changes: Conventional masking, background removal, framing, rotation or recoloring as recorded in assets/sfz-instruments/credits.json; cropped and resized. No AI generation.
+
+sfz_tubular_bells.png - Yamaha Deagan chimes (from LA Percussion Rentals).jpg
+Xylosmygame at English Wikipedia
+CC BY-SA 3.0: https://creativecommons.org/licenses/by-sa/3.0
+https://commons.wikimedia.org/wiki/File:Yamaha_Deagan_chimes_(from_LA_Percussion_Rentals).jpg
+https://commons.wikimedia.org/w/index.php?title=File%3AYamaha_Deagan_chimes_%28from_LA_Percussion_Rentals%29.jpg&oldid=1231982576
+Changes: Conventional masking, background removal, framing, rotation or recoloring as recorded in assets/sfz-instruments/credits.json; cropped and resized. No AI generation.
+
+sfz_handbell.png - Petite cloche manuelle.jpg
+M0tty
+CC BY-SA 4.0: https://creativecommons.org/licenses/by-sa/4.0
+https://commons.wikimedia.org/wiki/File:Petite_cloche_manuelle.jpg
+https://commons.wikimedia.org/w/index.php?title=File%3APetite_cloche_manuelle.jpg&oldid=1053990107
+Changes: Conventional masking, background removal, framing, rotation or recoloring as recorded in assets/sfz-instruments/credits.json; cropped and resized. No AI generation.
 
 
 stb_image 2.30 - SFZ artwork decoder

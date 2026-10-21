@@ -3,6 +3,8 @@
 #include "engine/multisample/MultisampleLoader.h"
 #include "foundation/Fs.h"
 
+#include <sfizz.h>
+
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -18,6 +20,51 @@
 #include <vector>
 
 using namespace duskstudio;
+
+TEST_CASE ("SFZ label text remains owned by the loaded instrument", "[multisample][sfz][sfizz-labels]")
+{
+    std::unique_ptr<sfizz_synth_t, decltype (&sfizz_free)> synth (sfizz_create_synth(), sfizz_free);
+    REQUIRE (synth);
+    const std::string longLabel (96, 'L');
+    const auto source = "<control> label_cc1=Modulation label_cc74=" + longLabel
+        + " label_key60=Modulation label_key61=" + longLabel + "\n<region> sample=*sine key=60\n";
+    REQUIRE (sfizz_load_string (synth.get(), "label-lifetime.sfz", source.c_str()));
+    auto count = sfizz_get_num_cc_labels;
+    auto number = sfizz_get_cc_label_number;
+    auto text = sfizz_get_cc_label_text;
+    int first = 1, second = 74;
+    SECTION ("Controller labels") {}
+    SECTION ("Key labels")
+    {
+        count = sfizz_get_num_key_labels;
+        number = sfizz_get_key_label_number;
+        text = sfizz_get_key_label_text;
+        first = 60;
+        second = 61;
+    }
+    const auto numLabels = count (synth.get());
+    int firstIndex = -1, secondIndex = -1;
+    for (unsigned i = 0; i < numLabels; ++i)
+    {
+        const auto value = number (synth.get(), static_cast<int> (i));
+        if (value == first) firstIndex = static_cast<int> (i);
+        if (value == second) secondIndex = static_cast<int> (i);
+    }
+    REQUIRE (firstIndex >= 0);
+    REQUIRE (secondIndex >= 0);
+    const auto* shortText = text (synth.get(), firstIndex);
+    const auto* longText = text (synth.get(), secondIndex);
+    REQUIRE (shortText != nullptr);
+    REQUIRE (longText != nullptr);
+    REQUIRE (std::string (shortText) == "Modulation");
+    REQUIRE (std::string (longText) == longLabel);
+    const std::vector<std::string> allocations (64, std::string (96, 'X'));
+    REQUIRE (std::string (shortText) == "Modulation");
+    REQUIRE (std::string (longText) == longLabel);
+    REQUIRE (allocations.front() != longText);
+    REQUIRE (text (synth.get(), -1) == nullptr);
+    REQUIRE (text (synth.get(), static_cast<int> (numLabels)) == nullptr);
+}
 
 namespace
 {

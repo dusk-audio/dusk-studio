@@ -117,6 +117,12 @@ public:
 
     ImVec2 preferredSize() const override { return ImVec2 (kPanelW, kPanelH); }
 
+    bool inputSettledForScenario() const override
+    {
+        return mouseHeld.note < 0 && std::all_of (held.begin(), held.end(),
+                                                 [] (const auto& note) { return note.note < 0; });
+    }
+
     // The layout's letters overlap the shell's shortcuts, so the panel owns them for
     // as long as it is up. Claim is layout membership rather than the note the current
     // octave resolves to: a key the centre pushed past MIDI 127 sounds nothing but must

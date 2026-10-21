@@ -169,6 +169,7 @@ struct MidiTimeline
     std::vector<MidiRegionPlacement>                       placement;   // playback.size() of them
 
     std::vector<std::uint32_t> byStart;               // unmuted regions, by timelineStart
+    std::vector<std::uint32_t> mergeByStart;          // all regions, stable original-index ties
     std::vector<std::int64_t>  startOf;               // their starts, ascending
     // Per kRegionChunk of byStart: the longest region in it, in samples and in
     // ticks, and over it and every chunk before it.
@@ -189,10 +190,16 @@ struct MidiTimeline
 inline void indexMidiTimeline (MidiTimeline& timeline)
 {
     timeline.byStart.clear();
+    timeline.mergeByStart.clear();
     for (std::uint32_t i = 0; i < (std::uint32_t) timeline.size(); ++i)
+    {
+        timeline.mergeByStart.push_back (i);
         if (! timeline.placement[i].muted)
             timeline.byStart.push_back (i);
+    }
     std::stable_sort (timeline.byStart.begin(), timeline.byStart.end(), [&timeline] (std::uint32_t a, std::uint32_t b)
+                      { return timeline.placement[a].timelineStart < timeline.placement[b].timelineStart; });
+    std::stable_sort (timeline.mergeByStart.begin(), timeline.mergeByStart.end(), [&timeline] (std::uint32_t a, std::uint32_t b)
                       { return timeline.placement[a].timelineStart < timeline.placement[b].timelineStart; });
 
     const auto chunk = MidiTimeline::kRegionChunk;

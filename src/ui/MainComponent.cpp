@@ -18,6 +18,8 @@
 #include "BounceDialog.h"
 #include "RenderInProgress.h"
 #include "PluginScanModal.h"
+#include "PluginPickerHelpers.h"
+#include "../engine/PluginSearchPaths.h"
 #include "ShortcutsPanel.h"
 #include "SupportersPanel.h"
 #include "MidiBindingsPanel.h"
@@ -561,9 +563,9 @@ public:
         cancelButton  .setColour (juce::TextButton::buttonColourId,  juce::Colour (0xff2a2a30));
         cancelButton  .setColour (juce::TextButton::textColourOffId, juce::Colour (0xffe0e0e0));
 
-        recoverButton.onClick = [this] { if (onRecover) onRecover(); };
-        loadButton   .onClick = [this] { if (onLoad)    onLoad();    };
-        cancelButton .onClick = [this] { if (onCancel)  onCancel();  };
+        recoverButton.onClick = [this] { const auto action = onRecover; if (action) action(); };
+        loadButton   .onClick = [this] { const auto action = onLoad;    if (action) action(); };
+        cancelButton .onClick = [this] { const auto action = onCancel;  if (action) action(); };
 
         addAndMakeVisible (recoverButton);
         addAndMakeVisible (loadButton);
@@ -2142,10 +2144,7 @@ void MainComponent::resized()
     }
     else
     {
-        // In mastering / aux the transport bar is hidden; the stage selector
-        // still needs a row to live on. Reserve the same height so the stage
-        // row doesn't jump positions when the user switches stages.
-        rowBounds = area.removeFromTop (kRowH);
+        rowBounds = inMastering ? area.withHeight (kRowH) : area.removeFromTop (kRowH);
     }
 
     constexpr int kStageBtnH = 28;
@@ -2608,6 +2607,54 @@ void MainComponent::openAudioSettings()
                 }
                 back->openAudioSettings();
             });
+        });
+    };
+    host.choosePluginFolder = [safeThis]
+    {
+        auto* self = safeThis.getComponent();
+        if (self == nullptr) return;
+        self->handOffAudioSettings ([safeThis]
+        {
+            auto* owner = safeThis.getComponent();
+            if (owner == nullptr) return;
+            filebrowser::Options options;
+            options.title = "Add plug-in folder";
+            options.selectDirectories = true;
+            const auto roots = pluginpaths::load();
+            if (! roots.empty())
+            {
+                using Folder = decltype (options.initialFileOrDirectory);
+                options.initialFileOrDirectory = Folder (roots.back().u8string().c_str());
+            }
+            filebrowser::open (*owner, std::move (options), [safeThis] (auto folder)
+            {
+                auto* back = safeThis.getComponent();
+                if (back == nullptr) return;
+                if (folder.isDirectory())
+                {
+                    auto updatedFolders = pluginpaths::load();
+                    updatedFolders.push_back (std::filesystem::u8path (folder.getFullPathName().toStdString()));
+                    std::string error;
+                    if (! pluginpaths::save (updatedFolders, error))
+                    {
+                        showDuskAlert (*back, "Plug-in folders", error, [safeThis]
+                        { if (auto* settings = safeThis.getComponent()) settings->openAudioSettings(); });
+                        return;
+                    }
+                }
+                back->openAudioSettings();
+            });
+        });
+    };
+    host.scanPlugins = [safeThis]
+    {
+        auto* self = safeThis.getComponent();
+        if (self == nullptr) return;
+        self->handOffAudioSettings ([safeThis]
+        {
+            if (auto* owner = safeThis.getComponent())
+                pluginpicker::runScanModal (owner->engine.getPluginManager(), owner, [safeThis]
+                { if (auto* settings = safeThis.getComponent()) settings->openAudioSettings(); });
         });
     };
     host.alert = [safeThis] (std::string title, std::string message)
@@ -4422,7 +4469,7 @@ bool MainComponent::answerRecoveryPrompt (int choice)
 {
     auto* prompt = dynamic_cast<AutosaveRecoveryDialog*> (recoveryModal.getBody());
     if (prompt == nullptr) return false;
-    auto& press = choice == 0 ? prompt->onRecover
+    const auto press = choice == 0 ? prompt->onRecover
                 : choice == 1 ? prompt->onLoad
                               : prompt->onCancel;
     if (press) press();
@@ -7029,17 +7076,17 @@ void MainComponent::toggleVirtualKeyboard()
     juce::Component::SafePointer<MainComponent> safeThis (this);
     auto keyboardView = imgui::makeVirtualKeyboardView (
         engine,
-        [safeThis] (int note, int velocity, int)
+        [safeThis] (int note, int velocity, int channel)
         {
             if (auto* self = safeThis.getComponent())
                 if (self->pianoRollShowing())
-                    self->pianoRoll->stepRecordNoteOn (note, velocity);
+                    self->pianoRoll->stepRecordNoteOn (note, velocity, channel);
         },
-        [safeThis] (int note, int)
+        [safeThis] (int note, int channel)
         {
             if (auto* self = safeThis.getComponent())
                 if (self->pianoRollShowing())
-                    self->pianoRoll->stepRecordNoteOff (note);
+                    self->pianoRoll->stepRecordNoteOff (note, channel);
         });
     virtualKeyboardView = keyboardView.get();
     virtualKeyboardWindow->setView (std::move (keyboardView));

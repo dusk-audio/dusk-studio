@@ -143,17 +143,13 @@ public:
     {
         const AudioInFlightScope reading (audioInFlight);
         MidiMergePlayback* pending = nullptr;
-        double sr = 0.0;
-        float bpm = 0.0f;
         if (active.load (std::memory_order_seq_cst)
             && trackIndex >= 0 && trackIndex < Session::kNumTracks)
         {
             const auto& capture = midiCaptures[(std::size_t) trackIndex];
             if (capture) pending = capture->pendingPlayback.get();
-            sr = recordSampleRate;
-            bpm = recordTempoBpm;
         }
-        fn (pending, sr, bpm);
+        fn (pending);
     }
 
     // The mode is fixed for a gesture and remains available after stop.
@@ -268,6 +264,7 @@ private:
                              const LoopCaptureSpan* explicitLoopSpan,
                              int numSamples) noexcept;
     void collectMidiPasses (int trackIndex);
+    std::int64_t midiCaptureTicksAt (std::int64_t sample) const noexcept;
 
     // Message thread, with active false and audioInFlight at zero. Drops
     // whatever capture is still held without committing it.
@@ -385,6 +382,10 @@ private:
     std::atomic<std::int64_t> linearMidiCaptureLength { -1 };
     double      recordSampleRate  = 0.0;
     float       recordTempoBpm = 0.0f;
+    // Immutable until active is false and audioInFlight has drained: the
+    // message-thread preview and audio-thread loop replay share this clock.
+    TempoMap    recordTempoMap;
+    std::int64_t recordStartTick = 0;
 
     LoopCapturePlan loopPlan;
     LoopCaptureSpan currentLoopSpan;

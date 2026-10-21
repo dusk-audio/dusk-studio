@@ -45,8 +45,8 @@ public:
     virtual void showCommittedRegion (int region = -1) = 0;
     virtual void showSwappedTake() = 0;
     virtual void yieldDragToRecordCommit() = 0;
-    virtual void stepRecordNoteOn (int note, int velocity) = 0;
-    virtual void stepRecordNoteOff (int note) = 0;
+    virtual void stepRecordNoteOn (int note, int velocity, int channel) = 0;
+    virtual void stepRecordNoteOff (int note, int channel) = 0;
     virtual void stepRecordKeyboardClosed() noexcept = 0;
     virtual bool handleShellKey (const std::string& description, bool repeat) = 0;
     virtual bool chaseEnabled() const = 0;

@@ -132,12 +132,31 @@ struct RegionClock
                               : regionStart + ticksToSamples (tick, sampleRate, bpm);
     }
 
+    std::int64_t tickAt (std::int64_t sample) const noexcept
+    {
+        return map != nullptr ? map->samplesToTicks (sample, sampleRate) - regionStartTick
+                              : samplesToTicks (sample - regionStart, sampleRate, bpm);
+    }
+
     const TempoMap* map;
     double          sampleRate;
     float           bpm;
     std::int64_t    regionStart;
     std::int64_t    regionStartTick;
 };
+
+template <typename Regions>
+int findMergeTarget (const Regions& regions, std::int64_t start, std::int64_t end,
+                     const TempoMap* map, double sampleRate, float bpm) noexcept
+{
+    return findMidiMergeTarget (regions, start, end, [&] (const auto& region) noexcept
+    {
+        return map != nullptr && ! map->empty()
+            ? RegionClock (map, sampleRate, bpm, region.timelineStart).at (region.lengthInTicks)
+                - region.timelineStart
+            : region.lengthInSamples;
+    });
+}
 
 // Probes a binary search over n events makes.
 inline int searchCost (std::size_t n) noexcept
@@ -165,6 +184,121 @@ inline bool takeScans (int& scans, int n) noexcept
     return true;
 }
 
+struct MergeTargetWork
+{
+    std::size_t regions = 0, mapPoints = 0, inverseQueries = 0;
+};
+
+struct MergeTargetSearch
+{
+    int target = -1;
+    bool complete = true;
+};
+
+inline MergeTargetSearch findMergeTarget (const MidiTimeline& timeline, std::int64_t start, std::int64_t end,
+                                          const TempoMap* map, double sampleRate, float bpm, int& scans,
+                                          MergeTargetWork* work = nullptr) noexcept
+{
+    if (end <= start) return {};
+    if (timeline.placement.size() > (std::size_t) std::max (0, scans))
+    { scans = 0; return { -1, false }; }
+    scans -= (int) timeline.placement.size();
+    if (map == nullptr || map->empty())
+        return { findMidiMergeTarget (timeline.placement, start, end), true };
+    const auto& points = map->points();
+    bool complete = true;
+    const auto chargeMap = [&] () noexcept
+    {
+        if (points.size() > (std::size_t) std::max (0, scans))
+        { scans = 0; complete = false; return false; }
+        scans -= (int) points.size();
+        if (work != nullptr) work->mapPoints += points.size();
+        return true;
+    };
+    const auto exactEnd = [&] (const auto& region) noexcept -> std::int64_t
+    {
+        if (! chargeMap() || ! chargeMap()) return 0;
+        if (work != nullptr) ++work->inverseQueries;
+        const RegionClock clock (map, sampleRate, bpm, region.timelineStart);
+        if (region.lengthInTicks > std::numeric_limits<std::int64_t>::max() - clock.regionStartTick)
+        { complete = false; return 0; }
+        return clock.at (region.lengthInTicks);
+    };
+    if (sampleRate <= 4800.0 || start < 0)
+    {
+        const auto target = findMidiMergeTarget (timeline.placement, start, end, [&] (const auto& region) noexcept
+        { return exactEnd (region) - region.timelineStart; });
+        return { target, complete };
+    }
+    if (! timeline.placement.empty())
+    {
+        const auto& last = timeline.placement.back();
+        if (! last.locked && last.timelineStart <= start)
+        {
+            if (work != nullptr) ++work->regions;
+            if (exactEnd (last) > start) return { (int) timeline.placement.size() - 1, complete };
+            if (! complete) return { -1, false };
+        }
+    }
+    // Inverse rounding changes at half a sample. Find the first absolute tick
+    // whose rounded sample is after the query once, rather than for every region.
+    if (! chargeMap() || ! chargeMap()) return { -1, false };
+    auto low = std::max<std::int64_t> (0, map->samplesToTicks (std::max<std::int64_t> (0, start - 1), sampleRate) - 1);
+    auto high = map->samplesToTicks (start + 1, sampleRate) + 1;
+    while (low < high)
+    {
+        const auto middle = low + (high - low) / 2;
+        if (! chargeMap()) return { -1, false };
+        if (work != nullptr) ++work->inverseQueries;
+        if (map->ticksToSamples (middle, sampleRate) > start) high = middle;
+        else low = middle + 1;
+    }
+    const auto firstAfter = low;
+    const double scale = (double) kMidiTicksPerQuarter / (sampleRate * 60.0);
+    std::size_t segment = 0;
+    std::int64_t segmentStart = 0;
+    double ticks = 0.0;
+    int containing = -1, reached = -1;
+    std::int64_t reachedStart = 0;
+    for (const auto index : timeline.mergeByStart)
+    {
+        const auto& region = timeline.placement[index];
+        if (region.timelineStart >= end || (reached >= 0 && region.timelineStart > reachedStart)) break;
+        if (region.locked) continue;
+        if (work != nullptr) ++work->regions;
+        if (region.timelineStart > start)
+        {
+            if (containing >= 0) return { containing, true };
+            // At audio rates a positive tick spans more than two samples, so
+            // its rounded end is after its start. Empty lengths need the exact check.
+            if (region.lengthInTicks <= 0 && exactEnd (region) <= region.timelineStart)
+            {
+                if (! complete) return { -1, false };
+                continue;
+            }
+            reached = std::max (reached, (int) index);
+            reachedStart = region.timelineStart;
+            continue;
+        }
+        while (segment + 1 < points.size() && points[segment + 1].timelineSamples <= region.timelineStart)
+        {
+            if (! takeScans (scans, 1)) return { -1, false };
+            if (work != nullptr) ++work->mapPoints;
+            const auto next = points[segment + 1].timelineSamples;
+            ticks += (double) (next - segmentStart) * (double) points[segment].bpm * scale;
+            segmentStart = next;
+            ++segment;
+        }
+        const auto at = region.timelineStart <= 0 ? std::int64_t { 0 }
+            : (std::int64_t) std::llround (ticks + (double) (region.timelineStart - segmentStart)
+                                                   * (double) points[segment].bpm * scale);
+        if (region.lengthInTicks > std::numeric_limits<std::int64_t>::max() - at)
+            return { -1, false };
+        if (at + region.lengthInTicks >= firstAfter) containing = std::max (containing, (int) index);
+    }
+    return { containing >= 0 ? containing : reached, true };
+}
+
 struct PendingCapture
 {
     const MidiMergePlayback* playback = nullptr;
@@ -174,27 +308,26 @@ struct PendingCapture
     std::int64_t timelineStart = 0, offsetTicks = 0;
 
     bool locateTarget (const MidiTimeline& timeline, std::int64_t captureStart, std::int64_t captureEnd,
-                       double capturedRate, float capturedBpm, int& scans) noexcept
+                       double sampleRate, float bpm, int& scans,
+                       const TempoMap* tempoMap = nullptr) noexcept
     {
         consumed = timeline.capture;
         timelineStart = captureStart;
         offsetTicks = 0;
         targetRegion = -1;
         if (playback == nullptr) return true;
-        if (timeline.placement.size() > (std::size_t) std::max (0, scans))
-        {
-            scans = 0;
-            return false;
-        }
-        scans -= (int) timeline.placement.size();
-        const int target = findMidiMergeTarget (timeline.placement, captureStart, captureEnd);
+        const auto found = findMergeTarget (timeline, captureStart, captureEnd, tempoMap, sampleRate, bpm, scans);
+        if (! found.complete) return false;
+        const int target = found.target;
         targetRegion = target >= 0 ? target : (int) timeline.size();
         if (target < 0) return true;
         const auto& place = timeline.placement[(std::size_t) target];
         if (place.muted) { playback = nullptr; return true; }
-        const auto offset = samplesToTicks (captureStart - place.timelineStart, capturedRate, capturedBpm);
-        timelineStart = place.timelineStart - ticksToSamples (std::max<std::int64_t> (0, -offset),
-                                                             capturedRate, capturedBpm);
+        const RegionClock clock (tempoMap != nullptr && ! tempoMap->empty() ? tempoMap : nullptr,
+                                 sampleRate, bpm, place.timelineStart);
+        const auto offset = clock.tickAt (captureStart);
+        if (offset < 0) timelineStart = clock.at (offset);
+        else timelineStart = place.timelineStart;
         offsetTicks = std::max<std::int64_t> (0, offset);
         return true;
     }
@@ -220,8 +353,8 @@ struct PendingCapture
         return ! done && outcome == Outcome::complete ? Outcome::scanBudgetSpent : outcome;
     }
 
-    template <typename Visit>
-    Outcome controls (int& scans, Visit&& visit) const noexcept
+    template <typename Visit, typename Overlaps>
+    Outcome controls (int& scans, Visit&& visit, Overlaps&& overlaps) const noexcept
     {
         if (playback == nullptr) return Outcome::complete;
         auto outcome = Outcome::complete;
@@ -230,6 +363,9 @@ struct PendingCapture
             control.atTick += offsetTicks;
             outcome = visit (control);
             return outcome == Outcome::complete;
+        }, [&] (std::int64_t first, std::int64_t last) noexcept
+        {
+            return overlaps (first + offsetTicks, last + offsetTicks);
         });
         return ! done && outcome == Outcome::complete ? Outcome::scanBudgetSpent : outcome;
     }
@@ -464,6 +600,9 @@ Outcome scheduleSpan (const MidiTimeline& timeline,
                     (std::uint8_t) control.controller, (std::uint16_t) control.value, control.kind };
             }
             return Outcome::complete;
+        }, [&] (std::int64_t first, std::int64_t) noexcept
+        {
+            return captureClock.at (first) <= span.start;
         });
         if (capturedControls != Outcome::complete) return capturedControls;
     }
@@ -525,6 +664,9 @@ Outcome scheduleSpan (const MidiTimeline& timeline,
                     return Outcome::complete;
                 return emit (control.statusByte(), control.dataByte1(), control.dataByte2(), at - span.start)
                     ? Outcome::complete : Outcome::eventRefused;
+            }, [&] (std::int64_t first, std::int64_t last) noexcept
+            {
+                return captureClock.at (last) >= span.start && captureClock.at (first) < span.end;
             });
         };
         bool captured = capture.playback == nullptr;

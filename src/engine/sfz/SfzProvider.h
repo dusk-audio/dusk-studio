@@ -82,6 +82,7 @@ OperationResult validatePackLicenseDocument (const ProviderLicense&, std::string
 
 std::vector<ProviderSource> providerSources();
 std::vector<std::string> artworkHostsForSource (std::string_view sourceId);
+bool isInstrumentArtworkPath (std::string_view path);
 ProviderPageResult browseProvider (HttpTransport&, const std::string& sourceId,
                                    unsigned page = 1, const std::string& query = {},
                                    const OperationControl& = {});

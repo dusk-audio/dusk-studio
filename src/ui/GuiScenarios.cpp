@@ -1702,6 +1702,17 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         return false;
        #endif
     }
+    bool captureAudioSettings (const std::filesystem::path& path) override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        if (! audioSettingsOpen()) return false;
+        owner.audioSettingsWindow->captureNextFrameTo (path.u8string());
+        return true;
+       #else
+        (void) path;
+        return false;
+       #endif
+    }
     bool openStartupDialog (const std::vector<std::filesystem::path>& sessions, bool runChoice) override
     {
        #if DUSKSTUDIO_HAS_NATIVE_UI
@@ -1791,8 +1802,18 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     bool resizeMainWindow (int width, int height) override
     {
         auto* window = owner.getTopLevelComponent();
-        if (window == nullptr || window->getPeer() == nullptr) return false;
+        auto* peer = window != nullptr ? window->getPeer() : nullptr;
+        if (peer == nullptr) return false;
+       #if defined (_WIN32)
+        const auto position = peer->getBounds().getPosition();
+       #endif
         window->setSize (width, height);
+       #if defined (_WIN32)
+        // Fractional UI scaling rounds the Component position to logical pixels.
+        const auto bounds = peer->getBounds();
+        if (bounds.getPosition() != position)
+            peer->setBounds (bounds.withPosition (position), peer->isFullScreen());
+       #endif
         return window->getWidth() == width && window->getHeight() == height;
     }
     bool setMainWindowMinimumWidth (int width) override

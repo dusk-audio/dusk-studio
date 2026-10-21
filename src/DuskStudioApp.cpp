@@ -45,6 +45,7 @@
 #include "foundation/Decibels.h"
 #include "foundation/PlanarBuffer.h"
 #include "foundation/VectorOps.h"
+#include "foundation/ScopedNoDenormals.h"
 
 #include <algorithm>
 #include <atomic>
@@ -1180,6 +1181,230 @@ static bool runHeadlessPipelineTest (const juce::String& pluginPath)
     return sessionRestoreOk && stripPeak > 1.0e-4f && masterPeak > 1.0e-4f;
 }
 
+struct SessionPerfDeviceOptions
+{
+    bool enabled = false;
+    std::string backend, name;
+    double sampleRate = 48000.0;
+    int blockSize = 256;
+    int durationMs = 10000;
+};
+
+static bool readSessionPerfDeviceOptions (SessionPerfDeviceOptions& options)
+{
+    options.enabled = envFlagSet ("DUSKSTUDIO_PERF_USE_DEVICE");
+    if (! options.enabled) return true;
+    const auto value = [] (const char* name) -> std::string
+    {
+        const auto* text = std::getenv (name);
+        return text != nullptr ? text : "";
+    };
+    options.backend = value ("DUSKSTUDIO_PERF_DEVICE_BACKEND");
+    options.name = value ("DUSKSTUDIO_PERF_DEVICE_NAME");
+    if (options.backend.empty() || options.name.empty()
+        || value ("DUSKSTUDIO_CONFIG_DIR").empty() || value ("DUSKSTUDIO_MUSIC_DIR").empty())
+    {
+        std::fprintf (stderr, "FAIL: device perf requires an explicit backend/device and private config/music directories\n");
+        return false;
+    }
+    const auto number = [] (const char* name, double minimum, double maximum, double& result)
+    {
+        const auto* text = std::getenv (name);
+        if (text == nullptr) return true;
+        char* end = nullptr;
+        const double parsed = std::strtod (text, &end);
+        if (end == text || *end != '\0' || ! std::isfinite (parsed)
+            || parsed < minimum || parsed > maximum || std::abs (parsed - std::floor (parsed)) > 0.0)
+        {
+            std::fprintf (stderr, "FAIL: %s must be a whole number in [%.0f, %.0f]\n", name, minimum, maximum);
+            return false;
+        }
+        result = parsed;
+        return true;
+    };
+    double buffer = options.blockSize, duration = options.durationMs;
+    if (! number ("DUSKSTUDIO_PERF_DEVICE_RATE", 8000.0, 768000.0, options.sampleRate)
+        || ! number ("DUSKSTUDIO_PERF_DEVICE_BUFFER", 32.0, 8192.0, buffer)
+        || ! number ("DUSKSTUDIO_PERF_DEVICE_DURATION_MS", 1000.0, 120000.0, duration))
+        return false;
+    options.blockSize = static_cast<int> (buffer);
+    options.durationMs = static_cast<int> (duration);
+    return true;
+}
+
+class SessionPerfDeviceCallback final : public device::IODeviceCallback
+{
+public:
+    explicit SessionPerfDeviceCallback (AudioEngine& owner) : engine (owner) {}
+    void audioDeviceAboutToStart (device::IODevice* dev) override { engine.audioDeviceAboutToStart (dev); }
+    void audioDeviceStopped() override { engine.audioDeviceStopped(); }
+    void audioDeviceError (const std::string&) override { terminalError.store (true, std::memory_order_release); }
+    void audioDeviceIOCallback (const float* const* input, int inputs, float* const* output, int outputs,
+                                int samples, const device::CallbackContext& context) override
+    {
+        const dusk::audio::ScopedNoDenormals noDenormals;
+        engine.audioDeviceIOCallback (input, inputs, output, outputs, samples, context);
+        if (samples <= 0) return;
+        for (int channel = 0; channel < outputs; ++channel)
+            if (output[channel] != nullptr)
+                for (int sample = 0; sample < samples; ++sample)
+                {
+                    const float value = output[channel][sample];
+                    if (! std::isfinite (value)) nonFinite.store (true, std::memory_order_relaxed);
+                    else peak = std::max (peak, std::abs (value));
+                }
+        frames.fetch_add (static_cast<std::uint64_t> (samples), std::memory_order_relaxed);
+    }
+    std::uint64_t frameCount() const noexcept { return frames.load (std::memory_order_relaxed); }
+    float outputPeak() const noexcept { return peak; } // Read only after removeCallback has drained audio.
+    bool finite() const noexcept { return ! nonFinite.load (std::memory_order_relaxed); }
+    bool healthy() const noexcept { return ! terminalError.load (std::memory_order_acquire); }
+private:
+    AudioEngine& engine;
+    std::atomic<std::uint64_t> frames { 0 };
+    std::atomic<bool> nonFinite { false };
+    std::atomic<bool> terminalError { false };
+    float peak = 0.0f;
+};
+
+static bool runDeviceSessionPerf (AudioEngine& engine, Session& session,
+                                  const SessionPerfDeviceOptions& options,
+                                  bool locateReaders, std::int64_t sessionEnd)
+{
+    if (session.sessionSampleRate > 0.0 && std::abs (session.sessionSampleRate - options.sampleRate) > 0.5)
+    {
+        std::fprintf (stderr, "FAIL: session rate %.0f differs from requested device rate %.0f; use a rate-matched fixture\n",
+                      session.sessionSampleRate, options.sampleRate);
+        return false;
+    }
+    auto& manager = engine.getDeviceManager();
+    manager.setCurrentDeviceType (options.backend, false);
+    auto* type = manager.getCurrentDeviceType();
+    if (type == nullptr || type->getTypeName() != options.backend)
+    {
+        std::fprintf (stderr, "FAIL: requested backend unavailable: %s\n", options.backend.c_str());
+        return false;
+    }
+    type->scanForDevices();
+    const auto names = type->getDeviceNames (false);
+    if (std::find (names.begin(), names.end(), options.name) == names.end())
+    {
+        std::fprintf (stderr, "FAIL: requested output unavailable: %s\n", options.name.c_str());
+        for (const auto& name : names) std::fprintf (stderr, "Available output: %s\n", name.c_str());
+        return false;
+    }
+    device::DeviceSetup setup;
+    setup.outputDeviceName = options.name;
+    setup.useDefaultInputChannels = false;
+    setup.sampleRate = options.sampleRate;
+    setup.bufferSize = options.blockSize;
+    const auto error = manager.setSetup (setup, false);
+    auto* opened = manager.getCurrentDevice();
+    if (! error.empty() || opened == nullptr)
+    {
+        std::fprintf (stderr, "FAIL: device open: %s\n", error.empty() ? "no device" : error.c_str());
+        return false;
+    }
+    const auto matches = [&] (device::IODevice* device)
+    {
+        return device != nullptr && device->isOpen() && device->isPlaying() && device->getName() == options.name
+            && std::abs (device->getCurrentSampleRate() - options.sampleRate) < 0.5
+            && device->getCurrentBufferSizeSamples() == options.blockSize
+            && device->getActiveOutputChannels().count() >= 2;
+    };
+    std::fprintf (stdout, "Device perf: backend=%s device=\"%s\" negotiated rate=%.0f buffer=%d outputs=%d inputs=%d duration=%dms\n",
+                  type->getTypeName().c_str(), opened->getName().c_str(), opened->getCurrentSampleRate(),
+                  opened->getCurrentBufferSizeSamples(), opened->getActiveOutputChannels().count(),
+                  opened->getActiveInputChannels().count(), options.durationMs);
+    if (! matches (opened))
+    {
+        std::fprintf (stderr, "FAIL: negotiated device parameters differ from the request\n");
+        return false;
+    }
+    SessionPerfDeviceCallback callback (engine);
+    struct Registration
+    {
+        AudioEngine& engine;
+        device::DeviceManager& manager;
+        SessionPerfDeviceCallback& callback;
+        bool finished = false;
+        void finish()
+        {
+            engine.stop();
+            manager.removeCallback (&callback);
+            manager.closeDevice();
+            finished = true;
+        }
+        ~Registration() { if (! finished) finish(); }
+    } registration { engine, manager, callback };
+    manager.addCallback (&callback);
+    auto& transport = engine.getTransport();
+    engine.setPerfCaptureEnabled (true);
+    transport.setPlayhead (0);
+    engine.play();
+    auto& playback = engine.getPlaybackEngine();
+    const auto before = playback.readerStats();
+    const int engineBefore = engine.getXRunCount(), backendBefore = engine.getBackendXRunCount();
+    const auto framesBefore = callback.frameCount();
+    std::size_t peakBytes = before.allocatedBytes, peakReaders = before.residentReaders;
+    using Clock = std::chrono::steady_clock;
+    const auto began = Clock::now();
+    const auto duration = std::chrono::milliseconds (options.durationMs);
+    const auto progressAllowance = std::chrono::duration<double> (
+        std::max (0.25, 4.0 * options.blockSize / options.sampleRate));
+    auto lastProgress = began;
+    auto lastFrames = framesBefore;
+    double maxLocateMs = 0.0;
+    int locates = 0;
+    bool deviceMatches = true;
+    bool progressing = true;
+    while (Clock::now() - began < duration)
+    {
+        const auto elapsed = Clock::now() - began;
+        if (locateReaders && locates < 3 && elapsed >= duration * (locates + 1) / 4)
+        {
+            const auto last = std::max<std::int64_t> (0, sessionEnd - options.blockSize);
+            const auto seekStart = Clock::now();
+            transport.locate (last / 4 * (++locates));
+            maxLocateMs = std::max (maxLocateMs,
+                std::chrono::duration<double, std::milli> (Clock::now() - seekStart).count());
+        }
+        engine.servicePlaybackForScenario();
+        const auto stats = playback.readerStats();
+        peakBytes = std::max (peakBytes, stats.allocatedBytes);
+        peakReaders = std::max (peakReaders, stats.residentReaders);
+        if (! matches (manager.getCurrentDevice()) || ! callback.healthy()) { deviceMatches = false; break; }
+        const auto now = Clock::now();
+        const auto currentFrames = callback.frameCount();
+        if (currentFrames != lastFrames) { lastFrames = currentFrames; lastProgress = now; }
+        if (now - lastProgress > progressAllowance) { progressing = false; break; }
+        std::this_thread::sleep_for (std::chrono::milliseconds (1));
+    }
+    const double seconds = std::chrono::duration<double> (Clock::now() - began).count();
+    const auto after = playback.readerStats();
+    const int engineDelta = engine.getXRunCount() - engineBefore;
+    const int backendDelta = engine.getBackendXRunCount() - backendBefore;
+    const auto frames = callback.frameCount() - framesBefore;
+    const double expectedFrames = seconds * options.sampleRate;
+    const double frameTolerance = std::max (4.0 * options.blockSize, expectedFrames * 0.05);
+    const bool frameCoverage = frames > 0 && std::abs ((double) frames - expectedFrames) <= frameTolerance;
+    engine.printPerfTable();
+    registration.finish();
+    std::fprintf (stdout,
+        "Device run: elapsed=%.3fs window frames=%llu expected=%.0f tolerance=%.0f coverage=%s rolling locates=%d max locate call=%.4fms\n"
+        "Device stream: stable=%s progressing=%s terminal error=%s\n"
+        "Device XRUNs: engine baseline=%d delta=%d; backend baseline=%d delta=%d\n"
+        "Reader pool: workers=%zu peak resident=%zu peak storage bytes=%zu read misses=%llu fill errors=%llu\n"
+        "Callback output: peak=%.6f finite=%s (includes setup/stop edges; measurement, not an audio-quality oracle)\n",
+        seconds, (unsigned long long) frames, expectedFrames, frameTolerance, frameCoverage ? "yes" : "no",
+        locates, maxLocateMs, deviceMatches ? "yes" : "no", progressing ? "yes" : "no", callback.healthy() ? "no" : "yes",
+        engineBefore, engineDelta, backendBefore, backendDelta,
+        after.workers, peakReaders, peakBytes, (unsigned long long) (after.readMisses - before.readMisses),
+        (unsigned long long) (after.fillErrors - before.fillErrors), callback.outputPeak(), callback.finite() ? "yes" : "no");
+    std::fflush (stdout);
+    return deviceMatches && progressing && frameCoverage && callback.healthy() && callback.finite();
+}
+
 // DUSKSTUDIO_PERF_SESSION=<path>: load a real session and play it
 // headlessly at 48 kHz / 256 samples, paced to realtime so the playback
 // prefetch behaves as it does live, then print the per-section perf
@@ -1187,10 +1412,15 @@ static bool runHeadlessPipelineTest (const juce::String& pluginPath)
 // buses, aux, master) with no audio device - for attributing a DSP-load
 // report to a specific section of the callback.
 // DUSKSTUDIO_PERF_READER_MODE=plain|locate|loop optionally overrides saved looping.
+// DUSKSTUDIO_PERF_USE_DEVICE=1 instead uses an explicit DEVICE_BACKEND/NAME,
+// with optional DEVICE_RATE/BUFFER/DURATION_MS (all prefixed DUSKSTUDIO_PERF_).
+// Device runs require private config/music directories and a rate-matched session.
 static bool runHeadlessSessionPerf (const juce::String& sessionPath)
 {
-    constexpr double sampleRate = 48000.0;
-    constexpr int    blockSize  = 256;
+    SessionPerfDeviceOptions deviceOptions;
+    if (! readSessionPerfDeviceOptions (deviceOptions)) return false;
+    const double sampleRate = deviceOptions.enabled ? deviceOptions.sampleRate : 48000.0;
+    const int blockSize = deviceOptions.enabled ? deviceOptions.blockSize : 256;
     constexpr int    numBlocks  = 2000;   // ~10.7 s at 48k/256
     constexpr int    numInChannels  = 2;
     constexpr int    numOutChannels = 2;
@@ -1206,16 +1436,19 @@ static bool runHeadlessSessionPerf (const juce::String& sessionPath)
     }
 
     std::fprintf (stdout, "=== Dusk Studio Headless Session Perf ===\n");
-    std::fprintf (stdout, "Session: %s\nSR=%.0f BS=%d Blocks=%d (realtime-paced)\n",
-                  sessionPath.toRawUTF8(), sampleRate, blockSize, numBlocks);
+    if (deviceOptions.enabled)
+        std::fprintf (stdout, "Session: %s\nRequested SR=%.0f BS=%d (real device)\n",
+                      sessionPath.toRawUTF8(), sampleRate, blockSize);
+    else
+        std::fprintf (stdout, "Session: %s\nSR=%.0f BS=%d Blocks=%d (realtime-paced)\n",
+                      sessionPath.toRawUTF8(), sampleRate, blockSize, numBlocks);
 
     auto session = std::make_unique<Session>();
     auto engine  = std::make_unique<AudioEngine> (*session);
-    // The AudioEngine ctor registered with its AudioDeviceManager (and may have
-    // opened a real device). This perf path drives the callback MANUALLY below,
-    // so detach FIRST - before prepareForSelfTest mutates DSP state - so the
-    // device thread can't process the engine while that state is in flux.
+    // Loading and preparation require a detached callback. The device path
+    // reattaches through its output probe only after the session is ready.
     engine->detachAudioCallback();
+    if (deviceOptions.enabled) engine->getDeviceManager().closeDevice();
     engine->prepareForSelfTest (sampleRate, blockSize);
 
     juce::File f (sessionPath);
@@ -1289,6 +1522,12 @@ static bool runHeadlessSessionPerf (const juce::String& sessionPath)
     std::fprintf (stdout, "Reader mode: %s%s; session content end: %lld samples\n", readerMode,
                   ! overrideReaderMode && transport.isLoopEnabled() ? " (saved loop retained)" : "",
                   (long long) sessionEnd);
+    if (deviceOptions.enabled)
+    {
+        const bool result = runDeviceSessionPerf (*engine, *session, deviceOptions, locateReaders, sessionEnd);
+        std::fprintf (stdout, "=== End of Session Perf ===\n");
+        return result;
+    }
     engine->setPerfCaptureEnabled (true);
     transport.setPlayhead (0);
     engine->play();

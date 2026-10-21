@@ -313,7 +313,7 @@ Assign a strip to one of eight fader groups (right-click the strip → **Fader g
 | --- | --------------- | --------------------------------------------------------------------------------- |
 | 1   | Keyboard        | Labels C rows with pitch names.                                                   |
 | 2   | Note grid       | Click an empty cell to create a note at the active velocity.                      |
-| 3   | Selected note   | Velocity shown next to the head. Drag to move; drag edges to trim.                |
+| 3   | Selected note   | Highlighted in the grid; **Vel: N** appears in the status bar. Drag to move; drag edges to trim. |
 | 4   | Velocity strip  | Drag the per-note bars to set velocity per note.                                  |
 | 5   | CC lane         | Pick a controller with **L**; draw events with the mouse.                         |
 | 6   | Scale highlight | Set root + mode with **S**. Rows outside the scale are dimmed in the grid.        |
@@ -459,7 +459,7 @@ Press **RECORDING** to focus the channel strips on input routing and arm control
 
 ## Configuring audio
 
-Open **Settings → Settings...**, then select the **Audio** tab to choose your audio device. Use the tabs across the top to switch between Audio, Control Surface, MIDI Bindings, MIDI Sync, General, Advanced and SFZ Library. The panel remembers the last tab while Dusk Studio is open.
+Open **Settings → Settings...**, then select the **Audio** tab to choose your audio device. Use the tabs across the top to switch between Audio, Control Surface, MIDI Bindings, MIDI Sync, General, Advanced, SFZ Library and Plug-ins. The panel remembers the last tab while Dusk Studio is open.
 
 ### Audio
 
@@ -514,6 +514,12 @@ All seven are saved with the session, so a project that syncs to an external clo
 **SFZ download location** shows the folder used for downloaded instrument packs. **Change folder...** lets you select an existing folder on this computer or an external drive. With **Move existing installed packs** unchecked, only future downloads use the new folder; existing packs remain available from their previous folders.
 
 Check **Move existing installed packs** before changing folders to relocate the current library too. Unload managed instruments first. Dusk Studio copies and verifies the packs before removing their originals, and keeps their portable session references intact. Recording or rendering pauses the operation; resume or cancel it from this tab afterwards. An unavailable external drive is reported rather than replaced with an empty local library. Reconnect it to use its instruments, or choose another folder for future downloads.
+
+### Plug-ins
+
+**Add folder...** adds a custom plug-in search folder for this computer. CLAP, VST3 and LV2 scans include its subfolders as well as the standard platform locations. Added folders are remembered across restarts; adding the same folder again keeps one entry. Audio Units use macOS registration independently of this list.
+
+Choose **Scan plugins** to discover newly installed plug-ins. The scan can be cancelled, keeping completed results, and Settings returns after its completion notice closes. **Remove** takes a folder out of future scans without deleting files or unloading a plug-in already in use. Restart Dusk Studio after removing an LV2 folder to clear its loaded discovery metadata. Unavailable folders stay in the list; reconnect them before scanning.
 
 \newpage
 
@@ -1081,7 +1087,7 @@ The **MASTERING** stage is a separate signal path. It does not play your tracks;
 - **Load mix...**: opens a file chooser for WAV, AIFF, or FLAC files.
 - **Load latest mixdown**: loads `mixdown.wav` from the session folder (what **Mixdown** writes), or `bounce.wav`, the bounce dialog's default name, if there is no mixdown.
 
-The source file path is displayed below the buttons. A file that will not load leaves the mix you had loaded in place, still playing if it was, and the line reads "Failed to load: [path]" with the file you picked until the source changes.
+The source file path is displayed beside the loading buttons. A file that will not load leaves the mix you had loaded in place, still playing if it was, and the line reads "Failed to load: [path]" with the file you picked until the source changes.
 
 ## Transport
 
@@ -1094,6 +1100,8 @@ A full-width audio thumbnail of the loaded file. Click anywhere on the waveform 
 ## Mastering chain
 
 The digital EQ, multiband compressor and limiter each have an enable toggle. A fourth **PHASE** panel measures the stereo output after the limiter. In a compact window, the picker above the panels shows one full-width module at a time: **Digital EQ**, **Multiband compressor**, **Limiter** or **Phase**.
+
+Wide windows give the EQ and compressor similar widths, with additional space for the limiter meters and Phase frequency display. The panels share header height and spacing. The compressor uses subdued band buttons; colored meter outlines identify the bands, and an engaged **S** button highlights a soloed band. Bypassing the compressor dims its header while leaving its controls available for editing.
 
 ### Digital 5-band EQ
 
@@ -1137,11 +1145,11 @@ The **PHASE** panel measures the post-limiter stereo signal without changing it 
 - **Average**: **50 to 5000 ms**, default **500 ms**. This is the correlation time constant. A longer setting steadies the reading.
 - **Reset** clears held correlation minima and sticky warnings.
 
-**Correlation** shows one bar per band from -1 to +1. Negative values draw red; the grey mark holds the minimum. The smaller **Overall** bar measures the full available frequency range directly, so a healthy overall reading can still accompany a negative band. Click a band to read its frequency range, correlation, held minimum and **Mono loss**. Scroll the panel to reach all the readings in a short window.
+**Correlation** shows segmented bars from -1 to +1 against a labelled logarithmic frequency axis. Positive values shade from yellow to green; negative values draw red, and a pale mark holds each minimum. The graph grows with the panel height. The smaller **Overall** bar and its readout measure the full available frequency range directly, so a healthy overall reading can still accompany a negative band. Click a band to read its frequency range, correlation, held minimum and **Mono loss**. Drag or scroll the blue **Bands**, **Q** and **Average** knobs; double-click a knob to restore its default, or Cmd-click its value on macOS (Ctrl-click elsewhere) to type. Expand **Details** for timing guidance and individual held warnings. Scroll the panel in a short window.
 
-A band that stays below zero for 250 ms of analyzed audio gets a sticky **Out of phase: [low] to [high] Hz** warning. Silence alone does not create a warning. Warnings and minima survive seeks, stage changes and native-panel recreation; **Reset**, loading another source, or changing the band count clears them. Changing Q or the device rate starts the current estimates again while preserving held results. Missing reader blocks, interrupted playback and discarded backlogs also start a fresh analysis window. The panel reads **Warming up** until enough new audio has arrived.
+A band that stays below zero for 250 ms of analyzed audio gets a sticky red marker and increases the held warning count. **Details** lists each **Out of phase: [low] to [high] Hz** warning. Silence alone does not create a warning. Warnings and minima survive seeks, stage changes and native-panel recreation; **Reset**, loading another source, or changing the band count clears them. Changing Q or the device rate starts the current estimates again while preserving held results. Missing reader blocks, interrupted playback and discarded backlogs also start a fresh analysis window. The panel reads **Warming up** until enough new audio has arrived.
 
-Choose **Coherence / time** for magnitude-squared coherence bars from 0 to 1 and the selected band's timing readings. High coherence means the channels share a stable relationship. Low coherence can be normal stereo width. Coherence needs sustained audio across independent FFT windows; it uses an averaging time of at least eight FFT windows, so it can take much longer to settle than **Average**, especially at low frequencies and high Q. The panel shows the actual FFT window and coherence averaging time; silence or a single brief sound cannot establish confidence.
+Choose **Coherence / time** for magnitude-squared coherence bars from 0 to 1; expand **Details** for the selected band's timing readings. High coherence means the channels share a stable relationship. Low coherence can be normal stereo width. Coherence needs sustained audio across independent FFT windows; it uses an averaging time of at least eight FFT windows, so it can take much longer to settle than **Average**, especially at low frequencies and high Q. **Details** shows the actual FFT window and coherence averaging time; silence or a single brief sound cannot establish confidence.
 
 **Wrapped offset** expresses the L/R phase angle as milliseconds and cannot identify a unique delay. A single tone is ambiguous. **Fitted R lag** needs sustained coherent energy across enough frequencies and can remain unavailable on music or changing noise. Positive values mean R lags L. The supported fitted range is plus or minus one-sixth of the FFT window, shown in milliseconds; treat it as a bounded estimate, since larger delays can alias. The panel does not correct timing or polarity.
 
@@ -1570,6 +1578,8 @@ To build a comp, see *Splicing a vocal comp from multiple takes* in Tips and rec
 
 Double-click a MIDI region to open the piano roll as a centred modal.
 
+A locked region stays visible and selectable, and its notes can be copied. Editing, deleting and step recording are blocked. Use the bottom-row **Lock** button or the region menu to unlock it before editing.
+
 ## Layout
 
 ```
@@ -1995,9 +2005,9 @@ Click a track's **Insert** slot and choose **SFZ Manager...** to load an instrum
 
 ![SFZ Manager Installed tab with a downloaded pack and its programs.](docs/images/ms-03-sfz-installed.png)
 
-Both tabs have an instrument preview above a grouped browser. Choose **Piano**, **Drum Kit**, **Acoustic Guitar** or another category to narrow the current list; **All instruments** restores it and leaves the preview blank until you select an instrument. On smaller windows the category list becomes a dropdown. **Installed** lists each downloaded pack once, and category counts count packs rather than SFZ files. **Search installed instruments** matches pack names, program names and saved descriptions without rescanning. Select a pack and choose its **Program**: when an ARIA bank declares its programs, the normal list uses those declarations and hides internal mapping fragments. **Show all SFZ files** exposes the full extracted file list when needed. Without usable bank metadata, all discovered SFZ candidates remain available.
+Both tabs have an instrument preview above a grouped browser. Choose **Piano**, **Drum Kit**, **Acoustic Guitar** or another category to narrow the current list; **All instruments** restores it and shows a library overview illustration until you select an instrument. On smaller windows the category list becomes a dropdown. **Installed** lists each downloaded pack once, and category counts count packs rather than SFZ files. **Search installed instruments** matches pack names, program names and saved descriptions without rescanning. Select a pack and choose its **Program**: when an ARIA bank declares its programs, the normal list uses those declarations and hides internal mapping fragments. **Show all SFZ files** exposes the full extracted file list when needed. Without usable bank metadata, all discovered SFZ candidates remain available.
 
-The preview uses repository artwork from GitHub raw/user-content hosts or Musical Artifacts' own hosts when the source declares a suitable image. Redirects must stay on those hosts. Otherwise it shows a licensed instrument cutout for the category. Image decoding and downloads run in the background, with bounded memory and disk caches. Installed and cached browsing reuse saved images without network requests; an uncached or unavailable image uses the category cutout. Older installations without saved artwork metadata use the same category for their list grouping and cutout, including patches with generic filenames. Image credits are included in **LICENSES.txt**.
+The preview uses repository artwork from GitHub raw/user-content hosts or Musical Artifacts' own hosts when the source declares a suitable image. Redirects must stay on those hosts. Otherwise it selects a licensed instrument cutout from the instrument name, using its path and saved metadata when the name is generic. The bundled set includes cello, upright bass, several brass and woodwind instruments, bells, mallets, guitars and world instruments. A known instrument name takes precedence over folder names. Packs containing different instruments use the selected program’s cutout instead of applying one pack cover to every program; logos and interface diagrams are excluded. Image decoding and downloads run in the background, with bounded memory and disk caches. Installed and cached browsing reuse saved images without network requests; an uncached or unavailable image uses the category cutout. Older installations without saved artwork metadata use the same category for their list grouping and cutout, including patches with generic filenames. Image credits are included in **LICENSES.txt**.
 
 ![Local SFZ folders](docs/images/ms-02-sfz-library.png)
 
@@ -2017,7 +2027,7 @@ Recent GitHub metadata may be reused for five minutes to reduce repository reque
 
 The default downloaded library is `~/.local/share/Dusk Studio/sfz-library` on Linux (`XDG_DATA_HOME` overrides `~/.local/share`), `%LOCALAPPDATA%\Dusk Studio\sfz-library` on Windows, and `~/Library/Application Support/Dusk Studio/sfz-library` on macOS. The **SFZ Library** tab in **Settings → Settings...** lets you choose another folder, including an external drive.
 
-After upgrading, packs in the former default configuration folder remain available in place. New downloads use the data folder unless you have already chosen a download location; saved locations keep their existing folders.
+Packs already stored in the configuration folder remain available in place. New downloads use the data folder unless you have already chosen a download location; saved locations keep their existing folders.
 
 Select a pack on the left to see its license, contents and download action on the right. **Declared license** reports the source's license declaration. Only CC0, CC BY and CC BY-SA packs are offered for download. NonCommercial and NoDerivatives packs are refused, including when their restrictions are discovered on selection. Previously installed instruments remain available under their original licenses. Read the displayed attribution and ShareAlike requirements before using a pack. A pack's size can be unknown until it downloads.
 
@@ -2041,7 +2051,7 @@ Switching to Mastering or losing the audio device ends the take and releases the
 
 Installed versions coexist. A session references the exact source, pack, version, archive digest and instrument path, so another computer can resolve the same installed pack without matching the original absolute path. If that pack is missing, the slot stays offline and keeps its reference. Reconnect its library drive, or open **SFZ Manager**, select an installed version of the same source and pack, choose its **Program**, then press **Relink this slot**. Relinking explicitly changes the saved version and keeps the instrument controls; the sound may differ between versions. A failed or cancelled relink preserves the old reference. Opening a session never downloads instruments or browses a repository. Files opened directly remain file references unless they belong to a known installed pack.
 
-Instrument replacement is prepared in the background while the current instrument keeps playing. A failed replacement leaves it playing, and an older request cannot replace a newer selection.
+Instrument replacement is prepared in the background while the current instrument keeps playing. A failed replacement leaves it playing, and an older request cannot replace a newer selection. Session instruments also load in the background. A pending slot reads **[name] (loading)** until loading finishes. If restored instruments fail, one **Plug-in unavailable** alert lists their tracks and exact reasons after the session's instrument loads settle; saved references and controls stay intact. Opening another session cancels unfinished instrument loads; their failures do not raise alerts.
 
 Downloading the same pack version again repairs a missing or damaged installation receipt. An installation with a valid receipt is reused, including any changed samples. To replace files after a failed installed-file check, first keep any edits you need, unload the pack's instruments, then use **Remove** and **Download** again.
 
@@ -2224,7 +2234,7 @@ Right-click the binding in the MIDI Bindings panel to change its mode.
 
 ## The MIDI Bindings panel
 
-Open **Settings → Settings...**, then select the **MIDI Bindings** tab.
+Open **Settings → Settings...**, select the **MIDI Bindings** tab, then click **MIDI Bindings...** to open the panel.
 
 Each row shows:
 
@@ -2324,6 +2334,8 @@ The output is **stereo 24-bit WAV at the session sample rate** by default (or a 
 Dusk Studio detaches from the realtime audio device and renders the project offline as fast as the CPU allows. When the bounce completes, the audio device is automatically re-attached.
 
 A render that cannot open a file it has to write, such as a read-only `mixdown.wav`, stops there, leaves that file exactly as it was, and its dialog reads "Could not write [file]: [reason]". A render that fails deletes only the files it created or overwrote: a stem bounce that stops at a stem it cannot open removes the stems it had already opened and leaves that stem and the ones after it alone. Freeze follows the same rule.
+
+If a soundfont is still loading, a bounce, mixdown, stem bounce, master export or freeze cannot start: "Wait for soundfont loading to finish, then render again." Wait for the instrument to finish loading and retry; existing output files stay untouched.
 
 While a bounce, mixdown, stem bounce, master export or freeze is rendering, **Save** and **Save As…** do nothing but put "Session not saved: finish or cancel the render first" in the status bar, since saving pauses the audio engine the render is using. While a DP-24/32 import runs they do the same with "Session not saved: finish or cancel the DP import first", since the import writes into the session's audio folder as it was when the import started.
 
