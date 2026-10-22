@@ -891,6 +891,7 @@ target_sources(DuskStudio PRIVATE
     src/ui/scenario/cases/gui_plugin_folders.cpp
     src/ui/scenario/cases/gui_regions_markers.cpp
     src/ui/scenario/cases/gui_session_file.cpp
+    src/ui/scenario/cases/gui_sfz_live.cpp
     src/ui/scenario/cases/gui_sfz_repository.cpp
     src/ui/scenario/cases/gui_startup_quit.cpp
     src/ui/scenario/cases/gui_tracks.cpp
