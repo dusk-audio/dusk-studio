@@ -1499,15 +1499,16 @@ std::optional<ScenarioResult> runImportRefusals (GuiHost& host, ScenarioContext&
     const auto restore = ctx.tempDir() / "restore.json";
     if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save session");
     const auto locked = ctx.tempDir() / "Unreadable" / "Locked.wav";
-    ctx.cleanup ([&host, &session, &transport, originalDir, restore, locked, state = transport.getState(),
+    ctx.cleanup ([&host, &engine, &session, &transport, originalDir, restore, locked, state = transport.getState(),
                   position = transport.getPlayhead()]
     {
         std::error_code ignored;
         std::filesystem::permissions (locked, std::filesystem::perms::owner_read | std::filesystem::perms::owner_write,
                                       std::filesystem::perm_options::replace, ignored);
         drainModals (host);
-        transport.setState (state);
+        engine.stop();
         transport.setPlayhead (position);
+        transport.setState (state);
         reopenSavedSession (host, restore);
         applySessionDirectory (session, originalDir);
     });
@@ -1598,9 +1599,9 @@ std::optional<ScenarioResult> runImportRefusals (GuiHost& host, ScenarioContext&
     steps->push_back ({ 200, [&transport] { transport.setState (Transport::State::Playing); } });
     openImport ("while playing");
     alerted ("while playing", "Import\nStop playback before importing files.");
-    steps->push_back ({ 100, [&transport]
+    steps->push_back ({ 100, [&engine, &transport]
     {
-        transport.setState (Transport::State::Stopped);
+        engine.stop();
         transport.setPlayhead (0);
     } });
     pick ("bytes that are not audio", garbage);

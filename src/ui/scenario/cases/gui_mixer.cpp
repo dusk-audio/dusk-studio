@@ -1349,7 +1349,8 @@ const ScenarioRegistrar modeShown { Scenario {
 std::optional<ScenarioResult> runOptimizeAutomation (GuiHost& host, ScenarioContext& ctx)
 {
     auto& session = ctx.session();
-    auto& transport = ctx.engine().getTransport();
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
     if (! transport.isStopped() || ! host.modalStackEmpty())
         return ScenarioResult::skip ("requires a stopped transport and no open modal");
 
@@ -1371,10 +1372,11 @@ std::optional<ScenarioResult> runOptimizeAutomation (GuiHost& host, ScenarioCont
     std::vector<std::vector<AutomationPoint>> savedLanes;
     for (auto* lane : lanes) savedLanes.push_back (lane->pointsConst());
     for (auto* mode : modes) ctx.keep (*mode);
-    ctx.cleanup ([&host, &transport, lanes, savedLanes, state = transport.getState(),
+    ctx.cleanup ([&host, &engine, &transport, lanes, savedLanes, state = transport.getState(),
                   position = transport.getPlayhead()]
     {
         drainModals (host);
+        engine.stop();
         transport.setPlayhead (position);
         transport.setState (state);
         for (std::size_t i = 0; i < lanes.size(); ++i) lanes[i]->publishPoints (savedLanes[i]);
@@ -1424,9 +1426,9 @@ std::optional<ScenarioResult> runOptimizeAutomation (GuiHost& host, ScenarioCont
     };
 
     transport.setState (Transport::State::Playing);
-    attempt (stopPlayback, 5, "while playing", [&transport, &readMode]
+    attempt (stopPlayback, 5, "while playing", [&engine, &readMode]
     {
-        transport.setState (Transport::State::Stopped);
+        engine.stop();
         readMode.store ((int) AutomationMode::Read, std::memory_order_release);
     });
     attempt (setOff, 5, "with a track in Read", [&readMode, &touchMode]
