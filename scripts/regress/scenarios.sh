@@ -1211,10 +1211,11 @@ regress_scenarios_run() {
         regress_skip "bb-interrupted-gui-save" "needs xdotool and the gui.interrupted_quit_save scenario"
     fi
 
-    if [[ "$(uname -s)" == Linux ]] && scenarios_has_case "gui.interrupted_quit_save"; then
+    if [[ "$(uname -s)" == Linux ]] && scenarios_binary_has "dusk-studio-audio-editor" \
+        && scenarios_has_case "gui.timeline_track_move"; then
         regress_leg "bb-display-loss" bash "${REPO_ROOT}/tests/blackbox_display_loss.sh" "$APP_BIN"
     else
-        regress_skip "bb-display-loss" "needs Linux X11 and the gui.interrupted_quit_save scenario"
+        regress_skip "bb-display-loss" "needs Linux X11, the native audio editor and the gui.timeline_track_move scenario"
     fi
 
     if scenarios_has_case "gui.quit_during_mixdown"; then

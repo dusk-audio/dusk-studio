@@ -1,0 +1,122 @@
+{
+  "issue": 906,
+  "recorded_at_utc": "2026-10-22T00:16:56.919165+00:00",
+  "status": "Confirmed exit-time TLS lifetime defect; removed by existing #911 ownership fix. Original bad_alloc allocation and original X11-loss trigger remain unlocated.",
+  "source": {
+    "checkout": "adb771a04b4717fd4882363ec31e76850484f72d",
+    "existing_fix": "41b6b038514bd73986c7ed2727f98a947c0ba7b8",
+    "candidate_changes": [
+      "tests/blackbox_display_loss.sh",
+      "scripts/regress/scenarios.sh"
+    ],
+    "product_code_changes": false
+  },
+  "original": {
+    "source": "8162114e30bd4e85197997ce5de81c1a574a08b2",
+    "output": "build/validation-release-review/linux-phase-gui/full-retry/output.log",
+    "crash_report": "build/validation-release-review/linux-phase-gui/full-retry/profile/home/.config/Dusk Studio/crashes/crash-20261019T081827.txt",
+    "observed_order": [
+      "XPending",
+      "_XEventsQueued",
+      "_XIOError",
+      "libc exit handlers",
+      "pending scenario destruction",
+      "exception unwind and terminate"
+    ],
+    "symbol_limit": "Original executable absent. A nearby retained binary corroborates the three hot destructor return PCs with a common +0x40 shift; cold unwind return 0x442514 matches exactly. This is corroboration, not exact original symbolication."
+  },
+  "reproduced_mechanism": {
+    "sequence": [
+      "Fatal X11 loss enters exit().",
+      "libc destroys current-thread TLS, including the Unicode LruCache and its owned mutex.",
+      "The old static activeGuiRun destroys the unfinished ScenarioContext during global exit handling.",
+      "Track-move cleanup restores the track order, triggering TapeStrip label layout.",
+      "Unicode::performAnalysis reuses the destroyed TLS cache, whose initialization guard remains set."
+    ],
+    "same_thread_cache_address": "0x7ffff5837ce8",
+    "same_freed_mutex_address": "0x52800e0",
+    "tls_guard_at_reentry": 1,
+    "observed_failure": "std::system_error (Invalid argument) from the freed mutex; another retained-binary run hangs in that mutex.",
+    "owner_lifetime": "No destroyed MainComponent or engine is assumed: exit() does not unwind the application main stack.",
+    "fix": "#911 makes GuiRun a MainComponent member. Normal shutdown destroys it while the window/framework live; fatal X11 exit no longer runs scenario cleanups as a global exit handler."
+  },
+  "targeted_results": {
+    "old_injected_attempts": 3,
+    "old_abnormal_results": 3,
+    "fixed_injected_attempts": 3,
+    "fixed_abnormal_results": 0,
+    "fixed_instrumented_native_exit": 1,
+    "fixed_instrumented_seconds_after_xio": 0.11024430899851723,
+    "fixed_cache_destructor_observed": true,
+    "fixed_cache_reentry_observed": false,
+    "regression_old": {
+      "test_exit": 1,
+      "native_exit": 137,
+      "outcome": "Exception, terminate and crash report; expected failing regression control."
+    },
+    "regression_fixed": {
+      "test_exit": 0,
+      "native_exit": 1,
+      "outcome": "Prompt fatal-display exit; no exception, completion verdict or crash report."
+    },
+    "test_change": "The display-loss guard now interrupts gui.timeline_track_move after native audio-editor context creation, covering the actual pending track-restoration cleanup. The separate interrupted-save black-box leg is retained.",
+    "isolation": "Private Xvfb, private null PipeWire, empty child-only ALSA configuration, private profile and copied immutable executables.",
+    "original_bad_alloc_reproduced": false,
+    "broad_validation_run": false,
+    "final_regression_guard": "guard-fixed-final/result.json",
+    "unsupported_binary_control": "Native editor marker absent: standalone guard exits77 before starting display/audio resources.",
+    "main_build": "cmake --build build -j6: exit0; no new warnings. No new C++ product code.",
+    "script_checks": "bash -n and git diff --check: pass."
+  },
+  "binary_sha256": {
+    "old_binary_sha256": "588546271b3141efdef24cced4d8a719402bcb776012e57c112e26bd75595767",
+    "retained_f28976e1_binary_sha256": "6415490aa39c1e832e2e648c167d2be0dc5aa5fc3b190fc65b845e12ba1f243d",
+    "fixed_binary_sha256": "a37f59fcc599259b0501081abd601e9d6dafe59cbdf90be431b56bc64c683ad7"
+  },
+  "evidence_root": "build/validation-906-cause/",
+  "evidence_files": [
+    "summary.json",
+    "nearoriginal-tls-4/unicode-dtor.json",
+    "nearoriginal-tls-4/unicode-reentry.json",
+    "nearoriginal-tls-4/post-xio-throw.json",
+    "nearoriginal-tls-4/output.log",
+    "fixed-30e9f21d-control-5/unicode-dtor.json",
+    "fixed-30e9f21d-control-5/inferior-exit.json",
+    "fixed-30e9f21d-control-5/output.log",
+    "guard-old-6/output.log",
+    "guard-fixed-7/output.log",
+    "guard-fixed-final/result.json",
+    "guard-fixed-final/output.log",
+    "unsupported-final.log",
+    "rebuild-8162114e/provenance.json",
+    "rebuild-8162114e/stopped-after-diagnosis.json"
+  ],
+  "limits": [
+    "Original std::bad_alloc allocation call was not captured and not newly reproduced; the proven freed-cache defect explains the historical exit-cleanup mechanism and exact cold unwind site but does not prove which freed payload produced that historical allocation exception.",
+    "Why the historical X11 display disappeared remains unproven. New loss is deliberately injected.",
+    "Three old failures and three fixed controls establish this lifetime path, not a statistical reliability guarantee.",
+    "No new sanitizer run: this is same-thread TLS/global destruction order, diagnosed directly by GDB; no suppression added."
+  ],
+  "proof_sha256": {
+    "summary.json": "0888fda3bb1b2ff9dfa8b5f6d064c3ac46f69b94ba5ae57e6ad1f986b777faa1",
+    "nearoriginal-tls-4/unicode-dtor.json": "57fb090b53767d1439fab36e57330ffb7472401464dae71e9f2d5d3775016cb6",
+    "nearoriginal-tls-4/unicode-reentry.json": "3762324c70cbcf1b924c06e0b5e9d8b2911ca8c7c51a37b716276d7f567a5974",
+    "nearoriginal-tls-4/post-xio-throw.json": "493fad15591587f72d518bca868f7f27aaf677958eee42e202f1050441634a00",
+    "nearoriginal-tls-4/output.log": "75fcf647227e4a731d1e191f9dac06a443a27815547565f36630f08629ecfeec",
+    "fixed-30e9f21d-control-5/unicode-dtor.json": "d0fa828616665c469d8d8c383ca9cd972fc5f732e533cc11b3ba1d08cdc30b92",
+    "fixed-30e9f21d-control-5/inferior-exit.json": "b98d238db4f30e2704e4950a954e6c051ea5a4c8a3d0bf829fd025aadded3456",
+    "fixed-30e9f21d-control-5/output.log": "31683ff50843d952bd9d1f950ff1e12fd1842b6f7e8d6da9f240f4d79eb537bd",
+    "guard-old-6/output.log": "8e6fc2af251609b25a1ab96a66ba55693de196684d164b79da7502a29e945dc4",
+    "guard-fixed-7/output.log": "dfbe3077eca7a2a34e5c3ef65e8d49de3e3369e88d07887e9afa97b06ea28874",
+    "build/validation-release-review/linux-phase-gui/full-retry/output.log": "bfdd2df6cd7d6c85e6db9bb4a5e0fa46796b96aaa90442cd0ec7171c56fdaff0",
+    "build/validation-release-review/linux-phase-gui/full-retry/profile/home/.config/Dusk Studio/crashes/crash-20261019T081827.txt": "3bfca798da0d5b0f19af349a18793f7f3476e6addad913b30f883a1898d9c2eb",
+    "tests/blackbox_display_loss.sh": "8d56a016555b5a897448d80bd1c1d8734b8729da49ec3cb40eddf8d06fc7ca59",
+    "scripts/regress/scenarios.sh": "5a6eb8be45fbe40e79db1bb4f236b91fde4e16e95a11bcd6e47ba424f871212a",
+    "guard-fixed-final/result.json": "4641394b96c59b3832225ceb582c9af71a212e1952826b94bfd366dedcff2e8c",
+    "guard-fixed-final/output.log": "963a404cb2652aee87dd1e46d96a83b3d89a59c33e3e38a51c60e4d12ccd2f14",
+    "unsupported-final.log": "ceb045e4b43c9e850b27fcd8f45bdce74d485290864cd603702c430978f83953",
+    "rebuild-8162114e/provenance.json": "ccb2ba34d7bea486f350e01030ca794080e1d9821b86cfd8f1ea6dc1d5c3c4bd",
+    "rebuild-8162114e/stopped-after-diagnosis.json": "522904a6ae90160ab04172d691992057e1ec269eddfa9344e0757d372ba19b02"
+  },
+  "historical_rebuild": "An isolated 8162114e source build was configured but stopped after causal proof was obtained from retained binaries; it is not a built-original or validation result. Provenance and stop receipt remain under rebuild-8162114e/."
+}

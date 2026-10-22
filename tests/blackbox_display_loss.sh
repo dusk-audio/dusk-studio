@@ -10,6 +10,10 @@ source "$repo_root/scripts/regress/xvfb.sh"
 source "$repo_root/scripts/regress/scenarios.sh"
 APP_BIN="${1:-$repo_root/build/DuskStudio_artefacts/Release/DuskStudio}"
 [[ $# -le 1 && -x "$APP_BIN" ]] || regress_die "usage: $0 [DuskStudio executable]"
+if [[ "$(uname -s)" != Linux ]] || ! scenarios_binary_has "dusk-studio-audio-editor"; then
+    printf 'SKIP: display-loss guard requires Linux and the native audio editor\n'
+    exit "$REGRESS_SKIP_RC"
+fi
 regress_require Xvfb pipewire sha256sum cmp python3
 
 bb_begin bb-display-loss 90
@@ -43,16 +47,17 @@ sha256sum "$APP_BIN" >"$BB_SDIR/app.sha256"
 # No ALSA definitions means fallback cannot open hardware through libasound.
 : >"$BB_SDIR/alsa-denied.conf"
 
-bb_spawn A "DUSKSTUDIO_RUN_SCENARIOS=gui:gui.interrupted_quit_save" \
+bb_spawn A "DUSKSTUDIO_RUN_SCENARIOS=gui:gui.timeline_track_move" \
     "DUSKSTUDIO_RUN_SELFTEST=" "DUSKSTUDIO_QUIT_AFTER_MS=" \
     "DUSKSTUDIO_LOAD_SESSION=" "DUSKSTUDIO_NATIVE_WAYLAND=" \
     "PIPEWIRE_REMOTE=pipewire-0" "ALSA_CONFIG_PATH=$BB_SDIR/alsa-denied.conf" --
 printf '%s\n' "${BB_PID[A]}" >"$BB_SDIR/app.pid"
-bb_wait_marker A "[Dusk Studio/scenario] external quit ready" 60
+bb_wait_marker A "[Dusk Studio/audio-editor] GL vendor=" 60
 bb_alive A || regress_die "app exited before display loss"
 kill -0 "$NULL_AUDIO_PID" || regress_die "private PipeWire graph exited"
 bb_assert_marker A "[Dusk Studio/PipeWire] opened"
-if grep -qE '^=== scenarios:|^\[(PASS|FAIL|SKIP)\] gui.interrupted_quit_save' "$BB_SDIR/A.out"; then
+bb_assert_marker A "[RUN] gui.timeline_track_move"
+if grep -qE '^=== scenarios:|^\[(PASS|FAIL|SKIP)\] gui\.timeline_track_move' "$BB_SDIR/A.out"; then
     regress_die "GuiRun completed before display loss"
 fi
 
@@ -83,8 +88,8 @@ unsafe = (rb"std::bad_alloc|terminate called|uncaught exception|Aborted|Segmenta
           rb"AddressSanitizer|runtime error:|phase 1: stop autosave timer|"
           rb"interrupted save cleanup")
 assert not re.search(unsafe, stderr + stdout, re.IGNORECASE), "unsafe cleanup or exception after display loss"
-assert not re.search(rb"^=== scenarios:|^\[(PASS|FAIL|SKIP)\] gui\.interrupted_quit_save",
+assert not re.search(rb"^=== scenarios:|^\[(PASS|FAIL|SKIP)\] gui\.timeline_track_move",
                      stdout, re.MULTILINE), "interrupted GuiRun reported completion"
 assert not list(root.rglob("crash-*.txt")), "display loss wrote a crash report"
 PY
-printf 'PASS: active GuiRun exited 1 after losing its private X11 display\n'
+printf 'PASS: interrupted track move exited 1 after losing its private X11 display\n'

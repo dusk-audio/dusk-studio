@@ -107,7 +107,8 @@
     "retained_earlier_guard": "display-loss-existing-behavior.json: prior test a18f839c/helper2828221e PASS on same app hash; separate inherited-Xvfb-survival control passed",
     "retained_baseline": "display-loss-blackbox-baseline.json: native1/0integerseconds; initial test failed only because a newly proposed diagnostic was absent",
     "hypothesis": "#911 moving static GuiRun ownership into MainComponent may explain why abnormal cleanup no longer reproduces; this is unproven",
-    "limit": "Injected fatal-display behavior only; neither original allocation cause nor why historical X11 was lost is established; #906 remains open"
+    "limit": "Injected fatal-display behavior only; neither original allocation cause nor why historical X11 was lost is established; #906 remains open",
+    "later_cause_investigation": "0.16-906-exit-lifetime.json proves old static GuiRun cleanup reentered a destroyed thread-local Unicode cache after fatal X11 exit; #911 removes that exit handler. The original bad_alloc allocation and historical display-loss trigger remain unlocated."
   },
   "retained_attempts": [
     "linux-package-fresh-1: prelaunch network failure; no app launched",
