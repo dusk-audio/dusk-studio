@@ -175,6 +175,7 @@ leg_release_metadata() {
 # The CI checks a merge to main has to pass. A ruleset that requires fewer
 # lets a red job merge, which is what the WARN names.
 RULESET_REQUIRED=(
+    "De-JUCE ratchet"
     "Build + tests (GCC Release, Ubuntu 22.04, amd64)"
     "Build + tests (GCC Release, Ubuntu 22.04, arm64)"
     "Build + tests (clang Release, macOS arm64)"
