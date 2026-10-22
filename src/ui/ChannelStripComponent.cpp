@@ -5584,10 +5584,11 @@ void ChannelStripComponent::recordAutomation (AutomationParam param, bool record
     auto& lane = track.automationLanes[(size_t) param];
     if (recording)
     {
+        const auto position = engine.getTransport().getAutomationPosition();
         const bool touch = track.automationMode.load (std::memory_order_relaxed) == (int) AutomationMode::Touch;
-        recorder.record (lane, engine.getTransport().getPlayhead(), value,
+        recorder.record (lane, position.samples, value,
                          session.tempoBpm.load (std::memory_order_relaxed),
-                         engine.getTransport().getLocateCount(),
+                         position.locateSerial,
                          touch ? (std::int64_t) (engine.getCurrentSampleRate()
                                                  * AutomationPassRecorder::kTouchReturnSeconds)
                                : 0);

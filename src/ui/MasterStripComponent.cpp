@@ -1279,10 +1279,11 @@ void MasterStripComponent::recordFader (bool recording, float db)
     auto& lane = params.automationLanes[(size_t) AutomationParam::FaderDb];
     if (recording)
     {
+        const auto position = engine.getTransport().getAutomationPosition();
         const bool touch = params.automationMode.load (std::memory_order_relaxed) == (int) AutomationMode::Touch;
-        faderRecorder.record (lane, engine.getTransport().getPlayhead(), db,
+        faderRecorder.record (lane, position.samples, db,
                               session.tempoBpm.load (std::memory_order_relaxed),
-                              engine.getTransport().getLocateCount(),
+                              position.locateSerial,
                               touch ? (std::int64_t) (engine.getCurrentSampleRate()
                                                       * AutomationPassRecorder::kTouchReturnSeconds)
                                     : 0);
