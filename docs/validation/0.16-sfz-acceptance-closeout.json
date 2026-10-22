@@ -1,14 +1,42 @@
 {
   "issue": 804,
-  "purpose": "Historical SFZ acceptance evidence with explicit source bounds. Not final shipping-package validation or maintainer signoff.",
+  "purpose": "SFZ acceptance evidence with explicit source and platform bounds. Not final shipping-package validation or maintainer signoff.",
   "current_live_gui": {
-    "status": "PENDING",
-    "platforms": [
-      "linux",
-      "macos",
-      "windows"
-    ],
-    "required": "Four live providers: browse, license/source/version, download, pause/resume, install, load and play. Historical backend helpers do not complete this gate."
+    "status": "PARTIAL",
+    "required": "Four live providers: browse, license/source/version, download, pause/resume, install, load and play. Historical backend helpers do not complete this gate.",
+    "linux": {
+      "status": "PASS",
+      "source_commit": "2b40fe35acb52f1069fb003a216357b9466a4d92",
+      "receipt_checkout_commit": "7fea982150d6907d6a9e655ac1f111af6e2183b3",
+      "equivalent_source_tests_at_commit": "5c6eec65cccb5f39e6aa9cc6bf6c335195f2dc9b",
+      "source_tree": "9aa2ca51ec682be0ed991a3147b28378bd9a02c7",
+      "tests_tree": "b123b0bf09c4aa2dc80c542f81b4aa3002b24050",
+      "equivalence_scope": "Exact src/ and tests/ git tree IDs match at all three commits. This is source-bound candidate evidence, not shipping-package or maintainer signoff.",
+      "app_sha256": "58cd8cf938dedbd8de3c363a2a2d546e68981414e46a685b876a96abbdd5579f",
+      "sidecar_sha256": "f19ae8e372f5654d01908a2a283ec657b9ba56f79a5168d362c554498cc334a1",
+      "binary_identity": "App and sidecar hashes verified before and after every run.",
+      "manifest": "build/validation-016-closeout/live-final-linux/result.json",
+      "manifest_sha256": "8117c60ffcad0a7de8ce853abfe1e9f35850b179bc524477fc803d5e42befdf6",
+      "raw_hashes_verified": 48,
+      "complete_ppm_captures_verified": 16,
+      "providers": [
+        {"source":"sfzinstruments","pack":"277114082","release":"0cc54468bb0d2d9b32921958585caad65ba8df21","license":{"id":"CC-BY-4.0","sha256":"9ba9550ad48438d0836ddab3da480b3b69ffa0aac7b7878b5a0039e7ab429411","source":"https://github.com/sfzinstruments/Ixox.Flute/blob/0cc54468bb0d2d9b32921958585caad65ba8df21/LICENSE"},"program":"Ixox Flute.sfz","note":72,"launcher_exit":0,"native_exit":0,"paused_bytes":781,"pause_body_bytes":781,"resume":{"range":"bytes=781-","response":200,"interpretation":"Server ignored Range; safe full restart"},"audio_peak_db":-22.193376541137695,"master_peak_db":-22.193376541137695,"path":"build/validation-016-closeout/live-linux-sfzinstruments.lQj0KB","raw_log_sha256":{"output.log":"514a0379b10f1cc325aba6fad978714f25ea2eb40f79c4da02901eb676420c2a","error.log":"d118825c68b7087d2ace336066f574fbf4b43e7148ef469437d0b3e6c549dfb8","native-exit.txt":"9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"},"capture_sha256":{"sfz-live-browse.ppm":"650aa5cc86d6e9caa631d663b744cc70316da194693f603d39bff3bc7bd6cd6c","sfz-live-license.ppm":"d7b573ad8f7574461bd75a46235559a1befbf8a1f32bd8711b17a962bb985f67","sfz-live-paused.ppm":"098887a19465997c0159d2cb5896c207869eb27da3c432a4614946a9d7194b14","sfz-live-installed.ppm":"b438df50c1eafdbeb924b18e6036972e82a1b45ab3a52594e6acaa8295dadc6f"}},
+        {"source":"freepats","pack":"576386289","release":"496f2f6e82f226d650e270c0f0ad5febbebec249","license":{"id":"CC0-1.0","sha256":"a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499","source":"https://github.com/freepats/bagpipe/blob/496f2f6e82f226d650e270c0f0ad5febbebec249/LICENSE.txt"},"program":"Bagpipe 20260806.sfz","note":72,"launcher_exit":0,"native_exit":0,"paused_bytes":783,"pause_body_bytes":783,"resume":{"range":"bytes=783-","response":200,"interpretation":"Server ignored Range; safe full restart"},"audio_peak_db":-18.720184326171875,"master_peak_db":-18.933570861816406,"path":"build/validation-016-closeout/live-linux-freepats.ZgUmgQ","raw_log_sha256":{"output.log":"688085145087045a4b40dfbfb395fcb6f7b396676c3c09deaa580d79e5046b46","error.log":"0ad6a78ecacb90d235d390439415e258edfacdec51c177b8109040172bc5fa7b","native-exit.txt":"9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"},"capture_sha256":{"sfz-live-browse.ppm":"57a837e029ededd97b3272bb758acfaef403d768d4011ada86220d5d9fe095cb","sfz-live-license.ppm":"3be76e7d75ba4112d2aebc27e42858fddfc790faf2ce06de9803ce288390708b","sfz-live-paused.ppm":"5ac83222f0d2ed71f1b052ac151b196e4f11fda4f0aec21cdf6bb19f031c402a","sfz-live-installed.ppm":"2b67c5bef452b14df3ed350d3b184bf38985eb4eaf258a032514308a58620f05"}},
+        {"source":"musical-artifacts","pack":"7088","release":"69244c80f12a198b13231c41f0117149a42ce567e0136795611703961837a5d0","license":{"id":"CC-BY-3.0","sha256":"c03a64c8205181867f66ed0fcee003709c8731ac5272e0b2a81d6612ed0f39a1","source":"https://musical-artifacts.com/artifacts/7088"},"program":"Gordon_s_Whistle.sfz","note":72,"launcher_exit":0,"native_exit":0,"paused_bytes":1360,"pause_body_bytes":1360,"resume":{"range":"bytes=1360-","response":206,"interpretation":"Partial-content continuation"},"audio_peak_db":-12.951602935791016,"master_peak_db":-12.914214134216309,"path":"build/validation-016-closeout/live-linux-musical-artifacts.caFlKF","raw_log_sha256":{"output.log":"014517d97e7bfd3f0994bfd4953811bd6fa9e072b657cc106490f7af8ab9f50f","error.log":"b759d35cc09e59491fd642e7d3342136ee5262e0021622b972cec0cf9840b1f8","native-exit.txt":"9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"},"capture_sha256":{"sfz-live-browse.ppm":"7a649e7c2817d770379c87ebb07bf0e69ce235d26fa82f00557ea0c2460737cb","sfz-live-license.ppm":"59d75b219cbf57faf2bb13e438cd02234979ddf3c312e59d13f13392bd62f1e9","sfz-live-paused.ppm":"7cea2021da9492a57b98e2b0a04a4f8e8f2895c65371a4725e9c395d25c12587","sfz-live-installed.ppm":"532bba85cc242e847a1a0adcf460c028a64b04a8870865e57b58e831d414e892"}},
+        {"source":"versilian","pack":"62918451","release":"28092772094b2d9f1148d84cea97f4545b8c687d","license":{"id":"CC0-1.0","sha256":"36ffd9dc085d529a7e60e1276d73ae5a030b020313e6c5408593a6ae2af39673","source":"https://github.com/sgossner/VSCO-2-CE/blob/28092772094b2d9f1148d84cea97f4545b8c687d/LICENSE"},"program":"BassoonStac.sfz","note":60,"launcher_exit":0,"native_exit":0,"paused_bytes":782,"pause_body_bytes":782,"resume":{"range":"bytes=782-","response":200,"interpretation":"Server ignored Range; safe full restart"},"audio_peak_db":-32.71706008911133,"master_peak_db":-32.71706008911133,"path":"build/validation-016-closeout/live-linux-versilian.8ZEOTd","raw_log_sha256":{"output.log":"d2b8898bfaaabaa2a49ee64908d78560723a313e12a96f7d9e9a8397ddd3a217","error.log":"b2ea60d54c56c125fe441bff78bc8d6dbd97b8afc744a3cf9b5e236e876132f7","native-exit.txt":"9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"},"capture_sha256":{"sfz-live-browse.ppm":"40af6feddbdb83a0c6c2984917b21b49cab4da7eb67962c1052517cd39d388bf","sfz-live-license.ppm":"4cb5f1bb73e11bc77764439e646df4169f6c18a2425a4f28dc6344a02220bae0","sfz-live-paused.ppm":"d04458411d7ca61998d5fb174c1aaaf30bc5d7fdc1052820dc1f78808ecb2ce7","sfz-live-installed.ppm":"a5dc59cf1540f1938e95d28d3c20dbd31f9635601d8a853cda6ed676d265672a"}}
+      ],
+      "limits": [
+        "Private Xvfb and null PipeWire; isolated fresh profile per provider. Track and master metering prove finite nonzero application playback, not analog output quality.",
+        "Pause uses the synthetic asset-render-active trigger, not an actual recording or bounce. Musical Artifacts continued with HTTP 206; the three GitHub-backed providers returned HTTP 200 to Range and safely restarted full downloads.",
+        "One attempt per provider; no browser-challenge bypass or automatic provider retries. PYTHONOPTIMIZE was unset and capture/native-exit checks were active."
+      ]
+    },
+    "macos": {
+      "status": "PENDING"
+    },
+    "windows": {
+      "status": "PENDING"
+    }
   },
   "physical_storage": {
     "linux": {
@@ -86,7 +114,7 @@
     "scope": "Historical final native app renders the separately installed 3755 VSCO tree on a temporary QEMU NTFS disk; not a default-location or physical USB measurement. Earlier 3755 native render failed and is not counted as passing."
   },
   "external_service_limits": [
-    "Historical macOS Musical Artifacts refresh returned an upstream browser/anti-bot response; no bypass attempted. Current three-OS live GUI checks remain pending.",
+    "Historical macOS Musical Artifacts refresh returned an upstream browser/anti-bot response; no bypass attempted. Current source-bound Linux live GUI acceptance passed all four providers, including Musical Artifacts. Current macOS and Windows live GUI acceptance remain pending.",
     "Old Salsa selection rejected for unsupported HTTPS behavior; Gordon's Whistle resolved to its prior verified descriptor."
   ],
   "source_comparison": {
