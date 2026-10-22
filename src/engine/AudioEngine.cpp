@@ -6360,6 +6360,9 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             playbackEngine.readForTrack (t, blockStartSamples,
                                           playbackScratch[(size_t) t].data(), outR,
                                           numSamples, loopReadStart, loopReadEnd);
+            if (playbackReadObserver != nullptr)
+                playbackReadObserver (playbackReadContext, t, blockStartSamples, loopReadStart, loopReadEnd,
+                                      playbackScratch[(size_t) t].data(), outR, numSamples);
 
             // Live-audio play-along overlay, the audio twin of the MIDI overlay
             // below. Playing forces willReadFromDisk, so without this an

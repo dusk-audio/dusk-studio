@@ -21,6 +21,7 @@
 #include "engine/BounceEngine.h"
 #include "engine/PluginManager.h"
 #include "engine/PluginSlot.h"
+#include "engine/PlaybackReadCapture.h"
 #include "engine/RtPriority.h"
 #include "engine/scenario/SuiteRunner.h"
 #if DUSKSTUDIO_HAS_MULTISAMPLE
@@ -29,6 +30,7 @@
 #include "engine/audiofile/FileReader.h"
 #include "engine/audiofile/FileWriter.h"
 #include "foundation/MessageThread.h"
+#include "foundation/Json.h"
 #include "session/SessionSerializer.h"
 #include "util/CrashHandler.h"
 #include "util/SingleInstance.h"
@@ -1184,6 +1186,7 @@ static bool runHeadlessPipelineTest (const juce::String& pluginPath)
 struct SessionPerfDeviceOptions
 {
     bool enabled = false;
+    bool verifySource = false;
     std::string backend, name;
     double sampleRate = 48000.0;
     int blockSize = 256;
@@ -1193,6 +1196,12 @@ struct SessionPerfDeviceOptions
 static bool readSessionPerfDeviceOptions (SessionPerfDeviceOptions& options)
 {
     options.enabled = envFlagSet ("DUSKSTUDIO_PERF_USE_DEVICE");
+    options.verifySource = envFlagSet ("DUSKSTUDIO_PERF_VERIFY_SOURCE");
+    if (options.verifySource && ! options.enabled)
+    {
+        std::fprintf (stderr, "FAIL: source verification requires DUSKSTUDIO_PERF_USE_DEVICE=1\n");
+        return false;
+    }
     if (! options.enabled) return true;
     const auto value = [] (const char* name) -> std::string
     {
@@ -1229,21 +1238,89 @@ static bool readSessionPerfDeviceOptions (SessionPerfDeviceOptions& options)
         return false;
     options.blockSize = static_cast<int> (buffer);
     options.durationMs = static_cast<int> (duration);
+    const auto rate = static_cast<int> (options.sampleRate);
+    if (options.verifySource && (options.durationMs > 10000
+        || (rate != 48000 && rate != 96000 && rate != 192000)))
+    {
+        std::fprintf (stderr, "FAIL: source verification supports 48/96/192 kHz and at most 10000 ms\n");
+        return false;
+    }
+    return true;
+}
+
+static bool validatePlaybackFixture (const Session& session, double sampleRate)
+{
+    static_assert (Session::kNumTracks == PlaybackReadCapture::kTracks);
+    const auto regionFrames = static_cast<std::int64_t> (sampleRate) * PlaybackReadCapture::kRegionSeconds;
+    for (int trackIndex = 0; trackIndex < Session::kNumTracks; ++trackIndex)
+    {
+        const auto& track = session.track (trackIndex);
+        if (track.mode.load() != static_cast<int> (Track::Mode::Stereo) || track.frozen.load()
+            || track.recordArmed.load() || track.inputMonitor.load() || track.strip.mute.load()
+            || ! track.takes.empty() || ! track.midiRegions.current().empty()
+            || track.regions.size() != PlaybackReadCapture::kRegionsPerTrack)
+        {
+            std::fprintf (stderr, "FAIL: source fixture track %d must contain fifteen dry stereo regions\n", trackIndex + 1);
+            return false;
+        }
+        for (int regionIndex = 0; regionIndex < PlaybackReadCapture::kRegionsPerTrack; ++regionIndex)
+        {
+            const auto& region = track.regions[static_cast<std::size_t> (regionIndex)];
+            char name[64];
+            std::snprintf (name, sizeof (name), "track-%02d-region-%02d.wav", trackIndex + 1, regionIndex + 1);
+            auto reader = dusk::audio::FileReader::open (region.filePath());
+            if (region.timelineStart != regionIndex * regionFrames || region.lengthInSamples != regionFrames
+                || region.sourceOffset != 0 || region.numChannels != 2 || region.fadeInSamples != 0
+                || region.fadeOutSamples != 0 || ! std::isfinite (region.gainDb) || std::abs (region.gainDb) > 1.0e-7f
+                || region.muted || region.takeId != 0 || region.reversedFrom.has_value()
+                || region.filePath().filename().u8string() != name || reader == nullptr
+                || reader->info().numChannels != 2 || reader->info().bitsPerSample != 16 || reader->info().isFloat
+                || reader->info().numFrames != regionFrames || std::abs (reader->info().sampleRate - sampleRate) > 0.5)
+            {
+                std::fprintf (stderr, "FAIL: source fixture track %d region %d differs from the PCM16 oracle layout\n",
+                              trackIndex + 1, regionIndex + 1);
+                return false;
+            }
+        }
+    }
     return true;
 }
 
 class SessionPerfDeviceCallback final : public device::IODeviceCallback
 {
 public:
-    explicit SessionPerfDeviceCallback (AudioEngine& owner) : engine (owner) {}
-    void audioDeviceAboutToStart (device::IODevice* dev) override { engine.audioDeviceAboutToStart (dev); }
-    void audioDeviceStopped() override { engine.audioDeviceStopped(); }
+    struct FinalStatistics
+    {
+        dusk::audio::ReaderFillPool::Stats readers;
+        std::uint64_t frames = 0;
+        int engineXruns = 0, backendXruns = 0;
+    };
+    explicit SessionPerfDeviceCallback (AudioEngine& owner, PlaybackReadCapture* capture)
+        : engine (owner), readCapture (capture) {}
+    void audioDeviceAboutToStart (device::IODevice* dev) override
+    {
+        if (starts.fetch_add (1, std::memory_order_relaxed) != 0)
+            terminalError.store (true, std::memory_order_release);
+        engine.audioDeviceAboutToStart (dev);
+    }
+    void audioDeviceStopped() override
+    {
+        if (stopClaimed.exchange (true, std::memory_order_acq_rel)) return;
+        final.readers = engine.getPlaybackEngine().readerStats();
+        final.frames = frameCount();
+        final.engineXruns = engine.getXRunCount();
+        final.backendXruns = engine.getBackendXRunCount();
+        finalReady.store (true, std::memory_order_release);
+        engine.audioDeviceStopped();
+    }
     void audioDeviceError (const std::string&) override { terminalError.store (true, std::memory_order_release); }
     void audioDeviceIOCallback (const float* const* input, int inputs, float* const* output, int outputs,
                                 int samples, const device::CallbackContext& context) override
     {
         const dusk::audio::ScopedNoDenormals noDenormals;
+        if (readCapture != nullptr) readCapture->beginCallback (samples);
         engine.audioDeviceIOCallback (input, inputs, output, outputs, samples, context);
+        if (readCapture != nullptr) readCapture->endCallback();
         if (samples <= 0) return;
         for (int channel = 0; channel < outputs; ++channel)
             if (output[channel] != nullptr)
@@ -1259,11 +1336,17 @@ public:
     float outputPeak() const noexcept { return peak; } // Read only after removeCallback has drained audio.
     bool finite() const noexcept { return ! nonFinite.load (std::memory_order_relaxed); }
     bool healthy() const noexcept { return ! terminalError.load (std::memory_order_acquire); }
+    bool hasFinalStatistics() const noexcept { return finalReady.load (std::memory_order_acquire); }
+    FinalStatistics finalStatistics() const { return hasFinalStatistics() ? final : FinalStatistics {}; }
 private:
     AudioEngine& engine;
+    PlaybackReadCapture* const readCapture;
     std::atomic<std::uint64_t> frames { 0 };
     std::atomic<bool> nonFinite { false };
     std::atomic<bool> terminalError { false };
+    std::atomic<unsigned> starts { 0 };
+    std::atomic<bool> stopClaimed { false }, finalReady { false };
+    FinalStatistics final;
     float peak = 0.0f;
 };
 
@@ -1321,22 +1404,61 @@ static bool runDeviceSessionPerf (AudioEngine& engine, Session& session,
         std::fprintf (stderr, "FAIL: negotiated device parameters differ from the request\n");
         return false;
     }
-    SessionPerfDeviceCallback callback (engine);
+    PlaybackReadCapture capture;
+    PlaybackReadCapture::Expectations sourceExpected;
+    if (options.verifySource)
+    {
+        if (! validatePlaybackFixture (session, options.sampleRate)) return false;
+        const auto frames = static_cast<std::size_t> (options.sampleRate * options.durationMs / 1000.0)
+            + 32 * static_cast<std::size_t> (options.blockSize);
+        if (! capture.prepare (frames, frames / static_cast<std::size_t> (options.blockSize) + 32,
+                               (std::uint32_t { 1 } << Session::kNumTracks) - 1))
+        {
+            std::fprintf (stderr, "FAIL: source capture exceeds the 400 MiB diagnostic budget\n");
+            return false;
+        }
+        sourceExpected.sampleRate = static_cast<int> (options.sampleRate);
+        auto& transport = engine.getTransport();
+        if (transport.isLoopEnabled())
+        {
+            sourceExpected.loopStart = transport.getLoopStart();
+            sourceExpected.loopEnd = transport.getLoopEnd();
+            sourceExpected.requireLoopWrap = true;
+        }
+        if (locateReaders)
+        {
+            const auto last = std::max<std::int64_t> (0, sessionEnd - options.blockSize);
+            for (int seek = 1; seek <= 3; ++seek) sourceExpected.rollingSeeks.push_back (last / 4 * seek);
+        }
+        engine.setPlaybackReadObserver ([] (void* context, int track, std::int64_t start,
+                                            std::int64_t loopStart, std::int64_t loopEnd,
+                                            const float* left, const float* right, int samples) noexcept
+        {
+            static_cast<PlaybackReadCapture*> (context)->read (track, start, loopStart, loopEnd, left, right, samples);
+        }, &capture);
+        std::fprintf (stdout, "Source capture: storage=%zu bytes; copying %.0f bytes/s before strip DSP; baseline perf must disable capture\n",
+                      capture.allocatedBytes(), options.sampleRate * Session::kNumTracks * 2 * sizeof (float));
+    }
+    SessionPerfDeviceCallback callback (engine, options.verifySource ? &capture : nullptr);
     struct Registration
     {
         AudioEngine& engine;
         device::DeviceManager& manager;
         SessionPerfDeviceCallback& callback;
+        PlaybackReadCapture& capture;
         bool finished = false;
         void finish()
         {
-            engine.stop();
+            capture.setCapturing (false);
+            if (auto* device = manager.getCurrentDevice()) device->stop();
             manager.removeCallback (&callback);
+            engine.setPlaybackReadObserver (nullptr, nullptr);
+            engine.stop();
             manager.closeDevice();
             finished = true;
         }
         ~Registration() { if (! finished) finish(); }
-    } registration { engine, manager, callback };
+    } registration { engine, manager, callback, capture };
     manager.addCallback (&callback);
     auto& transport = engine.getTransport();
     engine.setPerfCaptureEnabled (true);
@@ -1346,6 +1468,7 @@ static bool runDeviceSessionPerf (AudioEngine& engine, Session& session,
     const auto before = playback.readerStats();
     const int engineBefore = engine.getXRunCount(), backendBefore = engine.getBackendXRunCount();
     const auto framesBefore = callback.frameCount();
+    if (options.verifySource) capture.setCapturing (true);
     std::size_t peakBytes = before.allocatedBytes, peakReaders = before.residentReaders;
     using Clock = std::chrono::steady_clock;
     const auto began = Clock::now();
@@ -1381,15 +1504,44 @@ static bool runDeviceSessionPerf (AudioEngine& engine, Session& session,
         std::this_thread::sleep_for (std::chrono::milliseconds (1));
     }
     const double seconds = std::chrono::duration<double> (Clock::now() - began).count();
-    const auto after = playback.readerStats();
-    const int engineDelta = engine.getXRunCount() - engineBefore;
-    const int backendDelta = engine.getBackendXRunCount() - backendBefore;
-    const auto frames = callback.frameCount() - framesBefore;
+    registration.finish();
+    const auto final = callback.finalStatistics();
+    const auto after = final.readers;
+    peakBytes = std::max (peakBytes, after.allocatedBytes);
+    peakReaders = std::max (peakReaders, after.residentReaders);
+    const int engineDelta = final.engineXruns - engineBefore;
+    const int backendDelta = final.backendXruns - backendBefore;
+    const auto frames = final.frames >= framesBefore ? final.frames - framesBefore : std::uint64_t { 0 };
     const double expectedFrames = seconds * options.sampleRate;
     const double frameTolerance = std::max (4.0 * options.blockSize, expectedFrames * 0.05);
     const bool frameCoverage = frames > 0 && std::abs ((double) frames - expectedFrames) <= frameTolerance;
     engine.printPerfTable();
-    registration.finish();
+    bool sourcePassed = true;
+    if (options.verifySource)
+    {
+        const auto result = capture.analyze (sourceExpected);
+        const bool poolStable = before.workers >= 2 && before.workers <= 4 && after.workers == before.workers;
+        sourcePassed = result.passed() && engineDelta == 0 && backendDelta == 0 && poolStable
+            && after.fillErrors == before.fillErrors && deviceMatches && progressing && frameCoverage
+            && callback.healthy() && callback.finite() && callback.hasFinalStatistics();
+        const dusk::json::Json report {
+            { "passed", sourcePassed }, { "sample_rate", sourceExpected.sampleRate },
+            { "callbacks", result.capture.callbacks }, { "complete_callbacks", result.capture.completeCallbacks },
+            { "missing_track_callbacks", result.capture.missingTrackCallbacks },
+            { "duplicate_reads", result.capture.duplicateReads }, { "invalid_reads", result.capture.invalidReads },
+            { "protocol_errors", result.capture.protocolErrors }, { "overflow", result.capture.overflow },
+            { "checked_values", result.checkedValues }, { "mismatched_values", result.mismatchedValues },
+            { "non_finite_values", result.nonFiniteValues }, { "maximum_error", result.maximumError },
+            { "first_wrong_track", result.firstWrongTrack }, { "first_wrong_channel", result.firstWrongChannel },
+            { "first_wrong_frame", result.firstWrongFrame }, { "timeline_errors", result.timelineErrors },
+            { "committed_seeks", result.committedSeeks }, { "loop_wraps", result.loopWraps },
+            { "storage_bytes", capture.allocatedBytes() }, { "reader_pool_stable", poolStable },
+            { "device_stable", deviceMatches }, { "progressing", progressing }, { "frame_coverage", frameCoverage },
+            { "final_stop_snapshot", callback.hasFinalStatistics() },
+            { "engine_xrun_delta", engineDelta }, { "backend_xrun_delta", backendDelta }
+        };
+        std::fprintf (stdout, "Playback source oracle: %s\n", report.dump().c_str());
+    }
     std::fprintf (stdout,
         "Device run: elapsed=%.3fs window frames=%llu expected=%.0f tolerance=%.0f coverage=%s rolling locates=%d max locate call=%.4fms\n"
         "Device stream: stable=%s progressing=%s terminal error=%s\n"
@@ -1402,7 +1554,8 @@ static bool runDeviceSessionPerf (AudioEngine& engine, Session& session,
         after.workers, peakReaders, peakBytes, (unsigned long long) (after.readMisses - before.readMisses),
         (unsigned long long) (after.fillErrors - before.fillErrors), callback.outputPeak(), callback.finite() ? "yes" : "no");
     std::fflush (stdout);
-    return deviceMatches && progressing && frameCoverage && callback.healthy() && callback.finite();
+    return deviceMatches && progressing && frameCoverage && callback.healthy() && callback.finite()
+        && callback.hasFinalStatistics() && sourcePassed;
 }
 
 // DUSKSTUDIO_PERF_SESSION=<path>: load a real session and play it
@@ -1514,8 +1667,10 @@ static bool runHeadlessSessionPerf (const juce::String& sessionPath)
         if (loopReaders)
         {
             const auto twoSeconds = static_cast<std::int64_t> (2.0 * sampleRate);
-            const auto loopEnd = std::min (sessionEnd, 2 * twoSeconds);
-            const auto loopStart = loopEnd == 2 * twoSeconds ? twoSeconds : std::int64_t { 0 };
+            const auto requestedEnd = 2 * twoSeconds + (deviceOptions.verifySource ? 113 : 0);
+            const auto loopEnd = std::min (sessionEnd, requestedEnd);
+            const auto loopStart = loopEnd == requestedEnd
+                ? twoSeconds + (deviceOptions.verifySource ? 37 : 0) : std::int64_t { 0 };
             transport.setLoopRange (loopStart, loopEnd);
         }
     }
