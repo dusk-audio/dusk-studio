@@ -115,8 +115,9 @@ TEST_CASE ("A locate during playback becomes the point Stop returns to",
         CHECK (t.getCommittedPlayhead() == endpoint);
         CHECK (t.getPlayhead() == requested);
         CHECK (t.getRollStart() == requested);
-        CHECK (t.getLocateCount() == 1);
+        CHECK (t.getLocateCount() == 0);
         CHECK (t.beginAudioBlock() == requested);
+        CHECK (t.getLocateCount() == 1);
         const auto following = newerRequest ? 7000 : requested;
         t.locate (following);
         t.finishAudioBlock (requested + 256);
@@ -138,6 +139,80 @@ TEST_CASE ("A locate during playback becomes the point Stop returns to",
         CHECK (t.getPlayhead() == 1256);
         CHECK (t.beginAudioBlock() == 1256);
         CHECK (t.getRollStart() == 1000);
+    }
+    SECTION ("cold seeks leave audio and automation on the committed timeline until ready")
+    {
+        t.setState (Transport::State::Playing);
+        t.requestLocate (5000);
+        for (int block = 0; block < 32; ++block)
+        {
+            CHECK (t.beginAudioBlock ([] (std::int64_t) noexcept { return false; }) == 1000 + 256 * block);
+            CHECK (t.getPlayhead() == 5000);
+            const auto position = t.getAutomationPosition();
+            CHECK (position.samples == 1000 + 256 * block);
+            CHECK (position.locateSerial == 0);
+            t.finishAudioBlock (position.samples + 256);
+        }
+        CHECK (t.beginAudioBlock ([] (std::int64_t) noexcept { return true; }) == 5000);
+        const auto position = t.getAutomationPosition();
+        CHECK (position.samples == 5000);
+        CHECK (position.locateSerial == 1);
+    }
+    SECTION ("a newer request cannot consume an older target's readiness")
+    {
+        t.setState (Transport::State::Recording);
+        t.requestLocate (5000);
+        std::int64_t checkedTarget = -1;
+        CHECK (t.beginAudioBlock ([&] (std::int64_t target) noexcept
+        {
+            checkedTarget = target;
+            t.requestLocate (7000);
+            return true;
+        }) == 1000);
+        CHECK (checkedTarget == 5000);
+        CHECK (t.getPlayhead() == 7000);
+        CHECK (t.getAutomationPosition().locateSerial == 0);
+        CHECK (t.beginAudioBlock ([] (std::int64_t target) noexcept { return target == 5000; }) == 1000);
+        CHECK (t.beginAudioBlock ([] (std::int64_t target) noexcept { return target == 7000; }) == 7000);
+        CHECK (t.getAutomationPosition().locateSerial == 1);
+        CHECK (t.getRollStart() == 1000);
+    }
+    SECTION ("stopping cancels a still-cold seek without a committed locate serial")
+    {
+        t.setState (Transport::State::Playing);
+        t.requestLocate (5000);
+        CHECK (t.beginAudioBlock ([] (std::int64_t) noexcept { return false; }) == 1000);
+        t.finishAudioBlock (1256);
+        t.setState (Transport::State::Stopped);
+        t.setPlayhead (1256);
+        CHECK (t.beginAudioBlock() == 1256);
+        CHECK (t.getPlayhead() == 1256);
+        CHECK (t.getAutomationPosition().samples == 1256);
+        CHECK (t.getAutomationPosition().locateSerial == 0);
+    }
+    SECTION ("readiness can map a loop target while consuming the original request")
+    {
+        t.setState (Transport::State::Playing);
+        t.requestLocate (5000);
+        std::int64_t checkedTarget = -1;
+        CHECK (t.beginAudioBlock ([&] (std::int64_t& target) noexcept
+        {
+            checkedTarget = target;
+            target = 2000;
+            return true;
+        }) == 2000);
+        CHECK (checkedTarget == 5000);
+        CHECK (t.getPlayhead() == 2000);
+        CHECK (t.getAutomationPosition().locateSerial == 1);
+        t.requestLocate (7000);
+        CHECK (t.beginAudioBlock ([&] (std::int64_t& target) noexcept
+        {
+            target = 2500;
+            t.requestLocate (9000);
+            return true;
+        }) == 2000);
+        CHECK (t.getPlayhead() == 9000);
+        CHECK (t.getAutomationPosition().locateSerial == 1);
     }
 }
 

@@ -29,10 +29,25 @@ public:
         return playheadSamples.load (std::memory_order_relaxed);
     }
 
+    struct AutomationPosition { std::int64_t samples; std::uint32_t locateSerial; };
+    // Non-RT only: the UI records a position and its committed locate serial together.
+    AutomationPosition getAutomationPosition() const noexcept
+    {
+        for (;;)
+        {
+            const auto generation = positionGeneration.load (std::memory_order_acquire);
+            if ((generation & 1) != 0) continue;
+            const AutomationPosition result { playheadSamples.load (std::memory_order_relaxed),
+                                               locates.load (std::memory_order_relaxed) };
+            std::atomic_thread_fence (std::memory_order_acquire);
+            if (positionGeneration.load (std::memory_order_relaxed) == generation) return result;
+        }
+    }
+
     // Explicit positioning requires a quiescent audio owner.
     void setPlayhead (std::int64_t s) noexcept
     {
-        playheadSamples.store (s, std::memory_order_relaxed);
+        publishPosition (s, false);
         pendingLocate.store (kNoPendingLocate, std::memory_order_release);
     }
 
@@ -40,19 +55,29 @@ public:
     void requestLocate (std::int64_t s) noexcept
     {
         if (isPlaying()) setRollStart (s);
-        locates.fetch_add (1, std::memory_order_relaxed);
         pendingLocate.store (s, std::memory_order_release);
+    }
+    template <typename CanCommit>
+    std::int64_t beginAudioBlock (CanCommit&& canCommit) noexcept
+    {
+        auto requested = pendingLocate.load (std::memory_order_acquire);
+        if (requested != kNoPendingLocate)
+        {
+            auto target = requested;
+            if (canCommit (target)
+                && pendingLocate.compare_exchange_strong (requested, kNoPendingLocate,
+                                                           std::memory_order_acq_rel, std::memory_order_acquire))
+                publishPosition (target, true);
+        }
+        return getCommittedPlayhead();
     }
     std::int64_t beginAudioBlock() noexcept
     {
-        const auto requested = pendingLocate.exchange (kNoPendingLocate, std::memory_order_acq_rel);
-        if (requested != kNoPendingLocate)
-            playheadSamples.store (requested, std::memory_order_relaxed);
-        return getCommittedPlayhead();
+        return beginAudioBlock ([] (std::int64_t) noexcept { return true; });
     }
     void finishAudioBlock (std::int64_t next) noexcept
     {
-        playheadSamples.store (next, std::memory_order_relaxed);
+        publishPosition (next, false);
     }
 
     // Where playback or the take last began from a stopped transport, leaving
@@ -72,13 +97,13 @@ public:
     }
     void commitLocate (std::int64_t s) noexcept
     {
-        setPlayhead (s);
+        publishPosition (s, true);
+        pendingLocate.store (kNoPendingLocate, std::memory_order_release);
         if (isPlaying())
             setRollStart (s);
-        locates.fetch_add (1, std::memory_order_relaxed);
     }
 
-    // How many seeks locate() has made. An automation pass ends when this
+    // How many seeks the audio owner has committed. An automation pass ends when this
     // changes, so the stretch a seek skipped keeps what it held.
     std::uint32_t getLocateCount() const noexcept { return locates.load (std::memory_order_relaxed); }
 
@@ -122,12 +147,21 @@ public:
     }
 
 private:
+    void publishPosition (std::int64_t samples, bool located) noexcept
+    {
+        positionGeneration.fetch_add (1, std::memory_order_acq_rel);
+        std::atomic_thread_fence (std::memory_order_release);
+        playheadSamples.store (samples, std::memory_order_relaxed);
+        if (located) locates.fetch_add (1, std::memory_order_relaxed);
+        positionGeneration.fetch_add (1, std::memory_order_release);
+    }
     static constexpr auto kNoPendingLocate = std::numeric_limits<std::int64_t>::min();
     std::atomic<State>       state            { State::Stopped };
     std::atomic<std::int64_t> playheadSamples  { 0 };
     std::atomic<std::int64_t> pendingLocate    { kNoPendingLocate };
     std::atomic<std::int64_t> rollStart        { 0 };
     std::atomic<std::uint32_t> locates         { 0 };
+    std::atomic<std::uint64_t> positionGeneration { 0 };
 
     std::atomic<bool>        loopEnabled      { false };
     std::atomic<std::int64_t> loopStart        { 0 };

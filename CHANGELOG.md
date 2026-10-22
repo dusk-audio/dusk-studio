@@ -71,9 +71,10 @@ canonical source.
   performance and managed SFZ references. Dusk Studio 0.15.1 and earlier cannot
   open them. Keep a copy before saving if you need an older version.
 - **Shared audio reader workers.** Three workers fill immutable playback
-  windows near the playhead and release distant sample buffers. Seeking primes
-  the new position before it becomes audible; loop and offline render paths
-  keep their read-ahead coverage.
+  windows near the playhead and release distant sample buffers. Rolling seeks
+  keep current playback and recording running until the target is ready, and
+  automation follows the audio. Loop and offline render paths keep their
+  read-ahead coverage.
 - **Background instrument replacement.** The current instrument keeps playing
   while its replacement loads. Failed and stale requests leave it in place,
   and retired instruments are destroyed after the audio swap.

@@ -19,12 +19,23 @@ TEST_CASE ("loop-aware readForTrack wraps at the loop boundary",
     constexpr int    kFileLen    = 240000;
     constexpr std::int64_t kLoopStart = 1000, kLoopEnd = 180000;
     constexpr float kSlope = 1.0e-6f;
-    bool initiallyEnabled = true, keepCaptureRange = false;
+    bool initiallyEnabled = true, keepCaptureRange = false, checkSeekReadiness = false;
+    bool staleIncoming = false;
     std::int64_t initialStart = kLoopStart;
     SECTION ("Loop enabled before playback") {}
     SECTION ("Loop enabled while rolling") { initiallyEnabled = false; }
     SECTION ("Loop head moved while rolling") { initialStart = 50000; }
     SECTION ("Capture keeps its effective range") { keepCaptureRange = true; }
+    SECTION ("A seek waits for an enabled loop's head cache")
+    {
+        initiallyEnabled = false;
+        checkSeekReadiness = true;
+    }
+    SECTION ("A seek cannot adopt an incoming stream warmed before its position")
+    {
+        initiallyEnabled = false;
+        staleIncoming = true;
+    }
 
     const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
                         .getChildFile ("dusk-loop-read-"
@@ -68,15 +79,37 @@ TEST_CASE ("loop-aware readForTrack wraps at the loop boundary",
     pe.prepare (512);
     pe.preparePlayback();
 
+    if (staleIncoming)
+    {
+        transport.setPlayhead (0);
+        pe.refreshTrackPlayback (0, PlaybackEngine::Audition::Honour);
+        pe.service();
+        transport.setPlayhead (kLoopEnd - 200);
+        REQUIRE (pe.locateReadyRt (kLoopEnd - 200, 128, -1, -1));
+        pe.finishLocateBlockRt (kLoopEnd - 200, true);
+        std::vector<float> out (128);
+        pe.readForTrack (0, kLoopEnd - 200, out.data(), nullptr, 128);
+        CHECK_THAT (out.back(), WithinAbs ((kLoopEnd - 73) * kSlope, 2e-4f));
+        pe.finishLocateBlockRt (kLoopEnd - 72, false);
+        pe.readForTrack (0, kLoopEnd - 72, out.data(), nullptr, 128);
+        CHECK_THAT (out.back(), WithinAbs ((kLoopEnd + 55) * kSlope, 2e-4f));
+        pe.stopPlayback();
+        return;
+    }
+
     std::vector<float> tail (128);
     pe.readForTrack (0, kLoopEnd - 400, tail.data(), nullptr, 128);
     transport.setLoopRange (keepCaptureRange ? 50000 : kLoopStart, kLoopEnd);
     transport.setLoopEnabled (true);
     pe.beginAudioBlock (kLoopEnd - 200, kLoopStart, kLoopEnd);
+    if (checkSeekReadiness)
+        CHECK_FALSE (pe.locateReadyRt (kLoopEnd - 200, 400, kLoopStart, kLoopEnd));
     pe.service();
 
     std::vector<float> out (400, -1.0f);
     pe.readForTrack (0, kLoopEnd - 200, out.data(), nullptr, 400, kLoopStart, kLoopEnd);
+    if (checkSeekReadiness)
+        CHECK (pe.locateReadyRt (kLoopEnd - 200, 400, kLoopStart, kLoopEnd));
 
     // Pre-seam, outside the 64-sample fade-out window (which covers
     // offsets 136..199): raw pre-wrap source values.

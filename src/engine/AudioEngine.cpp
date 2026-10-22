@@ -2460,7 +2460,7 @@ AudioEngine::TransportService AudioEngine::serviceTransportRequests()
                                  : 0.0f;
         const double sr = getCurrentSampleRate();
         if (pOut > pIn && postRoll > 0.0f && sr > 0.0
-            && transport.getPlayhead() >= pOut + (std::int64_t) ((double) postRoll * sr))
+            && transport.getCommittedPlayhead() >= pOut + (std::int64_t) ((double) postRoll * sr))
         {
             pressStop();
             done.stopped = true;
@@ -4871,7 +4871,27 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         return;
     }
     const auto transportBlockState = transport.getState();
-    const auto transportBlockStart = transport.beginAudioBlock();
+    const auto transportLoopStart = transport.getLoopStart(), transportLoopEnd = transport.getLoopEnd();
+    const bool transportLoopEnabled = transport.isLoopEnabled();
+    const bool locateLoops = transportBlockState == Transport::State::Playing && transportLoopEnabled;
+    bool keepSeek = false;
+    const auto transportBlockStart = transport.beginAudioBlock ([&] (std::int64_t& target) noexcept
+    {
+        if (getStage() == Stage::Mastering) return true;
+        if (locateLoops)
+        {
+            const auto start = transportLoopStart, end = transportLoopEnd;
+            if (start >= 0 && end > start)
+            {
+                if (target < start) target = start;
+                else if (target >= end) target = start + (target - end) % (end - start);
+            }
+        }
+        keepSeek = true;
+        return playbackEngine.locateReadyRt (target, numSamples,
+            locateLoops ? transportLoopStart : -1, locateLoops ? transportLoopEnd : -1);
+    });
+    playbackEngine.finishLocateBlockRt (transportBlockStart, keepSeek);
 
     // Every session snapshot this block reads, on this thread or a worker lane,
     // stays alive until the block returns, however often the message thread
@@ -6106,9 +6126,9 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
 
     // Unarmed/frozen accompaniment must hear the same seam as the recorder.
     // Plain playback still follows the live transport bounds.
-    const auto liveLoopStart = transport.getLoopStart();
-    const auto liveLoopEnd = transport.getLoopEnd();
-    const bool playbackLoopActive = isPlaying && transport.isLoopEnabled() && liveLoopEnd > liveLoopStart;
+    const auto liveLoopStart = transportLoopStart;
+    const auto liveLoopEnd = transportLoopEnd;
+    const bool playbackLoopActive = isPlaying && transportLoopEnabled && liveLoopEnd > liveLoopStart;
     const std::int64_t loopReadStart = loopRecordingActive
         ? loopRecordPlan.loopStartSample
         : (playbackLoopActive ? liveLoopStart : -1);
