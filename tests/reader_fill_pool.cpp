@@ -323,3 +323,112 @@ TEST_CASE ("Fill pool retains loop-start readers near a wrap only",
     pool.setPositionRt (9500);
     CHECK_FALSE (pool.pumpOnce());
 }
+
+TEST_CASE ("Fill pool stages rolling seeks without replacing current playback",
+           "[audiofile][reader-pool][seek]")
+{
+    SampleFile file;
+    auto reader = file.reader (20001);
+    ReaderFillPool pool (3, false);
+    pool.configure (1000.0);
+    pool.add (*reader, 1000, 46000, 1000);
+    pool.primeAt (1000);
+    Block block;
+    const auto checkCurrent = [&]
+    {
+        REQUIRE (reader->readRt (block.pointers.data(), kChannels, 1000, 512));
+        block.check (1000);
+    };
+    checkCurrent();
+    pool.setSeekTargetRt (30000, 512);
+    CHECK_FALSE (pool.seekReadyRt (30000, 512));
+    REQUIRE (pool.pumpOnce());
+    CHECK_FALSE (pool.seekReadyRt (30000, 512));
+    checkCurrent();
+    SECTION ("the target becomes ready only after its complete window is published")
+    {
+        while (pool.pumpOnce()) checkCurrent();
+        REQUIRE (pool.seekReadyRt (30000, 512));
+        REQUIRE (reader->readRt (block.pointers.data(), kChannels, 30000, 512));
+        block.check (30000);
+        pool.setPositionRt (30000);
+        pool.clearSeekTargetRt();
+        pool.setSeekTargetRt (5000, 512);
+        while (pool.pumpOnce())
+        {
+            REQUIRE (reader->readRt (block.pointers.data(), kChannels, 30000, 512));
+            block.check (30000);
+        }
+        REQUIRE (pool.seekReadyRt (5000, 512));
+        REQUIRE (reader->readRt (block.pointers.data(), kChannels, 5000, 512));
+        block.check (5000);
+    }
+    SECTION ("superseded targets keep only current and the newest pending window")
+    {
+        for (const auto target : { 35000, 26000, 32000 })
+        {
+            pool.setSeekTargetRt (target, 512);
+            CHECK_FALSE (pool.seekReadyRt (target, 512));
+            while (pool.pumpOnce()) checkCurrent();
+            REQUIRE (pool.seekReadyRt (target, 512));
+            CHECK_FALSE (pool.seekReadyRt (30000, 512));
+            CHECK (reader->allocatedBytes() <= 2 * 20000 * kChannels * sizeof (float)
+                                                + 8192 * kChannels * sizeof (float) + 1024);
+        }
+    }
+    SECTION ("an overlapping seek preserves the whole current callback, not just its first frame")
+    {
+        pool.setSeekTargetRt (20200, 512);
+        while (pool.pumpOnce()) {}
+        REQUIRE (pool.seekReadyRt (20200, 512));
+        pool.setPositionRt (20200);
+        REQUIRE (reader->readRt (block.pointers.data(), kChannels, 20200, 512));
+        block.check (20200);
+        pool.setPositionRt (20712);
+        pool.setSeekTargetRt (45000, 512);
+        while (pool.pumpOnce())
+        {
+            REQUIRE (reader->readRt (block.pointers.data(), kChannels, 20712, 512));
+            block.check (20712);
+        }
+        REQUIRE (pool.seekReadyRt (45000, 512));
+        REQUIRE (reader->readRt (block.pointers.data(), kChannels, 20712, 512));
+        block.check (20712);
+    }
+    SECTION ("cancelled targets lose their readiness acknowledgement")
+    {
+        while (pool.pumpOnce()) checkCurrent();
+        REQUIRE (pool.seekReadyRt (30000, 512));
+        pool.clearSeekTargetRt();
+        CHECK_FALSE (pool.seekReadyRt (30000, 512));
+        while (pool.pumpOnce()) checkCurrent();
+    }
+    SECTION ("an empty destination range can commit without reading audio")
+    {
+        pool.setSeekTargetRt (100000, 512);
+        while (pool.pumpOnce()) checkCurrent();
+        CHECK (pool.seekReadyRt (100000, 512));
+    }
+    SECTION ("explicit priming invalidates a seek whose residency it retires")
+    {
+        while (pool.pumpOnce()) checkCurrent();
+        REQUIRE (pool.seekReadyRt (30000, 512));
+        pool.primeAt (100000);
+        CHECK_FALSE (reader->holdsSeek (30000, 512));
+        CHECK_FALSE (pool.seekReadyRt (30000, 512));
+    }
+    SECTION ("an empty pool is ready without waking a worker")
+    {
+        pool.remove (*reader);
+        CHECK (pool.seekReadyRt (30000, 512));
+        pool.clearSeekTargetRt();
+        pool.setSeekTargetRt (5000, 8192);
+        CHECK (pool.seekReadyRt (5000, 8192));
+        CHECK (reader->allocatedBytes() == 0);
+        return;
+    }
+    pool.remove (*reader);
+    CHECK (pool.stats().readers == 0);
+    CHECK (reader->allocatedBytes() == 0);
+    CHECK_FALSE (pool.pumpOnce());
+}

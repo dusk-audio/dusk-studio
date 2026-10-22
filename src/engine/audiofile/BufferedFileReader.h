@@ -47,6 +47,8 @@ public:
     void hintRt (std::int64_t startFrame) noexcept;
     std::int64_t hint() const noexcept;
     bool holds (std::int64_t startFrame, std::int64_t numFrames) const noexcept;
+    bool holdsSeek (std::int64_t startFrame, std::int64_t numFrames) const noexcept;
+    bool needsSeekFill (std::int64_t startFrame) const noexcept;
 
     // Non-RT: prefetch also wakes the owned Background worker.
     void prefetch (std::int64_t startFrame) noexcept;
@@ -57,7 +59,8 @@ public:
 
     // Exactly one filling owner. Manual callers/pools serialize these methods.
     // Each fillOnce reads at most kFillChunkFrames; fillNow primes a full window.
-    bool fillOnce();
+    bool fillOnce (std::int64_t startFrame = -1);
+    bool fillSeekOnce (std::int64_t target, std::int64_t currentFrame);
     void fillNow();
     void releaseResidency() noexcept;
 
@@ -78,6 +81,10 @@ private:
     const Window* acquireWindow() const noexcept;
     void releaseWindow() const noexcept;
     bool needsFillAt (const Window*, std::int64_t) const noexcept;
+    static bool windowHolds (const Window*, std::int64_t, std::int64_t) noexcept;
+    const Window* windowForRange (const Window*, std::int64_t, std::int64_t) const noexcept;
+    void retainSeekForPlayback (std::int64_t);
+    bool fillAt (std::int64_t startFrame, bool seeking);
     void beginFill (std::int64_t);
     void publishStaging();
     void updateAllocatedBytes() noexcept;
@@ -90,12 +97,15 @@ private:
     Fill fillMode;
 
     std::unique_ptr<Window> currentWindow;
+    std::unique_ptr<Window> seekWindow;
     std::unique_ptr<Window> stagingWindow;
     std::vector<float*> fillDest;
     std::int64_t stagingFilled = 0;
+    bool stagingForSeek = false;
     std::chrono::steady_clock::time_point nextFillAttempt {};
 
     std::atomic<const Window*> publishedWindow { nullptr };
+    std::atomic<const Window*> publishedSeekWindow { nullptr };
     mutable std::atomic<unsigned> activeReads { 0 };
     std::atomic<std::int64_t> hintFrame { 0 };
     std::atomic<std::size_t> allocated { 0 };

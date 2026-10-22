@@ -47,6 +47,9 @@ public:
 
     // RT: the workers poll these hints; publishing them never signals an event.
     void setPositionRt (std::int64_t timelineFrame) noexcept;
+    void setSeekTargetRt (std::int64_t timelineFrame, int warmFrames) noexcept;
+    void clearSeekTargetRt() noexcept;
+    bool seekReadyRt (std::int64_t timelineFrame, int warmFrames) const noexcept;
     // One serialized producer, normally the audio callback.
     void setLoopRt (bool enabled, std::int64_t start, std::int64_t end) noexcept;
 
@@ -79,9 +82,22 @@ private:
         Entry* entry = nullptr;
         std::int64_t sourceFrame = 0;
         bool evict = false;
+        bool seeking = false;
+        std::int64_t currentSourceFrame = -1;
+    };
+
+    struct Seek
+    {
+        std::int64_t target = -1;
+        int warmFrames = 0;
+        std::uint64_t generation = 0;
+        bool coherent = true;
     };
 
     Loop loopSnapshot() const noexcept;
+    Seek seekSnapshot() const noexcept;
+    void publishSeekRt (std::int64_t, int) noexcept;
+    void updateSeekReady();
     bool eligible (const Entry&, std::int64_t position, const Loop&,
                    std::int64_t& sourceFrame) const noexcept;
     Claim claimNext();
@@ -99,6 +115,10 @@ private:
 
     std::atomic<bool> stop { false };
     std::atomic<std::int64_t> position { 0 };
+    std::atomic<std::size_t> registeredReaders { 0 };
+    std::atomic<std::uint64_t> seekGeneration { 0 }, seekReadyGeneration { ~std::uint64_t { 0 } };
+    std::atomic<std::int64_t> seekTarget { -1 };
+    std::atomic<int> seekWarmFrames { 0 };
     std::atomic<std::int64_t> aheadFrames { 144000 };
     std::atomic<std::int64_t> behindFrames { 96000 };
     std::atomic<std::uint64_t> loopGeneration { 0 };
