@@ -1,0 +1,267 @@
+{
+  "issue": 870,
+  "purpose": "Physical ALSA source continuity and bounded reader-pool measurements. This receipt is not release signoff.",
+  "candidate": {
+    "schema": "dusk-validation-build-v1",
+    "source_commit": "2b40fe35acb52f1069fb003a216357b9466a4d92",
+    "source_clean": true,
+    "source_tree": "9aa2ca51ec682be0ed991a3147b28378bd9a02c7",
+    "tests_tree": "b123b0bf09c4aa2dc80c542f81b4aa3002b24050",
+    "build_exit": 0,
+    "build_log": "build/validation-016-closeout-build-clean-candidate.log",
+    "build_log_sha256": "39aaac3b0eb7ee016aa6bba82243e7d3ba2c7ee19693deeff12fbadfd75b46c6",
+    "app_sha256": "58cd8cf938dedbd8de3c363a2a2d546e68981414e46a685b876a96abbdd5579f",
+    "sidecar_sha256": "f19ae8e372f5654d01908a2a283ec657b9ba56f79a5168d362c554498cc334a1",
+    "dependencies": {
+      "daf": {
+        "path": "/home/marc/projects/DuskStudio/build/validation-postmerge-dcca89df/daf-focus-fix",
+        "commit": "ccd8665f7387024ce412e80a8b07c982ae92f5d4",
+        "tracked_status": "",
+        "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "juce": {
+        "path": "/home/marc/projects/JUCE-wayland",
+        "commit": "075eed7a1000b6b9dfce6aae93e7f2b82fa35f68",
+        "tracked_status": "",
+        "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "donor": {
+        "path": "/home/marc/projects/DuskStudio/build/_deps/dusk-plugins",
+        "commit": "78abae748a32c5863f586ca174a47047a4d2c4a1",
+        "tracked_status": "",
+        "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    "submodules": "a47f6badb49d948fd009998f28309cdab78979c9 external/clap (1.2.10-1-ga47f6ba)\n f92e07104495bbd645325ff62c1a6c8bae3ad428 external/dusk-fizz (1.2.3-17-gf92e0710)\n 825651ad3a1807fef86a33c9cb480b88ba334c39 external/vst3sdk (dusk-vst3sdk-v1)",
+    "cache_sha256": "b6112c59b8cf7a8d164a4903075b20ee628882158cf143adb1d31e72252a2176"
+  },
+  "inputs": {
+    "build/validation-016-closeout/candidate-build.json": "cc329e64dc3b59d77b00f58abfa34e124c06af6eb163bd69108910be9bbe33b9",
+    "build/validation-016-closeout/device-final-matrix/result.json": "60d8ee3c0fb4097e7030bce83f6b9bee1de6d9814b92f96f7585eb72b770c5f0",
+    "build/validation-016-closeout/device-results.json": "5befd0398b2e2b300bf5722826faa42061a7b455e8ef5debb738249a884565b9",
+    "build/validation-016-closeout/playback-fixtures/fixtures.json": "8600fcf241b69ef6d6e2e681473b16d7861bfa806b3a49cc4f7d3225a9abc45b"
+  },
+  "protocol": {
+    "backend": "ALSA",
+    "device": "HDA Intel PCH, ALC700 Analog",
+    "card": 1,
+    "duration_seconds": 10,
+    "output_channels": 2,
+    "input_channels": 0,
+    "tracks": 24,
+    "regions_per_track": 15,
+    "region_seconds": 8,
+    "source_format": "stereo PCM16",
+    "source_pattern": "splitmix64-track-region-channel-frame-v1",
+    "buffers": {
+      "48000": 256,
+      "96000": 512,
+      "192000": 1024
+    },
+    "repeats": {
+      "48000": 1,
+      "96000": 3,
+      "192000": 3
+    },
+    "cache_scope": "Each of 360 source files per rate had zero resident Linux source pages after fsync and fadvise before app launch. Device caches were uncontrolled; normal app prefetch was retained.",
+    "loop": "Four callback-unaligned wraps per loop run; actual source values include the loop crossfade mask.",
+    "locate": "Three committed rolling seeks per locate run.",
+    "measurement": "Raw playback samples before strip DSP are copied on the real device callback and compared offline against independent track, region, channel and source-frame values. All 24 track reads must occur exactly once per captured callback."
+  },
+  "summary": {
+    "runs": 24,
+    "native_exit_zero": 24,
+    "source_capture_runs": 21,
+    "capture_off_cost_runs": 3,
+    "checked_values": 1313341440,
+    "oracle_ranges": {
+      "duplicate_reads": {
+        "minimum": 0,
+        "maximum": 0,
+        "total": 0
+      },
+      "invalid_reads": {
+        "minimum": 0,
+        "maximum": 0,
+        "total": 0
+      },
+      "mismatched_values": {
+        "minimum": 0,
+        "maximum": 0,
+        "total": 0
+      },
+      "missing_track_callbacks": {
+        "minimum": 0,
+        "maximum": 0,
+        "total": 0
+      },
+      "non_finite_values": {
+        "minimum": 0,
+        "maximum": 0,
+        "total": 0
+      },
+      "protocol_errors": {
+        "minimum": 0,
+        "maximum": 0,
+        "total": 0
+      },
+      "timeline_errors": {
+        "minimum": 0,
+        "maximum": 0,
+        "total": 0
+      },
+      "engine_xrun_delta": {
+        "minimum": 0,
+        "maximum": 0,
+        "total": 0
+      },
+      "backend_xrun_delta": {
+        "minimum": 0,
+        "maximum": 0,
+        "total": 0
+      },
+      "callbacks": {
+        "minimum": 1874,
+        "maximum": 1876,
+        "total": 39377
+      },
+      "complete_callbacks": {
+        "minimum": 1874,
+        "maximum": 1876,
+        "total": 39377
+      },
+      "checked_values": {
+        "minimum": 23040000,
+        "maximum": 92209152,
+        "total": 1313341440
+      },
+      "committed_seeks": {
+        "minimum": 0,
+        "maximum": 3,
+        "total": 21
+      },
+      "loop_wraps": {
+        "minimum": 0,
+        "maximum": 4,
+        "total": 28
+      }
+    },
+    "maximum_sample_error": 1.1377016484459546e-07,
+    "loop_raw_read_misses": {
+      "minimum": 255,
+      "maximum": 384,
+      "interpretation": "These raw reader misses are covered by the actual sample oracle; they are not missing or incorrect output samples."
+    },
+    "plain_and_locate_raw_read_misses": 0,
+    "pool_workers": 3,
+    "pool_peak_resident_reader_range": [
+      24,
+      96
+    ],
+    "pool_peak_storage_bytes_range": [
+      38436864,
+      95797632
+    ]
+  },
+  "capture_off_cost_comparison": [
+    {
+      "rate": 48000,
+      "buffer": 256,
+      "baseline_path": "build/validation-016-closeout/device-48000-plain-256-0.9vzLmW",
+      "final_path": "build/validation-016-closeout/device-48000-plain-256-0.9atbht",
+      "baseline_mean_callback_us": 607.3,
+      "final_mean_callback_us": 605.7,
+      "difference_us": -1.6
+    },
+    {
+      "rate": 96000,
+      "buffer": 512,
+      "baseline_path": "build/validation-016-closeout/device-96000-plain-512-0.oLIKVk",
+      "final_path": "build/validation-016-closeout/device-96000-plain-512-0.2mwGmn",
+      "baseline_mean_callback_us": 1131.8,
+      "final_mean_callback_us": 1120.2,
+      "difference_us": -11.6
+    },
+    {
+      "rate": 192000,
+      "buffer": 1024,
+      "baseline_path": "build/validation-016-closeout/device-192000-plain-1024-0.e0zpQw",
+      "final_path": "build/validation-016-closeout/device-192000-plain-1024-0.kL1sWC",
+      "baseline_mean_callback_us": 2137.6,
+      "final_mean_callback_us": 2170.1,
+      "difference_us": 32.5
+    }
+  ],
+  "interpretation": [
+    "All final source runs passed with no wrong or non-finite values, protocol failures, timeline errors, fill errors, or engine/backend XRUN deltas.",
+    "The prior shared-pool binary failed the 48 kHz rolling-seek control with 159743 wrong values, 312 raw read misses, three committed seeks and no XRUN. The preliminary e47 pilot is not final candidate evidence and ran without its sidecar; its retained scope receipt records that limitation.",
+    "Capture-off costs are single ten-second runs. Callback averages include setup and stop. They do not establish a statistically significant speed improvement or regression.",
+    "The baseline already uses the shared fill pool. Historical per-region-thread versus shared-pool standalone measurements remain in issue 870 comment 6245544609.",
+    "The source oracle preallocates at most 400 MiB and copies 9216000, 18432000 or 36864000 bytes per second at 48, 96 or 192 kHz. Capture-off runs bound callback cost without that diagnostic copy.",
+    "Pool storage and worker counts describe the reader pool, not all process memory, machine-wide thread counts, wakeups, or device behavior.",
+    "Raw source comparison does not prove analog output quality or subjective listening quality. These runs do not force oversized blocks beyond supported limits or cover every device, hardware configuration, or buffer size.",
+    "TSan was not run in this receipt. Raspberry Pi acceptance is tracked separately in issue 893. Full suite, ASan/UBSan, GDB, remote-platform and maintainer release checks are outside this receipt and were pending when it was recorded."
+  ],
+  "verification": {
+    "raw_and_fixture_hashes_checked": 1398,
+    "fixture_audio_files_checked": 1080,
+    "fixture_audio_bytes_checked": 3870767520,
+    "before_after_binary_hashes_checked": 62,
+    "native_exits_checked": 31,
+    "oracle_json_reparsed_from_raw_logs": 25,
+    "hygiene": "ASCII JSON; no source or behavior changes."
+  },
+  "retained_provenance": {
+    "path": "build/validation-016-closeout/playback-device-provenance.json",
+    "sha256": "5f83ab22a95ac1fdd741437ed03cd9584deeb1eb515550793f8ebf46b5667482",
+    "bytes": 111363,
+    "scope": "Complete per-run records, all raw-file hashes, binary before/after identities, build receipt and control limitations. Fixture hashes remain in the referenced fixture manifest.",
+    "raw_file_hashes": 311,
+    "hashes_verified": 1398,
+    "fixture_audio_files_verified": 1080,
+    "fixture_audio_bytes_verified": 3870767520
+  },
+  "run_tables": {
+    "columns": ["path","rate","mode","buffer","capture","native_exit","binary_id","binary_unchanged","repeat","cold_source_pages","pool_workers","pool_peak_resident","pool_peak_storage_bytes","pool_raw_read_misses","pool_fill_errors","engine_xrun_baseline","engine_xrun_delta","backend_xrun_baseline","backend_xrun_delta","elapsed_seconds","frames","expected_frames","frame_tolerance","frame_coverage","locate_calls","max_locate_ms","mean_callback_us","oracle","raw_log_sha256"],
+    "oracle_columns": ["backend_xrun_delta","callbacks","checked_values","committed_seeks","complete_callbacks","device_stable","duplicate_reads","engine_xrun_delta","final_stop_snapshot","first_wrong_channel","first_wrong_frame","first_wrong_track","frame_coverage","invalid_reads","loop_wraps","maximum_error","mismatched_values","missing_track_callbacks","non_finite_values","overflow","passed","progressing","protocol_errors","reader_pool_stable","sample_rate","storage_bytes","timeline_errors"],
+    "raw_log_sha256_columns": ["output.log","error.log","native-exit.txt"],
+    "binary_ids": {"0":"24f991f96a468a4c00c12ca2762c043fc48427a42b91f2ccc409ff3237e660b7","1":"58cd8cf938dedbd8de3c363a2a2d546e68981414e46a685b876a96abbdd5579f","2":"e47ec58f26d6b1302ef741a8f2ad468f1af9f96046310d02cb3a520d9dd36677"},
+    "binary_identity": "binary_id is the SHA-256 in both app-before.sha256 and app-after.sha256. Full raw receipts are retained in the provenance manifest.",
+    "controls_scope": {"baseline":"Shared fill-pool binary before seek-readiness fixes, not per-region reader-thread architecture.","pilot":{"scope":"Preliminary working-source integration build; not final candidate evidence","build_log":"build/validation-016-closeout-build-seek-integration.log","limits":["Initial bundle copy used wrong sidecar source path; pilot ran with app alone, on session declaring zero plugin inserts. Correct sidecar was copied only after native app exit, before any later bundle use.","No final dynamic-loop or GUI-helper fence corrections are included in this binary."]}},
+    "final": [
+      ["build/validation-016-closeout/device-48000-locate-256-1.iZ1VKF",48000,"locate",256,true,0,"1",true,1,0,3,96,78417216,0,0,0,0,0,0,10.0,480000,480008,24000,"yes",3,0.0002,610.7,[0,1875,23040000,3,1875,true,0,0,true,-1,-1,-1,true,0,0,0.0,0,0,0,false,true,true,0,true,48000,94570512,0],["a4d605454cf3467d25660e42e640f628f55da39929c4aea12737e0f59d2031ea","a1e7a2aa472c33f326a92d7dbbd9d95be2bef8d7715e0a93994b180d6343c97b","9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"]],
+      ["build/validation-016-closeout/device-48000-plain-256-1.I1wmhh",48000,"plain",256,true,0,"1",true,1,0,3,48,58122624,0,0,0,0,0,0,10.001,480256,480032,24002,"yes",0,0.0,598.6,[0,1876,23052288,0,1876,true,0,0,true,-1,-1,-1,true,0,0,0.0,0,0,0,false,true,true,0,true,48000,94570512,0],["b0d1a0e1ad66d97d06a113ee488b173ddaecea12abc467c3e73ada175d18f014","76c7e3104ba0e66af0588773018f184b072ef8e35668b910462f7f9cf6129d3c","9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"]],
+      ["build/validation-016-closeout/device-48000-loop-256-1.eowLzz",48000,"loop",256,true,0,"1",true,1,0,3,24,38436864,255,0,0,0,0,0,10.0,480000,480008,24000,"yes",0,0.0,599.4,[0,1875,23040000,0,1875,true,0,0,true,-1,-1,-1,true,0,4,1.0190702715018318e-07,0,0,0,false,true,true,0,true,48000,94570512,0],["e3eebda22c45a75f0d176c802f805a78bff8448ba68a7c835abac43e5fdf6f29","93b0efeea00a599b2850eb4b2711531df87e3a100e61ed06a1bd8f929e93d306","9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"]],
+      ["build/validation-016-closeout/device-96000-locate-512-1.T5MBab",96000,"locate",512,true,0,"1",true,1,0,3,96,78447744,0,0,0,0,0,0,10.001,960512,960099,48005,"yes",3,0.0003,1142.6,[0,1876,46104576,3,1876,true,0,0,true,-1,-1,-1,true,0,0,0.0,0,0,0,false,true,true,0,true,96000,188303376,0],["87b89c50030cc23f6bb160b4450717d585ce2ff52e5bbcb18efd714f425096d8","e13f5dbc76c744a12ebccc797635d0ebee54f0d41c03b64b9246aca1879d3651","9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"]],
+      ["build/validation-016-closeout/device-96000-plain-512-1.aQ4eHQ",96000,"plain",512,true,0,"1",true,1,0,3,48,58441920,0,0,0,0,0,0,10.0,960000,960034,48002,"yes",0,0.0,1121.8,[0,1875,46080000,0,1875,true,0,0,true,-1,-1,-1,true,0,0,0.0,0,0,0,false,true,true,0,true,96000,188303376,0],["76e1d30dc40039d966c6751343da9c3a4c2d251eda7f206a8762136a506000bc","3d527398f8a487d47f8d8161ce519d9f2837838c01d12c8569258b192e5fddb3","9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"]],
+      ["build/validation-016-closeout/device-96000-loop-512-1.nOFjne",96000,"loop",512,true,0,"1",true,1,0,3,24,38436864,312,0,0,0,0,0,10.0,960000,960007,48000,"yes",0,0.0,1141.3,[0,1875,46080000,0,1875,true,0,0,true,-1,-1,-1,true,0,4,1.1377016484459546e-07,0,0,0,false,true,true,0,true,96000,188303376,0],["4f254cadd08278df175c7b9689e610a41bfdcbbe4c246dc819e7232569c8df79","25a580fc94e99c7e16f201ac018f35f23bada9b7c2eadf1b6d0d0b332ee5a7ca","9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"]],
+      ["build/validation-016-closeout/device-96000-locate-512-1.XvzINd",96000,"locate",512,true,0,"1",true,2,0,3,96,78447744,0,0,0,0,0,0,10.0,960000,960036,48002,"yes",3,0.0003,1131.8,[0,1875,46080000,3,1875,true,0,0,true,-1,-1,-1,true,0,0,0.0,0,0,0,false,true,true,0,true,96000,188303376,0],["058f4d21755ee584b7a4581745e3f5b65ca899b5af08f032907391fd800a5b51","274faece18a9fd2d0e420965c9cd928f641bb4099ccdd9a1ac248d5068d98926","9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"]],
+      ["build/validation-016-closeout/device-96000-plain-512-1.m4J5BM",96000,"plain",512,true,0,"1",true,2,0,3,48,58441920,0,0,0,0,0,0,10.001,960000,960056,48003,"yes",0,0.0,1139.7,[0,1875,46080000,0,1875,true,0,0,true,-1,-1,-1,true,0,0,0.0,0,0,0,false,true,true,0,true,96000,188303376,0],["d93c05ef0deba60aa0554a2c855268d28e0393b39245f34ffcb3e0b0cca66dbd","6c5952d0ac7e43b10f7128bb72c85fb2d7fdca9441c9bbf736488935eaca2613","9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"]],
+      ["build/validation-016-closeout/device-96000-loop-512-1.lnOaPJ",96000,"loop",512,true,0,"1",true,2,0,3,24,38436864,288,0,0,0,0,0,10.001,960000,960067,48003,"yes",0,0.0,1128.5,[0,1875,46080000,0,1875,true,0,0,true,-1,-1,-1,true,0,4,1.1377016484459546e-07,0,0,0,false,true,true,0,true,96000,188303376,0],["913348f1ae69eaad3aaf7f986528d2163266819bdf4daa7dab738d69e3c99069","bcf257218dc0f42bf2859a7bb0def933a849a077cfacdb7ddd61659e05b222da","9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"]],
+      ["build/validation-016-closeout/device-96000-locate-512-1.Ocoq7s",96000,"locate",512,true,0,"1",true,3,0,3,96,78447744,0,0,0,0,0,0,10.0,959488,960004,48000,"yes",3,0.0006,1139.6,[0,1874,46055424,3,1874,true,0,0,true,-1,-1,-1,true,0,0,0.0,0,0,0,false,true,true,0,true,96000,188303376,0],["c2b8dc689703a4f100b6be8a0ec7aa0d385b6df6d115c118ec0e2b7cf090898e","2f2048a981888de3085ebf098eb9349524a49a682c9961ad999907153ed782c1","9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"]],
+      ["build/validation-016-closeout/device-96000-plain-512-1.Q6lpnb",96000,"plain",512,true,0,"1",true,3,0,3,48,58441920,0,0,0,0,0,0,10.0,960000,960007,48000,"yes",0,0.0,1127.9,[0,1875,46080000,0,1875,true,0,0,true,-1,-1,-1,true,0,0,0.0,0,0,0,false,true,true,0,true,96000,188303376,0],["d4d1029c0fb600e33ba8a694f8138913a47600b131f4379d37676ed47761ca6f","651e3f194d3f3ba7f9fedbd4f237bea46912ccc02326bed0b6e288f71da034bf","9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"]],
+      ["build/validation-016-closeout/device-96000-loop-512-1.DgJdSW",96000,"loop",512,true,0,"1",true,3,0,3,24,38436864,384,0,0,0,0,0,10.001,960000,960090,48004,"yes",0,0.0,1137.1,[0,1875,46080000,0,1875,true,0,0,true,-1,-1,-1,true,0,4,1.1377016484459546e-07,0,0,0,false,true,true,0,true,96000,188303376,0],["8dadc14ed968cc076abe2048a36d8ddcf2df426ea529840e4f960cf3b4abebf6","38bf03dea02bd83b6566b85b984f90f843c7994e3f11fedb72250a5b058a919a","9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"]],
+      ["build/validation-016-closeout/device-192000-locate-1024-1.eseSEU",192000,"locate",1024,true,0,"1",true,1,0,3,96,95797632,0,0,0,0,0,0,10.001,1920000,1920159,96008,"yes",3,0.0005,2175.3,[0,1875,92160000,3,1875,true,0,0,true,-1,-1,-1,true,0,0,0.0,0,0,0,false,true,true,0,true,192000,375769104,0],["cc6e108a30d84850bb61140f4722101f7ed52751271677ab72986dd9dad18d23","1eceaa15ceeb47fa4d61ad859972362617d0047dfb28f61ca016a312c552a5aa","9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"]],
+      ["build/validation-016-closeout/device-192000-plain-1024-1.yHG810",192000,"plain",1024,true,0,"1",true,1,0,3,48,52707712,0,0,0,0,0,0,10.001,1920000,1920148,96007,"yes",0,0.0,2184.0,[0,1875,92160000,0,1875,true,0,0,true,-1,-1,-1,true,0,0,0.0,0,0,0,false,true,true,0,true,192000,375769104,0],["bb13a97312c39dc81bce0e5edee3642a1e1e2cc70dc8d4e64ee2a2dd77f3b070","c2919fedd9fc85fd71d7d8c99e5429ed39e99a5b89588d1d0d36bd84f43d4486","9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"]],
+      ["build/validation-016-closeout/device-192000-loop-1024-1.jkFX29",192000,"loop",1024,true,0,"1",true,1,0,3,24,38436864,299,0,0,0,0,0,10.001,1920000,1920124,96006,"yes",0,0.0,2221.2,[0,1875,92160000,0,1875,true,0,0,true,-1,-1,-1,true,0,4,1.0934251615246637e-07,0,0,0,false,true,true,0,true,192000,375769104,0],["d23866fec7ea0f72cc5fe49603ae3c64b281c692ea8790c33bc58156d75c62c9","8642ac0c1c15bc7a63ead633d3036140f88b0d967fc532456f4005efee180099","9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"]],
+      ["build/validation-016-closeout/device-192000-locate-1024-1.Lv8LHB",192000,"locate",1024,true,0,"1",true,2,0,3,96,95797632,0,0,0,0,0,0,10.001,1920000,1920126,96006,"yes",3,0.0005,2170.7,[0,1875,92160000,3,1875,true,0,0,true,-1,-1,-1,true,0,0,0.0,0,0,0,false,true,true,0,true,192000,375769104,0],["ba1ea535cb76c4691bac20b34dd893d356773e8fe4f5731b7c48129d428d95bc","7ba5c2702252c4d3bd92f907987fce88a7d2917170ddf7d8225984c333d58b06","9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"]],
+      ["build/validation-016-closeout/device-192000-plain-1024-1.CGvLkZ",192000,"plain",1024,true,0,"1",true,2,0,3,48,52871552,0,0,0,0,0,0,10.001,1921024,1920098,96005,"yes",0,0.0,2141.8,[0,1876,92209152,0,1876,true,0,0,true,-1,-1,-1,true,0,0,0.0,0,0,0,false,true,true,0,true,192000,375769104,0],["00a59b766bf6e331968761de29b786bb555a568a4f3f28492e04c7ac6353fca1","c6c68d7ddbe30820959decd05250cc199248a6692d5444d7012cd3dd512c242b","9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"]],
+      ["build/validation-016-closeout/device-192000-loop-1024-1.K1qiMb",192000,"loop",1024,true,0,"1",true,2,0,3,24,38436864,312,0,0,0,0,0,10.001,1920000,1920110,96005,"yes",0,0.0,2138.0,[0,1875,92160000,0,1875,true,0,0,true,-1,-1,-1,true,0,4,1.0934251615246637e-07,0,0,0,false,true,true,0,true,192000,375769104,0],["d5e1e81b6d91040e898c2b43ed1dedcbb4260cc214c1cba4b993fa2b95a01968","cd7a5eeb41d5ec0dab676db1aebd6d57fd23ae845eb343610bfce2493d802bc1","9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"]],
+      ["build/validation-016-closeout/device-192000-locate-1024-1.pmwdDj",192000,"locate",1024,true,0,"1",true,3,0,3,96,95797632,0,0,0,0,0,0,10.001,1921024,1920151,96008,"yes",3,0.0002,2169.2,[0,1875,92160000,3,1875,true,0,0,true,-1,-1,-1,true,0,0,0.0,0,0,0,false,true,true,0,true,192000,375769104,0],["1ff5b4831084360beda58dd088c9c929895017ed1d9518d02cc7b5fc5b6fad8b","ca29f6565e881dcdba52d746399e0e97d07f15a7874e960b0d653213ced86886","9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"]],
+      ["build/validation-016-closeout/device-192000-plain-1024-1.6SP2yl",192000,"plain",1024,true,0,"1",true,3,0,3,48,53592448,0,0,0,0,0,0,10.0,1920000,1920058,96003,"yes",0,0.0,2185.1,[0,1875,92160000,0,1875,true,0,0,true,-1,-1,-1,true,0,0,0.0,0,0,0,false,true,true,0,true,192000,375769104,0],["47d1f257930a4b2e8f34ce2eeba49450c413de105ef3e93459ab39f2c2a03664","409c0d1d6d77c496841072e9e5f3d9525e83021ad9b4550df03284921d90f52f","9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"]],
+      ["build/validation-016-closeout/device-192000-loop-1024-1.Va1ejb",192000,"loop",1024,true,0,"1",true,3,0,3,24,38436864,312,0,0,0,0,0,10.0,1920000,1920050,96002,"yes",0,0.0,2140.0,[0,1875,92160000,0,1875,true,0,0,true,-1,-1,-1,true,0,4,1.0934251615246637e-07,0,0,0,false,true,true,0,true,192000,375769104,0],["b4721a95069e603f8e63643c008b987f07d313de857528f233137983c3c510ec","bc9efaf6a3375faec142a0fc952a7fa94efa788ec2a5a1f6b77796eb46dcd2df","9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"]],
+      ["build/validation-016-closeout/device-48000-plain-256-0.9atbht",48000,"plain",256,false,0,"1",true,1,0,3,48,58147200,0,0,0,0,0,0,10.001,480000,480037,24002,"yes",0,0.0,605.7,null,["72d0228f60c85b4324ef72ef13f91171da5845449aec21b96a823c3b35e1e196","d4b5da5cec2e1e04e44076b3fb3fd2293ee82ce2754e4f4a5da6f3706e37b844","9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"]],
+      ["build/validation-016-closeout/device-96000-plain-512-0.2mwGmn",96000,"plain",512,false,0,"1",true,1,0,3,48,58441920,0,0,0,0,0,0,10.001,960000,960065,48003,"yes",0,0.0,1120.2,null,["2d7fd52a655734ef5560e2daf8bdf2acfaf28247505da69b57ede6eaaf9f7596","8626bae126300c7b31687aa830c55f429123eff052239fac1ebf67c89e1f2b80","9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"]],
+      ["build/validation-016-closeout/device-192000-plain-1024-0.kL1sWC",192000,"plain",1024,false,0,"1",true,1,0,3,48,56137944,0,0,0,0,0,0,10.001,1920000,1920127,96006,"yes",0,0.0,2170.1,null,["7688575abd931de276c1c3f5cc632f48035439dd2603f49730728b4d1c348818","2702a406b7baab8f9055afa0699236596e641c67764e06255681a4abf7c8ad9e","9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"]]
+    ],
+    "controls": [
+      ["build/validation-016-closeout/device-192000-plain-1024-0.e0zpQw",192000,"plain",1024,false,0,"0",true,null,0,3,48,53313920,0,0,0,0,0,0,10.0,1920000,1920075,96004,"yes",0,0.0,2137.6,null,["4f42ad28ba89d49a0c28a1800e3800a70143ed52785f21f5625a120184daa5ce","1f56ce4f83eceb08d186d80cf265d16f30713152e5becc1f4718b0b40627dd32","9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"]],
+      ["build/validation-016-closeout/device-48000-locate-256-1.fGYEA8",48000,"locate",256,true,1,"0",true,null,0,3,48,59921640,312,0,0,0,0,0,10.001,480256,480031,24002,"yes",3,0.0002,590.6,[0,1876,23052288,3,1876,true,0,0,true,0,1439936,0,true,0,0,0.999969482421875,159743,0,0,false,false,true,0,true,48000,94570512,0],["b6c70775dfd1ccb5d5b4ecb8114f38734b3eee3df1b2107d3e9dd40653c86f71","0a6407d9561f0a3b68576a058d41fd4ff249864cdfecc617b05fd58283094b85","4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"]],
+      ["build/validation-016-closeout/device-48000-locate-256-1.sa2PdM",48000,"locate",256,true,0,"2",true,null,0,3,96,78423360,0,0,0,0,0,0,10.0,480000,480011,24001,"yes",3,0.0005,595.6,[0,1875,23040000,3,1875,true,0,0,true,-1,-1,-1,true,0,0,0.0,0,0,0,false,true,true,0,true,48000,94570512,0],["d6f927ecd6c6cc9de9688f5a535103140a39a76d2a838964149498e915fa9050","286c80f9a94da4d09ba546b1e8f3103dbca853069a60ae2ef12aab54195ce8b9","9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"]],
+      ["build/validation-016-closeout/device-48000-loop-256-1.yrSIoE",48000,"loop",256,true,0,"0",true,null,0,3,24,38436864,284,0,0,0,0,0,10.0,480000,480022,24001,"yes",0,0.0,614.2,[0,1875,23040000,0,1875,true,0,0,true,-1,-1,-1,true,0,4,1.0190702715018318e-07,0,0,0,false,true,true,0,true,48000,94570512,0],["db8e4f79203c180027c780402593c708554888492c3a810f25ad1448c70cb76e","7adeb9dfa0fddd2d436d3c21a2c08aaa7a7fec665b75d0e2411772657fa8843d","9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"]],
+      ["build/validation-016-closeout/device-48000-plain-256-0.9vzLmW",48000,"plain",256,false,0,"0",true,null,0,3,48,58134912,0,0,0,0,0,0,10.001,480256,480041,24002,"yes",0,0.0,607.3,null,["6e6e21b08ed4a5453aaee6a0f4baa18abe926447635ab60928d1671788e875eb","c40ce2cfd19f1388b318b12a2310621b71c0b01fb193e8dc84bbcab436087026","9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"]],
+      ["build/validation-016-closeout/device-48000-plain-256-1.wyCyOV",48000,"plain",256,true,0,"0",true,null,0,3,48,58441920,0,0,0,0,0,0,10.0,480000,480020,24001,"yes",0,0.0,640.9,[0,1875,23040000,0,1875,true,0,0,true,-1,-1,-1,true,0,0,0.0,0,0,0,false,true,true,0,true,48000,94570512,0],["72a6ad345918d37a0eb886ed21fa7295deeec926afddafa8e7229ee0352ae927","e14567ec4814d472fba365dcfc08be5e8d99e1823b5e008bf62e6802ab068f04","9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"]],
+      ["build/validation-016-closeout/device-96000-plain-512-0.oLIKVk",96000,"plain",512,false,0,"0",true,null,0,3,48,58441920,0,0,0,0,0,0,10.001,960000,960058,48003,"yes",0,0.0,1131.8,null,["4d91f9c59755d3e81da50c704bcc3335d3eb0dfbc948fe8198731192a537db83","fefb29102ec647affe1b36ffc1ff458c85faa62e21ef2b11acf05ccc5689b2a3","9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"]]
+    ]
+  }
+}
