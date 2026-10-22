@@ -32,8 +32,17 @@ constexpr int kNetworkBoundMs = 3600000;
 
 std::string setting (const char* name)
 {
+   #if defined (_WIN32)
+    std::size_t size = 0;
+    if (::getenv_s (&size, nullptr, 0, name) != 0 || size == 0) return {};
+    std::string value (size, '\0');
+    if (::getenv_s (&size, value.data(), value.size(), name) != 0 || size == 0) return {};
+    value.resize (size - 1);
+    return value;
+   #else
     const char* value = std::getenv (name);
     return value != nullptr ? value : "";
+   #endif
 }
 
 bool require (ScenarioContext& ctx, bool condition, const std::string& message)
