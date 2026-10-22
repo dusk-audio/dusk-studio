@@ -29,6 +29,7 @@ add_executable(dusk-studio-tests
     daf_unit_instance.cpp
     daf_editor_host.cpp
     pump_pacing.cpp
+    playback_read_capture.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/imgui/DafEditorHost.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/builtin/BuiltinInstance.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/builtin/BuiltinRegistry.cpp
