@@ -14,6 +14,7 @@ constexpr ParamID kLatencyMode = 101;
 constexpr ParamID kTouchReport = 102;
 constexpr ParamID kRepeatIoOnActivate = 103;
 constexpr ParamID kFlipOutputsOnActivate = 104;
+constexpr ParamID kAnnounceLatencyChanges = 105;
 bool handlerDetachedBeforeTerminate = false;
 
 class LifecycleProbeView final : public CPluginView
@@ -63,6 +64,8 @@ public:
                                  ParameterInfo::kNoFlags, kRepeatIoOnActivate);
         parameters.addParameter (STR16 ("Flip Outputs On Activate"), nullptr, 1, 0.0,
                                  ParameterInfo::kNoFlags, kFlipOutputsOnActivate);
+        parameters.addParameter (STR16 ("Announce Latency Changes"), nullptr, 1, 0.0,
+                                 ParameterInfo::kNoFlags, kAnnounceLatencyChanges);
         handlerDetachedBeforeTerminate = false;
         rebuildBusses();
         return kResultOk;
@@ -87,8 +90,7 @@ public:
 
         if (id == kTouchReport)
         {
-            // The one path in this fixture that reaches IComponentHandler, so a
-            // host can tell an edit the plug-in reported from one it made
+            // A host can tell an edit the plug-in reported from one it made
             // itself. A real plug-in sends this from its own editor when the
             // user moves a knob; there is no editor here to move one in.
             beginEdit (kTouchReport);
@@ -98,7 +100,15 @@ public:
         }
         if (id == kLatencyMode)
         {
+            const bool changed = highLatency != (value >= 0.5);
             highLatency = value >= 0.5;
+            if (changed && announceLatencyChanges && componentHandler)
+                componentHandler->restartComponent (RestartFlags::kLatencyChanged);
+            return result;
+        }
+        if (id == kAnnounceLatencyChanges)
+        {
+            announceLatencyChanges = value >= 0.5;
             return result;
         }
         if (id == kRepeatIoOnActivate)
@@ -234,6 +244,7 @@ private:
 
     bool expanded = false;
     bool highLatency = false;
+    bool announceLatencyChanges = false;
     bool repeatIoOnActivate = false;
     bool flipOutputsOnActivate = false;
 };

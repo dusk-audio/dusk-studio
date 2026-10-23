@@ -1658,7 +1658,7 @@ void PianoRollViewImpl::stepRecordNoteOn (int noteNumber, int velocity, int chan
         const auto playheadTick = session.samplesToTicks (playhead, sr);
         const std::int64_t advanceSamples =
             session.ticksToSamples (playheadTick + stepTicks, sr) - playhead;
-        engine.getTransport().setPlayhead (playhead + advanceSamples);
+        engine.getTransport().locate (playhead + advanceSamples);
     }
     if (! chordHeld)
         stepRecordChordHad = false;

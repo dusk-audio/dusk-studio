@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import argparse
 import base64
+import json
+import re
 import os
 from pathlib import Path, PureWindowsPath
 import shlex
@@ -85,7 +87,9 @@ class Driver:
         remote = f"bash -lc {shlex.quote(script)}"
         self.command(label, ["ssh", self.args.mac_host, remote], capture=capture)
 
-    def windows_ps(self, label: str, script: str, *, capture: bool = False) -> None:
+    def windows_ps(
+        self, label: str, script: str, *, capture: bool = False
+    ) -> subprocess.CompletedProcess[str]:
         encoded = base64.b64encode(script.encode("utf-16le")).decode("ascii")
         argv = ["ssh"]
         if self.args.windows_key:
@@ -111,7 +115,7 @@ class Driver:
         )
         display = " ".join(display_parts)
         display += "\n" + "\n".join(f"      {line}" for line in script.splitlines())
-        self.command(label, argv, capture=capture, display=display)
+        return self.command(label, argv, capture=capture, display=display)
 
     def platform(self, name: str, work) -> None:
         started = time.monotonic()
@@ -360,28 +364,120 @@ def windows_checkout_script(source: str, commit: str, sync: bool) -> str:
     return "\n".join(lines)
 
 
+def windows_layout(build: str, generator: str) -> dict[str, str]:
+    if generator.startswith("Visual Studio "):
+        tests = r"tests\Release\dusk-studio-tests.exe"
+        probe = r"Release\dusk-windows-software-opengl-probe.exe"
+    elif generator == "Ninja":
+        tests = r"tests\dusk-studio-tests.exe"
+        probe = "dusk-windows-software-opengl-probe.exe"
+    else:
+        raise ValidationFailure(f"Unsupported Windows generator: {generator}")
+    return {
+        "test": ps_join(build, tests),
+        "probe": ps_join(build, probe),
+        "app": ps_join(build, r"DuskStudio_artefacts\Release\DuskStudio.exe"),
+        "fixtures": build + ";" + ps_join(build, "Release"),
+    }
+
+
+def windows_cache_script(build: str) -> str:
+    return f"""$ErrorActionPreference = 'Stop'
+$cacheText = Get-Content -LiteralPath {ps_quote(ps_join(build, 'CMakeCache.txt'))} -Raw
+$generator = [regex]::Matches($cacheText, '(?m)^CMAKE_GENERATOR:INTERNAL=([^\\r\\n]+)\\r?$')
+if ($generator.Count -ne 1) {{ throw 'CMake generator is missing or duplicated' }}
+$mesa = [regex]::Matches($cacheText, '(?m)^DUSKSTUDIO_WINDOWS_SOFTWARE_OPENGL_DIR:[^=]+=([^\\r\\n]*)\\r?$')
+if ($mesa.Count -gt 1) {{ throw 'Mesa configuration is duplicated' }}
+$mesaPath = if ($mesa.Count -eq 1) {{ $mesa[0].Groups[1].Value }} else {{ '' }}
+Write-Output ('DUSK-WINDOWS-CACHE ' + (@{{generator=$generator[0].Groups[1].Value;mesa=$mesaPath}} | ConvertTo-Json -Compress))
+"""
+
+
+def windows_cache_result(text: str) -> dict[str, str]:
+    records = [line.removeprefix("DUSK-WINDOWS-CACHE ") for line in text.splitlines()
+               if line.startswith("DUSK-WINDOWS-CACHE ")]
+    if len(records) != 1:
+        raise ValidationFailure("Windows cache metadata is missing or duplicated")
+    try:
+        metadata = json.loads(records[0])
+        if not isinstance(metadata["generator"], str) or not isinstance(metadata["mesa"], str):
+            raise ValueError("cache fields must be strings")
+    except (ValueError, KeyError, TypeError) as exc:
+        raise ValidationFailure(f"Invalid Windows cache metadata: {exc}") from exc
+    return metadata
+
+
 def windows_asio_preflight_script(build: str, expected_sdk: str) -> str:
-    cache = ps_join(build, "CMakeCache.txt")
-    project = ps_join(build, "DuskStudio.vcxproj")
-    expected_header = ps_join(expected_sdk, r"common\iasiodrv.h")
-    return "\n".join(
-        [
-            "$ErrorActionPreference = 'Stop'",
-            f"$expectedSdk = [IO.Path]::GetFullPath({ps_quote(expected_sdk)}).TrimEnd('\\')",
-            f"if (-not (Test-Path -LiteralPath {ps_quote(expected_header)})) {{ throw 'configured ASIO SDK is missing common\\iasiodrv.h' }}",
-            f"if (-not (Test-Path -LiteralPath {ps_quote(cache)})) {{ throw 'Windows CMake cache is missing' }}",
-            f"$cacheText = Get-Content -LiteralPath {ps_quote(cache)} -Raw",
-            "if ($cacheText -match '(?m)^DUSKSTUDIO_REQUIRE_ASIO:[^=]+=OFF\\r?$') { throw 'ASIO is explicitly disabled in the Windows CMake cache' }",
-            "$asioMatch = [regex]::Match($cacheText, '(?m)^DUSKSTUDIO_RESOLVED_ASIO_SDK_PATH:[^=]+=(.+)\\r?$')",
-            "if (-not $asioMatch.Success) { throw 'resolved ASIO SDK path is absent from the Windows CMake cache' }",
-            "$resolvedSdk = [IO.Path]::GetFullPath($asioMatch.Groups[1].Value.Trim()).TrimEnd('\\')",
-            "if ($resolvedSdk -ne $expectedSdk) { throw \"CMake uses ASIO SDK '$resolvedSdk', expected '$expectedSdk'\" }",
-            f"if (-not (Test-Path -LiteralPath {ps_quote(project)})) {{ throw 'DuskStudio.vcxproj is missing' }}",
-            f"$projectText = Get-Content -LiteralPath {ps_quote(project)} -Raw",
-            "if (-not $projectText.Contains('JUCE_ASIO=1')) { throw 'DuskStudio target is missing JUCE_ASIO=1' }",
-            'Write-Output "ASIO enabled: $resolvedSdk"',
-        ]
-    )
+    return f"""$ErrorActionPreference = 'Stop'
+$build = {ps_quote(build)}
+$expectedSdk = [IO.Path]::GetFullPath({ps_quote(expected_sdk)}).TrimEnd([char[]]'\\/')
+if (-not [IO.File]::Exists((Join-Path $expectedSdk 'common/iasiodrv.h'))) {{ throw 'configured ASIO SDK is missing common/iasiodrv.h' }}
+$cacheText = Get-Content -LiteralPath (Join-Path $build 'CMakeCache.txt') -Raw
+if ($cacheText -match '(?m)^DUSKSTUDIO_REQUIRE_ASIO:[^=]+=OFF\\r?$') {{ throw 'ASIO is explicitly disabled' }}
+$asio = [regex]::Matches($cacheText, '(?m)^DUSKSTUDIO_RESOLVED_ASIO_SDK_PATH:[^=]+=([^\\r\\n]+)\\r?$')
+if ($asio.Count -ne 1) {{ throw 'resolved ASIO SDK path is missing or duplicated' }}
+$resolvedSdk = [IO.Path]::GetFullPath($asio[0].Groups[1].Value).TrimEnd([char[]]'\\/')
+if ($resolvedSdk -ne $expectedSdk) {{ throw 'CMake uses a different ASIO SDK' }}
+$generators = [regex]::Matches($cacheText, '(?m)^CMAKE_GENERATOR:INTERNAL=([^\\r\\n]+)\\r?$')
+if ($generators.Count -ne 1) {{ throw 'CMake generator is missing or duplicated' }}
+$generator = $generators[0].Groups[1].Value
+if ($generator.StartsWith('Visual Studio ', [StringComparison]::Ordinal)) {{
+    [xml]$project = Get-Content -LiteralPath (Join-Path $build 'DuskStudio.vcxproj') -Raw
+    $ns = New-Object Xml.XmlNamespaceManager($project.NameTable)
+    $ns.AddNamespace('m', 'http://schemas.microsoft.com/developer/msbuild/2003')
+    $groups = @($project.SelectNodes('/m:Project/m:ItemDefinitionGroup', $ns) | Where-Object {{
+        $_.Condition -ceq "'`$(Configuration)|`$(Platform)'=='Release|x64'"
+    }})
+    if ($groups.Count -ne 1) {{ throw 'DuskStudio Release x64 definitions are missing or duplicated' }}
+    $definitions = @($groups[0].SelectNodes('m:ClCompile/m:PreprocessorDefinitions', $ns))
+    if ($definitions.Count -ne 1) {{ throw 'DuskStudio compile definitions are missing or duplicated' }}
+    $tokens = @($definitions[0].InnerText -split ';' | ForEach-Object {{ $_.Trim() }})
+}} elseif ($generator -ceq 'Ninja') {{
+    $ninja = Get-Content -LiteralPath (Join-Path $build 'build.ninja') -Raw
+    $edges = [regex]::Matches($ninja, '(?m)^build CMakeFiles/DuskStudio\\.dir/src/Main\\.cpp\\.obj: CXX_COMPILER__DuskStudio[^ \\r\\n]*Release[^\\r\\n]*\\r?\\n((?:[ \\t]+[^\\r\\n]*\\r?\\n|\\r?\\n)*)')
+    if ($edges.Count -ne 1) {{ throw 'DuskStudio Release Main.cpp compile edge is missing or duplicated' }}
+    $definitions = [regex]::Matches($edges[0].Groups[1].Value, '(?m)^  DEFINES = ([^\\r\\n]+)\\r?$')
+    if ($definitions.Count -ne 1) {{ throw 'DuskStudio compile definitions are missing or duplicated' }}
+    $tokens = @($definitions[0].Groups[1].Value -split '\\s+' | ForEach-Object {{ $_ -replace '^[-/]D', '' }})
+}} else {{ throw ('Unsupported Windows generator: ' + $generator) }}
+$asioTokens = @($tokens | Where-Object {{ $_ -cmatch '^JUCE_ASIO(?:=|$)' }})
+if ($asioTokens.Count -ne 1 -or $asioTokens[0] -cne 'JUCE_ASIO=1') {{ throw 'DuskStudio target must define exactly JUCE_ASIO=1' }}
+Write-Output ('ASIO enabled: ' + $resolvedSdk)
+"""
+
+
+def windows_probe_script(probe: str) -> str:
+    return f"""$ErrorActionPreference = 'Stop'
+$owned = Join-Path $env:TEMP ('dusk-wgl-' + [Guid]::NewGuid().ToString('N'))
+[void][IO.Directory]::CreateDirectory($owned)
+try {{
+    $stdout = Join-Path $owned 'stdout.txt'
+    $stderr = Join-Path $owned 'stderr.txt'
+    $process = Start-Process -FilePath {ps_quote(probe)} -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+    # Without a cached handle, a redirected process reports no ExitCode once it exits.
+    $null = $process.Handle
+    if (-not $process.WaitForExit(60000)) {{
+        $process.Kill()
+        $process.WaitForExit(5000) | Out-Null
+        throw 'Windows WGL probe timed out'
+    }}
+    $process.WaitForExit()
+    $code = $process.ExitCode
+    Get-Content -LiteralPath $stdout -Raw | Write-Output
+    Get-Content -LiteralPath $stderr -Raw | Write-Output
+    if ($code -ne 0) {{ throw ('Windows WGL probe exited ' + $code) }}
+}} finally {{ Remove-Item -LiteralPath $owned -Recurse -Force }}
+"""
+
+
+def check_windows_probe(text: str) -> None:
+    renderers = re.findall(r"^renderer=(.+)$", text, re.MULTILINE)
+    versions = re.findall(r"^version=(.+)$", text, re.MULTILINE)
+    if len(renderers) != 1 or "llvmpipe" not in renderers[0] or len(versions) != 1:
+        raise ValidationFailure("Windows WGL probe did not report one llvmpipe renderer/version")
+    version = re.match(r"([0-9]+)\.([0-9]+)(?:\s|\.|$)", versions[0])
+    if version is None or int(version[1]) < 3:
+        raise ValidationFailure("Windows WGL probe requires OpenGL 3 or newer")
 
 
 def native_clap_posix_script(app: str, fixture_dir: str, runner: str = "") -> str:
@@ -504,9 +600,6 @@ def run_windows(driver: Driver, commit: str) -> None:
     args = driver.args
     source = args.windows_source
     build = windows_build_path(source, args.windows_build_dir)
-    test = ps_join(build, r"tests\Release\dusk-studio-tests.exe")
-    app = ps_join(build, r"DuskStudio_artefacts\Release\DuskStudio.exe")
-    fixture_dir = ps_join(build, "Release")
     cmake = args.windows_cmake
     ctest = str(PureWindowsPath(cmake).with_name("ctest.exe"))
 
@@ -514,8 +607,14 @@ def run_windows(driver: Driver, commit: str) -> None:
         "Windows: verify/sync checkout",
         windows_checkout_script(source, commit, args.sync),
     )
+    cache = driver.windows_ps("Windows: read build configuration", windows_cache_script(build), capture=True)
+    metadata = {"generator": "Visual Studio 17 2022", "mesa": ""} if args.dry_run else windows_cache_result(cache.stdout)
+    layout = windows_layout(build, metadata["generator"])
+    test, app, fixture_dir = layout["test"], layout["app"], layout["fixtures"]
     if not args.skip_build:
         targets = ["DuskStudio", "dusk-studio-tests"]
+        if metadata["mesa"]:
+            targets.append("dusk-windows-software-opengl-probe")
         if args.native_state:
             targets.append("dusk-studio-multi-bus-clap-fixture")
         target_args = ", ".join(ps_quote(target) for target in targets)
@@ -534,6 +633,10 @@ def run_windows(driver: Driver, commit: str) -> None:
         "Windows: require ASIO",
         windows_asio_preflight_script(build, args.windows_asio_sdk),
     )
+    if metadata["mesa"]:
+        probe = driver.windows_ps("Windows: packaged llvmpipe WGL", windows_probe_script(layout["probe"]), capture=True)
+        if not args.dry_run:
+            check_windows_probe(probe.stdout)
     for test_filter in args.filters:
         script = "\n".join(
             [

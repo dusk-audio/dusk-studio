@@ -352,7 +352,8 @@ void DuskMultisampleEditor::openFileChooser()
     [safe] (juce::File file)
     {
         auto* self = safe.getComponent();
-        if (self == nullptr || ! file.existsAsFile()) return;
+        if (self == nullptr || ! filebrowser::isAcceptableChoice (file.getFullPathName().toStdString(),
+                                                                 filebrowser::Mode::Open, false, false)) return;
 
         const auto fileName = file.getFileName().toLowerCase();
 

@@ -1,0 +1,1637 @@
+{
+  "status": "NOT FINAL RELEASE SIGNOFF",
+  "latest_candidate": {
+    "recorded_utc": "2026-10-23T07:55:02.102777+00:00",
+    "status": "Current macOS and Linux builds and CTest pass. Linux full GUI274/0/0 and Windows full GUI260/0/14 pass strictly. Windows1723 CTest passes/5 capability skips, three picker pairs and185/0/10 engine scenarios pass. Physical192kHz/256 engine overruns reproduce and remain unresolved.",
+    "baseline_head": "54a6453fc2aa85da30a95338ea37566dd005b223",
+    "version": "0.15.1",
+    "version_bump_gate": "Issue 886 requires maintainer manual passes before bump-version 0.16.0. No version bump, tag or release workflow has run.",
+    "current_source": {
+      "production_AudioEngine_changed": true,
+      "preserved_untracked_directory": "external/sfizz/",
+      "hashes": {
+        ".github/workflows/windows-tests.yml": "0ba1fef6758e3abd4ef70faaf87847ff47c1db5f5a2d1ca665ab46e49b302536",
+        "CMakeLists.txt": "7ee8baa959446340cd18c75336f9dc896779810d2b6130a723abae7750ae1eeb",
+        "MANUAL.md": "652effd275c230110218cb7b6d76874562bc96d8948754347d6c66515786a25e",
+        "README.md": "36541201b42b8b8f45466389a4a30a2390e1d661283534f3802048f254057caa",
+        "scripts/regress/playback-fixtures.py": "3d293a64da4ae83cd447f0d087034127875d1037d3c4453ca8abdc9b2aca078c",
+        "scripts/regress/windows.sh": "6fad55f1d3eeb19a1dea85160ab02a475cf1f06d55aabf9188601f05eff76fde",
+        "scripts/regress/windows/gui-plugin-picker.ps1": "7f1ea4518e77e3de7b26febeb169d561b9cd43f791b780da1c02d17044cc3294",
+        "scripts/regress/windows/lib.ps1": "9516774dafbc416df36aff0e95c506bfca6005e60fee213cc43fac5b4f067502",
+        "scripts/regress/windows/scenarios.ps1": "f600de11aa5af4936997b38db221d7a84227025809613511882005a2e7c86183",
+        "scripts/validate-cross-platform.py": "55d3e87c9fa5fa3282864933032e4edb3760cb94e4c1a9163380c2165bf2612e",
+        "src/DuskStudioApp.cpp": "1e0e255912ce4eb229c56ac2037e90b9f2c64b4e26f83a85ef94c81c06217911",
+        "src/engine/AudioEngine.cpp": "b005b5d7f0dd499be02ac0b249ae36ed6b92faf60881f029230a9a0b5b4697b9",
+        "src/engine/AudioEngine.h": "169c3f50b53e434239e3284d560aeeca3e9779e0e2b6427d779da00ab58565a6",
+        "src/engine/MidiButtonEdges.h": "a5709c6336f2fdaaba04291760ad163a39cd46298f740460d0044ed37766688b",
+        "src/engine/PlaybackEngine.cpp": "9c0436eb6b138e5107b844d9d8004ba6b87a88c5f743b4839923d8ac20f7e265",
+        "src/engine/PlaybackEngine.h": "ea11c1917cae7621a410b2ce2fde8c9a7b377b2b9a55db8e79cef700ca03749c",
+        "src/engine/PlaybackReadCapture.h": "0dd8db9cd530d571174601f717afa44de09785b0e10953bf755ffd92d546b477",
+        "src/engine/Transport.h": "5f1c8b1097b8e573219ce0f52ff8c88b6647e226da69759a85a9cdd14ebe34b3",
+        "src/engine/audiofile/BufferedFileReader.cpp": "90224407357db3dc9f6bd7f7aca66212b0ff33901e373d1580e23394c2f50c10",
+        "src/engine/audiofile/BufferedFileReader.h": "60771b45a8d8e29aba7cdbd9a83995841acf0c7dbafd07ee02eebb8eb23bc5c8",
+        "src/engine/audiofile/ReaderFillPool.cpp": "c084d606b141f1d3be476fa10aeb1282d240d1b3af74b7b085c327a2895f6e3f",
+        "src/engine/audiofile/ReaderFillPool.h": "62ac71d07bbe215548802a4a83f742e2a46ac8f3ab551a13d81130ab2db1c92b",
+        "src/engine/scenario/ScenarioFixtures.cpp": "81c82ff1ea5ef52d7700d0f88a0327650b71adf3e2ade833b77d80825a07c21d",
+        "src/engine/scenario/SuiteRunner.cpp": "cdb4b1257cca3220fda980cceb2011694daf166e5bf09175f9b7b182634efc03",
+        "src/engine/scenario/cases/lv2_worker_bounce.cpp": "5f2fc343e3a4e910cb3218eedf03537de550330d64736851f9df0e236dd459e1",
+        "src/engine/scenario/cases/midi_bindings.cpp": "56e0fc6bd278a5cdcc8e34418fc4b3e412f4d783e46c3753aa5b0426d2874772",
+        "src/engine/scenario/cases/midi_target_matrix.cpp": "e7fd873db56930c3ee7b16b407debb4b6b8c71c9527cd10b7490acf52dcc3d73",
+        "src/engine/scenario/cases/oop_killed_child_bypasses.cpp": "a4fb857dd7c2a3818ab9b0012de8e20983d8235b545e1790333d1c91c2664dd0",
+        "src/engine/scenario/cases/transport.cpp": "19a2d125308aa18dec8ca18d0769213fa31c10cd2182e7dc12ca2baea4665d38",
+        "src/engine/scenario/cases/vst3_io_restart.cpp": "593697fa586bcb73fb67ae97f613702465a0dc8b3221b9d6e1bdeac3037e88f4",
+        "src/ui/AuxLaneComponent.cpp": "b1486f6a17b062eeea66d835daf274e009aa2e789a9aa7225fd69ac3ee3da5bd",
+        "src/ui/BusComponent.cpp": "f88acb7b0b85ce1b69f619ea54b365f73cec556df4ffc24f2ff187b6f1b55396",
+        "src/ui/ChannelStripComponent.cpp": "69895292f8bfa027b03722bfd653a0a9f17082cc9c381c4f2373cfb5c3d62dca",
+        "src/ui/FileBrowserChoice.cpp": "6ee0f2cfea6316fd5cad6b8b75445a9c873518c66b6eaaf84140042b6694819c",
+        "src/ui/FileBrowserChoice.h": "ee0ff956fdfe5dfd5ac68cba35ad6a509ef0a6216ea3373199038335262581a6",
+        "src/ui/GuiHost.h": "9672fb6ba17fa82ed6374bc96b17912927d17e4c0b89365e2eeb59fdc32b4396",
+        "src/ui/GuiScenarios.cpp": "0d4e07400e19989235f56baf061ce43cb6fc48284af00e92292387fd207779d8",
+        "src/ui/MasterStripComponent.cpp": "0a32e1acae74d71b8667e03a9d987d7420c6b70fcfdd8db3ec1dda6d275a285c",
+        "src/ui/imgui/DuskImGuiHost.cpp": "3fb9c07b1865a50ce66091c4ccc676dbb2d78d16500d89b0917232f0ddcc2800",
+        "src/ui/imgui/PianoRollView.cpp": "1dda9dc7a12aa9412009c62541a36b716a77b14cff09452addc4c186ba3dbac1",
+        "src/ui/multisample/DuskMultisampleEditor.cpp": "26c44c73a80d6da97f1642ec1d9f0beca773de35ccf8af48cf1b01515ea7c968",
+        "src/ui/scenario/GuiScenarioSupport.cpp": "c751eaa70078519897f0fc718b2479293705b991dd72f23045585b1bca5e4cd0",
+        "src/ui/scenario/cases/gui_import_browser.cpp": "d840cdc56f103ff38b85752a6bc9a55dc98986856d3df0406e56cf7ac97108c7",
+        "src/ui/scenario/cases/gui_keyboard_transport.cpp": "0f1f3caacda1220776b25e85e8edf115a4365e81547abcc5c402c93fd73698be",
+        "src/ui/scenario/cases/gui_midi_learn_plugins.cpp": "6b980b71b7253ce48803225c4be9fcf9dc376115a8ef52f5508ab440f1b321b9",
+        "src/ui/scenario/cases/gui_mixer.cpp": "1a866cb565890a9d1a1c6e389b40e388430c8c73624119d0e0ef000b369eebae",
+        "src/ui/scenario/cases/gui_piano_roll.cpp": "db98714e0d55a86f192be011b814eb1941495a901ece8e60e469c75865ef6767",
+        "src/ui/scenario/cases/gui_sfz_live.cpp": "97132fb4d8a175889dc5f9632c761746647de522ba2c700d5ade43722368bb56",
+        "src/ui/scenario/cases/gui_sfz_repository.cpp": "deb8ec23895f5fa9e46f357c24ba8edc129c950a95f6f6a254966dc3771c02ce",
+        "tests/CMakeLists.txt": "6f56ffdbcfe33bdaf0afcfbafaa5da35fc6934062f1289749df9d1818dafc4b2",
+        "tests/filebrowser_choice.cpp": "279ac923796646443b8935a8964fc50113dd14b7f0b8587aca1a5eb19d82c603",
+        "tests/fixtures/crash_state_vst3.cpp": "319c2413c2f0355f2394bd3d6996b19406cddf2198946a889ee0b4593e9afb77",
+        "tests/fixtures/runtime_relayout_vst3.cpp": "084bc3c5ed365f247b0dbb3f7be94aa93fa263c65f0ce1168d4c5b214edafabf",
+        "tests/fixtures/worker_lv2.cpp": "23d6d9c7decc1406698f1d664d4e8bca27dbd870111fcb61eb14254ff0217294",
+        "tests/fixtures/worker_plugin.ttl": "a28f7d1f4e3d1cfcddf26eb6e20368b79e8799f57354b59ec11c671d24135bd7",
+        "tests/gui_plugin_picker.sh": "58d943c43c40d93fa33849cf8acd4d2dd507d7d208d540a62b27d417780c8572",
+        "tests/manual_coverage.tsv": "22b625e1c7b267228eb91f567aa0ac906d07c10a301af381ed6ed95efa5bd3fe",
+        "tests/midi_button_edges.cpp": "1bb3ef9a0aeb19c667a83418f448c0859791de78a545c5ea801d4b4ec13435b6",
+        "tests/playback_live_swap.cpp": "abc972a47ff9ed871f01b8de46d0fd717a68a9be0e3ad93a4a0ab0a9d594a80f",
+        "tests/playback_loop_read.cpp": "a0d45e62c8ef547f69a35d908061049c00a91ae9d39d1f0edff4f20347a4cf2c",
+        "tests/playback_read_capture.cpp": "48a4569d366894a9309af8c0994c448179e720341c22049bb11704bb23b539dc",
+        "tests/plugin_slot_lifecycle.cpp": "448ab9ee55946b485963081f391fb0a4b22f328b2f3fb0fa02cf4bcbe27a2e41",
+        "tests/reader_fill_pool.cpp": "bd118f0ea9e3cef86a9deea2f90b341abc3eca89dcea24dbd23bd784727ad369",
+        "tests/release_mechanics.sh": "a5d983ba90568bf975963e8428fdb552ea9d94384fcb49edf4c0c0fd2a487cb7",
+        "tests/transport_stop_locate.cpp": "aed391329bbdc8eeffb2e780c815cbcbabba6a2264ba1501ee4e9fcbaca022fd",
+        "tests/validate_cross_platform.py": "236cd0e4ffc15cbc5b81f5979fa4ae29bbe7087b76df76ab0b8a7fe391851551",
+        "tests/windows_regress_snapshot.ps1": "8a9b18ba548fcfedc93959225e0c2958b61be871982cc837848453b7e68337d4"
+      },
+      "post_snapshot_test_only_change": {
+        "original_warning": [
+          {
+            "path": "tests/transport_stop_locate.cpp",
+            "line": 235,
+            "message": "declaration shadows a local variable [-Wshadow-uncaptured-local]",
+            "added_line": true
+          }
+        ],
+        "original_tests_build_exit": 0,
+        "restored_build_checks": [
+          {
+            "label": "warning-fix-main-build",
+            "command": [
+              "cmake",
+              "--build",
+              "build",
+              "-j6"
+            ],
+            "exit": 0,
+            "seconds": 0.118
+          },
+          {
+            "label": "warning-fix-tests-build",
+            "command": [
+              "cmake",
+              "--build",
+              "build-tests",
+              "--target",
+              "dusk-studio-tests",
+              "-j6"
+            ],
+            "exit": 0,
+            "seconds": 3.033
+          },
+          {
+            "label": "warning-fix-ctest",
+            "command": [
+              "ctest",
+              "--test-dir",
+              "build-tests",
+              "--output-on-failure"
+            ],
+            "exit": 0,
+            "seconds": 103.723
+          }
+        ],
+        "restored_warning_occurrences": {
+          "warning-fix-main-build.log": 0,
+          "warning-fix-tests-build.log": 45
+        },
+        "changed_file": "tests/transport_stop_locate.cpp",
+        "sha256": "aed391329bbdc8eeffb2e780c815cbcbabba6a2264ba1501ee4e9fcbaca022fd",
+        "change": "Move the target-checking lambda outside the enclosing Catch CHECK expansion to avoid nested macro locals shadowing one another.",
+        "restored_project_warning_occurrences": 0,
+        "restored_project_warnings": [],
+        "restored_linker_warning_occurrences": 45,
+        "restored_shadow_warning_present": false,
+        "assertion_meaning_unchanged": true,
+        "assertions_added_or_removed": 0,
+        "cross_platform_exact_source_followup": {
+          "all_hashes_verified": true,
+          "platforms": {
+            "linux": {
+              "result": {
+                "native_exit": 0,
+                "test_source_sha256": "aed391329bbdc8eeffb2e780c815cbcbabba6a2264ba1501ee4e9fcbaca022fd",
+                "executable_sha256": "2be1a1d9be6c4741b579076305c609b0819e631781d0130df7c30507a04e55cb"
+              },
+              "test_output": "Randomness seeded to: 4225995038\n===============================================================================\nAll tests passed (262 assertions in 4 test cases)",
+              "headers": {
+                "src/engine/Transport.h": "5f1c8b1097b8e573219ce0f52ff8c88b6647e226da69759a85a9cdd14ebe34b3",
+                "src/engine/StopBehavior.h": "cf4725bd98daa137f0d198fdcfdd5ad448229fa9fd424e29dc95073b9a42f4d9"
+              },
+              "files": 10
+            },
+            "windows": {
+              "result": {
+                "executable_sha256": "c085ad860424eee58f00505f78f1b9d82e6f7ca21f8a0cd20ac6edac9460213e",
+                "native_exit": 0,
+                "test_source_sha256": "aed391329bbdc8eeffb2e780c815cbcbabba6a2264ba1501ee4e9fcbaca022fd"
+              },
+              "test_output": "Randomness seeded to: 1455447611\r\n===============================================================================\r\nAll tests passed (262 assertions in 4 test cases)",
+              "headers": {
+                "src\\engine\\Transport.h": "5f1c8b1097b8e573219ce0f52ff8c88b6647e226da69759a85a9cdd14ebe34b3",
+                "src\\engine\\StopBehavior.h": "cf4725bd98daa137f0d198fdcfdd5ad448229fa9fd424e29dc95073b9a42f4d9"
+              },
+              "files": 6
+            }
+          }
+        }
+      },
+      "submodule_revisions": [
+        "+195b42a004144fab0b3cf95e9c067187d15365b7 external/clap (1.2.10)",
+        " f92e07104495bbd645325ff62c1a6c8bae3ad428 external/dusk-fizz (1.2.3-17-gf92e0710)",
+        " c2435f8342c2d0ed8101cb43adfd605fdc52dca2 external/dusk-fizz/external/abseil-cpp (20230125.3)",
+        " 8a2edd6d92ed820521d42c94d179462bf06b5ed3 external/dusk-fizz/external/filesystem (v1.1.2-403-g8a2edd6)",
+        " 2bf459d4ed6d7ed6b9f31bd9e07c91bace5009e0 external/dusk-fizz/external/simde (v0.7.4-19-g2bf459d4)",
+        " da8f73412998e4f1adf1100dc187533a51af77fd external/dusk-fizz/external/simde/test/munit (v0.2.0-37-gda8f734)",
+        " 4b3d07849537ce0b71b22180c0b1335eacc6e9be external/dusk-fizz/external/st_audiofile/thirdparty/dr_libs (flac-0.12.43~50)",
+        " d1a166c83ab445b1c14bc83d37c84e18d172e5f5 external/dusk-fizz/external/st_audiofile/thirdparty/dr_libs/tests/external/miniaudio (0.11.15~1676)",
+        " 78864a4a2e769e426be8cfd78ae7f5f72e236c33 external/dusk-fizz/external/st_audiofile/thirdparty/libaiff (heads/master)",
+        " 07ffb331d23c16e2d2979370441f63ea722760bc external/dusk-fizz/external/st_audiofile/thirdparty/wavpack (5.1.0-346-g07ffb33)",
+        " 825651ad3a1807fef86a33c9cb480b88ba334c39 external/vst3sdk (dusk-vst3sdk-v1)"
+      ],
+      "submodule_note": "CLAP 1.2.10 is the intentional uncommitted pin advance. Nested dependencies remain at their parent-approved pins."
+    },
+    "local_verification": {
+      "main_build_exit": 0,
+      "ctest_entries": 1771,
+      "ctest_pass": 1769,
+      "ctest_skipped_case_sensitive_filesystem": 2,
+      "catch_cases": 1806,
+      "catch_source_files": 279,
+      "headless_pass": 191,
+      "headless_skip": 4,
+      "headless_fail": 0,
+      "selftests_pass": 14,
+      "manual_behaviours": 645,
+      "manual_auto": 573,
+      "manual_partial": 19,
+      "manual_manual": 16,
+      "manual_gap": 0,
+      "manual_na": 37,
+      "tests_build_exit": 0,
+      "latest_checks": "build/016-browser-boundary-phase/warning-fix-checks.json",
+      "prior_headless_scope": "The retained macOS headless191/0/4 and selftests14 results precede the GUI/browser phases; they are not a fresh full macOS GUI acceptance.",
+      "mac_gui_status": "Focused functional passes exist; the full 580 functional run was terminated after repeated dialog/key timeouts. The desktop is locked and strict foreground acceptance is unavailable."
+    },
+    "phase_evidence": [
+      {
+        "report": "build/016-automation-phase/report.json",
+        "phase": "Committed automation positions across track/bus/master/aux",
+        "scope": "See report for exact failing/restored passing outputs, measured counts and unproven cases."
+      },
+      {
+        "report": "build/016-capture-phase/report.json",
+        "phase": "bounded playback source capture and analyzer",
+        "scope": "See report for exact failing/restored passing outputs, measured counts and unproven cases."
+      },
+      {
+        "report": "build/016-cross-platform-phase/report.json",
+        "phase": "Generator-aware Windows validation and WGL CI",
+        "scope": "See report for exact failing/restored passing outputs, measured counts and unproven cases."
+      },
+      {
+        "report": "build/016-device-phase/report.json",
+        "phase": "real device playback source verification and retained stop statistics",
+        "scope": "See report for exact failing/restored passing outputs, measured counts and unproven cases."
+      },
+      {
+        "report": "build/016-engine-phase/report.json",
+        "phase": "Readiness-aware callback, loop mapping and capture continuity",
+        "scope": "See report for exact failing/restored passing outputs, measured counts and unproven cases."
+      },
+      {
+        "report": "build/016-loop-boundary-phase/report.json",
+        "phase": "Loop readiness and every internal seam",
+        "scope": "See report for exact failing/restored passing outputs, measured counts and unproven cases."
+      },
+      {
+        "report": "build/016-lv2-latency-phase/report.json",
+        "phase": "native LV2 reported latency and automatic PDC coverage",
+        "scope": "See report for exact failing/restored passing outputs, measured counts and unproven cases."
+      },
+      {
+        "report": "build/016-midi-button-phase/report.json",
+        "phase": "MIDI Press source edges",
+        "scope": "See report for exact failing/restored passing outputs, measured counts and unproven cases."
+      },
+      {
+        "report": "build/016-midi-edge-unit-phase/report.json",
+        "phase": "deterministic complete MIDI edge domain",
+        "scope": "See report for exact failing/restored passing outputs, measured counts and unproven cases."
+      },
+      {
+        "report": "build/016-midi-matrix-phase/report.json",
+        "phase": "MIDI target matrix and MSVC lambda portability",
+        "scope": "See report for exact failing/restored passing outputs, measured counts and unproven cases."
+      },
+      {
+        "report": "build/016-oop-reopen-phase/report.json",
+        "phase": "real sandbox crash save/reopen state",
+        "scope": "See report for exact failing/restored passing outputs, measured counts and unproven cases."
+      },
+      {
+        "report": "build/016-playback-phase/report.json",
+        "phase": "Playback seek readiness and incoming stream adoption",
+        "scope": "See report for exact failing/restored passing outputs, measured counts and unproven cases."
+      },
+      {
+        "report": "build/016-pool-phase/report.json",
+        "phase": "Reader pool staged-seek integration",
+        "scope": "See report for exact failing/restored passing outputs, measured counts and unproven cases."
+      },
+      {
+        "report": "build/016-reader-phase/report.json",
+        "phase": "Buffered reader staged-seek seam",
+        "scope": "See report for exact failing/restored passing outputs, measured counts and unproven cases."
+      },
+      {
+        "report": "build/016-transport-phase/report.json",
+        "phase": "transport committed position and locate serial",
+        "scope": "See report for exact failing/restored passing outputs, measured counts and unproven cases."
+      },
+      {
+        "report": "build/016-windows-harness-phase/report.json",
+        "phase": "Windows GUI validation contracts and CLAP picker seeding",
+        "scope": "See report for exact failing/restored passing outputs, measured counts and unproven cases."
+      },
+      {
+        "report": "build/016-scenario-portability-phase/report.json",
+        "phase": "Scenario registry selector and VST3 path portability"
+      },
+      {
+        "report": "build/016-ipc-scheduling-phase/report.json",
+        "phase": "Host/timing test serial scheduling"
+      },
+      {
+        "report": "build/016-gui-boundary-phase/report.json",
+        "phase": "Window/cache state restoration",
+        "scope": "Source identities, actual failing and restored passing outputs, neighbours and remaining limits are in the report."
+      },
+      {
+        "report": "build/016-minimum-window-phase/report.json",
+        "phase": "Minimum window, import and shortcut layout coverage",
+        "scope": "Source identities, actual failing and restored passing outputs, neighbours and remaining limits are in the report."
+      },
+      {
+        "report": "build/016-native-overlay-phase/report.json",
+        "phase": "Windows native piano child visibility and alert stacking",
+        "scope": "Source identities, actual failing and restored passing outputs, neighbours and remaining limits are in the report."
+      },
+      {
+        "report": "build/016-foreground-phase/report.json",
+        "phase": "Producer completion clock and conservative foreground acceptance",
+        "scope": "Source identities, actual failing and restored passing outputs, neighbours and remaining limits are in the report."
+      },
+      {
+        "report": "build/016-windows-path-phase/report.json",
+        "phase": "Windows SFZ scenario filesystem I/O",
+        "scope": "Source identities, actual failing and restored passing outputs, neighbours and remaining limits are in the report."
+      },
+      {
+        "report": "build/016-browser-path-phase/report.json",
+        "phase": "Production browser long-path choices and SFZ callbacks",
+        "scope": "Source identities, actual failing and restored passing outputs, neighbours and remaining limits are in the report."
+      },
+      {
+        "report": "build/016-browser-boundary-phase/report.json",
+        "phase": "Filesystem header isolation and final local checks",
+        "scope": "Source identities, actual failing and restored passing outputs, neighbours and remaining limits are in the report."
+      },
+      {
+        "report": "build/016-physical-timing-phase/report.json",
+        "phase": "Current native ALSA source checks and bounded callback timing attribution",
+        "scope": "Six normal and six diagnostic runs; all failed verdicts retained; normal source and output hashes restored exactly."
+      }
+    ],
+    "linux_null_device": {
+      "evidence_archive": "build/016-remote-prep/linux-device-evidence-71c153884147.tar.gz",
+      "archive_sha256": "3e74f87242d15f0aa065f47b6253910e2e12a8ecb676c4a711907b5b837662c8",
+      "runs": 18,
+      "passed": true,
+      "checked_source_values": 483864576,
+      "mismatched_source_values": 0,
+      "maximum_loop_error": 1.1377016484459546e-07,
+      "committed_seeks": 9,
+      "loop_wraps": 12,
+      "rates": [
+        {
+          "sample_rate": 48000,
+          "buffer_size": 256,
+          "private_null_sink": true,
+          "source_capture_values": 69132288,
+          "capture_off_callback_us": [
+            564.7,
+            562.8,
+            564.7
+          ],
+          "capture_off_budget_percent": [
+            10.6,
+            10.6,
+            10.6
+          ],
+          "xruns": 0,
+          "fill_errors": 0,
+          "workers": 3
+        },
+        {
+          "sample_rate": 96000,
+          "buffer_size": 256,
+          "private_null_sink": true,
+          "source_capture_values": 138240000,
+          "capture_off_callback_us": [
+            552.4,
+            560.6,
+            569.7
+          ],
+          "capture_off_budget_percent": [
+            20.7,
+            21.0,
+            21.4
+          ],
+          "xruns": 0,
+          "fill_errors": 0,
+          "workers": 3
+        },
+        {
+          "sample_rate": 192000,
+          "buffer_size": 256,
+          "private_null_sink": true,
+          "source_capture_values": 276492288,
+          "capture_off_callback_us": [
+            555.6,
+            553.7,
+            555.9
+          ],
+          "capture_off_budget_percent": [
+            41.7,
+            41.5,
+            41.7
+          ],
+          "xruns": 0,
+          "fill_errors": 0,
+          "workers": 3
+        }
+      ]
+    },
+    "linux_physical_device": {
+      "evidence_archive": "build/016-remote-prep/linux-physical-evidence-71c153884147.tar.gz",
+      "archive_sha256": "1da838f8ef97b7e501b05f4a93870a63aac021cc0c870351332bef35d8bde158",
+      "device": "Scarlett 2i2 USB, USB Audio",
+      "source_manifest_sha256": "71c153884147c6792991f45f1a958133c5296c03b620b1c2e4dba6e0ed903f9e",
+      "app_sha256": "18652faa043ac10ed6eb4f988ca8861148424ca0dd1e16932a9e86e324f11328",
+      "matrix_runs": 36,
+      "matrix_pass": 33,
+      "matrix_fail": 3,
+      "failed_runs": [
+        {
+          "label": "oracle-192000-256-locate",
+          "native_exit": 1,
+          "xruns": [
+            [
+              "0",
+              "1",
+              "0",
+              "0"
+            ]
+          ],
+          "callback_us_and_percent": [
+            [
+              "590.6",
+              "44.3"
+            ]
+          ],
+          "oracle": [
+            {
+              "backend_xrun_delta": 0,
+              "callbacks": 7500,
+              "checked_values": 92160000,
+              "committed_seeks": 3,
+              "complete_callbacks": 7500,
+              "device_stable": true,
+              "duplicate_reads": 0,
+              "engine_xrun_delta": 1,
+              "final_stop_snapshot": true,
+              "first_wrong_channel": -1,
+              "first_wrong_frame": -1,
+              "first_wrong_track": -1,
+              "frame_coverage": true,
+              "invalid_reads": 0,
+              "loop_wraps": 0,
+              "maximum_error": 0.0,
+              "mismatched_values": 0,
+              "missing_track_callbacks": 0,
+              "non_finite_values": 0,
+              "overflow": false,
+              "passed": false,
+              "progressing": true,
+              "protocol_errors": 0,
+              "reader_pool_stable": true,
+              "sample_rate": 192000,
+              "storage_bytes": 373480512,
+              "timeline_errors": 0
+            }
+          ]
+        },
+        {
+          "label": "performance-192000-256-locate",
+          "native_exit": 0,
+          "xruns": [
+            [
+              "0",
+              "1",
+              "0",
+              "0"
+            ]
+          ],
+          "callback_us_and_percent": [
+            [
+              "551.3",
+              "41.3"
+            ]
+          ],
+          "oracle": []
+        },
+        {
+          "label": "performance-192000-256-loop",
+          "native_exit": 0,
+          "xruns": [
+            [
+              "0",
+              "1",
+              "0",
+              "0"
+            ]
+          ],
+          "callback_us_and_percent": [
+            [
+              "562.0",
+              "42.2"
+            ]
+          ],
+          "oracle": []
+        }
+      ],
+      "targeted_repeats": {
+        "runs": 9,
+        "pass": 9,
+        "fail": 0,
+        "audio_workers_override": 0
+      },
+      "limitations": [
+        "Original three 192kHz/256 engine-overrun failures remain failures; all backend deltas were zero. Nine later DSP-workers=0 passes do not establish the original cause.",
+        "The original loop run had552 raw reader misses and0 fill errors. Same-run loop cache repair/source continuity was not captured, so audible holes remain unproven.",
+        "The engine watchdog and means start after gate/locate, and share the same interval. A mean does not bound the maximum; an excluded prefix alone cannot explain an engine counter increment.",
+        "The final counter includes the reporting/stop tail, while source capture admission ends earlier. Its exact offending callback is unidentified.",
+        "Physical output was intentionally muted at the master; output peak0 does not establish audible output or duplex capture.",
+        "Warm filesystem cache; no Pi or cold-cache measurements. Hardware captures precede the later LV2/OOP/MIDI/GUI changes."
+      ],
+      "actual_backend": "Native ALSA output only, Scarlett 2i2 USB, three periods. The initial PipeWire null startup line is not the measured device.",
+      "raw_loop_reader_misses": 552,
+      "matrix_dsp_worker_setting": "Not recorded. Reader pool workers=3 does not establish DSP worker count. Targeted repeats explicitly set DSP workers=0.",
+      "audit": "build/016-remote-prep/physical-overrun-audit/findings.md",
+      "diagnostic_execution": "The bounded one-file callback journal was compiled and run only in the isolated validation copy under35187ed442e0da4cce6c3e4592e58d953e105d4a839cf4d30b652674aa46ddb7. Normal source and every output hash were restored exactly; no product timing fix was applied."
+    },
+    "current_remote_source_status": {
+      "linux": "5c06 build and1793 CTest entries pass. Engine195/0/1, selftest, three picker pairs and seven browser/overlay scenarios pass strictly. Prior2bd full GUI274/0/0 passes strictly with3137 owned in-suite samples. Prior edfe274/0/0 had2 PointerRoot samples and remains a strict failure.",
+      "windows": "5c06 verified source/dependencies build passed. CTest1723PASS/5SKIP/0FAIL, WGL, three2/0/0 picker runs, engine185/0/10 and GUI260/0/14 all passed. Full GUI1048seconds,3966 in-suite focus samples,0 unowned samples. All14 capability skips passed the audited identity/reason map. Old browser guard failed native1, restored source passed native0 strictly.",
+      "evidence": [
+        "build/016-browser-boundary-phase/linux-current-verification.json",
+        "build/016-browser-boundary-phase/linux-followup-verification.json",
+        "build/016-browser-boundary-phase/windows-focused-status.json",
+        "build/016-browser-boundary-phase/windows-final-verification.json",
+        "build/016-browser-boundary-phase/windows-5c06-followup-evidence/collection-verification.json"
+      ],
+      "windows_added_line_warning_audit": "5c06:80 parsed project compiler warnings,0 added-line warnings. The parser injected-line control detected1 warning."
+    },
+    "remaining_release_gates": [
+      "Strict macOS foreground GUI acceptance and maintainer manual pass require an unlocked desktop; functional passes do not satisfy this gate.",
+      "macOS Musical Artifacts live provider check remains HTTP403 service-blocked. Linux all four and Windows all four providers have historical source-specific verified live passes, including independent payload trees and nonzero audio.",
+      "Default-location VSCO/VCSL long-path installs on Windows remain unverified. Owned long-path fixtures and explicit storage roots do not establish defaults; the Windows validation disk has less than0.5GB free.",
+      "Physical external-drive move/unplug/replug on each OS; no controlled physical-drive fixture was exercised.",
+      "Subjective first-second master export, Phase walkthrough and maintainer manual passes on Linux/macOS/Windows.",
+      "Resolve192kHz/256 engine timing failures: original three failures remain recorded; current normal candidate adds a3-overrun plain run. Temporary traces attribute65 later increments to65 over-budget callbacks within measured playback, but do not identify internal DSP or scheduling cause. Current loop source evidence has0 wrong captured values despite904 raw misses; the historical552 misses remain separately scoped.",
+      "The original580 OOP X11 BadWindow and Windows0xe06d7363 full-suite crash lack a captured stack/root cause. Later focused and Linux full-suite passes are evidence of non-reproduction.",
+      "Human-owned commits/merge, final-main CI, installed shipping packages and release dry run. Canonical regress/prepush remains unrun because its synchronization uses forbidden Git operations."
+    ],
+    "not_done": [
+      "Work remains uncommitted; no GitHub messages, issue closure, merge, tag or release workflow. VERSION remains0.15.1 under issue886 manual-pass gate.",
+      "No changes to the user-untracked external/sfizz/ or existing canonical remote checkouts and tasks.",
+      "No speculative OOP lifetime, priority, scheduler, buffer, worker or audio-file writer change was applied to explain unproven causes.",
+      "No physical unplug/replug, audible listening signoff, Raspberry Pi testing, installed-package acceptance or final-main CI."
+    ],
+    "sfz_scope_authority": "https://github.com/dusk-audio/dusk-studio/issues/804#issuecomment-6252770309",
+    "windows_warning_audit": {
+      "snapshot_manifest_sha256": "5c06f93bd0d2956d2d8ad6d6403590fdb6ccc596ae47e19b24b8abcbe25fa15e",
+      "baseline_head": "54a6453fc2aa85da30a95338ea37566dd005b223",
+      "total_warning_occurrences": 80,
+      "parsed_project_warning_occurrences": 80,
+      "added_source_files": 57,
+      "added_source_lines": 4916,
+      "added_line_warnings": [],
+      "parser_fault_control": {
+        "injected_added_line_warning_detected": 1,
+        "normal_added_line_warnings": 0
+      },
+      "scope": "Exact archived src/tests bytes compared to the manifest baseline; source prefix matched in full; generated and dependency sources excluded."
+    },
+    "test_harness_corrections": [
+      "Registry enumeration uses list, then excludes exact helper tags. gui:list is invalid and its native2 run is retained.",
+      "The OOP expected identity canonicalizes an inner .so fixture location to its VST3 bundle; Windows inner .vst3 and macOS bundle identities are retained.",
+      "Windows owned temporary path was170characters. The failed repeated-take filename path was257characters before suffix,260 with(2). Same-binary short-TEMP focused and complete engine reruns passed.",
+      "Foreground samples are judged from first RUN through the suite footer; startup/shutdown samples remain retained. All three same-binary picker attempts then passed.",
+      "Windows native shell folders ignore USERPROFILE/APPDATA redirects. Future CTest uses an explicit private config, short TEMP and per-test config removal for10 cases that own their temporary special-location roots. Original native directory metadata predates these runs; no before snapshot exists for that first run.",
+      "Five host/timing cases now carry the required[ipc] tag. Original Windows properties werefalse for all5. Mac complete compiled IPC inventory80 cases isserial; this does not establish starvation as the earlier bypass failure cause.",
+      "The Windows app output must carry the same pinned Mesa DLLs as the probe. CMake now copies both; CI checks all4 copies. The580 and5c06 actual WGL checks verified the same pinned Mesa DLLs in app and probe outputs.",
+      "Windows SFZ fixture paths now use the native I/O spelling for identity, byte reads, rename and existence checks. Four direct ordinary/native probes each failed then passed; the ordinary is_regular_file probe did not throw.",
+      "Producer QPC completion marker and conservative suite-start membership have30 actual PowerShell source-mutant red/green controls. Foreign queries overlapping completion remain failures even when the consumer has already read the footer.",
+      "The current browser predicate accepts present long-path files and rejects long-path Save directories. Windows unit red3failed assertions(native3) becomes42/42(native0); actual SFZ old-guard mutation native1 becomes restored native0.",
+      "The Windows native piano close path immediately hides its HWND while retaining deferred resource teardown. The original stacking failure and an intentionally hidden initial child have actual failing/restored passing evidence."
+    ],
+    "compiled_candidate": {
+      "canonical_manifest_sha256": "5c06f93bd0d2956d2d8ad6d6403590fdb6ccc596ae47e19b24b8abcbe25fa15e",
+      "windows_manifest_sha256": "dd6246e172517ecc13f5b25efc32cdc941e43635070c82e3416bad49d69c8eb2",
+      "files": 5921,
+      "manifest": "build/016-remote-prep/snapshots/5c06f93bd0d2/source-current.manifest.json",
+      "scope": "Immutable validation snapshot. Later report updates and the separately verified transport test macro warning fix are not represented by this whole-tree hash."
+    },
+    "live_sfz_validation": {
+      "linux": "C93: all four providers verified live over HTTPS with pause/Range resume, independent complete payload trees and measured nonzero audio.",
+      "windows": "C93: sfzinstruments, FreePats and Versilian strict/full-payload passes.580: Musical Artifacts strict/full-payload pass,2738 paused bytes,2 Range requests,295-character native longest path, audio/master -13.278045654296875dB. The earlier C93 Musical Artifacts foreign-focus failure remains rejected.",
+      "macos": "Three historical provider payload passes; Musical Artifacts HTTP403. Locked desktop results are not strict foreground acceptance.",
+      "limits": "These source-specific live runs do not substitute for final installed-package/default-path/physical-drive acceptance."
+    },
+    "windows_full_validation": {
+      "full_run": "interactive-gui-8a4ae5e97c2e48ddb1103d20335fdf9c",
+      "native_exit": 0,
+      "strict_focus_pass": true,
+      "app_sha256": "3227d689ec9811514958e5e106f6fe312cfbb78f8fea9aa1b01e51540e3d8d1b",
+      "source_manifest_sha256": "5c06f93bd0d2956d2d8ad6d6403590fdb6ccc596ae47e19b24b8abcbe25fa15e",
+      "footers": [
+        "=== scenarios: 260 pass, 0 fail, 14 skip ==="
+      ],
+      "records": {
+        "PASS": 260,
+        "FAIL": 0,
+        "SKIP": 14
+      },
+      "skip_records": [
+        "[SKIP] gui.clap_no_window_message: only the Linux host looks for a plug-in window in the container",
+        "[SKIP] gui.dsp_readout_realtime_count: the realtime CPU-time guard is Linux-only",
+        "[SKIP] gui.lv2_editor_reflects_state: missing fixture: file_state.lv2",
+        "[SKIP] gui.lv2_midi_learn: missing fixture: file_state.lv2",
+        "[SKIP] gui.midi_io_selectors: virtual MIDI destination fixture requires ALSA sequencer",
+        "[SKIP] gui.oop_editor_closes_before_child: Windows tracks the child by handle, not by pid",
+        "[SKIP] gui.oop_editor_failure_no_strand: the sandbox stub children are driven on POSIX only",
+        "[SKIP] gui.piano_live_recording_preview: requires the native virtual keyboard and X server readback",
+        "[SKIP] gui.piano_roll_follows_take: reads the window back through the X server",
+        "[SKIP] gui.piano_roll_keeps_its_region: reads the window back through the X server",
+        "[SKIP] gui.piano_roll_shows_each_take: reads the window back through the X server",
+        "[SKIP] gui.plugin_editor_tab_left_alone: needs the Linux CLAP fixture",
+        "[SKIP] gui.settings_rescan_devices: requires native settings and ALSA sequencer",
+        "[SKIP] gui.slot_health_labels: the sandbox stub children are driven on POSIX only"
+      ],
+      "focus_samples": 3982,
+      "in_suite_samples": 3966,
+      "unowned_in_suite": 0,
+      "producer_footer_clock": null,
+      "ctest": {
+        "native_exit": 0,
+        "seconds": 89.9534424,
+        "serial_host_cases": 5,
+        "source_manifest_path": "C:\\Users\\marc\\dusk-m3-validation\\source\\build\\v016-current\\logs\\snapshot-5c06f93bd0d2\\source-current.windows-manifest.json",
+        "generated_harness_restored": true,
+        "native_folders_unchanged": true,
+        "tests": 1728,
+        "source_manifest_sha256": "5c06f93bd0d2956d2d8ad6d6403590fdb6ccc596ae47e19b24b8abcbe25fa15e",
+        "per_case_private_fixture_exceptions": 10,
+        "parallel": 4,
+        "temporary_root": "C:\\Users\\marc\\dusk-m3-validation\\source\\build\\v016-current\\t\\ctest-dc7cb950"
+      },
+      "ctest_tail": "...............   Passed    0.08 sec\n          Start 1718: ipc-stub: repeated connect, block, and teardown\n1722/1728 Test #1718: ipc-stub: repeated connect, block, and teardown ................................................................   Passed    0.21 sec\n          Start 1719: OOP control replies correlate requests and validate their shape\n1723/1728 Test #1719: OOP control replies correlate requests and validate their shape ................................................   Passed    0.60 sec\n          Start 1720: OOP worker park timeout prevents prepare mutation\n1724/1728 Test #1720: OOP worker park timeout prevents prepare mutation ..............................................................   Passed    0.44 sec\n          Start 1721: OOP worker park timeout prevents release mutation\n1725/1728 Test #1721: OOP worker park timeout prevents release mutation ..............................................................   Passed    0.44 sec\n          Start 1722: OOP worker park timeout prevents state read\n1726/1728 Test #1722: OOP worker park timeout prevents state read ....................................................................   Passed    0.44 sec\n          Start 1723: OOP worker park timeout prevents state write\n1727/1728 Test #1723: OOP worker park timeout prevents state write ...................................................................   Passed    0.44 sec\n          Start 1724: SFZ library shutdown joins an idle worker after acknowledged jobs\n1728/1728 Test #1724: SFZ library shutdown joins an idle worker after acknowledged jobs ..............................................   Passed    1.44 sec\n\n100% tests passed, 0 tests failed out of 1728\n\nTotal Test time (real) =  84.91 sec\n\nThe following tests did not run:\n\t  5 - SFZ ZIP extraction distinguishes unavailable input from corrupt contents (Skipped)\n\t  6 - SFZ pack publication rejects case-distinct license aliases (Skipped)\n\t 11 - SFZ installed tree hashing refuses case-distinct aliases (Skipped)\n\t 12 - SFZ library relocation never recreates a disconnected destination (Skipped)\n\t 13 - SFZ library relocation rejects a replacement destination with a copied marker (Skipped)\n\n---stderr---\n",
+      "posts_verdicts": [
+        "REGRESS-EXIT 0",
+        "REGRESS-SECONDS 1048",
+        "REGRESS-PHASE scenarios-gui RESULT PASS",
+        "REGRESS-PHASE scenarios-gui END"
+      ],
+      "ctest_pass": 1723,
+      "ctest_skip": 5,
+      "ctest_fail": 0,
+      "completion_clock": {
+        "footer_seconds": 1045.8256509999999,
+        "qpc_frequency": 3579545,
+        "qpc_sample_scope": "foreground-and-session-v1",
+        "qpc_is_high_resolution": true,
+        "footer_observed_qpc": 175078563824,
+        "footer_qpc_lines": [
+          {
+            "line": "[SCENARIO_END_QPC] freq=3579545 start=175077648425 end=175077648577 pid=10196 frequency_ok=1 start_ok=1 end_ok=1 write=45 flush=0",
+            "observed_qpc": 175078581694
+          }
+        ],
+        "completion_qpc": {
+          "frequency": 3579545,
+          "end": 175077648577,
+          "after_samples": 2,
+          "during_samples": 3966,
+          "start": 175077648425
+        }
+      }
+    },
+    "current_physical_timing": {
+      "status": "Current normal candidate reproduces engine overruns; temporary trace identifies over-budget engine calls during measurement. Internal DSP/scheduling cause remains unproven.",
+      "candidate_manifest_sha256": "5c06f93bd0d2956d2d8ad6d6403590fdb6ccc596ae47e19b24b8abcbe25fa15e",
+      "evidence": {
+        "all_hashes_verified": true,
+        "files": 66,
+        "archive": {
+          "path": "/home/marc/projects/DuskStudio/build/validation-016-20261022-current/logs/linux-5c06-physical-timing-evidence.tar.gz",
+          "bytes": 439324,
+          "sha256": "c754b79da5ff719194f2e492a41569f6aaaf5e0f7933e153f6e0037e5c75a64c",
+          "files": 66
+        }
+      },
+      "normal_pass": 5,
+      "normal_fail": 1,
+      "counter_attribution": {
+        "increments": 65,
+        "callbacks": 65,
+        "inside_measurement": 65,
+        "largest_recorded_engine_call_ns": 2097049,
+        "budget_ns": 1333333.3333333333
+      },
+      "trace_execution": {
+        "diagnostic_only": true,
+        "based_on": "5c06f93bd0d2956d2d8ad6d6403590fdb6ccc596ae47e19b24b8abcbe25fa15e",
+        "runs_exit": 1,
+        "source_restored": true,
+        "completed": true,
+        "diagnostic_manifest_sha256": "35187ed442e0da4cce6c3e4592e58d953e105d4a839cf4d30b652674aa46ddb7",
+        "diagnostic_build": {
+          "argv": [
+            "cmake",
+            "--build",
+            "/home/marc/projects/DuskStudio/build/validation-016-20261022-current/build",
+            "--target",
+            "DuskStudio",
+            "-j6"
+          ],
+          "exit": 0,
+          "seconds": 27.134
+        },
+        "restored_build": {
+          "argv": [
+            "cmake",
+            "--build",
+            "/home/marc/projects/DuskStudio/build/validation-016-20261022-current/build",
+            "--target",
+            "DuskStudio",
+            "-j6"
+          ],
+          "exit": 0,
+          "seconds": 2.453
+        },
+        "restored_outputs_match_original": true
+      },
+      "limits": [
+        "The instrumented runs changed timing and are diagnostic evidence, not release acceptance. All original and new failed verdicts remain failures.",
+        "The65 captured increments belong to these new traced runs, not the earlier three historical failures or the new normal run with3 increments.",
+        "Engine-call time includes gate/locate work and scheduler preemption. No finer DSP-stage, deschedule, IRQ or outer ALSA-wrapper attribution was collected.",
+        "The plain trace increments cluster at3.684\u20134.130seconds, and the loop increment at2.143seconds. Temporal clustering alone does not identify a cause.",
+        "The normal loop source run captured92160000 correct values(maxerror1.0934251615246637e-7) while final reader telemetry recorded904 raw misses. Capture and final-stat boundaries differ, so this does not attribute every raw miss individually.",
+        "Actual C++ traces reconciled65 natural counter changes. Missing-record/overflow/clock-error/empty-block guard faults were not injected into the C++ implementation; the18 earlier Python model controls retain their narrower scope.",
+        "Private master-muted output does not establish subjective audible quality or duplex input. The Windows GUI validation VM was concurrently active on the Linux host.",
+        "No priority, scheduler, governor, period, buffer, worker or product DSP change was made."
+      ],
+      "report": "build/016-physical-timing-phase/report.json",
+      "normal_failure": "Capture-off plain playback: native0 but strict timing failure, engine delta3/backend0, mean753.0us(56.5%).",
+      "same_run_loop_source": "92160000 captured source values,0 incorrect, maximum error1.0934251615246637e-7; final raw reader misses904. Capture and final-stat boundaries differ.",
+      "cpu_wall_followup": {
+        "runs": 12,
+        "strict_pass": 8,
+        "strict_fail": 4,
+        "engine_counter_increments": 116,
+        "attributed_increment_callbacks": 116,
+        "max_wall_ns": 2097917,
+        "max_cpu_ns": 2098674,
+        "source_outputs_restored_exactly": true
+      },
+      "cpu_wall_report": "build/016-physical-timing-phase/cpu-wall-report.json",
+      "interpretation": "The further116 measured overrun callbacks spent approximately the same CPU and elapsed time in the engine call. Internal DSP, cache/frequency and other execution-cost causes remain unproven; no scheduler or DSP fix is claimed."
+    },
+    "latest_windows_visual_observation": {
+      "evidence": "build/016-browser-boundary-phase/gui-screen-capture.json",
+      "utc": "2026-10-23T07:18:16.193604+00:00",
+      "foreground_pid": 10196,
+      "window": "Dusk Studio",
+      "frames": 3,
+      "observation": "Mixer visible; no modal/editor overlay in the three frames. This image is not the focused piano overlay test.",
+      "capture": "pythonw screen read only; capture PID5636 was distinct from foreground PID10196; no activation API."
+    }
+  },
+  "initial_vst3_phase": {
+    "date": "2026-10-22",
+    "status": "Local development and verification passed; this is not final release signoff.",
+    "source": {
+      "head": "54a6453fc2aa85da30a95338ea37566dd005b223",
+      "uncommitted": true,
+      "files": {
+        "src/engine/scenario/cases/vst3_io_restart.cpp": "593697fa586bcb73fb67ae97f613702465a0dc8b3221b9d6e1bdeac3037e88f4",
+        "tests/fixtures/runtime_relayout_vst3.cpp": "084bc3c5ed365f247b0dbb3f7be94aa93fa263c65f0ce1168d4c5b214edafabf",
+        "tests/manual_coverage.tsv": "bb360d21ba512823fe2f63143786458cf7769e5eac73c739bbf400db579b61c7"
+      },
+      "preserved_untracked_directory": "external/sfizz/",
+      "production_AudioEngine_unchanged": true
+    },
+    "milestone_review": {
+      "audit_date": "2026-10-22",
+      "milestone": {
+        "number": 9,
+        "title": "0.16",
+        "url": "https://github.com/dusk-audio/dusk-studio/milestone/9",
+        "open_items": 4,
+        "closed_items": 33,
+        "open_issues": [
+          {
+            "number": 916,
+            "title": "[0.16] Make Windows GUI validation portable and warning-free",
+            "url": "https://github.com/dusk-audio/dusk-studio/issues/916"
+          },
+          {
+            "number": 886,
+            "title": "[0.16] Pre-tag validation on the final main commit",
+            "url": "https://github.com/dusk-audio/dusk-studio/issues/886"
+          },
+          {
+            "number": 870,
+            "title": "Playback: a shared fill pool instead of one reader thread per region",
+            "url": "https://github.com/dusk-audio/dusk-studio/issues/870"
+          },
+          {
+            "number": 804,
+            "title": "[0.16] SFZ library: online catalog, downloads and portable locators",
+            "url": "https://github.com/dusk-audio/dusk-studio/issues/804"
+          }
+        ]
+      },
+      "pending_pr": {
+        "number": 915,
+        "url": "https://github.com/dusk-audio/dusk-studio/pull/915",
+        "head": "e8cd263b4106b1090a838e60df8c647c87b372e0",
+        "state": "open",
+        "checks": [
+          {
+            "name": "Build + tests (GCC Release, Ubuntu 22.04, amd64)",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/dusk-audio/dusk-studio/actions/runs/39769647606/job/119793679696"
+          },
+          {
+            "name": "Build + tests (GCC Release, Ubuntu 22.04, arm64)",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/dusk-audio/dusk-studio/actions/runs/39769647641/job/119793679581"
+          },
+          {
+            "name": "Catch2 tests (ASan + UBSan, Ubuntu 22.04)",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/dusk-audio/dusk-studio/actions/runs/39769647471/job/119793679462"
+          },
+          {
+            "name": "De-JUCE ratchet",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/dusk-audio/dusk-studio/actions/runs/39769647606/job/119793679408"
+          },
+          {
+            "name": "Catch2 tests (TSan, Ubuntu 22.04)",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/dusk-audio/dusk-studio/actions/runs/39769647471/job/119793679105"
+          },
+          {
+            "name": "Catch2 tests (MSVC x64 Release, Windows)",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/dusk-audio/dusk-studio/actions/runs/39769647539/job/119793679017"
+          },
+          {
+            "name": "Build + tests (clang Release, macOS arm64)",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/dusk-audio/dusk-studio/actions/runs/39769647399/job/119793678436"
+          }
+        ]
+      },
+      "stable_dependencies": {
+        "clap": {
+          "latest_stable_tag": "1.2.10",
+          "revision": "195b42a004144fab0b3cf95e9c067187d15365b7",
+          "url": "https://github.com/free-audio/clap/tree/1.2.10",
+          "previous_change": "The previous a47f6bad revision differs only in README.md."
+        },
+        "sampler": {
+          "revision": "f92e07104495bbd645325ff62c1a6c8bae3ad428",
+          "latest_green_merge": "abd338d1f7962e623ddafd909fae8232c78f6889",
+          "identical_tree": "6486c38f8c7cc7e57707ab7cedd6a17cefaeb1ba",
+          "upstream_check": "library-and-tests: success",
+          "url": "https://github.com/dusk-audio/dusk-fizz/commit/abd338d1f7962e623ddafd909fae8232c78f6889"
+        },
+        "vst3sdk": {
+          "tag": "dusk-vst3sdk-v1",
+          "revision": "825651ad3a1807fef86a33c9cb480b88ba334c39",
+          "url": "https://github.com/dusk-audio/vst3sdk/tree/dusk-vst3sdk-v1"
+        },
+        "policy": "Direct stable releases or the Dusk-maintained equivalent source tree; nested dependencies retain their parent revision's recorded pins."
+      },
+      "audit_method": "Initial broad outputs were truncated. Final milestone counts use the direct GitHub milestone-filtered issues API; source conclusions were rechecked with bounded reads."
+    },
+    "changes": [
+      "Add independent VST3 0-to-64 and 64-to-0 latency restart scenarios using the actual engine timer and all 24 compensation targets.",
+      "Add recording deferral coverage: audio continues, latency stays at zero through recording, then the timer applies 64 samples after Stop.",
+      "Keep fixture notifications opt-in, preserving existing silent Latency Mode behavior, parameter IDs and serialized state.",
+      "Repair the reused dry-audio assertion so NaN samples cannot satisfy it.",
+      "Align CLAP with stable 1.2.10; restore the sampler checkout to its recorded pin, whose tree equals the latest green Dusk merge.",
+      "Lower the MANUAL partial ceiling from 23 to 22; auto rows rise from 569 to 570. Catch2 source counts remain 1795 cases across 277 files."
+    ],
+    "submodules": {
+      "count": 11,
+      "nested_count": 8,
+      "all_clean": true,
+      "entries": [
+        {
+          "path": "external/clap",
+          "revision": "195b42a004144fab0b3cf95e9c067187d15365b7",
+          "clean": true,
+          "matches_parent_pin": false
+        },
+        {
+          "path": "external/dusk-fizz",
+          "revision": "f92e07104495bbd645325ff62c1a6c8bae3ad428",
+          "clean": true,
+          "matches_parent_pin": true
+        },
+        {
+          "path": "external/dusk-fizz/external/abseil-cpp",
+          "revision": "c2435f8342c2d0ed8101cb43adfd605fdc52dca2",
+          "clean": true,
+          "matches_parent_pin": true
+        },
+        {
+          "path": "external/dusk-fizz/external/filesystem",
+          "revision": "8a2edd6d92ed820521d42c94d179462bf06b5ed3",
+          "clean": true,
+          "matches_parent_pin": true
+        },
+        {
+          "path": "external/dusk-fizz/external/simde",
+          "revision": "2bf459d4ed6d7ed6b9f31bd9e07c91bace5009e0",
+          "clean": true,
+          "matches_parent_pin": true
+        },
+        {
+          "path": "external/dusk-fizz/external/simde/test/munit",
+          "revision": "da8f73412998e4f1adf1100dc187533a51af77fd",
+          "clean": true,
+          "matches_parent_pin": true
+        },
+        {
+          "path": "external/dusk-fizz/external/st_audiofile/thirdparty/dr_libs",
+          "revision": "4b3d07849537ce0b71b22180c0b1335eacc6e9be",
+          "clean": true,
+          "matches_parent_pin": true
+        },
+        {
+          "path": "external/dusk-fizz/external/st_audiofile/thirdparty/dr_libs/tests/external/miniaudio",
+          "revision": "d1a166c83ab445b1c14bc83d37c84e18d172e5f5",
+          "clean": true,
+          "matches_parent_pin": true
+        },
+        {
+          "path": "external/dusk-fizz/external/st_audiofile/thirdparty/libaiff",
+          "revision": "78864a4a2e769e426be8cfd78ae7f5f72e236c33",
+          "clean": true,
+          "matches_parent_pin": true
+        },
+        {
+          "path": "external/dusk-fizz/external/st_audiofile/thirdparty/wavpack",
+          "revision": "07ffb331d23c16e2d2979370441f63ea722760bc",
+          "clean": true,
+          "matches_parent_pin": true
+        },
+        {
+          "path": "external/vst3sdk",
+          "revision": "825651ad3a1807fef86a33c9cb480b88ba334c39",
+          "clean": true,
+          "matches_parent_pin": true
+        }
+      ],
+      "intentional_uncommitted_pin_change": "external/clap: a47f6badb49d948fd009998f28309cdab78979c9 -> 195b42a004144fab0b3cf95e9c067187d15365b7",
+      "sampler_initial_checkout": "0bb8aae364dc648c7c55438d17c7564a5d5eaef5",
+      "sampler_final_checkout": "f92e07104495bbd645325ff62c1a6c8bae3ad428",
+      "sampler_latest_merge_tree_equivalence": "f92e0710 and abd338d1 both have tree 6486c38f8c7cc7e57707ab7cedd6a17cefaeb1ba"
+    },
+    "validation": {
+      "app_build": {
+        "command": "cmake --build build -j6",
+        "exit": 0,
+        "logs": [
+          "build/016-readiness-stable-build.log",
+          "build/016-readiness-stable-final-build.log"
+        ]
+      },
+      "test_build": {
+        "command": "cmake --build build-tests --target dusk-studio-tests -j6",
+        "exit": 0,
+        "log": "build/016-readiness-stable-tests-build.log"
+      },
+      "ctest": {
+        "command": "ctest --test-dir build-tests --parallel 6 --output-on-failure",
+        "exit": 0,
+        "registered": 1759,
+        "passed": 1757,
+        "failed": 0,
+        "skipped": 2,
+        "elapsed_seconds": 23.0,
+        "log": "build/016-readiness-ctest-stable.log",
+        "log_sha256": "8964c48558bb4bed943d122c088fe4fe157f9a7201f778e9b4c72ac8a9a8f356",
+        "summary": [
+          "100% tests passed out of 1759",
+          "Total Test time (real) =  23.00 sec"
+        ],
+        "skips": [
+          "SFZ pack publication rejects case-distinct license aliases",
+          "SFZ installed tree hashing refuses case-distinct aliases"
+        ],
+        "skip_reason": "The macOS volume is case-insensitive."
+      },
+      "engine": {
+        "selection": "all",
+        "native_exit": 0,
+        "timed_out": false,
+        "elapsed_seconds": 56.646,
+        "permission_helper_exit": 0,
+        "app_sha256": "d01a494e2bc7cf9f201263354060fc9f38af5f43826f47d01958896b31635a85",
+        "fixture_sha256": "b68f906ae6d4fb77db17bfe345c78344f2f1d791deffbd5e2c7ee6709ba9f5b1",
+        "source_sha256": {
+          "src/engine/AudioEngine.cpp": "268f285403dd74fc1c842a41a2384e33c5be0cedf6bbb9b585718ca75d6264a8",
+          "src/engine/scenario/cases/vst3_io_restart.cpp": "593697fa586bcb73fb67ae97f613702465a0dc8b3221b9d6e1bdeac3037e88f4",
+          "tests/fixtures/runtime_relayout_vst3.cpp": "084bc3c5ed365f247b0dbb3f7be94aa93fa263c65f0ce1168d4c5b214edafabf"
+        },
+        "log": "build/016-readiness-runs/stable-engine/output.log",
+        "log_sha256": "75c8042ceb12ab79e8bdcffb8e4aceb04a7d154628dfe598b5e1cbd47caaf47b",
+        "output": [
+          "[PASS] vst3.latency_decrease_follows_restart (1 ms)",
+          "[PASS] vst3.latency_increase_follows_restart (0 ms)",
+          "[PASS] vst3.latency_restart_waits_for_take (784 ms)",
+          "=== scenarios: 188 pass, 0 fail, 4 skip ==="
+        ],
+        "skips": [
+          "[SKIP] engine.dsp_lane_back_on_realtime_after_stop: the realtime CPU-time guard is Linux-only",
+          "[SKIP] oop.killed_child_bypasses: the sandbox stub children are not exercised on macOS",
+          "[SKIP] oop.rapid_switching_safe: the sandbox stub children are not exercised on macOS",
+          "[SKIP] oop.unload_reaps_child: the sandbox stub children are not exercised on macOS"
+        ]
+      },
+      "selftest": {
+        "selection": "selftest",
+        "native_exit": 0,
+        "timed_out": false,
+        "elapsed_seconds": 4.6,
+        "permission_helper_exit": 0,
+        "app_sha256": "d01a494e2bc7cf9f201263354060fc9f38af5f43826f47d01958896b31635a85",
+        "fixture_sha256": "b68f906ae6d4fb77db17bfe345c78344f2f1d791deffbd5e2c7ee6709ba9f5b1",
+        "source_sha256": {
+          "src/engine/AudioEngine.cpp": "268f285403dd74fc1c842a41a2384e33c5be0cedf6bbb9b585718ca75d6264a8",
+          "src/engine/scenario/cases/vst3_io_restart.cpp": "593697fa586bcb73fb67ae97f613702465a0dc8b3221b9d6e1bdeac3037e88f4",
+          "tests/fixtures/runtime_relayout_vst3.cpp": "084bc3c5ed365f247b0dbb3f7be94aa93fa263c65f0ce1168d4c5b214edafabf"
+        },
+        "log": "build/016-readiness-runs/stable-selftest/output.log",
+        "log_sha256": "0474ac00d99e065d3bcdf944d41563ba18cdfd17738d88716f70859897be0552",
+        "output": [
+          "[PASS] Pass-Through Unity (track 0 IN, fader 0 dB, pan center, master 0 dB)",
+          "[PASS] Mute Silences (track 0 IN + mute on)",
+          "[PASS] Master Fader -6 dB (track 0 unity + pan center, master -6 dB)",
+          "[PASS] Master Comp No Noise Floor (comp ON, silent input)",
+          "[PASS] Bus Solo Mutes Direct (bus 0 soloed + empty, track 0 unassigned)",
+          "[PASS] Channel Routing 2-out (16in/2out, pan center)",
+          "[PASS] Channel Routing 4-out (16in/4out, only ch 0+1 should have audio)",
+          "[PASS] Master Tape gain audit (sweep)",
+          "[PASS] Channel comp (Opto / FET / VCA) on -18 dBFS @ 1 kHz",
+          "[PASS] Comp wiring uniformity across 16 tracks (Opto)",
+          "[PASS] Parallel Matches Serial (16 active tracks, 8 workers vs serial)",
+          "[PASS] MIDI play-along monitor (armed + IN MIDI track, live note each state)",
+          "[PASS] Audio play-along sends (IN audio track feeds aux 0 each state)",
+          "[PASS] Loop-record take stacking (aligned start, two callbacks, punch + seam)",
+          "[OK] Clone track native insert: CLAP identity and state clone and undo"
+        ]
+      },
+      "metadata_contracts": [
+        "manual-coverage-contract",
+        "release-mechanics-contract"
+      ],
+      "manual_coverage": "645 behaviors / 242 headings: 570 auto, 22 partial, 16 manual, 0 gap, 37 n/a",
+      "juce_gate": "157 coupled source files, 6878 uses; pass, no added coupling.",
+      "changed_source_warning_diagnostics": [],
+      "neighbors_checked": [
+        "VST3 state restore retains silent fixture notifications by default.",
+        "VST3 bus-layout restart during recording, repeated activation and restart-storm quarantine pass.",
+        "CLAP runtime latency, restart pacing, refused restart and recording deferral pass.",
+        "Bounce PDC trimming, offline inserts, native clone/state/undo and recording scenarios pass.",
+        "All 24 PDC targets match independently initialized rise and drop cases; the insert track target remains zero.",
+        "Scenario cleanup stops the take before unloading the slot; full catalog resets leave no failures."
+      ]
+    },
+    "failure_controls": {
+      "scope": "VST3 controls were captured before sampler alignment; final complete suites were repeated after alignment. Production mutations were restored.",
+      "notifications_disabled": {
+        "selection": "vst3.latency_increase_follows_restart,vst3.latency_decrease_follows_restart,vst3.latency_restart_waits_for_take",
+        "native_exit": 1,
+        "timed_out": false,
+        "elapsed_seconds": 11.283,
+        "permission_helper_exit": 0,
+        "app_sha256": "6bc21eccd98aa10ab2d481da97a8230cc52865b5dd805897726a4754405e32dc",
+        "log": "build/016-readiness-runs/red-missing-notification-desktop/output.log",
+        "log_sha256": "9710edc6fb10f3489fef5def77ad80e508525bf7daf8d4be81d5bcab66c993d7",
+        "output": [
+          "[FAIL] vst3.latency_increase_follows_restart: the requested VST3 latency and all track PDC targets did not reach 64 samples (2028 ms)",
+          "[FAIL] vst3.latency_decrease_follows_restart: the requested VST3 latency and all track PDC targets did not reach 0 samples (2006 ms)",
+          "[FAIL] vst3.latency_restart_waits_for_take: the held VST3 latency and PDC did not reach 64 samples after Stop (2783 ms)",
+          "=== scenarios: 0 pass, 3 fail, 0 skip ==="
+        ]
+      },
+      "recording_deferral_disabled": {
+        "selection": "vst3.latency_restart_waits_for_take",
+        "native_exit": 1,
+        "timed_out": false,
+        "elapsed_seconds": 3.649,
+        "permission_helper_exit": 0,
+        "app_sha256": "4b6bc36d600b926d87b6aab5810da782f2e42d5e8dab573a537a9a90e5effcb9",
+        "fixture_sha256": "b68f906ae6d4fb77db17bfe345c78344f2f1d791deffbd5e2c7ee6709ba9f5b1",
+        "source_sha256": {
+          "src/engine/AudioEngine.cpp": "4c3a2b72f0d6957741eb139326c802a63c559f81b709b67c36a4291f6a6bf2d0",
+          "src/engine/scenario/cases/vst3_io_restart.cpp": "593697fa586bcb73fb67ae97f613702465a0dc8b3221b9d6e1bdeac3037e88f4",
+          "tests/fixtures/runtime_relayout_vst3.cpp": "084bc3c5ed365f247b0dbb3f7be94aa93fa263c65f0ce1168d4c5b214edafabf"
+        },
+        "log": "build/016-readiness-runs/red-deferral-disabled/output.log",
+        "log_sha256": "a2d6a4013e060aa677b42bad5ae29ca8efb7930a73bbcece8fb52ec86735f8d7",
+        "output": [
+          "[FAIL] vst3.latency_restart_waits_for_take: VST3 latency or PDC changed during the take (754 ms)",
+          "=== scenarios: 0 pass, 1 fail, 0 skip ==="
+        ]
+      },
+      "repaired_assertion_rejects_nan": {
+        "selection": "vst3.latency_restart_waits_for_take",
+        "native_exit": 1,
+        "timed_out": false,
+        "elapsed_seconds": 2.456,
+        "permission_helper_exit": 0,
+        "app_sha256": "95bbafa8509bfcfbacf8e87613b184e15fb09c7fc8872314b5fbd47a008f2c4a",
+        "fixture_sha256": "c2f91bef792773aa0453f9533d3d15fe58373b63705eaf216db86d31f6ba0e97",
+        "source_sha256": {
+          "src/engine/AudioEngine.cpp": "268f285403dd74fc1c842a41a2384e33c5be0cedf6bbb9b585718ca75d6264a8",
+          "src/engine/scenario/cases/vst3_io_restart.cpp": "593697fa586bcb73fb67ae97f613702465a0dc8b3221b9d6e1bdeac3037e88f4",
+          "tests/fixtures/runtime_relayout_vst3.cpp": "1f074f99c4355fbcbcb88b68ece21609c43d3c213b2e917afe04f3999109e62f"
+        },
+        "log": "build/016-readiness-runs/red-nan-output/output.log",
+        "log_sha256": "67f60d249d8c9d643366339525fc986dea2c18fad4c83305506af2df8b1a232d",
+        "output": [
+          "[FAIL] vst3.latency_restart_waits_for_take: the deferred VST3 insert stopped passing audio (769 ms)",
+          "=== scenarios: 0 pass, 1 fail, 0 skip ==="
+        ]
+      },
+      "old_assertion_wrongly_accepts_same_nan": {
+        "selection": "vst3.latency_restart_waits_for_take",
+        "native_exit": 0,
+        "timed_out": false,
+        "elapsed_seconds": 3.471,
+        "permission_helper_exit": 0,
+        "app_sha256": "6bc21eccd98aa10ab2d481da97a8230cc52865b5dd805897726a4754405e32dc",
+        "fixture_sha256": "c2f91bef792773aa0453f9533d3d15fe58373b63705eaf216db86d31f6ba0e97",
+        "source_sha256": {
+          "src/engine/AudioEngine.cpp": "268f285403dd74fc1c842a41a2384e33c5be0cedf6bbb9b585718ca75d6264a8",
+          "src/engine/scenario/cases/vst3_io_restart.cpp": "4da1f748c5dba7c28e460fc17bc368a121140e756ddeafbbad1c1b4cf0ecbc36",
+          "tests/fixtures/runtime_relayout_vst3.cpp": "1f074f99c4355fbcbcb88b68ece21609c43d3c213b2e917afe04f3999109e62f"
+        },
+        "log": "build/016-readiness-runs/old-assertion-accepts-nan/output.log",
+        "log_sha256": "ec77fe9af9099e8e7c5ebc2d74054db73713cf828c9b72759a3fbc054d1b6d0d",
+        "output": [
+          "[PASS] vst3.latency_restart_waits_for_take (774 ms)",
+          "=== scenarios: 1 pass, 0 fail, 0 skip ==="
+        ]
+      },
+      "normal_output_and_deferral_restored": {
+        "selection": "vst3.latency_increase_follows_restart,vst3.latency_decrease_follows_restart,vst3.latency_restart_waits_for_take",
+        "native_exit": 0,
+        "timed_out": false,
+        "elapsed_seconds": 3.533,
+        "permission_helper_exit": 0,
+        "app_sha256": "95bbafa8509bfcfbacf8e87613b184e15fb09c7fc8872314b5fbd47a008f2c4a",
+        "fixture_sha256": "b68f906ae6d4fb77db17bfe345c78344f2f1d791deffbd5e2c7ee6709ba9f5b1",
+        "source_sha256": {
+          "src/engine/AudioEngine.cpp": "268f285403dd74fc1c842a41a2384e33c5be0cedf6bbb9b585718ca75d6264a8",
+          "src/engine/scenario/cases/vst3_io_restart.cpp": "593697fa586bcb73fb67ae97f613702465a0dc8b3221b9d6e1bdeac3037e88f4",
+          "tests/fixtures/runtime_relayout_vst3.cpp": "084bc3c5ed365f247b0dbb3f7be94aa93fa263c65f0ce1168d4c5b214edafabf"
+        },
+        "log": "build/016-readiness-runs/green-latency/output.log",
+        "log_sha256": "5767465a9ee310f14eb841fb1c487e079cf4ace19c21410dd16ce758085950f1",
+        "output": [
+          "[PASS] vst3.latency_increase_follows_restart (63 ms)",
+          "[PASS] vst3.latency_decrease_follows_restart (8 ms)",
+          "[PASS] vst3.latency_restart_waits_for_take (772 ms)",
+          "=== scenarios: 3 pass, 0 fail, 0 skip ==="
+        ]
+      },
+      "sampler_label_lifetime": {
+        "before": {
+          "revision": "0bb8aae3",
+          "log": "build/016-readiness-ctest-final.log",
+          "output": "SFZ label text remains owned by the loaded instrument: FAILED at tests/multisample_loader.cpp:59; returned empty or invalid text instead of Modulation."
+        },
+        "after": {
+          "revision": "f92e0710",
+          "log": "build/016-readiness-ctest-stable.log",
+          "output": "SFZ label text remains owned by the loaded instrument: Passed, 0.07 sec."
+        },
+        "root_cause": "The old C APIs copy label vectors into local variables and return c_str pointers into those destroyed copies. The recorded pin uses const references."
+      }
+    },
+    "environment": {
+      "host": "macOS 26.6.2 arm64",
+      "external_build_overrides": {
+        "JUCE": "51d11a2be6d5c97ccf12b4e5e827006e19f0555a",
+        "DAF": "63201255b270a318f5bbc50e36e8e30d7ec54393",
+        "donor": "78abae748a32c5863f586ca174a47047a4d2c4a1"
+      },
+      "repairs": [
+        "Selected the already-installed Homebrew libarchive include/library paths in local CMake caches.",
+        "Retrieved the exact pinned utf8proc sources through GitHub; all four Git blob hashes match the pinned commit.",
+        "Used a repository-local ccache directory.",
+        "Used an isolated child-process home plus matching Foundation home and a shorter temporary path for final CTests."
+      ],
+      "rejected_runs": [
+        "Sandboxed application aborted during macOS application registration before any scenarios ran; not functional failure evidence.",
+        "Sandboxed CTest: 250 failures due to unavailable cache/filesystem and IPC access.",
+        "First desktop CTest profile: 17 failures from inconsistent home paths, long Unix socket paths and parallel creation of missing shared temp parents.",
+        "Corrected desktop CTest before sampler alignment: one reproducible label-lifetime failure; zero other failures."
+      ]
+    },
+    "remaining_release_gates": [
+      "PR #915 is still unmerged. Its published e8cd263b head has seven successful required checks; this checkout is main 54a6453f plus the listed changes.",
+      "#916: publish and validate the portable Windows picker/warning fix on the final common DAF candidate; that follow-up is absent from this checkout.",
+      "#804/#886: final-candidate live acceptance of all four SFZ providers on Linux, macOS and Windows, including Windows default long paths and removable-drive move/unplug/replug.",
+      "#870/#886: final candidate performance, listening, cold-host/package and maintainer three-platform walkthrough acceptance.",
+      "Version bump, tagging and release publication require the maintainer gates and authorization."
+    ],
+    "limitations": [
+      "No new Linux or Windows execution or full GUI walkthrough was performed in this session.",
+      "Reported latency and compensation targets are measured; actual audible delay is not measured by these fixtures.",
+      "Local Homebrew libraries target newer macOS than the app deployment target; this is development validation, not proof of macOS 11 shipping compatibility.",
+      "The external DAF override is older than the common ccd8665f candidate named in #916; external sibling repositories were read, not modified.",
+      "Canonical prepush was not invoked because its macOS orchestration performs prohibited pushes and checkout/branch mutations.",
+      "No commits, staging, pushes, branch creation/deletion, merges, version bump, tag or release workflow were performed. Only explicitly authorized submodule checkout exceptions were used."
+    ]
+  },
+  "historical_candidates": [
+    {
+      "label": "Superseded A257/885 preparation record; statements below apply only to that earlier snapshot",
+      "record": {
+        "recorded_utc": "2026-10-23T01:47:45.682196+00:00",
+        "status": "Local builds, 1771 CTest entries and gates pass. Preparing final Linux/Windows validation with corrected fixture paths, runtime DLL copying and serial host-test scheduling.",
+        "baseline_head": "54a6453fc2aa85da30a95338ea37566dd005b223",
+        "version": "0.15.1",
+        "version_bump_gate": "Issue 886 requires maintainer manual passes before bump-version 0.16.0. No version bump, tag or release workflow has run.",
+        "current_source": {
+          "production_AudioEngine_changed": true,
+          "preserved_untracked_directory": "external/sfizz/",
+          "hashes": {
+            ".github/workflows/windows-tests.yml": "0ba1fef6758e3abd4ef70faaf87847ff47c1db5f5a2d1ca665ab46e49b302536",
+            "CMakeLists.txt": "5168dc8ae8af1a7ae1d6f48f608d687a0d5563b42fb94b58712bd47564abb5e1",
+            "MANUAL.md": "652effd275c230110218cb7b6d76874562bc96d8948754347d6c66515786a25e",
+            "README.md": "36541201b42b8b8f45466389a4a30a2390e1d661283534f3802048f254057caa",
+            "scripts/regress/playback-fixtures.py": "3d293a64da4ae83cd447f0d087034127875d1037d3c4453ca8abdc9b2aca078c",
+            "scripts/regress/windows.sh": "6fad55f1d3eeb19a1dea85160ab02a475cf1f06d55aabf9188601f05eff76fde",
+            "scripts/regress/windows/gui-plugin-picker.ps1": "7f1ea4518e77e3de7b26febeb169d561b9cd43f791b780da1c02d17044cc3294",
+            "scripts/regress/windows/lib.ps1": "e3d1b14737642ec9243b2a72c55dd7fb7adeadd08c2b103e9c7ad01568f8fc32",
+            "scripts/regress/windows/scenarios.ps1": "ecc1066f6449c10cef2f4eb07a7c3c1d05750d2a92e80f822e06774a62475fad",
+            "scripts/validate-cross-platform.py": "55d3e87c9fa5fa3282864933032e4edb3760cb94e4c1a9163380c2165bf2612e",
+            "src/DuskStudioApp.cpp": "1e0e255912ce4eb229c56ac2037e90b9f2c64b4e26f83a85ef94c81c06217911",
+            "src/engine/AudioEngine.cpp": "b005b5d7f0dd499be02ac0b249ae36ed6b92faf60881f029230a9a0b5b4697b9",
+            "src/engine/AudioEngine.h": "169c3f50b53e434239e3284d560aeeca3e9779e0e2b6427d779da00ab58565a6",
+            "src/engine/MidiButtonEdges.h": "a5709c6336f2fdaaba04291760ad163a39cd46298f740460d0044ed37766688b",
+            "src/engine/PlaybackEngine.cpp": "9c0436eb6b138e5107b844d9d8004ba6b87a88c5f743b4839923d8ac20f7e265",
+            "src/engine/PlaybackEngine.h": "ea11c1917cae7621a410b2ce2fde8c9a7b377b2b9a55db8e79cef700ca03749c",
+            "src/engine/PlaybackReadCapture.h": "0dd8db9cd530d571174601f717afa44de09785b0e10953bf755ffd92d546b477",
+            "src/engine/Transport.h": "5f1c8b1097b8e573219ce0f52ff8c88b6647e226da69759a85a9cdd14ebe34b3",
+            "src/engine/audiofile/BufferedFileReader.cpp": "90224407357db3dc9f6bd7f7aca66212b0ff33901e373d1580e23394c2f50c10",
+            "src/engine/audiofile/BufferedFileReader.h": "60771b45a8d8e29aba7cdbd9a83995841acf0c7dbafd07ee02eebb8eb23bc5c8",
+            "src/engine/audiofile/ReaderFillPool.cpp": "c084d606b141f1d3be476fa10aeb1282d240d1b3af74b7b085c327a2895f6e3f",
+            "src/engine/audiofile/ReaderFillPool.h": "62ac71d07bbe215548802a4a83f742e2a46ac8f3ab551a13d81130ab2db1c92b",
+            "src/engine/scenario/ScenarioFixtures.cpp": "81c82ff1ea5ef52d7700d0f88a0327650b71adf3e2ade833b77d80825a07c21d",
+            "src/engine/scenario/cases/lv2_worker_bounce.cpp": "5f2fc343e3a4e910cb3218eedf03537de550330d64736851f9df0e236dd459e1",
+            "src/engine/scenario/cases/midi_bindings.cpp": "56e0fc6bd278a5cdcc8e34418fc4b3e412f4d783e46c3753aa5b0426d2874772",
+            "src/engine/scenario/cases/midi_target_matrix.cpp": "e7fd873db56930c3ee7b16b407debb4b6b8c71c9527cd10b7490acf52dcc3d73",
+            "src/engine/scenario/cases/oop_killed_child_bypasses.cpp": "a4fb857dd7c2a3818ab9b0012de8e20983d8235b545e1790333d1c91c2664dd0",
+            "src/engine/scenario/cases/transport.cpp": "19a2d125308aa18dec8ca18d0769213fa31c10cd2182e7dc12ca2baea4665d38",
+            "src/engine/scenario/cases/vst3_io_restart.cpp": "593697fa586bcb73fb67ae97f613702465a0dc8b3221b9d6e1bdeac3037e88f4",
+            "src/ui/AuxLaneComponent.cpp": "b1486f6a17b062eeea66d835daf274e009aa2e789a9aa7225fd69ac3ee3da5bd",
+            "src/ui/BusComponent.cpp": "f88acb7b0b85ce1b69f619ea54b365f73cec556df4ffc24f2ff187b6f1b55396",
+            "src/ui/ChannelStripComponent.cpp": "26f28cb638626709d38f364cc1dc9991cc5b3d6ffc07ad21cf48be7013ca4658",
+            "src/ui/MasterStripComponent.cpp": "0a32e1acae74d71b8667e03a9d987d7420c6b70fcfdd8db3ec1dda6d275a285c",
+            "src/ui/imgui/PianoRollView.cpp": "1dda9dc7a12aa9412009c62541a36b716a77b14cff09452addc4c186ba3dbac1",
+            "src/ui/scenario/cases/gui_midi_learn_plugins.cpp": "6b980b71b7253ce48803225c4be9fcf9dc376115a8ef52f5508ab440f1b321b9",
+            "src/ui/scenario/cases/gui_mixer.cpp": "1a866cb565890a9d1a1c6e389b40e388430c8c73624119d0e0ef000b369eebae",
+            "src/ui/scenario/cases/gui_sfz_live.cpp": "97132fb4d8a175889dc5f9632c761746647de522ba2c700d5ade43722368bb56",
+            "tests/CMakeLists.txt": "0203d499ef6057e77f42f152c8c0b9ad9bcb1ffdba4155f5a800607eaf77bb4b",
+            "tests/fixtures/crash_state_vst3.cpp": "319c2413c2f0355f2394bd3d6996b19406cddf2198946a889ee0b4593e9afb77",
+            "tests/fixtures/runtime_relayout_vst3.cpp": "084bc3c5ed365f247b0dbb3f7be94aa93fa263c65f0ce1168d4c5b214edafabf",
+            "tests/fixtures/worker_lv2.cpp": "23d6d9c7decc1406698f1d664d4e8bca27dbd870111fcb61eb14254ff0217294",
+            "tests/fixtures/worker_plugin.ttl": "a28f7d1f4e3d1cfcddf26eb6e20368b79e8799f57354b59ec11c671d24135bd7",
+            "tests/gui_plugin_picker.sh": "58d943c43c40d93fa33849cf8acd4d2dd507d7d208d540a62b27d417780c8572",
+            "tests/manual_coverage.tsv": "1a2983f811c84d5199abecaa8394b8199f34de1ba48a6a3efb667d2a568f3a24",
+            "tests/midi_button_edges.cpp": "1bb3ef9a0aeb19c667a83418f448c0859791de78a545c5ea801d4b4ec13435b6",
+            "tests/playback_live_swap.cpp": "abc972a47ff9ed871f01b8de46d0fd717a68a9be0e3ad93a4a0ab0a9d594a80f",
+            "tests/playback_loop_read.cpp": "a0d45e62c8ef547f69a35d908061049c00a91ae9d39d1f0edff4f20347a4cf2c",
+            "tests/playback_read_capture.cpp": "48a4569d366894a9309af8c0994c448179e720341c22049bb11704bb23b539dc",
+            "tests/reader_fill_pool.cpp": "bd118f0ea9e3cef86a9deea2f90b341abc3eca89dcea24dbd23bd784727ad369",
+            "tests/release_mechanics.sh": "a5d983ba90568bf975963e8428fdb552ea9d94384fcb49edf4c0c0fd2a487cb7",
+            "tests/transport_stop_locate.cpp": "eabe43402bfd2c996734badbfa2e600efd81322b098ed259a996ecf46e9efb38",
+            "tests/validate_cross_platform.py": "236cd0e4ffc15cbc5b81f5979fa4ae29bbe7087b76df76ab0b8a7fe391851551",
+            "tests/windows_regress_snapshot.ps1": "584c697aabfc248e92a459a90a52ba6c47e820c3527644e5bfd22651543adbee",
+            "tests/plugin_slot_lifecycle.cpp": "448ab9ee55946b485963081f391fb0a4b22f328b2f3fb0fa02cf4bcbe27a2e41"
+          }
+        },
+        "local_verification": {
+          "main_build_exit": 0,
+          "ctest_entries": 1771,
+          "ctest_pass": 1769,
+          "ctest_skipped_case_sensitive_filesystem": 2,
+          "catch_cases": 1806,
+          "catch_source_files": 279,
+          "headless_pass": 191,
+          "headless_skip": 4,
+          "headless_fail": 0,
+          "selftests_pass": 14,
+          "manual_behaviours": 645,
+          "manual_auto": 573,
+          "manual_partial": 19,
+          "manual_manual": 16,
+          "manual_gap": 0,
+          "manual_na": 37
+        },
+        "phase_evidence": [
+          {
+            "report": "build/016-automation-phase/report.json",
+            "phase": "Committed automation positions across track/bus/master/aux",
+            "scope": "See report for exact failing/restored passing outputs, measured counts and unproven cases."
+          },
+          {
+            "report": "build/016-capture-phase/report.json",
+            "phase": "bounded playback source capture and analyzer",
+            "scope": "See report for exact failing/restored passing outputs, measured counts and unproven cases."
+          },
+          {
+            "report": "build/016-cross-platform-phase/report.json",
+            "phase": "Generator-aware Windows validation and WGL CI",
+            "scope": "See report for exact failing/restored passing outputs, measured counts and unproven cases."
+          },
+          {
+            "report": "build/016-device-phase/report.json",
+            "phase": "real device playback source verification and retained stop statistics",
+            "scope": "See report for exact failing/restored passing outputs, measured counts and unproven cases."
+          },
+          {
+            "report": "build/016-engine-phase/report.json",
+            "phase": "Readiness-aware callback, loop mapping and capture continuity",
+            "scope": "See report for exact failing/restored passing outputs, measured counts and unproven cases."
+          },
+          {
+            "report": "build/016-loop-boundary-phase/report.json",
+            "phase": "Loop readiness and every internal seam",
+            "scope": "See report for exact failing/restored passing outputs, measured counts and unproven cases."
+          },
+          {
+            "report": "build/016-lv2-latency-phase/report.json",
+            "phase": "native LV2 reported latency and automatic PDC coverage",
+            "scope": "See report for exact failing/restored passing outputs, measured counts and unproven cases."
+          },
+          {
+            "report": "build/016-midi-button-phase/report.json",
+            "phase": "MIDI Press source edges",
+            "scope": "See report for exact failing/restored passing outputs, measured counts and unproven cases."
+          },
+          {
+            "report": "build/016-midi-edge-unit-phase/report.json",
+            "phase": "deterministic complete MIDI edge domain",
+            "scope": "See report for exact failing/restored passing outputs, measured counts and unproven cases."
+          },
+          {
+            "report": "build/016-midi-matrix-phase/report.json",
+            "phase": "MIDI target matrix and MSVC lambda portability",
+            "scope": "See report for exact failing/restored passing outputs, measured counts and unproven cases."
+          },
+          {
+            "report": "build/016-oop-reopen-phase/report.json",
+            "phase": "real sandbox crash save/reopen state",
+            "scope": "See report for exact failing/restored passing outputs, measured counts and unproven cases."
+          },
+          {
+            "report": "build/016-playback-phase/report.json",
+            "phase": "Playback seek readiness and incoming stream adoption",
+            "scope": "See report for exact failing/restored passing outputs, measured counts and unproven cases."
+          },
+          {
+            "report": "build/016-pool-phase/report.json",
+            "phase": "Reader pool staged-seek integration",
+            "scope": "See report for exact failing/restored passing outputs, measured counts and unproven cases."
+          },
+          {
+            "report": "build/016-reader-phase/report.json",
+            "phase": "Buffered reader staged-seek seam",
+            "scope": "See report for exact failing/restored passing outputs, measured counts and unproven cases."
+          },
+          {
+            "report": "build/016-transport-phase/report.json",
+            "phase": "transport committed position and locate serial",
+            "scope": "See report for exact failing/restored passing outputs, measured counts and unproven cases."
+          },
+          {
+            "report": "build/016-windows-harness-phase/report.json",
+            "phase": "Windows GUI validation contracts and CLAP picker seeding",
+            "scope": "See report for exact failing/restored passing outputs, measured counts and unproven cases."
+          },
+          {
+            "report": "build/016-scenario-portability-phase/report.json",
+            "phase": "Scenario registry selector and VST3 path portability"
+          },
+          {
+            "report": "build/016-ipc-scheduling-phase/report.json",
+            "phase": "Host/timing test serial scheduling"
+          }
+        ],
+        "linux_null_device": {
+          "evidence_archive": "build/016-remote-prep/linux-device-evidence-71c153884147.tar.gz",
+          "archive_sha256": "3e74f87242d15f0aa065f47b6253910e2e12a8ecb676c4a711907b5b837662c8",
+          "runs": 18,
+          "passed": true,
+          "checked_source_values": 483864576,
+          "mismatched_source_values": 0,
+          "maximum_loop_error": 1.1377016484459546e-07,
+          "committed_seeks": 9,
+          "loop_wraps": 12,
+          "rates": [
+            {
+              "sample_rate": 48000,
+              "buffer_size": 256,
+              "private_null_sink": true,
+              "source_capture_values": 69132288,
+              "capture_off_callback_us": [
+                564.7,
+                562.8,
+                564.7
+              ],
+              "capture_off_budget_percent": [
+                10.6,
+                10.6,
+                10.6
+              ],
+              "xruns": 0,
+              "fill_errors": 0,
+              "workers": 3
+            },
+            {
+              "sample_rate": 96000,
+              "buffer_size": 256,
+              "private_null_sink": true,
+              "source_capture_values": 138240000,
+              "capture_off_callback_us": [
+                552.4,
+                560.6,
+                569.7
+              ],
+              "capture_off_budget_percent": [
+                20.7,
+                21.0,
+                21.4
+              ],
+              "xruns": 0,
+              "fill_errors": 0,
+              "workers": 3
+            },
+            {
+              "sample_rate": 192000,
+              "buffer_size": 256,
+              "private_null_sink": true,
+              "source_capture_values": 276492288,
+              "capture_off_callback_us": [
+                555.6,
+                553.7,
+                555.9
+              ],
+              "capture_off_budget_percent": [
+                41.7,
+                41.5,
+                41.7
+              ],
+              "xruns": 0,
+              "fill_errors": 0,
+              "workers": 3
+            }
+          ]
+        },
+        "linux_physical_device": {
+          "evidence_archive": "build/016-remote-prep/linux-physical-evidence-71c153884147.tar.gz",
+          "archive_sha256": "1da838f8ef97b7e501b05f4a93870a63aac021cc0c870351332bef35d8bde158",
+          "device": "Scarlett 2i2 USB, USB Audio",
+          "source_manifest_sha256": "71c153884147c6792991f45f1a958133c5296c03b620b1c2e4dba6e0ed903f9e",
+          "app_sha256": "18652faa043ac10ed6eb4f988ca8861148424ca0dd1e16932a9e86e324f11328",
+          "matrix_runs": 36,
+          "matrix_pass": 33,
+          "matrix_fail": 3,
+          "failed_runs": [
+            {
+              "label": "oracle-192000-256-locate",
+              "native_exit": 1,
+              "xruns": [
+                [
+                  "0",
+                  "1",
+                  "0",
+                  "0"
+                ]
+              ],
+              "callback_us_and_percent": [
+                [
+                  "590.6",
+                  "44.3"
+                ]
+              ],
+              "oracle": [
+                {
+                  "backend_xrun_delta": 0,
+                  "callbacks": 7500,
+                  "checked_values": 92160000,
+                  "committed_seeks": 3,
+                  "complete_callbacks": 7500,
+                  "device_stable": true,
+                  "duplicate_reads": 0,
+                  "engine_xrun_delta": 1,
+                  "final_stop_snapshot": true,
+                  "first_wrong_channel": -1,
+                  "first_wrong_frame": -1,
+                  "first_wrong_track": -1,
+                  "frame_coverage": true,
+                  "invalid_reads": 0,
+                  "loop_wraps": 0,
+                  "maximum_error": 0.0,
+                  "mismatched_values": 0,
+                  "missing_track_callbacks": 0,
+                  "non_finite_values": 0,
+                  "overflow": false,
+                  "passed": false,
+                  "progressing": true,
+                  "protocol_errors": 0,
+                  "reader_pool_stable": true,
+                  "sample_rate": 192000,
+                  "storage_bytes": 373480512,
+                  "timeline_errors": 0
+                }
+              ]
+            },
+            {
+              "label": "performance-192000-256-locate",
+              "native_exit": 0,
+              "xruns": [
+                [
+                  "0",
+                  "1",
+                  "0",
+                  "0"
+                ]
+              ],
+              "callback_us_and_percent": [
+                [
+                  "551.3",
+                  "41.3"
+                ]
+              ],
+              "oracle": []
+            },
+            {
+              "label": "performance-192000-256-loop",
+              "native_exit": 0,
+              "xruns": [
+                [
+                  "0",
+                  "1",
+                  "0",
+                  "0"
+                ]
+              ],
+              "callback_us_and_percent": [
+                [
+                  "562.0",
+                  "42.2"
+                ]
+              ],
+              "oracle": []
+            }
+          ],
+          "targeted_repeats": {
+            "runs": 9,
+            "pass": 9,
+            "fail": 0,
+            "audio_workers_override": 0
+          },
+          "limitations": [
+            "Original three engine-overrun failures remain failures; root cause unproven.",
+            "Zero backend XRUNs does not disprove individual callback deadline misses.",
+            "Statistics and final XRUN counters have different capture boundaries.",
+            "Warm filesystem cache; not cold-cache or Pi measurements.",
+            "The application/source hashes identify the capture/device phase before later LV2/OOP/MIDI changes."
+          ]
+        },
+        "current_remote_source_status": {
+          "linux": "a257 build passed; CTest passed; headless193 pass/1 fail/2 skip isolated to the newly added OOP fixture path expectation. GUI catalog invalid selector prevented launch. Both are corrected locally and require a fresh snapshot.",
+          "windows": "a257 common-DAF CCD ASIO build passed. Same binary: all three picker attempts each2PASS/native0 and the complete engine suite185PASS/0FAIL/10SKIP under short owned TEMP. Original long-TEMP run182PASS/3FAIL/10SKIP is retained. CTest1725PASS/3FAIL: SFZ long TEMP, spoofed-home parity, and an untagged timing test; all remain recorded until corrected harness/source reruns.",
+          "windows_added_line_warning_audit": "pending decoded final build log audit; native build passed."
+        },
+        "remaining_release_gates": [
+          "Fresh source build and full automated/GUI validation on Linux and Windows, including CLAP picker and Linux LV2 preservation.",
+          "Strict macOS foreground GUI acceptance is unavailable while loginwindow locks the desktop. Functional passes do not satisfy this gate.",
+          "All four SFZ providers on each OS. macOS Musical Artifacts remains HTTP403 service-blocked; native exit1 is retained.",
+          "Default-location VSCO/VCSL long-path installs on Windows. Current owned helper explicitly overrides the root and does not prove OS defaults.",
+          "Physical external-drive move, unplug and replug on each OS; no available controlled physical drive fixture.",
+          "Subjective first-second master export, Phase walkthrough and maintainer manual passes on all three OSes.",
+          "Resolve remaining 192kHz/256 engine-overrun uncertainty; original 3 failures remain recorded despite 9 passing targeted repeats.",
+          "Human-owned commits/merge and final-main CI, installed shipping packages and release dry run before final signoff."
+        ],
+        "not_done": [
+          "No git add/commit/push/checkout/switch/stash/reset/rebase or branch changes in these phases.",
+          "No GitHub issue closure, PR comment, merge, tag or release workflow.",
+          "No canonical regress/prepush run because its synchronization executes forbidden Git operations. Manifest-verified isolated builds provide separate evidence.",
+          "No speculative import of the four remaining PR GUI cleanup patches; source-supported race candidates lack an observed failing reproduction."
+        ],
+        "sfz_scope_authority": "https://github.com/dusk-audio/dusk-studio/issues/804#issuecomment-6252770309",
+        "windows_warning_audit": {
+          "snapshot_manifest_sha256": "a257fd69ff6e64253e4c15840b69e5cdefa8f6b662fcb1968a4d78142025a7cb",
+          "baseline_head": "54a6453fc2aa85da30a95338ea37566dd005b223",
+          "total_warning_occurrences": 1059,
+          "parsed_project_warning_occurrences": 1059,
+          "added_source_files": 43,
+          "added_source_lines": 4614,
+          "added_line_warnings": [],
+          "parser_fault_control": {
+            "injected_added_line_warning_detected": 1,
+            "normal_added_line_warnings": 0
+          },
+          "scope": "Exact archived src/tests bytes compared to the manifest baseline; source prefix matched in full; generated and dependency sources excluded."
+        },
+        "test_harness_corrections": [
+          "Registry enumeration uses list, then excludes exact helper tags. gui:list is invalid and its native2 run is retained.",
+          "The OOP expected identity canonicalizes an inner .so fixture location to its VST3 bundle; Windows inner .vst3 and macOS bundle identities are retained.",
+          "Windows owned temporary path was170characters. The failed repeated-take filename path was257characters before suffix,260 with(2). Same-binary short-TEMP focused and complete engine reruns passed.",
+          "Foreground samples are judged from first RUN through the suite footer; startup/shutdown samples remain retained. All three same-binary picker attempts then passed.",
+          "Windows native shell folders ignore USERPROFILE/APPDATA redirects. Future CTest uses an explicit private config, short TEMP and per-test config removal for10 cases that own their temporary special-location roots. Original native directory metadata predates these runs; no before snapshot exists for that first run.",
+          "Five host/timing cases now carry the required[ipc] tag. Original Windows properties werefalse for all5. Mac complete compiled IPC inventory80 cases isserial; this does not establish starvation as the earlier bypass failure cause.",
+          "The Windows app output must carry the same pinned Mesa DLLs as the probe. CMake now copies both; CI checks all4 copies. Actual Windows after-build verification is pending."
+        ]
+      }
+    }
+  ]
+}

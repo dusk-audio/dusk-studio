@@ -25,6 +25,8 @@ constexpr FixtureCandidate kCandidates[] = {
     { "multi_bus.clap",   "tests/dusk-studio-multi-bus-clap-fixture.clap" },
     { "relayout.vst3",    "VST3/Release/dusk-studio-runtime-relayout-vst3-fixture.vst3" },
     { "relayout.vst3",    "VST3/dusk-studio-runtime-relayout-vst3-fixture.vst3" },
+    { "crash_state.vst3", "VST3/Release/dusk-studio-crash-state-vst3-fixture.vst3" },
+    { "crash_state.vst3", "VST3/dusk-studio-crash-state-vst3-fixture.vst3" },
     { "file_state.lv2",   "tests/file-state-fixture.lv2" },
     { "many_patch.lv2",   "tests/many-patch-fixture.lv2" },
     { "worker.lv2",       "tests/worker-fixture.lv2" },

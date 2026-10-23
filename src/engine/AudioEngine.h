@@ -22,6 +22,7 @@
 #include "../foundation/MessageThread.h"
 #include "../foundation/SmoothedValue.h"
 #include "../foundation/TransportPosition.h"
+#include "MidiButtonEdges.h"
 #include "MidiSyncReceiver.h"
 #include "MidiTimeCodeReceiver.h"
 #include "MidiClockEmitter.h"
@@ -213,6 +214,14 @@ public:
     bool              isLoopRecordingActive() const noexcept
         { return recordManager.isLoopCaptureActive(); }
     PlaybackEngine&   getPlaybackEngine()  noexcept { return playbackEngine; }
+    using PlaybackReadObserver = void (*) (void*, int, std::int64_t, std::int64_t, std::int64_t,
+                                           const float*, const float*, int) noexcept;
+    // Install and clear only with the owning callback detached and drained.
+    void setPlaybackReadObserver (PlaybackReadObserver observer, void* context) noexcept
+    {
+        playbackReadObserver = observer;
+        playbackReadContext = context;
+    }
     PluginManager&    getPluginManager()   noexcept { return pluginManager; }
     MasteringPlayer&  getMasteringPlayer() noexcept { return masteringPlayer; }
     MasteringChain&   getMasteringChain()  noexcept { return masteringChain; }
@@ -795,6 +804,8 @@ private:
     std::vector<PluginLoadFailure> lastPluginLoadFailures;
     void collectDeferredNativeRestoreFailures();
     PlaybackEngine  playbackEngine  { session };
+    PlaybackReadObserver playbackReadObserver = nullptr;
+    void* playbackReadContext = nullptr;
     PluginManager   pluginManager;
     juce::UndoManager undoManager;
     RegionClipboard   regionClipboard;
@@ -1041,6 +1052,7 @@ private:
     // reserveBytes'd off the RT path in rebuildMidiBanks so the drain and the
     // test-inject merge never allocate on the audio thread.
     std::vector<dusk::MidiBuffer> perInputMidi;
+    std::vector<MidiButtonEdges> midiButtonEdges;
     // Per-track routing buffer feeding native MIDI consumers and the recorder.
     std::array<dusk::MidiBuffer, Session::kNumTracks> perTrackMidi;
     // The timeline scheduler's controller chase, audio thread only.

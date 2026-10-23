@@ -6,12 +6,14 @@
 #include "../../../session/Session.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace duskstudio::scenario
 {
@@ -75,6 +77,28 @@ ScenarioResult playSnapsToLoopStart (ScenarioContext& ctx)
     transport.setPlayhead (0);
     engine.play();
     ctx.expect (transport.getPlayhead() == 0, "Play snapped to a loop that was switched off");
+    engine.stop();
+
+    transport.setLoopRange (1000, 4000);
+    transport.setLoopEnabled (true);
+    engine.play();
+    for (const std::int64_t target : { std::int64_t (500), std::int64_t (5000) })
+    {
+        const auto heard = transport.getCommittedPlayhead();
+        const auto serial = transport.getLocateCount();
+        engine.getPlaybackEngine().holdLocateReadyForTest (true);
+        transport.locate (target);
+        ctx.pump (1);
+        ctx.expect (transport.getCommittedPlayhead() == heard + ScenarioContext::kBlockSize,
+                    "a pending loop seek changed the committed timeline");
+        ctx.expect (transport.getLocateCount() == serial, "a pending loop seek changed its serial");
+        engine.getPlaybackEngine().holdLocateReadyForTest (false);
+        ctx.pump (1);
+        const auto normalized = target < 1000 ? 1000 : 2000;
+        ctx.expect (transport.getCommittedPlayhead() == normalized + ScenarioContext::kBlockSize,
+                    "a committed loop seek did not normalize to the loop range");
+        ctx.expect (transport.getLocateCount() == serial + 1, "a ready loop seek did not commit once");
+    }
     engine.stop();
     return ctx.verdict();
 }
@@ -222,6 +246,16 @@ ScenarioResult punchPreAndPostRoll (ScenarioContext& ctx)
     ctx.expect (transport.getPlayhead() == punchIn - kSecond,
                 "pre-roll did not start playback one second before the punch-in");
 
+    engine.getPlaybackEngine().holdLocateReadyForTest (true);
+    transport.locate (punchOut + kSecond);
+    ctx.pump (1);
+    if (! ctx.expect (! engine.serviceTransportRequests().stopped,
+                      "post-roll stopped at a requested position that audio had not reached"))
+        return ctx.verdict();
+    transport.locate (transport.getCommittedPlayhead());
+    engine.getPlaybackEngine().holdLocateReadyForTest (false);
+    ctx.pump (1);
+
     std::int64_t stoppedAt = -1;
     for (int block = 0; block < 10000; ++block)
     {
@@ -333,18 +367,54 @@ ScenarioResult chaseStopLeavesPlayhead (ScenarioContext& ctx)
 
 ScenarioResult seeksKeepCaptureRunning (ScenarioContext& ctx)
 {
+    constexpr int kFrames = ScenarioContext::kBlockSize;
+    constexpr int kSeeks = 32, kBlocksPerSeek = 3;
+    constexpr int kMidiTrack = kTrack + 1;
     auto& engine = ctx.engine();
     auto& transport = engine.getTransport();
     auto& session = ctx.session();
+    auto& midiTrack = session.track (kMidiTrack);
+    const int midiInput = engine.getVirtualKeyboardInputIndex();
+    if (! ctx.expect (midiInput >= 0, "the virtual MIDI input is missing")) return ctx.verdict();
     ctx.keep (session.countInEnabled);
     ctx.keep (session.preRollEnabled);
     ctx.keep (session.postRollEnabled);
+    ctx.keep (session.tempoBpm);
+    ctx.keep (session.midiMergeEnabled);
+    ctx.keep (session.track (kTrack).printEffects);
+    ctx.keep (midiTrack.mode);
+    ctx.keep (midiTrack.midiInputIndex);
+    ctx.keep (midiTrack.midiChannel);
+    ctx.keep (midiTrack.recordArmed);
+    ctx.cleanup ([&engine, &session, tempoMap = session.tempoMap,
+                  latency = engine.getRecordingLatencyOffsetSamples(),
+                  loop = transport.isLoopEnabled(), loopStart = transport.getLoopStart(),
+                  loopEnd = transport.getLoopEnd()]
+    {
+        engine.stop();
+        session.tempoMap = tempoMap;
+        engine.publishTempoMap();
+        engine.setRecordingLatencyOffsetSamples (latency);
+        engine.getTransport().setLoopRange (loopStart, loopEnd);
+        engine.getTransport().setLoopEnabled (loop);
+    });
     session.countInEnabled.store (false);
     session.preRollEnabled.store (false);
     session.postRollEnabled.store (false);
+    session.tempoBpm.store (120.0f);
+    session.tempoMap.clear();
+    engine.publishTempoMap();
+    session.midiMergeEnabled.store (false);
+    session.track (kTrack).printEffects.store (false);
+    engine.setRecordingLatencyOffsetSamples (0);
     transport.setLoopEnabled (false);
     transport.setPunchEnabled (false);
     armTrack (ctx);
+    midiTrack.mode.store ((int) Track::Mode::Midi);
+    midiTrack.midiInputIndex.store (midiInput);
+    midiTrack.midiChannel.store (0);
+    midiTrack.recordArmed.store (true);
+    session.recomputeRtCounters();
     transport.setPlayhead (kSecond);
     engine.record();
     if (! ctx.expect (transport.isRecording(), "Record did not start before seeking"))
@@ -352,16 +422,66 @@ ScenarioResult seeksKeepCaptureRunning (ScenarioContext& ctx)
 
     const auto suspends = engine.getProcessingSuspendCount();
     const auto gated = engine.getGatedBlockCount();
-    constexpr int kSeeks = 32;
+    std::array<float, kFrames> input {}, silence {}, outputLeft {}, outputRight {};
+    std::array<const float*, kTrack + 1> inputs;
+    inputs.fill (silence.data());
+    inputs[kTrack] = input.data();
+    float* outputs[] { outputLeft.data(), outputRight.data() };
+    const auto sampleAt = [] (int frame)
+    {
+        return (float) ((frame % 2 == 0 ? 1 : -1) * (frame % 1023 + 1)) / 4096.0f;
+    };
+    std::vector<MidiNote> expectedNotes;
+    std::vector<MidiCc> expectedControls;
     std::chrono::steady_clock::duration locateTime {};
+    std::int64_t heardPosition = kSecond;
     for (int i = 0; i < kSeeks; ++i)
     {
-        const auto target = (i % 2 == 0 ? 1 : 10) * kSecond;
+        if (i == kSeeks / 2)
+        {
+            transport.setLoopRange (0, kSecond);
+            transport.setLoopEnabled (true);
+        }
+        const auto target = (i == kSeeks - 1 ? 11 : i % 2 == 0 ? 1 : 10) * kSecond;
+        engine.getPlaybackEngine().holdLocateReadyForTest (true);
+        const auto serial = transport.getLocateCount();
         const auto before = std::chrono::steady_clock::now();
         transport.locate (target);
         locateTime += std::chrono::steady_clock::now() - before;
-        ctx.expect (transport.getPlayhead() == target, "seek did not reach its requested position");
-        ctx.pump (1);
+        ctx.expect (transport.getPlayhead() == target, "seek did not expose its requested position");
+        ctx.expect (transport.getAutomationPosition().samples == heardPosition,
+                    "a requested seek changed the heard automation position");
+        for (int leg = 0; leg < kBlocksPerSeek; ++leg)
+        {
+            const bool commit = leg == kBlocksPerSeek - 1;
+            if (commit) engine.getPlaybackEngine().holdLocateReadyForTest (false);
+            const auto blockStart = commit ? target : heardPosition;
+            const int blockIndex = i * kBlocksPerSeek + leg;
+            for (int frame = 0; frame < kFrames; ++frame)
+                input[(std::size_t) frame] = sampleAt (blockIndex * kFrames + frame);
+            const int note = 36 + blockIndex % 48, velocity = 64 + blockIndex % 63;
+            const int controlValue = 1 + blockIndex % 126;
+            dusk::MidiBuffer events;
+            const std::uint8_t noteOn[] { 0x91, (std::uint8_t) note, (std::uint8_t) velocity };
+            const std::uint8_t control[] { 0xb1, 11, (std::uint8_t) controlValue };
+            const std::uint8_t noteOff[] { 0x81, (std::uint8_t) note, 0 };
+            events.addEvent (noteOn, 3, 32);
+            events.addEvent (control, 3, 64);
+            events.addEvent (noteOff, 3, 160);
+            engine.stageTestMidiInjection (midiInput, std::move (events));
+            engine.audioDeviceIOCallback (inputs.data(), (int) inputs.size(), outputs, 2, kFrames, {});
+            heardPosition = blockStart + kFrames;
+            ctx.expect (transport.getCommittedPlayhead() == heardPosition,
+                        "a pending seek stopped capture advancing or a live loop redirected the linear take");
+            ctx.expect (transport.getLocateCount() == serial + (commit ? 1u : 0u),
+                        "a seek's serial changed before readiness or failed to change at commit");
+            const auto offset = blockStart - kSecond;
+            const auto startTick = samplesToTicks (offset + 32, ScenarioContext::kSampleRate, 120.0f);
+            const auto endTick = samplesToTicks (offset + 160, ScenarioContext::kSampleRate, 120.0f);
+            expectedNotes.push_back ({ 2, note, velocity, startTick, endTick - startTick });
+            expectedControls.push_back ({ 2, 11, controlValue,
+                samplesToTicks (offset + 64, ScenarioContext::kSampleRate, 120.0f) });
+        }
     }
     ctx.expect (engine.getProcessingSuspendCount() == suspends, "seeking gated the recording callback");
     ctx.expect (engine.getGatedBlockCount() == gated, "a seek silenced a capture block");
@@ -374,8 +494,32 @@ ScenarioResult seeksKeepCaptureRunning (ScenarioContext& ctx)
     {
         const auto reader = dusk::audio::FileReader::open (
             std::filesystem::u8path (takes.back().file.getFullPathName().toStdString()));
-        ctx.expect (reader != nullptr && reader->info().numFrames == kSeeks * ScenarioContext::kBlockSize,
-                    "the take lost captured frames while seeking");
+        if (ctx.expect (reader != nullptr && reader->info().numFrames == kSeeks * kBlocksPerSeek * kFrames,
+                        "the take lost captured frames while seeking"))
+        {
+            std::array<float, kSeeks * kBlocksPerSeek * kFrames> recorded {};
+            float* destination[] { recorded.data() };
+            ctx.expect (reader->read (destination, 1, 0, (std::int64_t) recorded.size())
+                            == (std::int64_t) recorded.size(), "the take could not be read completely");
+            for (std::size_t frame = 0; frame < recorded.size(); ++frame)
+                if (! ctx.expect (std::abs (recorded[frame] - sampleAt ((int) frame)) < 1.0e-6f,
+                                  "seeking changed captured input at frame " + std::to_string (frame))) break;
+        }
+    }
+    const auto& midi = midiTrack.midiRegions.current();
+    if (ctx.expect (midi.size() == 1, "seeking did not preserve one MIDI take"))
+    {
+        ctx.expect (midi.front().timelineStart == kSecond, "seeking moved the MIDI take's start");
+        ctx.expect (midi.front().notes.size() == kSeeks * kBlocksPerSeek,
+                    "the MIDI take has " + std::to_string (midi.front().notes.size()) + " notes, expected 96");
+        ctx.expect (midi.front().ccs.size() == kSeeks * kBlocksPerSeek,
+                    "the MIDI take has " + std::to_string (midi.front().ccs.size()) + " controls, expected 96");
+        ctx.expect (std::is_permutation (midi.front().notes.begin(), midi.front().notes.end(),
+                                        expectedNotes.begin(), expectedNotes.end()),
+                    "seeking lost MIDI notes or changed their values or committed timestamps");
+        ctx.expect (std::is_permutation (midi.front().ccs.begin(), midi.front().ccs.end(),
+                                        expectedControls.begin(), expectedControls.end()),
+                    "seeking lost MIDI controls or changed their values or committed timestamps");
     }
     return ctx.verdict();
 }

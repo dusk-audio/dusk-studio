@@ -36,7 +36,7 @@ constexpr const char* kHardRtUri      = "urn:duskstudio:test:worker-hard-rt";
 constexpr float       kDefaultTarget  = 50.0f;
 constexpr const char* kTargetKey      = "urn:duskstudio:test:worker#target";
 
-enum Port : uint32_t { InL, InR, OutL, OutR, TargetPort, DelayPort };
+enum Port : uint32_t { InL, InR, OutL, OutR, TargetPort, DelayPort, LookaheadPort, LatencyPort };
 
 struct Request { float target; float delayMs; };
 struct Reply   { float gain; };
@@ -59,6 +59,8 @@ struct Instance
     float* out[2] {};
     const float* target = nullptr;
     const float* delay = nullptr;
+    const float* lookahead = nullptr;
+    float* latency = nullptr;
 
     float gain = 0.0f;
     float staged = 0.0f;
@@ -107,6 +109,8 @@ void connectPort (LV2_Handle instance, uint32_t port, void* data)
         case OutR:       self.out[1] = static_cast<float*> (data); break;
         case TargetPort: self.target = static_cast<const float*> (data); break;
         case DelayPort:  self.delay  = static_cast<const float*> (data); break;
+        case LookaheadPort: self.lookahead = static_cast<const float*> (data); break;
+        case LatencyPort: self.latency = static_cast<float*> (data); break;
         default: break;
     }
 }
@@ -114,6 +118,7 @@ void connectPort (LV2_Handle instance, uint32_t port, void* data)
 void run (LV2_Handle instance, uint32_t frames)
 {
     auto& self = *static_cast<Instance*> (instance);
+    if (self.latency != nullptr) *self.latency = self.lookahead != nullptr ? *self.lookahead : 0.0f;
     for (int c = 0; c < 2; ++c)
         if (self.out[c] != nullptr)
             for (uint32_t i = 0; i < frames; ++i)

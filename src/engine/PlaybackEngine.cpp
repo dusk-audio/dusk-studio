@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <limits>
 #include <thread>
 #include <utility>
 
@@ -48,9 +49,15 @@ constexpr int kSwapFadeSamples = 512;
 constexpr std::int64_t kSwapWarmFrames = 8192;
 constexpr auto kSwapWarmWait = std::chrono::milliseconds (300);
 
+// A locate waits at most this long for its readers and the loop head. After
+// that it commits anyway, and whatever a cold reader cannot serve plays silent,
+// so a reader or loop cache that never warms cannot hold the playhead forever.
+constexpr double kLocateWaitSeconds = 0.3;
+
 std::atomic<int> liveStreams { 0 };
 } // namespace
-PlaybackEngine::PlaybackEngine (Session& s) : session (s) {}
+PlaybackEngine::PlaybackEngine (Session& s, bool startFillWorkers)
+    : session (s), fillPool (3, startFillWorkers) {}
 
 PlaybackEngine::PerTrackStream::PerTrackStream() noexcept
 {
@@ -74,6 +81,9 @@ PlaybackEngine::~PlaybackEngine()
 
 void PlaybackEngine::prepare (int maxBlockSize, double sampleRate)
 {
+    locateReadyHeld.store (false, std::memory_order_relaxed);
+    locateWaitLimit = (std::int64_t) std::llround ((sampleRate > 0.0 ? sampleRate : 48000.0) * kLocateWaitSeconds);
+    resetLocateWait();
     fillPool.configure (sampleRate);
     // Pre-allocate the stereo scratch buffer once. Channel 1 is unused for
     // mono regions but allocated so the audio-thread read path never has to
@@ -101,6 +111,67 @@ void PlaybackEngine::beginAudioBlock (std::int64_t playhead, std::int64_t loopSt
 void PlaybackEngine::primeAt (std::int64_t playhead)
 {
     fillPool.primeAt (playhead);
+}
+
+bool PlaybackEngine::locateReadyRt (std::int64_t target, int numSamples,
+                                    std::int64_t loopStart, std::int64_t loopEnd) noexcept
+{
+    AudioInFlightScope guard (audioInFlight);
+    if (! streamsActive.load (std::memory_order_seq_cst)) return true;
+    pinStreamsForLocateBlock = false;
+    auto warmFrames = std::max (numSamples, static_cast<int> (kSwapWarmFrames));
+    const bool looping = loopStart >= 0 && loopEnd - loopStart >= kMinLoopLenForSplit
+        && target >= loopStart && target < loopEnd;
+    if (looping)
+        warmFrames = (int) std::min<std::int64_t> (warmFrames, loopEnd - target);
+    fillPool.setSeekTargetRt (target, warmFrames);
+    if (locateReadyHeld.load (std::memory_order_relaxed)) return false;
+    if (target != locateWaitTarget)
+    {
+        locateWaitTarget = target;
+        locateWaited = 0;
+    }
+    const bool overdue = locateWaited >= locateWaitLimit;
+    locateWaited += numSamples;
+    if (! overdue && ! locateWarmRt (target, numSamples, warmFrames, looping, loopStart, loopEnd))
+        return false;
+    pinStreamsForLocateBlock = true;
+    return true;
+}
+
+bool PlaybackEngine::locateWarmRt (std::int64_t target, int numSamples, int warmFrames, bool looping,
+                                   std::int64_t loopStart, std::int64_t loopEnd) const noexcept
+{
+    if (! fillPool.seekReadyRt (target, warmFrames)) return false;
+    if (! looping) return true;
+    const auto headFrames = std::min<std::int64_t> (
+        std::max<std::int64_t> (0, (std::int64_t) numSamples - (loopEnd - target)), loopEnd - loopStart);
+    if (headFrames > kLoopCacheSamples) return false;
+    for (const auto& slot : slots)
+        if (const auto* current = slot.current.load (std::memory_order_relaxed))
+            if (! current->regions.empty() && current->loopCacheStart != loopStart)
+                return false;
+    return true;
+}
+
+void PlaybackEngine::resetLocateWait() noexcept
+{
+    locateWaitTarget = std::numeric_limits<std::int64_t>::min();
+    locateWaited = 0;
+}
+
+void PlaybackEngine::finishLocateBlockRt (std::int64_t committedPosition, bool keepSeek) noexcept
+{
+    AudioInFlightScope guard (audioInFlight);
+    if (! streamsActive.load (std::memory_order_seq_cst)) return;
+    // Workers acquire a cleared seek before reading this committed position.
+    fillPool.setPositionRt (committedPosition);
+    if (! keepSeek)
+    {
+        fillPool.clearSeekTargetRt();
+        pinStreamsForLocateBlock = false;
+        resetLocateWait();
+    }
 }
 
 void PlaybackEngine::refreshLiveRegionParams()
@@ -147,7 +218,7 @@ void PlaybackEngine::preparePlayback (Audition audition)
     auditionedTrack.store (-1, std::memory_order_relaxed);
     auditionedTake.store (0, std::memory_order_relaxed);
 
-    const std::int64_t warmAt = transport != nullptr ? transport->getPlayhead() : 0;
+    const std::int64_t warmAt = transport != nullptr ? transport->getCommittedPlayhead() : 0;
     const auto loopStart = transport != nullptr ? transport->getLoopStart() : -1;
     const auto loopEnd = transport != nullptr ? transport->getLoopEnd() : -1;
     const bool looping = transport != nullptr && transport->isLoopEnabled()
@@ -220,13 +291,11 @@ PlaybackEngine::buildTrackStream (int t, Audition audition, std::int64_t warmAt,
         if (rawReader == nullptr) continue;
         const auto sourceInfo = rawReader->info();
 
-        // 96000 frames is ~1 s at 96 kHz / ~2 s at 44.1 kHz - generous
-        // given block sizes are 256-2048 - but a region shorter than that
-        // never reads past its own end, and a take-heavy session opens one
-        // reader per region, so cap the window at the region length.
+        // The reader reserves one frame beyond its published payload.
+        const auto warmFrames = swapWarmFrames();
         const std::int64_t windowFrames =
-            std::clamp (region.lengthInSamples, (std::int64_t) 8192,
-                         dusk::audio::BufferedFileReader::kDefaultWindowFrames);
+            std::clamp (region.lengthInSamples, warmFrames,
+                         std::max (warmFrames, dusk::audio::BufferedFileReader::kDefaultWindowFrames)) + 1;
         auto buffered = std::make_unique<dusk::audio::BufferedFileReader> (
             std::move (rawReader), windowFrames,
             dusk::audio::BufferedFileReader::Fill::Manual);
@@ -307,6 +376,7 @@ PlaybackEngine::buildTrackStream (int t, Audition audition, std::int64_t warmAt,
 
 bool PlaybackEngine::primeLoopCache (PerTrackStream& stream, std::int64_t loopStart)
 {
+    stream.loopCacheStart = -1;
     if (loopStart < 0) return true;
     bool complete = true;
 
@@ -349,6 +419,7 @@ bool PlaybackEngine::primeLoopCache (PerTrackStream& stream, std::int64_t loopSt
         rs.loopCacheTimelineStart = cacheStart;
         rs.loopCacheLen           = len;
     }
+    if (complete) stream.loopCacheStart = loopStart;
     return complete;
 }
 
@@ -390,6 +461,11 @@ void PlaybackEngine::stopPlayback()
         std::this_thread::yield();
     }
 
+    fillPool.clearSeekTargetRt();
+    pinStreamsForLocateBlock = false;
+    resetLocateWait();
+    locateReadyHeld.store (false, std::memory_order_relaxed);
+    refreshRequests.store (0, std::memory_order_relaxed);
     for (auto& slot : slots) freeSlot (slot);
 }
 
@@ -399,7 +475,7 @@ void PlaybackEngine::refreshTrackPlayback (int trackIndex, Audition audition)
         return;
     requestedAudition[(size_t) trackIndex] = audition;
     ++rebuilds;
-    const std::int64_t playhead = transport != nullptr ? transport->getPlayhead() : 0;
+    const std::int64_t playhead = transport != nullptr ? transport->getCommittedPlayhead() : 0;
     auto& swap = pending[(size_t) trackIndex];
     swap.stream = buildTrackStream (trackIndex, audition, playhead, swap.auditioned);
     // A track left with nothing to play still swaps, to silence.
@@ -412,7 +488,11 @@ void PlaybackEngine::refreshTrackPlayback (int trackIndex, Audition audition)
 void PlaybackEngine::service()
 {
     const bool live = streamsActive.load (std::memory_order_acquire);
-    const std::int64_t playhead = transport != nullptr ? transport->getPlayhead() : 0;
+    const auto refresh = refreshRequests.exchange (0, std::memory_order_acq_rel);
+    if (live)
+        for (int t = 0; t < Session::kNumTracks; ++t)
+            if ((refresh & (std::uint32_t { 1 } << t)) != 0)
+                refreshTrackPlayback (t, requestedAudition[(size_t) t]);
     const auto now = std::chrono::steady_clock::now();
     const auto loopStart = effectiveLoopStart.load (std::memory_order_acquire);
     if (live && loopStart != cachedLoopStart && now >= nextLoopCacheAttempt)
@@ -445,8 +525,14 @@ void PlaybackEngine::service()
         if (swap.stream == nullptr) continue;
         if (! live)
             swap.stream.reset();
-        else if (readersHoldFrom (*swap.stream, playhead) || now >= swap.deadline)
-            publish (t);
+        else
+        {
+            const auto position = transport != nullptr ? transport->getAutomationPosition()
+                                                       : Transport::AutomationPosition { 0, 0 };
+            const bool warm = readersHoldFrom (*swap.stream, position.samples);
+            if (warm || now >= swap.deadline)
+                publish (t, position.samples, position.locateSerial, warm);
+        }
     }
 
     for (auto& slot : slots)
@@ -467,9 +553,12 @@ bool PlaybackEngine::hasPendingWork() const noexcept
     return false;
 }
 
-void PlaybackEngine::publish (int t)
+void PlaybackEngine::publish (int t, std::int64_t playhead, std::uint32_t locateSerial, bool warm)
 {
     auto& swap = pending[(size_t) t];
+    swap.stream->warmStart = playhead;
+    swap.stream->warmEnd = warm ? playhead + swapWarmFrames() : playhead;
+    swap.stream->warmLocateSerial = locateSerial;
     if (swap.auditioned != 0)
     {
         auditionedTrack.store (t, std::memory_order_relaxed);
@@ -485,9 +574,14 @@ void PlaybackEngine::publish (int t)
     delete slots[(size_t) t].incoming.exchange (swap.stream.release(), std::memory_order_acq_rel);
 }
 
-bool PlaybackEngine::readersHoldFrom (const PerTrackStream& stream, std::int64_t playhead) noexcept
+std::int64_t PlaybackEngine::swapWarmFrames() const noexcept
 {
-    const std::int64_t until = playhead + kSwapWarmFrames;
+    return std::max (kSwapWarmFrames, (std::int64_t) readScratch.numSamples());
+}
+
+bool PlaybackEngine::readersHoldFrom (const PerTrackStream& stream, std::int64_t playhead) const noexcept
+{
+    const std::int64_t until = playhead + swapWarmFrames();
     for (const auto& r : stream.regions)
     {
         if (r.reader == nullptr) continue;
@@ -497,6 +591,33 @@ bool PlaybackEngine::readersHoldFrom (const PerTrackStream& stream, std::int64_t
             return false;
     }
     return true;
+}
+
+bool PlaybackEngine::canAdopt (const PerTrackStream& stream, std::int64_t playhead, int numSamples,
+                                std::int64_t loopStart, std::int64_t loopEnd,
+                                std::uint32_t locateSerial) noexcept
+{
+    if (stream.regions.empty()) return true;
+    const auto loopLength = loopEnd - loopStart;
+    const bool looping = loopStart >= 0 && loopLength >= kMinLoopLenForSplit && playhead < loopEnd;
+    if (looping && stream.loopCacheStart != loopStart) return false;
+    const auto cached = [&] (std::int64_t start, int count) noexcept
+    {
+        return stream.loopCacheStart >= 0 && start >= stream.loopCacheStart
+            && count <= kLoopCacheSamples
+            && start - stream.loopCacheStart <= kLoopCacheSamples - count;
+    };
+    const auto resident = [&] (std::int64_t start, int count) noexcept
+    {
+        return cached (start, count)
+            || (stream.warmLocateSerial == locateSerial && start >= stream.warmStart
+                && start <= stream.warmEnd && count <= stream.warmEnd - start);
+    };
+    if (! looping) return resident (playhead, numSamples);
+    const auto first = (int) std::min<std::int64_t> (numSamples, loopEnd - playhead);
+    return resident (playhead, first)
+        && (first == numSamples || cached (loopStart,
+            (int) std::min<std::int64_t> (numSamples - first, loopLength)));
 }
 
 void PlaybackEngine::freeSlot (TrackSlot& slot)
@@ -534,13 +655,24 @@ void PlaybackEngine::readForTrack (int trackIndex,
 
     // A rebuild waits for the fade before it, so no streams are ever dropped
     // part-way through fading in or out.
-    if (slot.fadePos < 0)
+    if (slot.fadePos < 0 && ! pinStreamsForLocateBlock)
         if (auto* next = slot.incoming.exchange (nullptr, std::memory_order_acq_rel))
         {
-            slot.fadingFrom = current;
-            slot.fadePos = 0;
-            current = next;
-            slot.current.store (current, std::memory_order_release);
+            const auto serial = transport != nullptr ? transport->getLocateCount() : std::uint32_t { 0 };
+            if (canAdopt (*next, playheadSamples, numSamples, loopStart, loopEnd, serial))
+            {
+                slot.fadingFrom = current;
+                slot.fadePos = 0;
+                current = next;
+                slot.current.store (current, std::memory_order_release);
+            }
+            else
+            {
+                // Ownership arrived through exchange; retire stale input without replacing current audio.
+                slot.fadingFrom = next;
+                slot.fadePos = kSwapFadeSamples;
+                refreshRequests.fetch_or (std::uint32_t { 1 } << trackIndex, std::memory_order_release);
+            }
         }
 
     if (current != nullptr)
@@ -615,8 +747,6 @@ int PlaybackEngine::readStream (PerTrackStream& stream, std::int64_t playheadSam
     // exactly like the transport's post-block wrap (loopStart + overshoot),
     // so audio at the seam neither bleeds past loopEnd nor skips the loop
     // downbeat. Seams inside this block get a short declick ramp.
-    int seamOffsets[8];
-    int numSeams = 0;
     int done = 0;
     int firstMissing = numSamples;
     std::int64_t pos = playheadSamples;
@@ -625,7 +755,6 @@ int PlaybackEngine::readStream (PerTrackStream& stream, std::int64_t playheadSam
         if (pos >= loopEnd)
         {
             pos = loopStart + (pos - loopEnd) % loopLen;
-            if (numSeams < 8) seamOffsets[numSeams++] = done;
         }
         const int span = (int) std::min ((std::int64_t) (numSamples - done),
                                             loopEnd - pos);
@@ -635,9 +764,9 @@ int PlaybackEngine::readStream (PerTrackStream& stream, std::int64_t playheadSam
         pos  += span;
     }
 
-    for (int s = 0; s < numSeams; ++s)
+    for (std::int64_t offset = loopEnd - playheadSamples; offset < numSamples;)
     {
-        const int seam = seamOffsets[s];
+        const int seam = (int) offset;
         // Fade out into the seam, fade in out of it - raised-cosine, zero
         // slope at both ends, same shape as the punch click-mask.
         for (int i = 1; i <= kLoopSeamFade; ++i)
@@ -659,6 +788,8 @@ int PlaybackEngine::readStream (PerTrackStream& stream, std::int64_t playheadSam
             outL[idx] *= g;
             if (outR != nullptr) outR[idx] *= g;
         }
+        if (loopLen >= numSamples - offset) break;
+        offset += loopLen;
     }
     return firstMissing;
 }

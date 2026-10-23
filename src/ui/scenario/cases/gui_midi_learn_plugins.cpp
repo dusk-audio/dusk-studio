@@ -697,7 +697,12 @@ std::optional<ScenarioResult> runPluginPicker (GuiHost& host, ScenarioContext& c
     {
         ctx.expect (host.pickerRows (true) == std::vector<std::string> { "SCENARIO MAKER A", "SCENARIO MAKER B" },
                     "manufacturer headings did not group the matching plugins");
-        ctx.expect (host.pickerRows (false) == std::vector<std::string> { "Picker Alpha  (CLAP)", "Picker Beta  (LV2-Native)" },
+       #if DUSKSTUDIO_HAS_NATIVE_LV2
+        constexpr const char* betaRow = "Picker Beta  (LV2-Native)";
+       #else
+        constexpr const char* betaRow = "Picker Beta  (CLAP)";
+       #endif
+        ctx.expect (host.pickerRows (false) == std::vector<std::string> { "Picker Alpha  (CLAP)", betaRow },
                     "filtered plugin rows omitted names or format labels");
         filter ("pIcKeR aLpHa");
     } });

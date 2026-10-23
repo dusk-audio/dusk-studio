@@ -191,6 +191,7 @@ add_executable(dusk-studio-tests
     loop_timeline.cpp
     generated_midi_budget.cpp
     midi_bindings_preset.cpp
+    midi_button_edges.cpp
     session_mcu_roundtrip.cpp
     console_bank_mapping.cpp
     track_meter_source.cpp
@@ -235,6 +236,7 @@ add_executable(dusk-studio-tests
     record_offset_placement.cpp
     record_stop_waits_for_audio.cpp
     playback_loop_read.cpp
+    playback_read_capture.cpp
     playback_take_audition.cpp
     playback_live_swap.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/PlaybackEngine.cpp
@@ -254,6 +256,7 @@ add_executable(dusk-studio-tests
     notepad_first_frame_probe.cpp
     appconfig_store.cpp
     filebrowser_choice.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/FileBrowserChoice.cpp
     save_target_checks.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/AppConfig.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/NotepadDocument.cpp
@@ -740,13 +743,28 @@ if(DUSKSTUDIO_NATIVE_VST3)
     get_target_property(DUSKSTUDIO_PANIC_PROBE_VST3_BUNDLE
         dusk-studio-panic-probe-vst3-fixture SMTG_PLUGIN_PACKAGE_PATH)
 
+    smtg_add_vst3plugin(dusk-studio-crash-state-vst3-fixture
+        fixtures/crash_state_vst3.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/common/pluginview.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/main/moduleinit.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/main/pluginfactory.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/vstbus.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/vstcomponentbase.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/vsteditcontroller.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/vstparameters.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/vstsinglecomponenteffect.cpp)
+    target_link_libraries(dusk-studio-crash-state-vst3-fixture PRIVATE dusk-vst3-hosting)
+    target_compile_definitions(dusk-studio-crash-state-vst3-fixture
+        PRIVATE PROJECT_INCLUDES_VSTEDITCONTROLLER=1)
+
     if(MSVC)
         # The SDK compiles its plug-in targets with /Zi in Release. Under Ninja
         # a fixture's translation units then race for one vc140.pdb (C1041),
         # and sccache cannot cache /Zi objects. Embed the debug info instead.
         foreach(vst3Fixture
                 dusk-studio-runtime-relayout-vst3-fixture
-                dusk-studio-panic-probe-vst3-fixture)
+                dusk-studio-panic-probe-vst3-fixture
+                dusk-studio-crash-state-vst3-fixture)
             get_target_property(DUSKSTUDIO_VST3_FIXTURE_OPTIONS ${vst3Fixture} COMPILE_OPTIONS)
             if(DUSKSTUDIO_VST3_FIXTURE_OPTIONS)
                 list(TRANSFORM DUSKSTUDIO_VST3_FIXTURE_OPTIONS REPLACE "/Zi" "/Z7")
@@ -789,7 +807,8 @@ if(DUSKSTUDIO_NATIVE_VST3)
         DUSKSTUDIO_PANIC_PROBE_VST3_FIXTURE_PATH="${DUSKSTUDIO_PANIC_PROBE_VST3_BUNDLE}")
     add_dependencies(dusk-studio-tests
         dusk-studio-runtime-relayout-vst3-fixture
-        dusk-studio-panic-probe-vst3-fixture)
+        dusk-studio-panic-probe-vst3-fixture
+        dusk-studio-crash-state-vst3-fixture)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         target_sources(dusk-studio-tests PRIVATE vst3_hostcontext_runloop.cpp)
     endif()
@@ -1108,6 +1127,10 @@ endif()
 # runs on every platform.
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
+    add_test(NAME cross-platform-validator-contract
+        COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/validate_cross_platform.py")
+    set_tests_properties(cross-platform-validator-contract PROPERTIES TIMEOUT 120)
     add_test(NAME manual-coverage-contract
         COMMAND "${Python3_EXECUTABLE}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/manual_coverage.py"

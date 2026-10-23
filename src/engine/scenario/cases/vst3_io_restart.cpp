@@ -10,10 +10,9 @@
 #include <string>
 #include <vector>
 
-// A native VST3 plug-in that changes its buses outputs silence until the host
-// restarts it. These drive the engine's own message-thread drain: the fixture
-// announces the change from a parameter, or from inside its own activation,
-// and the drain's ticks on the message loop do the rest.
+// These drive the engine's own message-thread drain. Latency requests wait
+// through a take; bus changes must restart even while recording because the
+// fixture cannot process with its old bus layout.
 namespace duskstudio::scenario
 {
 namespace
@@ -66,7 +65,8 @@ bool passesDry (ScenarioContext& ctx)
     std::vector<float> outL ((size_t) kFrames, 0.0f), outR ((size_t) kFrames, 0.0f);
     slotOf (ctx).processStereo (inL.data(), inR.data(), outL.data(), outR.data(), kFrames);
     for (size_t i = 0; i < (size_t) kFrames; ++i)
-        if (std::abs (outL[i] - inL[i]) > 1.0e-6f || std::abs (outR[i] - inR[i]) > 1.0e-6f)
+        if (! (std::abs (outL[i] - inL[i]) <= 1.0e-6f)
+            || ! (std::abs (outR[i] - inR[i]) <= 1.0e-6f))
             return false;
     return true;
 }
@@ -108,6 +108,72 @@ bool loadOnTrack (ScenarioContext& ctx, bool armForTake)
     }
     ctx.pump (4);
     return ctx.expect (runningWithOutputs (ctx, 2), "the fixture was not running after it loaded");
+}
+
+bool latencyMatches (ScenarioContext& ctx, int expected)
+{
+    auto& engine = ctx.engine();
+    if (slotOf (ctx).getLatencySamples() != expected
+        || engine.getAggregatePdcLatencySamples() != expected
+        || ! runningWithOutputs (ctx, 2)) return false;
+    for (int t = 0; t < Session::kNumTracks; ++t)
+        if (engine.getChannelStrip (t).getPdcCompensationSamples() != (t == kTrack ? 0 : expected))
+            return false;
+    return true;
+}
+
+std::optional<ScenarioResult> latencyFollowsRestart (ScenarioContext& ctx, bool decrease)
+{
+    if (! loadOnTrack (ctx, false)) return ctx.verdict();
+    auto& engine = ctx.engine();
+    const int initial = decrease ? 64 : 0;
+    const int expected = decrease ? 0 : 64;
+    if (! setParam (ctx, "Latency Mode", decrease ? 1.0 : 0.0)) return ctx.verdict();
+    std::string error;
+    if (! ctx.expect (slotOf (ctx).reactivate (ScenarioContext::kSampleRate,
+                                             ScenarioContext::kBlockSize, error),
+                      "could not prepare the initial latency: " + error)) return ctx.verdict();
+    engine.recomputePdc();
+    if (! ctx.expect (latencyMatches (ctx, initial), "the initial latency or PDC was wrong"))
+        return ctx.verdict();
+    if (! setParam (ctx, "Announce Latency Changes", 1.0)
+        || ! setParam (ctx, "Latency Mode", decrease ? 0.0 : 1.0)) return ctx.verdict();
+    ctx.expect (latencyMatches (ctx, initial), "latency changed before the requested restart");
+
+    // No blocks run while waiting, so only the drain can update PDC.
+    ctx.waitUntil ([&ctx, expected] { return latencyMatches (ctx, expected); }, kDrainWaitMs,
+                   [&ctx] { ctx.complete (ctx.verdict()); },
+                   "the requested VST3 latency and all track PDC targets did not reach "
+                       + std::to_string (expected) + " samples");
+    return std::nullopt;
+}
+
+std::optional<ScenarioResult> latencyRestartWaitsForTake (ScenarioContext& ctx)
+{
+    if (! loadOnTrack (ctx, true)) return ctx.verdict();
+    auto& engine = ctx.engine();
+    if (! ctx.expect (latencyMatches (ctx, 0), "latency or PDC was nonzero before recording"))
+        return ctx.verdict();
+    engine.getTransport().setPlayhead (0);
+    engine.record();
+    ctx.cleanup ([&engine] { if (! engine.getTransport().isStopped()) engine.stop(); });
+    if (! ctx.expect (engine.getTransport().isRecording(), "Record did not start with the track armed"))
+        return ctx.verdict();
+    if (! setParam (ctx, "Announce Latency Changes", 1.0)
+        || ! setParam (ctx, "Latency Mode", 1.0)) return ctx.verdict();
+    ctx.pump (4);
+    ctx.later (800, [&ctx, &engine]
+    {
+        ctx.pump (4);
+        ctx.expect (engine.getTransport().isRecording(), "the take stopped before Stop");
+        ctx.expect (latencyMatches (ctx, 0), "VST3 latency or PDC changed during the take");
+        ctx.expect (passesDry (ctx), "the deferred VST3 insert stopped passing audio");
+        engine.stop();
+        ctx.waitUntil ([&ctx] { return latencyMatches (ctx, 64); }, kDrainWaitMs,
+                       [&ctx] { ctx.complete (ctx.verdict()); },
+                       "the held VST3 latency and PDC did not reach 64 samples after Stop");
+    });
+    return std::nullopt;
 }
 
 // The restart suspends the engine for a moment, a gap in every take being
@@ -227,6 +293,21 @@ std::optional<ScenarioResult> restartStormGoesOffline (ScenarioContext& ctx)
 const ScenarioRegistrar takeRegistrar { Scenario {
     "vst3.io_change_restarts_during_take", { "vst3", "record" }, Needs::Engine,
     { "relayout.vst3" }, DUSK_VST3_CASE (ioChangeRestartsDuringTake)
+} };
+
+const ScenarioRegistrar latencyIncreaseRegistrar { Scenario {
+    "vst3.latency_increase_follows_restart", { "vst3", "pdc", "latency" }, Needs::Engine,
+    { "relayout.vst3" }, DUSK_VST3_CASE ([] (ScenarioContext& ctx) { return latencyFollowsRestart (ctx, false); })
+} };
+
+const ScenarioRegistrar latencyDecreaseRegistrar { Scenario {
+    "vst3.latency_decrease_follows_restart", { "vst3", "pdc", "latency" }, Needs::Engine,
+    { "relayout.vst3" }, DUSK_VST3_CASE ([] (ScenarioContext& ctx) { return latencyFollowsRestart (ctx, true); })
+} };
+
+const ScenarioRegistrar latencyTakeRegistrar { Scenario {
+    "vst3.latency_restart_waits_for_take", { "vst3", "pdc", "latency", "record" }, Needs::Engine,
+    { "relayout.vst3" }, DUSK_VST3_CASE (latencyRestartWaitsForTake)
 } };
 
 const ScenarioRegistrar repeatRegistrar { Scenario {

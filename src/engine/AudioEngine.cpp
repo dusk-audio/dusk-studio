@@ -1670,6 +1670,7 @@ void AudioEngine::rebuildMidiBanks()
     // Sized to the collector ring: anything smaller turns a backlog that fits
     // the ring into an empty block under the drain's whole-block contract.
     perInputMidi.assign ((size_t) midiIn.getNumInputs(), dusk::MidiBuffer{});
+    midiButtonEdges.assign (perInputMidi.size(), MidiButtonEdges{});
     for (auto& m : perInputMidi) m.reserveBytes (dusk::kMidiBlockBytes);
 
     // Re-resolve the session's sync + MCU wiring against the fresh banks so a
@@ -2460,7 +2461,7 @@ AudioEngine::TransportService AudioEngine::serviceTransportRequests()
                                  : 0.0f;
         const double sr = getCurrentSampleRate();
         if (pOut > pIn && postRoll > 0.0f && sr > 0.0
-            && transport.getPlayhead() >= pOut + (std::int64_t) ((double) postRoll * sr))
+            && transport.getCommittedPlayhead() >= pOut + (std::int64_t) ((double) postRoll * sr))
         {
             pressStop();
             done.stopped = true;
@@ -4277,6 +4278,8 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
     };
     const ResumeGuard resumeGuard { *this };
 
+    for (auto& edges : midiButtonEdges) edges.reset();
+
     if (rtTempoMapPool.size() > 1)
         rtTempoMapPool.erase (rtTempoMapPool.begin(), rtTempoMapPool.end() - 1);
 
@@ -4871,7 +4874,27 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         return;
     }
     const auto transportBlockState = transport.getState();
-    const auto transportBlockStart = transport.beginAudioBlock();
+    const auto transportLoopStart = transport.getLoopStart(), transportLoopEnd = transport.getLoopEnd();
+    const bool transportLoopEnabled = transport.isLoopEnabled();
+    const bool locateLoops = transportBlockState == Transport::State::Playing && transportLoopEnabled;
+    bool keepSeek = false;
+    const auto transportBlockStart = transport.beginAudioBlock ([&] (std::int64_t& target) noexcept
+    {
+        if (getStage() == Stage::Mastering) return true;
+        if (locateLoops)
+        {
+            const auto start = transportLoopStart, end = transportLoopEnd;
+            if (start >= 0 && end > start)
+            {
+                if (target < start) target = start;
+                else if (target >= end) target = start + (target - end) % (end - start);
+            }
+        }
+        keepSeek = true;
+        return playbackEngine.locateReadyRt (target, numSamples,
+            locateLoops ? transportLoopStart : -1, locateLoops ? transportLoopEnd : -1);
+    });
+    playbackEngine.finishLocateBlockRt (transportBlockStart, keepSeek);
 
     // Every session snapshot this block reads, on this thread or a worker lane,
     // stays alive until the block returns, however often the message thread
@@ -5243,20 +5266,16 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     // snapshot (mutated only on the message thread via AtomicSnapshot's
     // copy-and-swap). Continuous targets write atoms directly; transport
     // actions queue into pendingTransportAction (engine.play/stop/record
-    // aren't RT-safe). Note triggers fire on press only (NoteOn vel > 0);
-    // NoteOff and CC release are ignored per the v1 spec.
-    //
-    // Also enter the loop when a MIDI Learn capture is pending - the
-    // capture lives inside this loop, and gating it on bindings being
-    // non-empty would make it impossible to learn the FIRST binding
-    // (no bindings -> no loop -> no capture -> no first binding ever).
+    // aren't RT-safe). Observe source edges before binding fanout, including
+    // releases while no binding is published. Note releases only rearm edges;
+    // they never drive controls or MIDI Learn.
     const auto* bindings = session.midiBindings.read();
     const bool hasBindings = bindings != nullptr && ! bindings->empty();
-    const bool learnPending = session.midiLearnPending.load (std::memory_order_relaxed) >= 0;
-    if (hasBindings || learnPending)
     {
-        for (const auto& buf : perInputMidi)
+        for (std::size_t input = 0; input < perInputMidi.size(); ++input)
         {
+            const auto& buf = perInputMidi[input];
+            auto& edges = midiButtonEdges[input];
             if (buf.isEmpty()) continue;
             for (const auto meta : buf)
             {
@@ -5265,19 +5284,24 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                 const int size = v.getRawDataSize();
                 MidiBindingTrigger tg = MidiBindingTrigger::CC;
                 int dn = 0, val = 0;
+                bool rising = false, noteRelease = false;
                 if (raw == nullptr || size < 1) continue;
                 const auto type = (std::uint8_t) (raw[0] & 0xF0);
+                const int ch = type != 0xF0 ? (int) (raw[0] & 0x0F) + 1 : 0;
                 if (type == 0xB0 && size >= 3)
                 {
                     tg = MidiBindingTrigger::CC;
                     dn = raw[1];
                     val = raw[2];
+                    rising = edges.controller (ch, dn, val);
                 }
-                else if (type == 0x90 && size >= 3 && raw[2] > 0)
+                else if ((type == 0x90 || type == 0x80) && size >= 3)
                 {
                     tg = MidiBindingTrigger::Note;
                     dn = raw[1];
-                    val = raw[2];
+                    val = type == 0x80 ? 0 : raw[2];
+                    rising = edges.note (ch, dn, val);
+                    noteRelease = val == 0;
                 }
                 else if (type == 0xE0 && size >= 3)
                 {
@@ -5292,7 +5316,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                     val = 127;
                 }
                 else continue;
-                const int ch = type != 0xF0 ? (int) (raw[0] & 0x0F) + 1 : 0;
+                if (noteRelease) continue;
 
                 // Learn capture - take the first matching event when a
                 // learn target is pending. Audio-thread CAS-store; the
@@ -5418,8 +5442,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                     {
                         frac = (float) val / 127.0f;
                         pressed = (b.buttonMode == MidiButtonMode::Toggle)
-                                      ? true              // fire every received CC / Note
-                                      : (val >= 64);      // rising-edge / level threshold
+                                      ? true : rising;
                     }
 
                     // Soft takeover (pickup): an absolute controller snaps the
@@ -5465,19 +5488,19 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                     switch (b.target)
                     {
                         case MidiBindingTarget::TransportPlay:
-                            session.pendingTransportAction.store (
+                            if (pressed) session.pendingTransportAction.store (
                                 (int) PendingTransportAction::Play, std::memory_order_release);
                             break;
                         case MidiBindingTarget::TransportStop:
-                            session.pendingTransportAction.store (
+                            if (pressed) session.pendingTransportAction.store (
                                 (int) PendingTransportAction::Stop, std::memory_order_release);
                             break;
                         case MidiBindingTarget::TransportRecord:
-                            session.pendingTransportAction.store (
+                            if (pressed) session.pendingTransportAction.store (
                                 (int) PendingTransportAction::Record, std::memory_order_release);
                             break;
                         case MidiBindingTarget::TransportToggle:
-                            session.pendingTransportAction.store (
+                            if (pressed) session.pendingTransportAction.store (
                                 (int) PendingTransportAction::Toggle, std::memory_order_release);
                             break;
 
@@ -6106,9 +6129,9 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
 
     // Unarmed/frozen accompaniment must hear the same seam as the recorder.
     // Plain playback still follows the live transport bounds.
-    const auto liveLoopStart = transport.getLoopStart();
-    const auto liveLoopEnd = transport.getLoopEnd();
-    const bool playbackLoopActive = isPlaying && transport.isLoopEnabled() && liveLoopEnd > liveLoopStart;
+    const auto liveLoopStart = transportLoopStart;
+    const auto liveLoopEnd = transportLoopEnd;
+    const bool playbackLoopActive = isPlaying && transportLoopEnabled && liveLoopEnd > liveLoopStart;
     const std::int64_t loopReadStart = loopRecordingActive
         ? loopRecordPlan.loopStartSample
         : (playbackLoopActive ? liveLoopStart : -1);
@@ -6360,6 +6383,9 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             playbackEngine.readForTrack (t, blockStartSamples,
                                           playbackScratch[(size_t) t].data(), outR,
                                           numSamples, loopReadStart, loopReadEnd);
+            if (playbackReadObserver != nullptr)
+                playbackReadObserver (playbackReadContext, t, blockStartSamples, loopReadStart, loopReadEnd,
+                                      playbackScratch[(size_t) t].data(), outR, numSamples);
 
             // Live-audio play-along overlay, the audio twin of the MIDI overlay
             // below. Playing forces willReadFromDisk, so without this an

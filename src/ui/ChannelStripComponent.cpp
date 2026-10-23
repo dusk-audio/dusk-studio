@@ -4398,7 +4398,9 @@ void ChannelStripComponent::openSfzLibrary()
                     filebrowser::open (*target, { "Load soundfont (.sfz / .sf2 / .bank.xml)", {}, "*.sfz;*.sf2;*.bank.xml", filebrowser::Mode::Open },
                         [safe] (const auto& file)
                         {
-                            if (auto* owner = safe.getComponent(); owner != nullptr && file.existsAsFile())
+                            if (auto* owner = safe.getComponent(); owner != nullptr
+                                && filebrowser::isAcceptableChoice (file.getFullPathName().toStdString(),
+                                                                     filebrowser::Mode::Open, false, false))
                             {
                                 auto soundfont = file;
                                 if (file.getFileName().toLowerCase().endsWith (".bank.xml"))
@@ -5584,10 +5586,11 @@ void ChannelStripComponent::recordAutomation (AutomationParam param, bool record
     auto& lane = track.automationLanes[(size_t) param];
     if (recording)
     {
+        const auto position = engine.getTransport().getAutomationPosition();
         const bool touch = track.automationMode.load (std::memory_order_relaxed) == (int) AutomationMode::Touch;
-        recorder.record (lane, engine.getTransport().getPlayhead(), value,
+        recorder.record (lane, position.samples, value,
                          session.tempoBpm.load (std::memory_order_relaxed),
-                         engine.getTransport().getLocateCount(),
+                         position.locateSerial,
                          touch ? (std::int64_t) (engine.getCurrentSampleRate()
                                                  * AutomationPassRecorder::kTouchReturnSeconds)
                                : 0);

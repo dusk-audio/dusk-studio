@@ -131,6 +131,14 @@ jobs:
         with:
           version: v0.16.0
 
+      - name: Fetch pinned Mesa llvmpipe fallback
+        shell: pwsh
+        run: |
+          $destination = Join-Path $env:RUNNER_TEMP "dusk-mesa-softgl"
+          .\scripts\fetch-windows-software-opengl.ps1 -Destination $destination
+          "MESA_SOFTGL_PATH=$($destination.Replace('\', '/'))" |
+            Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
       - name: Configure tests (CMake / Ninja / MSVC x64)
         shell: bash
         run: |
@@ -154,10 +162,12 @@ jobs:
             -DDAF_PATH="${RT_UNIX}/DAF" \
             -DASIOSDK_PATH="${ASIOSDK_PATH}" \
             -DCMAKE_PREFIX_PATH="${VCPKG_PREFIX}" \
+            -DDUSKSTUDIO_WINDOWS_SOFTWARE_OPENGL_DIR="${MESA_SOFTGL_PATH}" \
+            -DDUSKSTUDIO_ENABLE_NATIVE_UI=ON \
             -DDUSKSTUDIO_NATIVE_CLAP=ON \
             -DDUSKSTUDIO_REQUIRE_LAME=ON \
             -DDUSKSTUDIO_NATIVE_VST3=ON
-          for option in DUSKSTUDIO_NATIVE_CLAP DUSKSTUDIO_NATIVE_VST3; do
+          for option in DUSKSTUDIO_ENABLE_NATIVE_UI DUSKSTUDIO_NATIVE_CLAP DUSKSTUDIO_NATIVE_VST3; do
             grep -q "^${option}:BOOL=ON$" build-tests/CMakeCache.txt || {
               echo "::error::${option} was not enabled in the test configure" >&2; exit 1; }
           done
@@ -169,7 +179,24 @@ jobs:
         # that child through its configured $<TARGET_FILE:...> path. The child
         # is beside the app in DuskStudio_artefacts/Release with Ninja too.
         shell: bash
-        run: cmake --build build-tests --target DuskStudio dusk-studio-tests -j4
+        run: cmake --build build-tests --target DuskStudio dusk-studio-tests dusk-windows-software-opengl-probe -j4
+
+      - name: Verify packaged Mesa selects llvmpipe
+        shell: pwsh
+        run: |
+          foreach ($name in @('opengl32.dll', 'libgallium_wgl.dll')) {
+            $expectedFile = Join-Path $env:MESA_SOFTGL_PATH $name
+            $expected = (Get-FileHash -Algorithm SHA256 -LiteralPath $expectedFile).Hash
+            foreach ($folder in @('build-tests', 'build-tests/DuskStudio_artefacts/Release')) {
+              $actualFile = Join-Path $folder $name
+              $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $actualFile).Hash
+              if ($actual -ne $expected) { throw "Mesa runtime differs: $folder/$name" }
+            }
+          }
+          & .\build-tests\dusk-windows-software-opengl-probe.exe
+          if ($LASTEXITCODE -ne 0) {
+            throw "Windows software OpenGL probe failed (exit $LASTEXITCODE)"
+          }
 
       - name: sccache stats
         if: ${{ !cancelled() && steps.sccache.outcome == 'success' }}
@@ -215,6 +242,7 @@ jobs:
           inventory="$(ctest --test-dir build-tests -N)"
           printf '%s\n' "$inventory"
           for required in \
+            "cross-platform-validator-contract" \
             "ipc-stub: connect, round-trip 32 blocks, byte-exact echo" \
             "ipc-stub: rejects oversize block" \
             "ipc-stub: timeout is bounded and marks the connection crashed" \

@@ -2227,10 +2227,10 @@ Right-click the binding in the MIDI Bindings panel to change its mode.
 - **Per-track toggles**: EQ on/off, compressor on/off, hardware insert bypass, aux-send pre/post.
 - **Per-track plugin parameter**: any indexed parameter on the loaded plugin.
 - **Per-bus**: Fader, Pan, Mute, Solo, EQ band gain (LF / MID / HF — 3 bands), HPF frequency.
-- **Per-aux**: Fader, Mute.
+- **Per-aux**: Fader, Mute, plugin parameter.
 - **Master**: Fader, EQ low boost, EQ high boost, compressor threshold, compressor makeup, compressor ratio.
 - **Per-track aux send**: send level for each of the four aux destinations.
-- **Bank-relative variants**: every "Per-track ..." target above has a `(banked)` counterpart addressed by position 1–8 within the active bank rather than by absolute track number, so one 8-fader controller reaches all 24 tracks. The active bank is the surface's fixed bank of 8 — tracks 1–8, 9–16, or 17–24 — not the console's visible page, which is as wide as the window allows. **Bank Left** / **Bank Right** moves it, and so does picking a page in the bank selector, which jumps the surface to the bank holding that page's first track. With all 24 strips on screen there is no page to pick and the bindings follow the surface alone.
+- **Bank-relative variants**: Fader, Pan, Mute, Solo, Arm, aux-send level, HPF frequency, EQ band gain, frequency and Q, compressor threshold and makeup, and plugin parameter each have a `(banked)` counterpart addressed by position 1–8 within the active bank, so one 8-fader controller reaches all 24 tracks. The active bank is the surface's fixed bank of 8 — tracks 1–8, 9–16, or 17–24 — not the console's visible page, which is as wide as the window allows. **Bank Left** / **Bank Right** moves it, and so does picking a page in the bank selector, which jumps the surface to the bank holding that page's first track. With all 24 strips on screen there is no page to pick and the bindings follow the surface alone.
 
 ## The MIDI Bindings panel
 
