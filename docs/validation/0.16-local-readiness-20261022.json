@@ -2,7 +2,7 @@
   "status": "NOT FINAL RELEASE SIGNOFF",
   "latest_candidate": {
     "recorded_utc": "2026-10-23T07:55:02.102777+00:00",
-    "status": "Current macOS and Linux builds and CTest pass. Linux full GUI274/0/0 and Windows full GUI260/0/14 pass strictly. Windows1723 CTest passes/5 capability skips, three picker pairs and185/0/10 engine scenarios pass. Physical192kHz/256 engine overruns reproduce and remain unresolved.",
+    "status": "Current macOS and Linux builds and CTest pass. Linux full GUI274/0/0 and Windows full GUI260/0/14 pass strictly. Windows1723 CTest passes/5 capability skips, three picker pairs and185/0/10 engine scenarios pass. The maintainer closed the physical192kHz/256 engine-overrun gate on2026-10-23; backend xruns and sample correctness govern shared-host physical acceptance. See current_physical_timing.closeout for evidence scope. Final release signoff remains outstanding.",
     "baseline_head": "54a6453fc2aa85da30a95338ea37566dd005b223",
     "version": "0.15.1",
     "version_bump_gate": "Issue 886 requires maintainer manual passes before bump-version 0.16.0. No version bump, tag or release workflow has run.",
@@ -543,9 +543,8 @@
       "Default-location VSCO/VCSL long-path installs on Windows remain unverified. Owned long-path fixtures and explicit storage roots do not establish defaults; the Windows validation disk has less than0.5GB free.",
       "Physical external-drive move/unplug/replug on each OS; no controlled physical-drive fixture was exercised.",
       "Subjective first-second master export, Phase walkthrough and maintainer manual passes on Linux/macOS/Windows.",
-      "Resolve192kHz/256 engine timing failures: original three failures remain recorded; current normal candidate adds a3-overrun plain run. Temporary traces attribute65 later increments to65 over-budget callbacks within measured playback, but do not identify internal DSP or scheduling cause. Current loop source evidence has0 wrong captured values despite904 raw misses; the historical552 misses remain separately scoped.",
       "The original580 OOP X11 BadWindow and Windows0xe06d7363 full-suite crash lack a captured stack/root cause. Later focused and Linux full-suite passes are evidence of non-reproduction.",
-      "Human-owned commits/merge, final-main CI, installed shipping packages and release dry run. Canonical regress/prepush remains unrun because its synchronization uses forbidden Git operations."
+      "Final-main CI, installed shipping packages and release dry run. Canonical regress/prepush has not passed: the authoring Mac invocation fails before testing at scripts/regress.sh:126 (perf: unbound variable) under system Bash3.2. The canonical runner also requires a Linux host and Mac build-node branch switching, which remains restricted."
     ],
     "not_done": [
       "Work remains uncommitted; no GitHub messages, issue closure, merge, tag or release workflow. VERSION remains0.15.1 under issue886 manual-pass gate.",
@@ -673,7 +672,8 @@
       }
     },
     "current_physical_timing": {
-      "status": "Current normal candidate reproduces engine overruns; temporary trace identifies over-budget engine calls during measurement. Internal DSP/scheduling cause remains unproven.",
+      "status": "Closed as a0.16 engine-defect gate by the maintainer on2026-10-23. On a shared host, engine overruns alone are informational; require backend-xrun and sample-correctness checks. Historical strict timing verdicts below remain recorded unchanged.",
+      "historical_status": "Current normal candidate reproduces engine overruns; temporary trace identifies over-budget engine calls during measurement. Internal DSP/scheduling cause remains unproven.",
       "candidate_manifest_sha256": "5c06f93bd0d2956d2d8ad6d6403590fdb6ccc596ae47e19b24b8abcbe25fa15e",
       "evidence": {
         "all_hashes_verified": true,
@@ -751,7 +751,75 @@
         "source_outputs_restored_exactly": true
       },
       "cpu_wall_report": "build/016-physical-timing-phase/cpu-wall-report.json",
-      "interpretation": "The further116 measured overrun callbacks spent approximately the same CPU and elapsed time in the engine call. Internal DSP, cache/frequency and other execution-cost causes remain unproven; no scheduler or DSP fix is claimed."
+      "historical_interpretation": "The further116 measured overrun callbacks spent approximately the same CPU and elapsed time in the engine call. Internal DSP, cache/frequency and other execution-cost causes remain unproven; no scheduler or DSP fix is claimed.",
+      "closeout": {
+        "recorded_utc": "2026-10-23T14:37:16Z",
+        "authority": "Maintainer instruction to close the gate using backend xruns and sample checks, and to treat the engine counter as informational unless the host is quiet.",
+        "acceptance": {
+          "shared_host": "Use backend xruns plus sample-correctness checks for physical acceptance. Do not require zero engine overruns on a busy shared desktop at192kHz/256. Record the sample-check coverage separately from capture-off runs.",
+          "quiet_host": "Engine overruns on a quiet host still merit investigation; this decision does not dismiss them generally.",
+          "historical_verdicts": "Original failed strict-timing verdicts are preserved. The gate decision changes their release interpretation, not their measured counters or recorded outcomes.",
+          "implementation": "No engine, counter, scheduler, driver or GUI behaviour changed. The existing automated predicates were not relaxed. The amber/red DSP-readout change is deferred until after0.16."
+        },
+        "provenance": {
+          "local_main_head": "c054ed00477a3bc948439b6001a6ed0311dfe322",
+          "nuc_head_observed_after_runs": "412b5cdd670124d9f7c6c83a62d9a7754f0bb157",
+          "identical_git_tree": "df8c23985d803f0afd88bafdf594531a3dacba77",
+          "nuc_working_tree_observed_clean": true,
+          "app_sha256_observed_after_runs": "39d352af9965c6396b9391e6aabb6100cb752ecc2765d4e50dbc53d0ab50fb54",
+          "driver_sha256_observed_after_runs": "db57f54bb020b8d7034e7f3f6c3b6b15baf23bdd25deeb0cbd3218f132c0b2e8",
+          "limit": "These identities were collected after measurement. The driver did not freeze source and executable hashes in each run; contemporaneous per-run provenance is not established. The older candidate_manifest_sha256 and current_source hashes elsewhere in this record remain historical snapshots."
+        },
+        "evidence": {
+          "nuc_root": "/home/marc/projects/DuskStudio-016-integration/build/overrun-ab/",
+          "driver": "/home/marc/projects/DuskStudio-016-integration/build/overrun_ab.py",
+          "completed_batches": {
+            "1023-095522-asis": 12,
+            "1023-095822-quiet": 18,
+            "1023-100302-quiet12": 39,
+            "1023-101209-plain15": 15
+          },
+          "excluded_incomplete_attempt": "1023-095439-asis",
+          "local_archive": "build/016-counter-closeout/nuc-overrun-ab-evidence.tar.gz",
+          "archive_sha256": "1671b94429dd74d13027901bfe11e1b18b8a0dcfc7bbb95e560b9b8b704d6c73",
+          "archive_bytes": 1725768,
+          "hashed_files": 528,
+          "all_file_hashes_verified": true,
+          "independent_review": "build/016-counter-closeout/independent-overrun-review.json"
+        },
+        "physical_results": {
+          "device": "Scarlett native ALSA,192000Hz,256 frames,3 periods",
+          "completed_runs": 84,
+          "native_exit_zero": 84,
+          "modes": {"plain": 38, "locate": 23, "loop": 23},
+          "backend_xrun_increments": 0,
+          "engine_positive_runs": 11,
+          "engine_overrun_increments": 490,
+          "engine_positive_run_increments_sorted": [1, 1, 1, 18, 59, 64, 65, 68, 70, 71, 72],
+          "source_oracle_runs": 9,
+          "source_oracle_passes": 9,
+          "checked_source_values": 829489152,
+          "incorrect_source_values": 0,
+          "maximum_source_error": 1.0934251615246637e-7,
+          "source_check_limit": "The nine checks tap source audio before DSP. None of the11 engine-positive runs enabled capture; callback output was deliberately silent. These receipts establish zero backend-reported xruns and correct checked source samples, not physical-output or audible correctness during overruns. The maintainer separately reports no audible dropouts."
+        },
+        "timing_assessment": {
+          "per_thread_runs": 15,
+          "heavy_runs_with_per_thread_timing": 2,
+          "covered_heavy_engine_counts": [72, 71],
+          "audio_load_median_percent": [44.38, 45.12],
+          "audio_load_peak_percent": [94.21, 97.26],
+          "elevated_span_seconds_approx": [0.505, 0.397],
+          "sibling_occupancy_mean_percent_when_audio_load_above_80": [87.20, 82.84],
+          "dusk_sibling_runtime_percent_in_those_windows": [0.0, 0.0285],
+          "inference": "The two detailed heavy runs support contention from outside work on the audio core's SMT sibling. One burst recovered after CPU0-to-1 migration; the other recovered on CPU7 without migration. Process identity was not sampled, so the saved per-thread evidence does not directly identify the Windows VM.",
+          "minor_faults_across_15_runs": 17,
+          "major_faults_across_15_runs": 0,
+          "saved_run_mean_audio_cpu_frequency_mhz_range": [3905, 4024],
+          "limits": "The remaining69 runs lack per-thread timing. The folder supports two detailed heavy clusters, not four. No thermal or throttle-event counters are saved; absence of throttling is not independently established here. The maintainer attributes the broader failures chiefly to the concurrent Windows VM."
+        },
+        "release_scope": "This closes only the engine-overrun release gate. The other remaining_release_gates, final validation pass, maintainer signoff and release controls still apply."
+      }
     },
     "latest_windows_visual_observation": {
       "evidence": "build/016-browser-boundary-phase/gui-screen-capture.json",

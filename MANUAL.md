@@ -553,7 +553,9 @@ A control surface's bank is a separate, fixed axis: eight strips at a time, trac
 
 Modal dialogs (audio settings, plugin picker, region editor, piano roll, import target picker) appear centered with a dimmed backdrop behind them. Press **Esc** or click outside the modal to dismiss.
 
-The readout in the menu bar's right corner shows the device state (`Audio: 48 kHz 5.3 ms`) and the engine load (`DSP: 12% (0/0)`). The parenthesised pair counts audio dropouts: engine-side overruns / backend (driver) xruns. The segment turns red when load passes ~85% or either counter is non-zero. **Double-click the DSP readout to reset the counters** — useful after fixing whatever caused a dropout so you can watch for fresh ones.
+The readout in the menu bar's right corner shows the device state (`Audio: 48 kHz 5.3 ms`) and the engine load (`DSP: 12% (0/0)`). The parenthesised pair shows engine-side overruns / backend (driver) xruns. The first counts blocks whose processing took longer than one buffer's audio duration. Device buffering can absorb a late block, so an engine overrun alone does not establish an audible dropout. The second counts stream underrun, overrun or recovery events reported by the audio backend.
+
+The segment turns red when load passes ~85% or either counter is non-zero. **Double-click the DSP readout to reset the counters** so you can watch for fresh events.
 
 On Linux the readout can also end in `RT 1` (or a higher count). Under the limit RTKit and PipeWire set, a plug-in that holds a realtime audio thread for about 200 ms without a break has the system end Dusk Studio. Instead, the thread is moved to normal priority on the kernel's warning shortly before that, and the count says how many of those warnings came. A warning that reaches a thread not running at realtime priority moves nothing, but it is counted too. A Multicore DSP thread goes back to realtime priority by itself the next time the transport is stopped. The audio device's own thread stays at normal priority, so dropouts are more likely, until you open the device again in the **Audio** tab under **Settings → Settings...**. The double-click resets this count too.
 

@@ -6,6 +6,10 @@ The mastering stage adds multiband phase analysis with held warnings, coherence 
 Sessions save in format 11, which Dusk Studio 0.15.1 and earlier cannot open. Keep a copy before saving if you need to use an older version.
 <!-- summary-end -->
 
+### Known limitations
+
+At very small audio buffers, other busy programs can make occasional blocks run late. If you hear clicks, raise the audio buffer size.
+
 ### Downloads
 
 - **Linux** (`.tar.xz`, x86_64 and aarch64): unsigned. Extract, then run
