@@ -44,10 +44,10 @@ constexpr std::int64_t kMinLoopLenForSplit = 2 * (std::int64_t) kLoopSeamFade;
 // leaves at the playhead is the same audio on both sides of the swap.
 constexpr int kSwapFadeSamples = 512;
 
-// A rebuild waits for its readers to hold this much past the playhead, but no
-// longer than kSwapWarmWait: after that it is handed over regardless.
+// A rebuild is handed over once its readers hold this much past the playhead.
+// Never cold: the audio thread refuses a stream it cannot play at once and asks
+// for another rebuild, which would start cold again.
 constexpr std::int64_t kSwapWarmFrames = 8192;
-constexpr auto kSwapWarmWait = std::chrono::milliseconds (300);
 
 // A locate waits at most this long for its readers and the loop head. After
 // that it commits anyway, and whatever a cold reader cannot serve plays silent,
@@ -482,7 +482,6 @@ void PlaybackEngine::refreshTrackPlayback (int trackIndex, Audition audition)
     if (swap.stream == nullptr)
         swap.stream = std::make_unique<PerTrackStream>();
     if (! swap.stream->loopCacheReady) cachedLoopStart = -1;
-    swap.deadline = std::chrono::steady_clock::now() + kSwapWarmWait;
 }
 
 void PlaybackEngine::service()
@@ -529,9 +528,8 @@ void PlaybackEngine::service()
         {
             const auto position = transport != nullptr ? transport->getAutomationPosition()
                                                        : Transport::AutomationPosition { 0, 0 };
-            const bool warm = readersHoldFrom (*swap.stream, position.samples);
-            if (warm || now >= swap.deadline)
-                publish (t, position.samples, position.locateSerial, warm);
+            if (readersHoldFrom (*swap.stream, position.samples))
+                publish (t, position.samples, position.locateSerial);
         }
     }
 
@@ -553,11 +551,11 @@ bool PlaybackEngine::hasPendingWork() const noexcept
     return false;
 }
 
-void PlaybackEngine::publish (int t, std::int64_t playhead, std::uint32_t locateSerial, bool warm)
+void PlaybackEngine::publish (int t, std::int64_t playhead, std::uint32_t locateSerial)
 {
     auto& swap = pending[(size_t) t];
     swap.stream->warmStart = playhead;
-    swap.stream->warmEnd = warm ? playhead + swapWarmFrames() : playhead;
+    swap.stream->warmEnd = playhead + swapWarmFrames();
     swap.stream->warmLocateSerial = locateSerial;
     if (swap.auditioned != 0)
     {

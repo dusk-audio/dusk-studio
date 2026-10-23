@@ -5,7 +5,15 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$repo_root/scripts/regress/xvfb.sh"
 source "$repo_root/scripts/regress/scenarios.sh"
 app="${1:-$repo_root/build/DuskStudio_artefacts/Release/DuskStudio}"
-beta_format="${2:-LV2}"
+# Picker Beta is the LV2 fixture where the app hosts LV2 natively and the CLAP
+# one where it does not, as the scenario expects. A source build says which in
+# its cache; a package has no cache and always ships the LV2 host.
+default_beta=LV2
+app_cache="$(cd "$(dirname "$app")/../.." 2>/dev/null && pwd)/CMakeCache.txt"
+if [[ -f "$app_cache" ]] && ! grep -qx 'DUSKSTUDIO_NATIVE_LV2:BOOL=ON' "$app_cache"; then
+    default_beta=CLAP
+fi
+beta_format="${2:-$default_beta}"
 case "$beta_format" in
     LV2|CLAP) ;;
     *) printf 'Usage: %s [app] [LV2|CLAP]\n' "$0" >&2; exit 2 ;;

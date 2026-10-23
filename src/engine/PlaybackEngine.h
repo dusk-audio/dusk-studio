@@ -66,7 +66,7 @@ public:
     // Rebuilds one track's streams while the transport rolls, so a comp edit or a
     // take solo is heard at once: the new streams are built and warmed here, and
     // service() hands them to the audio thread once their readers hold the audio
-    // at the playhead, or after a short wait regardless. The audio thread then
+    // at the playhead, however long that takes. The audio thread then
     // crossfades from the old streams to the new ones. A newer rebuild of the
     // same track replaces one still waiting, so nothing built here reaches the
     // audio thread before service() runs: an edit of several actions, each
@@ -230,7 +230,6 @@ private:
     struct PendingSwap
     {
         std::unique_ptr<PerTrackStream> stream;
-        std::chrono::steady_clock::time_point deadline;
         TakeId auditioned = 0;
     };
     std::array<PendingSwap, Session::kNumTracks> pending;
@@ -253,7 +252,7 @@ private:
     // or 0. Null when the track has nothing to play.
     std::unique_ptr<PerTrackStream> buildTrackStream (int trackIndex, Audition audition,
                                                       std::int64_t warmAt, TakeId& auditioned);
-    void publish (int trackIndex, std::int64_t playhead, std::uint32_t locateSerial, bool warm);
+    void publish (int trackIndex, std::int64_t playhead, std::uint32_t locateSerial);
     // Whether every reader holds the audio from `playhead` a short way on.
     std::int64_t swapWarmFrames() const noexcept;
     bool readersHoldFrom (const PerTrackStream& stream, std::int64_t playhead) const noexcept;

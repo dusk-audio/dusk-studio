@@ -460,9 +460,12 @@ regress_last_passed() {
 scenario_leg() {
     local name="$1" script="$2" deadline="$3"
     printf '\n--- %s ---\n' "$name"
-    local start=$SECONDS log="${POST_DIR}/${name}.log" code rc
+    local start=$SECONDS log="${POST_DIR}/${name}.log" code rc phase_ok=1
     rm -f "$log"
-    if ! run_guest_phase "$name" "$script" "$deadline"; then
+    run_guest_phase "$name" "$script" "$deadline" || phase_ok=0
+    # A phase that ended but did not pass still posted its suite output, which
+    # names the failing scenarios; only one that never ended has nothing to judge.
+    if ((!phase_ok)) && ! grep -qF "REGRESS-PHASE ${name} END" <<<"$PHASE_BODY"; then
         regress_record "$name" FAIL "$((SECONDS - start))" "the guest phase did not complete"
         return 0
     fi
@@ -478,6 +481,10 @@ scenario_leg() {
         '' | *[!0-9-]*) rc=125 ;;
         *) rc="$code" ;;
     esac
+    if ((!phase_ok && rc == 0)); then
+        grep -m1 -F " failed: " <<<"$PHASE_BODY" || true
+        rc=125
+    fi
     local dirty
     dirty="$(grep -c '^\[DIRTY\]' "$log" || true)"
     if ((dirty > 0)); then
