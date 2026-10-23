@@ -1,0 +1,212 @@
+{
+  "issue": 804,
+  "purpose": "SFZ acceptance evidence with explicit source and platform bounds. Not final shipping-package validation or maintainer signoff.",
+  "current_live_gui": {
+    "status": "PARTIAL",
+    "required": "Four live providers: browse, license/source/version, download, pause/resume, install, load and play. Historical backend helpers do not complete this gate.",
+    "linux": {
+      "status": "PASS",
+      "source_commit": "2b40fe35acb52f1069fb003a216357b9466a4d92",
+      "receipt_checkout_commit": "7fea982150d6907d6a9e655ac1f111af6e2183b3",
+      "equivalent_source_tests_at_commit": "5c6eec65cccb5f39e6aa9cc6bf6c335195f2dc9b",
+      "source_tree": "9aa2ca51ec682be0ed991a3147b28378bd9a02c7",
+      "tests_tree": "b123b0bf09c4aa2dc80c542f81b4aa3002b24050",
+      "equivalence_scope": "Exact src/ and tests/ git tree IDs match at all three commits. This is source-bound candidate evidence, not shipping-package or maintainer signoff.",
+      "app_sha256": "58cd8cf938dedbd8de3c363a2a2d546e68981414e46a685b876a96abbdd5579f",
+      "sidecar_sha256": "f19ae8e372f5654d01908a2a283ec657b9ba56f79a5168d362c554498cc334a1",
+      "binary_identity": "App and sidecar hashes verified before and after every run.",
+      "manifest": "build/validation-016-closeout/live-final-linux/result.json",
+      "manifest_sha256": "8117c60ffcad0a7de8ce853abfe1e9f35850b179bc524477fc803d5e42befdf6",
+      "raw_hashes_verified": 48,
+      "complete_ppm_captures_verified": 16,
+      "providers": [
+        {"source":"sfzinstruments","pack":"277114082","release":"0cc54468bb0d2d9b32921958585caad65ba8df21","license":{"id":"CC-BY-4.0","sha256":"9ba9550ad48438d0836ddab3da480b3b69ffa0aac7b7878b5a0039e7ab429411","source":"https://github.com/sfzinstruments/Ixox.Flute/blob/0cc54468bb0d2d9b32921958585caad65ba8df21/LICENSE"},"program":"Ixox Flute.sfz","note":72,"launcher_exit":0,"native_exit":0,"paused_bytes":781,"pause_body_bytes":781,"resume":{"range":"bytes=781-","response":200,"interpretation":"Server ignored Range; safe full restart"},"audio_peak_db":-22.193376541137695,"master_peak_db":-22.193376541137695,"path":"build/validation-016-closeout/live-linux-sfzinstruments.lQj0KB","raw_log_sha256":{"output.log":"514a0379b10f1cc325aba6fad978714f25ea2eb40f79c4da02901eb676420c2a","error.log":"d118825c68b7087d2ace336066f574fbf4b43e7148ef469437d0b3e6c549dfb8","native-exit.txt":"9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"},"capture_sha256":{"sfz-live-browse.ppm":"650aa5cc86d6e9caa631d663b744cc70316da194693f603d39bff3bc7bd6cd6c","sfz-live-license.ppm":"d7b573ad8f7574461bd75a46235559a1befbf8a1f32bd8711b17a962bb985f67","sfz-live-paused.ppm":"098887a19465997c0159d2cb5896c207869eb27da3c432a4614946a9d7194b14","sfz-live-installed.ppm":"b438df50c1eafdbeb924b18e6036972e82a1b45ab3a52594e6acaa8295dadc6f"}},
+        {"source":"freepats","pack":"576386289","release":"496f2f6e82f226d650e270c0f0ad5febbebec249","license":{"id":"CC0-1.0","sha256":"a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499","source":"https://github.com/freepats/bagpipe/blob/496f2f6e82f226d650e270c0f0ad5febbebec249/LICENSE.txt"},"program":"Bagpipe 20260806.sfz","note":72,"launcher_exit":0,"native_exit":0,"paused_bytes":783,"pause_body_bytes":783,"resume":{"range":"bytes=783-","response":200,"interpretation":"Server ignored Range; safe full restart"},"audio_peak_db":-18.720184326171875,"master_peak_db":-18.933570861816406,"path":"build/validation-016-closeout/live-linux-freepats.ZgUmgQ","raw_log_sha256":{"output.log":"688085145087045a4b40dfbfb395fcb6f7b396676c3c09deaa580d79e5046b46","error.log":"0ad6a78ecacb90d235d390439415e258edfacdec51c177b8109040172bc5fa7b","native-exit.txt":"9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"},"capture_sha256":{"sfz-live-browse.ppm":"57a837e029ededd97b3272bb758acfaef403d768d4011ada86220d5d9fe095cb","sfz-live-license.ppm":"3be76e7d75ba4112d2aebc27e42858fddfc790faf2ce06de9803ce288390708b","sfz-live-paused.ppm":"5ac83222f0d2ed71f1b052ac151b196e4f11fda4f0aec21cdf6bb19f031c402a","sfz-live-installed.ppm":"2b67c5bef452b14df3ed350d3b184bf38985eb4eaf258a032514308a58620f05"}},
+        {"source":"musical-artifacts","pack":"7088","release":"69244c80f12a198b13231c41f0117149a42ce567e0136795611703961837a5d0","license":{"id":"CC-BY-3.0","sha256":"c03a64c8205181867f66ed0fcee003709c8731ac5272e0b2a81d6612ed0f39a1","source":"https://musical-artifacts.com/artifacts/7088"},"program":"Gordon_s_Whistle.sfz","note":72,"launcher_exit":0,"native_exit":0,"paused_bytes":1360,"pause_body_bytes":1360,"resume":{"range":"bytes=1360-","response":206,"interpretation":"Partial-content continuation"},"audio_peak_db":-12.951602935791016,"master_peak_db":-12.914214134216309,"path":"build/validation-016-closeout/live-linux-musical-artifacts.caFlKF","raw_log_sha256":{"output.log":"014517d97e7bfd3f0994bfd4953811bd6fa9e072b657cc106490f7af8ab9f50f","error.log":"b759d35cc09e59491fd642e7d3342136ee5262e0021622b972cec0cf9840b1f8","native-exit.txt":"9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"},"capture_sha256":{"sfz-live-browse.ppm":"7a649e7c2817d770379c87ebb07bf0e69ce235d26fa82f00557ea0c2460737cb","sfz-live-license.ppm":"59d75b219cbf57faf2bb13e438cd02234979ddf3c312e59d13f13392bd62f1e9","sfz-live-paused.ppm":"7cea2021da9492a57b98e2b0a04a4f8e8f2895c65371a4725e9c395d25c12587","sfz-live-installed.ppm":"532bba85cc242e847a1a0adcf460c028a64b04a8870865e57b58e831d414e892"}},
+        {"source":"versilian","pack":"62918451","release":"28092772094b2d9f1148d84cea97f4545b8c687d","license":{"id":"CC0-1.0","sha256":"36ffd9dc085d529a7e60e1276d73ae5a030b020313e6c5408593a6ae2af39673","source":"https://github.com/sgossner/VSCO-2-CE/blob/28092772094b2d9f1148d84cea97f4545b8c687d/LICENSE"},"program":"BassoonStac.sfz","note":60,"launcher_exit":0,"native_exit":0,"paused_bytes":782,"pause_body_bytes":782,"resume":{"range":"bytes=782-","response":200,"interpretation":"Server ignored Range; safe full restart"},"audio_peak_db":-32.71706008911133,"master_peak_db":-32.71706008911133,"path":"build/validation-016-closeout/live-linux-versilian.8ZEOTd","raw_log_sha256":{"output.log":"d2b8898bfaaabaa2a49ee64908d78560723a313e12a96f7d9e9a8397ddd3a217","error.log":"b2ea60d54c56c125fe441bff78bc8d6dbd97b8afc744a3cf9b5e236e876132f7","native-exit.txt":"9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"},"capture_sha256":{"sfz-live-browse.ppm":"40af6feddbdb83a0c6c2984917b21b49cab4da7eb67962c1052517cd39d388bf","sfz-live-license.ppm":"4cb5f1bb73e11bc77764439e646df4169f6c18a2425a4f28dc6344a02220bae0","sfz-live-paused.ppm":"d04458411d7ca61998d5fb174c1aaaf30bc5d7fdc1052820dc1f78808ecb2ce7","sfz-live-installed.ppm":"a5dc59cf1540f1938e95d28d3c20dbd31f9635601d8a853cda6ed676d265672a"}}
+      ],
+      "limits": [
+        "Private Xvfb and null PipeWire; isolated fresh profile per provider. Track and master metering prove finite nonzero application playback, not analog output quality.",
+        "Pause uses the synthetic asset-render-active trigger, not an actual recording or bounce. Musical Artifacts continued with HTTP 206; the three GitHub-backed providers returned HTTP 200 to Range and safely restarted full downloads.",
+        "One attempt per provider; no browser-challenge bypass or automatic provider retries. PYTHONOPTIMIZE was unset and capture/native-exit checks were active."
+      ]
+    },
+    "macos": {
+      "status": "PENDING"
+    },
+    "windows": {
+      "status": "PENDING"
+    }
+  },
+  "physical_storage": {
+    "linux": {
+      "source": "f097",
+      "reported_helper_sha256": "9b4a1e23794f0b31a2b520b22849f3f335869d1878a076e7b7399b628b3cefc7",
+      "terminal_assertions": "PASS",
+      "native_exit": "NOT RETAINED",
+      "receipt": "build/validation-release-review/usb/linux/physical-2/02-complete.json"
+    },
+    "macos": {
+      "source": "f097",
+      "reported_helper_sha256": "c08a95d36a989d5994f0578077c218f82a56d1ccc0b6715e8a4baf2e0c653049",
+      "terminal_assertions": "PASS",
+      "native_exit": "NOT RETAINED",
+      "receipt": "build/validation-release-review/usb/macos/physical-2/02-complete.json"
+    },
+    "windows": {
+      "source": "f097 plus separately compiled SfzLibraryLocations.cpp override matching d5 and 54",
+      "reported_helper_sha256": "41384572b96cbd2c584e7e703d0f2d434d8f01b1a34caf70f0a110ef596bf192",
+      "native_exit": 0,
+      "receipt": "build/validation-release-review/usb/windows/continuation-20261019/summary.json",
+      "fat32_sections": 5,
+      "fat32_assertions": 266,
+      "aggregate_limit": "Aggregate exit 4 skips unsupported FAT32 directory-alias section; all five non-alias sections independently exited 0."
+    },
+    "scope": "Production Move and managed loader with synthetic real-WAV fixture; physical absence and same-volume return; identity/controls preserved, missing runtime rejected and exactly silent, recovery verified and finite nonzero audio.",
+    "limits": [
+      "No provider download in physical fixture; no in-flight unplug or power-loss write test.",
+      "Windows continuation restores immutable saved state in a fresh process. Original overnight expiry and preliminary No Media attempt are retained, superseded by verified physical removal/reconnect.",
+      "Linux/macOS used the older Locations.cpp; later POSIX publication changes are not covered by these physical runs."
+    ]
+  },
+  "windows_default_library": {
+    "helper_source": "f097",
+    "reported_helper_sha256": "b63a349f52aac85d3287121f54d72c062880e1be0468729bbdad6b9dec87aa12",
+    "root": "C:\\Users\\marc\\AppData\\Local\\Dusk Studio\\sfz-library",
+    "vsco": {
+      "programs_verified_and_opened": 75,
+      "maximum_path_native_units": 204,
+      "durable_partial_bytes": 272655
+    },
+    "vcsl": {
+      "programs_verified_and_opened": 183,
+      "maximum_path_native_units": 239,
+      "durable_partial_bytes": 276119
+    },
+    "native_renders": {
+      "source": "d5",
+      "reported_app_sha256": "2c95537dcb2f4d1faeb3f3989e68a62d550ce3acaafc0d071339b47d05f3185a",
+      "vsco": {
+        "exit": 0,
+        "peak": 0.33313,
+        "rms": 0.05581
+      },
+      "vcsl": {
+        "exit": 0,
+        "peak": 0.229063,
+        "rms": 0.039159
+      }
+    },
+    "limits": [
+      "Temporary production backend helper, not normal GUI or shipping package.",
+      "Both default-location maxima are below 260 and do not force MAX_PATH.",
+      "Durable partial survived shutdown and was seen by next process; live HTTP 200 responses restarted full archives, not successful HTTP 206 byte-range resume. Trace recorder filtered uppercase Range while production uses lowercase; missing trace headers prove no absence.",
+      "First VSCO validator checked wrong partial directory; failed attempt preserved, corrected clean retry passed."
+    ]
+  },
+  "separate_forced_long_path": {
+    "source": "47d144d6315bc6ca5c89bfdf6de2327ed25a4d28",
+    "sampler": "f54eaed2d8f7c53d12f2afea7a553350344879fc",
+    "path_native_units": 278,
+    "native_render_exit": 0,
+    "peak": 0.33313,
+    "rms": 0.05581,
+    "scope": "Historical final native app renders the separately installed 3755 VSCO tree on a temporary QEMU NTFS disk; not a default-location or physical USB measurement. Earlier 3755 native render failed and is not counted as passing."
+  },
+  "external_service_limits": [
+    "Historical macOS Musical Artifacts refresh returned an upstream browser/anti-bot response; no bypass attempted. Current source-bound Linux live GUI acceptance passed all four providers, including Musical Artifacts. Current macOS and Windows live GUI acceptance remain pending.",
+    "Old Salsa selection rejected for unsupported HTTPS behavior; Gordon's Whistle resolved to its prior verified descriptor."
+  ],
+  "source_comparison": {
+    "revisions": {
+      "f097": "f097217fbb56a32b74e927b71bc56acdb3ca6c30",
+      "d5": "d5d190a92fe79256626f2aada6143b6121399f18",
+      "54": "54a6453fc2aa85da30a95338ea37566dd005b223"
+    },
+    "method": "For each listed path and revision, SHA256 of exact git show REVISION:PATH bytes; equal hashes apply only to listed full files. Reproduce with git show REVISION:PATH | sha256sum.",
+    "equal_across_all_three_sha256": {
+      "src/engine/sfz/SfzPackStore.cpp": "02e8260bb0296178e4ed46b807b586174618a45752a2035332faa39e5d4405c6",
+      "src/engine/sfz/SfzPackStore.h": "f0420bf397b9ea5f7ec5503ff46ce06ce5b8240e14004cb299ac583887918be5",
+      "src/engine/sfz/ManagedSfzLocator.h": "1eaa50a9ecb570fff72934cb9e3221e20738e98f97fc8432496ec86d87d52603",
+      "src/engine/sfz/SfzLibraryService.cpp": "073afee3e54fc79879e8620cac6122f03a777ced35f74dce2a9c5576ad7ca028",
+      "src/engine/sfz/SfzLibraryService.h": "3a475d93d86c348e248bc3e639da3e2a8e51dff4eced4ff1be73753d7c73dd13",
+      "src/engine/sfz/SfzArtworkCache.cpp": "a585e3af2661786d7c538f41dc925e96e6851c925058e7011abd0faf90ca2fd1",
+      "src/engine/sfz/SfzTransfer.cpp": "c871fe59d36cf8c6976bb66db5389a9ba46f7e4435f0fc60310d8f1a738fdbb0",
+      "src/engine/sfz/SfzPathPolicy.cpp": "5d78d4dfc231ceb322873137fdb05d757a7973357b37646b7023f1f8075e816d",
+      "src/engine/sfz/SfzPackIntegrity.cpp": "2ed17cfe1547944f52a0046db19e0578ab3f27af205bb0fee4288cc6c4454176",
+      "src/foundation/Fs.h": "4626a6c54d1abf9878151a7068eeda0e54264a29211b61872df88834bab6828c",
+      "src/foundation/AppConfigDir.h": "e9d00aadf9656b0fd784ab2da8137041fc78a202850658f9c665f0c31e8c97fe",
+      "src/session/SessionSerializer.cpp": "21de609e203da146bc449df7848bff149869e34212fd00bb79a827c274cec6e3",
+      "src/dsp/ChannelStrip.cpp": "94fe44cab059568a0df53993e7fa74abf46b3aad0dee1bc21b9040285cd5df3c",
+      "src/engine/multisample/AriaBank.cpp": "88ad37b7cf60f016f15e032760ebbba006116aec97b54135d37fca715b4d9a59",
+      "src/engine/multisample/AriaBank.h": "175a9c5fdc750c7e5df2b33f89be1822013431a88d1acaa0469b4fa06700987a",
+      "src/engine/multisample/AriaGui.cpp": "e451d819691e538fb029038a115c7d72dd615b6d0d131ef87880e2f8b3708b4e",
+      "src/engine/multisample/AriaGui.h": "8e86c9f3ac688afa985e728eb222ca8ce847b4cf532eee151fced8a0a70f8d92",
+      "src/engine/multisample/DuskMultisampleProcessor.cpp": "e06076c3d786c54fb913b12e0a7585eb94bc355d7abdfd840bf461823b0dff55",
+      "src/engine/multisample/DuskMultisampleProcessor.h": "c9470d1f3711e0388882c20a3b0e200644da2848dd3d8da02799581a03ef462d",
+      "src/engine/multisample/MultisampleBundle.h": "d2300a828ef6b5a84be553e04b9829a319b61f6ba90404928d6c79f5577f068f",
+      "src/engine/multisample/MultisampleLoader.cpp": "bc9ca41e8b0c5012db18d2e5917ac0f21ece8f02bbf713a10d3faf666d1e6a63",
+      "src/engine/multisample/MultisampleLoader.h": "f2c9be61f0aec5b773d0cab300a464800162e756f3b864441d72750c8fbbba4e",
+      "src/engine/multisample/NativeMultisampleSlot.h": "7836c383542b313fdf8f44a30f9140c277bb226c114d9c789e74a4f43ecfeffc",
+      "src/engine/multisample/Sf2PresetSort.h": "62b97eef1901d05ef6da2650b839016b7238a39ab1f2fc2b111359e443c5bfe1",
+      "src/engine/multisample/Sf2Reader.cpp": "febaf9553252e7fce8fcbf6cc08874e02dbe5d862a865c59c0b2c373db7dcbc0",
+      "src/engine/multisample/Sf2Reader.h": "34c2ff9fa808063b154aacffb863f2b0797afafec09c1eeb7bb017b36f1f4294",
+      "src/engine/multisample/Sf2ToSfz.cpp": "0a1d9e36cecaed7428d626a0c242f0c4a66760bdca5c7a29e98dadecc1a1bc84",
+      "src/engine/multisample/Sf2ToSfz.h": "99a4e5e7f344de4a502a69dc7a6e76293e6743eff42ef2d536d2ce979582607a"
+    },
+    "different_sha256": {
+      "src/engine/sfz/SfzLibraryLocations.cpp": {
+        "f097": "8860269e19c0313385239ac1e80d072e7c72bfb332bd76e566b33f781f0e4da3",
+        "d5": "0863e011ce6065c478dec92f079bdad37e0446e9a71b6b1ee9ff991d3b03f20d",
+        "54": "0863e011ce6065c478dec92f079bdad37e0446e9a71b6b1ee9ff991d3b03f20d"
+      },
+      "src/engine/sfz/SfzProvider.cpp": {
+        "f097": "9379ada1e0ad9e20364b071a968295b9a1e98324ed999511fe4d072c19f13aa6",
+        "d5": "9379ada1e0ad9e20364b071a968295b9a1e98324ed999511fe4d072c19f13aa6",
+        "54": "a75cbdb9825091be36bf422ad4c55833aea1d4f9ca0beddacc84f690a19c603c"
+      },
+      "src/engine/sfz/SfzProvider.h": {
+        "f097": "19667e2cd355bda9c18b4911b84b19ea3d21040049ab48b9796c7e73b666c427",
+        "d5": "19667e2cd355bda9c18b4911b84b19ea3d21040049ab48b9796c7e73b666c427",
+        "54": "884db7b741be2636a680453cf05a5584f90e9d66469f6635c2a5c07e0dfd01b1"
+      }
+    },
+    "sampler_gitlinks": {
+      "f097": "51600e9f7f1ebde24b7b2915da4d78dec19b27c6",
+      "d5": "51600e9f7f1ebde24b7b2915da4d78dec19b27c6",
+      "54": "f92e07104495bbd645325ff62c1a6c8bae3ad428"
+    },
+    "limits": [
+      "Provider admission/artwork logic and Locations.cpp changed; sampler gitlink changed. These are not whole-product equivalence claims.",
+      "AudioEngine full file is not claimed unchanged. Current diagnostic/UI work is outside these historical source comparisons."
+    ]
+  },
+  "raw_receipt_sha256": {
+    "build/validation-release-review/usb/linux/build-manifest.json": "b947a6072b46854492e8917621464c1da14ef41b98a84e7cb26c03dc1976b58e",
+    "build/validation-release-review/usb/linux/physical-2/00-ready-to-unplug.json": "7339f6c2f27ff943a0f61cd4ee913cfdb96fe00d9830bc8a775e6843b07e6547",
+    "build/validation-release-review/usb/linux/physical-2/01-ready-to-reconnect.json": "764fabf5ceabdb324a07e9c4ac4820d36b17f2a8a4e1eb1a546f2ce0e5db6b87",
+    "build/validation-release-review/usb/linux/physical-2/02-complete.json": "8a1beb119c63003ce556d9a4283bcce34aaae62ff868bfb6de8889aab0b2cb4b",
+    "build/validation-release-review/usb/macos/build-manifest.json": "1d5cb873c5186f70af01c377afa20d90c744af252809a3f4c8ddee5dcb14fc40",
+    "build/validation-release-review/usb/macos/physical-2/00-ready-to-unplug.json": "b2f25cd48215dc97ed39a2ab031717f0a12635f59c0d4edddf7bed6bca1f1325",
+    "build/validation-release-review/usb/macos/physical-2/01-ready-to-reconnect.json": "1ec963c595a47aca8cea942afaccbd1a6cbdfa9d6c2fe30993631c72c3a7aa04",
+    "build/validation-release-review/usb/macos/physical-2/02-complete.json": "c447ec3fa0e30cb085c95e83f23ee173106c9659d7b6eced2f0c5a68f2ab1c57",
+    "build/validation-release-review/usb/windows/continuation-20261019/build-manifest.json": "36f10e095d93e9cfee9081ffef493274a71816d24edbd185ae61495873275989",
+    "build/validation-release-review/usb/windows/continuation-20261019/summary.json": "3d7f227763bf785bac15ea48e53755ee98249600a949bdb2b6b4b2cefc1f3c2f",
+    "build/validation-release-review/usb/windows/continuation-20261019/physical-native-exit.json": "6877dc32598411b77a38f0ffe584c1a6e78f0d425381468a5d7229eb613e7b9d",
+    "build/validation-release-review/usb/windows/continuation-20261019/resume-20261019-2/01-ready-to-reconnect.json": "1634ec370672e5e3a2373891d447c5eaf28ad9dc4440de2c2182da451fd0f971",
+    "build/validation-release-review/usb/windows/continuation-20261019/resume-20261019-2/02-complete.json": "3830e5bead0611b608037f78831ddde14580c3cf8d2a21539f0db8d8dcc81c6e",
+    "build/validation-release-review/live/windows-default/provider-build-manifest.json": "5d77f9c66eca25c1f5971ab0fd799ee872258bd26311ea18dc49b4102d00e99a",
+    "build/validation-release-review/live/windows-default/vsco-summary.json": "ec653cefabb582e78ab00174eb2f59f63f93fcd87304346c9d3b24f04e7a2994",
+    "build/validation-release-review/live/windows-default/vcsl-summary.json": "3214cbe78ca67c011a00500eeb1b5c54ee0e13b9d5a99c88f41f949f150fa23e",
+    "build/validation-release-review/live/windows-default/vsco-pause.json": "5f10c1d62f897a0d54f43fbfa319f7c1f8ab4f75d5960db82e17bf30e2cf9fec",
+    "build/validation-release-review/live/windows-default/vcsl-pause.json": "229d1f7369a5483ba4344f49fda375cceadc75557c5ee4b64644f5ebfe628c25",
+    "build/validation-release-review/live/windows-default/vsco-install.json": "d334ef3a7d1e3a52d1a409c1f9f33564db48c590da93241ae217c5a731235f19",
+    "build/validation-release-review/live/windows-default/vcsl-install.json": "241935b2b26dd734a92aa54d4c1b8810fa232b18feba2ce29edce0a2c58b6191",
+    "build/validation-release-review/live/windows-default/final-app/summary.json": "7baee5461baf3297dda6b8bf6eeec4daa040ac9bc5534b948273bb9f25eabd48",
+    "build/validation-release-review/live/results.json": "265bb8f6d6f76f602475d69858657aab13dff962298ebdd094e638e7de3ef1aa",
+    "build/validation-final-47d144d6/results.json": "e6f02b84fe999face6826f4fd6750841d82b6dd75917718b783dd28a4a231133",
+    "build/validation-final-47d144d6/raw/dusk-016-windows-render-long-fixed.log": "63e3355ba7a3a03709aca2fdf1bef181b118f58e7e68a3dcbaedfb9a4b2c4f1a",
+    "build/validation-final-47d144d6/raw/dusk-016-windows-longpath-final-evidence.tar": "0b7161ec0b7e18e4044663177146657f823ba70965e1dd7227aacb47635415aa"
+  },
+  "verification": "Raw receipt bytes rehashed locally and compared with retained recorded hashes where available. Reported historical helper/app binary hashes are provenance from receipts, not newly rehashed executables."
+}

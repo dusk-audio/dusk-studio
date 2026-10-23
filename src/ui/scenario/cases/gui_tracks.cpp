@@ -656,7 +656,7 @@ std::optional<ScenarioResult> runTimelineTrackMove (GuiHost& host, ScenarioConte
     ctx.cleanup ([&host, &engine, &session, &transport, launched]
     {
         drainModals (host);
-        transport.setState (Transport::State::Stopped);
+        engine.stop();
         transport.setPlayhead (0);
         session.track (frozenTrack).frozen.store (false);
         if (session.track (renderTrack).frozen.load()) engine.unfreezeTrack (renderTrack);
@@ -820,7 +820,7 @@ std::optional<ScenarioResult> runTimelineTrackMove (GuiHost& host, ScenarioConte
         order (moved ({ kick }, 0), "a refused undo moved the tracks");
         ctx.expect (engine.getUndoManager().getUndoDescription() == kMoveTracksTransaction,
                     "a refused undo dropped the move from the history");
-        transport.setState (Transport::State::Stopped);
+        engine.stop();
         transport.setPlayhead (0);
     } });
 
@@ -838,7 +838,7 @@ std::optional<ScenarioResult> runTimelineTrackMove (GuiHost& host, ScenarioConte
         order (moved ({ kick }, 0), "a refused undo from the editor moved the tracks");
         ctx.expect (engine.getUndoManager().getUndoDescription() == kMoveTracksTransaction,
                     "a refused undo from the editor dropped the move from the history");
-        transport.setState (Transport::State::Stopped);
+        engine.stop();
         transport.setPlayhead (0);
     } });
 
@@ -1006,10 +1006,10 @@ std::optional<ScenarioResult> runTimelineTrackMove (GuiHost& host, ScenarioConte
         ctx.expect (host.dragTapeTrackName (kick, 0), "the kick's name did not take a drag");
     } });
     alerted ("while playing", "Can't move tracks\nStop playback, then move the tracks again.");
-    steps->push_back ({ 300, [&session, &transport, order, identity]
+    steps->push_back ({ 300, [&session, &engine, &transport, order, identity]
     {
         order (identity(), "a move while playing ran anyway");
-        transport.setState (Transport::State::Stopped);
+        engine.stop();
         transport.setPlayhead (0);
         session.track (frozenTrack).frozen.store (true);
     } });
@@ -1082,7 +1082,7 @@ std::optional<ScenarioResult> runCloneRefusals (GuiHost& host, ScenarioContext& 
     ctx.keep (dest.frozen);
     ctx.cleanup ([&engine, &transport]
     {
-        transport.setState (Transport::State::Stopped);
+        engine.stop();
         transport.setPlayhead (0);
         engine.getUndoManager().clearUndoHistory();
     });
@@ -1121,9 +1121,9 @@ std::optional<ScenarioResult> runCloneRefusals (GuiHost& host, ScenarioContext& 
     steps->push_back ({ 100, [&transport] { transport.setState (Transport::State::Playing); } });
     clone ("while playing");
     alerted ("while playing", "Can't clone track\nStop playback, then clone the track again.");
-    steps->push_back ({ 100, [&transport, &dest]
+    steps->push_back ({ 100, [&engine, &transport, &dest]
     {
-        transport.setState (Transport::State::Stopped);
+        engine.stop();
         transport.setPlayhead (0);
         dest.frozen.store (true);
     } });

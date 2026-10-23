@@ -15,7 +15,6 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
-#include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
@@ -158,8 +157,7 @@ void reopenSavedSession (GuiHost& host, const std::filesystem::path& sessionJson
 
 std::string fileBytes (const std::filesystem::path& path)
 {
-    std::ifstream input (path, std::ios::binary);
-    return std::string (std::istreambuf_iterator<char> (input), std::istreambuf_iterator<char>());
+    return dusk::fs::loadFileAsString (path);
 }
 
 std::string commandChord (char letter)

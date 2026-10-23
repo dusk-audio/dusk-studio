@@ -2401,6 +2401,7 @@ std::optional<ScenarioResult> runMasteringTransport (GuiHost& host, ScenarioCont
                   state = transport.getState(), position = transport.getPlayhead()]
     {
         drainModals (host);
+        ctx.engine().stop();
         player.stop();
         player.unloadFile();
         // unloadFile is only the player's half: the view wrote the path into

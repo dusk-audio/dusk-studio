@@ -40,14 +40,18 @@ public:
     void add (BufferedFileReader&, std::int64_t timelineStart,
               std::int64_t timelineEnd, std::int64_t sourceOffset);
     void remove (BufferedFileReader&) noexcept;
+    // Non-RT; RT hint producers must be quiescent during reset and priming.
     void reset() noexcept;
-    // Updates the pool position after priming; transport writers must be quiescent.
+    // Updates the pool position and cancels any pending seek.
     void primeAt (std::int64_t timelineFrame);
     Stats stats() const;
 
-    // RT: the workers poll these hints; publishing them never signals an event.
+    // RT: one serialized producer; workers poll hints without an event signal.
     void setPositionRt (std::int64_t timelineFrame) noexcept;
-    // One serialized producer, normally the audio callback.
+    // Each overlapping source span must fit its reader's window payload.
+    void setSeekTargetRt (std::int64_t timelineFrame, int warmFrames) noexcept;
+    void clearSeekTargetRt() noexcept;
+    bool seekReadyRt (std::int64_t timelineFrame, int warmFrames) const noexcept;
     void setLoopRt (bool enabled, std::int64_t start, std::int64_t end) noexcept;
 
     // One bounded pass, also used by deterministic no-thread tests.
@@ -79,9 +83,23 @@ private:
         Entry* entry = nullptr;
         std::int64_t sourceFrame = 0;
         bool evict = false;
+        bool seeking = false;
+        std::int64_t currentSourceFrame = -1;
+        std::int64_t numFrames = 0;
+    };
+
+    struct Seek
+    {
+        std::int64_t target = -1;
+        int warmFrames = 0;
+        std::uint64_t generation = 0;
+        bool coherent = true;
     };
 
     Loop loopSnapshot() const noexcept;
+    Seek seekSnapshot() const noexcept;
+    void publishSeekRt (std::int64_t, int) noexcept;
+    void updateSeekReady();
     bool eligible (const Entry&, std::int64_t position, const Loop&,
                    std::int64_t& sourceFrame) const noexcept;
     Claim claimNext();
@@ -99,6 +117,10 @@ private:
 
     std::atomic<bool> stop { false };
     std::atomic<std::int64_t> position { 0 };
+    std::atomic<std::size_t> registeredReaders { 0 };
+    std::atomic<std::uint64_t> seekGeneration { 0 }, seekReadyGeneration { ~std::uint64_t { 0 } };
+    std::atomic<std::int64_t> seekTarget { -1 };
+    std::atomic<int> seekWarmFrames { 0 };
     std::atomic<std::int64_t> aheadFrames { 144000 };
     std::atomic<std::int64_t> behindFrames { 96000 };
     std::atomic<std::uint64_t> loopGeneration { 0 };

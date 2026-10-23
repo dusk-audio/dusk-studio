@@ -256,7 +256,7 @@ void pumpUntil (std::function<bool()> done, std::chrono::milliseconds timeout)
 // handed off, which shows up here as the completion never arriving inside the
 // call and the slot only going remote once the message loop runs again.
 #if ! defined (__APPLE__)
-TEST_CASE ("PluginSlot completes an out-of-process load off the message thread")
+TEST_CASE ("PluginSlot completes an out-of-process load off the message thread", "[plugin][ipc]")
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
 
@@ -391,7 +391,7 @@ TEST_CASE ("PluginSlot reports no latency for a crashed sandbox child before or 
 // With no child binary where the loader looks, the sandbox is simply not
 // available: the load must still take the in-process path rather than fail or
 // wait on a host that will never answer.
-TEST_CASE ("PluginSlot falls back to in-process when the host binary is missing")
+TEST_CASE ("PluginSlot falls back to in-process when the host binary is missing", "[plugin][ipc]")
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
 
@@ -425,7 +425,7 @@ TEST_CASE ("PluginSlot falls back to in-process when the host binary is missing"
 // restore never sees because it spawns from the message thread. Needs the stub
 // that answers block commands as well as control RPCs; the control-only one
 // cannot keep any slot alive under a live callback.
-TEST_CASE ("PluginSlot keeps its sandbox child when the graph is live across the load")
+TEST_CASE ("PluginSlot keeps its sandbox child when the graph is live across the load", "[plugin][ipc]")
 {
     using namespace std::chrono_literals;
 
@@ -492,7 +492,7 @@ TEST_CASE ("PluginSlot keeps its sandbox child when the graph is live across the
 // budget plus the whole LoadPlugin deadline, per slot, on the message thread.
 // The worker is cancellable now, so both stalls unwind in about one poll slice
 // plus the child teardown.
-TEST_CASE ("PluginSlot destruction cancels a stalled out-of-process load")
+TEST_CASE ("PluginSlot destruction cancels a stalled out-of-process load", "[plugin][ipc]")
 {
     using namespace std::chrono_literals;
 
@@ -535,7 +535,7 @@ TEST_CASE ("PluginSlot destruction cancels a stalled out-of-process load")
 // that rotates the deferred-destruction ring destroys the connection evicted
 // from the far slot, which unmaps that shared memory - so the rotation has to
 // happen with the lock held, not merely after currentRemote has been nulled.
-TEST_CASE ("PluginSlot rotates the remote ring under the process lock")
+TEST_CASE ("PluginSlot rotates the remote ring under the process lock", "[plugin][ipc]")
 {
     using namespace std::chrono_literals;
 

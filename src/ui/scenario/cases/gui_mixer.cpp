@@ -88,9 +88,12 @@ std::optional<ScenarioResult> runAutomation (GuiHost& host, ScenarioContext& ctx
         for (auto& l : master.automationLanes) l.publishPoints ({});
         for (auto& l : aux.automationLanes) l.publishPoints ({});
     };
-    ctx.cleanup ([&engine, &session, &params, &bus, &master, &aux, clearAll]
+    ctx.cleanup ([&host, &engine, &session, &params, &bus, &master, &aux, clearAll,
+                  position = engine.getTransport().getCommittedPlayhead(), view = host.tapeView()]
     {
         engine.stop();
+        engine.getTransport().setPlayhead (position);
+        host.restoreTapeView (view);
         clearAll();
         params.faderDb.store (0.0f, std::memory_order_relaxed);
         params.pan.store (0.0f, std::memory_order_relaxed);
@@ -110,6 +113,7 @@ std::optional<ScenarioResult> runAutomation (GuiHost& host, ScenarioContext& ctx
     {
         std::size_t muteCount = 0;
         std::int64_t stoppedAt = 0;
+        std::uint32_t pendingSerial = 0;
     };
     auto marks = std::make_shared<Marks>();
     auto steps = std::make_shared<std::vector<Step>>();
@@ -257,6 +261,73 @@ std::optional<ScenarioResult> runAutomation (GuiHost& host, ScenarioContext& ctx
                     "a WRITE pass erased the automation after where it stopped");
         ctx.expect (timesAscend (fader), "the fader lane is out of time order");
         track.automationMode.store ((int) AutomationMode::Off, std::memory_order_release);
+    } });
+
+    static constexpr std::int64_t kPendingTarget = 172800000;
+    const std::array<AutomationLane*, 4> pendingLanes {
+        &track.automationLanes[(std::size_t) AutomationParam::FaderDb],
+        &bus.automationLanes[(std::size_t) AutomationParam::FaderDb],
+        &master.automationLanes[(std::size_t) AutomationParam::FaderDb],
+        &aux.automationLanes[(std::size_t) AutomationParam::FaderDb] };
+    const auto modes = std::array<std::atomic<int>*, 4> {
+        &track.automationMode, &bus.automationMode, &master.automationMode, &aux.automationMode };
+    steps->push_back ({ 0, [&engine, &params, &bus, &master, &aux, clearAll, roll, marks, modes]
+    {
+        clearAll();
+        for (auto* mode : modes) mode->store ((int) AutomationMode::Write);
+        params.faderDb.store (-3.0f);
+        bus.faderDb.store (-5.0f);
+        master.faderDb.store (-7.0f);
+        aux.returnLevelDb.store (-9.0f);
+        roll();
+        marks->pendingSerial = engine.getTransport().getLocateCount();
+        engine.getPlaybackEngine().holdLocateReadyForTest (true);
+        engine.getTransport().locate (kPendingTarget);
+    } });
+    steps->push_back ({ 200, [&params, &bus, &master, &aux]
+    {
+        params.faderDb.store (-13.0f);
+        bus.faderDb.store (-15.0f);
+        master.faderDb.store (-17.0f);
+        aux.returnLevelDb.store (-19.0f);
+    } });
+    steps->push_back ({ 200, [modes]
+    {
+        for (auto* mode : modes) mode->store ((int) AutomationMode::Off);
+    } });
+    steps->push_back ({ 100, [&engine, &ctx, marks, pendingLanes, modes, &params, &bus, &master, &aux]
+    {
+        const auto position = engine.getTransport().getAutomationPosition();
+        ctx.expect (position.samples < kPendingTarget && position.locateSerial == marks->pendingSerial,
+                    "the seek committed while readiness was held");
+        for (std::size_t i = 0; i < pendingLanes.size(); ++i)
+        {
+            const auto& points = pendingLanes[i]->pointsConst();
+            ctx.expect (laneHolds (points, AutomationParam::FaderDb, -3.0f - 2.0f * (float) i, kDbTolerance)
+                            && laneHolds (points, AutomationParam::FaderDb, -13.0f - 2.0f * (float) i, kDbTolerance),
+                        "strip family " + std::to_string (i) + " lost a pending-seek fader ride");
+            ctx.expect (! points.empty() && timesAscend (points)
+                            && points.back().timeSamples <= position.samples,
+                        "strip family " + std::to_string (i) + " wrote at the requested seek before audio reached it");
+        }
+        for (auto* mode : modes) mode->store ((int) AutomationMode::Write);
+        params.faderDb.store (-23.0f);
+        bus.faderDb.store (-25.0f);
+        master.faderDb.store (-27.0f);
+        aux.returnLevelDb.store (-29.0f);
+        engine.getPlaybackEngine().holdLocateReadyForTest (false);
+    } });
+    steps->push_back ({ 200, [&engine] { engine.stop(); } });
+    steps->push_back ({ 100, [&ctx, pendingLanes]
+    {
+        for (std::size_t i = 0; i < pendingLanes.size(); ++i)
+        {
+            const auto& points = pendingLanes[i]->pointsConst();
+            ctx.expect (laneHolds (points, AutomationParam::FaderDb, -23.0f - 2.0f * (float) i, kDbTolerance)
+                            && std::any_of (points.begin(), points.end(), [] (const AutomationPoint& p)
+                                            { return p.timeSamples >= kPendingTarget; }),
+                        "strip family " + std::to_string (i) + " did not record after the seek committed");
+        }
     } });
 
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
@@ -1349,7 +1420,8 @@ const ScenarioRegistrar modeShown { Scenario {
 std::optional<ScenarioResult> runOptimizeAutomation (GuiHost& host, ScenarioContext& ctx)
 {
     auto& session = ctx.session();
-    auto& transport = ctx.engine().getTransport();
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
     if (! transport.isStopped() || ! host.modalStackEmpty())
         return ScenarioResult::skip ("requires a stopped transport and no open modal");
 
@@ -1371,10 +1443,11 @@ std::optional<ScenarioResult> runOptimizeAutomation (GuiHost& host, ScenarioCont
     std::vector<std::vector<AutomationPoint>> savedLanes;
     for (auto* lane : lanes) savedLanes.push_back (lane->pointsConst());
     for (auto* mode : modes) ctx.keep (*mode);
-    ctx.cleanup ([&host, &transport, lanes, savedLanes, state = transport.getState(),
+    ctx.cleanup ([&host, &engine, &transport, lanes, savedLanes, state = transport.getState(),
                   position = transport.getPlayhead()]
     {
         drainModals (host);
+        engine.stop();
         transport.setPlayhead (position);
         transport.setState (state);
         for (std::size_t i = 0; i < lanes.size(); ++i) lanes[i]->publishPoints (savedLanes[i]);
@@ -1424,9 +1497,9 @@ std::optional<ScenarioResult> runOptimizeAutomation (GuiHost& host, ScenarioCont
     };
 
     transport.setState (Transport::State::Playing);
-    attempt (stopPlayback, 5, "while playing", [&transport, &readMode]
+    attempt (stopPlayback, 5, "while playing", [&engine, &readMode]
     {
-        transport.setState (Transport::State::Stopped);
+        engine.stop();
         readMode.store ((int) AutomationMode::Read, std::memory_order_release);
     });
     attempt (setOff, 5, "with a track in Read", [&readMode, &touchMode]

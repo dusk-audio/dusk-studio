@@ -217,6 +217,10 @@ struct DuskImGuiHost::Impl final : private dusk::Timer
             return;
         closeRequested = true;
         closeWasPumped = false;
+       #if defined (_WIN32)
+        // The parent can paint an alert before deferred teardown reaches this child.
+        ::ShowWindow (reinterpret_cast<HWND> (window->getNativeWindowHandle()), SW_HIDE);
+       #endif
     }
 
     bool isOpen() const noexcept { return window != nullptr || closeRequested; }

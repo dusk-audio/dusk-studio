@@ -15,6 +15,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <memory>
 #include <string>
 #include <vector>
@@ -389,47 +390,221 @@ ScenarioResult runMovesEngage (ScenarioContext& ctx)
 ScenarioResult runButtonModes (ScenarioContext& ctx)
 {
     auto& session = ctx.session();
-    constexpr int kTrack = 3;
-    auto& mute = session.track (kTrack).strip.mute;
-
-    ctx.keep (mute);
+    auto& engine = ctx.engine();
+    auto& mute = session.track (3).strip.mute;
+    auto& other = session.track (4).strip.mute;
+    auto& pan = session.track (6).strip.pan;
+    ctx.keep (mute); ctx.keep (other); ctx.keep (pan);
+    ctx.keep (session.pendingTransportAction);
+    ctx.keep (session.midiLearnPending); ctx.keep (session.midiLearnCapture);
+    for (int track = 0; track < Session::kNumTracks; ++track)
+    { ctx.keep (session.track (track).midiInputIndex); ctx.keep (session.track (track).midiOutputIndex); }
+    ctx.keep (session.syncSourceInputIdx); ctx.keep (session.syncOutputIdx);
+    ctx.keep (session.mcu.resolvedInputIdx); ctx.keep (session.mcu.resolvedOutputIdx);
     restoreBindings (ctx);
-
-    MidiBinding press;
-    press.trigger = MidiBindingTrigger::CC;
-    press.dataNumber = 40;
-    press.target = MidiBindingTarget::TrackMute;
-    press.targetIndex = kTrack;
+    const bool hardware = engine.setHardwareMidiInputsEnabledForScenario (false);
+    const bool takeover = engine.getMidiSoftTakeover();
+    engine.setMidiSoftTakeover (false);
+    ctx.cleanup ([&engine, hardware, takeover]
+    { engine.setHardwareMidiInputsEnabledForScenario (hardware); engine.setMidiSoftTakeover (takeover); });
+    session.midiLearnPending.store (-1);
+    session.pendingTransportAction.store (static_cast<int> (PendingTransportAction::None));
+    int messages = 0, checks = 0;
+    const auto check = [&] (bool condition, const std::string& text)
+    { ++checks; return ctx.expect (condition, text); };
+    const auto send = [&] (dusk::MidiBuffer events)
+    {
+        for (const auto event : events) { (void) event; ++messages; }
+        ctx.pumpWithMidi (kInput, std::move (events));
+    };
+    const auto sendCc = [&] (int channel, int number, int value) { send (cc (channel, number, value)); };
+    const auto raw = [&] (int status, int number, int value)
+    {
+        const std::uint8_t data[] { static_cast<std::uint8_t> (status),
+                                  static_cast<std::uint8_t> (number), static_cast<std::uint8_t> (value) };
+        dusk::MidiBuffer events; events.addEvent (data, 3, 0); send (std::move (events));
+    };
+    auto press = ccBinding (40, MidiBindingTarget::TrackMute, 3);
     press.buttonMode = MidiButtonMode::Press;
-
-    // A momentary button sends 127 then 0 for one press: only the rising edge
-    // is the press.
     publish (session, { press });
-    mute.store (false, std::memory_order_relaxed);
-    ctx.pump (1);
+    sendCc (1, 40, 0); mute.store (false);
+    const std::array<int, 4> values { 127, 127, 0, 127 };
+    const std::array<bool, 4> risingStates { true, true, true, false };
+    for (std::size_t i = 0; i < values.size(); ++i)
+    {
+        sendCc (1, 40, values[i]);
+        check (mute.load() == risingStates[i], "CC Press step " + std::to_string (i) + " did not follow rising edges");
+    }
+    sendCc (1, 40, 0); mute.store (false);
+    dusk::MidiBuffer batch;
+    for (std::size_t i = 0; i < values.size(); ++i)
+    {
+        const std::uint8_t data[] { 0xB0, 40, static_cast<std::uint8_t> (values[i]) };
+        batch.addEvent (data, 3, static_cast<int> (i));
+    }
+    send (std::move (batch));
+    check (! mute.load(), "multiple presses in one block did not use event order");
 
-    ctx.pumpWithMidi (kInput, cc (1, 40, 127));
-    ctx.expect (mute.load (std::memory_order_relaxed),
-                "a momentary press did not reach mute");
-    ctx.pumpWithMidi (kInput, cc (1, 40, 0));
-    ctx.expect (mute.load (std::memory_order_relaxed),
-                "the release of a momentary press flipped mute a second time");
+    press.dataNumber = 41; publish (session, { press }); mute.store (false);
+    const std::array<int, 5> thresholds { 63, 64, 65, 63, 64 };
+    const std::array<bool, 5> thresholdStates { false, true, true, true, false };
+    for (std::size_t i = 0; i < thresholds.size(); ++i)
+    {
+        sendCc (1, 41, thresholds[i]);
+        check (mute.load() == thresholdStates[i], "CC threshold step " + std::to_string (i) + " was not edge-triggered");
+    }
+    auto toggle = press; toggle.dataNumber = 40; toggle.buttonMode = MidiButtonMode::Toggle;
+    publish (session, { toggle }); mute.store (false);
+    for (std::size_t i = 0; i < values.size(); ++i)
+    {
+        sendCc (1, 40, values[i]);
+        check (mute.load() == (i % 2 == 0), "CC Toggle step " + std::to_string (i) + " did not fire on every message");
+    }
 
-    // A latching button alternates 127 and 0 across presses, so every message
-    // has to count or the user gets one flip per two clicks.
-    auto toggle = press;
-    toggle.buttonMode = MidiButtonMode::Toggle;
-    publish (session, { toggle });
-    mute.store (false, std::memory_order_relaxed);
-    ctx.pump (1);
+    auto note = press; note.trigger = MidiBindingTrigger::Note; note.dataNumber = 60;
+    publish (session, { note }); raw (0x80, 60, 0); mute.store (false);
+    const std::array<std::array<int, 3>, 8> notes {{
+        {{0x90, 1, 1}}, {{0x90, 1, 1}}, {{0x80, 64, 1}}, {{0x90, 127, 0}},
+        {{0x90, 0, 0}}, {{0x90, 1, 1}}, {{0x80, 0, 1}}, {{0x90, 1, 0}}
+    }};
+    for (std::size_t i = 0; i < notes.size(); ++i)
+    {
+        raw (notes[i][0], 60, notes[i][1]);
+        check (mute.load() == (notes[i][2] != 0), "Note Press step " + std::to_string (i) + " did not honor positive velocity and releases");
+    }
+    note.buttonMode = MidiButtonMode::Toggle; publish (session, { note }); mute.store (false);
+    raw (0x90, 60, 1); check (mute.load(), "Note Toggle ignored velocity one");
+    raw (0x90, 60, 1); check (! mute.load(), "Note Toggle suppressed a repeated positive NoteOn");
+    raw (0x80, 60, 127); check (! mute.load(), "Note Toggle fired on NoteOff");
+    raw (0x90, 60, 0); check (! mute.load(), "Note Toggle fired on zero-velocity NoteOn");
+    raw (0x90, 60, 127); check (mute.load(), "Note Toggle did not rearm after release");
+    raw (0x80, 60, 1); check (mute.load(), "Note Toggle release changed mute");
 
-    ctx.pumpWithMidi (kInput, cc (1, 40, 127));
-    ctx.expect (mute.load (std::memory_order_relaxed),
-                "the first click of a latching button did not flip mute");
-    ctx.pumpWithMidi (kInput, cc (1, 40, 0));
-    ctx.expect (! mute.load (std::memory_order_relaxed),
-                "the second click of a latching button did not flip mute back");
+    publish (session, {}); session.midiLearnPending.store (0); session.midiLearnCapture.store (0);
+    raw (0x80, 71, 127);
+    check (! learnCaptureIsValid (session.midiLearnCapture.load()), "MIDI Learn captured NoteOff");
+    raw (0x90, 71, 0);
+    check (! learnCaptureIsValid (session.midiLearnCapture.load()), "MIDI Learn captured zero-velocity NoteOn");
+    session.midiLearnPending.store (-1);
 
+    auto continuous = ccBinding (90, MidiBindingTarget::TrackPan, 6);
+    publish (session, { continuous }); sendCc (1, 90, 127);
+    check (std::abs (pan.load() - 1.0f) < 1.0e-6f, "CC continuous high endpoint failed");
+    pan.store (0); sendCc (1, 90, 127);
+    check (std::abs (pan.load() - 1.0f) < 1.0e-6f, "CC edge tracking suppressed a repeated continuous value");
+    sendCc (1, 90, 0);
+    check (std::abs (pan.load() + 1.0f) < 1.0e-6f, "CC continuous zero was suppressed");
+    continuous.trigger = MidiBindingTrigger::Note; continuous.dataNumber = 62;
+    publish (session, { continuous }); raw (0x90, 62, 1);
+    check (std::abs (pan.load() - (-1.0f + 2.0f / 127.0f)) < 1.0e-6f, "Note velocity was replaced by a button value");
+    raw (0x90, 62, 63);
+    check (std::abs (pan.load() - (-1.0f + 126.0f / 127.0f)) < 1.0e-6f, "Note continuous repeat was suppressed");
+    raw (0x80, 62, 127);
+    check (std::abs (pan.load() - (-1.0f + 126.0f / 127.0f)) < 1.0e-6f, "NoteOff changed a continuous binding");
+    raw (0x90, 62, 127); raw (0x90, 62, 0);
+    check (std::abs (pan.load() - 1.0f) < 1.0e-6f, "zero-velocity NoteOn changed a continuous binding");
+    continuous.trigger = MidiBindingTrigger::PitchBend;
+    publish (session, { continuous }); raw (0xE0, 0, 0);
+    check (std::abs (pan.load() + 1.0f) < 1.0e-6f, "pitch bend low endpoint changed");
+    raw (0xE0, 127, 127);
+    check (std::abs (pan.load() - 1.0f) < 1.0e-6f, "pitch bend high endpoint changed");
+
+    const std::array<MidiBindingTarget, 4> targets { MidiBindingTarget::TransportPlay, MidiBindingTarget::TransportStop,
+        MidiBindingTarget::TransportRecord, MidiBindingTarget::TransportToggle };
+    const std::array<PendingTransportAction, 4> actions { PendingTransportAction::Play, PendingTransportAction::Stop,
+        PendingTransportAction::Record, PendingTransportAction::Toggle };
+    for (std::size_t t = 0; t < targets.size(); ++t)
+    {
+        auto button = ccBinding (70 + static_cast<int> (t), targets[t], 0);
+        publish (session, { button });
+        const std::array<int, 5> presses { 0, 127, 127, 0, 127 };
+        for (std::size_t i = 0; i < presses.size(); ++i)
+        {
+            session.pendingTransportAction.store (static_cast<int> (PendingTransportAction::None));
+            sendCc (1, button.dataNumber, presses[i]);
+            const auto expected = i == 1 || i == 4 ? actions[t] : PendingTransportAction::None;
+            check (session.pendingTransportAction.load() == static_cast<int> (expected),
+                   "transport Press target " + std::to_string (t) + " step " + std::to_string (i) + " did not follow edges");
+        }
+        button.buttonMode = MidiButtonMode::Toggle; publish (session, { button });
+        for (int value : { 127, 0, 127 })
+        {
+            session.pendingTransportAction.store (static_cast<int> (PendingTransportAction::None));
+            sendCc (1, button.dataNumber, value);
+            check (session.pendingTransportAction.load() == static_cast<int> (actions[t]), "transport Toggle suppressed a message");
+        }
+    }
+    auto machine = ccBinding (2, MidiBindingTarget::TransportPlay, 0); machine.trigger = MidiBindingTrigger::MmcCommand;
+    publish (session, { machine });
+    for (int i = 0; i < 2; ++i)
+    {
+        session.pendingTransportAction.store (static_cast<int> (PendingTransportAction::None)); send (mmc (2));
+        check (session.pendingTransportAction.load() == static_cast<int> (PendingTransportAction::Play), "repeated MMC one-shot was suppressed");
+    }
+    session.pendingTransportAction.store (static_cast<int> (PendingTransportAction::None));
+
+    press.dataNumber = 81; publish (session, { press }); mute.store (false);
+    sendCc (1, 81, 127); check (mute.load(), "wildcard source did not fire on channel one");
+    sendCc (2, 81, 127); check (! mute.load(), "two channels shared their held state");
+    sendCc (1, 81, 0); check (! mute.load(), "channel-one release fired");
+    sendCc (2, 81, 127); check (! mute.load(), "channel-one release rearmed channel two");
+    sendCc (1, 81, 127); check (mute.load(), "channel-one release did not rearm channel one");
+
+    press.dataNumber = 82; auto separate = press; separate.trigger = MidiBindingTrigger::Note; separate.targetIndex = 4;
+    publish (session, { press, separate }); mute.store (false); other.store (false);
+    sendCc (1, 82, 127); check (mute.load() && ! other.load(), "CC changed the same-numbered note target");
+    raw (0x90, 82, 1); check (mute.load() && other.load(), "CC and Note shared their held state");
+    raw (0x80, 82, 0); sendCc (1, 82, 0);
+
+    press.dataNumber = 83; auto fanout = press; fanout.targetIndex = 4;
+    publish (session, { press, fanout }); mute.store (false); other.store (false);
+    for (std::size_t i = 0; i < values.size(); ++i)
+    {
+        sendCc (1, 83, values[i]);
+        check (mute.load() == risingStates[i] && other.load() == risingStates[i], "fanout consumed the edge before every binding saw it");
+    }
+    press.dataNumber = 84; publish (session, { press }); mute.store (false);
+    sendCc (1, 84, 127); check (mute.load(), "empty-bindings setup press failed");
+    publish (session, {}); sendCc (1, 84, 0); check (mute.load(), "unbound release changed a control");
+    publish (session, { press }); sendCc (1, 84, 127);
+    check (! mute.load(), "a release with no bindings was lost");
+    for (int status : { 0x80, 0x90 })
+    {
+        auto key = press; key.trigger = MidiBindingTrigger::Note;
+        key.dataNumber = status == 0x80 ? 63 : 64;
+        publish (session, { key }); mute.store (false);
+        raw (0x90, key.dataNumber, 1); check (mute.load(), "unbound-note release setup failed");
+        publish (session, {}); raw (status, key.dataNumber, status == 0x80 ? 127 : 0);
+        check (mute.load(), "unbound note release changed a control");
+        publish (session, { key }); raw (0x90, key.dataNumber, 1);
+        check (! mute.load(), "an unbound note release was lost");
+    }
+    press.dataNumber = 85; publish (session, { press }); mute.store (false);
+    sendCc (1, 85, 127); check (mute.load(), "snapshot setup press failed");
+    publish (session, { press }); sendCc (1, 85, 127);
+    check (mute.load(), "publishing bindings rearmed a source still held high");
+
+    press.dataNumber = 86; fanout = press; fanout.targetIndex = 4;
+    std::vector<MidiBinding> many (512, fanout); many.push_back (press);
+    publish (session, std::move (many)); mute.store (false); other.store (false);
+    sendCc (1, 86, 127);
+    check (mute.load() && ! other.load(), "the binding beyond index 511 was lost or a shared edge was consumed");
+    sendCc (1, 86, 127);
+    check (mute.load() && ! other.load(), "repeated high fired among 513 bindings");
+    sendCc (1, 86, 0); sendCc (1, 86, 127);
+    check (! mute.load() && ! other.load(), "513 bindings did not rearm together");
+
+    press.dataNumber = 87; publish (session, { press }); mute.store (false);
+    sendCc (1, 87, 127); check (mute.load(), "prepare-reset setup press failed");
+    engine.prepareForSelfTest (ScenarioContext::kSampleRate, ScenarioContext::kBlockSize);
+    mute.store (false); sendCc (1, 87, 127);
+    check (mute.load(), "re-prepare retained a held source from the old device lifecycle");
+    press.dataNumber = 88; publish (session, { press }); mute.store (false);
+    sendCc (1, 88, 127); check (mute.load(), "MIDI bank rebuild setup press failed");
+    engine.refreshMidiInputs();
+    mute.store (false); sendCc (1, 88, 127);
+    check (mute.load(), "MIDI bank rebuild retained a held source from the old input bank");
+    std::printf ("MIDI button modes: %d messages, %d checks\n", messages, checks);
     return ctx.verdict();
 }
 

@@ -367,6 +367,9 @@ public:
     virtual std::string startupChoice() const = 0;
     virtual double uiScale() const = 0;
     virtual void restoreUiScale (float scale) = 0;
+    // Peer x, y, width, height and fullscreen state.
+    virtual std::vector<int> mainWindowBounds() const = 0;
+    virtual void restoreMainWindowBounds (const std::vector<int>& bounds) = 0;
     // The main window's width and height, then the smallest width and height it
     // may be sized to, all in interface units before the UI scale. Empty
     // without a window.

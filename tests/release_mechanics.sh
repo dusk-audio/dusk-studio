@@ -892,9 +892,11 @@ windows_pr_build = re.search(
 assert windows_pr_build, "windows-tests.yml lost its app + test build step"
 assert re.search(
     r"cmake --build build-tests (?:--config Release )?--target "
-    r"DuskStudio dusk-studio-tests -j4",
+    r"DuskStudio dusk-studio-tests(?: [A-Za-z0-9_-]+)* -j4",
     windows_pr_build.group("body"),
 ), "Windows PR CI must compile both the app and test targets"
+assert "dusk-windows-software-opengl-probe" in windows_pr_build.group("body"), \
+    "Windows PR CI must compile the configured WGL probe"
 
 assert re.search(
     r"(?m)^\s*run: cmake --build build --config Release -j4 -- -p:CL_MPCount=1\s*$",

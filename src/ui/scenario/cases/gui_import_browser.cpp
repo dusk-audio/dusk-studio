@@ -5,6 +5,7 @@
 #include "../../../session/RegionEditActions.h"
 #include "../../../session/SessionSerializer.h"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -580,45 +581,57 @@ std::optional<ScenarioResult> runImportTargetShortWindow (GuiHost& host, Scenari
     (void) ctx;
     return ScenarioResult::skip ("the UI scale needs the native UI");
    #else
-    const auto launch = host.mainWindowSize();
-    if (launch.size() < 4) return ScenarioResult::fail ("the main window reported no size");
+    const auto launch = host.mainWindowBounds();
+    if (launch.size() != 5) return ScenarioResult::fail ("the main window reported no size");
     if (auto early = beginImportPickerCase (host, ctx)) return early;
     const auto originalScale = static_cast<float> (host.uiScale());
     ctx.cleanup ([&host, originalScale, launch]
     {
         drainModals (host);
         host.restoreUiScale (originalScale);
-        host.resizeMainWindow (launch[0], launch[1]);
+        host.restoreMainWindowBounds (launch);
     });
     giveMidiRegion (ctx, 0);
     const auto file = ctx.tempDir() / "Stereo.wav";
     if (! writeStereoSilence (file)) return ScenarioResult::fail ("could not write the audio import fixture");
 
-    // The UI scale lowers the window's smallest height below the picker's.
     static constexpr float kScale = 1.25f;
     static constexpr int kShortHeight = 540;
-    static constexpr int kPickerHeight = 560;
+    // Only a window that took the short height is sure to clip the picker; the
+    // fallback to the window's own minimum may still hold every row.
+    auto compact = std::make_shared<bool> (false);
     auto steps = std::make_shared<std::vector<Step>>();
     steps->push_back ({ 0, [&host] { host.restoreUiScale (kScale); } });
-    steps->push_back ({ 100, [&host, &ctx]
+    steps->push_back ({ 100, [&host, &ctx, compact]
     {
         const auto size = host.mainWindowSize();
-        if (size.size() < 4 || ! host.resizeMainWindow (size[0], kShortHeight))
-            ctx.complete (ScenarioResult::skip ("the window cannot be made shorter than the picker here"));
+        if (! ctx.expect (size.size() == 4, "the scaled window reported no resize limits"))
+        { ctx.complete (ctx.verdict()); return; }
+        *compact = host.resizeMainWindow (size[0], kShortHeight);
+        if (! *compact
+            && ! ctx.expect (host.resizeMainWindow (std::max (size[0], size[2]), std::max (kShortHeight, size[3])),
+                             "the window refused its supported minimum size"))
+            ctx.complete (ctx.verdict());
     }, [&host] { return std::abs (host.uiScale() - kScale) < 0.001; }, "the UI scale did not change" });
     steps->push_back ({ 200, [&host, &ctx, file]
     { ctx.expect (host.dropFilesOnTrack (0, { file }), "the drop on the MIDI track was rejected"); } });
-    steps->push_back ({ 300, [&host, &ctx]
+    steps->push_back ({ 300, [&host, &ctx, compact]
     {
         const auto layout = host.modalLayout();
         if (! ctx.expect (layout.size() == 7, "the picker reported no layout")) return;
-        if (layout[3] >= kPickerHeight)
-        {
-            ctx.complete (ScenarioResult::skip ("a " + std::to_string (layout[5]) + "-unit window still holds the whole picker"));
-            return;
-        }
+        ctx.expect (layout[0] >= 0 && layout[1] >= 0 && layout[2] > 0 && layout[3] > 0
+                    && layout[0] + layout[2] <= layout[4] && layout[1] + layout[3] <= layout[5],
+                    "the import picker extends outside its parent");
         const auto rows = host.importTargetRows();
-        ctx.expect (! rows.empty() && rows.back().rfind ("1\t", 0) == 0, "the MIDI track holding a region does not sort last");
+        bool complete = rows.size() == Session::kNumTracks, clipped = false;
+        for (int track = 1; track <= Session::kNumTracks; ++track)
+        {
+            const auto fields = importTargetRow (host, track);
+            complete = complete && fields.size() == 6;
+            clipped = clipped || (fields.size() == 6 && fields[5] != "in view");
+        }
+        ctx.expect (complete && (clipped || ! *compact) && rows.back().rfind ("1\t", 0) == 0,
+                    "the picker did not contain every track, clip in the short window, or sort the dropped-on track last");
         const auto row = importTargetRow (host, 1);
         ctx.expect (row.size() == 6 && row[4] == "selected" && row[5] == "in view",
                     "in a " + std::to_string (layout[3]) + "-unit picker the dropped-on track reads '"
@@ -1499,15 +1512,16 @@ std::optional<ScenarioResult> runImportRefusals (GuiHost& host, ScenarioContext&
     const auto restore = ctx.tempDir() / "restore.json";
     if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save session");
     const auto locked = ctx.tempDir() / "Unreadable" / "Locked.wav";
-    ctx.cleanup ([&host, &session, &transport, originalDir, restore, locked, state = transport.getState(),
+    ctx.cleanup ([&host, &engine, &session, &transport, originalDir, restore, locked, state = transport.getState(),
                   position = transport.getPlayhead()]
     {
         std::error_code ignored;
         std::filesystem::permissions (locked, std::filesystem::perms::owner_read | std::filesystem::perms::owner_write,
                                       std::filesystem::perm_options::replace, ignored);
         drainModals (host);
-        transport.setState (state);
+        engine.stop();
         transport.setPlayhead (position);
+        transport.setState (state);
         reopenSavedSession (host, restore);
         applySessionDirectory (session, originalDir);
     });
@@ -1598,9 +1612,9 @@ std::optional<ScenarioResult> runImportRefusals (GuiHost& host, ScenarioContext&
     steps->push_back ({ 200, [&transport] { transport.setState (Transport::State::Playing); } });
     openImport ("while playing");
     alerted ("while playing", "Import\nStop playback before importing files.");
-    steps->push_back ({ 100, [&transport]
+    steps->push_back ({ 100, [&engine, &transport]
     {
-        transport.setState (Transport::State::Stopped);
+        engine.stop();
         transport.setPlayhead (0);
     } });
     pick ("bytes that are not audio", garbage);

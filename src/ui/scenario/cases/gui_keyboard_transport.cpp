@@ -424,15 +424,19 @@ std::optional<ScenarioResult> runStageViews (GuiHost& host, ScenarioContext& ctx
         case AudioEngine::Stage::Aux: original = Stage::Aux; break;
         case AudioEngine::Stage::Mastering: original = Stage::Mastering; break;
     }
-    auto& transport = ctx.engine().getTransport();
-    ctx.cleanup ([&host, &transport, original, state = transport.getState(),
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+    if (! transport.isStopped())
+        return ScenarioResult::skip ("requires a stopped transport");
+    ctx.cleanup ([&host, &engine, &transport, original, state = transport.getState(),
                   position = transport.getPlayhead()]
     {
         host.switchToStage (original);
+        engine.stop();
         transport.setPlayhead (position);
         transport.setState (state);
     });
-    transport.setState (Transport::State::Stopped);
+    engine.stop();
 
     auto run = std::make_shared<std::function<void (std::size_t)>>();
     std::weak_ptr<std::function<void (std::size_t)>> weakRun = run;
@@ -470,19 +474,23 @@ const ScenarioRegistrar stageViews { Scenario {
 std::optional<ScenarioResult> runClockFormats (GuiHost& host, ScenarioContext& ctx)
 {
     auto& session = ctx.session();
-    auto& transport = ctx.engine().getTransport();
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+    if (! transport.isStopped())
+        return ScenarioResult::skip ("requires a stopped transport");
     ctx.keep (session.timeDisplayMode);
     ctx.keep (session.tempoBpm);
     ctx.keep (session.beatsPerBar);
     ctx.keep (session.midiLearnPending);
     ctx.cleanup ([&session, points = session.tempoMap.points()]
                  { session.tempoMap.setPoints (points); });
-    ctx.cleanup ([&transport, position = transport.getPlayhead(), state = transport.getState()]
+    ctx.cleanup ([&engine, &transport, position = transport.getPlayhead(), state = transport.getState()]
     {
+        engine.stop();
         transport.setPlayhead (position);
         transport.setState (state);
     });
-    transport.setState (Transport::State::Stopped);
+    engine.stop();
     session.tempoMap.clear();
     session.tempoBpm.store (120.0f);
     session.beatsPerBar.store (4);
@@ -525,9 +533,12 @@ const ScenarioRegistrar clockFormats { Scenario {
 std::optional<ScenarioResult> runTrackShortcuts (GuiHost& host, ScenarioContext& ctx)
 {
     auto& session = ctx.session();
-    auto& transport = ctx.engine().getTransport();
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+    if (! transport.isStopped())
+        return ScenarioResult::skip ("requires a stopped transport");
     const auto stage = ctx.engine().getStage();
-    ctx.cleanup ([&host, &transport, stage, state = transport.getState(),
+    ctx.cleanup ([&host, &engine, &transport, stage, state = transport.getState(),
                   position = transport.getPlayhead()]
     {
         switch (stage)
@@ -537,10 +548,11 @@ std::optional<ScenarioResult> runTrackShortcuts (GuiHost& host, ScenarioContext&
             case AudioEngine::Stage::Aux: host.switchToStage (GuiHost::Stage::Aux); break;
             case AudioEngine::Stage::Mastering: host.switchToStage (GuiHost::Stage::Mastering); break;
         }
+        engine.stop();
         transport.setPlayhead (position);
         transport.setState (state);
     });
-    transport.setState (Transport::State::Stopped);
+    engine.stop();
     ctx.keep (session.activeBank);
     ctx.keep (session.mcu.bank);
     ctx.cleanup (host.preserveKeyboardFocus());
@@ -782,10 +794,14 @@ const ScenarioRegistrar aboutDetails { Scenario {
 std::optional<ScenarioResult> runUnarmedRecord (GuiHost& host, ScenarioContext& ctx)
 {
     auto& session = ctx.session();
-    auto& transport = ctx.engine().getTransport();
-    ctx.cleanup ([&host, &transport, state = transport.getState(), position = transport.getPlayhead()]
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+    if (! transport.isStopped())
+        return ScenarioResult::skip ("requires a stopped transport");
+    ctx.cleanup ([&host, &engine, &transport, state = transport.getState(), position = transport.getPlayhead()]
     {
         if (! host.modalStackEmpty()) host.closeTopModal();
+        engine.stop();
         transport.setPlayhead (position);
         transport.setState (state);
     });
@@ -798,7 +814,7 @@ std::optional<ScenarioResult> runUnarmedRecord (GuiHost& host, ScenarioContext& 
         audioCounts[static_cast<std::size_t> (index)] = track.regions.size();
         midiCounts[static_cast<std::size_t> (index)] = track.midiRegions.current().size();
     }
-    transport.setState (Transport::State::Stopped);
+    engine.stop();
     transport.setPlayhead (48000);
     ctx.expect (host.pressKey ("R", 'r'), "Record shortcut was not handled");
     ctx.waitUntil ([&host] { return ! host.modalStackEmpty(); }, 3000,
@@ -1315,38 +1331,41 @@ std::optional<ScenarioResult> runShortcutsShortWindow (GuiHost& host, ScenarioCo
     return ScenarioResult::skip ("the UI scale needs the native UI");
    #else
     if (! host.modalStackEmpty()) return ScenarioResult::skip ("requires no modal");
-    const auto launch = host.mainWindowSize();
-    if (launch.size() < 4) return ScenarioResult::fail ("the main window reported no size");
+    const auto launch = host.mainWindowBounds();
+    if (launch.size() != 5) return ScenarioResult::fail ("the main window reported no size");
     const auto originalScale = static_cast<float> (host.uiScale());
     ctx.cleanup ([&host, originalScale, launch]
     {
         drainModals (host);
         host.restoreUiScale (originalScale);
-        host.resizeMainWindow (launch[0], launch[1]);
+        host.restoreMainWindowBounds (launch);
     });
-    // Short enough to squeeze the rows, tall enough for the smallest of them.
     static constexpr float kScale = 1.25f;
     static constexpr int kShortHeight = 680;
+    auto compactRequired = std::make_shared<bool> (false);
     auto steps = std::make_shared<std::vector<Step>>();
     steps->push_back ({ 0, [&host] { host.restoreUiScale (kScale); } });
-    // A window manager that holds the window to its minimum leaves nothing to
-    // check: the list then always fits.
-    steps->push_back ({ 100, [&host, &ctx]
+    steps->push_back ({ 100, [&host, &ctx, compactRequired]
     {
         const auto size = host.mainWindowSize();
-        if (size.size() < 4 || ! host.resizeMainWindow (size[0], kShortHeight))
-            ctx.complete (ScenarioResult::skip ("the window cannot be made shorter than the shortcut list here"));
+        if (! ctx.expect (size.size() == 4, "the scaled window reported no resize limits"))
+        { ctx.complete (ctx.verdict()); return; }
+        *compactRequired = host.resizeMainWindow (size[0], kShortHeight);
+        if (! *compactRequired
+            && ! ctx.expect (host.resizeMainWindow (std::max (size[0], size[2]), std::max (kShortHeight, size[3])),
+                             "the window refused its supported minimum size"))
+            ctx.complete (ctx.verdict());
     }, [&host] { return std::abs (host.uiScale() - kScale) < 0.001; }, "the UI scale did not change" });
     steps->push_back ({ 100, [&host, &ctx]
     { ctx.expect (host.pressKey ("shift + /", '?'), "the shortcuts key was not handled"); } });
-    steps->push_back ({ 0, [&host, &ctx]
+    steps->push_back ({ 0, [&host, &ctx, compactRequired]
     {
         const auto layout = host.shortcutsLayout();
-        if (! ctx.expect (layout.size() > 5 && (layout.size() - 5) % 4 == 0, "the shortcut panel reported no rows"))
+        if (! ctx.expect (layout.size() == 5 + 57 * 4, "the shortcut panel did not report all 57 rows"))
             return;
         const int width = layout[0], height = layout[1], rowH = layout[2], fullRowH = layout[3], minRowH = layout[4];
-        ctx.expect (rowH < fullRowH, "the rows kept their full height in a " + std::to_string (height)
-                    + "-unit panel");
+        ctx.expect (rowH <= fullRowH && (! *compactRequired || rowH < fullRowH),
+                    "the rows have the wrong height in a " + std::to_string (height) + "-unit panel");
         ctx.expect (rowH >= minRowH, "the rows squeezed below " + std::to_string (minRowH) + " units");
         struct Row { int x, y, w, h; };
         std::vector<Row> rows;

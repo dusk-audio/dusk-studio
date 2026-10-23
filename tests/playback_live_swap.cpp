@@ -137,10 +137,73 @@ void requireFade (const std::vector<float>& out, std::size_t at, float from, flo
 TEST_CASE ("A track rebuilt while playing crossfades from its old audio to its new",
            "[playback][live-swap]")
 {
+    enum class Probe { Ordinary, Pin, Large, StalePosition, StaleSerial };
+    Probe probe = Probe::Ordinary;
     bool loopRefresh = false, jointCoverage = false;
+    SECTION ("A ready rebuild waits until the locate block releases its stream pin") { probe = Probe::Pin; }
+    SECTION ("A large callback adopts a complete rebuilt window") { probe = Probe::Large; }
+    SECTION ("A stale rebuild preserves old audio after a position change") { probe = Probe::StalePosition; }
+    SECTION ("A stale rebuild preserves old audio after only a locate serial change") { probe = Probe::StaleSerial; }
     SECTION ("A region switches files") {}
     SECTION ("A loop-cache refresh reloads a changed source") { loopRefresh = true; }
     SECTION ("The old cache and reader jointly cover a fade") { jointCoverage = true; }
+    if (probe == Probe::Pin)
+    {
+        Rig rig (128000, 1000);
+        rig.engine.prepare (1024);
+        rig.engine.preparePlayback();
+        rig.rebuildWith (rig.b);
+        REQUIRE (rig.engine.locateReadyRt (1000, kBlock, -1, -1));
+        rig.engine.finishLocateBlockRt (1000, true);
+        std::vector<float> out (1024);
+        rig.engine.readForTrack (kTrack, 1000, out.data(), nullptr, kBlock);
+        for (int n = 0; n < kBlock; ++n)
+            REQUIRE_THAT (out[(size_t) n], WithinAbs (kLevelA, 1e-4));
+        rig.engine.finishLocateBlockRt (1000, false);
+        rig.engine.readForTrack (kTrack, 1000, out.data(), nullptr, (int) out.size());
+        requireFade (out, 0, kLevelA, kLevelB);
+        CHECK_THAT (out.back(), WithinAbs (kLevelB, 1e-4));
+        return;
+    }
+    if (probe == Probe::Large)
+    {
+        Rig rig (128000, 1000);
+        rig.engine.prepare (16384);
+        rig.engine.preparePlayback();
+        rig.rebuildWith (rig.b);
+        std::vector<float> out (16384);
+        rig.engine.readForTrack (kTrack, 1000, out.data(), nullptr, (int) out.size());
+        requireFade (out, 0, kLevelA, kLevelB);
+        CHECK_THAT (out.back(), WithinAbs (kLevelB, 1e-4));
+        return;
+    }
+    if (probe == Probe::StalePosition || probe == Probe::StaleSerial)
+    {
+        const std::int64_t target = probe == Probe::StaleSerial ? 1000 : 20000;
+        Rig rig (240000, 1000);
+        rig.rebuildWith (rig.b);
+        rig.transport.commitLocate (target);
+        rig.engine.primeAt (target);
+        std::vector<float> out (kBlock);
+        REQUIRE (rig.engine.locateReadyRt (target, kBlock, -1, -1));
+        rig.engine.finishLocateBlockRt (target, true);
+        rig.engine.readForTrack (kTrack, target, out.data(), nullptr, kBlock);
+        CHECK_THAT (out.back(), WithinAbs (kLevelA, 1e-4));
+        rig.engine.finishLocateBlockRt (target, false);
+        rig.engine.readForTrack (kTrack, target, out.data(), nullptr, kBlock);
+        CHECK_THAT (out.front(), WithinAbs (kLevelA, 1e-4));
+        CHECK_THAT (out.back(), WithinAbs (kLevelA, 1e-4));
+        const auto rebuilds = rig.engine.rebuildCount();
+        rig.engine.service();
+        REQUIRE (rig.engine.rebuildCount() == rebuilds + 1);
+        rig.engine.readForTrack (kTrack, target, out.data(), nullptr, kBlock);
+        CHECK_THAT (out.front(), WithinAbs (kLevelA, 1e-4));
+        rig.engine.readForTrack (kTrack, target + kBlock, out.data(), nullptr, kBlock);
+        rig.engine.readForTrack (kTrack, target + 2 * kBlock, out.data(), nullptr, kBlock);
+        CHECK_THAT (out.front(), WithinAbs (kLevelB, 1e-4));
+        CHECK_THAT (out.back(), WithinAbs (kLevelB, 1e-4));
+        return;
+    }
     Rig rig (jointCoverage ? 128000 : kFrames, jointCoverage ? 33700 : 0, jointCoverage);
     const auto before = rig.play (1);
     CHECK_THAT (before.front(), WithinAbs (kLevelA, 1e-4));

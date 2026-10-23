@@ -74,6 +74,7 @@ void ReaderFillPool::add (BufferedFileReader& reader, std::int64_t start,
     std::lock_guard<std::mutex> control (controlMutex);
     {
         std::lock_guard<std::mutex> lock (mutex);
+        seekReadyGeneration.store (~std::uint64_t { 0 }, std::memory_order_release);
         for (auto& entry : entries)
             if (entry->reader == &reader)
                 throw std::invalid_argument ("reader is already registered with fill pool");
@@ -83,6 +84,7 @@ void ReaderFillPool::add (BufferedFileReader& reader, std::int64_t start,
         entry->timelineEnd = std::max (entry->timelineStart, end);
         entry->sourceOffset = std::max<std::int64_t> (0, offset);
         entries.push_back (std::move (entry));
+        registeredReaders.store (entries.size(), std::memory_order_release);
     }
     changed.notify_all();
 }
@@ -94,10 +96,12 @@ void ReaderFillPool::remove (BufferedFileReader& reader) noexcept
     const auto found = std::find_if (entries.begin(), entries.end(),
                                     [&] (const auto& e) { return e->reader == &reader; });
     if (found == entries.end()) return;
+    seekReadyGeneration.store (~std::uint64_t { 0 }, std::memory_order_release);
     auto* entry = found->get();
     entry->removed = true;
     changed.wait (lock, [&] { return ! entry->claimed; });
     entries.erase (found);
+    registeredReaders.store (entries.size(), std::memory_order_release);
     lock.unlock();
     reader.releaseResidency();
 }
@@ -107,6 +111,8 @@ void ReaderFillPool::reset() noexcept
     std::lock_guard<std::mutex> control (controlMutex);
     std::unique_lock<std::mutex> lock (mutex);
     resetting = true;
+    clearSeekTargetRt();
+    seekReadyGeneration.store (~std::uint64_t { 0 }, std::memory_order_release);
     changed.wait (lock, [&]
     {
         return std::none_of (entries.begin(), entries.end(),
@@ -114,6 +120,7 @@ void ReaderFillPool::reset() noexcept
     });
     std::vector<std::unique_ptr<Entry>> retired;
     retired.swap (entries);
+    registeredReaders.store (0, std::memory_order_release);
     lock.unlock();
     for (auto& entry : retired) entry->reader->releaseResidency();
     lock.lock();
@@ -125,6 +132,61 @@ void ReaderFillPool::reset() noexcept
 void ReaderFillPool::setPositionRt (std::int64_t frame) noexcept
 {
     position.store (std::max<std::int64_t> (0, frame), std::memory_order_release);
+}
+
+void ReaderFillPool::publishSeekRt (std::int64_t target, int warmFrames) noexcept
+{
+    if (seekTarget.load (std::memory_order_relaxed) == target
+        && seekWarmFrames.load (std::memory_order_relaxed) == warmFrames) return;
+    seekGeneration.fetch_add (1, std::memory_order_acq_rel);
+    std::atomic_thread_fence (std::memory_order_release);
+    seekTarget.store (target, std::memory_order_relaxed);
+    seekWarmFrames.store (warmFrames, std::memory_order_relaxed);
+    seekGeneration.fetch_add (1, std::memory_order_release);
+}
+
+void ReaderFillPool::setSeekTargetRt (std::int64_t target, int warmFrames) noexcept
+{
+    publishSeekRt (std::max<std::int64_t> (0, target), std::max (1, warmFrames));
+}
+
+void ReaderFillPool::clearSeekTargetRt() noexcept { publishSeekRt (-1, 0); }
+
+ReaderFillPool::Seek ReaderFillPool::seekSnapshot() const noexcept
+{
+    const auto generation = seekGeneration.load (std::memory_order_acquire);
+    if ((generation & 1) != 0) return { -1, 0, generation, false };
+    const auto target = seekTarget.load (std::memory_order_relaxed);
+    const auto frames = seekWarmFrames.load (std::memory_order_relaxed);
+    std::atomic_thread_fence (std::memory_order_acquire);
+    return { target, frames, generation, seekGeneration.load (std::memory_order_relaxed) == generation };
+}
+
+bool ReaderFillPool::seekReadyRt (std::int64_t target, int warmFrames) const noexcept
+{
+    const auto seek = seekSnapshot();
+    return seek.coherent && seek.target >= 0 && seek.target == std::max<std::int64_t> (0, target)
+        && seek.warmFrames >= std::max (1, warmFrames) && (registeredReaders.load (std::memory_order_acquire) == 0
+            || seekReadyGeneration.load (std::memory_order_acquire) == seek.generation);
+}
+
+void ReaderFillPool::updateSeekReady()
+{
+    if (resetting || priming) return;
+    const auto seek = seekSnapshot();
+    if (! seek.coherent || seek.target < 0 || seekReadyGeneration.load (std::memory_order_relaxed) == seek.generation)
+        return;
+    if (std::any_of (entries.begin(), entries.end(), [] (const auto& entry) { return entry->claimed; })) return;
+    const auto end = addFrames (seek.target, seek.warmFrames);
+    for (const auto& entry : entries)
+    {
+        if (entry->removed) continue;
+        const auto from = std::max (seek.target, entry->timelineStart);
+        const auto until = std::min (end, entry->timelineEnd);
+        if (until > from && ! entry->reader->holdsSeek (
+                addFrames (entry->sourceOffset, from - entry->timelineStart), until - from)) return;
+    }
+    seekReadyGeneration.store (seek.generation, std::memory_order_release);
 }
 
 void ReaderFillPool::setLoopRt (bool enabled, std::int64_t start, std::int64_t end) noexcept
@@ -185,9 +247,12 @@ ReaderFillPool::Claim ReaderFillPool::claimNext()
 {
     std::lock_guard<std::mutex> lock (mutex);
     if (resetting || priming || stop.load (std::memory_order_acquire)) return {};
-    const auto at = position.load (std::memory_order_acquire);
+    updateSeekReady();
     const auto loop = loopSnapshot();
-    if (! loop.coherent) return {};
+    const auto seek = seekSnapshot();
+    if (! loop.coherent || ! seek.coherent) return {};
+    // Clearing the seek follows publication of its committed position on the audio owner.
+    const auto at = position.load (std::memory_order_acquire);
     const auto now = std::chrono::steady_clock::now();
     const auto behind = behindFrames.load (std::memory_order_acquire);
     Claim chosen;
@@ -199,25 +264,43 @@ ReaderFillPool::Claim ReaderFillPool::claimNext()
         if (entry.claimed || entry.removed) continue;
         std::int64_t sourceFrame = 0;
         const bool near = eligible (entry, at, loop, sourceFrame);
-        if (near)
+        std::int64_t seekSource = 0;
+        std::int64_t seekFrames = 0;
+        const auto seekFrom = std::max (seek.target, entry.timelineStart);
+        const auto seekUntil = std::min (addFrames (seek.target, seek.warmFrames), entry.timelineEnd);
+        const bool required = seek.target >= 0 && seekUntil > seekFrom;
+        const bool nearSeek = required
+            || (seek.target >= 0 && eligible (entry, seek.target, loop, seekSource));
+        if (required)
         {
-            if (now < entry.retryAfter
-                || (at >= entry.timelineEnd
-                    && entry.timelineEnd > std::max<std::int64_t> (0, at - behind)))
-                continue;
-            entry.reader->hintRt (sourceFrame);
-            if (! entry.reader->needsFill()) continue;
+            seekSource = addFrames (entry.sourceOffset, seekFrom - entry.timelineStart);
+            seekFrames = seekUntil - seekFrom;
         }
-        else if (entry.reader->allocatedBytes() == 0)
-            continue;
-        const auto distance = at < entry.timelineStart ? entry.timelineStart - at
-                            : at >= entry.timelineEnd ? at - entry.timelineEnd : 0;
-        const Priority priority { near ? 0 : 1, distance,
+        else if (nearSeek)
+        {
+            const auto timelineFrame = std::clamp (seek.target, entry.timelineStart, entry.timelineEnd - 1);
+            seekFrames = std::min<std::int64_t> (seek.warmFrames, entry.timelineEnd - timelineFrame);
+        }
+        bool fillCurrent = false;
+        if (near && ! (at >= entry.timelineEnd && entry.timelineEnd > std::max<std::int64_t> (0, at - behind)))
+        {
+            entry.reader->hintRt (sourceFrame);
+            fillCurrent = entry.reader->needsFill();
+        }
+        const bool fillSeek = nearSeek && entry.reader->needsSeekFill (seekSource, seekFrames);
+        const bool evict = ! near && ! nearSeek && entry.reader->allocatedBytes() != 0;
+        if ((! fillCurrent && ! fillSeek && ! evict) || (! evict && now < entry.retryAfter)) continue;
+        const auto target = fillCurrent || evict ? at : seek.target;
+        const auto distance = target < entry.timelineStart ? entry.timelineStart - target
+                            : target >= entry.timelineEnd ? target - entry.timelineEnd : 0;
+        const Priority priority { fillCurrent ? 0 : fillSeek ? 1 : 2, distance,
                                   entry.reader->hasResidency() ? 1 : 0, entry.lastService };
         if (priority < best)
         {
             best = priority;
-            chosen = { &entry, sourceFrame, ! near };
+            const auto currentSource = near ? sourceFrame : std::int64_t { -1 };
+            chosen = { &entry, fillCurrent ? sourceFrame : seekSource, evict,
+                       ! fillCurrent && fillSeek, currentSource, seekFrames };
         }
     }
     if (chosen.entry != nullptr)
@@ -235,6 +318,7 @@ void ReaderFillPool::finishClaim (Entry& entry, bool failed) noexcept
         entry.retryAfter = failed ? std::chrono::steady_clock::now() + std::chrono::milliseconds (100)
                                   : std::chrono::steady_clock::time_point {};
         entry.claimed = false;
+        updateSeekReady();
     }
     changed.notify_all();
 }
@@ -249,11 +333,14 @@ bool ReaderFillPool::pumpOnce()
         if (claim.evict) claim.entry->reader->releaseResidency();
         else
         {
-            claim.entry->reader->hintRt (claim.sourceFrame);
-            if (claim.entry->reader->fillOnce())
+            const auto filled = claim.seeking
+                ? claim.entry->reader->fillSeekOnce (claim.sourceFrame, claim.currentSourceFrame, claim.numFrames)
+                : claim.entry->reader->fillOnce (claim.sourceFrame);
+            if (filled)
                 fillPasses.fetch_add (1, std::memory_order_relaxed);
             else
-                failed = claim.entry->reader->needsFill();
+                failed = claim.seeking ? claim.entry->reader->needsSeekFill (claim.sourceFrame, claim.numFrames)
+                                      : claim.entry->reader->needsFill();
         }
     }
     catch (...)
@@ -274,6 +361,8 @@ void ReaderFillPool::primeAt (std::int64_t frame)
     std::unique_lock<std::mutex> lock (mutex);
     claims.reserve (entries.size());
     priming = true;
+    clearSeekTargetRt();
+    seekReadyGeneration.store (~std::uint64_t { 0 }, std::memory_order_release);
     changed.wait (lock, [&]
     {
         return std::none_of (entries.begin(), entries.end(),

@@ -181,6 +181,72 @@ std::optional<ScenarioResult> runWorkerBounce (ScenarioContext& ctx)
                    "the worker fixture never answered in live blocks");
     return std::nullopt;
 }
+
+std::optional<ScenarioResult> latencyFollowsReportedPort (ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& track = session.track (kTrack);
+    auto& strip = engine.getChannelStrip (kTrack);
+    auto& slot = strip.getNativeLv2Slot();
+    ctx.cleanup ([&engine, &session] { session.recomputeRtCounters(); engine.recomputePdc(); });
+    ctx.keep (track.mode);
+    ctx.keep (track.inputSource);
+    ctx.keep (track.inputMonitor);
+    ctx.keep (track.recordArmed);
+    ctx.keep (track.frozen);
+    ctx.keep (track.strip.insertBypassed);
+    ctx.keep (strip.insertMode);
+    track.inputSource.store (-2);
+    track.inputMonitor.store (true);
+    track.recordArmed.store (false);
+    track.frozen.store (false);
+    track.strip.insertBypassed.store (false);
+    strip.insertMode.store (ChannelStrip::kInsertPlugin, std::memory_order_release);
+    session.recomputeRtCounters();
+    const bool bypassed = slot.isBypassed();
+    ctx.cleanup ([&strip, &slot, bypassed] { strip.unloadNativeLv2(); slot.setBypassed (bypassed); });
+    std::string error;
+    const auto fixture = ctx.fixture ("worker.lv2");
+    if (! ctx.expect (fixture.has_value() && slot.load (*fixture, kRate, ScenarioContext::kBlockSize, error, kPluginUri),
+                      "the latency fixture did not load: " + error)) return ctx.verdict();
+    slot.setBypassed (false);
+    const auto setLookahead = [&slot] (int samples)
+    {
+        for (int index = 0; index < slot.paramCount(); ++index)
+            if (const auto* info = slot.paramInfo (index); info != nullptr && info->name == "Look-ahead")
+            {
+                slot.setParamValue (info->id, samples);
+                return true;
+            }
+        return false;
+    };
+    for (const auto mode : { Track::Mode::Mono, Track::Mode::Stereo })
+    {
+        track.mode.store (static_cast<int> (mode));
+        for (const int samples : { 0, 64, 0 })
+        {
+            if (! ctx.expect (setLookahead (samples), "the fixture has no Look-ahead parameter"))
+                return ctx.verdict();
+            ctx.pump (1);
+            const int reported = slot.getLatencySamples();
+            ctx.expect (reported == samples, "slot latency after one callback: expected "
+                        + std::to_string (samples) + ", observed " + std::to_string (reported));
+            ctx.pump (1);
+            const int aggregate = engine.getAggregatePdcLatencySamples();
+            ctx.expect (aggregate == samples, "aggregate PDC after the next callback: expected "
+                        + std::to_string (samples) + ", observed " + std::to_string (aggregate));
+            for (int index = 0; index < Session::kNumTracks; ++index)
+            {
+                const int expected = index == kTrack ? 0 : samples;
+                const int compensation = engine.getChannelStrip (index).getPdcCompensationSamples();
+                ctx.expect (compensation == expected, "track " + std::to_string (index + 1)
+                            + " PDC target: expected " + std::to_string (expected) + ", observed " + std::to_string (compensation));
+            }
+        }
+    }
+    return ctx.verdict();
+}
 #endif
 
 const ScenarioRegistrar registrar { Scenario {
@@ -198,6 +264,24 @@ const ScenarioRegistrar registrar { Scenario {
        #endif
     },
     120000
+} };
+
+const ScenarioRegistrar latencyRegistrar { Scenario {
+    "lv2.latency_follows_reported_port", { "lv2", "latency", "pdc", "plugin" }, Needs::Engine,
+   #if DUSKSTUDIO_HAS_NATIVE_LV2
+    { "worker.lv2" },
+   #else
+    {},
+   #endif
+    [] (ScenarioContext& ctx) -> std::optional<ScenarioResult>
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_LV2
+        return latencyFollowsReportedPort (ctx);
+       #else
+        (void) ctx;
+        return ScenarioResult::skip ("built without the native LV2 host");
+       #endif
+    }
 } };
 } // namespace
 } // namespace duskstudio::scenario

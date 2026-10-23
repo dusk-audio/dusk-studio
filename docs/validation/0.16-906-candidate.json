@@ -1,0 +1,210 @@
+{
+  "issue": 906,
+  "status": "PASS: 40 selected ASan/UBSan application scenarios and all 274 ordered GDB scenarios completed with native exit 0.",
+  "scope": "Source-bound Linux validation only. This is not shipping-package validation, cross-platform completion, maintainer manual signoff, or release authorization.",
+  "source": {
+    "commit": "c9f0ff0dd53a4e4580a586e314046c637f2ac749",
+    "clean_at_build": true,
+    "equivalent_product_source_commit": "2b40fe35acb52f1069fb003a216357b9466a4d92",
+    "src_tree": "9aa2ca51ec682be0ed991a3147b28378bd9a02c7",
+    "tests_tree": "b123b0bf09c4aa2dc80c542f81b4aa3002b24050",
+    "scope": "Exact src/ and tests/ git tree IDs match; scripts and documentation differ.",
+    "merged_main": "54a6453fc2aa85da30a95338ea37566dd005b223",
+    "merged_existing_fix": "41b6b038514bd73986c7ed2727f98a947c0ba7b8",
+    "causal_report": "docs/validation/0.16-906-exit-lifetime.json",
+    "causal_report_sha256": "782e164866cb7324330eaebdacd715440239759f1284558c55a60f944ea314a1"
+  },
+  "causal_limits": [
+    "The existing ownership fix removes confirmed exit-time reentry into a destroyed Unicode TLS cache during fatal X11 exit. The retained causal report contains old/fixed controls and the lifetime mechanism.",
+    "The original bad_alloc allocation and the event causing original X11 display loss remain unlocated. No destroyed MainComponent or engine is assumed; exit() does not unwind the main stack."
+  ],
+  "allocation_audit": {
+    "original_audit": "build/validation-main-a310ce51/allocation-audit.md",
+    "original_audit_sha256": "2f405a1c42377279635e800928990f2e5722c1e15aba930dbfa321338dceb0a3",
+    "identical_full_files_sha256": {
+      "src/ui/imgui/AudioEditorView.cpp": "4cdcc668f83550f6ac4a3948958f08643559363280088872cff0102654bb1825",
+      "src/ui/imgui/AudioEditorView.h": "f8c3171f76a088191111196c0a24cc343a0de3aa5fdd75f1cab293ed2ebcff4a",
+      "src/engine/audiofile/WaveformPeaks.cpp": "c92da5292a9bf160378fcc13613746c86fa6fe984a7d309d15e2c03c1f695110",
+      "src/engine/audiofile/WaveformPeaks.h": "47acaf58a4a6fd5b5627391787b530097b2669e35f523dc3ef3c4c7ff10e994f",
+      "src/session/TrackMove.h": "3c0fac5a8d685e129b503901a66c833bf54cfdd32a815c4afcdbdc5a06f8342e",
+      "src/ui/TrackMoveUndo.h": "76f0868e276163aed60f653aaf5f493c36e2d532e894b0e114b6e4f9b76e2254",
+      "src/session/Session.cpp": "20e3ca284a33805bf102acfa3d04f14a2ffb0a08a855627a57c80ad7549b7636",
+      "src/session/Session.h": "e660227663c5d2df5463bbb352df98694f0b546864f8d8fe8fac25d762eea94e",
+      "src/ui/TapeStrip.cpp": "36db2360116149207890fcc5e2683254293e4949cb7f2fa8f6a611a1761644f0",
+      "src/ui/TapeStrip.h": "732926eb16d7d33a64cf354dbc8ad9bd89b9d62a090806eb917d54032d84dcba"
+    },
+    "revisions": [
+      "a310ce51",
+      "2b40fe35acb52f1069fb003a216357b9466a4d92",
+      "c9f0ff0dd53a4e4580a586e314046c637f2ac749"
+    ],
+    "bounds": {
+      "overview_bytes_per_source": 134217728,
+      "detail_bytes": 16777216,
+      "detail_columns": 65536,
+      "editor_cached_sources": 12
+    },
+    "limits": "These ten full files are byte-identical. gui_tracks.cpp callback fences and MainComponent lifecycle/focus changed. ReaderFillPool, BufferedFileReader, PlaybackEngine and AudioEngine changed and were reviewed separately; no whole playback-file or whole-product equality is claimed."
+  },
+  "asan_ubsan": {
+    "status": "PASS",
+    "build_receipt": "build/validation-016-closeout/asan-build.json",
+    "build_attempts": [
+      {
+        "log": "build/validation-016-closeout-build-asan-final.log",
+        "exit": 143,
+        "complete": false
+      },
+      {
+        "log": "build/validation-016-closeout-build-asan-final-resume.log",
+        "exit": 0,
+        "complete": true
+      }
+    ],
+    "first_build_limit": "Termination signal; no compiler error or completion in retained log. Cause not established.",
+    "warning_audit": {
+      "receipt": "build/validation-016-closeout/asan-build-warning-audit.json",
+      "entries": 478,
+      "diagnostics_on_added_source_lines": 0,
+      "scope": "Current build diagnostics on exact added source lines; unchanged lines are retained for audit, not independently recompiled at base"
+    },
+    "app_sha256": "340bbdaa9b638dd202e3456dfc458ca7a6e16546ff6945bda4a4e5dc8bb3b2bd",
+    "sidecar_sha256": "6cba7ab9cb7402c5b4b2bffb06dd3140a94e7874d17f71a431ac15bf35ae0ac4",
+    "binary_identity": "App and sidecar immutable bundle rehashed locally; runtime result confirms unchanged after all groups. Both link libasan and libubsan.",
+    "sampler_library_sha256": "93e88a65bda9ff96a9825956b8d11e3c9681e81218175c4861e057723ef26697",
+    "sampler_instrumentation": "Global Dusk sanitizer options instrument sfizz_internal even though the sampler-specific SFIZZ_ASAN cache option is OFF.",
+    "selection": "build/validation-016-closeout/asan-selection-final.json",
+    "selection_sha256": "afb697bd31fb3f0a5918a272823758bede6e762e4468d5b3e7e9d9479c022c9e",
+    "asan_options": "halt_on_error=1:abort_on_error=1:detect_leaks=0:symbolize=1",
+    "ubsan_options": "halt_on_error=1:abort_on_error=1:print_stacktrace=1",
+    "groups": {
+      "engine": {
+        "pass": 6,
+        "fail": 0,
+        "skip": 0,
+        "native_exit": 0,
+        "timed_out": false,
+        "xvfb_alive_before_teardown": true,
+        "ordered_identities_match_selection": true
+      },
+      "gui-controls": {
+        "pass": 17,
+        "fail": 0,
+        "skip": 0,
+        "native_exit": 0,
+        "timed_out": false,
+        "xvfb_alive_before_teardown": true,
+        "ordered_identities_match_selection": true
+      },
+      "gui-timeline": {
+        "pass": 10,
+        "fail": 0,
+        "skip": 0,
+        "native_exit": 0,
+        "timed_out": false,
+        "xvfb_alive_before_teardown": true,
+        "ordered_identities_match_selection": true
+      },
+      "gui-quits": {
+        "pass": 7,
+        "fail": 0,
+        "skip": 0,
+        "native_exit": 0,
+        "timed_out": false,
+        "xvfb_alive_before_teardown": true,
+        "ordered_identities_match_selection": true
+      }
+    },
+    "total_pass": 40,
+    "limits": "Leak detection disabled for GUI application runs. Forty selected identities passed in exact group order; this is not the full scenario catalog or a TSan run. SFIZZ_ASAN is OFF in cache, but global address/undefined flags instrument the sampler library; its retained hash and build-rule/symbol receipt establish that scope.",
+    "dependencies": {
+      "daf": "ccd8665f7387024ce412e80a8b07c982ae92f5d4",
+      "juce": "075eed7a1000b6b9dfce6aae93e7f2b82fa35f68",
+      "donor": "78abae748a32c5863f586ca174a47047a4d2c4a1"
+    },
+    "dependency_scope": "Tracked dependency worktrees clean at build; exact paths, submodules, cache and raw build hashes remain in the build receipt."
+  },
+  "rejected_full_gdb": {
+    "path": "build/validation-016-closeout/full-gdb-final-7fea-native",
+    "status": "REJECTED",
+    "pass": 272,
+    "fail": 0,
+    "skip": 2,
+    "native_exit": 0,
+    "wrapper_exit": 1,
+    "reason": "An empty ALSA configuration disabled the sequencer as well as physical PCM access. Two MIDI GUI scenarios skipped; strict acceptance rejected this run despite native exit 0.",
+    "positive_controls": {
+      "native_alsa_sequencer": "build/validation-016-closeout/alsa-sequencer-control/result.json",
+      "sequencer_open": 0,
+      "physical_pcm_opens": "Both default and hw:0 fail; owned native sequencer opens and closes.",
+      "gui": "build/validation-016-closeout/midi-sequencer-gui-control.json",
+      "pass": 2,
+      "fail": 0,
+      "skip": 0,
+      "native_exit": 0
+    }
+  },
+  "strict_full_gdb": {
+    "status": "PASS",
+    "path": "build/validation-016-closeout/full-gdb-final-sequencer-c9",
+    "pass": 274,
+    "fail": 0,
+    "skip": 0,
+    "ordered_catalog_match": true,
+    "native_exit": 0,
+    "debugger_exit": 0,
+    "wrapper_exit": 0,
+    "timed_out": false,
+    "missing": 0,
+    "unexpected": 0,
+    "duplicates": 0,
+    "binary_receipts_unchanged": true,
+    "private_services_alive_after_child": true,
+    "xvfb_alive_before_teardown": true,
+    "allocation_positive_control": {
+      "debugger_exit": 99,
+      "bad_alloc_catchpoint_fired": true
+    },
+    "emitted_bad_alloc_traps": 0,
+    "emitted_x11_io_traps": 0,
+    "memory": {
+      "samples": 465,
+      "samples_with_rss": 464,
+      "observed_min_rss_kib": 141388,
+      "observed_max_rss_kib": 467844,
+      "observed_peak_hwm_kib": 467844,
+      "limits": "Observed sampled process RSS/HWM only. Not proof of an OOM-event delta, absence of every allocation failure, or whole-machine memory behavior. The raw limits/cgroup and memory samples are retained."
+    },
+    "app_sha256": "58cd8cf938dedbd8de3c363a2a2d546e68981414e46a685b876a96abbdd5579f",
+    "sidecar_sha256": "f19ae8e372f5654d01908a2a283ec657b9ba56f79a5168d362c554498cc334a1",
+    "harness_checkout": "c9f0ff0dd53a4e4580a586e314046c637f2ac749"
+  },
+  "verification": {
+    "asan_ordered_scenarios_checked": 40,
+    "strict_gdb_ordered_scenarios_checked": 274,
+    "source_files_byte_compared": 10,
+    "raw_hashes_verified": 112,
+    "core_raw_hashes_repeated": 10,
+    "complete_raw_hash_manifest": "raw_provenance.path",
+    "hygiene": "ASCII JSON; internal validation only; no MANUAL change."
+  },
+  "raw_provenance": {
+    "path": "build/validation-016-closeout/906-candidate-provenance.json",
+    "sha256": "d63dd3571775bf02d7a724d8ab5ff3108ec1e6d22185a0a995fb94e0b0857b99",
+    "bytes": 24947,
+    "raw_hashes": 112,
+    "scope": "Complete verified old and new raw hashes, source bounds, ASan groups, rejected run and strict final GDB receipts. Original drafts remain unchanged."
+  },
+  "core_raw_sha256": {
+    "build/validation-016-closeout/asan-app-result.json": "58100b2149e9408dbfdab123374a1bf827db53d9826881e54fe644a310a6026d",
+    "build/validation-016-closeout/asan-build.json": "b87cf91ea294de1d357bb0135de5ed76b18e2e0b23cbe307254a6c2624f49717",
+    "build/validation-016-closeout/asan-sampler-instrumentation.json": "85c393d18a93cc1f68c67fcf3ed912344b50c07320186bb488996d20877f3c64",
+    "build/validation-016-closeout/asan-build-warning-audit.json": "6d4da654a24f55478e03f1261fafc09a5ed7299047c9ce0528a93b2d5e53931c",
+    "build/validation-016-closeout/asan-selection-final.json": "afb697bd31fb3f0a5918a272823758bede6e762e4468d5b3e7e9d9479c022c9e",
+    "build/validation-016-closeout/asan-build-incomplete.json": "64e85c81362f29d443d4c0456fd84b9344246c442935168535e24ee12ae3c131",
+    "build/validation-016-closeout/midi-sequencer-gui-control.json": "ef7a2d4c7d6b578b7b23c6b8a7ff43430953a525583a37a23b1cfad0dd64c7e9",
+    "build/validation-016-closeout/alsa-sequencer-control/result.json": "8607d1fedcf9b81663ea973be463eea5339e9ae89f7b079d36d56b3f917af5da",
+    "build/validation-016-closeout/full-gdb-final-sequencer-c9/inventory-check.json": "b8f42f162e863651e2e22d374bb929300cf92a728014b114201647965622f576",
+    "build/validation-016-closeout/full-gdb-final-sequencer-c9/output.log": "b2a4f994278c112242a31d306a56076d1cad7e9e2c134ccd7590d07c6d994dcd"
+  }
+}

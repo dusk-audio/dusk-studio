@@ -152,6 +152,46 @@ function Invoke-RegressApp($name, $envs, $appArgs, $timeoutSec) {
     return $code
 }
 
+function Complete-RegressForegroundSamples($result) {
+    if (-not $result.qpc_is_high_resolution -or $result.qpc_frequency -le 0 -or
+        $result.qpc_sample_scope -cne 'foreground-and-session-v1') { throw 'Foreground clock is unavailable' }
+    if (@($result.footer_qpc_lines).Count -ne 1 -or $null -eq $result.footer_observed_qpc) { throw 'Missing or duplicate scenario completion clock' }
+    $entry = $result.footer_qpc_lines[0]
+    $marker = [regex]::Match($entry.line, '^\[SCENARIO_END_QPC\] freq=([1-9][0-9]*) start=([1-9][0-9]*) end=([1-9][0-9]*) pid=([1-9][0-9]*) frequency_ok=1 start_ok=1 end_ok=1 write=([1-9][0-9]*) flush=0$')
+    if (-not $marker.Success) { throw 'Invalid scenario completion clock' }
+    [long]$frequency = $marker.Groups[1].Value
+    [long]$start = $marker.Groups[2].Value
+    [long]$end = $marker.Groups[3].Value
+    [long]$owner = $marker.Groups[4].Value
+    if ($frequency -ne $result.qpc_frequency -or $owner -ne $result.app_pid -or
+        $end -lt $start -or $end -ge [long]::MaxValue -or
+        [long]$entry.observed_qpc -lt $end -or [long]$result.footer_observed_qpc -lt $start) { throw 'Inconsistent scenario completion clock' }
+    if ($null -eq $result.activation -or $result.app_session -ne $result.launcher_session) { throw 'Owned foreground session was unavailable' }
+    [long]$previous = 0
+    $during = 0
+    $after = 0
+    $pass = $true
+    foreach ($sample in $result.foreground_samples) {
+        [long]$sampleStart = $sample.qpc_start
+        [long]$sampleEnd = $sample.qpc_end
+        if ($sampleStart -le 0 -or $sampleStart -lt $previous -or $sampleEnd -lt $sampleStart -or
+            $sample.suite_started -isnot [bool]) { throw 'Invalid foreground sample clock' }
+        $previous = $sampleEnd
+        $sample.legacy_in_suite = [bool]$sample.in_suite
+        $sample.after_suite = $sampleStart -gt ($end + 1)
+        $sample.in_suite = $sample.suite_started -and -not $sample.after_suite
+        if ($sample.after_suite) { $after++ }
+        if ($sample.in_suite) {
+            $during++
+            if (-not $sample.owned -or $sample.desktop -cne 'Default' -or
+                $sample.active_console -ne $result.launcher_session) { $pass = $false }
+        }
+    }
+    if ($during -eq 0) { throw 'No foreground samples during the scenario suite' }
+    $result.completion_qpc = @{ frequency = $frequency; start = $start; end = $end; during_samples = $during; after_samples = $after }
+    $result.strict_focus_pass = $pass
+}
+
 # The real folders a launch must leave alone. The snapshot is taken after the
 # install and compared once every launch is done.
 function Get-RegressRealFolders {
@@ -192,4 +232,118 @@ function Get-RegressSnapshot {
             $rows += "$($_.FullName)|temp|$($_.LastWriteTimeUtc.Ticks)"
         }
     return $rows
+}
+
+function Get-RegressGuiCatalog([string]$text, $exitCode) {
+    if ([string]$exitCode -cne '0') { throw "GUI inventory exited with $exitCode" }
+    $names = New-Object 'Collections.Generic.List[string]'
+    $seen = New-Object 'Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+    foreach ($line in ($text -split "`r?`n")) {
+        if (-not $line.StartsWith('gui.', [StringComparison]::Ordinal)) { continue }
+        $match = [regex]::Match($line, '^gui\.[A-Za-z0-9_]+(?: \[([^\]]*)\])?$')
+        if (-not $match.Success) { throw "Malformed GUI inventory row: $line" }
+        $name = ($line -split ' ', 2)[0]
+        if (-not $seen.Add($name)) { throw "Duplicate GUI inventory row: $name" }
+        $tags = @($match.Groups[1].Value -split ',' | ForEach-Object { $_.Trim() })
+        if ($tags -ccontains 'helper') { continue }
+        [void]$names.Add($name)
+    }
+    if ($names.Count -eq 0) { throw 'The GUI inventory is empty' }
+    return $names.ToArray()
+}
+
+function Get-RegressWindowsGuiSkips {
+    return [ordered]@{
+        'gui.clap_no_window_message' = 'only the Linux host looks for a plug-in window in the container'
+        'gui.dsp_readout_realtime_count' = 'the realtime CPU-time guard is Linux-only'
+        'gui.lv2_editor_reflects_state' = 'missing fixture: file_state.lv2'
+        'gui.lv2_midi_learn' = 'missing fixture: file_state.lv2'
+        'gui.midi_io_selectors' = 'virtual MIDI destination fixture requires ALSA sequencer'
+        'gui.oop_editor_closes_before_child' = 'Windows tracks the child by handle, not by pid'
+        'gui.oop_editor_failure_no_strand' = 'the sandbox stub children are driven on POSIX only'
+        'gui.piano_live_recording_preview' = 'requires the native virtual keyboard and X server readback'
+        'gui.piano_roll_follows_take' = 'reads the window back through the X server'
+        'gui.piano_roll_keeps_its_region' = 'reads the window back through the X server'
+        'gui.piano_roll_shows_each_take' = 'reads the window back through the X server'
+        'gui.plugin_editor_tab_left_alone' = 'needs the Linux CLAP fixture'
+        'gui.settings_rescan_devices' = 'requires native settings and ALSA sequencer'
+        'gui.slot_health_labels' = 'the sandbox stub children are driven on POSIX only'
+    }
+}
+
+function Assert-RegressScenarioResults([string]$text, $exitCode, [string[]]$expectedNames, $allowedSkips) {
+    if ([string]$exitCode -cne '0') { throw "Scenarios exited with $exitCode" }
+    if ($text -match '\[DIRTY\]|REGRESS-TIMEOUT') { throw 'Scenario cleanup or timeout failed' }
+    $expected = New-Object 'Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+    foreach ($name in $expectedNames) {
+        if (-not $expected.Add($name)) { throw "Duplicate expected scenario: $name" }
+    }
+    if ($expected.Count -eq 0) { throw 'No expected scenarios were supplied' }
+    $seen = New-Object 'Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+    $records = New-Object 'Collections.Generic.List[string]'
+    $passed = 0
+    $skipped = 0
+    $footer = $null
+    foreach ($line in ($text -split "`r?`n")) {
+        if ($line -match '^\[(PASS|FAIL|SKIP)\]') {
+            $match = [regex]::Match($line, '^\[(PASS|FAIL|SKIP)\] ([A-Za-z0-9_.]+)(.*)$')
+            if (-not $match.Success) { throw "Malformed scenario result: $line" }
+            $status = $match.Groups[1].Value
+            $name = $match.Groups[2].Value
+            $detail = $match.Groups[3].Value
+            if (-not $expected.Contains($name)) { throw "Unexpected scenario result: $name" }
+            if (-not $seen.Add($name)) { throw "Duplicate scenario result: $name" }
+            if ($status -ceq 'FAIL') { throw "Scenario failed: $line" }
+            if ($status -ceq 'SKIP') {
+                if (-not $allowedSkips.Contains($name)) { throw "Supported scenario skipped: $name" }
+                if ($detail -cne (': ' + $allowedSkips[$name])) { throw "Unexpected skip reason: $line" }
+                $skipped++
+            } else {
+                if ($allowedSkips.Contains($name)) { throw "Unsupported scenario reported a pass: $name" }
+                if ($detail -notmatch '^ \([0-9]+ ms\)$') { throw "Malformed pass result: $line" }
+                $passed++
+            }
+            [void]$records.Add($name)
+        } elseif ($line.StartsWith('=== scenarios:', [StringComparison]::Ordinal)) {
+            if ($null -ne $footer) { throw 'Duplicate scenario summary' }
+            $footer = [regex]::Match($line, '^=== scenarios: ([0-9]+) pass, ([0-9]+) fail, ([0-9]+) skip ===$')
+            if (-not $footer.Success) { throw "Malformed scenario summary: $line" }
+        }
+    }
+    if ($records.Count -ne $expectedNames.Count) { throw 'Scenario inventory is incomplete' }
+    for ($index = 0; $index -lt $expectedNames.Count; $index++) {
+        if ($records[$index] -cne $expectedNames[$index]) { throw 'Scenario result order differs from the selected inventory' }
+    }
+    if ($null -eq $footer) { throw 'Missing scenario summary' }
+    if ([int]$footer.Groups[1].Value -ne $passed -or [int]$footer.Groups[2].Value -ne 0 -or [int]$footer.Groups[3].Value -ne $skipped) {
+        throw 'Scenario summary disagrees with individual results'
+    }
+}
+
+function Initialize-RegressPickerCache([string]$configDir, [string[]]$fixtureRoots) {
+    $specs = @(
+        @('dusk-studio-multi-bus-clap-fixture.clap', 'studio.dusk.test.multi-bus', 'Picker Alpha', 'Scenario Maker A', 'Fx|EQ'),
+        @('dusk-studio-param-touch-clap-fixture.clap', 'studio.dusk.test.param-touch', 'Picker Beta', 'Scenario Maker B', 'Fx|Delay'),
+        @('dusk-studio-no-window-clap-fixture.clap', 'studio.dusk.test.no-window', 'Window Pick', 'Scenario Maker C', 'Fx|Utility')
+    )
+    $descriptors = @()
+    foreach ($spec in $specs) {
+        $location = $null
+        foreach ($root in $fixtureRoots) {
+            foreach ($relative in @($spec[0], (Join-Path 'Release' $spec[0]))) {
+                $candidate = [IO.Path]::GetFullPath((Join-Path $root $relative))
+                if ([IO.File]::Exists($candidate)) { $location = $candidate; break }
+            }
+            if ($null -ne $location) { break }
+        }
+        if ($null -eq $location) { throw ('Missing picker fixture: ' + $spec[0]) }
+        $descriptors += [ordered]@{
+            version = 1; backend = 'native'; name = $spec[2]; manufacturer = $spec[3]; category = $spec[4]
+            format_name = 'CLAP'; location = $location; plugin_id = $spec[1]
+            num_input_channels = 2; num_output_channels = 2; is_instrument = $false
+        }
+    }
+    [void][IO.Directory]::CreateDirectory($configDir)
+    $json = [ordered]@{version = 1; descriptors = $descriptors} | ConvertTo-Json -Depth 8
+    [IO.File]::WriteAllText((Join-Path $configDir 'clap-cache.json'), $json, (New-Object Text.UTF8Encoding($false)))
 }
