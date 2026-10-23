@@ -77,13 +77,21 @@ TEST_CASE ("playback capture rejects finite but incorrect disk audio", "[engine]
     REQUIRE (capture.prepare (128, 1, 1));
     auto left = fixture (0, 0, 125, 128);
     auto right = fixture (0, 1, 125, 128);
+    std::uint64_t mismatches = 128, nonFinite = 0;
+    std::int64_t firstFrame = 125;
     SECTION ("silence") { std::fill (left.begin(), left.end(), 0.0f); }
     SECTION ("another track") { left = fixture (1, 0, 125, 128); }
     SECTION ("another region") { left = fixture (0, 0, 8 * kRate + 125, 128); }
     SECTION ("swapped channel") { left = right; }
     SECTION ("old periodic pattern displacement") { left = fixture (0, 0, 60126, 128); }
-    SECTION ("one missing sample") { left[75] = 0.0f; }
-    SECTION ("non-finite") { left[75] = std::numeric_limits<float>::quiet_NaN(); }
+    SECTION ("one missing sample") { left[75] = 0.0f; mismatches = 1; firstFrame = 200; }
+    SECTION ("first sample") { left[0] = 0.0f; mismatches = 1; }
+    SECTION ("non-finite")
+    {
+        left[75] = std::numeric_limits<float>::quiet_NaN();
+        mismatches = nonFinite = 1;
+        firstFrame = 200;
+    }
     capture.setCapturing (true);
     capture.beginCallback (128);
     capture.read (0, 125, -1, -1, left.data(), right.data(), 128);
@@ -91,7 +99,12 @@ TEST_CASE ("playback capture rejects finite but incorrect disk audio", "[engine]
     capture.setCapturing (false);
     const auto result = capture.analyze (plain());
     CHECK_FALSE (result.passed());
-    CHECK (result.mismatchedValues > 0);
+    CHECK (result.checkedValues == 256);
+    CHECK (result.mismatchedValues == mismatches);
+    CHECK (result.nonFiniteValues == nonFinite);
+    CHECK (result.firstWrongTrack == 0);
+    CHECK (result.firstWrongChannel == 0);
+    CHECK (result.firstWrongFrame == firstFrame);
 }
 
 TEST_CASE ("playback capture rejects omitted duplicated or malformed track taps", "[engine][playback-capture]")
@@ -100,49 +113,128 @@ TEST_CASE ("playback capture rejects omitted duplicated or malformed track taps"
     REQUIRE (capture.prepare (128, 1, 3));
     capture.setCapturing (true);
     capture.beginCallback (128);
-    SECTION ("missing one track") { read (capture, 0, 0, 128); }
-    SECTION ("missing all tracks") {}
+    std::uint64_t missing = 0, duplicate = 0, invalid = 0;
+    SECTION ("missing one track") { read (capture, 0, 0, 128); missing = 1; }
+    SECTION ("missing all tracks") { missing = 1; }
     SECTION ("duplicate track")
     {
         read (capture, 0, 0, 128);
         read (capture, 0, 0, 128);
         read (capture, 1, 0, 128);
+        duplicate = 1;
     }
     SECTION ("different positions in the same callback")
     {
         read (capture, 0, 0, 128);
         read (capture, 1, 1, 128);
+        invalid = 1;
+    }
+    SECTION ("different loop starts in the same callback")
+    {
+        read (capture, 0, 0, 128);
+        read (capture, 1, 0, 128, 0, -1);
+        invalid = 1;
+    }
+    SECTION ("different loop ends in the same callback")
+    {
+        read (capture, 0, 0, 128);
+        read (capture, 1, 0, 128, -1, 1024);
+        invalid = 1;
     }
     SECTION ("partial block")
     {
         read (capture, 0, 0, 127);
         read (capture, 1, 0, 128);
+        invalid = 1;
     }
     SECTION ("absent right channel")
     {
         const auto left = fixture (0, 0, 0, 128);
         capture.read (0, 0, -1, -1, left.data(), nullptr, 128);
         read (capture, 1, 0, 128);
+        invalid = 1;
+    }
+    SECTION ("absent left channel")
+    {
+        const auto right = fixture (0, 1, 0, 128);
+        capture.read (0, 0, -1, -1, nullptr, right.data(), 128);
+        read (capture, 1, 0, 128);
+        invalid = 1;
+    }
+    SECTION ("unselected track")
+    {
+        read (capture, 2, 0, 128);
+        read (capture, 0, 0, 128);
+        read (capture, 1, 0, 128);
+        invalid = 1;
+    }
+    SECTION ("track outside the mixer")
+    {
+        read (capture, 24, 0, 128);
+        read (capture, 0, 0, 128);
+        read (capture, 1, 0, 128);
+        invalid = 1;
     }
     capture.endCallback();
     capture.setCapturing (false);
-    CHECK_FALSE (capture.analyze (plain()).passed());
+    const auto result = capture.analyze (plain());
+    CHECK_FALSE (result.passed());
+    CHECK (result.capture.missingTrackCallbacks == missing);
+    CHECK (result.capture.completeCallbacks == 1 - missing);
+    CHECK (result.capture.duplicateReads == duplicate);
+    CHECK (result.capture.invalidReads == invalid);
 }
 
 TEST_CASE ("playback capture bounds storage and never accepts a truncated run", "[engine][playback-capture]")
 {
     PlaybackReadCapture capture;
+    bool reprepare = false;
     SECTION ("sample capacity") { REQUIRE (capture.prepare (64, 2, 1)); }
     SECTION ("callback capacity") { REQUIRE (capture.prepare (256, 1, 1)); }
     SECTION ("re-prepare releases all old buffer capacity")
     {
+        reprepare = true;
         REQUIRE (capture.prepare (4096, 4096, 3));
+        capture.setCapturing (true);
+        capture.beginCallback (128);
+        read (capture, 0, 0, 128);
+        read (capture, 1, 0, 128);
+        capture.endCallback();
+        capture.beginCallback (128);
+        read (capture, 0, 128, 128);
+        read (capture, 0, 128, 128);
+        read (capture, 2, 128, 128);
         const auto largeBytes = capture.allocatedBytes();
         REQUIRE (capture.prepare (64, 1, 1));
         PlaybackReadCapture fresh;
         REQUIRE (fresh.prepare (64, 1, 1));
         CHECK (capture.allocatedBytes() == fresh.allocatedBytes());
         CHECK (capture.allocatedBytes() < largeBytes / 100);
+    }
+    CHECK_FALSE (capture.prepare (0, 1, 1));
+    CHECK_FALSE (capture.prepare (1, 0, 1));
+    CHECK_FALSE (capture.prepare (std::numeric_limits<std::size_t>::max(), 1, 1));
+    CHECK_FALSE (capture.prepare (1, std::numeric_limits<std::size_t>::max(), 1));
+    CHECK_FALSE (capture.prepare (PlaybackReadCapture::kMaxStorageBytes / (2 * sizeof (float)), 1, 1));
+    CHECK_FALSE (capture.prepare (1, 1, 0));
+    CHECK_FALSE (capture.prepare (1, 1, 1u << 24));
+    if (reprepare)
+    {
+        const auto empty = capture.analyze (plain());
+        CHECK (empty.capture.callbacks == 0);
+        CHECK (empty.capture.completeCallbacks == 0);
+        CHECK (empty.capture.protocolErrors == 0);
+        CHECK (empty.capture.duplicateReads == 0);
+        CHECK (empty.capture.invalidReads == 0);
+        capture.setCapturing (true);
+        capture.beginCallback (64);
+        read (capture, 0, 0, 64);
+        capture.endCallback();
+        capture.setCapturing (false);
+        const auto result = capture.analyze (plain());
+        CHECK (result.passed());
+        CHECK (result.checkedValues == 128);
+        CHECK (result.capture.callbacks == 1);
         return;
     }
     capture.setCapturing (true);
@@ -156,9 +248,6 @@ TEST_CASE ("playback capture bounds storage and never accepts a truncated run", 
     const auto result = capture.analyze (plain());
     CHECK (result.capture.overflow);
     CHECK_FALSE (result.passed());
-    CHECK_FALSE (capture.prepare (std::numeric_limits<std::size_t>::max(), 1, 1));
-    CHECK_FALSE (capture.prepare (1, 1, 0));
-    CHECK_FALSE (capture.prepare (1, 1, 1u << 24));
 }
 
 TEST_CASE ("playback capture checks unaligned loop masks independently", "[engine][playback-capture]")
@@ -185,8 +274,23 @@ TEST_CASE ("playback capture checks unaligned loop masks independently", "[engin
         right[static_cast<std::size_t> (sample)] *= gain;
     }
     bool shouldPass = true;
+    bool requireWrapWithoutCrossing = false;
     SECTION ("masked seam") {}
     SECTION ("unmasked seam") { left[74] = fixture (0, 0, expected.loopEnd - 1, 1)[0]; shouldPass = false; }
+    SECTION ("a required wrap must actually be captured") { requireWrapWithoutCrossing = true; }
+    if (requireWrapWithoutCrossing)
+    {
+        capture.beginCallback (128);
+        read (capture, 0, expected.loopStart, 128, expected.loopStart, expected.loopEnd);
+        capture.endCallback();
+        capture.setCapturing (false);
+        const auto result = capture.analyze (expected);
+        CHECK (result.loopWraps == 0);
+        CHECK (result.timelineErrors == 1);
+        CHECK (result.mismatchedValues == 0);
+        CHECK_FALSE (result.passed());
+        return;
+    }
     capture.beginCallback (256);
     capture.read (0, start, expected.loopStart, expected.loopEnd, left.data(), right.data(), 256);
     capture.endCallback();
@@ -207,10 +311,11 @@ TEST_CASE ("playback capture requires observed seek commits and rejects other ti
     expected.rollingSeeks = { 1000, 2000, 3000 };
     std::vector<std::int64_t> starts { 0, 1000, 2000, 3000 };
     bool shouldPass = true;
+    std::uint64_t timelineErrors = 0, committedSeeks = 3;
     SECTION ("all three committed") {}
-    SECTION ("only two committed") { starts.pop_back(); shouldPass = false; }
-    SECTION ("an unexpected discontinuity") { starts[2] += 1; shouldPass = false; }
-    SECTION ("seeks arrive out of order") { std::swap (starts[1], starts[2]); shouldPass = false; }
+    SECTION ("only two committed") { starts.pop_back(); shouldPass = false; timelineErrors = 1; committedSeeks = 2; }
+    SECTION ("an unexpected discontinuity") { starts[2] += 1; shouldPass = false; timelineErrors = 3; committedSeeks = 1; }
+    SECTION ("seeks arrive out of order") { std::swap (starts[1], starts[2]); shouldPass = false; timelineErrors = 3; committedSeeks = 1; }
     capture.setCapturing (true);
     for (const auto start : starts)
     {
@@ -221,24 +326,35 @@ TEST_CASE ("playback capture requires observed seek commits and rejects other ti
     capture.setCapturing (false);
     const auto result = capture.analyze (expected);
     CHECK (result.passed() == shouldPass);
-    if (shouldPass) CHECK (result.committedSeeks == 3);
+    CHECK (result.timelineErrors == timelineErrors);
+    CHECK (result.committedSeeks == committedSeeks);
 }
 
 TEST_CASE ("playback capture gates whole callbacks and rejects an unfinished callback", "[engine][playback-capture]")
 {
     PlaybackReadCapture capture;
-    REQUIRE (capture.prepare (256, 2, 1));
+    REQUIRE (capture.prepare (256, 2, 3));
     capture.beginCallback (128);
     capture.endCallback();
-    CHECK_FALSE (capture.analyze (plain()).passed());
+    const auto disabled = capture.analyze (plain());
+    CHECK_FALSE (disabled.passed());
+    CHECK (disabled.capture.callbacks == 0);
     capture.setCapturing (true);
     capture.beginCallback (128);
     read (capture, 0, 0, 128);
     capture.setCapturing (false);
+    read (capture, 1, 0, 128);
     SECTION ("a stop request completes the active callback")
     {
         capture.endCallback();
-        CHECK (capture.analyze (plain()).passed());
+        const auto result = capture.analyze (plain());
+        CHECK (result.passed());
+        CHECK (result.checkedValues == 512);
     }
-    SECTION ("an omitted end is a protocol error") { CHECK_FALSE (capture.analyze (plain()).passed()); }
+    SECTION ("an omitted end is a protocol error")
+    {
+        const auto result = capture.analyze (plain());
+        CHECK_FALSE (result.passed());
+        CHECK (result.capture.protocolErrors == 1);
+    }
 }

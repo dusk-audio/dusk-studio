@@ -2056,6 +2056,21 @@ std::optional<ScenarioResult> runPianoNativeEscapeStack (GuiHost& host, Scenario
         ctx.expect (host.pianoKeyboardFocus (true) && host.inputPianoRoll ("escape"), "the reopened child did not receive Escape");
     }, [&host] { return host.pianoNativeWindowOpen() && host.pianoViewport()[3] > 0; }, "the piano child did not reopen" });
     steps->push_back ({ 0, [] {}, [&host] { return ! host.pianoNativeWindowOpen(); }, "the reopened child did not finish closing" });
+   #if defined (_WIN32)
+    steps->push_back ({ 0, [&host] { host.openPianoRoll (0, 0); } });
+    steps->push_back ({ 0, [&host, &ctx]
+    {
+        ctx.expect (host.panelTopmostAtCentre ("piano-roll") == 1,
+                    "the native piano child was not visible before the alert");
+        host.raiseAlert ("Overlay visibility check", "The editor must yield to this alert immediately.");
+        ctx.expect (host.panelTopmostAtCentre ("piano-roll") == 0 || ! host.pianoNativeWindowOpen(),
+                    "the closing native piano child remained above the alert");
+    }, [&host] { return host.pianoNativeWindowOpen() && host.pianoViewport()[3] > 0; },
+       "the piano child did not reopen for the alert" });
+    steps->push_back ({ 0, [&host] { host.clickModalButton ("OK"); },
+                        [&host] { return ! host.pianoNativeWindowOpen(); }, "the alert did not close the piano child" });
+    steps->push_back ({ 0, [] {}, [&host] { return host.modalStackEmpty(); }, "the overlay alert did not close" });
+   #endif
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
 }
@@ -2097,13 +2112,19 @@ std::optional<ScenarioResult> runPianoNativeNavigationReopen (GuiHost& host, Sce
         ctx.expect (host.inputPianoRoll ("command + ]"), "the old child did not queue navigation");
         host.closePianoRoll();
         host.openPianoRoll (0, 0);
-        ctx.expect (host.pianoKeyboardFocus (true) && host.inputPianoRoll (commandChord ('A')),
-                    "the replacement child did not queue Select All");
     }, [&host] { return host.pianoRollRegion() == 0 && host.pianoViewport()[3] > 0; }, "native previous-region did not replace the child" });
     steps->push_back ({ 0, [&host, &ctx]
     {
         ctx.expect (host.pianoNativeWindowOpen() && host.pianoRollRegion() == 0,
                     "a discarded child's queued navigation changed its replacement");
+        ctx.expect (host.focusPiano(), "the replacement piano child could not receive focus");
+    }, [&host] { return host.pianoViewport()[3] > 0; }, "the replacement piano roll did not draw" });
+    steps->push_back ({ 0, [&host, &ctx]
+    {
+        ctx.expect (host.inputPianoRoll (commandChord ('A')), "the replacement child did not queue Select All");
+    } });
+    steps->push_back ({ 0, [&host, &ctx]
+    {
         ctx.expect (host.pianoSelection() == std::vector<int> { 0, 1 }, "the replacement child did not draw its own input");
         ctx.expect (host.inputPianoRoll ("cursor up"), "the replacement child did not receive Up");
     } });

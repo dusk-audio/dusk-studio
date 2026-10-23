@@ -5,6 +5,11 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$repo_root/scripts/regress/xvfb.sh"
 source "$repo_root/scripts/regress/scenarios.sh"
 app="${1:-$repo_root/build/DuskStudio_artefacts/Release/DuskStudio}"
+beta_format="${2:-LV2}"
+case "$beta_format" in
+    LV2|CLAP) ;;
+    *) printf 'Usage: %s [app] [LV2|CLAP]\n' "$0" >&2; exit 2 ;;
+esac
 scratch="$(mktemp -d "${TMPDIR:-/tmp}/dusk-plugin-picker.XXXXXX")"
 trap 'xvfb_session_stop; rm -rf "$scratch"' EXIT
 
@@ -12,18 +17,22 @@ for attempt in 1 2 3; do
     run_dir="$scratch/$attempt"
     mkdir -p "$run_dir"
     sandbox_env "$run_dir"
-    python3 - "$repo_root" "$run_dir/home/.config/Dusk Studio" <<'PY'
+    python3 - "$repo_root" "$run_dir/home/.config/Dusk Studio" "$beta_format" <<'PY'
 import json
 from pathlib import Path
 import sys
 
-root, cache_dir = map(Path, sys.argv[1:])
+root, cache_dir = map(Path, sys.argv[1:3])
 cache_dir.mkdir(parents=True, exist_ok=True)
+beta = ("lv2-native-cache.json", "LV2", root / "build-tests/tests/file-state-fixture.lv2",
+        "urn:duskstudio:test:control-state")
+if sys.argv[3] == "CLAP":
+    beta = ("clap-cache.json", "CLAP", root / "build-tests/dusk-studio-param-touch-clap-fixture.clap",
+            "studio.dusk.test.param-touch")
 fixtures = [
     ("clap-cache.json", "CLAP", "Picker Alpha", "Scenario Maker A", "Fx|EQ",
      root / "build-tests/dusk-studio-multi-bus-clap-fixture.clap", "studio.dusk.test.multi-bus"),
-    ("lv2-native-cache.json", "LV2", "Picker Beta", "Scenario Maker B", "Fx|Delay",
-     root / "build-tests/tests/file-state-fixture.lv2", "urn:duskstudio:test:control-state"),
+    (beta[0], beta[1], "Picker Beta", "Scenario Maker B", "Fx|Delay", beta[2], beta[3]),
     ("clap-cache.json", "CLAP", "Window Pick", "Scenario Maker C", "Fx|Utility",
      root / "build-tests/dusk-studio-no-window-clap-fixture.clap", "studio.dusk.test.no-window"),
 ]

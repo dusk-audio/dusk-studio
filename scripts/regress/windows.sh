@@ -260,6 +260,7 @@ install_scripts() {
         serve_script scenarios.ps1 pe.ps1 PHASE=scenarios-headless SPEC=all TIMEOUT="$ENGINE_TIMEOUT" &&
         serve_script scenarios.ps1 pg.ps1 PHASE=scenarios-gui SPEC=gui TIMEOUT="$GUI_TIMEOUT" &&
         serve_script settings-defaults.ps1 pd.ps1 &&
+        serve_script gui-plugin-picker.ps1 ppk.ps1 &&
         serve_script audit.ps1 pa.ps1
 }
 
@@ -546,8 +547,7 @@ if ((installed)); then
         scenario_leg "scenarios-headless" pe.ps1 $((ENGINE_TIMEOUT + 300))
         scenario_leg "scenarios-gui" pg.ps1 $((GUI_TIMEOUT + 300))
         guest_leg "gui-settings-defaults" pd.ps1 900
-        regress_skip "gui-plugin-picker" \
-            "its seeded cache names an LV2 fixture, and Windows builds no LV2 host; run tests/gui_plugin_picker.sh on Linux"
+        guest_leg "gui-plugin-picker" ppk.ps1 360
     else
         for leg in "${SCENARIO_ROWS[@]}"; do regress_skip "$leg" "not requested (--no-scenarios)"; done
     fi

@@ -4398,7 +4398,9 @@ void ChannelStripComponent::openSfzLibrary()
                     filebrowser::open (*target, { "Load soundfont (.sfz / .sf2 / .bank.xml)", {}, "*.sfz;*.sf2;*.bank.xml", filebrowser::Mode::Open },
                         [safe] (const auto& file)
                         {
-                            if (auto* owner = safe.getComponent(); owner != nullptr && file.existsAsFile())
+                            if (auto* owner = safe.getComponent(); owner != nullptr
+                                && filebrowser::isAcceptableChoice (file.getFullPathName().toStdString(),
+                                                                     filebrowser::Mode::Open, false, false))
                             {
                                 auto soundfont = file;
                                 if (file.getFileName().toLowerCase().endsWith (".bank.xml"))

@@ -130,12 +130,9 @@ bool BufferedFileReader::holdsSeek (std::int64_t startFrame, std::int64_t numFra
     return held;
 }
 
-bool BufferedFileReader::needsSeekFill (std::int64_t startFrame) const noexcept
+bool BufferedFileReader::needsSeekFill (std::int64_t startFrame, std::int64_t numFrames) const noexcept
 {
-    acquireWindow();
-    const bool needed = needsFillAt (publishedSeekWindow.load (std::memory_order_seq_cst), startFrame);
-    releaseWindow();
-    return needed;
+    return ! holdsSeek (startFrame, numFrames);
 }
 
 bool BufferedFileReader::needsFillAt (const Window* window, std::int64_t h) const noexcept
@@ -233,22 +230,26 @@ void BufferedFileReader::retainSeekForPlayback (std::int64_t frame)
 bool BufferedFileReader::fillOnce (std::int64_t startFrame)
 {
     const auto at = startFrame >= 0 ? startFrame : hint();
-    return fillAt (at, false);
+    return fillAt (at, false, 0);
 }
 
-bool BufferedFileReader::fillSeekOnce (std::int64_t target, std::int64_t currentFrame)
+bool BufferedFileReader::fillSeekOnce (std::int64_t target, std::int64_t currentFrame,
+                                      std::int64_t numFrames)
 {
+    if (! needsSeekFill (target, numFrames)) return false;
     if (seekWindow != nullptr && seekWindow->startFrame != target) retainSeekForPlayback (currentFrame);
-    return fillAt (target, true);
+    return fillAt (target, true, numFrames);
 }
 
-bool BufferedFileReader::fillAt (std::int64_t startFrame, bool seeking)
+bool BufferedFileReader::fillAt (std::int64_t startFrame, bool seeking, std::int64_t numFrames)
 {
     if (std::chrono::steady_clock::now() < nextFillAttempt) return false;
     try
     {
         if (channels <= 0 || source == nullptr) return false;
         const auto h = std::clamp (startFrame, (std::int64_t) 0, fileInfo.numFrames);
+        const auto end = seeking ? std::min ({ spanEnd (startFrame, numFrames), fileInfo.numFrames,
+                                               spanEnd (h, capacity - 1) }) : h;
         const auto* destination = seeking ? seekWindow.get() : currentWindow.get();
         if (h >= fileInfo.numFrames)
         {
@@ -258,7 +259,8 @@ bool BufferedFileReader::fillAt (std::int64_t startFrame, bool seeking)
         }
         if (stagingWindow != nullptr
             && (stagingForSeek != seeking || h < stagingWindow->startFrame
-                || h >= stagingWindow->startFrame + stagingWindow->numFrames))
+                || h >= stagingWindow->startFrame + stagingWindow->numFrames
+                || (seeking && ! windowHolds (stagingWindow.get(), h, end))))
         {
             stagingWindow.reset();
             stagingFilled = 0;
@@ -266,7 +268,7 @@ bool BufferedFileReader::fillAt (std::int64_t startFrame, bool seeking)
         }
         if (stagingWindow == nullptr)
         {
-            if (! needsFillAt (destination, h)) return false;
+            if (! seeking && ! needsFillAt (destination, h)) return false;
             stagingForSeek = seeking;
             beginFill (h);
         }
@@ -328,6 +330,7 @@ void BufferedFileReader::releaseResidency() noexcept
     seekWindow.reset();
     stagingWindow.reset();
     stagingFilled = 0;
+    stagingForSeek = false;
     std::vector<float*>().swap (fillDest);
     if (source != nullptr) source->releaseReadScratch();
     nextFillAttempt = {};

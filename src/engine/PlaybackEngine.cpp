@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <limits>
 #include <thread>
 #include <utility>
 
@@ -48,9 +49,15 @@ constexpr int kSwapFadeSamples = 512;
 constexpr std::int64_t kSwapWarmFrames = 8192;
 constexpr auto kSwapWarmWait = std::chrono::milliseconds (300);
 
+// A locate waits at most this long for its readers and the loop head. After
+// that it commits anyway, and whatever a cold reader cannot serve plays silent,
+// so a reader or loop cache that never warms cannot hold the playhead forever.
+constexpr double kLocateWaitSeconds = 0.3;
+
 std::atomic<int> liveStreams { 0 };
 } // namespace
-PlaybackEngine::PlaybackEngine (Session& s) : session (s) {}
+PlaybackEngine::PlaybackEngine (Session& s, bool startFillWorkers)
+    : session (s), fillPool (3, startFillWorkers) {}
 
 PlaybackEngine::PerTrackStream::PerTrackStream() noexcept
 {
@@ -74,6 +81,9 @@ PlaybackEngine::~PlaybackEngine()
 
 void PlaybackEngine::prepare (int maxBlockSize, double sampleRate)
 {
+    locateReadyHeld.store (false, std::memory_order_relaxed);
+    locateWaitLimit = (std::int64_t) std::llround ((sampleRate > 0.0 ? sampleRate : 48000.0) * kLocateWaitSeconds);
+    resetLocateWait();
     fillPool.configure (sampleRate);
     // Pre-allocate the stereo scratch buffer once. Channel 1 is unused for
     // mono regions but allocated so the audio-thread read path never has to
@@ -115,17 +125,39 @@ bool PlaybackEngine::locateReadyRt (std::int64_t target, int numSamples,
     if (looping)
         warmFrames = (int) std::min<std::int64_t> (warmFrames, loopEnd - target);
     fillPool.setSeekTargetRt (target, warmFrames);
-    if (! fillPool.seekReadyRt (target, warmFrames)) return false;
-    if (looping)
+    if (locateReadyHeld.load (std::memory_order_relaxed)) return false;
+    if (target != locateWaitTarget)
     {
-        if (numSamples > kLoopCacheSamples) return false;
-        for (const auto& slot : slots)
-            if (const auto* current = slot.current.load (std::memory_order_relaxed))
-                if (! current->regions.empty() && current->loopCacheStart != loopStart)
-                    return false;
+        locateWaitTarget = target;
+        locateWaited = 0;
     }
+    const bool overdue = locateWaited >= locateWaitLimit;
+    locateWaited += numSamples;
+    if (! overdue && ! locateWarmRt (target, numSamples, warmFrames, looping, loopStart, loopEnd))
+        return false;
     pinStreamsForLocateBlock = true;
     return true;
+}
+
+bool PlaybackEngine::locateWarmRt (std::int64_t target, int numSamples, int warmFrames, bool looping,
+                                   std::int64_t loopStart, std::int64_t loopEnd) const noexcept
+{
+    if (! fillPool.seekReadyRt (target, warmFrames)) return false;
+    if (! looping) return true;
+    const auto headFrames = std::min<std::int64_t> (
+        std::max<std::int64_t> (0, (std::int64_t) numSamples - (loopEnd - target)), loopEnd - loopStart);
+    if (headFrames > kLoopCacheSamples) return false;
+    for (const auto& slot : slots)
+        if (const auto* current = slot.current.load (std::memory_order_relaxed))
+            if (! current->regions.empty() && current->loopCacheStart != loopStart)
+                return false;
+    return true;
+}
+
+void PlaybackEngine::resetLocateWait() noexcept
+{
+    locateWaitTarget = std::numeric_limits<std::int64_t>::min();
+    locateWaited = 0;
 }
 
 void PlaybackEngine::finishLocateBlockRt (std::int64_t committedPosition, bool keepSeek) noexcept
@@ -138,6 +170,7 @@ void PlaybackEngine::finishLocateBlockRt (std::int64_t committedPosition, bool k
     {
         fillPool.clearSeekTargetRt();
         pinStreamsForLocateBlock = false;
+        resetLocateWait();
     }
 }
 
@@ -258,13 +291,11 @@ PlaybackEngine::buildTrackStream (int t, Audition audition, std::int64_t warmAt,
         if (rawReader == nullptr) continue;
         const auto sourceInfo = rawReader->info();
 
-        // 96000 frames is ~1 s at 96 kHz / ~2 s at 44.1 kHz - generous
-        // given block sizes are 256-2048 - but a region shorter than that
-        // never reads past its own end, and a take-heavy session opens one
-        // reader per region, so cap the window at the region length.
+        // The reader reserves one frame beyond its published payload.
+        const auto warmFrames = swapWarmFrames();
         const std::int64_t windowFrames =
-            std::clamp (region.lengthInSamples, (std::int64_t) 8192,
-                         dusk::audio::BufferedFileReader::kDefaultWindowFrames);
+            std::clamp (region.lengthInSamples, warmFrames,
+                         std::max (warmFrames, dusk::audio::BufferedFileReader::kDefaultWindowFrames)) + 1;
         auto buffered = std::make_unique<dusk::audio::BufferedFileReader> (
             std::move (rawReader), windowFrames,
             dusk::audio::BufferedFileReader::Fill::Manual);
@@ -432,6 +463,8 @@ void PlaybackEngine::stopPlayback()
 
     fillPool.clearSeekTargetRt();
     pinStreamsForLocateBlock = false;
+    resetLocateWait();
+    locateReadyHeld.store (false, std::memory_order_relaxed);
     refreshRequests.store (0, std::memory_order_relaxed);
     for (auto& slot : slots) freeSlot (slot);
 }
@@ -524,7 +557,7 @@ void PlaybackEngine::publish (int t, std::int64_t playhead, std::uint32_t locate
 {
     auto& swap = pending[(size_t) t];
     swap.stream->warmStart = playhead;
-    swap.stream->warmEnd = warm ? playhead + kSwapWarmFrames : playhead;
+    swap.stream->warmEnd = warm ? playhead + swapWarmFrames() : playhead;
     swap.stream->warmLocateSerial = locateSerial;
     if (swap.auditioned != 0)
     {
@@ -541,9 +574,14 @@ void PlaybackEngine::publish (int t, std::int64_t playhead, std::uint32_t locate
     delete slots[(size_t) t].incoming.exchange (swap.stream.release(), std::memory_order_acq_rel);
 }
 
-bool PlaybackEngine::readersHoldFrom (const PerTrackStream& stream, std::int64_t playhead) noexcept
+std::int64_t PlaybackEngine::swapWarmFrames() const noexcept
 {
-    const std::int64_t until = playhead + kSwapWarmFrames;
+    return std::max (kSwapWarmFrames, (std::int64_t) readScratch.numSamples());
+}
+
+bool PlaybackEngine::readersHoldFrom (const PerTrackStream& stream, std::int64_t playhead) const noexcept
+{
+    const std::int64_t until = playhead + swapWarmFrames();
     for (const auto& r : stream.regions)
     {
         if (r.reader == nullptr) continue;
@@ -709,8 +747,6 @@ int PlaybackEngine::readStream (PerTrackStream& stream, std::int64_t playheadSam
     // exactly like the transport's post-block wrap (loopStart + overshoot),
     // so audio at the seam neither bleeds past loopEnd nor skips the loop
     // downbeat. Seams inside this block get a short declick ramp.
-    int seamOffsets[8];
-    int numSeams = 0;
     int done = 0;
     int firstMissing = numSamples;
     std::int64_t pos = playheadSamples;
@@ -719,7 +755,6 @@ int PlaybackEngine::readStream (PerTrackStream& stream, std::int64_t playheadSam
         if (pos >= loopEnd)
         {
             pos = loopStart + (pos - loopEnd) % loopLen;
-            if (numSeams < 8) seamOffsets[numSeams++] = done;
         }
         const int span = (int) std::min ((std::int64_t) (numSamples - done),
                                             loopEnd - pos);
@@ -729,9 +764,9 @@ int PlaybackEngine::readStream (PerTrackStream& stream, std::int64_t playheadSam
         pos  += span;
     }
 
-    for (int s = 0; s < numSeams; ++s)
+    for (std::int64_t offset = loopEnd - playheadSamples; offset < numSamples;)
     {
-        const int seam = seamOffsets[s];
+        const int seam = (int) offset;
         // Fade out into the seam, fade in out of it - raised-cosine, zero
         // slope at both ends, same shape as the punch click-mask.
         for (int i = 1; i <= kLoopSeamFade; ++i)
@@ -753,6 +788,8 @@ int PlaybackEngine::readStream (PerTrackStream& stream, std::int64_t playheadSam
             outL[idx] *= g;
             if (outR != nullptr) outR[idx] *= g;
         }
+        if (loopLen >= numSamples - offset) break;
+        offset += loopLen;
     }
     return firstMissing;
 }

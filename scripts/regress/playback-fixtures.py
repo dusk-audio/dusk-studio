@@ -66,7 +66,7 @@ def generate(directory, rate):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', required=True, type=Path, help='new or empty fixture directory')
-    parser.add_argument('--rates', nargs='+', type=int, choices=(48000, 96000, 192000),
+    parser.add_argument('--rates', nargs='+', type=int, choices=(44100, 48000, 96000, 192000),
                         default=[48000, 96000, 192000])
     args = parser.parse_args()
     root = args.output.resolve()

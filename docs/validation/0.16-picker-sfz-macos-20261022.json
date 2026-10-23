@@ -1,0 +1,1143 @@
+{
+  "milestone": "0.16 / GitHub milestone9",
+  "recorded_utc": "2026-10-22T19:53:04.131136+00:00",
+  "status": "Local picker portability and macOS SFZ acceptance phase; release gates remain open",
+  "previous_phase": "docs/validation/0.16-local-readiness-20261022.json",
+  "source": {
+    "head": "54a6453fc2aa85da30a95338ea37566dd005b223",
+    "version": "0.15.1 unchanged",
+    "uncommitted": true,
+    "sha256": {
+      "CMakeLists.txt": "4a6468f342ad75fe023126fd0874e1bf01883013717f6061006f7ffde9b6d442",
+      "src/ui/scenario/cases/gui_midi_learn_plugins.cpp": "6b980b71b7253ce48803225c4be9fcf9dc376115a8ef52f5508ab440f1b321b9",
+      "src/ui/scenario/cases/gui_sfz_live.cpp": "97132fb4d8a175889dc5f9632c761746647de522ba2c700d5ade43722368bb56",
+      "tests/gui_plugin_picker.sh": "58d943c43c40d93fa33849cf8acd4d2dd507d7d208d540a62b27d417780c8572"
+    }
+  },
+  "implementation": {
+    "picker": "Select the complete expected Beta row by native-LV2 compile support; preserve exact ordered two-row equality.",
+    "seeder": "Default LV2 retained; explicit CLAP mode seeds the real distinct param-touch fixture. Linux wrapper was not run on macOS; its exact Python block was used.",
+    "helper": "Import only gui_sfz_live.cpp and its CMake source registration from PR915 e8cd263b4106b1090a838e60df8c647c87b372e0; no other PR915 change imported.",
+    "helper_original_blob": "778f326d1df95003b29754a8a8289970ca11d2b6",
+    "windows_environment": "Replace the sole getenv setting reader on Windows with _dupenv_s and RAII ownership; other platforms retain getenv.",
+    "scope": "Four code/build/script files plus this evidence file; prior-phase changes preserved.",
+    "windows_tooling_gap": "Tracked scripts/regress/windows/scenarios.ps1 does not seed picker caches; windows.sh explicitly skips gui-plugin-picker. This phase does not complete Windows tooling. A dedicated CLAP-only seeder/runner must check all three binaries and require both PASS records."
+  },
+  "dependencies": {
+    "daf": "ccd8665f7387024ce412e80a8b07c982ae92f5d4",
+    "daf_provenance": "Read-only git archive of an existing object in sibling DAF-pin into ignored build/016-readiness-deps/daf-ccd8665f; sibling repo not modified.",
+    "build_and_tests_use_common_daf": true,
+    "native_lv2_restored": "ON",
+    "submodules": "Prior-phase stable audit retained: CLAP1.2.10; reviewed sampler f92 tree identical to latest green abd338d; Dusk SDK stable tag; nested dependencies retain parent pins.",
+    "submodule_status": [
+      "+195b42a004144fab0b3cf95e9c067187d15365b7 external/clap (1.2.10)",
+      " f92e07104495bbd645325ff62c1a6c8bae3ad428 external/dusk-fizz (1.2.3-17-gf92e0710)",
+      " c2435f8342c2d0ed8101cb43adfd605fdc52dca2 external/dusk-fizz/external/abseil-cpp (20230125.3)",
+      " 8a2edd6d92ed820521d42c94d179462bf06b5ed3 external/dusk-fizz/external/filesystem (v1.1.2-403-g8a2edd6)",
+      " 2bf459d4ed6d7ed6b9f31bd9e07c91bace5009e0 external/dusk-fizz/external/simde (v0.7.4-19-g2bf459d4)",
+      " da8f73412998e4f1adf1100dc187533a51af77fd external/dusk-fizz/external/simde/test/munit (v0.2.0-37-gda8f734)",
+      " 4b3d07849537ce0b71b22180c0b1335eacc6e9be external/dusk-fizz/external/st_audiofile/thirdparty/dr_libs (flac-0.12.43~50)",
+      " d1a166c83ab445b1c14bc83d37c84e18d172e5f5 external/dusk-fizz/external/st_audiofile/thirdparty/dr_libs/tests/external/miniaudio (0.11.15~1676)",
+      " 78864a4a2e769e426be8cfd78ae7f5f72e236c33 external/dusk-fizz/external/st_audiofile/thirdparty/libaiff (heads/master)",
+      " 07ffb331d23c16e2d2979370441f63ea722760bc external/dusk-fizz/external/st_audiofile/thirdparty/wavpack (5.1.0-346-g07ffb33)",
+      " 825651ad3a1807fef86a33c9cb480b88ba334c39 external/vst3sdk (dusk-vst3sdk-v1)"
+    ]
+  },
+  "picker_controls": {
+    "red-off-clap": {
+      "selection": "gui:gui.plugin_picker_filter_and_load,gui.pick_opens_native_editor",
+      "beta": "CLAP",
+      "native_exit": 1,
+      "timed_out": false,
+      "elapsed_seconds": 6.95,
+      "permission_helper_exit": 0,
+      "owned_foreground_samples": 6,
+      "daf": "ccd8665f7387024ce412e80a8b07c982ae92f5d4",
+      "app_sha256": "f2d88aa7ac334b9556546761ec170cc3949f2511f41fd95ae524c4df94908739",
+      "verdicts": [
+        "[FAIL] gui.plugin_picker_filter_and_load: filtered plugin rows omitted names or format labels (1945 ms)",
+        "[PASS] gui.pick_opens_native_editor (149 ms)",
+        "=== scenarios: 1 pass, 1 fail, 0 skip ==="
+      ],
+      "raw": "build/016-picker-runs/red-off-clap/output.log",
+      "raw_sha256": "33a7ca9d861be76ffb3de9e1394153e188160c2075f0347d808fcbff525e9758"
+    },
+    "green-off-clap": {
+      "selection": "gui:gui.plugin_picker_filter_and_load,gui.pick_opens_native_editor",
+      "beta": "CLAP",
+      "native_exit": 1,
+      "timed_out": false,
+      "elapsed_seconds": 21.761,
+      "permission_helper_exit": 0,
+      "owned_foreground_samples": 9,
+      "daf": "ccd8665f7387024ce412e80a8b07c982ae92f5d4",
+      "app_sha256": "8958c8e286c6a25e6ba10727853a1f102f0f9aef5a5082484257049018db70e5",
+      "verdicts": [
+        "[FAIL] gui.plugin_picker_filter_and_load: insert chooser did not open (1953 ms)",
+        "[FAIL] gui.pick_opens_native_editor: timed out after 15000 ms (15050 ms)",
+        "=== scenarios: 0 pass, 2 fail, 0 skip ==="
+      ],
+      "raw": "build/016-picker-runs/green-off-clap/output.log",
+      "raw_sha256": "50ba8b9c59645b001f9da7e2908bdca9efd3760760e4f49a9c7f17238e5c5efb"
+    },
+    "green-off-clap-observe": {
+      "selection": "gui:gui.plugin_picker_filter_and_load,gui.pick_opens_native_editor",
+      "beta": "CLAP",
+      "native_exit": 0,
+      "timed_out": false,
+      "elapsed_seconds": 5.649,
+      "permission_helper_exit": 0,
+      "owned_foreground_samples": 6,
+      "daf": "ccd8665f7387024ce412e80a8b07c982ae92f5d4",
+      "app_sha256": "8958c8e286c6a25e6ba10727853a1f102f0f9aef5a5082484257049018db70e5",
+      "verdicts": [
+        "[PASS] gui.plugin_picker_filter_and_load (1922 ms)",
+        "[PASS] gui.pick_opens_native_editor (176 ms)",
+        "=== scenarios: 2 pass, 0 fail, 0 skip ==="
+      ],
+      "raw": "build/016-picker-runs/green-off-clap-observe/output.log",
+      "raw_sha256": "6c06083ae0fa09fe07846deaf709e73de7c198bacae2f6c18a1afdd56b437e41"
+    },
+    "green-off-seeder": {
+      "selection": "gui:gui.plugin_picker_filter_and_load,gui.pick_opens_native_editor",
+      "beta": "CLAP",
+      "native_exit": 0,
+      "timed_out": false,
+      "elapsed_seconds": 5.648,
+      "permission_helper_exit": 0,
+      "owned_foreground_samples": 4,
+      "daf": "ccd8665f7387024ce412e80a8b07c982ae92f5d4",
+      "app_sha256": "8958c8e286c6a25e6ba10727853a1f102f0f9aef5a5082484257049018db70e5",
+      "verdicts": [
+        "[PASS] gui.plugin_picker_filter_and_load (1905 ms)",
+        "[PASS] gui.pick_opens_native_editor (82 ms)",
+        "=== scenarios: 2 pass, 0 fail, 0 skip ==="
+      ],
+      "raw": "build/016-picker-runs/green-off-seeder/output.log",
+      "raw_sha256": "39878ff981e1009997f5c2a2190524e35bb73a946767ce0850f29837135c9df5"
+    },
+    "green-on-lv2": {
+      "selection": "gui:gui.plugin_picker_filter_and_load,gui.pick_opens_native_editor",
+      "beta": "LV2",
+      "native_exit": 0,
+      "timed_out": false,
+      "elapsed_seconds": 6.583,
+      "permission_helper_exit": 0,
+      "owned_foreground_samples": 4,
+      "daf": "ccd8665f7387024ce412e80a8b07c982ae92f5d4",
+      "app_sha256": "04eca79c48fc1186af846343090a1bdc7585f82be717cd49e0180c9391b7b25f",
+      "verdicts": [
+        "[PASS] gui.plugin_picker_filter_and_load (1876 ms)",
+        "[PASS] gui.pick_opens_native_editor (93 ms)",
+        "=== scenarios: 2 pass, 0 fail, 0 skip ==="
+      ],
+      "raw": "build/016-picker-runs/green-on-lv2/output.log",
+      "raw_sha256": "5de5d4d596736dc21fecfefc006929c51148d4c597dbcbe1af313dd48790cc30"
+    },
+    "red-on-wrong-format": {
+      "selection": "gui:gui.plugin_picker_filter_and_load,gui.pick_opens_native_editor",
+      "beta": "CLAP",
+      "native_exit": 1,
+      "timed_out": false,
+      "elapsed_seconds": 5.682,
+      "permission_helper_exit": 0,
+      "owned_foreground_samples": 4,
+      "daf": "ccd8665f7387024ce412e80a8b07c982ae92f5d4",
+      "app_sha256": "04eca79c48fc1186af846343090a1bdc7585f82be717cd49e0180c9391b7b25f",
+      "verdicts": [
+        "[FAIL] gui.plugin_picker_filter_and_load: filtered plugin rows omitted names or format labels (1890 ms)",
+        "[PASS] gui.pick_opens_native_editor (92 ms)",
+        "=== scenarios: 1 pass, 1 fail, 0 skip ==="
+      ],
+      "raw": "build/016-picker-runs/red-on-wrong-format/output.log",
+      "raw_sha256": "fe2440401535dc8eff79acdac45b609f0a48d8f578ae3e4477c8eb943903aa7e"
+    },
+    "green-on-restored-lv2": {
+      "selection": "gui:gui.plugin_picker_filter_and_load,gui.pick_opens_native_editor",
+      "beta": "LV2",
+      "native_exit": 0,
+      "timed_out": false,
+      "elapsed_seconds": 5.669,
+      "permission_helper_exit": 0,
+      "owned_foreground_samples": 4,
+      "daf": "ccd8665f7387024ce412e80a8b07c982ae92f5d4",
+      "app_sha256": "04eca79c48fc1186af846343090a1bdc7585f82be717cd49e0180c9391b7b25f",
+      "verdicts": [
+        "[PASS] gui.plugin_picker_filter_and_load (1908 ms)",
+        "[PASS] gui.pick_opens_native_editor (191 ms)",
+        "=== scenarios: 2 pass, 0 fail, 0 skip ==="
+      ],
+      "raw": "build/016-picker-runs/green-on-restored-lv2/output.log",
+      "raw_sha256": "ffe48da70fa7427197ec31bb50ee23348fa63e4c236bf03de06c52db4bc57853"
+    }
+  },
+  "picker_interpretation": {
+    "no_lv2": "Old hardcoded LV2 expectation fails at format row assertion; repaired branch passes with the same real CLAP Beta fixture.",
+    "opposite": "LV2-enabled build rejects CLAP Beta, then passes when LV2 Beta is restored.",
+    "rejected_attempt": "green-off-clap failed before the label assertion, with only9 of36 observed foreground samples owned by Dusk. No product root cause was established or speculative fix made.",
+    "neighbours_checked": [
+      "built-in group first",
+      "manufacturer headings",
+      "case-insensitive name match",
+      "no-match removes rows and groups",
+      "type category grouping",
+      "Alpha native CLAP load and saved exact identity",
+      "picker dismissal",
+      "native editor flow"
+    ]
+  },
+  "environment_reader": {
+    "red": "Original setting() fails host compilation with the unsafe getenv identifier poisoned under the Windows preprocessing branch.",
+    "red_output": [
+      "build/016-env-old.cpp:26:30: error: attempt to use a poisoned identifier",
+      "   26 |     const char* value = std::getenv (name);",
+      "      |                              ^",
+      "1 error generated."
+    ],
+    "green_output": [
+      "PASS: unset, empty, 4096-byte copied value and CRT allocation failure"
+    ],
+    "cases": [
+      "unset",
+      "empty",
+      "4096-byte copied value",
+      "CRT allocation failure"
+    ],
+    "limits": "Clang C++17 -Wall -Wextra -Werror plus AddressSanitizer with a host CRT shim; not actual MSVC/Windows CRT proof. Leak sanitizer is unsupported here; green run disables leak detection."
+  },
+  "sfz": {
+    "providers": {
+      "sfzinstruments": {
+        "source": "sfzinstruments",
+        "pack": "277114082",
+        "release": "0cc54468bb0d2d9b32921958585caad65ba8df21",
+        "program": "Ixox Flute.sfz",
+        "note": 72,
+        "complete": true,
+        "phase": "complete",
+        "runtime_loaded": true,
+        "browse_items": 1,
+        "installed_programs": 1,
+        "installed_tree_sha256": "3840fdab2faef916b0a217178c75c1492c9ed42766fd586a8e58066bc2caee4c",
+        "locator": {
+          "archive_sha256": "60a0f8f0514ce0de920853433c05fcb3524bab435d5822c3c95caa0cf0d1da5a",
+          "entrypoint": "Ixox Flute.sfz",
+          "instrument": "sfz-f66afce8ec1d41a13e347baeff78c709",
+          "pack": "277114082",
+          "release": "0cc54468bb0d2d9b32921958585caad65ba8df21",
+          "source": "sfzinstruments"
+        },
+        "license": {
+          "id": "CC-BY-4.0",
+          "sha256": "9ba9550ad48438d0836ddab3da480b3b69ffa0aac7b7878b5a0039e7ab429411",
+          "source": "https://github.com/sfzinstruments/Ixox.Flute/blob/0cc54468bb0d2d9b32921958585caad65ba8df21/LICENSE"
+        },
+        "audio_peak_db": -27.501821517944336,
+        "master_peak_db": -27.501821517944336,
+        "paused_bytes": 780,
+        "run": {
+          "selection": "gui:gui.sfz_live_repository_acceptance",
+          "beta": "live:sfzinstruments",
+          "native_exit": 0,
+          "timed_out": false,
+          "elapsed_seconds": 14.279,
+          "permission_helper_exit": 0,
+          "owned_foreground_samples": 11,
+          "daf": "ccd8665f7387024ce412e80a8b07c982ae92f5d4",
+          "app_sha256": "04eca79c48fc1186af846343090a1bdc7585f82be717cd49e0180c9391b7b25f",
+          "verdicts": [
+            "[PASS] gui.sfz_live_repository_acceptance (11268 ms)",
+            "=== scenarios: 1 pass, 0 fail, 0 skip ==="
+          ],
+          "raw": "build/016-picker-runs/live-mac-sfzinstruments/output.log",
+          "raw_sha256": "122010769ee8f7696d1273450ea8d97bf71d970d95c680c3fd8e4efdd2078619"
+        },
+        "evidence": "build/016-picker-runs/live-mac-sfzinstruments/config/sfz-live-result.json",
+        "evidence_sha256": "a1f20ef45ad937eb2400294db1218d2caba2c4bbdb90c5e2dd3574317a6909c8",
+        "request_count": 12,
+        "resume_requests": [
+          {
+            "error": "",
+            "if-range": "\"dbf6388e1afc404bd31ec433e666f753cf34505dcd30f566affc0ab4a7b20e90\"",
+            "range": "bytes=780-",
+            "responses": [
+              302
+            ],
+            "status": 0,
+            "url": "https://github.com/sfzinstruments/Ixox.Flute/archive/0cc54468bb0d2d9b32921958585caad65ba8df21.zip"
+          },
+          {
+            "error": "",
+            "if-range": "\"dbf6388e1afc404bd31ec433e666f753cf34505dcd30f566affc0ab4a7b20e90\"",
+            "range": "bytes=780-",
+            "responses": [
+              200
+            ],
+            "status": 0,
+            "url": "https://codeload.github.com/sfzinstruments/Ixox.Flute/zip/0cc54468bb0d2d9b32921958585caad65ba8df21"
+          }
+        ],
+        "http_failures": [
+          {
+            "error": "",
+            "responses": [
+              404
+            ],
+            "status": 0,
+            "url": "https://raw.githubusercontent.com/sfzinstruments/sfzinstruments.github.io/master/assets/img/woodwinds/ixox_flute.jpg"
+          }
+        ],
+        "captures": [
+          {
+            "path": "build/016-picker-runs/live-mac-sfzinstruments/config/sfz-live-browse.ppm",
+            "bytes": 10301585,
+            "sha256": "0784fb52ad6c40605463ab383cceed58caf14d6089b2b9227aabba0d6961254a"
+          },
+          {
+            "path": "build/016-picker-runs/live-mac-sfzinstruments/config/sfz-live-license.ppm",
+            "bytes": 10301585,
+            "sha256": "0889bf5e1d3c94d4a82ef3083e0b43f2d79582ad9e9a25664f5477fb179d8a9c"
+          },
+          {
+            "path": "build/016-picker-runs/live-mac-sfzinstruments/config/sfz-live-paused.ppm",
+            "bytes": 10301585,
+            "sha256": "7fd0e2a2868cdcfc315f359f968d9d1b3892a584c1cd0b4522b8458e54075aee"
+          },
+          {
+            "path": "build/016-picker-runs/live-mac-sfzinstruments/config/sfz-live-installed.ppm",
+            "bytes": 10301585,
+            "sha256": "c87ea704fa6fe2b9dc5b93804214d840e2e53bac20fd031c844076dc44b2c71a"
+          }
+        ]
+      },
+      "freepats": {
+        "source": "freepats",
+        "pack": "576386289",
+        "release": "496f2f6e82f226d650e270c0f0ad5febbebec249",
+        "program": "Bagpipe 20260806.sfz",
+        "note": 72,
+        "complete": true,
+        "phase": "complete",
+        "runtime_loaded": true,
+        "browse_items": 1,
+        "installed_programs": 2,
+        "installed_tree_sha256": "c4ed6c3ed39bb3df8668700adec9c0ab4bb2d1e2ea11b5b711f983453b3ae6cf",
+        "locator": {
+          "archive_sha256": "55288963571c38565a61248c6f994003b846b3931eca101ecb5b01a31b247b34",
+          "entrypoint": "Bagpipe 20260806.sfz",
+          "instrument": "sfz-519e43983c5f683d4ddeddc0ba6605cd",
+          "pack": "576386289",
+          "release": "496f2f6e82f226d650e270c0f0ad5febbebec249",
+          "source": "freepats"
+        },
+        "license": {
+          "id": "CC0-1.0",
+          "sha256": "a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499",
+          "source": "https://github.com/freepats/bagpipe/blob/496f2f6e82f226d650e270c0f0ad5febbebec249/LICENSE.txt"
+        },
+        "audio_peak_db": -15.759148597717285,
+        "master_peak_db": -16.12032699584961,
+        "paused_bytes": 782,
+        "run": {
+          "selection": "gui:gui.sfz_live_repository_acceptance",
+          "beta": "live:freepats",
+          "native_exit": 0,
+          "timed_out": false,
+          "elapsed_seconds": 12.045,
+          "permission_helper_exit": 0,
+          "owned_foreground_samples": 8,
+          "daf": "ccd8665f7387024ce412e80a8b07c982ae92f5d4",
+          "app_sha256": "04eca79c48fc1186af846343090a1bdc7585f82be717cd49e0180c9391b7b25f",
+          "verdicts": [
+            "[PASS] gui.sfz_live_repository_acceptance (8991 ms)",
+            "=== scenarios: 1 pass, 0 fail, 0 skip ==="
+          ],
+          "raw": "build/016-picker-runs/live-mac-freepats/output.log",
+          "raw_sha256": "0b625d808378e8a9e2c84bf21d58ab37adea3bb77c3f43ac803ec8c3313953b1"
+        },
+        "evidence": "build/016-picker-runs/live-mac-freepats/config/sfz-live-result.json",
+        "evidence_sha256": "b45bb715a6a4be6678771155063bf74c64bc0286adfd6d073b07f5c44feee7d1",
+        "request_count": 9,
+        "resume_requests": [
+          {
+            "error": "",
+            "if-range": "\"8e83e014e9a6f716c30bc63a3c2cfba2e774284ea249418d7dfe64f55be8365b\"",
+            "range": "bytes=782-",
+            "responses": [
+              302
+            ],
+            "status": 0,
+            "url": "https://github.com/freepats/bagpipe/archive/496f2f6e82f226d650e270c0f0ad5febbebec249.zip"
+          },
+          {
+            "error": "",
+            "if-range": "\"8e83e014e9a6f716c30bc63a3c2cfba2e774284ea249418d7dfe64f55be8365b\"",
+            "range": "bytes=782-",
+            "responses": [
+              200
+            ],
+            "status": 0,
+            "url": "https://codeload.github.com/freepats/bagpipe/zip/496f2f6e82f226d650e270c0f0ad5febbebec249"
+          }
+        ],
+        "http_failures": [],
+        "captures": [
+          {
+            "path": "build/016-picker-runs/live-mac-freepats/config/sfz-live-browse.ppm",
+            "bytes": 10301585,
+            "sha256": "6049d8c18e4cbc73ecd58b6eda92df357d065010d5f5dcae82ff5e0ef497b289"
+          },
+          {
+            "path": "build/016-picker-runs/live-mac-freepats/config/sfz-live-license.ppm",
+            "bytes": 10301585,
+            "sha256": "258c05878b9262962ed49756cce46f7f5a9c1a2e232d2c325499fed106250b70"
+          },
+          {
+            "path": "build/016-picker-runs/live-mac-freepats/config/sfz-live-paused.ppm",
+            "bytes": 10301585,
+            "sha256": "5fe8f87add53fc3a513dee1df4ac78992ebbbb4a6e7170f8d726f4c3228fd22a"
+          },
+          {
+            "path": "build/016-picker-runs/live-mac-freepats/config/sfz-live-installed.ppm",
+            "bytes": 10301585,
+            "sha256": "50609a1b7c0516afc00e8896500a5587ed3100eb60122ae2b443578a4807dcf6"
+          }
+        ]
+      },
+      "musical-artifacts": {
+        "source": "musical-artifacts",
+        "pack": "7088",
+        "program": "Gordon_s_Whistle.sfz",
+        "note": 72,
+        "complete": false,
+        "phase": "incomplete",
+        "failure": "browsed: Repository returned a browser or anti-bot page. Open the source website; automated downloads are unavailable.",
+        "run": {
+          "selection": "gui:gui.sfz_live_repository_acceptance",
+          "beta": "live:musical-artifacts",
+          "native_exit": 1,
+          "timed_out": false,
+          "elapsed_seconds": 4.533,
+          "permission_helper_exit": 0,
+          "owned_foreground_samples": 1,
+          "daf": "ccd8665f7387024ce412e80a8b07c982ae92f5d4",
+          "app_sha256": "04eca79c48fc1186af846343090a1bdc7585f82be717cd49e0180c9391b7b25f",
+          "verdicts": [
+            "[FAIL] gui.sfz_live_repository_acceptance: browsed: Repository returned a browser or anti-bot page. Open the source website; automated downloads are unavailable. (1203 ms)",
+            "=== scenarios: 0 pass, 1 fail, 0 skip ==="
+          ],
+          "raw": "build/016-picker-runs/live-mac-musical-artifacts/output.log",
+          "raw_sha256": "adf407e99ce916b709ab34d669f5211deccf25210d24a8107bab461d02016af3"
+        },
+        "evidence": "build/016-picker-runs/live-mac-musical-artifacts/config/sfz-live-result.json",
+        "evidence_sha256": "6bf932fed674540ee09f613b1271cce8f75cf7905735d98eb362da9222ebb6b9",
+        "request_count": 1,
+        "resume_requests": [],
+        "http_failures": [
+          {
+            "error": "",
+            "responses": [
+              403
+            ],
+            "status": 0,
+            "url": "https://musical-artifacts.com/artifacts.json?formats=sfz&page=1&q=Gordon"
+          }
+        ],
+        "captures": []
+      },
+      "versilian": {
+        "source": "versilian",
+        "pack": "62918451",
+        "release": "28092772094b2d9f1148d84cea97f4545b8c687d",
+        "program": "BassoonStac.sfz",
+        "note": 60,
+        "complete": true,
+        "phase": "complete",
+        "runtime_loaded": true,
+        "browse_items": 1,
+        "installed_programs": 75,
+        "installed_tree_sha256": "5655ef61f9cf233a486508b7ae0d3877a8d6d59ac4812d04d0724ea2de23bf88",
+        "locator": {
+          "archive_sha256": "1f34a21b9dc8bc7646f4b7e9bb26ad0d20e4a400a69a6a47ea783c6162e3bde2",
+          "entrypoint": "BassoonStac.sfz",
+          "instrument": "sfz-6b645336f00ad1e4376ed37b86083c15",
+          "pack": "62918451",
+          "release": "28092772094b2d9f1148d84cea97f4545b8c687d",
+          "source": "versilian"
+        },
+        "license": {
+          "id": "CC0-1.0",
+          "sha256": "36ffd9dc085d529a7e60e1276d73ae5a030b020313e6c5408593a6ae2af39673",
+          "source": "https://github.com/sgossner/VSCO-2-CE/blob/28092772094b2d9f1148d84cea97f4545b8c687d/LICENSE"
+        },
+        "audio_peak_db": -38.33564376831055,
+        "master_peak_db": -38.33564376831055,
+        "paused_bytes": 780,
+        "run": {
+          "selection": "gui:gui.sfz_live_repository_acceptance",
+          "beta": "live:versilian",
+          "native_exit": 0,
+          "timed_out": false,
+          "elapsed_seconds": 338.019,
+          "permission_helper_exit": 0,
+          "owned_foreground_samples": 309,
+          "daf": "ccd8665f7387024ce412e80a8b07c982ae92f5d4",
+          "app_sha256": "04eca79c48fc1186af846343090a1bdc7585f82be717cd49e0180c9391b7b25f",
+          "verdicts": [
+            "[PASS] gui.sfz_live_repository_acceptance (334572 ms)",
+            "=== scenarios: 1 pass, 0 fail, 0 skip ==="
+          ],
+          "raw": "build/016-picker-runs/live-mac-versilian/output.log",
+          "raw_sha256": "43fb7d107d536e72a924be142f02ddb30c646bed65acfcf6529e86c4370465b3"
+        },
+        "evidence": "build/016-picker-runs/live-mac-versilian/config/sfz-live-result.json",
+        "evidence_sha256": "e9c69b52a6ca9e37e98df4f2bd7466bd580670c0944f4b1612043e5459778788",
+        "request_count": 10,
+        "resume_requests": [
+          {
+            "error": "",
+            "if-range": "\"bb0c564933db5d59e70bed05d53c508295ff834890b1462dbe1857452b4f921f\"",
+            "range": "bytes=780-",
+            "responses": [
+              302
+            ],
+            "status": 0,
+            "url": "https://github.com/sgossner/VSCO-2-CE/archive/28092772094b2d9f1148d84cea97f4545b8c687d.zip"
+          },
+          {
+            "error": "",
+            "if-range": "\"bb0c564933db5d59e70bed05d53c508295ff834890b1462dbe1857452b4f921f\"",
+            "range": "bytes=780-",
+            "responses": [
+              200
+            ],
+            "status": 0,
+            "url": "https://codeload.github.com/sgossner/VSCO-2-CE/zip/28092772094b2d9f1148d84cea97f4545b8c687d"
+          }
+        ],
+        "http_failures": [],
+        "captures": [
+          {
+            "path": "build/016-picker-runs/live-mac-versilian/config/sfz-live-browse.ppm",
+            "bytes": 10301585,
+            "sha256": "16258d895edbc08670585142a50755df9dbfc225168f5a6e9e90ff5d7332c5f1"
+          },
+          {
+            "path": "build/016-picker-runs/live-mac-versilian/config/sfz-live-license.ppm",
+            "bytes": 10301585,
+            "sha256": "a8c2c40f0655a1cbacdccd5145a1396862706e479c55d509ea5922fe11db9ebe"
+          },
+          {
+            "path": "build/016-picker-runs/live-mac-versilian/config/sfz-live-paused.ppm",
+            "bytes": 10301585,
+            "sha256": "14f2edffde7362e9e78e3510c64c24f662bdeab7f68904ed7e975167109cf9d6"
+          },
+          {
+            "path": "build/016-picker-runs/live-mac-versilian/config/sfz-live-installed.ppm",
+            "bytes": 10301585,
+            "sha256": "b907cfa107b1cc83f429b4b0463b02b7facc1964724cebab18523637b4ef7fdb"
+          }
+        ]
+      }
+    },
+    "guards": {
+      "sfz-no-consent": {
+        "selection": "gui:gui.sfz_live_repository_acceptance",
+        "beta": "",
+        "native_exit": 3,
+        "timed_out": false,
+        "elapsed_seconds": 3.452,
+        "permission_helper_exit": 0,
+        "owned_foreground_samples": 0,
+        "daf": "ccd8665f7387024ce412e80a8b07c982ae92f5d4",
+        "app_sha256": "8958c8e286c6a25e6ba10727853a1f102f0f9aef5a5082484257049018db70e5",
+        "verdicts": [
+          "[SKIP] gui.sfz_live_repository_acceptance: requires explicit live SFZ download consent",
+          "=== scenarios: 0 pass, 0 fail, 1 skip ==="
+        ],
+        "raw": "build/016-picker-runs/sfz-no-consent/output.log",
+        "raw_sha256": "c83823ed99b778deafbb0330d880e79b0a7f5ef179a163b03304ebc49306bfd3"
+      },
+      "sfz-reject-unowned": {
+        "selection": "gui:gui.sfz_live_repository_acceptance",
+        "beta": "live:bad-profile",
+        "native_exit": 1,
+        "timed_out": false,
+        "elapsed_seconds": 3.46,
+        "permission_helper_exit": 0,
+        "owned_foreground_samples": 1,
+        "daf": "ccd8665f7387024ce412e80a8b07c982ae92f5d4",
+        "app_sha256": "8958c8e286c6a25e6ba10727853a1f102f0f9aef5a5082484257049018db70e5",
+        "verdicts": [
+          "[FAIL] gui.sfz_live_repository_acceptance: Live SFZ requires a fresh token-marked absolute private profile (0 ms)",
+          "=== scenarios: 0 pass, 1 fail, 0 skip ==="
+        ],
+        "raw": "build/016-picker-runs/sfz-reject-unowned/output.log",
+        "raw_sha256": "60c74d1bc59d36e62f2651af39e16344e8b1bf0cee40d2b593c8362658cb3884"
+      },
+      "sfz-silent-note-red": {
+        "selection": "gui:gui.sfz_live_repository_acceptance",
+        "beta": "live:sfzinstruments",
+        "native_exit": 1,
+        "timed_out": false,
+        "elapsed_seconds": 23.079,
+        "permission_helper_exit": 0,
+        "owned_foreground_samples": 18,
+        "daf": "ccd8665f7387024ce412e80a8b07c982ae92f5d4",
+        "app_sha256": "04eca79c48fc1186af846343090a1bdc7585f82be717cd49e0180c9391b7b25f",
+        "verdicts": [
+          "[FAIL] gui.sfz_live_repository_acceptance: Loaded live instrument produced no finite nonzero audio (19821 ms)",
+          "=== scenarios: 0 pass, 1 fail, 0 skip ==="
+        ],
+        "raw": "build/016-picker-runs/sfz-silent-note-red/output.log",
+        "raw_sha256": "4236ce827db50511033c67fe2dc4d36dc304d1e6a62538b049cce673e9a30463"
+      },
+      "sfz-audio-restored-green": {
+        "selection": "gui:gui.sfz_live_repository_acceptance",
+        "beta": "live:sfzinstruments",
+        "native_exit": 0,
+        "timed_out": false,
+        "elapsed_seconds": 12.151,
+        "permission_helper_exit": 0,
+        "owned_foreground_samples": 8,
+        "daf": "ccd8665f7387024ce412e80a8b07c982ae92f5d4",
+        "app_sha256": "04eca79c48fc1186af846343090a1bdc7585f82be717cd49e0180c9391b7b25f",
+        "verdicts": [
+          "[PASS] gui.sfz_live_repository_acceptance (8607 ms)",
+          "=== scenarios: 1 pass, 0 fail, 0 skip ==="
+        ],
+        "raw": "build/016-picker-runs/sfz-audio-restored-green/output.log",
+        "raw_sha256": "15c598d0445b8e8eb40d8862e411a364242980c5d3423c8b8808800348fd85ed"
+      }
+    },
+    "transport": "Production CurlTransport over real public HTTPS. No fixture responses or anti-bot bypass.",
+    "isolation": "Fresh absolute token-marked config/data/library and empty session for each live run; owned app process and PID-bound authorized permission helper.",
+    "resume": "Nonempty reusable partial preserved; Range/If-Range sent on resume. Successful GitHub codeload endpoints reply200, exercising safe full restart rather than claiming206 continuation.",
+    "pause": "Synthetic asset-render-active gate is armed after archive bytes arrive; not a real recording or render.",
+    "audio": "Finite track and master meter outputs above -90dB. Note0 control fails after runtime load; restored note72 passes. These are meter checks, not audible listening.",
+    "restoration": "Each successful helper run restores the empty session and verifies that the portable instrument locator is cleared.",
+    "failure_coverage_limit": "Consent, private-profile and silent-output controls were exercised. Individual failure branches of every imported helper assertion were not mutation-tested and are not claimed as proven negative coverage."
+  },
+  "automated": {
+    "builds_and_ctest": [
+      {
+        "label": "main-build",
+        "command": [
+          "cmake",
+          "--build",
+          "build",
+          "-j6"
+        ],
+        "exit": 0,
+        "elapsed_seconds": 0.263,
+        "log": "build/016-picker-main-build.log"
+      },
+      {
+        "label": "tests-build",
+        "command": [
+          "cmake",
+          "--build",
+          "build-tests",
+          "--target",
+          "dusk-studio-tests",
+          "-j6"
+        ],
+        "exit": 0,
+        "elapsed_seconds": 53.509,
+        "log": "build/016-picker-tests-build.log"
+      },
+      {
+        "label": "ctest",
+        "command": [
+          "ctest",
+          "--test-dir",
+          "build-tests",
+          "--parallel",
+          "6",
+          "--output-on-failure"
+        ],
+        "exit": 0,
+        "elapsed_seconds": 23.472,
+        "log": "build/016-picker-ctest.log"
+      }
+    ],
+    "ctest": {
+      "passed": 1757,
+      "failed": 0,
+      "skipped": 2,
+      "total": 1759,
+      "skips": [
+        "SFZ pack publication rejects case-distinct license aliases",
+        "SFZ installed tree hashing refuses case-distinct aliases"
+      ]
+    },
+    "engine": {
+      "selection": "all",
+      "native_exit": 0,
+      "timed_out": false,
+      "elapsed_seconds": 55.501,
+      "permission_helper_exit": 0,
+      "app_sha256": "04eca79c48fc1186af846343090a1bdc7585f82be717cd49e0180c9391b7b25f",
+      "fixture_sha256": "b68f906ae6d4fb77db17bfe345c78344f2f1d791deffbd5e2c7ee6709ba9f5b1",
+      "source_sha256": {
+        "src/engine/AudioEngine.cpp": "268f285403dd74fc1c842a41a2384e33c5be0cedf6bbb9b585718ca75d6264a8",
+        "src/engine/scenario/cases/vst3_io_restart.cpp": "593697fa586bcb73fb67ae97f613702465a0dc8b3221b9d6e1bdeac3037e88f4",
+        "tests/fixtures/runtime_relayout_vst3.cpp": "084bc3c5ed365f247b0dbb3f7be94aa93fa263c65f0ce1168d4c5b214edafabf"
+      }
+    },
+    "engine_counts": {
+      "passed": 188,
+      "failed": 0,
+      "skipped": 4
+    },
+    "selftest": {
+      "selection": "selftest",
+      "native_exit": 0,
+      "timed_out": false,
+      "elapsed_seconds": 4.653,
+      "permission_helper_exit": 0,
+      "app_sha256": "04eca79c48fc1186af846343090a1bdc7585f82be717cd49e0180c9391b7b25f",
+      "fixture_sha256": "b68f906ae6d4fb77db17bfe345c78344f2f1d791deffbd5e2c7ee6709ba9f5b1",
+      "source_sha256": {
+        "src/engine/AudioEngine.cpp": "268f285403dd74fc1c842a41a2384e33c5be0cedf6bbb9b585718ca75d6264a8",
+        "src/engine/scenario/cases/vst3_io_restart.cpp": "593697fa586bcb73fb67ae97f613702465a0dc8b3221b9d6e1bdeac3037e88f4",
+        "tests/fixtures/runtime_relayout_vst3.cpp": "084bc3c5ed365f247b0dbb3f7be94aa93fa263c65f0ce1168d4c5b214edafabf"
+      }
+    },
+    "gui_catalog": {
+      "ordinary": 274,
+      "helpers": 4,
+      "unique_registered": 278,
+      "inventory": "build/016-picker-gui-inventory.json"
+    },
+    "warnings": "Zero diagnostic warning lines attributed to changed source files in the LV2 ON/OFF builds. Existing donor/JUCE/test warnings and Homebrew macOS26-vs11 linker warnings remain.",
+    "deployment_limit": "Local macOS26 Homebrew linkage does not establish shipping macOS11 compatibility.",
+    "contracts": {
+      "manual_coverage": "645 behaviours / 242 headings:570auto,22partial,16manual,0gap,37n/a",
+      "juce_gate": "157 files / 6878 uses; unchanged",
+      "shell_syntax": "PASS",
+      "diff_whitespace": "PASS"
+    },
+    "rejected_full_gui": {
+      "selection": "gui",
+      "beta": "LV2",
+      "native_exit": 1,
+      "timed_out": false,
+      "elapsed_seconds": 921.38,
+      "permission_helper_exit": 0,
+      "owned_foreground_samples": 1425,
+      "daf": "ccd8665f7387024ce412e80a8b07c982ae92f5d4",
+      "app_sha256": "04eca79c48fc1186af846343090a1bdc7585f82be717cd49e0180c9391b7b25f",
+      "sampled_foreground": {
+        "total": 1579,
+        "active": 1576,
+        "owned_all": 1425,
+        "owned_active": null,
+        "observation_errors": 0
+      },
+      "raw": "build/016-full-gui-runs/common-daf-lv2/output.log",
+      "raw_sha256": "fc14d10bff613893753c4e34f32c2e90c6e7b5b8ecfd9bdd358e2532e65b4b4b",
+      "counts": {
+        "passed": 248,
+        "failed": 13,
+        "skipped": 13
+      },
+      "rejected": true,
+      "foreground_limit": "151 of1576 active observations were loginwindow PID189 at195.231..283.343seconds. Native exit1; no product root cause is established by this run.",
+      "audit": "build/016-full-gui-audit.json"
+    },
+    "fresh_profile_isolations": {
+      "approved-browser-piano": {
+        "selection": "gui:gui.file_browser_cancel_scan,gui.piano_native_shortcuts",
+        "beta": "LV2",
+        "native_exit": 0,
+        "timed_out": false,
+        "app_pid": 79930,
+        "activation": "{\"activated\":true,\"owned_pid\":79930,\"foreground_pid\":611}",
+        "activation_exit": 0,
+        "awake_exit": 0,
+        "elapsed_seconds": 9.993,
+        "permission_helper_exit": 0,
+        "owned_foreground_samples": 13,
+        "daf": "ccd8665f7387024ce412e80a8b07c982ae92f5d4",
+        "app_sha256": "04eca79c48fc1186af846343090a1bdc7585f82be717cd49e0180c9391b7b25f",
+        "verdicts": [
+          "[PASS] gui.file_browser_cancel_scan (2950 ms)",
+          "[PASS] gui.piano_native_shortcuts (3056 ms)",
+          "=== scenarios: 2 pass, 0 fail, 0 skip ==="
+        ],
+        "sampled_foreground": {
+          "total": 14,
+          "active": 12,
+          "owned_all": 13,
+          "owned_active": 12,
+          "observation_errors": 0
+        },
+        "raw": "build/016-gui-isolations/approved-browser-piano/output.log",
+        "raw_sha256": "a95bd1bf52b528113842247e2aa70350c5a629cff01c21e5b8bc3773f97e0ace"
+      },
+      "browser-cluster-passive": {
+        "selection": "gui:gui.file_browser_cancel_scan,gui.file_browser_held_folder,gui.file_browser_held_up,gui.file_browser_keys_stay_inside,gui.file_browser_tab_from_path,gui.file_keys",
+        "beta": "LV2",
+        "native_exit": 1,
+        "timed_out": false,
+        "app_pid": 79578,
+        "elapsed_seconds": 35.979,
+        "permission_helper_exit": 0,
+        "owned_foreground_samples": 24,
+        "daf": "ccd8665f7387024ce412e80a8b07c982ae92f5d4",
+        "app_sha256": "04eca79c48fc1186af846343090a1bdc7585f82be717cd49e0180c9391b7b25f",
+        "verdicts": [
+          "[FAIL] gui.file_browser_cancel_scan: the browser did not move to the crowded folder (17537 ms)",
+          "[PASS] gui.file_browser_held_folder (831 ms)",
+          "[PASS] gui.file_browser_held_up (2610 ms)",
+          "[PASS] gui.file_browser_keys_stay_inside (2667 ms)",
+          "[PASS] gui.file_browser_tab_from_path (684 ms)",
+          "[PASS] gui.file_keys (6453 ms)",
+          "=== scenarios: 5 pass, 1 fail, 0 skip ==="
+        ],
+        "sampled_foreground": {
+          "total": 59,
+          "active": 56,
+          "owned_all": 24,
+          "owned_active": 24,
+          "observation_errors": 0
+        },
+        "raw": "build/016-gui-isolations/browser-cluster-passive/output.log",
+        "raw_sha256": "a95f315b915366f030c84a70cb82df33b8f98bc0f0a851ce765257ca27d53b62"
+      },
+      "edit-selection": {
+        "selection": "gui:gui.edit_keys,gui.region_split_duplicate_keys,gui.region_menu_locked_refuses,gui.tape_locked_regions_stay",
+        "beta": "LV2",
+        "native_exit": 0,
+        "timed_out": false,
+        "elapsed_seconds": 14.416,
+        "permission_helper_exit": 0,
+        "owned_foreground_samples": 0,
+        "daf": "ccd8665f7387024ce412e80a8b07c982ae92f5d4",
+        "app_sha256": "04eca79c48fc1186af846343090a1bdc7585f82be717cd49e0180c9391b7b25f",
+        "verdicts": [
+          "[PASS] gui.edit_keys (4581 ms)",
+          "[PASS] gui.region_split_duplicate_keys (1767 ms)",
+          "[PASS] gui.region_menu_locked_refuses (2174 ms)",
+          "[PASS] gui.tape_locked_regions_stay (2722 ms)",
+          "=== scenarios: 4 pass, 0 fail, 0 skip ==="
+        ],
+        "sampled_foreground": {
+          "total": 23,
+          "active": 20,
+          "owned_all": 0,
+          "owned_active": null,
+          "observation_errors": 0
+        },
+        "raw": "build/016-gui-isolations/edit-selection/output.log",
+        "raw_sha256": "fdb9daf81c59301893611de4f5da2cf702a2038f7da8f13f82d36d67ca3cb1a6"
+      },
+      "editor-cluster-passive": {
+        "selection": "gui:gui.duskverb_editor_dismiss,gui.duskverb_midi_learn,gui.edit_keys,gui.editor_open_close_loop,gui.editor_title_names_strip,gui.eq_filter_reads_its_switch,gui.eq_held_past_knob,gui.eq_midi_learn_band,gui.fader_entry_and_learn",
+        "beta": "LV2",
+        "native_exit": 0,
+        "timed_out": false,
+        "app_pid": 79373,
+        "elapsed_seconds": 35.824,
+        "permission_helper_exit": 0,
+        "owned_foreground_samples": 0,
+        "daf": "ccd8665f7387024ce412e80a8b07c982ae92f5d4",
+        "app_sha256": "04eca79c48fc1186af846343090a1bdc7585f82be717cd49e0180c9391b7b25f",
+        "verdicts": [
+          "[PASS] gui.duskverb_editor_dismiss (3215 ms)",
+          "[PASS] gui.duskverb_midi_learn (1857 ms)",
+          "[PASS] gui.edit_keys (4581 ms)",
+          "[PASS] gui.editor_open_close_loop (12626 ms)",
+          "[PASS] gui.editor_title_names_strip (1989 ms)",
+          "[PASS] gui.eq_filter_reads_its_switch (1265 ms)",
+          "[PASS] gui.eq_held_past_knob (2184 ms)",
+          "[PASS] gui.eq_midi_learn_band (2362 ms)",
+          "[PASS] gui.fader_entry_and_learn (1935 ms)",
+          "=== scenarios: 9 pass, 0 fail, 0 skip ==="
+        ],
+        "sampled_foreground": {
+          "total": 0,
+          "active": 0,
+          "owned_all": 0,
+          "owned_active": 0,
+          "observation_errors": 0
+        },
+        "raw": "build/016-gui-isolations/editor-cluster-passive/output.log",
+        "raw_sha256": "592a3e1e2e68e67023186d4242edd903eed8786a6c96147ba585238c1fad5505"
+      },
+      "piano-and-short-window": {
+        "selection": "gui:gui.import_target_short_window,gui.piano_native_shortcuts",
+        "beta": "LV2",
+        "native_exit": 0,
+        "timed_out": false,
+        "app_pid": 79499,
+        "elapsed_seconds": 6.728,
+        "permission_helper_exit": 0,
+        "owned_foreground_samples": 6,
+        "daf": "ccd8665f7387024ce412e80a8b07c982ae92f5d4",
+        "app_sha256": "04eca79c48fc1186af846343090a1bdc7585f82be717cd49e0180c9391b7b25f",
+        "verdicts": [
+          "[SKIP] gui.import_target_short_window: the window cannot be made shorter than the picker here",
+          "[PASS] gui.piano_native_shortcuts (3056 ms)",
+          "=== scenarios: 1 pass, 0 fail, 1 skip ==="
+        ],
+        "sampled_foreground": {
+          "total": 10,
+          "active": 6,
+          "owned_all": 6,
+          "owned_active": 6,
+          "observation_errors": 0
+        },
+        "raw": "build/016-gui-isolations/piano-and-short-window/output.log",
+        "raw_sha256": "31ce42f28384324a0494c72cb8a6ab60f6b82e07a387025e71ce096156b974bd"
+      }
+    },
+    "isolation_limits": "Passive edit/editor reruns had zero owned foreground samples; the editor observer also stopped after an OS-script timeout. These cannot be accepted as root-owned release evidence. Approved focused browser/piano run passed2/0/0 with13 owned samples; its activation request is asynchronous, and subsequent independent samples establish ownership.",
+    "full_gui": {
+      "selection": "gui",
+      "beta": "LV2",
+      "native_exit": 0,
+      "timed_out": false,
+      "app_pid": 80017,
+      "activation": "{\"activated\":true,\"owned_pid\":80017,\"foreground_pid\":611}",
+      "activation_exit": 0,
+      "awake_exit": 0,
+      "elapsed_seconds": 851.052,
+      "permission_helper_exit": 0,
+      "owned_foreground_samples": 1421,
+      "daf": "ccd8665f7387024ce412e80a8b07c982ae92f5d4",
+      "app_sha256": "04eca79c48fc1186af846343090a1bdc7585f82be717cd49e0180c9391b7b25f",
+      "sampled_foreground": {
+        "total": 1456,
+        "active": 1455,
+        "owned_all": 1421,
+        "owned_active": 1420,
+        "observation_errors": 0
+      },
+      "raw": "build/016-full-gui-runs/common-daf-guarded/output.log",
+      "raw_sha256": "ae46d9ea70d841a611c34bf765d3b7b9b8bda0fdc3c26b10509829f5820ad1ac"
+    },
+    "full_gui_audit": {
+      "accepted": false,
+      "checks": {
+        "native_exit_zero": true,
+        "no_timeout": true,
+        "exact_ordered_inventory": true,
+        "exact_unique_count": true,
+        "no_failed_scenarios": true,
+        "only_audited_skips": true,
+        "counts_match_footer": true,
+        "sampled_foreground_owned": false,
+        "owned_activation_request_accepted": true,
+        "sleep_assertion_exited_cleanly": true,
+        "permission_helper_exited_cleanly": true
+      },
+      "counts": {
+        "PASS": 261,
+        "FAIL": 0,
+        "SKIP": 13
+      },
+      "registered_expected": 274,
+      "observed": 274,
+      "failures": [],
+      "skips": [
+        [
+          "SKIP",
+          "gui.clap_no_window_message",
+          ": only the Linux host looks for a plug-in window in the container"
+        ],
+        [
+          "SKIP",
+          "gui.dsp_readout_realtime_count",
+          ": the realtime CPU-time guard is Linux-only"
+        ],
+        [
+          "SKIP",
+          "gui.import_target_short_window",
+          ": the window cannot be made shorter than the picker here"
+        ],
+        [
+          "SKIP",
+          "gui.lv2_editor_reflects_state",
+          ": the fixture's only UI is an X11 widget, built on Linux alone"
+        ],
+        [
+          "SKIP",
+          "gui.lv2_midi_learn",
+          ": the LV2 fixture UI could not be embedded on this display"
+        ],
+        [
+          "SKIP",
+          "gui.midi_io_selectors",
+          ": virtual MIDI destination fixture requires ALSA sequencer"
+        ],
+        [
+          "SKIP",
+          "gui.piano_live_recording_preview",
+          ": requires the native virtual keyboard and X server readback"
+        ],
+        [
+          "SKIP",
+          "gui.piano_roll_follows_take",
+          ": reads the window back through the X server"
+        ],
+        [
+          "SKIP",
+          "gui.piano_roll_keeps_its_region",
+          ": reads the window back through the X server"
+        ],
+        [
+          "SKIP",
+          "gui.piano_roll_shows_each_take",
+          ": reads the window back through the X server"
+        ],
+        [
+          "SKIP",
+          "gui.plugin_editor_tab_left_alone",
+          ": needs the Linux CLAP fixture"
+        ],
+        [
+          "SKIP",
+          "gui.settings_rescan_devices",
+          ": requires native settings and ALSA sequencer"
+        ],
+        [
+          "SKIP",
+          "gui.tape_repaints_unannounced_regions",
+          ": the tape strip repaints with nothing changed on this display, so an unannounced change cannot be told apart"
+        ]
+      ],
+      "unexpected_skips": [],
+      "foreground": {
+        "owned_pid": "80017",
+        "active_samples": 1455,
+        "owned_active_samples": 1420,
+        "owned_samples_all": 1421,
+        "total_samples": 1456,
+        "observed_pids": [
+          "553",
+          "80017"
+        ],
+        "first_active_seconds": 2.471,
+        "last_active_seconds": 849.767,
+        "mismatch_count": 35,
+        "mismatch_samples_retained_in": "build/016-full-gui-guarded-audit.json",
+        "first_mismatch": {
+          "elapsed": 562.94,
+          "pid": "553",
+          "exit": 0,
+          "active": true
+        },
+        "last_mismatch": {
+          "elapsed": 582.661,
+          "pid": "553",
+          "exit": 0,
+          "active": true
+        }
+      },
+      "conditional_coverage_limits": {
+        "gui.import_target_short_window": {
+          "requested_height": 540,
+          "ui_scale": 1.25,
+          "source_minimum_before_insets": 600,
+          "limit": "Actual dimensions were not logged; guard also permits missing size metadata. No short-window feature pass claimed."
+        },
+        "gui.tape_repaints_unannounced_regions": {
+          "baseline_ms": 500,
+          "limit": "Paint counter changes before any region mutation, so causality is unmeasurable; both mutation assertions remain unexecuted."
+        }
+      },
+      "verifier_controls": {
+        "synthetic_complete": true,
+        "missing_supported_record_rejected": true,
+        "duplicate_record_rejected": true,
+        "supported_fixture_skip_rejected": true,
+        "different_reason_for_platform_skip_rejected": true,
+        "native_failure_rejected": true,
+        "timeout_rejected": true,
+        "false_footer_rejected": true,
+        "failed_scenario_rejected": true
+      },
+      "controls_limit": "Synthetic log mutations exercise only the verifier, not product behaviour."
+    },
+    "full_gui_result_limit": "Functional catalog completed261pass/0fail/13exact audited skips. Strict foreground audit remains false: Code PID553 owned35active samples at562.940..582.661seconds. No uninterrupted-foreground acceptance is claimed."
+  },
+  "remaining": [
+    "An uninterrupted foreground Mac GUI acceptance remains unproven despite complete261pass/0fail/13audited-skip functional run; retain35 nonowned samples as a limitation.",
+    "Musical Artifacts live macOS acceptance: HTTP403 anti-bot response at the fresh browse endpoint; no download or runtime acceptance claimed.",
+    "Implement the tracked Windows picker fixture seeder/runner and replace the gui-plugin-picker skip in scripts/regress/windows.sh; no native Windows result is claimed.",
+    "Native Windows MSVC compile/warning audit, picker pass and full260pass/14audited-skip GUI acceptance for #916; macOS native-LV2-OFF controls are not Windows proof.",
+    "Other PR915 rolling-seek/readiness/automation changes remain outside this phase and unmerged.",
+    "Final common-candidate Linux/Windows live provider acceptance, Windows default long paths, physical removable-drive move/unplug/replug checks.",
+    "Final-candidate CI, authorized canonical prepush equivalent, cold-host/package and performance/listening acceptance.",
+    "Maintainer manual pass on Linux, macOS and Windows before version bump/tag/release."
+  ],
+  "not_done": [
+    "No git add/commit/push/checkout/switch/stash/reset/rebase, branch mutation, tag or release action in this phase.",
+    "No sibling repository modifications; unrelated untracked external/sfizz preserved.",
+    "No GitHub issues closed, PR merged, or external message sent.",
+    "regress mac/prepush were not invoked because their internal Git pushes/checkouts/temporary branch mutations violate standing instructions."
+  ],
+  "validation_authorization": {
+    "initial_review": "Automatic approval review rejected proactive app activation and caffeinate under a passive-only interpretation; rejected invocation did not run.",
+    "explicit_exception": "User authorized one-time activation of each owned Dusk validation process plus sleep prevention bound to that PID.",
+    "bounds": "Activation helper checks exact PID/executable and refuses loginwindow; no screen unlock. Caffeinate -d -i -w PID exits with the owned app. No other app activated.",
+    "helper": "build/016-activate-owned.js",
+    "controller": "build/016-full-gui-guarded.py"
+  },
+  "unmerged_pr_review": {
+    "pr": "https://github.com/dusk-audio/dusk-studio/pull/915",
+    "head": "e8cd263b4106b1090a838e60df8c647c87b372e0",
+    "base": "54a6453fc2aa85da30a95338ea37566dd005b223",
+    "scope": "36 files / 12 commits; published source/tests are unchanged from2b40fe35; latest differences only receipts/ruleset. Published CI does not validate this partially imported working tree.",
+    "new_boundary_finding": {
+      "kind": "Source invariant verified; runtime regression not executed",
+      "affected": "Unmerged readiness gate, not current-main deadlock",
+      "source_file_frames": 48000,
+      "timeline_start": 10000,
+      "region_length": 8192,
+      "source_offset": 1000,
+      "callback_frames": 512,
+      "allocated_capacity": 8192,
+      "publishable_frames": 8191,
+      "required_frames": 8192,
+      "mechanism": "Reader publishes fixed source window[1000,9191); pool requires[1000,9192). needsSeekFill returns false, so no refill extends the immutable window; EOF is not reached.",
+      "correction_to_verify": "Reserve existing one-frame margin at PlaybackEngine buildTrackStream capacity selection and account for maximum prepared block; preserve readiness contract.",
+      "negative_coverage_needed": [
+        "8191/8192/8193 trimmed regions",
+        "nonzero offset",
+        "EOF/trailing silence",
+        "mono/stereo",
+        "large prepared blocks",
+        "loop cache/seams",
+        "supersede/cancel/reset",
+        "stale reject and warmed incoming adoption"
+      ]
+    },
+    "next_phases": [
+      {
+        "name": "Reader seek-window seam",
+        "files": [
+          "src/engine/BufferedFileReader.h",
+          "src/engine/BufferedFileReader.cpp",
+          "tests/reader_fill_pool.cpp"
+        ],
+        "tests": "Use existing-case SECTIONs; preserve Catch counts. Observe old-window, new-publication, supersession, EOF and reset failures before restored passes."
+      },
+      {
+        "name": "Windows picker tooling",
+        "files": [
+          "scripts/regress/windows/plugin-picker.ps1",
+          "scripts/regress/windows.sh"
+        ],
+        "tests": "Real CLAP Alpha, distinct param-touch Beta and Window Pick; both explicit PASS markers; supported missing fixtures must not silently pass."
+      },
+      {
+        "name": "Later bounded engine/UI phases",
+        "note": "Pool readiness, Transport coherent snapshots, automation callers, Playback/AudioEngine integration including capacity correction, GUI stop fences, source capture and device evidence remain separate <=5file phases."
+      }
+    ],
+    "phase_boundary": "CLAUDE.md:249 requires phases of at most5files and explicit approval between phases."
+  }
+}

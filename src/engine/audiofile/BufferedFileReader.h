@@ -48,7 +48,7 @@ public:
     std::int64_t hint() const noexcept;
     bool holds (std::int64_t startFrame, std::int64_t numFrames) const noexcept;
     bool holdsSeek (std::int64_t startFrame, std::int64_t numFrames) const noexcept;
-    bool needsSeekFill (std::int64_t startFrame) const noexcept;
+    bool needsSeekFill (std::int64_t startFrame, std::int64_t numFrames) const noexcept;
 
     // Non-RT: prefetch also wakes the owned Background worker.
     void prefetch (std::int64_t startFrame) noexcept;
@@ -60,7 +60,8 @@ public:
     // Exactly one filling owner. Manual callers/pools serialize these methods.
     // Each fillOnce reads at most kFillChunkFrames; fillNow primes a full window.
     bool fillOnce (std::int64_t startFrame = -1);
-    bool fillSeekOnce (std::int64_t target, std::int64_t currentFrame);
+    // Seek filling preserves current playback; numFrames is the required warm span.
+    bool fillSeekOnce (std::int64_t target, std::int64_t currentFrame, std::int64_t numFrames);
     void fillNow();
     void releaseResidency() noexcept;
 
@@ -84,7 +85,7 @@ private:
     static bool windowHolds (const Window*, std::int64_t, std::int64_t) noexcept;
     const Window* windowForRange (const Window*, std::int64_t, std::int64_t) const noexcept;
     void retainSeekForPlayback (std::int64_t);
-    bool fillAt (std::int64_t startFrame, bool seeking);
+    bool fillAt (std::int64_t startFrame, bool seeking, std::int64_t numFrames);
     void beginFill (std::int64_t);
     void publishStaging();
     void updateAllocatedBytes() noexcept;

@@ -1,10 +1,12 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include "foundation/Fs.h"
 #include "ui/FileBrowserChoice.h"
 
 #include <filesystem>
 #include <fstream>
+#include <stdexcept>
 #include <string>
 
 namespace
@@ -15,25 +17,33 @@ using duskstudio::filebrowser::isAcceptableChoice;
 
 struct ScratchFolder
 {
-    ScratchFolder() : dir (dusk::fs::createUniqueTempDirectory ("dusk-filebrowser-choice-"))
+    explicit ScratchFolder (bool longPath)
+        : root (dusk::fs::createUniqueTempDirectory ("dusk-filebrowser-choice-")), dir (root)
     {
-        std::ofstream (dir / "take.wav") << "x";
+        if (root.empty()) throw std::runtime_error ("Could not create the file browser fixture");
+        if (longPath)
+            while (dir.native().size() < 320) dir /= "long-path-component";
+        stdfs::create_directories (dusk::fs::nativeIOPath (dir));
+        std::ofstream file (dusk::fs::nativeIOPath (dir / "take.wav"), std::ios::binary);
+        file.exceptions (std::ios::failbit | std::ios::badbit);
+        file << "x";
+        file.close();
     }
     ~ScratchFolder()
     {
         std::error_code ec;
-        stdfs::remove_all (dir, ec);
+        stdfs::remove_all (dusk::fs::nativeIOPath (root), ec);
     }
     std::string path (const char* child) const { return (dir / child).u8string(); }
     std::string folder() const { return dir.u8string(); }
 
-    stdfs::path dir;
+    stdfs::path root, dir;
 };
 } // namespace
 
 TEST_CASE ("file browser Open hands back only an existing file")
 {
-    const ScratchFolder scratch;
+    const ScratchFolder scratch (GENERATE (false, true));
     REQUIRE_FALSE (scratch.dir.empty());
 
     CHECK (isAcceptableChoice (scratch.path ("take.wav"), Mode::Open, false, false));
@@ -44,7 +54,7 @@ TEST_CASE ("file browser Open hands back only an existing file")
 
 TEST_CASE ("file browser Save and folder pickers keep the browser's answer")
 {
-    const ScratchFolder scratch;
+    const ScratchFolder scratch (GENERATE (false, true));
     REQUIRE_FALSE (scratch.dir.empty());
 
     SECTION ("Save takes a name that does not exist yet")
@@ -63,9 +73,9 @@ TEST_CASE ("file browser Save and folder pickers keep the browser's answer")
 
 TEST_CASE ("file browser Save never hands back a folder as a file name")
 {
-    const ScratchFolder scratch;
+    const ScratchFolder scratch (GENERATE (false, true));
     REQUIRE_FALSE (scratch.dir.empty());
-    stdfs::create_directory (scratch.dir / "Mixes");
+    stdfs::create_directory (dusk::fs::nativeIOPath (scratch.dir / "Mixes"));
 
     SECTION ("a file save refuses the browsed folder and a folder inside it")
     {

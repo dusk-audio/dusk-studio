@@ -736,6 +736,12 @@ if(DUSKSTUDIO_ENABLE_NATIVE_UI)
                     "${DUSKSTUDIO_WINDOWS_SOFTWARE_OPENGL_DIR}/libgallium_wgl.dll"
                     "$<TARGET_FILE_DIR:dusk-windows-software-opengl-probe>"
                 VERBATIM)
+            add_custom_command(TARGET DuskStudio POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${DUSKSTUDIO_WINDOWS_SOFTWARE_OPENGL_DIR}/opengl32.dll"
+                    "${DUSKSTUDIO_WINDOWS_SOFTWARE_OPENGL_DIR}/libgallium_wgl.dll"
+                    "$<TARGET_FILE_DIR:DuskStudio>"
+                VERBATIM)
         endif()
     endif()
 endif()
@@ -798,6 +804,7 @@ target_sources(DuskStudio PRIVATE
     src/engine/scenario/cases/managed_sfz_relink.cpp
     src/engine/scenario/cases/markers.cpp
     src/engine/scenario/cases/midi_bindings.cpp
+    src/engine/scenario/cases/midi_target_matrix.cpp
     src/engine/scenario/cases/midi_dropped_block_releases.cpp
     src/engine/scenario/cases/midi_insert_unfed_releases.cpp
     src/engine/scenario/cases/midi_merge_pending.cpp
@@ -862,6 +869,7 @@ target_sources(DuskStudio PRIVATE
     src/ui/DuskContextMenu.cpp
     src/ui/CursorOverlay.cpp
     src/ui/DuskFileBrowser.cpp
+    src/ui/FileBrowserChoice.cpp
     src/ui/EditCursors.cpp
     src/ui/AuxView.cpp
     src/ui/BusComponent.cpp

@@ -1240,9 +1240,9 @@ static bool readSessionPerfDeviceOptions (SessionPerfDeviceOptions& options)
     options.durationMs = static_cast<int> (duration);
     const auto rate = static_cast<int> (options.sampleRate);
     if (options.verifySource && (options.durationMs > 10000
-        || (rate != 48000 && rate != 96000 && rate != 192000)))
+        || (rate != 44100 && rate != 48000 && rate != 96000 && rate != 192000)))
     {
-        std::fprintf (stderr, "FAIL: source verification supports 48/96/192 kHz and at most 10000 ms\n");
+        std::fprintf (stderr, "FAIL: source verification supports 44.1/48/96/192 kHz and at most 10000 ms\n");
         return false;
     }
     return true;
@@ -1299,12 +1299,19 @@ public:
         : engine (owner), readCapture (capture) {}
     void audioDeviceAboutToStart (device::IODevice* dev) override
     {
-        if (starts.fetch_add (1, std::memory_order_relaxed) != 0)
+        lifecycleChanges.fetch_add (1, std::memory_order_relaxed);
+        if (measurementStarted.load (std::memory_order_acquire))
             terminalError.store (true, std::memory_order_release);
         engine.audioDeviceAboutToStart (dev);
     }
     void audioDeviceStopped() override
     {
+        lifecycleChanges.fetch_add (1, std::memory_order_relaxed);
+        if (! measurementStarted.load (std::memory_order_acquire))
+        {
+            engine.audioDeviceStopped();
+            return;
+        }
         if (stopClaimed.exchange (true, std::memory_order_acq_rel)) return;
         final.readers = engine.getPlaybackEngine().readerStats();
         final.frames = frameCount();
@@ -1333,6 +1340,8 @@ public:
         frames.fetch_add (static_cast<std::uint64_t> (samples), std::memory_order_relaxed);
     }
     std::uint64_t frameCount() const noexcept { return frames.load (std::memory_order_relaxed); }
+    unsigned lifecycleSerial() const noexcept { return lifecycleChanges.load (std::memory_order_relaxed); }
+    void beginMeasurement() noexcept { measurementStarted.store (true, std::memory_order_release); }
     float outputPeak() const noexcept { return peak; } // Read only after removeCallback has drained audio.
     bool finite() const noexcept { return ! nonFinite.load (std::memory_order_relaxed); }
     bool healthy() const noexcept { return ! terminalError.load (std::memory_order_acquire); }
@@ -1344,7 +1353,8 @@ private:
     std::atomic<std::uint64_t> frames { 0 };
     std::atomic<bool> nonFinite { false };
     std::atomic<bool> terminalError { false };
-    std::atomic<unsigned> starts { 0 };
+    std::atomic<unsigned> lifecycleChanges { 0 };
+    std::atomic<bool> measurementStarted { false };
     std::atomic<bool> stopClaimed { false }, finalReady { false };
     FinalStatistics final;
     float peak = 0.0f;
@@ -1460,6 +1470,35 @@ static bool runDeviceSessionPerf (AudioEngine& engine, Session& session,
         ~Registration() { if (! finished) finish(); }
     } registration { engine, manager, callback, capture };
     manager.addCallback (&callback);
+    const auto waitForDevice = []
+    {
+        std::this_thread::sleep_for (std::chrono::milliseconds (1));
+    };
+    const auto warmupBegan = std::chrono::steady_clock::now();
+    auto stableSince = warmupBegan;
+    auto warmupSerial = callback.lifecycleSerial();
+    bool settled = false;
+    while (std::chrono::steady_clock::now() - warmupBegan < std::chrono::seconds (5))
+    {
+        waitForDevice();
+        const auto now = std::chrono::steady_clock::now();
+        const auto serial = callback.lifecycleSerial();
+        if (! callback.healthy()) break;
+        if (! matches (manager.getCurrentDevice()) || callback.frameCount() == 0 || serial != warmupSerial)
+            stableSince = now;
+        else if (now - stableSince >= std::chrono::milliseconds (200)) { settled = true; break; }
+        warmupSerial = serial;
+    }
+    if (! settled)
+    {
+        auto* device = manager.getCurrentDevice();
+        std::fprintf (stderr, "FAIL: device callbacks did not settle: frames=%llu lifecycle=%u healthy=%s rate=%.0f buffer=%d\n",
+                      (unsigned long long) callback.frameCount(), callback.lifecycleSerial(), callback.healthy() ? "yes" : "no",
+                      device != nullptr ? device->getCurrentSampleRate() : 0.0,
+                      device != nullptr ? device->getCurrentBufferSizeSamples() : 0);
+        return false;
+    }
+    callback.beginMeasurement();
     auto& transport = engine.getTransport();
     engine.setPerfCaptureEnabled (true);
     transport.setPlayhead (0);
@@ -1501,9 +1540,11 @@ static bool runDeviceSessionPerf (AudioEngine& engine, Session& session,
         const auto currentFrames = callback.frameCount();
         if (currentFrames != lastFrames) { lastFrames = currentFrames; lastProgress = now; }
         if (now - lastProgress > progressAllowance) { progressing = false; break; }
-        std::this_thread::sleep_for (std::chrono::milliseconds (1));
+        waitForDevice();
     }
     const double seconds = std::chrono::duration<double> (Clock::now() - began).count();
+    capture.setCapturing (false);
+    engine.printPerfTable();
     registration.finish();
     const auto final = callback.finalStatistics();
     const auto after = final.readers;
@@ -1515,7 +1556,6 @@ static bool runDeviceSessionPerf (AudioEngine& engine, Session& session,
     const double expectedFrames = seconds * options.sampleRate;
     const double frameTolerance = std::max (4.0 * options.blockSize, expectedFrames * 0.05);
     const bool frameCoverage = frames > 0 && std::abs ((double) frames - expectedFrames) <= frameTolerance;
-    engine.printPerfTable();
     bool sourcePassed = true;
     if (options.verifySource)
     {

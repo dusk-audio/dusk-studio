@@ -32,13 +32,12 @@ constexpr int kNetworkBoundMs = 3600000;
 
 std::string setting (const char* name)
 {
-   #if defined (_WIN32)
-    std::size_t size = 0;
-    if (::getenv_s (&size, nullptr, 0, name) != 0 || size == 0) return {};
-    std::string value (size, '\0');
-    if (::getenv_s (&size, value.data(), value.size(), name) != 0 || size == 0) return {};
-    value.resize (size - 1);
-    return value;
+   #if defined(_WIN32)
+    char* value = nullptr;
+    std::size_t bytes = 0;
+    const auto error = ::_dupenv_s (&value, &bytes, name);
+    const std::unique_ptr<char, decltype (&std::free)> owned (value, &std::free);
+    return error == 0 && value != nullptr ? value : "";
    #else
     const char* value = std::getenv (name);
     return value != nullptr ? value : "";

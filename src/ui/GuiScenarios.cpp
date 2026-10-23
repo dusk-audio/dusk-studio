@@ -1800,6 +1800,24 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     std::string startupChoice() const override { return startupChoiceMade; }
     double uiScale() const override { return embedscale::globalScale(); }
     void restoreUiScale (float scale) override { owner.restoreUiScaleForScenario (scale); }
+    std::vector<int> mainWindowBounds() const override
+    {
+        const auto* window = owner.getTopLevelComponent();
+        const auto* peer = window != nullptr ? window->getPeer() : nullptr;
+        if (peer == nullptr) return {};
+        const auto bounds = peer->getBounds();
+        return { bounds.getX(), bounds.getY(), bounds.getWidth(), bounds.getHeight(), peer->isFullScreen() ? 1 : 0 };
+    }
+    void restoreMainWindowBounds (const std::vector<int>& saved) override
+    {
+        auto* window = owner.getTopLevelComponent();
+        auto* peer = window != nullptr ? window->getPeer() : nullptr;
+        if (peer == nullptr || saved.size() != 5) return;
+        auto bounds = peer->getBounds();
+        bounds.setPosition (saved[0], saved[1]);
+        bounds.setSize (saved[2], saved[3]);
+        peer->setBounds (bounds, saved[4] != 0);
+    }
     std::vector<int> mainWindowSize() const override
     {
         auto* window = owner.getTopLevelComponent();

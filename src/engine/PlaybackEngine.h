@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <limits>
 #include <memory>
 #include <vector>
 #include "audiofile/BufferedFileReader.h"
@@ -21,7 +22,7 @@ class Transport;
 class PlaybackEngine
 {
 public:
-    explicit PlaybackEngine (Session& s);
+    explicit PlaybackEngine (Session& s, bool startFillWorkers = true);
     ~PlaybackEngine();
 
     // Pre-allocate scratch for the largest block. Must run before any
@@ -85,6 +86,14 @@ public:
     // Tests only: open every reader without its background thread and fill it
     // at once, so a rebuild is warm the moment it is built.
     void setSynchronousReadersForTest (bool synchronous) noexcept { synchronousReaders = synchronous; }
+    bool pumpReadersForTest() { return fillPool.pumpOnce(); }
+    void holdLocateReadyForTest (bool hold) noexcept
+    {
+        locateReadyHeld.store (hold, std::memory_order_relaxed);
+    }
+    // Tests only: how many frames a locate waits for warm readers before it
+    // commits regardless. prepare() sets it from the sample rate.
+    void setLocateWaitForTest (std::int64_t frames) noexcept { locateWaitLimit = frames; }
     // How many track stream sets exist, for tests that prove none leak.
     static int liveStreamCountForTest() noexcept;
     // Tests only: hold the audio thread in flight, as a callback stuck mid-read does.
@@ -119,7 +128,7 @@ private:
     const Transport* transport = nullptr;
     std::uint64_t rebuilds = 0;
     std::uint64_t swaps = 0;
-    dusk::audio::ReaderFillPool fillPool { 3 };
+    dusk::audio::ReaderFillPool fillPool;
     struct ReaderDeleter
     {
         dusk::audio::ReaderFillPool* pool = nullptr;
@@ -232,6 +241,11 @@ private:
     std::chrono::steady_clock::time_point nextLoopCacheAttempt {};
     bool synchronousReaders = false;
     bool pinStreamsForLocateBlock = false;
+    std::atomic<bool> locateReadyHeld { false };
+    // Audio thread: the locate target being waited on and the frames waited so far.
+    std::int64_t locateWaitTarget = std::numeric_limits<std::int64_t>::min();
+    std::int64_t locateWaited = 0;
+    std::int64_t locateWaitLimit = 14400;
     std::atomic<std::uint32_t> refreshRequests { 0 };
 
     // One track's streams, readers opened and warmed at `warmAt`, loop cache
@@ -241,11 +255,15 @@ private:
                                                       std::int64_t warmAt, TakeId& auditioned);
     void publish (int trackIndex, std::int64_t playhead, std::uint32_t locateSerial, bool warm);
     // Whether every reader holds the audio from `playhead` a short way on.
-    static bool readersHoldFrom (const PerTrackStream& stream, std::int64_t playhead) noexcept;
+    std::int64_t swapWarmFrames() const noexcept;
+    bool readersHoldFrom (const PerTrackStream& stream, std::int64_t playhead) const noexcept;
     static bool canAdopt (const PerTrackStream&, std::int64_t playhead, int numSamples,
                           std::int64_t loopStart, std::int64_t loopEnd,
                           std::uint32_t locateSerial) noexcept;
     void freeSlot (TrackSlot& slot);
+    bool locateWarmRt (std::int64_t target, int numSamples, int warmFrames, bool looping,
+                       std::int64_t loopStart, std::int64_t loopEnd) const noexcept;
+    void resetLocateWait() noexcept;
 
     // One track's streams summed into outL / outR, loop-aware as readForTrack
     // describes. Returns the first incomplete span's offset, or numSamples.

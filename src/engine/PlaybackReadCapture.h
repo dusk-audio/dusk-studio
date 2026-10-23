@@ -222,7 +222,8 @@ public:
                         {
                             const auto distance = static_cast<std::int64_t> (sample) - seam;
                             if (distance >= -64 && distance < 64)
-                                gain *= 0.5 * (1.0 - std::cos (3.14159265358979323846 * std::abs (distance) / 64.0));
+                                gain *= 0.5 * (1.0 - std::cos (3.14159265358979323846
+                                    * static_cast<double> (std::abs (distance)) / 64.0));
                         }
                     for (int channel = 0; channel < 2; ++channel)
                     {

@@ -40,17 +40,18 @@ public:
     void add (BufferedFileReader&, std::int64_t timelineStart,
               std::int64_t timelineEnd, std::int64_t sourceOffset);
     void remove (BufferedFileReader&) noexcept;
+    // Non-RT; RT hint producers must be quiescent during reset and priming.
     void reset() noexcept;
-    // Updates the pool position after priming; transport writers must be quiescent.
+    // Updates the pool position and cancels any pending seek.
     void primeAt (std::int64_t timelineFrame);
     Stats stats() const;
 
-    // RT: the workers poll these hints; publishing them never signals an event.
+    // RT: one serialized producer; workers poll hints without an event signal.
     void setPositionRt (std::int64_t timelineFrame) noexcept;
+    // Each overlapping source span must fit its reader's window payload.
     void setSeekTargetRt (std::int64_t timelineFrame, int warmFrames) noexcept;
     void clearSeekTargetRt() noexcept;
     bool seekReadyRt (std::int64_t timelineFrame, int warmFrames) const noexcept;
-    // One serialized producer, normally the audio callback.
     void setLoopRt (bool enabled, std::int64_t start, std::int64_t end) noexcept;
 
     // One bounded pass, also used by deterministic no-thread tests.
@@ -84,6 +85,7 @@ private:
         bool evict = false;
         bool seeking = false;
         std::int64_t currentSourceFrame = -1;
+        std::int64_t numFrames = 0;
     };
 
     struct Seek

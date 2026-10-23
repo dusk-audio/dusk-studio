@@ -22,6 +22,7 @@
 #include "../foundation/MessageThread.h"
 #include "../foundation/SmoothedValue.h"
 #include "../foundation/TransportPosition.h"
+#include "MidiButtonEdges.h"
 #include "MidiSyncReceiver.h"
 #include "MidiTimeCodeReceiver.h"
 #include "MidiClockEmitter.h"
@@ -1051,6 +1052,7 @@ private:
     // reserveBytes'd off the RT path in rebuildMidiBanks so the drain and the
     // test-inject merge never allocate on the audio thread.
     std::vector<dusk::MidiBuffer> perInputMidi;
+    std::vector<MidiButtonEdges> midiButtonEdges;
     // Per-track routing buffer feeding native MIDI consumers and the recorder.
     std::array<dusk::MidiBuffer, Session::kNumTracks> perTrackMidi;
     // The timeline scheduler's controller chase, audio thread only.

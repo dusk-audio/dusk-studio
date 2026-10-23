@@ -61,7 +61,8 @@ void exportCapture (ScenarioContext& ctx, const fs::path& source, const char* na
 bool sameFile (const std::string& actual, const fs::path& expected)
 {
     std::error_code error;
-    return ! actual.empty() && fs::equivalent (fs::u8path (actual), expected, error) && ! error;
+    return ! actual.empty() && fs::equivalent (dusk::fs::nativeIOPath (fs::u8path (actual)),
+                                               dusk::fs::nativeIOPath (expected), error) && ! error;
 }
 
 std::string hash (std::string_view bytes)
@@ -378,11 +379,11 @@ std::shared_ptr<CaseState> prepare (GuiHost& host, ScenarioContext& ctx, const c
         }
         const auto key = hash (Json { { "url", cacheUrls[i] }, { "headers", headers } }.dump());
         auto& cache = state->repositoryCaches[i];
-        cache.path = dusk::fs::appDataDir() / "sfz-cache" / "repository" / (key + ".json");
+        cache.path = dusk::fs::nativeIOPath (dusk::fs::appDataDir() / "sfz-cache" / "repository" / (key + ".json"));
         cache.backup = cache.path.parent_path()
             / (".scenario-catalog-" + hash (ctx.tempDir().string() + name + key).substr (0, 32));
     }
-    state->originalWindow = host.mainWindowSize();
+    state->originalWindow = host.mainWindowBounds();
     state->originalUiScale = static_cast<float> (host.uiScale());
     state->originalDirectory = currentSessionDirectory (ctx.session());
     state->originalPlayhead = ctx.engine().getTransport().getPlayhead();
@@ -404,8 +405,7 @@ std::shared_ptr<CaseState> prepare (GuiHost& host, ScenarioContext& ctx, const c
         if (auto* strip = host.strip (kStripIndex)) strip->closeEditor();
         if (auto* strip = host.strip (1)) strip->closeEditor();
         host.restoreUiScale (state->originalUiScale);
-        if (state->originalWindow.size() >= 2)
-            host.resizeMainWindow (state->originalWindow[0], state->originalWindow[1]);
+        host.restoreMainWindowBounds (state->originalWindow);
         auto& engine = ctx.engine();
         auto& service = engine.getSfzLibrary();
         if (state->rendering) { engine.setAssetRenderActive (false); state->rendering = false; }
@@ -575,12 +575,18 @@ void pushStart (std::vector<Step>& steps, GuiHost& host, ScenarioContext& ctx, c
     steps.push_back ({ 0, [&ctx, state]
     {
         const auto snapshot = ctx.engine().getSfzLibrary().snapshot();
+        Json items = Json::array();
+        for (const auto& item : snapshot.page.items)
+            items.push_back ({ { "source", item.sourceId }, { "pack", item.packId }, { "name", item.name } });
+        const Json detail { { "items", std::move (items) }, { "expected_pack", state->transport->packId },
+                            { "error", snapshot.error }, { "generation", snapshot.generation },
+                            { "cached", snapshot.cachedResponse }, { "requests", state->transport->requests.load() } };
         ctx.expect (snapshot.page.items.size() == 4 && snapshot.page.items.front().packId == state->transport->packId
                     && snapshot.page.items.front().sourceId == "sfzinstruments"
                     && snapshot.page.items[1].sourceId == "musical-artifacts"
                     && snapshot.page.items[2].sourceId == "freepats"
                     && snapshot.page.items.back().sourceId == "versilian",
-                    "explicit All repositories search did not combine all fixture sources");
+                    "explicit All repositories search did not combine all fixture sources: " + detail.dump());
     } });
     for (const std::string source : { "freepats", "versilian" })
     {
@@ -650,8 +656,7 @@ void pushFinish (std::vector<Step>& steps, GuiHost& host, ScenarioContext& ctx, 
         if (auto* strip = host.strip (kStripIndex)) strip->closeEditor();
         if (auto* strip = host.strip (1)) strip->closeEditor();
         host.restoreUiScale (state->originalUiScale);
-        if (state->originalWindow.size() >= 2)
-            host.resizeMainWindow (state->originalWindow[0], state->originalWindow[1]);
+        host.restoreMainWindowBounds (state->originalWindow);
         drainModals (host);
         ctx.engine().stop();
         reopenSavedSession (host, state->restore);
@@ -985,7 +990,7 @@ std::optional<ScenarioResult> runWorkflow (GuiHost& host, ScenarioContext& ctx)
     steps->push_back ({ 0, [&host, state]
     {
         host.restoreUiScale (state->originalUiScale);
-        if (state->originalWindow.size() >= 2) host.resizeMainWindow (state->originalWindow[0], state->originalWindow[1]);
+        host.restoreMainWindowBounds (state->originalWindow);
     } });
     steps->push_back ({ 0, [&host, &ctx, state]
     {
@@ -1129,7 +1134,8 @@ std::optional<ScenarioResult> runWorkflow (GuiHost& host, ScenarioContext& ctx)
     {
         ctx.expect (ctx.engine().getSfzLibrary().snapshot().generation == state->generation,
                     "Remove submitted deletion of a version used by the current session");
-        ctx.expect (fs::is_regular_file (state->installed->directory / "Instruments/Two.sfz"), "used pack was deleted");
+        ctx.expect (fs::is_regular_file (dusk::fs::nativeIOPath (state->installed->directory / "Instruments/Two.sfz")),
+                    "used pack was deleted");
         ctx.expect (host.sfzLibraryPointer (kStripIndex, "installed-tab", 0.5f, false), "installed tab was not available before capture");
         host.captureSfzLibrary (kStripIndex, state->capture);
         ctx.expect (ctx.engine().requestNativeMultisampleLoad (kStripIndex, ctx.tempDir() / "missing.sfz", {},
@@ -1327,14 +1333,14 @@ std::optional<ScenarioResult> runStorageMove (GuiHost& host, ScenarioContext& ct
                     "SFZ storage Move changed the archive digest or release identity");
         for (std::size_t i = 0; i < moved.instruments.size(); ++i)
             ctx.expect (moved.locatorFor (moved.instruments[i]) == storage->before->locatorFor (storage->before->instruments[i])
-                        && fs::is_regular_file (moved.directory / moved.instruments[i].relativePath),
+                        && fs::is_regular_file (dusk::fs::nativeIOPath (moved.directory / moved.instruments[i].relativePath)),
                         "SFZ storage Move changed or lost a raw instrument locator");
         for (std::size_t i = 0; i < moved.programs.size(); ++i)
             ctx.expect (moved.locatorFor (moved.programs[i]) == storage->before->locatorFor (storage->before->programs[i]),
                         "SFZ storage Move changed a declared program locator");
         ctx.expect (! storage->samples.empty() && fileBytes (moved.directory / "Samples/tone.wav") == storage->samples,
                     "SFZ storage Move changed or lost the instrument samples");
-        ctx.expect (! fs::exists (storage->originalPack), "SFZ storage Move retained the original pack copy");
+        ctx.expect (! fs::exists (dusk::fs::nativeIOPath (storage->originalPack)), "SFZ storage Move retained the original pack copy");
         state->installed = moved;
     }, [&ctx, state]
     {
@@ -1693,7 +1699,7 @@ std::optional<ScenarioResult> runRelink (GuiHost& host, ScenarioContext& ctx, bo
     {
         if (! relink->moved) return;
         std::error_code error;
-        fs::rename (relink->held, relink->target, error);
+        fs::rename (dusk::fs::nativeIOPath (relink->held), dusk::fs::nativeIOPath (relink->target), error);
         if (error) ctx.note ("Could not restore the relink fixture: " + error.message());
     });
     auto steps = std::make_shared<std::vector<Step>>();
@@ -1779,7 +1785,7 @@ std::optional<ScenarioResult> runRelink (GuiHost& host, ScenarioContext& ctx, bo
         if (fail)
         {
             std::error_code error;
-            fs::rename (relink->target, relink->held, error);
+            fs::rename (dusk::fs::nativeIOPath (relink->target), dusk::fs::nativeIOPath (relink->held), error);
             relink->moved = ! error;
             if (! ctx.expect (! error, "could not make the selected program unavailable: " + error.message()))
                 ctx.complete (ctx.verdict());
@@ -1799,7 +1805,7 @@ std::optional<ScenarioResult> runRelink (GuiHost& host, ScenarioContext& ctx, bo
                 "failed native relink changed the saved identity or controls");
             ctx.expect (! instance || ! instance->hasLoadedRuntime(), "failed native relink loaded an instrument");
             std::error_code error;
-            fs::rename (relink->held, relink->target, error);
+            fs::rename (dusk::fs::nativeIOPath (relink->held), dusk::fs::nativeIOPath (relink->target), error);
             relink->moved = static_cast<bool> (error);
             ctx.expect (! error, "could not restore the selected relink program: " + error.message());
             dismissAlert (host);

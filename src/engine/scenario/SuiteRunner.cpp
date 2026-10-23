@@ -4,6 +4,16 @@
 #include "ScenarioWorld.h"
 #include "../../foundation/MessageThread.h"
 
+#if defined (_WIN32)
+ #ifndef WIN32_LEAN_AND_MEAN
+  #define WIN32_LEAN_AND_MEAN
+ #endif
+ #ifndef NOMINMAX
+  #define NOMINMAX
+ #endif
+ #include <windows.h>
+#endif
+
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -399,9 +409,33 @@ void SuiteRunner::report (const Scenario& scenario, const ScenarioResult& result
 
 void SuiteRunner::finishSuite()
 {
-    std::fprintf (stdout, "=== scenarios: %d pass, %d fail, %d skip ===\n",
-                  summary.pass, summary.fail, summary.skip);
-    std::fflush (stdout);
+   #if defined (_WIN32)
+    LARGE_INTEGER frequency {}, footerStart {}, footerEnd {};
+    const bool frequencyOk = ::QueryPerformanceFrequency (&frequency) != FALSE;
+    const bool startOk = ::QueryPerformanceCounter (&footerStart) != FALSE;
+   #endif
+    const int footerWrite = std::fprintf (stdout, "=== scenarios: %d pass, %d fail, %d skip ===\n",
+                                         summary.pass, summary.fail, summary.skip);
+    const int footerFlush = std::fflush (stdout);
+   #if defined (_WIN32)
+    const bool endOk = ::QueryPerformanceCounter (&footerEnd) != FALSE;
+    if (guiHost != nullptr)
+    {
+        // Redirected readers can observe this footer after the window has closed.
+        std::fprintf (stderr,
+                      "[SCENARIO_END_QPC] freq=%lld start=%lld end=%lld pid=%lu frequency_ok=%d start_ok=%d end_ok=%d write=%d flush=%d\n",
+                      static_cast<long long> (frequency.QuadPart),
+                      static_cast<long long> (footerStart.QuadPart),
+                      static_cast<long long> (footerEnd.QuadPart),
+                      static_cast<unsigned long> (::GetCurrentProcessId()),
+                      static_cast<int> (frequencyOk), static_cast<int> (startOk),
+                      static_cast<int> (endOk), footerWrite, footerFlush);
+        std::fflush (stderr);
+    }
+   #else
+    (void) footerWrite;
+    (void) footerFlush;
+   #endif
 
     int exitCode = summary.fail == 0 ? 0 : 1;
     if (summary.pass == 0 && summary.fail == 0)

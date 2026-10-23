@@ -214,6 +214,61 @@ TEST_CASE ("A locate during playback becomes the point Stop returns to",
         CHECK (t.getPlayhead() == 9000);
         CHECK (t.getAutomationPosition().locateSerial == 1);
     }
+    SECTION ("a rejected mapped target leaves the original request pending")
+    {
+        t.setState (Transport::State::Playing);
+        t.requestLocate (5000);
+        int checks = 0;
+        CHECK (t.beginAudioBlock ([&] (std::int64_t& target) noexcept
+        {
+            ++checks;
+            target = 2000;
+            return false;
+        }) == 1000);
+        CHECK (checks == 1);
+        CHECK (t.getPlayhead() == 5000);
+        CHECK (t.getAutomationPosition().samples == 1000);
+        CHECK (t.getAutomationPosition().locateSerial == 0);
+        const auto acceptMappedTarget = [&] (std::int64_t& target) noexcept
+        {
+            ++checks;
+            CHECK (target == 5000);
+            target = 2500;
+            return true;
+        };
+        CHECK (t.beginAudioBlock (acceptMappedTarget) == 2500);
+        CHECK (checks == 2);
+        CHECK (t.getAutomationPosition().samples == 2500);
+        CHECK (t.getAutomationPosition().locateSerial == 1);
+    }
+    SECTION ("position snapshots follow committed moves and exclude cancelled requests")
+    {
+        t.commitLocate (2000);
+        CHECK (t.getAutomationPosition().samples == 2000);
+        CHECK (t.getAutomationPosition().locateSerial == 1);
+        t.setState (Transport::State::Recording);
+        t.requestLocate (5000);
+        t.requestLocate (7000);
+        CHECK (t.getPlayhead() == 7000);
+        CHECK (t.getAutomationPosition().samples == 2000);
+        CHECK (t.getAutomationPosition().locateSerial == 1);
+        t.finishAudioBlock (2256);
+        CHECK (t.getAutomationPosition().samples == 2256);
+        CHECK (t.getAutomationPosition().locateSerial == 1);
+        t.setState (Transport::State::Stopped);
+        t.setPlayhead (-48000);
+        CHECK (t.getAutomationPosition().samples == -48000);
+        CHECK (t.getAutomationPosition().locateSerial == 1);
+        int checks = 0;
+        CHECK (t.beginAudioBlock ([&] (std::int64_t) noexcept { ++checks; return true; }) == -48000);
+        CHECK (checks == 0);
+        t.requestLocate (9000);
+        t.commitLocate (11000);
+        CHECK (t.beginAudioBlock() == 11000);
+        CHECK (t.getAutomationPosition().samples == 11000);
+        CHECK (t.getAutomationPosition().locateSerial == 2);
+        CHECK (t.getRollStart() == 1000);
+    }
 }
 
 TEST_CASE ("The persisted Playhead on Stop values keep their meaning",
