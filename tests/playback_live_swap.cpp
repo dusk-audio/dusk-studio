@@ -301,6 +301,12 @@ TEST_CASE ("A gain change on a track whose rebuild is waiting is heard at once a
         rig.engine.refreshTrackPlayback (kTrack, PlaybackEngine::Audition::Honour);
         rig.session->track (kTrack).regions.front().gainDb = -6.0f;
     }
+    SECTION ("The edit was made after the rebuild was published, before the audio thread took it")
+    {
+        rig.engine.refreshTrackPlayback (kTrack, PlaybackEngine::Audition::Honour);
+        rig.engine.service();
+        rig.session->track (kTrack).regions.front().gainDb = -6.0f;
+    }
     rig.engine.refreshLiveRegionParams();
     const auto waiting = rig.play (1);
     CHECK_THAT (waiting.front(), WithinAbs (kLevelA * gain, 1e-4));

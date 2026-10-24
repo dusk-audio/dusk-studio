@@ -211,6 +211,9 @@ private:
         std::int64_t loopCacheStart = -1;
         std::int64_t warmStart = 0, warmEnd = 0;
         std::uint32_t warmLocateSerial = 0;
+        // Set at build time and read only by the message thread: an auditioned
+        // take plays whole, so its regions' gain and mute never apply.
+        TakeId auditioned = 0;
     };
 
     // One track's streams. While they are live, the audio thread owns `current`

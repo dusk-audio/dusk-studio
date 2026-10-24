@@ -182,15 +182,16 @@ void PlaybackEngine::refreshLiveRegionParams()
     // timeline position + length; structural mismatches (split / join
     // / move) leave the stream untouched and the next preparePlayback
     // rebuilds. Both fields are atomics the audio thread loads per block. A
-    // rebuild waiting to be handed over takes the same values, so the crossfade
-    // to it brings no step. Streams playing an auditioned take stay at unity:
-    // the take plays whole whatever its regions say.
+    // rebuild still waiting here, or published but not yet taken by the audio
+    // thread, takes the same values, so the crossfade to it brings no step and
+    // the edit survives the handover. Streams playing an auditioned take stay at
+    // unity: the take plays whole whatever its regions say.
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
         const auto& regs = session.track (t).regions;
         const auto refresh = [&regs] (PerTrackStream* stream)
         {
-            if (stream == nullptr) return;
+            if (stream == nullptr || stream->auditioned != 0) return;
             // Streams are sorted by timelineStart in preparePlayback; the
             // session.regions vector is NOT sorted. Match each stream by
             // walking regions until we find one with the same identity.
@@ -208,10 +209,9 @@ void PlaybackEngine::refreshLiveRegionParams()
                 }
             }
         };
-        if (t != auditionedTrack.load (std::memory_order_relaxed))
-            refresh (slots[(size_t) t].current.load (std::memory_order_acquire));
-        if (pending[(size_t) t].auditioned == 0)
-            refresh (pending[(size_t) t].stream.get());
+        refresh (slots[(size_t) t].current.load (std::memory_order_acquire));
+        refresh (slots[(size_t) t].incoming.load (std::memory_order_acquire));
+        refresh (pending[(size_t) t].stream.get());
     }
 }
 
@@ -285,6 +285,7 @@ PlaybackEngine::buildTrackStream (int t, Audition audition, std::int64_t warmAt,
     if (regions.empty()) return nullptr;
 
     auto stream = std::make_unique<PerTrackStream>();
+    stream->auditioned = auditioned;
     stream->regions.reserve (regions.size());
 
     for (const auto& region : regions)
