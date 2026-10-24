@@ -66,7 +66,8 @@ public:
     // Rebuilds one track's streams while the transport rolls, so a comp edit or a
     // take solo is heard at once: the new streams are built and warmed here, and
     // service() hands them to the audio thread once their readers hold the audio
-    // at the playhead, however long that takes. The audio thread then
+    // at the playhead, however long that takes, except that a reader whose file
+    // has stopped reading holds it back for 300 ms at most. The audio thread then
     // crossfades from the old streams to the new ones. A newer rebuild of the
     // same track replaces one still waiting, so nothing built here reaches the
     // audio thread before service() runs: an edit of several actions, each
@@ -87,6 +88,7 @@ public:
     // at once, so a rebuild is warm the moment it is built.
     void setSynchronousReadersForTest (bool synchronous) noexcept { synchronousReaders = synchronous; }
     bool pumpReadersForTest() { return fillPool.pumpOnce(); }
+    void settleReadersForTest() { fillPool.settleForTest(); }
     void holdLocateReadyForTest (bool hold) noexcept
     {
         locateReadyHeld.store (hold, std::memory_order_relaxed);
@@ -94,6 +96,8 @@ public:
     // Tests only: how many frames a locate waits for warm readers before it
     // commits regardless. prepare() sets it from the sample rate.
     void setLocateWaitForTest (std::int64_t frames) noexcept { locateWaitLimit = frames; }
+    // Tests only: how long a rebuild waits for a reader whose file stopped reading.
+    void setRebuildFailureGraceForTest (std::chrono::milliseconds grace) noexcept { rebuildFailureGrace = grace; }
     // How many track stream sets exist, for tests that prove none leak.
     static int liveStreamCountForTest() noexcept;
     // Tests only: hold the audio thread in flight, as a callback stuck mid-read does.
@@ -231,6 +235,7 @@ private:
     {
         std::unique_ptr<PerTrackStream> stream;
         TakeId auditioned = 0;
+        std::chrono::steady_clock::time_point builtAt {};
     };
     std::array<PendingSwap, Session::kNumTracks> pending;
     std::array<Audition, Session::kNumTracks> requestedAudition {};
@@ -245,6 +250,7 @@ private:
     std::int64_t locateWaitTarget = std::numeric_limits<std::int64_t>::min();
     std::int64_t locateWaited = 0;
     std::int64_t locateWaitLimit = 14400;
+    std::chrono::milliseconds rebuildFailureGrace { 300 };
     std::atomic<std::uint32_t> refreshRequests { 0 };
 
     // One track's streams, readers opened and warmed at `warmAt`, loop cache
@@ -253,9 +259,11 @@ private:
     std::unique_ptr<PerTrackStream> buildTrackStream (int trackIndex, Audition audition,
                                                       std::int64_t warmAt, TakeId& auditioned);
     void publish (int trackIndex, std::int64_t playhead, std::uint32_t locateSerial);
-    // Whether every reader holds the audio from `playhead` a short way on.
+    // Whether every reader holds the audio from `playhead` a short way on, or with
+    // `passFailing`, has at least stopped reading, so cannot do better than silence.
     std::int64_t swapWarmFrames() const noexcept;
-    bool readersHoldFrom (const PerTrackStream& stream, std::int64_t playhead) const noexcept;
+    bool readersHoldFrom (const PerTrackStream& stream, std::int64_t playhead,
+                          bool passFailing = false) const noexcept;
     static bool canAdopt (const PerTrackStream&, std::int64_t playhead, int numSamples,
                           std::int64_t loopStart, std::int64_t loopEnd,
                           std::uint32_t locateSerial) noexcept;

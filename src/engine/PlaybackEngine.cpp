@@ -182,32 +182,36 @@ void PlaybackEngine::refreshLiveRegionParams()
     // timeline position + length; structural mismatches (split / join
     // / move) leave the stream untouched and the next preparePlayback
     // rebuilds. Both fields are atomics the audio thread loads per block. A
-    // track with a rebuild waiting to be handed over is left alone: the
-    // rebuild already carries these values, and the crossfade to it brings
-    // them in without a step.
+    // rebuild waiting to be handed over takes the same values, so the crossfade
+    // to it brings no step. Streams playing an auditioned take stay at unity:
+    // the take plays whole whatever its regions say.
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
-        auto* stream = slots[(size_t) t].current.load (std::memory_order_acquire);
-        if (stream == nullptr || pending[(size_t) t].stream != nullptr
-            || t == auditionedTrack.load (std::memory_order_relaxed)) continue;
         const auto& regs = session.track (t).regions;
-
-        // Streams are sorted by timelineStart in preparePlayback; the
-        // session.regions vector is NOT sorted. Match each stream by
-        // walking regions until we find one with the same identity.
-        for (auto& rs : stream->regions)
+        const auto refresh = [&regs] (PerTrackStream* stream)
         {
-            for (const auto& region : regs)
+            if (stream == nullptr) return;
+            // Streams are sorted by timelineStart in preparePlayback; the
+            // session.regions vector is NOT sorted. Match each stream by
+            // walking regions until we find one with the same identity.
+            for (auto& rs : stream->regions)
             {
-                if (audioPath (region.file) != rs.sourcePath
-                    || region.timelineStart   != rs.timelineStart
-                    || region.lengthInSamples != rs.lengthInSamples) continue;
-                rs.gainLinear.store (dusk::audio::decibelsToGain (
-                    std::clamp (region.gainDb, -60.0f, 24.0f), -60.0f));
-                rs.muted.store (region.muted);
-                break;
+                for (const auto& region : regs)
+                {
+                    if (audioPath (region.file) != rs.sourcePath
+                        || region.timelineStart   != rs.timelineStart
+                        || region.lengthInSamples != rs.lengthInSamples) continue;
+                    rs.gainLinear.store (dusk::audio::decibelsToGain (
+                        std::clamp (region.gainDb, -60.0f, 24.0f), -60.0f));
+                    rs.muted.store (region.muted);
+                    break;
+                }
             }
-        }
+        };
+        if (t != auditionedTrack.load (std::memory_order_relaxed))
+            refresh (slots[(size_t) t].current.load (std::memory_order_acquire));
+        if (pending[(size_t) t].auditioned == 0)
+            refresh (pending[(size_t) t].stream.get());
     }
 }
 
@@ -478,6 +482,7 @@ void PlaybackEngine::refreshTrackPlayback (int trackIndex, Audition audition)
     const std::int64_t playhead = transport != nullptr ? transport->getCommittedPlayhead() : 0;
     auto& swap = pending[(size_t) trackIndex];
     swap.stream = buildTrackStream (trackIndex, audition, playhead, swap.auditioned);
+    swap.builtAt = std::chrono::steady_clock::now();
     // A track left with nothing to play still swaps, to silence.
     if (swap.stream == nullptr)
         swap.stream = std::make_unique<PerTrackStream>();
@@ -528,7 +533,10 @@ void PlaybackEngine::service()
         {
             const auto position = transport != nullptr ? transport->getAutomationPosition()
                                                        : Transport::AutomationPosition { 0, 0 };
-            if (readersHoldFrom (*swap.stream, position.samples))
+            // A file that stops reading would otherwise hold the track's rebuilds,
+            // and so its edits, until Stop. A reader that is only slow never does.
+            if (readersHoldFrom (*swap.stream, position.samples,
+                                 now - swap.builtAt >= rebuildFailureGrace))
                 publish (t, position.samples, position.locateSerial);
         }
     }
@@ -577,7 +585,8 @@ std::int64_t PlaybackEngine::swapWarmFrames() const noexcept
     return std::max (kSwapWarmFrames, (std::int64_t) readScratch.numSamples());
 }
 
-bool PlaybackEngine::readersHoldFrom (const PerTrackStream& stream, std::int64_t playhead) const noexcept
+bool PlaybackEngine::readersHoldFrom (const PerTrackStream& stream, std::int64_t playhead,
+                                      bool passFailing) const noexcept
 {
     const std::int64_t until = playhead + swapWarmFrames();
     for (const auto& r : stream.regions)
@@ -585,7 +594,8 @@ bool PlaybackEngine::readersHoldFrom (const PerTrackStream& stream, std::int64_t
         if (r.reader == nullptr) continue;
         const std::int64_t from = std::max (playhead, r.timelineStart);
         const std::int64_t to = std::min (until, r.timelineStart + r.lengthInSamples);
-        if (to > from && ! r.reader->holds (r.sourceOffset + (from - r.timelineStart), to - from))
+        if (to > from && ! r.reader->holds (r.sourceOffset + (from - r.timelineStart), to - from)
+            && ! (passFailing && r.reader->fillFailing()))
             return false;
     }
     return true;

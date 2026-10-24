@@ -119,6 +119,30 @@ TEST_CASE ("an auditioned take plays alone in place of its track's regions",
         CHECK_THAT (out[kTakeStart + kTakeLen / 2], WithinAbs (kLevelB, 2e-4));
     }
 
+    SECTION ("a take auditioned while rolling stays at unity whatever a matching region says")
+    {
+        session->takeAudition = {};
+        track.regions[0].timelineStart = kTakeStart;
+        track.regions[0].lengthInSamples = kTakeLen;
+        track.regions[0].sourceOffset = 100;
+        track.regions[0].file = fileB;
+        track.regions[0].muted = true;
+        pe.preparePlayback (PlaybackEngine::Audition::Honour);
+        read();
+        CHECK_THAT (out[kTakeStart + kTakeLen / 2], WithinAbs (0.0f, 1e-6));
+
+        pe.setSynchronousReadersForTest (true);
+        session->takeAudition = { 2, 2 };
+        pe.refreshTrackPlayback (2, PlaybackEngine::Audition::Honour);
+        pe.refreshLiveRegionParams();
+        pe.service();
+        read();
+        CHECK_THAT (out[kTakeStart + kTakeLen / 2], WithinAbs (kLevelB, 2e-4));
+        pe.refreshLiveRegionParams();
+        read();
+        CHECK_THAT (out[kTakeStart + kTakeLen / 2], WithinAbs (kLevelB, 2e-4));
+    }
+
     SECTION ("an audition naming a take the track lacks plays the regions")
     {
         session->takeAudition = { 2, 42 };

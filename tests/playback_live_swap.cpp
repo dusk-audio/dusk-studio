@@ -284,22 +284,119 @@ TEST_CASE ("The audio thread never takes a rebuild made part-way through an edit
     CHECK (rig.engine.swapCount() == swaps + 1);
 }
 
-TEST_CASE ("A gain change on a track whose rebuild is waiting arrives through the crossfade",
+TEST_CASE ("A gain change on a track whose rebuild is waiting is heard at once and through the handover",
            "[playback][live-swap]")
 {
     Rig rig;
     rig.play (1);
     rig.transport.setPlayhead (rig.playhead);
-    rig.session->track (kTrack).regions.front().gainDb = -6.0f;
-    rig.engine.refreshTrackPlayback (kTrack, PlaybackEngine::Audition::Honour);
+    const float gain = dusk::audio::decibelsToGain (-6.0f, -60.0f);
+    SECTION ("The edit was made before the rebuild was built")
+    {
+        rig.session->track (kTrack).regions.front().gainDb = -6.0f;
+        rig.engine.refreshTrackPlayback (kTrack, PlaybackEngine::Audition::Honour);
+    }
+    SECTION ("The edit was made while the rebuild waited")
+    {
+        rig.engine.refreshTrackPlayback (kTrack, PlaybackEngine::Audition::Honour);
+        rig.session->track (kTrack).regions.front().gainDb = -6.0f;
+    }
     rig.engine.refreshLiveRegionParams();
     const auto waiting = rig.play (1);
-    CHECK_THAT (waiting.front(), WithinAbs (kLevelA, 1e-4));
-    CHECK_THAT (waiting.back(), WithinAbs (kLevelA, 1e-4));
+    CHECK_THAT (waiting.front(), WithinAbs (kLevelA * gain, 1e-4));
+    CHECK_THAT (waiting.back(), WithinAbs (kLevelA * gain, 1e-4));
 
     rig.engine.service();
     const auto out = rig.play (4);
-    requireFade (out, 0, kLevelA, kLevelA * dusk::audio::decibelsToGain (-6.0f, -60.0f));
+    for (std::size_t i = 0; i < out.size(); ++i)
+    {
+        INFO ("sample " << i);
+        REQUIRE_THAT (out[i], WithinAbs (kLevelA * gain, 1e-4));
+    }
+}
+
+TEST_CASE ("A rebuild whose file stops reading hands over without waiting for it",
+           "[playback][live-swap]")
+{
+    constexpr int kLong = 128000;
+    test::TempDirectory dir { "dusk-live-swap-failing-" };
+    const auto a = writeConstantMono (dir.path(), "a.wav", kLevelA, kLong);
+    const auto b = writeConstantMono (dir.path(), "b.wav", kLevelB, kLong);
+    const auto c = writeConstantMono (dir.path(), "c.wav", kLevelC, kLong);
+    auto session = std::make_unique<Session>();
+    session->setSessionDirectory (a.getParentDirectory().getParentDirectory());
+    session->track (kTrack).regions = { wholeRegion (a, kLong) };
+    Transport transport;
+    // No fill workers: the test fills the readers when it chooses to.
+    PlaybackEngine engine { *session, false };
+    engine.bindTransport (transport);
+    engine.prepare (kBlock);
+    engine.preparePlayback();
+    std::int64_t playhead = 0;
+    const auto play = [&] (int blocks)
+    {
+        std::vector<float> out ((std::size_t) (blocks * kBlock));
+        for (int i = 0; i < blocks; ++i)
+        {
+            transport.setPlayhead (playhead);
+            engine.readForTrack (kTrack, playhead, out.data() + i * kBlock, nullptr, kBlock);
+            playhead += kBlock;
+        }
+        return out;
+    };
+    const auto rebuildWith = [&] (const juce::File& file)
+    {
+        transport.setPlayhead (playhead);
+        session->track (kTrack).regions = { wholeRegion (file, kLong) };
+        engine.refreshTrackPlayback (kTrack, PlaybackEngine::Audition::Honour);
+    };
+    CHECK_THAT (play (1).front(), WithinAbs (kLevelA, 1e-4));
+
+    SECTION ("A cold reader that reads keeps the old audio until it is warm")
+    {
+        engine.setRebuildFailureGraceForTest (std::chrono::milliseconds (0));
+        rebuildWith (c);
+        const auto swaps = engine.swapCount();
+        engine.service();
+        CHECK (engine.swapCount() == swaps);
+        CHECK_THAT (play (1).back(), WithinAbs (kLevelA, 1e-4));
+        while (engine.pumpReadersForTest()) {}
+        engine.service();
+        CHECK (engine.swapCount() == swaps + 1);
+        requireFade (play (4), 0, kLevelA, kLevelC);
+    }
+    SECTION ("A reader whose reads fail stops holding the rebuild once the grace has passed")
+    {
+        rebuildWith (b);
+        // The file is cut short after the rebuild opened it, as a pulled drive leaves it.
+        const auto path = dir.path() / "audio" / "b.wav";
+        const auto header = std::filesystem::file_size (path) - (std::uintmax_t) kLong * sizeof (float);
+        std::filesystem::resize_file (path, header + 100 * sizeof (float));
+        while (engine.pumpReadersForTest()) {}
+        const auto swaps = engine.swapCount();
+        engine.service();
+        CHECK (engine.swapCount() == swaps);
+        CHECK_THAT (play (1).back(), WithinAbs (kLevelA, 1e-4));
+
+        engine.setRebuildFailureGraceForTest (std::chrono::milliseconds (0));
+        engine.service();
+        CHECK (engine.swapCount() == swaps + 1);
+        const auto out = play (4);
+        requireFade (out, 0, kLevelA, 0.0f);
+        CHECK_THAT (out.back(), WithinAbs (0.0f, 1e-6));
+
+        // The track takes gain edits again: the next rebuild hands over too.
+        session->track (kTrack).regions = { wholeRegion (c, kLong) };
+        session->track (kTrack).regions.front().gainDb = -6.0f;
+        transport.setPlayhead (playhead);
+        engine.refreshTrackPlayback (kTrack, PlaybackEngine::Audition::Honour);
+        while (engine.pumpReadersForTest()) {}
+        engine.service();
+        CHECK (engine.swapCount() == swaps + 2);
+        play (4);
+        CHECK_THAT (play (1).back(), WithinAbs (kLevelC * dusk::audio::decibelsToGain (-6.0f, -60.0f), 1e-4));
+    }
+    engine.stopPlayback();
 }
 
 TEST_CASE ("A track rebuilt with nothing to play fades to silence", "[playback][live-swap]")
