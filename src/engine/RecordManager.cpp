@@ -317,6 +317,8 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
         std::memory_order_relaxed);
     recordSampleRate  = sampleRate;
     recordTempoBpm = session.tempoBpm.load (std::memory_order_relaxed);
+    captureTicksBpm = recordTempoBpm;
+    stopTempoFromPass = std::numeric_limits<int>::max();
     recordTempoMap = session.tempoMap;
     midiMergeCapture = merge;
     capturedMidiTrackMask = 0;
@@ -575,7 +577,7 @@ const MidiCapturePreview* RecordManager::midiCapturePreview (int trackIndex) con
 
 std::int64_t RecordManager::midiCaptureTicksAt (std::int64_t sample) const noexcept
 {
-    return recordTempoMap.empty() ? samplesToTicks (sample, recordSampleRate, recordTempoBpm)
+    return recordTempoMap.empty() ? samplesToTicks (sample, recordSampleRate, captureTicksBpm)
         : recordTempoMap.samplesToTicks (midiCaptureTimelineStart() + sample, recordSampleRate)
             - recordStartTick;
 }
@@ -624,7 +626,7 @@ std::vector<RecordManager::CapturedMidiPassGroup> RecordManager::takeMidiPassGro
         group.passOrdinal = nextMidiGroupOrdinal++;
         group.timelineStart = midiCaptureTimelineStart();
         group.capturedSampleRate = recordSampleRate;
-        group.capturedBpm = recordTempoBpm;
+        group.capturedBpm = group.passOrdinal >= stopTempoFromPass ? captureTicksBpm : recordTempoBpm;
         for (int track = 0; track < Session::kNumTracks; ++track)
         {
             if ((capturedMidiTrackMask & (std::uint32_t { 1 } << track)) == 0) continue;
@@ -673,6 +675,15 @@ void RecordManager::stopRecording (std::int64_t endSample)
                 finalMidiEnd = std::max (finalMidiEnd, cap->lastEndSample);
             }
     }
+    // Everything Stop commits is placed at the tempo in force at Stop, as in
+    // 0.15, so a BPM edit or a followed MIDI clock during the take scales it.
+    // MIDI Merge passes finished while recording went on keep the tempo they were
+    // captured at, so they are drained first. A tempo map rules over both.
+    serviceMidiCapture();
+    for (int track = 0; track < Session::kNumTracks; ++track)
+        if (midiCaptures[(size_t) track] != nullptr)
+            stopTempoFromPass = std::min (stopTempoFromPass, midiCompletedOrdinals[(size_t) track] + 1);
+    captureTicksBpm = session.tempoBpm.load (std::memory_order_relaxed);
     for (int track = 0; track < Session::kNumTracks; ++track)
         if (auto& cap = midiCaptures[(size_t) track])
         {
@@ -724,7 +735,7 @@ void RecordManager::stopRecording (std::int64_t endSample)
     // teardown loop below - audio + MIDI commit phases are independent so
     // ordering doesn't matter, but doing MIDI first keeps the two paths
     // visibly separate and the failure cases isolated.
-    const float bpm = recordTempoBpm;
+    const float bpm = captureTicksBpm;
     const std::int64_t totalSamples = loopPlan.enabled
         ? std::max<std::int64_t> (0, endSample - recordStartSample) : finalMidiEnd;
     for (int t = 0; t < Session::kNumTracks; ++t)
