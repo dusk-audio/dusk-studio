@@ -938,7 +938,11 @@ else()
     if(NOT (SNDFILE_LIBRARY AND SNDFILE_INCLUDE_DIR))
         message(FATAL_ERROR
             "libsndfile development files are required (all audio file I/O goes "
-            "through it). Linux: libsndfile1-dev. macOS: brew install libsndfile. "
+            "through it). Linux: libsndfile1-dev. macOS: run "
+            "scripts/build-macos-runtime-deps.sh <prefix> and configure with "
+            "-DCMAKE_PREFIX_PATH=<prefix> and "
+            "PKG_CONFIG_LIBDIR=<prefix>/lib/pkgconfig:<prefix>/share/pkgconfig "
+            "(Homebrew builds target a newer macOS and fail packaging). "
             "Windows: vcpkg install --triplet x64-windows-static from the repo "
             "root (vcpkg.json declares it).")
     endif()
@@ -1353,8 +1357,9 @@ endif()
 
 # Optional MP3 bounce via libmp3lame (LAME). Detected at configure time on every
 # OS; when absent the MP3 export option is hidden and bounces stay WAV-only.
-# Install: libmp3lame-devel (openSUSE) / libmp3lame-dev (Debian) / `brew install lame`
-# / vcpkg on Windows (vcpkg.json declares it).
+# Install: libmp3lame-devel (openSUSE) / libmp3lame-dev (Debian) /
+# scripts/build-macos-runtime-deps.sh on macOS / vcpkg on Windows (vcpkg.json
+# declares it).
 # The config package comes first because vcpkg's x64-windows-static build names
 # its archive libmp3lame-static.lib, which the plain name search never matches,
 # and that archive also needs libmpghip-static.lib, which only the config
@@ -1385,7 +1390,10 @@ if(DUSKSTUDIO_HAS_LAME)
 elseif(DUSKSTUDIO_REQUIRE_LAME)
     message(FATAL_ERROR
         "MP3 bounce required (DUSKSTUDIO_REQUIRE_LAME=ON) but libmp3lame was not found. "
-        "Linux: libmp3lame-dev. macOS: brew install lame. Windows: vcpkg install "
+        "Linux: libmp3lame-dev. macOS: run scripts/build-macos-runtime-deps.sh "
+        "<prefix> and configure with -DCMAKE_PREFIX_PATH=<prefix> and "
+        "PKG_CONFIG_LIBDIR=<prefix>/lib/pkgconfig:<prefix>/share/pkgconfig "
+        "(Homebrew builds target a newer macOS and fail packaging). Windows: vcpkg install "
         "--triplet x64-windows-static from the repo root (vcpkg.json declares it).")
 else()
     message(STATUS "MP3 bounce: libmp3lame NOT found - MP3 export disabled (WAV only)")
@@ -2153,7 +2161,8 @@ if(APPLE)
             DESTINATION "DuskStudio.app/Contents/Resources")
     # Installing a bundle rewrites its Mach-O load commands, so the POST_BUILD
     # signature above is invalid by the time CPack stages the .app, and the
-    # staged copy is still missing the Homebrew dylibs it links. Repair both on
+    # staged copy is still missing the dylibs it links from the private prefix
+    # that scripts/build-macos-runtime-deps.sh builds. Repair both on
     # the installed tree, where nothing runs after us.
     install(CODE "
         execute_process(

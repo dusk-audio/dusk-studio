@@ -2,7 +2,8 @@
 # Make an installed DuskStudio.app self-contained and correctly signed.
 #
 # Two things break the bundle between the POST_BUILD signature and the DMG:
-# the app links Homebrew's lame/libsndfile/lilv/suil from outside the bundle,
+# the app links lame/libsndfile/lilv/suil from the build machine's private
+# prefix (scripts/build-macos-runtime-deps.sh), outside the bundle,
 # and CMake's bundle install rewrites the Mach-O load commands, which
 # invalidates any signature sealed before it. Both are repaired here, on the
 # installed copy, so signing is the last thing that touches the binaries.

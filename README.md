@@ -245,7 +245,7 @@ guides list the exact packages and manifest setup.
 |----------|-----|
 | Linux | [BUILDING-LINUX.md](docs/BUILDING-LINUX.md) |
 | Windows | [BUILDING-WINDOWS.md](docs/BUILDING-WINDOWS.md) |
-| macOS | Upstream JUCE 8.0.4, the pinned donor plugins, DAF `main`, libsndfile and LAME; static libsodium through `DUSKSTUDIO_SODIUM_ROOT`; SDK libcurl, zlib and iconv; static libarchive through `CMAKE_PREFIX_PATH`; and pinned static utf8proc built by CMake. CI builds libarchive 3.8.7 for macOS 11. See [.github/workflows/macos-build.yml](.github/workflows/macos-build.yml). |
+| macOS | Upstream JUCE 8.0.4, the pinned donor plugins and DAF `main`. libsndfile, LAME, lilv, suil and their codec and RDF dependencies come from `scripts/build-macos-runtime-deps.sh <prefix>`, which builds pinned sources for macOS 11 into a private prefix on an Apple Silicon Mac (it needs CMake, Ninja, Meson and pkg-config, for example `brew install ninja meson pkgconf`); pass the prefix in `CMAKE_PREFIX_PATH` and its `lib/pkgconfig` and `share/pkgconfig` in `PKG_CONFIG_LIBDIR`. Homebrew copies target a newer macOS and fail packaging. The build also uses static libsodium through `DUSKSTUDIO_SODIUM_ROOT`, the SDK's libcurl, zlib and iconv, static libarchive through `CMAKE_PREFIX_PATH`, and pinned static utf8proc built by CMake. CI builds libarchive 3.8.7 for macOS 11. See [.github/workflows/macos-build.yml](.github/workflows/macos-build.yml). |
 | Linux tarball packaging | [packaging/README.md](packaging/README.md) |
 | End-user manual and troubleshooting | [MANUAL.md](MANUAL.md) |
 

@@ -2,10 +2,11 @@
 # Copy every non-system dylib an .app links against into Contents/Frameworks and
 # rewrite the install names to load from there.
 #
-# The macOS build links Homebrew's lame/libsndfile/lilv/suil, which live under
-# /opt/homebrew on the build machine and nowhere on a user's. Those four pull in
-# a further transitive set (ogg, vorbis, FLAC, opus, mpg123, serd, sord, sratom,
-# zix), so the closure is walked rather than enumerated.
+# The macOS build links lame/libsndfile/lilv/suil from the private prefix that
+# scripts/build-macos-runtime-deps.sh builds for macOS 11. That prefix exists on
+# the build machine and nowhere on a user's. Those four pull in a further
+# transitive set (ogg, vorbis, FLAC, opus, mpg123, serd, sord, sratom, zix), so
+# the closure is walked rather than enumerated.
 #
 # install_name_tool invalidates a code signature, so the caller must sign AFTER
 # this runs, not before.
