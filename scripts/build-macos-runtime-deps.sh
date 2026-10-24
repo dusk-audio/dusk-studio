@@ -188,7 +188,7 @@ int main(void)
         fputs("suil rejected a Cocoa LV2 UI in a Cocoa host\n", stderr); return 1;
     }
     puts("FLAC/Vorbis/Opus/MPEG writing: PASS");
-    puts("suil links and accepts a Cocoa LV2 UI in a Cocoa host (direct embed, no wrapper module)");
+    puts("suil links and answers the Cocoa host and UI type query");
     return 0;
 }
 CAPABILITIES
@@ -231,7 +231,7 @@ for path in sorted((prefix / 'lib').glob('*.dylib')):
 if not libraries:
     raise SystemExit('No source-built shared libraries were installed')
 manifest = dict(architecture='arm64', deployment_target='11.0', sdk=sdk, sources=sources,
-                libraries=libraries, capabilities='FLAC/Vorbis/Opus/MPEG writing; suil links and reports Cocoa-in-Cocoa LV2 UI embedding')
+                libraries=libraries, capabilities='FLAC/Vorbis/Opus/MPEG writing; suil answers the Cocoa host and UI type query')
 (prefix / 'runtime-deps-manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
 print('Verified %d source-built shared libraries targeting macOS 11 or earlier' % len(libraries))
 MANIFEST
