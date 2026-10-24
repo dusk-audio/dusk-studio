@@ -2736,7 +2736,20 @@ void AudioEngine::record()
         return;
     }
 
-    transport.setPlayhead (loopPlan.enabled ? startSample : transport.getPlayhead());
+    // Rolling on from anywhere but the heard position is a locate, so an
+    // automation pass ends there instead of writing over the stretch it skips.
+    // A pending seek already moved the roll start; a loop take leaves it alone.
+    const auto rollFrom = loopPlan.enabled ? startSample : transport.getPlayhead();
+    if (rollFrom == transport.getCommittedPlayhead())
+    {
+        transport.setPlayhead (rollFrom);
+    }
+    else
+    {
+        const auto rollStart = transport.getRollStart();
+        transport.commitLocate (rollFrom);
+        transport.setRollStart (rollStart);
+    }
 
     activeRecordStart.store (startSample, std::memory_order_relaxed);
     updateAssetWorkPause();
@@ -4883,12 +4896,11 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         if (getStage() == Stage::Mastering) return true;
         if (locateLoops)
         {
+            // A target before the loop plays on into it, as the end-of-block
+            // wrap only folds positions past the loop end.
             const auto start = transportLoopStart, end = transportLoopEnd;
-            if (start >= 0 && end > start)
-            {
-                if (target < start) target = start;
-                else if (target >= end) target = start + (target - end) % (end - start);
-            }
+            if (start >= 0 && end > start && target >= end)
+                target = start + (target - end) % (end - start);
         }
         keepSeek = true;
         return playbackEngine.locateReadyRt (target, numSamples,

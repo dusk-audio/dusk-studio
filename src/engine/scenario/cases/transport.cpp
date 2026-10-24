@@ -2,6 +2,7 @@
 #include "../ScenarioContext.h"
 #include "../../AudioEngine.h"
 #include "../../audiofile/FileReader.h"
+#include "../../../session/AutomationRecorder.h"
 #include "../../../session/MidiBindings.h"
 #include "../../../session/Session.h"
 
@@ -94,10 +95,32 @@ ScenarioResult playSnapsToLoopStart (ScenarioContext& ctx)
         ctx.expect (transport.getLocateCount() == serial, "a pending loop seek changed its serial");
         engine.getPlaybackEngine().holdLocateReadyForTest (false);
         ctx.pump (1);
-        const auto normalized = target < 1000 ? 1000 : 2000;
-        ctx.expect (transport.getCommittedPlayhead() == normalized + ScenarioContext::kBlockSize,
-                    "a committed loop seek did not normalize to the loop range");
+        // A seek before the loop plays from there into it; one past its end wraps in.
+        const auto landed = target < 1000 ? target : 2000;
+        ctx.expect (transport.getCommittedPlayhead() == landed + ScenarioContext::kBlockSize,
+                    "a loop seek to " + std::to_string (target) + " committed at "
+                        + std::to_string (transport.getCommittedPlayhead() - ScenarioContext::kBlockSize)
+                        + ", not " + std::to_string (landed));
         ctx.expect (transport.getLocateCount() == serial + 1, "a ready loop seek did not commit once");
+        if (target >= 1000) continue;
+        auto before = transport.getCommittedPlayhead();
+        bool wrapped = false;
+        for (int block = 0; block < 64 && ! wrapped; ++block)
+        {
+            ctx.pump (1);
+            const auto after = transport.getCommittedPlayhead();
+            wrapped = after < before;
+            if (! wrapped)
+                ctx.expect (after == before + ScenarioContext::kBlockSize,
+                            "playback from before the loop did not run straight on at " + std::to_string (before));
+            else
+                ctx.expect (before + ScenarioContext::kBlockSize >= 4000
+                                && after == 1000 + before + ScenarioContext::kBlockSize - 4000,
+                            "playback from before the loop wrapped from " + std::to_string (before)
+                                + " to " + std::to_string (after) + " instead of at the loop end");
+            before = after;
+        }
+        ctx.expect (wrapped, "playback from before the loop never reached the loop end");
     }
     engine.stop();
     return ctx.verdict();
@@ -524,6 +547,78 @@ ScenarioResult seeksKeepCaptureRunning (ScenarioContext& ctx)
     return ctx.verdict();
 }
 
+// Record pressed while a rolling seek still waits for its readers commits the
+// seek as a locate: a WRITE pass ends where the audio was, and the stretch the
+// seek skipped keeps the ride it had.
+ScenarioResult recordDuringSeekEndsAutomationPass (ScenarioContext& ctx)
+{
+    constexpr auto kFader = AutomationParam::FaderDb;
+    constexpr std::int64_t kTarget = 6 * kSecond;
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+    ctx.keep (session.countInEnabled);
+    ctx.keep (session.preRollEnabled);
+    ctx.keep (session.postRollEnabled);
+    ctx.cleanup ([&engine, &transport, loop = transport.isLoopEnabled(), punch = transport.isPunchEnabled()]
+    {
+        engine.getPlaybackEngine().holdLocateReadyForTest (false);
+        engine.stop();
+        transport.setLoopEnabled (loop);
+        transport.setPunchEnabled (punch);
+    });
+    session.countInEnabled.store (false);
+    session.preRollEnabled.store (false);
+    session.postRollEnabled.store (false);
+    transport.setLoopEnabled (false);
+    transport.setPunchEnabled (false);
+    armTrack (ctx);
+
+    AutomationLane lane;
+    lane.publishPoints ({ { 0, normalizeAutomationValue (kFader, -30.0f), 120.0f },
+                          { 10 * kSecond, normalizeAutomationValue (kFader, -30.0f), 120.0f } });
+    const auto earlier = lane.pointsConst();
+    const auto nearDb = [] (float a, float b) { return std::abs (a - b) < 0.05f; };
+    AutomationPassRecorder recorder (kFader);
+    const auto tick = [&]
+    {
+        const auto position = transport.getAutomationPosition();
+        recorder.record (lane, position.samples, -10.0f, 120.0f, position.locateSerial, 0);
+    };
+
+    transport.setPlayhead (kSecond);
+    engine.play();
+    for (int block = 0; block < 8; ++block) { ctx.pump (1); tick(); }
+    const auto heard = transport.getCommittedPlayhead();
+    const auto serial = transport.getLocateCount();
+    engine.getPlaybackEngine().holdLocateReadyForTest (true);
+    transport.locate (kTarget);
+    ctx.pump (1);
+    tick();
+    if (! ctx.expect (transport.getCommittedPlayhead() == heard + ScenarioContext::kBlockSize,
+                      "the seek committed before Record was pressed"))
+        return ctx.verdict();
+
+    engine.record();
+    engine.getPlaybackEngine().holdLocateReadyForTest (false);
+    if (! ctx.expect (transport.isRecording(), "Record did not start")) return ctx.verdict();
+    ctx.expect (transport.getCommittedPlayhead() == kTarget, "Record did not roll on from the seek's target");
+    ctx.expect (transport.getLocateCount() == serial + 1, "Record committed the seek without counting a locate");
+    ctx.expect (transport.getRollStart() == kTarget, "Record moved the roll start away from the seek's target");
+    for (int block = 0; block < 8; ++block) { ctx.pump (1); tick(); }
+    recorder.finish (lane);
+    engine.stop();
+
+    const auto& now = lane.pointsConst();
+    const auto skipped = (heard + kTarget) / 2;
+    ctx.expect (nearDb (evaluateLane (now, skipped, kFader), evaluateLane (earlier, skipped, kFader)),
+                "the pass wrote over the stretch the seek skipped");
+    ctx.expect (nearDb (evaluateLane (now, kSecond + ScenarioContext::kBlockSize, kFader), -10.0f)
+                    && nearDb (evaluateLane (now, kTarget + ScenarioContext::kBlockSize, kFader), -10.0f),
+                "the ride on either side of the seek was not kept");
+    return ctx.verdict();
+}
+
 std::optional<ScenarioResult> run (ScenarioResult (*body) (ScenarioContext&), ScenarioContext& ctx)
 {
     return body (ctx);
@@ -550,5 +645,8 @@ const ScenarioRegistrar chaseRegistrar { Scenario {
 const ScenarioRegistrar seekCaptureRegistrar { Scenario {
     "transport.seeks_keep_capture_running", { "transport", "record", "playback" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (seeksKeepCaptureRunning, ctx); } } };
+const ScenarioRegistrar recordDuringSeekRegistrar { Scenario {
+    "transport.record_during_seek_ends_automation_pass", { "transport", "record", "automation" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (recordDuringSeekEndsAutomationPass, ctx); } } };
 } // namespace
 } // namespace duskstudio::scenario

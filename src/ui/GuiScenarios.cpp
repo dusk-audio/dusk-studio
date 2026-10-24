@@ -6,6 +6,9 @@
  #include "imgui/DuskPanelWindow.h"
  #include "imgui/StartupView.h"
 #endif
+#if defined (_WIN32) && DUSKSTUDIO_HAS_NATIVE_UI
+ #include "NativeWindowVisibilityProbe.h"
+#endif
 
 #include "AuxLaneComponent.h"
 #include "DimOverlay.h"
@@ -270,6 +273,27 @@ struct MainComponent::ScenarioStripHandle final : scenario::StripHandle
         auto* component = strip();
         return component != nullptr && component->hasOpenBuiltinEditorForScenario();
     }
+
+   #if defined (_WIN32) && DUSKSTUDIO_HAS_NATIVE_UI
+    std::function<bool()> captureBuiltinEditorHiddenProbe() const override
+    {
+        const auto* component = strip();
+        if (component == nullptr) return {};
+        const auto* panel = component->builtinPanelForScenario();
+        const auto* plugin = component->builtinPluginEditorForScenario();
+        const auto panelWindow = panel != nullptr ? panel->nativeWindowHandleForScenario() : 0;
+        const auto pluginWindow = plugin != nullptr ? plugin->nativeWindow() : 0;
+        if ((panel != nullptr && panel->isOpen() && panelWindow == 0)
+            || (plugin != nullptr && plugin->isOpen() && pluginWindow == 0)) return {};
+        return platform::captureNativeWindowsHiddenProbe ({ panelWindow, pluginWindow });
+    }
+
+    bool builtinEditorDisposed() const override
+    {
+        const auto* component = strip();
+        return component != nullptr && component->builtinEditorDisposedForScenario();
+    }
+   #endif
 
     bool pluginWindowMissing() const override
     {

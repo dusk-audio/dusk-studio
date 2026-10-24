@@ -16,6 +16,7 @@ ENTITLEMENTS="${3:-}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 "$HERE/bundle-macos-dylibs.sh" "$APP"
+python3 "$HERE/verify-macos-bundle.py" "$APP"
 
 # Inside-out: nested code first, then the bundle that seals it. --deep is
 # deprecated and does not reliably re-sign what install_name_tool touched.

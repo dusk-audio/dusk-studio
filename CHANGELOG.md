@@ -5,7 +5,7 @@ All notable changes to Dusk Studio. Format loosely follows
 back-filled from `git log`; once tags exist this file is the
 canonical source.
 
-## [0.16.0] - Unreleased
+## [0.16.0] - 2026-10-24
 
 ### Added
 
@@ -92,6 +92,8 @@ canonical source.
 
 ### Fixed
 
+- **macOS compatibility.** Bundled audio and plug-in hosting libraries now
+  honour the documented macOS 11 minimum.
 - **Timeline selection.** A new region click keeps its selection when an older
   edit notification is still waiting to be delivered.
 - **Custom LV2 loading.** Reusing a format avoids repeated folder walks;
@@ -164,6 +166,11 @@ canonical source.
   changing a no-device import's timeline rate or clearing a finished master
   export's loudness readings. Hot-plug and explicit MIDI refreshes wait until
   an offline bounce, stem export or freeze finishes.
+- **MIDI Press bindings.** Press mode fires only when a button goes down, as
+  the manual describes: a controller value rising to 64 or more, or a note-on.
+  A value repeated while the button is held no longer fires it again. A button
+  that sends 127 and never a release value fires once in Press mode; set its
+  binding to Toggle.
 
 ## [0.15.1] - 2026-10-11
 

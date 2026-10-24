@@ -53,6 +53,7 @@ TEST_CASE ("loop-aware readForTrack wraps at the loop boundary",
     SECTION ("A 127-frame loop keeps linear fallback") { loopProbe = 7; }
     SECTION ("A callback ending at a loop seam stays unmasked") { loopProbe = 8; }
     SECTION ("A huge loop length never overflows seam enumeration") { loopProbe = 9; }
+    SECTION ("A seek before the loop start plays into the loop, then wraps") { loopProbe = 11; }
 
     const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
                         .getChildFile ("dusk-loop-read-"
@@ -114,6 +115,7 @@ TEST_CASE ("loop-aware readForTrack wraps at the loop boundary",
         if (loopProbe == 6) probeEnd = probeStart + 128;
         if (loopProbe == 7) probeEnd = probeStart + 127;
         if (loopProbe == 8) preparedBlock = 256;
+        if (loopProbe == 11) probeTarget = probeStart - 100;
         if (loopProbe == 9)
         {
             probeStart = 0;

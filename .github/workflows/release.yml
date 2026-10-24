@@ -845,9 +845,10 @@ jobs:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       LIBARCHIVE_VERSION: 3.8.7
       LIBARCHIVE_SHA256: d3a8ba457ae25c27c84fd2830a2efdcc5b1d40bf585d4eb0d35f47e99e5d4774
+      PKG_CONFIG_PATH: ""
 
     steps:
-      - name: Checkout Dusk Studio (with sfizz submodule)
+      - name: Checkout Dusk Studio (with dusk-fizz submodule)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           submodules: recursive
@@ -856,8 +857,12 @@ jobs:
           persist-credentials: false
 
       - name: Install build dependencies
-        # lame: libmp3lame for MP3 bounce/export (required by the configure).
-        run: brew install ninja ccache lame libsndfile lilv suil lv2
+        run: brew install ninja ccache meson pkgconf
+
+      - name: Build shared runtime dependencies (pinned, macOS 11)
+        run: |
+          bash scripts/build-macos-runtime-deps.sh "${RUNNER_TEMP}/dusk-runtime"
+          echo "PKG_CONFIG_LIBDIR=${RUNNER_TEMP}/dusk-runtime/lib/pkgconfig:${RUNNER_TEMP}/dusk-runtime/share/pkgconfig" >> "$GITHUB_ENV"
 
       - name: Build static libsodium (pinned)
         # Homebrew's bottle is built for the runner OS, newer than the app's
@@ -980,7 +985,10 @@ jobs:
           # Apple Silicon. No Developer ID, no Hardened Runtime, no notary.
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_PREFIX_PATH="${RUNNER_TEMP}/libarchive;$(brew --prefix)" \
+            -DCMAKE_PREFIX_PATH="${RUNNER_TEMP}/libarchive;${RUNNER_TEMP}/dusk-runtime" \
+            -DSndFile_DIR="${RUNNER_TEMP}/dusk-runtime/lib/cmake/SndFile" \
+            -DLAME_LIBRARY="${RUNNER_TEMP}/dusk-runtime/lib/libmp3lame.dylib" \
+            -DLAME_INCLUDE_DIR="${RUNNER_TEMP}/dusk-runtime/include" \
             -DDUSKSTUDIO_SODIUM_ROOT="${RUNNER_TEMP}/libsodium" \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins" \
@@ -1037,7 +1045,10 @@ jobs:
           set -euo pipefail
           cmake -S . -B build-tests -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_PREFIX_PATH="${RUNNER_TEMP}/libarchive;$(brew --prefix)" \
+            -DCMAKE_PREFIX_PATH="${RUNNER_TEMP}/libarchive;${RUNNER_TEMP}/dusk-runtime" \
+            -DSndFile_DIR="${RUNNER_TEMP}/dusk-runtime/lib/cmake/SndFile" \
+            -DLAME_LIBRARY="${RUNNER_TEMP}/dusk-runtime/lib/libmp3lame.dylib" \
+            -DLAME_INCLUDE_DIR="${RUNNER_TEMP}/dusk-runtime/include" \
             -DDUSKSTUDIO_SODIUM_ROOT="${RUNNER_TEMP}/libsodium" \
             -DDUSKSTUDIO_BUILD_TESTS=ON \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
@@ -1233,11 +1244,8 @@ jobs:
           scripts/verify-package-contents.sh macos "$mnt"
 
       - name: Verify the packaged app launches
-        # The build and the test suite both run against the Homebrew prefix,
-        # so they pass whether or not the .app carries its dependencies. Only
-        # launching the packaged bundle proves it: mount the DMG the user
-        # downloads, scrub the environment so no build-machine path can
-        # satisfy a missing dylib, and require a clean exit.
+        # Check the mounted artifact and launch with a clean environment so
+        # a build-machine dependency cannot hide a missing bundled library.
         run: |
           set -euo pipefail
           shopt -s nullglob
@@ -1259,6 +1267,7 @@ jobs:
               exit 1; }
           trap 'hdiutil detach "$MNT" >/dev/null 2>&1 || true' EXIT
           APP="$MNT/DuskStudio.app"
+          python3 scripts/verify-macos-bundle.py "$APP"
           HELPER="$APP/Contents/MacOS/dusk-studio-plugin-host"
           [[ -x "$HELPER" ]] || {
             echo "::error::packaged app has no plugin sandbox helper" >&2

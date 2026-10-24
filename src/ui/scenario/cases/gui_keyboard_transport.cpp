@@ -1351,8 +1351,11 @@ std::optional<ScenarioResult> runShortcutsShortWindow (GuiHost& host, ScenarioCo
         if (! ctx.expect (size.size() == 4, "the scaled window reported no resize limits"))
         { ctx.complete (ctx.verdict()); return; }
         *compactRequired = host.resizeMainWindow (size[0], kShortHeight);
+        // At 125%, eight logical units make an even native size step, so
+        // rounding the native title-bar constraints preserves the requested size.
+        const int fallbackHeight = ((std::max (kShortHeight, size[3]) + 7) / 8) * 8;
         if (! *compactRequired
-            && ! ctx.expect (host.resizeMainWindow (std::max (size[0], size[2]), std::max (kShortHeight, size[3])),
+            && ! ctx.expect (host.resizeMainWindow (std::max (size[0], size[2]), fallbackHeight),
                              "the window refused its supported minimum size"))
             ctx.complete (ctx.verdict());
     }, [&host] { return std::abs (host.uiScale() - kScale) < 0.001; }, "the UI scale did not change" });

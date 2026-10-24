@@ -51,7 +51,7 @@ key is `packaging/release-signing.pub` in the source repository; download it
 from this release's tag, compare its fingerprint with the one on the project
 site, import it, then check the signature before the hashes:
 
-    VERSION=0.15.1   # this release
+    VERSION=0.16.0   # this release
     curl -fsSLO "https://raw.githubusercontent.com/dusk-audio/dusk-studio/v$VERSION/packaging/release-signing.pub"
     gpg --show-keys --with-fingerprint release-signing.pub
     gpg --import release-signing.pub

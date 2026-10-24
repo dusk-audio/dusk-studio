@@ -41,9 +41,10 @@ jobs:
       SODIUM_SHA256: adbdd8f16149e81ac6078a03aca6fc03b592b89ef7b5ed83841c086191be3349
       LIBARCHIVE_VERSION: 3.8.7
       LIBARCHIVE_SHA256: d3a8ba457ae25c27c84fd2830a2efdcc5b1d40bf585d4eb0d35f47e99e5d4774
+      PKG_CONFIG_PATH: ""
 
     steps:
-      - name: Checkout Dusk Studio (with sfizz submodule)
+      - name: Checkout Dusk Studio (with dusk-fizz submodule)
         uses: actions/checkout@v7
         with:
           submodules: recursive
@@ -55,8 +56,12 @@ jobs:
         # default Makefiles on this many TUs). ccache: object cache that
         # survives across runs via the actions/cache step below, so an
         # unchanged TU isn't recompiled on the next push.
-        # lame: libmp3lame for MP3 bounce/export (required by the configure).
-        run: brew install ninja ccache lame libsndfile lilv suil lv2
+        run: brew install ninja ccache meson pkgconf
+
+      - name: Build shared runtime dependencies (pinned, macOS 11)
+        run: |
+          bash scripts/build-macos-runtime-deps.sh "${RUNNER_TEMP}/dusk-runtime"
+          echo "PKG_CONFIG_LIBDIR=${RUNNER_TEMP}/dusk-runtime/lib/pkgconfig:${RUNNER_TEMP}/dusk-runtime/share/pkgconfig" >> "$GITHUB_ENV"
 
       - name: Compiler identity
         id: compiler
@@ -158,7 +163,10 @@ jobs:
           set -euo pipefail
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_PREFIX_PATH="${RUNNER_TEMP}/libarchive;$(brew --prefix)" \
+            -DCMAKE_PREFIX_PATH="${RUNNER_TEMP}/libarchive;${RUNNER_TEMP}/dusk-runtime" \
+            -DSndFile_DIR="${RUNNER_TEMP}/dusk-runtime/lib/cmake/SndFile" \
+            -DLAME_LIBRARY="${RUNNER_TEMP}/dusk-runtime/lib/libmp3lame.dylib" \
+            -DLAME_INCLUDE_DIR="${RUNNER_TEMP}/dusk-runtime/include" \
             -DDUSKSTUDIO_SODIUM_ROOT="${RUNNER_TEMP}/libsodium" \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins" \
@@ -210,7 +218,10 @@ jobs:
           set -euo pipefail
           cmake -S . -B build-tests -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_PREFIX_PATH="${RUNNER_TEMP}/libarchive;$(brew --prefix)" \
+            -DCMAKE_PREFIX_PATH="${RUNNER_TEMP}/libarchive;${RUNNER_TEMP}/dusk-runtime" \
+            -DSndFile_DIR="${RUNNER_TEMP}/dusk-runtime/lib/cmake/SndFile" \
+            -DLAME_LIBRARY="${RUNNER_TEMP}/dusk-runtime/lib/libmp3lame.dylib" \
+            -DLAME_INCLUDE_DIR="${RUNNER_TEMP}/dusk-runtime/include" \
             -DDUSKSTUDIO_SODIUM_ROOT="${RUNNER_TEMP}/libsodium" \
             -DDUSKSTUDIO_BUILD_TESTS=ON \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \

@@ -821,6 +821,9 @@ std::optional<ScenarioResult> runWorkflow (GuiHost& host, ScenarioContext& ctx)
     } });
     pushCategory (*steps, host, ctx, "all");
     pushWorkClick (*steps, host, ctx, state, "online-item-0", LibraryState::Complete);
+    steps->push_back ({ 0, [] {}, [&host]
+    { return host.sfzLibraryPointer (kStripIndex, "enabled-license-link", 0.5f, false); },
+    "resolved SFZ source controls did not become usable", {}, kSettleBoundMs });
     pushClick (*steps, host, ctx, "source-link");
     pushClick (*steps, host, ctx, "license-link");
     pushClick (*steps, host, ctx, "demo-0");

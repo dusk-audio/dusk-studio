@@ -608,8 +608,11 @@ std::optional<ScenarioResult> runImportTargetShortWindow (GuiHost& host, Scenari
         if (! ctx.expect (size.size() == 4, "the scaled window reported no resize limits"))
         { ctx.complete (ctx.verdict()); return; }
         *compact = host.resizeMainWindow (size[0], kShortHeight);
+        // At 125%, eight logical units make an even native size step, so
+        // rounding the native title-bar constraints preserves the requested size.
+        const int fallbackHeight = ((std::max (kShortHeight, size[3]) + 7) / 8) * 8;
         if (! *compact
-            && ! ctx.expect (host.resizeMainWindow (std::max (size[0], size[2]), std::max (kShortHeight, size[3])),
+            && ! ctx.expect (host.resizeMainWindow (std::max (size[0], size[2]), fallbackHeight),
                              "the window refused its supported minimum size"))
             ctx.complete (ctx.verdict());
     }, [&host] { return std::abs (host.uiScale() - kScale) < 0.001; }, "the UI scale did not change" });
@@ -1594,7 +1597,11 @@ std::optional<ScenarioResult> runImportRefusals (GuiHost& host, ScenarioContext&
         {
             ctx.expect (host.clickFileBrowserControl (false), how + ": the Import browser has no file list");
             host.pressPeerKey ("Home", 0);
-        } });
+        }, [&host, file]
+        {
+            return host.fileBrowserFolder().lexically_normal() == file.parent_path().lexically_normal()
+                   && ! host.fileBrowserScanning();
+        }, how + ": the Import browser did not finish scanning the requested folder", {}, kSettleBoundMs });
         steps->push_back ({ 200, [&host, &ctx, how]
         { ctx.expect (host.clickModalButton ("Open"), how + ": the Import browser has no Open button"); } });
     };
