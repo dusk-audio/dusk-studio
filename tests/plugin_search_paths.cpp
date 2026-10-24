@@ -10,11 +10,14 @@
 #include "../cmake/JuceLv2WindowsPaths.h"
 #endif
 
+#include <algorithm>
 #include <functional>
 #include <future>
 #include <memory>
 #include <optional>
 #include <stdexcept>
+#include <string>
+#include <vector>
 
 namespace
 {
@@ -42,6 +45,47 @@ struct CountingLv2Format : juce::LV2PluginFormat
     }
     int visits = 0;
     std::function<void()> onPrime;
+};
+
+// Searches the way JUCE's VST3 format does: every directory link is followed
+// and nothing records what was visited. The depth cap turns a runaway walk into
+// a failed check instead of a hung test.
+struct LinkFollowingVst3Format : juce::LV2PluginFormat
+{
+    juce::String getName() const override { return "VST3"; }
+    juce::FileSearchPath getDefaultLocationsToSearch() override { return defaults; }
+    bool fileMightContainThisPluginType (const juce::String& file) override { return file.endsWithIgnoreCase (".vst3"); }
+    juce::StringArray searchPathsForPlugins (const juce::FileSearchPath& paths, bool, bool) override
+    {
+        juce::StringArray found;
+        for (int i = 0; i < paths.getNumPaths(); ++i)
+        {
+            searched.push_back (std::filesystem::u8path (paths[i].getFullPathName().toStdString()));
+            walk (found, paths[i], 0);
+        }
+        return found;
+    }
+    void findAllTypesForFile (juce::OwnedArray<juce::PluginDescription>& results, const juce::String& file) override
+    {
+        auto description = std::make_unique<juce::PluginDescription>();
+        description->pluginFormatName = getName();
+        description->name = juce::File (file).getFileNameWithoutExtension();
+        description->fileOrIdentifier = file;
+        results.add (description.release());
+    }
+    void walk (juce::StringArray& found, const juce::File& directory, int depth)
+    {
+        if (depth > 8) { runaway = true; return; }
+        for (const auto& entry : juce::RangedDirectoryIterator (directory, false, "*", juce::File::findFilesAndDirectories))
+        {
+            const auto file = entry.getFile();
+            if (fileMightContainThisPluginType (file.getFullPathName())) found.add (file.getFullPathName());
+            else if (file.isDirectory()) walk (found, file, depth + 1);
+        }
+    }
+    juce::FileSearchPath defaults;
+    std::vector<std::filesystem::path> searched;
+    bool runaway = false;
 };
 
 CountingLv2Format& addCountingLv2 (juce::AudioPluginFormatManager& manager)
@@ -252,6 +296,66 @@ TEST_CASE ("Custom plugin discovery reaches nested vendors and stops at bundle b
     }
     std::atomic<bool> abort { true };
     CHECK (paths::findBundles (roots, ".vst3", &abort).empty());
+}
+
+TEST_CASE ("A custom folder whose links loop finishes discovery in every format that sees it", "[plugins][paths]")
+{
+    Tree tree;
+    const auto custom = tree.directory ("custom");
+    std::error_code linkError;
+    fs::create_directory_symlink (".", custom / "a", linkError);
+    if (! linkError) fs::create_directory_symlink (".", custom / "b", linkError);
+    INFO ("directory links: " << (linkError ? linkError.message() : std::string ("a -> . and b -> .")));
+    const paths::Roots roots { custom };
+    juce::KnownPluginList known;
+    juce::String scanned;
+
+    SECTION ("VST3 keeps JUCE's walk to the default folders and finds custom bundles natively")
+    {
+        const auto standard = tree.directory ("standard/Default.vst3").parent_path();
+        const auto looped = tree.directory ("custom/Vendor/Looped.vst3");
+        LinkFollowingVst3Format format;
+        format.defaults.add (juce::File (standard.u8string()));
+        {
+            juce::PluginDirectoryScanner scanner (known, format,
+                duskstudio::juce_compat::pluginSearchLocations (format, roots), true, {}, false);
+            while (scanner.scanNextFile (false, scanned)) {}
+        }
+        CHECK_FALSE (format.runaway);
+        CHECK (format.searched == std::vector<fs::path> { standard });
+        REQUIRE (known.getNumTypes() == 1);
+        CHECK (fs::u8path (known.getTypes()[0].fileOrIdentifier.toStdString()) == standard / "Default.vst3");
+
+        const auto nativeRoots = paths::extend ({ standard }, roots);
+        auto expected = paths::Roots { standard / "Default.vst3", looped };
+        std::sort (expected.begin(), expected.end());
+        CHECK (paths::findBundles (nativeRoots, ".vst3") == expected);
+        std::atomic<bool> abort { true };
+        CHECK (paths::findBundles (nativeRoots, ".vst3", &abort).empty());
+    }
+    SECTION ("LV2 lists each custom folder once and primes nested bundles")
+    {
+        const auto bundle = tree.directory ("custom/Vendor/Looped.lv2");
+        REQUIRE (dusk::fs::writeStringToFile (bundle / "manifest.ttl", R"ttl(
+@prefix lv2: <http://lv2plug.in/ns/lv2core#> .
+@prefix doap: <http://usefulinc.com/ns/doap#> .
+<urn:duskstudio:test:looped-folder> a lv2:Plugin ;
+ doap:name "Looped folder fixture" ; lv2:binary <missing.so> ;
+ lv2:port [ a lv2:InputPort, lv2:AudioPort ; lv2:index 0 ; lv2:symbol "in" ; lv2:name "Input" ],
+          [ a lv2:OutputPort, lv2:AudioPort ; lv2:index 1 ; lv2:symbol "out" ; lv2:name "Output" ] .
+)ttl"));
+        RegisteredLv2Format registered;
+        auto& format = *registered.format;
+        duskstudio::juce_compat::primeCustomLv2 (format, roots);
+        {
+            juce::PluginDirectoryScanner scanner (known, format,
+                duskstudio::juce_compat::pluginSearchLocations (format, roots), true, {}, false);
+            while (scanner.scanNextFile (false, scanned)) {}
+        }
+        const auto found = known.getTypes();
+        CHECK (std::any_of (found.begin(), found.end(), [] (const auto& item)
+        { return item.fileOrIdentifier == "urn:duskstudio:test:looped-folder"; }));
+    }
 }
 
 TEST_CASE ("Invalid plugin folder settings do not create search roots", "[plugins][paths]")

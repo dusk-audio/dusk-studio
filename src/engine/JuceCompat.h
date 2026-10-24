@@ -37,11 +37,15 @@ inline void addDefaultFormats (juce::AudioPluginFormatManager& fm)
         }
 }
 
+// The folders a format's own search may walk. Custom folders stay out of the
+// VST3 search: JUCE's walk follows directory links with no record of where it
+// has been and never sees a cancel request. The native VST3 scan, whose rows
+// replace the JUCE ones, reaches them through the loop-safe findBundles.
 inline auto pluginSearchLocations (juce::AudioPluginFormat& format,
                                    const pluginpaths::Roots& custom)
 {
     auto locations = format.getDefaultLocationsToSearch();
-    if (format.getName() == "AudioUnit") return locations;
+    if (format.getName() == "AudioUnit" || format.getName() == "VST3") return locations;
     const auto add = [&] (const auto& path) { locations.add (juce::File (path.u8string())); };
     for (const auto& path : custom) add (path);
     locations.removeRedundantPaths();
