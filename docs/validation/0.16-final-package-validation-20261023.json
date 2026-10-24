@@ -138,6 +138,7 @@
     "original_defect": "Both executables minOS11, all14 bundled dylibs minOS15",
     "source_dependency_build_seconds": 87.689,
     "source_dependency_probe": "Writes64stereo frames through FLAC,Vorbis,Opus,MP3; Suil nativeCocoa capability probe; each capability independently disabled/fails/restored/passes",
+    "source_dependency_probe_correction": "Added 2026-10-24 (#922): the Suil Cocoa check calls suil_ui_supported with the same Cocoa type for host and UI, which suil accepts however it was built. It cannot fail on a working suil, so it shows only that suil links and answers the query, not native Cocoa UI support. The line above is left as recorded.",
     "bundle_verifier_controls": {
       "observations": 91,
       "red": 41,
