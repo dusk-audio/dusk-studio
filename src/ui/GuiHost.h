@@ -82,6 +82,10 @@ public:
     // The mode selector shows mode, a Track::Mode, and the input rows are the ones
     // that mode uses.
     virtual bool modeControlsMatch (int mode) const = 0;
+   #if defined (_WIN32) && DUSKSTUDIO_HAS_NATIVE_UI
+    virtual std::function<bool()> captureBuiltinEditorHiddenProbe() const = 0;
+    virtual bool builtinEditorDisposed() const = 0;
+   #endif
 };
 
 // One aux lane's plug-in slots.

@@ -1082,6 +1082,7 @@ std::optional<ScenarioResult> runUnsavedSessionSparesUntitled (GuiHost& host, Sc
     namespace fs = std::filesystem;
     auto& engine = ctx.engine();
     auto& session = ctx.session();
+    auto& transport = engine.getTransport();
     if (! engine.getTransport().isStopped() || ! host.modalStackEmpty()
         || ! engine.isAudioCallbackRegistered() || ! host.autosaveRunning() || host.engineDetached())
         return ScenarioResult::skip ("requires a stopped transport, no modal, and live audio and autosave");
@@ -1097,7 +1098,9 @@ std::optional<ScenarioResult> runUnsavedSessionSparesUntitled (GuiHost& host, Sc
     const auto originalDir = currentSessionDirectory (session);
     const auto restore = ctx.tempDir() / "restore.json";
     if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save session");
-    ctx.cleanup ([&host, &engine, &session, originalDir, restore, privateDir]
+    ctx.cleanup ([&host, &engine, &session, &transport, originalDir, restore, privateDir,
+                  loop = transport.isLoopEnabled(), loopStart = transport.getLoopStart(), loopEnd = transport.getLoopEnd(),
+                  punch = transport.isPunchEnabled(), punchIn = transport.getPunchIn(), punchOut = transport.getPunchOut()]
     {
         engine.stop();
         session.setTrackArmed (0, false);
@@ -1105,9 +1108,16 @@ std::optional<ScenarioResult> runUnsavedSessionSparesUntitled (GuiHost& host, Sc
         engine.reattachAudioCallback();
         reopenSavedSession (host, restore);
         applySessionDirectory (session, originalDir);
+        transport.setLoopRange (loopStart, loopEnd);
+        transport.setLoopEnabled (loop);
+        transport.setPunchRange (punchIn, punchOut);
+        transport.setPunchEnabled (punch);
         std::error_code ignored;
         fs::remove_all (privateDir, ignored);
     });
+
+    transport.setLoopEnabled (false);
+    transport.setPunchEnabled (false);
 
     const auto untitled = ctx.tempDir() / "Untitled";
     fs::create_directories (untitled / "audio");

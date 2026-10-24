@@ -1729,6 +1729,35 @@ std::optional<ScenarioResult> runNativeDialogKeys (GuiHost& host, ScenarioContex
         return strip != nullptr && strip->hasOpenBuiltinEditor();
     };
     atWindow ("Utility's knob panel", utilityUp);
+   #if defined (_WIN32)
+    auto utilityHidden = std::make_shared<std::function<bool()>>();
+    steps->push_back ({ 100, [&host, &ctx, utilityHidden]
+    {
+        if (auto* strip = host.strip (0)) *utilityHidden = strip->captureBuiltinEditorHiddenProbe();
+        if (! ctx.expect ((bool) *utilityHidden, "Utility had no confirmed visible native child before Save As"))
+        {
+            ctx.complete (ctx.verdict());
+            return;
+        }
+        host.pressPeerKey ("command + shift + S");
+    } });
+    steps->push_back ({ 400, [&host, &ctx, utilityHidden]
+    {
+        ctx.expect (host.modalText().rfind ("Save session as...", 0) == 0,
+                    "Cmd+Shift+S over Utility's knob panel showed '" + host.modalText() + "' rather than Save As");
+        ctx.expect (*utilityHidden && (*utilityHidden)(),
+                    "Utility's confirmed native child was not hidden or destroyed over the Save As browser");
+    } });
+    steps->push_back ({ 0, [&host, &ctx]
+    {
+        drainModals (host);
+        ctx.expect (host.openAudioSettings(), "Audio settings did not open");
+    }, [&host]
+    {
+        const auto* strip = host.strip (0);
+        return strip != nullptr && strip->builtinEditorDisposed();
+    }, "Utility's editor or dimmer was not disposed after Save As", {}, 3000 });
+   #else
     steps->push_back ({ 100, [&host] { host.pressPeerKey ("command + shift + S"); } });
     steps->push_back ({ 400, [&host, &ctx, utilityUp]
     {
@@ -1738,6 +1767,7 @@ std::optional<ScenarioResult> runNativeDialogKeys (GuiHost& host, ScenarioContex
         drainModals (host);
         ctx.expect (host.openAudioSettings(), "Audio settings did not open");
     } });
+   #endif
 
     // Audio settings: every key at the window, then the panel's own.
     atWindow ("Audio settings", [&host] { return host.audioSettingsOpen(); });

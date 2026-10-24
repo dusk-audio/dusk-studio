@@ -131,6 +131,12 @@ public:
     bool builtinPointerForScenario (const std::string& control, float position, bool pressed);
     void closeBuiltinForScenario() { closeBuiltinEditorPopup(); }
     bool hasOpenBuiltinEditorForScenario() const noexcept { return isBuiltinEditorOpen(); }
+   #if defined (_WIN32) && DUSKSTUDIO_HAS_NATIVE_UI
+    const auto* builtinPanelForScenario() const noexcept { return builtinEditorWindow.get(); }
+    const auto* builtinPluginEditorForScenario() const noexcept { return builtinPluginEditor.get(); }
+    bool builtinEditorDisposedForScenario() const noexcept
+    { return ! isBuiltinEditorOpen() && builtinEditorDim == nullptr; }
+   #endif
 
     void paint (juce::Graphics&) override;
     void resized() override;
