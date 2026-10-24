@@ -4859,13 +4859,14 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     {
         auto* self = safeThis.getComponent();
         if (self == nullptr) return;
-        bool modalOpen = ! EmbeddedModal::activeModalStack().empty()
-                      || juce::ModalComponentManager::getInstance()->getNumModalComponents() != 0;
+        bool modalOpen = juce::ModalComponentManager::getInstance()->getNumModalComponents() != 0;
        #if DUSKSTUDIO_HAS_NATIVE_UI
         modalOpen = modalOpen || imgui::DuskPanelWindow::hasOpenModal()
                    || (self->notepadWindow != nullptr && self->notepadWindow->isOpen());
        #endif
-        // Parent activation also takes native focus, so a newer dialog must keep it.
+        // Parent activation also takes native focus, so a dialog in its own
+        // window must keep it. An in-window alert raised by the load lives in
+        // this peer, and focusCanvasOrTopModal hands the keyboard to it.
         if (! modalOpen)
         {
             if (auto* peer = self->getPeer())
