@@ -483,6 +483,10 @@ TEST_CASE ("SFZ Instruments does not accept SPDX hints without actual matching l
     { secondaryLicense (kLicenseText + "except the organ, CC BY-NC-SA 4.0"); }
     SECTION ("A sidecar prohibits commercial use in prose")
     { secondaryLicense (kLicenseText + "Commercial use is not permitted."); }
+    SECTION ("A sidecar declares a bare hyphenated NonCommercial element")
+    { secondaryLicense (kLicenseText + "Samples: BY-NC."); }
+    SECTION ("A sidecar declares a bare NoDerivatives element with an em dash")
+    { secondaryLicense (kLicenseText + "Drums: BY\xe2\x80\x94ND."); }
     SECTION ("A differently named license document conflicts")
     { secondaryLicense ("https://creativecommons.org/licenses/by-sa/4.0/", "Samples/LICENCE-MAPPINGS"); }
     SECTION ("A document in a licensing directory is unestablished")
