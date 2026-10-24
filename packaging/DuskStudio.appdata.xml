@@ -30,6 +30,15 @@
   <content_rating type="oars-1.1"/>
   <releases>
     <!-- scripts/bump-version.sh prepends new <release> entries here. -->
+    <release version="0.16.0" date="2026-10-24">
+      <description>
+        <p>MIDI Merge layers performances into a region, with one undo step per loop pass while recording continues. The piano roll shows incoming notes live. Browse CC0, CC BY and CC BY-SA SFZ instruments from SFZ Instruments, Musical Artifacts, FreePats and Versilian Studios, then download them to your installed library. Sessions keep the exact installed pack reference across computers. Playback readers share three fill workers and keep sample buffers near the playhead.
+
+The mastering stage adds multiband phase analysis with held warnings, coherence and mono-loss readings. Its Mono monitor checks the fold-down while exports stay stereo.
+
+Sessions save in format 11, which Dusk Studio 0.15.1 and earlier cannot open. Keep a copy before saving if you need to use an older version.</p>
+      </description>
+    </release>
     <release version="0.15.1" date="2026-10-11">
       <description>
         <p>The piano roll follows the takes you record over its region, and playing the virtual keyboard during a take no longer changes the earlier take.</p>
