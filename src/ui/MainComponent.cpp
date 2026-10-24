@@ -2588,9 +2588,7 @@ void MainComponent::openAudioSettings()
             filebrowser::Options options;
             options.title = "Choose SFZ library folder";
             options.selectDirectories = true;
-            const auto root = owner->engine.getSfzLibrary().snapshot().locations.active.root;
-            using Folder = decltype (options.initialFileOrDirectory);
-            options.initialFileOrDirectory = Folder (root.u8string().c_str());
+            options.initialFileOrDirectory = toFile (owner->engine.getSfzLibrary().snapshot().locations.active.root);
             filebrowser::open (*owner, std::move (options), [safeThis, moveExisting] (auto folder)
             {
                 auto* back = safeThis.getComponent();
@@ -2621,20 +2619,16 @@ void MainComponent::openAudioSettings()
             filebrowser::Options options;
             options.title = "Add plug-in folder";
             options.selectDirectories = true;
-            const auto roots = pluginpaths::load();
-            if (! roots.empty())
-            {
-                using Folder = decltype (options.initialFileOrDirectory);
-                options.initialFileOrDirectory = Folder (roots.back().u8string().c_str());
-            }
+            const auto roots = pluginpaths::stored();
+            if (! roots.empty()) options.initialFileOrDirectory = toFile (roots.back());
             filebrowser::open (*owner, std::move (options), [safeThis] (auto folder)
             {
                 auto* back = safeThis.getComponent();
                 if (back == nullptr) return;
                 if (folder.isDirectory())
                 {
-                    auto updatedFolders = pluginpaths::load();
-                    updatedFolders.push_back (std::filesystem::u8path (folder.getFullPathName().toStdString()));
+                    auto updatedFolders = pluginpaths::stored();
+                    updatedFolders.push_back (toPath (folder));
                     std::string error;
                     if (! pluginpaths::save (updatedFolders, error))
                     {

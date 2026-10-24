@@ -166,6 +166,67 @@ std::optional<ScenarioResult> runPluginFolders (GuiHost& host, ScenarioContext& 
    #endif
 }
 
+// The browser opens at the last custom folder. A non-ASCII name must reach it
+// intact, or the browser falls back to the nearest parent that exists.
+std::optional<ScenarioResult> runPluginFolderUnicodeStart (GuiHost& host, ScenarioContext& ctx)
+{
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("requires native settings");
+   #else
+    if (! ctx.engine().getTransport().isStopped() || ! host.modalStackEmpty() || host.audioSettingsOpen())
+        return ScenarioResult::skip ("requires stopped transport and no open dialog");
+    namespace fs = std::filesystem;
+    const auto settings = pluginpaths::settingsFile();
+    const bool existed = fs::exists (settings);
+    const auto saved = dusk::fs::loadFileAsString (settings);
+    ctx.cleanup ([&host, settings, existed, saved]
+    {
+        drainModals (host);
+        host.closeAudioSettings();
+        if (existed) dusk::fs::writeStringToFile (settings, saved);
+        else { std::error_code error; fs::remove (settings, error); }
+    });
+    const auto folder = fs::canonical (ctx.tempDir()) / fs::u8path ("Jos\xc3\xa9 \xe9\x9f\xb3\xe8\x89\xb2");
+    if (! fs::create_directory (folder)) return ScenarioResult::fail ("could not create the Unicode folder fixture");
+    std::string settingsError;
+    if (! pluginpaths::save ({ folder }, settingsError)) return ScenarioResult::fail (settingsError);
+    auto steps = std::make_shared<std::vector<Step>>();
+    const auto click = [&] (std::string control)
+    {
+        steps->push_back ({ 0, [&host, &ctx, control]
+        { ctx.expect (host.clickAudioSettingsControl (control), "Settings control could not be clicked: " + control); },
+        [&host, control] { return host.pointerAudioSettings (control, 0.5f, false); },
+        "Settings control did not appear: " + control, {}, kSettleBoundMs });
+    };
+    steps->push_back ({ 0, [&host, &ctx] { ctx.expect (host.openAudioSettings(), "Settings did not open"); } });
+    click ("tab-plugins");
+    click ("plugin-folder-add");
+    steps->push_back ({ 0, [&host, &ctx, folder]
+    {
+        std::error_code sameError;
+        ctx.expect (fs::equivalent (host.fileBrowserFolder(), folder, sameError) && ! sameError,
+                    "the plug-in folder browser opened at " + host.fileBrowserFolder().u8string()
+                    + " instead of the stored folder");
+        ctx.expect (host.clickModalButton ("Cancel"), "plug-in folder picker could not be cancelled");
+    }, [&host] { return ! host.fileBrowserFolder().empty() && ! host.fileBrowserScanning(); },
+    "plug-in folder browser did not open", {}, kSettleBoundMs });
+    steps->push_back ({ 0, [&ctx, folder]
+    { ctx.expect (pluginpaths::stored() == pluginpaths::Roots { folder }, "Cancel changed the custom folder list"); },
+    [&host] { return host.audioSettingsOpen() && host.modalStackEmpty(); }, "Cancel did not return to Settings", {}, kSettleBoundMs });
+    steps->push_back ({ 0, [&host] { host.closeAudioSettings(); } });
+    steps->push_back ({ 0, [] {}, [&host] { return ! host.audioSettingsOpen(); },
+    "Settings did not close at the end of the Unicode folder check", {}, kSettleBoundMs });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+   #endif
+}
+
+const ScenarioRegistrar pluginFolderUnicodeStart { Scenario {
+    "gui.settings_plugin_folder_unicode_start", { "gui", "settings", "plugins" }, Needs::Engine | Needs::Gui,
+    {}, {}, 60000, [] (GuiHost& host, ScenarioContext& ctx) { return runPluginFolderUnicodeStart (host, ctx); }
+} };
 const ScenarioRegistrar pluginFolders { Scenario {
     "gui.settings_plugin_folders", { "gui", "settings", "plugins" }, Needs::Engine | Needs::Gui,
     {}, {}, 90000, [] (GuiHost& host, ScenarioContext& ctx) { return runPluginFolders (host, ctx); }
