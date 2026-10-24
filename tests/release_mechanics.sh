@@ -627,6 +627,34 @@ if [[ "$(cat "$FIXTURE/VERSION")" != "9.9.9" ]]; then
     exit 1
 fi
 
+# Blank lines in the notes separate paragraphs: software centres show each <p>
+# as one run of text, so every paragraph needs its own.
+FIXTURE_PARAGRAPHS="$SCRATCH/repo-paragraphs"
+mkdir -p "$FIXTURE_PARAGRAPHS/scripts" "$FIXTURE_PARAGRAPHS/packaging"
+cp "$SOURCE_ROOT/scripts/bump-version.sh" "$FIXTURE_PARAGRAPHS/scripts/bump-version.sh"
+printf '0.0.0\n' > "$FIXTURE_PARAGRAPHS/VERSION"
+printf '## [9.9.9] - Unreleased\n' > "$FIXTURE_PARAGRAPHS/CHANGELOG.md"
+printf '%s\n' \
+    '<?xml version="1.0" encoding="UTF-8"?>' \
+    '<component>' \
+    '  <releases>' \
+    '    <!-- scripts/bump-version.sh prepends new <release> entries here. -->' \
+    '  </releases>' \
+    '</component>' \
+    > "$FIXTURE_PARAGRAPHS/packaging/DuskStudio.appdata.xml"
+printf '%s\n' '<!-- summary-start -->' 'old' '<!-- summary-end -->' \
+    > "$FIXTURE_PARAGRAPHS/packaging/RELEASE-NOTES.md"
+PARAGRAPH_NOTES=$(printf 'First & <one>.\n\nSecond paragraph.\n \n\nThird paragraph.')
+(cd "$FIXTURE_PARAGRAPHS" && bash scripts/bump-version.sh 9.9.9 "$PARAGRAPH_NOTES" >/dev/null)
+"$PYTHON" - "$FIXTURE_PARAGRAPHS/packaging/DuskStudio.appdata.xml" <<'PY'
+import sys
+import xml.etree.ElementTree as ET
+
+release = ET.parse(sys.argv[1]).getroot().find("./releases/release")
+paragraphs = [p.text for p in release.findall("./description/p")]
+assert paragraphs == ["First & <one>.", "Second paragraph.", "Third paragraph."], paragraphs
+PY
+
 # Missing release metadata must abort atomically instead of returning success
 # after writing only VERSION.
 FIXTURE_MISSING="$SCRATCH/repo-missing-appdata"

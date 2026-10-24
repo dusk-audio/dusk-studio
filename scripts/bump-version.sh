@@ -249,11 +249,21 @@ if [[ -f "$APPDATA" ]]; then
     # Compose the new <release> block in a temp file (real newlines) and have
     # awk splice it after the one valid anchor. awk reads the multi-line block
     # from a file because BSD awk rejects literal newlines in -v assignments.
+    # Blank lines separate paragraphs, and each paragraph becomes its own <p>:
+    # software centres show a <p> as one run of text.
     RELEASE_FILE=$(mktemp -t duskstudio-release.XXXXXX)
     XML_NOTES=$(printf '%s' "$NOTES" \
         | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g')
-    printf '    <release version="%s" date="%s">\n      <description>\n        <p>%s</p>\n      </description>\n    </release>\n' \
-        "$NEW_VERSION" "$TODAY" "$XML_NOTES" > "$RELEASE_FILE"
+    {
+        printf '    <release version="%s" date="%s">\n      <description>\n' "$NEW_VERSION" "$TODAY"
+        printf '%s\n' "$XML_NOTES" | awk '
+            function flush() { if (paragraph != "") print "        <p>" paragraph "</p>"; paragraph = "" }
+            /^[ \t]*$/ { flush(); next }
+            { paragraph = (paragraph == "") ? $0 : (paragraph "\n" $0) }
+            END { flush() }
+        '
+        printf '      </description>\n    </release>\n'
+    } > "$RELEASE_FILE"
 
     AWK_STATUS=0
     awk -v release_file="$RELEASE_FILE" -v anchor="$ANCHOR" '
