@@ -44,7 +44,7 @@ Dusk Studio includes:
 - No more than 24 tracks. The limit is fixed.
 - No reorderable signal chain. EQ is always before the compressor; the compressor is always before the fader. No chains of seventeen plugins on a single channel.
 - No sample-level audio editing. Regions can be moved, split, trimmed, faded, normalised, and gained. The waveform itself is not editable.
-- Console-style automation. Ride the fader, pan, mute, or an aux send with Write/Touch/Read and the program records the move. For touch-up, the audio region editor's breakpoint lane lets you add, drag, and delete points, or draw a freehand stroke with the Draw tool to lay a run of points at once. Segments stay linear between points; no spline/bezier shaping.
+- Console-style automation. Ride the fader, pan, mute, or an aux send with Write/Touch/Read and the program records the move during playback. For touch-up, the audio region editor's breakpoint lane lets you add, drag, and delete points, or draw a freehand stroke with the Draw tool to lay a run of points at once. Segments stay linear between points; no spline/bezier shaping.
 - No preferences sprawl. The only preferences panel is for audio device configuration.
 - No tabs, no hidden panes, no project-explorer-trees-within-trees.
 
@@ -120,7 +120,7 @@ Switch to **MIXING** stage. The input block on each strip collapses into a small
 
 Mix top-down: shape EQ first, then ride the compressor, then balance with faders. Save your aux sends for finishing touches (reverb on aux 1, tape delay on aux 2, etc.).
 
-For console-style automation, click the small mode label below a fader and pick OFF, READ, WRITE or TOUCH from the menu. WRITE records every move while the transport rolls; TOUCH only writes while you are physically touching the control.
+For console-style automation, click the small mode label below a fader and pick OFF, READ, WRITE or TOUCH from the menu. WRITE records every move during playback; TOUCH only writes while you are physically touching the control. Neither records while a take is recording.
 
 ## Bounce
 
@@ -898,7 +898,7 @@ A vertical fader with a range of **−∞ dB** (true mute, below −90 dB floor)
 - Click the dB readout beneath the fader to type a precise value.
 - Right-click to enter MIDI Learn mode (the next CC you move binds to this fader).
 
-The fader is automatable. The automation modes are **OFF** (no automation), **READ** (play back recorded automation), **WRITE** (record automation continuously while transport rolls), and **TOUCH** (record while you are touching the control; revert to read when you release). Click the small mode label below the fader to pick a mode from a menu.
+The fader is automatable. The automation modes are **OFF** (no automation), **READ** (play back recorded automation), **WRITE** (record automation continuously during playback), and **TOUCH** (record while you are touching the control during playback; revert to read when you release). Neither records while a take is recording. Click the small mode label below the fader to pick a mode from a menu.
 
 ## Mute, Solo, Phase
 
@@ -1725,10 +1725,12 @@ Each channel strip, each bus, each aux return, and the master strip have an auto
 
 - **OFF**: the fader does what you do. No recording, no playback of past rides.
 - **READ**: previously recorded automation drives the fader during playback. The automated controls are locked, and nothing you do is recorded.
-- **WRITE**: every fader movement is recorded for as long as the transport rolls. Existing automation in the region played over is overwritten.
-- **TOUCH**: while you are touching the fader, your movement is recorded. When you let go, the automation reverts to the previously recorded value via a short ramp.
+- **WRITE**: every fader movement is recorded for as long as playback runs. Existing automation in the region played over is overwritten.
+- **TOUCH**: while you are touching the fader during playback, your movement is recorded. When you let go, the automation reverts to the previously recorded value via a short ramp.
 
 The same modes apply to pan, mute, and solo. Pan rides like the fader; mute and solo are discrete on/off toggles, so they record only in WRITE (in READ/TOUCH the recorded lane drives them). On a bus the automatable controls are the fader, pan, and mute (bus solo is manual-only).
+
+WRITE and TOUCH record during playback only. Channel strips, buses, aux returns and the master write nothing while a take is recording, and pressing **Record** during playback ends the pass there. To record a mix move, play the song back with the strip in WRITE or TOUCH.
 
 Dusk Studio's automation is console-first: you ride the controls and the program writes what you did. For touch-up, the audio region editor exposes a per-parameter breakpoint lane - add, drag, and delete points individually, or switch to the Draw tool and draw a freehand stroke to lay a run of points at once. Segments stay linear between points; there is no spline/bezier shaping.
 
