@@ -103,7 +103,7 @@ public:
                            AudioSettingsHost hostCallbacks)
         : deviceManager (dm), engine (e), session (s), host (std::move (hostCallbacks))
     {
-        pluginFolders = pluginpaths::load();
+        pluginFolders = pluginpaths::stored();
         selector = std::make_unique<AudioDeviceSelector> (
             dm,
             [this] (std::string title, std::string message)

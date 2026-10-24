@@ -5,7 +5,7 @@
 
 namespace duskstudio::lv2
 {
-std::vector<ScannedLv2> Lv2Scanner::scan (const std::atomic<bool>* abort)
+std::vector<ScannedLv2> Lv2Scanner::scan (const std::atomic<bool>* abort, bool* walkError)
 {
     std::vector<ScannedLv2> found;
     if (abort != nullptr && abort->load (std::memory_order_relaxed)) return found;
@@ -13,7 +13,7 @@ std::vector<ScannedLv2> Lv2Scanner::scan (const std::atomic<bool>* abort)
     LilvWorld* world = lilv_world_new();
     if (world == nullptr) return found;
     lilv_world_load_all (world);   // $LV2_PATH, else the spec default directories
-    for (const auto& bundle : pluginpaths::findBundles (pluginpaths::load(), ".lv2", abort))
+    for (const auto& bundle : pluginpaths::findBundles (pluginpaths::load(), ".lv2", abort, walkError))
     {
         if (abort != nullptr && abort->load (std::memory_order_relaxed)) break;
         const auto path = bundle.u8string() + "/";

@@ -1206,7 +1206,7 @@ std::uint32_t handleLoadPlugin (HostState& host,
                         + std::chrono::milliseconds (kHostLifecycleWaitMs);
     if (desc.pluginFormatName == "LV2"
         && runOnHostMessageThreadAndWait ([&host]
-        { duskstudio::juce_compat::primeCustomLv2 (host.formatManager); }, kHostLifecycleWaitMs)
+        { duskstudio::juce_compat::primeCustomLv2 (host.formatManager, duskstudio::pluginpaths::load()); }, kHostLifecycleWaitMs)
             != HostDispatchResult::Done)
         return kControlStatusLifecycleFailed;
 
@@ -1916,7 +1916,7 @@ int runScan (int argc, const char* const* argv) noexcept
     }
 
     juce::OwnedArray<juce::PluginDescription> found;
-    if (formatName == "LV2") duskstudio::juce_compat::primeCustomLv2 (fm);
+    if (formatName == "LV2") duskstudio::juce_compat::primeCustomLv2 (fm, duskstudio::pluginpaths::load());
     chosen->findAllTypesForFile (found, fileOrId);   // may crash/hang - that is the point
 
     const auto payload = duskstudio::scanproto::makePayload (
