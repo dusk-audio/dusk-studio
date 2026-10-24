@@ -545,6 +545,12 @@ TEST_CASE ("SFZ Instruments does not accept SPDX hints without actual matching l
     { transport.replies = githubReplies (kLicenseText + "CC\tBY -\nND 4.0"); }
     SECTION ("Markdown formatting does not hide a restricted identifier")
     { transport.replies = githubReplies (kLicenseText + "CC **BY-NC** 4.0"); }
+    SECTION ("A bare versioned NonCommercial identifier conflicts with the primary grant")
+    { transport.replies = githubReplies (kLicenseText + "The choir recordings are BY-NC 4.0."); }
+    SECTION ("A bare NonCommercial ShareAlike identifier conflicts with the primary grant")
+    { transport.replies = githubReplies (kLicenseText + "The organ samples are BY-NC-SA."); }
+    SECTION ("A bare versioned NoDerivatives identifier conflicts with the primary grant")
+    { transport.replies = githubReplies (kLicenseText + "Drums: BY-ND 3.0"); }
     SECTION ("A nonbreaking hyphen does not hide a restricted identifier")
     { transport.replies = githubReplies (kLicenseText + "CC BY\xe2\x80\x91ND 4.0"); }
     SECTION ("Commercial use is explicitly prohibited despite the primary grant")

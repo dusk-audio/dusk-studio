@@ -560,6 +560,15 @@ std::optional<CcLicense> licenseText (const std::string& text, const std::string
                                         "no derivatives", "no derivative works", "no modifications",
                                         "no commercial use", "not for commercial", "personal use only" })
             if (wording.find (restriction) != std::string::npos) return {};
+        // A bare "BY-NC" is an author credit ("by NC Audio") unless a version or
+        // another licence element follows it.
+        for (const std::string restricted : { " by nc ", " by nd " })
+            for (auto at = wording.find (restricted); at != std::string::npos; at = wording.find (restricted, at + 1))
+            {
+                const auto next = wording.substr (at + restricted.size(), 3);
+                if ((! next.empty() && next[0] >= '0' && next[0] <= '9')
+                    || next == "sa " || next == "nc " || next == "nd ") return {};
+            }
     }
     return actual;
 }
