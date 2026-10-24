@@ -95,10 +95,32 @@ ScenarioResult playSnapsToLoopStart (ScenarioContext& ctx)
         ctx.expect (transport.getLocateCount() == serial, "a pending loop seek changed its serial");
         engine.getPlaybackEngine().holdLocateReadyForTest (false);
         ctx.pump (1);
-        const auto normalized = target < 1000 ? 1000 : 2000;
-        ctx.expect (transport.getCommittedPlayhead() == normalized + ScenarioContext::kBlockSize,
-                    "a committed loop seek did not normalize to the loop range");
+        // A seek before the loop plays from there into it; one past its end wraps in.
+        const auto landed = target < 1000 ? target : 2000;
+        ctx.expect (transport.getCommittedPlayhead() == landed + ScenarioContext::kBlockSize,
+                    "a loop seek to " + std::to_string (target) + " committed at "
+                        + std::to_string (transport.getCommittedPlayhead() - ScenarioContext::kBlockSize)
+                        + ", not " + std::to_string (landed));
         ctx.expect (transport.getLocateCount() == serial + 1, "a ready loop seek did not commit once");
+        if (target >= 1000) continue;
+        auto before = transport.getCommittedPlayhead();
+        bool wrapped = false;
+        for (int block = 0; block < 64 && ! wrapped; ++block)
+        {
+            ctx.pump (1);
+            const auto after = transport.getCommittedPlayhead();
+            wrapped = after < before;
+            if (! wrapped)
+                ctx.expect (after == before + ScenarioContext::kBlockSize,
+                            "playback from before the loop did not run straight on at " + std::to_string (before));
+            else
+                ctx.expect (before + ScenarioContext::kBlockSize >= 4000
+                                && after == 1000 + before + ScenarioContext::kBlockSize - 4000,
+                            "playback from before the loop wrapped from " + std::to_string (before)
+                                + " to " + std::to_string (after) + " instead of at the loop end");
+            before = after;
+        }
+        ctx.expect (wrapped, "playback from before the loop never reached the loop end");
     }
     engine.stop();
     return ctx.verdict();

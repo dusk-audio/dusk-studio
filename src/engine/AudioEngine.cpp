@@ -4896,12 +4896,11 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         if (getStage() == Stage::Mastering) return true;
         if (locateLoops)
         {
+            // A target before the loop plays on into it, as the end-of-block
+            // wrap only folds positions past the loop end.
             const auto start = transportLoopStart, end = transportLoopEnd;
-            if (start >= 0 && end > start)
-            {
-                if (target < start) target = start;
-                else if (target >= end) target = start + (target - end) % (end - start);
-            }
+            if (start >= 0 && end > start && target >= end)
+                target = start + (target - end) % (end - start);
         }
         keepSeek = true;
         return playbackEngine.locateReadyRt (target, numSamples,
