@@ -166,6 +166,11 @@ canonical source.
   changing a no-device import's timeline rate or clearing a finished master
   export's loudness readings. Hot-plug and explicit MIDI refreshes wait until
   an offline bounce, stem export or freeze finishes.
+- **MIDI Press bindings.** Press mode fires only when a button goes down, as
+  the manual describes: a controller value rising to 64 or more, or a note-on.
+  A value repeated while the button is held no longer fires it again. A button
+  that sends 127 and never a release value fires once in Press mode; set its
+  binding to Toggle.
 
 ## [0.15.1] - 2026-10-11
 
