@@ -1970,6 +1970,22 @@ bool AudioEngine::hasPendingMultisampleLoad (int trackIndex) const
         && multisampleLoads->pending[static_cast<std::size_t> (trackIndex)];
 }
 
+std::string AudioEngine::pendingMultisampleName (int trackIndex) const
+{
+    if (! hasPendingMultisampleLoad (trackIndex)) return {};
+    const auto& request = multisampleLoads->deferred[static_cast<std::size_t> (trackIndex)];
+    if (! request) return {};
+    if (! request->path.empty()) return request->path.stem().u8string();
+    return request->locator ? std::filesystem::u8path (request->locator->relativePath).stem().u8string() : std::string {};
+}
+
+// Deferred loads are submitted only once a device gives them a rate and block
+// size, so with none open they cannot finish however long a render waits.
+bool AudioEngine::multisampleLoadsAwaitDevice() const
+{
+    return hasPendingMultisampleLoads() && (getCurrentSampleRate() <= 0.0 || getCurrentBlockSize() <= 0);
+}
+
 void AudioEngine::serviceMultisampleLoads()
 {
     if (recordManager.isActive() || offlineRenderActive.load (std::memory_order_acquire)

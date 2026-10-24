@@ -1,6 +1,7 @@
 #include "../Scenario.h"
 #include "../ScenarioContext.h"
 #include "../../AudioEngine.h"
+#include "../../BounceEngine.h"
 #include "../../RecordManager.h"
 #include "../../device/DeviceManager.h"
 #include "../../device/IODevice.h"
@@ -14,6 +15,8 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 namespace duskstudio::scenario
@@ -238,6 +241,42 @@ ScenarioResult noDeviceRefusesRecord (ScenarioContext& ctx)
 }
 
 #if DUSKSTUDIO_HAS_MULTISAMPLE
+// Restored instruments wait for a device before they load, so with none open a
+// render refusal has to say how to unblock them rather than ask for patience.
+ScenarioResult noDeviceExplainsPendingSoundfontRender (ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    restoreOfflinePrepare (ctx);
+    const auto soundfont = ctx.tempDir() / "waiting.sfz";
+    if (! ctx.expect (dusk::fs::writeStringToFile (soundfont, "<region> sample=*sine key=60"),
+                      "could not create the waiting instrument"))
+        return ctx.verdict();
+    ctx.cleanup ([&engine] { engine.cancelNativeMultisampleLoad (kTrack); });
+
+    StubDevice device { ScenarioContext::kSampleRate, ScenarioContext::kBlockSize };
+    engine.audioDeviceAboutToStart (&device);
+    engine.audioDeviceStopped();
+    if (! ctx.expect (engine.requestNativeMultisampleLoad (kTrack, soundfont, {}, {}, -1, true),
+                      "could not queue the restored instrument"))
+        return ctx.verdict();
+    engine.serviceMultisampleLoads();
+    ctx.expect (engine.hasPendingMultisampleLoads() && engine.multisampleLoadsAwaitDevice(),
+                "the restored instrument did not wait for a device");
+
+    using SessionFile = std::decay_t<decltype (std::declval<const Session&>().getSessionDirectory())>;
+    const SessionFile output ((ctx.tempDir() / "render.wav").u8string().c_str());
+    const std::string expected = "Soundfonts cannot finish loading with no audio device open. "
+                                 "Open Settings \xE2\x86\x92 Audio and select a device, then render again.";
+    BounceEngine bounce (engine, ctx.session());
+    ctx.expect (! bounce.start (output, ScenarioContext::kSampleRate, 256),
+                "a mix render started with no device to load its instrument");
+    ctx.expect (bounce.getLastError() == expected, "the mix refusal did not ask for a device: " + bounce.getLastError());
+    ctx.expect (! bounce.startFreeze (kTrack, output, 48000, ScenarioContext::kSampleRate, 256),
+                "a freeze started with no device to load its instrument");
+    ctx.expect (bounce.getLastError() == expected, "the freeze refusal did not ask for a device: " + bounce.getLastError());
+    return ctx.verdict();
+}
+
 enum class TakeEnd { Mastering, DeviceStop, DeviceLost, ForeignDeviceStop, OfflineDetach };
 
 std::optional<ScenarioResult> interruptedTakeResumesAssets (ScenarioContext& ctx, TakeEnd route)
@@ -398,6 +437,9 @@ const ScenarioRegistrar foreignStopRegistrar { Scenario {
 const ScenarioRegistrar offlineDetachRegistrar { Scenario {
     "device.offline_handoff_finalizes_capture", { "device", "record", "midi", "sfz", "bounce" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return interruptedTakeResumesAssets (ctx, TakeEnd::OfflineDetach); } } };
+const ScenarioRegistrar noDeviceSoundfontRenderRegistrar { Scenario {
+    "device.none_open_explains_pending_soundfont_render", { "device", "sfz", "bounce" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return noDeviceExplainsPendingSoundfontRender (ctx); } } };
 #endif
 
 const ScenarioRegistrar lossRegistrar { Scenario {

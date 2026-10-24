@@ -523,7 +523,12 @@ std::optional<ScenarioResult> runSoundfontConversion (GuiHost& host, ScenarioCon
         {
             ctx.expect (engine.hasPendingMultisampleLoads(), "the SFZ request was not pending before replacement");
             host.closeSfzLibrary (0);
-        } });
+        }, [&host]
+        {
+            const auto* component = host.strip (0);
+            const auto label = component != nullptr ? component->insertLabel() : std::string {};
+            return label.rfind ("Conversion fixture", 0) == 0 && label.find ("(loading)") != std::string::npos;
+        }, "the pending soundfont was not labelled with its own name" });
         steps->push_back ({ 0, [&host, &ctx]
         { ctx.expect (host.clickInsert (0), "the pending SFZ load blocked the insert chooser"); },
         [&host] { return ! host.sfzLibraryOpen (0) && host.modalStackEmpty(); },

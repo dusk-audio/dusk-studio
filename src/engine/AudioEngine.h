@@ -204,6 +204,8 @@ public:
     void serviceMultisampleLoads();
     bool hasPendingMultisampleLoads() const;
     bool hasPendingMultisampleLoad (int trackIndex) const;
+    std::string pendingMultisampleName (int trackIndex) const;
+    bool multisampleLoadsAwaitDevice() const;
 #endif
 
     Session&          getSession()        noexcept { return session; }
