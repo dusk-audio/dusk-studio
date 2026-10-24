@@ -66,6 +66,9 @@ public:
         return currentFrames.load (std::memory_order_relaxed);
     }
 
+    // The sync-clock sample at which getFrames() took its value; -1 before any.
+    std::int64_t getFramesSample() const noexcept { return lastEventSample; }
+
     // False also during reverse scrub.
     bool isRolling() const noexcept
     {

@@ -2,6 +2,7 @@
 #include "../ScenarioContext.h"
 #include "../../AudioEngine.h"
 #include "../../audiofile/FileReader.h"
+#include "../../audiofile/FileWriter.h"
 #include "../../../session/AutomationRecorder.h"
 #include "../../../session/MidiBindings.h"
 #include "../../../session/Session.h"
@@ -12,7 +13,9 @@
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <limits>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -619,6 +622,398 @@ ScenarioResult recordDuringSeekEndsAutomationPass (ScenarioContext& ctx)
     return ctx.verdict();
 }
 
+// A rolling MTC master at 30 fps, sending quarter frames block by block. Each
+// run of eight carries the frame the master showed as its first piece went out.
+struct MtcMaster
+{
+    static constexpr std::int64_t kSamplesPerQuarter = 400;
+    static constexpr std::int64_t kSamplesPerFrame = 4 * kSamplesPerQuarter;
+
+    std::int64_t originFrame = 0;
+    std::int64_t clock = 0;
+    std::int64_t nextQuarter = 0;
+    std::int64_t pendingJumpFrames = 0;
+
+    // Where the master is now, in timeline samples.
+    std::int64_t position() const { return originFrame * kSamplesPerFrame + clock; }
+
+    // Jumps at the start of the next run of eight, so no run is torn.
+    void jump (std::int64_t frames) { pendingJumpFrames += frames; }
+
+    dusk::MidiBuffer block (int numSamples)
+    {
+        dusk::MidiBuffer events;
+        for (; nextQuarter * kSamplesPerQuarter < clock + numSamples; ++nextQuarter)
+        {
+            const int piece = (int) (nextQuarter % 8);
+            if (piece == 0)
+            {
+                originFrame += pendingJumpFrames;
+                pendingJumpFrames = 0;
+            }
+            const auto frame = originFrame + (nextQuarter - piece) / 4;
+            const int ff = (int) (frame % 30), ss = (int) (frame / 30 % 60);
+            const int mm = (int) (frame / 1800 % 60), hh = (int) (frame / 108000 % 24);
+            const int nibbles[] { ff & 0x0f, ff >> 4, ss & 0x0f, ss >> 4, mm & 0x0f, mm >> 4,
+                                  hh & 0x0f, (3 << 1) | (hh >> 4) };
+            const std::uint8_t bytes[] { 0xf1, (std::uint8_t) ((piece << 4) | nibbles[piece]) };
+            events.addEvent (bytes, 2, (int) (nextQuarter * kSamplesPerQuarter - clock));
+        }
+        clock += numSamples;
+        return events;
+    }
+};
+
+// Frames of one track's region that read back as silence, and where its last
+// block read began.
+struct RegionSilence
+{
+    int track = -1;
+    std::int64_t regionEnd = 0;
+    std::int64_t frames = 0;
+    std::int64_t lastStart = -1;
+
+    static void observe (void* context, int track, std::int64_t start, std::int64_t, std::int64_t,
+                         const float* left, const float*, int samples) noexcept
+    {
+        auto& probe = *static_cast<RegionSilence*> (context);
+        if (track != probe.track) return;
+        probe.lastStart = start;
+        for (int i = 0; i < samples; ++i)
+            if (start + i >= 0 && start + i < probe.regionEnd && std::fpclassify (left[i]) == FP_ZERO)
+                ++probe.frames;
+    }
+};
+
+constexpr std::int64_t kLevelRegionLength = 40 * kSecond;
+
+// A steady level on `track` from the timeline start, so any frame of silence
+// is one its readers did not hold when the transport got there.
+bool placeLevelRegion (ScenarioContext& ctx, int track)
+{
+    using SessionFile = std::decay_t<decltype (std::declval<const Session&>().getSessionDirectory())>;
+    using SessionString = std::decay_t<decltype (std::declval<const Session&>()
+                                                     .getSessionDirectory().getFullPathName())>;
+    const auto source = ctx.tempDir() / ("level-" + std::to_string (track) + ".wav");
+    dusk::audio::WriteSpec spec;
+    spec.sampleRate = (double) kSecond;
+    spec.numChannels = 1;
+    spec.bitsPerSample = 32;
+    auto writer = dusk::audio::FileWriter::create (source, spec);
+    const std::vector<float> level ((std::size_t) kLevelRegionLength, 0.25f);
+    const float* channels[] { level.data() };
+    if (writer == nullptr || ! writer->write (channels, 1, kLevelRegionLength) || ! writer->flush()) return false;
+    AudioRegion region;
+    region.file = SessionFile (SessionString::fromUTF8 (source.u8string().c_str()));
+    region.lengthInSamples = kLevelRegionLength;
+    region.numChannels = 1;
+    ctx.keep (ctx.session().track (track).mode);
+    ctx.session().track (track).mode.store ((int) Track::Mode::Mono, std::memory_order_relaxed);
+    ctx.session().track (track).regions = { region };
+    return true;
+}
+
+// A chase run at one block size: its own buffers, a rolling MTC master, and
+// readers filled before every block, so what plays silent is what they were
+// never asked to hold. A new seek target warms for `holdBlocks` blocks first.
+struct ChaseRig
+{
+    ScenarioContext& ctx;
+    AudioEngine& engine;
+    Transport& transport;
+    PlaybackEngine& playback;
+    const int input;
+    const int block;
+    MtcMaster master;
+    int holdBlocks = 0;
+    std::vector<std::vector<float>> inputs, outputs;
+    std::vector<const float*> in;
+    std::vector<float*> out;
+    device::CallbackContext callback {};
+    std::int64_t warming = -1;
+    int warmedFor = 0, blocks = 0;
+
+    ChaseRig (ScenarioContext& c, int inputIndex, int blockSize)
+        : ctx (c), engine (c.engine()), transport (c.engine().getTransport()),
+          playback (c.engine().getPlaybackEngine()), input (inputIndex), block (blockSize),
+          inputs (16, std::vector<float> ((std::size_t) blockSize)),
+          outputs (2, std::vector<float> ((std::size_t) blockSize))
+    {
+        for (auto& channel : inputs) in.push_back (channel.data());
+        for (auto& channel : outputs) out.push_back (channel.data());
+        auto& session = ctx.session();
+        engine.stop();
+        engine.prepareForSelfTest ((double) kSecond, block);
+        session.syncSourceInputIdx.store (-1);
+        pump ({});
+        engine.stop();
+        transport.setPlayhead (0);
+        session.syncSourceInputIdx.store (input);
+        master.originFrame = 300;
+    }
+
+    int blocksFor (int ms) const
+    {
+        return std::max (1, (int) (((std::int64_t) ms * (kSecond / 1000) + block - 1) / block));
+    }
+
+    void pump (dusk::MidiBuffer events)
+    {
+        engine.stageTestMidiInjection (input, std::move (events));
+        engine.audioDeviceIOCallback (in.data(), (int) in.size(), out.data(), (int) out.size(), block, callback);
+    }
+
+    bool pending() const { return transport.getPlayhead() != transport.getCommittedPlayhead(); }
+    std::int64_t drift() const { return transport.getCommittedPlayhead() - master.position(); }
+
+    void step()
+    {
+        if (pending() && transport.getPlayhead() != warming)
+        {
+            warming = transport.getPlayhead();
+            warmedFor = 0;
+        }
+        if (! pending()) warming = -1;
+        playback.holdLocateReadyForTest (pending() && warmedFor++ < holdBlocks);
+        playback.settleReadersForTest();
+        pump (master.block (block));
+        // The transport bar services queued transport requests at 20 Hz.
+        if (++blocks % blocksFor (50) == 0) engine.serviceTransportRequests();
+    }
+
+    void run (int ms) { for (int b = blocksFor (ms); b > 0; --b) step(); }
+
+    // Steps until a re-locate waits, at most a second.
+    bool runUntilPending()
+    {
+        for (int b = blocksFor (1000); b > 0 && ! pending(); --b) step();
+        return pending();
+    }
+};
+
+// The chase trusts its own clock while it is under three whole frames off.
+constexpr std::int64_t kChaseTolerance = 3 * MtcMaster::kSamplesPerFrame - 1;
+// The chase scenarios play their steady level here, clear of the track Record arms.
+constexpr int kChaseTrack = kTrack + 3;
+
+void prepareChase (ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+    ctx.keep (session.syncSourceInputIdx);
+    ctx.keep (session.externalTimeCodeChasesTransport);
+    ctx.keep (session.countInEnabled);
+    ctx.keep (session.preRollEnabled);
+    ctx.cleanup ([&engine, &session, &transport, loop = transport.isLoopEnabled(),
+                  loopStart = transport.getLoopStart(), loopEnd = transport.getLoopEnd()]
+    {
+        engine.getPlaybackEngine().holdLocateReadyForTest (false);
+        engine.stop();
+        engine.setPlaybackReadObserver (nullptr, nullptr);
+        session.track (kChaseTrack).regions.clear();
+        transport.setLoopRange (loopStart, loopEnd);
+        transport.setLoopEnabled (loop);
+        engine.prepareForSelfTest (ScenarioContext::kSampleRate, ScenarioContext::kBlockSize);
+    });
+    session.countInEnabled.store (false);
+    session.preRollEnabled.store (false);
+    transport.setLoopEnabled (false);
+    session.externalTimeCodeChasesTransport.store (true);
+}
+
+// MTC chase against a master that jumps while its seeks warm slowly, at block
+// sizes from 256 to 8192 samples: the transport must land on the master with a
+// single re-locate and stop re-locating. A warm-up longer than the two-frame
+// tolerance must not leave each re-locate behind the master, one longer than the
+// four-update drift window must not keep restarting itself, and a second jump
+// while a re-locate waits must replace it rather than follow it.
+ScenarioResult mtcChaseLocksThroughSlowSeeks (ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+    const int input = engine.getVirtualKeyboardInputIndex();
+    if (! ctx.expect (input >= 0, "the virtual MIDI input is missing")) return ctx.verdict();
+    prepareChase (ctx);
+    if (! ctx.expect (placeLevelRegion (ctx, kChaseTrack), "could not write the chased track's audio"))
+        return ctx.verdict();
+    RegionSilence silence;
+    silence.track = kChaseTrack;
+    silence.regionEnd = kLevelRegionLength;
+    engine.setPlaybackReadObserver (&RegionSilence::observe, &silence);
+
+    // 128 ms of warm-up is past two frames; 341 ms is past the 300 ms locate
+    // limit and the 267 ms a chase waits before it asks again, which at 256
+    // samples also leaves room for a second jump while the first re-locate waits.
+    struct Variant { int blockSize; int warmMs; bool secondJump; };
+    for (const auto& variant : { Variant { 256, 128, false }, Variant { 256, 341, true },
+                                 Variant { 512, 341, false }, Variant { 4096, 341, false },
+                                 Variant { 8192, 341, false } })
+    {
+        ChaseRig rig (ctx, input, variant.blockSize);
+        rig.holdBlocks = rig.blocksFor (variant.warmMs);
+        const std::string label = "at " + std::to_string (variant.blockSize) + "-sample blocks with seeks warming for "
+                                + std::to_string (variant.warmMs) + " ms: ";
+
+        rig.run (3000);
+        if (! ctx.expect (transport.isPlaying() && std::abs (rig.drift()) <= kChaseTolerance,
+                          label + "the chase did not lock onto the rolling master, drift "
+                              + std::to_string (rig.drift())))
+            return ctx.verdict();
+
+        silence.frames = 0;
+        rig.master.jump (10 * 30);
+        const auto locatesBefore = transport.getLocateCount();
+        if (variant.secondJump)
+        {
+            if (! ctx.expect (rig.runUntilPending(), label + "the chase never asked to re-locate"))
+                return ctx.verdict();
+            rig.master.jump (5 * 30);
+        }
+        rig.run (4000);
+        const auto locatesSettled = transport.getLocateCount();
+        rig.run (2000);
+        ctx.note (label + std::to_string (locatesSettled - locatesBefore) + " re-locates, drift "
+                  + std::to_string (rig.drift()) + " samples, " + std::to_string (silence.frames) + " silent frames");
+        ctx.expect (transport.isPlaying(), label + "the transport stopped");
+        ctx.expect (std::abs (rig.drift()) <= kChaseTolerance,
+                    label + "the transport did not land on the master after it jumped, drift "
+                        + std::to_string (rig.drift()) + " samples");
+        ctx.expect (transport.getLocateCount() == locatesSettled,
+                    label + "the chase kept re-locating: " + std::to_string (transport.getLocateCount() - locatesBefore)
+                        + " re-locates");
+        ctx.expect (locatesSettled - locatesBefore == 1,
+                    label + std::to_string (locatesSettled - locatesBefore) + " re-locates committed, not one");
+        // The re-locate can land past what its readers warmed; that block plays
+        // cold, and the readers have it by the next.
+        ctx.expect (silence.frames <= variant.blockSize,
+                    label + std::to_string (silence.frames) + " frames of the chased track played silent");
+    }
+    return ctx.verdict();
+}
+
+// A chase re-locate still waiting when chase is turned off, the transport stops,
+// a take starts, or the loop is on.
+ScenarioResult mtcChasePendingLocateEdges (ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& transport = engine.getTransport();
+    const int input = engine.getVirtualKeyboardInputIndex();
+    if (! ctx.expect (input >= 0, "the virtual MIDI input is missing")) return ctx.verdict();
+    prepareChase (ctx);
+    if (! ctx.expect (placeLevelRegion (ctx, kChaseTrack), "could not write the chased track's audio"))
+        return ctx.verdict();
+    RegionSilence reads;
+    reads.track = kChaseTrack;
+    reads.regionEnd = kLevelRegionLength;
+    engine.setPlaybackReadObserver (&RegionSilence::observe, &reads);
+    constexpr int kForever = std::numeric_limits<int>::max();
+
+    // Locked, then the master jumps and the re-locate it asks for waits.
+    const auto waitingRelocate = [&] (ChaseRig& rig, const std::string& label)
+    {
+        rig.run (3000);
+        if (! ctx.expect (transport.isPlaying() && std::abs (rig.drift()) <= kChaseTolerance,
+                          label + "the chase did not lock onto the rolling master")) return false;
+        rig.holdBlocks = kForever;
+        rig.master.jump (10 * 30);
+        if (! ctx.expect (rig.runUntilPending(), label + "the chase never asked to re-locate")) return false;
+        // Long enough for its readers to warm, short of another drift window.
+        for (int b = 0; b < 4; ++b) rig.step();
+        return true;
+    };
+
+    {
+        ChaseRig rig (ctx, input, ScenarioContext::kBlockSize);
+        const std::string label = "chase turned off while its re-locate waits: ";
+        if (! waitingRelocate (rig, label)) return ctx.verdict();
+        const auto target = transport.getPlayhead();
+        const auto locates = transport.getLocateCount();
+        session.externalTimeCodeChasesTransport.store (false);
+        rig.holdBlocks = 0;
+        rig.step();
+        ctx.expect (transport.getLocateCount() == locates + 1
+                        && transport.getCommittedPlayhead() == target + rig.block,
+                    label + "the waiting seek did not land where it was asked, as an ordinary one would: "
+                        + std::to_string (transport.getLocateCount() - locates) + " locates, at "
+                        + std::to_string (transport.getCommittedPlayhead() - rig.block) + " for " + std::to_string (target));
+        rig.run (1000);
+        ctx.expect (transport.getLocateCount() == locates + 1, label + "the transport still re-located");
+        session.externalTimeCodeChasesTransport.store (true);
+    }
+    {
+        ChaseRig rig (ctx, input, ScenarioContext::kBlockSize);
+        const std::string label = "Stop while a chase re-locate waits: ";
+        if (! waitingRelocate (rig, label)) return ctx.verdict();
+        engine.stop();
+        rig.holdBlocks = 0;
+        const auto stoppedAt = transport.getCommittedPlayhead();
+        auto locates = transport.getLocateCount();
+        // A landing for the cancelled re-locate would come at once. A drift
+        // re-locate needs four MTC updates, 50 blocks, and a transport service.
+        for (int b = 0; b < 20; ++b) rig.step();
+        ctx.expect (transport.isStopped(), label + "the transport rolled on");
+        ctx.expect (transport.getLocateCount() == locates && transport.getCommittedPlayhead() == stoppedAt,
+                    label + "the cancelled re-locate landed after Stop, at "
+                        + std::to_string (transport.getCommittedPlayhead()));
+        // Stopped under a rolling master, the playhead follows it through drift
+        // re-locates, each landing on the master.
+        int followed = 0;
+        for (int b = rig.blocksFor (2000); b > 0; --b)
+        {
+            rig.step();
+            if (transport.getLocateCount() == locates) continue;
+            locates = transport.getLocateCount();
+            ++followed;
+            ctx.expect (std::abs (rig.drift()) <= kChaseTolerance,
+                        label + "a drift re-locate left the stopped playhead "
+                            + std::to_string (rig.drift()) + " samples from the master");
+        }
+        ctx.expect (transport.isStopped() && followed > 0,
+                    label + "the stopped playhead never followed the master");
+    }
+    {
+        ChaseRig rig (ctx, input, ScenarioContext::kBlockSize);
+        const std::string label = "a chase re-locate with the loop on: ";
+        rig.run (3000);
+        transport.setLoopRange (2 * kSecond, 12 * kSecond);
+        transport.setLoopEnabled (true);
+        auto locates = transport.getLocateCount();
+        int landed = 0;
+        for (int b = rig.blocksFor (3000); b > 0; --b)
+        {
+            rig.step();
+            if (transport.getLocateCount() == locates) continue;
+            locates = transport.getLocateCount();
+            ++landed;
+            ctx.expect (reads.lastStart >= 2 * kSecond && reads.lastStart < 12 * kSecond,
+                        label + "a re-locate landed at " + std::to_string (reads.lastStart) + ", outside the loop");
+        }
+        ctx.expect (landed > 0, label + "the chase never re-located the looping transport");
+        transport.setLoopEnabled (false);
+    }
+    {
+        armTrack (ctx);
+        ChaseRig rig (ctx, input, ScenarioContext::kBlockSize);
+        const std::string label = "Record while a chase re-locate waits: ";
+        if (! waitingRelocate (rig, label)) return ctx.verdict();
+        // Long enough that its target falls well behind the master.
+        for (int b = 0; b < 30; ++b) rig.step();
+        engine.record();
+        if (! ctx.expect (transport.isRecording(), label + "Record did not start")) return ctx.verdict();
+        ctx.expect (std::abs (rig.drift()) <= kChaseTolerance,
+                    label + "the take started " + std::to_string (rig.drift()) + " samples from the master");
+        const auto locates = transport.getLocateCount();
+        rig.holdBlocks = 0;
+        rig.run (2000);
+        ctx.expect (transport.isRecording() && transport.getLocateCount() == locates,
+                    label + "the transport re-located during the take");
+        engine.stop();
+    }
+    return ctx.verdict();
+}
+
 std::optional<ScenarioResult> run (ScenarioResult (*body) (ScenarioContext&), ScenarioContext& ctx)
 {
     return body (ctx);
@@ -645,6 +1040,12 @@ const ScenarioRegistrar chaseRegistrar { Scenario {
 const ScenarioRegistrar seekCaptureRegistrar { Scenario {
     "transport.seeks_keep_capture_running", { "transport", "record", "playback" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (seeksKeepCaptureRunning, ctx); } } };
+const ScenarioRegistrar mtcChaseRegistrar { Scenario {
+    "transport.mtc_chase_locks_through_slow_seeks", { "transport", "sync", "playback" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (mtcChaseLocksThroughSlowSeeks, ctx); } } };
+const ScenarioRegistrar mtcChaseEdgesRegistrar { Scenario {
+    "transport.mtc_chase_pending_locate_edges", { "transport", "sync", "record", "loop" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (mtcChasePendingLocateEdges, ctx); } } };
 const ScenarioRegistrar recordDuringSeekRegistrar { Scenario {
     "transport.record_during_seek_ends_automation_pass", { "transport", "record", "automation" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (recordDuringSeekEndsAutomationPass, ctx); } } };

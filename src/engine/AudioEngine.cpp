@@ -2722,7 +2722,9 @@ void AudioEngine::record()
 
     // Preparation can span rolling callbacks. Latch the take's position only
     // after they drain, then apply the immutable loop/punch capture boundary.
-    std::int64_t startSample = transport.getPlayhead();
+    // A chase re-locate still waiting starts the take where the master has got to.
+    const auto playhead = pendingPlayheadWhileSuspended();
+    std::int64_t startSample = playhead;
     if (loopPlan.enabled)
         startSample = loopPlan.captureStartSample;
     else if (transport.isPunchEnabled()
@@ -2755,7 +2757,7 @@ void AudioEngine::record()
     // Rolling on from anywhere but the heard position is a locate, so an
     // automation pass ends there instead of writing over the stretch it skips.
     // A pending seek already moved the roll start; a loop take leaves it alone.
-    const auto rollFrom = loopPlan.enabled ? startSample : transport.getPlayhead();
+    const auto rollFrom = loopPlan.enabled ? startSample : playhead;
     if (rollFrom == transport.getCommittedPlayhead())
     {
         transport.setPlayhead (rollFrom);
@@ -4837,6 +4839,23 @@ void AudioEngine::reduceLaneAccum (int numSamples) noexcept
     }
 }
 
+void AudioEngine::requestChaseLocateRt (std::int64_t masterSamples) noexcept
+{
+    if (chaseLocate.target >= 0) chaseLocate.retired = chaseLocate.target;
+    chaseLocate.target = masterSamples;
+    chaseLocate.clock = midiSyncSampleClock;
+    chaseLocate.serial = transport.getLocateCount();
+    session.pendingTransportPlayhead.store (masterSamples, std::memory_order_relaxed);
+}
+
+std::int64_t AudioEngine::pendingPlayheadWhileSuspended() const noexcept
+{
+    const auto pending = transport.getPlayhead();
+    const bool chased = chaseLocate.target >= 0 && pending == chaseLocate.target
+                     && pending != transport.getCommittedPlayhead();
+    return chased ? pending + (midiSyncSampleClock - chaseLocate.clock) : pending;
+}
+
 void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                                          int numInputChannels,
                                          float* const* outputChannelData,
@@ -4907,22 +4926,39 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     const bool transportLoopEnabled = transport.isLoopEnabled();
     const bool locateLoops = transportBlockState == Transport::State::Playing && transportLoopEnabled;
     bool keepSeek = false;
+    if (transport.isStopped() || ! session.externalTimeCodeChasesTransport.load (std::memory_order_relaxed))
+        chaseLocate = {};
     const auto transportBlockStart = transport.beginAudioBlock ([&] (std::int64_t& target) noexcept
     {
         if (getStage() == Stage::Mastering) return true;
-        if (locateLoops)
+        if (target == chaseLocate.retired) return false;
+        const auto requested = target;
+        // A target before the loop plays on into it, as the end-of-block
+        // wrap only folds positions past the loop end.
+        const auto fold = [&] (std::int64_t& position) noexcept
         {
-            // A target before the loop plays on into it, as the end-of-block
-            // wrap only folds positions past the loop end.
             const auto start = transportLoopStart, end = transportLoopEnd;
-            if (start >= 0 && end > start && target >= end)
-                target = start + (target - end) % (end - start);
-        }
+            if (locateLoops && start >= 0 && end > start && position >= end)
+                position = start + (position - end) % (end - start);
+        };
+        fold (target);
         keepSeek = true;
-        return playbackEngine.locateReadyRt (target, numSamples,
-            locateLoops ? transportLoopStart : -1, locateLoops ? transportLoopEnd : -1);
+        if (! playbackEngine.locateReadyRt (target, numSamples,
+                locateLoops ? transportLoopStart : -1, locateLoops ? transportLoopEnd : -1))
+            return false;
+        // The master rolled on while the chase's re-locate warmed: land where it
+        // is now, not where it was when asked, or the chase never locks. That can
+        // be past what the readers warmed, which then plays cold for a moment.
+        if (requested == chaseLocate.target)
+        {
+            target = requested + (midiSyncSampleClock - chaseLocate.clock);
+            fold (target);
+        }
+        return true;
     });
     playbackEngine.finishLocateBlockRt (transportBlockStart, keepSeek);
+    if (transport.getLocateCount() != chaseLocate.serial)
+        chaseLocate = {};
 
     // Every session snapshot this block reads, on this thread or a worker lane,
     // stays alive until the block returns, however often the message thread
@@ -5022,6 +5058,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         lastMtcRolling = false;
         mtcDriftWindowFrames = 0;
         lastSeenMtcFrames = -1;
+        chaseLocate = {};
     }
     // Mackie Control surface input. Independent of sync source - the
     // user could run MIDI Clock on device A and the MCU on device B.
@@ -5089,12 +5126,17 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                 : mtcRate == MidiTimeCodeReceiver::Fps25      ? sr / 25.0
                 : mtcRate == MidiTimeCodeReceiver::Fps29_97DF ? sr * 1001.0 / 30000.0
                                                               : sr / 30.0;
+            // Where the master was at this block's start. The frame count was
+            // taken at a quarter frame somewhere in the block, which with large
+            // buffers is more than the tolerance away from its start.
+            const auto mtcAtBlockStart = (std::int64_t) ((double) mtcFrames * sPerFrame)
+                + (midiSyncSampleClock - midiTimeCodeReceiver.getFramesSample());
 
             if (mtcRolling && ! lastMtcRolling)
             {
                 // Initial lock on rising edge.
                 session.pendingTransportPlayhead.store (
-                    (std::int64_t) ((double) mtcFrames * sPerFrame),
+                    mtcAtBlockStart,
                     std::memory_order_relaxed);
                 session.pendingTransportAction.store (
                     (int) PendingTransportAction::Play,
@@ -5123,9 +5165,17 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                 // 1024 samples) and the window collapses to ~80 ms.
                 if (mtcFrames != lastSeenMtcFrames)
                 {
-                    const auto transportSamples = transportBlockStart;
-                    const auto mtcSamples =
-                        (std::int64_t) ((double) mtcFrames * sPerFrame);
+                    const auto mtcSamples = mtcAtBlockStart;
+                    // While its re-locate waits, the chase measures the master
+                    // against where that re-locate will land, so it neither asks
+                    // again for the same jump nor misses a second one.
+                    const bool asked = chaseLocate.target >= 0
+                        && (session.pendingTransportPlayhead.load (std::memory_order_relaxed) == chaseLocate.target
+                            || (transport.getPlayhead() == chaseLocate.target
+                                && transport.getPlayhead() != transport.getCommittedPlayhead()));
+                    const auto transportSamples = asked
+                        ? chaseLocate.target + (midiSyncSampleClock - chaseLocate.clock)
+                        : transportBlockStart;
                     const auto deltaSamples = transportSamples - mtcSamples;
                     const auto deltaFrames = std::llabs (
                         (std::int64_t) ((double) deltaSamples / sPerFrame));
@@ -5133,8 +5183,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                     {
                         if (++mtcDriftWindowFrames >= kFreewheelReSyncWindow)
                         {
-                            session.pendingTransportPlayhead.store (
-                                mtcSamples, std::memory_order_relaxed);
+                            requestChaseLocateRt (mtcSamples);
                             mtcDriftWindowFrames = 0;
                         }
                     }
