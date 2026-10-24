@@ -56,7 +56,7 @@ mpg123	1.33.7	https://www.mpg123.de/download/mpg123-1.33.7.tar.bz2	31d0e35a4ca56
 lame	4.0	https://downloads.sourceforge.net/project/lame/lame/4.0/lame-4.0.tar.gz	3df5124d5ad3a98312ffd7ba6a9b36230e4f8a3e66d3ce0f425e336c32d216eb	LGPL-2.0-or-later
 sndfile	1.2.2	https://github.com/libsndfile/libsndfile/releases/download/1.2.2/libsndfile-1.2.2.tar.xz	3799ca9924d3125038880367bf1468e53a1b7e3686a934f098b7e1d286cdb80e	LGPL-2.1-or-later
 lv2	1.18.10	https://lv2plug.in/spec/lv2-1.18.10.tar.xz	78c51bcf21b54e58bb6329accbb4dae03b2ed79b520f9a01e734bd9de530953f	ISC OR 0BSD
-zix	0.8.2	https://gitlab.com/drobilla/zix/-/archive/v0.8.2/zix-v0.8.2.tar.gz	a2464cdc11fa359b5e713b3c82bf0b476952efe397a02374ddbc1b62eee04f13	ISC
+zix	0.8.2	https://download.drobilla.net/zix-0.8.2.tar.xz	4c73aab0f8cbbfe56b00c8c6d648316021e699c5ae6cbf254391ef309047e67b	ISC
 serd	0.32.10	https://download.drobilla.net/serd-0.32.10.tar.xz	b0e93b49e52f01a049475b7886ef140407115a32d3b1e5dc5f95141c88275d1c	ISC
 sord	0.16.22	https://download.drobilla.net/sord-0.16.22.tar.xz	bb23b34b216579136795d518cffa73d91cf205594ce9accebfd408afb839173f	ISC
 sratom	0.6.22	https://download.drobilla.net/sratom-0.6.22.tar.xz	0209b7d0f22c96abb416722ed735b0933be47931ecff4aa4b26ded7760b4f252	ISC

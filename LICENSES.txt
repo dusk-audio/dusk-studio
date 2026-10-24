@@ -3991,7 +3991,7 @@ OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
 PERFORMANCE OF THIS SOFTWARE.
 --------------------------------------------------------------------------------
 Zix 0.8.2 — ISC (macOS bundled native LV2 runtime)
-COPYING from https://gitlab.com/drobilla/zix/-/archive/v0.8.2/zix-v0.8.2.tar.gz
+COPYING from https://download.drobilla.net/zix-0.8.2.tar.xz
 --------------------------------------------------------------------------------
 
 Copyright 2011-2022 David Robillard <d@drobilla.net>
