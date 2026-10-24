@@ -11,6 +11,7 @@ namespace
 {
 constexpr int kActiveWaitMs = 5;
 constexpr int kIdleWaitMs = 100;
+constexpr auto kRetryDelay = std::chrono::milliseconds (100);
 
 std::int64_t spanEnd (std::int64_t start, std::int64_t count) noexcept
 {
@@ -28,10 +29,7 @@ BufferedFileReader::BufferedFileReader (std::unique_ptr<FileReader> src,
       fillMode (fill)
 {
     if (fillMode == Fill::Background && channels > 0 && fileInfo.numFrames > 0)
-    {
-        beginFill (0);
         worker = std::thread ([this] { run(); });
-    }
 }
 
 BufferedFileReader::~BufferedFileReader()
@@ -96,9 +94,22 @@ bool BufferedFileReader::holds (std::int64_t startFrame, std::int64_t numFrames)
     return held;
 }
 
+std::int64_t BufferedFileReader::filledFrames (const Window* window) noexcept
+{
+    return window == nullptr ? 0 : window->filled.load (std::memory_order_acquire);
+}
+
 bool BufferedFileReader::windowHolds (const Window* window, std::int64_t from, std::int64_t end) noexcept
 {
-    return window != nullptr && window->startFrame <= from && window->startFrame + window->numFrames >= end;
+    return window != nullptr && window->startFrame <= from && window->startFrame + filledFrames (window) >= end;
+}
+
+bool BufferedFileReader::grows (const Window* window, std::int64_t from, std::int64_t end) noexcept
+{
+    if (window == nullptr) return false;
+    const auto filled = window->filled.load (std::memory_order_relaxed);
+    return filled < window->planned && window->startFrame <= from
+        && from <= window->startFrame + filled && end <= window->startFrame + window->planned;
 }
 
 const BufferedFileReader::Window* BufferedFileReader::windowForRange (
@@ -111,7 +122,7 @@ const BufferedFileReader::Window* BufferedFileReader::windowForRange (
     const auto overlap = [from, end] (const Window* window)
     {
         return window == nullptr ? std::int64_t { 0 }
-            : std::max<std::int64_t> (0, std::min (end, window->startFrame + window->numFrames)
+            : std::max<std::int64_t> (0, std::min (end, window->startFrame + filledFrames (window))
                                           - std::max (from, window->startFrame));
     };
     const auto* best = overlap (seek) > overlap (current) ? seek : current;
@@ -139,10 +150,9 @@ bool BufferedFileReader::needsFillAt (const Window* window, std::int64_t h) cons
 {
     if (channels <= 0 || h >= fileInfo.numFrames)
         return false;
-    if (window == nullptr || h < window->startFrame
-        || h >= window->startFrame + window->numFrames)
+    const auto end = window != nullptr ? window->startFrame + filledFrames (window) : 0;
+    if (window == nullptr || h < window->startFrame || h >= end)
         return true;
-    const auto end = window->startFrame + window->numFrames;
     return end < fileInfo.numFrames
         && end - h <= (capacity - 1) / 2;
 }
@@ -161,6 +171,11 @@ bool BufferedFileReader::hasResidency() const noexcept
 {
     return publishedWindow.load (std::memory_order_acquire) != nullptr
         || publishedSeekWindow.load (std::memory_order_acquire) != nullptr;
+}
+
+bool BufferedFileReader::fillFailing() const noexcept
+{
+    return failing.load (std::memory_order_relaxed);
 }
 
 std::size_t BufferedFileReader::allocatedBytes() const noexcept
@@ -183,133 +198,192 @@ void BufferedFileReader::updateAllocatedBytes() noexcept
     allocated.store (bytes, std::memory_order_relaxed);
 }
 
-void BufferedFileReader::beginFill (std::int64_t startFrame)
+std::unique_ptr<BufferedFileReader::Window> BufferedFileReader::makeWindow (std::int64_t startFrame)
 {
     auto next = std::make_unique<Window>();
     next->startFrame = startFrame;
-    next->numFrames = std::min (capacity - 1, fileInfo.numFrames - startFrame);
-    next->stride = next->numFrames;
-    if ((std::uint64_t) next->numFrames > std::numeric_limits<std::size_t>::max()
-                                                  / sizeof (float) / (std::size_t) channels)
+    next->planned = std::min (capacity - 1, fileInfo.numFrames - startFrame);
+    next->stride = next->planned;
+    if ((std::uint64_t) next->stride > std::numeric_limits<std::size_t>::max()
+                                               / sizeof (float) / (std::size_t) channels)
         throw std::length_error ("audio read window is too large");
-    next->data.resize ((std::size_t) next->numFrames * (std::size_t) channels);
+    next->data.resize ((std::size_t) next->stride * (std::size_t) channels);
     fillDest.resize ((std::size_t) channels);
-    stagingWindow = std::move (next);
-    stagingFilled = 0;
-    updateAllocatedBytes();
+    return next;
 }
 
-void BufferedFileReader::publishStaging()
+bool BufferedFileReader::readChunk (Window& window)
 {
-    auto& destination = stagingForSeek ? seekWindow : currentWindow;
-    auto& published = stagingForSeek ? publishedSeekWindow : publishedWindow;
-    auto retired = std::move (destination);
-    destination = std::move (stagingWindow);
-    published.exchange (destination.get(), std::memory_order_seq_cst);
+    const auto filled = window.filled.load (std::memory_order_relaxed);
+    const auto chunk = std::min (kFillChunkFrames, window.planned - filled);
+    if (chunk <= 0) return false;
+    for (int c = 0; c < channels; ++c)
+        fillDest[(std::size_t) c] = window.data.data()
+                               + (std::size_t) c * (std::size_t) window.stride
+                               + (std::size_t) filled;
+    const auto got = std::clamp<std::int64_t> (
+        source->read (fillDest.data(), channels, window.startFrame + filled, chunk), 0, chunk);
+    if (got > 0) window.filled.store (filled + got, std::memory_order_release);
+    if (got < chunk)
+    {
+        nextFillAttempt = std::chrono::steady_clock::now() + kRetryDelay;
+        failing.store (true, std::memory_order_relaxed);
+        return false;
+    }
+    failing.store (false, std::memory_order_relaxed);
+    return true;
+}
+
+void BufferedFileReader::publish (std::unique_ptr<Window>& slot, std::atomic<const Window*>& published,
+                                  std::unique_ptr<Window> next)
+{
+    auto retired = std::move (slot);
+    slot = std::move (next);
+    published.exchange (slot.get(), std::memory_order_seq_cst);
     while (activeReads.load (std::memory_order_seq_cst) != 0)
         std::this_thread::yield();
     retired.reset();
-    stagingFilled = 0;
     updateAllocatedBytes();
 }
 
 void BufferedFileReader::retainSeekForPlayback (std::int64_t frame)
 {
-    if (frame < 0 || ! windowHolds (seekWindow.get(), frame, spanEnd (frame, 1))
-        || windowHolds (currentWindow.get(), frame, seekWindow->startFrame + seekWindow->numFrames)) return;
-    // The readiness acknowledgement still pins this seek until its replacement is published.
-    auto retained = std::make_unique<Window> (*seekWindow);
-    auto retired = std::move (currentWindow);
-    currentWindow = std::move (retained);
-    publishedWindow.exchange (currentWindow.get(), std::memory_order_seq_cst);
-    while (activeReads.load (std::memory_order_seq_cst) != 0) std::this_thread::yield();
-    retired.reset();
-    updateAllocatedBytes();
+    const auto playing = [this] (std::int64_t at)
+    {
+        return at >= 0 && windowHolds (seekWindow.get(), at, spanEnd (at, 1))
+            && ! windowHolds (currentWindow.get(), at, seekWindow->startFrame + filledFrames (seekWindow.get()));
+    };
+    // The audio thread's own reads move the hint, so it catches playback that
+    // committed into this seek after the caller sampled its position.
+    if (! playing (frame) && ! playing (hint())) return;
+    // Playback runs in the seek window: it becomes the current window and keeps
+    // growing there. Nothing is freed when the seek slot empties, and no
+    // readiness rests on it: a new seek window starts only for a span it lacks.
+    auto retained = std::move (seekWindow);
+    publish (currentWindow, publishedWindow, std::move (retained));
+    publishedSeekWindow.store (nullptr, std::memory_order_seq_cst);
 }
 
 bool BufferedFileReader::fillOnce (std::int64_t startFrame)
 {
-    const auto at = startFrame >= 0 ? startFrame : hint();
-    return fillAt (at, false, 0);
+    return fillAt (startFrame >= 0 ? startFrame : hint());
 }
 
 bool BufferedFileReader::fillSeekOnce (std::int64_t target, std::int64_t currentFrame,
                                       std::int64_t numFrames)
 {
     if (! needsSeekFill (target, numFrames)) return false;
-    if (seekWindow != nullptr && seekWindow->startFrame != target) retainSeekForPlayback (currentFrame);
-    return fillAt (target, true, numFrames);
+    return fillSeekAt (target, currentFrame, numFrames);
 }
 
-bool BufferedFileReader::fillAt (std::int64_t startFrame, bool seeking, std::int64_t numFrames)
+bool BufferedFileReader::fillSeekAt (std::int64_t target, std::int64_t currentFrame, std::int64_t numFrames)
+{
+    if (std::chrono::steady_clock::now() < nextFillAttempt) return false;
+    try
+    {
+        if (channels <= 0 || source == nullptr) return false;
+        const auto h = std::clamp (target, (std::int64_t) 0, fileInfo.numFrames);
+        if (h >= fileInfo.numFrames) return false;
+        const auto end = std::min ({ spanEnd (target, numFrames), fileInfo.numFrames, spanEnd (h, capacity - 1) });
+        if (grows (seekWindow.get(), h, end))
+        {
+            const bool full = readChunk (*seekWindow);
+            updateAllocatedBytes();
+            return full;
+        }
+        // A complete window from the target already holds all a window can.
+        if (seekWindow != nullptr && seekWindow->startFrame == h
+            && filledFrames (seekWindow.get()) == seekWindow->planned)
+            return false;
+        auto next = makeWindow (h);
+        const bool full = readChunk (*next);
+        if (filledFrames (next.get()) == 0)
+        {
+            updateAllocatedBytes();
+            return false;
+        }
+        retainSeekForPlayback (currentFrame);
+        publish (seekWindow, publishedSeekWindow, std::move (next));
+        return full;
+    }
+    catch (...)
+    {
+        nextFillAttempt = std::chrono::steady_clock::now() + kRetryDelay;
+        failing.store (true, std::memory_order_relaxed);
+        updateAllocatedBytes();
+        throw;
+    }
+}
+
+bool BufferedFileReader::fillAt (std::int64_t startFrame)
 {
     if (std::chrono::steady_clock::now() < nextFillAttempt) return false;
     try
     {
         if (channels <= 0 || source == nullptr) return false;
         const auto h = std::clamp (startFrame, (std::int64_t) 0, fileInfo.numFrames);
-        const auto end = seeking ? std::min ({ spanEnd (startFrame, numFrames), fileInfo.numFrames,
-                                               spanEnd (h, capacity - 1) }) : h;
-        const auto* destination = seeking ? seekWindow.get() : currentWindow.get();
         if (h >= fileInfo.numFrames)
         {
             stagingWindow.reset();
             updateAllocatedBytes();
             return false;
         }
+        // A window still growing toward h carries on, whichever slot it serves:
+        // a seek committed before it was warm keeps everything it has read.
+        for (auto* slot : { &seekWindow, &currentWindow })
+            if (grows (slot->get(), h, h))
+            {
+                const bool full = readChunk (**slot);
+                updateAllocatedBytes();
+                return full;
+            }
         if (stagingWindow != nullptr
-            && (stagingForSeek != seeking || h < stagingWindow->startFrame
-                || h >= stagingWindow->startFrame + stagingWindow->numFrames
-                || (seeking && ! windowHolds (stagingWindow.get(), h, end))))
+            && (h < stagingWindow->startFrame || h >= stagingWindow->startFrame + stagingWindow->planned))
         {
             stagingWindow.reset();
-            stagingFilled = 0;
             updateAllocatedBytes();
+        }
+        if (! windowHolds (currentWindow.get(), h, h + 1) && ! windowHolds (seekWindow.get(), h, h + 1))
+        {
+            // Nothing published plays h, so whatever is read for it is heard at once.
+            auto next = stagingWindow != nullptr
+                        && h <= stagingWindow->startFrame + filledFrames (stagingWindow.get())
+                      ? std::move (stagingWindow) : makeWindow (h);
+            stagingWindow.reset();
+            const bool full = readChunk (*next);
+            if (filledFrames (next.get()) > 0)
+                publish (currentWindow, publishedWindow, std::move (next));
+            updateAllocatedBytes();
+            return full;
         }
         if (stagingWindow == nullptr)
         {
-            if (! seeking && ! needsFillAt (destination, h)) return false;
-            stagingForSeek = seeking;
-            beginFill (h);
+            if (! needsFillAt (currentWindow.get(), h) || ! needsFillAt (seekWindow.get(), h)) return false;
+            stagingWindow = makeWindow (h);
         }
-
-        const auto stride = stagingWindow->numFrames;
-        const auto chunk = std::min (kFillChunkFrames, stride - stagingFilled);
-        for (int c = 0; c < channels; ++c)
-            fillDest[(std::size_t) c] = stagingWindow->data.data()
-                                   + (std::size_t) c * (std::size_t) stride
-                                   + (std::size_t) stagingFilled;
-        const auto got = source->read (fillDest.data(), channels,
-                                       stagingWindow->startFrame + stagingFilled, chunk);
-        stagingFilled += got;
-        updateAllocatedBytes();
-        if (got < chunk)
+        const bool full = readChunk (*stagingWindow);
+        const auto stagedEnd = stagingWindow->startFrame + filledFrames (stagingWindow.get());
+        if (filledFrames (stagingWindow.get()) == stagingWindow->planned)
+            publish (currentWindow, publishedWindow, std::move (stagingWindow));
+        else if (! full)
         {
-            nextFillAttempt = std::chrono::steady_clock::now() + std::chrono::milliseconds (100);
-            const auto partialEnd = stagingWindow->startFrame + stagingFilled;
-            const bool keepCurrent = destination != nullptr
-                && h >= destination->startFrame
-                && h < destination->startFrame + destination->numFrames
-                && partialEnd < destination->startFrame + destination->numFrames;
-            if (stagingFilled > 0 && ! keepCurrent)
+            // A short refill replaces the current window only where it reaches further.
+            const auto reach = [h] (const Window* window)
             {
-                stagingWindow->numFrames = stagingFilled;
-                publishStaging();
-            }
-            else
-                stagingWindow.reset();
-            stagingFilled = 0;
-            updateAllocatedBytes();
-            return false;
+                return windowHolds (window, h, h + 1) ? window->startFrame + filledFrames (window) : h;
+            };
+            if (stagedEnd > std::max (reach (currentWindow.get()), reach (seekWindow.get())))
+                publish (currentWindow, publishedWindow, std::move (stagingWindow));
+            stagingWindow.reset();
         }
-        if (stagingFilled == stride) publishStaging();
-        return true;
+        updateAllocatedBytes();
+        return full;
     }
     catch (...)
     {
-        nextFillAttempt = std::chrono::steady_clock::now() + std::chrono::milliseconds (100);
+        nextFillAttempt = std::chrono::steady_clock::now() + kRetryDelay;
+        failing.store (true, std::memory_order_relaxed);
         stagingWindow.reset();
-        stagingFilled = 0;
         updateAllocatedBytes();
         throw;
     }
@@ -329,8 +403,6 @@ void BufferedFileReader::releaseResidency() noexcept
     currentWindow.reset();
     seekWindow.reset();
     stagingWindow.reset();
-    stagingFilled = 0;
-    stagingForSeek = false;
     std::vector<float*>().swap (fillDest);
     if (source != nullptr) source->releaseReadScratch();
     nextFillAttempt = {};
@@ -385,7 +457,7 @@ bool BufferedFileReader::readRt (float* const* dest, int numDestCh,
     if (window != nullptr)
     {
         const auto from = std::max (wantedStart, window->startFrame);
-        const auto to = std::min (wantedEnd, window->startFrame + window->numFrames);
+        const auto to = std::min (wantedEnd, window->startFrame + filledFrames (window));
         if (to > from)
         {
             if (coverage != nullptr) *coverage = { from, to };

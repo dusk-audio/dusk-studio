@@ -239,6 +239,7 @@ add_executable(dusk-studio-tests
     playback_read_capture.cpp
     playback_take_audition.cpp
     playback_live_swap.cpp
+    playback_rolling_seek_threads.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/PlaybackEngine.cpp
     mastering_player_resample.cpp
     mastering_player_file_release.cpp

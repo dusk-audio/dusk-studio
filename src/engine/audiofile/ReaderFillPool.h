@@ -56,6 +56,9 @@ public:
 
     // One bounded pass, also used by deterministic no-thread tests.
     bool pumpOnce();
+    // Tests only: pumps until nothing is left to fill and no worker is mid-fill,
+    // so with the positions held still every reader holds what it was asked for.
+    void settleForTest();
 
 private:
     struct Entry
@@ -66,6 +69,10 @@ private:
         std::int64_t sourceOffset = 0;
         bool claimed = false;
         bool removed = false;
+        // What the claim in flight does. Only an eviction, or a fill toward a
+        // seek other than the current one, can take residency a seek reads.
+        bool claimEvicts = false;
+        std::uint64_t claimSeekGeneration = 0;
         std::chrono::steady_clock::time_point retryAfter {};
         std::uint64_t lastService = 0;
     };
@@ -100,8 +107,9 @@ private:
     Seek seekSnapshot() const noexcept;
     void publishSeekRt (std::int64_t, int) noexcept;
     void updateSeekReady();
+    // `pastEnd` reports a position past the entry's end, mapped to its last frame.
     bool eligible (const Entry&, std::int64_t position, const Loop&,
-                   std::int64_t& sourceFrame) const noexcept;
+                   std::int64_t& sourceFrame, bool* pastEnd = nullptr) const noexcept;
     Claim claimNext();
     void finishClaim (Entry&, bool failed = false) noexcept;
     void run();

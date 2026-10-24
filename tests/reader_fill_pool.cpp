@@ -75,7 +75,7 @@ struct Block
 };
 } // namespace
 
-TEST_CASE ("Manual reader allocates lazily and publishes after bounded fill passes",
+TEST_CASE ("Manual reader allocates lazily and publishes each bounded fill pass as it reads",
            "[audiofile][buffered][reader-pool]")
 {
     SampleFile file;
@@ -89,9 +89,12 @@ TEST_CASE ("Manual reader allocates lazily and publishes after bounded fill pass
 
     REQUIRE (reader->fillOnce());
     CHECK (reader->allocatedBytes() > 0);
-    CHECK_FALSE (reader->holds (0, 512));
+    CHECK (reader->holds (0, BufferedFileReader::kFillChunkFrames));
+    CHECK_FALSE (reader->holds (0, BufferedFileReader::kFillChunkFrames + 1));
+    REQUIRE (reader->readRt (block.pointers.data(), kChannels, 0, 512));
+    block.check (0);
     REQUIRE (reader->fillOnce());
-    CHECK_FALSE (reader->hasResidency());
+    CHECK (reader->holds (0, 2 * BufferedFileReader::kFillChunkFrames));
     REQUIRE (reader->fillOnce());
     CHECK (reader->holds (0, 20000));
     CHECK_FALSE (reader->holds (20000, 1));
@@ -107,21 +110,16 @@ TEST_CASE ("Reader keeps the old immutable window while a replacement is staged"
     auto reader = file.reader();
     reader->fillNow();
     Block block;
-    SECTION ("A complete replacement stays unpublished until filled")
+    SECTION ("A position no window holds is served by each pass as it is read")
     {
-        for (int pass = 0; pass < 2; ++pass)
-        {
-            reader->hintRt (22000);
-            REQUIRE (reader->fillOnce());
-            CHECK_FALSE (reader->holds (22000, 512));
-            REQUIRE (reader->readRt (block.pointers.data(), kChannels, 0, 512));
-            block.check (0);
-        }
         reader->hintRt (22000);
         REQUIRE (reader->fillOnce());
-        CHECK_FALSE (reader->holds (0, 512));
+        CHECK (reader->holds (22000, BufferedFileReader::kFillChunkFrames));
         REQUIRE (reader->readRt (block.pointers.data(), kChannels, 22000, 512));
         block.check (22000);
+        for (int pass = 0; pass < 2; ++pass) REQUIRE (reader->fillOnce());
+        CHECK (reader->holds (22000, 20000));
+        CHECK_FALSE (reader->holds (0, 512));
     }
     SECTION ("A one-frame retarget refills the missing end of a full seek span")
     {
@@ -137,7 +135,8 @@ TEST_CASE ("Reader keeps the old immutable window while a replacement is staged"
     {
         auto seekReader = file.reader (16385);
         REQUIRE (seekReader->fillSeekOnce (1000, 0, 16384));
-        REQUIRE_FALSE (seekReader->holdsSeek (1000, 8192));
+        REQUIRE (seekReader->holdsSeek (1000, 8192));
+        REQUIRE_FALSE (seekReader->holdsSeek (1000, 8193));
         REQUIRE (seekReader->fillSeekOnce (1001, 0, 16384));
         CHECK_FALSE (seekReader->holdsSeek (1001, 16384));
         CHECK (seekReader->fillSeekOnce (1001, 0, 16384));
@@ -156,7 +155,9 @@ TEST_CASE ("Reader keeps the old immutable window while a replacement is staged"
         const auto headerBytes = std::filesystem::file_size (file.path) - kFrames * kChannels * sizeof (float);
         std::filesystem::resize_file (file.path, headerBytes + 24000 * kChannels * sizeof (float));
         reader->hintRt (22000);
+        CHECK_FALSE (reader->fillFailing());
         CHECK_FALSE (reader->fillOnce());
+        CHECK (reader->fillFailing());
         REQUIRE (reader->readRt (block.pointers.data(), kChannels, 22000, 512));
         block.check (22000);
         CHECK_FALSE (reader->holds (24000, 1));
@@ -189,12 +190,10 @@ TEST_CASE ("Reader keeps the old immutable window while a replacement is staged"
     {
         for (int pass = 0; pass < 3; ++pass)
             REQUIRE (reader->fillSeekOnce (10000, 0, 20000));
-        for (int pass = 0; pass < 3; ++pass)
-        {
-            REQUIRE (reader->fillSeekOnce (32000, 19800, 8192));
-            REQUIRE (reader->readRt (block.pointers.data(), kChannels, 19800, 512));
-            block.check (19800);
-        }
+        REQUIRE (reader->fillSeekOnce (32000, 19800, 8192));
+        REQUIRE (reader->readRt (block.pointers.data(), kChannels, 19800, 512));
+        block.check (19800);
+        CHECK_FALSE (reader->fillSeekOnce (32000, 19800, 8192));
         CHECK_FALSE (reader->holdsSeek (10000, 20000));
         CHECK (reader->holds (10000, 20000));
         REQUIRE (reader->readRt (block.pointers.data(), kChannels, 32000, 512));
@@ -203,40 +202,40 @@ TEST_CASE ("Reader keeps the old immutable window while a replacement is staged"
     SECTION ("A retarget reuses an unfinished stage when the requested end fits")
     {
         REQUIRE (reader->fillSeekOnce (22000, 0, 8192));
-        REQUIRE (reader->fillSeekOnce (22001, 0, 8192));
         CHECK_FALSE (reader->holdsSeek (22001, 8192));
         REQUIRE (reader->fillSeekOnce (22001, 0, 8192));
-        CHECK (reader->holdsSeek (22000, 20000));
+        CHECK (reader->holdsSeek (22001, 8192));
+        CHECK (reader->holdsSeek (22000, 2 * BufferedFileReader::kFillChunkFrames));
         REQUIRE (reader->readRt (block.pointers.data(), kChannels, 22001, 512));
         block.check (22001);
     }
     SECTION ("A disjoint retarget discards the superseded unfinished seek")
     {
         REQUIRE (reader->fillSeekOnce (22000, 0, 8192));
-        for (int pass = 0; pass < 3; ++pass)
-            REQUIRE (reader->fillSeekOnce (1000, 0, 8192));
+        REQUIRE (reader->fillSeekOnce (1000, 0, 8192));
+        CHECK_FALSE (reader->fillSeekOnce (1000, 0, 8192));
         CHECK_FALSE (reader->holdsSeek (22000, 8192));
-        CHECK (reader->holdsSeek (1000, 20000));
+        CHECK (reader->holdsSeek (1000, 8192));
         REQUIRE (reader->readRt (block.pointers.data(), kChannels, 1000, 512));
         block.check (1000);
     }
-    SECTION ("Normal staging cannot be published as seek residency")
+    SECTION ("Ordinary filling never lands in the seek window")
     {
         REQUIRE (reader->fillOnce (22000));
-        for (int pass = 0; pass < 3; ++pass)
-            REQUIRE (reader->fillSeekOnce (30000, 0, 8192));
+        REQUIRE (reader->fillSeekOnce (30000, 0, 8192));
         CHECK_FALSE (reader->holdsSeek (22000, 8192));
-        CHECK (reader->holdsSeek (30000, 20000));
-        REQUIRE (reader->readRt (block.pointers.data(), kChannels, 1000, 512));
-        block.check (1000);
+        CHECK (reader->holds (22000, 8192));
+        CHECK (reader->holdsSeek (30000, 8192));
+        REQUIRE (reader->readRt (block.pointers.data(), kChannels, 30000, 512));
+        block.check (30000);
     }
-    SECTION ("Seek staging cannot be published as normal residency")
+    SECTION ("Playback committed inside a seek still filling keeps filling it")
     {
         REQUIRE (reader->fillSeekOnce (30000, 0, 8192));
-        for (int pass = 0; pass < 3; ++pass)
+        for (int pass = 0; pass < 2; ++pass)
             REQUIRE (reader->fillOnce (31000));
-        CHECK_FALSE (reader->holdsSeek (30000, 8192));
-        CHECK_FALSE (reader->holdsSeek (31000, 8192));
+        CHECK (reader->holdsSeek (30000, 20000));
+        CHECK_FALSE (reader->fillOnce (31000));
         REQUIRE (reader->readRt (block.pointers.data(), kChannels, 31000, 512));
         block.check (31000);
     }
@@ -261,8 +260,8 @@ TEST_CASE ("Reader keeps the old immutable window while a replacement is staged"
         CHECK_FALSE (reader->fillSeekOnce (-512, 0, 512));
         CHECK_FALSE (reader->needsSeekFill (1000, 0));
         CHECK_FALSE (reader->fillSeekOnce (1000, 0, -1));
-        for (int pass = 0; pass < 3; ++pass)
-            REQUIRE (reader->fillSeekOnce (-256, 0, 512));
+        REQUIRE (reader->fillSeekOnce (-256, 0, 512));
+        CHECK_FALSE (reader->fillSeekOnce (-256, 0, 512));
         CHECK (reader->holdsSeek (-256, 512));
         REQUIRE (reader->readRt (block.pointers.data(), kChannels, -256, 512));
         block.check (-256);
@@ -283,8 +282,7 @@ TEST_CASE ("Reader keeps the old immutable window while a replacement is staged"
         {
             SampleFile sourceFile (channelCount);
             auto seekReader = sourceFile.reader();
-            for (int pass = 0; pass < 3; ++pass)
-                REQUIRE (seekReader->fillSeekOnce (22000, -1, 8192));
+            REQUIRE (seekReader->fillSeekOnce (22000, -1, 8192));
             CHECK (seekReader->hasResidency());
             REQUIRE (seekReader->readRt (block.pointers.data(), kChannels, 22000, 512));
             block.check (22000, 512, channelCount);
@@ -299,9 +297,10 @@ TEST_CASE ("Reader keeps the old immutable window while a replacement is staged"
     }
     SECTION ("Eviction clears current seek and partial staging before reuse")
     {
-        for (int pass = 0; pass < 3; ++pass)
-            REQUIRE (reader->fillSeekOnce (22000, 0, 8192));
-        REQUIRE (reader->fillSeekOnce (1000, 0, 8192));
+        REQUIRE (reader->fillSeekOnce (22000, 0, 8192));
+        reader->hintRt (12000);
+        REQUIRE (reader->fillOnce());
+        CHECK (reader->holds (0, 20000));
         REQUIRE (reader->allocatedBytes() >= 3 * 20000 * kChannels * sizeof (float));
         reader->releaseResidency();
         CHECK (reader->allocatedBytes() == 0);
@@ -523,17 +522,19 @@ TEST_CASE ("Fill pool priming maps timeline to source offsets and removal fences
         pool.add (*reader, 1000, 46000, 1000);
         pool.primeAt (30000);
         pool.setSeekTargetRt (1000, 512);
-        for (int pass = 0; pass < 3; ++pass) REQUIRE (pool.pumpOnce());
+        REQUIRE (pool.pumpOnce());
         REQUIRE (pool.seekReadyRt (1000, 512));
         pool.setPositionRt (900);
         pool.setSeekTargetRt (32000, 512);
         Block block;
-        for (int pass = 0; pass < 3; ++pass)
+        int passes = 0;
+        while (pool.pumpOnce())
         {
-            REQUIRE (pool.pumpOnce());
+            ++passes;
             REQUIRE (reader->readRt (block.pointers.data(), kChannels, 1000, 512));
             block.check (1000);
         }
+        CHECK (passes >= 2);
         CHECK (pool.seekReadyRt (32000, 512));
     }
     SECTION ("Reset and explicit priming cancel requests from the previous playback")
@@ -544,7 +545,7 @@ TEST_CASE ("Fill pool priming maps timeline to source offsets and removal fences
         pool.add (*reader, 1000, 46000, 1000);
         pool.primeAt (1000);
         pool.setSeekTargetRt (30000, 512);
-        for (int pass = 0; pass < 3; ++pass) REQUIRE (pool.pumpOnce());
+        REQUIRE (pool.pumpOnce());
         REQUIRE (pool.seekReadyRt (30000, 512));
         SECTION ("Reset")
         {
@@ -568,25 +569,25 @@ TEST_CASE ("Fill pool priming maps timeline to source offsets and removal fences
         pool.primeAt (1000);
         pool.setSeekTargetRt (30000, 512);
         Block block;
-        for (int pass = 0; pass < 3; ++pass)
-        {
-            REQUIRE (pool.pumpOnce());
-            CHECK (pool.seekReadyRt (30000, 512) == (pass == 2));
-            REQUIRE (reader->readRt (block.pointers.data(), kChannels, 1000, 512));
-            block.check (1000);
-        }
+        CHECK_FALSE (pool.seekReadyRt (30000, 512));
+        REQUIRE (pool.pumpOnce());
+        CHECK (pool.seekReadyRt (30000, 512));
+        REQUIRE (reader->readRt (block.pointers.data(), kChannels, 1000, 512));
+        block.check (1000);
         REQUIRE (reader->readRt (block.pointers.data(), kChannels, 30000, 512));
         block.check (30000);
         pool.setPositionRt (30000);
         pool.clearSeekTargetRt();
         CHECK_FALSE (pool.seekReadyRt (30000, 512));
         pool.setSeekTargetRt (5000, 512);
-        for (int pass = 0; pass < 3; ++pass)
+        int passes = 0;
+        while (pool.pumpOnce())
         {
-            REQUIRE (pool.pumpOnce());
+            ++passes;
             REQUIRE (reader->readRt (block.pointers.data(), kChannels, 30000, 512));
             block.check (30000);
         }
+        CHECK (passes >= 2);
         CHECK (pool.seekReadyRt (5000, 512));
         REQUIRE (reader->readRt (block.pointers.data(), kChannels, 5000, 512));
         block.check (5000);
@@ -602,10 +603,10 @@ TEST_CASE ("Fill pool priming maps timeline to source offsets and removal fences
         REQUIRE (pool.pumpOnce());
         pool.setSeekTargetRt (35000, 8192);
         CHECK_FALSE (pool.seekReadyRt (35000, 8192));
-        for (int pass = 0; pass < 2; ++pass) REQUIRE (pool.pumpOnce());
+        REQUIRE (pool.pumpOnce());
         REQUIRE (pool.seekReadyRt (35000, 8192));
         CHECK_FALSE (pool.seekReadyRt (30000, 8192));
-        CHECK (reader->holdsSeek (30000, 20000));
+        CHECK (reader->holdsSeek (30000, 2 * BufferedFileReader::kFillChunkFrames));
         CHECK_FALSE (pool.pumpOnce());
         const auto filled = pool.stats().fillPasses;
         REQUIRE (filled > 0);
@@ -672,10 +673,11 @@ TEST_CASE ("Fill pool priming maps timeline to source offsets and removal fences
         pool.add (*reader, 10000, 19000, 1000);
         pool.setSeekTargetRt (10000, 20000);
         REQUIRE (pool.pumpOnce());
+        CHECK_FALSE (pool.seekReadyRt (10000, 20000));
         pool.setSeekTargetRt (11000, 20000);
-        for (int pass = 0; pass < 2; ++pass) REQUIRE (pool.pumpOnce());
+        REQUIRE (pool.pumpOnce());
         CHECK (pool.seekReadyRt (11000, 20000));
-        CHECK (reader->holdsSeek (1000, 20000));
+        CHECK (reader->holdsSeek (1000, 2 * BufferedFileReader::kFillChunkFrames));
     }
     SECTION ("Seek prefetch keeps nearby future regions inside its ordinary horizon")
     {
@@ -820,11 +822,9 @@ TEST_CASE ("Fill pool priming maps timeline to source offsets and removal fences
         pool.setSeekTargetRt (30000, 512);
         REQUIRE (pool.pumpOnce());
         CHECK (loopHead->holds (7000, 128));
-        for (int pass = 0; pass < 3; ++pass)
-        {
-            REQUIRE (pool.pumpOnce());
-            CHECK (loopHead->holds (7000, 128));
-        }
+        CHECK_FALSE (pool.seekReadyRt (30000, 512));
+        REQUIRE (pool.pumpOnce());
+        CHECK (loopHead->holds (7000, 128));
         CHECK (pool.seekReadyRt (30000, 512));
         pool.setPositionRt (5000);
         REQUIRE (pool.pumpOnce());
@@ -886,6 +886,59 @@ TEST_CASE ("Fill pool priming maps timeline to source offsets and removal fences
     }
 }
 
+TEST_CASE ("Fill pool readiness reads only what the committed position plays",
+           "[audiofile][reader-pool][seek]")
+{
+    SampleFile file;
+    Block block;
+    SECTION ("A seek committed before it was warm keeps filling the window it began")
+    {
+        auto reader = file.reader();
+        ReaderFillPool pool (3, false);
+        pool.configure (1000.0);
+        pool.add (*reader, 1000, 46000, 1000);
+        pool.primeAt (1000);
+        pool.setSeekTargetRt (30000, 16384);
+        REQUIRE (pool.pumpOnce());
+        CHECK_FALSE (pool.seekReadyRt (30000, 16384));
+        REQUIRE (reader->holdsSeek (30000, BufferedFileReader::kFillChunkFrames));
+        // The locate limit commits it anyway.
+        pool.setPositionRt (30000);
+        pool.clearSeekTargetRt();
+        REQUIRE (reader->readRt (block.pointers.data(), kChannels, 30000, 512));
+        block.check (30000);
+        const auto passes = pool.stats().fillPasses;
+        REQUIRE (pool.pumpOnce());
+        CHECK (pool.stats().fillPasses == passes + 1);
+        CHECK (reader->holdsSeek (30000, 2 * BufferedFileReader::kFillChunkFrames));
+        // Playback running on toward its end keeps it growing to a whole window.
+        pool.setPositionRt (38000);
+        while (pool.pumpOnce()) {}
+        CHECK (reader->holdsSeek (30000, 20000));
+    }
+    SECTION ("A region that ends before the target is not filled for it")
+    {
+        auto behind = file.reader();
+        auto required = file.reader();
+        ReaderFillPool pool (3, false);
+        pool.configure (1000.0, 3.0, 2.0);
+        pool.add (*behind, 28500, 29500, 5000);
+        pool.add (*required, 30000, 31000, 1000);
+        pool.setPositionRt (100000);
+        pool.setSeekTargetRt (30000, 512);
+        REQUIRE (pool.pumpOnce());
+        CHECK (pool.seekReadyRt (30000, 512));
+        CHECK_FALSE (pool.pumpOnce());
+        CHECK (behind->allocatedBytes() == 0);
+        // Committed, the region is near but behind the playhead, and stays unfilled.
+        pool.setPositionRt (30000);
+        pool.clearSeekTargetRt();
+        while (pool.pumpOnce()) {}
+        CHECK (behind->allocatedBytes() == 0);
+        CHECK (required->holds (1000, 1000));
+    }
+}
+
 TEST_CASE ("Fill pool retains loop-start readers near a wrap only",
            "[audiofile][reader-pool]")
 {
@@ -928,10 +981,11 @@ TEST_CASE ("Fill pool stages rolling seeks without replacing current playback",
     pool.setSeekTargetRt (30000, 512);
     CHECK_FALSE (pool.seekReadyRt (30000, 512));
     REQUIRE (pool.pumpOnce());
-    CHECK_FALSE (pool.seekReadyRt (30000, 512));
     checkCurrent();
-    SECTION ("the target becomes ready only after its complete window is published")
+    SECTION ("the target becomes ready once its warm span is published")
     {
+        CHECK (pool.seekReadyRt (30000, 512));
+        CHECK_FALSE (reader->holdsSeek (30000, BufferedFileReader::kFillChunkFrames + 1));
         while (pool.pumpOnce()) checkCurrent();
         REQUIRE (pool.seekReadyRt (30000, 512));
         REQUIRE (reader->readRt (block.pointers.data(), kChannels, 30000, 512));

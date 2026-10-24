@@ -59,14 +59,21 @@ public:
 
     // Exactly one filling owner. Manual callers/pools serialize these methods.
     // Each fillOnce reads at most kFillChunkFrames; fillNow primes a full window.
+    // A window for a frame no published window holds is published with its first
+    // chunk and grows in place, so a cold reader plays as soon as it has read.
     bool fillOnce (std::int64_t startFrame = -1);
     // Seek filling preserves current playback; numFrames is the required warm span.
+    // The seek window is published with its first chunk and holds the span once
+    // enough of it has arrived; playback that commits there keeps it growing.
     bool fillSeekOnce (std::int64_t target, std::int64_t currentFrame, std::int64_t numFrames);
     void fillNow();
     void releaseResidency() noexcept;
 
     bool needsFill() const noexcept;
     bool hasResidency() const noexcept;
+    // Whether the last read from the source came up short or threw, until a
+    // later read succeeds: the file has stopped reading, at least for now.
+    bool fillFailing() const noexcept;
     std::size_t allocatedBytes() const noexcept;
     std::uint64_t readMisses() const noexcept;
 
@@ -74,20 +81,29 @@ private:
     struct Window
     {
         std::int64_t startFrame = 0;
-        std::int64_t numFrames = 0;
         std::int64_t stride = 0;
+        // Filling owner only: the frames this window grows to.
+        std::int64_t planned = 0;
+        // Published payload. Only the filling owner raises it, after writing the
+        // frames below it, so a reader that loads it may read every frame it covers.
+        std::atomic<std::int64_t> filled { 0 };
         std::vector<float> data;
     };
 
     const Window* acquireWindow() const noexcept;
     void releaseWindow() const noexcept;
     bool needsFillAt (const Window*, std::int64_t) const noexcept;
+    static std::int64_t filledFrames (const Window*) noexcept;
     static bool windowHolds (const Window*, std::int64_t, std::int64_t) noexcept;
+    static bool grows (const Window*, std::int64_t from, std::int64_t end) noexcept;
     const Window* windowForRange (const Window*, std::int64_t, std::int64_t) const noexcept;
     void retainSeekForPlayback (std::int64_t);
-    bool fillAt (std::int64_t startFrame, bool seeking, std::int64_t numFrames);
-    void beginFill (std::int64_t);
-    void publishStaging();
+    bool fillAt (std::int64_t startFrame);
+    bool fillSeekAt (std::int64_t target, std::int64_t currentFrame, std::int64_t numFrames);
+    std::unique_ptr<Window> makeWindow (std::int64_t);
+    bool readChunk (Window&);
+    void publish (std::unique_ptr<Window>& slot, std::atomic<const Window*>& published,
+                  std::unique_ptr<Window> next);
     void updateAllocatedBytes() noexcept;
     void run();
 
@@ -97,12 +113,12 @@ private:
     const std::int64_t capacity;
     Fill fillMode;
 
+    // A filling window lives in the slot it serves; staging holds a refill of a
+    // current window that still plays, and stays unpublished until it is full.
     std::unique_ptr<Window> currentWindow;
     std::unique_ptr<Window> seekWindow;
     std::unique_ptr<Window> stagingWindow;
     std::vector<float*> fillDest;
-    std::int64_t stagingFilled = 0;
-    bool stagingForSeek = false;
     std::chrono::steady_clock::time_point nextFillAttempt {};
 
     std::atomic<const Window*> publishedWindow { nullptr };
@@ -111,6 +127,7 @@ private:
     std::atomic<std::int64_t> hintFrame { 0 };
     std::atomic<std::size_t> allocated { 0 };
     std::atomic<std::uint64_t> misses { 0 };
+    std::atomic<bool> failing { false };
 
     std::atomic<bool> stop { false };
     AutoResetEvent    wake;
