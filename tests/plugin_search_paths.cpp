@@ -378,11 +378,11 @@ TEST_CASE ("Custom plugin roots and bundles keep the spelling that reached them 
     CHECK (paths::load (file) == paths::Roots { vendorLink / "Diva-1.4" });
 }
 
+// Windows reads overlong folders through the extended-length prefix, so there is
+// no walk error to provoke there.
+#if ! defined(_WIN32)
 TEST_CASE ("A folder that cannot be walked reports an error and keeps its siblings", "[plugins][paths]")
 {
-   #if defined(_WIN32)
-    SKIP ("long paths are read through the extended-length prefix on Windows");
-   #else
     Tree tree;
     const auto custom = tree.directory ("custom");
     const auto before = tree.directory ("custom/a/Before.lv2");
@@ -408,15 +408,16 @@ TEST_CASE ("A folder that cannot be walked reports an error and keeps its siblin
     CHECK (duskstudio::juce_compat::customLv2Bundles (manager) == paths::Roots { before, after });
     fs::rename (tree.root / "custom" / "m", tree.root / "parked");
     CHECK (format.calls.size() == 3);
-   #endif
 }
+#endif
 
 TEST_CASE ("Loading an LV2 plug-in primes only bundles the last folder walk found", "[plugins][paths]")
 {
     Tree tree;
     const auto custom = tree.directory ("custom");
-    const auto first = tree.directory ("custom/vendor/First.lv2");
-    const auto second = tree.directory ("custom/vendor/Second.lv2");
+    // The walk hands bundles over in the platform's own spelling.
+    const auto first = tree.directory ("custom/vendor/First.lv2").lexically_normal();
+    const auto second = tree.directory ("custom/vendor/Second.lv2").lexically_normal();
     duskstudio::juce_compat::FormatManager scanned;
     auto& scanFormat = addLv2<RecordingLv2Format> (scanned);
     REQUIRE (duskstudio::juce_compat::primeCustomLv2 (scanned, { custom }, true));
