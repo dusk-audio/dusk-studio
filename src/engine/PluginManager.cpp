@@ -781,8 +781,14 @@ void PluginManager::scanClapPlugins (const std::atomic<bool>* abort)
     std::vector<PluginDescriptor> fresh;
     bool cancelled = false;
     bool walkError = false;
-    for (const auto& path : pluginpaths::findBundles (
-             pluginpaths::extend (clap::ClapScanner::defaultSearchPaths(), pluginpaths::load()), ".clap", abort, &walkError))
+    const auto bundles = pluginpaths::findBundles (
+        pluginpaths::extend (clap::ClapScanner::defaultSearchPaths(), pluginpaths::load()), ".clap", abort, &walkError);
+    // `fresh` REPLACES the previous results, so publishing a run that stopped
+    // early, or one whose folder walk failed part way, would drop bundles from
+    // the picker and from the cache on disk. Keep what the last complete scan
+    // found instead, without probing bundles whose results would be discarded.
+    if (walkError) { reportIncompleteWalk ("CLAP"); return; }
+    for (const auto& path : bundles)
     {
         // Between bundles as well as inside one, or a cancel would still have to
         // wait out every remaining bundle in this phase.
@@ -794,13 +800,7 @@ void PluginManager::scanClapPlugins (const std::atomic<bool>* abort)
         if (outcome == NativeScanOutcome::NoSandbox)
             nativescan::appendClapRows (path, fresh);   // no sandbox available - in-process
     }
-
-    // `fresh` REPLACES the previous results, so publishing a run that stopped
-    // early, or one whose folder walk failed part way, would drop bundles from
-    // the picker and from the cache on disk. Keep what the last complete scan
-    // found instead.
     if (cancelled || (abort != nullptr && abort->load (std::memory_order_relaxed))) return;
-    if (walkError) { reportIncompleteWalk ("CLAP"); return; }
 
     {
         const juce::ScopedLock sl (nativeDescriptionsLock);
@@ -968,11 +968,14 @@ void PluginManager::scanVst3NativePlugins (const std::atomic<bool>* abort)
     std::vector<PluginDescriptor> fresh;
     bool cancelled = false;
     bool walkError = false;
-    for (const auto& path : pluginpaths::findBundles (
-             pluginpaths::extend (vst3::Vst3Scanner::defaultSearchPaths(), pluginpaths::load()), ".vst3", abort, &walkError))
+    const auto bundles = pluginpaths::findBundles (
+        pluginpaths::extend (vst3::Vst3Scanner::defaultSearchPaths(), pluginpaths::load()), ".vst3", abort, &walkError);
+    // See scanClapPlugins: a failed walk, or a phase that stopped early, must
+    // not replace the cached results, and a cancel must not wait out the
+    // remaining bundles.
+    if (walkError) { reportIncompleteWalk ("VST3"); return; }
+    for (const auto& path : bundles)
     {
-        // See scanClapPlugins: a cancel must not wait out the remaining bundles,
-        // and a phase that stopped early must not replace the cached results.
         if (abort != nullptr && abort->load (std::memory_order_relaxed)) { cancelled = true; break; }
 
         const juce::File file (juce::String::fromUTF8 (path.u8string().c_str()));
@@ -982,7 +985,6 @@ void PluginManager::scanVst3NativePlugins (const std::atomic<bool>* abort)
             nativescan::appendVst3Rows (path, fresh);   // no sandbox available - in-process
     }
     if (cancelled || (abort != nullptr && abort->load (std::memory_order_relaxed))) return;
-    if (walkError) { reportIncompleteWalk ("VST3"); return; }
 
     {
         const juce::ScopedLock sl (nativeDescriptionsLock);
