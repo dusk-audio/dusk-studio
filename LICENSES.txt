@@ -418,14 +418,17 @@ SYSTEM DEPENDENCIES (not vendored — resolved at configure time)
 libsndfile (all audio file I/O — required on every platform)
   License  : LGPL-2.1-or-later
   Path     : not vendored — found at configure time (libsndfile-dev /
-             libsndfile-devel / brew install libsndfile). A missing libsndfile
+             libsndfile-devel on Linux; on macOS the release passes
+             SndFile_DIR for the pinned source build from
+             scripts/build-macos-runtime-deps.sh). A missing libsndfile
              is a configure FATAL_ERROR, and both the app and the test binary
              link the dusk_sndfile interface target.
   Notes    : On Linux this is a dynamic link against the system library,
              libsndfile.so.1, which is LGPL-2.1 section 6(b), the
              shared-library mechanism, and needs nothing further.
              The macOS DMG does not use the system's copy. The release build
-             links Homebrew's libsndfile, and scripts/bundle-macos-dylibs.sh
+             builds pinned sources for macOS 11 with
+             scripts/build-macos-runtime-deps.sh, and scripts/bundle-macos-dylibs.sh
              copies it into DuskStudio.app/Contents/Frameworks together with
              every non-system dylib it pulls in: libmp3lame (LAME, see its
              entry below), libmpg123 (LGPL-2.1-only), and libFLAC, libogg,
@@ -433,9 +436,11 @@ libsndfile (all audio file I/O — required on every platform)
              separate dylibs loaded through @executable_path/../Frameworks,
              so a user can swap in a modified build of any of them, re-sign
              the bundle, and run it; that is the 6(b) shared-library route.
-             Their versions are whatever Homebrew bottles the release runner
-             installed on the day of the build; nothing in this repository
-             pins them, and the DMG ships no source for them. As with the
+             The macOS source pins are libsndfile 1.2.2, mpg123 1.33.7,
+             LAME 4.0, FLAC 1.5.0, Ogg 1.3.6, Vorbis 1.3.7 and Opus 1.6.1.
+             The build script records each upstream archive URL and SHA-256;
+             its runtime-deps-manifest.json records the built dylibs and their
+             deployment targets. The DMG ships no source for them. As with the
              Windows delivery gap below, this file does not claim the LGPL
              source obligation for those copies is fully discharged today.
              Windows takes a different route. The workflows run vcpkg in
@@ -573,12 +578,15 @@ lilv / suil / lv2 (native LV2 host — Linux and macOS builds)
              pkg-config (lilv-0, suil-0, lv2); the native LV2 host is compiled
              only when all three are present (DUSKSTUDIO_NATIVE_LV2).
   Notes    : Linked against the shared objects, never statically. On Linux
-             those are the distro's. The macOS release build links Homebrew's,
+             those are the distro's. The macOS release build compiles pinned
+             sources for macOS 11 with scripts/build-macos-runtime-deps.sh,
              and the DMG bundles liblilv and libsuil in
              DuskStudio.app/Contents/Frameworks with their dependencies
              libserd, libsord, libsratom and libzix, all ISC (David
-             Robillard), at the Homebrew versions installed on the release
-             runner. ISC is GPL-compatible; no additional obligations beyond
+             Robillard). The source pins are Lilv 0.28.0, Suil 0.10.26,
+             LV2 headers 1.18.10, Serd 0.32.10, Sord 0.16.22,
+             Sratom 0.6.22 and Zix 0.8.2; archive URLs and SHA-256 values
+             live in the build script. ISC is GPL-compatible; no additional obligations beyond
              the license text.
              This entry is only about the SYSTEM lilv/suil/lv2 the native host
              uses. JUCE bundles its own static copies of lv2, lilv, serd, sord
@@ -591,15 +599,17 @@ LAME / libmp3lame (MP3 bounce export — optional)
   Path     : not vendored — system shared library found at configure time via
              find_library(mp3lame); linked only when present
              (DUSKSTUDIO_HAS_LAME). Builds without it fall back to WAV-only.
-  Notes    : On Linux and macOS, linked against a SHARED library —
-             find_library resolves the distro / Homebrew shared object at
+  Notes    : On Linux and macOS, linked against a SHARED library, so
+             LGPL-2.1 section 6(b) applies: the shared-library mechanism is a
+             2.1 addition, relied on here under LAME's or-later grant. On
+             Linux, find_library resolves the distro's shared object at
              configure time (verified: release Linux build links
-             /usr/lib64/libmp3lame.so), so LGPL-2.1 section 6(b) applies:
-             the shared-library mechanism is a 2.1 addition, relied on here
-             under LAME's or-later grant. Linux uses the system's copy. The
-             macOS DMG bundles Homebrew's libmp3lame in
+             /usr/lib64/libmp3lame.so), and the package uses the system's copy.
+             The macOS release instead passes LAME_LIBRARY for the
+             libmp3lame.dylib that scripts/build-macos-runtime-deps.sh builds
+             from pinned LAME 4.0 source, and the DMG bundles it in
              DuskStudio.app/Contents/Frameworks as a separate dylib, with the
-             same unpinned version and missing source noted under libsndfile.
+             source-delivery limit noted under libsndfile.
              Windows is the exception: mp3lame is one of the two packages in
              the root vcpkg.json, installed statically by the same
              x64-windows-static manifest run described under libsndfile, so a
@@ -610,6 +620,12 @@ LAME / libmp3lame (MP3 bounce export — optional)
              Present in a binary only if the build was configured with
              libmp3lame available.
   Upstream : https://lame.sourceforge.io/
+
+             LAME 4.0 README copyright notices:
+             Copyrights (c) 1999-2011 by The LAME Project
+             Copyrights (c) 1999,2000,2001 by Mark Taylor
+             Copyrights (c) 1998 by Michael Cheng
+             Copyrights (c) 1995,1996,1997 by Michael Hipp: mpglib
 
 Mesa for Windows software OpenGL fallback (Windows MSI only)
   Version  : Mesa 26.2.0, built with LLVM 22.1.8 by pal1000's
@@ -2284,10 +2300,10 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 --------------------------------------------------------------------------------
-Opus 1.5.2 — BSD-3-Clause
-xiph/opus COPYING at tag v1.5.2, https://github.com/xiph/opus
-The baseline above resolves opus to 1.5.2, and the port installs this COPYING
-as its copyright. Reproduced whole, including the royalty-free patent license
+Opus 1.5.2 (Windows) / 1.6.1 (macOS) — BSD-3-Clause
+xiph/opus COPYING at tags v1.5.2 and v1.6.1, https://github.com/xiph/opus
+The two source releases carry identical COPYING text. The Windows port
+installs it as its copyright. Reproduced whole, including the royalty-free patent license
 pointers upstream keeps at the foot of the file.
 --------------------------------------------------------------------------------
 
@@ -2337,11 +2353,12 @@ Broadcom Corporation:
 https://datatracker.ietf.org/ipr/1526/
 
 --------------------------------------------------------------------------------
-mpg123 1.33.4 — LGPL-2.1-only, copyright and license statement
+mpg123 1.33.4 (Windows) / 1.33.7 (macOS) — LGPL-2.1-only, copyright and license statement
 mpg123-1.33.4/COPYING, opening statement, from the release tarball
 mpg123-1.33.4.tar.bz2 at https://sourceforge.net/projects/mpg123/ — the exact
 archive the vcpkg port fetches, its SHA512 matching the one the portfile pins
 at baseline 39344dff01c5a5a0134caf2624cdd492f05d30ea.
+The pinned macOS mpg123 1.33.7 archive carries the same opening statement.
 The license body that this statement points at is the LGPL 2.1 reproduced in
 the next block. Section 2 of the same COPYING is the GPL version 2, which
 covers the mpg123 console programs; the port builds the library only
@@ -3882,6 +3899,114 @@ ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS WITH THE
 SOFTWARE.
 
+--------------------------------------------------------------------------------
+Lilv 0.28.0 — ISC (macOS bundled native LV2 runtime)
+COPYING from https://download.drobilla.net/lilv-0.28.0.tar.xz
+--------------------------------------------------------------------------------
+
+Copyright 2011-2026 David Robillard <d@drobilla.net>
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
+FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM
+LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR
+OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+PERFORMANCE OF THIS SOFTWARE.
+--------------------------------------------------------------------------------
+Suil 0.10.26 — ISC (macOS bundled native LV2 runtime)
+COPYING from https://download.drobilla.net/suil-0.10.26.tar.xz
+--------------------------------------------------------------------------------
+
+Copyright 2007-2025 David Robillard <d@drobilla.net>
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
+FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM
+LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR
+OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+PERFORMANCE OF THIS SOFTWARE.
+--------------------------------------------------------------------------------
+Serd 0.32.10 — ISC (macOS bundled native LV2 runtime)
+COPYING from https://download.drobilla.net/serd-0.32.10.tar.xz
+--------------------------------------------------------------------------------
+
+Copyright 2011-2025 David Robillard <d@drobilla.net>
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
+FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM
+LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR
+OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+PERFORMANCE OF THIS SOFTWARE.
+--------------------------------------------------------------------------------
+Sord 0.16.22 — ISC (macOS bundled native LV2 runtime)
+COPYING from https://download.drobilla.net/sord-0.16.22.tar.xz
+--------------------------------------------------------------------------------
+
+Copyright 2011-2026 David Robillard <d@drobilla.net>
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
+FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM
+LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR
+OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+PERFORMANCE OF THIS SOFTWARE.
+--------------------------------------------------------------------------------
+Sratom 0.6.22 — ISC (macOS bundled native LV2 runtime)
+COPYING from https://download.drobilla.net/sratom-0.6.22.tar.xz
+--------------------------------------------------------------------------------
+
+Copyright 2012-2026 David Robillard <d@drobilla.net>
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
+FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM
+LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR
+OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+PERFORMANCE OF THIS SOFTWARE.
+--------------------------------------------------------------------------------
+Zix 0.8.2 — ISC (macOS bundled native LV2 runtime)
+COPYING from https://gitlab.com/drobilla/zix/-/archive/v0.8.2/zix-v0.8.2.tar.gz
+--------------------------------------------------------------------------------
+
+Copyright 2011-2022 David Robillard <d@drobilla.net>
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
+FITNESS.  IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM
+LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR
+OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+PERFORMANCE OF THIS SOFTWARE.
 --------------------------------------------------------------------------------
 DAF / DGL — ISC
 LICENSE in the DAF monorepo rev @DAF_REV@

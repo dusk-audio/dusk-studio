@@ -1131,6 +1131,10 @@ if(Python3_Interpreter_FOUND)
         COMMAND "${Python3_EXECUTABLE}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/validate_cross_platform.py")
     set_tests_properties(cross-platform-validator-contract PROPERTIES TIMEOUT 120)
+    add_test(NAME macos-bundle-contract
+        COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/macos_bundle.py")
+    set_tests_properties(macos-bundle-contract PROPERTIES TIMEOUT 30)
     add_test(NAME manual-coverage-contract
         COMMAND "${Python3_EXECUTABLE}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/manual_coverage.py"

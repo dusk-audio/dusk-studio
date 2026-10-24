@@ -92,6 +92,8 @@ canonical source.
 
 ### Fixed
 
+- **macOS compatibility.** Bundled audio and plug-in hosting libraries now
+  honour the documented macOS 11 minimum.
 - **Timeline selection.** A new region click keeps its selection when an older
   edit notification is still waiting to be delivered.
 - **Custom LV2 loading.** Reusing a format avoids repeated folder walks;
