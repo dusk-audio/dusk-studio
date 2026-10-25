@@ -204,6 +204,8 @@ public:
     void serviceMultisampleLoads();
     bool hasPendingMultisampleLoads() const;
     bool hasPendingMultisampleLoad (int trackIndex) const;
+    std::string pendingMultisampleName (int trackIndex) const;
+    bool multisampleLoadsAwaitDevice() const;
 #endif
 
     Session&          getSession()        noexcept { return session; }
@@ -864,6 +866,23 @@ private:
     bool        lastChaseEnabled    = false;
     int         mtcDriftWindowFrames = 0;
     std::int64_t lastSeenMtcFrames    = -1;
+    // The drift re-locate the chase asked for: where the master was at sync
+    // clock `clock`. It lands that far on, wherever the master has rolled to by
+    // then. `retired` is an earlier target a second jump replaced, refused until
+    // the message thread swaps it out. Any commit, Stop, or turning chase off
+    // clears them.
+    struct ChaseLocate
+    {
+        std::int64_t  target  = -1;
+        std::int64_t  retired = -1;
+        std::int64_t  clock   = 0;
+        std::uint32_t serial  = 0;
+    };
+    ChaseLocate chaseLocate;
+    void requestChaseLocateRt (std::int64_t masterSamples) noexcept;
+    // Message thread, audio callbacks suspended and drained: the pending playhead,
+    // or where a pending chase re-locate would land now.
+    std::int64_t pendingPlayheadWhileSuspended() const noexcept;
     // Recording is the workflow start state. Saved sessions overwrite
     // via session.uiStage on load.
     std::atomic<Stage> stage { Stage::Recording };

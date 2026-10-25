@@ -50,6 +50,7 @@
 #include "foundation/ScopedNoDenormals.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cerrno>
 #include <chrono>
@@ -1598,6 +1599,32 @@ static bool runDeviceSessionPerf (AudioEngine& engine, Session& session,
         && callback.hasFinalStatistics() && sourcePassed;
 }
 
+// Frames each track read back as digital silence, block by block. The perf
+// fixtures play a tone on every track for the whole session, so there a run of
+// silent frames is audio the readers could not serve. A lone zero is a tone
+// crossing zero on both channels at once.
+struct HeadlessReadProbe
+{
+    std::vector<int> silent;
+    int block = 0;
+
+    static void observe (void* context, int track, std::int64_t, std::int64_t, std::int64_t,
+                         const float* left, const float* right, int samples) noexcept
+    {
+        auto& probe = *static_cast<HeadlessReadProbe*> (context);
+        const auto zero = [&] (int i)
+        {
+            return std::fpclassify (left[i]) == FP_ZERO && (right == nullptr || std::fpclassify (right[i]) == FP_ZERO);
+        };
+        int count = 0;
+        for (int i = 0; i < samples; ++i)
+            count += zero (i) && ((i > 0 && zero (i - 1)) || (i + 1 < samples && zero (i + 1))) ? 1 : 0;
+        probe.silent[(std::size_t) probe.block * Session::kNumTracks + (std::size_t) track] += count;
+    }
+
+    int at (int b, int track) const { return silent[(std::size_t) b * Session::kNumTracks + (std::size_t) track]; }
+};
+
 // DUSKSTUDIO_PERF_SESSION=<path>: load a real session and play it
 // headlessly at 48 kHz / 256 samples, paced to realtime so the playback
 // prefetch behaves as it does live, then print the per-section perf
@@ -1751,6 +1778,16 @@ static bool runHeadlessSessionPerf (const juce::String& sessionPath)
     double pacingPauseMs = 0.0;
     int locateCount = 0;
     float masterPeak = 0.0f;
+    HeadlessReadProbe probe;
+    const bool probeReads = locateReaders || loopReaders;
+    if (probeReads)
+    {
+        probe.silent.assign ((std::size_t) numBlocks * Session::kNumTracks, 0);
+        engine->setPlaybackReadObserver (&HeadlessReadProbe::observe, &probe);
+    }
+    std::array<int, 3> locateRequested { -1, -1, -1 }, locateCommitted { -1, -1, -1 };
+    std::array<std::int64_t, 3> locateTargets {};
+    std::uint32_t locateSerial = transport.getLocateCount();
 
     for (int b = 0; b < numBlocks; ++b)
     {
@@ -1758,16 +1795,23 @@ static bool runHeadlessSessionPerf (const juce::String& sessionPath)
         {
             const auto lastStart = std::max<std::int64_t> (0, sessionEnd - blockSize);
             const auto target = lastStart / 4 * (++locateCount);
+            locateSerial = transport.getLocateCount();
+            locateRequested[(std::size_t) locateCount - 1] = b;
+            locateTargets[(std::size_t) locateCount - 1] = target;
             const auto seekStart = std::chrono::steady_clock::now();
             transport.locate (target);
             pacingPauseMs += std::chrono::duration<double, std::milli> (
                 std::chrono::steady_clock::now() - seekStart).count();
         }
         for (auto& o : outputs) std::fill (o.begin(), o.end(), 0.0f);
+        probe.block = b;
         engine->audioDeviceIOCallback (
             inputPtrs.data(), numInChannels,
             outputPtrs.data(), numOutChannels,
             blockSize, ctx);
+        if (locateCount > 0 && locateCommitted[(std::size_t) locateCount - 1] < 0
+            && transport.getLocateCount() != locateSerial)
+            locateCommitted[(std::size_t) locateCount - 1] = b;
 
         for (int s = 0; s < blockSize; ++s)
             masterPeak = std::max ({ masterPeak,
@@ -1800,6 +1844,59 @@ static bool runHeadlessSessionPerf (const juce::String& sessionPath)
         (unsigned long long) (readerStats.workerWakeups - readerStats0.workerWakeups),
         readerSeconds > 0.0 ? (double) (readerStats.workerWakeups - readerStats0.workerWakeups) / readerSeconds : 0.0,
         locateCount);
+    if (probeReads)
+    {
+        engine->setPlaybackReadObserver (nullptr, nullptr);
+        const auto silentIn = [&] (int from, int until, int track)
+        {
+            std::int64_t frames = 0;
+            for (int b = std::max (0, from); b < std::min (until, numBlocks); ++b) frames += probe.at (b, track);
+            return frames;
+        };
+        const auto blocksAfter = (int) std::ceil (2.0 * sampleRate / blockSize);
+        for (int i = 0; i < locateCount; ++i)
+        {
+            const auto requested = locateRequested[(std::size_t) i], committed = locateCommitted[(std::size_t) i];
+            if (committed < 0)
+            {
+                std::fprintf (stdout, "Locate %d: target=%lld never committed\n", i + 1,
+                              (long long) locateTargets[(std::size_t) i]);
+                continue;
+            }
+            const auto until = std::min (committed + blocksAfter,
+                                         i + 1 < locateCount ? locateRequested[(std::size_t) i + 1] : numBlocks);
+            std::int64_t before = 0, after = 0, worst = 0;
+            int lastSilent = -1;
+            for (int t = 0; t < Session::kNumTracks; ++t)
+            {
+                before += silentIn (requested, committed, t);
+                const auto frames = silentIn (committed, until, t);
+                after += frames;
+                worst = std::max (worst, frames);
+            }
+            for (int b = committed; b < until; ++b)
+                for (int t = 0; t < Session::kNumTracks; ++t)
+                    if (probe.at (b, t) > 0) lastSilent = b;
+            std::fprintf (stdout,
+                "Locate %d: target=%lld committed after %d blocks (%.1f ms); silent track-frames before commit=%lld; "
+                "in the %.0f ms after commit: %lld track-frames (%.1f track-ms), worst track %.1f ms, silence ends %.1f ms after commit\n",
+                i + 1, (long long) locateTargets[(std::size_t) i], committed - requested, (committed - requested) * blockMs,
+                (long long) before, (until - committed) * blockMs, (long long) after, 1000.0 * (double) after / sampleRate,
+                1000.0 * (double) worst / sampleRate, lastSilent < 0 ? 0.0 : (lastSilent + 1 - committed) * blockMs);
+        }
+        std::int64_t total = 0;
+        int silentBlocks = 0, firstSilent = -1;
+        for (int b = 0; b < numBlocks; ++b)
+        {
+            std::int64_t frames = 0;
+            for (int t = 0; t < Session::kNumTracks; ++t) frames += probe.at (b, t);
+            total += frames;
+            if (frames > 0 && firstSilent < 0) firstSilent = b;
+            silentBlocks += frames > 0 ? 1 : 0;
+        }
+        std::fprintf (stdout, "Read probe: silent track-frames over the run=%lld (%.1f track-ms) in %d blocks, first at block %d\n",
+                      (long long) total, 1000.0 * (double) total / sampleRate, silentBlocks, firstSilent);
+    }
     engine->stop();
     std::fprintf (stdout, "Master peak over run: %.4f %s\n", masterPeak,
                   masterPeak <= 1.0e-6f ? "(SILENT - check playhead/regions; costs below undercount the live case)"

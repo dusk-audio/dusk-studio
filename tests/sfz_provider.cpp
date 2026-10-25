@@ -483,6 +483,10 @@ TEST_CASE ("SFZ Instruments does not accept SPDX hints without actual matching l
     { secondaryLicense (kLicenseText + "except the organ, CC BY-NC-SA 4.0"); }
     SECTION ("A sidecar prohibits commercial use in prose")
     { secondaryLicense (kLicenseText + "Commercial use is not permitted."); }
+    SECTION ("A sidecar declares a bare hyphenated NonCommercial element")
+    { secondaryLicense (kLicenseText + "Samples: BY-NC."); }
+    SECTION ("A sidecar declares a bare NoDerivatives element with an em dash")
+    { secondaryLicense (kLicenseText + "Drums: BY\xe2\x80\x94ND."); }
     SECTION ("A differently named license document conflicts")
     { secondaryLicense ("https://creativecommons.org/licenses/by-sa/4.0/", "Samples/LICENCE-MAPPINGS"); }
     SECTION ("A document in a licensing directory is unestablished")
@@ -545,6 +549,12 @@ TEST_CASE ("SFZ Instruments does not accept SPDX hints without actual matching l
     { transport.replies = githubReplies (kLicenseText + "CC\tBY -\nND 4.0"); }
     SECTION ("Markdown formatting does not hide a restricted identifier")
     { transport.replies = githubReplies (kLicenseText + "CC **BY-NC** 4.0"); }
+    SECTION ("A bare versioned NonCommercial identifier conflicts with the primary grant")
+    { transport.replies = githubReplies (kLicenseText + "The choir recordings are BY-NC 4.0."); }
+    SECTION ("A bare NonCommercial ShareAlike identifier conflicts with the primary grant")
+    { transport.replies = githubReplies (kLicenseText + "The organ samples are BY-NC-SA."); }
+    SECTION ("A bare versioned NoDerivatives identifier conflicts with the primary grant")
+    { transport.replies = githubReplies (kLicenseText + "Drums: BY-ND 3.0"); }
     SECTION ("A nonbreaking hyphen does not hide a restricted identifier")
     { transport.replies = githubReplies (kLicenseText + "CC BY\xe2\x80\x91ND 4.0"); }
     SECTION ("Commercial use is explicitly prohibited despite the primary grant")

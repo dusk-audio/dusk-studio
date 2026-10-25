@@ -34,6 +34,13 @@ namespace duskstudio
 {
 namespace
 {
+[[maybe_unused]] void reportIncompleteWalk (const char* format)
+{
+    std::fprintf (stderr, "[Dusk Studio/scan] a %s folder could not be read completely; "
+                          "keeping the previous %s results\n", format, format);
+    std::fflush (stderr);
+}
+
 PluginDescriptor fromJuceDescription (const juce::PluginDescription& source)
 {
     PluginDescriptor descriptor;
@@ -462,6 +469,7 @@ PluginManager::PluginManager()
     juce_compat::addDefaultFormats (formatManager);
 
     loadCache();
+    juce_compat::restoreCustomLv2Bundles (formatManager, pluginpaths::stored (customLv2BundleList()));
     // Restore native-format descriptions so the picker has them at launch.
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
     loadNativeCache (clapDescriptions, "clap-cache.json", "clap-cache.xml", false);
@@ -488,6 +496,12 @@ juce::File PluginManager::getCacheFile() const
     if (! cfgDir.isDirectory() && cfgDir.createDirectory().failed())
         return {};   // fall back to empty File - load/saveCache become no-ops
     return cfgDir.getChildFile ("plugin-cache.xml");
+}
+
+std::filesystem::path PluginManager::customLv2BundleList() const
+{
+    const auto directory = dusk::fs::appConfigDir();
+    return directory.empty() ? std::filesystem::path {} : directory / "lv2-custom-bundles.json";
 }
 
 juce::File PluginManager::getDeadMansPedalFile() const
@@ -554,7 +568,12 @@ int PluginManager::scanInstalledPlugins (
     int added = 0;
     const auto customFolders = pluginpaths::load();
     // Explicit scans must discover bundles added under unchanged roots.
-    juce_compat::primeCustomLv2 (formatManager, customFolders, true, abort);
+    const bool customLv2Complete = juce_compat::primeCustomLv2 (formatManager, customFolders, true, abort);
+    if (customLv2Complete)
+    {
+        std::string bundleListError;
+        pluginpaths::save (juce_compat::customLv2Bundles (formatManager), bundleListError, customLv2BundleList());
+    }
     const auto& formats = formatManager.getFormats();
     const int   numFormats = formats.size();
     bool aborted = false;
@@ -633,7 +652,8 @@ int PluginManager::scanInstalledPlugins (
         // that actually have URI-style (non-path) entries needing validation.
         std::map<juce::String, juce::StringArray> liveIdsByFormat;
         for (const auto& desc : knownPluginList.getTypes())
-            if (! juce::File::isAbsolutePath (desc.fileOrIdentifier))
+            if (! juce::File::isAbsolutePath (desc.fileOrIdentifier)
+                && (customLv2Complete || desc.pluginFormatName != "LV2"))
                 liveIdsByFormat.emplace (desc.pluginFormatName, juce::StringArray{});
 
         for (auto& entry : liveIdsByFormat)
@@ -760,8 +780,15 @@ void PluginManager::scanClapPlugins (const std::atomic<bool>* abort)
     // message thread can't stall behind this thread's file I/O.
     std::vector<PluginDescriptor> fresh;
     bool cancelled = false;
-    for (const auto& path : pluginpaths::findBundles (
-             pluginpaths::extend (clap::ClapScanner::defaultSearchPaths(), pluginpaths::load()), ".clap", abort))
+    bool walkError = false;
+    const auto bundles = pluginpaths::findBundles (
+        pluginpaths::extend (clap::ClapScanner::defaultSearchPaths(), pluginpaths::load()), ".clap", abort, &walkError);
+    // `fresh` REPLACES the previous results, so publishing a run that stopped
+    // early, or one whose folder walk failed part way, would drop bundles from
+    // the picker and from the cache on disk. Keep what the last complete scan
+    // found instead, without probing bundles whose results would be discarded.
+    if (walkError) { reportIncompleteWalk ("CLAP"); return; }
+    for (const auto& path : bundles)
     {
         // Between bundles as well as inside one, or a cancel would still have to
         // wait out every remaining bundle in this phase.
@@ -773,10 +800,6 @@ void PluginManager::scanClapPlugins (const std::atomic<bool>* abort)
         if (outcome == NativeScanOutcome::NoSandbox)
             nativescan::appendClapRows (path, fresh);   // no sandbox available - in-process
     }
-
-    // `fresh` REPLACES the previous results, so publishing a run that stopped
-    // early would drop every bundle after the stop from the picker and from the
-    // cache on disk. Keep what the last complete scan found instead.
     if (cancelled || (abort != nullptr && abort->load (std::memory_order_relaxed))) return;
 
     {
@@ -892,8 +915,10 @@ std::vector<PluginDescriptor> PluginManager::getClapInstrumentDescriptions() con
 void PluginManager::scanLv2Plugins (const std::atomic<bool>* abort)
 {
 #if DUSKSTUDIO_HAS_NATIVE_LV2
-    const auto scanned = lv2::Lv2Scanner::scan (abort);   // manifest parse outside the lock
+    bool walkError = false;
+    const auto scanned = lv2::Lv2Scanner::scan (abort, &walkError);   // manifest parse outside the lock
     if (abort != nullptr && abort->load (std::memory_order_relaxed)) return;
+    if (walkError) { reportIncompleteWalk ("LV2"); return; }
 
     std::vector<PluginDescriptor> fresh;
     fresh.reserve (scanned.size());
@@ -942,11 +967,15 @@ void PluginManager::scanVst3NativePlugins (const std::atomic<bool>* abort)
 #if DUSKSTUDIO_HAS_NATIVE_VST3
     std::vector<PluginDescriptor> fresh;
     bool cancelled = false;
-    for (const auto& path : pluginpaths::findBundles (
-             pluginpaths::extend (vst3::Vst3Scanner::defaultSearchPaths(), pluginpaths::load()), ".vst3", abort))
+    bool walkError = false;
+    const auto bundles = pluginpaths::findBundles (
+        pluginpaths::extend (vst3::Vst3Scanner::defaultSearchPaths(), pluginpaths::load()), ".vst3", abort, &walkError);
+    // See scanClapPlugins: a failed walk, or a phase that stopped early, must
+    // not replace the cached results, and a cancel must not wait out the
+    // remaining bundles.
+    if (walkError) { reportIncompleteWalk ("VST3"); return; }
+    for (const auto& path : bundles)
     {
-        // See scanClapPlugins: a cancel must not wait out the remaining bundles,
-        // and a phase that stopped early must not replace the cached results.
         if (abort != nullptr && abort->load (std::memory_order_relaxed)) { cancelled = true; break; }
 
         const juce::File file (juce::String::fromUTF8 (path.u8string().c_str()));
@@ -1079,7 +1108,7 @@ PluginManager::createPluginInstance (const PluginDescriptor& desc,
                                       double sampleRate, int blockSize,
                                       juce::String& errorMessage)
 {
-    if (desc.formatName == "LV2") juce_compat::primeCustomLv2 (formatManager);
+    if (desc.formatName == "LV2") juce_compat::primeLv2Plugin (formatManager, desc.location);
     auto instance = formatManager.createPluginInstance (
         toJuceDescription (desc), sampleRate, blockSize, errorMessage);
     if (instance == nullptr)
@@ -1093,7 +1122,7 @@ void PluginManager::createPluginInstanceAsync (
     const PluginDescriptor& desc, double sampleRate, int blockSize,
     std::function<void (std::unique_ptr<juce::AudioPluginInstance>, juce::String)> callback)
 {
-    if (desc.formatName == "LV2") juce_compat::primeCustomLv2 (formatManager);
+    if (desc.formatName == "LV2") juce_compat::primeLv2Plugin (formatManager, desc.location);
     // Off-thread creation for slow-to-instantiate formats. JUCE runs the
     // format's createInstance on a background thread when the format reports
     // requiresUnblockedMessageThreadDuringCreation() == false, then fires this

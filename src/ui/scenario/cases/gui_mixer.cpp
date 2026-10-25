@@ -49,7 +49,7 @@ bool timesAscend (const std::vector<AutomationPoint>& points)
     return true;
 }
 
-// The strips' own timers record the rides while the transport rolls. Write
+// The strips' own timers record the rides during playback. Write
 // takes the fader, pan, mute and solo; Touch records the fader and pan while
 // held and returns to the earlier ride on release; a mute click in Touch
 // records nothing; a bus's fader, pan and mute, the master fader and an aux

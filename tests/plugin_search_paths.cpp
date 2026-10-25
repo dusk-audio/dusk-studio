@@ -8,6 +8,10 @@
 
 #if defined(_WIN32)
 #include "../cmake/JuceLv2WindowsPaths.h"
+#else
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #endif
 
 #include <algorithm>
@@ -15,6 +19,7 @@
 #include <future>
 #include <memory>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -88,9 +93,28 @@ struct LinkFollowingVst3Format : juce::LV2PluginFormat
     bool runaway = false;
 };
 
-CountingLv2Format& addCountingLv2 (juce::AudioPluginFormatManager& manager)
+// Loading a bundle path teaches the format the URI "urn:<bundle stem>".
+struct RecordingLv2Format : juce::LV2PluginFormat
 {
-    auto format = std::make_unique<CountingLv2Format>();
+    void findAllTypesForFile (juce::OwnedArray<juce::PluginDescription>& results, const juce::String& identifier) override
+    {
+        const auto text = identifier.toStdString();
+        calls.push_back (text);
+        const auto path = std::filesystem::u8path (text);
+        if (path.extension() == ".lv2") known.insert ("urn:" + path.stem().u8string());
+        if (known.count (text) == 0) return;
+        auto description = std::make_unique<juce::PluginDescription>();
+        description->fileOrIdentifier = identifier;
+        results.add (description.release());
+    }
+    std::vector<std::string> calls;
+    std::set<std::string> known;
+};
+
+template <typename Format>
+Format& addLv2 (juce::AudioPluginFormatManager& manager)
+{
+    auto format = std::make_unique<Format>();
     auto& result = *format;
    #if DUSKSTUDIO_JUCE_HAS_FREE_ADD_FORMATS
     manager.addFormat (std::move (format));
@@ -99,6 +123,41 @@ CountingLv2Format& addCountingLv2 (juce::AudioPluginFormatManager& manager)
    #endif
     return result;
 }
+
+CountingLv2Format& addCountingLv2 (juce::AudioPluginFormatManager& manager)
+{
+    return addLv2<CountingLv2Format> (manager);
+}
+
+#if ! defined(_WIN32)
+// A chain of folders whose full path is longer than PATH_MAX, built and removed
+// relative to each parent because no absolute path can name the deep end.
+struct OverlongFolder
+{
+    std::vector<int> descriptors;
+    std::string name = std::string (240, 'd');
+    explicit OverlongFolder (const std::filesystem::path& parent)
+    {
+        descriptors.push_back (::open (parent.c_str(), O_RDONLY | O_DIRECTORY));
+        REQUIRE (descriptors.back() >= 0);
+        for (int depth = 0; depth < 20; ++depth)
+        {
+            REQUIRE (::mkdirat (descriptors.back(), name.c_str(), 0700) == 0);
+            descriptors.push_back (::openat (descriptors.back(), name.c_str(), O_RDONLY | O_DIRECTORY));
+            REQUIRE (descriptors.back() >= 0);
+        }
+    }
+    ~OverlongFolder()
+    {
+        for (std::size_t level = descriptors.size(); level-- > 1;)
+        {
+            ::close (descriptors[level]);
+            ::unlinkat (descriptors[level - 1], name.c_str(), AT_REMOVEDIR);
+        }
+        ::close (descriptors.front());
+    }
+};
+#endif
 
 struct Tree
 {
@@ -163,9 +222,9 @@ TEST_CASE ("Custom LV2 priming caches roots for each format lifetime", "[plugins
     REQUIRE (paths::save (roots, error));
     duskstudio::juce_compat::FormatManager manager;
     auto& format = addCountingLv2 (manager);
-    duskstudio::juce_compat::primeCustomLv2 (manager);
+    duskstudio::juce_compat::primeCustomLv2 (manager, paths::load());
     REQUIRE (format.visits == 1);
-    duskstudio::juce_compat::primeCustomLv2 (manager);
+    duskstudio::juce_compat::primeCustomLv2 (manager, paths::load());
     CHECK (format.visits == 1);
 
     SECTION ("new manager lifetimes prime independently")
@@ -175,7 +234,7 @@ TEST_CASE ("Custom LV2 priming caches roots for each format lifetime", "[plugins
         {
             fresh.emplace();
             auto& other = addCountingLv2 (*fresh);
-            duskstudio::juce_compat::primeCustomLv2 (*fresh);
+            duskstudio::juce_compat::primeCustomLv2 (*fresh, paths::load());
             CHECK (other.visits == 1);
             fresh.reset();
         }
@@ -183,34 +242,34 @@ TEST_CASE ("Custom LV2 priming caches roots for each format lifetime", "[plugins
     SECTION ("changed and empty roots invalidate priming")
     {
         REQUIRE (paths::save ({}, error));
-        duskstudio::juce_compat::primeCustomLv2 (manager);
+        duskstudio::juce_compat::primeCustomLv2 (manager, paths::load());
         REQUIRE (paths::save (roots, error));
-        duskstudio::juce_compat::primeCustomLv2 (manager);
+        duskstudio::juce_compat::primeCustomLv2 (manager, paths::load());
         CHECK (format.visits == 2);
         const paths::Roots other { tree.directory ("other") };
         tree.directory ("other/Second.lv2");
         REQUIRE (paths::save (other, error));
-        duskstudio::juce_compat::primeCustomLv2 (manager);
+        duskstudio::juce_compat::primeCustomLv2 (manager, paths::load());
         CHECK (format.visits == 3);
     }
     SECTION ("explicit refresh discovers new bundles under unchanged roots")
     {
         tree.directory ("custom/new/Second.lv2");
-        duskstudio::juce_compat::primeCustomLv2 (manager);
+        duskstudio::juce_compat::primeCustomLv2 (manager, paths::load());
         CHECK (format.visits == 1);
         duskstudio::juce_compat::primeCustomLv2 (manager, roots, true);
         CHECK (format.visits == 3);
-        duskstudio::juce_compat::primeCustomLv2 (manager);
+        duskstudio::juce_compat::primeCustomLv2 (manager, paths::load());
         CHECK (format.visits == 3);
     }
     SECTION ("reconnected roots retry discovery")
     {
         const auto unplugged = tree.root / "unplugged";
         fs::rename (roots.front(), unplugged);
-        duskstudio::juce_compat::primeCustomLv2 (manager);
+        duskstudio::juce_compat::primeCustomLv2 (manager, paths::load());
         CHECK (format.visits == 1);
         fs::rename (unplugged, roots.front());
-        duskstudio::juce_compat::primeCustomLv2 (manager);
+        duskstudio::juce_compat::primeCustomLv2 (manager, paths::load());
         CHECK (format.visits == 2);
     }
     SECTION ("cancellation does not commit partial priming")
@@ -234,7 +293,7 @@ TEST_CASE ("Custom LV2 priming caches roots for each format lifetime", "[plugins
         CHECK_THROWS_AS (duskstudio::juce_compat::primeCustomLv2 (manager, roots, true), std::runtime_error);
         CHECK (format.visits == 2);
         format.onPrime = {};
-        duskstudio::juce_compat::primeCustomLv2 (manager);
+        duskstudio::juce_compat::primeCustomLv2 (manager, paths::load());
         CHECK (format.visits == 3);
     }
 }
@@ -292,10 +351,93 @@ TEST_CASE ("Custom plugin discovery reaches nested vendors and stops at bundle b
         fs::create_directory_symlink (tree.root / "custom", tree.root / "external" / "cycle", linkError);
         const auto linked = paths::findBundles (roots, ".vst3");
         CHECK (linked.size() == 2);
-        CHECK (std::find (linked.begin(), linked.end(), external) != linked.end());
+        CHECK (std::find (linked.begin(), linked.end(), vendor / "linked-vendor" / "Vendor" / "Linked.vst3") != linked.end());
+        CHECK (std::find (linked.begin(), linked.end(), external) == linked.end());
     }
     std::atomic<bool> abort { true };
     CHECK (paths::findBundles (roots, ".vst3", &abort).empty());
+}
+
+TEST_CASE ("Custom plugin roots and bundles keep the spelling that reached them through links", "[plugins][paths]")
+{
+    Tree tree;
+    const auto versioned = tree.directory ("vendor/Diva-1.4");
+    REQUIRE (dusk::fs::writeStringToFile (versioned / "Diva.64.so", "fixture"));
+    const auto custom = tree.directory ("custom");
+    const auto vendorLink = custom / "u-he";
+    std::error_code linkError;
+    fs::create_directory_symlink (tree.root / "vendor", vendorLink, linkError);
+    if (! linkError) fs::create_symlink (versioned / "Diva.64.so", custom / "Diva.clap", linkError);
+    if (linkError) SKIP ("symbolic links are unavailable: " << linkError.message());
+    CHECK (paths::normalize ({ vendorLink, tree.root / "vendor" }) == paths::Roots { vendorLink });
+    CHECK (paths::findBundles ({ custom }, ".clap") == paths::Roots { custom / "Diva.clap" });
+    const auto file = tree.root / "settings.json";
+    std::string error;
+    REQUIRE (paths::save ({ vendorLink / "Diva-1.4" / "" }, error, file));
+    CHECK (paths::stored (file) == paths::Roots { vendorLink / "Diva-1.4" });
+    CHECK (paths::load (file) == paths::Roots { vendorLink / "Diva-1.4" });
+}
+
+// Windows reads overlong folders through the extended-length prefix, so there is
+// no walk error to provoke there.
+#if ! defined(_WIN32)
+TEST_CASE ("A folder that cannot be walked reports an error and keeps its siblings", "[plugins][paths]")
+{
+    Tree tree;
+    const auto custom = tree.directory ("custom");
+    const auto before = tree.directory ("custom/a/Before.lv2");
+    const auto after = tree.directory ("custom/z/After.lv2");
+    {
+        bool walkError = true;
+        CHECK (paths::findBundles ({ custom }, ".lv2", nullptr, &walkError) == paths::Roots { before, after });
+        CHECK_FALSE (walkError);
+    }
+    const OverlongFolder overlong (tree.directory ("custom/m"));
+    bool walkError = false;
+    CHECK (paths::findBundles ({ custom }, ".lv2", nullptr, &walkError) == paths::Roots { before, after });
+    CHECK (walkError);
+
+    duskstudio::juce_compat::FormatManager manager;
+    auto& format = addLv2<RecordingLv2Format> (manager);
+    fs::rename (tree.root / "custom" / "m", tree.root / "parked");
+    CHECK (duskstudio::juce_compat::primeCustomLv2 (manager, { custom }, true));
+    CHECK (duskstudio::juce_compat::customLv2Bundles (manager) == paths::Roots { before, after });
+    fs::rename (tree.root / "parked", tree.root / "custom" / "m");
+    fs::remove_all (after);
+    CHECK_FALSE (duskstudio::juce_compat::primeCustomLv2 (manager, { custom }, true));
+    CHECK (duskstudio::juce_compat::customLv2Bundles (manager) == paths::Roots { before, after });
+    fs::rename (tree.root / "custom" / "m", tree.root / "parked");
+    CHECK (format.calls.size() == 3);
+}
+#endif
+
+TEST_CASE ("Loading an LV2 plug-in primes only bundles the last folder walk found", "[plugins][paths]")
+{
+    Tree tree;
+    const auto custom = tree.directory ("custom");
+    // The walk hands bundles over in the platform's own spelling.
+    const auto first = tree.directory ("custom/vendor/First.lv2").lexically_normal();
+    const auto second = tree.directory ("custom/vendor/Second.lv2").lexically_normal();
+    duskstudio::juce_compat::FormatManager scanned;
+    auto& scanFormat = addLv2<RecordingLv2Format> (scanned);
+    REQUIRE (duskstudio::juce_compat::primeCustomLv2 (scanned, { custom }, true));
+    CHECK (scanFormat.calls == std::vector<std::string> { first.u8string(), second.u8string() });
+    scanFormat.calls.clear();
+    fs::rename (custom, tree.root / "unplugged");
+    duskstudio::juce_compat::primeLv2Plugin (scanned, "urn:Second");
+    CHECK (scanFormat.calls == std::vector<std::string> { "urn:Second" });
+
+    duskstudio::juce_compat::FormatManager restarted;
+    auto& format = addLv2<RecordingLv2Format> (restarted);
+    duskstudio::juce_compat::restoreCustomLv2Bundles (restarted, duskstudio::juce_compat::customLv2Bundles (scanned));
+    duskstudio::juce_compat::primeLv2Plugin (restarted, "urn:First");
+    CHECK (format.calls == std::vector<std::string> { "urn:First", first.u8string(), "urn:First" });
+    format.calls.clear();
+    duskstudio::juce_compat::primeLv2Plugin (restarted, "urn:Missing");
+    CHECK (format.calls == std::vector<std::string> { "urn:Missing", second.u8string(), "urn:Missing" });
+    format.calls.clear();
+    duskstudio::juce_compat::primeLv2Plugin (restarted, "urn:Missing");
+    CHECK (format.calls == std::vector<std::string> { "urn:Missing" });
 }
 
 TEST_CASE ("A custom folder whose links loop finishes discovery in every format that sees it", "[plugins][paths]")
@@ -346,7 +488,7 @@ TEST_CASE ("A custom folder whose links loop finishes discovery in every format 
 )ttl"));
         RegisteredLv2Format registered;
         auto& format = *registered.format;
-        duskstudio::juce_compat::primeCustomLv2 (format, roots);
+        duskstudio::juce_compat::primeCustomLv2 (registered.manager, roots);
         {
             juce::PluginDirectoryScanner scanner (known, format,
                 duskstudio::juce_compat::pluginSearchLocations (format, roots), true, {}, false);
@@ -438,7 +580,7 @@ TEST_CASE ("Nested custom LV2 bundles prime the parent scanner and fresh scan ch
     REQUIRE (paths::save (roots, error));
     RegisteredLv2Format registered;
     auto& format = *registered.format;
-    duskstudio::juce_compat::primeCustomLv2 (format, roots);
+    duskstudio::juce_compat::primeCustomLv2 (registered.manager, roots);
     juce::KnownPluginList known;
     juce::PluginDirectoryScanner scanner (known, format,
         duskstudio::juce_compat::pluginSearchLocations (format, roots), true, {}, false);
@@ -452,7 +594,7 @@ TEST_CASE ("Nested custom LV2 bundles prime the parent scanner and fresh scan ch
     CHECK (fixture->numOutputChannels == 1);
     RegisteredLv2Format freshRegistered;
     auto& fresh = *freshRegistered.format;
-    duskstudio::juce_compat::primeCustomLv2 (fresh, paths::load());
+    duskstudio::juce_compat::primeCustomLv2 (freshRegistered.manager, paths::load());
     juce::OwnedArray<juce::PluginDescription> descriptions;
     fresh.findAllTypesForFile (descriptions, uri);
     REQUIRE (descriptions.size() == 1);
@@ -487,7 +629,7 @@ TEST_CASE ("Nested custom LV2 bundles prime the parent scanner and fresh scan ch
         bundle.parent_path() / "Runtime.lv2" / "require-creator-thread", "1"));
     RegisteredLv2Format runtimeRegistered;
     auto& runtimeFormat = *runtimeRegistered.format;
-    duskstudio::juce_compat::primeCustomLv2 (runtimeFormat, roots);
+    duskstudio::juce_compat::primeCustomLv2 (runtimeRegistered.manager, roots);
     juce::OwnedArray<juce::PluginDescription> runtimeDescriptions;
     runtimeFormat.findAllTypesForFile (runtimeDescriptions, "urn:duskstudio:test:midi-probe");
     REQUIRE (runtimeDescriptions.size() == 1);
@@ -534,7 +676,7 @@ TEST_CASE ("Nested custom LV2 bundles prime the parent scanner and fresh scan ch
     CHECK (retained.size() == 1);
     RegisteredLv2Format restartedRegistered;
     auto& restarted = *restartedRegistered.format;
-    duskstudio::juce_compat::primeCustomLv2 (restarted, paths::load());
+    duskstudio::juce_compat::primeCustomLv2 (restartedRegistered.manager, paths::load());
     juce::OwnedArray<juce::PluginDescription> removed;
     restarted.findAllTypesForFile (removed, uri);
     CHECK (removed.isEmpty());

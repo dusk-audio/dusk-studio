@@ -2338,7 +2338,7 @@ void ChannelStripComponent::refreshPluginSlotButton()
    #if DUSKSTUDIO_HAS_MULTISAMPLE
     if (engine.hasPendingMultisampleLoad (trackIndex))
     {
-        const auto name = std::filesystem::u8path (track.nativeMultisamplePath.toStdString()).stem().u8string();
+        const auto name = engine.pendingMultisampleName (trackIndex);
         const auto label = (name.empty() ? std::string ("Soundfont") : name) + " (loading)";
         pluginSlotButton.setTooltip ("The soundfont is loading. Wait for loading to finish before rendering.");
         if (label == lastSlotName) return;

@@ -25,6 +25,8 @@ struct ScannedLv2
 class Lv2Scanner
 {
 public:
-    static std::vector<ScannedLv2> scan (const std::atomic<bool>* abort = nullptr);
+    // walkError reports a custom folder that could not be read completely.
+    static std::vector<ScannedLv2> scan (const std::atomic<bool>* abort = nullptr,
+                                         bool* walkError = nullptr);
 };
 } // namespace duskstudio::lv2

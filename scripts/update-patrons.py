@@ -32,7 +32,8 @@ Behaviour:
   - Active patrons are bucketed by their highest entitled tier amount:
     >= $10 PATRONS, >= $5 SUPPORTERS, >= $1 FOUNDING SUPPORTERS (the closed
     $1 Hugs and $3 legacy tiers). See TIERS for the array each heading uses.
-  - The campaign creator's own membership is never credited.
+  - The campaign creator's own membership and the accounts in TEST_ACCOUNTS
+    are never credited, as active or past supporters.
   - Anyone listed in the current header who is no longer an active patron is
     moved to pastSupporters (existing pastSupporters entries are preserved).
   - Without --dry-run, each donor header discovered through DUSK_PLUGINS_PATH
@@ -68,6 +69,9 @@ TIERS = [  # (array name in the header, credits heading, minimum cents)
 # and the DuskStudio supporters panel reference them.
 RETIRED_ARRAYS = ["hugs"]
 ARRAY_NAMES = [name for name, _, _ in TIERS] + RETIRED_ARRAYS + ["pastSupporters"]
+# Maintainer accounts that subscribe to test the gated downloads. They are not
+# supporters, so their memberships are left out of the credits.
+TEST_ACCOUNTS = {"Dusk Audio"}
 
 
 def write_config_secure(config):
@@ -294,13 +298,15 @@ def main():
         sys.exit("No PatreonBackers.h found in any sibling plugins checkout.")
 
     active, _former, creator = fetch_members(config)
-    creator = {overrides.get(n, n) for n in creator}
+    uncredited = {overrides.get(n, n) for n in creator | TEST_ACCOUNTS} | TEST_ACCOUNTS
     # Apply display-name overrides, keeping the HIGHEST contribution when two
     # API names collapse to the same display name (a plain dict comprehension
     # would keep whichever happened to come last, dropping the higher tier).
     merged = {}
     for n, c in active.items():
         display = overrides.get(n, n)
+        if n in uncredited or display in uncredited:
+            continue
         merged[display] = max(c, merged.get(display, 0))
     active = merged
 
@@ -335,11 +341,11 @@ def main():
         previously_listed.update(parse_array(canonical, name))
     past = parse_array(canonical, "pastSupporters")
     now_active = set(active.keys())
-    dropped = sorted((previously_listed - now_active) - set(past) - creator,
+    dropped = sorted((previously_listed - now_active) - set(past) - uncredited,
                      key=str.casefold)
     # Subtract now_active so a returning patron leaves pastSupporters
     # instead of being credited in two sections at once.
-    new_past = sorted((set(past) | set(dropped)) - now_active - creator,
+    new_past = sorted((set(past) | set(dropped)) - now_active - uncredited,
                       key=str.casefold)
 
     print("Active patrons by tier:")

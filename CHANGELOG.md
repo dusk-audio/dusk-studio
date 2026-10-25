@@ -171,6 +171,9 @@ canonical source.
   A value repeated while the button is held no longer fires it again. A button
   that sends 127 and never a release value fires once in Press mode; set its
   binding to Toggle.
+- **MTC chase.** Chasing MIDI Time Code holds lock with large audio buffers,
+  and the re-locate after a master jump lands where the master has rolled to,
+  even when the audio files take a while to read.
 
 ## [0.15.1] - 2026-10-11
 

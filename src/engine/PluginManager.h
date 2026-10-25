@@ -134,6 +134,7 @@ private:
 
     void loadCache();
     void saveCache() const;
+    std::filesystem::path customLv2BundleList() const;
 
     juce::File nativeCacheFile (const char* fileName) const;
 #if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_VST3

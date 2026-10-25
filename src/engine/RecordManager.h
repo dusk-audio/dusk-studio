@@ -264,6 +264,8 @@ private:
                              const LoopCaptureSpan* explicitLoopSpan,
                              int numSamples) noexcept;
     void collectMidiPasses (int trackIndex);
+    // Ticks from the capture's start, through the captured tempo map or, without
+    // one, at captureTicksBpm.
     std::int64_t midiCaptureTicksAt (std::int64_t sample) const noexcept;
 
     // Message thread, with active false and audioInFlight at zero. Drops
@@ -382,6 +384,11 @@ private:
     std::atomic<std::int64_t> linearMidiCaptureLength { -1 };
     double      recordSampleRate  = 0.0;
     float       recordTempoBpm = 0.0f;
+    // The constant tempo capture converts at: recordTempoBpm while recording,
+    // and the tempo in force at Stop for everything Stop commits. MIDI Merge
+    // passes from stopTempoFromPass on were converted at Stop.
+    float       captureTicksBpm = 0.0f;
+    int         stopTempoFromPass = 0;
     // Immutable until active is false and audioInFlight has drained: the
     // message-thread preview and audio-thread loop replay share this clock.
     TempoMap    recordTempoMap;

@@ -560,6 +560,33 @@ std::optional<CcLicense> licenseText (const std::string& text, const std::string
                                         "no derivatives", "no derivative works", "no modifications",
                                         "no commercial use", "not for commercial", "personal use only" })
             if (wording.find (restriction) != std::string::npos) return {};
+        // A bare "BY-NC" is an author credit ("by NC Audio") unless a version or
+        // another licence element follows it.
+        for (const std::string restricted : { " by nc ", " by nd " })
+            for (auto at = wording.find (restricted); at != std::string::npos; at = wording.find (restricted, at + 1))
+            {
+                const auto next = wording.substr (at + restricted.size(), 3);
+                if ((! next.empty() && next[0] >= '0' && next[0] <= '9')
+                    || next == "sa " || next == "nc " || next == "nd ") return {};
+            }
+        // Hyphenated, it is licence notation even with nothing after it
+        // ("Samples: BY-NC."): the hyphen is what a credit never has. Any dash
+        // counts, from the hyphen-minus through U+2010-2014 to the minus sign.
+        const auto letter = [] (char c) { return c >= 'a' && c <= 'z'; };
+        const auto digit = [] (char c) { return c >= '0' && c <= '9'; };
+        for (const std::string dash : { "-", "\xe2\x80\x90", "\xe2\x80\x91", "\xe2\x80\x92", "\xe2\x80\x93",
+                                        "\xe2\x80\x94", "\xe2\x88\x92" })
+            for (const std::string element : { "nc", "nd" })
+            {
+                const auto token = "by" + dash + element;
+                for (auto at = content.find (token); at != std::string::npos; at = content.find (token, at + 1))
+                {
+                    const auto end = at + token.size();
+                    if ((at == 0 || ! (letter (content[at - 1]) || digit (content[at - 1])))
+                        && (end == content.size() || ! letter (content[end])))
+                        return {};
+                }
+            }
     }
     return actual;
 }

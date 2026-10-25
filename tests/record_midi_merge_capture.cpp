@@ -460,20 +460,94 @@ TEST_CASE ("RecordManager stopping at a MIDI loop seam cannot create a phantom h
     REQUIRE (fixture.manager.takeMidiPassGroups().empty());
 }
 
-TEST_CASE ("RecordManager MIDI merge uses the captured tempo after a mid-gesture tempo change",
-           "[recording][recordmanager][midi][merge]")
+TEST_CASE ("RecordManager MIDI merge commits a linear take at the tempo in force at Stop",
+           "[recording][recordmanager][midi][merge][tempo]")
 {
     CaptureFixture fixture (true);
     REQUIRE (fixture.manager.startRecording (kSampleRate, 1000));
     fixture.session.tempoBpm.store (60.0f, std::memory_order_relaxed);
     fixture.manager.writeMidiBlock (0, note (60), 0, nullptr, 100);
+    fixture.manager.serviceMidiCapture();
+    // The live preview keeps the tempo the take started at.
+    REQUIRE (fixture.manager.midiCapturePreview (0)->notes == std::vector<MidiNote> { { 1, 60, 100, 10, 20 } });
     fixture.manager.stopRecording (1100);
     const auto groups = fixture.manager.takeMidiPassGroups();
     REQUIRE (groups.size() == 1);
     REQUIRE_THAT (groups[0].capturedSampleRate, WithinAbs (kSampleRate, 1.0e-9));
-    REQUIRE_THAT ((double) groups[0].capturedBpm, WithinAbs (120.0, 1.0e-9));
-    REQUIRE (groups[0].tracks[0].pass.lengthInTicks == 100);
-    REQUIRE (groups[0].tracks[0].pass.notes == std::vector<MidiNote> { { 1, 60, 100, 10, 20 } });
+    REQUIRE_THAT ((double) groups[0].capturedBpm, WithinAbs (60.0, 1.0e-9));
+    REQUIRE (groups[0].tracks[0].pass.lengthInTicks == 50);
+    REQUIRE (groups[0].tracks[0].pass.notes == std::vector<MidiNote> { { 1, 60, 100, 5, 10 } });
+}
+
+TEST_CASE ("RecordManager places loop MIDI passes committed at Stop at the tempo then in force",
+           "[recording][recordmanager][midi][merge][tempo]")
+{
+    SECTION ("Merge off commits every pass at Stop")
+    {
+        CaptureFixture fixture (false);
+        REQUIRE (fixture.manager.startRecording (kSampleRate, 100, 0, loopPlan()));
+        writeLoop (fixture.manager, 0, 1, note (60));
+        fixture.session.tempoBpm.store (60.0f, std::memory_order_relaxed);
+        writeLoop (fixture.manager, 0, 2, note (62));
+        fixture.manager.stopRecording (200);
+        const auto regions = fixture.session.track (0).midiRegions.current();
+        REQUIRE (regions.size() == 1);
+        CHECK (regions[0].lengthInTicks == 50);
+        CHECK (regions[0].notes == std::vector<MidiNote> { { 1, 62, 100, 5, 10 } });
+        CHECK_THAT (regions[0].recordedAtBPM, WithinAbs (60.0, 1.0e-9));
+        REQUIRE (regions[0].previousTakes.size() == 1);
+        CHECK (regions[0].previousTakes[0].notes == std::vector<MidiNote> { { 1, 60, 100, 5, 10 } });
+    }
+    SECTION ("Merge on keeps the passes it finished while recording at the start tempo")
+    {
+        CaptureFixture fixture (true);
+        REQUIRE (fixture.manager.startRecording (kSampleRate, 100, 0, loopPlan()));
+        writeLoop (fixture.manager, 0, 1, note (60));
+        fixture.session.tempoBpm.store (60.0f, std::memory_order_relaxed);
+        auto groups = fixture.manager.takeMidiPassGroups();
+        REQUIRE (groups.size() == 1);
+        CHECK_THAT ((double) groups[0].capturedBpm, WithinAbs (120.0, 1.0e-9));
+        CHECK (groups[0].tracks[0].pass.notes == std::vector<MidiNote> { { 1, 60, 100, 10, 20 } });
+        dusk::MidiBuffer held;
+        addMessage (held, 0x90, 64, 90, 30);
+        writeLoop (fixture.manager, 0, 2, held, 40);
+        fixture.manager.stopRecording (140);
+        groups = fixture.manager.takeMidiPassGroups();
+        REQUIRE (groups.size() == 1);
+        REQUIRE (groups[0].passOrdinal == 2);
+        CHECK_THAT ((double) groups[0].capturedBpm, WithinAbs (60.0, 1.0e-9));
+        CHECK (groups[0].tracks[0].pass.lengthInTicks == 20);
+        CHECK (groups[0].tracks[0].pass.notes == std::vector<MidiNote> { { 1, 64, 90, 15, 5 } });
+    }
+}
+
+TEST_CASE ("RecordManager places a linear MIDI take at the tempo in force at Stop",
+           "[recording][recordmanager][midi][tempo]")
+{
+    const bool tempoMap = GENERATE (false, true);
+    CAPTURE (tempoMap);
+    CaptureFixture fixture (false);
+    if (tempoMap) fixture.session.tempoMap.setPoints ({ { 0, 120.0f } });
+    REQUIRE (fixture.manager.startRecording (kSampleRate, 1000));
+    fixture.manager.writeMidiBlock (0, note (60), 0, nullptr, 100);
+    fixture.manager.serviceMidiCapture();
+    REQUIRE (fixture.manager.midiCapturePreview (0)->notes == std::vector<MidiNote> { { 1, 60, 100, 10, 20 } });
+
+    fixture.session.tempoBpm.store (60.0f, std::memory_order_relaxed);
+    fixture.manager.stopRecording (1100);
+    const auto& regions = fixture.session.track (0).midiRegions.current();
+    REQUIRE (regions.size() == 1);
+    if (tempoMap)
+    {
+        CHECK (regions[0].lengthInTicks == 100);
+        CHECK (regions[0].notes == std::vector<MidiNote> { { 1, 60, 100, 10, 20 } });
+    }
+    else
+    {
+        CHECK (regions[0].lengthInTicks == 50);
+        CHECK (regions[0].notes == std::vector<MidiNote> { { 1, 60, 100, 5, 10 } });
+        CHECK_THAT (regions[0].recordedAtBPM, WithinAbs (60.0, 1.0e-9));
+    }
 }
 
 TEST_CASE ("RecordManager Merge OFF retains all tagged channel-control messages",

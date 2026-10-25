@@ -44,7 +44,7 @@ Dusk Studio includes:
 - No more than 24 tracks. The limit is fixed.
 - No reorderable signal chain. EQ is always before the compressor; the compressor is always before the fader. No chains of seventeen plugins on a single channel.
 - No sample-level audio editing. Regions can be moved, split, trimmed, faded, normalised, and gained. The waveform itself is not editable.
-- Console-style automation. Ride the fader, pan, mute, or an aux send with Write/Touch/Read and the program records the move. For touch-up, the audio region editor's breakpoint lane lets you add, drag, and delete points, or draw a freehand stroke with the Draw tool to lay a run of points at once. Segments stay linear between points; no spline/bezier shaping.
+- Console-style automation. Ride the fader, pan, mute, or an aux send with Write/Touch/Read and the program records the move during playback. For touch-up, the audio region editor's breakpoint lane lets you add, drag, and delete points, or draw a freehand stroke with the Draw tool to lay a run of points at once. Segments stay linear between points; no spline/bezier shaping.
 - No preferences sprawl. The only preferences panel is for audio device configuration.
 - No tabs, no hidden panes, no project-explorer-trees-within-trees.
 
@@ -120,7 +120,7 @@ Switch to **MIXING** stage. The input block on each strip collapses into a small
 
 Mix top-down: shape EQ first, then ride the compressor, then balance with faders. Save your aux sends for finishing touches (reverb on aux 1, tape delay on aux 2, etc.).
 
-For console-style automation, click the small mode label below a fader and pick OFF, READ, WRITE or TOUCH from the menu. WRITE records every move while the transport rolls; TOUCH only writes while you are physically touching the control.
+For console-style automation, click the small mode label below a fader and pick OFF, READ, WRITE or TOUCH from the menu. WRITE records every move during playback; TOUCH only writes while you are physically touching the control. Neither records while a take is recording.
 
 ## Bounce
 
@@ -898,7 +898,7 @@ A vertical fader with a range of **−∞ dB** (true mute, below −90 dB floor)
 - Click the dB readout beneath the fader to type a precise value.
 - Right-click to enter MIDI Learn mode (the next CC you move binds to this fader).
 
-The fader is automatable. The automation modes are **OFF** (no automation), **READ** (play back recorded automation), **WRITE** (record automation continuously while transport rolls), and **TOUCH** (record while you are touching the control; revert to read when you release). Click the small mode label below the fader to pick a mode from a menu.
+The fader is automatable. The automation modes are **OFF** (no automation), **READ** (play back recorded automation), **WRITE** (record automation continuously during playback), and **TOUCH** (record while you are touching the control during playback; revert to read when you release). Neither records while a take is recording. Click the small mode label below the fader to pick a mode from a menu.
 
 ## Mute, Solo, Phase
 
@@ -1725,10 +1725,12 @@ Each channel strip, each bus, each aux return, and the master strip have an auto
 
 - **OFF**: the fader does what you do. No recording, no playback of past rides.
 - **READ**: previously recorded automation drives the fader during playback. The automated controls are locked, and nothing you do is recorded.
-- **WRITE**: every fader movement is recorded for as long as the transport rolls. Existing automation in the region played over is overwritten.
-- **TOUCH**: while you are touching the fader, your movement is recorded. When you let go, the automation reverts to the previously recorded value via a short ramp.
+- **WRITE**: every fader movement is recorded for as long as playback runs. Existing automation in the region played over is overwritten.
+- **TOUCH**: while you are touching the fader during playback, your movement is recorded. When you let go, the automation reverts to the previously recorded value via a short ramp.
 
 The same modes apply to pan, mute, and solo. Pan rides like the fader; mute and solo are discrete on/off toggles, so they record only in WRITE (in READ/TOUCH the recorded lane drives them). On a bus the automatable controls are the fader, pan, and mute (bus solo is manual-only).
+
+WRITE and TOUCH record during playback only. Channel strips, buses, aux returns and the master write nothing while a take is recording, and pressing **Record** during playback ends the pass there. To record a mix move, play the song back with the strip in WRITE or TOUCH.
 
 Dusk Studio's automation is console-first: you ride the controls and the program writes what you did. For touch-up, the audio region editor exposes a per-parameter breakpoint lane - add, drag, and delete points individually, or switch to the Draw tool and draw a freehand stroke to lay a run of points at once. Segments stay linear between points; there is no spline/bezier shaping.
 
@@ -1768,7 +1770,7 @@ There is no VST2 support. See *Native plugin hosting (Linux, macOS, and Windows)
 
 ## Scanning
 
-Dusk Studio does not automatically scan plugins on first launch. Open any plugin picker (click an empty channel **Insert** slot, or an aux lane's **Click to add an insert**, and choose **Plugin (VST3 / CLAP / LV2 / AU)**) and click **Scan plugins**. Scanning takes 10–30 seconds for a large collection and runs behind a progress window naming the plugin being probed, so the app stays responsive rather than appearing to hang. Click **Cancel** there, or press Esc, to stop early. The plugin currently being probed is skipped and results from completed scans stay in the picker. CLAP, VST3, LV2, and Audio Unit passes can all stop early; an interrupted native-format pass is discarded rather than publishing a partial cache, so that format's earlier results stand until you run **Scan plugins** again. The LV2 and Audio Unit passes read manifests or registry metadata rather than plugin code, and check for cancellation between discovered entries.
+Dusk Studio does not automatically scan plugins on first launch. Open any plugin picker (click an empty channel **Insert** slot, or an aux lane's **Click to add an insert**, and choose **Plugin (VST3 / CLAP / LV2 / AU)**) and click **Scan plugins**. Scanning takes 10–30 seconds for a large collection and runs behind a progress window naming the plugin being probed, so the app stays responsive rather than appearing to hang. Click **Cancel** there, or press Esc, to stop early. The plugin currently being probed is skipped and results from completed scans stay in the picker. CLAP, VST3, LV2, and Audio Unit passes can all stop early; an interrupted native-format pass is discarded rather than publishing a partial cache, so that format's earlier results stand until you run **Scan plugins** again. A pass that cannot read part of a plug-in folder, for example a drive that fails mid-scan, keeps the earlier results the same way and notes it in the session log. The LV2 and Audio Unit passes read manifests or registry metadata rather than plugin code, and check for cancellation between discovered entries.
 
 Plugin scan results are cached in:
 
@@ -2337,7 +2339,7 @@ Dusk Studio detaches from the realtime audio device and renders the project offl
 
 A render that cannot open a file it has to write, such as a read-only `mixdown.wav`, stops there, leaves that file exactly as it was, and its dialog reads "Could not write [file]: [reason]". A render that fails deletes only the files it created or overwrote: a stem bounce that stops at a stem it cannot open removes the stems it had already opened and leaves that stem and the ones after it alone. Freeze follows the same rule.
 
-If a soundfont is still loading, a bounce, mixdown, stem bounce, master export or freeze cannot start: "Wait for soundfont loading to finish, then render again." Wait for the instrument to finish loading and retry; existing output files stay untouched.
+If a soundfont is still loading, a bounce, mixdown, stem bounce, master export or freeze cannot start: "Wait for soundfont loading to finish, then render again." Wait for the instrument to finish loading and retry; existing output files stay untouched. Soundfonts load only while an audio device is open, so with none open the refusal reads "Soundfonts cannot finish loading with no audio device open. Open Settings → Audio and select a device, then render again."
 
 While a bounce, mixdown, stem bounce, master export or freeze is rendering, **Save** and **Save As…** do nothing but put "Session not saved: finish or cancel the render first" in the status bar, since saving pauses the audio engine the render is using. While a DP-24/32 import runs they do the same with "Session not saved: finish or cancel the DP import first", since the import writes into the session's audio folder as it was when the import started.
 

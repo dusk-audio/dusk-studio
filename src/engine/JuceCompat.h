@@ -5,6 +5,9 @@
 
 #include <map>
 #include <mutex>
+#include <optional>
+#include <set>
+#include <string>
 
 namespace duskstudio::juce_compat
 {
@@ -52,17 +55,26 @@ inline auto pluginSearchLocations (juce::AudioPluginFormat& format,
     return locations;
 }
 
-inline void primeCustomLv2 (juce::AudioPluginFormat& format, const pluginpaths::Roots& custom,
-                            const std::atomic<bool>* abort = nullptr)
+// Returns how many descriptions the identifiers produced. A bundle path loads
+// that bundle into the format's world; explicit bundles avoid nonrecursive
+// LV2_PATH lookup and separator ambiguity.
+inline int describeLv2 (juce::AudioPluginFormat& format, const std::vector<std::string>& identifiers,
+                        const std::atomic<bool>* abort = nullptr)
 {
-    if (format.getName() != "LV2") return;
-    for (const auto& bundle : pluginpaths::findBundles (custom, ".lv2", abort))
+    juce::OwnedArray<juce::PluginDescription> descriptions;
+    for (const auto& identifier : identifiers)
     {
-        if (abort != nullptr && abort->load (std::memory_order_relaxed)) return;
-        juce::OwnedArray<juce::PluginDescription> descriptions;
-        // Explicit bundles avoid nonrecursive LV2_PATH lookup and separator ambiguity.
-        format.findAllTypesForFile (descriptions, bundle.u8string());
+        if (abort != nullptr && abort->load (std::memory_order_relaxed)) break;
+        format.findAllTypesForFile (descriptions, identifier);
     }
+    return descriptions.size();
+}
+
+inline std::vector<std::string> bundleIdentifiers (const pluginpaths::Roots& bundles)
+{
+    std::vector<std::string> identifiers;
+    for (const auto& bundle : bundles) identifiers.push_back (bundle.u8string());
+    return identifiers;
 }
 
 class FormatManager : public juce::AudioPluginFormatManager
@@ -74,21 +86,30 @@ class FormatManager : public juce::AudioPluginFormatManager
     };
     std::mutex lv2PrimingMutex;
     std::map<const void*, PrimedRoots> primedLv2Roots;
-    friend void primeCustomLv2 (FormatManager&, const pluginpaths::Roots&, bool, const std::atomic<bool>*);
+    pluginpaths::Roots walkedLv2Bundles;
+    std::map<const void*, std::set<std::filesystem::path>> loadedLv2Bundles;
+    friend bool primeCustomLv2 (FormatManager&, const pluginpaths::Roots&, bool, const std::atomic<bool>*);
+    friend void primeLv2Plugin (FormatManager&, const std::string&);
+    friend pluginpaths::Roots customLv2Bundles (FormatManager&);
+    friend void restoreCustomLv2Bundles (FormatManager&, pluginpaths::Roots);
 };
 
-inline void primeCustomLv2 (FormatManager& manager, const pluginpaths::Roots& custom,
+// False when cancelled or when the folder walk hit an error. Neither records
+// anything, so a later call retries and the last complete bundle list survives.
+inline bool primeCustomLv2 (FormatManager& manager, const pluginpaths::Roots& custom,
                             bool refresh = false, const std::atomic<bool>* abort = nullptr)
 {
     const std::lock_guard<std::mutex> lock (manager.lv2PrimingMutex);
     const auto cancelled = [&] { return abort != nullptr && abort->load (std::memory_order_relaxed); };
-    if (cancelled()) return;
+    if (cancelled()) return false;
     FormatManager::PrimedRoots state { pluginpaths::normalize (custom), {} };
     for (const auto& root : state.roots)
     {
         std::error_code error;
         state.available.push_back (std::filesystem::is_directory (root, error));
     }
+    std::optional<pluginpaths::Roots> bundles;
+    bool walkError = false;
     for (auto* format : manager.getFormats())
         if (format != nullptr && format->getName() == "LV2")
         {
@@ -96,14 +117,46 @@ inline void primeCustomLv2 (FormatManager& manager, const pluginpaths::Roots& cu
             if (! refresh && primed != manager.primedLv2Roots.end()
                 && primed->second.roots == state.roots && primed->second.available == state.available) continue;
             manager.primedLv2Roots.erase (format);
-            primeCustomLv2 (*format, state.roots, abort);
-            if (cancelled()) return;
-            manager.primedLv2Roots.emplace (format, state);
+            if (! bundles) bundles = pluginpaths::findBundles (state.roots, ".lv2", abort, &walkError);
+            describeLv2 (*format, bundleIdentifiers (*bundles), abort);
+            if (cancelled()) return false;
+            manager.loadedLv2Bundles[format].insert (bundles->begin(), bundles->end());
+            if (! walkError) manager.primedLv2Roots.emplace (format, state);
+        }
+    if (bundles && ! walkError) manager.walkedLv2Bundles = std::move (*bundles);
+    return ! walkError;
+}
+
+// Loading a plug-in never walks the custom folders: a URI the format already
+// knows needs nothing, and an unknown one is looked for only in the bundles
+// the last complete walk found.
+inline void primeLv2Plugin (FormatManager& manager, const std::string& uri)
+{
+    const std::lock_guard<std::mutex> lock (manager.lv2PrimingMutex);
+    for (auto* format : manager.getFormats())
+        if (format != nullptr && format->getName() == "LV2")
+        {
+            if (describeLv2 (*format, { uri }) != 0) continue;
+            auto& loaded = manager.loadedLv2Bundles[format];
+            for (const auto& bundle : manager.walkedLv2Bundles)
+            {
+                if (loaded.count (bundle) != 0) continue;
+                describeLv2 (*format, bundleIdentifiers ({ bundle }));
+                loaded.insert (bundle);
+                if (describeLv2 (*format, { uri }) != 0) break;
+            }
         }
 }
 
-inline void primeCustomLv2 (FormatManager& manager)
+inline pluginpaths::Roots customLv2Bundles (FormatManager& manager)
 {
-    primeCustomLv2 (manager, pluginpaths::load());
+    const std::lock_guard<std::mutex> lock (manager.lv2PrimingMutex);
+    return manager.walkedLv2Bundles;
+}
+
+inline void restoreCustomLv2Bundles (FormatManager& manager, pluginpaths::Roots bundles)
+{
+    const std::lock_guard<std::mutex> lock (manager.lv2PrimingMutex);
+    manager.walkedLv2Bundles = std::move (bundles);
 }
 } // namespace duskstudio::juce_compat

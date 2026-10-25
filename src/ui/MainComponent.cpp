@@ -2588,9 +2588,7 @@ void MainComponent::openAudioSettings()
             filebrowser::Options options;
             options.title = "Choose SFZ library folder";
             options.selectDirectories = true;
-            const auto root = owner->engine.getSfzLibrary().snapshot().locations.active.root;
-            using Folder = decltype (options.initialFileOrDirectory);
-            options.initialFileOrDirectory = Folder (root.u8string().c_str());
+            options.initialFileOrDirectory = toFile (owner->engine.getSfzLibrary().snapshot().locations.active.root);
             filebrowser::open (*owner, std::move (options), [safeThis, moveExisting] (auto folder)
             {
                 auto* back = safeThis.getComponent();
@@ -2621,20 +2619,16 @@ void MainComponent::openAudioSettings()
             filebrowser::Options options;
             options.title = "Add plug-in folder";
             options.selectDirectories = true;
-            const auto roots = pluginpaths::load();
-            if (! roots.empty())
-            {
-                using Folder = decltype (options.initialFileOrDirectory);
-                options.initialFileOrDirectory = Folder (roots.back().u8string().c_str());
-            }
+            const auto roots = pluginpaths::stored();
+            if (! roots.empty()) options.initialFileOrDirectory = toFile (roots.back());
             filebrowser::open (*owner, std::move (options), [safeThis] (auto folder)
             {
                 auto* back = safeThis.getComponent();
                 if (back == nullptr) return;
                 if (folder.isDirectory())
                 {
-                    auto updatedFolders = pluginpaths::load();
-                    updatedFolders.push_back (std::filesystem::u8path (folder.getFullPathName().toStdString()));
+                    auto updatedFolders = pluginpaths::stored();
+                    updatedFolders.push_back (toPath (folder));
                     std::string error;
                     if (! pluginpaths::save (updatedFolders, error))
                     {
@@ -4865,13 +4859,14 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     {
         auto* self = safeThis.getComponent();
         if (self == nullptr) return;
-        bool modalOpen = ! EmbeddedModal::activeModalStack().empty()
-                      || juce::ModalComponentManager::getInstance()->getNumModalComponents() != 0;
+        bool modalOpen = juce::ModalComponentManager::getInstance()->getNumModalComponents() != 0;
        #if DUSKSTUDIO_HAS_NATIVE_UI
         modalOpen = modalOpen || imgui::DuskPanelWindow::hasOpenModal()
                    || (self->notepadWindow != nullptr && self->notepadWindow->isOpen());
        #endif
-        // Parent activation also takes native focus, so a newer dialog must keep it.
+        // Parent activation also takes native focus, so a dialog in its own
+        // window must keep it. An in-window alert raised by the load lives in
+        // this peer, and focusCanvasOrTopModal hands the keyboard to it.
         if (! modalOpen)
         {
             if (auto* peer = self->getPeer())

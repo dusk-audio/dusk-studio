@@ -67,6 +67,15 @@ bool openedSince (const TargetSnapshot& before, const std::filesystem::path& pat
         return false;
     return ! before.existed || now.size != before.size || now.modified != before.modified;
 }
+
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+const char* pendingSoundfontRefusal (const AudioEngine& engine)
+{
+    return engine.multisampleLoadsAwaitDevice()
+        ? "Soundfonts cannot finish loading with no audio device open. Open Settings \xE2\x86\x92 Audio and select a device, then render again."
+        : "Wait for soundfont loading to finish, then render again.";
+}
+#endif
 } // namespace
 
 BounceEngine::BounceEngine (AudioEngine& e, Session& s) noexcept
@@ -278,7 +287,7 @@ bool BounceEngine::start (const juce::File& outFile, double sr, int bs, double t
    #if DUSKSTUDIO_HAS_MULTISAMPLE
     if (engine.hasPendingMultisampleLoads())
     {
-        setStartError ("Wait for soundfont loading to finish, then render again.");
+        setStartError (pendingSoundfontRefusal (engine));
         return false;
     }
    #endif
@@ -1134,7 +1143,7 @@ bool BounceEngine::startFreeze (int trackIndex, const juce::File& outFile,
        #if DUSKSTUDIO_HAS_MULTISAMPLE
         if (engine.hasPendingMultisampleLoads())
         {
-            lastError = "Wait for soundfont loading to finish, then render again.";
+            lastError = pendingSoundfontRefusal (engine);
             return false;
         }
        #endif
