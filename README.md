@@ -8,7 +8,7 @@
 [![Windows tests](https://github.com/dusk-audio/dusk-studio/actions/workflows/windows-tests.yml/badge.svg)](https://github.com/dusk-audio/dusk-studio/actions/workflows/windows-tests.yml)
 [![Linux sanitizers](https://github.com/dusk-audio/dusk-studio/actions/workflows/linux-sanitizer.yml/badge.svg)](https://github.com/dusk-audio/dusk-studio/actions/workflows/linux-sanitizer.yml)
 
-A deliberately constrained, portastudio-style DAW for Linux, macOS and Windows.
+A portastudio-style DAW for Linux, macOS and Windows.
 Built for engineers who want to **record, mix and master without leaving the
 application**: no plugin paralysis, no menu diving, no infinite-options sprawl.
 
