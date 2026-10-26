@@ -70,45 +70,6 @@ private releases repo, with a signed `SHA256SUMS` beside them. What is left
 before 1.0 is release engineering, low-spec and Raspberry Pi performance, and
 deeper accessibility.
 
-| Stage | Status |
-|---|---|
-| Live mixer (24 ch in 3 banks of 8 + 4 aux + 4 mix buses + master) | Working |
-| Multitrack recording / playback with disk-full + MIDI-overflow detection | Working |
-| Atomic session save + 30 s autosave with content-hash dirty check | Working |
-| Session templates (Blank / Band / Beats / Singer-Songwriter) | Working |
-| Built-in insert units (Utility, DuskVerb 2, Tape Echo 2, Tape Machine 2, Sunset) | Working |
-| Plugin hosting (per-channel CLAP / VST3 / LV2 / AU + per-aux return) | Working |
-| Native soundfonts (`.sfz` + `.sf2` via dusk-fizz, no external synth) | Working |
-| Instrument library (installed files and Creative Commons SFZ repositories) | Working |
-| Plugin offline-state preservation (missing plugin doesn't wipe save) | Working |
-| Out-of-process plugin sandbox, audio, opt-in (Linux + macOS + Windows) | Working |
-| Out-of-process plugin sandbox, editor embed (Linux XEmbed, Windows SetParent, macOS in-process shell) | Working |
-| Mastering view (waveform + 5-band EQ + multiband comp + brick-wall limiter + BS.1770 + multiband phase / Mono monitor) | Working |
-| Offline bounce / mixdown export (master) | Working |
-| Single-pass stem export (tracks + buses + aux returns) | Working |
-| Realtime bounce (hardware inserts print wet) | Working |
-| Aux sends + reverb / delay returns (built-in DuskVerb 2, Tape Echo 2) | Working |
-| External hardware inserts (per channel + per aux, with auto-latency ping) | Working |
-| MIDI tracks + instrument plugins + piano roll editor with live recording preview | Working |
-| MIDI Merge with one undo step per recording pass | Working |
-| Audio region editor (non-destructive trim / fade / gain, automation lanes), in-window | Working |
-| Takes on the track + comping from take lanes in the audio editor | Working |
-| Loop-record take stacking (up to 1,024 passes kept as takes) | Working |
-| Cross-track plugin delay compensation (PDC) | Working |
-| Console automation (Write / Read / Touch on channels + aux + master) | Working |
-| MIDI Clock sync + MTC slave + master | Working |
-| MIDI hot-plug detection (Linux) | Working |
-| MIDI bindings + MIDI Learn (transport / strip / sends / EQ / comp / plugin + built-in params) | Working |
-| Mackie Control surface (tested against Tascam DP-24SD) | Working |
-| Multi-file audio + MIDI import with target-track picker | Working |
-| Session notepad (lyrics / notes + chord chart, saved as `notepad.md`) | Working |
-| Staged shutdown on window close, Quit, SIGTERM or logout | Working |
-| Linux tarball | Working (CI publishes to private releases repo on tag) |
-| Windows MSI installer (unsigned) | Working (CI publishes to private releases repo on tag) |
-| macOS DMG (ad-hoc signed) | Working (CI publishes to private releases repo on tag) |
-| Signed `SHA256SUMS` per release | Working (a tag cannot publish without it) |
-| Deeper a11y (full screen-reader labels + keyboard-only mixer nav) | Floor only |
-
 The C++ suite declares 1816 Catch2 test cases across 280 test source files.
 Linux amd64, Linux arm64 and macOS build and run it on every push; Windows runs
 it on every push and PR; ThreadSanitizer and ASan plus UBSan run it on every
