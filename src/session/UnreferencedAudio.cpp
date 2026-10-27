@@ -42,11 +42,16 @@ UnreferencedAudio findUnreferencedAudio (const Session& session)
     }
 
     std::vector<std::filesystem::path> referenced;
-    const auto remember = [&referenced] (const std::filesystem::path& path)
+    const auto remember = [&] (const std::filesystem::path& path)
     {
-        if (! path.empty()
-            && std::find (referenced.begin(), referenced.end(), path) == referenced.end())
+        if (path.empty()
+            || std::find (referenced.begin(), referenced.end(), path) != referenced.end())
+            return;
+        std::error_code referenceError;
+        if (std::filesystem::exists (path, referenceError))
             referenced.push_back (path);
+        else if (referenceError)
+            found.scanFailed = true;
     };
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
@@ -60,9 +65,12 @@ UnreferencedAudio findUnreferencedAudio (const Session& session)
         }
         for (const auto& take : track.takes)
             remember (pathOf (take.file));
+        remember (std::filesystem::u8path (track.frozenAudioPath.toStdString()).lexically_normal());
+        remember (pathOf (track.frozenRegion.file));
     }
     // A bounce loaded into the Mastering stage may live in audio/ too.
     remember (pathOf (session.mastering().sourceFile));
+    if (found.scanFailed) return found;
 
     for (std::filesystem::directory_iterator it (audioDir, error), end; ! error && it != end;
          it.increment (error))
@@ -73,6 +81,18 @@ UnreferencedAudio findUnreferencedAudio (const Session& session)
         if (entryError) { found.scanFailed = true; continue; }
         if (! regular || ! isWav (path)) continue;
         if (std::find (referenced.begin(), referenced.end(), path) != referenced.end()) continue;
+        bool inUse = false;
+        for (const auto& reference : referenced)
+        {
+            if (std::filesystem::equivalent (path, reference, entryError))
+            {
+                inUse = true;
+                break;
+            }
+            // A reference that becomes unreadable may still name any candidate.
+            if (entryError) return { {}, 0, true };
+        }
+        if (inUse) continue;
         const auto size = std::filesystem::file_size (path, entryError);
         if (entryError) { found.scanFailed = true; continue; }
         found.files.push_back (path);

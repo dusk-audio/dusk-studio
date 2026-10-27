@@ -10,7 +10,9 @@
 #include <filesystem>
 #include <vector>
 
-#if ! defined (_WIN32)
+#if defined (_WIN32)
+ #include <windows.h>
+#else
  #include <sys/stat.h>
  #include <unistd.h>
 #endif
@@ -39,6 +41,17 @@ bool holds (const duskstudio::UnreferencedAudio& found, const juce::File& file)
                           .lexically_normal();
     return std::find (found.files.begin(), found.files.end(), path) != found.files.end();
 }
+
+#if defined (_WIN32)
+bool symlinksUnavailable (const std::error_code& error)
+{
+    return error == std::errc::operation_not_permitted
+        || error == std::errc::permission_denied
+        || error == std::errc::operation_not_supported
+        || error == std::errc::function_not_supported
+        || error == std::error_code (ERROR_PRIVILEGE_NOT_HELD, std::system_category());
+}
+#endif
 } // namespace
 
 // Clean out offers to delete what past record passes left behind: WAVs in the
@@ -128,6 +141,166 @@ TEST_CASE ("Clean out reports nothing for a session with no audio directory",
     CHECK (found.files.empty());
     CHECK (found.totalBytes == 0);
 
+    dir.deleteRecursively();
+}
+
+TEST_CASE ("Clean out keeps legacy freeze renders in the audio directory",
+           "[session][cleanout][freeze]")
+{
+    const auto dir = makeScratch();
+    duskstudio::Session session;
+    session.setSessionDirectory (dir);
+    const auto audio = session.getAudioDirectory();
+    REQUIRE (audio.createDirectory().wasOk());
+    const auto frozen = writeWav (audio, "freeze_track01.wav", 512);
+    const auto orphan = writeWav (audio, "orphan.wav", 128);
+    auto& track = session.track (0);
+    track.frozen.store (true, std::memory_order_relaxed);
+    track.frozenAudioPath = frozen.getFullPathName();
+    track.frozenRegion.file = frozen;
+    track.frozenRegion.lengthInSamples = 48000;
+    track.frozenRegion.numChannels = 2;
+
+    SECTION ("the complete saved freeze state protects its render") {}
+    SECTION ("the persisted path protects its render") { track.frozenRegion = {}; }
+    SECTION ("the playback region protects its render") { track.frozenAudioPath.clear(); }
+
+    const auto found = duskstudio::findUnreferencedAudio (session);
+    CHECK_FALSE (found.scanFailed);
+    CHECK_FALSE (holds (found, frozen));
+    CHECK (found.files.size() == 1);
+    CHECK (holds (found, orphan));
+    CHECK (found.totalBytes == orphan.getSize());
+    dir.deleteRecursively();
+}
+
+TEST_CASE ("Clean out keeps audio referenced through filesystem aliases",
+           "[session][cleanout]")
+{
+    enum class Alias { symbolicLink, hardLink, caseVariant };
+    auto kind = Alias::symbolicLink;
+    SECTION ("symbolic links") { kind = Alias::symbolicLink; }
+    SECTION ("hard links") { kind = Alias::hardLink; }
+    SECTION ("case aliases on a case insensitive filesystem") { kind = Alias::caseVariant; }
+
+    const auto dir = makeScratch();
+    duskstudio::Session session;
+    session.setSessionDirectory (dir);
+    const auto audio = session.getAudioDirectory();
+    REQUIRE (audio.createDirectory().wasOk());
+    const auto aliases = dir.getChildFile ("aliases");
+    REQUIRE (aliases.createDirectory().wasOk());
+    const auto live = writeWav (audio, "live.wav", 512);
+    const auto take = writeWav (audio, "take.wav", 256);
+    const auto mastering = writeWav (audio, "mix.wav", 128);
+    const auto orphan = writeWav (audio, "orphan.wav", 64);
+    if (kind == Alias::caseVariant)
+    {
+        const auto upper = live.getSiblingFile (live.getFileName().toUpperCase());
+        std::error_code error;
+        const bool supported = std::filesystem::equivalent (
+            std::filesystem::u8path (live.getFullPathName().toStdString()),
+            std::filesystem::u8path (upper.getFullPathName().toStdString()), error);
+        REQUIRE ((! error || error == std::errc::no_such_file_or_directory));
+        if (! supported)
+        {
+            WARN ("Case-insensitive alias coverage is unavailable on this case-sensitive filesystem");
+            dir.deleteRecursively();
+            return;
+        }
+    }
+   #if defined (_WIN32)
+    if (kind == Alias::symbolicLink)
+    {
+        const auto probe = std::filesystem::u8path (
+            aliases.getChildFile ("symlink-probe.wav").getFullPathName().toStdString());
+        std::error_code error;
+        std::filesystem::create_symlink (
+            std::filesystem::u8path (live.getFullPathName().toStdString()), probe, error);
+        if (symlinksUnavailable (error))
+        {
+            WARN ("Symbolic-link alias coverage is unavailable: " << error.message());
+            dir.deleteRecursively();
+            return;
+        }
+        REQUIRE_FALSE (error);
+        REQUIRE (std::filesystem::remove (probe, error));
+        REQUIRE_FALSE (error);
+    }
+   #endif
+    const auto aliasOf = [&] (const juce::File& file)
+    {
+        auto alias = aliases.getChildFile (file.getFileName());
+        std::error_code error;
+        const auto source = std::filesystem::u8path (file.getFullPathName().toStdString());
+        if (kind == Alias::caseVariant)
+        {
+            alias = file.getSiblingFile (file.getFileName().toUpperCase());
+            REQUIRE (std::filesystem::equivalent (
+                source, std::filesystem::u8path (alias.getFullPathName().toStdString()), error));
+            REQUIRE_FALSE (error);
+        }
+        else
+        {
+            const auto target = std::filesystem::u8path (alias.getFullPathName().toStdString());
+            if (kind == Alias::symbolicLink)
+                std::filesystem::create_symlink (source, target, error);
+            else
+                std::filesystem::create_hard_link (source, target, error);
+            REQUIRE_FALSE (error);
+        }
+        return alias;
+    };
+
+    duskstudio::AudioRegion region;
+    region.file = aliasOf (live);
+    region.lengthInSamples = 48000;
+    session.track (0).regions.push_back (region);
+    duskstudio::AudioTake oldTake;
+    oldTake.id = session.allocateTakeId();
+    oldTake.file = aliasOf (take);
+    session.track (1).takes.push_back (oldTake);
+    session.mastering().sourceFile = aliasOf (mastering);
+
+    const auto found = duskstudio::findUnreferencedAudio (session);
+    CHECK_FALSE (found.scanFailed);
+    CHECK_FALSE (holds (found, live));
+    CHECK_FALSE (holds (found, take));
+    CHECK_FALSE (holds (found, mastering));
+    CHECK (found.files.size() == 1);
+    CHECK (holds (found, orphan));
+    CHECK (found.totalBytes == orphan.getSize());
+    dir.deleteRecursively();
+}
+
+TEST_CASE ("Clean out offers no files when a reference cannot be inspected",
+           "[session][cleanout]")
+{
+    const auto dir = makeScratch();
+    duskstudio::Session session;
+    session.setSessionDirectory (dir);
+    const auto audio = session.getAudioDirectory();
+    REQUIRE (audio.createDirectory().wasOk());
+    writeWav (audio, "orphan.wav", 128);
+    const auto alias = dir.getChildFile ("loop.wav");
+    const auto path = std::filesystem::u8path (alias.getFullPathName().toStdString());
+    std::error_code error;
+    std::filesystem::create_symlink (path, path, error);
+   #if defined (_WIN32)
+    if (symlinksUnavailable (error))
+    {
+        WARN ("Uninspectable-symbolic-link coverage is unavailable: " << error.message());
+        dir.deleteRecursively();
+        return;
+    }
+   #endif
+    REQUIRE_FALSE (error);
+    session.mastering().sourceFile = alias;
+
+    const auto found = duskstudio::findUnreferencedAudio (session);
+    CHECK (found.scanFailed);
+    CHECK (found.files.empty());
+    CHECK (found.totalBytes == 0);
     dir.deleteRecursively();
 }
 
