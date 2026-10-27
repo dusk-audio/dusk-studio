@@ -4,6 +4,7 @@
 #include "dsp/AuxLaneStrip.h"
 #include "dsp/ChannelStrip.h"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <memory>
@@ -169,6 +170,97 @@ TEST_CASE ("Appendix A: aux insert defaults to Empty and routes every mode",
             CHECK_THAT (left[i], WithinAbs (choice.left, 1e-5));
             CHECK_THAT (right[i], WithinAbs (choice.right, 1e-5));
         }
+    }
+}
+
+TEST_CASE ("Aux cue keeps processed audio while the master return is muted", "[aux-lane][cue]")
+{
+    for (const bool hardwareMode : { false, true })
+    {
+        CAPTURE (hardwareMode);
+        AuxLaneParams params;
+        HardwareInsertParams hardware;
+        routeHardware (hardware);
+        auto strip = std::make_unique<AuxLaneStrip>();
+        strip->bind (params);
+        strip->bindHardwareInsert (0, hardware);
+        strip->prepare (48000.0, kFrames);
+        std::string error;
+        REQUIRE (strip->loadBuiltin (0, "dusk.builtin.utility", error));
+        invertUtility (strip->getBuiltinSlot (0));
+        strip->insertMode[0].store (hardwareMode ? AuxLaneStrip::kInsertHardware : AuxLaneStrip::kInsertPlugin);
+        params.outputPair.store (2004);
+        Block left {}, right {}, returnL {}, returnR {};
+        returnL.fill (0.75f); returnR.fill (-0.5f);
+        std::array<Block, 4> physical {};
+        const float* inputs[] { returnL.data(), returnR.data() };
+        float* outputs[] { physical[0].data(), physical[1].data(), physical[2].data(), physical[3].data() };
+        const auto block = [&] (int numOutputs = 4)
+        {
+            left.fill (0.25f); right.fill (0.125f);
+            for (auto& output : physical) output.fill (0.0f);
+            strip->processStereoBlock (left.data(), right.data(), kFrames, inputs, 2, outputs, numOutputs);
+        };
+        struct State { const char* name; bool manualMute, liveMute; float db; };
+        for (const auto state : {
+            State { "open", false, false, 0.0f },
+            State { "manual mute", true, true, 0.0f },
+            State { "automation mute", false, true, -12.0f },
+            State { "return fader down", false, false, -12.0f },
+            State { "return fader floor", false, false, -100.0f },
+            State { "unmute", false, false, 0.0f } })
+        {
+            CAPTURE (state.name);
+            params.mute.store (state.manualMute); params.liveMute.store (state.liveMute);
+            params.returnLevelDb.store (state.db); params.liveReturnLevelDb.store (state.db);
+            for (int n = 0; n < kSettleBlocks; ++n) block();
+            const float processedL = hardwareMode ? 0.75f : -0.25f;
+            const float processedR = hardwareMode ? -0.5f : -0.125f;
+            const float gain = state.liveMute || state.db <= -100.0f ? 0.0f : std::pow (10.0f, state.db / 20.0f);
+            float cueError = 0.0f, returnError = 0.0f, sendError = 0.0f;
+            for (std::size_t n = 0; n < left.size(); ++n)
+            {
+                cueError = std::max ({ cueError, std::abs (physical[2][n] - processedL), std::abs (physical[3][n] - processedR) });
+                returnError = std::max ({ returnError, std::abs (left[n] - processedL * gain), std::abs (right[n] - processedR * gain) });
+                if (hardwareMode)
+                    sendError = std::max ({ sendError, std::abs (physical[0][n] - 0.25f), std::abs (physical[1][n] - 0.125f) });
+            }
+            CHECK_THAT (cueError, WithinAbs (0.0f, 1.0e-5f));
+            CHECK_THAT (returnError, WithinAbs (0.0f, 1.0e-5f));
+            CHECK_THAT (sendError, WithinAbs (0.0f, 1.0e-5f));
+            if (state.liveMute)
+            {
+                CHECK_THAT (params.meterPostL.load(), WithinAbs (-100.0f, 1.0e-5f));
+                CHECK_THAT (params.meterPostR.load(), WithinAbs (-100.0f, 1.0e-5f));
+            }
+        }
+
+        for (const bool validCue : { false, true })
+        {
+            CAPTURE (validCue);
+            params.outputPair.store (2004);
+            params.liveMute.store (false); params.liveReturnLevelDb.store (0.0f);
+            for (int n = 0; n < kSettleBlocks; ++n) block();
+            params.liveMute.store (true); params.liveReturnLevelDb.store (-12.0f);
+            if (! validCue) params.outputPair.store (-1);
+            for (int n = 0; n < kSettleBlocks; ++n) block();
+            if (! validCue)
+                for (const auto& output : physical)
+                    for (const float sample : output) REQUIRE_THAT (sample, WithinAbs (0.0f, 1.0e-7f));
+            params.liveMute.store (false);
+            block();
+            const float firstGain = 1.0f + (std::pow (10.0f, -12.0f / 20.0f) - 1.0f) / 960.0f;
+            CHECK_THAT (left.front(), WithinAbs ((hardwareMode ? 0.75f : -0.25f) * firstGain, 1.0e-5f));
+        }
+
+        params.outputPair.store (2004);
+        params.liveMute.store (true);
+        hardware.pingPending.store (true); hardware.pingResult.store (531);
+        for (int n = 0; n < kSettleBlocks; ++n) block (2);
+        for (const auto& output : physical)
+            for (const float sample : output) REQUIRE_THAT (sample, WithinAbs (0.0f, 1.0e-7f));
+        CHECK (hardware.pingPending.load());
+        CHECK (hardware.pingResult.load() == 531);
     }
 }
 

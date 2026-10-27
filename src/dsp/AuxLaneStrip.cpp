@@ -533,10 +533,16 @@ void AuxLaneStrip::processStereoBlock (float* L, float* R, int numSamples,
         return;
     }
 
-    // Mute path: clear in-place so the engine's accumulator into master
-    // sees silence (the lane's buffer is reused across blocks). Reads
-    // liveMute (post-automation) so automated mutes also drop the lane.
-    if (paramsRef->liveMute.load (std::memory_order_relaxed))
+    const bool muted = paramsRef->liveMute.load (std::memory_order_relaxed);
+    const int cuePair = paramsRef->outputPair.load (std::memory_order_relaxed);
+    bool hasCue = false;
+    if (muted && cuePair > 0 && deviceOutputs != nullptr)
+    {
+        const int left = outputpair::decodePairL (cuePair), right = outputpair::decodePairR (cuePair);
+        hasCue = left >= 0 && right >= 0 && left < numDeviceOutputs && right < numDeviceOutputs
+              && deviceOutputs[left] != nullptr && deviceOutputs[right] != nullptr;
+    }
+    if (muted && ! hasCue)
     {
         std::memset (L, 0, sizeof (float) * (size_t) numSamples);
         std::memset (R, 0, sizeof (float) * (size_t) numSamples);
@@ -545,7 +551,7 @@ void AuxLaneStrip::processStereoBlock (float* L, float* R, int numSamples,
         return;
     }
 
-    updateGainTarget();
+    if (! muted) updateGainTarget();
 
     pluginMidiScratch.clear();
 
@@ -631,7 +637,16 @@ void AuxLaneStrip::processStereoBlock (float* L, float* R, int numSamples,
     // pair BEFORE the return fader/mute below, so the hardware pair is an
     // independent cue send (the fader/mute govern only the fold into master).
     outputpair::tapStereoPairInto (deviceOutputs, numDeviceOutputs, L, R, numSamples,
-                                     paramsRef->outputPair.load (std::memory_order_relaxed));
+                                     cuePair);
+
+    if (muted)
+    {
+        std::memset (L, 0, sizeof (float) * (size_t) numSamples);
+        std::memset (R, 0, sizeof (float) * (size_t) numSamples);
+        paramsRef->meterPostL.store (-100.0f, std::memory_order_relaxed);
+        paramsRef->meterPostR.store (-100.0f, std::memory_order_relaxed);
+        return;
+    }
 
     // Return level + meter peak.
     float postPeakL = 0.0f, postPeakR = 0.0f;
