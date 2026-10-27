@@ -14,7 +14,11 @@ struct TransportPosition
     double       bpm                     = 120.0;
     double       ppqPosition             = 0.0;
     double       timeInSeconds           = 0.0;
-    std::int64_t timeInSamples           = 0;
+    std::int64_t timeInSamples            = 0;
+    std::int64_t loopStartSamples         = 0;
+    std::int64_t loopEndSamples           = 0;
+    double       ppqLoopStart             = 0.0;
+    double       ppqLoopEnd               = 0.0;
     int          timeSignatureNumerator   = 4;
     int          timeSignatureDenominator = 4;
     bool         isPlaying               = false;
