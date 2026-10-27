@@ -22,7 +22,7 @@ src/engine/MasteringPlayer.cpp	2
 src/engine/MasteringPlayer.h	4
 src/engine/PluginManager.cpp	97
 src/engine/PluginManager.h	27
-src/engine/PluginSlot.cpp	69
+src/engine/PluginSlot.cpp	68
 src/engine/PluginSlot.h	40
 src/engine/RecordManager.cpp	3
 src/engine/RecordManager.h	2
@@ -105,8 +105,8 @@ src/ui/ImportTargetPicker.cpp	97
 src/ui/ImportTargetPicker.h	11
 src/ui/Lv2PluginEditorComponent.cpp	3
 src/ui/Lv2PluginEditorComponent.h	4
-src/ui/MainComponent.cpp	409
-src/ui/MainComponent.h	57
+src/ui/MainComponent.cpp	406
+src/ui/MainComponent.h	55
 src/ui/MasterStripComponent.cpp	328
 src/ui/MasterStripComponent.h	55
 src/ui/MasteringView.cpp	143
@@ -135,7 +135,7 @@ src/ui/SelfTestPanel.h	7
 src/ui/ShortcutsPanel.h	36
 src/ui/SplitModuleButton.h	42
 src/ui/SteppedKnob.h	12
-src/ui/SupportersPanel.h	42
+src/ui/SupportersPanel.h	41
 src/ui/SystemStatusBar.cpp	31
 src/ui/SystemStatusBar.h	11
 src/ui/TapeStrip.cpp	330
@@ -148,7 +148,7 @@ src/ui/Vst3PluginEditorComponent.cpp	8
 src/ui/Vst3PluginEditorComponent.h	7
 src/ui/WindowState.cpp	7
 src/ui/WindowState.h	5
-src/ui/multisample/AriaGuiComponent.cpp	90
+src/ui/multisample/AriaGuiComponent.cpp	89
 src/ui/multisample/AriaGuiComponent.h	17
 src/ui/multisample/DuskMultisampleEditor.cpp	64
 src/ui/multisample/DuskMultisampleEditor.h	21
