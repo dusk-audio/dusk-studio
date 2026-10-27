@@ -21,6 +21,9 @@
 
 #pragma once
 
+#include <dsp/DuskOversampler.hpp>
+
+#include <array>
 #include <vector>
 #include <cmath>
 #include <algorithm>
@@ -32,41 +35,86 @@ public:
     // Below this RMS, treat as silence and emit 0 Hz.
     static constexpr float kSilenceThreshold = 0.005f; // ~ -46 dBFS
 
-    void prepare (double sampleRate, int historySamples = 2048)
+    void prepare (double sampleRate, int historySamples = 0)
     {
         sampleRate_ = sampleRate;
-        history_.assign (static_cast<size_t> (historySamples), 0.0f);
+        decimationStages_ = 0;
+        // Decimation keeps the low-note window without increasing scan cost.
+        if (sampleRate_ > 48000.0)
+        {
+            while (sampleRate_ > 24000.0 && decimationStages_ < static_cast<int> (decimators_.size()))
+            {
+                sampleRate_ *= 0.5;
+                ++decimationStages_;
+            }
+        }
+        for (auto& filter : decimators_) filter.reset();
+        decimationPhase_.fill (false);
+        analysisEnergy_ = 0.0;
+        const int historySize = historySamples > 0 ? std::max (4, historySamples)
+                                                   : (decimationStages_ > 0 ? 1024 : 2048);
+        history_.assign (static_cast<size_t> (historySize), 0.0f);
         writePos_ = 0;
         latestHz_ = 0.0f;
         latestLevel_ = 0.0f;
         // A quarter of the history: fast enough that the reading tracks a
         // player retuning a string, cheap enough to stay off the hot path.
-        scanInterval_ = std::max (1, historySamples / 4);
+        scanInterval_ = std::max (1, historySize / 4);
         samplesSinceScan_ = scanInterval_;   // scan on the first block after prepare
         // Search range: 50..1500 Hz -> lag range
-        minLag_ = std::max (2, static_cast<int> (std::floor (sampleRate / 1500.0)));
+        minLag_ = std::max (2, static_cast<int> (std::floor (sampleRate_ / 1500.0)));
         maxLag_ = std::min (static_cast<int> (history_.size()) - 2,
-                            static_cast<int> (std::ceil  (sampleRate /   50.0)));
+                            static_cast<int> (std::ceil  (sampleRate_ /   50.0)));
     }
 
     // Audio-thread safe.
     void pushBlock (const float* samples, int numSamples)
     {
         const int N = static_cast<int> (history_.size());
-        if (N <= 0) return;
+        if (N <= 0 || numSamples <= 0) return;
 
         // Append + RMS.
         double sumSq = 0.0;
-        for (int i = 0; i < numSamples; ++i)
+        int analysisSamples = 0;
+        if (decimationStages_ == 0)
         {
-            const float s = samples[i];
-            history_[static_cast<size_t> (writePos_)] = s;
-            writePos_ = (writePos_ + 1) % N;
-            sumSq += static_cast<double> (s) * s;
+            for (int i = 0; i < numSamples; ++i)
+            {
+                const float s = samples[i];
+                history_[static_cast<size_t> (writePos_)] = s;
+                writePos_ = (writePos_ + 1) % N;
+                sumSq += static_cast<double> (s) * s;
+            }
+            analysisSamples = numSamples;
         }
-        latestLevel_ = numSamples > 0
-            ? static_cast<float> (std::sqrt (sumSq / static_cast<double> (numSamples)))
-            : 0.0f;
+        else
+        {
+            for (int i = 0; i < numSamples; ++i)
+            {
+                float s = samples[i];
+                sumSq += static_cast<double> (s) * s;
+                bool ready = true;
+                for (int stage = 0; stage < decimationStages_; ++stage)
+                {
+                    const auto index = static_cast<std::size_t> (stage);
+                    decimators_[index].push (s);
+                    decimationPhase_[index] = ! decimationPhase_[index];
+                    if (decimationPhase_[index])
+                    {
+                        ready = false;
+                        break;
+                    }
+                    s = decimators_[index].out (duskaudio::hbtaps::kA);
+                }
+                if (! ready) continue;
+                const float previous = history_[static_cast<std::size_t> (writePos_)];
+                analysisEnergy_ += static_cast<double> (s) * s - static_cast<double> (previous) * previous;
+                history_[static_cast<std::size_t> (writePos_)] = s;
+                writePos_ = (writePos_ + 1) % N;
+                ++analysisSamples;
+            }
+        }
+        latestLevel_ = static_cast<float> (std::sqrt (sumSq / static_cast<double> (numSamples)));
 
         if (latestLevel_ < kSilenceThreshold)
         {
@@ -74,10 +122,19 @@ public:
             samplesSinceScan_ = scanInterval_;   // re-scan as soon as signal returns
             return;
         }
+        if (analysisSamples == 0) return;
+        // CMNDF normalizes amplitude, so reject attenuated aliases before scanning.
+        if (decimationStages_ > 0
+            && analysisEnergy_ < static_cast<double> (kSilenceThreshold * kSilenceThreshold) * N)
+        {
+            latestHz_ = 0.0f;
+            samplesSinceScan_ = scanInterval_;
+            return;
+        }
 
         // Hold the last reading between scans rather than clearing it, so the
         // tuner needle stays put instead of flickering to "no signal".
-        samplesSinceScan_ += numSamples;
+        samplesSinceScan_ += analysisSamples;
         if (samplesSinceScan_ < scanInterval_) return;
         samplesSinceScan_ %= scanInterval_;
 
@@ -187,6 +244,10 @@ private:
     static constexpr int kFrameStride = 4;
 
     double sampleRate_ = 44100.0;
+    std::array<duskaudio::HalfbandFIR<47, 12>, 4> decimators_;
+    std::array<bool, 4> decimationPhase_ {};
+    int decimationStages_ = 0;
+    double analysisEnergy_ = 0.0;
     std::vector<float> history_;
     int writePos_  = 0;
     int minLag_    = 30;

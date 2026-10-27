@@ -4501,7 +4501,7 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
     }
     metronome.prepare (sr);
     playbackEngine.prepare (bs, sr);
-    pitchDetector.prepare (sr);   // ~46 ms history at the device rate
+    pitchDetector.prepare (sr);
 
     mixL.assign ((size_t) bs, 0.0f);
     mixR.assign ((size_t) bs, 0.0f);
