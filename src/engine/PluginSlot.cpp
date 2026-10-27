@@ -1,6 +1,7 @@
 #include "PluginSlot.h"
 #include "AtomicPark.h"
 #include "PluginManager.h"
+#include "LegacyStateBase64.h"
 #include "../foundation/ScopedNoDenormals.h"
 #include <algorithm>
 #include <cmath>
@@ -1472,11 +1473,25 @@ bool PluginSlot::restoreFromSavedState (
 
     PluginDescriptor descriptorToLoad = persistedDescriptor;
     normalizeVst3Location (descriptorToLoad);
-    offlineDescriptor = persistedDescriptor;
-    offlineLegacyDescriptionXml.clear();
-    offlineStateBase64 = stateBase64;
-    offlineCapturePlaceholder = false;
-    lastKnownStateBase64 = stateBase64;
+    const auto preserveSavedState = [&]
+    {
+        offlineDescriptor = persistedDescriptor;
+        offlineLegacyDescriptionXml.clear();
+        offlineStateBase64 = stateBase64;
+        offlineCapturePlaceholder = false;
+        lastKnownStateBase64 = stateBase64;
+    };
+    const auto rejectState = [&] (const char* reason)
+    {
+        unload();
+        preserveSavedState();
+        errorMessage = reason;
+        return false;
+    };
+    preserveSavedState();
+    const auto decodedState = decodeStoredStateBase64 (stateBase64.toStdString());
+    if (decodedState.unreadable)
+        return rejectState ("Saved plugin state is not valid base64");
 
     // Try the OOP path first if enabled. On any failure we fall through
     // to the in-process load below - the user's session restore should
@@ -1489,21 +1504,31 @@ bool PluginSlot::restoreFromSavedState (
     {
         if (loadFromDescriptor (descriptorToLoad, errorMessage))
         {
-            if (auto* r = currentRemote.load (std::memory_order_acquire);
-                r != nullptr && stateBase64.isNotEmpty())
+            if (! decodedState.bytes.empty())
             {
-                juce::MemoryBlock mb;
-                if (mb.fromBase64Encoding (stateBase64) && mb.getSize() > 0)
+                if (auto* r = currentRemote.load (std::memory_order_acquire))
                 {
                     std::string err;
-                    if (! r->setState (static_cast<const std::uint8_t*> (mb.getData()),
-                                         mb.getSize(), err))
-                    {
-                        std::fprintf (stderr,
-                                      "[Dusk Studio/PluginSlot] OOP setState failed: %s\n",
-                                      err.c_str());
-                    }
+                    if (! r->setState (decodedState.bytes.data(), decodedState.bytes.size(), err))
+                        return rejectState (err.c_str());
                 }
+                else if (ownedInstance != nullptr)
+                {
+                    const juce::SpinLock::ScopedLockType processGuard (processLock);
+                    currentInstance.store (nullptr, std::memory_order_release);
+                    ownedInstance->releaseResources();
+                    ownedInstance->setStateInformation (decodedState.bytes.data(),
+                                                        (int) decodedState.bytes.size());
+                    if (preparedSampleRate > 0.0)
+                        ownedInstance->prepareToPlay (preparedSampleRate, preparedBlockSize);
+                    blocksSinceLoad = 0;
+                    consecutiveOverruns = 0;
+                    cachedLatencySamples.store (ownedInstance->getLatencySamples(),
+                                                 std::memory_order_relaxed);
+                    currentInstance.store (ownedInstance.get(), std::memory_order_release);
+                }
+                else
+                    return rejectState ("Plugin load completed without an instance");
             }
             offlineDescriptor.reset();
             offlineLegacyDescriptionXml.clear();
@@ -1537,18 +1562,12 @@ bool PluginSlot::restoreFromSavedState (
     fresh->setPlayConfigDetails (fresh->getTotalNumInputChannels(),
                                   fresh->getTotalNumOutputChannels(),
                                   preparedSampleRate, preparedBlockSize);
+    if (! decodedState.bytes.empty())
+        fresh->setStateInformation (decodedState.bytes.data(), (int) decodedState.bytes.size());
     if (preparedSampleRate > 0.0)
         fresh->prepareToPlay (preparedSampleRate, preparedBlockSize);
     auto loaded = refreshFromInstance (*manager, *fresh, descriptorToLoad);
     logLoadedPlugin (*fresh, loaded);
-
-    // Apply the saved state blob (if any).
-    if (stateBase64.isNotEmpty())
-    {
-        juce::MemoryBlock mb;
-        if (mb.fromBase64Encoding (stateBase64) && mb.getSize() > 0)
-            fresh->setStateInformation (mb.getData(), (int) mb.getSize());
-    }
 
     ownedInstance = std::move (fresh);
     {

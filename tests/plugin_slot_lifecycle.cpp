@@ -1,5 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include "TestTempDirectory.h"
 #include "engine/PluginManager.h"
 #include "engine/PluginSlot.h"
 
@@ -7,7 +9,10 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <functional>
+#include <fstream>
+#include <optional>
 #include <thread>
 
 #if ! defined (_WIN32)
@@ -198,6 +203,153 @@ TEST_CASE ("PluginSlot refuses in-process loads until a device prepares it",
     CHECK (error.isNotEmpty());
     CHECK (error != "plugin slot not prepared");
 }
+
+#if defined(DUSKSTUDIO_FILE_STATE_LV2_FIXTURE_PATH) && JUCE_PLUGINHOST_LV2
+namespace
+{
+class ScopedFixtureConfig
+{
+public:
+    ScopedFixtureConfig()
+    {
+        if (const auto* value = std::getenv (dusk::fs::kConfigDirEnv)) previous = value;
+        set (directory.path().u8string().c_str());
+    }
+    ~ScopedFixtureConfig() { set (previous ? previous->c_str() : nullptr); }
+
+    bool seed() const
+    {
+        std::string error;
+        return pluginpaths::save ({ DUSKSTUDIO_FILE_STATE_LV2_FIXTURE_PATH }, error,
+                                   directory.path() / "lv2-custom-bundles.json");
+    }
+
+private:
+    static void set (const char* value)
+    {
+       #if defined(_WIN32)
+        ::_putenv_s (dusk::fs::kConfigDirEnv, value != nullptr ? value : "");
+       #else
+        if (value != nullptr) ::setenv (dusk::fs::kConfigDirEnv, value, 1);
+        else                  ::unsetenv (dusk::fs::kConfigDirEnv);
+       #endif
+    }
+    duskstudio::test::TempDirectory directory { "dusk-plugin-restore-config-" };
+    std::optional<std::string> previous;
+};
+
+PluginDescriptor statefulStandardDescriptor()
+{
+    juce::LV2PluginFormat format;
+    juce::OwnedArray<juce::PluginDescription> descriptions;
+    format.findAllTypesForFile (descriptions, DUSKSTUDIO_FILE_STATE_LV2_FIXTURE_PATH);
+    juce::PluginDescription* chosen = nullptr;
+    for (auto* description : descriptions)
+        if (description->fileOrIdentifier == "urn:duskstudio:test:control-state")
+            chosen = description;
+    REQUIRE (chosen != nullptr);
+    return PluginManager::descriptorFromJuceForTest (*chosen);
+}
+
+juce::String nondefaultStandardState (PluginManager& manager, const PluginDescriptor& descriptor)
+{
+    juce::String error;
+    auto source = manager.createPluginInstance (descriptor, 48000.0, 64, error);
+    REQUIRE (source != nullptr);
+    source->prepareToPlay (48000.0, 64);
+    bool changed = false;
+    for (auto* param : source->getParameters())
+        if (param->getName (100) == "Gain")
+        {
+            param->setValueNotifyingHost (0.625f);
+            changed = true;
+        }
+    REQUIRE (changed);
+    juce::AudioBuffer<float> audio (2, 64);
+    audio.clear();
+    juce::MidiBuffer midi;
+    source->processBlock (audio, midi);
+    juce::MemoryBlock state;
+    source->getStateInformation (state);
+    REQUIRE (state.getSize() > 0);
+    return state.toBase64Encoding();
+}
+}
+
+#if DUSKSTUDIO_HAS_OOP_PLUGINS
+TEST_CASE ("PluginSlot restores saved state into an in-process sandbox fallback", "[plugin][ipc][restore]")
+{
+    juce::ScopedJuceInitialiser_GUI juceInit;
+    ScopedFixtureConfig fixtureConfig;
+    REQUIRE (fixtureConfig.seed());
+    duskstudio::test::TempDirectory temp ("dusk-plugin-fallback-");
+    const auto hostPath = temp.path() / "unavailable-host";
+    SECTION ("missing child") {}
+    SECTION ("unlaunchable child") { std::ofstream (hostPath) << "not an executable"; }
+
+    PluginManager manager;
+    manager.setOopEnabled (true);
+    manager.setHostExecutableOverride (hostPath.u8string(), "--ipc-host");
+    const auto descriptor = statefulStandardDescriptor();
+    const auto saved = nondefaultStandardState (manager, descriptor);
+    PluginSlot slot;
+    slot.setManager (manager);
+    slot.prepareToPlay (48000.0, 64);
+    juce::String error;
+    REQUIRE (slot.restoreFromSavedState (descriptor, {}, saved, error));
+    REQUIRE_FALSE (slot.isRemote());
+    REQUIRE (slot.getInstance() != nullptr);
+    CHECK_FALSE (slot.isOffline());
+    bool checked = false;
+    for (auto* param : slot.getInstance()->getParameters())
+        if (param->getName (100) == "Gain")
+        {
+            CHECK_THAT (param->getValue(), Catch::Matchers::WithinAbs (0.625f, 1.0e-6f));
+            checked = true;
+        }
+    CHECK (checked);
+    CHECK (slot.getStateBase64ForSave (0) == saved);
+}
+#endif
+
+TEST_CASE ("PluginSlot rejects malformed saved state and preserves its original reference", "[plugin][ipc][restore]")
+{
+    juce::ScopedJuceInitialiser_GUI juceInit;
+    ScopedFixtureConfig fixtureConfig;
+    REQUIRE (fixtureConfig.seed());
+    duskstudio::test::TempDirectory temp ("dusk-plugin-corrupt-state-");
+    PluginManager manager;
+    manager.setHostExecutableOverride ((temp.path() / "missing-host").u8string(), "--ipc-host");
+    SECTION ("in-process") { manager.setOopEnabled (false); }
+    SECTION ("sandbox requested") { manager.setOopEnabled (true); }
+    auto descriptor = statefulStandardDescriptor();
+    const auto originalLocation = descriptor.location;
+    for (const char* malformed : { "not a blob", "1.", "9.+C" })
+    {
+        PluginSlot slot;
+        slot.setManager (manager);
+        slot.prepareToPlay (48000.0, 64);
+        juce::String error;
+        CHECK_FALSE (slot.restoreFromSavedState (descriptor, {}, malformed, error));
+        CHECK (error.isNotEmpty());
+        CHECK_FALSE (slot.isLoaded());
+        CHECK (slot.isOffline());
+        REQUIRE (slot.getDescriptorForSave (0).has_value());
+        CHECK (*slot.getDescriptorForSave (0) == descriptor);
+        CHECK (slot.getDescriptorForSave (0)->location == originalLocation);
+        CHECK (slot.getStateBase64ForSave (0) == malformed);
+    }
+    for (const char* empty : { "", "0." })
+    {
+        PluginSlot slot;
+        slot.setManager (manager);
+        slot.prepareToPlay (48000.0, 64);
+        juce::String error;
+        CHECK (slot.restoreFromSavedState (descriptor, {}, empty, error));
+        CHECK_FALSE (slot.isOffline());
+    }
+}
+#endif
 
 #if DUSKSTUDIO_HAS_OOP_PLUGINS
 namespace
