@@ -476,6 +476,8 @@ struct AlsaSeqMidiOutput::Impl
     std::map<std::string, Destination> openDests;
     std::vector<pollfd> pollDescriptors;
     double latestQueuedTimeMs = 0.0;
+    double queueClockOriginMs = 0.0;
+    std::uint64_t queueClockOriginNs = 0;
 
     // As on the input side: the pump thread sends through `seq` while the
     // message thread can be opening or querying it. Taken by the public entry
@@ -512,6 +514,17 @@ struct AlsaSeqMidiOutput::Impl
         queue = snd_seq_alloc_named_queue (seq, "Dusk MIDI output");
         if (queue < 0 || snd_seq_start_queue (seq, queue, nullptr) < 0
             || snd_seq_drain_output (seq) < 0) return false;
+        snd_seq_queue_status_t* status;
+        snd_seq_queue_status_alloca (&status);
+        const double beforeStatus = backendClockMs();
+        const int statusResult = snd_seq_get_queue_status (seq, queue, status);
+        const double afterStatus = backendClockMs();
+        if (statusResult < 0) return false;
+        const auto* time = snd_seq_queue_status_get_real_time (status);
+        if (time->tv_nsec >= 1000000000) return false;
+        // Re-sampling this offset per block can invert closely spaced producer deadlines.
+        queueClockOriginMs = (beforeStatus + afterStatus) * 0.5;
+        queueClockOriginNs = static_cast<std::uint64_t> (time->tv_sec) * 1000000000 + time->tv_nsec;
         const int count = snd_seq_poll_descriptors_count (seq, POLLOUT);
         if (count <= 0) return false;
         pollDescriptors.resize (static_cast<std::size_t> (count));
@@ -540,6 +553,8 @@ struct AlsaSeqMidiOutput::Impl
         outPort = queue = -1;
         pollDescriptors.clear();
         latestQueuedTimeMs = 0.0;
+        queueClockOriginMs = 0.0;
+        queueClockOriginNs = 0;
         openDests.clear();
     }
 
@@ -679,17 +694,13 @@ bool AlsaSeqMidiOutput::send (const std::string& identifier, const dusk::MidiBuf
 
     snd_seq_queue_status_t* status;
     snd_seq_queue_status_alloca (&status);
-    const double beforeStatus = backendClockMs();
     const int statusResult = snd_seq_get_queue_status (impl->seq, impl->queue, status);
     const double afterStatus = backendClockMs();
     if (statusResult < 0) return impl->fail ("queue status", statusResult);
     const auto* queueTime = snd_seq_queue_status_get_real_time (status);
     if (queueTime->tv_nsec >= 1000000000) return impl->fail ("queue time", -ERANGE);
-    const std::uint64_t queueNs = static_cast<std::uint64_t> (queueTime->tv_sec) * 1000000000
-                              + queueTime->tv_nsec;
-    const double anchorMs = (beforeStatus + afterStatus) * 0.5;
-    const long double baseQueueNs = static_cast<long double> (queueNs)
-        + (static_cast<long double> (baseTimeMs) - anchorMs) * 1000000.0L;
+    const long double baseQueueNs = static_cast<long double> (impl->queueClockOriginNs)
+        + (static_cast<long double> (baseTimeMs) - impl->queueClockOriginMs) * 1000000.0L;
     const auto timestamp = [baseQueueNs, sampleRate] (int offset, snd_seq_real_time_t& result)
     {
         constexpr std::uint64_t maximumNs = (static_cast<std::uint64_t> (

@@ -317,6 +317,10 @@ TEST_CASE ("MidiOutputBank RT queue delivers through the pump, bounded by its de
     {
         std::lock_guard<std::mutex> lk (sink.m);
         REQUIRE (sink.messages.size() == (std::size_t) MidiOutputBank::kQueueDepth);
+        std::vector<int> deliveredNotes;
+        for (const auto& message : sink.messages)
+            deliveredNotes.push_back (message.size() > 1 ? message[1] : -1);
+        CAPTURE (deliveredNotes);
         for (int i = 0; i < (int) sink.messages.size(); ++i)
         {
             REQUIRE (sink.messages[(size_t) i].size() == 3);
@@ -325,11 +329,24 @@ TEST_CASE ("MidiOutputBank RT queue delivers through the pump, bounded by its de
         sink.messages.clear();
     }
 
+    const auto consumeCleanup = [&]
+    {
+        REQUIRE (sink.waitFor (2));
+        std::lock_guard<std::mutex> lk (sink.m);
+        REQUIRE (sink.messages.size() == 2);
+        const std::vector<std::uint8_t> soundOff { 0xb0, 120, 0 };
+        const std::vector<std::uint8_t> notesOff { 0xb0, 123, 0 };
+        REQUIRE (sink.messages[0] == soundOff);
+        REQUIRE (sink.messages[1] == notesOff);
+        sink.messages.clear();
+    };
+
     SECTION ("a close discards what was queued before it, even if the port reopens")
     {
         bank.queueRt (dst, oneNote (0x11), 48000.0);
         bank.closeAll();
         REQUIRE_FALSE (bank.isOpen (dst));
+        consumeCleanup();
 
         // Reopened before the pump ever ran: the block from before the close
         // must be gone, not delivered late to the reopened port.
@@ -351,6 +368,7 @@ TEST_CASE ("MidiOutputBank RT queue delivers through the pump, bounded by its de
     {
         bank.queueRt (dst, oneNote (0x33), 48000.0);
         bank.rebuild();
+        consumeCleanup();
 
         // Indices are minted afresh, so the pre-rebuild block must not be sent
         // even though the same physical port is still there and reopens.
