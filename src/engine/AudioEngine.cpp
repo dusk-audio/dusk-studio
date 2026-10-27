@@ -814,7 +814,10 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
     // (LFOs, arps, delays) read live session BPM + playhead.
     playHead = std::make_unique<DuskStudioPlayHead> (transport,
                                                   &session.tempoBpm,
-                                                  &currentSampleRate);
+                                                  &currentSampleRate,
+                                                  &rtTempoMap,
+                                                  &session.beatsPerBar,
+                                                  &session.beatUnit);
 
     midiScheduledAhead.fill (-1);
 
@@ -1226,28 +1229,7 @@ void AudioEngine::fireChangeListeners()
 
 void AudioEngine::publishTempoMap()
 {
-    // Message thread. Heap-allocate an immutable copy, keep it alive in the
-    // pool, then release-store its pointer so the audio thread's next
-    // acquire-load sees a fully-built map. The old copy is NOT freed here - a
-    // concurrent callback may still hold it (publishes can be as frequent as a
-    // drag's mouse-moves); the pool is trimmed in audioDeviceStopped, when no
-    // callback can be in flight. Each copy is tiny (a few tempo points).
-    auto fresh = std::make_unique<TempoMap> (session.tempoMap);
-    const TempoMap* raw = fresh.get();
-    rtTempoMapPool.push_back (std::move (fresh));
-    rtTempoMap.store (raw, std::memory_order_release);
-
-    // Backstop bound so a marathon drag session can't grow the pool without
-    // limit between audioDeviceStopped reclamations. Generous on purpose: a
-    // queued-event burst (post-stall drain of a tempo-handle drag) can land
-    // many publishes inside ONE audio block while the callback still holds
-    // an old map across its MIDI-region scheduling scan - a tight bound here
-    // would free that map under the reader. 256 publishes inside a single
-    // block is not a reachable burst; each map is a few tempo points.
-    constexpr size_t kMaxRtTempoMaps = 256;
-    if (rtTempoMapPool.size() > kMaxRtTempoMaps)
-        rtTempoMapPool.erase (rtTempoMapPool.begin(),
-                               rtTempoMapPool.end() - (std::ptrdiff_t) kMaxRtTempoMaps);
+    rtTempoMap.publish (std::make_unique<TempoMap> (session.tempoMap));
 }
 
 void AudioEngine::setTempoPoints (std::vector<TempoPoint> pts)
@@ -4379,9 +4361,6 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
 
     for (auto& edges : midiButtonEdges) edges.reset();
 
-    if (rtTempoMapPool.size() > 1)
-        rtTempoMapPool.erase (rtTempoMapPool.begin(), rtTempoMapPool.end() - 1);
-
     // A finished render's cancel flag dies with its BounceEngine, and only the
     // next callback would clear the pointer; a slot processed directly before
     // then must not wait on it.
@@ -6868,7 +6847,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             // Lock-free tempo-map snapshot. When non-empty, note/CC ticks resolve
             // to absolute timeline samples through the map (so playback follows
             // tempo changes); when null/empty this is the exact constant-bpm path.
-            const TempoMap* tm = rtTempoMap.load (std::memory_order_acquire);
+            const TempoMap* tm = rtTempoMap.read();
             const bool useMap = (tm != nullptr && ! tm->empty());
             // The timeline window, from where the last one ended to the
             // instrument's latency past this block's end (see
@@ -7157,14 +7136,15 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     }
 
     {
-        // Plug-ins see the tempo in effect at the block's start, like the click;
-        // the constant session tempo when no map is published.
-        const TempoMap* tmBlock = rtTempoMap.load (std::memory_order_acquire);
-        const double blockBpm = (tmBlock != nullptr && ! tmBlock->empty())
-                                  ? (double) tmBlock->bpmAt (blockStartSamples)
-                                  : (double) session.tempoBpm.load (std::memory_order_acquire);
-        blockTransport = snapshotTransport (transport, blockBpm,
-                                            currentSampleRate.load (std::memory_order_relaxed));
+        const double sampleRate = currentSampleRate.load (std::memory_order_relaxed);
+        blockTransport = snapshotTransport (transportBlockState, blockStartSamples,
+                                            (double) session.tempoBpm.load (std::memory_order_acquire), sampleRate,
+                                            session.beatsPerBar.load (std::memory_order_relaxed),
+                                            session.beatUnit.load (std::memory_order_relaxed),
+                                            loopRecordingActive || transportLoopEnabled,
+                                            loopRecordingActive ? loopReadStart : transportLoopStart,
+                                            loopRecordingActive ? loopReadEnd : transportLoopEnd);
+        applyTransportTempoMap (blockTransport, rtTempoMap.read(), sampleRate, kMidiTicksPerQuarter);
     }
 
     // DSP pass
@@ -7717,7 +7697,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     const bool polyphonic    = session.metronomePolyphonic         .load (std::memory_order_relaxed);
 
     metronome.setEnabled    (session.metronomeEnabled.load (std::memory_order_relaxed));
-    const TempoMap* tmMetro = rtTempoMap.load (std::memory_order_acquire);
+    const TempoMap* tmMetro = rtTempoMap.read();
     metronome.setBpm (session.tempoBpm.load (std::memory_order_relaxed));
     metronome.setBeatsPerBar(session.beatsPerBar.load (std::memory_order_relaxed));
     metronome.setVolumeDb   (session.metronomeVolDb.load (std::memory_order_relaxed));
