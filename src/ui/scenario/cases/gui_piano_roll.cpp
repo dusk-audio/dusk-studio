@@ -381,6 +381,100 @@ const ScenarioRegistrar pianoOptions { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runPianoOptions (host, ctx); }
 } };
 
+std::optional<ScenarioResult> runPianoRegionGrowth (GuiHost& host, ScenarioContext& ctx, bool duplicate)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires stopped transport and no modal");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto originalStage = engine.getStage();
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    ctx.cleanup ([&host, &session, originalDir, originalStage, restore]
+    {
+        host.closePiano();
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+        host.switchToStage (guiStage (originalStage));
+    });
+
+    const double rate = engine.getTimelineSampleRate();
+    session.tempoMap.setPoints ({ { 0, 120.0f }, { static_cast<std::int64_t> (rate * 1.5), 90.0f } });
+    engine.publishTempoMap();
+    MidiRegion before;
+    const auto startTick = kMidiTicksPerQuarter * 5 / 2;
+    before.timelineStart = session.ticksToSamples (startTick, rate);
+    before.lengthInTicks = kMidiTicksPerQuarter * 2;
+    before.lengthInSamples = session.ticksToSamples (startTick + before.lengthInTicks, rate) - before.timelineStart;
+    const auto noteLength = duplicate ? kMidiTicksPerQuarter / 4 : kMidiTicksPerQuarter / 16;
+    before.notes = { { 1, 60, 80, before.lengthInTicks - noteLength, noteLength } };
+    session.track (0).mode.store (static_cast<int> (Track::Mode::Midi));
+    session.track (0).frozen.store (false);
+    session.track (0).midiRegions.publish (
+        std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { before }));
+    engine.getUndoManager().clearUndoHistory();
+    host.switchToStage (GuiHost::Stage::Recording);
+    if (! host.openPiano (0, 0)) return ScenarioResult::fail ("piano roll did not open");
+
+    const auto check = [&ctx, &session, before, rate, duplicate] (bool changed)
+    {
+        const auto& regions = session.track (0).midiRegions.current();
+        if (! ctx.expect (regions.size() == 1, "editing lost the MIDI region")) return;
+        const auto& region = regions.front();
+        if (! changed)
+        {
+            ctx.expect (region.notes == before.notes && region.lengthInTicks == before.lengthInTicks
+                        && region.lengthInSamples == before.lengthInSamples, "Undo did not restore notes and region extent together");
+            return;
+        }
+        if (! ctx.expect (region.notes.size() == (duplicate ? 2u : 1u), "editing changed the wrong number of notes")) return;
+        const auto& note = region.notes.back();
+        ctx.expect (note.startTick == before.lengthInTicks, "editing did not place the note on the requested grid boundary");
+        ctx.expect (region.lengthInTicks >= note.startTick + note.lengthInTicks,
+                    "editing left the note outside its playable region");
+        ctx.expect (region.timelineStart == before.timelineStart, "extending the region moved its start");
+        const auto absoluteTick = session.samplesToTicks (region.timelineStart, rate);
+        ctx.expect (region.lengthInSamples == session.ticksToSamples (absoluteTick + region.lengthInTicks, rate)
+                                               - region.timelineStart,
+                    "extending the MIDI region used the wrong tempo-map sample domain");
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 200, [&host, &ctx, duplicate]
+    {
+        ctx.expect (host.pressPianoRollKey ("command + A"), "the piano roll did not select its note");
+        ctx.expect (host.pressPianoRollKey (duplicate ? "command + D" : "Q"), "the piano roll did not handle the edit");
+    } });
+    if (! duplicate)
+        steps->push_back ({ 200, [&host, &ctx]
+        { ctx.expect (host.clickContextMenuItem ("1/16 @ 100%"), "the quantize menu did not offer the requested grid"); } });
+    steps->push_back ({ 200, [&host, &ctx, check]
+    {
+        check (true);
+        ctx.expect (host.pressPianoRollKey ("command + Z"), "Undo was not handled");
+    } });
+    steps->push_back ({ 200, [&host, &ctx, check]
+    {
+        check (false);
+        ctx.expect (host.pressPianoRollKey ("command + shift + Z"), "Redo was not handled");
+    } });
+    steps->push_back ({ 200, [check] { check (true); } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar pianoQuantizeGrowth { Scenario {
+    "gui.piano_quantize_extends_region", { "gui", "piano", "midi" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runPianoRegionGrowth (host, ctx, false); }
+} };
+const ScenarioRegistrar pianoDuplicateGrowth { Scenario {
+    "gui.piano_duplicate_extends_region", { "gui", "piano", "midi" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runPianoRegionGrowth (host, ctx, true); }
+} };
+
 std::optional<ScenarioResult> runPianoViewport (GuiHost& host, ScenarioContext& ctx)
 {
     auto& engine = ctx.engine();

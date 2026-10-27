@@ -490,8 +490,25 @@ private:
         popupRegion = regionIdx;
         popupRevision = trackIdx >= 0 && trackIdx < Session::kNumTracks ? session.track (trackIdx).midiRegions.edits() : 0;
     }
+    void extendForNotes (MidiRegion& r)
+    {
+        auto end = r.lengthInTicks;
+        for (const auto& note : r.notes)
+            end = std::max (end, note.startTick + note.lengthInTicks);
+        if (end <= r.lengthInTicks) return;
+        r.lengthInTicks = end;
+        const auto rate = engine.getTimelineSampleRate();
+        const auto startTick = session.samplesToTicks (r.timelineStart, rate);
+        r.lengthInSamples = session.ticksToSamples (startTick + end, rate) - r.timelineStart;
+    }
     void quantize (std::int64_t ticks, float strength)
-    { changeNotes ("Quantize notes", [&] (MidiRegion& r) { edit.quantizeSelected (r.notes, ticks, strength); }); }
+    {
+        changeNotes ("Quantize notes", [&] (MidiRegion& r)
+        {
+            edit.quantizeSelected (r.notes, ticks, strength);
+            extendForNotes (r);
+        });
+    }
     void setVelocity (int value)
     { changeNotes ("Set velocity", [&] (MidiRegion& r) { edit.setVelocityFor (r.notes, value); }); }
     void humanize (int percent)
@@ -583,7 +600,14 @@ private:
                 return true;
             }
             if (k.key == ImGuiKey_D)
-            { changeNotes ("Duplicate notes", [&] (MidiRegion& r) { edit.duplicateSelectedNotes (r.notes, kMidiTicksPerQuarter); }); return true; }
+            {
+                changeNotes ("Duplicate notes", [&] (MidiRegion& r)
+                {
+                    edit.duplicateSelectedNotes (r.notes, kMidiTicksPerQuarter);
+                    extendForNotes (r);
+                });
+                return true;
+            }
             if (k.key == ImGuiKey_G) { glue(); return true; }
             return false;
         }
