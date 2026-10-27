@@ -78,6 +78,8 @@ add_executable(dusk-studio-tests
     default_input_choice.cpp
     session_tick_conversion.cpp
     tempo_map_conversion.cpp
+    piano_roll_edit.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/PianoRollEdit.cpp
     midi_timeline_schedule.cpp
     hosting_midi_fit.cpp
     output_pair_routing.cpp
