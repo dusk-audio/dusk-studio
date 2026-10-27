@@ -164,6 +164,27 @@ public:
         return kResultOk;
     }
 
+    tresult PLUGIN_API setEditorState (IBStream* state) override
+    {
+        if (state == nullptr) return kInvalidArgument;
+        uint8 value = 0;
+        int32 count = 0;
+        if (state->read (&value, sizeof (value), &count) != kResultOk
+            || count != sizeof (value) || value > 1)
+            return kResultFalse;
+        controllerState = value;
+        return kResultOk;
+    }
+
+    tresult PLUGIN_API getEditorState (IBStream* state) override
+    {
+        if (state == nullptr) return kInvalidArgument;
+        int32 count = 0;
+        return state->write (&controllerState, sizeof (controllerState), &count) == kResultOk
+                   && count == sizeof (controllerState)
+            ? kResultOk : kResultFalse;
+    }
+
     uint32 PLUGIN_API getLatencySamples() override
     {
         return highLatency ? 64u : 0u;
@@ -242,6 +263,7 @@ private:
         bus->setActive (true);
     }
 
+    uint8 controllerState = 0;
     bool expanded = false;
     bool highLatency = false;
     bool announceLatencyChanges = false;

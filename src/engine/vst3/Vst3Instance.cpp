@@ -993,6 +993,7 @@ bool Vst3Instance::loadState (const std::vector<uint8_t>& in)
 
     MemoryStream compStream (const_cast<uint8_t*> (in.data() + compPos), (TSize) compSize);
     const bool componentOk = impl->component->setState (&compStream) == kResultOk;
+    bool controllerOk = ctrlSize == 0;
 
     if (impl->controller)
     {
@@ -1003,11 +1004,12 @@ bool Vst3Instance::loadState (const std::vector<uint8_t>& in)
         if (ctrlSize > 0)
         {
             MemoryStream ctrlStream (const_cast<uint8_t*> (in.data() + ctrlPos), (TSize) ctrlSize);
-            impl->controller->setState (&ctrlStream);
+            controllerOk = impl->controller->setState (&ctrlStream) == kResultOk;
         }
     }
-    if (componentOk)
+    const bool accepted = componentOk && controllerOk;
+    if (accepted)
         impl->latencyChanged.store (true, std::memory_order_relaxed);
-    return componentOk;
+    return accepted;
 }
 } // namespace duskstudio::vst3

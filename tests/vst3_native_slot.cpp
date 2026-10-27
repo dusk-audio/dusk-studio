@@ -6,6 +6,7 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "engine/vst3/NativeVst3Slot.h"
+#include "engine/hosting/NativeRestorePolicy.h"
 #include "engine/vst3/Vst3HostContext.h"
 
 #if defined(__GNUC__)
@@ -363,4 +364,52 @@ TEST_CASE ("Vst3Instance detaches host interfaces before plugin termination",
     REQUIRE (view->getSize (&teardownState) == Steinberg::kResultTrue);
     REQUIRE (teardownState.getWidth() == 1);
     REQUIRE (teardownState.getHeight() == 1);
+}
+
+TEST_CASE ("VST3 rejected controller state keeps the saved state offline",
+           "[vst3][slot][restore]")
+{
+    duskstudio::vst3::NativeVst3Slot slot;
+    std::string error;
+    REQUIRE (slot.load (
+        std::filesystem::u8path (DUSKSTUDIO_RUNTIME_RELAYOUT_VST3_FIXTURE_PATH),
+        48000.0, 64, error));
+    std::vector<uint8_t> saved;
+    REQUIRE (slot.saveState (saved));
+    REQUIRE (saved.size() == 14);
+    REQUIRE (saved.back() == 0);
+
+    SECTION ("accepted controller state round-trips independently of the component")
+    {
+        saved.back() = 1;
+        REQUIRE (slot.loadState (saved));
+        std::vector<uint8_t> captured;
+        REQUIRE (slot.saveState (captured));
+        CHECK (captured == saved);
+        CHECK (slot.getLatencySamples() == 0);
+    }
+
+    SECTION ("component-only saved state remains supported")
+    {
+        saved.pop_back();
+        saved[9] = 0;
+        REQUIRE (slot.loadState (saved));
+        CHECK (slot.isLoaded());
+    }
+
+    SECTION ("a nonempty rejected controller stream prevents recapturing replacement state")
+    {
+        saved.back() = 0xff;
+        const auto original = saved;
+        const bool accepted = slot.loadState (saved);
+        CHECK_FALSE (accepted);
+        const auto reason = duskstudio::hosting::enforceRestorePolicy (
+            true, true, accepted, {}, saved.size(), [&] { slot.unload(); });
+        CHECK_FALSE (slot.isLoaded());
+        CHECK (reason == "saved state was rejected (14 bytes); slot left offline "
+                         "to preserve the saved state");
+        if (slot.isLoaded())
+            slot.saveState (saved);
+        CHECK (saved == original);
+    }
 }
