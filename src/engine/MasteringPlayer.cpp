@@ -70,7 +70,7 @@ bool MasteringPlayer::updateResampleState()
     resampleReadPos = -1;
     resampleFraction = 0.0;
     resampleFramesRemaining = 0;
-    resampleSeekRevision = seekRevision.load (std::memory_order_acquire);
+    resampleSeekRevision = 0;
     if (! std::isfinite (preparedDeviceRate) || preparedDeviceRate < 0.0
         || ! std::isfinite (ratio) || ratio <= 0.0
         || ! std::isfinite (duration) || duration >= 9223372036854775808.0L
@@ -113,7 +113,8 @@ bool MasteringPlayer::loadFile (const juce::File& file)
     ownedReader = std::move (r);
     loadedFile  = file;
     ++sourceGeneration;
-    playhead.store (0, std::memory_order_relaxed);
+    const auto seek = transport.beginSeek (0);
+    transport.finishSeek (seek);
     // Size the resample scratch for this source's rate BEFORE the reader is
     // published - the audio thread is parked on null until the store below.
     resampleReady = updateResampleState();
@@ -129,10 +130,11 @@ bool MasteringPlayer::loadFile (const juce::File& file)
 void MasteringPlayer::unloadFile()
 {
     ControlChangeScope change (*this);
-    playing.store (false, std::memory_order_relaxed);
+    transport.stop();
     loadedFile = juce::File();
     ++sourceGeneration;
-    playhead.store (0, std::memory_order_relaxed);
+    const auto seek = transport.beginSeek (0);
+    transport.finishSeek (seek);
 
     // Destroying the reader, here on the message thread, is what closes the
     // file - but only once the drain proves no block can still be reading it.
@@ -201,7 +203,7 @@ MasteringPlayer::BlockInfo MasteringPlayer::process (float* L, float* R, int num
     std::memset (L, 0, sizeof (float) * (size_t) numSamples);
     std::memset (R, 0, sizeof (float) * (size_t) numSamples);
 
-    info.playing = playing.load (std::memory_order_relaxed);
+    info.playing = transport.isPlaying();
     if (! info.playing) return finish();
 
     // Bump BEFORE loading currentReader: parkAndWaitForAudio clears the
@@ -219,7 +221,10 @@ MasteringPlayer::BlockInfo MasteringPlayer::process (float* L, float* R, int num
         return finish();
     }
 
-    const std::int64_t start  = playhead.load (std::memory_order_relaxed);
+    const auto block = transport.beginBlock();
+    info.playing = block.playing;
+    if (! info.playing) return finish();
+    const std::int64_t start = block.position;
     info.sourceStart = info.sourceEnd = start;
     const std::int64_t length = r->info().numFrames;
     const bool         mono   = r->info().numChannels < 2;
@@ -231,7 +236,7 @@ MasteringPlayer::BlockInfo MasteringPlayer::process (float* L, float* R, int num
     if (start >= length)
     {
         // Past EOF - auto-stop so the UI can flip the Play button back.
-        playing.store (false, std::memory_order_relaxed);
+        transport.finishBlock (block, start, true);
         return finish();
     }
 
@@ -256,12 +261,8 @@ MasteringPlayer::BlockInfo MasteringPlayer::process (float* L, float* R, int num
         std::memcpy (L, readScratch.channel (0), sizeof (float) * (size_t) available);
         std::memcpy (R, readScratch.channel (1), sizeof (float) * (size_t) available);
 
-        playhead.fetch_add (available, std::memory_order_relaxed);
         info.sourceEnd = start + available;
-
-        // If we just hit EOF mid-block, auto-stop.
-        if (start + available >= length)
-            playing.store (false, std::memory_order_relaxed);
+        transport.finishBlock (block, info.sourceEnd, info.sourceEnd >= length);
         return finish();
     }
 
@@ -270,7 +271,7 @@ MasteringPlayer::BlockInfo MasteringPlayer::process (float* L, float* R, int num
         info.completeSourceRead = false;
         return finish();
     }
-    const auto seek = seekRevision.load (std::memory_order_acquire);
+    const auto seek = block.locateSerial;
     if (start != resampleReadPos || seek != resampleSeekRevision)
     {
         resampleFraction = 0.0;
@@ -309,10 +310,9 @@ MasteringPlayer::BlockInfo MasteringPlayer::process (float* L, float* R, int num
     const bool ended = resampleFramesRemaining == 0;
     const auto consumed = ended ? length - start : std::min (whole, length - start);
     resampleFraction = ended ? 0.0 : phase - (double) whole;
-    playhead.fetch_add (consumed, std::memory_order_relaxed);
     resampleReadPos = start + consumed;
     info.sourceEnd = resampleReadPos;
-    if (ended) playing.store (false, std::memory_order_relaxed);
+    transport.finishBlock (block, info.sourceEnd, ended);
     return finish();
 }
 } // namespace duskstudio

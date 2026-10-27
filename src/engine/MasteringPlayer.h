@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <memory>
 #include "audiofile/BufferedFileReader.h"
+#include "MasteringTransport.h"
 #include "../foundation/WindowedSincInterpolator.h"
 #include "../foundation/PlanarBuffer.h"
 
@@ -50,21 +51,21 @@ public:
     void play() noexcept
     {
         ControlChangeScope change (*this);
-        playing.store (true, std::memory_order_relaxed);
+        transport.play();
     }
     void stop() noexcept
     {
         ControlChangeScope change (*this);
-        playing.store (false, std::memory_order_relaxed);
+        transport.stop();
     }
-    bool isPlaying() const noexcept { return playing.load (std::memory_order_relaxed); }
+    bool isPlaying() const noexcept { return transport.isPlaying(); }
 
-    std::int64_t getPlayhead() const noexcept     { return playhead.load (std::memory_order_relaxed); }
+    std::int64_t getPlayhead() const noexcept { return transport.getPlayhead(); }
     void setPlayhead (std::int64_t p) noexcept
     {
         ControlChangeScope change (*this);
-        playhead.store (p, std::memory_order_relaxed);
-        seekRevision.fetch_add (1, std::memory_order_release);
+        const auto seek = transport.beginSeek (p);
+        transport.finishSeek (seek);
     }
 
     struct BlockInfo
@@ -143,8 +144,7 @@ private:
     std::int64_t resampleReadPos = -1;   // audio thread only
     double resampleFraction = 0.0;
     std::int64_t resampleFramesRemaining = 0;
-    std::atomic<std::uint64_t> seekRevision { 0 };
-    std::uint64_t resampleSeekRevision = 0;
+    std::uint32_t resampleSeekRevision = 0;
     bool resampleReady = false;
     int    preparedBlockSize   = 0;    // message thread only
     double preparedDeviceRate  = 0.0;  // message thread only
@@ -174,7 +174,6 @@ private:
     bool updateResampleState();         // message thread, only after a
                                         // successful parkAndWaitForAudio
 
-    std::atomic<bool>        playing  { false };
-    std::atomic<std::int64_t> playhead { 0 };
+    MasteringTransport transport;
 };
 } // namespace duskstudio

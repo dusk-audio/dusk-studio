@@ -1,7 +1,9 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "engine/MasteringPlayer.h"
+#include "engine/MasteringTransport.h"
 #include "engine/audiofile/FileWriter.h"
 
 #include <juce_audio_formats/juce_audio_formats.h>
@@ -96,6 +98,107 @@ TEST_CASE ("MasteringPlayer resamples a source whose rate differs from the devic
     REQUIRE (player.getPlayhead() >= kSourceLen - 8);
     REQUIRE (player.getPlayhead() <= kSourceLen);
     player.finishOfflineRender();
+}
+
+TEST_CASE ("Mastering transport retains a seek across an older block commit", "[mastering][transport]")
+{
+    MasteringTransport transport;
+    transport.play();
+    const auto oldBlock = transport.beginBlock();
+    const std::int64_t target = GENERATE (0, 2000);
+    const auto seek = transport.beginSeek (target);
+    transport.finishSeek (seek);
+    CHECK (transport.getPlayhead() == target);
+    transport.finishBlock (oldBlock, 512, false);
+    CHECK (transport.getPlayhead() == target);
+    const auto next = transport.beginBlock();
+    CHECK (next.position == target);
+    CHECK (next.locateSerial != oldBlock.locateSerial);
+    CHECK (next.playing);
+}
+
+TEST_CASE ("Mastering transport ignores EOF from a superseded run request", "[mastering][transport]")
+{
+    MasteringTransport transport;
+    transport.play();
+    const auto oldBlock = transport.beginBlock();
+    SECTION ("seek while still playing")
+    {
+        const auto seek = transport.beginSeek (0);
+        transport.finishBlock (oldBlock, 512, true);
+        transport.finishSeek (seek);
+    }
+    SECTION ("stop then play returns to the same state with a new request")
+    {
+        transport.stop();
+        transport.play();
+        transport.finishBlock (oldBlock, 512, true);
+    }
+    SECTION ("play while already playing is a new request")
+    {
+        transport.play();
+        transport.finishBlock (oldBlock, 512, true);
+    }
+    CHECK (transport.isPlaying());
+}
+
+TEST_CASE ("Mastering transport seek publication preserves newer explicit run controls", "[mastering][transport]")
+{
+    MasteringTransport transport;
+    SECTION ("a concurrent play supersedes a stopped seek snapshot")
+    {
+        const auto seek = transport.beginSeek (2000);
+        transport.play();
+        transport.finishSeek (seek);
+        CHECK (transport.isPlaying());
+    }
+    SECTION ("a concurrent stop supersedes a playing seek snapshot")
+    {
+        transport.play();
+        const auto seek = transport.beginSeek (2000);
+        transport.stop();
+        transport.finishSeek (seek);
+        CHECK_FALSE (transport.isPlaying());
+    }
+    SECTION ("a newer play survives an EOF receipt before the seek finishes")
+    {
+        const auto seek = transport.beginSeek (2000);
+        transport.play();
+        const auto block = transport.beginBlock();
+        transport.finishBlock (block, 2000, true);
+        REQUIRE_FALSE (transport.isPlaying());
+        transport.finishSeek (seek);
+        CHECK (transport.isPlaying());
+    }
+    CHECK (transport.getPlayhead() == 2000);
+}
+
+TEST_CASE ("Mastering transport seeking after EOF stays stopped until play", "[mastering][transport]")
+{
+    MasteringTransport transport;
+    transport.play();
+    const auto block = transport.beginBlock();
+    transport.finishBlock (block, 512, true);
+    REQUIRE_FALSE (transport.isPlaying());
+    const auto seek = transport.beginSeek (100);
+    transport.finishSeek (seek);
+    CHECK_FALSE (transport.isPlaying());
+    CHECK (transport.getPlayhead() == 100);
+    transport.play();
+    CHECK (transport.beginBlock().position == 100);
+}
+
+TEST_CASE ("Mastering transport pause preserves the committed seek serial", "[mastering][transport]")
+{
+    MasteringTransport transport;
+    transport.play();
+    const auto block = transport.beginBlock();
+    transport.finishBlock (block, 512, false);
+    transport.stop();
+    transport.play();
+    const auto resumed = transport.beginBlock();
+    CHECK (resumed.position == 512);
+    CHECK (resumed.locateSerial == block.locateSerial);
 }
 
 TEST_CASE ("MasteringPlayer rejects frequencies above the destination Nyquist", "[mastering][resample][antialias]")
