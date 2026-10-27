@@ -3,6 +3,7 @@
 #include "engine/ipc/ParamPushQueue.h"
 
 #include <cstdint>
+#include <cstring>
 
 using duskstudio::ipc::ParamPushQueue;
 using duskstudio::ipc::ParamPushRecord;
@@ -154,4 +155,35 @@ TEST_CASE ("ParamPushQueue reader waits on a slot whose producer is mid-write", 
     REQUIRE (queue.pop (out));
     REQUIRE (out.payload.paramIndex == 2);
     REQUIRE_FALSE (queue.pop (out));
+}
+
+TEST_CASE ("ParamPushQueue preserves payload bits while overwriting old records", "[ipc]")
+{
+    const std::uint32_t patterns[] {
+        0x00000000u, 0x80000000u, 0x00000001u, 0x7f7fffffu,
+        0x7f800000u, 0xff800000u, 0x7fc12345u, 0xffc54321u
+    };
+    constexpr auto capacity = (std::uint32_t) ParamPushQueue::kCapacity;
+    for (const auto bits : patterns)
+    {
+        ParamPushQueue queue;
+        float value = 0.0f;
+        std::memcpy (&value, &bits, sizeof (value));
+        for (std::uint32_t i = 0; i <= capacity; ++i)
+            REQUIRE (queue.push ({ { 0xfedcba98u ^ i, value, 0x89abcdefu ^ i },
+                                    0x76543210u ^ i }));
+
+        ParamPushRecord out {};
+        for (std::uint32_t i = 1; i <= capacity; ++i)
+        {
+            REQUIRE (queue.pop (out));
+            REQUIRE (out.payload.paramIndex == (0xfedcba98u ^ i));
+            REQUIRE (out.payload.sequenceNumber == (0x89abcdefu ^ i));
+            REQUIRE (out.generation == (0x76543210u ^ i));
+            std::uint32_t receivedBits = 0;
+            std::memcpy (&receivedBits, &out.payload.value, sizeof (receivedBits));
+            REQUIRE (receivedBits == bits);
+        }
+        REQUIRE_FALSE (queue.pop (out));
+    }
 }

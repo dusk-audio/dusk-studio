@@ -5,6 +5,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 
 namespace duskstudio::ipc
 {
@@ -80,7 +81,13 @@ public:
     void commit (std::uint64_t ticket, const ParamPushRecord& in) noexcept
     {
         auto& slot = slots[(std::size_t) (ticket & kMask)];
-        slot.value = in;
+        std::uint32_t valueBits = 0;
+        std::memcpy (&valueBits, &in.payload.value, sizeof (valueBits));
+        slot.indexAndValue.store ((std::uint64_t (in.payload.paramIndex) << 32) | valueBits,
+                                   std::memory_order_release);
+        slot.sequenceAndGeneration.store ((std::uint64_t (in.payload.sequenceNumber) << 32)
+                                             | in.generation,
+                                           std::memory_order_release);
         slot.stamp.store (publishedStamp (ticket), std::memory_order_release);
     }
 
@@ -110,8 +117,15 @@ public:
                 continue;
             }
 
-            out = slot.value;
-            std::atomic_thread_fence (std::memory_order_acquire);
+            const auto indexAndValue = slot.indexAndValue.load (std::memory_order_acquire);
+            const auto sequenceAndGeneration = slot.sequenceAndGeneration.load (std::memory_order_acquire);
+            out.payload.paramIndex = (std::uint32_t) (indexAndValue >> 32);
+            const auto valueBits = (std::uint32_t) indexAndValue;
+            std::memcpy (&out.payload.value, &valueBits, sizeof (valueBits));
+            out.payload.sequenceNumber = (std::uint32_t) (sequenceAndGeneration >> 32);
+            out.generation = (std::uint32_t) sequenceAndGeneration;
+            // A replacement word's acquire also observes its claimed stamp, so
+            // the final check rejects a snapshot mixed across two laps.
             const auto after = slot.stamp.load (std::memory_order_relaxed);
 
             ++readTicket;
@@ -134,7 +148,8 @@ private:
     struct Slot
     {
         std::atomic<std::uint64_t> stamp { 0 };
-        ParamPushRecord            value {};
+        std::atomic<std::uint64_t> indexAndValue { 0 };
+        std::atomic<std::uint64_t> sequenceAndGeneration { 0 };
     };
 
     static_assert ((kCapacity & (kCapacity - 1)) == 0, "kCapacity must be a power of two");
