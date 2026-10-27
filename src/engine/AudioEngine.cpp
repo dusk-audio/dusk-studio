@@ -2881,24 +2881,79 @@ void AudioEngine::jumpToLastRecordPoint()
 
 void AudioEngine::publishPluginStateForSave (bool capturePluginState)
 {
-    // Snapshot each track's PluginSlot into its session-model strings so
-    // SessionSerializer (which only sees Session) can serialise plugin
-    // state alongside everything else. Empty strings = no plugin loaded.
-    //
-    // Plugin state I/O briefly suspends each plugin (releaseResources /
-    // prepareToPlay around getStateInformation) - JUCE's contract says
-    // state I/O must not race the renderer, and plugins like u-he Diva
-    // crash hard when it does. The engine's master output goes silent for
-    // a few milliseconds per loaded plugin during the save.
-    //
-    // For the autosave timer (capturePluginState=false) that runs
-    // every 30 s during normal playback, that dropout is unacceptable.
-    // We skip plugin state entirely on that path: the existing values
-    // in Session::pluginStateBase64 (set by the most recent manual save
-    // or session load) are preserved, so a crash recovery still gets
-    // valid plugin state - just possibly stale relative to in-flight
-    // knob tweaks. Manual save (Ctrl+S, File>Save, quit-save) is the
-    // path that captures fresh plugin state.
+    // Built-ins and multisample snapshot controls without pausing DSP.
+    for (int t = 0; t < Session::kNumTracks; ++t)
+    {
+        auto& track = session.track (t);
+        auto& strip = *strips[(size_t) t];
+        if (strip.isBuiltinLoaded())
+        {
+            auto& builtinSlot = strip.getBuiltinSlot();
+            bindBuiltinStateToLoadedIdentity (
+                track.builtinUnitId, track.builtinStateBase64, builtinSlot.getPluginId());
+            if (! strip.builtinReloadFailed())
+                captureBuiltinState (builtinSlot, track.builtinStateBase64,
+                                     "track built-in", t);
+        }
+        else if (! strip.builtinReloadFailed())
+        {
+            track.builtinUnitId.clear();
+            track.builtinStateBase64.clear();
+        }
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+        // The editor can swap or CLEAR the soundfont in place, so the retained
+        // reference off the instance - not the slot's original bundle path - is
+        // what the session persists. It deliberately survives a failed load.
+        const auto persistedSoundfont = strip.isNativeMultisampleLoaded()
+            ? juce::String::fromUTF8 (
+                  strip.getNativeMultisampleSlot().getLoadedSoundfontPath().c_str())
+            : juce::String();
+        if (persistedSoundfont.isNotEmpty())
+        {
+            bindNativeStateToLoadedIdentity (
+                "multisample", track.nativeMultisamplePath,
+                track.nativeMultisampleStateBase64,
+                persistedSoundfont.toStdString());
+            if (! strip.nativeMultisampleReloadFailed())
+                captureNativeState (strip.getNativeMultisampleSlot(),
+                                    track.nativeMultisampleStateBase64,
+                                    "track multisample", t);
+        }
+        else if (! strip.nativeMultisampleReloadFailed())
+        {
+            track.nativeMultisamplePath.clear();
+            track.nativeMultisampleStateBase64.clear();
+            track.nativeMultisampleLocator.reset();
+        }
+#endif
+    }
+    for (int a = 0; a < Session::kNumAuxLanes; ++a)
+    {
+        auto& lane = session.auxLane (a);
+        auto& strip = auxLaneStrips[(size_t) a];
+        for (int s = 0; s < AuxLaneParams::kMaxLanePlugins; ++s)
+        {
+            if (strip.isBuiltinLoaded (s))
+            {
+                auto& builtinSlot = strip.getBuiltinSlot (s);
+                bindBuiltinStateToLoadedIdentity (
+                    lane.builtinUnitId[(size_t) s],
+                    lane.builtinStateBase64[(size_t) s],
+                    builtinSlot.getPluginId());
+                if (! strip.builtinReloadFailed (s))
+                    captureBuiltinState (builtinSlot,
+                                         lane.builtinStateBase64[(size_t) s],
+                                         "aux built-in", s);
+            }
+            else if (! strip.builtinReloadFailed (s))
+            {
+                lane.builtinUnitId[(size_t) s].clear();
+                lane.builtinStateBase64[(size_t) s].clear();
+            }
+        }
+    }
+
+    // Third-party state access may reconfigure the processor and needs the gate.
     if (! capturePluginState)
         return;
 
@@ -3027,46 +3082,6 @@ void AudioEngine::publishPluginStateForSave (bool capturePluginState)
             track.nativeAuStateBase64.clear();
         }
 #endif
-#if DUSKSTUDIO_HAS_MULTISAMPLE
-        // The editor can swap or CLEAR the soundfont in place, so the retained
-        // reference off the instance - not the slot's original bundle path - is
-        // what the session persists. It deliberately survives a failed load.
-        const auto persistedSoundfont = strip.isNativeMultisampleLoaded()
-            ? juce::String::fromUTF8 (
-                  strip.getNativeMultisampleSlot().getLoadedSoundfontPath().c_str())
-            : juce::String();
-        if (persistedSoundfont.isNotEmpty())
-        {
-            bindNativeStateToLoadedIdentity (
-                "multisample", track.nativeMultisamplePath,
-                track.nativeMultisampleStateBase64,
-                persistedSoundfont.toStdString());
-            if (! strip.nativeMultisampleReloadFailed())
-                captureNativeState (strip.getNativeMultisampleSlot(),
-                                    track.nativeMultisampleStateBase64,
-                                    "track multisample", t);
-        }
-        else if (! strip.nativeMultisampleReloadFailed())
-        {
-            track.nativeMultisamplePath.clear();
-            track.nativeMultisampleStateBase64.clear();
-            track.nativeMultisampleLocator.reset();
-        }
-#endif
-        if (strip.isBuiltinLoaded())
-        {
-            auto& builtinSlot = strip.getBuiltinSlot();
-            bindBuiltinStateToLoadedIdentity (
-                track.builtinUnitId, track.builtinStateBase64, builtinSlot.getPluginId());
-            if (! strip.builtinReloadFailed())
-                captureBuiltinState (builtinSlot, track.builtinStateBase64,
-                                     "track built-in", t);
-        }
-        else if (! strip.builtinReloadFailed())
-        {
-            track.builtinUnitId.clear();
-            track.builtinStateBase64.clear();
-        }
     }
     for (int a = 0; a < Session::kNumAuxLanes; ++a)
     {
@@ -3172,23 +3187,6 @@ void AudioEngine::publishPluginStateForSave (bool capturePluginState)
                 lane.nativeAuStateBase64[(size_t) s].clear();
             }
 #endif
-            if (strip.isBuiltinLoaded (s))
-            {
-                auto& builtinSlot = strip.getBuiltinSlot (s);
-                bindBuiltinStateToLoadedIdentity (
-                    lane.builtinUnitId[(size_t) s],
-                    lane.builtinStateBase64[(size_t) s],
-                    builtinSlot.getPluginId());
-                if (! strip.builtinReloadFailed (s))
-                    captureBuiltinState (builtinSlot,
-                                         lane.builtinStateBase64[(size_t) s],
-                                         "aux built-in", s);
-            }
-            else if (! strip.builtinReloadFailed (s))
-            {
-                lane.builtinUnitId[(size_t) s].clear();
-                lane.builtinStateBase64[(size_t) s].clear();
-            }
         }
     }
 

@@ -4,6 +4,7 @@
 #include "../../../engine/audiofile/FileWriter.h"
 #include "../../../engine/audiofile/FileReader.h"
 #include "../../../dsp/ChannelStrip.h"
+#include "../../../dsp/AuxLaneStrip.h"
 #include "../../../session/RegionEditActions.h"
 #include "../../../session/SessionSerializer.h"
 
@@ -374,6 +375,210 @@ const ScenarioRegistrar autosave { Scenario {
     {},
     60000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runAutosave (host, ctx); }
+} };
+
+std::optional<ScenarioResult> runBuiltinRecovery (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty()
+        || ! engine.isAudioCallbackRegistered())
+        return ScenarioResult::skip ("requires stopped live audio and no modal");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    engine.publishPluginStateForSave (true);
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    ctx.cleanup ([&host, &engine, &session, originalDir, restore]
+    {
+        engine.stop();
+        drainModals (host);
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+    });
+
+    const auto folder = ctx.tempDir() / "Built-in recovery";
+    std::filesystem::create_directories (folder);
+    const auto canonical = folder / "session.json";
+    const auto autosaveFile = folder / "session.json.autosave";
+    auto saved = std::make_unique<Session>();
+    saved->track (0).builtinUnitId = "dusk.builtin.utility";
+    saved->auxLane (0).builtinUnitId[0] = "dusk.builtin.delay";
+    if (! SessionSerializer::save (*saved, canonical))
+        return ScenarioResult::fail ("could not create the built-in session");
+    reopenSavedSession (host, canonical);
+
+    const auto parameter = [] (const builtin::NativeBuiltinSlot& slot, const char* id)
+    {
+        for (int i = 0; i < slot.paramCount(); ++i)
+            if (const auto* info = slot.paramInfo (i);
+                info != nullptr && info->id != nullptr && std::string_view (info->id) == id)
+                return i;
+        return -1;
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    pushFileMenuSteps (host, ctx, *steps, "Save");
+    steps->push_back ({ 300, [&host, &ctx, &engine, parameter]
+    {
+        if (host.requestQuit())
+        {
+            ctx.expect (false, "the freshly saved built-ins were dirty before an edit");
+            host.clickModalButton ("Cancel");
+        }
+        auto& track = engine.getChannelStrip (0).getBuiltinSlot();
+        auto& aux = engine.getAuxLaneStrip (0).getBuiltinSlot (0);
+        const int gain = parameter (track, "gain_db"), mix = parameter (aux, "mix");
+        if (! ctx.expect (gain >= 0 && mix >= 0, "the track or aux built-in did not load")) return;
+        track.setParamValue (gain, -12.0f);
+        aux.setParamValue (mix, 0.24f);
+        engine.play();
+    } });
+    steps->push_back ({ 300, [&host, &ctx, &engine, autosaveFile]
+    {
+        host.autosaveTick();
+        ctx.expect (std::filesystem::exists (autosaveFile), "built-in-only edits wrote no recovery file");
+        ctx.expect (engine.getTransport().isPlaying() && ! engine.isProcessingSuspended(),
+                    "capturing built-in recovery state interrupted playback");
+        engine.stop();
+        ctx.expect (host.requestQuit(), "built-in-only edits did not ask to save before quitting");
+    } });
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        if (! host.modalStackEmpty())
+            ctx.expect (host.clickModalButton ("Cancel"), "the quit prompt could not be cancelled");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, &engine, canonical, autosaveFile, parameter]
+    {
+        if (! ctx.expect (host.openSession (canonical) && ! host.modalStackEmpty(),
+                          "built-in-only edits did not offer recovery")) return;
+        if (! ctx.expect (host.answerRecovery (GuiHost::Recovery::Recover), "built-in recovery failed")) return;
+        auto& track = engine.getChannelStrip (0).getBuiltinSlot();
+        auto& aux = engine.getAuxLaneStrip (0).getBuiltinSlot (0);
+        const int gain = parameter (track, "gain_db"), mix = parameter (aux, "mix");
+        if (ctx.expect (gain >= 0 && mix >= 0, "recovery lost a built-in unit"))
+        {
+            ctx.expect (nearly (track.getParamValue (gain), -12.0f), "recovery lost the track's control edit");
+            ctx.expect (nearly (aux.getParamValue (mix), 0.24f), "recovery lost the aux control edit");
+        }
+        ctx.expect (! std::filesystem::exists (autosaveFile), "recovery left its sidecar behind");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar builtinRecovery { Scenario {
+    "gui.builtin_edits_autosave_and_prompt", { "gui", "session", "builtin", "autosave" },
+    Needs::Engine | Needs::Gui, {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runBuiltinRecovery (host, ctx); }
+} };
+
+std::optional<ScenarioResult> runMultisampleRecovery (GuiHost& host, ScenarioContext& ctx)
+{
+#if ! DUSKSTUDIO_HAS_MULTISAMPLE
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("multisample support is not built");
+#else
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty()
+        || ! engine.isAudioCallbackRegistered())
+        return ScenarioResult::skip ("requires stopped live audio and no modal");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    engine.publishPluginStateForSave (true);
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    ctx.cleanup ([&host, &engine, &session, originalDir, restore]
+    {
+        engine.stop();
+        drainModals (host);
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+    });
+    const auto folder = ctx.tempDir() / "Multisample recovery";
+    std::filesystem::create_directories (folder);
+    const auto soundfont = folder / "Fixture.sfz";
+    if (! writeRampFixture (folder / "Tone.wav", 48000.0, 4096))
+        return ScenarioResult::fail ("could not write the multisample recovery WAV");
+    {
+        std::ofstream file (soundfont);
+        file << "<region> sample=Tone.wav key=60\n";
+        if (! file) return ScenarioResult::fail ("could not write the multisample recovery SFZ");
+    }
+    const auto canonical = folder / "session.json";
+    const auto autosaveFile = folder / "session.json.autosave";
+    auto saved = std::make_unique<Session>();
+    saved->track (0).mode.store (static_cast<int> (Track::Mode::Midi));
+    saved->track (0).nativeMultisamplePath = soundfont.u8string();
+    if (! SessionSerializer::save (*saved, canonical))
+        return ScenarioResult::fail ("could not create the multisample session");
+    reopenSavedSession (host, canonical);
+    const auto loaded = [&engine]
+    {
+        const auto* instance = engine.getChannelStrip (0).getNativeMultisampleSlot().getInstance();
+        return ! engine.hasPendingMultisampleLoads() && instance != nullptr && instance->hasLoadedRuntime();
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 0, [] {}, loaded, "the multisample recovery instrument did not load" });
+    pushFileMenuSteps (host, ctx, *steps, "Save");
+    steps->push_back ({ 300, [&host, &ctx, &engine]
+    {
+        if (host.requestQuit())
+        {
+            ctx.expect (false, "the freshly saved multisample was dirty before an edit");
+            host.clickModalButton ("Cancel");
+        }
+        auto* instance = engine.getChannelStrip (0).getNativeMultisampleSlot().getInstance();
+        if (! ctx.expect (instance != nullptr, "the multisample instance disappeared")) return;
+        engine.play();
+        instance->getOverrides().masterVolDb.store (-12.0f, std::memory_order_relaxed);
+        instance->getOverrides().masterTuneCents.store (37.0f, std::memory_order_relaxed);
+        instance->setPolyphony (96);
+        instance->setHDCC (74, 0.23f);
+        instance->setHDCC (258, 0.61f);
+    } });
+    steps->push_back ({ 300, [&host, &ctx, &engine, autosaveFile]
+    {
+        host.autosaveTick();
+        ctx.expect (std::filesystem::exists (autosaveFile), "multisample-only edits wrote no recovery file");
+        ctx.expect (engine.getTransport().isPlaying() && ! engine.isProcessingSuspended(),
+                    "capturing multisample recovery state interrupted playback");
+        engine.stop();
+        ctx.expect (host.requestQuit(), "multisample-only edits did not ask to save before quitting");
+    } });
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        if (! host.modalStackEmpty())
+            ctx.expect (host.clickModalButton ("Cancel"), "the multisample quit prompt could not be cancelled");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, canonical]
+    {
+        if (! ctx.expect (host.openSession (canonical) && ! host.modalStackEmpty(),
+                          "multisample-only edits did not offer recovery")) return;
+        ctx.expect (host.answerRecovery (GuiHost::Recovery::Recover), "multisample recovery failed");
+    } });
+    steps->push_back ({ 100, [&ctx, &engine, autosaveFile]
+    {
+        const auto* instance = engine.getChannelStrip (0).getNativeMultisampleSlot().getInstance();
+        if (! ctx.expect (instance != nullptr, "recovery lost the multisample instance")) return;
+        const auto& controls = instance->getOverrides();
+        ctx.expect (nearly (controls.masterVolDb.load (std::memory_order_relaxed), -12.0f), "recovery lost multisample volume");
+        ctx.expect (nearly (controls.masterTuneCents.load (std::memory_order_relaxed), 37.0f), "recovery lost multisample tune");
+        ctx.expect (controls.polyphony.load (std::memory_order_relaxed) == 96, "recovery lost multisample polyphony");
+        ctx.expect (nearly (instance->getHDCC (74), 0.23f) && nearly (instance->getHDCC (258), 0.61f),
+                    "recovery lost standard or extended ARIA control overrides");
+        ctx.expect (! std::filesystem::exists (autosaveFile), "multisample recovery left its sidecar behind");
+    }, loaded, "the recovered multisample instrument did not load" });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+#endif
+}
+
+const ScenarioRegistrar multisampleRecovery { Scenario {
+    "gui.multisample_edits_autosave_and_prompt", { "gui", "session", "multisample", "autosave" },
+    Needs::Engine | Needs::Gui, {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runMultisampleRecovery (host, ctx); }
 } };
 
 // The Save As browser a quit's Save opens holds the quit's audio and autosave

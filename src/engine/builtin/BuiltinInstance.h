@@ -20,10 +20,9 @@ namespace duskstudio::builtin
 // that is one of Dusk's DAF plug-ins runs through a DafUnitInstance, which this
 // forwards to; everything else here is the knob-unit path.
 //
-// Threading matches INativeInstance: create / activate / deactivate /
-// reactivate / saveState / loadState are message-thread, processBlock is the
-// sole audio-thread entry, and the slot fences load and unload with the
-// engine's process gate.
+// Lifecycle and state access run on the message thread. saveState snapshots
+// atomic controls and immutable state, so it may overlap processBlock. Loads
+// and lifecycle changes require the engine's process gate.
 class BuiltinInstance final : public hosting::INativeInstance
 {
 public:
