@@ -203,6 +203,7 @@ bool anyPassOpen (const Track& track)
 struct LiveTrackMove
 {
     TrackMovePlan plan;
+    const UndoableAction* action = nullptr;
     // By slot before the move: the inputs it pinned, which follow again on undo.
     TrackSlotMask pinnedInputs {};
     bool moved = false;
@@ -272,7 +273,7 @@ bool commitTrackMove (AudioEngine& engine, const TrackMovePlan& requested)
     auto& um = engine.getUndoManager();
     um.clearUndoHistory();
     um.beginNewTransaction (kMoveTracksTransaction);
-    um.perform (new ParamEditAction (
+    auto* action = new ParamEditAction (
         [&engine, live]
         {
             if (! live->moved) live->moved = engine.moveTracks (live->plan);
@@ -281,7 +282,9 @@ bool commitTrackMove (AudioEngine& engine, const TrackMovePlan& requested)
         {
             if (live->moved && engine.moveTracks (invertTrackMove (live->plan), live->pinnedInputs))
                 live->moved = false;
-        }));
+        });
+    live->action = action;
+    um.perform (action);
     um.beginNewTransaction();
     if (! live->moved)
     {
@@ -299,15 +302,86 @@ bool commitTrackMove (AudioEngine& engine, const TrackMovePlan& requested)
 TrackMoveRefusal trackMoveUndoRefusal (AudioEngine& engine, bool redo)
 {
     auto& um = engine.getUndoManager();
-    if ((redo ? um.getRedoDescription() : um.getUndoDescription()) != kMoveTracksTransaction)
-        return {};
+    const auto* actions = um.actionsForReplay (redo);
+    if (actions == nullptr) return {};
     const auto& moves = liveTrackMoves();
     const auto it = moves.find (&engine);
     const auto live = it != moves.end() ? it->second.lock() : nullptr;
-    if (live == nullptr)
+    if (live == nullptr || ! actions->contains (live->action))
         return {};
     return trackMoveRefusalFor (engine.getSession(), engine,
                                 redo ? live->plan : invertTrackMove (live->plan));
+}
+
+struct TransactionPreflight
+{
+    static bool allows (AudioEngine& engine, Session& session, const UndoableAction& action, bool redo,
+                         const std::array<int, Session::kNumTracks>& slots)
+    {
+        const auto unlocked = [&session, &slots] (int track)
+        {
+            return track >= 0 && track < Session::kNumTracks
+                && ! frozenLocked (session, slots[(std::size_t) track]);
+        };
+        if (const auto* edit = dynamic_cast<const RegionEditAction*> (&action)) return unlocked (edit->trackIdx);
+        if (const auto* edit = dynamic_cast<const SplitRegionAction*> (&action)) return unlocked (edit->trackIdx);
+        if (const auto* edit = dynamic_cast<const PasteRegionAction*> (&action)) return unlocked (edit->trackIdx);
+        if (const auto* edit = dynamic_cast<const CreateMidiRegionAction*> (&action)) return unlocked (edit->trackIdx);
+        if (const auto* edit = dynamic_cast<const MidiRegionEditAction*> (&action)) return unlocked (edit->trackIdx);
+        if (const auto* edit = dynamic_cast<const DeleteRegionAction*> (&action)) return unlocked (edit->trackIdx);
+        if (const auto* edit = dynamic_cast<const PromoteTakeRangeAction*> (&action)) return unlocked (edit->trackIdx);
+        if (const auto* edit = dynamic_cast<const DeleteTakeAction*> (&action)) return unlocked (edit->trackIdx);
+        if (const auto* edit = dynamic_cast<const RenameTakeAction*> (&action)) return unlocked (edit->trackIdx);
+        if (const auto* edit = dynamic_cast<const JoinRegionsAction*> (&action)) return unlocked (edit->trackIdx);
+        if (const auto* edit = dynamic_cast<const ReverseRegionAction*> (&action)) return unlocked (edit->trackIdx);
+        if (const auto* edit = dynamic_cast<const DeleteMidiRegionAction*> (&action)) return unlocked (edit->trackIdx);
+        if (const auto* edit = dynamic_cast<const CloneTrackAction*> (&action))
+            return ! engine.getTransport().isRecording()
+                && unlocked (edit->dstIdx) && (! redo || unlocked (edit->srcIdx));
+        if (const auto* edit = dynamic_cast<const MidiMergePassAction*> (&action))
+            return std::all_of (edit->diffs.begin(), edit->diffs.end(),
+                                [&unlocked] (const auto& diff) { return unlocked (diff.trackIndex); });
+        if (const auto* edit = dynamic_cast<const RecordCommitAction*> (&action))
+            return std::all_of (edit->diffs.begin(), edit->diffs.end(),
+                                [&unlocked] (const auto& diff) { return unlocked (diff.trackIndex); });
+        return true;
+    }
+};
+
+bool canReplayTransaction (AudioEngine& engine, const UndoableAction* const* actions,
+                            std::size_t count, bool redo)
+{
+    auto& session = engine.getSession();
+    std::array<int, Session::kNumTracks> slots {};
+    for (int track = 0; track < Session::kNumTracks; ++track)
+        slots[(std::size_t) track] = track;
+    const auto& moves = liveTrackMoves();
+    const auto found = moves.find (&engine);
+    const auto move = found != moves.end() ? found->second.lock() : nullptr;
+    for (std::size_t step = 0; step < count; ++step)
+    {
+        const auto* action = actions[redo ? step : count - 1 - step];
+        if (action == nullptr) return false;
+        if (move != nullptr && action == move->action)
+        {
+            const auto plan = redo ? move->plan : invertTrackMove (move->plan);
+            if (! engine.canMoveTracks()) return false;
+            for (int from = 0; from < Session::kNumTracks; ++from)
+            {
+                if (plan.oldToNew[(std::size_t) from] == from) continue;
+                const auto original = slots[(std::size_t) from];
+                if (frozenLocked (session, original) || anyPassOpen (session.track (original))
+                    || engine.getStrip (original).getPluginSlot().isAsyncLoadPending())
+                    return false;
+            }
+            const auto beforeMove = slots;
+            for (int to = 0; to < Session::kNumTracks; ++to)
+                slots[(std::size_t) to] = beforeMove[(std::size_t) plan.newToOld[(std::size_t) to]];
+        }
+        else if (! TransactionPreflight::allows (engine, session, *action, redo, slots))
+            return false;
+    }
+    return true;
 }
 
 // RegionEditAction
@@ -1879,9 +1953,10 @@ bool RecordCommitAction::perform()
         return true;
     }
     for (const auto& d : diffs)
+        if (d.trackIndex < 0 || d.trackIndex >= Session::kNumTracks
+            || frozenLocked (session, d.trackIndex)) return false;
+    for (const auto& d : diffs)
     {
-        if (d.trackIndex < 0 || d.trackIndex >= Session::kNumTracks) continue;
-        if (frozenLocked (session, d.trackIndex)) continue;   // frozen track is edit-locked
         session.track (d.trackIndex).regions = d.audioAfter;
         applyTakeChange (session.track (d.trackIndex).takes, d.takesBefore, d.takesAfter);
         session.track (d.trackIndex).midiRegions.mutate (
@@ -1898,9 +1973,10 @@ bool RecordCommitAction::perform()
 bool RecordCommitAction::undo()
 {
     for (const auto& d : diffs)
+        if (d.trackIndex < 0 || d.trackIndex >= Session::kNumTracks
+            || frozenLocked (session, d.trackIndex)) return false;
+    for (const auto& d : diffs)
     {
-        if (d.trackIndex < 0 || d.trackIndex >= Session::kNumTracks) continue;
-        if (frozenLocked (session, d.trackIndex)) continue;   // frozen track is edit-locked
         session.track (d.trackIndex).regions = d.audioBefore;
         applyTakeChange (session.track (d.trackIndex).takes, d.takesAfter, d.takesBefore);
         session.track (d.trackIndex).midiRegions.mutate (

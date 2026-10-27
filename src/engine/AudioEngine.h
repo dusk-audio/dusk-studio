@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cstddef>
 #include <functional>
 #include <map>
 #include <memory>
@@ -35,6 +36,7 @@
 #include "device/IODeviceCallback.h"
 #include "device/MicrophoneAccess.h"
 #include "../session/Session.h"
+#include "../session/RegionEditActions.h"
 #include "MidiTimelineSchedule.h"
 #include "AudioWorkerPool.h"
 #include "MasteringPlayer.h"
@@ -50,6 +52,115 @@ namespace duskstudio::sfz { class LibraryService; }
 
 namespace duskstudio
 {
+class SessionUndoManager final : private juce::UndoManager
+{
+public:
+    using Actions = juce::Array<const UndoableAction*>;
+    using Name = decltype (std::declval<const UndoManager&>().getUndoDescription());
+
+    explicit SessionUndoManager (std::function<bool (const Actions&, bool)> guard = {})
+        : canReplay (std::move (guard)) {}
+
+    using UndoManager::addChangeListener;
+    using UndoManager::removeChangeListener;
+    using UndoManager::dispatchPendingMessages;
+    using UndoManager::beginNewTransaction;
+    using UndoManager::canUndo;
+    using UndoManager::canRedo;
+    using UndoManager::getUndoDescription;
+    using UndoManager::getRedoDescription;
+    using UndoManager::getUndoDescriptions;
+    using UndoManager::getRedoDescriptions;
+    using UndoManager::getNumberOfUnitsTakenUpByStoredCommands;
+    using UndoManager::setMaxNumberOfStoredUnits;
+
+    void clearUndoHistory()
+    {
+        UndoManager::clearUndoHistory();
+        past.clear();
+        future.clear();
+        synchronized = true;
+    }
+
+    bool perform (UndoableAction* action)
+    {
+        if (! matchesHistory())
+        {
+            delete action;
+            return false;
+        }
+        const bool append = getNumActionsInCurrentTransaction() > 0;
+        if (! UndoManager::perform (action)) return false;
+        future.clear();
+        Actions actions;
+        getActionsInCurrentTransaction (actions);
+        if (append) past.back() = std::move (actions);
+        else        past.push_back (std::move (actions));
+        const auto retained = (std::size_t) getUndoDescriptions().size();
+        if (past.size() > retained)
+            past.erase (past.begin(), past.begin() + (std::ptrdiff_t) (past.size() - retained));
+        synchronized = matchesHistory();
+        return true;
+    }
+
+    bool perform (UndoableAction* action, const Name& name)
+    {
+        if (! perform (action)) return false;
+        if (name.isNotEmpty()) setCurrentTransactionName (name);
+        return true;
+    }
+
+    const Actions* actionsForReplay (bool redo) const
+    {
+        if (! matchesHistory()) return nullptr;
+        const auto& replayStack = redo ? future : past;
+        return replayStack.empty() ? nullptr : &replayStack.back();
+    }
+
+    bool undo() { return replay (false); }
+    bool redo() { return replay (true); }
+
+private:
+    bool matchesHistory() const
+    {
+        return synchronized
+            && past.size() == (std::size_t) getUndoDescriptions().size()
+            && future.size() == (std::size_t) getRedoDescriptions().size();
+    }
+
+    bool allowed (bool redo) const
+    {
+        const auto* actions = actionsForReplay (redo);
+        return actions != nullptr && (! canReplay || canReplay (*actions, redo));
+    }
+
+    bool replay (bool redo)
+    {
+        if (! allowed (redo)) return false;
+        const bool result = redo ? UndoManager::redo() : UndoManager::undo();
+        if (! result) return false;
+        // A refused action makes the underlying manager return true after
+        // deleting the history. Its action pointers must not survive here.
+        if (! UndoManager::canUndo() && ! UndoManager::canRedo())
+        {
+            past.clear();
+            future.clear();
+            synchronized = true;
+            return false;
+        }
+        auto& from = redo ? future : past;
+        auto& to = redo ? past : future;
+        to.push_back (std::move (from.back()));
+        from.pop_back();
+        synchronized = matchesHistory();
+        return true;
+    }
+
+    std::function<bool (const Actions&, bool)> canReplay;
+    std::vector<Actions> past, future;
+    bool synchronized = true;
+};
+
 // input -> channel strip (live or playback source) -> aux/master.
 // Owns Transport, recording, playback, plugin host.
 class AudioEngine final : public device::IODeviceCallback
@@ -313,7 +424,7 @@ public:
     // output availability is published atomically to the audio thread.
     void openConfiguredMidiOutputs();
 
-    juce::UndoManager& getUndoManager() noexcept { return undoManager; }
+    SessionUndoManager& getUndoManager() noexcept { return undoManager; }
 
     // MIDI soft takeover (pickup) for continuous absolute bindings - see the
     // member block below. Pushed from the UI at startup and on toggle.
@@ -809,7 +920,10 @@ private:
     PlaybackReadObserver playbackReadObserver = nullptr;
     void* playbackReadContext = nullptr;
     PluginManager   pluginManager;
-    juce::UndoManager undoManager;
+    SessionUndoManager undoManager { [this] (const SessionUndoManager::Actions& actions, bool redo)
+    {
+        return canReplayTransaction (*this, actions.begin(), (std::size_t) actions.size(), redo);
+    } };
     RegionClipboard   regionClipboard;
 
     MasteringPlayer  masteringPlayer;

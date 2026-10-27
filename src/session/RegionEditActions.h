@@ -11,6 +11,7 @@ namespace duskstudio
 {
 class AudioEngine;
 using UndoableAction = juce::UndoableAction;
+struct TransactionPreflight;
 
 // The plugin portion of a clone snapshot is one indivisible replay unit.
 // Keeping the structured descriptor, malformed legacy fallback, and state
@@ -48,6 +49,7 @@ struct ClonePluginSnapshot
 // applies the new state; undo() restores the original.
 class RegionEditAction final : public UndoableAction
 {
+    friend struct TransactionPreflight;
 public:
     RegionEditAction (Session& session, AudioEngine& engine,
                        int trackIdx, int regionIdx,
@@ -72,6 +74,7 @@ private:
 // is continuous across the split.
 class SplitRegionAction final : public UndoableAction
 {
+    friend struct TransactionPreflight;
 public:
     SplitRegionAction (Session& session, AudioEngine& engine,
                         int trackIdx, int regionIdx,
@@ -96,6 +99,7 @@ private:
 // reads the take's file.
 class PasteRegionAction final : public UndoableAction
 {
+    friend struct TransactionPreflight;
 public:
     PasteRegionAction (Session& session, AudioEngine& engine,
                         int trackIdx, const AudioRegion& region);
@@ -119,6 +123,7 @@ private:
 // removes the region; redo re-inserts the same one.
 class CreateMidiRegionAction final : public UndoableAction
 {
+    friend struct TransactionPreflight;
 public:
     CreateMidiRegionAction (Session& session,
                               int trackIdx,
@@ -156,6 +161,7 @@ private:
 // thread hears the edit whole and its timeline is rebuilt once.
 class MidiRegionEditAction final : public UndoableAction
 {
+    friend struct TransactionPreflight;
 public:
     struct Change
     {
@@ -186,6 +192,7 @@ private:
 // Removes a region; undo re-inserts it at its original index.
 class DeleteRegionAction final : public UndoableAction
 {
+    friend struct TransactionPreflight;
 public:
     DeleteRegionAction (Session& session, AudioEngine& engine,
                          int trackIdx, int regionIdx);
@@ -212,6 +219,7 @@ private:
 // trim it.
 class PromoteTakeRangeAction final : public UndoableAction
 {
+    friend struct TransactionPreflight;
 public:
     PromoteTakeRangeAction (Session& session, AudioEngine& engine, int trackIdx,
                              TakeId takeId, std::int64_t start, std::int64_t end);
@@ -237,6 +245,7 @@ private:
 // the take is locked.
 class DeleteTakeAction final : public UndoableAction
 {
+    friend struct TransactionPreflight;
 public:
     DeleteTakeAction (Session& session, AudioEngine& engine, int trackIdx, TakeId takeId);
 
@@ -256,6 +265,7 @@ private:
 
 class RenameTakeAction final : public UndoableAction
 {
+    friend struct TransactionPreflight;
 public:
     RenameTakeAction (Session& session, int trackIdx, TakeId takeId, std::string newName);
 
@@ -292,6 +302,7 @@ private:
 // region so undo() can restore the full pre-join layout.
 class JoinRegionsAction final : public UndoableAction
 {
+    friend struct TransactionPreflight;
 public:
     JoinRegionsAction (Session& session, AudioEngine& engine,
                         int trackIdx, const std::vector<int>& indices);
@@ -319,6 +330,7 @@ private:
 // bails). Single region.
 class ReverseRegionAction final : public UndoableAction
 {
+    friend struct TransactionPreflight;
 public:
     ReverseRegionAction (Session& session, AudioEngine& engine,
                           int trackIdx, int regionIdx);
@@ -344,6 +356,7 @@ private:
 // gives: one publish per perform and per undo.
 class DeleteMidiRegionAction final : public UndoableAction
 {
+    friend struct TransactionPreflight;
 public:
     DeleteMidiRegionAction (Session& session, AudioEngine& engine,
                               int trackIdx, int regionIdx);
@@ -378,6 +391,7 @@ private:
 // to whatever plugin (if any) was loaded before.
 class CloneTrackAction final : public UndoableAction
 {
+    friend struct TransactionPreflight;
 public:
     CloneTrackAction (Session& session, AudioEngine& engine,
                        int sourceTrackIdx, int destTrackIdx);
@@ -418,6 +432,7 @@ private:
 
 class MidiMergePassAction final : public UndoableAction
 {
+    friend struct TransactionPreflight;
 public:
     struct TrackDiff
     {
@@ -449,6 +464,7 @@ private:
 // orphaned files are reclaimed via the existing "Clean Out" menu action.
 class RecordCommitAction final : public UndoableAction
 {
+    friend struct TransactionPreflight;
 public:
     struct TrackDiff
     {
@@ -536,10 +552,12 @@ private:
 
 // The engine's undo and redo, inside a RegionRebuildBatch so a transaction of
 // many region actions rebuilds playback once, as the gesture that made it did.
-// Both refuse, leaving the history as it is, while trackMoveUndoRefusal says
-// the step is a track move that can't run now.
+// A frozen participant or a refused track move leaves the whole transaction
+// and its history untouched.
 bool undoTransaction (AudioEngine& engine);
 bool redoTransaction (AudioEngine& engine);
+bool canReplayTransaction (AudioEngine& engine, const UndoableAction* const* actions,
+                            std::size_t count, bool redo);
 
 // The name of the one undo step a track move makes.
 constexpr const char* kMoveTracksTransaction = "Move tracks";
