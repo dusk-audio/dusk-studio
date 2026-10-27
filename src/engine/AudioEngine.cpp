@@ -2879,8 +2879,70 @@ void AudioEngine::jumpToLastRecordPoint()
     transport.locate (session.lastRecordPointSamples.load (std::memory_order_relaxed));
 }
 
-void AudioEngine::publishPluginStateForSave (bool capturePluginState)
+bool AudioEngine::preparePluginStateForSave (PreparedPluginState& prepared,
+                                             std::string& error)
 {
+    error.clear();
+    PreparedPluginState pending;
+    suspendProcessing();
+    workerPool.quiesce();
+    struct ResumeGuard
+    {
+        AudioEngine& engine;
+        ~ResumeGuard() { engine.resumeProcessing(); }
+    };
+    const ResumeGuard resume { *this };
+    bool latencyMoved = false;
+    const auto capture = [&] (PluginSlot& slot, PreparedPluginState::Slot& saved,
+                              const std::string& location)
+    {
+        saved.descriptor = slot.getDescriptorForSave (0);
+        saved.legacyDescriptionXml = slot.getLegacyDescriptionXmlForSave().toStdString();
+        const int before = slot.getLatencySamples();
+        std::string captureError;
+        const auto state = slot.getStateBase64ForSave (0, &captureError);
+        latencyMoved = latencyMoved || slot.getLatencySamples() != before;
+        if (! captureError.empty())
+        {
+            error = location + " - " + slot.getLoadedName().toStdString() + ": " + captureError;
+            return false;
+        }
+        saved.stateBase64 = state.toStdString();
+        return true;
+    };
+    bool okay = true;
+    for (int track = 0; okay && track < Session::kNumTracks; ++track)
+        okay = capture (strips[(size_t) track]->getPluginSlot(), pending.tracks[(size_t) track],
+                         "Track " + std::to_string (track + 1));
+    for (int lane = 0; okay && lane < Session::kNumAuxLanes; ++lane)
+        for (int slot = 0; okay && slot < AuxLaneParams::kMaxLanePlugins; ++slot)
+            okay = capture (auxLaneStrips[(size_t) lane].getPluginSlot (slot),
+                             pending.aux[(size_t) lane][(size_t) slot],
+                             "Aux " + std::to_string (lane + 1) + " slot " + std::to_string (slot + 1));
+    // State capture may re-prepare an insert and move its latency, even on failure.
+    if (latencyMoved) recomputePdc();
+    if (! okay) return false;
+    prepared = std::move (pending);
+    return true;
+}
+
+bool AudioEngine::publishPluginStateForSave (bool capturePluginState,
+                                             const PreparedPluginState* prepared,
+                                             std::string* error)
+{
+    if (error != nullptr) error->clear();
+    std::optional<PreparedPluginState> captured;
+    if (capturePluginState && prepared == nullptr)
+    {
+        captured.emplace();
+        std::string captureError;
+        if (! preparePluginStateForSave (*captured, captureError))
+        {
+            if (error != nullptr) *error = std::move (captureError);
+            return false;
+        }
+        prepared = &*captured;
+    }
     // Built-ins and multisample snapshot controls without pausing DSP.
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
@@ -2955,7 +3017,7 @@ void AudioEngine::publishPluginStateForSave (bool capturePluginState)
 
     // Third-party state access may reconfigure the processor and needs the gate.
     if (! capturePluginState)
-        return;
+        return true;
 
     // Hold the audio thread out with the process gate, as a re-prepare does,
     // rather than detaching from the device: reattaching fires
@@ -2972,27 +3034,14 @@ void AudioEngine::publishPluginStateForSave (bool capturePluginState)
     };
     const ResumeGuard resumeGuard { *this };
 
-    static constexpr int parkSleepMs = 0;  // the gate keeps the audio thread out
-
-    // Reading a JUCE-hosted plug-in's state re-prepares it, and a plug-in may
-    // settle on another latency when it does.
-    bool latencyMoved = false;
-    const auto readState = [&latencyMoved] (PluginSlot& slot)
-    {
-        const int latencyBefore = slot.getLatencySamples();
-        auto state = slot.getStateBase64ForSave (parkSleepMs);
-        latencyMoved = latencyMoved || slot.getLatencySamples() != latencyBefore;
-        return state;
-    };
-
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
         auto& track = session.track (t);
-        auto& strip = *strips[(size_t) t];
-        auto& slot  = strip.getPluginSlot();
-        track.pluginDescriptor = slot.getDescriptorForSave (parkSleepMs);
-        track.pluginLegacyDescriptionXml = slot.getLegacyDescriptionXmlForSave();
-        track.pluginStateBase64    = readState (slot);
+        [[maybe_unused]] auto& strip = *strips[(size_t) t];
+        const auto& saved = prepared->tracks[(size_t) t];
+        track.pluginDescriptor = saved.descriptor;
+        track.pluginLegacyDescriptionXml = saved.legacyDescriptionXml;
+        track.pluginStateBase64 = saved.stateBase64;
 
         // Native CLAP insert (parallel to the JUCE plugin; at most one is loaded).
         // Linux-only; on other platforms the saved path/state are preserved untouched
@@ -3088,12 +3137,11 @@ void AudioEngine::publishPluginStateForSave (bool capturePluginState)
         auto& lane = session.auxLane (a);
         for (int s = 0; s < AuxLaneParams::kMaxLanePlugins; ++s)
         {
-            auto& strip = auxLaneStrips[(size_t) a];
-            auto& slot  = strip.getPluginSlot (s);
-            lane.pluginDescriptor[(size_t) s] = slot.getDescriptorForSave (parkSleepMs);
-            lane.pluginLegacyDescriptionXml[(size_t) s]
-                = slot.getLegacyDescriptionXmlForSave();
-            lane.pluginStateBase64[(size_t) s]    = readState (slot);
+            [[maybe_unused]] auto& strip = auxLaneStrips[(size_t) a];
+            const auto& saved = prepared->aux[(size_t) a][(size_t) s];
+            lane.pluginDescriptor[(size_t) s] = saved.descriptor;
+            lane.pluginLegacyDescriptionXml[(size_t) s] = saved.legacyDescriptionXml;
+            lane.pluginStateBase64[(size_t) s] = saved.stateBase64;
 
             // Native CLAP slot (parallel to the JUCE plugin; at most one is loaded).
             // Linux-only; preserved untouched elsewhere (see the track block above).
@@ -3190,11 +3238,7 @@ void AudioEngine::publishPluginStateForSave (bool capturePluginState)
         }
     }
 
-    // The mixer recomputes PDC at the top of every block it runs. Doing it here
-    // as well, under the gate, leaves nothing reading the compensation for the
-    // old latency, even while the Mastering stage keeps the mixer idle.
-    if (latencyMoved)
-        recomputePdc();
+    return true;
 }
 
 void AudioEngine::releaseAllPluginResources()

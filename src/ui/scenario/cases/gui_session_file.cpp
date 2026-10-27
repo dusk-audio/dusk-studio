@@ -3,12 +3,14 @@
 #include "../../../foundation/Fs.h"
 #include "../../../engine/audiofile/FileWriter.h"
 #include "../../../engine/audiofile/FileReader.h"
+#include "../../../engine/scenario/cases/OopStubHarness.h"
 #include "../../../dsp/ChannelStrip.h"
 #include "../../../dsp/AuxLaneStrip.h"
 #include "../../../session/RegionEditActions.h"
 #include "../../../session/SessionSerializer.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <cstdint>
@@ -17,6 +19,7 @@
 #include <fstream>
 #include <functional>
 #include <iterator>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -1960,6 +1963,214 @@ const ScenarioRegistrar cleanOutWhileRecording { Scenario {
     "gui.clean_out_while_recording", { "gui", "session", "recording", "messages" }, Needs::Engine | Needs::Gui,
     {}, {}, 20000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runCleanOutWhileRecording (host, ctx); }
+} };
+std::optional<ScenarioResult> runOopCaptureFailureSave (GuiHost& host, ScenarioContext& ctx,
+                                                       bool saveAs)
+{
+#if DUSKSTUDIO_HAS_OOP_PLUGINS
+    namespace fs = std::filesystem;
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& manager = engine.getPluginManager();
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty()
+        || ! engine.isAudioCallbackRegistered() || engine.getCurrentSampleRate() <= 0.0)
+        return ScenarioResult::skip ("requires stopped live audio and no modal");
+    const auto fixture = ctx.fixture ("crash_state.vst3");
+    if (! fixture) return ScenarioResult::fail ("the state fixture is unavailable");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    engine.publishPluginStateForSave (true);
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not preserve the initial session");
+    const bool wasOop = manager.isOopEnabled();
+    ctx.cleanup ([&host, &engine, &session, &manager, wasOop, originalDir, restore]
+    {
+        engine.stop();
+        drainModals (host);
+        engine.getChannelStrip (0).getPluginSlot().unload();
+        manager.setOopEnabled (wasOop);
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+    });
+
+    const auto folder = ctx.tempDir() / "OOP capture session";
+    const auto copy = ctx.tempDir() / "OOP capture copy";
+    const auto tone = folder / "audio" / "source.wav";
+    fs::create_directories (tone.parent_path());
+    {
+        dusk::audio::WriteSpec spec;
+        spec.sampleRate = engine.getCurrentSampleRate();
+        spec.numChannels = 1;
+        auto writer = dusk::audio::FileWriter::create (tone, spec);
+        const std::vector<float> samples (256, 0.25f);
+        const float* input[] { samples.data() };
+        if (! writer || ! writer->write (input, 1, 256) || ! writer->flush())
+            return ScenarioResult::fail ("could not create the source audio");
+    }
+    {
+        auto saved = std::make_unique<Session>();
+        applySessionDirectory (*saved, folder);
+        AudioRegion region;
+        using File = std::decay_t<decltype (region.file)>;
+        region.file = File (tone.u8string().c_str());
+        region.lengthInSamples = 256;
+        saved->track (1).regions = { region };
+        saved->track (1).mode.store ((int) Track::Mode::Mono);
+        if (! SessionSerializer::save (*saved, folder / "session.json"))
+            return ScenarioResult::fail ("could not create the source session");
+    }
+    if (! dusk::fs::writeStringToFile (folder / "notepad.md", "saved notes\n"))
+        return ScenarioResult::fail ("could not create the source notepad");
+    fs::create_directories (folder / "state" / "lv2" / "sentinel");
+    dusk::fs::writeStringToFile (folder / "state" / "lv2" / "sentinel" / "bank.bin", "keep source state");
+    fs::create_directories (copy / "audio");
+    dusk::fs::writeStringToFile (copy / "audio" / "existing.wav", "keep target media");
+    dusk::fs::writeStringToFile (copy / "notepad.md", "keep target notes\n");
+    reopenSavedSession (host, folder / "session.json");
+
+    using File = std::decay_t<decltype (session.getSessionDirectory())>;
+    using Text = std::decay_t<decltype (session.getSessionDirectory().getFullPathName())>;
+    Text loadError;
+    auto probe = manager.createPluginInstance (File (fixture->u8string().c_str()),
+        engine.getCurrentSampleRate(), ScenarioContext::kBlockSize, loadError);
+    if (! probe) return ScenarioResult::fail ("could not inspect the state fixture: " + loadError.toStdString());
+    struct State
+    {
+        bool done = false, loaded = false;
+        std::string error, originalState;
+        std::optional<PluginDescriptor> originalDescriptor;
+        int largeIndex = -1;
+        std::map<fs::path, std::string> sourceFiles, targetFiles;
+    };
+    auto state = std::make_shared<State>();
+    auto descriptor = manager.descriptorForInstance (*probe);
+    descriptor.location = fixture->u8string();
+    const auto& parameters = probe->getParameters();
+    for (int index = 0; index < parameters.size(); ++index)
+        if (parameters[index]->getName (100) == "Large State") state->largeIndex = index;
+    probe.reset();
+    if (descriptor.backend != PluginBackend::JuceLegacy || state->largeIndex < 0)
+        return ScenarioResult::fail ("the fixture lacks its legacy large-state control");
+    manager.setOopEnabled (true);
+    auto& slot = engine.getChannelStrip (0).getPluginSlot();
+    slot.loadFromDescriptorAsync (descriptor, [state] (bool loaded, auto error)
+    {
+        state->loaded = loaded;
+        state->error = error.toStdString();
+        state->done = true;
+    });
+    const auto tree = [&ctx] (const fs::path& root)
+    {
+        std::map<fs::path, std::string> files;
+        std::error_code error;
+        for (fs::recursive_directory_iterator it (root, error), end;
+             ! error && it != end; it.increment (error))
+        {
+            if (it->is_directory (error) && ! error)
+                files.emplace (it->path().lexically_relative (root), "directory");
+            else if (! error && it->is_regular_file (error) && ! error)
+                files.emplace (it->path().lexically_relative (root),
+                               "file:" + dusk::fs::loadFileAsString (it->path()));
+        }
+        ctx.expect (! error, "could not inspect fixture files: " + error.message());
+        return files;
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 0, [&ctx, &engine, &slot, state]
+    {
+        ctx.expect (state->loaded && slot.isRemote(), "the actual fixture child did not load: " + state->error);
+        engine.getChannelStrip (0).insertMode.store (ChannelStrip::kInsertPlugin);
+    }, [state] { return state->done; }, "the fixture child did not finish loading" });
+    if (! saveAs)
+        for (int pass = 0; pass < 2; ++pass)
+        {
+            pushFileMenuSteps (host, ctx, *steps, "Save");
+            steps->push_back ({ 0, [&host, &ctx, &session]
+            {
+                ctx.expect (host.modalStackEmpty() && host.statusMessage().rfind ("Saved:", 0) == 0,
+                            "a healthy repeated Save failed: " + host.modalText());
+                ctx.expect (session.track (0).pluginStateBase64.isNotEmpty(),
+                            "a healthy child state was not saved");
+            } });
+        }
+    steps->push_back ({ 0, [&host, &ctx, &session, &slot, state, folder]
+    {
+        ctx.expect (host.closeNotepadAfterTyping ("notes pending in memory\n"),
+                    "could not set up the in-memory notepad");
+        ctx.expect (dusk::fs::writeStringToFile (folder / "notepad.md", "saved notes\n"),
+                    "could not restore the canonical notepad sentinel");
+        state->originalState = session.track (0).pluginStateBase64.toStdString();
+        state->originalDescriptor = session.track (0).pluginDescriptor;
+        slot.setParamNormalised (state->largeIndex, 1.0f);
+    } });
+    steps->push_back ({ 0, [] {}, [&engine, &slot]
+    {
+        std::array<float, ScenarioContext::kBlockSize> left {}, right {};
+        left.fill (0.25f); right.fill (0.25f);
+        oopstub::SlotMidiBuffer midi;
+        const int count = std::clamp (engine.getCurrentBlockSize(), 1, ScenarioContext::kBlockSize);
+        engine.suspendProcessing();
+        slot.processStereoBlock (left.data(), right.data(), count, midi);
+        engine.resumeProcessing();
+        return std::abs (left.front() - 0.125f) < 1.0e-6f;
+    }, "the fixture child did not apply the large-state switch" });
+    steps->push_back ({ 0, [&host, &ctx, &session, state, tree, folder, copy]
+    {
+        session.track (0).strip.faderDb.store (-6.0f);
+        host.autosaveTick();
+        const auto autosave = folder / "session.json.autosave";
+        ctx.expect (fs::exists (autosave) && std::abs (savedFaderOf (autosave) + 6.0f) < 1.0e-6f,
+                    "live cheap controls did not reach autosave with a large opaque state");
+        state->sourceFiles = tree (folder);
+        state->targetFiles = tree (copy);
+    } });
+    if (saveAs) pushSaveAsSteps (host, ctx, *steps, copy);
+    else pushFileMenuSteps (host, ctx, *steps, "Save");
+    steps->push_back ({ 0, [&host, &ctx, &engine, &session, &slot, state, tree, folder, copy]
+    {
+        const auto message = host.modalText();
+        ctx.expect (message.find ("Save failed") != std::string::npos
+                        && message.find ("state") != std::string::npos
+                        && message.find ("Track 1") != std::string::npos
+                        && message.find ("Dusk Crash State Fixture") != std::string::npos,
+                    "Save did not explain the child state capture failure: " + message);
+        ctx.expect (currentSessionDirectory (session) == folder, "failed Save As changed the session directory");
+        ctx.expect (tree (folder) == state->sourceFiles, "failed Save changed canonical/audio/notepad/state/autosave files");
+        ctx.expect (tree (copy) == state->targetFiles, "failed Save As changed existing target files or copied new files");
+        ctx.expect (session.track (0).pluginStateBase64.toStdString() == state->originalState
+                        && session.track (0).pluginDescriptor == state->originalDescriptor,
+                    "failed capture replaced the original opaque state or identity");
+        ctx.expect (session.track (1).regions.size() == 1
+                        && session.track (1).regions.front().file.getFullPathName().toStdString()
+                        == (folder / "audio" / "source.wav").u8string(),
+                    "failed Save As repointed source audio");
+        ctx.expect (! engine.isProcessingSuspended() && slot.isRemote(), "failed save left audio gated or discarded the child");
+        ctx.expect (slot.getStateBase64ForSave (0).toStdString() == state->originalState,
+                    "failed capture lost the child's last known state");
+        drainModals (host);
+    }, [&host, &session, folder, copy, saveAs]
+    {
+        return host.modalText().find ("Save failed") != std::string::npos
+            || (saveAs ? currentSessionDirectory (session) == copy
+                       : ! fs::exists (folder / "session.json.autosave"));
+    }, "Save neither completed nor reported its capture failure" });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+#else
+    (void) host; (void) ctx; (void) saveAs;
+    return ScenarioResult::skip ("sandboxed plug-ins are unavailable");
+#endif
+}
+
+const ScenarioRegistrar oopCaptureFailureSave { Scenario {
+    "gui.oop_capture_failure_save", { "gui", "session", "save", "ipc", "messages" }, Needs::Engine | Needs::Gui,
+    { "crash_state.vst3" }, {}, 60000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runOopCaptureFailureSave (host, ctx, false); }
+} };
+const ScenarioRegistrar oopCaptureFailureSaveAs { Scenario {
+    "gui.oop_capture_failure_save_as", { "gui", "session", "save", "ipc", "messages" }, Needs::Engine | Needs::Gui,
+    { "crash_state.vst3" }, {}, 60000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runOopCaptureFailureSave (host, ctx, true); }
 } };
 } // namespace
 } // namespace duskstudio::scenario::gui

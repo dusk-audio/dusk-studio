@@ -738,15 +738,27 @@ public:
     // PluginSlot's description + state into the Track fields; consume
     // restores in reverse.
     //
-    // capturePluginState false keeps the plug-in state strings the session
-    // already holds, so a save with audio running costs no dropout. true reads
-    // fresh state from every plug-in with the process gate held: the callback
-    // emits silence and calls no plug-in until the capture ends. A JUCE-hosted
-    // plug-in is released and re-prepared around its state read, so it starts
-    // cold again, and its slot re-arms the overrun watchdog's grace and re-reads
-    // its latency. The engine stays attached to the device, so its own DSP is
-    // not re-prepared and keeps its meters, envelopes and delay lines.
-    void publishPluginStateForSave (bool capturePluginState = false);
+    // false refreshes safe built-in and multisample controls, retaining opaque
+    // third-party state. true gates processing while reading that state; hosted
+    // inserts may re-prepare and change latency. The engine remains attached to
+    // the device, retaining its own meters, envelopes and delay lines.
+    struct PreparedPluginState
+    {
+        struct Slot
+        {
+            std::optional<PluginDescriptor> descriptor;
+            std::string legacyDescriptionXml;
+            std::string stateBase64;
+        };
+        std::array<Slot, Session::kNumTracks> tracks;
+        std::array<std::array<Slot, AuxLaneParams::kMaxLanePlugins>, Session::kNumAuxLanes> aux;
+    };
+    // Message thread only; consume the prepared snapshot before yielding to other edits.
+    // Preparation changes no Session fields or native sidecar files.
+    bool preparePluginStateForSave (PreparedPluginState&, std::string& error);
+    bool publishPluginStateForSave (bool capturePluginState = false,
+                                     const PreparedPluginState* prepared = nullptr,
+                                     std::string* error = nullptr);
     void consumePluginStateAfterLoad();
 
     struct PluginLoadFailure

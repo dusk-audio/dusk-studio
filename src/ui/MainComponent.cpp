@@ -3670,12 +3670,23 @@ bool MainComponent::saveSessionTo (const juce::File& requestedDir)
         if (transportBar != nullptr) transportBar->notifyRecordStopped();
     }
 
+    AudioEngine::PreparedPluginState preparedPluginState;
+    std::string captureError;
+    if (! engine.preparePluginStateForSave (preparedPluginState, captureError))
+    {
+        setStatusForPath ("Save failed", dir);
+        showDuskAlert (*this, "Save failed",
+                       "Dusk Studio could not capture plug-in state:\n\n    "
+                           + captureError + "\n\nThe session was not saved. "
+                             "Its files and saved plug-in state are unchanged.");
+        return false;
+    }
+
     // Save As to a different folder must take the audio along: copy every
     // session-owned file into the new dir and repoint the model BEFORE the
     // directory swap, so serialize below emits relative paths. Plain Ctrl+S
-    // (same dir) is a no-op here. The copy runs before the plug-in state
-    // capture and outside its process gate - it touches no plugin state, so a
-    // long copy adds no dropout.
+    // (same dir) is a no-op here. State capture has succeeded; the copy runs
+    // outside its process gate, so a long copy adds no dropout.
     const bool isSaveAs = oldDir != juce::File() && dir != oldDir;
     SessionSerializer::ConsolidationResult consolidated;
     if (isSaveAs)
@@ -3731,14 +3742,9 @@ bool MainComponent::saveSessionTo (const juce::File& requestedDir)
     // to call even when the user picked an existing session folder.
     session.setSessionDirectory (dir);
 
-    // Plugin state I/O races the renderer on plugins that don't honour
-    // JUCE's "must not overlap" contract (u-he Diva is the smoking-gun
-    // example), corrupting the plugin's internal state and leading to
-    // an abort inside ~VST3PluginInstance later. The engine holds the
-    // audio thread out for the capture without leaving the device, so the
-    // user hears a short (~10-50 ms × N loaded plugins) dropout on Ctrl+S
-    // and the meters, envelopes and transport carry on afterwards.
-    engine.publishPluginStateForSave (/*capturePluginState*/ true);
+    // Native state sidecars use the destination directory; opaque third-party
+    // state was captured before any files changed and is reused without RPC.
+    engine.publishPluginStateForSave (true, &preparedPluginState);
     engine.publishTransportStateForSave();
 
     const auto target = dir.getChildFile ("session.json");

@@ -229,7 +229,10 @@ public:
     // re-reads its latency afterwards, as a device re-prepare does.
     std::optional<PluginDescriptor> getDescriptorForSave (int parkSleepMs = 25);
     juce::String getLegacyDescriptionXmlForSave() const;
-    juce::String getStateBase64ForSave   (int parkSleepMs = 25);
+    // A nonempty error distinguishes a failed live capture from valid empty state.
+    // Callers without errorOut retain the last-known-state fallback.
+    juce::String getStateBase64ForSave (int parkSleepMs = 25,
+                                       std::string* errorOut = nullptr);
 
     bool restoreFromSavedState (const std::optional<PluginDescriptor>& descriptor,
                                 const juce::String& legacyDescriptionXml,

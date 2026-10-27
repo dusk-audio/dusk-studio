@@ -1992,6 +1992,8 @@ When you save a session, each loaded plugin's identity (description XML — UID,
 
 If a native plugin returns no state during a save, the save still completes and the terminal identifies the slot with a line such as `[Dusk Studio/session] track VST3 1 saved no state; keeping the matching stored copy`. An earlier state is retained only when it belongs to that same plugin; otherwise the line ends with `no matching stored copy retained`.
 
+If a sandboxed plugin cannot return its state, Save stops with a **Save failed** alert naming the track or aux slot, plugin and reason. The capture happens before copying files for Save As or changing the session folder, so the existing session, recovery file and Save As destination are preserved. If Save stopped an active take first, that take remains committed in memory and on disk. Keep the session open and resolve the plugin failure before saving again; choosing another folder does not bypass it.
+
 When you load a session:
 
 - If the plugin is found on the system, it is loaded and the saved state is applied.
@@ -2769,10 +2771,11 @@ The format for each entry:
 
 ### Save failed
 
-- **When**: `session.json` couldn't be written (disk full, permission denied, folder moved out from under the app).
+- **When**: `session.json` couldn't be written (disk full, permission denied, folder moved out from under the app), or a sandboxed plugin could not return its current state.
 - **Text**: "Dusk Studio could not write the session file: [path]. Common causes: disk full, missing write permission, or the parent folder was moved since the session was opened. The session is unchanged in memory; try Save As to a different location."
+- **Plugin capture text**: "Dusk Studio could not capture plug-in state:" followed by "[Track n or Aux n slot m] - [plugin]: [reason]" and "The session was not saved. Its files and saved plug-in state are unchanged." The slot diagnostic and preservation message appear on separate lines.
 - **Buttons**: OK.
-- **Action**: Use **Save As…** to land the session somewhere writable. Do not quit before saving — your in-memory state is intact.
+- **Action**: For a file-write failure, use **Save As…** to land the session somewhere writable. For a plugin capture failure, keep the session open and resolve the named plugin's failure before retrying Save. Do not quit before saving; your in-memory state is intact.
 
 ### Folder holds another session
 

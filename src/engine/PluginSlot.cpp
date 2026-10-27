@@ -1332,8 +1332,9 @@ bool PluginSlot::isLoadedPluginInstrument() const
     return loadedDescriptor.has_value() && loadedDescriptor->isInstrument;
 }
 
-juce::String PluginSlot::getStateBase64ForSave (int parkSleepMs)
+juce::String PluginSlot::getStateBase64ForSave (int parkSleepMs, std::string* errorOut)
 {
+    if (errorOut != nullptr) errorOut->clear();
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
     if (auto* r = currentRemote.load (std::memory_order_acquire))
     {
@@ -1344,6 +1345,8 @@ juce::String PluginSlot::getStateBase64ForSave (int parkSleepMs)
         std::string err;
         if (! r->getState (blob, err))
         {
+            if (errorOut != nullptr)
+                *errorOut = err.empty() ? "plug-in state capture failed" : err;
             std::fprintf (stderr,
                           "[Dusk Studio/PluginSlot] OOP getState failed: %s\n",
                           err.c_str());
