@@ -7,6 +7,8 @@
 #include "../../builtin/BuiltinRegistry.h"
 #include "../../audiofile/FileReader.h"
 #include "../../audiofile/FileWriter.h"
+#include "../../device/DeviceManager.h"
+#include "../../device/IODevice.h"
 #include "../../../dsp/ChannelStrip.h"
 #include "../../../foundation/AutoResetEvent.h"
 #include "../../../foundation/Fs.h"
@@ -30,6 +32,10 @@
 #include <type_traits>
 #include <utility>
 #include <vector>
+
+#if defined (__linux__)
+ #include <dlfcn.h>
+#endif
 
 namespace duskstudio::scenario
 {
@@ -207,6 +213,132 @@ void renderThen (ScenarioContext& ctx, const std::filesystem::path& out, const R
 }
 
 // -------------------------------------------------------- the master mix file
+
+std::optional<ScenarioResult> finalizationFailures (ScenarioContext& ctx)
+{
+#if ! defined (__linux__) || ! defined (DUSKSTUDIO_HAS_PIPEWIRE)
+    (void) ctx;
+    return ScenarioResult::skip ("requires the native PipeWire fault harness");
+#else
+    const auto arm = reinterpret_cast<void (*) (int, const char*)> (dlsym (RTLD_DEFAULT, "dusk_audiofile_arm"));
+    const auto hits = reinterpret_cast<int (*)()> (dlsym (RTLD_DEFAULT, "dusk_audiofile_hits"));
+    const auto disarm = reinterpret_cast<void (*)()> (dlsym (RTLD_DEFAULT, "dusk_audiofile_disarm"));
+    const char* runtime = std::getenv ("PIPEWIRE_RUNTIME_DIR");
+    if (arm == nullptr || hits == nullptr || disarm == nullptr || runtime == nullptr
+        || std::string (runtime).find ("/tmp/dusk-pw.") != 0)
+        return ScenarioResult::skip ("requires the owned null graph and native fault fixture");
+    disarm();
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    ctx.keep (session.oversamplingFactor);
+    ctx.keep (session.deviceCaptureChannels);
+    ctx.keep (session.track (0).strip.auxSendDb[0]);
+    ctx.keep (session.auxLane (0).params.returnLevelDb);
+    session.oversamplingFactor.store (1);
+    session.track (0).strip.auxSendDb[0].store (0.0f);
+    session.auxLane (0).params.returnLevelDb.store (0.0f);
+    constexpr int length = 8192;
+    const auto source = ctx.tempDir() / "finalization-source.wav";
+    if (! writeMono (source, sine (440.0f, 0.125f, length)))
+        return ScenarioResult::fail ("could not write the finalization source");
+    placeRegion (ctx, 0, source, 0, length);
+    ctx.cleanup ([&engine, disarm]
+    {
+        disarm();
+        engine.stop();
+        engine.detachAudioCallback();
+        engine.getDeviceManager().closeDevice();
+        engine.prepareForSelfTest (kRate, ScenarioContext::kBlockSize);
+    });
+    engine.reattachAudioCallback();
+    const auto openError = engine.getDeviceManager().initialise (2, 2, {}, false);
+    if (! ctx.expect (openError.empty(), "the private duplex device did not open: " + openError))
+        return ctx.verdict();
+    auto* device = engine.getDeviceManager().getCurrentDevice();
+    if (! ctx.expect (device != nullptr && device->isOpen() && device->isPlaying()
+                      && device->getActiveInputChannels().count() == 2,
+                      "the finalization fixture is not a live duplex graph")) return ctx.verdict();
+
+    auto next = std::make_shared<std::function<void (int)>>();
+    std::weak_ptr<std::function<void (int)>> weakNext = next;
+    *next = [&ctx, &engine, &session, arm, hits, disarm, weakNext] (int pass)
+    {
+        if (pass == 12) { ctx.complete (ctx.verdict()); return; }
+        disarm();
+        const int kind = pass / 2;
+        const bool inject = (pass % 2) != 0;
+        const bool realtime = kind >= 4;
+        const bool stems = kind == 2 || kind == 5;
+        const bool freeze = kind == 3;
+        const bool mp3 = kind == 1;
+        const auto label = std::string (realtime ? "realtime " : "offline ")
+                         + (stems ? "stems" : freeze ? "freeze" : mp3 ? "MP3 mix" : "WAV mix");
+        const auto out = ctx.sessionDir() / ("finalization-" + std::to_string (pass) + (mp3 ? ".mp3" : ".wav"));
+        std::vector<std::filesystem::path> outputs { out };
+        if (stems)
+        {
+            outputs.clear();
+            for (const auto& target : BounceEngine::collectStemTargets (session, sessionFile (out)))
+                outputs.push_back (pathOf (target.file));
+            if (! ctx.expect (outputs.size() == 2, label + ": the fixture did not name track and aux stems"))
+            { ctx.complete (ctx.verdict()); return; }
+        }
+        auto armed = std::make_shared<bool> (false);
+        auto run = std::make_shared<BounceRun>();
+        run->bounce = std::make_unique<BounceEngine> (engine, session, OfflineRenderQuality::MatchPlayback);
+        ctx.cleanup ([run, disarm] { disarm(); run->bounce.reset(); });
+        run->bounce->onProgressUpdated = [arm, armed, inject, mp3, target = outputs.back()] (float progress)
+        {
+            if (inject && progress >= 1.0f && ! *armed)
+            { arm (mp3 ? 5 : 3, target.c_str()); *armed = true; }
+        };
+        run->bounce->onFinished = [raw = run.get()] (bool ok, std::string error)
+        { raw->ok = ok; raw->error = std::move (error); raw->finished.store (true, std::memory_order_release); };
+        const auto mode = stems ? BounceEngine::Mode::Stems : BounceEngine::Mode::MasterMix;
+        const auto format = mp3 ? BounceEngine::Format::Mp3 : BounceEngine::Format::Wav;
+        const bool started = freeze ? run->bounce->startFreeze (0, sessionFile (out), length, kRate, 1024)
+            : run->bounce->start (sessionFile (out), kRate, 1024, 0.0, mode, format, 320, 24, realtime);
+        if (! ctx.expect (started, label + ": the render refused to start"))
+        { ctx.complete (ctx.verdict()); return; }
+        auto self = weakNext.lock();
+        ctx.waitUntil ([run] { return run->finished.load (std::memory_order_acquire) && ! run->bounce->isRendering(); },
+            kRenderTimeoutMs, [&ctx, run, self, armed, outputs, hits, disarm, pass, inject, mp3, label]
+            {
+                const int faultCount = hits();
+                disarm();
+                if (inject)
+                {
+                    ctx.expect (*armed && faultCount == 1, label + ": finalization did not hit the native fault");
+                    ctx.expect (! run->ok && ! run->error.empty(), label + ": finalization failure reported success");
+                    for (const auto& output : outputs)
+                        ctx.expect (! std::filesystem::exists (output), label + ": finalization failure kept an opened output");
+                }
+                else
+                {
+                    ctx.expect (run->ok && run->error.empty(), label + ": normal finalization failed: " + run->error);
+                    for (const auto& output : outputs)
+                    {
+                        if (mp3)
+                        {
+                            const auto bytes = dusk::fs::loadFileAsString (output);
+                            ctx.expect (bytes.size() > 1000 && bytes.find ("Info") != std::string::npos,
+                                        label + ": the MP3 header was not finalized");
+                        }
+                        else
+                        {
+                            const auto audio = readBack (output);
+                            ctx.expect (audio && audio->info.numFrames == length && audio->peak() > 0.01f,
+                                        label + ": the finalized WAV lost its duration or samples");
+                        }
+                    }
+                }
+                if (self) (*self) (pass + 1);
+            }, label + ": the render did not finish");
+    };
+    (*next) (0);
+    return std::nullopt;
+#endif
+}
 
 // The default bounce: stereo 24-bit WAV at the session rate, as long as the
 // last region plus a fixed 5 s tail, with the timeline in place from sample 0.
@@ -3463,5 +3595,8 @@ const ScenarioRegistrar exportMp3Registrar { Scenario {
 const ScenarioRegistrar exportDitherRegistrar { Scenario {
     "bounce.export_master_cd_dither_is_tpdf", { "bounce", "mastering" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return exportMasterDither (ctx); }, 120000 } };
+const ScenarioRegistrar finalizationRegistrar { Scenario {
+    "bounce.native_finalization_failures", { "bounce", "stems", "freeze", "realtime" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return finalizationFailures (ctx); }, 120000 } };
 } // namespace
 } // namespace duskstudio::scenario

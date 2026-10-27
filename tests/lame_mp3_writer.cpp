@@ -141,3 +141,13 @@ TEST_CASE ("LameMp3Writer writes and reopens a Unicode path", "[mp3][issue-381]"
     LameMp3Writer missingWriter (missingParent, 48000.0, 2, 320);
     CHECK_FALSE (missingWriter.fileOpened());
 }
+
+#if DUSKSTUDIO_HAS_LAME && defined (__linux__)
+TEST_CASE ("LameMp3Writer reports a finalization-only disk failure", "[mp3][finalization]")
+{
+    LameMp3Writer writer ("/dev/full", 48000.0, 2, 320);
+    REQUIRE (writer.isOk());
+    CHECK_FALSE (writer.flush());
+    CHECK_FALSE (writer.flush());
+}
+#endif

@@ -883,6 +883,13 @@ bool BounceEngine::runStemsMode()
 
     clearAllStemTaps();
     const size_t writersOpened = writers.size();
+    for (size_t i = 0; i < writersOpened; ++i)
+        if (! writers[i]->flush() && succeeded)
+        {
+            succeeded = false;
+            const decltype(lastErrorLock)::ScopedLockType lock (lastErrorLock);
+            lastError = "Writer flush failed in " + targets[i].file.getFileName().toStdString();
+        }
     writers.clear();  // flush + close before any delete below
 
     if (cancelRequested.load (std::memory_order_relaxed))
@@ -1112,7 +1119,15 @@ bool BounceEngine::runRealtimeMode()
     // then destroy the writers. drainPool joins its disk thread at scope exit.
     const size_t writersOpened = writers.size();
     for (auto& w : writers)
+    {
         drainPool.remove (w.get());
+        if (! w->isValid() && succeeded)
+        {
+            succeeded = false;
+            const decltype(lastErrorLock)::ScopedLockType lock (lastErrorLock);
+            lastError = "Realtime bounce writer failed while finalizing";
+        }
+    }
     writers.clear();
 
     runOnMessageThread ([&transport, savedPlayhead, savedLoop]
@@ -1349,6 +1364,12 @@ bool BounceEngine::renderFreezeTrack (int trackIndex, const juce::File& outFile,
     // Drop the capture tap BEFORE re-preparing / re-attaching the live device.
     engine.getChannelStrip (trackIndex).setFreezeCapture (nullptr, nullptr);
     engine.getPlaybackEngine().stopPlayback();
+    if (! writer->flush() && ok)
+    {
+        ok = false;
+        const decltype(lastErrorLock)::ScopedLockType lock (lastErrorLock);
+        lastError = "Writer flush failed during freeze";
+    }
     writer.reset();   // flush + close before any deleteFile
 
     // Restore everything - solo, transport, stage, oversampling, device callback.
