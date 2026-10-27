@@ -171,3 +171,25 @@ TEST_CASE ("SfzLibrary default roots are absolute and distinct")
     std::sort (sorted.begin(), sorted.end());
     CHECK (std::unique (sorted.begin(), sorted.end()) == sorted.end());
 }
+
+TEST_CASE ("SfzLibrary preserves readable roots when another root fails")
+{
+    ScratchTree tree;
+    tree.file ("first/one.sfz");
+    tree.file ("last/two.sf2");
+    const auto missing = tree.root / "missing";
+    std::vector<std::pair<std::size_t, std::size_t>> progress;
+    const auto result = scanLibraryRoots (
+        { tree.root / "first", missing, tree.root / "last" }, nullptr,
+        [&] (std::size_t done, std::size_t total) { progress.emplace_back (done, total); });
+
+    CHECK_FALSE (result.cancelled);
+    CHECK (result.entries.size() == 2);
+    CHECK (listed (result, "one"));
+    CHECK (listed (result, "two"));
+    REQUIRE (result.problems.size() == 1);
+    CHECK (result.problems.front().root == missing);
+    CHECK_FALSE (result.problems.front().reason.empty());
+    REQUIRE (progress.size() == 3);
+    CHECK (progress.back() == std::make_pair (std::size_t (3), std::size_t (3)));
+}

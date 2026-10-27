@@ -64,6 +64,16 @@ void scanOneRoot (const stdfs::path& root,
     struct Pending { stdfs::path dir; int depth; };
     std::vector<Pending> queue { { root, 0 } };
     bool reportedUnreadable = false;
+    const auto reportUnreadable = [&] (const std::error_code& error)
+    {
+        // One line per root, not per unreadable subdirectory: a permission
+        // hole halfway down a pack tree is not worth a wall of rows.
+        if (! reportedUnreadable)
+        {
+            result.problems.push_back ({ root, "could not be read: " + error.message() });
+            reportedUnreadable = true;
+        }
+    };
 
     while (! queue.empty())
     {
@@ -79,19 +89,14 @@ void scanOneRoot (const stdfs::path& root,
         stdfs::directory_iterator it (pending.dir, iterError);
         if (iterError)
         {
-            // One line per root, not per unreadable subdirectory: a permission
-            // hole halfway down a pack tree is not worth a wall of rows.
-            if (! reportedUnreadable)
-            {
-                result.problems.push_back ({ root, "could not be read: " + iterError.message() });
-                reportedUnreadable = true;
-            }
+            reportUnreadable (iterError);
             continue;
         }
 
-        for (const auto& entry : it)
+        for (stdfs::directory_iterator end; ! iterError && it != end; it.increment (iterError))
         {
             if (cancelled (cancel)) return;
+            const auto& entry = *it;
 
             std::error_code entryError;
             if (entry.is_directory (entryError) && ! entryError)
@@ -113,6 +118,7 @@ void scanOneRoot (const stdfs::path& root,
             found.sizeBytes   = dusk::fs::fileSize (entry.path());
             result.entries.push_back (std::move (found));
         }
+        if (iterError) reportUnreadable (iterError);
     }
 }
 } // namespace
