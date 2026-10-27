@@ -5395,6 +5395,10 @@ juce::File makeStereoTempWav (const juce::File& left, const juce::File& right)
             writer.reset(); tmp.deleteFile(); return {};
         }
     }
+    if (! writer->flush())
+    {
+        writer.reset(); tmp.deleteFile(); return {};
+    }
     writer.reset();
     return tmp;
 }
