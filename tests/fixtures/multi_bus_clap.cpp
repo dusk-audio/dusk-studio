@@ -20,6 +20,9 @@ struct PluginData
 {
     std::uint32_t processCount = 0;
     std::array<std::array<bool, 16>, kNotePortCount> voiceActive {};
+    clap_event_transport_t transport {};
+    std::int64_t steadyTime = -1;
+    bool hasTransport = false;
 };
 
 const clap_plugin_descriptor_t kDescriptor {
@@ -162,6 +165,9 @@ clap_process_status CLAP_ABI pluginProcess (const clap_plugin_t* plugin,
         return CLAP_PROCESS_ERROR;
 
     auto* data = static_cast<PluginData*> (plugin->plugin_data);
+    data->hasTransport = process->transport != nullptr;
+    data->transport = data->hasTransport ? *process->transport : clap_event_transport_t {};
+    data->steadyTime = process->steady_time;
     if (process->in_events != nullptr)
     {
         const auto count = process->in_events->size (process->in_events);
@@ -225,11 +231,16 @@ clap_process_status CLAP_ABI pluginProcess (const clap_plugin_t* plugin,
     return CLAP_PROCESS_CONTINUE;
 }
 
-const void* CLAP_ABI pluginExtension (const clap_plugin_t*, const char* id)
+const void* CLAP_ABI pluginExtension (const clap_plugin_t* plugin, const char* id)
 {
     if (std::strcmp (id, CLAP_EXT_AUDIO_PORTS) == 0) return &kAudioPorts;
     if (std::strcmp (id, CLAP_EXT_NOTE_PORTS) == 0) return &kNotePorts;
     if (std::strcmp (id, CLAP_EXT_STATE) == 0) return &kState;
+    const auto* data = static_cast<const PluginData*> (plugin->plugin_data);
+    if (std::strcmp (id, "studio.dusk.test.transport") == 0)
+        return data->hasTransport ? &data->transport : nullptr;
+    if (std::strcmp (id, "studio.dusk.test.steady-time") == 0)
+        return &data->steadyTime;
     return nullptr;
 }
 void CLAP_ABI pluginMainThread (const clap_plugin_t*) {}

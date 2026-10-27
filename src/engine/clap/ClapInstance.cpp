@@ -5,12 +5,27 @@
 #include <clap/clap.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <string>
 
 namespace duskstudio::clap
 {
+namespace
+{
+bool toFixedTime (double value, std::int64_t factor, std::int64_t& result) noexcept
+{
+    const long double scaled = std::round ((long double) value * (long double) factor);
+    constexpr long double limit = 9223372036854775808.0L;
+    if (! std::isfinite (scaled) || scaled >= limit || scaled < -limit)
+        return false;
+    result = (std::int64_t) scaled;
+    return true;
+}
+}
+
 ClapInstance::ClapInstance()
 {
     // Input event list backed by eventScratch[0..eventCount); reports 0 events when
@@ -326,6 +341,7 @@ bool ClapInstance::activate (double sampleRate, int maxBlock, std::string& error
     prepareAudioPorts (audioOutPorts, clapOutBuffers, clapOutData, clapOutScratch);
 
     startFailed = false;   // a fresh activation may try start_processing again
+    activeSampleRate = sampleRate;
     active = true;
     return true;
 }
@@ -362,6 +378,7 @@ void ClapInstance::deactivate()
             plugin->deactivate (plugin);
     }
     active = false;
+    activeSampleRate = 0.0;
 }
 
 bool ClapInstance::saveState (std::vector<uint8_t>& out) const
@@ -693,8 +710,9 @@ void ClapInstance::processBlock (const hosting::PortBuffers& io) noexcept
     resetPortBuffers (audioOutPorts, clapOutBuffers, clapOutData, clapOutScratch,
                       mainAudioOutPort, io.mainOut, io.mainOutChannels, false);
 
+    clap_event_transport_t transport {};
     clap_process_t p {};
-    p.steady_time         = -1;          // free-running
+    p.steady_time         = -1;
     p.frames_count        = (uint32_t) numFrames;
     p.transport           = nullptr;
     p.audio_inputs        = clapInBuffers.empty() ? nullptr : clapInBuffers.data();
@@ -703,6 +721,69 @@ void ClapInstance::processBlock (const hosting::PortBuffers& io) noexcept
     p.audio_outputs_count = (uint32_t) clapOutBuffers.size();
     p.in_events           = &inEvents;
     p.out_events          = &emptyOut;
+
+    if (const auto* position = io.transport)
+    {
+        transport.header.size = sizeof (transport);
+        transport.header.space_id = CLAP_CORE_EVENT_SPACE_ID;
+        transport.header.type = CLAP_EVENT_TRANSPORT;
+        if (position->isPlaying || position->isRecording)
+            transport.flags |= CLAP_TRANSPORT_IS_PLAYING;
+        if (position->isRecording)
+            transport.flags |= CLAP_TRANSPORT_IS_RECORDING;
+        if (std::isfinite (position->bpm) && position->bpm > 0.0)
+        {
+            transport.tempo = position->bpm;
+            transport.flags |= CLAP_TRANSPORT_HAS_TEMPO;
+        }
+        if (toFixedTime (position->ppqPosition, CLAP_BEATTIME_FACTOR, transport.song_pos_beats))
+            transport.flags |= CLAP_TRANSPORT_HAS_BEATS_TIMELINE;
+        if (toFixedTime (position->timeInSeconds, CLAP_SECTIME_FACTOR, transport.song_pos_seconds))
+            transport.flags |= CLAP_TRANSPORT_HAS_SECONDS_TIMELINE;
+        if (position->timeSignatureNumerator > 0 && position->timeSignatureDenominator > 0
+            && position->timeSignatureNumerator <= std::numeric_limits<std::uint16_t>::max()
+            && position->timeSignatureDenominator <= std::numeric_limits<std::uint16_t>::max())
+        {
+            transport.tsig_num = (std::uint16_t) position->timeSignatureNumerator;
+            transport.tsig_denom = (std::uint16_t) position->timeSignatureDenominator;
+            transport.flags |= CLAP_TRANSPORT_HAS_TIME_SIGNATURE;
+            if ((transport.flags & CLAP_TRANSPORT_HAS_BEATS_TIMELINE) != 0)
+            {
+                const double quartersPerBar = (double) transport.tsig_num * 4.0
+                                            / (double) transport.tsig_denom;
+                const double bar = std::floor (position->ppqPosition / quartersPerBar);
+                if (bar >= (double) std::numeric_limits<std::int32_t>::min()
+                    && bar <= (double) std::numeric_limits<std::int32_t>::max()
+                    && toFixedTime (bar * quartersPerBar, CLAP_BEATTIME_FACTOR, transport.bar_start))
+                    transport.bar_number = (std::int32_t) bar;
+                else
+                {
+                    transport.flags &= ~(std::uint32_t) CLAP_TRANSPORT_HAS_BEATS_TIMELINE;
+                    transport.song_pos_beats = 0;
+                }
+            }
+        }
+        clap_beattime loopStartBeats = 0, loopEndBeats = 0;
+        clap_sectime loopStartSeconds = 0, loopEndSeconds = 0;
+        if (position->loopEndSamples > position->loopStartSamples
+            && position->ppqLoopEnd > position->ppqLoopStart
+            && std::isfinite (activeSampleRate) && activeSampleRate > 0.0
+            && toFixedTime (position->ppqLoopStart, CLAP_BEATTIME_FACTOR, loopStartBeats)
+            && toFixedTime (position->ppqLoopEnd, CLAP_BEATTIME_FACTOR, loopEndBeats)
+            && toFixedTime ((double) position->loopStartSamples / activeSampleRate,
+                            CLAP_SECTIME_FACTOR, loopStartSeconds)
+            && toFixedTime ((double) position->loopEndSamples / activeSampleRate,
+                            CLAP_SECTIME_FACTOR, loopEndSeconds))
+        {
+            transport.loop_start_beats = loopStartBeats;
+            transport.loop_end_beats = loopEndBeats;
+            transport.loop_start_seconds = loopStartSeconds;
+            transport.loop_end_seconds = loopEndSeconds;
+            if (position->isLooping)
+                transport.flags |= CLAP_TRANSPORT_IS_LOOP_ACTIVE;
+        }
+        p.transport = &transport;
+    }
 
     if (plugin->process (plugin, &p) == CLAP_PROCESS_ERROR)
         clearOutputs();

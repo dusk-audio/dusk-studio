@@ -130,6 +130,7 @@ private:
     bool processing = false;
     bool startFailed = false;   // plugin refused start_processing - stay asleep, don't retry every block
     int  maxFrames = 0;
+    double activeSampleRate = 0.0;
 
     hosting::PortLayout layout;   // negotiated at create()
     int latencySamples = 0;       // cached at activate() from CLAP_EXT_LATENCY

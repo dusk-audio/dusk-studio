@@ -15,6 +15,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -105,6 +106,119 @@ TEST_CASE ("ClapInstance chokes every CLAP note-input port on the transport pani
     inst.processBlock (io);
     REQUIRE_THAT (outL[0], Catch::Matchers::WithinAbs (0.0f, 1.0e-7f));
     REQUIRE_THAT (outR[0], Catch::Matchers::WithinAbs (0.0f, 1.0e-7f));
+}
+
+TEST_CASE ("ClapInstance supplies transport fields without retaining a previous block",
+           "[clap][instance][transport]")
+{
+    using Catch::Matchers::WithinAbs;
+    duskstudio::clap::ClapBundle bundle;
+    std::string error;
+    REQUIRE (bundle.load (DUSKSTUDIO_MULTI_BUS_CLAP_FIXTURE_PATH, error));
+    duskstudio::clap::ClapInstance instance;
+    REQUIRE (instance.create (bundle, bundle.plugins().front().id, error));
+    REQUIRE (instance.activate (48000.0, 64, error));
+    duskstudio::hosting::InsertAdapter adapter;
+    adapter.prepare (instance.portLayout(), 64);
+    std::array<float, 64> left {}, right {};
+    const auto process = [&] (const dusk::TransportPosition* position)
+    {
+        adapter.process (instance, left.data(), right.data(), 64,
+                         nullptr, nullptr, nullptr, position);
+        const auto* plugin = instance.getPlugin();
+        const auto* steadyTime = static_cast<const std::int64_t*> (
+            plugin->get_extension (plugin, "studio.dusk.test.steady-time"));
+        REQUIRE (steadyTime != nullptr);
+        CHECK (*steadyTime == -1);
+        return static_cast<const clap_event_transport_t*> (
+            plugin->get_extension (plugin, "studio.dusk.test.transport"));
+    };
+    const auto fixedBeats = [] (double value)
+    {
+        return (clap_beattime) std::llround (value * (double) CLAP_BEATTIME_FACTOR);
+    };
+    const auto fixedSeconds = [] (double value)
+    {
+        return (clap_sectime) std::llround (value * (double) CLAP_SECTIME_FACTOR);
+    };
+    const auto valid = CLAP_TRANSPORT_HAS_TEMPO | CLAP_TRANSPORT_HAS_BEATS_TIMELINE
+                     | CLAP_TRANSPORT_HAS_SECONDS_TIMELINE | CLAP_TRANSPORT_HAS_TIME_SIGNATURE;
+    dusk::TransportPosition position;
+    position.bpm = 93.5;
+    position.ppqPosition = 17.25;
+    position.timeInSamples = 123456;
+    position.timeInSeconds = 123456.0 / 48000.0;
+    position.timeSignatureNumerator = 7;
+    position.timeSignatureDenominator = 8;
+    position.isRecording = true;
+    position.isLooping = true;
+    position.loopStartSamples = 24000;
+    position.loopEndSamples = 96000;
+    position.ppqLoopStart = 1.25;
+    position.ppqLoopEnd = 9.75;
+    const auto* transport = process (&position);
+    REQUIRE (transport != nullptr);
+    CHECK (transport->header.size == sizeof (clap_event_transport_t));
+    CHECK (transport->header.time == 0);
+    CHECK (transport->header.space_id == CLAP_CORE_EVENT_SPACE_ID);
+    CHECK (transport->header.type == CLAP_EVENT_TRANSPORT);
+    CHECK (transport->header.flags == 0);
+    CHECK (transport->flags == (uint32_t) (valid | CLAP_TRANSPORT_IS_PLAYING
+                                          | CLAP_TRANSPORT_IS_RECORDING | CLAP_TRANSPORT_IS_LOOP_ACTIVE));
+    CHECK (transport->song_pos_beats == fixedBeats (17.25));
+    CHECK (transport->song_pos_seconds == fixedSeconds (123456.0 / 48000.0));
+    CHECK_THAT (transport->tempo, WithinAbs (93.5, 1.0e-12));
+    CHECK_THAT (transport->tempo_inc, WithinAbs (0.0, 1.0e-12));
+    CHECK (transport->tsig_num == 7);
+    CHECK (transport->tsig_denom == 8);
+    CHECK (transport->bar_start == fixedBeats (14.0));
+    CHECK (transport->bar_number == 4);
+    CHECK (transport->loop_start_beats == fixedBeats (1.25));
+    CHECK (transport->loop_end_beats == fixedBeats (9.75));
+    CHECK (transport->loop_start_seconds == fixedSeconds (0.5));
+    CHECK (transport->loop_end_seconds == fixedSeconds (2.0));
+
+    position.isRecording = false;
+    position.isLooping = false;
+    position.bpm = 137.0;
+    position.ppqPosition = -0.75;
+    position.timeInSamples = -12000;
+    position.timeInSeconds = -0.25;
+    transport = process (&position);
+    REQUIRE (transport != nullptr);
+    CHECK (transport->flags == (uint32_t) valid);
+    CHECK (transport->song_pos_beats == fixedBeats (-0.75));
+    CHECK (transport->song_pos_seconds == fixedSeconds (-0.25));
+    CHECK_THAT (transport->tempo, WithinAbs (137.0, 1.0e-12));
+    CHECK (transport->bar_number == -1);
+    CHECK (transport->bar_start == fixedBeats (-3.5));
+
+    REQUIRE (instance.reactivate (96000.0, 64, error));
+    position.isPlaying = true;
+    position.isLooping = true;
+    transport = process (&position);
+    REQUIRE (transport != nullptr);
+    CHECK ((transport->flags & CLAP_TRANSPORT_IS_PLAYING) != 0);
+    CHECK ((transport->flags & CLAP_TRANSPORT_IS_LOOP_ACTIVE) != 0);
+    CHECK (transport->loop_start_seconds == fixedSeconds (0.25));
+    CHECK (transport->loop_end_seconds == fixedSeconds (1.0));
+    CHECK (process (nullptr) == nullptr);
+
+    position.isPlaying = false;
+    position.isLooping = true;
+    position.bpm = std::numeric_limits<double>::quiet_NaN();
+    position.ppqPosition = std::numeric_limits<double>::infinity();
+    position.timeInSeconds = 4294967296.0;
+    position.timeSignatureNumerator = 65536;
+    position.ppqLoopEnd = std::numeric_limits<double>::infinity();
+    transport = process (&position);
+    REQUIRE (transport != nullptr);
+    CHECK (transport->flags == 0);
+    CHECK (transport->song_pos_beats == 0);
+    CHECK (transport->song_pos_seconds == 0);
+    CHECK_THAT (transport->tempo, WithinAbs (0.0, 1.0e-12));
+    CHECK (transport->tsig_num == 0);
+    CHECK (transport->tsig_denom == 0);
 }
 
 TEST_CASE ("ClapInstance loads + processes a real CLAP plugin", "[clap][instance]")
