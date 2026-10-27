@@ -1,5 +1,6 @@
 #include "PluginManager.h"
 #include "JuceCompat.h"
+#include "ScanProcess.h"
 
 #include "ipc/PluginScanProtocol.h"
 #include "NativePluginCache.h"
@@ -23,12 +24,11 @@
   #include "au/AuScanner.h"
 #endif
 
+#include <algorithm>
 #include <atomic>
 #include <array>
 #include <chrono>
 #include <map>
-#include <mutex>
-#include <thread>
 
 namespace duskstudio
 {
@@ -165,7 +165,6 @@ bool loadNativeCacheSources (
 // native-bundle child further down, which are gated independently (macOS
 // without OOP support still scans native bundles through the child).
 #if DUSKSTUDIO_HAS_OOP_PLUGINS || DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_VST3
-using ScanChildProcess = juce::ChildProcess;
 
 namespace
 {
@@ -183,8 +182,7 @@ struct SandboxedScan
     {
         Completed,      // child produced a payload; trust it
         Cancelled,      // user stopped the scan; the file is untouched, not at fault
-        Failed,         // crash, hang, or a flood of output
-        Unsupervised    // no watchdog, so the scan was never safe to start
+        Failed          // crash, hang, or a flood of output
     };
 
     Verdict     verdict  = Verdict::Failed;
@@ -193,142 +191,54 @@ struct SandboxedScan
     std::string payload;
 };
 
-// Drive one already-started sandboxed child to a verdict.
-//
-// readProcessOutput does not return until it has filled its buffer or the child
-// exits, so a deadline polled from this thread never fires against a plugin
-// sitting on a license dialog and writing nothing. A watchdog enforces the
-// deadline and the cancel flag instead - ending the child is what releases the
-// read - and re-issues the kill every tick, because a killed child frees the
-// reader only once the pipe reaches EOF.
-//
-// isRunning() reaps the child and the pid becomes reusable the moment it does,
-// so the reader publishes reading=false inside the same lock that gates every
-// kill. Without that interlock a late kill lands on an unrelated process.
-SandboxedScan driveSandboxedScan (ScanChildProcess& proc, const std::atomic<bool>* abort,
-                                  std::uint32_t timeoutMs = kScanTimeoutMs)
+SandboxedScan driveSandboxedScan (ScanProcess& proc, const std::atomic<bool>* abort,
+                                  std::uint32_t timeoutMs = kScanTimeoutMs,
+                                  std::size_t outputLimit = kMaxScanOutputBytes)
 {
     SandboxedScan result;
-
-    juce::MemoryOutputStream captured;
-    char buf[8192];
-
-    // TSan does not model std::condition_variable's mutex release reliably on
-    // this path and reports the reader's process check as a double lock. A
-    // short explicit poll keeps the watchdog bounded without that false
-    // synchronization edge. processMutex prevents a late kill after
-    // isRunning() has reaped the child and made its PID reusable.
-    std::mutex       processMutex;
-    std::atomic<bool> reading { true };
-    bool cancelled = false;   // watchdog-owned; read only after join()
-    bool expired   = false;
-
-    std::thread watchdog;
-    try
+    std::string captured;
+    char buffer[8192];
+    const auto started = std::chrono::steady_clock::now();
+    bool cancelled = false;
+    const auto append = [&] (std::size_t bytes)
     {
-        watchdog = std::thread ([&]
-        {
-            // Wrap-safe elapsed check: unsigned subtraction is correct across a
-            // single getMillisecondCounter() wrap (every ~49 days of uptime), so
-            // compare the interval rather than an absolute deadline.
-            const std::uint32_t startMs = juce::Time::getMillisecondCounter();
-            while (reading.load (std::memory_order_acquire))
-            {
-                std::this_thread::sleep_for (std::chrono::milliseconds (5));
-                const bool cancelRequested = abort != nullptr
-                    && abort->load (std::memory_order_relaxed);
-                const bool deadlineReached =
-                    juce::Time::getMillisecondCounter() - startMs >= timeoutMs;
-                if (! cancelRequested && ! deadlineReached) continue;
-
-                std::lock_guard<std::mutex> processLock (processMutex);
-                if (! reading.load (std::memory_order_acquire)) break;
-                if (cancelRequested) cancelled = true;
-                else                 expired = true;
-                proc.kill();   // TerminateProcess on Windows - unblocks a modal dialog
-            }
-        });
-    }
-    catch (const std::system_error& e)
+        captured.append (buffer, bytes);
+        result.tooMuchOutput = captured.size() >= outputLimit;
+    };
+    for (;;)
     {
-        // Without a watchdog the read below can block forever. Refuse the file
-        // rather than wedge the whole scan on it.
-        proc.kill();
-        proc.waitForProcessToFinish (200);
-        std::fprintf (stderr, "[Dusk Studio/scan] could not start the scan watchdog: %s\n",
-                      e.what());
-        std::fflush (stderr);
-        result.verdict = SandboxedScan::Verdict::Unsupervised;
-        return result;
-    }
-
-    {
-        // A joinable std::thread destructor terminates the process, so every way
-        // out of the loop below - including a throw - has to pass through here.
-        struct Joiner
+        if (abort != nullptr && abort->load (std::memory_order_relaxed))
         {
-            ~Joiner()
-            {
-                reading.store (false, std::memory_order_release);
-                thread.join();
-            }
-
-            std::thread&       thread;
-            std::atomic<bool>& reading;
-        } joiner { watchdog, reading };
-
-        for (;;)
-        {
-            const int n = proc.readProcessOutput (buf, (int) sizeof buf);
-            if (n > 0)
-            {
-                captured.write (buf, (size_t) n);
-                if (captured.getDataSize() < kMaxScanOutputBytes) continue;
-
-                {
-                    // Under the lock like every other kill, so the watchdog
-                    // cannot also be killing while this one runs.
-                    std::lock_guard<std::mutex> lock (processMutex);
-                    reading.store (false, std::memory_order_release);
-                    proc.kill();
-                }
-                result.tooMuchOutput = true;
-                break;
-            }
-
-            bool finished = false;
-            {
-                std::lock_guard<std::mutex> lock (processMutex);
-                if (! proc.isRunning())
-                {
-                    reading.store (false, std::memory_order_release);
-                    finished = true;
-                }
-            }
-            if (! finished)
-            {
-                std::this_thread::sleep_for (std::chrono::milliseconds (5));
-                continue;
-            }
-
-            int extra;
-            while ((extra = proc.readProcessOutput (buf, (int) sizeof buf)) > 0)
-                captured.write (buf, (size_t) extra);
+            cancelled = true;
             break;
         }
+        if (std::chrono::steady_clock::now() - started >= std::chrono::milliseconds (timeoutMs))
+        {
+            result.timedOut = true;
+            break;
+        }
+        const auto read = proc.readOutput (buffer, sizeof (buffer));
+        if (read.status == ScanProcess::ReadStatus::Data)
+        {
+            const auto before = captured.size();
+            append (read.bytes);
+            if (result.tooMuchOutput) break;
+            const auto from = before > scanproto::kPayloadEnd.size() ? before - scanproto::kPayloadEnd.size() : 0;
+            if (captured.find (scanproto::kPayloadEnd, from) != std::string::npos
+                && ! scanproto::extractPayload (captured).empty()) break;
+        }
+        else if (read.status != ScanProcess::ReadStatus::Waiting)
+            break;
     }
-
-    if (result.tooMuchOutput || cancelled || expired)
-        proc.waitForProcessToFinish (200);   // reap: kill() never waitpid()s
-
-    result.timedOut = expired;
-    result.payload  = scanproto::extractPayload (captured.toString().toStdString());
-
-    // A payload carries both sentinels, so having one proves the child finished
-    // the scan. That outranks everything the watchdog saw: a deadline that
-    // expired while the child was already exiting, or a flood that arrived
-    // alongside a good answer, would otherwise blacklist a plugin that scanned
-    // fine. timedOut and tooMuchOutput only pick the log line.
+    proc.stop();
+    while (! result.tooMuchOutput)
+    {
+        const auto read = proc.readOutput (buffer, sizeof (buffer), 0);
+        if (read.status != ScanProcess::ReadStatus::Data) break;
+        append (read.bytes);
+    }
+    result.payload = scanproto::extractPayload (captured);
+    // A complete payload wins a simultaneous deadline, cancel, or output flood.
     if (! result.payload.empty()) result.verdict = SandboxedScan::Verdict::Completed;
     else if (cancelled)           result.verdict = SandboxedScan::Verdict::Cancelled;
     else                          result.verdict = SandboxedScan::Verdict::Failed;
@@ -378,11 +288,11 @@ public:
             return true;
         }
 
-        ScanChildProcess proc;
-        const juce::StringArray args { hostExecutable, "--scan",
-                                       format.getName(), fileOrIdentifier };
+        ScanProcess proc;
+        const std::vector<std::string> args { hostExecutable.toStdString(), "--scan",
+                                               format.getName().toStdString(), fileOrIdentifier.toStdString() };
 
-        if (! proc.start (args, juce::ChildProcess::wantStdOut))
+        if (! proc.start (args))
         {
             // Host present but wouldn't spawn (AV block, transient OS limit).
             // Same rule as above: skip, don't scan in-process, don't blacklist.
@@ -391,14 +301,6 @@ public:
         }
 
         const auto scan = driveSandboxedScan (proc, abort);
-
-        if (scan.verdict == SandboxedScan::Verdict::Unsupervised)
-        {
-            // Same rule as a missing host binary: skip, don't scan in-process,
-            // don't blacklist.
-            noteSandboxUnavailable (fileOrIdentifier);
-            return true;
-        }
 
         // Cancel tears the whole scan down; leave the in-flight file UNSCANNED
         // (return true) rather than blacklisting a plugin the user stopped on.
@@ -724,19 +626,13 @@ PluginManager::NativeScanOutcome PluginManager::scanNativeBundleSandboxed (
     if (hostExe == juce::File() || ! hostExe.existsAsFile())
         return NativeScanOutcome::NoSandbox;
 
-    ScanChildProcess proc;
-    const juce::StringArray args { hostExe.getFullPathName(), "--scan-native",
-                                   format, bundle.getFullPathName() };
-    if (! proc.start (args, juce::ChildProcess::wantStdOut))
+    ScanProcess proc;
+    const std::vector<std::string> args { hostExe.getFullPathName().toStdString(), "--scan-native",
+                                           format, bundle.getFullPathName().toStdString() };
+    if (! proc.start (args))
         return NativeScanOutcome::NoSandbox;
 
     const auto scan = driveSandboxedScan (proc, abort);
-
-    // A child DID run and was killed unsupervised, so the bundle's factory may
-    // have executed already. Falling back in-process would run it again with no
-    // isolation at all - skip instead, and re-probe on the next scan.
-    if (scan.verdict == SandboxedScan::Verdict::Unsupervised)
-        return NativeScanOutcome::Handled;
 
     if (scan.verdict == SandboxedScan::Verdict::Cancelled)
         return NativeScanOutcome::Cancelled;
@@ -1169,9 +1065,9 @@ juce::String PluginManager::descriptorToLegacyXml (const PluginDescriptor& sourc
 #if defined(DUSKSTUDIO_TESTS)
  #if DUSKSTUDIO_HAS_OOP_PLUGINS || DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_VST3
 std::array<bool, 3> driveSandboxedScanForTest (
-    ScanChildProcess& process, const std::atomic<bool>* abort, std::uint32_t timeoutMs)
+    ScanProcess& process, const std::atomic<bool>* abort, std::uint32_t timeoutMs, std::size_t outputLimit)
 {
-    const auto scan = driveSandboxedScan (process, abort, timeoutMs);
+    const auto scan = driveSandboxedScan (process, abort, timeoutMs, std::min (outputLimit, kMaxScanOutputBytes));
     return { scan.verdict == SandboxedScan::Verdict::Completed,
              scan.verdict == SandboxedScan::Verdict::Cancelled,
              scan.timedOut };

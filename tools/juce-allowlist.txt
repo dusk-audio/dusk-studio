@@ -20,7 +20,7 @@ src/engine/FileImporter.h	4
 src/engine/JuceCompat.h	9
 src/engine/MasteringPlayer.cpp	2
 src/engine/MasteringPlayer.h	4
-src/engine/PluginManager.cpp	105
+src/engine/PluginManager.cpp	97
 src/engine/PluginManager.h	27
 src/engine/PluginSlot.cpp	69
 src/engine/PluginSlot.h	40

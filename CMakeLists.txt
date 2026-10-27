@@ -778,6 +778,7 @@ target_sources(DuskStudio PRIVATE
     src/engine/PlaybackEngine.cpp
     src/engine/PluginDescriptor.cpp
     src/engine/PluginManager.cpp
+    src/engine/ScanProcess.cpp
     src/engine/PluginSlot.cpp
     src/engine/sfz/SfzLibrary.cpp
     src/ui/multisample/SfzLibraryPanel.cpp
