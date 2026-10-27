@@ -241,11 +241,7 @@ AudioImportResult importAudio (const AudioImportRequest& req)
         return writer->write (channels.data(), buffer.numChannels(), frames);
     };
 
-    // Stream decode -> conform -> (sinc-)resample -> write in bounded chunks.
-    // The old whole-file path allocated three full-length buffers (a 30-min
-    // 96 kHz stereo stem needed ~1.4 GB before the writer even opened) and
-    // froze the message thread on the allocation; this loop peaks at a few
-    // hundred KB regardless of source length.
+    // Chunking and prepared filter phases bound memory independently of source length.
     constexpr int kGrain = 65536;
     // A refused chunk allocation discards the part-written file the same way a
     // failed read or write does, but reports its own reason.
@@ -298,7 +294,8 @@ AudioImportResult importAudio (const AudioImportRequest& req)
             || ! carry.setSize (req.targetChannels, needIn + kGrain))
             return failAllocation();
         std::array<dusk::audio::WindowedSincInterpolator, 2> interp;
-        for (auto& i : interp) i.reset();
+        for (int channel = 0; channel < req.targetChannels; ++channel)
+            if (! interp[(size_t) channel].prepareAntiAliasing (ratio)) return failAllocation();
 
         // The sinc kernel delays its output by getBaseLatency() INPUT samples;
         // without discarding that from the head, every resampled import lands
