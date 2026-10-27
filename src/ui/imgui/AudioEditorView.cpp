@@ -18,6 +18,7 @@
 #include "../../session/Session.h"
 #include "../../session/SnapHelpers.h"
 #include "../../session/TakeComp.h"
+#include "../../util/StringParsing.h"
 
 // The input trail is only in Dear ImGui's internal header, which this target's
 // warning set would otherwise flag.
@@ -3452,10 +3453,13 @@ private:
             {
                 if (! focusedEditable())
                     return;
-                const auto digits = dusk::text::retainCharacters (dusk::text::trim (text), "0123456789.-+");
-                if (digits.empty())
+                auto raw = dusk::text::toLowerCase (dusk::text::trim (text));
+                if (dusk::text::endsWith (raw, "db"))
+                    raw.resize (raw.size() - 2);
+                float parsed {};
+                if (! parseFullFloat (raw, parsed))
                     return;
-                const auto db = std::clamp (dusk::text::getFloatValue (digits), -24.0f, 12.0f);
+                const auto db = std::clamp (parsed, -24.0f, 12.0f);
                 editFocused ("Set region gain", [db] (AudioRegion& a) { a.gainDb = db; });
                 break;
             }
@@ -3466,18 +3470,30 @@ private:
                 // "IN / OUT", or one value for the fade-in alone, and the readout's own
                 // "fade ... ms" dressing is tolerated so it can be retyped as shown.
                 auto raw = dusk::text::toLowerCase (dusk::text::trim (text));
-                raw = dusk::text::replace (dusk::text::replace (raw, "fade", ""), "ms", "");
+                if (dusk::text::startsWith (raw, "fade"))
+                    raw.erase (0, 4);
+                if (dusk::text::endsWith (raw, "ms"))
+                    raw.resize (raw.size() - 2);
                 const auto slash = raw.find ('/');
-                const auto inMs = std::max (0.0, dusk::text::getDoubleValue (dusk::text::trim (raw.substr (0, slash))));
-                const auto outMs = slash == std::string::npos
-                                 ? 0.0 : std::max (0.0, dusk::text::getDoubleValue (dusk::text::trim (raw.substr (slash + 1))));
+                double inMs {}, outMs {};
+                if (! parseFullDouble (raw.substr (0, slash), inMs)
+                    || (slash != std::string::npos && ! parseFullDouble (raw.substr (slash + 1), outMs)))
+                    return;
                 const double sr = sampleRate();
+                if (! std::isfinite (sr) || sr <= 0.0)
+                    return;
                 editFocused ("Set region fades", [inMs, outMs, sr] (AudioRegion& a)
                 {
+                    const auto samples = [sr] (double ms, std::int64_t remainingSamples)
+                    {
+                        const auto value = std::max (0.0, ms) * (sr / 1000.0);
+                        if (value >= static_cast<double> (remainingSamples))
+                            return remainingSamples;
+                        return static_cast<std::int64_t> (std::llround (value));
+                    };
                     const auto length = std::max<std::int64_t> (0, a.lengthInSamples);
-                    a.fadeInSamples = clampTo (static_cast<std::int64_t> (std::llround (inMs * sr / 1000.0)), 0, length);
-                    a.fadeOutSamples = clampTo (static_cast<std::int64_t> (std::llround (outMs * sr / 1000.0)), 0,
-                                                length - a.fadeInSamples);
+                    a.fadeInSamples = samples (inMs, length);
+                    a.fadeOutSamples = samples (outMs, length - a.fadeInSamples);
                 });
                 break;
             }

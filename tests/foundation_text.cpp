@@ -2,10 +2,12 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "foundation/Text.h"
+#include "util/StringParsing.h"
 
 #include <juce_core/juce_core.h>
 
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace dusk;
@@ -77,4 +79,41 @@ TEST_CASE ("dusk::text::joinIntoString / split", "[foundation][text]")
     REQUIRE (text::split ("a,b,c", ',') == std::vector<std::string> { "a", "b", "c" });
     REQUIRE (text::split ("", ',')      == std::vector<std::string> { "" });
     REQUIRE (text::split ("a,,c", ',')  == std::vector<std::string> { "a", "", "c" });
+}
+
+TEST_CASE ("full float parsing accepts only finite complete numbers", "[foundation][text][parsing]")
+{
+    for (const auto& [input, expected] : std::vector<std::pair<const char*, float>> {
+             { " 127.6\t", 127.6f }, { "-0.5", -0.5f }, { "+3", 3.0f },
+             { "1.25e2", 125.0f }, { ".5", 0.5f } })
+    {
+        CAPTURE (input);
+        float value {};
+        REQUIRE (duskstudio::parseFullFloat (input, value));
+        CHECK_THAT (value, Catch::Matchers::WithinAbs (expected, 1.0e-5f));
+    }
+    for (const auto* input : { "", " ", "-", ".", "1..2", "12abc", "1,5", "nan", "inf", "-inf", "1e309", "1e40" })
+    {
+        CAPTURE (input);
+        float value = 19.25f;
+        CHECK_FALSE (duskstudio::parseFullFloat (input, value));
+        CHECK_THAT (value, Catch::Matchers::WithinAbs (19.25f, 1.0e-6f));
+    }
+}
+
+TEST_CASE ("full double parsing keeps sample rounding precision and finite double range", "[foundation][text][parsing]")
+{
+    double value {};
+    REQUIRE (duskstudio::parseFullDouble ("0.0312499999", value));
+    CHECK_THAT (value, Catch::Matchers::WithinAbs (0.0312499999, 1.0e-15));
+    REQUIRE (std::llround (value * 48.0) == 1);
+    REQUIRE (duskstudio::parseFullDouble (" 1e300 ", value));
+    CHECK_THAT (value, Catch::Matchers::WithinRel (1.0e300, 1.0e-12));
+    for (const auto* input : { "", " ", "-", ".", "1..2", "12abc", "1,5", "nan", "inf", "-inf", "1e309" })
+    {
+        CAPTURE (input);
+        value = 19.25;
+        CHECK_FALSE (duskstudio::parseFullDouble (input, value));
+        CHECK_THAT (value, Catch::Matchers::WithinAbs (19.25, 1.0e-12));
+    }
 }
