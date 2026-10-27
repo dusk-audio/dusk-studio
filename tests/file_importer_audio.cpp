@@ -13,6 +13,11 @@
 #include <cstdint>
 #include <memory>
 #include <stdexcept>
+#include <string>
+
+#if defined (__linux__)
+ #include <dlfcn.h>
+#endif
 
 using Catch::Matchers::WithinAbs;
 
@@ -504,4 +509,66 @@ TEST_CASE ("FileImporter: a matching 32-bit source is not truncated to 24-bit",
     REQUIRE (src.loadFileAsData (srcBytes));
     REQUIRE (res.region.file.loadFileAsData (outBytes));
     REQUIRE (srcBytes == outBytes);   // 32-bit data preserved, not down-converted
+}
+
+TEST_CASE ("FileImporter rejects converted audio when final file synchronization fails",
+           "[FileImporter][finalization]")
+{
+    TempScope tmp;
+    const auto source = tmp.dir.getChildFile ("source.wav");
+    writeTestWav (source, 48000.0, 1, 4096, [] (int, int n)
+    { return 0.25f * (float) std::sin (2.0 * kPi * 1000.0 * (double) n / 48000.0); }, 32);
+    juce::MemoryBlock sourceBytes;
+    REQUIRE (source.loadFileAsData (sourceBytes));
+
+    duskstudio::fileimport::AudioImportRequest req;
+    req.source = source;
+    req.audioDir = tmp.dir.getChildFile ("normal");
+    req.trackIndex = 6;
+    req.sessionSampleRate = 48000.0;
+    req.targetChannels = 2;
+    const auto normal = duskstudio::fileimport::importAudio (req);
+    REQUIRE (normal.ok);
+    const auto audio = readWav (normal.region.file);
+    CHECK (audio.numChannels == 2);
+    CHECK (audio.lengthInSamples == 4096);
+    CHECK (bufferPeak (audio.buffer, 0) > 0.2f);
+
+   #if defined (__linux__)
+    const auto arm = reinterpret_cast<void (*) (int, const char*)> (dlsym (RTLD_DEFAULT, "dusk_audiofile_arm"));
+    const auto hits = reinterpret_cast<int (*)()> (dlsym (RTLD_DEFAULT, "dusk_audiofile_hits"));
+    const auto disarm = reinterpret_cast<void (*)()> (dlsym (RTLD_DEFAULT, "dusk_audiofile_disarm"));
+    if (arm == nullptr || hits == nullptr || disarm == nullptr)
+    {
+        WARN ("native finalization fault variations require the private preload fixture");
+        return;
+    }
+    struct FaultScope
+    {
+        void (*disarm)();
+        ~FaultScope() { disarm(); }
+    } fault { disarm };
+    for (const int kind : { 3, 4 })
+    {
+        CAPTURE (kind);
+        req.audioDir = tmp.dir.getChildFile ("failed-" + juce::String (kind));
+        REQUIRE (req.audioDir.createDirectory().wasOk());
+        const auto untouched = req.audioDir.getChildFile ("keep.txt");
+        REQUIRE (untouched.replaceWithText ("keep"));
+        const auto selector = req.audioDir.getChildFile ("import_track07_*").getFullPathName().toStdString();
+        arm (kind, selector.c_str());
+        const auto converted = duskstudio::fileimport::importAudio (req);
+        const int injected = hits();
+        disarm();
+        CHECK (injected == 1);
+        CHECK_FALSE (converted.ok);
+        CHECK (converted.errorMessage == "Audio decode or write failed");
+        CHECK (req.audioDir.findChildFiles (juce::File::findFiles, false, "import_*.wav").isEmpty());
+        CHECK (untouched.loadFileAsString() == "keep");
+        CHECK (normal.region.file.existsAsFile());
+        juce::MemoryBlock after;
+        REQUIRE (source.loadFileAsData (after));
+        CHECK (after == sourceBytes);
+    }
+   #endif
 }

@@ -363,7 +363,8 @@ AudioImportResult importAudio (const AudioImportRequest& req)
         }
     }
 
-    writer.reset();   // flush + close before we read the file back
+    if (! writer->flush()) wrote = false;
+    writer.reset();
     if (! wrote)
     {
         outFile.deleteFile();
