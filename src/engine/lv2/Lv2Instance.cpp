@@ -35,6 +35,7 @@
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace duskstudio::lv2
@@ -50,6 +51,7 @@ struct Lv2Instance::Impl
     // Bumped whenever a LilvInstance is destroyed, so an embedded UI holding
     // instance-access handles can detect the swap.
     std::atomic<std::uint64_t> instanceEpoch { 0 };
+    std::vector<std::weak_ptr<std::function<void()>>> editorReleaseHooks;
 
     // URID map/unmap host feature (see Lv2UridMap for the threading).
     Lv2UridMap     urids;
@@ -450,8 +452,17 @@ struct Lv2Instance::Impl
     std::vector<std::vector<uint8_t>> atomBuffers;
     LV2_URID atomChunkType = 0;
 
+    void releaseAttachedEditors()
+    {
+        auto hooks = std::exchange (editorReleaseHooks, {});
+        for (const auto& registration : hooks)
+            if (auto hook = registration.lock(); hook != nullptr && *hook)
+                (*hook)();
+    }
+
     void freeInstance()
     {
+        releaseAttachedEditors();
         // The worker thread must be gone before the plugin it calls into, and a
         // request queued for this instance must never reach the next one.
         worker.stop();
@@ -978,6 +989,7 @@ void Lv2Instance::deactivate() { impl->freeInstance(); }
 
 bool Lv2Instance::reactivate (double sampleRate, int maxBlockFrames, std::string& errorOut)
 {
+    impl->releaseAttachedEditors();
     // LV2 fixes the sample rate at instantiate, so a rate/block change means a
     // fresh instance. Carry the state blob across when the plugin can serialize
     // (control ports + state:interface); fall back to the raw port values when it
@@ -1150,6 +1162,15 @@ void Lv2Instance::processBlock (const hosting::PortBuffers& io) noexcept
 void Lv2Instance::setStateDirectory (const std::filesystem::path& dir)
 {
     impl->stateDir = statepaths::normalizeStateDirectory (dir);
+}
+
+void Lv2Instance::addEditorReleaseHook (std::weak_ptr<std::function<void()>> hook)
+{
+    auto& hooks = impl->editorReleaseHooks;
+    hooks.erase (std::remove_if (hooks.begin(), hooks.end(),
+                                [] (const auto& registered) { return registered.expired(); }),
+                 hooks.end());
+    hooks.push_back (std::move (hook));
 }
 
 bool Lv2Instance::saveStateBlobOnly (std::vector<uint8_t>& out) const

@@ -598,6 +598,28 @@ if(DUSKSTUDIO_NATIVE_LV2)
         target_compile_features(dusk-studio-file-state-lv2-ui-fixture PRIVATE cxx_std_17)
         target_link_libraries(dusk-studio-file-state-lv2-ui-fixture PRIVATE PkgConfig::LV2 X11)
         add_dependencies(dusk-studio-tests dusk-studio-file-state-lv2-ui-fixture)
+
+        add_executable(dusk-lv2-editor-tests
+            lv2_editor_lifetime.cpp
+            ${CMAKE_SOURCE_DIR}/src/engine/hosting/InsertAdapter.cpp
+            ${CMAKE_SOURCE_DIR}/src/engine/lv2/Lv2Bundle.cpp
+            ${CMAKE_SOURCE_DIR}/src/engine/lv2/Lv2Instance.cpp
+            ${CMAKE_SOURCE_DIR}/src/engine/lv2/Lv2Editor.cpp
+            ${CMAKE_SOURCE_DIR}/src/engine/lv2/Lv2Worker.cpp)
+        target_compile_features(dusk-lv2-editor-tests PRIVATE cxx_std_17)
+        target_include_directories(dusk-lv2-editor-tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+        target_compile_definitions(dusk-lv2-editor-tests PRIVATE
+            DUSKSTUDIO_FILE_STATE_LV2_FIXTURE_PATH="${DUSKSTUDIO_FILE_STATE_LV2_BUNDLE}")
+        target_link_libraries(dusk-lv2-editor-tests PRIVATE Catch2::Catch2WithMain
+            PkgConfig::LILV PkgConfig::SUIL PkgConfig::LV2 X11 Threads::Threads ${CMAKE_DL_LIBS})
+        add_dependencies(dusk-lv2-editor-tests
+            dusk-studio-file-state-lv2-fixture dusk-studio-file-state-lv2-ui-fixture)
+        add_dependencies(dusk-studio-tests dusk-lv2-editor-tests)
+        add_test(NAME lv2-editor-lifetime
+            COMMAND ${CMAKE_COMMAND} -E env DUSKSTUDIO_SELFTEST_TIMEOUT=20s
+                ${CMAKE_SOURCE_DIR}/scripts/run-selftest-xvfb.sh
+                $<TARGET_FILE:dusk-lv2-editor-tests>)
+        set_tests_properties(lv2-editor-lifetime PROPERTIES RUN_SERIAL TRUE TIMEOUT 30)
     endif()
 
     set(DUSKSTUDIO_MANY_PATCH_PROPERTY_DEFINITIONS "")

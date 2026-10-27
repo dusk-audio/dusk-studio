@@ -105,6 +105,7 @@ void Lv2Editor::setLeakOnClose (bool b) noexcept
 
 void Lv2Editor::abandonPlugin() noexcept
 {
+    instanceRelease.reset();
     if (impl != nullptr) impl->instance = nullptr;
 }
 int  Lv2Editor::preferredWidth()  const noexcept { return impl != nullptr ? impl->prefW : 0; }
@@ -165,6 +166,12 @@ bool Lv2Editor::open (Lv2Instance& inst, std::string& errorOut)
     }
 
     impl->discovered = true;
+    instanceRelease = std::make_shared<std::function<void()>> ([this]
+    {
+        quiesce();
+        close();
+    });
+    inst.addEditorReleaseHook (instanceRelease);
     return true;
 }
 
@@ -312,6 +319,7 @@ void Lv2Editor::quiesce() noexcept
 
 void Lv2Editor::abandonPluginAndContainer() noexcept
 {
+    instanceRelease.reset();
     if (impl == nullptr) return;
     // suil retains Impl as both its controller and resize feature handle. The
     // instance is already disposed, so no suil call or Cocoa hierarchy message
@@ -324,6 +332,7 @@ void Lv2Editor::abandonPluginAndContainer() noexcept
 
 void Lv2Editor::close()
 {
+    instanceRelease.reset();
     if (impl == nullptr) return;
     if (impl->leakOnClose && impl->suilInstance != nullptr)
     {

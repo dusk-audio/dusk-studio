@@ -5,6 +5,7 @@
 #include <array>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -91,6 +92,8 @@ public:
     // teardown). An embedded UI compares this against the epoch it captured at
     // embed time to detect that its instance-access handles went stale.
     std::uint64_t instanceEpoch() const noexcept;
+    // Message thread: close every UI before its instance-access handle is freed.
+    void addEditorReleaseHook (std::weak_ptr<std::function<void()>> hook);
     void*       uridMapFeature()   const noexcept;
     void*       uridUnmapFeature() const noexcept;
     // The options feature (sample rate, block lengths) the plugin was given.

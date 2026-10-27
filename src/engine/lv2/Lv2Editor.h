@@ -88,5 +88,6 @@ public:
 private:
     struct Impl;
     std::unique_ptr<Impl> impl;
+    std::shared_ptr<std::function<void()>> instanceRelease;
 };
 } // namespace duskstudio::lv2

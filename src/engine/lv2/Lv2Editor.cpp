@@ -100,7 +100,11 @@ Lv2Editor::Lv2Editor() : impl (std::make_unique<Impl>()) { impl->owner = this; }
 Lv2Editor::~Lv2Editor() { close(); }
 
 void Lv2Editor::setLeakOnClose (bool b) noexcept { impl->leakOnClose = b; }
-void Lv2Editor::abandonPlugin() noexcept { impl->instance = nullptr; }
+void Lv2Editor::abandonPlugin() noexcept
+{
+    instanceRelease.reset();
+    impl->instance = nullptr;
+}
 int  Lv2Editor::preferredWidth()  const noexcept { return impl->prefW; }
 int  Lv2Editor::preferredHeight() const noexcept { return impl->prefH; }
 bool Lv2Editor::isOpen()     const noexcept { return impl->discovered; }
@@ -149,6 +153,12 @@ bool Lv2Editor::open (Lv2Instance& inst, std::string& errorOut)
     { errorOut = "plugin has no X11-embeddable UI"; return false; }
 
     impl->discovered = true;
+    instanceRelease = std::make_shared<std::function<void()>> ([this]
+    {
+        quiesce();
+        close();
+    });
+    inst.addEditorReleaseHook (instanceRelease);
     return true;
 }
 
@@ -327,6 +337,7 @@ void Lv2Editor::abandonPluginAndContainer() noexcept
 
 void Lv2Editor::close()
 {
+    instanceRelease.reset();
     if (impl->leakOnClose && impl->suilInstance != nullptr)
     {
         // Shutdown path: the suil instance is deliberately leaked because a
@@ -373,6 +384,7 @@ void Lv2Editor::close()
         impl->display = nullptr;
     }
     impl->hostWindow = impl->uiWindow = 0;
+    impl->instance = nullptr;
     impl->discovered = impl->embedded = impl->mapped = false;
 }
 

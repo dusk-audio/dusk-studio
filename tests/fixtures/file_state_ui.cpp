@@ -1,9 +1,13 @@
 #include <lv2/atom/atom.h>
 #include <lv2/atom/forge.h>
 #include <lv2/core/lv2.h>
+#include <lv2/data-access/data-access.h>
+#include <lv2/instance-access/instance-access.h>
 #include <lv2/patch/patch.h>
 #include <lv2/ui/ui.h>
 #include <lv2/urid/urid.h>
+
+#include "Lv2UiLifetimeProbe.h"
 
 #include <X11/Xlib.h>
 #include <unistd.h>
@@ -62,6 +66,9 @@ struct Ui
     Display* display = nullptr;
     Window window = 0;
     std::string probe;
+    const duskstudio::test::Lv2UiLifetimeProbe* lifetimeProbe = nullptr;
+    void* dspInstance = nullptr;
+    std::uint64_t dspSerial = 0;
 };
 
 // What a JUCE-built LV2 UI does the moment it comes up: push its parameters to
@@ -105,13 +112,23 @@ LV2UI_Handle instantiate (const LV2UI_Descriptor*, const char*, const char*,
     auto* self = new (std::nothrow) Ui;
     if (self == nullptr) { XCloseDisplay (display); return nullptr; }
     self->display = display;
+    self->dspInstance = feature<void> (features, LV2_INSTANCE_ACCESS_URI);
+    if (const auto* dataAccess = feature<LV2_Extension_Data_Feature> (features,
+                                                                   LV2_DATA_ACCESS_URI);
+        dataAccess != nullptr && dataAccess->data_access != nullptr)
+    {
+        self->lifetimeProbe = static_cast<const duskstudio::test::Lv2UiLifetimeProbe*> (
+            dataAccess->data_access (duskstudio::test::kLv2UiLifetimeProbeUri));
+        if (self->lifetimeProbe != nullptr)
+            self->dspSerial = self->lifetimeProbe->serial (self->dspInstance);
+    }
     std::error_code error;
     if (auto path = probePath(); std::filesystem::exists (path, error) && writeProbe (path, ""))
         self->probe = std::move (path);
     self->window = XCreateSimpleWindow (display, (Window) (uintptr_t) parent, 0, 0, 160, 80, 0,
                                         BlackPixel (display, DefaultScreen (display)),
                                         BlackPixel (display, DefaultScreen (display)));
-    XFlush (display);
+    XSync (display, False);
 
     *widget = (LV2UI_Widget) (uintptr_t) self->window;
     announceProperty (map, write, controller);
@@ -122,6 +139,8 @@ void cleanup (LV2UI_Handle handle)
 {
     auto* self = static_cast<Ui*> (handle);
     if (self == nullptr) return;
+    if (self->lifetimeProbe != nullptr)
+        self->lifetimeProbe->recordCleanup (self->dspInstance, self->dspSerial);
     if (self->display != nullptr)
     {
         if (self->window != 0) XDestroyWindow (self->display, self->window);

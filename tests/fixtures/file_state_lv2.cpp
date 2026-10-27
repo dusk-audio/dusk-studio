@@ -3,12 +3,16 @@
 #include <lv2/state/state.h>
 #include <lv2/urid/urid.h>
 
+#include "Lv2UiLifetimeProbe.h"
+
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <iterator>
+#include <mutex>
 #include <string>
+#include <unordered_map>
 
 namespace
 {
@@ -19,6 +23,34 @@ constexpr const char* kRefusalReportName = "probe/refusals.txt";
 constexpr const char* kPathKey = "urn:duskstudio:test:file-state#path";
 constexpr const char* kPayload = "dusk-lv2-file-state-v1";
 constexpr const char* kRestorePayload = "dusk-lv2-restore-make-path-v1";
+
+std::mutex lifetimeMutex;
+std::unordered_map<void*, std::uint64_t> liveInstances;
+std::uint64_t nextInstanceSerial = 1;
+std::uint64_t uiCleanupCount = 0;
+std::uint64_t staleUiCleanupCount = 0;
+
+std::uint64_t instanceSerial (void* instance)
+{
+    const std::lock_guard<std::mutex> lock (lifetimeMutex);
+    const auto found = liveInstances.find (instance);
+    return found != liveInstances.end() ? found->second : 0;
+}
+
+void recordUiCleanup (void* instance, std::uint64_t serial)
+{
+    const std::lock_guard<std::mutex> lock (lifetimeMutex);
+    ++uiCleanupCount;
+    const auto found = liveInstances.find (instance);
+    if (serial == 0 || found == liveInstances.end() || found->second != serial)
+        ++staleUiCleanupCount;
+}
+
+const duskstudio::test::Lv2UiLifetimeProbe uiLifetimeProbe {
+    &instanceSerial, &recordUiCleanup,
+    [] { const std::lock_guard<std::mutex> lock (lifetimeMutex); return uiCleanupCount; },
+    [] { const std::lock_guard<std::mutex> lock (lifetimeMutex); return staleUiCleanupCount; }
+};
 
 template <typename T>
 const T* feature (const LV2_Feature* const* features, const char* uri)
@@ -45,14 +77,19 @@ struct Instance
     bool restoredReadable = false;
 };
 
-LV2_Handle instantiate (const LV2_Descriptor*, double, const char*,
+LV2_Handle instantiate (const LV2_Descriptor*, double sampleRate, const char*,
                         const LV2_Feature* const* features)
 {
+    if (sampleRate <= 0.0) return nullptr;
     auto* map = const_cast<LV2_URID_Map*> (feature<LV2_URID_Map> (features, LV2_URID__map));
     if (map == nullptr) return nullptr;
     auto* self = new Instance;
     self->map = map;
     self->atomSequence = map->map (map->handle, LV2_ATOM__Sequence);
+    {
+        const std::lock_guard<std::mutex> lock (lifetimeMutex);
+        liveInstances.emplace (self, nextInstanceSerial++);
+    }
     return self;
 }
 
@@ -101,7 +138,14 @@ void run (LV2_Handle instance, uint32_t frames)
     }
 }
 
-void cleanup (LV2_Handle instance) { delete static_cast<Instance*> (instance); }
+void cleanup (LV2_Handle instance)
+{
+    {
+        const std::lock_guard<std::mutex> lock (lifetimeMutex);
+        liveInstances.erase (instance);
+    }
+    delete static_cast<Instance*> (instance);
+}
 
 LV2_State_Status save (LV2_Handle instance, LV2_State_Store_Function store,
                        LV2_State_Handle handle, uint32_t,
@@ -232,6 +276,8 @@ const LV2_State_Interface refusalInterface { &saveNothing, &restoreRefusals };
 
 const void* extensionData (const char* uri)
 {
+    if (std::strcmp (uri, duskstudio::test::kLv2UiLifetimeProbeUri) == 0)
+        return &uiLifetimeProbe;
     return std::strcmp (uri, LV2_STATE__interface) == 0 ? &stateInterface : nullptr;
 }
 
