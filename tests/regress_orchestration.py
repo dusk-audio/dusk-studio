@@ -283,4 +283,25 @@ else:
         assert not any(call["args"][:1] == ["push"] for call in calls), calls
         assert not any(call["command"] == configured_helper.name for call in calls), calls
 
-print("regression runner: interrupt cleanup, timing cache and dedicated Mac paths pass")
+    linux_root = root / "linux-missing-app"
+    linux_runners = linux_root / "scripts/regress"
+    linux_runners.mkdir(parents=True)
+    for name in ("linux.sh", "common.sh", "xvfb.sh", "scenarios.sh", "null-audio.sh"):
+        shutil.copyfile(repo / "scripts/regress" / name, linux_runners / name)
+    required_tools = linux_root / "bin"
+    required_tools.mkdir()
+    for name in ("cmake", "ctest", "Xvfb", "timeout", "flock", "pgrep"):
+        tool = required_tools / name
+        tool.write_text("#!/bin/sh\necho 'unexpected tool invocation' >&2\nexit 1\n")
+        tool.chmod(0o755)
+    for arguments in (["--scenarios-only"], ["--scenarios-only", "--gui-scenarios"]):
+        result = subprocess.run(
+            ["/bin/bash", str(linux_runners / "linux.sh"), *arguments],
+            env=dict(child_environment, PATH=f"{required_tools}:{os.environ['PATH']}"),
+            capture_output=True, text=True, timeout=5,
+        )
+        assert result.returncode != 0, result.stdout
+        assert "app binary missing:" in result.stdout + result.stderr, result
+        assert "regress linux: OK" not in result.stdout, result.stdout
+
+print("regression runner: interrupt cleanup, timing cache, Mac paths and missing app pass")

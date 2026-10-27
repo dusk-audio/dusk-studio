@@ -44,15 +44,20 @@ codesign --force --deep \
 codesign --verify --deep --strict --verbose=2 "$APP_PATH"
 
 echo "Building DMG ..."
+PACKAGE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/duskstudio-package-macos.XXXXXX")"
+trap 'rm -rf "$PACKAGE_DIR"' EXIT
 pushd "$BUILD_DIR" >/dev/null
-cpack -G DragNDrop -C Release
+cpack -G DragNDrop -C Release -B "$PACKAGE_DIR"
 popd >/dev/null
 
-DMG=$(ls "$BUILD_DIR"/*.dmg | head -1)
-if [[ -z "$DMG" ]]; then
-    echo "error: cpack produced no .dmg" >&2
+shopt -s nullglob
+DMGS=("$PACKAGE_DIR"/*.dmg)
+shopt -u nullglob
+if [[ ${#DMGS[@]} -ne 1 || ! -f "${DMGS[0]}" ]]; then
+    echo "error: cpack must produce exactly one .dmg" >&2
     exit 1
 fi
+DMG="${DMGS[0]}"
 
 mv "$DMG" .
 LOCAL_DMG="$(basename "$DMG")"

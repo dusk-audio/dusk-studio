@@ -423,7 +423,7 @@ leg_package_install() {
     cmp -s "${PACKAGE_ROOT}/DuskStudio/DuskStudio" "${opt}/DuskStudio" \
         || { echo "error: the installed binary differs from the tarball's" >&2; rc=1; }
     exec_line="$(grep -m1 '^Exec=' "$desktop" 2>/dev/null || true)"
-    if [[ "$exec_line" != "Exec=${opt}/DuskStudio %f" ]]; then
+    if [[ "$exec_line" != "Exec=env \"${opt}/DuskStudio\" %f" ]]; then
         echo "error: the installed desktop entry says '${exec_line}'" >&2
         rc=1
     fi
@@ -621,6 +621,7 @@ if [[ -x "$APP_BIN" ]]; then
         fi
     fi
 else
+    regress_record "app-binary" FAIL 0 "app binary missing: ${APP_BIN:-no package}"
     missing_legs=(selftest-xvfb ipc-selftest ipc-host-test perf-suite)
     if ((RUN_SCENARIOS)); then
         missing_legs+=("${SCENARIO_LEG_NAMES[@]}")

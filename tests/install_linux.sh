@@ -17,7 +17,13 @@ PKG="$WORK/dusk-studio-0.0.0-Linux-x86_64"
 APP="$PKG/DuskStudio"
 mkdir -p "$APP/share/applications" "$APP/share/icons/hicolor/256x256/apps" \
          "$APP/share/mime/packages" "$APP/share/metainfo"
-printf '#!/bin/sh\n' > "$APP/DuskStudio"
+cat > "$APP/DuskStudio" <<'APP'
+#!/bin/sh
+if [ -n "${DUSK_INSTALL_TEST_CAPTURE:-}" ]; then
+    printf '%s\n' "$0" "$@" > "$DUSK_INSTALL_TEST_CAPTURE.tmp"
+    mv "$DUSK_INSTALL_TEST_CAPTURE.tmp" "$DUSK_INSTALL_TEST_CAPTURE"
+fi
+APP
 printf '#!/bin/sh\n' > "$APP/dusk-studio-plugin-host"
 chmod +x "$APP/DuskStudio" "$APP/dusk-studio-plugin-host"
 cp "$REPO_ROOT/packaging/audio.dusk.studio.desktop" "$APP/share/applications/"
@@ -27,7 +33,7 @@ cp "$REPO_ROOT/packaging/DuskStudio.appdata.xml" "$APP/share/metainfo/"
 cp "$REPO_ROOT/scripts/install-linux.sh" "$PKG/install.sh"
 printf '# Quickstart\n' > "$PKG/QUICKSTART.md"
 
-HOME_DIR="$WORK/home"
+HOME_DIR="$WORK/home with spaces'\"\\%literal\$cash\`tick"
 mkdir -p "$HOME_DIR"
 
 # One environment for every user-scope run. Every XDG home is pointed inside the
@@ -62,6 +68,33 @@ META="$DATA/metainfo/DuskStudio.appdata.xml"
 [[ -f "$ICON" ]] || fail "the icon did not land in the scratch XDG data home"
 [[ -f "$MIME" ]] || fail "the MIME package did not land in the scratch XDG data home"
 [[ -f "$META" ]] || fail "the AppStream metadata did not land in the scratch XDG data home"
+
+if command -v gio >/dev/null 2>&1; then
+    SESSION="$WORK/session with spaces'\"\\%literal.json"
+    touch "$SESSION"
+    for mode in menu session; do
+        CAPTURE="$WORK/launch-$mode"
+        args=()
+        [[ "$mode" == session ]] && args+=("$SESSION")
+        env -u XDG_DATA_DIRS -u XDG_CONFIG_DIRS \
+            HOME="$HOME_DIR" XDG_DATA_HOME="$DATA" \
+            XDG_CONFIG_HOME="$HOME_DIR/.config" XDG_CACHE_HOME="$HOME_DIR/.cache" \
+            XDG_STATE_HOME="$HOME_DIR/.local/state" \
+            DUSK_INSTALL_TEST_CAPTURE="$CAPTURE" \
+            gio launch "$DESKTOP" "${args[@]}" \
+            || fail "the desktop parser refused the $mode launcher"
+        for ((attempt = 0; attempt < 100; ++attempt)); do
+            [[ -f "$CAPTURE" ]] && break
+            sleep 0.02
+        done
+        [[ -f "$CAPTURE" ]] || fail "the $mode launcher never ran the installed app"
+        printf '%s\n' "$OPT/DuskStudio" "${args[@]}" > "$WORK/expected-launch"
+        cmp -s "$WORK/expected-launch" "$CAPTURE" \
+            || fail "the $mode launcher changed the executable or session argument"
+    done
+else
+    echo "skip: gio is unavailable; desktop launches need a real desktop parser"
+fi
 
 scratch_install --uninstall >/dev/null || fail "install.sh --uninstall exited non-zero"
 for path in "$OPT" "$LAUNCHER" "$DESKTOP" "$ICON" "$MIME" "$META"; do
