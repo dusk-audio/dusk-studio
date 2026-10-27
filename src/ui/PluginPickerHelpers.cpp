@@ -167,7 +167,17 @@ void showLoadFailureAlertFallback (const juce::String& message)
 }
 } // namespace
 
-namespace { EmbeddedModal& pluginScanModal() { static EmbeddedModal m; return m; } }
+namespace
+{
+EmbeddedModal& pluginScanModal() { static EmbeddedModal m; return m; }
+std::size_t& pluginScanGeneration() { static std::size_t generation = 0; return generation; }
+}
+
+void closeForShutdown()
+{
+    ++pluginScanGeneration();
+    pluginScanModal().closeAndDeleteBodyNow();
+}
 
 void runScanModal (PluginManager& manager, juce::Component* parent,
                     std::function<void()> onAlertDismiss)
@@ -197,13 +207,17 @@ void runScanModal (PluginManager& manager, juce::Component* parent,
     // scan no longer freezes the UI. The modal closes itself when the scan
     // finishes; a completion alert then carries the reopen-picker follow-up.
     auto& modal = pluginScanModal();
+    const auto generation = ++pluginScanGeneration();
     juce::Component::SafePointer<juce::Component> safeHost (host);
 
     auto body = std::make_unique<PluginScanModal> (manager,
-        [&modal, &manager, safeHost, onAlertDismiss = std::move (onAlertDismiss)]
+        [&modal, &manager, safeHost, generation, onAlertDismiss = std::move (onAlertDismiss)]
         (int added, bool cancelled) mutable
         {
+            if (generation != pluginScanGeneration()) return;
+            auto* h = safeHost.getComponent();
             modal.close();
+            if (h == nullptr) return;
 
             auto message = juce::String::formatted (
                 "Added %d plugin%s to the picker. (Total known: %d)",
@@ -235,11 +249,8 @@ void runScanModal (PluginManager& manager, juce::Component* parent,
                            "Studio and delete:\n"
                         << manager.getCacheFile().getFullPathName();
 
-            if (auto* h = safeHost.getComponent())
-                showDuskAlert (*h, scanCompleteTitle (cancelled),
-                                  std::move (message), std::move (onAlertDismiss));
-            else if (onAlertDismiss)
-                onAlertDismiss();
+            showDuskAlert (*h, scanCompleteTitle (cancelled),
+                              std::move (message), std::move (onAlertDismiss));
         });
 
     // Esc cancels rather than dismissing: tearing the modal down mid-scan would

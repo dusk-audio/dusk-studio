@@ -51,6 +51,7 @@ SCENARIO_BB_LEG_NAMES=(
     bb-quit-during-mixdown
     bb-quit-save-rate
     bb-startup-scan
+    bb-explicit-scan-shutdown
     bb-oop-child-kill
     bb-oop-quit-during-load
 )
@@ -1234,6 +1235,14 @@ regress_scenarios_run() {
         regress_leg "bb-startup-scan" leg_bb_startup_scan
     else
         regress_skip "bb-startup-scan" "needs the startup plugin-scan markers"
+    fi
+
+    if [[ "$(uname -s)" == Linux ]] && command -v xdotool >/dev/null 2>&1 \
+        && scenarios_binary_has "dusk-studio-audio-settings" \
+        && scenarios_has_case "gui.settings_plugin_scan_quit"; then
+        regress_leg "bb-explicit-scan-shutdown" bash "${REPO_ROOT}/tests/blackbox_explicit_scan_shutdown.sh" "$APP_BIN"
+    else
+        regress_skip "bb-explicit-scan-shutdown" "needs Linux X11, native settings, xdotool and the gui.settings_plugin_scan_quit scenario"
     fi
 
     if scenarios_has_quit_timer && scenarios_has_case "session.mint_oop_fixture"; then

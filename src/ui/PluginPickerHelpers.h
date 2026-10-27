@@ -103,15 +103,16 @@ void openInsertChooser (PluginSlot& slot,
                          std::function<void (const std::string&)> onPickBuiltin = {},
                          std::function<void()> onPickSfzLibrary = {});
 
-// Synchronous scan. Blocks the message thread during scanInstalledPlugins().
-// Shows a Dusk in-window completion alert in `parent` (top-level Component)
-// when done. Pass nullptr for `parent` to fall back to a JUCE AlertWindow
-// (legacy path; new callsites should always provide a parent).
+// Background scan with an in-window progress modal and completion alert.
+// Without a parent or active window, scanning runs synchronously.
 // `onAlertDismiss` fires after the user dismisses the completion alert;
 // use it to chain subsequent UI work (e.g. reopening the picker) so the
 // follow-up doesn't stack on top of the alert and hide it.
 void runScanModal (PluginManager& manager, juce::Component* parent = nullptr,
                     std::function<void()> onAlertDismiss = {});
+
+// Message-thread shutdown only: cancel and join before destroying the manager.
+void closeForShutdown();
 
 // Open the in-window DuskFileBrowser to pick a plugin file (.vst3 / .so /
 // .lv2), loading on selection. `onChange` runs on successful load. `expectedKind`

@@ -1,6 +1,8 @@
 #include "../GuiScenarioSupport.h"
 #include "../../../engine/PluginSearchPaths.h"
+#include "../../../engine/PluginManager.h"
 
+#include <cstdio>
 #include <cstdlib>
 
 namespace duskstudio::scenario::gui
@@ -234,6 +236,47 @@ const ScenarioRegistrar pluginFolders { Scenario {
 const ScenarioRegistrar pluginScan {
     Scenario { "gui.settings_plugin_scan", { "gui", "settings", "plugins" }, Needs::Engine | Needs::Gui,
     {}, {}, 120000, [] (GuiHost& host, ScenarioContext& ctx) { return runPluginFolders (host, ctx, true); }
+} };
+
+std::optional<ScenarioResult> runPluginScanQuit (GuiHost& host, ScenarioContext& ctx)
+{
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI || defined(_WIN32)
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("requires native settings and an isolated scan host");
+   #else
+    const auto* scanHost = std::getenv ("DUSKSTUDIO_SCAN_SHUTDOWN_HOST");
+    const auto* readyPath = std::getenv ("DUSKSTUDIO_SCAN_SHUTDOWN_READY");
+    if (scanHost == nullptr || readyPath == nullptr)
+        return ScenarioResult::skip ("requires the isolated explicit-scan shutdown harness");
+    ctx.engine().getPluginManager().setHostExecutableOverride (scanHost, {});
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.openAudioSettings(), "Settings did not open"); } });
+    for (const auto* name : { "tab-plugins", "plugin-scan" })
+    {
+        const std::string control (name);
+        steps->push_back ({ 0, [&host, &ctx, control]
+        { ctx.expect (host.clickAudioSettingsControl (control), "Settings control could not be clicked: " + control); },
+        [&host, control] { return host.pointerAudioSettings (control, 0.5f, false); },
+        "Settings control did not appear: " + control, {}, kSettleBoundMs });
+    }
+    steps->push_back ({ 0, [&host, &ctx]
+    {
+        ctx.expect (! host.audioSettingsOpen() && ! host.modalStackEmpty(), "the blocked scan has no progress modal");
+        std::fprintf (stderr, "[scan-shutdown] blocked explicit scan; requesting quit\n");
+        std::fflush (stderr);
+        ctx.expect (host.pressPeerKey (commandChord ('q'), 'q'), "the scanner did not accept Ctrl+Q");
+    }, [ready = std::filesystem::u8path (readyPath)] { return std::filesystem::is_regular_file (ready); },
+    "the explicit scanner did not enter the blocked scan host", {}, 30000 });
+    runSteps (ctx, steps, [] {});
+    return std::nullopt;
+   #endif
+}
+
+const ScenarioRegistrar pluginScanQuit { Scenario {
+    "gui.settings_plugin_scan_quit", { "helper" }, Needs::Engine | Needs::Gui,
+    {}, {}, 45000, runPluginScanQuit
 } };
 } // namespace
 } // namespace duskstudio::scenario::gui

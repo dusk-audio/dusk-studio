@@ -1226,6 +1226,7 @@ MainComponent::MainComponent()
 MainComponent::~MainComponent()
 {
     tearingDown = true;
+    pluginpicker::closeForShutdown();
     stopTimer();   // halt autosave before tearing down engine / session
     guiRun.reset();
     engine.setPluginRestoreAlertSink ({});
@@ -4259,6 +4260,7 @@ void MainComponent::beginSafeShutdown()
         return;
     }
     shutdownInProgress = true;
+    pluginpicker::closeForShutdown();
 
     if (guiRun != nullptr)
     {
