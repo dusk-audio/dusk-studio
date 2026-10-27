@@ -37,6 +37,9 @@ public:
     // `params` alive for the duration of audio processing.
     void bind (const HardwareInsertParams& params) noexcept;
 
+    // Audio thread, or with the callback detached.
+    void setOfflineRender (bool active) noexcept { offlineRender = active; }
+
     // In-place. Out-of-range routing falls through to dry-only so a
     // stale config never crashes the audio thread.
     void processStereoBlock (float* L, float* R, int numSamples,
@@ -78,6 +81,7 @@ public:
 private:
     const HardwareInsertParams* paramsRef = nullptr;
     double prepSampleRate = 0.0;
+    bool offlineRender = false;
 
     dusk::audio::IntDelayLine dryDelayL;
     dusk::audio::IntDelayLine dryDelayR;

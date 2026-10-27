@@ -1171,7 +1171,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
     // panic's note-offs can flush. A MIDI track with nothing loaded has
     // nothing to pump.
     if (! passByGate && ! (isMidi && hasLoadedMidiConsumer())
-        && ! needsProcessedMono && ! pingRequested)
+        && ! needsProcessedMono && ! pingRequested && (freezeCapL == nullptr || freezeCapR == nullptr))
     {
         faderGain.setTargetValue (0.0f);
         for (auto& s : busGain)     s.setTargetValue (0.0f);

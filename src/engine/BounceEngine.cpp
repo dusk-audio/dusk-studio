@@ -21,15 +21,25 @@ namespace duskstudio
 {
 namespace
 {
-// Latches the engine's offline-render flag for the lifetime of a render loop so
-// the audio callback suppresses live-MIDI pulls (see AudioEngine's play-along
-// overlay). RAII so an early-out or exception still clears it.
 struct ScopedOfflineRender
 {
-    explicit ScopedOfflineRender (AudioEngine& e) noexcept : engine (e)
-        { engine.setOfflineRenderActive (true); }
-    ~ScopedOfflineRender() { engine.setOfflineRenderActive (false); }
+    explicit ScopedOfflineRender (AudioEngine& e) noexcept
+        : engine (e), savedLoop (e.getTransport().isLoopEnabled())
+    {
+        engine.setOfflineRenderActive (true);
+        engine.getTransport().setLoopEnabled (false);
+    }
+    ~ScopedOfflineRender() { restore(); }
+    void restore() noexcept
+    {
+        if (! active) return;
+        engine.getTransport().setLoopEnabled (savedLoop);
+        engine.setOfflineRenderActive (false);
+        active = false;
+    }
     AudioEngine& engine;
+    const bool savedLoop;
+    bool active = true;
 };
 
 // A writer that fails may already have created or truncated its target, or it
@@ -314,8 +324,7 @@ bool BounceEngine::start (const juce::File& outFile, double sr, int bs, double t
     }
 
     outputFile  = outFile;
-    renderSampleRate = (sr > 0.0) ? sr : engine.getCurrentSampleRate();
-    if (renderSampleRate <= 0.0) renderSampleRate = 48000.0;
+    renderSampleRate = (sr > 0.0) ? sr : engine.getTimelineSampleRate();
     renderBlockSize = std::max (64, bs);
     tailSeconds     = tail;
     renderMode      = mode;
@@ -644,6 +653,7 @@ void BounceEngine::run()
         engine.getMasteringPlayer().finishOfflineRender();
     }
     engine.setStage (savedStage);
+    offlineGuard.restore();
     // Back to the user's realtime oversampling, then reattach on the message
     // thread - addAudioCallback re-prepares the engine (plugin (de)activate),
     // which must not run on this worker. A finished master export keeps the
@@ -891,6 +901,7 @@ bool BounceEngine::runStemsMode()
     transport.setState (savedTransportState);
     transport.setPlayhead (savedPlayhead);
     engine.setStage (savedStage);
+    offlineGuard.restore();
     // Back to the user's realtime oversampling, then reattach on the message
     // thread - addAudioCallback re-prepares the engine (plugin (de)activate),
     // which must not run on this worker.
@@ -1145,8 +1156,7 @@ bool BounceEngine::startFreeze (int trackIndex, const juce::File& outFile,
     }
 
     outputFile       = outFile;
-    renderSampleRate = (sampleRate > 0.0) ? sampleRate : engine.getCurrentSampleRate();
-    if (renderSampleRate <= 0.0) renderSampleRate = 48000.0;
+    renderSampleRate = (sampleRate > 0.0) ? sampleRate : engine.getTimelineSampleRate();
     renderBlockSize  = std::max (16, blockSize);
     renderMode       = Mode::FreezeTrack;
     renderFormat     = Format::Wav;
@@ -1277,11 +1287,13 @@ bool BounceEngine::renderFreezeTrack (int trackIndex, const juce::File& outFile,
         session.track (trackIndex).mode.load (std::memory_order_relaxed)
             == (int) Track::Mode::Midi;
     const auto& frozenStrip = engine.getChannelStrip (trackIndex);
-    const bool pluginInsert = frozenStrip.insertMode.load (std::memory_order_relaxed)
-                                  == ChannelStrip::kInsertPlugin;
-    const std::int64_t leadIn =
-        (isMidiTrack || ! pluginInsert ? 0 : (std::int64_t) frozenStrip.getInsertPluginLatencySamples())
-        + (std::int64_t) frozenStrip.getOversamplingLatencySamples();
+    const int insertMode = frozenStrip.insertMode.load (std::memory_order_relaxed);
+    const int insertLatency = insertMode == ChannelStrip::kInsertHardware
+        ? frozenStrip.getHardwareInsertSlot().getLatencySamples()
+        : (! isMidiTrack && insertMode == ChannelStrip::kInsertPlugin
+            ? frozenStrip.getInsertPluginLatencySamples() : 0);
+    const std::int64_t leadIn = (std::int64_t) insertLatency
+                            + (std::int64_t) frozenStrip.getOversamplingLatencySamples();
     const std::int64_t toRender = lenSamples + leadIn;
 
     std::int64_t done = 0, written = 0, dropped = 0;
@@ -1345,6 +1357,7 @@ bool BounceEngine::renderFreezeTrack (int trackIndex, const juce::File& outFile,
     transport.setState (savedTransportState);
     transport.setPlayhead (savedPlayhead);
     engine.setStage (savedStage);
+    offlineGuard.restore();
     // Reattach on the message thread (addAudioCallback re-prepares the engine,
     // reaching plugin (de)activate - must not run on this worker).
     runOnMessageThread ([this]

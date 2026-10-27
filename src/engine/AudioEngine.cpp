@@ -1829,6 +1829,12 @@ void AudioEngine::updateAssetWorkPause() noexcept
 
 void AudioEngine::setOfflineRenderActive (bool active) noexcept
 {
+    if (! active && offlineRenderActive.load (std::memory_order_acquire))
+    {
+        session.pendingTransportAction.exchange ((int) PendingTransportAction::None,
+                                                 std::memory_order_acquire);
+        session.pendingTransportPlayhead.exchange ((std::int64_t) -1, std::memory_order_relaxed);
+    }
     offlineRenderActive.store (active, std::memory_order_release);
     updateAssetWorkPause();
 }
@@ -2473,6 +2479,13 @@ void AudioEngine::pressStop()
 AudioEngine::TransportService AudioEngine::serviceTransportRequests()
 {
     TransportService done;
+    if (offlineRenderActive.load (std::memory_order_acquire))
+    {
+        session.pendingTransportAction.exchange ((int) PendingTransportAction::None,
+                                                 std::memory_order_acquire);
+        session.pendingTransportPlayhead.exchange ((std::int64_t) -1, std::memory_order_relaxed);
+        return done;
+    }
 
     // Auto-punch post-roll: stop once the playhead passes punch-out plus the
     // post-roll. A post-roll of 0 keeps rolling, and so does loop recording.
@@ -3204,6 +3217,11 @@ void AudioEngine::setNativeInsertsOfflineRender (bool offline,
 {
     nativeInsertsOffline.store (offline, std::memory_order_relaxed);
     nativeInsertsRenderCancelled.store (renderCancelled, std::memory_order_relaxed);
+    for (auto& strip : stripStorage)
+        strip.getHardwareInsertSlot().setOfflineRender (offline);
+    for (auto& laneStrip : auxLaneStrips)
+        for (int s = 0; s < AuxLaneParams::kMaxLanePlugins; ++s)
+            laneStrip.getHardwareInsertSlot (s).setOfflineRender (offline);
     // LV2 is the one host that acts on it: its Worker replies are waited for.
 #if DUSKSTUDIO_HAS_NATIVE_LV2
     for (auto& strip : stripStorage)
@@ -4929,6 +4947,8 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         clearOutputs();
         return;
     }
+    const bool offlineRender = context.offlineRender
+                            || offlineRenderActive.load (std::memory_order_acquire);
     const auto transportBlockState = transport.getState();
     const auto transportLoopStart = transport.getLoopStart(), transportLoopEnd = transport.getLoopEnd();
     const bool transportLoopEnabled = transport.isLoopEnabled();
@@ -5001,15 +5021,10 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     // duration of THIS callback only - never cached across blocks.
     currentDeviceInputs     = inputChannelData;
     numCurrentDeviceInputs  = numInputChannels;
-    currentDeviceOutputs    = outputChannelData;
-    numCurrentDeviceOutputs = numOutputChannels;
+    // Physical cue taps must not accumulate into the offline render buffer.
+    currentDeviceOutputs    = offlineRender ? nullptr : outputChannelData;
+    numCurrentDeviceOutputs = offlineRender ? 0 : numOutputChannels;
 
-    // Zero every device output up front. The master bus + click
-    // overwrite their assigned channels at the end of the callback via
-    // memcpy so pre-zeroing them is harmless. Hardware-insert sends
-    // accumulate into their assigned channels via `+=`, which requires
-    // a clean zero baseline. Pre-zeroing everything avoids baking in a
-    // "master is always 0/1" assumption.
     for (int ch = 0; ch < numOutputChannels; ++ch)
         if (outputChannelData != nullptr && outputChannelData[ch] != nullptr)
             std::memset (outputChannelData[ch], 0,
@@ -5037,6 +5052,9 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         testInjectMidi.clear();
         testInjectReady.store (false, std::memory_order_release);
     }
+    if (offlineRender)
+        for (auto& events : perInputMidi)
+            events.clear();
 
     // External MIDI Clock sync. Feed the chosen input's per-block
     // buffer to the receiver; if it derived a fresh BPM and the
@@ -5049,7 +5067,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     // wrap / Cmd-jump / scrub - using it for clock intervals would
     // produce wild BPM swings whenever the user moves the playhead.
     const int syncIdx = session.syncSourceInputIdx.load (std::memory_order_acquire);
-    if (syncIdx != lastSyncSourceIdx)
+    if (! offlineRender && syncIdx != lastSyncSourceIdx)
     {
         // Source changed (or first run). Reset both the receiver's
         // history and the local sample clock so the new source starts
@@ -5073,14 +5091,14 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     // Gate on the resolved index so MCU decode is a no-op when no
     // controller is selected. Audio-thread only; receiver writes
     // directly to Session atoms.
-    if (mcuReceiver != nullptr)
+    if (! offlineRender && mcuReceiver != nullptr)
     {
         const int mcuIdx = session.mcu.resolvedInputIdx.load (std::memory_order_acquire);
         if (mcuIdx >= 0 && (size_t) mcuIdx < perInputMidi.size())
             mcuReceiver->process (perInputMidi[(size_t) mcuIdx], midiSyncSampleClock);
     }
 
-    if (syncIdx >= 0 && (size_t) syncIdx < perInputMidi.size())
+    if (! offlineRender && syncIdx >= 0 && (size_t) syncIdx < perInputMidi.size())
     {
         // The drained input block is already a dusk::MidiBuffer - feed it
         // straight to the receivers (Clock + MTC multiplex on the same port).
@@ -5244,7 +5262,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         }
         lastExtRolling = extRolling;
     }
-    else
+    else if (! offlineRender)
     {
         // Clear the readouts when no source is selected so the UI badge
         // doesn't stay frozen at the last value after the user turns
@@ -5256,7 +5274,8 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         session.externalTimeCodeReversed.store (false, std::memory_order_relaxed);
         lastExtRolling = false;
     }
-    midiSyncSampleClock += numSamples;
+    if (! offlineRender)
+        midiSyncSampleClock += numSamples;
 
     // MIDI Clock OUTPUT (master mode). Generates F8 + FA/FC (+ MTC) bytes into
     // a dusk scratch buffer and hands it to the out-bank's RT queue for the
@@ -5268,13 +5287,13 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     // index (the opened output port + its background-thread state) is visible
     // here before we route bytes to it.
     const int syncOutIdx = session.syncOutputIdx.load (std::memory_order_acquire);
-    if (syncOutIdx != lastSyncOutputIdx)
+    if (! offlineRender && syncOutIdx != lastSyncOutputIdx)
     {
         midiClockEmitter.reset();
         midiTimeCodeEmitter.reset();
         lastSyncOutputIdx = syncOutIdx;
     }
-    const bool portReady = syncOutIdx >= 0 && midiOut.isOpen (syncOutIdx);
+    const bool portReady = ! offlineRender && syncOutIdx >= 0 && midiOut.isOpen (syncOutIdx);
     const bool emitClock = portReady
                          && session.syncOutputEmitClock.load (std::memory_order_relaxed);
     const bool emitTimeCode = portReady
@@ -6173,11 +6192,6 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     const bool isRecording = (state == Transport::State::Recording);
     std::int64_t blockStartSamples = transportBlockStart;
 
-    // Offline renders must be deterministic - live input never prints. An offline
-    // bounce/stem/freeze drives this callback from a worker thread while the MIDI
-    // input path stays open, so this latch gates every live-MIDI pull below.
-    const bool offlineRender = offlineRenderActive.load (std::memory_order_acquire);
-
     // Loop recording uses the immutable plan published before Record entered
     // the rolling state. Live Loop/Punch edits apply to the next gesture, so a
     // current take cannot change shape halfway through a callback or pass.
@@ -7029,7 +7043,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         // loaded instrument plugin (if any) does. Handed to the pump thread
         // via the out-bank's lock-free RT queue, which validates the port
         // under its mutex. Empty buffer skipped to avoid pointless slot use.
-        if (midiTrack && ! perTrackMidi[(size_t) t].isEmpty())
+        if (! offlineRender && midiTrack && ! perTrackMidi[(size_t) t].isEmpty())
         {
             const int outIdx = session.track (t).midiOutputIndex.load (
                                   std::memory_order_relaxed);
