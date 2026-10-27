@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -21,9 +22,16 @@ struct OperationControl
     std::function<bool()> cancelled;
     std::function<bool()> paused;
     std::function<void (const OperationProgress&)> progress;
+    // Borrowed flags outlive the operation and can be polled without callbacks.
+    const std::atomic<bool>* stopFlag = nullptr;
+    const std::atomic<bool>* cancelFlag = nullptr;
+    const std::atomic<bool>* pauseFlag = nullptr;
 
     OperationStatus status() const
     {
+        if ((stopFlag && stopFlag->load (std::memory_order_acquire))
+            || (cancelFlag && cancelFlag->load (std::memory_order_acquire))) return OperationStatus::Cancelled;
+        if (pauseFlag && pauseFlag->load (std::memory_order_acquire)) return OperationStatus::Paused;
         if (cancelled && cancelled()) return OperationStatus::Cancelled;
         if (paused && paused()) return OperationStatus::Paused;
         return OperationStatus::Complete;

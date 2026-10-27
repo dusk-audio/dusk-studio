@@ -1232,6 +1232,66 @@ TEST_CASE ("SFZ library removal forwards session usage and refreshes installed s
     REQUIRE (transport->count() == 1);
 }
 
+TEST_CASE ("SFZ removal reservations protect queued and paused packs until worker completion", "[sfz][service][ipc]")
+{
+    Tree tree;
+    const auto bytes = archiveBytes();
+    const auto transport = std::make_shared<ScriptedTransport>();
+    transport->append ({ bytes });
+    LibraryService service (tree.root, transport);
+    settled (service);
+    REQUIRE (service.install (packFor (bytes)));
+    const auto ready = settled (service);
+    REQUIRE (ready.installed.size() == 1);
+    const auto pack = ready.installed.front();
+    const auto locator = pack.locatorFor (pack.instruments.front());
+    const auto path = pack.directory / fs::u8path (locator.relativePath);
+    auto unrelated = locator;
+    unrelated.releaseId = "another-release";
+    REQUIRE (service.canLoadInstrument (path, locator));
+
+    SECTION ("Current and pending managed users still refuse removal")
+    {
+        REQUIRE (service.remove (pack, { locator }));
+        const auto refused = settled (service);
+        CHECK (refused.state == LibraryState::Failed);
+        CHECK (fs::exists (path));
+        CHECK (service.canLoadInstrument (path, locator));
+        return;
+    }
+
+    service.setHeavyWork (true);
+    REQUIRE (service.remove (pack, {}));
+    CHECK_FALSE (service.canLoadInstrument ({}, locator));
+    CHECK_FALSE (service.canLoadInstrument (path, {}));
+    CHECK_FALSE (service.canLoadInstrument (path.parent_path() / "." / path.filename(), {}));
+    CHECK (service.canLoadInstrument ({}, unrelated));
+    CHECK (service.canLoadInstrument (tree.root / "unrelated.sfz", {}));
+    REQUIRE (settled (service).state == LibraryState::Paused);
+    CHECK_FALSE (service.canLoadInstrument ({}, locator));
+    CHECK_FALSE (service.canLoadInstrument (path, {}));
+    CHECK (fs::exists (path));
+
+    SECTION ("Cancellation releases the reservation only after its worker acknowledges it")
+    {
+        service.cancel();
+        const auto cancelled = settled (service);
+        CHECK (cancelled.state == LibraryState::Cancelled);
+        CHECK (fs::exists (path));
+        CHECK (service.canLoadInstrument (path, locator));
+    }
+    SECTION ("Explicit resume keeps loads excluded through actual deletion")
+    {
+        service.setHeavyWork (false);
+        REQUIRE (service.resume());
+        const auto removed = settled (service);
+        CHECK (removed.state == LibraryState::Complete);
+        CHECK_FALSE (fs::exists (pack.directory));
+        CHECK (removed.installed.empty());
+        CHECK (service.canLoadInstrument (path, locator));
+    }
+}
+
 TEST_CASE ("SFZ library shutdown preserves paused downloads unless explicitly cancelled", "[sfz][service][ipc]")
 {
     Tree tree;

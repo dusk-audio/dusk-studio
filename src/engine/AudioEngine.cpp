@@ -42,6 +42,7 @@
  #include "RealtimeKit.h"
 #endif
 #include "../foundation/Decibels.h"
+#include "../foundation/Fs.h"
 #include "../foundation/VectorOps.h"
 #include "../foundation/ScopedNoDenormals.h"
 #include <algorithm>
@@ -1871,11 +1872,18 @@ std::vector<sfz::ManagedSfzLocator> AudioEngine::managedSfzInUse() const
             && multisampleLoads->deferred[(std::size_t) t]->locator)
             result.push_back (*multisampleLoads->deferred[(std::size_t) t]->locator);
         else if (const auto& pending = multisampleLoads->deferred[(std::size_t) t]; pending)
+        {
+            std::error_code error;
             for (const auto& pack : installed)
                 for (const auto& instrument : pack.instruments)
-                    if ((pack.directory / std::filesystem::u8path (instrument.relativePath)).lexically_normal()
-                        == pending->path.lexically_normal())
+                {
+                    const auto file = pack.directory / std::filesystem::u8path (instrument.relativePath);
+                    if (file.lexically_normal() == pending->path.lexically_normal()
+                        || std::filesystem::equivalent (dusk::fs::nativeIOPath (file),
+                                                       dusk::fs::nativeIOPath (pending->path), error))
                         result.push_back (pack.locatorFor (instrument));
+                }
+        }
 #endif
     }
     return result;
@@ -1888,7 +1896,7 @@ bool AudioEngine::requestNativeMultisampleLoad (
     bool restoring, std::vector<std::uint8_t> state, std::function<void()> beforeCommit,
     bool preserveSavedState)
 {
-    if (sfzLibrary->isMovingPacks()) return false;
+    if (std::this_thread::get_id() != ownerThread || ! sfzLibrary->canLoadInstrument (path, locator)) return false;
     if (trackIndex < 0 || trackIndex >= Session::kNumTracks
         || (! restoring && session.track (trackIndex).frozen.load (std::memory_order_acquire))) return false;
     auto& loads = *multisampleLoads;

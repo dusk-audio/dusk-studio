@@ -338,9 +338,9 @@ bool fileTree (const fs::path& root, std::vector<FileEntry>& files, std::string&
     return true;
 }
 
-OperationResult interrupted (const OperationControl& control)
+OperationResult interrupted (OperationStatus status)
 {
-    return { control.status(), "SFZ library location change interrupted" };
+    return { status, "SFZ library location change interrupted" };
 }
 
 bool createPackParents (const DirectoryGuard& destination, const fs::path& relative,
@@ -396,7 +396,7 @@ OperationResult transferPack (const fs::path& source, const DirectoryGuard& dest
     std::array<char, 65536> buffer {}, verify {};
     for (const auto& file : files)
     {
-        if (control.status() != OperationStatus::Complete) return interrupted (control);
+        if (const auto status = control.status(); status != OperationStatus::Complete) return interrupted (status);
         if (! available()) return disconnected;
         const auto target = destination.path / file.relative;
         std::error_code ec;
@@ -408,7 +408,7 @@ OperationResult transferPack (const fs::path& source, const DirectoryGuard& dest
         else
         {
             if (! fs::is_regular_file (fs::symlink_status (dusk::fs::nativeIOPath (target), ec)) || ec)
-                return { OperationStatus::Failed, "An existing destination pack differs from the installed pack" };
+                return { OperationStatus::Failed, "An existing destination pack differs from the installed pack", FailureKind::Integrity };
             const auto size = fs::file_size (dusk::fs::nativeIOPath (target), ec);
             if (ec) return { OperationStatus::Failed, "Cannot inspect the destination SFZ file" };
             if (size != file.bytes)
@@ -429,7 +429,7 @@ OperationResult transferPack (const fs::path& source, const DirectoryGuard& dest
         std::uintmax_t bytes = 0;
         while (input)
         {
-            if (control.status() != OperationStatus::Complete) return interrupted (control);
+            if (const auto status = control.status(); status != OperationStatus::Complete) return interrupted (status);
             if (! available()) return disconnected;
             input.read (buffer.data(), static_cast<std::streamsize> (buffer.size()));
             const auto count = input.gcount();
@@ -467,7 +467,7 @@ OperationResult transferPack (const fs::path& source, const DirectoryGuard& dest
         std::uintmax_t verified = 0;
         while (check)
         {
-            if (control.status() != OperationStatus::Complete) return interrupted (control);
+            if (const auto status = control.status(); status != OperationStatus::Complete) return interrupted (status);
             if (! available()) return disconnected;
             check.read (verify.data(), static_cast<std::streamsize> (verify.size()));
             const auto count = check.gcount();
@@ -605,7 +605,7 @@ LocationChangeResult changeLibraryLocation (const LibraryLocations& before, cons
     const auto fail = [&] (const std::string& message, FailureKind kind = FailureKind::None)
     { result.error = message; result.failureKind = kind; return result; };
     if (sodium_init() < 0) return fail ("Cannot initialize SFZ library verification");
-    if (control.status() != OperationStatus::Complete) { result.status = control.status(); return result; }
+    if (const auto status = control.status(); status != OperationStatus::Complete) { result.status = status; return result; }
     std::error_code error;
     const auto target = fs::canonical (dusk::fs::nativeIOPath (destination), error);
     const auto chosenDirectory = error ? std::optional<DirectoryGuard> {} : guardDirectory (target);
@@ -746,7 +746,18 @@ LocationChangeResult changeLibraryLocation (const LibraryLocations& before, cons
                 originals.push_back ({ *sourceLibrary, *sourcePack, *publishedDirectory, pack });
             }
         }
-    if (control.status() != OperationStatus::Complete) { result.status = control.status(); return result; }
+    for (const auto& original : originals)
+    {
+        if (! original.library.matches() || ! original.directory.matches()
+            || ! original.published.matches())
+            return fail ("An SFZ library drive disconnected or changed during the move");
+        const auto verified = transferPack (original.directory.path, original.published,
+                                            *destinationLibrary, false, control, completed);
+        if (! verified) { result.status = verified.status; return fail (verified.error, verified.failureKind); }
+        if (! original.library.matches() || ! original.directory.matches())
+            return fail ("The source SFZ library changed during the move; originals were kept");
+    }
+    if (const auto status = control.status(); status != OperationStatus::Complete) { result.status = status; return result; }
     if (! destinationLibrary->matches() || ! syncPath (packsPath, true, error) || ! syncPath (target, true, error))
         return fail ("The destination SFZ library drive is unavailable or could not be flushed", storageFailureKind (error));
     const auto configured = writeConfiguration (configurationFile, after, error);
@@ -760,6 +771,10 @@ LocationChangeResult changeLibraryLocation (const LibraryLocations& before, cons
         result.locations = std::move (after);
         return result;
     }
+    OperationControl cleanupControl;
+    cleanupControl.stopFlag = control.stopFlag;
+    cleanupControl.cancelFlag = control.cancelFlag;
+    cleanupControl.pauseFlag = control.pauseFlag;
     for (const auto& original : originals)
     {
         if (! destinationLibrary->matches() || ! original.library.matches()
@@ -770,6 +785,29 @@ LocationChangeResult changeLibraryLocation (const LibraryLocations& before, cons
         }
         const auto destinationIdentity = directoryIdentity (packsPath / original.pack.directory.filename());
         if (destinationIdentity == original.directory.identity) continue;
+        if (const auto status = control.status(); status != OperationStatus::Complete)
+        {
+            result.status = status;
+            result.error = "The new library is active. Cleanup was interrupted; remaining original copies were kept.";
+            result.locations = std::move (after);
+            return result;
+        }
+        // No caller callback may change a source between its final verification and deletion.
+        auto verified = transferPack (original.directory.path, original.published,
+                                      *destinationLibrary, false, cleanupControl, completed);
+        if (verified) verified.status = cleanupControl.status();
+        if (verified.status == OperationStatus::Paused || verified.status == OperationStatus::Cancelled)
+        {
+            result.status = verified.status;
+            result.error = "The new library is active. Cleanup was interrupted; remaining original copies were kept.";
+            result.locations = std::move (after);
+            return result;
+        }
+        if (! verified || ! original.library.matches() || ! original.directory.matches())
+        {
+            result.error = "The new library is active. An original pack changed or could not be verified; its files were kept.";
+            continue;
+        }
         const auto removed = PackStore (original.library.location.root, original.library.location.marker).remove (original.pack, {});
         if (! removed) result.error = "The new library is active. Some original copies could not be removed: " + removed.error;
     }
@@ -778,8 +816,8 @@ LocationChangeResult changeLibraryLocation (const LibraryLocations& before, cons
         auto pruned = after;
         pruned.previous.erase (std::remove_if (pruned.previous.begin(), pruned.previous.end(), [] (const auto& location)
         {
-            std::error_code error;
-            return emptyLibrary (location) && syncPath (location.root / "packs", true, error) && syncPath (location.root, true, error);
+            std::error_code cleanupError;
+            return emptyLibrary (location) && syncPath (location.root / "packs", true, cleanupError) && syncPath (location.root, true, cleanupError);
         }), pruned.previous.end());
         if (pruned.previous.size() != after.previous.size())
         {

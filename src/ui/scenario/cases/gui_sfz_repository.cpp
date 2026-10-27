@@ -1438,7 +1438,48 @@ std::optional<ScenarioResult> runPauseCancel (GuiHost& host, ScenarioContext& ct
                     "Resume did not publish exactly one complete pack");
     } });
     pushInstalledSelection (*steps, host, ctx, state);
-    pushWorkClick (*steps, host, ctx, state, "remove", LibraryState::Complete);
+    auto removalLoads = std::make_shared<std::array<bool, 3>>();
+    steps->push_back ({ 0, [&ctx, state]
+    {
+        ctx.engine().setAssetRenderActive (true);
+        state->rendering = true;
+    } });
+    pushWorkClick (*steps, host, ctx, state, "remove", LibraryState::Paused);
+    steps->push_back ({ 0, [&ctx, state, removalLoads]
+    {
+        auto& engine = ctx.engine();
+        engine.setAssetRenderActive (false);
+        state->rendering = false;
+        if (! ctx.expect (state->installed && ! state->installed->programs.empty(),
+                          "paused removal lost its selected pack")) return;
+        const auto& pack = *state->installed;
+        const auto locator = pack.locatorFor (pack.programs.front());
+        const auto path = pack.directory / pack.programs.front().relativePath;
+        (*removalLoads)[0] = engine.requestNativeMultisampleLoad (1, path, locator);
+        (*removalLoads)[1] = engine.requestNativeMultisampleLoad (2, path);
+        (*removalLoads)[2] = engine.requestNativeMultisampleLoad (3, path, locator, {}, -1, true);
+        ctx.expect (std::none_of (removalLoads->begin(), removalLoads->end(), [] (bool accepted) { return accepted; }),
+                    "a paused removal accepted a managed, direct-path or restoring instrument load");
+    } });
+    steps->push_back ({ 0, [&ctx, removalLoads]
+    {
+        for (std::size_t i = 0; i < removalLoads->size(); ++i)
+            if ((*removalLoads)[i])
+            {
+                const auto* instance = ctx.engine().getChannelStrip (static_cast<int> (i) + 1)
+                                           .getNativeMultisampleSlot().getInstance();
+                ctx.expect (instance != nullptr && instance->hasLoadedRuntime(),
+                            "the accepted removal regression load did not reach a live runtime");
+            }
+    }, [&ctx] { return ! ctx.engine().hasPendingMultisampleLoads(); },
+       "loads admitted during paused removal did not finish", {}, kSettleBoundMs });
+    pushWorkClick (*steps, host, ctx, state, "resume", LibraryState::Complete);
+    steps->push_back ({ 0, [&ctx, state, removalLoads]
+    {
+        if (std::any_of (removalLoads->begin(), removalLoads->end(), [] (bool accepted) { return accepted; }))
+            ctx.expect (fs::exists (state->installed->directory / "Samples/tone.wav"),
+                        "resuming a stale removal deleted a pack now used by a live instrument");
+    } });
     steps->push_back ({ 0, [&ctx, state]
     {
         const auto installed = ctx.engine().getSfzLibrary().snapshot().installed;

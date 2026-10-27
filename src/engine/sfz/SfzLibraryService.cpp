@@ -406,6 +406,28 @@ bool LibraryService::setTransportForTest (std::shared_ptr<HttpTransport> replace
     return true;
 }
 
+bool LibraryService::canLoadInstrument (const fs::path& path, const std::optional<ManagedSfzLocator>& locator) const
+{
+    const std::lock_guard<std::mutex> lock (mutex);
+    if (stopping.load (std::memory_order_acquire) || movingPacks.load (std::memory_order_acquire)) return false;
+    if (removingPackKey.empty()) return true;
+    if (locator && PackStore::identity (*locator) == removingPackKey) return false;
+    if (path.empty()) return true;
+    const auto normalized = [] (const fs::path& input)
+    {
+        std::error_code error;
+        auto result = fs::weakly_canonical (dusk::fs::nativeIOPath (input), error);
+        return error ? dusk::fs::nativeIOPath (input).lexically_normal() : result;
+    };
+    const auto file = normalized (path);
+    for (const auto& directory : removingPackDirectories)
+    {
+        const auto relative = file.lexically_relative (normalized (directory));
+        if (! relative.empty() && *relative.begin() != "..") return false;
+    }
+    return true;
+}
+
 bool LibraryService::enqueue (Job job)
 {
     {
@@ -418,6 +440,15 @@ bool LibraryService::enqueue (Job job)
             const auto downloads = configurationFile.empty() ? cacheRoot : store.root() / ".downloads";
             job.part = downloads / (key + ".part");
             job.preserveDownload = true;
+        }
+        if (job.kind == JobKind::Remove && ! job.installed.instruments.empty())
+        {
+            // The engine snapshots users and admits loads on its owner thread;
+            // this reservation keeps that snapshot valid until deletion finishes.
+            removingPackKey = PackStore::identity (job.installed.locatorFor (job.installed.instruments.front()));
+            removingPackDirectories = { job.installed.directory, current.locations.active.root / "packs" / removingPackKey };
+            for (const auto& previous : current.locations.previous)
+                removingPackDirectories.push_back (previous.root / "packs" / removingPackKey);
         }
         job.generation = ++current.generation;
         current.busy = true;
@@ -653,7 +684,7 @@ OperationResult LibraryService::execute (Job& job, const OperationControl& contr
     {
         setState (job.generation, LibraryState::ChangingLocation);
         auto changed = changeLibraryLocation (locations, job.destination, job.moveExisting, control, configurationFile);
-        if (! changed || ! changed.locations) return { changed.status, changed.error, changed.failureKind };
+        if (! changed.locations) return { changed.status, changed.error, changed.failureKind };
         locations = std::move (*changed.locations);
         store = PackStore (locations.active.root, locations.active.marker);
         const auto installed = installedLibraryPacks (locations);
@@ -663,7 +694,7 @@ OperationResult LibraryService::execute (Job& job, const OperationControl& contr
             current.locations = locations;
             current.installed = installed;
         }
-        return { OperationStatus::Complete, changed.error };
+        return { changed.status, changed.error, changed.failureKind };
     }
     if (job.kind == JobKind::Installed && ! configurationFile.empty())
     {
@@ -887,9 +918,9 @@ void LibraryService::run()
             pending.reset();
         }
         OperationControl control;
-        control.cancelled = [this]
-        { return stopping.load (std::memory_order_acquire) || cancelRequested.load (std::memory_order_acquire); };
-        control.paused = [this] { return heavyWork.load (std::memory_order_acquire); };
+        control.stopFlag = &stopping;
+        control.cancelFlag = &cancelRequested;
+        control.pauseFlag = &heavyWork;
         control.progress = [this, generation = job.generation] (const OperationProgress& progress)
         {
             const std::lock_guard<std::mutex> lock (mutex);
@@ -951,6 +982,11 @@ void LibraryService::run()
                     && (job.kind == JobKind::ChangeLocation || job.kind == JobKind::Cleanup))
                     movingPacks.store (false, std::memory_order_release);
                 if (result.status == OperationStatus::Paused) paused = std::move (job);
+                else
+                {
+                    removingPackKey.clear();
+                    removingPackDirectories.clear();
+                }
             }
         }
     }
