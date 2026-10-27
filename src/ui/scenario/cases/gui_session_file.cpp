@@ -316,6 +316,7 @@ std::optional<ScenarioResult> runAutosave (GuiHost& host, ScenarioContext& ctx)
     fs::create_directories (dir, error);
     const auto sessionJson = dir / "session.json";
     const auto autosave = dir / "session.json.autosave";
+    session.track (0).name = "Aa";
     if (! SessionSerializer::save (session, sessionJson))
         return ScenarioResult::fail ("could not write the session to open");
     if (! host.openSession (sessionJson) || ! host.modalStackEmpty())
@@ -324,12 +325,34 @@ std::optional<ScenarioResult> runAutosave (GuiHost& host, ScenarioContext& ctx)
     host.autosaveTick();
     ctx.expect (! fs::exists (autosave, error), "the heartbeat wrote an autosave for an unchanged session");
 
+    session.track (0).name = "BB";
+    host.autosaveTick();
+    ctx.expect (fs::exists (autosave, error), "a track rename colliding with the saved hash was not autosaved");
+    session.track (0).name = "Aa";
+    host.autosaveTick();
+    ctx.expect (! fs::exists (autosave, error), "undoing a rename kept its recovery file");
+
     fader.store (kEdited, std::memory_order_relaxed);
     host.autosaveTick();
     ctx.expect (fs::exists (autosave, error), "the heartbeat did not write the change");
     ctx.expect (! fs::exists (dir / "session.json.autosave.tmp", error), "the autosave left its temp file behind");
     ctx.expect (nearly (savedFaderOf (autosave), kEdited), "the autosave does not hold the change");
     ctx.expect (nearly (savedFaderOf (sessionJson), original), "the heartbeat touched session.json");
+
+    session.track (0).name = "BB";
+    host.autosaveTick();
+    auto renamed = std::make_unique<Session>();
+    ctx.expect (SessionSerializer::load (*renamed, autosave) && renamed->track (0).nameUtf8() == "BB",
+                "a track rename colliding with the previous autosave hash was not written");
+    session.track (0).name = "Aa";
+    host.autosaveTick();
+
+    fader.store (original, std::memory_order_relaxed);
+    host.autosaveTick();
+    ctx.expect (! fs::exists (autosave, error), "returning to the saved state kept a stale recovery file");
+    fader.store (kEdited, std::memory_order_relaxed);
+    host.autosaveTick();
+    ctx.expect (fs::exists (autosave, error), "editing again after returning to saved state wrote no recovery file");
 
     fs::remove (autosave, error);
     host.autosaveTick();
@@ -378,6 +401,200 @@ const ScenarioRegistrar autosave { Scenario {
     {},
     60000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runAutosave (host, ctx); }
+} };
+
+std::optional<ScenarioResult> runRevertedAutosaveQuitsClean (GuiHost& host, ScenarioContext& ctx)
+{
+    namespace fs = std::filesystem;
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires stopped transport and no modal");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    ctx.cleanup ([&host, &session, originalDir, restore]
+    {
+        drainModals (host);
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+    });
+
+    const auto folder = ctx.tempDir() / "Reverted autosave";
+    fs::create_directories (folder);
+    const auto canonical = folder / "session.json";
+    const auto autosaveFile = folder / "session.json.autosave";
+    auto saved = std::make_unique<Session>();
+    saved->sessionSampleRate = engine.getCurrentSampleRate();
+    saved->track (0).strip.faderDb.store (-3.0f);
+    if (! SessionSerializer::save (*saved, canonical)
+        || ! host.openSession (canonical) || ! host.modalStackEmpty())
+        return ScenarioResult::fail ("could not open the saved session");
+
+    auto& fader = session.track (0).strip.faderDb;
+    fader.store (-12.0f);
+    host.autosaveTick();
+    if (! ctx.expect (fs::exists (autosaveFile) && nearly (savedFaderOf (autosaveFile), -12.0f),
+                      "the edit did not create its recovery file"))
+        return ctx.verdict();
+    fader.store (-3.0f);
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 0, [&host, &ctx, autosaveFile]
+    {
+        // Quit must recognize the saved state before the next heartbeat.
+        ctx.expect (! host.requestQuit(), "reverting an autosaved edit still asked to save before quitting");
+        ctx.expect (! fs::exists (autosaveFile), "a clean quit check kept the stale recovery file");
+    } });
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        if (! host.modalStackEmpty())
+            ctx.expect (host.clickModalButton ("Cancel"), "the unexpected quit prompt could not be cancelled");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, &fader, canonical, autosaveFile]
+    {
+        ctx.expect (host.modalStackEmpty(), "cancelling the unexpected quit prompt left a modal up");
+        fader.store (-12.0f);
+        host.autosaveTick();
+        ctx.expect (fs::exists (autosaveFile) && nearly (savedFaderOf (autosaveFile), -12.0f),
+                    "editing again after a clean quit check wrote no recovery file");
+        ctx.expect (nearly (savedFaderOf (canonical), -3.0f), "the clean quit check changed the manual save");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar revertedAutosaveQuitsClean { Scenario {
+    "gui.reverted_autosave_quits_clean", { "gui", "session", "autosave", "quit" },
+    Needs::Engine | Needs::Gui, {}, {}, 10000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runRevertedAutosaveQuitsClean (host, ctx); }
+} };
+
+std::optional<ScenarioResult> runUnclaimedAutosaveSurvivesCleanQueries (GuiHost& host, ScenarioContext& ctx)
+{
+    namespace fs = std::filesystem;
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires stopped transport and no modal");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    ctx.cleanup ([&host, &session, originalDir, restore]
+    {
+        drainModals (host);
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+    });
+
+    const auto folder = ctx.tempDir() / "Unclaimed autosave";
+    fs::create_directories (folder);
+    const auto canonical = folder / "session.json";
+    const auto autosaveFile = folder / "session.json.autosave";
+    const auto replacement = folder / "replacement.json";
+    auto saved = std::make_unique<Session>();
+    saved->sessionSampleRate = engine.getCurrentSampleRate();
+    saved->track (0).strip.faderDb.store (-3.0f);
+    if (! SessionSerializer::save (*saved, canonical)
+        || ! host.openSession (canonical) || ! host.modalStackEmpty())
+        return ScenarioResult::fail ("could not open the saved session");
+
+    saved->track (0).strip.faderDb.store (-12.0f);
+    if (! SessionSerializer::save (*saved, autosaveFile))
+        return ScenarioResult::fail ("could not create the unclaimed recovery file");
+    const auto unclaimedBytes = fileBytes (autosaveFile);
+    saved->track (0).strip.faderDb.store (-18.0f);
+    if (! SessionSerializer::save (*saved, replacement))
+        return ScenarioResult::fail ("could not create the replacement recovery file");
+    const auto replacementBytes = fileBytes (replacement);
+
+    auto& fader = session.track (0).strip.faderDb;
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 0, [&host, &ctx, autosaveFile, unclaimedBytes]
+    {
+        ctx.expect (! host.requestQuit(), "an unclaimed recovery file made the unchanged session ask to save");
+        ctx.expect (fileBytes (autosaveFile) == unclaimedBytes, "a clean quit check removed the unclaimed recovery file");
+    } });
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        if (! host.modalStackEmpty())
+            ctx.expect (host.clickModalButton ("Cancel"), "the unexpected quit prompt could not be cancelled");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, &fader, autosaveFile, unclaimedBytes, replacement, replacementBytes]
+    {
+        ctx.expect (host.modalStackEmpty(), "cancelling the unexpected quit prompt left a modal up");
+        host.autosaveTick();
+        ctx.expect (fileBytes (autosaveFile) == unclaimedBytes, "a clean heartbeat removed the unclaimed recovery file");
+
+        fader.store (-6.0f);
+        host.autosaveTick();
+        ctx.expect (nearly (savedFaderOf (autosaveFile), -6.0f), "the live edit did not create an owned recovery file");
+        std::error_code error;
+        fs::copy_file (replacement, autosaveFile, fs::copy_options::overwrite_existing, error);
+        if (! ctx.expect (! error, "could not replace the owned recovery file")) return;
+        fader.store (-3.0f);
+        ctx.expect (! host.requestQuit(), "an externally replaced recovery file made the reverted session ask to save");
+        ctx.expect (fileBytes (autosaveFile) == replacementBytes, "a clean quit check removed the replaced recovery file");
+    } });
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        if (! host.modalStackEmpty())
+            ctx.expect (host.clickModalButton ("Cancel"), "the replacement's unexpected quit prompt could not be cancelled");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, &fader, canonical, autosaveFile, replacementBytes]
+    {
+        ctx.expect (host.modalStackEmpty(), "cancelling the replacement's quit prompt left a modal up");
+        host.autosaveTick();
+        ctx.expect (fileBytes (autosaveFile) == replacementBytes, "a clean heartbeat removed the replaced recovery file");
+        fader.store (-6.0f);
+        host.autosaveTick();
+        ctx.expect (nearly (savedFaderOf (autosaveFile), -6.0f),
+                    "the replaced recovery file left the previous live edit deduplicated");
+        ctx.expect (nearly (savedFaderOf (canonical), -3.0f), "a clean check changed the manual save");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, &session, &fader, canonical]
+    {
+        reopenSavedSession (host, canonical);
+        host.startUnsavedSessionIn (ctx.tempDir() / "Sidecar switch");
+        const auto folder = currentSessionDirectory (session);
+        const auto owned = folder / "session.json.autosave";
+        fader.store (-6.0f);
+        host.autosaveTick();
+        if (! ctx.expect (fs::exists (owned), "the unsaved session did not create its recovery file")) return;
+        const auto privateDir = dusk::fs::appConfigDir() / "unsaved-session";
+        const auto other = privateDir / "session.json.autosave";
+        const bool existed = fs::exists (other);
+        const auto previousBytes = existed ? fileBytes (other) : std::string();
+        ctx.cleanup ([other, existed, previousBytes]
+        {
+            if (existed) dusk::fs::writeStringToFile (other, previousBytes);
+            else { std::error_code ignored; fs::remove (other, ignored); }
+        });
+        fs::create_directories (privateDir);
+        std::error_code error;
+        fs::copy_file (owned, other, fs::copy_options::overwrite_existing, error);
+        if (! ctx.expect (! error, "could not prepare the other recovery file")) return;
+        const auto otherBytes = fileBytes (other);
+        auto occupant = std::make_unique<Session>();
+        occupant->track (0).name = "Another session";
+        if (! ctx.expect (SessionSerializer::save (*occupant, folder / "session.json"),
+                          "could not simulate a session appearing in the unsaved folder")) return;
+        fader.store (-3.0f);
+        ctx.expect (! host.requestQuit(), "a sidecar-folder switch made the reverted session dirty");
+        ctx.expect (fs::exists (other) && fileBytes (other) == otherBytes,
+                    "a clean check deleted an identical recovery file at a different path");
+        ctx.expect (fs::exists (owned), "a sidecar-folder switch deleted the previous recovery file");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar unclaimedAutosaveSurvivesCleanQueries { Scenario {
+    "gui.unclaimed_autosave_survives_clean_queries", { "gui", "session", "autosave", "quit" },
+    Needs::Engine | Needs::Gui, {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runUnclaimedAutosaveSurvivesCleanQueries (host, ctx); }
 } };
 
 std::optional<ScenarioResult> runBuiltinRecovery (GuiHost& host, ScenarioContext& ctx)
@@ -1964,6 +2181,7 @@ const ScenarioRegistrar cleanOutWhileRecording { Scenario {
     {}, {}, 20000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runCleanOutWhileRecording (host, ctx); }
 } };
+
 std::optional<ScenarioResult> runOopCaptureFailureSave (GuiHost& host, ScenarioContext& ctx,
                                                        bool saveAs)
 {
@@ -2075,6 +2293,17 @@ std::optional<ScenarioResult> runOopCaptureFailureSave (GuiHost& host, ScenarioC
         ctx.expect (! error, "could not inspect fixture files: " + error.message());
         return files;
     };
+    const auto stateApplied = [&engine, &slot] (bool large)
+    {
+        std::array<float, ScenarioContext::kBlockSize> left {}, right {};
+        left.fill (0.25f); right.fill (0.25f);
+        oopstub::SlotMidiBuffer midi;
+        const int count = std::clamp (engine.getCurrentBlockSize(), 1, ScenarioContext::kBlockSize);
+        engine.suspendProcessing();
+        slot.processStereoBlock (left.data(), right.data(), count, midi);
+        engine.resumeProcessing();
+        return std::abs (left.front() - (large ? 0.125f : 0.25f)) < 1.0e-6f;
+    };
     auto steps = std::make_shared<std::vector<Step>>();
     steps->push_back ({ 0, [&ctx, &engine, &slot, state]
     {
@@ -2093,6 +2322,59 @@ std::optional<ScenarioResult> runOopCaptureFailureSave (GuiHost& host, ScenarioC
                             "a healthy child state was not saved");
             } });
         }
+    if (! saveAs)
+    {
+        steps->push_back ({ 0, [&host, &ctx, &slot, state]
+        {
+            if (host.requestQuit())
+            {
+                ctx.expect (false, "the healthy saved child was dirty before an opaque edit");
+                host.clickModalButton ("Cancel");
+            }
+            slot.setParamNormalised (state->largeIndex, 1.0f);
+        } });
+        steps->push_back ({ 0, [] {}, [stateApplied] { return stateApplied (true); }, "the opaque-only large-state edit did not reach the child" });
+        pushFileMenuSteps (host, ctx, *steps, "Save");
+        steps->push_back ({ 0, [&host, &ctx]
+        {
+            ctx.expect (host.modalText().find ("could not capture plug-in state") != std::string::npos,
+                        "the opaque-only edit did not reach a capture-failure alert: " + host.modalText());
+            drainModals (host);
+        } });
+        steps->push_back ({ 200, [&host, &ctx]
+        {
+            ctx.expect (host.requestQuit(), "an opaque-only failed Save did not ask to save before quitting");
+            if (! host.modalStackEmpty())
+                ctx.expect (host.modalText().find ("Save changes before quitting?") != std::string::npos,
+                            "failed Save raised the wrong quit prompt: " + host.modalText());
+        } });
+        steps->push_back ({ 200, [&host, &ctx]
+        {
+            if (! host.modalStackEmpty())
+                ctx.expect (host.clickModalButton ("Cancel"), "the failed-Save quit prompt could not be cancelled");
+        } });
+        steps->push_back ({ 200, [&host, &ctx]
+        {
+            ctx.expect (host.modalStackEmpty(), "Cancel left the failed-Save quit prompt open");
+        } });
+        steps->push_back ({ 0, [&slot, state]
+        {
+            slot.setParamNormalised (state->largeIndex, 0.0f);
+        } });
+        steps->push_back ({ 0, [] {}, [stateApplied] { return stateApplied (false); },
+                            "the child did not return to a serializable state" });
+        pushFileMenuSteps (host, ctx, *steps, "Save");
+        steps->push_back ({ 0, [&host, &ctx]
+        {
+            ctx.expect (host.modalStackEmpty() && host.statusMessage().rfind ("Saved:", 0) == 0,
+                        "a successful retry did not save after the child state shrank");
+            if (host.requestQuit())
+            {
+                ctx.expect (false, "a successful Save retained the earlier capture-failure dirty state");
+                host.clickModalButton ("Cancel");
+            }
+        } });
+    }
     steps->push_back ({ 0, [&host, &ctx, &session, &slot, state, folder]
     {
         ctx.expect (host.closeNotepadAfterTyping ("notes pending in memory\n"),
@@ -2103,17 +2385,7 @@ std::optional<ScenarioResult> runOopCaptureFailureSave (GuiHost& host, ScenarioC
         state->originalDescriptor = session.track (0).pluginDescriptor;
         slot.setParamNormalised (state->largeIndex, 1.0f);
     } });
-    steps->push_back ({ 0, [] {}, [&engine, &slot]
-    {
-        std::array<float, ScenarioContext::kBlockSize> left {}, right {};
-        left.fill (0.25f); right.fill (0.25f);
-        oopstub::SlotMidiBuffer midi;
-        const int count = std::clamp (engine.getCurrentBlockSize(), 1, ScenarioContext::kBlockSize);
-        engine.suspendProcessing();
-        slot.processStereoBlock (left.data(), right.data(), count, midi);
-        engine.resumeProcessing();
-        return std::abs (left.front() - 0.125f) < 1.0e-6f;
-    }, "the fixture child did not apply the large-state switch" });
+    steps->push_back ({ 0, [] {}, [stateApplied] { return stateApplied (true); }, "the fixture child did not apply the large-state switch" });
     steps->push_back ({ 0, [&host, &ctx, &session, state, tree, folder, copy]
     {
         session.track (0).strip.faderDb.store (-6.0f);
@@ -2147,6 +2419,16 @@ std::optional<ScenarioResult> runOopCaptureFailureSave (GuiHost& host, ScenarioC
         ctx.expect (! engine.isProcessingSuspended() && slot.isRemote(), "failed save left audio gated or discarded the child");
         ctx.expect (slot.getStateBase64ForSave (0).toStdString() == state->originalState,
                     "failed capture lost the child's last known state");
+        const auto autosave = folder / "session.json.autosave";
+        session.track (0).strip.faderDb.store (-9.0f);
+        host.autosaveTick();
+        ctx.expect (fs::exists (autosave) && std::abs (savedFaderOf (autosave) + 9.0f) < 1.0e-6f,
+                    "failed Save stopped later control edits from reaching autosave");
+        const auto recoveryBytes = dusk::fs::loadFileAsString (autosave);
+        session.track (0).strip.faderDb.store (savedFaderOf (folder / "session.json"));
+        host.autosaveTick();
+        ctx.expect (fs::exists (autosave) && dusk::fs::loadFileAsString (autosave) == recoveryBytes,
+                    "a matching control snapshot discarded recovery after a failed Save");
         drainModals (host);
     }, [&host, &session, folder, copy, saveAs]
     {

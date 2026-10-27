@@ -2343,9 +2343,19 @@ std::optional<ScenarioResult> runSwitchRefusedNamesRender (GuiHost& host, Scenar
         }
         const auto render = (*legs)[index].render;
         auto steps = std::make_shared<std::vector<Step>>();
+        steps->push_back ({ 0, [&session]
+        {
+            auto& fader = session.track (0).strip.faderDb;
+            fader.store (fader.load() - 1.0f);
+        } });
         (*legs)[index].start (*steps);
-        steps->push_back ({ 300, [&host, &ctx, render]
-        { ctx.expect (host.renderRunning(), "the " + render + " did not start"); } });
+        steps->push_back ({ 300, [&host, &ctx, folder, render]
+        {
+            ctx.expect (host.renderRunning(), "the " + render + " did not start");
+            host.autosaveTick();
+            ctx.expect (! std::filesystem::exists (folder / "session.json.autosave"),
+                        "autosave captured the " + render + " worker's temporary session state");
+        } });
         steps->push_back ({ 50, [&host, other] { host.requestSessionSwitch (other); } });
         steps->push_back ({ 100, [&host, &ctx, &session, folder, render]
         {

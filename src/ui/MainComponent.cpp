@@ -3674,6 +3674,7 @@ bool MainComponent::saveSessionTo (const juce::File& requestedDir)
     std::string captureError;
     if (! engine.preparePluginStateForSave (preparedPluginState, captureError))
     {
+        pluginStateCaptureFailed = true;
         setStatusForPath ("Save failed", dir);
         showDuskAlert (*this, "Save failed",
                        "Dusk Studio could not capture plug-in state:\n\n    "
@@ -3808,7 +3809,7 @@ bool MainComponent::saveSessionTo (const juce::File& requestedDir)
         // Remember the JSON so the next autosave tick can recognise an
         // idle (no further edits) state and skip the write.
         setLastSavedSessionJson    (json);
-        setLastWrittenAutosaveJson (juce::String());
+        setLastWrittenAutosaveJson ({}, {});
         sessionOnDisk = true;
         setStatusForPath ("Saved", target);
         return true;
@@ -3911,8 +3912,25 @@ std::filesystem::path MainComponent::sidecarFolder() const
                                      privateUnsavedFolder());
 }
 
+void MainComponent::discardWrittenAutosave()
+{
+    // A clean launch can still have a recovery point from an earlier run.
+    if (lastWrittenAutosaveJson.isEmpty()) return;
+    const auto target = getAutosaveFileFor (toFile (sidecarFolder()));
+    if (toPath (target) != lastWrittenAutosavePath)
+    {
+        setLastWrittenAutosaveJson ({}, {});
+        return;
+    }
+    if (target.existsAsFile()
+        && dusk::fs::loadFileAsString (toPath (target)) == lastWrittenAutosaveJson.toStdString()
+        && ! target.deleteFile()) return;
+    setLastWrittenAutosaveJson ({}, {});
+}
+
 void MainComponent::writeAutosave()
 {
+    if (! runningRenders().empty()) return;
     const auto dir = toFile (sidecarFolder());
     if (dir == juce::File()) return;
 
@@ -3922,58 +3940,49 @@ void MainComponent::writeAutosave()
     // touched on disk yet.
     dir.createDirectory();
 
-    // Same publish bookend as the manual save - the serializer reads
-    // only from Session, not from the live engine. Audio is running on
-    // the autosave path (timer fires from the live message loop), so
-    // plug-in state stays as the last manual save captured it rather
-    // than cost a dropout on every autosave.
+    // Control snapshots are safe during playback; opaque plug-in state waits for Save.
     engine.publishPluginStateForSave (/*capturePluginState*/ false);
     engine.publishTransportStateForSave();
 
-    // Skip the write entirely when the snapshot matches what's already on
-    // disk - either the last manual save (no real edits since Ctrl+S) or
-    // the previous autosave tick (timer firing on idle state). Without
-    // this skip the autosave file's mtime would creep past session.json
-    // on every autosave, producing a false-positive recovery prompt on next load.
     const juce::String json = SessionSerializer::serialize (session);
-    // Strip volatile plugin / tape APVTS state before comparing - donor
-    // getStateInformation drifts between calls even with no user change,
-    // which would otherwise fire an autosave write every tick on idle
-    // sessions.
-    //
-    // M8: hash-based dedup. Hash the stripped JSON ONCE per tick + compare
-    // against the 32-bit fingerprint cached at last-save / last-autosave
-    // assignment. Avoids re-running a juce::String equality scan over the
-    // full serialised tree (potentially hundreds of KB) on every tick.
-    // JUCE's DefaultHashFunctions::generateHash is the JUCE-canonical fast
-    // hash used by HashMap; collision risk on a real session string is
-    // statistically negligible. Worst-case missed-write recovers next tick.
+    // A hash match is only a filter: names such as Aa and BB collide.
     const auto stripped = stripVolatileStateForDirtyCompare (json);
     const auto strippedHash = (std::uint32_t) (std::uint32_t)
         juce::DefaultHashFunctions::generateHash (stripped, 0x7fffffff);
-    if (strippedHash == lastSavedSessionStrippedHash)    return;
-    if (strippedHash == lastWrittenAutosaveStrippedHash) return;
-
     const auto target = getAutosaveFileFor (dir);
+    if (toPath (target) != lastWrittenAutosavePath)
+        setLastWrittenAutosaveJson ({}, {});
+    if (strippedHash == lastSavedSessionStrippedHash
+        && stripped == stripVolatileStateForDirtyCompare (lastSavedSessionJson))
+    {
+        if (! pluginStateCaptureFailed) discardWrittenAutosave();
+        return;
+    }
+    if (strippedHash == lastWrittenAutosaveStrippedHash
+        && stripped == stripVolatileStateForDirtyCompare (lastWrittenAutosaveJson)) return;
+
     if (! SessionSerializer::writeAtomic (target, json))
     {
         DBG ("MainComponent: autosave write failed at " << target.getFullPathName());
         return;
     }
-    setLastWrittenAutosaveJson (json);
+    setLastWrittenAutosaveJson (json, toPath (target));
 }
 
 void MainComponent::setLastSavedSessionJson (const juce::String& json)
 {
+    pluginStateCaptureFailed = false;
     lastSavedSessionJson = json;
     const auto stripped  = stripVolatileStateForDirtyCompare (json);
     lastSavedSessionStrippedHash = (std::uint32_t) (std::uint32_t)
         juce::DefaultHashFunctions::generateHash (stripped, 0x7fffffff);
 }
 
-void MainComponent::setLastWrittenAutosaveJson (const juce::String& json)
+void MainComponent::setLastWrittenAutosaveJson (const juce::String& json,
+                                               const std::filesystem::path& path)
 {
     lastWrittenAutosaveJson = json;
+    lastWrittenAutosavePath = path;
     const auto stripped     = stripVolatileStateForDirtyCompare (json);
     lastWrittenAutosaveStrippedHash = (std::uint32_t) (std::uint32_t)
         juce::DefaultHashFunctions::generateHash (stripped, 0x7fffffff);
@@ -4025,27 +4034,21 @@ bool MainComponent::currentSessionDirty()
     engine.publishPluginStateForSave (/*capturePluginState*/ false);
     engine.publishTransportStateForSave();
 
+    if (pluginStateCaptureFailed) return true;
+
     // Compare with volatile state stripped (playhead / view / timestamps)
     // so transient fields don't flip the raw JSON on an otherwise-clean session.
     const auto strippedCurrent = stripVolatileStateForDirtyCompare (SessionSerializer::serialize (session));
     const auto strippedSaved   = stripVolatileStateForDirtyCompare (lastSavedSessionJson);
-    const bool divergedFromBaseline =
-        ! lastSavedSessionJson.isEmpty() && strippedCurrent != strippedSaved;
+    if (lastSavedSessionJson.isEmpty())
+        return autosaveIsNewerThan (toFile (sidecarFolder()).getChildFile ("session.json"));
 
-    // A session that was never saved has no session.json, only the autosave the
-    // heartbeat wrote from this very state. autosaveIsNewerThan answers "yes"
-    // there because there is nothing for it to be newer than, which on the
-    // bootstrap Untitled session means the first autosave tick makes an
-    // untouched app ask the user to save work they have not done. The baseline
-    // seeded at construction answers the question instead - and if that
-    // baseline is ever missing, the old reading stands rather than reporting an
-    // hour of unsaved work clean.
-    const auto sessionJson = toFile (sidecarFolder()).getChildFile ("session.json");
-    if (! sessionJson.existsAsFile())
-        return lastSavedSessionJson.isEmpty() ? autosaveIsNewerThan (sessionJson)
-                                              : divergedFromBaseline;
+    if (strippedCurrent != strippedSaved) return true;
 
-    return divergedFromBaseline || autosaveIsNewerThan (sessionJson);
+    // Undo can restore the saved state before the next heartbeat removes its
+    // previous recovery point. Only discard a sidecar this instance wrote.
+    discardWrittenAutosave();
+    return false;
 }
 
 void MainComponent::resumeQuitAfterRender()
@@ -4838,7 +4841,7 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     // tick compares against this snapshot and skips the write while the
     // session remains untouched.
     setLastSavedSessionJson    (SessionSerializer::serialize (session));
-    setLastWrittenAutosaveJson (juce::String());
+    setLastWrittenAutosaveJson ({}, {});
     sessionOnDisk = true;
 
     // Recovery must end with the recovered state on disk. Without this,

@@ -37,7 +37,7 @@ Dusk Studio includes:
 - Mackie Control surface support (tested against Tascam DP-24SD).
 - A piano roll for MIDI editing and an audio region editor with non-destructive trim, fade, and gain.
 - Every recording pass kept whole as a take on its track, with take lanes in the audio region editor for building a comp from the best parts.
-- Session save/load with automatic 30-second autosave and atomic-write protection.
+- Session save/load with automatic autosave every two minutes by default and atomic-write protection.
 
 ## What it deliberately does not have
 
@@ -2296,7 +2296,7 @@ Do that before you launch Dusk Studio again, or copy the folder somewhere safe f
 
 If Dusk Studio crashes or loses power, the next launch detects the autosave file and offers to recover. Choosing **Recover autosave** immediately writes the recovered state to `session.json` (and only then removes the autosave), so the recovered work is on disk even if you quit right after. A manual Save deletes the autosave, so a leftover autosave that differs from `session.json` is the signal that a recovery point exists.
 
-Plugin and tape state are captured in the autosave along with everything else, so recovery restores your processing as it stood at the last tick.
+Autosave refreshes mixer, tape, built-in effect and multisample controls without interrupting playback. Third-party plugin state remains at its last successful manual Save or load, so use Save after changing a third-party plugin, including edits made inside its own editor. Such edits alone may not trigger the quit prompt. After a plugin capture fails, the session continues to ask about saving and keeps any existing recovery file until a save or load succeeds.
 
 ## What's in a session
 

@@ -302,6 +302,7 @@ private:
     // deletes the autosave.
     void timerCallback() override;
     void writeAutosave();
+    void discardWrittenAutosave();
     juce::File getAutosaveFileFor (const juce::File& sessionDir) const;
     bool autosaveIsNewerThan (const juce::File& sessionJson) const;
     void deleteAutosaveFor   (const juce::File& sessionDir) const;
@@ -313,22 +314,17 @@ private:
     static std::filesystem::path defaultSessionsFolder();
     void startUnsavedSessionIn (const std::filesystem::path& parent);
 
-    // Full JSON kept for quit-prompt diff + recovery; the heavy compare
-    // path uses the hash fields below.
+    // A failed capture keeps the session dirty until a save or load succeeds.
+    bool pluginStateCaptureFailed = false;
     juce::String lastSavedSessionJson;
     juce::String lastWrittenAutosaveJson;
-    // M8 fingerprint: cached hash of the volatile-state-stripped JSON
-    // so writeAutosave's dedup is a single 32-bit compare instead of a
-    // full juce::String equality scan against a possibly-MB-sized
-    // serialisation. juce::DefaultHashFunctions::generateHash returns
-    // an int; we store as uint32 to avoid the sign bit. 0 = unseen
-    // sentinel (legitimate hash collisions at 0 are vanishingly rare;
-    // the worst-case false positive is a missed autosave on the first
-    // tick after load, recovered on the next).
+    std::filesystem::path lastWrittenAutosavePath;
+    // Hashes filter repeated autosaves; matching hashes still require an exact
+    // comparison of JSON with volatile state stripped.
     std::uint32_t lastSavedSessionStrippedHash    { 0 };
     std::uint32_t lastWrittenAutosaveStrippedHash { 0 };
     void setLastSavedSessionJson (const juce::String& json);
-    void setLastWrittenAutosaveJson (const juce::String& json);
+    void setLastWrittenAutosaveJson (const juce::String& json, const std::filesystem::path& path);
 
     Session session;
     AudioEngine engine { session, appconfig::resolveWorkerCount() };
