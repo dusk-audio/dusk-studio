@@ -896,6 +896,9 @@ elseif (APPLE)
         ${CMAKE_SOURCE_DIR}/src/engine/ipc/platform/IpcSync_Mac.cpp)
 endif()
 if (_duskstudio_ipc_test_enabled)
+    if (UNIX)
+        target_sources(dusk-studio-tests PRIVATE ipc_channel_peer_close.cpp)
+    endif()
     target_sources(dusk-studio-tests PRIVATE
         ipc_stub_round_trip.cpp
         ipc_prepare_without_plugin.cpp
