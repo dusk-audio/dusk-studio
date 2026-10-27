@@ -350,6 +350,24 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         realtime_cpu_guard.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/RealtimeKit.cpp)
     target_link_libraries(dusk-studio-tests PRIVATE asound)
+    add_executable(dusk-alsa-output-tests
+        alsa_seq_output_schedule.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/midi/AlsaSeqMidi.cpp)
+    target_include_directories(dusk-alsa-output-tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    target_compile_options(dusk-alsa-output-tests PRIVATE -Wall -Wextra -Wpedantic)
+    target_link_libraries(dusk-alsa-output-tests PRIVATE asound Catch2::Catch2WithMain)
+    foreach(symbol IN ITEMS
+        snd_seq_open snd_seq_close snd_seq_set_client_name snd_seq_client_id
+        snd_seq_create_simple_port snd_seq_nonblock snd_seq_set_client_pool_output snd_seq_query_next_client
+        snd_seq_query_next_port snd_seq_connect_to snd_seq_disconnect_to
+        snd_seq_alloc_named_queue snd_seq_control_queue snd_seq_drain_output
+        snd_seq_get_queue_status snd_seq_queue_status_get_real_time
+        snd_seq_free_queue snd_seq_drop_output snd_seq_event_output_direct
+        snd_seq_poll_descriptors_count snd_seq_poll_descriptors
+        snd_seq_poll_descriptors_revents poll)
+        target_link_options(dusk-alsa-output-tests PRIVATE "-Wl,--wrap=${symbol}")
+    endforeach()
+    add_dependencies(dusk-studio-tests dusk-alsa-output-tests)
 elseif(APPLE AND DUSKSTUDIO_NATIVE_COREMIDI)
     target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_HAS_NATIVE_COREMIDI=1)
 endif()
@@ -1046,6 +1064,9 @@ endif()
 
 list(APPEND CMAKE_MODULE_PATH ${catch2_SOURCE_DIR}/extras)
 include(Catch)
+if(TARGET dusk-alsa-output-tests)
+    catch_discover_tests(dusk-alsa-output-tests)
+endif()
 # The environment-gated ALSA-seq loopback tests SKIP() on headless CI. Run in
 # isolation (catch_discover_tests filters each case by exact name) a skip-only
 # Catch2 run exits 4, which ctest scores as a failure. --allow-running-no-tests
