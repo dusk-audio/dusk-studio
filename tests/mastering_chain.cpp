@@ -7,11 +7,70 @@
 
 #include <juce_audio_basics/juce_audio_basics.h>
 
+#include <array>
 #include <cmath>
 #include <iterator>
 #include <vector>
 
 using Catch::Matchers::WithinAbs;
+
+TEST_CASE ("MasteringChain: latest scope window wraps and resets on prepare", "[MasteringChain][scope]")
+{
+    constexpr int capacity = 16384, block = 512;
+    duskstudio::MasteringParams params;
+    params.compEnabled.store (false);
+    params.limiterEnabled.store (false);
+    duskstudio::MasteringChain chain;
+    chain.bind (params);
+    std::vector<float> window (capacity + 1, -7.0f);
+    REQUIRE (chain.readScopeLatest (window.data(), capacity) == 0);
+    chain.prepare (48000.0, block);
+    REQUIRE_THAT (chain.getScopeSampleRate(), WithinAbs (48000.0, 1.0e-6));
+    REQUIRE (chain.readScopeLatest (nullptr, capacity) == 0);
+    REQUIRE (chain.readScopeLatest (window.data(), 0) == 0);
+    REQUIRE (chain.readScopeLatest (window.data(), -1) == 0);
+    REQUIRE_THAT (window.front(), WithinAbs (-7.0f, 1.0e-7f));
+    REQUIRE (chain.readScopeLatest (window.data(), capacity + 1) == capacity);
+    for (int n = 0; n < capacity; ++n)
+        REQUIRE_THAT (window[(std::size_t) n], WithinAbs (0.0f, 1.0e-7f));
+    REQUIRE_THAT (window.back(), WithinAbs (-7.0f, 1.0e-7f));
+
+    duskstudio::MasteringDigitalEq reference;
+    reference.prepare (48000.0, block);
+    reference.setEnabled (false);
+    std::array<float, block> left {}, right {}, expectedLeft {}, expectedRight {};
+    std::vector<float> expected;
+    for (int batch = 0; batch < 40; ++batch)
+    {
+        for (int n = 0; n < block; ++n)
+        {
+            const int sample = batch * block + n;
+            left[(std::size_t) n] = (float) ((sample * 37) % 2047 - 1023) * 0.0001f;
+            right[(std::size_t) n] = (float) ((sample * 17) % 1021 - 510) * 0.0002f;
+        }
+        expectedLeft = left; expectedRight = right;
+        reference.processInPlace (expectedLeft.data(), expectedRight.data(), block);
+        for (int n = 0; n < block; ++n)
+            expected.push_back (0.5f * (expectedLeft[(std::size_t) n] + expectedRight[(std::size_t) n]));
+        chain.processInPlace (left.data(), right.data(), block, false);
+    }
+    REQUIRE (chain.readScopeLatest (window.data(), capacity + 1) == capacity);
+    for (int n = 0; n < capacity; ++n)
+        REQUIRE_THAT (window[(std::size_t) n], WithinAbs (expected[expected.size() - capacity + (std::size_t) n], 1.0e-7f));
+    REQUIRE_THAT (window.back(), WithinAbs (-7.0f, 1.0e-7f));
+    REQUIRE (chain.readScopeLatest (window.data(), 17) == 17);
+    for (std::size_t n = 0; n < 17; ++n)
+        REQUIRE_THAT (window[n], WithinAbs (expected[expected.size() - 17 + n], 1.0e-7f));
+    chain.processInPlace (left.data(), right.data(), 0, false);
+    REQUIRE (chain.readScopeLatest (window.data(), 1) == 1);
+    REQUIRE_THAT (window.front(), WithinAbs (expected.back(), 1.0e-7f));
+
+    chain.prepare (96000.0, 64);
+    REQUIRE_THAT (chain.getScopeSampleRate(), WithinAbs (96000.0, 1.0e-6));
+    REQUIRE (chain.readScopeLatest (window.data(), capacity) == capacity);
+    for (int n = 0; n < capacity; ++n)
+        REQUIRE_THAT (window[(std::size_t) n], WithinAbs (0.0f, 1.0e-7f));
+}
 
 TEST_CASE ("Appendix A: active multiband compressor defaults and control ranges",
            "[MasteringChain][appendix]")

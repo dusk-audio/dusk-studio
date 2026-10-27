@@ -46,39 +46,36 @@ void MasteringChain::prepare (double sampleRate, int blockSize, int oversampling
     loudnessMeter.prepare (sampleRate, bs);
     phaseFeed.prepare (sampleRateForMeter);
 
-    // Scope ring: power-of-two, large enough that a single FFT window (2048)
-    // is rarely overwritten mid-copy even at large block sizes.
-    constexpr int kScopeRingSize = 1 << 14;   // 16384
-    scopeRing.assign (kScopeRingSize, 0.0f);
-    scopeRingMask.store (kScopeRingSize - 1, std::memory_order_relaxed);
+    scopeRingMask.store (0, std::memory_order_release);
+    for (auto& sample : scopeRing)
+        sample.store (0.0f, std::memory_order_relaxed);
     scopeWritePos.store (0, std::memory_order_relaxed);
+    scopeSampleRate.store (sampleRateForMeter, std::memory_order_relaxed);
+    scopeRingMask.store (kScopeRingSize - 1, std::memory_order_release);
 
     preparedBlockSize = bs;
 }
 
 void MasteringChain::pushScope (const float* L, const float* R, int n) noexcept
 {
-    const int mask = scopeRingMask.load (std::memory_order_relaxed);
+    const int mask = scopeRingMask.load (std::memory_order_acquire);
     if (mask == 0) return;
-    float* ring = scopeRing.data();
     long long wp = scopeWritePos.load (std::memory_order_relaxed);
     for (int i = 0; i < n; ++i)
-        ring[(int) (wp++ & mask)] = 0.5f * (L[i] + R[i]);
+        scopeRing[(std::size_t) (wp++ & mask)].store (0.5f * (L[i] + R[i]), std::memory_order_relaxed);
     scopeWritePos.store (wp, std::memory_order_release);
 }
 
 int MasteringChain::readScopeLatest (float* dest, int count) const noexcept
 {
-    const int ringSize = (int) scopeRing.size();
-    if (ringSize == 0 || count <= 0 || dest == nullptr) return 0;
-    count = std::min (count, ringSize);
-    const int mask = scopeRingMask.load (std::memory_order_relaxed);
+    if (count <= 0 || dest == nullptr) return 0;
+    count = std::min (count, kScopeRingSize);
+    const int mask = scopeRingMask.load (std::memory_order_acquire);
     if (mask == 0) return 0;   // matches pushScope; guards a mask-not-yet-stored race
     const long long wp = scopeWritePos.load (std::memory_order_acquire);
-    const float* ring = scopeRing.data();
     const long long start = wp - count;
     for (int i = 0; i < count; ++i)
-        dest[i] = ring[(int) ((start + i) & mask)];
+        dest[i] = scopeRing[(std::size_t) ((start + i) & mask)].load (std::memory_order_relaxed);
     return count;
 }
 
