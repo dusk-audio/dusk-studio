@@ -2,12 +2,17 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "engine/RecordManager.h"
+#include "engine/audiofile/FileReader.h"
+#include "engine/audiofile/FileWriter.h"
 #include "session/Session.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_core/juce_core.h>
 
+#include <algorithm>
+#include <cstdint>
+#include <memory>
 #include <tuple>
 #include <vector>
 
@@ -22,6 +27,94 @@ juce::File makeTempSessionDir()
                                     + juce::String (juce::Random::getSystemRandom().nextInt()));
     dir.createDirectory();
     return dir;
+}
+
+enum class FailureStage { Drain, Flush };
+
+struct SinkObservation
+{
+    std::int64_t persisted = 0;
+    int flushCalls = 0;
+    bool nativeOkay = true;
+};
+
+class FailingFileSink final : public dusk::audio::IFileWriteSink
+{
+public:
+    FailingFileSink (std::unique_ptr<dusk::audio::FileWriter> targetIn,
+                     SinkObservation& observationIn, FailureStage stageIn,
+                     std::int64_t prefixFramesIn, int bufferFrames)
+        : target (std::move (targetIn)), observation (observationIn), stage (stageIn),
+          prefixFrames (prefixFramesIn),
+          buffered ((size_t) bufferFrames * (size_t) target->numChannels()) {}
+
+    int numChannels() const noexcept override { return target->numChannels(); }
+
+    bool writeInterleaved (const float* data, std::int64_t frames) noexcept override
+    {
+        if (stage == FailureStage::Drain)
+        {
+            const auto keep = std::min (frames, prefixFrames);
+            observation.nativeOkay = target->writeInterleaved (data, keep);
+            if (observation.nativeOkay) observation.persisted = keep;
+            return false;
+        }
+        const auto samples = (size_t) frames * (size_t) numChannels();
+        if (samples > buffered.size() - bufferedSamples)
+        {
+            observation.nativeOkay = false;
+            return false;
+        }
+        std::copy_n (data, samples, buffered.data() + bufferedSamples);
+        bufferedSamples += samples;
+        return true;
+    }
+
+    bool flush() override
+    {
+        if (finished) return false;
+        finished = true;
+        ++observation.flushCalls;
+        const auto available = (std::int64_t) (bufferedSamples / (size_t) numChannels());
+        const auto keep = std::min (available, prefixFrames);
+        observation.nativeOkay = target->writeInterleaved (buffered.data(), keep)
+                              && target->flush();
+        if (observation.nativeOkay) observation.persisted = keep;
+        return false;
+    }
+
+private:
+    std::unique_ptr<dusk::audio::FileWriter> target;
+    SinkObservation& observation;
+    FailureStage stage;
+    std::int64_t prefixFrames;
+    std::vector<float> buffered;
+    size_t bufferedSamples = 0;
+    bool finished = false;
+};
+
+duskstudio::RecordManager::WriteSinkFactory failingWriterFactory (
+    SinkObservation& observation, FailureStage stage, std::int64_t prefixFrames,
+    int bufferFrames)
+{
+    return [&observation, stage, prefixFrames, bufferFrames] (
+        const std::filesystem::path& path, const dusk::audio::WriteSpec& spec)
+        -> std::unique_ptr<dusk::audio::IFileWriteSink>
+    {
+        auto writer = dusk::audio::FileWriter::create (path, spec);
+        REQUIRE (writer != nullptr);
+        if (path.filename().u8string().find ("track01_") == 0)
+            return std::make_unique<FailingFileSink> (
+                std::move (writer), observation, stage, prefixFrames, bufferFrames);
+        return writer;
+    };
+}
+
+std::int64_t fileFrames (const juce::File& file)
+{
+    auto reader = dusk::audio::FileReader::open (
+        std::filesystem::u8path (file.getFullPathName().toStdString()));
+    return reader != nullptr ? reader->info().numFrames : -1;
 }
 } // namespace
 
@@ -263,5 +356,114 @@ TEST_CASE ("RecordManager saves each take as a 24-bit WAV in audio/ named by tra
         REQUIRE ((int) reader->lengthInSamples == kTotal);
     }
 
+    dir.deleteRecursively();
+}
+
+TEST_CASE ("RecordManager bounds partial takes after final sink failures",
+           "[recording][recordmanager][finalization]")
+{
+    auto stage = FailureStage::Drain;
+    SECTION ("the last accepted block gets a short sink write") { stage = FailureStage::Drain; }
+    SECTION ("the final flush persists only a prefix") { stage = FailureStage::Flush; }
+
+    constexpr int frames = 256;
+    const auto dir = makeTempSessionDir();
+    duskstudio::Session session;
+    session.setSessionDirectory (dir);
+    for (int track : { 0, 1 })
+    {
+        session.track (track).mode.store ((int) duskstudio::Track::Mode::Mono,
+                                          std::memory_order_relaxed);
+        session.setTrackArmed (track, true);
+    }
+    SinkObservation observation;
+    duskstudio::RecordManager recorder (
+        session, failingWriterFactory (observation, stage, frames / 2, frames));
+    REQUIRE (recorder.startRecording (48000.0, 0));
+    REQUIRE (recorder.getLastSetupFailures().empty());
+    const std::vector<float> block (frames, 0.25f);
+    recorder.writeInputBlock (0, block.data(), nullptr, frames);
+    recorder.writeInputBlock (1, block.data(), nullptr, frames);
+    recorder.stopRecording (frames);
+
+    CHECK (observation.nativeOkay);
+    CHECK (observation.persisted == frames / 2);
+    CHECK (observation.flushCalls == (stage == FailureStage::Flush ? 1 : 0));
+    const auto& partial = session.track (0);
+    REQUIRE (partial.takes.size() == 1);
+    REQUIRE (partial.regions.size() == 1);
+    CHECK (partial.takes.front().lengthInSamples == frames / 2);
+    CHECK (partial.regions.front().lengthInSamples == frames / 2);
+    CHECK (fileFrames (partial.takes.front().file) == frames / 2);
+    const auto& good = session.track (1);
+    REQUIRE (good.takes.size() == 1);
+    REQUIRE (good.regions.size() == 1);
+    CHECK (good.takes.front().lengthInSamples == frames);
+    CHECK (fileFrames (good.takes.front().file) == frames);
+    const auto& errors = recorder.getLastRecordErrors();
+    REQUIRE (errors.size() == 1);
+    CHECK (errors.front().trackIndex == 0);
+    CHECK (errors.front().kind == duskstudio::RecordManager::RecordErrorKind::WavWrite);
+    CHECK (errors.front().count == 1);
+    dir.deleteRecursively();
+}
+
+TEST_CASE ("RecordManager keeps only complete persisted loop passes after a final flush failure",
+           "[recording][recordmanager][finalization]")
+{
+    constexpr int passFrames = 64;
+    int prefixFrames = passFrames + passFrames / 2;
+    SECTION ("the final persisted pass is partial") { prefixFrames = passFrames + passFrames / 2; }
+    SECTION ("the prefix ends at a complete pass") { prefixFrames = passFrames; }
+    SECTION ("no complete pass persisted") { prefixFrames = passFrames / 2; }
+
+    const auto dir = makeTempSessionDir();
+    duskstudio::Session session;
+    session.setSessionDirectory (dir);
+    for (int track : { 0, 1 })
+    {
+        session.track (track).mode.store ((int) duskstudio::Track::Mode::Mono,
+                                          std::memory_order_relaxed);
+        session.setTrackArmed (track, true);
+    }
+    SinkObservation observation;
+    duskstudio::RecordManager recorder (session, failingWriterFactory (
+        observation, FailureStage::Flush, prefixFrames, 2 * passFrames));
+    const duskstudio::RecordManager::LoopCapturePlan plan { true, 0, passFrames, 0, passFrames };
+    REQUIRE (recorder.startRecording (48000.0, 0, 0, plan));
+    const std::vector<float> block (passFrames, 0.25f);
+    for (int pass = 1; pass <= 2; ++pass)
+    {
+        const auto span = recorder.coordinateLoopCaptureSpan (pass, 0, 0, passFrames);
+        REQUIRE (span.numSamples == passFrames);
+        recorder.beginLoopCaptureSpan (span);
+        for (int track : { 0, 1 })
+            recorder.writeInputBlock (track, block.data(), nullptr, passFrames, &span);
+    }
+    recorder.stopRecording (passFrames);
+
+    CHECK (observation.nativeOkay);
+    CHECK (observation.persisted == prefixFrames);
+    CHECK (observation.flushCalls == 1);
+    const auto& partial = session.track (0);
+    CHECK (partial.takes.size() == (size_t) (prefixFrames / passFrames));
+    CHECK (partial.regions.size() == (size_t) (prefixFrames / passFrames));
+    if (! partial.takes.empty())
+    {
+        CHECK (partial.takes.front().lengthInSamples == passFrames);
+        CHECK (partial.takes.front().sourceOffset == 0);
+        CHECK (partial.regions.front().provenance.loopPassOrdinal == 1);
+        CHECK (fileFrames (partial.takes.front().file) == prefixFrames);
+    }
+    const auto& good = session.track (1);
+    REQUIRE (good.takes.size() == 2);
+    REQUIRE (good.regions.size() == 1);
+    CHECK (good.regions.front().provenance.loopPassOrdinal == 2);
+    CHECK (fileFrames (good.takes.front().file) == 2 * passFrames);
+    const auto& errors = recorder.getLastRecordErrors();
+    REQUIRE (errors.size() == 1);
+    CHECK (errors.front().trackIndex == 0);
+    CHECK (errors.front().kind == duskstudio::RecordManager::RecordErrorKind::WavWrite);
+    CHECK (errors.front().count == 1);
     dir.deleteRecursively();
 }
