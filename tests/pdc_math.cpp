@@ -4,6 +4,7 @@
 
 #include "dsp/ChannelStrip.h"
 #include "engine/PdcMath.h"
+#include "engine/PluginManager.h"
 
 #include <array>
 #include <cmath>
@@ -51,7 +52,7 @@ struct StripPdcHarness
         }
     }
 
-    void run (bool gate = true)
+    void run (bool gate = true, bool frozen = false)
     {
         masterL.fill (0.0f); masterR.fill (0.0f);
         for (auto& bus : busL) bus.fill (0.0f);
@@ -61,7 +62,8 @@ struct StripPdcHarness
         juce::MidiBuffer midi;
         strip.processAndAccumulate (left.data(), stereo ? right.data() : nullptr, midi, false,
                                     masterL.data(), masterR.data(), busLPtrs, busRPtrs,
-                                    auxLPtrs, auxRPtrs, kBlock, gate);
+                                    auxLPtrs, auxRPtrs, kBlock, gate,
+                                    nullptr, 0, nullptr, 0, frozen);
     }
 
     void signal (int block)
@@ -101,6 +103,110 @@ struct StripPdcHarness
             CAPTURE (c, delay);
             REQUIRE (peaks[c] > 0.05f);
             REQUIRE (positions[c] == delay);
+        }
+    }
+};
+
+class TransparentDelay final : public juce::AudioPluginInstance
+{
+public:
+    using juce::AudioPluginInstance::processBlock;
+
+    explicit TransparentDelay (int delay)
+        : AudioPluginInstance (BusesProperties()
+            .withInput ("Input", juce::AudioChannelSet::stereo(), true)
+            .withOutput ("Output", juce::AudioChannelSet::stereo(), true)), latency (delay) {}
+
+    const juce::String getName() const override { return "Transparent delay"; }
+    void prepareToPlay (double, int) override
+    {
+        for (auto& line : lines) line.setMaximumDelayInSamples (ChannelStrip::kMaxPdcSamples);
+        setDelay (latency);
+    }
+    void setDelay (int delay)
+    {
+        latency = delay;
+        for (auto& line : lines) line.setDelay (delay);
+        setLatencySamples (delay);
+    }
+    void releaseResources() override {}
+    void processBlock (juce::AudioBuffer<float>& audio, juce::MidiBuffer&) override
+    {
+        for (int c = 0; c < audio.getNumChannels(); ++c)
+            for (int i = 0; i < audio.getNumSamples(); ++i)
+            {
+                lines[(std::size_t) c].pushSample (audio.getSample (c, i));
+                audio.setSample (c, i, lines[(std::size_t) c].popSample());
+            }
+        if (bypassAfterProcess != nullptr)
+        {
+            bypassAfterProcess->setBypassed (true);
+            bypassAfterProcess = nullptr;
+        }
+    }
+    juce::AudioProcessorEditor* createEditor() override { return nullptr; }
+    bool hasEditor() const override { return false; }
+    bool acceptsMidi() const override { return false; }
+    bool producesMidi() const override { return false; }
+    double getTailLengthSeconds() const override { return 0.0; }
+    int getNumPrograms() override { return 1; }
+    int getCurrentProgram() override { return 0; }
+    void setCurrentProgram (int) override {}
+    const juce::String getProgramName (int) override { return {}; }
+    void changeProgramName (int, const juce::String&) override {}
+    void getStateInformation (juce::MemoryBlock&) override {}
+    void setStateInformation (const void*, int) override {}
+    void fillInPluginDescription (juce::PluginDescription& description) const override
+    {
+        description.name = getName();
+        description.pluginFormatName = "Test";
+        description.fileOrIdentifier = "transparent-delay";
+    }
+
+    duskstudio::PluginSlot* bypassAfterProcess = nullptr;
+
+private:
+    std::array<dusk::audio::IntDelayLine, 2> lines;
+    int latency;
+};
+
+struct InsertPdcHarness : StripPdcHarness
+{
+    duskstudio::PluginManager manager;
+    duskstudio::HardwareInsertParams hardwareParams;
+    TransparentDelay* plugin = nullptr;
+
+    InsertPdcHarness (bool useStereo, int latency, bool hardware = false)
+        : StripPdcHarness (useStereo, 0)
+    {
+        strip.insertMode.store (hardware ? ChannelStrip::kInsertHardware : ChannelStrip::kInsertPlugin);
+        if (hardware)
+        {
+            hardwareParams.routing.mutate ([latency] (auto& routing) { routing.latencySamples = latency; });
+            strip.bindHardwareInsert (hardwareParams);
+        }
+        strip.prepare (48000.0, kBlock, 1);
+        if (hardware)
+            strip.getHardwareInsertSlot().setOfflineRender (true);
+        else
+        {
+            strip.bindPluginManager (manager);
+            auto instance = std::make_unique<TransparentDelay> (latency);
+            plugin = instance.get();
+            REQUIRE (strip.getPluginSlot().installInProcessInstanceForTest (std::move (instance)));
+        }
+    }
+
+    void setLatency (int latency)
+    {
+        if (plugin != nullptr)
+        {
+            plugin->setDelay (latency);
+            REQUIRE (strip.getPluginSlot().refreshLatencyIfChanged());
+        }
+        else
+        {
+            hardwareParams.routing.mutate ([latency] (auto& routing) { routing.latencySamples = latency; });
         }
     }
 };
@@ -212,4 +318,76 @@ TEST_CASE ("Channel strip PDC retargets after an inactive gate", "[pdc][channel-
     actual.run (false);
     REQUIRE (actual.strip.getLastProcessedSamples() == 0);
     actual.expectImpulseAt (change[1]);
+}
+
+TEST_CASE ("Channel insert LED preserves the wet path timing through both transitions", "[pdc][channel-strip][insert-led]")
+{
+    const bool stereo = GENERATE (false, true);
+    const int latency = GENERATE (96, 193, ChannelStrip::kMaxPdcSamples);
+    CAPTURE (stereo, latency);
+    InsertPdcHarness actual { stereo, latency }, reference { stereo, latency };
+    for (int block = 0; block < latency / kBlock + 40; ++block)
+    {
+        actual.signal (block); reference.signal (block);
+        actual.run(); reference.run();
+    }
+    for (const bool bypassed : { true, false })
+    {
+        actual.params.insertBypassed.store (bypassed);
+        for (int block = 40; block < 72; ++block)
+        {
+            CAPTURE (bypassed, block);
+            actual.signal (block); reference.signal (block);
+            actual.run(); reference.run();
+            expectSameOutput (actual, reference);
+        }
+    }
+    actual.params.insertBypassed.store (true);
+    warm (actual, reference);
+    actual.plugin->bypassAfterProcess = &actual.strip.getPluginSlot();
+    reference.plugin->bypassAfterProcess = &reference.strip.getPluginSlot();
+    for (int block = 72; block < 76; ++block)
+    {
+        actual.signal (block); reference.signal (block);
+        actual.run(); reference.run();
+        REQUIRE (actual.strip.getPluginSlot().getLatencySamples() == 0);
+        expectSameOutput (actual, reference);
+    }
+}
+
+TEST_CASE ("Channel insert LED follows changed plugin latency with warm dry history", "[pdc][channel-strip][insert-led]")
+{
+    const bool stereo = GENERATE (false, true);
+    const int latency = GENERATE (0, 96, 257);
+    CAPTURE (stereo, latency);
+    InsertPdcHarness actual { stereo, 193 }, reference { stereo, 193 };
+    warm (actual, reference);
+    actual.params.insertBypassed.store (true);
+    for (int block = 40; block < 88; ++block)
+    {
+        if (block == 60) { actual.setLatency (latency); reference.setLatency (latency); }
+        if (block == 68) actual.params.insertBypassed.store (false);
+        actual.signal (block); reference.signal (block);
+        actual.run(); reference.run();
+        CAPTURE (block);
+        expectSameOutput (actual, reference);
+    }
+}
+
+TEST_CASE ("Channel insert LED aligns hardware dry audio including frozen playback", "[pdc][channel-strip][insert-led]")
+{
+    const bool frozen = GENERATE (false, true);
+    const bool stereo = GENERATE (false, true);
+    CAPTURE (frozen, stereo);
+    InsertPdcHarness actual { stereo, 193, true }, reference { stereo, 193, true };
+    for (int block = 0; block < 120; ++block)
+    {
+        if (block == 40 || block == 80) actual.params.insertBypassed.store (true);
+        if (block == 60 || block == 100) actual.params.insertBypassed.store (false);
+        if (block == 85) { actual.setLatency (96); reference.setLatency (96); }
+        actual.signal (block); reference.signal (block);
+        actual.run (true, frozen); reference.run (true, frozen);
+        CAPTURE (block);
+        expectSameOutput (actual, reference);
+    }
 }

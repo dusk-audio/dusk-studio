@@ -467,6 +467,14 @@ private:
 
     std::vector<float> insertScratchL;
     std::vector<float> insertScratchR;
+    std::vector<float> insertDryHistoryL;
+    std::vector<float> insertDryHistoryR;
+    int insertDryWrite = 0;
+    bool insertDryHistoryActive = false;
+    int insertDrySource = 0;
+    int insertDryLatency = 0;
+    void resetInsertDryHistory() noexcept;
+    void alignInsertDry (int numSamples, bool mono, int latency) noexcept;
 
     // PDC compensation delay (post-insert / pre-EQ). Two single-channel lines
     // mirror the HardwareInsertSlot dry-delay pattern. The delay length only

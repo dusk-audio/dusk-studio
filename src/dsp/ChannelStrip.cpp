@@ -66,6 +66,12 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
         activeInsertMode == kInsertEmpty ? 0.0f : 1.0f);
     insertScratchL.assign ((size_t) std::max (1, blockSize), 0.0f);
     insertScratchR.assign ((size_t) std::max (1, blockSize), 0.0f);
+    insertDryHistoryL.assign ((size_t) kMaxPdcSamples, 0.0f);
+    insertDryHistoryR.assign ((size_t) kMaxPdcSamples, 0.0f);
+    insertDryWrite = 0;
+    insertDryHistoryActive = false;
+    insertDrySource = 0;
+    insertDryLatency = 0;
 
     // PDC compensation delay lines, pre-sized to the max so setDelay() is a pure
     // parameter update (no RT allocation). The compensation amount itself is set
@@ -967,8 +973,52 @@ int ChannelStrip::getInsertPluginLatencySamples() const noexcept
     return pluginSlot.getLatencySamples();
 }
 
+void ChannelStrip::resetInsertDryHistory() noexcept
+{
+    if (! insertDryHistoryActive) return;
+    std::fill (insertDryHistoryL.begin(), insertDryHistoryL.end(), 0.0f);
+    std::fill (insertDryHistoryR.begin(), insertDryHistoryR.end(), 0.0f);
+    insertDryWrite = 0;
+    insertDryHistoryActive = false;
+}
+
+void ChannelStrip::alignInsertDry (int numSamples, bool mono, int latency) noexcept
+{
+    // Dry alignment shares the existing cross-track PDC capacity.
+    if (activeInsertMode == kInsertEmpty
+        || (activeInsertMode == kInsertPlugin && ! hasLoadedEffectMidiConsumer())
+        || latency < 0 || latency > kMaxPdcSamples)
+    {
+        resetInsertDryHistory();
+        return;
+    }
+    // Hardware clears its dry history when the measured loop latency changes.
+    if (activeInsertMode == kInsertHardware && latency != insertDryLatency)
+        resetInsertDryHistory();
+    insertDryLatency = latency;
+    // Keep history warm at full wet, including both lines on a mono pass.
+    static_assert ((kMaxPdcSamples & (kMaxPdcSamples - 1)) == 0);
+    constexpr int mask = kMaxPdcSamples - 1;
+    for (int i = 0; i < numSamples; ++i)
+    {
+        const auto index = (size_t) i;
+        const float leftInput = insertScratchL[index];
+        const float rightInput = mono ? leftInput : insertScratchR[index];
+        const auto read = (size_t) ((insertDryWrite - latency + kMaxPdcSamples) & mask);
+        const float left = latency == 0 ? leftInput : insertDryHistoryL[read];
+        const float right = latency == 0 ? rightInput : insertDryHistoryR[read];
+        insertDryHistoryL[(size_t) insertDryWrite] = leftInput;
+        insertDryHistoryR[(size_t) insertDryWrite] = rightInput;
+        insertDryWrite = (insertDryWrite + 1) & mask;
+        insertScratchL[index] = left;
+        if (! mono) insertScratchR[index] = right;
+    }
+    insertDryHistoryActive = true;
+}
+
 void ChannelStrip::drainPdcForSkip() noexcept
 {
+    resetInsertDryHistory();
     // Same series-tail length the per-track silent skip uses: PDC delay and
     // oversampler are chained, so when both are active the held tail is the SUM.
     // Comparing against kMaxPdcSamples instead would skip the reset once
@@ -1090,6 +1140,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
         else
         {
             activeInsertMode = req;
+            resetInsertDryHistory();
             if (activeInsertMode == kInsertHardware)
                 hardwareSlot.resetTailsAndDelayLine();
             activeInsertGain.setTargetValue (activeInsertMode == kInsertEmpty
@@ -1113,6 +1164,13 @@ void ChannelStrip::processAndAccumulate (const float* inL,
     currentOutRDb.store (-100.0f, std::memory_order_relaxed);
 
     if (numSamples == 0) return;
+
+    const int drySource = isMidi && ! isFrozen ? 0 : (isFrozen ? 2 : 1);
+    if (drySource != insertDrySource)
+    {
+        resetInsertDryHistory();
+        insertDrySource = drySource;
+    }
 
     if (insertFedMidi && ! isMidi)
         insertOwesMidiReset = true;
@@ -1151,9 +1209,15 @@ void ChannelStrip::processAndAccumulate (const float* inL,
     }
 
     if ((int) tempMono.size() < numSamples)
+    {
+        resetInsertDryHistory();
         return;  // can't allocate on the audio thread; bail safely (silence)
+    }
     if (stereo && tempStereoBuffer.numSamples() < numSamples)
+    {
+        resetInsertDryHistory();
         return;
+    }
 
     // Skip the heavy DSP when the strip isn't passing to master and the
     // recorder doesn't need a processed buffer either. With 24 strips each
@@ -1306,6 +1370,8 @@ void ChannelStrip::processAndAccumulate (const float* inL,
 
         std::memcpy (insertScratchL.data(), tempMono.data(),
                       sizeof (float) * (size_t) numSamples);
+        const int insertLatency = activeInsertMode == kInsertPlugin
+            ? getInsertPluginLatencySamples() : 0;
         if (activeInsertMode == kInsertPlugin)
         {
             const auto* owedReset = takeOwedMidiReset();
@@ -1400,6 +1466,8 @@ void ChannelStrip::processAndAccumulate (const float* inL,
                 tempMono[(size_t) i] = 0.5f
                     * (tempMono[(size_t) i] + insertScratchR[(size_t) i]);
         }
+        alignInsertDry (numSamples, true, activeInsertMode == kInsertHardware
+            ? hardwareSlot.getLatencySamples() : insertLatency);
         // Crossfade pre-insert vs post-insert by the gate.
         for (int i = 0; i < numSamples; ++i)
         {
@@ -1530,6 +1598,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
                 hardwareSlot.processStereoBlock (L, R, numSamples,
                                                   deviceInputs, numDeviceInputs,
                                                   deviceOutputs, numDeviceOutputs);
+                alignInsertDry (numSamples, false, hardwareSlot.getLatencySamples());
                 for (int i = 0; i < numSamples; ++i)
                 {
                     const float g = activeInsertGain.getNextValue();
@@ -1613,6 +1682,9 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             // Stash pre-insert for the crossfade gate.
             std::memcpy (insertScratchL.data(), L, sizeof (float) * (size_t) numSamples);
             std::memcpy (insertScratchR.data(), R, sizeof (float) * (size_t) numSamples);
+            // A slot can auto-bypass after rendering its last delayed block.
+            const int insertLatency = activeInsertMode == kInsertPlugin
+                ? getInsertPluginLatencySamples() : 0;
 
             if (activeInsertMode == kInsertPlugin)
             {
@@ -1651,6 +1723,8 @@ void ChannelStrip::processAndAccumulate (const float* inL,
                                                   deviceInputs, numDeviceInputs,
                                                   deviceOutputs, numDeviceOutputs);
             }
+            alignInsertDry (numSamples, false, activeInsertMode == kInsertHardware
+                ? hardwareSlot.getLatencySamples() : insertLatency);
             // Crossfade pre vs post by the gate (empty mode collapses to
             // pre, plugin/hardware ramp from pre to their processed output).
             for (int i = 0; i < numSamples; ++i)
