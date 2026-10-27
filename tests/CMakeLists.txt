@@ -1107,7 +1107,7 @@ catch_discover_tests(dusk-studio-tests
 # [ipc] cases start plug-in hosts and assert on bounded response times. Run
 # them serially so other cases cannot starve their control threads.
 catch_discover_tests(dusk-studio-tests
-    TEST_SPEC "[ipc]~[sfz-shutdown]~[sfz-service-disk-full]"
+    TEST_SPEC "[ipc]~[scan-grandchild-fixture]~[sfz-shutdown]~[sfz-service-disk-full]"
     PROPERTIES RUN_SERIAL TRUE)
 catch_discover_tests(dusk-studio-tests
     TEST_SPEC "[sfz-shutdown]"

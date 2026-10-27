@@ -123,7 +123,9 @@ TEST_CASE ("PluginSlot re-reads a plugin's latency when a save re-prepares it", 
 
     lifecycle->latencyOnPrepare = 128;
     std::string captureError = "previous capture failure";
-    CHECK (slot.getStateBase64ForSave (0, &captureError).isEmpty());
+    juce::MemoryBlock savedState;
+    CHECK (savedState.fromBase64Encoding (slot.getStateBase64ForSave (0, &captureError)));
+    CHECK (savedState.getSize() == 0);
     CHECK (captureError.empty());
     CHECK (lifecycle->releaseCalls == 1);
     CHECK (lifecycle->prepareCalls == 2);
