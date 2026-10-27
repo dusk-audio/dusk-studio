@@ -5,11 +5,15 @@
 #include "../../RecordManager.h"
 #include "../../device/DeviceManager.h"
 #include "../../device/IODevice.h"
+#include "../../audiofile/FileReader.h"
 #include "../../sfz/SfzLibraryService.h"
 #include "../../../foundation/Fs.h"
 #include "../../../session/Session.h"
 
+#include <algorithm>
 #include <cstdint>
+#include <cstdlib>
+#include <cmath>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -104,6 +108,144 @@ void armTrack (ScenarioContext& ctx)
     track.inputSource.store (-2, std::memory_order_relaxed);
     track.recordArmed.store (true, std::memory_order_relaxed);
     ctx.session().recomputeRtCounters();
+}
+
+#if defined(DUSKSTUDIO_HAS_PIPEWIRE)
+class LossLifecycle final : public device::IODeviceCallback
+{
+public:
+    void audioDeviceIOCallback (const float* const*, int, float* const* out, int numOut, int numSamples,
+                                const device::CallbackContext&) override
+    {
+        for (int ch = 0; ch < numOut; ++ch)
+            if (out[ch] != nullptr) std::fill (out[ch], out[ch] + numSamples, 0.0f);
+    }
+    void audioDeviceAboutToStart (device::IODevice* opened) override
+    {
+        device = opened;
+        ++starts;
+    }
+    void audioDeviceStopped() override
+    {
+        closedBeforeStop = device != nullptr && ! device->isOpen() && ! device->isPlaying();
+        ++stops;
+    }
+
+    device::IODevice* device = nullptr;
+    int starts = 0, stops = 0;
+    bool closedBeforeStop = false;
+};
+#endif
+
+std::optional<ScenarioResult> pipewireServerLossCommits (ScenarioContext& ctx)
+{
+#if ! defined(DUSKSTUDIO_HAS_PIPEWIRE)
+    return ScenarioResult::skip ("built without the native PipeWire backend");
+#else
+    const char* handshakeEnv = std::getenv ("DUSKSTUDIO_PIPEWIRE_LOSS_HANDSHAKE");
+    const char* runtimeEnv = std::getenv ("PIPEWIRE_RUNTIME_DIR");
+    if (handshakeEnv == nullptr || runtimeEnv == nullptr)
+        return ScenarioResult::skip ("requires an owned private PipeWire loss harness");
+    const auto handshake = std::filesystem::u8path (handshakeEnv);
+    const auto runtime = std::filesystem::u8path (runtimeEnv);
+    if (handshake.parent_path() != runtime || runtime.parent_path() != "/tmp"
+        || runtime.filename().string().find ("dusk-pw.") != 0
+        || ! std::filesystem::exists (handshake / "owned-null-graph"))
+        return ScenarioResult::fail ("the PipeWire loss harness is not an owned null graph");
+
+    auto& engine = ctx.engine();
+    auto& manager = engine.getDeviceManager();
+    auto& transport = engine.getTransport();
+    restoreOfflinePrepare (ctx);
+    ctx.keep (ctx.session().countInEnabled);
+    const int recordingOffset = engine.getRecordingLatencyOffsetSamples();
+    ctx.cleanup ([&engine, recordingOffset] { engine.setRecordingLatencyOffsetSamples (recordingOffset); });
+    ctx.session().countInEnabled.store (false);
+    engine.setRecordingLatencyOffsetSamples (0);
+    transport.setLoopEnabled (false);
+    transport.setPunchEnabled (false);
+    const auto lifecycle = std::make_shared<LossLifecycle>();
+    const auto banners = std::make_shared<int> (0);
+    engine.setDeviceLostAlertSink ([banners] (std::string) { ++*banners; });
+    ctx.cleanup ([&engine, lifecycle]
+    {
+        engine.getDeviceManager().removeCallback (lifecycle.get());
+        engine.detachAudioCallback();
+        engine.getDeviceManager().closeDevice();
+        engine.stop();
+        engine.getSfzLibrary().cancel();
+    });
+    engine.reattachAudioCallback();
+    const auto error = manager.initialise (2, 2, {}, false);
+    if (! ctx.expect (error.empty(), "could not open the private null graph: " + error))
+        return ctx.verdict();
+    auto* device = manager.getCurrentDevice();
+    if (! ctx.expect (device != nullptr && device->isOpen() && device->isPlaying(),
+                      "the private device did not start")) return ctx.verdict();
+    const double rate = device->getCurrentSampleRate();
+    const int block = device->getCurrentBufferSizeSamples();
+    manager.addCallback (lifecycle.get());
+    armTrack (ctx);
+    ctx.session().track (kTrack).inputSource.store (0);
+    transport.setPlayhead (kTakeStart);
+    engine.record();
+    if (! ctx.expect (engine.getRecordManager().isActive(), "the private device take did not start"))
+        return ctx.verdict();
+    ctx.expect (engine.getSfzLibrary().requestInstalled(), "could not queue library work during recording");
+    ctx.waitUntil ([&engine, block]
+    {
+        return engine.getTransport().getCommittedPlayhead() >= kTakeStart + block * 16
+            && engine.getSfzLibrary().snapshot().state == sfz::LibraryState::Paused;
+    }, 5000, [&ctx, &engine, handshake, lifecycle, banners, rate, block]
+    {
+        ctx.expect (! engine.getSfzLibrary().resume(), "library work was not paused by the take");
+        if (! ctx.expect (dusk::fs::writeStringToFile (handshake / "recording", "ready"),
+                          "could not notify the private server owner"))
+        { ctx.complete (ctx.verdict()); return; }
+        ctx.waitUntil ([&engine, lifecycle, banners]
+        {
+            return engine.getDeviceManager().getCurrentDevice() == nullptr
+                && engine.getTransport().isStopped() && ! engine.getRecordManager().isActive()
+                && lifecycle->stops == 1 && *banners == 1;
+        }, 5000, [&ctx, &engine, lifecycle, banners, rate, block]
+        {
+            ctx.expect (lifecycle->starts == 1 && lifecycle->closedBeforeStop,
+                        "the terminal PipeWire flags were not visible before one stopped callback");
+            ctx.expect (! engine.getDeviceManager().isDeviceChangePending(),
+                        "server loss was marked as a deliberate device change");
+            ctx.expect (engine.getCurrentSampleRate() <= 0.0 && engine.getCurrentBlockSize() == 0,
+                        "the disconnected device left the engine prepared");
+            const auto expected = engine.getTransport().getCommittedPlayhead() - kTakeStart;
+            const auto& regions = ctx.session().track (kTrack).regions;
+            if (ctx.expect (regions.size() == 1, "server loss did not commit exactly one interrupted take"))
+            {
+                const auto& region = regions.front();
+                ctx.expect (region.timelineStart == kTakeStart && region.lengthInSamples == expected
+                            && expected >= block * 16 && expected % block == 0,
+                            "the committed take did not preserve the full captured-block prefix");
+                auto reader = dusk::audio::FileReader::open (region.filePath());
+                if (ctx.expect (reader != nullptr, "the committed take WAV was not readable"))
+                {
+                    ctx.expect (reader->info().numFrames == expected && reader->info().numChannels == 1
+                                && std::abs (reader->info().sampleRate - rate) < 1.0,
+                                "the committed take WAV header lost the captured prefix");
+                    std::vector<float> samples (static_cast<std::size_t> (expected));
+                    float* dest[] { samples.data() };
+                    ctx.expect (reader->read (dest, 1, 0, expected) == expected,
+                                "the committed take WAV prefix could not be read in full");
+                }
+            }
+            ctx.expect (engine.getSfzLibrary().resume(), "server loss left the library recording pause held");
+            ctx.later (100, [&ctx, lifecycle, banners]
+            {
+                ctx.expect (lifecycle->stops == 1 && *banners == 1,
+                            "one server loss delivered duplicate lifecycle notifications");
+                ctx.complete (ctx.verdict());
+            });
+        }, "PipeWire server loss did not close the device and finalize the active take");
+    }, "the private device did not capture blocks and pause library work");
+    return std::nullopt;
+#endif
 }
 
 // Pulling the interface out mid-take stops the transport, commits what was
@@ -445,6 +587,9 @@ const ScenarioRegistrar noDeviceSoundfontRenderRegistrar { Scenario {
 const ScenarioRegistrar lossRegistrar { Scenario {
     "device.loss_stops_and_commits", { "device", "record", "transport" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return lossStopsAndCommits (ctx); } } };
+const ScenarioRegistrar pipewireLossRegistrar { Scenario {
+    "device.pipewire_server_loss_commits", { "device", "record", "pipewire" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return pipewireServerLossCommits (ctx); } } };
 const ScenarioRegistrar noDeviceRegistrar { Scenario {
     "device.none_open_refuses_record", { "device", "record" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return noDeviceRefusesRecord (ctx); } } };

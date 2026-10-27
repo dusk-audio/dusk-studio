@@ -69,7 +69,11 @@ public:
 
     void  start (device::IODeviceCallback* newCallback) override;
     void  stop() override;
-    bool  isPlaying() override                 { return isStarted.load (std::memory_order_acquire); }
+    bool  isPlaying() override
+    {
+        return isStarted.load (std::memory_order_acquire)
+            && isDeviceOpen.load (std::memory_order_acquire);
+    }
 
     std::string getLastError() override         { return lastError; }
 
@@ -101,8 +105,8 @@ public:
     // callback lock.
     void onProcess (struct spa_io_position* position) noexcept;
 
-    // pw_filter state-change entry point (C trampoline in the .cpp). Runs on the
-    // thread loop; wakes open()'s bounded wait so it can read the resolved state.
+    // Runs on the thread loop. Terminal states publish closure for the manager's
+    // message-thread watcher; teardown cannot run while the loop lock is held.
     void onFilterStateChanged() noexcept;
 
 private:
