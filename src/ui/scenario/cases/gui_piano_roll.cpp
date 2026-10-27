@@ -191,15 +191,17 @@ std::optional<ScenarioResult> runPianoOptions (GuiHost& host, ScenarioContext& c
     if (! engine.getTransport().isStopped()) return ScenarioResult::skip ("requires stopped transport");
     const auto originalDir = currentSessionDirectory (session);
     const auto originalStage = engine.getStage();
+    const bool originalKeySnap = session.pianoRollKeySnap;
     const auto restore = ctx.tempDir() / "restore.json";
     if (! SessionSerializer::save (session, restore))
         return ScenarioResult::fail ("could not save the initial session");
-    ctx.cleanup ([&host, &session, originalDir, originalStage, restore]
+    ctx.cleanup ([&host, &session, originalDir, originalStage, originalKeySnap, restore]
     {
         drainModals (host);
         host.closeRegionEditors();
         host.openSession (restore);
         applySessionDirectory (session, originalDir);
+        session.pianoRollKeySnap = originalKeySnap;
         host.switchToStage (guiStage (originalStage));
     });
     MidiRegion region;
@@ -271,6 +273,104 @@ std::optional<ScenarioResult> runPianoOptions (GuiHost& host, ScenarioContext& c
         steps->push_back ({ 100, [&host, &ctx, colour]
         { ctx.expect (host.pianoOptions()[3] == colour, "C cycled to the wrong note-colour mode"); } });
     }
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (host.clickPianoControl ("key-snap"), "Key snap checkbox was not clicked"); } });
+    steps->push_back ({ 150, [&host, &ctx, &session, originalKeySnap]
+    {
+        ctx.expect (session.pianoRollKeySnap != originalKeySnap, "Key snap checkbox did not toggle once");
+        ctx.expect (host.clickPianoControl ("mute"), "Mute checkbox was not clicked");
+    } });
+    steps->push_back ({ 150, [&host, &ctx, &session]
+    {
+        ctx.expect (session.track (0).midiRegions.current()[0].muted, "Mute checkbox did not mute the region");
+        ctx.expect (host.clickPianoControl ("lock"), "Lock checkbox was not clicked");
+    } });
+    steps->push_back ({ 150, [&host, &ctx, &session]
+    {
+        ctx.expect (session.track (0).midiRegions.current()[0].locked, "Lock checkbox did not lock the region");
+        ctx.expect (host.inputPianoRoll ("command + A"), "locked region did not accept Select All");
+    } });
+    steps->push_back ({ 150, [&host, &ctx]
+    {
+        ctx.expect (host.pianoSelection().size() == 2, "locking the region prevented note selection");
+        ctx.expect (host.inputPianoRoll ("cursor right"), "locked region did not receive the nudge key");
+    } });
+    steps->push_back ({ 150, [&host, &ctx, checkTicks]
+    {
+        checkTicks (0, 240);
+        host.closePiano();
+        ctx.expect (host.openPiano (0, 0), "piano roll did not reopen after checkbox edits");
+    } });
+    steps->push_back ({ 150, [&host, &ctx, &session, originalKeySnap]
+    {
+        const auto& reopened = session.track (0).midiRegions.current()[0];
+        ctx.expect (reopened.muted && reopened.locked && session.pianoRollKeySnap != originalKeySnap,
+                    "reopening the roll lost checkbox state");
+        ctx.expect (host.clickPianoControl ("key-snap"), "reopened Key snap checkbox was not clicked");
+    } });
+    steps->push_back ({ 150, [&host, &ctx, &session, originalKeySnap]
+    {
+        ctx.expect (session.pianoRollKeySnap == originalKeySnap, "second Key snap click did not restore its state");
+        ctx.expect (host.clickPianoControl ("mute"), "reopened Mute checkbox was not clicked");
+    } });
+    steps->push_back ({ 150, [&host, &ctx, &session]
+    {
+        ctx.expect (! session.track (0).midiRegions.current()[0].muted, "second Mute click did not unmute the region");
+        ctx.expect (host.clickPianoControl ("lock"), "reopened Lock checkbox was not clicked");
+    } });
+    steps->push_back ({ 150, [&ctx, &session]
+    { ctx.expect (! session.track (0).midiRegions.current()[0].locked, "second Lock click did not unlock the region"); } });
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (host.clickPianoControl ("snap-resolution"), "toolbar snap-resolution dropdown was not clicked"); } });
+    steps->push_back ({ 0, [&host, &ctx]
+    {
+        ctx.expect (host.pianoNativeWindowOpen(), "opening the snap dropdown closed the piano roll");
+        ctx.expect (host.inputPianoRoll ("escape"), "snap dropdown did not receive native Escape");
+    }, [&host] { return ! host.modalStackEmpty(); }, "toolbar snap dropdown did not open" });
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.pianoNativeWindowOpen(), "Escape closed the piano roll behind the snap dropdown"); },
+    [&host] { return host.modalStackEmpty(); }, "Escape did not close the toolbar snap dropdown" });
+    steps->push_back ({ 700, [&host, &ctx]
+    { ctx.expect (host.clickPianoControl ("properties"), "region-properties toolbar button was not clicked"); } });
+    steps->push_back ({ 150, [&host, &ctx]
+    {
+       #if defined(__linux__)
+        auto capture = ctx.tempDir() / "midi-region-properties.ppm";
+        if (const auto* folder = std::getenv ("DUSKSTUDIO_REGION_MENU_CAPTURE_DIR"))
+        {
+            std::error_code error;
+            std::filesystem::create_directories (std::filesystem::u8path (folder), error);
+            if (! ctx.expect (! error, "could not create the region-menu capture folder")) return;
+            capture = std::filesystem::u8path (folder) / capture.filename();
+        }
+        ctx.expect (host.pianoControlPeakOnScreen ("properties", capture) >= 0,
+                    "could not capture the MIDI region-properties dropdown");
+       #endif
+        ctx.expect (host.inputPianoRoll ("escape"), "region-properties dropdown did not receive native Escape");
+    }, [&host] { return ! host.modalStackEmpty(); }, "region-properties dropdown did not open" });
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.pianoNativeWindowOpen(), "Escape closed the piano roll behind region properties"); },
+    [&host] { return host.modalStackEmpty(); }, "Escape did not close the region-properties dropdown" });
+    for (const auto& edit : std::array<std::pair<const char*, bool>, 4> {
+             { { "mute", true }, { "lock", true }, { "lock", false }, { "mute", false } } })
+    {
+        const std::string control = edit.first;
+        const bool enabled = edit.second;
+        steps->push_back ({ 700, [&host, &ctx]
+        { ctx.expect (host.clickPianoControl ("properties"), "region-properties toolbar button was not clicked"); } });
+        steps->push_back ({ 150, [&host, &ctx, control]
+        { ctx.expect (host.clickPianoControl ("region:" + control), "region-properties row was not clicked: " + control); },
+        [&host] { return ! host.modalStackEmpty(); }, "region-properties dropdown did not reopen" });
+        steps->push_back ({ 0, [&host, &ctx, &session, control, enabled]
+        {
+            const auto& edited = session.track (0).midiRegions.current()[0];
+            ctx.expect ((control == "mute" ? edited.muted : edited.locked) == enabled,
+                        "region-properties row did not toggle " + control);
+            ctx.expect (host.pianoNativeWindowOpen(), "region-properties edit closed the piano roll");
+        }, [&host] { return host.modalStackEmpty(); }, "region-properties edit did not dismiss the dropdown" });
+    }
+   #endif
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
 }

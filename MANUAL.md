@@ -345,7 +345,7 @@ chapter. Everything below is the long form.
   restores the software fallback.
 - **If the notepad ever takes Dusk Studio down with it**, it will not do so twice. A graphics driver that ends the application while the notepad is drawing its first frame leaves a marker behind, and the next launch refuses the notepad and names the renderer that did it. Upgrading to the packaged llvmpipe renderer automatically clears a marker written by an older release; markers created afterward remain guarded even if the renderer changes again. After any other graphics-driver change, delete the `notepad-first-frame` file in Dusk Studio's configuration folder to retry. Any build that encounters Mesa's GL-on-D3D12 OpenGL Compatibility Pack refuses it because it is known to end the application; install the graphics vendor's OpenGL driver instead. To keep the notepad switched off permanently, set `notepad_enabled=0` in `app-config.properties` in that same folder.
 
-Any modern multi-core CPU (Intel, AMD, or Apple Silicon) is sufficient for a 24-track session at 48 kHz. With **Multicore DSP** set to Auto (the default — see the *Advanced* tab under *Settings → Settings...*), the channel-strip work is shared across the available cores, so lower-power multi-core machines handle larger sessions more comfortably. The compressor and EQ on every channel are oversampled when the global oversampling factor is raised; expect roughly 2-3× the mix-engine CPU at 4× oversampling (keep oversampling at 1× on low-power machines).
+Any modern multi-core CPU (Intel, AMD, or Apple Silicon) is sufficient for a 24-track session at 48 kHz. With **Multicore DSP** set to Auto (the default — see the *Audio* tab under *Settings → Settings...*), the channel-strip work is shared across the available cores, so lower-power multi-core machines handle larger sessions more comfortably. The compressor and EQ on every channel are oversampled when the global oversampling factor is raised; expect roughly 2-3× the mix-engine CPU at 4× oversampling (keep oversampling at 1× on low-power machines).
 
 ## Installing Dusk Studio
 
@@ -459,7 +459,17 @@ Press **RECORDING** to focus the channel strips on input routing and arm control
 
 ## Configuring audio
 
-Open **Settings → Settings...**, then select the **Audio** tab to choose your audio device. Use the tabs across the top to switch between Audio, Control Surface, MIDI Bindings, MIDI Sync, General, Advanced, SFZ Library and Plug-ins. The panel remembers the last tab while Dusk Studio is open.
+Open **Settings → Settings...**, then select the **Audio** tab to choose your audio device. Use the tabs across the top to switch between General, Audio, Control Surface, MIDI Bindings, MIDI Sync, SFZ Library and Plug-ins. The panel remembers the last tab while Dusk Studio is open.
+
+### General
+
+- **UI scale**: a global zoom factor for the entire interface. The interface previews changes live while you adjust the slider; the final value is saved per-machine when you release it. On macOS the window keeps its size on screen: zooming in never makes it grow, so a large scale on a small window gives the console less room rather than pushing the window past the display. On Linux and Windows the window keeps the console's minimum size at every scale, so zooming in on a small window can make it grow.
+- **Expand tape strip by default**: show the tape strip on every app launch. Per-machine; takes effect on next launch.
+- **Follow playhead by default**: start the timeline and the audio / MIDI editors with Chase engaged, so the view scrolls to keep the playhead in sight during playback. Per-machine; takes effect on next launch.
+- **Playhead on Stop**: where the playhead lands when you press Stop. **Return to where play or record started** is the default: the playhead goes back to where playback or the take began, or to where you last moved it during playback, so Play hears the take you just made. A punch take begins at the punch-in point and a loop take at the loop start; count-in and pre-roll do not count. The other choices are **Stay where it is (pause)**, **Return to start (rewind to 0)** and **Return to last clicked point**. Pressing Stop while already stopped returns to bar 1 whatever this says. Per-machine; takes effect immediately.
+- **MIDI soft takeover (pickup)**: when on, a knob or fader bound with MIDI Learn stays dormant until the physical control crosses the parameter's current position, instead of snapping the parameter on first touch. Applies to continuous mixer targets (faders, pans, sends, EQ, comp, master); plugin-parameter bindings always track directly. Per-machine; takes effect immediately.
+- **Autosave every**: the crash-recovery autosave cadence, 15 seconds to 5 minutes (default 2 minutes; saved intervals are kept). Per-machine; applies when the Settings panel closes.
+- **Scan plugins on startup**: re-run the plugin scanner every time Dusk Studio launches. Off by default; large plugin collections take 10–30 seconds to scan.
 
 ### Audio
 
@@ -471,6 +481,12 @@ Open **Settings → Settings...**, then select the **Audio** tab to choose your 
 - **Main output**: which physical pair the master mix goes to. **1-2 (default)** in most rigs; move it to another pair (e.g. when you want outputs 1-2 free for a control-room or cue feed). Only pairs the device currently has open are listed. If an aux lane is routed to the same pair as the master, the two sum on that pair.
 - **Rescan devices**: re-enumerates every backend and every MIDI port, useful if you plugged in a USB interface after launch. MIDI port enumeration waits until the transport stops. MIDI controllers on Linux do not need it; see [MIDI hot-plug](#midi-hot-plug).
 - **First launch only**: with nothing saved yet, Dusk Studio picks an input device alongside the output when the backend offers one, so recording works without a trip to this panel first. It never touches a configuration you have already made: if you chose no input on purpose, it stays that way. If the device will not open with that input (a capture device on another card can refuse the output's sample rate, or be busy), Dusk Studio reopens the output on its own so playback keeps working, and when that output has no inputs of its own the transport bar says **No input device. Choose one in Settings > Audio.** until you pick one here. If even the output will not reopen, you get the same warning as when [no audio device opens at startup](#audio-device-in-use-or-wont-open-at-startup). At startup, when an open that pairs the output with an input fails as a whole, Dusk Studio opens that output on its own rather than leaving you with no device. On macOS the input waits for the microphone prompt: the output opens first, and the input follows once you click **Allow** (see the macOS steps under [Installing Dusk Studio](#installing-dusk-studio)).
+
+- **Effect Oversampling**: 1×, 2×, or 4×. Defaults to 1× (native). Raises the internal sample rate of every channel EQ and compressor, every bus compressor, and the master EQ and compressor. Reduces aliasing on saturation stages at the cost of CPU — roughly 2-3× the mix-engine CPU at 4×, and needs a buffer of 256 samples or more at 48 kHz. Each oversampled stage adds about half a millisecond of delay at 2× and 4×; delay compensation keeps tracks, buses and aux returns lined up, and bounces trim it out. The master tape and the mastering chain are the exceptions and ignore this setting: the tape anti-aliases locally at a fixed internal rate, the mastering EQ and limiter always run at 4×, and the multiband compressor runs at the session rate.
+- **Render quality**: **High (4× oversampling)** is the default for offline bounces, mixdowns, stem bounces, master exports and track freezes. **Match playback (faster)** uses the session's current **Effect Oversampling** setting instead, reducing work at 1× or 2×; at 4× it is the same quality. Render speed still depends on the processors in the session. Saved per-machine. Realtime hardware bounces always use the playback settings.
+- **Multicore DSP**: spreads the per-block DSP of the 24 channel strips across several CPU cores instead of running them all on the single audio thread. **Auto** (default) uses *cores − 2* worker threads on machines with 4 or more cores — leaving one core for the interface and one for the operating system — and falls back to single-core on smaller machines. **Off** forces the single-core path; you can also pin an explicit worker count. This is a **per-machine** setting: it is stored on this computer and is **not** saved in the session, so a project made on a many-core workstation will not overload a smaller machine (a 4-core Raspberry Pi 5, say) when you open it there. The bus, aux, and master stages always run on the audio thread; only the channel strips fan out, and on a quad-core machine that heavy strip work runs roughly three times faster. Hosted plugins on those strips process on the worker threads too; in the unlikely event a specific plugin misbehaves with this enabled, switch it Off.
+- **Recording offset**: a manual correction, in samples, subtracted from where each newly recorded audio take is placed on the timeline. Use it when your monitoring path adds a round-trip delay that isn't already reported — analog converters, an external effects loop, or a plugin that under-reports its latency — so what you played lands back in time instead of slightly late. A positive value pulls takes earlier; the take is never moved before sample 0 — a take that would land entirely before it is discarded with a warning. It affects **audio** takes only — MIDI is captured with no converter delay and is left where it was played. **To calibrate**: route your interface's output back into an input (a physical loopback cable, or the same converter you monitor through), record the metronome click for a few bars, then open the take in the audio editor and read off, in samples, how far the recorded click sits after the beat it should land on. Type that number and press Enter, or use **-** and **+** to change it one sample at a time. Values are limited to -192,000 through 192,000 samples. The value is **per-machine** — it describes this desk's I/O latency, not the session — and applies to the next take, no restart needed.
+- **Run Self-Test...**: runs Dusk Studio's headless audio engine against a synthetic test signal and reports pass/fail. The suite includes a determinism check that the multicore mix matches the single-core mix sample-for-sample (within floating-point rounding). As with the bindings panel, the settings panel steps out of the way while the self-test is open and comes back when you close it.
 
 ### Control surface
 
@@ -491,23 +507,6 @@ A single button opens the **MIDI Bindings** panel, which lists every CC-to-contr
 - **MTC frame rate**: 24, 25, 29.97 drop-frame, or 30 frames per second.
 
 All seven are saved with the session, so a project that syncs to an external clock reopens ready to sync.
-
-### General
-
-- **UI scale**: a global zoom factor for the entire interface. The interface previews changes live while you adjust the slider; the final value is saved per-machine when you release it. On macOS the window keeps its size on screen: zooming in never makes it grow, so a large scale on a small window gives the console less room rather than pushing the window past the display. On Linux and Windows the window keeps the console's minimum size at every scale, so zooming in on a small window can make it grow.
-- **Expand tape strip by default**: show the tape strip on every app launch. Per-machine; takes effect on next launch.
-- **Follow playhead by default**: start the timeline and the audio / MIDI editors with Chase engaged, so the view scrolls to keep the playhead in sight during playback. Per-machine; takes effect on next launch.
-- **Playhead on Stop**: where the playhead lands when you press Stop. **Return to where play or record started** is the default: the playhead goes back to where playback or the take began, or to where you last moved it during playback, so Play hears the take you just made. A punch take begins at the punch-in point and a loop take at the loop start; count-in and pre-roll do not count. The other choices are **Stay where it is (pause)**, **Return to start (rewind to 0)** and **Return to last clicked point**. Pressing Stop while already stopped returns to bar 1 whatever this says. Per-machine; takes effect immediately.
-- **MIDI soft takeover (pickup)**: when on, a knob or fader bound with MIDI Learn stays dormant until the physical control crosses the parameter's current position, instead of snapping the parameter on first touch. Applies to continuous mixer targets (faders, pans, sends, EQ, comp, master); plugin-parameter bindings always track directly. Per-machine; takes effect immediately.
-- **Autosave every**: the crash-recovery autosave cadence, 15 seconds to 5 minutes (default 30 seconds). Per-machine; applies when the Settings panel closes.
-- **Scan plugins on startup**: re-run the plugin scanner every time Dusk Studio launches. Off by default; large plugin collections take 10–30 seconds to scan.
-
-### Advanced
-
-- **Effect oversampling**: 1×, 2×, or 4×. Defaults to 1× (native). Raises the internal sample rate of every channel EQ and compressor, every bus compressor, and the master EQ and compressor. Reduces aliasing on saturation stages at the cost of CPU — roughly 2-3× the mix-engine CPU at 4×, and needs a buffer of 256 samples or more at 48 kHz. Each oversampled stage adds about half a millisecond of delay at 2× and 4×; delay compensation keeps tracks, buses and aux returns lined up, and bounces trim it out. The master tape and the mastering chain are the exceptions and ignore this setting: the tape anti-aliases locally at a fixed internal rate, the mastering EQ and limiter always run at 4×, and the multiband compressor runs at the session rate.
-- **Multicore DSP**: spreads the per-block DSP of the 24 channel strips across several CPU cores instead of running them all on the single audio thread. **Auto** (default) uses *cores − 2* worker threads on machines with 4 or more cores — leaving one core for the interface and one for the operating system — and falls back to single-core on smaller machines. **Off** forces the single-core path; you can also pin an explicit worker count. This is a **per-machine** setting: it is stored on this computer and is **not** saved in the session, so a project made on a many-core workstation will not overload a smaller machine (a 4-core Raspberry Pi 5, say) when you open it there. The bus, aux, and master stages always run on the audio thread; only the channel strips fan out, and on a quad-core machine that heavy strip work runs roughly three times faster. Hosted plugins on those strips process on the worker threads too; in the unlikely event a specific plugin misbehaves with this enabled, switch it Off.
-- **Recording offset**: a manual correction, in samples, subtracted from where each newly recorded audio take is placed on the timeline. Use it when your monitoring path adds a round-trip delay that isn't already reported — analog converters, an external effects loop, or a plugin that under-reports its latency — so what you played lands back in time instead of slightly late. A positive value pulls takes earlier; the take is never moved before sample 0 — a take that would land entirely before it is discarded with a warning. It affects **audio** takes only — MIDI is captured with no converter delay and is left where it was played. **To calibrate**: route your interface's output back into an input (a physical loopback cable, or the same converter you monitor through), record the metronome click for a few bars, then open the take in the audio editor and read off, in samples, how far the recorded click sits after the beat it should land on. Type that number and press Enter, or use **-** and **+** to change it one sample at a time. Values are limited to -192,000 through 192,000 samples. The value is **per-machine** — it describes this desk's I/O latency, not the session — and applies to the next take, no restart needed.
-- **Run self-test**: runs Dusk Studio's headless audio engine against a synthetic test signal and reports pass/fail. The suite includes a determinism check that the multicore mix matches the single-core mix sample-for-sample (within floating-point rounding). As with the bindings panel, the settings panel steps out of the way while the self-test is open and comes back when you close it.
 
 ### SFZ Library
 
@@ -1580,7 +1579,7 @@ To build a comp, see *Splicing a vocal comp from multiple takes* in Tips and rec
 
 Double-click a MIDI region to open the piano roll as a centred modal.
 
-A locked region stays visible and selectable, and its notes can be copied. Editing, deleting and step recording are blocked. Use the bottom-row **Lock** button or the region menu to unlock it before editing.
+A locked region stays visible and selectable, and its notes can be copied. Editing, deleting and step recording are blocked. Use the bottom-row **Lock** checkbox or the region menu to unlock it before editing.
 
 ## Layout
 
@@ -1602,6 +1601,8 @@ A locked region stays visible and selectable, and its notes can be copied. Editi
 │  status bar                              │
 └──────────────────────────────────────────┘
 ```
+
+Snap resolution sits beside **Snap** in the toolbar; **Chase** and the zoom controls sit at the right. The status bar holds the **Notes** and **Colour** dropdowns, **Key snap**, and the **Mute** and **Lock** checkboxes.
 
 ## Creating notes
 
@@ -2283,7 +2284,7 @@ Because the session is a folder, you can copy or back up a session by copying th
 
 ## Autosave
 
-Every 30 seconds, if anything has changed since the last save, Dusk Studio writes a recovery file, `session.json.autosave`, next to the canonical `session.json` (it does **not** overwrite `session.json` — a manual Save is still what updates the real session file). The autosave is atomic (same temp-file-and-rename pattern) and silent — it never interrupts playback or recording. Idle sessions are skipped via a content hash, so the file isn't rewritten when nothing meaningful changed.
+Every 2 minutes by default, if anything has changed since the last save, Dusk Studio writes a recovery file, `session.json.autosave`, next to the canonical `session.json` (it does **not** overwrite `session.json` — a manual Save is still what updates the real session file). The autosave is atomic (same temp-file-and-rename pattern) and silent — it never interrupts playback or recording. Idle sessions are skipped via a content hash, so the file isn't rewritten when nothing meaningful changed. Choose another interval with **Autosave every** in the **General** tab under **Settings → Settings...**. A saved interval, including 30 seconds, keeps its value.
 
 A session that has never been saved or opened, such as the `Untitled` session Dusk Studio starts with, keeps its autosave, notes and takes in its own folder, which never holds another session: if you once saved a session as `Untitled`, the new one starts in `Untitled 2` (or the first `Untitled N` that is free) beside it, and that folder is reused on the next launch. If a `session.json` appears in the new session's folder anyway, its autosave and notes go to the `unsaved-session` folder in Dusk Studio's configuration folder instead, **Don't Save** and **Save As** leave the other session's autosave where it is, Save As does not take its plug-in state along, and Save As into that folder is refused like any folder that holds another session. A never-saved session has no `session.json` to open, so to get its work back after a crash, rename its `session.json.autosave` to `session.json` and open it (see Session won't open).
 
@@ -2336,6 +2337,8 @@ To export your finished mix as a stereo audio file:
 The output is **stereo 24-bit WAV at the session sample rate** by default (or a 320 kbps MP3 if you name the file `.mp3`), with a fixed 5-second tail so reverb and compression ringouts decay naturally.
 
 Dusk Studio detaches from the realtime audio device and renders the project offline as fast as the CPU allows. When the bounce completes, the audio device is automatically re-attached.
+
+**Render quality** in the **Audio** tab under **Settings → Settings...** controls offline processing. **High (4× oversampling)** keeps the existing quality; **Match playback (faster)** uses the current **Effect Oversampling** setting, including for track freeze. It reduces oversampling work at 1× or 2× rather than changing playback speed. At 4× the two choices are equivalent.
 
 A render that cannot open a file it has to write, such as a read-only `mixdown.wav`, stops there, leaves that file exactly as it was, and its dialog reads "Could not write [file]: [reason]". A render that fails deletes only the files it created or overwrote: a stem bounce that stops at a stem it cannot open removes the stems it had already opened and leaves that stem and the ones after it alone. Freeze follows the same rule.
 
@@ -2645,7 +2648,7 @@ A plugin is using more than 60% (or 85% in OOP mode) of the audio buffer time fo
 
 - Raise the audio device's block size in the **Audio** tab under **Settings → Settings...**.
 - On Linux, raise the ALSA period count from 2 to 3.
-- Reduce the effect oversampling to 1× in the **Advanced** tab under **Settings → Settings...**.
+- Reduce the effect oversampling to 1× in the **Audio** tab under **Settings → Settings...**.
 - Check that no track is clipping (red bar at the top of the input meter).
 - Close other CPU-heavy programs.
 

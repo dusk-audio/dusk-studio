@@ -154,6 +154,7 @@ struct Render
     double sampleRate = kRate;
     double tailSeconds = 5.0;
     int wavBitDepth = 24;
+    OfflineRenderQuality quality = OfflineRenderQuality::High;
 };
 
 // One bounce in flight. The worker hands its device detach and reattach back to
@@ -168,11 +169,13 @@ struct BounceRun
 
 std::shared_ptr<BounceRun> startRender (ScenarioContext& ctx, const std::filesystem::path& out,
                                         const Render& render,
-                                        std::function<void()> onWorkerStarted = {})
+                                        std::function<void()> onWorkerStarted = {},
+                                        std::function<void(float)> onProgress = {})
 {
     auto run = std::make_shared<BounceRun>();
-    run->bounce = std::make_unique<BounceEngine> (ctx.engine(), ctx.session());
+    run->bounce = std::make_unique<BounceEngine> (ctx.engine(), ctx.session(), render.quality);
     run->bounce->onStarted = std::move (onWorkerStarted);
+    run->bounce->onProgressUpdated = std::move (onProgress);
     // Joins the worker before the world resets, even when a wait times out.
     ctx.cleanup ([run] { run->bounce.reset(); });
     run->bounce->onFinished = [raw = run.get()] (bool ok, std::string error)
@@ -785,7 +788,7 @@ std::optional<ScenarioResult> stemsRenderWhatStartNamed (ScenarioContext& ctx)
 }
 
 // An impulse on a direct track and one on a bus-routed track, rendered as a
-// mix and as stems, all land where they sit on the timeline.
+// mix and as stems at both render qualities, all land where they sit on the timeline.
 std::optional<ScenarioResult> rendersLandOnTheTimeline (ScenarioContext& ctx)
 {
     static constexpr std::int64_t kAt = 24000;
@@ -818,37 +821,82 @@ std::optional<ScenarioResult> rendersLandOnTheTimeline (ScenarioContext& ctx)
                     label + ": the impulse moved by " + std::to_string (at - want) + " samples");
     };
 
-    Render mixRender;
-    mixRender.tailSeconds = 0.2;
-    Render stemRender = mixRender;
-    stemRender.mode = BounceEngine::Mode::Stems;
-    renderThen (ctx, mixPath, mixRender, [&ctx, mixPath, base, targets, stemRender, landed] (bool ok, const std::string& error)
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    const int savedFactor = session.oversamplingFactor.load (std::memory_order_relaxed);
+    ctx.cleanup ([&session, &engine, savedFactor]
     {
-        const auto mix = readBack (mixPath);
-        if (! ctx.expect (ok && mix.has_value(), "the mix bounce failed: " + error))
+        session.oversamplingFactor.store (savedFactor, std::memory_order_relaxed);
+        engine.prepareForSelfTest (kRate, ScenarioContext::kBlockSize);
+    });
+    session.oversamplingFactor.store (4, std::memory_order_relaxed);
+    engine.prepareForSelfTest (kRate, ScenarioContext::kBlockSize);
+    const int highLatency = engine.getChannelStrip (0).getOversamplingLatencySamples();
+    session.oversamplingFactor.store (1, std::memory_order_relaxed);
+    engine.prepareForSelfTest (kRate, ScenarioContext::kBlockSize);
+    const int liveLatency = engine.getChannelStrip (0).getOversamplingLatencySamples();
+
+    auto next = std::make_shared<std::function<void (int)>>();
+    std::weak_ptr<std::function<void (int)>> weakNext = next;
+    *next = [&ctx, &session, &engine, weakNext, mixPath, base, targets, landed, highLatency, liveLatency] (int pass)
+    {
+        if (pass >= 4)
         {
             ctx.complete (ctx.verdict());
             return;
         }
-        landed (mix->left, 0, kAt + 6000, kAt, "mix, direct track");
-        landed (mix->left, kAt + 6000, (std::int64_t) mix->left.size(), kAt + 12000, "mix, bus-routed track");
-
-        renderThen (ctx, base, stemRender, [&ctx, targets, landed] (bool stemsOk, const std::string& stemsError)
-        {
-            if (ctx.expect (stemsOk, "the stem bounce failed: " + stemsError))
-                for (const auto& target : targets)
-                    if (const auto stem = readBack (pathOf (target.file)))
+        const bool stems = pass % 2 != 0;
+        Render render;
+        render.tailSeconds = 0.2;
+        render.mode = stems ? BounceEngine::Mode::Stems : BounceEngine::Mode::MasterMix;
+        render.quality = pass < 2 ? OfflineRenderQuality::High : OfflineRenderQuality::MatchPlayback;
+        const auto label = std::string (pass < 2 ? "high quality, " : "match playback, ") + (stems ? "stems" : "mix");
+        const int expectedLatency = pass < 2 ? highLatency : liveLatency;
+        auto renderLatency = std::make_shared<std::atomic<int>> (-1);
+        auto run = startRender (ctx, stems ? base : mixPath, render, {}, [&engine, renderLatency] (float)
+        { renderLatency->store (engine.getChannelStrip (0).getOversamplingLatencySamples(), std::memory_order_relaxed); });
+        if (run == nullptr) return;
+        auto self = weakNext.lock();
+        ctx.waitUntil ([run] { return run->finished.load (std::memory_order_acquire) && ! run->bounce->isRendering(); },
+            kRenderTimeoutMs,
+            [&ctx, &session, &engine, run, self, pass, stems, label, expectedLatency, renderLatency,
+             mixPath, targets, landed, liveLatency]
+            {
+                if (! ctx.expect (run->ok, label + ": bounce failed: " + run->error))
+                { ctx.complete (ctx.verdict()); return; }
+                ctx.expect (renderLatency->load (std::memory_order_relaxed) == expectedLatency,
+                            label + ": the render did not use the selected oversampling quality");
+                ctx.expect (session.oversamplingFactor.load (std::memory_order_relaxed) == 1,
+                            label + ": the render changed the live oversampling setting");
+                engine.prepareForSelfTest (kRate, ScenarioContext::kBlockSize);
+                ctx.expect (engine.getChannelStrip (0).getOversamplingLatencySamples() == liveLatency,
+                            label + ": the render's oversampling override was not cleared");
+                if (! stems)
+                {
+                    const auto mix = readBack (mixPath);
+                    if (ctx.expect (mix.has_value(), label + ": the mix bounce wrote no readable file"))
+                    {
+                        landed (mix->left, 0, kAt + 6000, kAt, label + ", direct track");
+                        landed (mix->left, kAt + 6000, (std::int64_t) mix->left.size(), kAt + 12000, label + ", bus-routed track");
+                    }
+                }
+                else for (const auto& target : targets)
+                {
+                    const auto stem = readBack (pathOf (target.file));
+                    if (ctx.expect (stem.has_value(), label + ": a stem file was not readable"))
                     {
                         const bool routed = target.kind == BounceEngine::StemTarget::Kind::Bus
                                          || (target.kind == BounceEngine::StemTarget::Kind::Track
                                              && target.index == 1);
                         landed (stem->left, 0, (std::int64_t) stem->left.size(),
                                 routed ? kAt + 12000 : kAt,
-                                pathOf (target.file).filename().u8string());
+                                label + ", " + pathOf (target.file).filename().u8string());
                     }
-            ctx.complete (ctx.verdict());
-        });
-    });
+                }
+                (*self) (pass + 1);
+            }, "the alignment bounce never finished");
+    };
+    (*next) (0);
     return std::nullopt;
 }
 

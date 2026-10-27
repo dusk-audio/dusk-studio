@@ -3340,7 +3340,7 @@ private:
         const auto propertiesBox = square (left (dia));
         if (iconButton (ctx, "Properties", propertiesBox, Glyph::properties, haveRegion, "Region properties"))
         {
-            propertiesAnchor = ImVec2 (propertiesBox.x0, propertiesBox.y1);
+            propertiesAnchor = ImVec2 (propertiesBox.x0, icons.y1 + ctx.s (4.0f));
             ImGui::OpenPopup (kPropertiesMenu);
         }
         inner.takeLeft (ctx.s (4.0f));
@@ -4293,13 +4293,15 @@ private:
     void drawPopups (dw::Context& ctx)
     {
         const ScopedFormStyle form (ctx);
-        ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2 (ctx.s (6.0f), ctx.s (6.0f)));
-        ImGui::PushStyleVar (ImGuiStyleVar_ItemSpacing, ImVec2 (ctx.s (8.0f), ctx.s (5.0f)));
+        ImGui::PushFont (ctx.fonts->valueLarge != nullptr ? ctx.fonts->valueLarge : ctx.fonts->band);
+        ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2 (ctx.s (10.0f), ctx.s (8.0f)));
+        ImGui::PushStyleVar (ImGuiStyleVar_ItemSpacing, ImVec2 (ctx.s (10.0f), ctx.s (8.0f)));
         drawContextMenu();
         drawFadeMenu();
         drawPropertiesMenu();
         drawAutomationMenu();
         ImGui::PopStyleVar (2);
+        ImGui::PopFont();
     }
 
     // True when the popup is up and its region still exists; closes it otherwise.
@@ -4406,6 +4408,8 @@ private:
     {
         // Hung from the button.
         ImGui::SetNextWindowPos (propertiesAnchor, ImGuiCond_Appearing);
+        ImGui::SetNextWindowSizeConstraints ({ layout.s (260.0f), 0.0f },
+                                             { std::numeric_limits<float>::max(), std::numeric_limits<float>::max() });
         if (! beginMenu (kPropertiesMenu))
             return;
         const auto* r = region();

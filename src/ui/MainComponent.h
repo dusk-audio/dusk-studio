@@ -297,7 +297,7 @@ private:
     int  pendingImportInitialHint   = -1;
     int  pendingImportLastCommitted = -2;
 
-    // 30 s autosave to session.json.autosave (atomic temp+rename). On
+    // Autosave to session.json.autosave on the configured cadence (atomic temp+rename). On
     // load, if newer than session.json, prompt to recover. Manual save
     // deletes the autosave.
     void timerCallback() override;

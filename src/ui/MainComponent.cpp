@@ -1210,14 +1210,13 @@ MainComponent::MainComponent()
     }
 
     // Autosave heartbeat. Writes session.json.autosave next to the canonical
-    // session.json on the configured cadence (default 30 s) so a crash loses at most
-    // ~30 s of work. The write is atomic (temp + rename), so even a kill
-    // during the timer fire never leaves a half-written autosave.
+    // session.json on the configured cadence. The write is atomic (temp + rename),
+    // so even a kill during the timer fire never leaves a half-written autosave.
     startTimer (appconfig::getAutosaveIntervalSeconds() * 1000);
 
     // Seed the dirty-compare baseline for the bootstrap "Untitled" session so
     // edits to a brand-new, never-saved session are caught at quit instead of
-    // only after the first 30 s autosave (the quit check skips when this is
+    // only after the first autosave (the quit check skips when this is
     // empty). saveSessionTo / finishLoadingSessionFrom reseed it on Save As /
     // load; an async startup-dialog load just overwrites this blank baseline.
     if (lastSavedSessionJson.isEmpty())
@@ -2800,6 +2799,9 @@ void MainComponent::handOffAudioSettings (std::function<void()> showModal)
 
 void MainComponent::openAudioSettingsForCapture (const std::string& capturePath)
 {
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    audioSettingsTab = 1;
+   #endif
     openAudioSettings();
    #if DUSKSTUDIO_HAS_NATIVE_UI
     if (audioSettingsWindow != nullptr && audioSettingsWindow->isOpen())
@@ -3828,7 +3830,7 @@ juce::File MainComponent::getAutosaveFileFor (const juce::File& sessionDir) cons
 // Hosted plugins (per-channel inserts, aux-lane slots) re-emit slightly
 // different APVTS state on each getStateInformation call - internal counters /
 // smoother phases that aren't user-meaningful. The autosave dirty-check must
-// ignore that drift, otherwise it fires every 30 s on a freshly-saved session
+// ignore that drift, otherwise it fires on every autosave of a freshly-saved session
 // and resurfaces the recovery dialog on the next launch. Strip the base64
 // state values to "" before any content compare.
 static juce::String stripVolatileStateForDirtyCompare (juce::String s)
@@ -3917,7 +3919,7 @@ void MainComponent::writeAutosave()
     // only from Session, not from the live engine. Audio is running on
     // the autosave path (timer fires from the live message loop), so
     // plug-in state stays as the last manual save captured it rather
-    // than cost a dropout every 30 s.
+    // than cost a dropout on every autosave.
     engine.publishPluginStateForSave (/*capturePluginState*/ false);
     engine.publishTransportStateForSave();
 
@@ -3925,7 +3927,7 @@ void MainComponent::writeAutosave()
     // disk - either the last manual save (no real edits since Ctrl+S) or
     // the previous autosave tick (timer firing on idle state). Without
     // this skip the autosave file's mtime would creep past session.json
-    // every 30 s, producing a false-positive recovery prompt on next load.
+    // on every autosave, producing a false-positive recovery prompt on next load.
     const juce::String json = SessionSerializer::serialize (session);
     // Strip volatile plugin / tape APVTS state before comparing - donor
     // getStateInformation drifts between calls even with no user change,

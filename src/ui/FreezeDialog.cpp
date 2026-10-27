@@ -1,4 +1,5 @@
 #include "FreezeDialog.h"
+#include "AppConfig.h"
 #include "../engine/AudioEngine.h"
 #include "../session/Session.h"
 
@@ -65,7 +66,7 @@ FreezeDialog::FreezeDialog (AudioEngine& e, Session& s, int t)
 
     // Async render on the worker thread; the timer polls progress. No worker->UI
     // callbacks, so there's no lifetime race against a closing dialog.
-    bounceEngine = std::make_unique<BounceEngine> (engine, session);
+    bounceEngine = std::make_unique<BounceEngine> (engine, session, appconfig::getOfflineRenderQuality());
     if (! bounceEngine->startFreeze (trackIndex, outFile, lenSamples,
                                       engine.getCurrentSampleRate()))
     {

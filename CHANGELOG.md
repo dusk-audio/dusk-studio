@@ -5,6 +5,22 @@ All notable changes to Dusk Studio. Format loosely follows
 back-filled from `git log`; once tags exist this file is the
 canonical source.
 
+## [Unreleased]
+
+### Added
+
+- **Offline render quality.** High keeps 4× effect oversampling. Match playback
+  uses the session's effect oversampling for faster offline bounces and track
+  freezes at 1× or 2×. Realtime hardware bounces keep the playback settings.
+
+### Changed
+
+- **MIDI and audio editors.** Matching toolbar and status controls, clearer
+  piano keys, larger region menus and a linked-note Glue Selection icon.
+- **Settings.** General opens first; Audio includes the processing controls.
+  UI scale help is removed. New configurations autosave every two minutes;
+  saved intervals stay unchanged.
+
 ## [0.16.0] - 2026-10-24
 
 ### Added

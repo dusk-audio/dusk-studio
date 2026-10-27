@@ -107,7 +107,7 @@ std::optional<ScenarioResult> runPluginFolders (GuiHost& host, ScenarioContext& 
         "Settings did not return after folder selection", {}, kSettleBoundMs });
     };
     steps->push_back ({ 0, [&host, &ctx] { ctx.expect (host.openAudioSettings(), "Settings did not open"); } });
-    for (const auto* tab : { "audio", "control-surface", "midi-bindings", "midi-sync", "general", "advanced", "sfz-library", "plugins" })
+    for (const auto* tab : { "general", "audio", "control-surface", "midi-bindings", "midi-sync", "sfz-library", "plugins" })
     {
         click (std::string ("tab-") + tab);
         capture (std::string ("settings-") + tab);

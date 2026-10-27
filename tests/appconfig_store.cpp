@@ -224,3 +224,62 @@ TEST_CASE ("A library root carrying a separator still round-trips", "[appconfig]
     duskstudio::appconfig::setSfzLibraryRoots (awkward);
     CHECK (duskstudio::appconfig::getSfzLibraryRoots() == awkward);
 }
+
+TEST_CASE ("Offline render quality defaults to High and round-trips safely", "[appconfig]")
+{
+    using duskstudio::OfflineRenderQuality;
+    const ScopedStore store { "render-quality" };
+
+    SECTION ("missing or invalid choices preserve high quality")
+    {
+        CHECK (duskstudio::appconfig::getOfflineRenderQuality() == OfflineRenderQuality::High);
+        store.create();
+        for (const std::string value : { "invalid", "-1", "2", "999999999999999999999" })
+        {
+            store.write ("offline_render_quality=" + value + "\n");
+            CHECK (duskstudio::appconfig::getOfflineRenderQuality() == OfflineRenderQuality::High);
+        }
+    }
+
+    SECTION ("both choices survive other preference writes")
+    {
+        for (const auto quality : { OfflineRenderQuality::MatchPlayback, OfflineRenderQuality::High })
+        {
+            duskstudio::appconfig::setOfflineRenderQuality (quality);
+            duskstudio::appconfig::setScanPluginsOnStartup (true);
+            CHECK (duskstudio::appconfig::getOfflineRenderQuality() == quality);
+            CHECK (duskstudio::appconfig::getScanPluginsOnStartup());
+        }
+    }
+
+    SECTION ("an unknown enum value is saved as high quality")
+    {
+        duskstudio::appconfig::setOfflineRenderQuality (static_cast<OfflineRenderQuality> (99));
+        CHECK (duskstudio::appconfig::getOfflineRenderQuality() == OfflineRenderQuality::High);
+    }
+}
+
+TEST_CASE ("Autosave defaults to two minutes and preserves saved intervals", "[appconfig]")
+{
+    const ScopedStore store { "autosave-default" };
+
+    SECTION ("missing or invalid intervals use two minutes")
+    {
+        CHECK (duskstudio::appconfig::getAutosaveIntervalSeconds() == 120);
+        store.create();
+        for (const std::string value : { "invalid", "-1", "0", "9", "601" })
+        {
+            store.write ("autosave_interval_sec=" + value + "\n");
+            CHECK (duskstudio::appconfig::getAutosaveIntervalSeconds() == 120);
+        }
+    }
+
+    SECTION ("a saved thirty-second interval keeps its meaning")
+    {
+        store.create();
+        store.write ("autosave_interval_sec=30\n");
+        CHECK (duskstudio::appconfig::getAutosaveIntervalSeconds() == 30);
+        duskstudio::appconfig::setAutosaveIntervalSeconds (300);
+        CHECK (duskstudio::appconfig::getAutosaveIntervalSeconds() == 300);
+    }
+}

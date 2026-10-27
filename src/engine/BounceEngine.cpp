@@ -19,11 +19,6 @@
 
 namespace duskstudio
 {
-// Offline renders force 4× oversampling on the saturating analog stages
-// (console / comp / tube / tape) so the printed file is alias-free, while
-// realtime monitoring stays at the user's lighter Effect Oversampling setting.
-static constexpr int kRenderOversamplingFactor = 4;
-
 namespace
 {
 // Latches the engine's offline-render flag for the lifetime of a render loop so
@@ -78,8 +73,9 @@ const char* pendingSoundfontRefusal (const AudioEngine& engine)
 #endif
 } // namespace
 
-BounceEngine::BounceEngine (AudioEngine& e, Session& s) noexcept
-    : juce::Thread ("Dusk Studio bounce"), engine (e), session (s)
+BounceEngine::BounceEngine (AudioEngine& e, Session& s, OfflineRenderQuality quality) noexcept
+    : juce::Thread ("Dusk Studio bounce"), engine (e), session (s),
+      renderOversamplingFactor (quality == OfflineRenderQuality::MatchPlayback ? 0 : 4)
 {}
 
 BounceEngine::~BounceEngine()
@@ -465,12 +461,11 @@ void BounceEngine::run()
     ScopedOfflineRender offlineGuard (engine);
     // Detach + re-prepare on the message thread: prepareForSelfTest reaches every
     // hosted plugin's (de)activate, which the CLAP contract forbids off the main
-    // thread. Render the saturating stages at 4× so the bounce is alias-free;
-    // cleared before the live re-prepare below.
+    // thread. The render override is cleared before the live re-prepare below.
     if (! runOnMessageThread ([this]
         {
             engine.detachAudioCallback();
-            engine.setRenderOversamplingOverride (kRenderOversamplingFactor);
+            engine.setRenderOversamplingOverride (renderOversamplingFactor);
             engine.prepareForSelfTest (renderSampleRate, renderBlockSize);
         }))
     {
@@ -714,13 +709,12 @@ bool BounceEngine::runStemsMode()
 
     ScopedOfflineRender offlineGuard (engine);
     // Detach + re-prepare on the message thread (plugin (de)activate must not run
-    // on this worker - see runOnMessageThread). Stems render through the full
-    // strip path too, so oversample them 4× for alias-free output; cleared before
+    // on this worker - see runOnMessageThread). Clear the render override before
     // the live re-prepare below.
     if (! runOnMessageThread ([this]
         {
             engine.detachAudioCallback();
-            engine.setRenderOversamplingOverride (kRenderOversamplingFactor);
+            engine.setRenderOversamplingOverride (renderOversamplingFactor);
             engine.prepareForSelfTest (renderSampleRate, renderBlockSize);
         }))
         return false;   // shutdown before detach/prepare - engine untouched
@@ -1217,7 +1211,7 @@ bool BounceEngine::renderFreezeTrack (int trackIndex, const juce::File& outFile,
     if (! runOnMessageThread ([this]
         {
             engine.detachAudioCallback();
-            engine.setRenderOversamplingOverride (kRenderOversamplingFactor);
+            engine.setRenderOversamplingOverride (renderOversamplingFactor);
             engine.prepareForSelfTest (renderSampleRate, renderBlockSize);
         }))
     {

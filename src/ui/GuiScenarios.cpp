@@ -919,7 +919,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         (void) x; (void) y; (void) down; (void) modifiers; return false;
        #endif
     }
-    bool clickPianoControl (const std::string& name)
+    bool clickPianoControl (const std::string& name) override
     {
        #if DUSKSTUDIO_HAS_NATIVE_UI
         return owner.pianoRollShowing() && owner.pianoRollWindow->clickControlForScenario (name);

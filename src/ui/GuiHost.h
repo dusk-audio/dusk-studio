@@ -197,6 +197,7 @@ public:
     virtual int audioEditorKeyboardRequests() const = 0;
     virtual bool openPiano (int track, int region) = 0;
     virtual void closePiano() = 0;
+    virtual bool clickPianoControl (const std::string& name) = 0;
     virtual bool clickPianoCcToggle() = 0;
     virtual bool pianoCcPointer (std::int64_t tick, int value, bool down) = 0;
     virtual int pianoCcController() const = 0;
