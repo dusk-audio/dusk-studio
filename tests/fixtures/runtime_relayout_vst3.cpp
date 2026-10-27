@@ -2,6 +2,7 @@
 #include "public.sdk/source/common/pluginview.h"
 #include "public.sdk/source/vst/vstsinglecomponenteffect.h"
 #include "pluginterfaces/base/ibstream.h"
+#include "pluginterfaces/vst/ivstprocesscontext.h"
 
 #include <algorithm>
 
@@ -15,6 +16,7 @@ constexpr ParamID kTouchReport = 102;
 constexpr ParamID kRepeatIoOnActivate = 103;
 constexpr ParamID kFlipOutputsOnActivate = 104;
 constexpr ParamID kAnnounceLatencyChanges = 105;
+constexpr ParamID kReportTransport = 106;
 bool handlerDetachedBeforeTerminate = false;
 
 class LifecycleProbeView final : public CPluginView
@@ -66,6 +68,8 @@ public:
                                  ParameterInfo::kNoFlags, kFlipOutputsOnActivate);
         parameters.addParameter (STR16 ("Announce Latency Changes"), nullptr, 1, 0.0,
                                  ParameterInfo::kNoFlags, kAnnounceLatencyChanges);
+        parameters.addParameter (STR16 ("Report Transport"), nullptr, 1, 0.0,
+                                 ParameterInfo::kNoFlags, kReportTransport);
         handlerDetachedBeforeTerminate = false;
         rebuildBusses();
         return kResultOk;
@@ -109,6 +113,11 @@ public:
         if (id == kAnnounceLatencyChanges)
         {
             announceLatencyChanges = value >= 0.5;
+            return result;
+        }
+        if (id == kReportTransport)
+        {
+            reportTransport = value >= 0.5;
             return result;
         }
         if (id == kRepeatIoOnActivate)
@@ -243,6 +252,30 @@ public:
         for (int32 bus = 1; bus < data.numOutputs; ++bus)
             for (int32 channel = 0; channel < 2; ++channel)
                 std::fill_n (data.outputs[bus].channelBuffers32[channel], data.numSamples, 0.0f);
+        if (reportTransport)
+        {
+            float report[11] {};
+            if (const auto* transport = data.processContext)
+            {
+                report[0] = 1.0f;
+                report[1] = (float) transport->sampleRate;
+                report[2] = (float) transport->projectTimeSamples;
+                report[3] = (float) transport->projectTimeMusic;
+                report[4] = (float) transport->barPositionMusic;
+                report[5] = (float) transport->tempo;
+                report[6] = (float) transport->timeSigNumerator;
+                report[7] = (float) transport->timeSigDenominator;
+                report[8] = (float) transport->state;
+                report[9] = (float) transport->cycleStartMusic;
+                report[10] = (float) transport->cycleEndMusic;
+            }
+            for (int32 channel = 0; channel < 2; ++channel)
+            {
+                auto* output = data.outputs[0].channelBuffers32[channel];
+                std::fill_n (output, data.numSamples, 0.0f);
+                std::copy_n (report, std::min (data.numSamples, (int32) 11), output);
+            }
+        }
         return kResultOk;
     }
 
@@ -269,6 +302,7 @@ private:
     bool announceLatencyChanges = false;
     bool repeatIoOnActivate = false;
     bool flipOutputsOnActivate = false;
+    bool reportTransport = false;
 };
 } // namespace
 } // namespace Steinberg::Vst

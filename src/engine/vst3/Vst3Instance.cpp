@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstring>
 #include <utility>
 
@@ -587,9 +588,7 @@ bool Vst3Instance::activate (double sampleRate, int maxBlockFrames, std::string&
     impl->processData.outputParameterChanges = nullptr;
     impl->processData.inputEvents  = &impl->inEvents;
     impl->processData.outputEvents = &impl->outEvents;
-    impl->processData.processContext = &impl->processContext;
-    impl->processContext = {};
-    impl->processContext.sampleRate = sampleRate;
+    impl->processData.processContext = nullptr;
 
     // Give every channel independent scratch. VST3 buffers are writable and
     // may be processed in place, so aliasing unused buses lets one bus corrupt
@@ -913,6 +912,57 @@ void Vst3Instance::processBlock (const hosting::PortBuffers& io) noexcept
                                                        - impl->inEvents.getEventCount()),
                                         eventsFor, addEvent);
         }
+    }
+
+    impl->processData.processContext = nullptr;
+    if (const auto* position = io.transport)
+    {
+        auto& context = impl->processContext;
+        context = {};
+        context.sampleRate = impl->sampleRate;
+        context.projectTimeSamples = position->timeInSamples;
+        if (position->isPlaying || position->isRecording)
+            context.state |= Vst::ProcessContext::kPlaying;
+        if (position->isRecording)
+            context.state |= Vst::ProcessContext::kRecording;
+        if (std::isfinite (position->ppqPosition))
+        {
+            context.projectTimeMusic = position->ppqPosition;
+            context.state |= Vst::ProcessContext::kProjectTimeMusicValid;
+        }
+        if (std::isfinite (position->bpm) && position->bpm > 0.0)
+        {
+            context.tempo = position->bpm;
+            context.state |= Vst::ProcessContext::kTempoValid;
+        }
+        if (position->timeSignatureNumerator > 0 && position->timeSignatureDenominator > 0)
+        {
+            context.timeSigNumerator = position->timeSignatureNumerator;
+            context.timeSigDenominator = position->timeSignatureDenominator;
+            context.state |= Vst::ProcessContext::kTimeSigValid;
+            if ((context.state & Vst::ProcessContext::kProjectTimeMusicValid) != 0)
+            {
+                const double quartersPerBar = (double) context.timeSigNumerator * 4.0
+                                            / (double) context.timeSigDenominator;
+                const double barPosition = std::floor (context.projectTimeMusic / quartersPerBar)
+                                         * quartersPerBar;
+                if (std::isfinite (barPosition))
+                {
+                    context.barPositionMusic = barPosition;
+                    context.state |= Vst::ProcessContext::kBarPositionValid;
+                }
+            }
+        }
+        if (std::isfinite (position->ppqLoopStart) && std::isfinite (position->ppqLoopEnd)
+            && position->ppqLoopEnd > position->ppqLoopStart)
+        {
+            context.cycleStartMusic = position->ppqLoopStart;
+            context.cycleEndMusic = position->ppqLoopEnd;
+            context.state |= Vst::ProcessContext::kCycleValid;
+            if (position->isLooping)
+                context.state |= Vst::ProcessContext::kCycleActive;
+        }
+        impl->processData.processContext = &context;
     }
 
     impl->inParams.finalize();
