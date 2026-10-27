@@ -5,7 +5,7 @@
 #include <cstdint>
 #include <memory>
 #include "audiofile/BufferedFileReader.h"
-#include "../foundation/LagrangeInterpolator.h"
+#include "../foundation/WindowedSincInterpolator.h"
 #include "../foundation/PlanarBuffer.h"
 
 namespace duskstudio
@@ -26,7 +26,7 @@ public:
     ~MasteringPlayer();
 
     // Message thread. deviceSampleRate drives the resampler: a source whose
-    // rate differs from the device is Lagrange-interpolated in process() so
+    // rate differs from the device is band-limited in process() so
     // it plays at the right speed and pitch (the playhead stays in SOURCE
     // samples - the UI's waveform and seek math use the source rate).
     void prepare (int maxBlockSize, double deviceSampleRate);
@@ -64,6 +64,7 @@ public:
     {
         ControlChangeScope change (*this);
         playhead.store (p, std::memory_order_relaxed);
+        seekRevision.fetch_add (1, std::memory_order_release);
     }
 
     struct BlockInfo
@@ -126,11 +127,11 @@ private:
     // Resampling state. speedRatio = sourceRate / deviceRate; 1 (within
     // epsilon) takes the exact-copy path. inScratch is sized on the message
     // thread (prepare/loadFile) for the worst per-block source need; the
-    // audio thread never allocates. resampleReadPos tracks read continuity so
-    // an external seek (setPlayhead) resets the interpolator history instead
-    // of smearing across the jump.
+    // audio thread never allocates. The centered kernel reads ahead without
+    // advancing the source-domain playhead. Explicit seeks reset fractional
+    // phase, including a seek to the current integer playhead.
     //
-    // Mutation protocol: readScratch / inScratch / the interpolators are
+    // Mutation protocol: readScratch / inScratch / the resampler are
     // touched by process() between its audioInFlight bump and scope exit.
     // The message thread parks currentReader on null and drains
     // audioInFlight to zero (parkAndWaitForAudio) BEFORE resizing or
@@ -138,8 +139,13 @@ private:
     // in-flight block from racing the resize.
     std::atomic<double> speedRatio { 1.0 };
     dusk::audio::PlanarBuffer inScratch;
-    dusk::audio::LagrangeInterpolator interpL, interpR;
+    dusk::audio::WindowedSincInterpolator resampler;
     std::int64_t resampleReadPos = -1;   // audio thread only
+    double resampleFraction = 0.0;
+    std::int64_t resampleFramesRemaining = 0;
+    std::atomic<std::uint64_t> seekRevision { 0 };
+    std::uint64_t resampleSeekRevision = 0;
+    bool resampleReady = false;
     int    preparedBlockSize   = 0;    // message thread only
     double preparedDeviceRate  = 0.0;  // message thread only
 
@@ -165,7 +171,7 @@ private:
     // the caller must then leave the shared state untouched.
     bool parkAndWaitForAudio();
 
-    void updateResampleState();         // message thread, only after a
+    bool updateResampleState();         // message thread, only after a
                                         // successful parkAndWaitForAudio
 
     std::atomic<bool>        playing  { false };

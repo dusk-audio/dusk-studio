@@ -17,6 +17,8 @@
 // lowpass phases for a fixed downsampling ratio; process() neither allocates
 // nor locks in either mode. 201 taps per output sample is an offline cost.
 // One instance per channel; sharing one smears their histories.
+// The centered evaluator instead uses caller-owned lookahead and one prepared
+// kernel shared between channels, without the streaming path's delay.
 namespace dusk::audio
 {
 namespace detail
@@ -86,6 +88,35 @@ public:
             lowpassPhases.clear();
             return true;
         }
+        return preparePhases (speedRatio, 1.0);
+    }
+
+    static constexpr int centeredRadius() noexcept { return kCrossings; }
+
+    bool prepareCentered (double speedRatio)
+    {
+        return preparePhases (speedRatio, 0.0);
+    }
+
+    // Input spans center-radius through center+radius, with zero padding
+    // outside the source. Preparation owns all kernel construction.
+    float centeredValue (const float* input, double fraction) const noexcept
+    {
+        const double phase = fraction * kPhases;
+        const int lower = std::min ((int) phase, kPhases - 1);
+        const float blend = (float) (phase - lower);
+        const auto* row = lowpassPhases.data() + (size_t) lower * kKernelSize;
+        const auto* next = row + kKernelSize;
+        float result = 0.0f;
+        for (int tap = 0; tap < kKernelSize; ++tap)
+            result += input[tap] * (row[tap] + blend * (next[tap] - row[tap]));
+        return result;
+    }
+
+private:
+    bool preparePhases (double speedRatio, double phaseOrigin)
+    {
+        if (! std::isfinite (speedRatio) || speedRatio <= 0.0) return false;
         try
         {
             lowpassPhases.resize ((size_t) (kPhases + 1) * kKernelSize);
@@ -97,7 +128,7 @@ public:
         }
 
         constexpr double pi = 3.14159265358979323846;
-        const double cutoff = 1.0 / speedRatio;
+        const double cutoff = std::min (1.0, 1.0 / speedRatio);
         for (int phase = 0; phase <= kPhases; ++phase)
         {
             auto* row = lowpassPhases.data() + (size_t) phase * kKernelSize;
@@ -105,7 +136,7 @@ public:
             double sum = 0.0;
             for (int tap = 0; tap < kKernelSize; ++tap)
             {
-                const double x = 1.0 - offset + (double) (tap - kCrossings);
+                const double x = phaseOrigin - offset + (double) (tap - kCrossings);
                 double coefficient = 0.0;
                 if (std::abs (x) < kCrossings)
                 {
@@ -123,6 +154,7 @@ public:
         return true;
     }
 
+public:
     // Produces `numOutputSamples` from `input`, consuming `speedRatio` input
     // samples per output sample, and returns how many were actually consumed.
     // The carried fractional position can pull in up to two samples beyond
