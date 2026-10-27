@@ -5,6 +5,7 @@
 #include "../../../dsp/ChannelStrip.h"
 #include "../../../session/ParamEditAction.h"
 #include "../../../session/SessionSerializer.h"
+#include "../../HardwareInsertEditor.h"
 
 #include <array>
 #include <chrono>
@@ -2112,6 +2113,60 @@ std::optional<ScenarioResult> runPluginEditorTabLeftAlone (GuiHost& host, Scenar
     return std::nullopt;
    #endif
 }
+
+ScenarioResult hardwareRoutingSurvivesReopen (GuiHost&, ScenarioContext& ctx)
+{
+    auto& devices = ctx.engine().getDeviceManager();
+    auto* device = devices.getCurrentDevice();
+    if (device == nullptr || device->getOutputChannelNames().size() < 2
+                          || device->getInputChannelNames().size() < 2)
+        return ScenarioResult::skip ("requires at least two input and output channels");
+
+    for (const int format : { 0, 1, 2 })
+    {
+        HardwareInsertParams params;
+        auto routing = std::make_unique<HardwareInsertRouting>();
+        routing->format = format;
+        routing->outputChL = format == 2 ? 1 : 0;
+        routing->outputChR = format == 2 ? -1 : 1;
+        routing->inputChL = 0;
+        routing->inputChR = format == 2 ? -1 : 1;
+        routing->latencySamples = 321;
+        const auto expected = *routing;
+        params.routing.publish (std::move (routing));
+
+        for (int reopen = 0; reopen != 2; ++reopen)
+        {
+            HardwareInsertEditor editor (params, devices, {}, false, true);
+            std::vector<DuskComboBox*> combos;
+            for (auto* child : editor.getChildren())
+                if (auto* combo = dynamic_cast<DuskComboBox*> (child))
+                    combos.push_back (combo);
+            if (! ctx.expect (combos.size() == 2, "hardware editor lost its routing controls"))
+                return ctx.verdict();
+            for (auto* combo : combos)
+                ctx.expect (combo->getSelectedId() > 1,
+                            "reopening the hardware editor displayed an unrouted channel");
+
+            combos.front()->onChange();
+            const auto actual = params.routing.current();
+            ctx.expect (actual.format == expected.format
+                        && actual.outputChL == expected.outputChL
+                        && actual.outputChR == expected.outputChR
+                        && actual.inputChL == expected.inputChL
+                        && actual.inputChR == expected.inputChR
+                        && actual.latencySamples == expected.latencySamples,
+                        "publishing the reopened hardware editor changed its saved routing");
+        }
+    }
+    return ctx.verdict();
+}
+
+const ScenarioRegistrar hardwareRoutingReopen { Scenario {
+    "gui.hardware_insert_routing_reopens", { "gui", "hardware" }, Needs::Engine | Needs::Gui,
+    {}, {}, 10000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return hardwareRoutingSurvivesReopen (host, ctx); }
+} };
 
 const ScenarioRegistrar pluginEditorTabLeftAlone { Scenario {
     "gui.plugin_editor_tab_left_alone", { "gui", "plugin", "keyboard" }, Needs::Engine | Needs::Gui,
