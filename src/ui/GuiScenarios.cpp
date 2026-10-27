@@ -111,7 +111,8 @@ void dispatchMouseButton (Peer& peer, void (Peer::*handler) (Source, Point, Modi
 {
     const int flags = (down ? ((modifiers & 4) != 0 ? Modifiers::rightButtonModifier : Modifiers::leftButtonModifier) : 0)
                     | ((modifiers & 1) != 0 ? Modifiers::shiftModifier : 0)
-                    | ((modifiers & 2) != 0 ? Modifiers::commandModifier : 0);
+                    | ((modifiers & 2) != 0 ? Modifiers::commandModifier : 0)
+                    | ((modifiers & 8) != 0 ? Modifiers::altModifier : 0);
     const auto saved = Modifiers::currentModifiers;
     Modifiers::currentModifiers = Modifiers (flags);
     (peer.*handler) (Source::mouse, Point (x, y) * peer.getComponent().getDesktopScaleFactor(), Modifiers (flags),
@@ -2540,6 +2541,31 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         if (bounds.isEmpty()) return false;
         const auto point = owner.getTopLevelComponent()->getLocalPoint (owner.tapeStrip.get(), bounds.getCentre()).toFloat();
         return dragAt (point.x, point.y, point.x + (float) pixels, point.y);
+    }
+
+    std::vector<int> tapeRegionPoint (int track, int region, const std::string& kind) const override
+    {
+        auto* tape = owner.tapeStrip.get();
+        if (tape == nullptr || ! tape->isShowing()) return {};
+        const auto bounds = tape->audioRegionScreenRect (track, region);
+        if (bounds.isEmpty()) return {};
+        auto point = bounds.getCentre();
+        if (kind == "trim-start") point.x = bounds.getX() + 1;
+        else if (kind == "trim-end") point.x = bounds.getRight() - 1;
+        else if (kind == "fade-in" || kind == "fade-out")
+        {
+            const auto& r = owner.session.track (track).regions[(size_t) region];
+            point.y = bounds.getY() + 1;
+            point.x = tape->xForSampleForScenario (kind == "fade-in" ? r.timelineStart + r.fadeInSamples
+                : r.timelineStart + r.lengthInSamples - r.fadeOutSamples);
+        }
+        else if (kind != "body") return {};
+        const auto window = owner.getTopLevelComponent()->getLocalPoint (tape, point);
+        return { window.x, window.y };
+    }
+    bool tapeRegionPointer (int x, int y, bool down, int modifiers) override
+    {
+        return pointerAt ((float) x, (float) y, down, modifiers);
     }
 
     std::string tapeTakeBadgeText (int track) const override

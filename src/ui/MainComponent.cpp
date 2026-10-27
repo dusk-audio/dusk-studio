@@ -6975,6 +6975,8 @@ void MainComponent::followTrackMove (const TrackMovePlan& plan)
 
 void MainComponent::undoOrRedo (bool redo)
 {
+    // Region previews name vector slots that a history step can reshape.
+    if (tapeStrip != nullptr && tapeStrip->isRegionDragActive()) return;
     auto& um = engine.getUndoManager();
     if ((redo ? um.getRedoDescription() : um.getUndoDescription()) == kMoveTracksTransaction)
     {

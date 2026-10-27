@@ -1371,6 +1371,8 @@ An edit made while a MIDI track plays never leaves a note hanging. Mute, move or
 
 The selection stays on a region while you edit it, so you can nudge it again, or press **Alt+T** on a MIDI region, without clicking it first. Undo, redo, and anything that adds or removes regions (split, paste, duplicate, join, delete) clear the selection.
 
+While you hold a region drag, Undo, Redo, Cut, Paste, Split, Duplicate, Delete and the nudge shortcuts do nothing. Release the mouse before using them.
+
 ### Splitting
 
 Position the playhead and press **Cmd/Ctrl+E** to split the selected region at the playhead. Or right-click and choose **Split**. (**T** shows / hides the timeline.)

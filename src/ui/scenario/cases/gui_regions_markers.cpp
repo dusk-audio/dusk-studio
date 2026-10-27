@@ -1306,6 +1306,376 @@ const ScenarioRegistrar tapeLockedRegionsStay { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runTapeLockedRegionsStay (host, ctx); }
 } };
 
+std::optional<ScenarioResult> runTapeProtectedGestures (GuiHost& host, ScenarioContext& ctx, bool mixed)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires stopped transport and no modal");
+    if (engine.getStage() != AudioEngine::Stage::Recording && engine.getStage() != AudioEngine::Stage::Mixing)
+        return ScenarioResult::skip ("requires a stage with the timeline");
+    ctx.cleanup (host.preserveKeyboardFocus());
+    std::array<std::vector<AudioRegion>, 4> original;
+    std::array<AudioRegion, 4> fixture;
+    const auto rate = (std::int64_t) std::llround (engine.getTimelineSampleRate());
+    for (int t = 0; t < 4; ++t)
+    {
+        auto& track = session.track (t);
+        original[(size_t) t] = track.regions;
+        ctx.keep (track.mode);
+        ctx.keep (track.frozen);
+        track.mode.store ((int) Track::Mode::Mono);
+        track.frozen.store (false);
+        auto& region = fixture[(size_t) t];
+        region.timelineStart = t < 2 ? 0 : rate * t;
+        region.lengthInSamples = rate * 4;
+        region.sourceOffset = rate;
+        region.gainDb = -3.0f;
+        track.regions = { region };
+    }
+    const auto view = host.tapeView();
+    const bool timeline = host.setTimelineShown (true);
+    ctx.cleanup ([&host, &engine, &session, original, timeline, view, snap = session.snapToGrid]
+    {
+        for (int t = 0; t < 4; ++t) session.track (t).regions = original[(size_t) t];
+        session.snapToGrid = snap;
+        engine.getUndoManager().clearUndoHistory();
+        host.setTimelineShown (timeline);
+        host.restoreTapeView (view);
+    });
+    session.snapToGrid = false;
+    engine.getUndoManager().clearUndoHistory();
+    const auto unchanged = [&ctx, &session, fixture] (int track, const std::string& what)
+    {
+        const auto& r = session.track (track).regions.front();
+        const auto& before = fixture[(size_t) track];
+        ctx.expect (r.timelineStart == before.timelineStart && r.lengthInSamples == before.lengthInSamples
+                    && r.sourceOffset == before.sourceOffset && r.fadeInSamples == before.fadeInSamples
+                    && r.fadeOutSamples == before.fadeOutSamples && std::abs (r.gainDb - before.gainDb) < 0.001f,
+                    what + " changed a protected region");
+    };
+    const auto gesture = [&host, &ctx] (const std::string& kind, int dx, int dy, int modifiers)
+    {
+        const auto point = host.tapeRegionPoint (2, 0, kind);
+        if (! ctx.expect (point.size() == 2, kind + " point unavailable")) return;
+        ctx.expect (host.tapeRegionPointer (point[0], point[1], true, modifiers), kind + " press failed");
+        host.tapeRegionPointer (point[0] + dx, point[1] + dy, true, modifiers);
+        host.tapeRegionPointer (point[0] + dx, point[1] + dy, false, modifiers);
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 300, [&host, &ctx]
+    { ctx.expect (host.pressPeerKey ("0", '0'), "zoom-to-fit key was not handled"); } });
+    if (! mixed)
+    {
+        session.track (2).frozen.store (true);
+        for (const std::string kind : { "body", "trim-start", "trim-end", "fade-in", "fade-out", "gain" })
+        {
+            steps->push_back ({ 700, [gesture, kind]
+            { gesture (kind == "gain" ? "body" : kind, kind == "fade-out" ? -24 : 24,
+                       kind == "gain" ? -20 : 0, kind == "gain" ? 8 : 0); } });
+            steps->push_back ({ 100, [&ctx, &engine, &session, unchanged, fixture, kind]
+            {
+                unchanged (2, "frozen " + kind);
+                ctx.expect (! engine.getUndoManager().canUndo(), "frozen " + kind + " added undo history");
+                session.track (2).regions = { fixture[2] };
+            } });
+        }
+        steps->push_back ({ 700, [&host, &ctx, &session, fixture]
+        {
+            session.track (2).frozen.store (false);
+            const auto point = host.tapeRegionPoint (2, 0, "body");
+            if (! ctx.expect (point.size() == 2, "editable body point unavailable")) return;
+            host.tapeRegionPointer (point[0], point[1], true);
+            host.tapeRegionPointer (point[0] + 24, point[1], true);
+            ctx.expect (session.track (2).regions.front().timelineStart > fixture[2].timelineStart,
+                        "editable drag made no live preview");
+            session.track (2).frozen.store (true);
+            host.tapeRegionPointer (point[0] + 24, point[1], false);
+        } });
+        steps->push_back ({ 100, [&ctx, &engine, unchanged]
+        {
+            unchanged (2, "freeze before gesture commit");
+            ctx.expect (! engine.getUndoManager().canUndo(), "refused gesture added undo history");
+        } });
+    }
+    else
+    {
+        session.track (0).frozen.store (true);
+        session.track (1).regions.front().locked = true;
+        for (const bool gain : { false, true })
+        {
+            for (const int track : { 2, 0, 1, 3 })
+                steps->push_back ({ 700, [&host, &ctx, track]
+                { ctx.expect (host.clickAudioRegion (track, 0, false, track == 2 ? 0 : 2), "group selection failed"); } });
+            steps->push_back ({ 700, [&host, &ctx, gain]
+            {
+                const auto point = host.tapeRegionPoint (2, 0, "body");
+                if (! ctx.expect (point.size() == 2, "group anchor unavailable")) return;
+                const int x = gain ? point[0] : 5;
+                const int y = point[1] + (gain ? -20 : 0);
+                host.tapeRegionPointer (point[0], point[1], true, gain ? 8 : 0);
+                host.tapeRegionPointer (x, y, true, gain ? 8 : 0);
+                host.tapeRegionPointer (x, y, false, gain ? 8 : 0);
+            } });
+            steps->push_back ({ 100, [&ctx, &engine, &session, unchanged, fixture, gain, rate]
+            {
+                unchanged (0, "group gesture on frozen member");
+                unchanged (1, "group gesture on locked member");
+                const auto& anchor = session.track (2).regions.front();
+                const auto& other = session.track (3).regions.front();
+                if (gain)
+                    ctx.expect (std::abs (anchor.gainDb + 1.0f) < 0.001f && std::abs (other.gainDb + 1.0f) < 0.001f,
+                                "group gain did not edit both eligible members");
+                else
+                    ctx.expect (anchor.timelineStart == 0 && other.timelineStart == rate,
+                                "protected members constrained the editable group's timeline floor");
+                ctx.expect (engine.getUndoManager().canUndo(), "editable group added no undo step");
+                engine.getUndoManager().undo();
+                for (int t = 0; t < 4; ++t) unchanged (t, "group undo");
+                ctx.expect (! engine.getUndoManager().canUndo(), "group gesture used more than one undo step");
+                for (int t = 0; t < 4; ++t) session.track (t).regions = { fixture[(size_t) t] };
+                session.track (1).regions.front().locked = true;
+                engine.getUndoManager().clearUndoHistory();
+            } });
+        }
+    }
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar tapeFrozenGesturesStay { Scenario {
+    "gui.tape_frozen_gestures_stay", { "gui", "tape", "region" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runTapeProtectedGestures (host, ctx, false); }
+} };
+
+const ScenarioRegistrar tapeMixedProtectedGestures { Scenario {
+    "gui.tape_mixed_protected_gestures", { "gui", "tape", "region" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runTapeProtectedGestures (host, ctx, true); }
+} };
+
+std::optional<ScenarioResult> runTapeGestureBounds (GuiHost& host, ScenarioContext& ctx, bool shortClip,
+                                                     bool heldEditKeys = false)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& track = session.track (0);
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires stopped transport and no modal");
+    if (engine.getStage() != AudioEngine::Stage::Recording && engine.getStage() != AudioEngine::Stage::Mixing)
+        return ScenarioResult::skip ("requires a stage with the timeline");
+    ctx.cleanup (host.preserveKeyboardFocus());
+    ctx.keep (track.mode);
+    ctx.keep (track.frozen);
+    track.mode.store ((int) Track::Mode::Mono);
+    track.frozen.store (false);
+    const auto view = host.tapeView();
+    const bool timeline = host.setTimelineShown (true);
+    ctx.cleanup ([&host, &engine, &session, &track, original = track.regions, view, timeline,
+                  snap = session.snapToGrid, playhead = engine.getTransport().getPlayhead(),
+                  clipboard = engine.getRegionClipboard()]
+    {
+        track.regions = original;
+        session.snapToGrid = snap;
+        engine.getRegionClipboard() = clipboard;
+        engine.getTransport().locate (playhead);
+        engine.getUndoManager().clearUndoHistory();
+        host.setTimelineShown (timeline);
+        host.restoreTapeView (view);
+    });
+    session.snapToGrid = false;
+    engine.getTransport().locate (0);
+    const auto rate = (std::int64_t) std::llround (engine.getTimelineSampleRate());
+    AudioRegion first;
+    first.timelineStart = shortClip ? 0 : 2 * rate;
+    first.lengthInSamples = shortClip ? 512 : 2 * rate;
+    if (shortClip)
+    {
+        const auto source = ctx.tempDir() / "short.wav";
+        auto writer = dusk::audio::FileWriter::create (source, { (double) rate, 1, 24 });
+        const std::vector<float> samples (512, 0.25f);
+        const float* channels[] { samples.data() };
+        if (! writer || ! writer->write (channels, 1, 512) || ! writer->flush())
+            return ScenarioResult::fail ("could not write short region source");
+        first.file = decltype (first.file) (source.string());
+    }
+    AudioRegion second = first;
+    second.timelineStart = 6 * rate;
+    track.regions = shortClip ? std::vector<AudioRegion> { first } : std::vector<AudioRegion> { first, second };
+    engine.getUndoManager().clearUndoHistory();
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 300, [&host, &ctx]
+    { ctx.expect (host.pressPeerKey ("0", '0'), "zoom-to-fit key was not handled"); } });
+    if (shortClip)
+    {
+        steps->push_back ({ 300, [&host, &ctx]
+        {
+            const auto point = host.tapeRegionPoint (0, 0, "trim-start");
+            if (! ctx.expect (point.size() == 2, "short trim point unavailable")) return;
+            host.tapeRegionPointer (point[0], point[1], true);
+            host.tapeRegionPointer (point[0] + 1, point[1], true);
+            host.tapeRegionPointer (point[0] + 1, point[1], false);
+        } });
+        steps->push_back ({ 150, [&ctx, &session, &track]
+        {
+            const auto valid = [&ctx] (const AudioRegion& region, const std::string& what)
+            {
+                ctx.expect (region.timelineStart >= 0 && region.sourceOffset >= 0
+                            && region.lengthInSamples > 0 && region.lengthInSamples <= 512
+                            && region.sourceOffset + region.lengthInSamples <= 512,
+                            what + " exceeded the short source bounds");
+            };
+            if (! ctx.expect (track.regions.size() == 1, "short trim changed region count")) return;
+            valid (track.regions.front(), "left trim");
+            const auto saved = ctx.tempDir() / "short-trim.json";
+            if (! ctx.expect (SessionSerializer::save (session, saved), "could not save short trim")) return;
+            Session reopened;
+            if (ctx.expect (SessionSerializer::load (reopened, saved) && reopened.track (0).regions.size() == 1,
+                            "could not reload short trim"))
+                valid (reopened.track (0).regions.front(), "reloaded left trim");
+        } });
+    }
+    else if (heldEditKeys)
+    {
+        const auto sameRegion = [] (const AudioRegion& a, const AudioRegion& b)
+        {
+            return a.timelineStart == b.timelineStart && a.lengthInSamples == b.lengthInSamples
+                && a.sourceOffset == b.sourceOffset && a.fadeInSamples == b.fadeInSamples
+                && a.fadeOutSamples == b.fadeOutSamples && std::abs (a.gainDb - b.gainDb) < 0.001f;
+        };
+        const std::array<std::pair<const char*, char>, 6> keys {{
+            { "delete", 0 }, { "command + X", controlCharacter ('x') },
+            { "command + V", controlCharacter ('v') }, { "command + E", controlCharacter ('e') },
+            { "command + D", controlCharacter ('d') }, { "command + cursor right", 0 }
+        }};
+        for (const auto& key : keys)
+        {
+            auto point = std::make_shared<std::vector<int>>();
+            auto preview = std::make_shared<std::vector<AudioRegion>>();
+            const std::string name = key.first;
+            steps->push_back ({ 150, [&engine, &track, first, second, rate]
+            {
+                track.regions = { first, second };
+                engine.getUndoManager().clearUndoHistory();
+                engine.getTransport().locate (3 * rate);
+                auto& clipboard = engine.getRegionClipboard();
+                clipboard.hasContent = true;
+                clipboard.sourceTrack = 0;
+                clipboard.region = second;
+            } });
+            steps->push_back ({ 700, [&host, &ctx, &track, point, preview, first, key, name]
+            {
+                *point = host.tapeRegionPoint (0, 0, "body");
+                if (! ctx.expect (point->size() == 2, name + " anchor unavailable")) return;
+                host.tapeRegionPointer ((*point)[0], (*point)[1], true);
+                host.tapeRegionPointer ((*point)[0] + 24, (*point)[1], true);
+                ctx.expect (track.regions.size() == 2 && track.regions.front().timelineStart > first.timelineStart,
+                            name + " made no held preview");
+                *preview = track.regions;
+                host.pressPeerKey (name, key.second);
+            } });
+            steps->push_back ({ 150, [&host, &ctx, &engine, &track, point, preview, sameRegion, second, name]
+            {
+                if (ctx.expect (track.regions.size() == 2 && preview->size() == 2,
+                                name + " reshaped regions during a held drag"))
+                    ctx.expect (sameRegion (track.regions[0], (*preview)[0])
+                                && sameRegion (track.regions[1], (*preview)[1]),
+                                name + " changed the held preview");
+                ctx.expect (! engine.getUndoManager().canUndo(), name + " added history before release");
+                const auto& clipboard = engine.getRegionClipboard();
+                ctx.expect (clipboard.hasContent && clipboard.sourceTrack == 0 && sameRegion (clipboard.region, second),
+                            name + " changed the clipboard during a held drag");
+                if (point->size() != 2) return;
+                host.tapeRegionPointer ((*point)[0] + 48, (*point)[1], true);
+                host.tapeRegionPointer ((*point)[0] + 48, (*point)[1], false);
+            } });
+            steps->push_back ({ 150, [&ctx, &engine, &track, sameRegion, first, second, name]
+            {
+                if (ctx.expect (track.regions.size() == 2, name + " changed topology after release"))
+                    ctx.expect (track.regions[0].timelineStart > first.timelineStart
+                                && track.regions[0].lengthInSamples == first.lengthInSamples
+                                && track.regions[0].sourceOffset == first.sourceOffset
+                                && sameRegion (track.regions[1], second),
+                                name + " retargeted a region after release");
+                ctx.expect (engine.getUndoManager().canUndo(), name + " lost the completed drag's undo step");
+                engine.getUndoManager().undo();
+                if (ctx.expect (track.regions.size() == 2, name + " undo changed topology"))
+                    ctx.expect (sameRegion (track.regions[0], first) && sameRegion (track.regions[1], second),
+                                name + " undo restored the wrong region");
+                ctx.expect (! engine.getUndoManager().canUndo(), name + " added more than one undo step");
+            } });
+        }
+    }
+    else
+    {
+        steps->push_back ({ 300, [&host, &ctx]
+        { ctx.expect (host.clickAudioRegion (0, 0), "could not select first region"); } });
+        steps->push_back ({ 150, [&host, &ctx, &track]
+        {
+            ctx.expect (host.pressPeerKey ("delete", 0), "delete key was not handled");
+            ctx.expect (track.regions.size() == 1, "delete did not remove first region");
+        } });
+        auto point = std::make_shared<std::vector<int>>();
+        steps->push_back ({ 700, [&host, &ctx, &track, point, second]
+        {
+            *point = host.tapeRegionPoint (0, 0, "body");
+            if (! ctx.expect (point->size() == 2, "remaining region body unavailable")) return;
+            host.tapeRegionPointer ((*point)[0], (*point)[1], true);
+            host.tapeRegionPointer ((*point)[0] + 24, (*point)[1], true);
+            ctx.expect (track.regions.size() == 1 && track.regions.front().timelineStart > second.timelineStart,
+                        "held drag made no preview on remaining region");
+            ctx.expect (host.pressPeerKey ("command + Z", controlCharacter ('z')), "held undo was not handled");
+        } });
+        steps->push_back ({ 150, [&host, &ctx, &track, point, first, second]
+        {
+            if (track.regions.size() == 2)
+                ctx.expect (track.regions[0].timelineStart == first.timelineStart
+                            && track.regions[1].timelineStart == second.timelineStart,
+                            "undo reshaped regions without canceling the held preview");
+            if (point->size() != 2) return;
+            host.tapeRegionPointer ((*point)[0] + 48, (*point)[1], true);
+            host.tapeRegionPointer ((*point)[0] + 48, (*point)[1], false);
+        } });
+        steps->push_back ({ 150, [&ctx, &engine, &track, first, second]
+        {
+            if (track.regions.size() == 1)
+            {
+                ctx.expect (track.regions.front().timelineStart > second.timelineStart,
+                            "gated undo lost the continuing drag");
+                engine.getUndoManager().undo();
+                ctx.expect (track.regions.size() == 1 && track.regions.front().timelineStart == second.timelineStart,
+                            "drag undo lost the remaining region's original position");
+                engine.getUndoManager().undo();
+            }
+            if (ctx.expect (track.regions.size() == 2, "delete undo did not restore both regions"))
+                ctx.expect (track.regions[0].timelineStart == first.timelineStart
+                            && track.regions[1].timelineStart == second.timelineStart,
+                            "release retargeted a region after undo reshaped the list");
+        } });
+    }
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar tapeDragUndoKeepsRegions { Scenario {
+    "gui.tape_drag_undo_keeps_regions", { "gui", "tape", "region" }, Needs::Engine | Needs::Gui,
+    {}, {}, 10000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runTapeGestureBounds (host, ctx, false); }
+} };
+
+const ScenarioRegistrar tapeShortTrimBounds { Scenario {
+    "gui.tape_short_trim_bounds", { "gui", "tape", "region" }, Needs::Engine | Needs::Gui,
+    {}, {}, 10000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runTapeGestureBounds (host, ctx, true); }
+} };
+
+const ScenarioRegistrar tapeHeldEditKeysKeepRegions { Scenario {
+    "gui.tape_held_edit_keys_keep_regions", { "gui", "tape", "region", "keyboard" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runTapeGestureBounds (host, ctx, false, true); }
+} };
+
 // A region that reaches a track with nothing announcing it, as a take committed
 // when the device stops does, shows on the tape strip within a tick of its timer.
 std::optional<ScenarioResult> runTapeRepaintsUnannouncedRegions (GuiHost& host, ScenarioContext& ctx)
