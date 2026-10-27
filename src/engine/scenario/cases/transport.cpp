@@ -181,6 +181,83 @@ ScenarioResult clickFollowsBusAlignment (ScenarioContext& ctx)
     return ctx.verdict();
 }
 
+ScenarioResult clickKeepsTempoMapPhase (ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+    const auto mapWas = session.tempoMap;
+    ctx.cleanup ([&session, &engine, mapWas]
+    {
+        engine.stop();
+        session.tempoMap = mapWas;
+        engine.publishTempoMap();
+        engine.prepareForSelfTest (ScenarioContext::kSampleRate, ScenarioContext::kBlockSize);
+    });
+    ctx.keep (session.oversamplingFactor);
+    ctx.keep (session.tempoBpm);
+    ctx.keep (session.beatsPerBar);
+    ctx.keep (session.metronomeEnabled);
+    ctx.keep (session.metronomeClickWhilePlaying);
+    ctx.keep (session.metronomeVolDb);
+    ctx.keep (session.metronomePolyphonic);
+    session.tempoBpm.store (120.0f);
+    session.beatsPerBar.store (4);
+    session.metronomeEnabled.store (true);
+    session.metronomeClickWhilePlaying.store (true);
+    session.metronomeVolDb.store (0.0f);
+    session.metronomePolyphonic.store (false);
+    transport.setLoopEnabled (false);
+    for (const int factor : { 1, 4 })
+        for (const std::int64_t change : { std::int64_t (84000), std::int64_t (96000) })
+        {
+            engine.stop();
+            session.oversamplingFactor.store (factor);
+            session.tempoMap.setPoints ({ { 0, 120.0f }, { change, 90.0f } });
+            engine.publishTempoMap();
+            engine.prepareForSelfTest (ScenarioContext::kSampleRate, ScenarioContext::kBlockSize);
+            engine.applyMasterPdcTargetsNow();
+            const auto latency = engine.getMixLatencySamples();
+            const auto start = change - 1000;
+            const auto firstBeat = change == 84000 ? 100000 : 96000;
+            const auto secondBeat = firstBeat + 32000;
+            transport.setPlayhead (start);
+            engine.play();
+            std::vector<float> actual;
+            while (transport.getCommittedPlayhead() < secondBeat + latency + 300)
+            {
+                ctx.pump (1);
+                const auto& block = ctx.lastBlock (0);
+                actual.insert (actual.end(), block.begin(), block.end());
+            }
+            std::vector<float> expected (actual.size());
+            for (int beat = 4; beat <= 5; ++beat)
+            {
+                Metronome reference;
+                reference.prepare (ScenarioContext::kSampleRate);
+                reference.setEnabled (true);
+                reference.setBpm (120.0f);
+                reference.setVolumeDb (0.0f);
+                std::array<float, 241> left {}, right {};
+                reference.process ((std::int64_t) beat * 24000 - 1, true,
+                                    left.data(), right.data(), (int) left.size());
+                const auto offset = (beat == 4 ? firstBeat : secondBeat) + latency - start;
+                if (! ctx.expect (offset >= 0 && (std::size_t) offset + 240 <= expected.size(),
+                                  "the mapped click reference fell outside the captured output"))
+                    return ctx.verdict();
+                std::copy (left.begin() + 1, left.end(), expected.begin() + offset);
+            }
+            float difference = 0.0f;
+            for (std::size_t i = 0; i < actual.size(); ++i)
+                difference = std::max (difference, std::abs (actual[i] - expected[i]));
+            ctx.expect (difference < 1.0e-5f,
+                        std::to_string (factor) + "x metronome lost beat phase or accents at tempo change "
+                            + std::to_string (change) + "; waveform difference " + std::to_string (difference));
+        }
+    engine.stop();
+    return ctx.verdict();
+}
+
 // Count-in rolls the playhead back one bar and clicks through it, metronome
 // off or not; the take itself starts where Record was pressed.
 ScenarioResult countInRollsBackABar (ScenarioContext& ctx)
@@ -1028,6 +1105,9 @@ const ScenarioRegistrar countInRegistrar { Scenario {
 const ScenarioRegistrar clickAlignmentRegistrar { Scenario {
     "transport.click_follows_bus_alignment", { "transport", "metronome", "pdc" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (clickFollowsBusAlignment, ctx); } } };
+const ScenarioRegistrar clickTempoMapRegistrar { Scenario {
+    "transport.click_keeps_tempo_map_phase", { "transport", "metronome", "tempo-map", "pdc" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (clickKeepsTempoMapPhase, ctx); } } };
 const ScenarioRegistrar punchRegistrar { Scenario {
     "transport.punch_pre_and_post_roll", { "transport", "record", "punch" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (punchPreAndPostRoll, ctx); } } };

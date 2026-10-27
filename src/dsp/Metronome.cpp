@@ -26,7 +26,7 @@ void Metronome::reset() noexcept
 
 void Metronome::process (std::int64_t playheadStart, bool transportRolling,
                           float* L, float* R, int numSamples,
-                          bool forceEnable) noexcept
+                          bool forceEnable, double quarterNoteAtStart) noexcept
 {
     if (sr <= 0.0 || L == nullptr || R == nullptr) return;
     const bool effectiveEnabled = forceEnable
@@ -50,6 +50,14 @@ void Metronome::process (std::int64_t playheadStart, bool transportRolling,
 
     const double samplesPerBeat = sr * 60.0 / (double) bpm;
     if (samplesPerBeat < 1.0) return;
+    const bool mappedPhase = std::isfinite (quarterNoteAtStart);
+    std::int64_t mappedBeat = mappedPhase ? (std::int64_t) std::floor (quarterNoteAtStart) : 0;
+    const auto mappedBoundary = [&] (std::int64_t beat) noexcept
+    {
+        return (std::int64_t) std::llround ((double) playheadStart
+            + ((double) beat - quarterNoteAtStart) * samplesPerBeat);
+    };
+    std::int64_t nextMappedBeat = mappedPhase ? mappedBoundary (mappedBeat + 1) : 0;
 
     const int   bpb  = std::max (1, beatsPerBar.load (std::memory_order_relaxed));
     const float vol  = dusk::audio::decibelsToGain (
@@ -109,13 +117,14 @@ void Metronome::process (std::int64_t playheadStart, bool transportRolling,
 
         if (transportRolling && effectiveEnabled)
         {
-            // floor() rounds toward -inf, so the beat index is correct for both
-            // forward playback and a negative playhead (count-in pre-roll sets
-            // the playhead to startSample - countInSamples). The old ceil()-1
-            // form mis-indexed exact-beat negative positions, double/skipping
-            // clicks across sample 0.
+            if (mappedPhase && absSample >= nextMappedBeat)
+            {
+                ++mappedBeat;
+                nextMappedBeat = mappedBoundary (mappedBeat + 1);
+            }
+            // Floor keeps negative count-in positions in the preceding beat.
             const std::int64_t beatIdx =
-                (std::int64_t) std::floor ((double) absSample / samplesPerBeat);
+                mappedPhase ? mappedBeat : (std::int64_t) std::floor ((double) absSample / samplesPerBeat);
 
             if (! lastBeatSeeded)
             {

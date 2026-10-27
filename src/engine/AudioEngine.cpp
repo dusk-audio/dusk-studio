@@ -7717,16 +7717,8 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     const bool polyphonic    = session.metronomePolyphonic         .load (std::memory_order_relaxed);
 
     metronome.setEnabled    (session.metronomeEnabled.load (std::memory_order_relaxed));
-    {
-        // Click follows the tempo map: use the tempo in effect at the block's
-        // playhead (per-block is plenty for a monitoring click). Falls back to
-        // the constant tempo when no map is published.
-        const TempoMap* tmMetro = rtTempoMap.load (std::memory_order_acquire);
-        const float metroBpm = (tmMetro != nullptr && ! tmMetro->empty())
-                                 ? tmMetro->bpmAt (blockStartSamples)
-                                 : session.tempoBpm.load (std::memory_order_relaxed);
-        metronome.setBpm (metroBpm);
-    }
+    const TempoMap* tmMetro = rtTempoMap.load (std::memory_order_acquire);
+    metronome.setBpm (session.tempoBpm.load (std::memory_order_relaxed));
     metronome.setBeatsPerBar(session.beatsPerBar.load (std::memory_order_relaxed));
     metronome.setVolumeDb   (session.metronomeVolDb.load (std::memory_order_relaxed));
     metronome.setPolyphonic (polyphonic);
@@ -7764,10 +7756,36 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                              + busAlignSamples.load (std::memory_order_relaxed)
                              + masterDryPdcApplied + master.getOversamplingLatencySamples()
                              + getMasterTapeLatencySamples();
-        metronome.process (blockStartSamples - (std::int64_t) mixLatency,
-                            clickRolling,
-                            mixL.data(), mixR.data(), numSamples,
-                            /*forceEnable*/ inCountIn);
+        const auto clickStart = blockStartSamples - (std::int64_t) mixLatency;
+        const double clickRate = currentSampleRate.load (std::memory_order_relaxed);
+        if (! clickRolling || (! metronome.isEnabled() && ! inCountIn)
+            || tmMetro == nullptr || tmMetro->empty() || clickRate <= 0.0)
+        {
+            metronome.process (clickStart, clickRolling, mixL.data(), mixR.data(), numSamples, inCountIn);
+        }
+        else
+        {
+            const auto& points = tmMetro->points();
+            auto next = std::upper_bound (points.begin(), points.end(), clickStart,
+                [] (std::int64_t sample, const TempoPoint& point) { return sample < point.timelineSamples; });
+            int offset = 0;
+            while (offset < numSamples)
+            {
+                const auto start = clickStart + offset;
+                int count = numSamples - offset;
+                if (next != points.end())
+                    count = (int) std::min<std::int64_t> (count, next->timelineSamples - start);
+                const float bpm = tmMetro->bpmAt (start);
+                const double quarterNote = start < 0
+                    ? (double) start * (double) points.front().bpm / (60.0 * clickRate)
+                    : tmMetro->samplesToTicksFractional (start, clickRate) / (double) kMidiTicksPerQuarter;
+                metronome.setBpm (bpm);
+                metronome.process (start, clickRolling, mixL.data() + offset, mixR.data() + offset,
+                                    count, inCountIn, quarterNote);
+                offset += count;
+                if (next != points.end() && clickStart + offset == next->timelineSamples) ++next;
+            }
+        }
     }
 
     writeMasterMixToOutput (outputChannelData, numOutputChannels, numSamples);
