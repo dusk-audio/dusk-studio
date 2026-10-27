@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../../foundation/MidiBuffer.h"
+#include "../../foundation/ProcessedBlock.h"
 #include "../MidiPanic.h"
 
 #include "InsertAdapter.h"
@@ -12,6 +13,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -76,6 +78,8 @@ public:
         bundle     = std::move (b);
         instance   = std::move (inst);
         adapter.prepare (instance->portLayout(), maxBlock);   // size the fold scratch
+        maxProcessFrames.store (maxBlock, std::memory_order_release);
+        historyResetPending.store (true, std::memory_order_release);
         loadedPath     = path.u8string();
         loadedPluginId = pickedId;
         gen.fetch_add (1, std::memory_order_relaxed);
@@ -122,7 +126,11 @@ public:
         // its state. Keep the adapter in step with that active replacement even
         // while reporting the partial failure to the caller.
         if (instance->isActive())
+        {
             adapter.prepare (instance->portLayout(), maxBlock);
+            maxProcessFrames.store (maxBlock, std::memory_order_release);
+            historyResetPending.store (true, std::memory_order_release);
+        }
         if (restored)
             processingOnline.store (true, std::memory_order_release);
         return restored;
@@ -209,7 +217,8 @@ public:
     // INativeInstance::processBlock. Clears the outputs + returns when no plugin
     // is loaded; passes audio through when bypassed. midiIn feeds instruments
     // and MIDI-driven effects, transport a tempo-synced plugin (both null ok).
-    void processStereo (const float* inL, const float* inR,
+    // Returns the rendered block's timing, or no value for a fallback.
+    std::optional<dusk::ProcessedBlock> processStereo (const float* inL, const float* inR,
                         float* outL, float* outR, int numFrames,
                         const dusk::MidiBuffer* midiIn = nullptr,
                         const dusk::TransportPosition* transport = nullptr) noexcept
@@ -226,10 +235,10 @@ public:
             || inL == nullptr)
         {
             clearOutputs();
-            return;
+            return std::nullopt;
         }
 
-        if (numFrames <= 0) return;
+        if (numFrames <= 0) return std::nullopt;
         const size_t n = sizeof (float) * (size_t) numFrames;
 
         // A quarantined effect is an offline insert, not a channel mute: fall
@@ -248,7 +257,7 @@ public:
             if (outL != nullptr && outL != inL) std::memcpy (outL, inL, n);
             const float* r = (inR != nullptr) ? inR : inL;
             if (outR != nullptr && outR != r)   std::memcpy (outR, r, n);
-            return;
+            return std::nullopt;
         }
 
         // A momentarily inactive instance (mid-reactivate, fenced by the
@@ -257,7 +266,7 @@ public:
         if (! instance->isActive())
         {
             clearOutputs();
-            return;
+            return std::nullopt;
         }
 
         // The adapter needs both output buffers to process in place; a missing one
@@ -265,7 +274,7 @@ public:
         if (outL == nullptr || outR == nullptr)
         {
             clearOutputs();
-            return;
+            return std::nullopt;
         }
 
         // The InsertAdapter processes in place, so stage the input into the output
@@ -274,10 +283,15 @@ public:
         const float* r = (inR != nullptr) ? inR : inL;
         if (outR != r)  std::memcpy (outR, r, n);
 
+        if (numFrames > maxProcessFrames.load (std::memory_order_acquire)) return std::nullopt;
+        const int blockLatency = adapter.outputChannels() > 0 ? instance->getLatencySamples() : 0;
         adapter.process (*instance, outL, outR, numFrames,
                          nullptr, nullptr, settleOwedReset (midiIn), transport,
                          offlineRender.load (std::memory_order_acquire),
                          offlineCancel.load (std::memory_order_relaxed));
+        if (adapter.outputChannels() == 0) return std::nullopt;
+        return dusk::ProcessedBlock { blockLatency,
+            historyResetPending.exchange (false, std::memory_order_acq_rel) };
     }
 
     // UI: the live instance for editor attach (nullptr when not loaded).
@@ -372,5 +386,7 @@ protected:
 private:
     struct ParamBinding { uint32_t paramIndex; float frac; };
     SpscRing<ParamBinding, 256> bindingRing;
+    std::atomic<int> maxProcessFrames { 0 };
+    std::atomic<bool> historyResetPending { true };
 };
 } // namespace duskstudio::hosting

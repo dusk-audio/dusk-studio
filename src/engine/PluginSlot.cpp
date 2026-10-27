@@ -282,6 +282,7 @@ void PluginSlot::publishRemoteConnection (
         consecutiveOverruns = 0;
         autoBypassed .store (false, std::memory_order_relaxed);
         remoteCrashed.store (false, std::memory_order_relaxed);
+        historyResetPending.store (true, std::memory_order_release);
         currentRemote.store (ownedRemote.get(), std::memory_order_release);
     }
     reaperTimer.startTimer (kReaperPeriodMs);
@@ -699,6 +700,7 @@ void PluginSlot::prepareToPlay (double sampleRate, int blockSize)
         // Re-publish the live instance last: releaseResources() nulls
         // currentInstance while keeping ownedInstance, so without this a
         // release / re-prepare cycle leaves the slot silent until a reload.
+        historyResetPending.store (true, std::memory_order_release);
         currentInstance.store (ownedInstance.get(), std::memory_order_release);
         return;
     }
@@ -732,6 +734,7 @@ void PluginSlot::prepareToPlay (double sampleRate, int blockSize)
         // Re-publish the live remote: a prior oversized-block prepare or
         // releaseResources() may have nulled currentRemote, and the success
         // path must restore it or the slot stays silent until a reload.
+        historyResetPending.store (true, std::memory_order_release);
         currentRemote.store (ownedRemote.get(), std::memory_order_release);
         // Latency stays whatever loadPlugin reported; OOP doesn't currently
         // re-query it on prepareToPlay (the child reapplies the existing
@@ -957,6 +960,7 @@ bool PluginSlot::loadFromFile (const juce::File& pluginFile, juce::String& error
         attachInstanceListeners();
         cachedLatencySamples.store (ownedInstance->getLatencySamples(),
                                       std::memory_order_relaxed);
+        historyResetPending.store (true, std::memory_order_release);
         currentInstance.store (ownedInstance.get(), std::memory_order_release);
     }
     loadedDescriptor = std::move (descriptor);
@@ -1136,6 +1140,7 @@ bool PluginSlot::installInProcessInstance (PluginInstancePtr fresh,
         attachInstanceListeners();
         cachedLatencySamples.store (ownedInstance->getLatencySamples(),
                                       std::memory_order_relaxed);
+        historyResetPending.store (true, std::memory_order_release);
         currentInstance.store (ownedInstance.get(), std::memory_order_release);
     }
     loadedDescriptor = std::move (descriptor);
@@ -1415,6 +1420,7 @@ juce::String PluginSlot::getStateBase64ForSave (int parkSleepMs, std::string* er
                     inst.getTotalNumOutputChannels(),
                     preparedSampleRate, preparedBlockSize);
                 inst.prepareToPlay (preparedSampleRate, preparedBlockSize);
+                historyResetPending.store (true, std::memory_order_release);
 
                 // The plug-in starts cold again and may report a new latency,
                 // so the watchdog gets its warm-up grace back and the latency
@@ -1528,6 +1534,7 @@ bool PluginSlot::restoreFromSavedState (
                     consecutiveOverruns = 0;
                     cachedLatencySamples.store (ownedInstance->getLatencySamples(),
                                                  std::memory_order_relaxed);
+                    historyResetPending.store (true, std::memory_order_release);
                     currentInstance.store (ownedInstance.get(), std::memory_order_release);
                 }
                 else
@@ -1593,6 +1600,7 @@ bool PluginSlot::restoreFromSavedState (
         attachInstanceListeners();
         cachedLatencySamples.store (ownedInstance->getLatencySamples(),
                                       std::memory_order_relaxed);
+        historyResetPending.store (true, std::memory_order_release);
         currentInstance.store (ownedInstance.get(), std::memory_order_release);
     }
     loadedDescriptor = std::move (loaded);
@@ -1604,20 +1612,21 @@ bool PluginSlot::restoreFromSavedState (
     return true;
 }
 
-void PluginSlot::processMonoBlock (float* monoData, int numSamples,
+std::optional<dusk::ProcessedBlock> PluginSlot::processMonoBlock (float* monoData, int numSamples,
                                    juce::MidiBuffer& midiMessages) noexcept
 {
     dusk::audio::ScopedNoDenormals noDenormals;
-    if (numSamples == 0) return;
+    if (numSamples == 0) return std::nullopt;
 
     if (bypassed.load (std::memory_order_relaxed)
         || autoBypassed.load (std::memory_order_relaxed))
-        return;
+        return std::nullopt;
 
     // Dry-pass if prepareToPlay / releaseResources holds the lock (see header).
     const juce::SpinLock::ScopedTryLockType processGuard (processLock);
     if (! processGuard.isLocked())
-        return;
+        return std::nullopt;
+    const int blockLatency = cachedLatencySamples.load (std::memory_order_relaxed);
 
     // Time-budget watchdog. A plugin that consistently overruns the buffer
     // gets auto-bypassed so it can't freeze the audio thread. Two
@@ -1648,7 +1657,7 @@ void PluginSlot::processMonoBlock (float* monoData, int numSamples,
         {
             // Stereo-in plugin in a mono slot: duplicate mono into both
             // channels of the scratch and feed both as input pointers.
-            if (numSamples > stereoScratch.getNumSamples()) return;
+            if (numSamples > stereoScratch.getNumSamples()) return std::nullopt;
             stereoScratch.copyFrom (0, 0, monoData, numSamples);
             stereoScratch.copyFrom (1, 0, monoData, numSamples);
             inPtrs[0] = stereoScratch.getReadPointer (0);
@@ -1666,7 +1675,7 @@ void PluginSlot::processMonoBlock (float* monoData, int numSamples,
                                        kOopProcessTimeoutNs))
         {
             engageAutoBypass();
-            return;
+            return std::nullopt;
         }
 
         if (rNumOut == 1)
@@ -1698,12 +1707,14 @@ void PluginSlot::processMonoBlock (float* monoData, int numSamples,
             }
         }
         if (blocksSinceLoad < kGraceBlocks) ++blocksSinceLoad;
-        return;
+        if (rNumOut <= 0) return std::nullopt;
+        return dusk::ProcessedBlock { blockLatency,
+            historyResetPending.exchange (false, std::memory_order_acq_rel) };
     }
    #endif
 
     auto* p = currentInstance.load (std::memory_order_acquire);
-    if (p == nullptr) return;
+    if (p == nullptr) return std::nullopt;
 
     constexpr double kBudgetFraction = 0.6;
     const auto t0 = juce::Time::getHighResolutionTicks();
@@ -1727,7 +1738,7 @@ void PluginSlot::processMonoBlock (float* monoData, int numSamples,
         // picker filter prevents loading an instrument on a Mono channel
         // slot, so this branch is unreachable in normal use; keeping it
         // symmetrical avoids a foot-gun if filtering ever loosens.
-        if (numSamples > stereoScratch.getNumSamples()) return;
+        if (numSamples > stereoScratch.getNumSamples()) return std::nullopt;
 
         const int procCh = std::min (numOut, stereoScratch.getNumChannels());
         for (int c = 0; c < procCh; ++c)
@@ -1750,7 +1761,7 @@ void PluginSlot::processMonoBlock (float* monoData, int numSamples,
         // back to mono. Use the pre-allocated scratch so we don't touch
         // the heap.
         if (numSamples > stereoScratch.getNumSamples())
-            return;
+            return std::nullopt;
 
         stereoScratch.copyFrom (0, 0, monoData, numSamples);
         stereoScratch.copyFrom (1, 0, monoData, numSamples);
@@ -1777,22 +1788,26 @@ void PluginSlot::processMonoBlock (float* monoData, int numSamples,
         }
     }
     if (blocksSinceLoad < kGraceBlocks) ++blocksSinceLoad;
+    if (numOut <= 0) return std::nullopt;
+    return dusk::ProcessedBlock { blockLatency,
+        historyResetPending.exchange (false, std::memory_order_acq_rel) };
 }
 
-void PluginSlot::processStereoBlock (float* L, float* R, int numSamples,
+std::optional<dusk::ProcessedBlock> PluginSlot::processStereoBlock (float* L, float* R, int numSamples,
                                      juce::MidiBuffer& midiMessages) noexcept
 {
     dusk::audio::ScopedNoDenormals noDenormals;
-    if (numSamples == 0) return;
+    if (numSamples == 0) return std::nullopt;
 
     if (bypassed.load (std::memory_order_relaxed)
         || autoBypassed.load (std::memory_order_relaxed))
-        return;
+        return std::nullopt;
 
     // Dry-pass if prepareToPlay / releaseResources holds the lock (see header).
     const juce::SpinLock::ScopedTryLockType processGuard (processLock);
     if (! processGuard.isLocked())
-        return;
+        return std::nullopt;
+    const int blockLatency = cachedLatencySamples.load (std::memory_order_relaxed);
 
     constexpr int    kGraceBlocks            = 16;
     constexpr int    kMaxConsecutiveOverruns = 4;
@@ -1819,7 +1834,7 @@ void PluginSlot::processStereoBlock (float* L, float* R, int numSamples,
             // Mono-in plugin on a stereo bus: average L+R into the
             // pre-allocated scratch and feed that as the single input
             // channel.
-            if (numSamples > stereoScratch.getNumSamples()) return;
+            if (numSamples > stereoScratch.getNumSamples()) return std::nullopt;
             float* mono = stereoScratch.getWritePointer (0);
             for (int i = 0; i < numSamples; ++i)
                 mono[i] = (L[i] + R[i]) * 0.5f;
@@ -1837,7 +1852,7 @@ void PluginSlot::processStereoBlock (float* L, float* R, int numSamples,
             // future build raises the cap and this code wasn't updated,
             // bail rather than read garbage.
             engageAutoBypass();
-            return;
+            return std::nullopt;
         }
 
         dusk::copyEventsWhole (midiMessages, oopMidiScratch);
@@ -1853,7 +1868,7 @@ void PluginSlot::processStereoBlock (float* L, float* R, int numSamples,
             // avoiding here - re-trying a dead connection still pays
             // the deadline cost).
             engageAutoBypass();
-            return;
+            return std::nullopt;
         }
 
         // Read output channels from SHM and copy into L/R.
@@ -1891,12 +1906,14 @@ void PluginSlot::processStereoBlock (float* L, float* R, int numSamples,
             }
         }
         if (blocksSinceLoad < kGraceBlocks) ++blocksSinceLoad;
-        return;
+        if (rNumOut <= 0) return std::nullopt;
+        return dusk::ProcessedBlock { blockLatency,
+            historyResetPending.exchange (false, std::memory_order_acq_rel) };
     }
    #endif
 
     auto* p = currentInstance.load (std::memory_order_acquire);
-    if (p == nullptr) return;
+    if (p == nullptr) return std::nullopt;
 
     constexpr double kBudgetFraction = 0.6;
     const auto t0 = juce::Time::getHighResolutionTicks();
@@ -1917,7 +1934,7 @@ void PluginSlot::processStereoBlock (float* L, float* R, int numSamples,
         // Mono-input plugin on a stereo bus: collapse to mono, run, then fan
         // out the (possibly stereo) output back across L/R. Use the
         // pre-allocated stereoScratch as the working buffer.
-        if (numSamples > stereoScratch.getNumSamples()) return;
+        if (numSamples > stereoScratch.getNumSamples()) return std::nullopt;
 
         float* mono = stereoScratch.getWritePointer (0);
         for (int i = 0; i < numSamples; ++i)
@@ -1955,7 +1972,7 @@ void PluginSlot::processStereoBlock (float* L, float* R, int numSamples,
         // contents). Caller (ChannelStrip MIDI path) already cleared L/R
         // before calling; we still clear stereoScratch because it's
         // separate storage that may hold the previous block's plugin output.
-        if (numSamples > stereoScratch.getNumSamples()) return;
+        if (numSamples > stereoScratch.getNumSamples()) return std::nullopt;
 
         const int procCh = std::min (numOut, stereoScratch.getNumChannels());
         for (int c = 0; c < procCh; ++c)
@@ -1975,7 +1992,7 @@ void PluginSlot::processStereoBlock (float* L, float* R, int numSamples,
     else
     {
         // Plugin layout we can't handle (zero outputs, etc.) - bail.
-        return;
+        return std::nullopt;
     }
 
     if (bufferMs > 0.0 && blocksSinceLoad >= kGraceBlocks)
@@ -1993,6 +2010,8 @@ void PluginSlot::processStereoBlock (float* L, float* R, int numSamples,
         }
     }
     if (blocksSinceLoad < kGraceBlocks) ++blocksSinceLoad;
+    return dusk::ProcessedBlock { blockLatency,
+        historyResetPending.exchange (false, std::memory_order_acq_rel) };
 }
 
 void PluginSlot::setParamNormalised (int paramIndex, float value01) noexcept

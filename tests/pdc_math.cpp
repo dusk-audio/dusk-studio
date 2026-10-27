@@ -211,6 +211,72 @@ struct InsertPdcHarness : StripPdcHarness
     }
 };
 
+struct NativeDelayBundle
+{
+    bool load (const std::string&, std::string&) { return true; }
+};
+
+struct NativeDelayInstance final : duskstudio::hosting::INativeInstance
+{
+    bool create (NativeDelayBundle&, const std::string& id, std::string&)
+    {
+        duskstudio::hosting::BusInfo input;
+        input.channelCount = 2;
+        input.active = true;
+        input.role = duskstudio::hosting::BusInfo::Role::Main;
+        input.dir = duskstudio::hosting::BusInfo::Direction::Input;
+        auto output = input;
+        output.dir = duskstudio::hosting::BusInfo::Direction::Output;
+        layout.inputs = { input };
+        layout.outputs = id == "sink" ? std::vector<duskstudio::hosting::BusInfo>()
+                                      : std::vector<duskstudio::hosting::BusInfo> { output };
+        layout.mainInIndex = 0;
+        layout.mainOutIndex = id == "sink" ? -1 : 0;
+        return true;
+    }
+    const duskstudio::hosting::PortLayout& portLayout() const noexcept override { return layout; }
+    bool activate (double, int, std::string&) override
+    {
+        for (auto& line : lines)
+        {
+            line.setMaximumDelayInSamples (193);
+            line.setDelay (193);
+        }
+        active = true;
+        return true;
+    }
+    void deactivate() override { active = false; }
+    bool reactivate (double rate, int frames, std::string& error) override { return activate (rate, frames, error); }
+    bool isActive() const noexcept override { return active; }
+    void processBlock (const duskstudio::hosting::PortBuffers& io) noexcept override
+    {
+        ++processCalls;
+        for (int c = 0; c < io.mainOutChannels; ++c)
+            for (int i = 0; i < io.numFrames; ++i)
+            {
+                lines[(std::size_t) c].pushSample (io.mainIn[c][i]);
+                io.mainOut[c][i] = lines[(std::size_t) c].popSample();
+            }
+    }
+    bool saveState (std::vector<uint8_t>&) const override { return true; }
+    bool loadState (const std::vector<uint8_t>&) override { return true; }
+    int getLatencySamples() const noexcept override { return 193; }
+
+    duskstudio::hosting::PortLayout layout;
+    std::array<dusk::audio::IntDelayLine, 2> lines;
+    bool active = false;
+    int processCalls = 0;
+};
+
+struct NativeDelayTraits
+{
+    using Bundle = NativeDelayBundle;
+    using Instance = NativeDelayInstance;
+    static constexpr const char* bundleNoun = "delay";
+    static bool pickPlugin (const Bundle&, const std::string& requested, std::string& id, std::string&)
+    { id = requested.empty() ? "delay" : requested; return true; }
+};
+
 void expectSameOutput (const StripPdcHarness& actual, const StripPdcHarness& reference)
 {
     for (std::size_t i = 0; i < actual.masterL.size(); ++i)
@@ -390,4 +456,112 @@ TEST_CASE ("Channel insert LED aligns hardware dry audio including frozen playba
         CAPTURE (block);
         expectSameOutput (actual, reference);
     }
+}
+
+TEST_CASE ("Channel insert LED uses zero delay for a slot that dry-passes a busy process lock", "[pdc][channel-strip][insert-led]")
+{
+    const bool stereo = GENERATE (false, true);
+    const bool reengaging = GENERATE (false, true);
+    CAPTURE (stereo, reengaging);
+    InsertPdcHarness actual { stereo, 193 }, reference { stereo, 193 };
+    warm (actual, reference);
+    actual.params.insertBypassed.store (true);
+    warm (actual, reference);
+    if (reengaging) actual.params.insertBypassed.store (false);
+    reference.strip.getPluginSlot().setBypassed (true);
+    actual.signal (90); reference.signal (90);
+    {
+        const juce::SpinLock::ScopedLockType guard (actual.strip.getPluginSlot().getProcessLock());
+        actual.run();
+    }
+    reference.run();
+    expectSameOutput (actual, reference);
+    reference.strip.getPluginSlot().setBypassed (false);
+    for (int block = 91; block < 99; ++block)
+    {
+        actual.signal (block); reference.signal (block);
+        actual.run(); reference.run();
+        expectSameOutput (actual, reference);
+    }
+}
+
+TEST_CASE ("Channel insert LED discards dry history after a same-latency plugin restart", "[pdc][channel-strip][insert-led]")
+{
+    const bool stereo = GENERATE (false, true);
+    const int restart = GENERATE (0, 1, 2);
+    CAPTURE (stereo, restart);
+    InsertPdcHarness actual { stereo, 193 }, reference { stereo, 193 };
+    warm (actual, reference);
+    actual.params.insertBypassed.store (true);
+    warm (actual, reference);
+    for (auto* harness : { &actual, &reference })
+    {
+        auto& slot = harness->strip.getPluginSlot();
+        if (restart == 0)
+            slot.prepareToPlay (48000.0, kBlock);
+        else if (restart == 1)
+        {
+            slot.unload();
+            auto instance = std::make_unique<TransparentDelay> (193);
+            harness->plugin = instance.get();
+            REQUIRE (slot.installInProcessInstanceForTest (std::move (instance)));
+        }
+        else
+            (void) slot.getStateBase64ForSave (0);
+    }
+    for (int block = 90; block < 98; ++block)
+    {
+        actual.signal (block); reference.signal (block);
+        actual.run(); reference.run();
+        expectSameOutput (actual, reference);
+    }
+}
+
+TEST_CASE ("Native insert returns rendered timing and no value for fallbacks", "[pdc][insert-led][native]")
+{
+    duskstudio::hosting::NativeInsertSlot<NativeDelayTraits> slot;
+    std::string error;
+    REQUIRE (slot.load ("delay", 48000.0, kBlock, error));
+    Block left, right, outL {}, outR {};
+    left.fill (0.25f); right.fill (-0.5f);
+    const auto run = [&] { return slot.processStereo (left.data(), right.data(), outL.data(), outR.data(), kBlock); };
+    const auto first = run();
+    REQUIRE (first.has_value());
+    REQUIRE (first->latencySamples == 193);
+    REQUIRE (first->historyReset);
+    REQUIRE_THAT (outL[0], WithinAbs (0.0f, 1e-7f));
+    REQUIRE (slot.getInstance()->processCalls == 1);
+    const auto expectDry = [&]
+    {
+        REQUIRE_FALSE (run().has_value());
+        for (std::size_t i = 0; i < outL.size(); ++i)
+        {
+            REQUIRE_THAT (outL[i], WithinAbs (left[i], 1e-7f));
+            REQUIRE_THAT (outR[i], WithinAbs (right[i], 1e-7f));
+        }
+    };
+    slot.setBypassed (true);
+    expectDry();
+    slot.setBypassed (false);
+    slot.quarantineAfterFailedReactivation();
+    expectDry();
+    const auto generation = slot.generation();
+    REQUIRE (slot.reactivate (48000.0, kBlock / 2, error));
+    expectDry();
+    REQUIRE (slot.getInstance()->processCalls == 1);
+    const auto resumed = slot.processStereo (left.data(), right.data(), outL.data(), outR.data(), kBlock / 2);
+    REQUIRE (resumed.has_value());
+    REQUIRE (resumed->latencySamples == 193);
+    REQUIRE (resumed->historyReset);
+    const auto continuing = slot.processStereo (left.data(), right.data(), outL.data(), outR.data(), kBlock / 2);
+    REQUIRE (continuing.has_value());
+    REQUIRE_FALSE (continuing->historyReset);
+    REQUIRE (slot.generation() == generation);
+    slot.getInstance()->deactivate();
+    REQUIRE_FALSE (run().has_value());
+    REQUIRE_THAT (outL[0], WithinAbs (0.0f, 1e-7f));
+    REQUIRE_THAT (outR[0], WithinAbs (0.0f, 1e-7f));
+    REQUIRE (slot.load ("delay", 48000.0, kBlock, error, "sink"));
+    expectDry();
+    REQUIRE (slot.getInstance()->processCalls == 1);
 }

@@ -986,7 +986,6 @@ void ChannelStrip::alignInsertDry (int numSamples, bool mono, int latency) noexc
 {
     // Dry alignment shares the existing cross-track PDC capacity.
     if (activeInsertMode == kInsertEmpty
-        || (activeInsertMode == kInsertPlugin && ! hasLoadedEffectMidiConsumer())
         || latency < 0 || latency > kMaxPdcSamples)
     {
         resetInsertDryHistory();
@@ -1370,8 +1369,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
 
         std::memcpy (insertScratchL.data(), tempMono.data(),
                       sizeof (float) * (size_t) numSamples);
-        const int insertLatency = activeInsertMode == kInsertPlugin
-            ? getInsertPluginLatencySamples() : 0;
+        std::optional<dusk::ProcessedBlock> insertResult;
         if (activeInsertMode == kInsertPlugin)
         {
             const auto* owedReset = takeOwedMidiReset();
@@ -1382,7 +1380,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
                 // back (same collapse as the hardware mono path). insertScratchR is free
                 // here (only the hardware branch uses it).
                 std::memcpy (insertScratchR.data(), tempMono.data(), sizeof (float) * (size_t) numSamples);
-                nativeClapSlot.processStereo (tempMono.data(), insertScratchR.data(),
+                insertResult = nativeClapSlot.processStereo (tempMono.data(), insertScratchR.data(),
                                               tempMono.data(), insertScratchR.data(), numSamples,
                                               owedReset);
                 for (int i = 0; i < numSamples; ++i)
@@ -1396,7 +1394,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             {
                 // Same stereo-only mono fold as the CLAP branch above.
                 std::memcpy (insertScratchR.data(), tempMono.data(), sizeof (float) * (size_t) numSamples);
-                nativeLv2Slot.processStereo (tempMono.data(), insertScratchR.data(),
+                insertResult = nativeLv2Slot.processStereo (tempMono.data(), insertScratchR.data(),
                                              tempMono.data(), insertScratchR.data(), numSamples,
                                              owedReset);
                 for (int i = 0; i < numSamples; ++i)
@@ -1410,7 +1408,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             {
                 // Same stereo-only mono fold as the CLAP branch above.
                 std::memcpy (insertScratchR.data(), tempMono.data(), sizeof (float) * (size_t) numSamples);
-                nativeVst3Slot.processStereo (tempMono.data(), insertScratchR.data(),
+                insertResult = nativeVst3Slot.processStereo (tempMono.data(), insertScratchR.data(),
                                               tempMono.data(), insertScratchR.data(), numSamples,
                                               owedReset);
                 for (int i = 0; i < numSamples; ++i)
@@ -1424,7 +1422,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             {
                 std::memcpy (insertScratchR.data(), tempMono.data(),
                              sizeof (float) * (size_t) numSamples);
-                nativeAuSlot.processStereo (tempMono.data(), insertScratchR.data(),
+                insertResult = nativeAuSlot.processStereo (tempMono.data(), insertScratchR.data(),
                                             tempMono.data(), insertScratchR.data(), numSamples,
                                             owedReset);
                 for (int i = 0; i < numSamples; ++i)
@@ -1437,7 +1435,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             {
                 // Same stereo-only mono fold as the CLAP branch above.
                 std::memcpy (insertScratchR.data(), tempMono.data(), sizeof (float) * (size_t) numSamples);
-                builtinSlot.processStereo (tempMono.data(), insertScratchR.data(),
+                insertResult = builtinSlot.processStereo (tempMono.data(), insertScratchR.data(),
                                            tempMono.data(), insertScratchR.data(), numSamples,
                                            owedReset, transport);
                 for (int i = 0; i < numSamples; ++i)
@@ -1447,7 +1445,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             else
             {
                 fillPluginMidiScratch (owedReset);
-                pluginSlot.processMonoBlock (tempMono.data(), numSamples, pluginMidiScratch);
+                insertResult = pluginSlot.processMonoBlock (tempMono.data(), numSamples, pluginMidiScratch);
             }
         }
         else if (activeInsertMode == kInsertHardware)
@@ -1466,8 +1464,15 @@ void ChannelStrip::processAndAccumulate (const float* inL,
                 tempMono[(size_t) i] = 0.5f
                     * (tempMono[(size_t) i] + insertScratchR[(size_t) i]);
         }
-        alignInsertDry (numSamples, true, activeInsertMode == kInsertHardware
-            ? hardwareSlot.getLatencySamples() : insertLatency);
+        if (activeInsertMode == kInsertHardware)
+            alignInsertDry (numSamples, true, hardwareSlot.getLatencySamples());
+        else if (insertResult.has_value())
+        {
+            if (insertResult->historyReset) resetInsertDryHistory();
+            alignInsertDry (numSamples, true, insertResult->latencySamples);
+        }
+        else if (activeInsertMode == kInsertEmpty || ! hasLoadedEffectMidiConsumer())
+            resetInsertDryHistory();
         // Crossfade pre-insert vs post-insert by the gate.
         for (int i = 0; i < numSamples; ++i)
         {
@@ -1682,39 +1687,37 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             // Stash pre-insert for the crossfade gate.
             std::memcpy (insertScratchL.data(), L, sizeof (float) * (size_t) numSamples);
             std::memcpy (insertScratchR.data(), R, sizeof (float) * (size_t) numSamples);
-            // A slot can auto-bypass after rendering its last delayed block.
-            const int insertLatency = activeInsertMode == kInsertPlugin
-                ? getInsertPluginLatencySamples() : 0;
+            std::optional<dusk::ProcessedBlock> insertResult;
 
             if (activeInsertMode == kInsertPlugin)
             {
                 const auto* owedReset = takeOwedMidiReset();
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
                 if (nativeClapSlot.isLoaded())
-                    nativeClapSlot.processStereo (L, R, L, R, numSamples, owedReset);
+                    insertResult = nativeClapSlot.processStereo (L, R, L, R, numSamples, owedReset);
                 else
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_LV2
                 if (nativeLv2Slot.isLoaded())
-                    nativeLv2Slot.processStereo (L, R, L, R, numSamples, owedReset);
+                    insertResult = nativeLv2Slot.processStereo (L, R, L, R, numSamples, owedReset);
                 else
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_VST3
                 if (nativeVst3Slot.isLoaded())
-                    nativeVst3Slot.processStereo (L, R, L, R, numSamples, owedReset);
+                    insertResult = nativeVst3Slot.processStereo (L, R, L, R, numSamples, owedReset);
                 else
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_AU
                 if (nativeAuSlot.isLoaded())
-                    nativeAuSlot.processStereo (L, R, L, R, numSamples, owedReset);
+                    insertResult = nativeAuSlot.processStereo (L, R, L, R, numSamples, owedReset);
                 else
 #endif
                 if (builtinSlot.isLoaded())
-                    builtinSlot.processStereo (L, R, L, R, numSamples, owedReset, transport);
+                    insertResult = builtinSlot.processStereo (L, R, L, R, numSamples, owedReset, transport);
                 else
                 {
                     fillPluginMidiScratch (owedReset);
-                    pluginSlot.processStereoBlock (L, R, numSamples, pluginMidiScratch);
+                    insertResult = pluginSlot.processStereoBlock (L, R, numSamples, pluginMidiScratch);
                 }
             }
             else if (activeInsertMode == kInsertHardware)
@@ -1723,8 +1726,15 @@ void ChannelStrip::processAndAccumulate (const float* inL,
                                                   deviceInputs, numDeviceInputs,
                                                   deviceOutputs, numDeviceOutputs);
             }
-            alignInsertDry (numSamples, false, activeInsertMode == kInsertHardware
-                ? hardwareSlot.getLatencySamples() : insertLatency);
+            if (activeInsertMode == kInsertHardware)
+                alignInsertDry (numSamples, false, hardwareSlot.getLatencySamples());
+            else if (insertResult.has_value())
+            {
+                if (insertResult->historyReset) resetInsertDryHistory();
+                alignInsertDry (numSamples, false, insertResult->latencySamples);
+            }
+            else if (activeInsertMode == kInsertEmpty || ! hasLoadedEffectMidiConsumer())
+                resetInsertDryHistory();
             // Crossfade pre vs post by the gate (empty mode collapses to
             // pre, plugin/hardware ramp from pre to their processed output).
             for (int i = 0; i < numSamples; ++i)

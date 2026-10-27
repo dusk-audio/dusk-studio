@@ -5,6 +5,7 @@
 
 #include "PluginDescriptor.h"
 #include "../foundation/MessageThread.h"
+#include "../foundation/ProcessedBlock.h"
 #include "../foundation/SpscIndexFifo.h"
 
 #if DUSKSTUDIO_HAS_OOP_PLUGINS
@@ -111,14 +112,16 @@ public:
 
     // In-place process. Empty MIDI buffer for FX inserts; per-track MIDI
     // for instrument plugins. Mono-only plugins on stereo input are
-    // averaged to mono and broadcast back to both channels.
+    // averaged to mono and broadcast back to both channels. Returns the
+    // rendered block's timing, or no value on dry fallback. A reset flag marks
+    // the first rendered block after the host reinitialised the processor.
     //
     // Time-budget watchdog: if wall-clock exceeds kTimeBudgetFraction of
     // the block's audio time for kOverrunStreak blocks in a row, the
     // plugin is auto-bypassed and the user has to re-enable manually.
-    void processMonoBlock (float* monoData, int numSamples,
+    std::optional<dusk::ProcessedBlock> processMonoBlock (float* monoData, int numSamples,
                            juce::MidiBuffer& midiMessages) noexcept;
-    void processStereoBlock (float* L, float* R, int numSamples,
+    std::optional<dusk::ProcessedBlock> processStereoBlock (float* L, float* R, int numSamples,
                              juce::MidiBuffer& midiMessages) noexcept;
 
     // Message thread. Hold while constructing the plugin's editor: sampler-
@@ -338,6 +341,7 @@ private:
     std::atomic<juce::AudioPluginInstance*> currentInstance { nullptr };
     std::atomic<bool> bypassed { false };
     std::atomic<bool> autoBypassed { false };
+    std::atomic<bool> historyResetPending { true };
 
     // Per-instance prepare<->process exclusion (the Tracktion ExternalPlugin
     // pattern). The audio/worker thread TRY-locks around the plugin's
