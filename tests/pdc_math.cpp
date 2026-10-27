@@ -30,15 +30,15 @@ struct StripPdcHarness
     std::array<float*, ChannelStrip::kNumAuxSends> auxLPtrs {}, auxRPtrs {};
     bool stereo;
 
-    StripPdcHarness (bool useStereo, int delay) : stereo (useStereo)
+    StripPdcHarness (bool useStereo, int delay, int factor = 1, bool allowSilentSkip = true) : stereo (useStereo)
     {
         params.eqEnabled.store (false);
         params.compEnabled.store (false);
         params.faderDb.store (0.0f);
         params.pan.store (0.0f);
         strip.bind (params);
-        strip.insertMode.store (ChannelStrip::kInsertEmpty);
-        strip.prepare (48000.0, kBlock, 1);
+        strip.insertMode.store (allowSilentSkip ? ChannelStrip::kInsertEmpty : ChannelStrip::kInsertPlugin);
+        strip.prepare (48000.0, kBlock, factor);
         strip.setPdcCompensationSamples (delay);
         for (std::size_t i = 0; i < busL.size(); ++i)
         {
@@ -287,6 +287,22 @@ void expectSameOutput (const StripPdcHarness& actual, const StripPdcHarness& ref
     }
 }
 
+void expectSameProcessedOutput (const StripPdcHarness& actual, const StripPdcHarness& reference)
+{
+    const auto* expectedL = reference.strip.getLastProcessedMono();
+    const auto* expectedR = reference.strip.getLastProcessedR();
+    const auto* actualL = actual.strip.getLastProcessedMono();
+    const auto* actualR = actual.strip.getLastProcessedR();
+    REQUIRE (expectedL != nullptr);
+    for (int i = 0; i < kBlock; ++i)
+    {
+        CAPTURE (i);
+        REQUIRE_THAT (actualL != nullptr ? actualL[i] : 0.0f, WithinAbs (expectedL[i], 1e-6f));
+        if (expectedR != nullptr)
+            REQUIRE_THAT (actualR != nullptr ? actualR[i] : 0.0f, WithinAbs (expectedR[i], 1e-6f));
+    }
+}
+
 void warm (StripPdcHarness& actual, StripPdcHarness& reference)
 {
     for (int block = 0; block < 40; ++block)
@@ -368,7 +384,7 @@ TEST_CASE ("Channel strip PDC preserves its tail and retargets after silence", "
         actual.run(); reference.run();
         expectSameOutput (actual, reference);
     }
-    for (int block = 0; block < 8; ++block) actual.run();
+    for (int block = 0; block < 512; ++block) actual.run();
     REQUIRE (actual.strip.getLastProcessedSamples() == 0);
     actual.expectImpulseAt (change[1]);
 }
@@ -564,4 +580,94 @@ TEST_CASE ("Native insert returns rendered timing and no value for fallbacks", "
     REQUIRE (slot.load ("delay", 48000.0, kBlock, error, "sink"));
     expectDry();
     REQUIRE (slot.getInstance()->processCalls == 1);
+}
+
+TEST_CASE ("Channel silent-input skip drains the console and full oversampler tail", "[channel-strip][tail]")
+{
+    const bool stereo = GENERATE (false, true);
+    const int factor = GENERATE (1, 2, 4);
+    const int delay = GENERATE (0, 96);
+    CAPTURE (stereo, factor, delay);
+    StripPdcHarness actual { stereo, delay, factor }, reference { stereo, delay, factor, false };
+    warm (actual, reference);
+    actual.silence(); reference.silence();
+    bool skipped = false;
+    for (int block = 0; block < 512; ++block)
+    {
+        CAPTURE (block);
+        actual.run(); reference.run();
+        expectSameProcessedOutput (actual, reference);
+        expectSameOutput (actual, reference);
+        skipped = skipped || actual.strip.getLastProcessedSamples() == 0;
+    }
+    REQUIRE (skipped);
+    for (int block = 552; block < 560; ++block)
+    {
+        actual.signal (block); reference.signal (block);
+        actual.run(); reference.run();
+        expectSameProcessedOutput (actual, reference);
+        expectSameOutput (actual, reference);
+    }
+}
+
+TEST_CASE ("Channel silent-input skip preserves slow filter tails before a closed fader", "[channel-strip][tail]")
+{
+    const bool stereo = GENERATE (false, true);
+    const int factor = GENERATE (1, 4);
+    const bool highQ = GENERATE (false, true);
+    const bool compressed = GENERATE (false, true);
+    CAPTURE (stereo, factor, highQ, compressed);
+    StripPdcHarness actual { stereo, 96, factor }, reference { stereo, 96, factor, false },
+                    frozen { stereo, 96, factor, false };
+    for (auto* harness : { &actual, &reference, &frozen })
+    {
+        auto& params = harness->params;
+        params.liveFaderDb.store (-100.0f);
+        params.eqEnabled.store (true);
+        params.compEnabled.store (compressed);
+        params.compMode.store (2);
+        params.compVcaThreshDb.store (-38.0f);
+        params.compVcaRatio.store (8.0f);
+        if (highQ)
+        {
+            params.lmFreq.store (100.0f);
+            params.lmGainDb.store (15.0f);
+            params.lmQ.store (3.5f);
+        }
+        else
+        {
+            params.hpfEnabled.store (true);
+            params.hpfFreq.store (20.0f);
+        }
+    }
+    for (int block = 0; block < 200; ++block)
+    {
+        actual.signal (block); reference.signal (block); frozen.signal (block);
+        actual.run(); reference.run(); frozen.run();
+    }
+    actual.silence(); reference.silence(); frozen.silence();
+    bool skipped = false;
+    bool heardLateTail = false;
+    for (int block = 0; block < 512; ++block)
+    {
+        CAPTURE (block);
+        actual.run(); reference.run();
+        const bool asleep = actual.strip.getLastProcessedSamples() == 0;
+        if (skipped) REQUIRE (asleep);
+        if (! asleep) frozen.run();
+        expectSameProcessedOutput (actual, reference);
+        const auto* output = reference.strip.getLastProcessedMono();
+        if (block >= 16)
+            for (int i = 0; i < kBlock; ++i)
+                heardLateTail = heardLateTail || std::abs (output[i]) > 1e-5f;
+        skipped = skipped || asleep;
+    }
+    REQUIRE (heardLateTail);
+    REQUIRE (skipped);
+    for (int block = 712; block < 720; ++block)
+    {
+        actual.signal (block); reference.signal (block); frozen.signal (block);
+        actual.run(); reference.run(); frozen.run();
+        expectSameProcessedOutput (actual, compressed ? frozen : reference);
+    }
 }

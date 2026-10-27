@@ -489,13 +489,13 @@ private:
     std::int64_t  pdcSilentRun = 0;
     void relatchPdcIfDrained (float blockPeakAbs, int numSamples) noexcept;
     void drainPdcForSkip() noexcept;
+    bool silentTailActive = false;
+    std::int64_t silentTailInputSamples = 0;
+    int silentTailQuietSamples = 0;
+    int silentTailHoldSamples = 0;
 
-    // The per-strip oversampler's rounded internal latency (half-band filter
-    // state). The EQ - which carries the always-on console saturation - runs
-    // every block, so the oversampler is never skipped; this value is kept only
-    // so the silent-skip can account for the oversampler's tail before dropping
-    // a block (see requiredDrain in processAndAccumulate). The FIR round trip is
-    // 23 (2x) / lround(26.5)=27 (4x) base-rate samples.
+    // Rounded group delay for PDC / frozen alignment. Twice this bounds the
+    // full FIR support that the silent-source drain must let through.
     static constexpr int kMaxOsLatency = 32;
     int          osLatencySamples = 0;
 

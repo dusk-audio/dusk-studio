@@ -72,6 +72,10 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
     insertDryHistoryActive = false;
     insertDrySource = 0;
     insertDryLatency = 0;
+    silentTailActive = false;
+    silentTailInputSamples = 0;
+    silentTailQuietSamples = 0;
+    silentTailHoldSamples = std::max (1, (int) std::ceil (sampleRate * 0.020));
 
     // PDC compensation delay lines, pre-sized to the max so setDelay() is a pure
     // parameter update (no RT allocation). The compensation amount itself is set
@@ -1018,6 +1022,9 @@ void ChannelStrip::alignInsertDry (int numSamples, bool mono, int latency) noexc
 void ChannelStrip::drainPdcForSkip() noexcept
 {
     resetInsertDryHistory();
+    silentTailActive = false;
+    silentTailInputSamples = 0;
+    silentTailQuietSamples = 0;
     // Same series-tail length the per-track silent skip uses: PDC delay and
     // oversampler are chained, so when both are active the held tail is the SUM.
     // Comparing against kMaxPdcSamples instead would skip the reset once
@@ -1258,22 +1265,11 @@ void ChannelStrip::processAndAccumulate (const float* inL,
         return;
     }
 
-    // Per-track silent-skip - when the audio source is dead silent AND
-    // there's no insert plugin that could produce tail / generated
-    // audio, the whole HPF / 4-band EQ / comp / sends chain is a no-op
-    // worth dodging. 24 strips × full DSP per block is an xrun-class
-    // cost on ALSA's tight scheduling window; PipeWire's slack hides
-    // it. Mirrors the aux-lane silent skip in
-    // AudioEngine.cpp:audioDeviceIOCallbackWithContext (the canonical
-    // freeze-smoothers / reset-meter pattern). Constraints:
-    //   - Tracks with an insert excluded (plugin tail / latency
-    //     compensation would suffer from skipped blocks). A MIDI track's
-    //     loaded plugin is the only audio source it has, so its test is
-    //     whether one is loaded rather than the insert mode, which sits
-    //     at kInsertPlugin before anything is loaded.
-    //   - `needsProcessedMono` (recorder-print path) already handled
-    //     above; tracks armed-with-print stay on the full pass.
-    if (isMidi ? ! hasLoadedMidiConsumer() : activeInsertMode == kInsertEmpty)
+    // Input silence alone does not settle the downstream filters or console.
+    const bool silentSkipEligible = isMidi ? ! hasLoadedMidiConsumer()
+                                          : activeInsertMode == kInsertEmpty;
+    bool sourceSilent = false;
+    if (silentSkipEligible)
     {
         const auto peakAbs = [] (const float* buf, int n) -> float
         {
@@ -1283,41 +1279,36 @@ void ChannelStrip::processAndAccumulate (const float* inL,
         };
         const float peakL = peakAbs (inL, numSamples);
         const float peakR = (stereo && inR != nullptr) ? peakAbs (inR, numSamples) : 0.0f;
-        // Hold off the skip until the PDC delay line has drained - otherwise the
-        // last pdcAppliedSamples of this track's signal (still sitting in the
-        // line) would be truncated. While the tail flushes we fall through to
-        // the normal path; relatchPdcIfDrained there advances pdcSilentRun, and
-        // once it reaches the applied length this skip re-engages. (Empty insert
-        // => post-insert == input, so the input-peak silence test is exact.)
-        // The PDC delay line and the oversampler are in SERIES (insert -> PDC
-        // delay -> oversampler), both fed the post-insert signal that
-        // pdcSilentRun tracks. The oversampler holds osLatencySamples of
-        // half-band filter-state tail, so when both are active the trailing tail
-        // is the SUM (pdc + os); draining only to max(pdc, os) would truncate the
-        // shorter one. When only one is active it's that one's length.
-        const std::int64_t requiredDrain =
-            (pdcAppliedSamples > 0 && osLatencySamples > 0)
-                ? (std::int64_t) pdcAppliedSamples + (std::int64_t) osLatencySamples
-                : (std::int64_t) std::max (pdcAppliedSamples, osLatencySamples);
-        if (peakL <= 1e-6f && peakR <= 1e-6f && pdcSilentRun >= requiredDrain)
+        sourceSilent = peakL <= 0.0f && peakR <= 0.0f;
+        if (! sourceSilent)
         {
-            pdcSilentRun += numSamples;
-           #if DUSKSTUDIO_HAS_DUSK_DSP
-            // No comp ran this block, so the GR meter would otherwise pin
-            // at the last reduction value. Force it to 0 so a silent track
-            // reads no gain reduction - same intent as the bypass path that
-            // zeroes the GR atom after the comp pass below.
-            currentGrDb.store (0.0f, std::memory_order_relaxed);
-           #endif
-            // Output meter already defaulted to -inf at the top of this call.
-            // Smoothers stay FROZEN on skip (no setTargetValue,
-            // no getNextValue) - when audio returns, they pick up
-            // at the configured value with no click. The track's
-            // input meter is written by AudioEngine before this
-            // call and already reflects -inf for silent input, so
-            // no meter reset is required here.
-            return;
+            silentTailActive = true;
+            silentTailInputSamples = 0;
+            silentTailQuietSamples = 0;
         }
+        else
+        {
+            const std::int64_t requiredDrain = (std::int64_t) pdcAppliedSamples
+                                              + 2 * osLatencySamples;
+            silentTailInputSamples = std::min (requiredDrain, silentTailInputSamples + numSamples);
+            if (! silentTailActive || (silentTailInputSamples >= requiredDrain
+                                       && silentTailQuietSamples >= silentTailHoldSamples))
+            {
+                silentTailActive = false;
+                pdcSilentRun += numSamples;
+               #if DUSKSTUDIO_HAS_DUSK_DSP
+                currentGrDb.store (0.0f, std::memory_order_relaxed);
+               #endif
+                // Smoothers stay frozen once the audible tail has settled.
+                return;
+            }
+        }
+    }
+    else
+    {
+        silentTailActive = true;
+        silentTailInputSamples = 0;
+        silentTailQuietSamples = 0;
     }
 
     updateGainTargets();
@@ -1832,6 +1823,16 @@ void ChannelStrip::processAndAccumulate (const float* inL,
         lastProcessedPtr = L;
         lastProcessedR   = R;
         lastProcessedSamples = numSamples;
+    }
+
+    if (silentSkipEligible && sourceSilent && silentTailActive)
+    {
+        const auto rangeL = findSignedMinMax (srcL, numSamples);
+        const auto rangeR = findSignedMinMax (srcR, numSamples);
+        const float peak = std::max ({ std::abs (rangeL.min), std::abs (rangeL.max),
+                                      std::abs (rangeR.min), std::abs (rangeR.max) });
+        silentTailQuietSamples = peak <= 1.0e-7f
+            ? std::min (silentTailHoldSamples, silentTailQuietSamples + numSamples) : 0;
     }
 
     // Offline freeze render tap: srcL/srcR are the post-EQ/comp, pre-fader
