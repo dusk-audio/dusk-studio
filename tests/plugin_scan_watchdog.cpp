@@ -94,7 +94,8 @@ bool processLive (std::uint64_t pid)
 void checkInheritedWriter (bool cancel, bool parentExits, std::size_t outputLimit = 8 * 1024 * 1024)
 {
     duskstudio::test::TempDirectory directory ("dusk-scan-tree-");
-    const Environment root (kTreeDirectory, directory.path().u8string());
+    const auto canonicalDirectory = std::filesystem::canonical (directory.path());
+    const Environment root (kTreeDirectory, canonicalDirectory.u8string());
     const Environment leaf (kTreeLeaf, "");
     const Environment exits (kTreeParentExits, parentExits ? "1" : "");
     const auto executable = juce::File::getSpecialLocation (
@@ -109,6 +110,7 @@ void checkInheritedWriter (bool cancel, bool parentExits, std::size_t outputLimi
         if (read.status == duskstudio::ScanProcess::ReadStatus::Data) ready.push_back (next);
         else if (read.status != duskstudio::ScanProcess::ReadStatus::Waiting) break;
     }
+    INFO (ready);
     REQUIRE (ready.find (kTreeReady) != std::string::npos);
     const auto readPid = [&directory] (const char* name)
     {
@@ -134,7 +136,7 @@ void checkInheritedWriter (bool cancel, bool parentExits, std::size_t outputLimi
     CHECK_FALSE (processLive (leafPid));
     duskstudio::sfz::DirectoryLease released;
     std::string error;
-    CHECK (released.acquire (directory.path(), duskstudio::sfz::DirectoryLease::Access::Exclusive, error));
+    CHECK (released.acquire (canonicalDirectory, duskstudio::sfz::DirectoryLease::Access::Exclusive, error));
 }
 
 void startSilentChild (duskstudio::ScanProcess& child)
