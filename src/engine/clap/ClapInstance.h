@@ -88,6 +88,8 @@ public:
     // call fails. Used for session persistence of a native CLAP.
     bool saveState (std::vector<uint8_t>& out) const override;
     bool loadState (const std::vector<uint8_t>& in) override;
+    std::uint64_t stateRevision() const noexcept override
+        { return revision.load (std::memory_order_acquire); }
 
     // Parameters (message thread). Enumerated once at create().
     int               paramCount() const noexcept { return (int) params.size(); }
@@ -158,10 +160,8 @@ private:
     std::vector<float*> clapInData, clapOutData;
     std::vector<float> clapInScratch, clapOutScratch;
 
-    // Output event list handed to every process() call. We accept and ignore the
-    // plugin's outgoing events for now (try_push returns true). Member, not a
-    // function-static, so the audio thread's first process() never trips a
-    // thread-safe-static-init guard. Wired in the constructor.
+    // Output sink for parameter touches and persistent state changes. Instance
+    // storage avoids a first-process thread-safe-static initialization guard.
     clap_output_events_t emptyOut {};
 
     // Parameter automation. UI->RT ring of pending changes (message-thread
@@ -201,7 +201,7 @@ private:
 
     // Audio thread. Refills eventScratch[0..eventCount) from the param ring; shared
     // by processStereo and processBlock.
-    void drainParamRing() noexcept;
+    bool drainParamRing() noexcept;
 
     const clap_plugin_params_t* paramsExt = nullptr;
     std::vector<ParamInfo>      params;
@@ -209,5 +209,10 @@ private:
     // Last param id the plugin's GUI touched (audio-thread store from the output
     // event sink, message-thread read). -1 = none since create().
     std::atomic<int64_t> lastTouchedParamId { -1 };
+    // Sorted once at create so output events never scan the parameter metadata.
+    std::vector<clap_id> writableParamIds;
+    static_assert (std::atomic<std::uint64_t>::is_always_lock_free,
+                   "CLAP state revision must be lock-free");
+    std::atomic<std::uint64_t> revision { 0 };
 };
 } // namespace duskstudio::clap

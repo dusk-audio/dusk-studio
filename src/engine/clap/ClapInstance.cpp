@@ -41,20 +41,24 @@ ClapInstance::ClapInstance()
         return idx < self->eventCount ? &self->eventScratch[(size_t) idx].header : nullptr;
     };
 
-    // Output sink: events are accepted and dropped, EXCEPT that parameter
-    // value/gesture events stamp the last-touched id (audio thread, relaxed) so
-    // MIDI Learn can bind "the knob the user just moved in the plugin's GUI".
+    // Touches feed MIDI Learn; global writable values also publish state edits.
     emptyOut.ctx      = this;
     emptyOut.try_push = [] (const clap_output_events* list, const clap_event_header_t* ev) -> bool
     {
-        if (ev != nullptr && ev->space_id == CLAP_CORE_EVENT_SPACE_ID
-            && (ev->type == CLAP_EVENT_PARAM_VALUE || ev->type == CLAP_EVENT_PARAM_GESTURE_BEGIN))
+        if (ev != nullptr && ev->space_id == CLAP_CORE_EVENT_SPACE_ID)
         {
             auto* self = static_cast<ClapInstance*> (const_cast<void*> (list->ctx));
-            const auto id = ev->type == CLAP_EVENT_PARAM_VALUE
-                              ? reinterpret_cast<const clap_event_param_value_t*> (ev)->param_id
-                              : reinterpret_cast<const clap_event_param_gesture_t*> (ev)->param_id;
-            self->lastTouchedParamId.store ((int64_t) id, std::memory_order_relaxed);
+            if (ev->type == CLAP_EVENT_PARAM_VALUE && ev->size >= sizeof (clap_event_param_value_t))
+            {
+                const auto& value = *reinterpret_cast<const clap_event_param_value_t*> (ev);
+                self->lastTouchedParamId.store ((int64_t) value.param_id, std::memory_order_relaxed);
+                if (value.note_id == -1 && value.port_index == -1 && value.channel == -1 && value.key == -1
+                    && std::binary_search (self->writableParamIds.begin(), self->writableParamIds.end(), value.param_id))
+                    self->revision.fetch_add (1, std::memory_order_release);
+            }
+            else if (ev->type == CLAP_EVENT_PARAM_GESTURE_BEGIN && ev->size >= sizeof (clap_event_param_gesture_t))
+                self->lastTouchedParamId.store ((int64_t) reinterpret_cast<const clap_event_param_gesture_t*> (ev)->param_id,
+                                               std::memory_order_relaxed);
         }
         return true;
     };
@@ -257,10 +261,12 @@ bool ClapInstance::create (const ClapBundle& bundle, const std::string& pluginId
     // Snapshot the parameter list for automation / display. [main-thread]
     paramsExt = static_cast<const clap_plugin_params_t*> (
         plugin->get_extension (plugin, CLAP_EXT_PARAMS));
+    writableParamIds.clear();
     if (paramsExt != nullptr && paramsExt->count != nullptr && paramsExt->get_info != nullptr)
     {
         const uint32_t n = std::min<uint32_t> (paramsExt->count (plugin), 4096u);   // clamp: count is plugin-supplied
         params.reserve (n);
+        writableParamIds.reserve (n);
         for (uint32_t i = 0; i < n; ++i)
         {
             clap_param_info_t info {};
@@ -275,8 +281,11 @@ bool ClapInstance::create (const ClapBundle& bundle, const std::string& pluginId
             pi.defaultValue = info.default_value;
             pi.flags        = info.flags;
             pi.cookie       = info.cookie;
+            if ((info.flags & CLAP_PARAM_IS_READONLY) == 0)
+                writableParamIds.push_back (info.id);
             params.push_back (std::move (pi));
         }
+        std::sort (writableParamIds.begin(), writableParamIds.end());
     }
     return true;
 }
@@ -442,6 +451,7 @@ bool ClapInstance::loadState (const std::vector<uint8_t>& in)
             latencySamples = (int) lat->get (plugin);
     }
 
+    revision.fetch_add (1, std::memory_order_release);
     return true;
 }
 
@@ -462,17 +472,22 @@ bool ClapInstance::paramValueToText (clap_id id, double value, std::string& out)
 
 void ClapInstance::setParamValue (clap_id id, double value) noexcept
 {
-    void* cookie = nullptr;
-    for (const auto& p : params) if (p.id == id) { cookie = p.cookie; break; }
-    paramRing.push ({ id, value, cookie });   // full => drop (pathological flood only)
+    for (const auto& p : params)
+        if (p.id == id)
+        {
+            if ((p.flags & CLAP_PARAM_IS_READONLY) != 0) return;
+            if (paramRing.push ({ id, value, p.cookie }))
+                revision.fetch_add (1, std::memory_order_release);
+            return;
+        }
 }
 
-void ClapInstance::drainParamRing() noexcept
+bool ClapInstance::drainParamRing() noexcept
 {
     // Drain queued parameter changes into this block's CLAP event list (audio thread
     // = single consumer). All at time 0 - sample-accurate automation is a later step.
     eventCount = 0;
-    paramRing.drain ([this] (const ParamChange& pc)
+    return paramRing.drain ([this] (const ParamChange& pc)
     {
         auto& ev = eventScratch[(size_t) eventCount++].param;
         ev.header.size     = sizeof (clap_event_param_value_t);
@@ -487,7 +502,7 @@ void ClapInstance::drainParamRing() noexcept
         ev.channel         = -1;
         ev.key             = -1;
         ev.value           = pc.value;
-    }, (uint32_t) eventScratch.size());
+    }, (uint32_t) eventScratch.size()) != 0;
 }
 
 std::size_t ClapInstance::clapEventsFor (const uint8_t* d, int numBytes) const noexcept
@@ -665,7 +680,7 @@ void ClapInstance::processBlock (const hosting::PortBuffers& io) noexcept
         processing = true;
     }
 
-    drainParamRing();
+    const bool paramsApplied = drainParamRing();
     if (io.midiIn != nullptr)
         appendMidiEvents (*io.midiIn);
 
@@ -787,5 +802,8 @@ void ClapInstance::processBlock (const hosting::PortBuffers& io) noexcept
 
     if (plugin->process (plugin, &p) == CLAP_PROCESS_ERROR)
         clearOutputs();
+    // A capture between enqueue and application must not make this edit clean.
+    if (paramsApplied)
+        revision.fetch_add (1, std::memory_order_release);
 }
 } // namespace duskstudio::clap

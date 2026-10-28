@@ -504,6 +504,8 @@ if(DUSKSTUDIO_NATIVE_CLAP)
         DUSKSTUDIO_PANIC_PROBE_CLAP_FIXTURE_PATH="$<TARGET_FILE:dusk-studio-panic-probe-clap-fixture>"
         DUSKSTUDIO_NO_WINDOW_CLAP_FIXTURE_PATH="$<TARGET_FILE:dusk-studio-no-window-clap-fixture>"
         DUSKSTUDIO_LATENCY_CLAP_FIXTURE_PATH="$<TARGET_FILE:dusk-studio-latency-clap-fixture>")
+    set_property(SOURCE clap_instance_process.cpp APPEND PROPERTY COMPILE_DEFINITIONS
+        DUSKSTUDIO_PARAM_TOUCH_CLAP_FIXTURE_PATH="$<TARGET_FILE:dusk-studio-param-touch-clap-fixture>")
 
     if(APPLE)
         # The directory-bundle resolver test needs a valid Mach-O image that

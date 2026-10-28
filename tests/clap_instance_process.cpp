@@ -19,6 +19,154 @@
 #include <string>
 #include <vector>
 
+namespace
+{
+struct ParamEventControl
+{
+    bool (CLAP_ABI *queue) (const clap_plugin_t*, const clap_event_header_t*);
+};
+
+struct RevisionFixture
+{
+    explicit RevisionFixture (const char* path = DUSKSTUDIO_PARAM_TOUCH_CLAP_FIXTURE_PATH)
+    {
+        REQUIRE (bundle.load (path, error));
+        REQUIRE (bundle.plugins().size() == 1);
+        REQUIRE (instance.create (bundle, bundle.plugins().front().id, error));
+        REQUIRE (instance.activate (48000.0, 64, error));
+    }
+    void process()
+    { instance.processStereo (left.data(), right.data(), left.data(), right.data(), 64); }
+    void emit (const clap_event_header_t& event)
+    {
+        const auto* plugin = instance.getPlugin();
+        const auto* control = static_cast<const ParamEventControl*> (
+            plugin->get_extension (plugin, "studio.dusk.test.param-touch-events"));
+        REQUIRE (control != nullptr);
+        REQUIRE (control->queue (plugin, &event));
+        process();
+    }
+    double value (clap_id id)
+    {
+        double result = 0.0;
+        REQUIRE (instance.getParamValue (id, result));
+        return result;
+    }
+    duskstudio::clap::ClapBundle bundle;
+    duskstudio::clap::ClapInstance instance;
+    std::string error;
+    std::array<float, 64> left {}, right {};
+};
+
+clap_event_param_value_t globalParamValue (clap_id id, double value)
+{
+    clap_event_param_value_t event {};
+    event.header = { sizeof (event), 0, CLAP_CORE_EVENT_SPACE_ID, CLAP_EVENT_PARAM_VALUE, 0 };
+    event.param_id = id;
+    event.note_id = event.port_index = event.channel = event.key = -1;
+    event.value = value;
+    return event;
+}
+}
+
+TEST_CASE ("ClapInstance revisions distinguish persistent output values from transient events", "[clap][instance][state]")
+{
+    RevisionFixture fixture;
+    for (const std::uint32_t flags : { 0u, (std::uint32_t) CLAP_EVENT_DONT_RECORD })
+    {
+        const auto before = fixture.instance.stateRevision();
+        auto event = globalParamValue (40, flags == 0 ? 0.25 : 0.75);
+        event.header.flags = flags;
+        fixture.emit (event.header);
+        CHECK (fixture.instance.stateRevision() > before);
+        CHECK_THAT (fixture.value (40), Catch::Matchers::WithinAbs (event.value, 1e-12));
+    }
+    for (int scope = 0; scope < 6; ++scope)
+    {
+        CAPTURE (scope);
+        const auto before = fixture.instance.stateRevision();
+        auto event = globalParamValue (scope == 4 ? 42 : scope == 5 ? 999 : 40, 0.5);
+        if (scope == 0) event.note_id = 7;
+        if (scope == 1) event.port_index = 0;
+        if (scope == 2) event.channel = 0;
+        if (scope == 3) event.key = 60;
+        fixture.emit (event.header);
+        CHECK (fixture.instance.stateRevision() == before);
+        if (scope == 4)
+            CHECK_THAT (fixture.value (42), Catch::Matchers::WithinAbs (0.5, 1e-12));
+    }
+    clap_event_param_mod_t modulation {};
+    modulation.header = { sizeof (modulation), 0, CLAP_CORE_EVENT_SPACE_ID, CLAP_EVENT_PARAM_MOD, 0 };
+    modulation.param_id = 40;
+    modulation.note_id = modulation.port_index = modulation.channel = modulation.key = -1;
+    modulation.amount = 0.5;
+    const auto beforeTransient = fixture.instance.stateRevision();
+    fixture.emit (modulation.header);
+    for (const auto type : { CLAP_EVENT_PARAM_GESTURE_BEGIN, CLAP_EVENT_PARAM_GESTURE_END })
+    {
+        clap_event_param_gesture_t gesture {};
+        gesture.header = { sizeof (gesture), 0, CLAP_CORE_EVENT_SPACE_ID, (std::uint16_t) type, 0 };
+        gesture.param_id = 40;
+        fixture.emit (gesture.header);
+    }
+    CHECK (fixture.instance.stateRevision() == beforeTransient);
+    CHECK (fixture.instance.lastTouchedParamIndex() == 0);
+}
+
+TEST_CASE ("ClapInstance revisions mark accepted host changes and their later application", "[clap][instance][state]")
+{
+    RevisionFixture fixture (DUSKSTUDIO_LATENCY_CLAP_FIXTURE_PATH);
+    const auto initial = fixture.instance.stateRevision();
+    fixture.instance.setParamValue (999, 1.0);
+    fixture.instance.setParamValue (11, 1.0);
+    CHECK (fixture.instance.stateRevision() == initial);
+    fixture.instance.setParamValue (7, 8.0);
+    const auto queued = fixture.instance.stateRevision();
+    CHECK (queued > initial);
+    CHECK_THAT (fixture.value (7), Catch::Matchers::WithinAbs (0.0, 1e-12));
+    fixture.process();
+    CHECK (fixture.instance.stateRevision() > queued);
+    CHECK_THAT (fixture.value (7), Catch::Matchers::WithinAbs (8.0, 1e-12));
+
+    for (int index = 0; index < 512; ++index)
+        fixture.instance.setParamValue (7, 16.0);
+    const auto full = fixture.instance.stateRevision();
+    fixture.instance.setParamValue (7, 32.0);
+    CHECK (fixture.instance.stateRevision() == full);
+    fixture.process();
+    CHECK (fixture.instance.stateRevision() > full);
+    CHECK_THAT (fixture.value (7), Catch::Matchers::WithinAbs (16.0, 1e-12));
+}
+
+TEST_CASE ("ClapInstance revisions survive state capture and reactivation", "[clap][instance][state]")
+{
+    RevisionFixture fixture;
+    fixture.instance.setParamValue (40, 0.25);
+    const auto pending = fixture.instance.stateRevision();
+    std::vector<std::uint8_t> beforeApplication;
+    REQUIRE (fixture.instance.saveState (beforeApplication));
+    CHECK (fixture.instance.stateRevision() == pending);
+    fixture.process();
+    CHECK (fixture.instance.stateRevision() > pending);
+    const auto beforeLoad = fixture.instance.stateRevision();
+    REQUIRE (fixture.instance.loadState (beforeApplication));
+    CHECK (fixture.instance.stateRevision() > beforeLoad);
+    CHECK_THAT (fixture.value (40), Catch::Matchers::WithinAbs (0.0, 1e-12));
+    auto corrupt = beforeApplication;
+    corrupt.front() = 0;
+    const auto restored = fixture.instance.stateRevision();
+    CHECK_FALSE (fixture.instance.loadState (corrupt));
+    CHECK_FALSE (fixture.instance.loadState ({}));
+    CHECK (fixture.instance.stateRevision() == restored);
+    std::vector<std::uint8_t> saved;
+    REQUIRE (fixture.instance.saveState (saved));
+    CHECK (fixture.instance.stateRevision() == restored);
+    REQUIRE (fixture.instance.reactivate (96000.0, 32, fixture.error));
+    CHECK (fixture.instance.stateRevision() == restored);
+    fixture.instance.getPlugin()->reset (fixture.instance.getPlugin());
+    CHECK (fixture.instance.stateRevision() == restored);
+}
+
 TEST_CASE ("ClapInstance connects every advertised bus and tolerates duplicate main flags",
            "[clap][instance][regression][issue-361]")
 {
