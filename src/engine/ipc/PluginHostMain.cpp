@@ -61,6 +61,7 @@
 #include "../../foundation/AutoResetEvent.h"
 #include "../../foundation/MessageThread.h"
 #include "../JuceCompat.h"
+#include "../DuskStudioPlayHead.h"
 #include "platform/ChildAppKit.h"
 #include "platform/IpcChannel.h"
 #include "platform/IpcShm.h"
@@ -819,6 +820,8 @@ struct HostState
     duskstudio::juce_compat::FormatManager formatManager;
     juce::KnownPluginList knownList;
 
+    dusk::AtomicTransportPosition transportPosition;
+    duskstudio::DuskStudioPlayHead playhead { transportPosition };
     PluginInstancePtr ownedInstance;
     std::atomic<juce::AudioPluginInstance*> currentInstance { nullptr };
 
@@ -1224,9 +1227,10 @@ std::uint32_t handleLoadPlugin (HostState& host,
     const auto remainingMs = std::chrono::duration_cast<std::chrono::milliseconds> (
         deadline - std::chrono::steady_clock::now()).count();
     if (remainingMs <= 0) return kControlStatusLifecycleFailed;
-    const auto dispatched = runOnHostMessageThreadAndWait ([hdr, result]
+    const auto dispatched = runOnHostMessageThreadAndWait ([&host, hdr, result]
     {
         auto& fresh = result->instance;
+        fresh->setPlayHead (&host.playhead);
         fresh->setPlayConfigDetails (fresh->getTotalNumInputChannels(),
                                     fresh->getTotalNumOutputChannels(),
                                     hdr.sampleRate, hdr.blockSize);
@@ -1270,6 +1274,7 @@ std::uint32_t handleLoadPlugin (HostState& host,
         host.mirrorGeneration.fetch_add (1, std::memory_order_release);
        #endif
         deposed = std::move (host.ownedInstance);
+        host.transportPosition.publish (nullptr);
         host.ownedInstance = std::move (fresh);
         host.currentSampleRate = hdr.sampleRate;
         host.currentBlockSize  = hdr.blockSize;
@@ -1325,6 +1330,7 @@ std::uint32_t handlePrepareToPlay (HostState& host,
     if (host.ownedInstance == nullptr) return kControlStatusNoPluginLoaded;
     return withParkedHostWorkerOnMessageThread (host, [&host, p]
     {
+        host.transportPosition.publish (nullptr);
         host.ownedInstance->prepareToPlay (p.sampleRate, p.blockSize);
         host.currentSampleRate = p.sampleRate;
         host.currentBlockSize  = p.blockSize;
@@ -1353,6 +1359,7 @@ std::uint32_t handleRelease (HostState& host)
             host.mirrorGeneration.fetch_add (1, std::memory_order_release);
            #endif
             deposed = std::move (host.ownedInstance);
+            host.transportPosition.publish (nullptr);
         }
     });
     if (parkStatus != 0) return parkStatus;
@@ -1608,6 +1615,26 @@ void audioWorkerLoop (HostState& host) noexcept
         }
         else
         {
+            dusk::TransportPosition position;
+            if ((host.hdr->flags & kTransportPresent) != 0)
+            {
+                position.bpm = host.hdr->bpm;
+                position.timeInSamples = host.hdr->timeInSamples;
+                position.timeInSeconds = host.hdr->timeInSeconds;
+                position.ppqPosition = host.hdr->ppqPosition;
+                position.timeSignatureNumerator = host.hdr->timeSignatureNumerator;
+                position.timeSignatureDenominator = host.hdr->timeSignatureDenominator;
+                position.loopStartSamples = host.hdr->loopStartSamples;
+                position.loopEndSamples = host.hdr->loopEndSamples;
+                position.ppqLoopStart = host.hdr->ppqLoopStart;
+                position.ppqLoopEnd = host.hdr->ppqLoopEnd;
+                position.isPlaying = (host.hdr->flags & kTransportPlaying) != 0;
+                position.isRecording = (host.hdr->flags & kTransportRecording) != 0;
+                position.isLooping = (host.hdr->flags & kTransportLooping) != 0;
+                host.transportPosition.publish (&position);
+            }
+            else
+                host.transportPosition.publish (nullptr);
             const int bufCh = std::max (ci, co);
             for (int c = 0; c < bufCh; ++c)
             {

@@ -3,6 +3,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "Transport.h"
 #include "TransportSnapshot.h"
+#include "../foundation/AtomicTransportPosition.h"
 #include "../session/Session.h"
 #include <atomic>
 #include <cmath>
@@ -23,25 +24,37 @@ public:
                        const AtomicSnapshot<TempoMap>* tempoMap = nullptr,
                        const std::atomic<int>* numerator = nullptr,
                        const std::atomic<int>* denominator = nullptr) noexcept
-        : transport (t), bpmSource (bpm), sampleRateSource (sampleRate),
+        : transport (&t), bpmSource (bpm), sampleRateSource (sampleRate),
           tempoMapSource (tempoMap), numeratorSource (numerator), denominatorSource (denominator) {}
+
+    explicit DuskStudioPlayHead (const dusk::AtomicTransportPosition& source) noexcept
+        : snapshotSource (&source) {}
 
     juce::Optional<PositionInfo> getPosition() const override
     {
-        const double bpm = (bpmSource != nullptr)
-                            ? (double) bpmSource->load (std::memory_order_relaxed)
-                            : 120.0;
+        dusk::TransportPosition position;
         const double sr = (sampleRateSource != nullptr)
-                            ? sampleRateSource->load (std::memory_order_relaxed)
-                            : 0.0;
-        const int numerator = numeratorSource != nullptr
-                            ? numeratorSource->load (std::memory_order_relaxed) : 4;
-        const int denominator = denominatorSource != nullptr
-                              ? denominatorSource->load (std::memory_order_relaxed) : 4;
-        const SnapshotReadScope snapshotReads;
-        auto position = snapshotTransport (transport, bpm, sr, numerator, denominator);
-        if (tempoMapSource != nullptr)
-            applyTransportTempoMap (position, tempoMapSource->read(), sr, kMidiTicksPerQuarter);
+                            ? sampleRateSource->load (std::memory_order_relaxed) : 0.0;
+        if (snapshotSource != nullptr)
+        {
+            const auto snapshot = snapshotSource->read();
+            if (! snapshot) return {};
+            position = *snapshot;
+        }
+        else
+        {
+            const double bpm = (bpmSource != nullptr)
+                                ? (double) bpmSource->load (std::memory_order_relaxed)
+                                : 120.0;
+            const int numerator = numeratorSource != nullptr
+                                ? numeratorSource->load (std::memory_order_relaxed) : 4;
+            const int denominator = denominatorSource != nullptr
+                                  ? denominatorSource->load (std::memory_order_relaxed) : 4;
+            const SnapshotReadScope snapshotReads;
+            position = snapshotTransport (*transport, bpm, sr, numerator, denominator);
+            if (tempoMapSource != nullptr)
+                applyTransportTempoMap (position, tempoMapSource->read(), sr, kMidiTicksPerQuarter);
+        }
 
         PositionInfo info;
         info.setIsPlaying   (position.isPlaying);
@@ -53,7 +66,7 @@ public:
             position.timeSignatureNumerator, position.timeSignatureDenominator });
 
         info.setTimeInSamples (position.timeInSamples);
-        if (std::isfinite (sr) && sr > 0.0)
+        if (snapshotSource != nullptr || (std::isfinite (sr) && sr > 0.0))
         {
             info.setTimeInSeconds (position.timeInSeconds);
             if (position.bpm > 0.0)
@@ -70,11 +83,12 @@ public:
     }
 
 private:
-    Transport& transport;
-    const std::atomic<float>*  bpmSource;
-    const std::atomic<double>* sampleRateSource;
-    const AtomicSnapshot<TempoMap>* tempoMapSource;
-    const std::atomic<int>* numeratorSource;
-    const std::atomic<int>* denominatorSource;
+    Transport* transport = nullptr;
+    const std::atomic<float>*  bpmSource = nullptr;
+    const std::atomic<double>* sampleRateSource = nullptr;
+    const AtomicSnapshot<TempoMap>* tempoMapSource = nullptr;
+    const std::atomic<int>* numeratorSource = nullptr;
+    const std::atomic<int>* denominatorSource = nullptr;
+    const dusk::AtomicTransportPosition* snapshotSource = nullptr;
 };
 } // namespace duskstudio

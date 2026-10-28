@@ -70,7 +70,7 @@ private releases repo, with a signed `SHA256SUMS` beside them. What is left
 before 1.0 is release engineering, low-spec and Raspberry Pi performance, and
 deeper accessibility.
 
-The C++ suite declares 1909 Catch2 test cases across 284 test source files.
+The C++ suite declares 1911 Catch2 test cases across 284 test source files.
 Linux amd64, Linux arm64 and macOS build and run it on every push; Windows runs
 it on every push and PR; ThreadSanitizer and ASan plus UBSan run it on every
 push and PR. All of those, plus the framework-coupling ratchet, are required
@@ -183,7 +183,7 @@ src/
   ui/          # MainComponent, ConsoleView, channel/aux/master strips, mastering view
     imgui/     # native surfaces: startup, audio settings, audio editor, unit editors, keyboard
   util/        # native log storage + CrashHandler signal reports
-tests/         # 1909 Catch2 test cases declared in C++ (session, recording, MIDI, IPC, DSP)
+tests/         # 1911 Catch2 test cases declared in C++ (session, recording, MIDI, IPC, DSP)
 packaging/     # .desktop, AppStream, MIME, macOS bundle, for tarball + DMG builds
 docs/          # maintainer guide, the 1.0 plan, migration plans
   DuskStudio.md  # authoritative product spec
