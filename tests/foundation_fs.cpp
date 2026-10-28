@@ -185,3 +185,14 @@ TEST_CASE ("directory walks report increment errors without throwing", "[foundat
     REQUIRE (visitedValue == 42);
     REQUIRE (increments == 1);
 }
+
+TEST_CASE ("loadFileAsString returns nothing for a path it opens but cannot read", "[foundation][fs]")
+{
+    const auto directory = fs::createUniqueTempDirectory ("dusk-unreadable-");
+    REQUIRE_FALSE (directory.empty());
+    std::string text = "unchanged";
+    CHECK_NOTHROW (text = fs::loadFileAsString (directory));
+    CHECK (text.empty());
+    std::error_code error;
+    stdfs::remove_all (directory, error);
+}

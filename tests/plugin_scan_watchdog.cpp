@@ -83,9 +83,11 @@ bool processLive (std::uint64_t pid)
    #else
     if (::kill (static_cast<pid_t> (pid), 0) != 0 && errno == ESRCH) return false;
     #if defined(__linux__)
+    // Unreadable once reaped after kill() found it; 'Z' while still a zombie.
     const auto status = dusk::fs::loadFileAsString ("/proc/" + std::to_string (pid) + "/stat");
     const auto end = status.rfind (')');
-    if (end != std::string::npos && end + 2 < status.size() && status[end + 2] == 'Z') return false;
+    if (end == std::string::npos) return false;
+    if (end + 2 < status.size() && status[end + 2] == 'Z') return false;
     #endif
     return true;
    #endif
