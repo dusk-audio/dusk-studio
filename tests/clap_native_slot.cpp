@@ -9,6 +9,7 @@
 #include "engine/PdcMath.h"
 #include "engine/clap/NativeClapSlot.h"
 #include "dsp/ChannelStrip.h"
+#include "dsp/AuxLaneStrip.h"
 
 #include <algorithm>
 #include <array>
@@ -147,6 +148,78 @@ TEST_CASE ("Channel native inserts receive the current transport through audio a
     CHECK (received->bar_number == -1);
     CHECK (received->bar_start == beats (-3.0));
     strip.setTransport (nullptr);
+    CHECK (run() == nullptr);
+}
+
+TEST_CASE ("Auxiliary native inserts receive current transport through silent tails", "[clap][aux-lane][transport]")
+{
+    using Catch::Matchers::WithinAbs;
+    using duskstudio::AuxLaneStrip;
+    constexpr int blockSize = 64;
+    constexpr int slot = 0;
+    const bool closedReturn = GENERATE (false, true);
+    CAPTURE (closedReturn);
+    duskstudio::AuxLaneParams params;
+    params.returnLevelDb.store (closedReturn ? -100.0f : 0.0f);
+    params.liveReturnLevelDb.store (closedReturn ? -100.0f : 0.0f);
+    AuxLaneStrip lane;
+    lane.bind (params);
+    lane.insertMode[(std::size_t) slot].store (AuxLaneStrip::kInsertPlugin);
+    lane.prepare (48000.0, blockSize);
+    std::string error;
+    REQUIRE (lane.loadNativeClap (slot, juce::File { DUSKSTUDIO_MULTI_BUS_CLAP_FIXTURE_PATH }, error));
+    auto* instance = lane.getNativeClapSlot (slot).getInstance();
+    REQUIRE (instance != nullptr);
+    REQUIRE_FALSE (lane.getNativeClapSlot (slot).isLoadedInstrument());
+    const auto* plugin = instance->getPlugin();
+    std::array<float, blockSize> left {}, right {};
+    const auto run = [&]
+    {
+        lane.processStereoBlock (left.data(), right.data(), blockSize);
+        return static_cast<const clap_event_transport_t*> (
+            plugin->get_extension (plugin, "studio.dusk.test.transport"));
+    };
+    const auto beats = [] (double value) { return (clap_beattime) std::llround (value * (double) CLAP_BEATTIME_FACTOR); };
+    const auto valid = CLAP_TRANSPORT_HAS_TEMPO | CLAP_TRANSPORT_HAS_BEATS_TIMELINE
+                     | CLAP_TRANSPORT_HAS_SECONDS_TIMELINE | CLAP_TRANSPORT_HAS_TIME_SIGNATURE;
+    dusk::TransportPosition position;
+    position.bpm = 93.5;
+    position.ppqPosition = 17.25;
+    position.timeInSamples = 123456;
+    position.timeInSeconds = 123456.0 / 48000.0;
+    position.timeSignatureNumerator = 7;
+    position.timeSignatureDenominator = 8;
+    position.isPlaying = position.isRecording = position.isLooping = true;
+    position.loopStartSamples = 24000;
+    position.loopEndSamples = 96000;
+    position.ppqLoopStart = 1.25;
+    position.ppqLoopEnd = 9.75;
+    lane.setTransport (&position);
+    left.fill (0.25f); right.fill (-0.125f);
+    const auto* received = run();
+    REQUIRE (received != nullptr);
+    CHECK_THAT (received->tempo, WithinAbs (93.5, 1e-12));
+    CHECK (received->song_pos_beats == beats (17.25));
+    CHECK (received->tsig_num == 7);
+    CHECK (received->tsig_denom == 8);
+    CHECK (received->flags == (std::uint32_t) (valid | CLAP_TRANSPORT_IS_PLAYING
+        | CLAP_TRANSPORT_IS_RECORDING | CLAP_TRANSPORT_IS_LOOP_ACTIVE));
+    CHECK (received->loop_start_beats == beats (1.25));
+    CHECK (received->loop_end_beats == beats (9.75));
+    left.fill (0.0f); right.fill (0.0f);
+    position.bpm = 137.0;
+    position.ppqPosition = -0.75;
+    position.timeInSamples = -12000;
+    position.timeInSeconds = -0.25;
+    position.timeSignatureNumerator = 6;
+    position.isPlaying = position.isRecording = position.isLooping = false;
+    received = run();
+    REQUIRE (received != nullptr);
+    CHECK_THAT (received->tempo, WithinAbs (137.0, 1e-12));
+    CHECK (received->song_pos_beats == beats (-0.75));
+    CHECK (received->tsig_num == 6);
+    CHECK (received->flags == (std::uint32_t) valid);
+    lane.setTransport (nullptr);
     CHECK (run() == nullptr);
 }
 

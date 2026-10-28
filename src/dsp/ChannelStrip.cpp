@@ -1436,7 +1436,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             else
             {
                 fillPluginMidiScratch (owedReset);
-                insertResult = pluginSlot.processMonoBlock (tempMono.data(), numSamples, pluginMidiScratch);
+                insertResult = pluginSlot.processMonoBlock (tempMono.data(), numSamples, pluginMidiScratch, transport);
             }
         }
         else if (activeInsertMode == kInsertHardware)
@@ -1654,7 +1654,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             if (builtinSlot.isLoaded())
                 builtinSlot.processStereo (L, R, L, R, numSamples, &nativeMidiScratch, transport);
             else
-            pluginSlot.processStereoBlock (L, R, numSamples, trackMidi);
+            pluginSlot.processStereoBlock (L, R, numSamples, trackMidi, transport);
             insertOwesMidiReset = false;
             for (int i = 0; i < numSamples; ++i)
                 activeInsertGain.getNextValue();
@@ -1708,7 +1708,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
                 else
                 {
                     fillPluginMidiScratch (owedReset);
-                    insertResult = pluginSlot.processStereoBlock (L, R, numSamples, pluginMidiScratch);
+                    insertResult = pluginSlot.processStereoBlock (L, R, numSamples, pluginMidiScratch, transport);
                 }
             }
             else if (activeInsertMode == kInsertHardware)

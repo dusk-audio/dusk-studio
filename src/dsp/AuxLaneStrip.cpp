@@ -595,28 +595,28 @@ void AuxLaneStrip::processStereoBlock (float* L, float* R, int numSamples,
             // PluginSlot. processStereo is in-place safe (own scratch buffers).
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
             if (nativeClapSlots[sIdx].isLoaded())
-                nativeClapSlots[sIdx].processStereo (L, R, L, R, numSamples);
+                nativeClapSlots[sIdx].processStereo (L, R, L, R, numSamples, nullptr, transport);
             else
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_LV2
             if (nativeLv2Slots[sIdx].isLoaded())
-                nativeLv2Slots[sIdx].processStereo (L, R, L, R, numSamples);
+                nativeLv2Slots[sIdx].processStereo (L, R, L, R, numSamples, nullptr, transport);
             else
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_VST3
             if (nativeVst3Slots[sIdx].isLoaded())
-                nativeVst3Slots[sIdx].processStereo (L, R, L, R, numSamples);
+                nativeVst3Slots[sIdx].processStereo (L, R, L, R, numSamples, nullptr, transport);
             else
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_AU
             if (nativeAuSlots[sIdx].isLoaded())
-                nativeAuSlots[sIdx].processStereo (L, R, L, R, numSamples);
+                nativeAuSlots[sIdx].processStereo (L, R, L, R, numSamples, nullptr, transport);
             else
 #endif
             if (builtinSlots[sIdx].isLoaded())
                 builtinSlots[sIdx].processStereo (L, R, L, R, numSamples, nullptr, transport);
             else
-                slots[sIdx].processStereoBlock (L, R, numSamples, pluginMidiScratch);
+                slots[sIdx].processStereoBlock (L, R, numSamples, pluginMidiScratch, transport);
         }
         else if (activeInsertMode[sIdx] == kInsertHardware)
         {
