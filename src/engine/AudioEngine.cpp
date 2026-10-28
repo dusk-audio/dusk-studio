@@ -770,12 +770,25 @@ struct AudioEngine::MultisampleLoadState
         std::uint64_t requestGeneration, slotGeneration;
         PluginLoadFailure failure;
     };
+    // A locator restore resolves the saved reference to this machine's file.
+    // Until the instrument changes, the session keeps persisting what it saved.
+    struct PortableRestore
+    {
+        std::uint64_t slotGeneration = 0;
+        sfz::ManagedSfzLocator locator;
+        std::string resolvedPath;
+        std::vector<std::uint8_t> restoredState;
+        decltype (Track::nativeMultisamplePath) savedPath;
+        decltype (Track::nativeMultisampleStateBase64) savedState;
+    };
     MultisampleLoader worker;
     std::uint64_t sessionGeneration = 1;
     std::array<std::uint64_t, Session::kNumTracks> generations {};
     std::array<bool, Session::kNumTracks> pending {};
     std::array<std::optional<MultisampleLoader::Request>, Session::kNumTracks> deferred;
     std::vector<RestoreFailure> restoreFailures;
+    // Indexed by strip owner, so a track move keeps its receipt.
+    std::array<std::optional<PortableRestore>, Session::kNumTracks> portableRestores;
 };
 #endif
 
@@ -2097,6 +2110,14 @@ void AudioEngine::serviceMultisampleLoads()
             track.nativeAuIdentifier.clear(); track.nativeAuStateBase64.clear();
             track.pluginDescriptor.reset(); track.pluginLegacyDescriptionXml.clear(); track.pluginStateBase64.clear();
             track.builtinUnitId.clear(); track.builtinStateBase64.clear();
+            auto& portable = loads.portableRestores[(std::size_t) pluginNormalizationTrackOwner (request.trackIndex)];
+            portable.reset();
+            std::vector<std::uint8_t> restoredState;
+            auto& committedSlot = strip.getNativeMultisampleSlot();
+            if (request.restoring && request.locator && committedSlot.saveState (restoredState))
+                portable = MultisampleLoadState::PortableRestore { committedSlot.generation(), *request.locator,
+                    committedSlot.getLoadedSoundfontPath(), std::move (restoredState),
+                    track.nativeMultisamplePath, track.nativeMultisampleStateBase64 };
             auto* instance = strip.getNativeMultisampleSlot().getInstance();
             const auto alive = playbackServiceAlive;
             instance->setReplacementLoader ([this, alive, instance] (std::filesystem::path path, int preset,
@@ -2999,15 +3020,26 @@ bool AudioEngine::publishPluginStateForSave (bool capturePluginState,
             ? juce::String::fromUTF8 (
                   strip.getNativeMultisampleSlot().getLoadedSoundfontPath().c_str())
             : juce::String();
-        if (persistedSoundfont.isNotEmpty())
+        auto& multisampleSlot = strip.getNativeMultisampleSlot();
+        const auto& portable = multisampleLoads->portableRestores[(size_t) pluginNormalizationTrackOwner (t)];
+        std::vector<std::uint8_t> liveState;
+        if (persistedSoundfont.isNotEmpty() && portable && ! strip.nativeMultisampleReloadFailed()
+            && portable->slotGeneration == multisampleSlot.generation()
+            && track.nativeMultisampleLocator == portable->locator
+            && portable->resolvedPath == multisampleSlot.getLoadedSoundfontPath()
+            && multisampleSlot.saveState (liveState) && liveState == portable->restoredState)
+        {
+            track.nativeMultisamplePath = portable->savedPath;
+            track.nativeMultisampleStateBase64 = portable->savedState;
+        }
+        else if (persistedSoundfont.isNotEmpty())
         {
             bindNativeStateToLoadedIdentity (
                 "multisample", track.nativeMultisamplePath,
                 track.nativeMultisampleStateBase64,
                 persistedSoundfont.toStdString());
             if (! strip.nativeMultisampleReloadFailed())
-                captureNativeState (strip.getNativeMultisampleSlot(),
-                                    track.nativeMultisampleStateBase64,
+                captureNativeState (multisampleSlot, track.nativeMultisampleStateBase64,
                                     "track multisample", t);
         }
         else if (! strip.nativeMultisampleReloadFailed())
@@ -3772,6 +3804,7 @@ void AudioEngine::consumePluginStateAfterLoad()
     multisampleLoads->worker.cancelAll();
     multisampleLoads->pending.fill (false);
     multisampleLoads->restoreFailures.clear();
+    for (auto& portable : multisampleLoads->portableRestores) portable.reset();
     for (auto& request : multisampleLoads->deferred) request.reset();
 #endif
     // Mirror of publish: read the (just-deserialised) strings on each track
