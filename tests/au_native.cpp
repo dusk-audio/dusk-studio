@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <filesystem>
 #include <limits>
@@ -22,6 +23,24 @@ constexpr std::uint32_t fourcc (const char (&text)[5]) noexcept
          | (static_cast<std::uint32_t> (text[1]) << 16)
          | (static_cast<std::uint32_t> (text[2]) << 8)
          |  static_cast<std::uint32_t> (text[3]);
+}
+
+// Parameter listener notifications arrive through the main run loop.
+template <typename Done>
+bool runMainLoopUntil (Done&& done)
+{
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds (2);
+    while (! done() && std::chrono::steady_clock::now() < deadline)
+        CFRunLoopRunInMode (kCFRunLoopDefaultMode, 0.01, true);
+    return done();
+}
+
+void runMainLoopFor (double seconds)
+{
+    const auto deadline = std::chrono::steady_clock::now()
+        + std::chrono::duration<double> (seconds);
+    while (std::chrono::steady_clock::now() < deadline)
+        CFRunLoopRunInMode (kCFRunLoopDefaultMode, 0.01, true);
 }
 
 std::string loadAppleEffect (duskstudio::au::NativeAuSlot& slot)
@@ -324,8 +343,10 @@ TEST_CASE ("Native Audio Unit slot lifecycle, process, parameters, state, and la
     const auto* parameter = slot.paramInfo (writable);
     double original = 0.0;
     REQUIRE (slot.getParamValue (parameter->id, original));
+    const auto beforeBinding = slot.stateRevision();
     slot.queueParamBinding (static_cast<std::uint32_t> (writable), 0.73f);
     slot.drainQueuedParamBindings();
+    CHECK (slot.stateRevision() > beforeBinding);
     double changed = 0.0;
     REQUIRE (slot.getParamValue (parameter->id, changed));
     const double expected = parameter->minValue
@@ -333,7 +354,21 @@ TEST_CASE ("Native Audio Unit slot lifecycle, process, parameters, state, and la
     CHECK_THAT (changed, WithinAbs (expected,
         std::max (1.0e-5, (parameter->maxValue - parameter->minValue) * 1.0e-5)));
 
+    // An edit in the unit's own view reaches the host only as a listener notification.
+    AudioUnitParameter viewEdit { static_cast<AudioUnit> (slot.getInstance()->nativeAudioUnit()),
+                                  parameter->id, kAudioUnitScope_Global, 0 };
+    const auto beforeViewEdit = slot.stateRevision();
+    REQUIRE (AUParameterSet (nullptr, nullptr, &viewEdit, static_cast<AudioUnitParameterValue> (
+        parameter->minValue + 0.31 * (parameter->maxValue - parameter->minValue)), 0) == noErr);
+    CHECK (runMainLoopUntil ([&] { return slot.stateRevision() > beforeViewEdit; }));
+
+    runMainLoopFor (0.2);
+    const auto beforeRestore = slot.stateRevision();
     REQUIRE (slot.loadState (saved));
+    const auto afterRestore = slot.stateRevision();
+    CHECK (afterRestore > beforeRestore);
+    runMainLoopFor (0.2);
+    CHECK (slot.stateRevision() == afterRestore);
     double restored = 0.0;
     REQUIRE (slot.getParamValue (parameter->id, restored));
     CHECK_THAT (restored, WithinAbs (original,
