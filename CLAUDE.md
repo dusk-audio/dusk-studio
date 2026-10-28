@@ -203,7 +203,7 @@ If a change touches a unit that has tests, those tests must pass. If it touches 
 
 ### Before a push
 
-Run `scripts/regress.sh prepush` (`TMPDIR=/var/tmp` on the Linux dev box) and push only on `regress prepush: OK`. It builds and tests the checkout on Linux and on the macOS build node at once, including the suite under CI's realtime and memlock limits. Windows compiles only in CI. Batch fixes into one push: every push restarts the macOS CI job from the beginning.
+Run `scripts/regress.sh prepush` (`TMPDIR=/var/tmp` on the Linux dev box) and push only on `regress prepush: OK`. It builds and tests the checkout on Linux, on the macOS build node and in the win11 VM (MSVC, CI's Windows targets and ctest) at once, including the suite under CI's realtime and memlock limits. A fresh checkout needs its submodules and both `build/` and `build-tests/` configured first. Batch fixes into one push: every push restarts the macOS CI job from the beginning.
 
 For macOS GUI validation, Marc authorizes automatically selecting **Allow** for Dusk Studio's microphone and removable-volume requests. Start `scripts/regress/mac/allow-prompts.js` alongside the owned validation app, bound to its PID file and exact executable path; keep its action log with the run. This approval persists across rebuilds and future testing. Other applications and permission types require separate authorization.
 
