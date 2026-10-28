@@ -227,7 +227,8 @@ bool RemotePluginConnection::completeConnect (const std::string& extraArg,
 bool RemotePluginConnection::processBlockSync (const float* const* inChannels,
                                                  int numIn, int numOut, int numSamples,
                                                  dusk::MidiBuffer& midi,
-                                                 long long timeoutNs) noexcept
+                                                 long long timeoutNs,
+                                                 const dusk::TransportPosition* transport) noexcept
 {
     if (! shm.isMapped() || crashed.load (std::memory_order_acquire))
         return false;
@@ -257,6 +258,22 @@ bool RemotePluginConnection::processBlockSync (const float* const* inChannels,
     hdr->numInChans  = (std::uint32_t) numIn;
     hdr->numOutChans = (std::uint32_t) numOut;
     hdr->midiOutBytes = 0;
+    hdr->bpm = transport != nullptr ? transport->bpm : 0.0;
+    hdr->timeInSamples = transport != nullptr ? transport->timeInSamples : 0;
+    hdr->timeInSeconds = transport != nullptr ? transport->timeInSeconds : 0.0;
+    hdr->ppqPosition = transport != nullptr ? transport->ppqPosition : 0.0;
+    hdr->timeSignatureNumerator = transport != nullptr ? transport->timeSignatureNumerator : 0;
+    hdr->timeSignatureDenominator = transport != nullptr ? transport->timeSignatureDenominator : 0;
+    hdr->loopStartSamples = transport != nullptr ? transport->loopStartSamples : 0;
+    hdr->loopEndSamples = transport != nullptr ? transport->loopEndSamples : 0;
+    hdr->ppqLoopStart = transport != nullptr ? transport->ppqLoopStart : 0.0;
+    hdr->ppqLoopEnd = transport != nullptr ? transport->ppqLoopEnd : 0.0;
+    hdr->flags = transport != nullptr
+        ? kTransportPresent
+            | (transport->isPlaying || transport->isRecording ? kTransportPlaying : 0u)
+            | (transport->isRecording ? kTransportRecording : 0u)
+            | (transport->isLooping ? kTransportLooping : 0u)
+        : 0u;
 
     const std::uint32_t mySeq = ++localSeq;
     hdr->cmdSeq.store (mySeq, std::memory_order_release);

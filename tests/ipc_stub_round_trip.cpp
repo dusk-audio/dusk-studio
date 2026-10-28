@@ -14,6 +14,7 @@
 // three platform gates in the top-level CMakeLists' OOP block.
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include "engine/ipc/RemotePluginConnection.h"
 #include "engine/ipc/platform/IpcProcess.h"
 #include "engine/ipc/platform/IpcShm.h"
@@ -565,6 +566,83 @@ TEST_CASE ("ipc-stub: connect, round-trip 32 blocks, byte-exact echo",
 
     REQUIRE (conn.getRoundTripCount() == (std::uint64_t) kIterations);
     REQUIRE_FALSE (conn.isCrashed());
+}
+
+TEST_CASE ("ipc-stub: transport snapshots cross whole and clear when absent", "[ipc][transport]")
+{
+    using Catch::Matchers::WithinAbs;
+    namespace ipc = duskstudio::ipc;
+    ipc::RemotePluginConnection connection;
+    std::string error;
+    REQUIRE (connection.connect (DUSKSTUDIO_PLUGIN_HOST_PATH, "--ipc-stub", error));
+    auto* header = reinterpret_cast<ipc::BlockHeader*> (
+        reinterpret_cast<char*> (const_cast<float*> (connection.readOutChannel (0))) - ipc::kAudioOutOffset);
+    header->bpm = 77.75;
+    header->timeInSamples = 12345;
+    header->flags = 3;
+    const float input[] { 0.25f };
+    const float* inputs[] { input };
+    dusk::MidiBuffer midi;
+    REQUIRE (connection.processBlockSync (inputs, 1, 1, 1, midi, kTimeoutNs));
+    CHECK_THAT (connection.readOutChannel (0)[0], WithinAbs (0.25f, 1.0e-7f));
+    CHECK_THAT (header->bpm, WithinAbs (0.0, 1.0e-12));
+    CHECK (header->timeInSamples == 0);
+    CHECK (header->flags == 0);
+
+    dusk::TransportPosition position;
+    position.bpm = 93.5;
+    position.timeInSamples = 123456;
+    position.timeInSeconds = 123456.0 / 48000.0;
+    position.ppqPosition = 12345.125678901234;
+    position.timeSignatureNumerator = 7;
+    position.timeSignatureDenominator = 8;
+    position.isPlaying = position.isRecording = position.isLooping = true;
+    position.loopStartSamples = 24000;
+    position.loopEndSamples = 96000;
+    position.ppqLoopStart = 1.12345678901234;
+    position.ppqLoopEnd = 9.98765432109876;
+    REQUIRE (connection.processBlockSync (inputs, 1, 1, 1, midi, kTimeoutNs, &position));
+    CHECK (header->flags == (ipc::kTransportPresent | ipc::kTransportPlaying
+                            | ipc::kTransportRecording | ipc::kTransportLooping));
+    CHECK_THAT (header->bpm, WithinAbs (93.5, 1.0e-12));
+    CHECK (header->timeInSamples == 123456);
+    CHECK_THAT (header->timeInSeconds, WithinAbs (123456.0 / 48000.0, 1.0e-12));
+    CHECK_THAT (header->ppqPosition, WithinAbs (12345.125678901234, 1.0e-12));
+    CHECK (header->timeSignatureNumerator == 7);
+    CHECK (header->timeSignatureDenominator == 8);
+    CHECK (header->loopStartSamples == 24000);
+    CHECK (header->loopEndSamples == 96000);
+    CHECK_THAT (header->ppqLoopStart, WithinAbs (1.12345678901234, 1.0e-12));
+    CHECK_THAT (header->ppqLoopEnd, WithinAbs (9.98765432109876, 1.0e-12));
+    CHECK (ipc::kAudioInOffset == 256);
+    CHECK (sizeof (ipc::BlockHeader) <= ipc::kHeaderSize);
+
+    position.isPlaying = position.isRecording = position.isLooping = false;
+    position.bpm = 137.25;
+    position.timeInSamples = -6000;
+    position.timeInSeconds = -0.125;
+    position.ppqPosition = -0.75;
+    position.timeSignatureNumerator = 6;
+    REQUIRE (connection.processBlockSync (inputs, 1, 1, 1, midi, kTimeoutNs, &position));
+    CHECK (header->flags == ipc::kTransportPresent);
+    CHECK_THAT (header->bpm, WithinAbs (137.25, 1.0e-12));
+    CHECK (header->timeInSamples == -6000);
+    CHECK_THAT (header->timeInSeconds, WithinAbs (-0.125, 1.0e-12));
+    CHECK_THAT (header->ppqPosition, WithinAbs (-0.75, 1.0e-12));
+    CHECK (header->timeSignatureNumerator == 6);
+
+    REQUIRE (connection.processBlockSync (inputs, 1, 1, 1, midi, kTimeoutNs));
+    CHECK (header->flags == 0);
+    CHECK_THAT (header->bpm, WithinAbs (0.0, 1.0e-12));
+    CHECK (header->timeInSamples == 0);
+    CHECK_THAT (header->timeInSeconds, WithinAbs (0.0, 1.0e-12));
+    CHECK_THAT (header->ppqPosition, WithinAbs (0.0, 1.0e-12));
+    CHECK (header->timeSignatureNumerator == 0);
+    CHECK (header->timeSignatureDenominator == 0);
+    CHECK (header->loopStartSamples == 0);
+    CHECK (header->loopEndSamples == 0);
+    CHECK_THAT (header->ppqLoopStart, WithinAbs (0.0, 1.0e-12));
+    CHECK_THAT (header->ppqLoopEnd, WithinAbs (0.0, 1.0e-12));
 }
 
 TEST_CASE ("ipc-stub: rejects oversize block", "[ipc]")

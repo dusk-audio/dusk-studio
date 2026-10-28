@@ -23,7 +23,7 @@ namespace duskstudio::ipc
 {
 
 constexpr std::uint32_t kMagic     = 0x46434C30;  // 'FCL0'
-constexpr std::uint32_t kVersion   = 4;
+constexpr std::uint32_t kVersion   = 5;
 constexpr int           kMaxBlock  = 1024;        // upper bound on numSamples per block
 constexpr int           kMaxChans  = 2;           // stereo plenty for this host
 // Serialised MIDI-block byte cap. At least a track's routing ceiling
@@ -186,9 +186,11 @@ struct ResizeEditorPayload
     std::uint64_t reserved;
 };
 
-// Cache-line aligned so the parent's `cmdSeq` write doesn't false-share
-// with the child's `replySeq` write. 64 bytes covers all live fields with
-// room to grow without breaking the layout.
+constexpr std::uint32_t kTransportPlaying   = 1u << 0;
+constexpr std::uint32_t kTransportLooping   = 1u << 1;
+constexpr std::uint32_t kTransportRecording = 1u << 2;
+constexpr std::uint32_t kTransportPresent   = 1u << 3;
+
 struct alignas (64) BlockHeader
 {
     // Bumped by the parent immediately before signalling the child.
@@ -218,13 +220,22 @@ struct alignas (64) BlockHeader
     double  bpm;
     std::int64_t timeInSamples;
     std::uint64_t hostFrameCounter;
-    std::uint32_t flags;            // bit 0 = isPlaying, bit 1 = isLooping
+    std::uint32_t flags;
 
     // Sanity check. Set once at SHM init by the parent, read by the
     // child to refuse mismatched layouts.
     std::uint64_t magic;
     std::uint32_t version;
     std::uint32_t reservedTail;
+
+    double ppqPosition;
+    double timeInSeconds;
+    std::int64_t loopStartSamples;
+    std::int64_t loopEndSamples;
+    double ppqLoopStart;
+    double ppqLoopEnd;
+    std::int32_t timeSignatureNumerator;
+    std::int32_t timeSignatureDenominator;
 };
 
 // Layout offsets within the shared mmap region. Computed at compile time

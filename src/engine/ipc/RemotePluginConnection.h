@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "../../foundation/MidiBuffer.h"
+#include "../../foundation/TransportPosition.h"
 
 namespace duskstudio::ipc
 {
@@ -182,7 +183,8 @@ public:
     bool processBlockSync (const float* const* inChannels, int numIn, int numOut,
                             int numSamples,
                             dusk::MidiBuffer& midi,
-                            long long timeoutNs) noexcept;
+                            long long timeoutNs,
+                            const dusk::TransportPosition* transport = nullptr) noexcept;
 
     // Read the i'th output channel from SHM. Valid pointer for the life
     // of the connection. Audio thread calls this after processBlockSync
