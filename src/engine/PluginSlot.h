@@ -101,8 +101,10 @@ public:
     void unload();
 
     bool isLoaded() const noexcept;
-    // Message thread. Whether the slot owns a plug-in, or the placeholder of
-    // one that could not be restored, reachable from the audio path or not.
+    // Message thread. Whether the slot owns a plug-in, reachable from the
+    // audio path or not: a live or parked instance, a sandbox child cut off or
+    // crashed, the identity a dropped crashed child leaves, or the placeholder
+    // of one that could not be restored.
     bool holdsPlugin() const noexcept;
     juce::String getLoadedName() const;
     bool isLoadedStandardVst3() const noexcept
@@ -509,6 +511,17 @@ private:
     // per load: switching modes requires unload + reload.
     std::unique_ptr<duskstudio::ipc::RemotePluginConnection> ownedRemote;
     std::atomic<duskstudio::ipc::RemotePluginConnection*>    currentRemote { nullptr };
+    // Message thread. Set once releaseResources has had the child drop its
+    // plug-in: what it read just before is all a save can have.
+    bool remoteReleased = false;
+    // Message thread. A child the audio path no longer reaches though it still
+    // runs its plug-in: a block size over the IPC limit, or a failed prepare.
+    bool liveCutOffRemote() const noexcept
+    {
+        return ownedRemote != nullptr && currentRemote.load (std::memory_order_acquire) == nullptr
+            && ! remoteReleased && ! remoteCrashed.load (std::memory_order_relaxed)
+            && ! ownedRemote->isCrashed();
+    }
     std::array<std::unique_ptr<duskstudio::ipc::RemotePluginConnection>, 2> previousRemotes;
 
     // Message thread. The final revision of every child this slot has let go

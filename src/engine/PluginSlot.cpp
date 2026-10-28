@@ -284,6 +284,7 @@ void PluginSlot::publishRemoteConnection (
     int numIn, int numOut, int latency, bool isInstrument)
 {
     ownedRemote = std::move (connection);
+    remoteReleased = false;
     {
         // Same drain-then-reset-and-publish as loadFromFile.
         const juce::SpinLock::ScopedLockType processGuard (processLock);
@@ -307,7 +308,9 @@ void PluginSlot::publishRemoteConnection (
     offlineLegacyDescriptionXml.clear();
     offlineStateBase64.clear();
     offlineCapturePlaceholder = false;
+    // A fresh plug-in holds its default state, which no change since covers yet.
     lastKnownStateBase64.clear();
+    lastKnownStateRevision = stateRevision();
 }
 
 void PluginSlot::reapFinishedRemoteLoads() noexcept
@@ -486,6 +489,7 @@ void PluginSlot::retireRemoteConnection()
         previousRemotes[1] = std::move (previousRemotes[0]);
         previousRemotes[0] = std::move (ownedRemote);
     }
+    remoteReleased = false;
     // The ring only defers the destructor; the child must not wait for that,
     // or an unloaded slot keeps a host process alive until two more sandboxed
     // loads push it out. The connection that has just left the audio path is
@@ -821,6 +825,7 @@ void PluginSlot::releaseResources()
         // the SHM + child process alive, so a subsequent load doesn't
         // pay the fork+exec cost again.
         (void) ownedRemote->release (err);
+        remoteReleased = true;
     }
    #endif
 }
@@ -843,7 +848,7 @@ juce::String PluginSlot::getLoadedName() const
 
 bool PluginSlot::holdsPlugin() const noexcept
 {
-    if (isLoaded() || ownedInstance != nullptr || isOffline()) return true;
+    if (isLoaded() || ownedInstance != nullptr || loadedDescriptor.has_value() || isOffline()) return true;
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
     if (ownedRemote != nullptr) return true;
    #endif
@@ -1015,6 +1020,7 @@ bool PluginSlot::loadFromFile (const juce::File& pluginFile, juce::String& error
     offlineStateBase64.clear();
     offlineCapturePlaceholder = false;
     lastKnownStateBase64.clear();
+    lastKnownStateRevision = stateRevision();
     return true;
 }
 
@@ -1195,6 +1201,7 @@ bool PluginSlot::installInProcessInstance (PluginInstancePtr fresh,
     offlineStateBase64.clear();
     offlineCapturePlaceholder = false;
     lastKnownStateBase64.clear();
+    lastKnownStateRevision = stateRevision();
     return true;
 }
 
@@ -1416,7 +1423,12 @@ juce::String PluginSlot::getStateBase64ForSave (int parkSleepMs, std::string* er
     } captureScope { capturingState };
     drainPendingParamWrites (true);
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
-    if (auto* r = currentRemote.load (std::memory_order_acquire))
+    // A child cut off from the audio path by the block size or a failed
+    // prepare is alive and, with no blocks coming, idle: read it the same way.
+    auto* r = currentRemote.load (std::memory_order_acquire);
+    if (r == nullptr && liveCutOffRemote())
+        r = ownedRemote.get();
+    if (r != nullptr)
     {
         // Only a caller that reports errors may clear it; a silent snapshot
         // leaves it for the next save.
@@ -1460,7 +1472,9 @@ juce::String PluginSlot::getStateBase64ForSave (int parkSleepMs, std::string* er
     }
     (void) parkSleepMs;
 
-    if (ownedRemote != nullptr && loadedDescriptor.has_value())
+    // A crashed child, kept or dropped by Re-enable, can only return what was
+    // last read from it, and vouches for no change since.
+    if (loadedDescriptor.has_value() && ownedInstance == nullptr)
     {
         reportRevision (lastKnownStateRevision);
         return lastKnownStateBase64;
@@ -2199,6 +2213,12 @@ void PluginSlot::drainPendingParamWrites (bool forCapture)
     if (! forCapture && ownedInstance != nullptr
         && currentInstance.load (std::memory_order_acquire) == nullptr)
         return;
+   #if DUSKSTUDIO_HAS_OOP_PLUGINS
+    // A cut-off child takes its writes at the next capture or reconnect, not
+    // here, where they would have nowhere to go.
+    if (! forCapture && liveCutOffRemote())
+        return;
+   #endif
     const int avail = paramFifo.getNumReady();
     if (avail > 0)
     {
@@ -2291,9 +2311,10 @@ void PluginSlot::applyParamWriteOnMessageThread (const ParamWrite& pw, bool forC
     // SetParam -> callAsync -> setValueNotifyingHost path. Acquire
     // load pairs with the message-thread release stores in
     // descriptor load / unload that swap currentRemote.
-    if (auto* r = currentRemote.load (std::memory_order_acquire))
-        if (! r->setRemoteParam (pw.paramIndex, pw.value))
-            remoteParamWriteLost.store (true, std::memory_order_relaxed);
+    auto* r = currentRemote.load (std::memory_order_acquire);
+    if (r == nullptr && forCapture && liveCutOffRemote()) r = ownedRemote.get();
+    if (r != nullptr && ! r->setRemoteParam (pw.paramIndex, pw.value))
+        remoteParamWriteLost.store (true, std::memory_order_relaxed);
    #endif
 }
 

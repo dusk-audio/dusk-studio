@@ -2980,8 +2980,8 @@ bool AudioEngine::preparePluginStateForSave (PreparedPluginState& prepared,
         std::uint64_t capturedRevision = 0;
         const auto state = slot.getStateBase64ForSave (0, &captureError, &capturedRevision);
         latencyMoved = latencyMoved || slot.getLatencySamples() != before;
-        // A slot the audio path no longer reaches hands back the state it last
-        // read, which is stale once the plug-in has changed since.
+        // A slot whose sandbox child has crashed, kept or dropped, hands back
+        // the state last read from it, which is stale once it has changed since.
         if (captureError.empty() && ! slot.isLoaded() && slot.holdsPlugin()
             && capturedRevision != slot.stateRevision())
             captureError = "it has stopped processing, so its latest changes could not be read";
