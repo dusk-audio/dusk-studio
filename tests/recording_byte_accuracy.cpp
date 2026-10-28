@@ -551,6 +551,50 @@ TEST_CASE ("RecordManager keeps a finished take its file check cannot reopen",
     dir.deleteRecursively();
 }
 
+// The re-open retries wait on the message thread. A Stop on a mount that has
+// gone away fails them for every armed track, so the waits are one budget for
+// the whole Stop: past it each take gets a single look, and every file stays.
+TEST_CASE ("RecordManager shares one re-open retry budget across a Stop",
+           "[recording][recordmanager][finalization]")
+{
+    constexpr int frames = 128;
+    constexpr int tracks = 6;
+    const auto dir = makeTempSessionDir();
+    duskstudio::Session session;
+    session.setSessionDirectory (dir);
+    for (int track = 0; track < tracks; ++track)
+    {
+        session.track (track).mode.store ((int) duskstudio::Track::Mode::Mono,
+                                          std::memory_order_relaxed);
+        session.setTrackArmed (track, true);
+    }
+    int attempts = 0;
+    duskstudio::RecordManager recorder (
+        session, {},
+        [&attempts] (const std::filesystem::path&) -> std::optional<std::int64_t>
+        {
+            ++attempts;
+            return std::nullopt;
+        });
+    REQUIRE (recorder.startRecording (48000.0, 0));
+    const std::vector<float> block (frames, 0.25f);
+    for (int track = 0; track < tracks; ++track)
+        recorder.writeInputBlock (track, block.data(), nullptr, frames);
+    recorder.stopRecording (frames);
+
+    CHECK (attempts == tracks + duskstudio::fileimport::detail::kTransientFileAttempts - 1);
+    for (int track = 0; track < tracks; ++track)
+    {
+        CAPTURE (track);
+        const auto& kept = session.track (track);
+        REQUIRE (kept.takes.size() == 1);
+        CHECK (kept.takes.front().lengthInSamples == frames);
+        CHECK (fileFrames (kept.takes.front().file) == frames);
+    }
+    CHECK (recorder.getLastRecordErrors().empty());
+    dir.deleteRecursively();
+}
+
 // The writer and the read-back must name the same file. A session folder whose
 // name leaves ASCII is where a narrow-string path conversion would part them.
 TEST_CASE ("RecordManager records into a session folder named outside ASCII",

@@ -1168,6 +1168,11 @@ void RecordManager::stopRecording (std::int64_t endSample)
         cap.reset();
     }
 
+    // Retries wait on the message thread, so a Stop gets one budget of them for
+    // all its takes: a mount that has gone away fails every take's check, and
+    // past the budget each take gets a single look.
+    int reopenRetriesLeft = fileimport::detail::kTransientFileAttempts - 1;
+
     // Tear down writers (this flushes the threaded queues and closes the
     // WAV files), then commit a Region for each.
     for (int t = 0; t < Session::kNumTracks; ++t)
@@ -1183,9 +1188,12 @@ void RecordManager::stopRecording (std::int64_t endSample)
         slot->writer.reset();  // flush + close
 
         const auto path = std::filesystem::u8path (slot->file.getFullPathName().toStdString());
-        const auto persistedFrames = fileimport::detail::retryTransientFileOperation (
-            [this, &path] { return persistedFrameProbe (path); },
-            [] { std::this_thread::sleep_for (std::chrono::milliseconds (20)); });
+        auto persistedFrames = persistedFrameProbe (path);
+        for (; ! persistedFrames && reopenRetriesLeft > 0; --reopenRetriesLeft)
+        {
+            std::this_thread::sleep_for (std::chrono::milliseconds (20));
+            persistedFrames = persistedFrameProbe (path);
+        }
         // A file that cannot be reopened has not been shown to be short, so it
         // stays, and the take stands unless the sink itself reported a failure.
         const bool sinkFailed = slot->sinkWriteFailed.load (std::memory_order_acquire);
