@@ -3,12 +3,15 @@
 // test; the state regression below defaults to the bundled fixture.
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "engine/PdcMath.h"
 #include "engine/clap/NativeClapSlot.h"
+#include "dsp/ChannelStrip.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
@@ -50,6 +53,102 @@ TestClapBundle testClapBundle()
     return { std::filesystem::u8path (DUSKSTUDIO_MULTI_BUS_CLAP_FIXTURE_PATH), true };
 }
 } // namespace
+
+TEST_CASE ("Channel native inserts receive the current transport through audio and silent blocks", "[clap][channel-strip][transport]")
+{
+    using Catch::Matchers::WithinAbs;
+    using duskstudio::ChannelStrip;
+    constexpr int blockSize = 64;
+    const bool stereo = GENERATE (false, true);
+    CAPTURE (stereo);
+    duskstudio::ChannelStripParams params;
+    ChannelStrip strip;
+    strip.bind (params);
+    strip.prepare (48000.0, blockSize);
+    std::string error;
+    REQUIRE (strip.loadNativeClap (juce::File { DUSKSTUDIO_MULTI_BUS_CLAP_FIXTURE_PATH }, error));
+    auto* instance = strip.getNativeClapSlot().getInstance();
+    REQUIRE (instance != nullptr);
+    REQUIRE_FALSE (strip.insertIsNativeInstrument());
+    const auto* plugin = instance->getPlugin();
+    REQUIRE (plugin != nullptr);
+    using Block = std::array<float, blockSize>;
+    Block left {}, right {}, masterL {}, masterR {};
+    std::array<Block, ChannelStrip::kNumBuses> busesL {}, busesR {};
+    std::array<Block, ChannelStrip::kNumAuxSends> auxL {}, auxR {};
+    std::array<float*, ChannelStrip::kNumBuses> busPtrsL {}, busPtrsR {};
+    std::array<float*, ChannelStrip::kNumAuxSends> auxPtrsL {}, auxPtrsR {};
+    for (std::size_t i = 0; i < busesL.size(); ++i)
+    {
+        busPtrsL[i] = busesL[i].data(); busPtrsR[i] = busesR[i].data();
+    }
+    for (std::size_t i = 0; i < auxL.size(); ++i)
+    {
+        auxPtrsL[i] = auxL[i].data(); auxPtrsR[i] = auxR[i].data();
+    }
+    juce::MidiBuffer midi;
+    const auto run = [&]
+    {
+        masterL.fill (0.0f); masterR.fill (0.0f);
+        strip.processAndAccumulate (left.data(), stereo ? right.data() : nullptr, midi, false,
+                                    masterL.data(), masterR.data(), busPtrsL, busPtrsR,
+                                    auxPtrsL, auxPtrsR, blockSize, true);
+        REQUIRE (strip.getLastProcessedSamples() == blockSize);
+        return static_cast<const clap_event_transport_t*> (
+            plugin->get_extension (plugin, "studio.dusk.test.transport"));
+    };
+    const auto beats = [] (double value) { return (clap_beattime) std::llround (value * (double) CLAP_BEATTIME_FACTOR); };
+    const auto seconds = [] (double value) { return (clap_sectime) std::llround (value * (double) CLAP_SECTIME_FACTOR); };
+    const auto valid = CLAP_TRANSPORT_HAS_TEMPO | CLAP_TRANSPORT_HAS_BEATS_TIMELINE
+                     | CLAP_TRANSPORT_HAS_SECONDS_TIMELINE | CLAP_TRANSPORT_HAS_TIME_SIGNATURE;
+    dusk::TransportPosition position;
+    position.bpm = 93.5;
+    position.timeInSamples = 123456;
+    position.timeInSeconds = 123456.0 / 48000.0;
+    position.ppqPosition = 17.25;
+    position.timeSignatureNumerator = 7;
+    position.timeSignatureDenominator = 8;
+    position.isPlaying = position.isRecording = position.isLooping = true;
+    position.loopStartSamples = 24000;
+    position.loopEndSamples = 96000;
+    position.ppqLoopStart = 1.25;
+    position.ppqLoopEnd = 9.75;
+    strip.setTransport (&position);
+    left.fill (0.25f); right.fill (-0.125f);
+    const auto* received = run();
+    REQUIRE (received != nullptr);
+    CHECK_THAT (received->tempo, WithinAbs (position.bpm, 1e-12));
+    CHECK (received->song_pos_beats == beats (position.ppqPosition));
+    CHECK (received->song_pos_seconds == seconds (position.timeInSeconds));
+    CHECK (received->flags == (uint32_t) (valid | CLAP_TRANSPORT_IS_PLAYING
+        | CLAP_TRANSPORT_IS_RECORDING | CLAP_TRANSPORT_IS_LOOP_ACTIVE));
+    CHECK (received->tsig_num == 7);
+    CHECK (received->tsig_denom == 8);
+    CHECK (received->loop_start_beats == beats (1.25));
+    CHECK (received->loop_end_beats == beats (9.75));
+    CHECK (received->loop_start_seconds == seconds (0.5));
+    CHECK (received->loop_end_seconds == seconds (2.0));
+
+    left.fill (0.0f); right.fill (0.0f);
+    params.insertBypassed.store (true);
+    position.isPlaying = position.isRecording = position.isLooping = false;
+    position.bpm = 137.0;
+    position.ppqPosition = -0.75;
+    position.timeInSamples = -12000;
+    position.timeInSeconds = -0.25;
+    position.timeSignatureNumerator = 6;
+    received = run();
+    REQUIRE (received != nullptr);
+    CHECK_THAT (received->tempo, WithinAbs (137.0, 1e-12));
+    CHECK (received->song_pos_beats == beats (-0.75));
+    CHECK (received->song_pos_seconds == seconds (-0.25));
+    CHECK (received->flags == (uint32_t) valid);
+    CHECK (received->tsig_num == 6);
+    CHECK (received->bar_number == -1);
+    CHECK (received->bar_start == beats (-3.0));
+    strip.setTransport (nullptr);
+    CHECK (run() == nullptr);
+}
 
 TEST_CASE ("NativeClapSlot loads, processes, and unloads cleanly", "[clap][slot]")
 {

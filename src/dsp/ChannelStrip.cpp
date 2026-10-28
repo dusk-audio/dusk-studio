@@ -1373,7 +1373,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
                 std::memcpy (insertScratchR.data(), tempMono.data(), sizeof (float) * (size_t) numSamples);
                 insertResult = nativeClapSlot.processStereo (tempMono.data(), insertScratchR.data(),
                                               tempMono.data(), insertScratchR.data(), numSamples,
-                                              owedReset);
+                                              owedReset, transport);
                 for (int i = 0; i < numSamples; ++i)
                     tempMono[(size_t) i] = 0.5f
                         * (tempMono[(size_t) i] + insertScratchR[(size_t) i]);
@@ -1387,7 +1387,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
                 std::memcpy (insertScratchR.data(), tempMono.data(), sizeof (float) * (size_t) numSamples);
                 insertResult = nativeLv2Slot.processStereo (tempMono.data(), insertScratchR.data(),
                                              tempMono.data(), insertScratchR.data(), numSamples,
-                                             owedReset);
+                                             owedReset, transport);
                 for (int i = 0; i < numSamples; ++i)
                     tempMono[(size_t) i] = 0.5f
                         * (tempMono[(size_t) i] + insertScratchR[(size_t) i]);
@@ -1401,7 +1401,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
                 std::memcpy (insertScratchR.data(), tempMono.data(), sizeof (float) * (size_t) numSamples);
                 insertResult = nativeVst3Slot.processStereo (tempMono.data(), insertScratchR.data(),
                                               tempMono.data(), insertScratchR.data(), numSamples,
-                                              owedReset);
+                                              owedReset, transport);
                 for (int i = 0; i < numSamples; ++i)
                     tempMono[(size_t) i] = 0.5f
                         * (tempMono[(size_t) i] + insertScratchR[(size_t) i]);
@@ -1415,7 +1415,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
                              sizeof (float) * (size_t) numSamples);
                 insertResult = nativeAuSlot.processStereo (tempMono.data(), insertScratchR.data(),
                                             tempMono.data(), insertScratchR.data(), numSamples,
-                                            owedReset);
+                                            owedReset, transport);
                 for (int i = 0; i < numSamples; ++i)
                     tempMono[(size_t) i] = 0.5f
                         * (tempMono[(size_t) i] + insertScratchR[(size_t) i]);
@@ -1628,27 +1628,27 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             dusk::copyEventsWhole (trackMidi, nativeMidiScratch);
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
             if (nativeClapSlot.isLoaded())
-                nativeClapSlot.processStereo (L, R, L, R, numSamples, &nativeMidiScratch);
+                nativeClapSlot.processStereo (L, R, L, R, numSamples, &nativeMidiScratch, transport);
             else
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_LV2
             if (nativeLv2Slot.isLoaded())
-                nativeLv2Slot.processStereo (L, R, L, R, numSamples, &nativeMidiScratch);
+                nativeLv2Slot.processStereo (L, R, L, R, numSamples, &nativeMidiScratch, transport);
             else
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_VST3
             if (nativeVst3Slot.isLoaded())
-                nativeVst3Slot.processStereo (L, R, L, R, numSamples, &nativeMidiScratch);
+                nativeVst3Slot.processStereo (L, R, L, R, numSamples, &nativeMidiScratch, transport);
             else
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_AU
             if (nativeAuSlot.isLoaded())
-                nativeAuSlot.processStereo (L, R, L, R, numSamples, &nativeMidiScratch);
+                nativeAuSlot.processStereo (L, R, L, R, numSamples, &nativeMidiScratch, transport);
             else
 #endif
 #if DUSKSTUDIO_HAS_MULTISAMPLE
             if (nativeMultisampleSlot.isLoaded())
-                nativeMultisampleSlot.processStereo (L, R, L, R, numSamples, &nativeMidiScratch);
+                nativeMultisampleSlot.processStereo (L, R, L, R, numSamples, &nativeMidiScratch, transport);
             else
 #endif
             if (builtinSlot.isLoaded())
@@ -1685,22 +1685,22 @@ void ChannelStrip::processAndAccumulate (const float* inL,
                 const auto* owedReset = takeOwedMidiReset();
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
                 if (nativeClapSlot.isLoaded())
-                    insertResult = nativeClapSlot.processStereo (L, R, L, R, numSamples, owedReset);
+                    insertResult = nativeClapSlot.processStereo (L, R, L, R, numSamples, owedReset, transport);
                 else
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_LV2
                 if (nativeLv2Slot.isLoaded())
-                    insertResult = nativeLv2Slot.processStereo (L, R, L, R, numSamples, owedReset);
+                    insertResult = nativeLv2Slot.processStereo (L, R, L, R, numSamples, owedReset, transport);
                 else
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_VST3
                 if (nativeVst3Slot.isLoaded())
-                    insertResult = nativeVst3Slot.processStereo (L, R, L, R, numSamples, owedReset);
+                    insertResult = nativeVst3Slot.processStereo (L, R, L, R, numSamples, owedReset, transport);
                 else
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_AU
                 if (nativeAuSlot.isLoaded())
-                    insertResult = nativeAuSlot.processStereo (L, R, L, R, numSamples, owedReset);
+                    insertResult = nativeAuSlot.processStereo (L, R, L, R, numSamples, owedReset, transport);
                 else
 #endif
                 if (builtinSlot.isLoaded())
