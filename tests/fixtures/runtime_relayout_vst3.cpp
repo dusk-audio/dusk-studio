@@ -5,6 +5,7 @@
 #include "pluginterfaces/vst/ivstprocesscontext.h"
 
 #include <algorithm>
+#include <atomic>
 
 namespace Steinberg::Vst
 {
@@ -232,9 +233,10 @@ public:
     tresult PLUGIN_API process (ProcessData& data) override
     {
         const int32 expectedOutputs = expanded ? 3 : 2;
+        const bool reportsTransport = reportTransport;
         if (data.symbolicSampleSize != kSample32
             || data.numInputs != 1 || data.inputs == nullptr
-            || data.numOutputs < 1 || (! reportTransport && data.numOutputs != expectedOutputs)
+            || data.numOutputs < 1 || (! reportsTransport && data.numOutputs != expectedOutputs)
             || data.outputs == nullptr)
             return kResultFalse;
 
@@ -246,7 +248,7 @@ public:
         if (! validStereoBus (data.inputs[0]))
             return kResultFalse;
         for (int32 bus = 0; bus < data.numOutputs; ++bus)
-            if (! validStereoBus (data.outputs[bus]) && (! reportTransport || bus == 0))
+            if (! validStereoBus (data.outputs[bus]) && (! reportsTransport || bus == 0))
                 return kResultFalse;
 
         for (int32 channel = 0; channel < 2; ++channel)
@@ -256,7 +258,7 @@ public:
             if (validStereoBus (data.outputs[bus]))
                 for (int32 channel = 0; channel < 2; ++channel)
                     std::fill_n (data.outputs[bus].channelBuffers32[channel], data.numSamples, 0.0f);
-        if (reportTransport)
+        if (reportsTransport)
         {
             float report[11] {};
             if (const auto* transport = data.processContext)
@@ -301,12 +303,13 @@ private:
     }
 
     uint8 controllerState = 0;
-    bool expanded = false;
+    // process() reads these on the audio thread while the host sets them.
+    std::atomic<bool> expanded { false };
+    std::atomic<bool> reportTransport { false };
     bool highLatency = false;
     bool announceLatencyChanges = false;
     bool repeatIoOnActivate = false;
     bool flipOutputsOnActivate = false;
-    bool reportTransport = false;
 };
 } // namespace
 } // namespace Steinberg::Vst
