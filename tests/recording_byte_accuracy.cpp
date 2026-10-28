@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include "engine/FileImporter.h"
 #include "engine/RecordManager.h"
 #include "engine/audiofile/FileReader.h"
 #include "engine/audiofile/FileWriter.h"
@@ -12,7 +13,10 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <filesystem>
+#include <limits>
 #include <memory>
+#include <optional>
 #include <tuple>
 #include <vector>
 
@@ -466,4 +470,121 @@ TEST_CASE ("RecordManager keeps only complete persisted loop passes after a fina
     CHECK (errors.front().kind == duskstudio::RecordManager::RecordErrorKind::WavWrite);
     CHECK (errors.front().count == 1);
     dir.deleteRecursively();
+}
+
+// Stop reopens every finished take to count the frames that reached disk. On
+// Windows an indexer or antivirus scan can hold a just-closed file, and any
+// platform can run out of descriptors; a check that cannot run must not cost
+// the user a complete take.
+TEST_CASE ("RecordManager keeps a finished take its file check cannot reopen",
+           "[recording][recordmanager][finalization]")
+{
+    constexpr int frames = 256;
+    int refusals = 0;
+    bool sinkFails = false;
+    SECTION ("the file opens on a later attempt") { refusals = 2; }
+    SECTION ("the file never opens") { refusals = std::numeric_limits<int>::max(); }
+    SECTION ("the file never opens and the sink reported a failure")
+    {
+        refusals = std::numeric_limits<int>::max();
+        sinkFails = true;
+    }
+
+    const auto dir = makeTempSessionDir();
+    duskstudio::Session session;
+    session.setSessionDirectory (dir);
+    for (int track : { 0, 1 })
+    {
+        session.track (track).mode.store ((int) duskstudio::Track::Mode::Mono,
+                                          std::memory_order_relaxed);
+        session.setTrackArmed (track, true);
+    }
+    SinkObservation observation;
+    duskstudio::RecordManager::WriteSinkFactory sinks;
+    if (sinkFails)
+        sinks = failingWriterFactory (observation, FailureStage::Flush, frames, frames);
+    int attempts = 0;
+    duskstudio::RecordManager recorder (
+        session, sinks,
+        [&] (const std::filesystem::path& path) -> std::optional<std::int64_t>
+        {
+            if (path.filename().u8string().find ("track01_") == 0 && attempts++ < refusals)
+                return std::nullopt;
+            auto reader = dusk::audio::FileReader::open (path);
+            if (reader == nullptr) return std::nullopt;
+            return reader->info().numFrames;
+        });
+    REQUIRE (recorder.startRecording (48000.0, 0));
+    const std::vector<float> block (frames, 0.25f);
+    recorder.writeInputBlock (0, block.data(), nullptr, frames);
+    recorder.writeInputBlock (1, block.data(), nullptr, frames);
+    recorder.stopRecording (frames);
+
+    const auto wavs = session.getAudioDirectory().findChildFiles (
+        juce::File::findFiles, false, "track01_*.wav");
+    REQUIRE (wavs.size() == 1);
+    CHECK (fileFrames (wavs.getFirst()) == frames);
+    const auto& checked = session.track (0);
+    const auto& errors = recorder.getLastRecordErrors();
+    if (sinkFails)
+    {
+        CHECK (checked.takes.empty());
+        CHECK (checked.regions.empty());
+        REQUIRE (errors.size() == 1);
+        CHECK (errors.front().trackIndex == 0);
+        CHECK (errors.front().kind == duskstudio::RecordManager::RecordErrorKind::WavWrite);
+    }
+    else
+    {
+        CHECK (attempts == std::min (refusals,
+                                     duskstudio::fileimport::detail::kTransientFileAttempts - 1) + 1);
+        REQUIRE (checked.takes.size() == 1);
+        REQUIRE (checked.regions.size() == 1);
+        CHECK (checked.takes.front().file == wavs.getFirst());
+        CHECK (checked.takes.front().lengthInSamples == frames);
+        CHECK (checked.regions.front().lengthInSamples == frames);
+        CHECK (errors.empty());
+    }
+    const auto& good = session.track (1);
+    REQUIRE (good.takes.size() == 1);
+    CHECK (good.takes.front().lengthInSamples == frames);
+    dir.deleteRecursively();
+}
+
+// The writer and the read-back must name the same file. A session folder whose
+// name leaves ASCII is where a narrow-string path conversion would part them.
+TEST_CASE ("RecordManager records into a session folder named outside ASCII",
+           "[recording][recordmanager][finalization]")
+{
+    const auto parent = makeTempSessionDir();
+    const auto dir = parent.getChildFile (juce::CharPointer_UTF8 ("Jos\xc3\xa9 \xe6\x97\xa5\xe6\x9c\xac"));
+    REQUIRE (dir.createDirectory().wasOk());
+    duskstudio::Session session;
+    session.setSessionDirectory (dir);
+    session.track (0).mode.store ((int) duskstudio::Track::Mode::Mono, std::memory_order_relaxed);
+    session.setTrackArmed (0, true);
+    std::filesystem::path opened;
+    duskstudio::RecordManager recorder (
+        session,
+        [&opened] (const std::filesystem::path& path, const dusk::audio::WriteSpec& spec)
+            -> std::unique_ptr<dusk::audio::IFileWriteSink>
+        {
+            opened = path;
+            return dusk::audio::FileWriter::create (path, spec);
+        });
+    REQUIRE (recorder.startRecording (48000.0, 0));
+    REQUIRE (recorder.getLastSetupFailures().empty());
+    constexpr int frames = 128;
+    const std::vector<float> block (frames, 0.25f);
+    recorder.writeInputBlock (0, block.data(), nullptr, frames);
+    recorder.stopRecording (frames);
+
+    const auto& track = session.track (0);
+    REQUIRE (track.takes.size() == 1);
+    const auto take = track.takes.front().file;
+    CHECK (opened == std::filesystem::u8path (take.getFullPathName().toStdString()));
+    CHECK (take.getParentDirectory() == dir.getChildFile ("audio"));
+    CHECK (fileFrames (take) == frames);
+    CHECK (recorder.getLastRecordErrors().empty());
+    parent.deleteRecursively();
 }

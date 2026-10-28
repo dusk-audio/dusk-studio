@@ -33,8 +33,12 @@ class RecordManager
 public:
     using WriteSinkFactory = std::function<std::unique_ptr<dusk::audio::IFileWriteSink> (
         const std::filesystem::path&, const dusk::audio::WriteSpec&)>;
+    // One attempt at reading back how many frames a finished take's file holds;
+    // nullopt when the file could not be opened.
+    using PersistedFrameProbe = std::function<std::optional<std::int64_t> (
+        const std::filesystem::path&)>;
     explicit RecordManager (Session& s);
-    RecordManager (Session& s, WriteSinkFactory factory);
+    RecordManager (Session& s, WriteSinkFactory factory, PersistedFrameProbe probe = {});
     ~RecordManager();
 
     // Immutable message-thread snapshot supplied when a loop-record gesture
@@ -285,6 +289,7 @@ private:
 
     Session& session;
     WriteSinkFactory writeSinkFactory;
+    PersistedFrameProbe persistedFrameProbe;
 
     struct PassDescriptor
     {

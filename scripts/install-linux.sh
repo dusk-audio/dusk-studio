@@ -75,6 +75,15 @@ fi
 
 [ -x "$SRC/DuskStudio" ] || { echo "error: $SRC/DuskStudio not found - run install.sh from the extracted tarball" >&2; exit 1; }
 
+# The desktop entry launches through env for a path holding '%' and directly
+# for one holding '=' (see the Exec rewrite below); neither form starts a path
+# holding both.
+case "$OPT" in
+    *=*%*|*%*=*)
+        echo "error: the install path '$OPT' holds both '=' and '%', which no desktop launcher can start; install with --system or from a HOME without one of them" >&2
+        exit 1 ;;
+esac
+
 # Program dir.
 rm -rf "$OPT"
 mkdir -p "$OPT"
@@ -95,7 +104,9 @@ SRC_DESKTOP="$OPT/share/applications/audio.dusk.studio.desktop"
 mkdir -p "$(dirname "$DESKTOP")" "$(dirname "$ICON")" "$(dirname "$MIME")" "$(dirname "$META")"
 # Desktop values are unescaped before Exec quoting; literal backslashes need
 # four escapes, and field-code percent signs need doubling. env keeps desktop
-# parsers from checking the executable path before expanding literal percents.
+# parsers from checking the executable path before expanding literal percents,
+# but GNU env takes any operand holding '=' for an assignment, so such a path
+# is launched directly.
 BIN="$BIN" awk '
     /^Exec=/ {
         bin = ENVIRON["BIN"]
@@ -111,7 +122,8 @@ BIN="$BIN" awk '
             else if (c == "\r") c = slash "r"
             escaped = escaped c
         }
-        print "Exec=env \"" escaped "\" %f"
+        if (index(bin, "=")) print "Exec=\"" escaped "\" %f"
+        else print "Exec=env \"" escaped "\" %f"
         next
     }
     { print }

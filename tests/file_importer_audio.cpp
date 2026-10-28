@@ -18,6 +18,10 @@
 #if defined (__linux__)
  #include <dlfcn.h>
 #endif
+#if ! defined (_WIN32)
+ #include <csignal>
+ #include <sys/resource.h>
+#endif
 
 using Catch::Matchers::WithinAbs;
 
@@ -510,6 +514,56 @@ TEST_CASE ("FileImporter: a matching 32-bit source is not truncated to 24-bit",
     REQUIRE (res.region.file.loadFileAsData (outBytes));
     REQUIRE (srcBytes == outBytes);   // 32-bit data preserved, not down-converted
 }
+
+#if ! defined (_WIN32)
+// A verbatim copy is the common import. Its final chunk reaches the disk only
+// when the copy is closed, so a full disk there has to fail the import rather
+// than leave a region over a short file.
+TEST_CASE ("FileImporter discards a verbatim copy whose last bytes never reach the disk",
+           "[FileImporter][finalization]")
+{
+    TempScope tmp;
+    const auto source = tmp.dir.getChildFile ("match.wav");
+    writeTestWav (source, 48000.0, 1, 4096, [] (int, int n)
+    { return 0.25f * (float) std::sin (2.0 * kPi * 1000.0 * (double) n / 48000.0); });
+    const auto audioDir = tmp.dir.getChildFile ("audio");
+    REQUIRE (audioDir.createDirectory().wasOk());
+
+    duskstudio::fileimport::AudioImportRequest req;
+    req.source = source;
+    req.audioDir = audioDir;
+    req.sessionSampleRate = 48000.0;
+    req.targetChannels = 1;
+
+    rlimit before {};
+    REQUIRE (::getrlimit (RLIMIT_FSIZE, &before) == 0);
+    const auto cap = (rlim_t) source.getSize() - 100;
+    if (before.rlim_max != RLIM_INFINITY && before.rlim_max < cap)
+        SKIP ("the file size hard limit is already below the source");
+    duskstudio::fileimport::AudioImportResult result;
+    {
+        struct FileSizeCap
+        {
+            rlimit restore;
+            void (*handler) (int);
+            ~FileSizeCap()
+            {
+                ::setrlimit (RLIMIT_FSIZE, &restore);
+                std::signal (SIGXFSZ, handler);
+            }
+        } scope { before, std::signal (SIGXFSZ, SIG_IGN) };
+        rlimit capped = before;
+        capped.rlim_cur = cap;
+        REQUIRE (::setrlimit (RLIMIT_FSIZE, &capped) == 0);
+        result = duskstudio::fileimport::importAudio (req);
+    }
+
+    CHECK_FALSE (result.ok);
+    CHECK (juce::String (result.errorMessage)
+               .startsWith ("Could not copy the file into the session audio folder: "));
+    CHECK (audioDir.findChildFiles (juce::File::findFiles, false, "*").isEmpty());
+}
+#endif
 
 TEST_CASE ("FileImporter rejects converted audio when final file synchronization fails",
            "[FileImporter][finalization]")

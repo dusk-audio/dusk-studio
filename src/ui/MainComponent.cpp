@@ -6345,6 +6345,13 @@ constexpr const char* kCleanOutFolderNotOwned =
     "Save this session before cleaning out. Another session has since been saved "
     "in the folder this one records into, and Clean out would count that "
     "session's recordings as unreferenced and delete them.";
+
+// A cut or copied region waits on the clipboard for its Paste, still needing its audio.
+UnreferencedAudio findCleanOutCandidates (const Session& session, AudioEngine& engine)
+{
+    const auto& clipboard = engine.getRegionClipboard();
+    return findUnreferencedAudio (session, clipboard.hasContent ? &clipboard.region : nullptr);
+}
 } // namespace
 
 bool MainComponent::refuseCleanOut()
@@ -6366,7 +6373,7 @@ void MainComponent::cleanOutUnreferencedFiles()
 {
     if (refuseCleanOut()) return;
 
-    const auto unreferenced = findUnreferencedAudio (session);
+    const auto unreferenced = findCleanOutCandidates (session, engine);
     if (unreferenced.scanFailed)
     {
         showDuskAlert (*this, "Clean out",
@@ -6374,6 +6381,15 @@ void MainComponent::cleanOutUnreferencedFiles()
                           "there is no telling what is unreferenced. Check the "
                           "folder's permissions and that its drive is still "
                           "connected, then try again.");
+        return;
+    }
+    if (unreferenced.referenceUnreadable)
+    {
+        showDuskAlert (*this, "Clean out",
+                          "Could not check one of the audio files this session "
+                          "uses, so there is no telling what is unreferenced. "
+                          "Check that the drive holding it is still connected "
+                          "and that its folder can be opened, then try again.");
         return;
     }
     if (! session.getAudioDirectory().isDirectory())
@@ -6414,7 +6430,7 @@ void MainComponent::cleanOutUnreferencedFiles()
                            // again: nothing goes that a take now holds or a
                            // region now points at.
                            if (self->refuseCleanOut()) return;
-                           const auto current = findUnreferencedAudio (self->session).files;
+                           const auto current = findCleanOutCandidates (self->session, self->engine).files;
                            int deleted = 0;
                            for (const auto& path : listed)
                                if (std::find (current.begin(), current.end(), path) != current.end()

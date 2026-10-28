@@ -298,9 +298,50 @@ TEST_CASE ("Clean out offers no files when a reference cannot be inspected",
     session.mastering().sourceFile = alias;
 
     const auto found = duskstudio::findUnreferencedAudio (session);
-    CHECK (found.scanFailed);
+    CHECK (found.referenceUnreadable);
+    CHECK_FALSE (found.scanFailed);
     CHECK (found.files.empty());
     CHECK (found.totalBytes == 0);
+    dir.deleteRecursively();
+}
+
+// A Cut region lives only on the region clipboard until it is pasted. An
+// imported file is no take, so nothing else names it, and deleting it would
+// leave the paste pointing at a missing file.
+TEST_CASE ("Clean out keeps the audio a region on the clipboard plays",
+           "[session][cleanout]")
+{
+    const auto dir = makeScratch();
+    duskstudio::Session session;
+    session.setSessionDirectory (dir);
+    const auto audio = session.getAudioDirectory();
+    REQUIRE (audio.createDirectory().wasOk());
+    const auto imported = writeWav (audio, "import_track01.wav", 512);
+    const auto reversedSource = writeWav (audio, "import_track02.wav", 256);
+    const auto orphan = writeWav (audio, "orphan.wav", 128);
+
+    duskstudio::AudioRegion cut;
+    cut.file = imported;
+    cut.lengthInSamples = 480;
+    SECTION ("the clipboard region plays the file")
+    {
+        CHECK (holds (duskstudio::findUnreferencedAudio (session), imported));
+        const auto found = duskstudio::findUnreferencedAudio (session, &cut);
+        CHECK_FALSE (found.scanFailed);
+        CHECK_FALSE (holds (found, imported));
+        CHECK (holds (found, reversedSource));
+        CHECK (holds (found, orphan));
+    }
+    SECTION ("the clipboard region reverses the file")
+    {
+        cut.file = dir.getChildFile ("takes").getChildFile ("import_track02-reversed.wav");
+        cut.reversedFrom = duskstudio::AudioRegion::ReverseSource { cut.file, reversedSource, 0, 480, 0 };
+        const auto found = duskstudio::findUnreferencedAudio (session, &cut);
+        CHECK_FALSE (found.scanFailed);
+        CHECK_FALSE (holds (found, reversedSource));
+        CHECK (holds (found, imported));
+        CHECK (holds (found, orphan));
+    }
     dir.deleteRecursively();
 }
 
@@ -369,6 +410,7 @@ TEST_CASE ("Clean out reports a directory it cannot read", "[session][cleanout]"
 
     const auto found = duskstudio::findUnreferencedAudio (session);
     CHECK (found.scanFailed);
+    CHECK_FALSE (found.referenceUnreadable);
     CHECK (found.files.empty());
 
     ::chmod (audio.getFullPathName().toRawUTF8(), 0700);

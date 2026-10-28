@@ -69,29 +69,37 @@ META="$DATA/metainfo/DuskStudio.appdata.xml"
 [[ -f "$MIME" ]] || fail "the MIME package did not land in the scratch XDG data home"
 [[ -f "$META" ]] || fail "the AppStream metadata did not land in the scratch XDG data home"
 
-if command -v gio >/dev/null 2>&1; then
-    SESSION="$WORK/session with spaces'\"\\%literal.json"
-    touch "$SESSION"
+# Opens the installed desktop entry through GLib's parser, as a menu launch and
+# with a session argument, and checks the installed app ran with exactly that.
+check_launches() {
+    local data="$HOME_DIR/.local/share"
+    local session="$WORK/session with spaces'\"\\%literal.json"
+    touch "$session"
     for mode in menu session; do
-        CAPTURE="$WORK/launch-$mode"
+        local capture="$WORK/launch-$mode"
+        rm -f "$capture"
         args=()
-        [[ "$mode" == session ]] && args+=("$SESSION")
+        [[ "$mode" == session ]] && args+=("$session")
         env -u XDG_DATA_DIRS -u XDG_CONFIG_DIRS \
-            HOME="$HOME_DIR" XDG_DATA_HOME="$DATA" \
+            HOME="$HOME_DIR" XDG_DATA_HOME="$data" \
             XDG_CONFIG_HOME="$HOME_DIR/.config" XDG_CACHE_HOME="$HOME_DIR/.cache" \
             XDG_STATE_HOME="$HOME_DIR/.local/state" \
-            DUSK_INSTALL_TEST_CAPTURE="$CAPTURE" \
-            gio launch "$DESKTOP" "${args[@]}" \
+            DUSK_INSTALL_TEST_CAPTURE="$capture" \
+            gio launch "$data/applications/audio.dusk.studio.desktop" "${args[@]}" \
             || fail "the desktop parser refused the $mode launcher"
         for ((attempt = 0; attempt < 100; ++attempt)); do
-            [[ -f "$CAPTURE" ]] && break
+            [[ -f "$capture" ]] && break
             sleep 0.02
         done
-        [[ -f "$CAPTURE" ]] || fail "the $mode launcher never ran the installed app"
-        printf '%s\n' "$OPT/DuskStudio" "${args[@]}" > "$WORK/expected-launch"
-        cmp -s "$WORK/expected-launch" "$CAPTURE" \
+        [[ -f "$capture" ]] || fail "the $mode launcher never ran the installed app"
+        printf '%s\n' "$HOME_DIR/.local/opt/dusk-studio/DuskStudio" "${args[@]}" > "$WORK/expected-launch"
+        cmp -s "$WORK/expected-launch" "$capture" \
             || fail "the $mode launcher changed the executable or session argument"
     done
+}
+
+if command -v gio >/dev/null 2>&1; then
+    check_launches
 else
     echo "skip: gio is unavailable; desktop launches need a real desktop parser"
 fi
@@ -100,6 +108,28 @@ scratch_install --uninstall >/dev/null || fail "install.sh --uninstall exited no
 for path in "$OPT" "$LAUNCHER" "$DESKTOP" "$ICON" "$MIME" "$META"; do
     if [[ -e "$path" || -L "$path" ]]; then fail "--uninstall left $path behind"; fi
 done
+
+# GNU env reads any operand holding '=' as an assignment, so a home with one
+# needs the launcher without env in front.
+HOME_DIR="$WORK/home=with spaces'\"\\\$cash\`tick"
+mkdir -p "$HOME_DIR"
+scratch_install >/dev/null || fail "install.sh exited non-zero for a home holding '='"
+if command -v gio >/dev/null 2>&1; then
+    check_launches
+else
+    echo "skip: gio is unavailable; desktop launches need a real desktop parser"
+fi
+scratch_install --uninstall >/dev/null || fail "install.sh --uninstall exited non-zero for a home holding '='"
+
+# A path holding both '=' and '%' has no Exec line any desktop parser launches.
+HOME_DIR="$WORK/home=with%percent"
+mkdir -p "$HOME_DIR"
+out="$(scratch_install 2>&1 >/dev/null)" && status=0 || status=$?
+[[ "$status" -eq 1 ]] || fail "an install path holding '=' and '%' exited $status, expected 1"
+[[ "$out" == "error: the install path '$HOME_DIR/.local/opt/dusk-studio' holds both '=' and '%', which no desktop launcher can start; install with --system or from a HOME without one of them" ]] \
+    || fail "an install path holding '=' and '%' printed: $out"
+[[ ! -e "$HOME_DIR/.local" ]] || fail "a refused install still wrote into $HOME_DIR/.local"
+HOME_DIR="$WORK/home with spaces'\"\\%literal\$cash\`tick"
 
 if [[ "$(id -u)" != 0 ]]; then
     out="$(scratch_install --system 2>&1 >/dev/null)" && status=0 || status=$?

@@ -1,4 +1,5 @@
 #include "RecordManager.h"
+#include "FileImporter.h"
 #include "audiofile/FileReader.h"
 #include "audiofile/FileWriter.h"
 #include "../session/TakeComp.h"
@@ -168,8 +169,8 @@ bool sliceMidiTake (const MidiTakeRef& source,
 
 RecordManager::RecordManager (Session& s) : RecordManager (s, {}) {}
 
-RecordManager::RecordManager (Session& s, WriteSinkFactory factory)
-    : session (s), writeSinkFactory (std::move (factory))
+RecordManager::RecordManager (Session& s, WriteSinkFactory factory, PersistedFrameProbe probe)
+    : session (s), writeSinkFactory (std::move (factory)), persistedFrameProbe (std::move (probe))
 {
     if (! writeSinkFactory)
         writeSinkFactory = [] (const std::filesystem::path& path,
@@ -177,6 +178,13 @@ RecordManager::RecordManager (Session& s, WriteSinkFactory factory)
             -> std::unique_ptr<dusk::audio::IFileWriteSink>
         {
             return dusk::audio::FileWriter::create (path, spec);
+        };
+    if (! persistedFrameProbe)
+        persistedFrameProbe = [] (const std::filesystem::path& path) -> std::optional<std::int64_t>
+        {
+            auto reader = dusk::audio::FileReader::open (path);
+            if (reader == nullptr) return std::nullopt;
+            return std::max<std::int64_t> (0, reader->info().numFrames);
         };
 }
 
@@ -454,7 +462,7 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
         spec.bitsPerSample = 24;
         spec.format        = dusk::audio::WriteSpec::Format::Wav;
         auto fileWriter = writeSinkFactory (
-            outFile.getFullPathName().toStdString(), spec);
+            std::filesystem::u8path (outFile.getFullPathName().toStdString()), spec);
         if (fileWriter == nullptr)
         {
             std::fprintf (stderr,
@@ -1174,17 +1182,23 @@ void RecordManager::stopRecording (std::int64_t endSample)
         drainPool.remove (slot->writer.get());
         slot->writer.reset();  // flush + close
 
-        std::int64_t persistedFrames = 0;
-        {
-            auto reader = dusk::audio::FileReader::open (
-                std::filesystem::u8path (slot->file.getFullPathName().toStdString()));
-            if (reader != nullptr)
-                persistedFrames = std::max<std::int64_t> (0, reader->info().numFrames);
-        }
-        const auto frames = std::min (acceptedFrames, persistedFrames);
+        const auto path = std::filesystem::u8path (slot->file.getFullPathName().toStdString());
+        const auto persistedFrames = fileimport::detail::retryTransientFileOperation (
+            [this, &path] { return persistedFrameProbe (path); },
+            [] { std::this_thread::sleep_for (std::chrono::milliseconds (20)); });
+        // A file that cannot be reopened has not been shown to be short, so it
+        // stays, and the take stands unless the sink itself reported a failure.
+        const bool sinkFailed = slot->sinkWriteFailed.load (std::memory_order_acquire);
+        const auto frames = persistedFrames ? std::min (acceptedFrames, *persistedFrames)
+                          : sinkFailed      ? std::int64_t { 0 }
+                                            : acceptedFrames;
+        if (! persistedFrames)
+            std::fprintf (stderr,
+                          "[Dusk Studio/RecordManager] stopRecording: track %d could not "
+                          "reopen \"%s\" to count its frames; the file is kept.\n",
+                          t + 1, slot->file.getFullPathName().toRawUTF8());
         auto fails = slot->writeFailures.load (std::memory_order_relaxed);
-        if (slot->sinkWriteFailed.load (std::memory_order_acquire)
-            || persistedFrames < acceptedFrames)
+        if (sinkFailed || frames < acceptedFrames)
         {
             fails = std::max<std::uint64_t> (1, fails);
             std::fprintf (stderr,
@@ -1272,7 +1286,8 @@ void RecordManager::stopRecording (std::int64_t endSample)
                 lastRecordErrors.push_back (
                     { t, RecordErrorKind::OffsetConsumedTake, (std::uint64_t) frames });
             }
-            slot->file.deleteFile();
+            if (persistedFrames)
+                slot->file.deleteFile();
         }
         slot.reset();
     }

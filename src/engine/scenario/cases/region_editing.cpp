@@ -17,6 +17,10 @@
 #include <utility>
 #include <vector>
 
+#if defined (__linux__)
+ #include <dlfcn.h>
+#endif
+
 namespace duskstudio::scenario
 {
 namespace
@@ -573,6 +577,65 @@ ScenarioResult joinRendersAGapAsSilence (ScenarioContext& ctx)
     return ctx.verdict();
 }
 
+// A render whose file never reached the disk whole is no render: Join and
+// Reverse refuse, the regions stay as they were and takes/ keeps nothing.
+std::optional<ScenarioResult> rendersRefuseAFileThatFailsToSync (ScenarioContext& ctx)
+{
+#if ! defined (__linux__)
+    (void) ctx;
+    return ScenarioResult::skip ("requires the native audio-file fault fixture");
+#else
+    const auto arm = reinterpret_cast<void (*) (int, const char*)> (dlsym (RTLD_DEFAULT, "dusk_audiofile_arm"));
+    const auto hits = reinterpret_cast<int (*)()> (dlsym (RTLD_DEFAULT, "dusk_audiofile_hits"));
+    const auto disarm = reinterpret_cast<void (*)()> (dlsym (RTLD_DEFAULT, "dusk_audiofile_disarm"));
+    if (arm == nullptr || hits == nullptr || disarm == nullptr)
+        return ScenarioResult::skip ("requires the native audio-file fault fixture");
+    constexpr int kFsync = 3;
+    disarm();
+    ctx.cleanup ([disarm] { disarm(); });
+    const auto first = writtenFile (ctx, "sync-first", tone (4800, 0.5f));
+    const auto second = writtenFile (ctx, "sync-second", tone (4800, 0.3f));
+    if (! first || ! second) return ScenarioResult::fail ("could not write the source files");
+    const auto takes = pathOf (ctx.session().getSessionDirectory().getChildFile ("takes"));
+    std::error_code error;
+    std::filesystem::create_directories (takes, error);
+    const auto realTakes = std::filesystem::canonical (takes, error);
+    if (error) return ScenarioResult::fail ("could not resolve the session's takes folder");
+    const auto failSyncOf = [&] (const std::string& render)
+    {
+        arm (kFsync, ((realTakes / ("sync-first-" + render)).string() + "*").c_str());
+    };
+    auto& regs = regionsOf (ctx);
+    auto& undo = ctx.engine().getUndoManager();
+    undo.clearUndoHistory();
+
+    regs = { regionOf (*first, 0, 4800, 0), regionOf (*second, 4800, 4800, 0) };
+    undo.beginNewTransaction();
+    failSyncOf ("joined");
+    const bool joined = undo.perform (new JoinRegionsAction (ctx.session(), ctx.engine(), kTrack, { 0, 1 }));
+    const int joinHits = hits();
+    disarm();
+    ctx.expect (joinHits == 1, "the sync fault never reached the joined render");
+    ctx.expect (! joined, "a join whose render failed to sync was accepted");
+    ctx.expect (regs.size() == 2 && regs[0].file == *first && regs[1].file == *second,
+                "a refused join changed the regions");
+    ctx.expect (rendersIn (ctx) == 0, "a refused join left its render in takes/");
+
+    regs = { regionOf (*first, 0, 4800, 0) };
+    undo.beginNewTransaction();
+    failSyncOf ("reversed");
+    const bool reversed = undo.perform (new ReverseRegionAction (ctx.session(), ctx.engine(), kTrack, 0));
+    const int reverseHits = hits();
+    disarm();
+    ctx.expect (reverseHits == 1, "the sync fault never reached the reversed render");
+    ctx.expect (! reversed, "a reverse whose render failed to sync was accepted");
+    ctx.expect (regs.size() == 1 && regs[0].file == *first && ! regs[0].reversedFrom,
+                "a refused reverse changed the region");
+    ctx.expect (rendersIn (ctx) == 0, "a refused reverse left its render in takes/");
+    return ctx.verdict();
+#endif
+}
+
 // An edit over several MIDI regions of one track publishes the track's regions
 // once on perform, undo and redo: the snapshot keeps one retired vector, so a
 // second publish inside an audio block frees the vector that block reads. A
@@ -704,6 +767,9 @@ const ScenarioRegistrar joinSeamRegistrar { Scenario {
 const ScenarioRegistrar joinGapRegistrar { Scenario {
     "region.join_renders_a_gap_as_silence", { "region", "edit" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (joinRendersAGapAsSilence, ctx); } } };
+const ScenarioRegistrar syncFailureRegistrar { Scenario {
+    "region.renders_refuse_a_file_that_fails_to_sync", { "region", "edit", "finalization" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return rendersRefuseAFileThatFailsToSync (ctx); } } };
 const ScenarioRegistrar batchedRegistrar { Scenario {
     "region.batched_edits_publish_and_rebuild_once", { "region", "edit", "undo", "midi" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (batchedEditsPublishAndRebuildOnce, ctx); } } };

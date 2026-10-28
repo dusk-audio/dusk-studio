@@ -1774,9 +1774,10 @@ bool permissionsBite (const std::filesystem::path& probe)
 }
 
 // File > Clean out unreferenced files... in each state the manual lists: no
-// audio folder, one it cannot read, nothing to clean, and stray takes. Cancel
-// keeps the strays; Delete removes only the unreferenced .wav files in the
-// audio folder and clears the undo history.
+// audio folder, one it cannot read, nothing to clean, a file in use it cannot
+// check, and stray takes. Cancel keeps the strays; Delete removes only the
+// unreferenced .wav files in the audio folder, sparing the file a Cut region on
+// the clipboard plays, and clears the undo history.
 std::optional<ScenarioResult> runCleanOutAlerts (GuiHost& host, ScenarioContext& ctx)
 {
     namespace fs = std::filesystem;
@@ -1809,9 +1810,11 @@ std::optional<ScenarioResult> runCleanOutAlerts (GuiHost& host, ScenarioContext&
     const bool canLock = permissionsBite (ctx.tempDir() / "probe");
     if (! canLock) ctx.note ("an unreadable folder stays listable here, as it does for root; that leg is skipped");
 
+    ctx.cleanup ([&engine, clipboard = engine.getRegionClipboard()] { engine.getRegionClipboard() = clipboard; });
     const auto take = audio / "Take.wav";
+    const auto cut = audio / "Imported.wav";
     const std::vector<fs::path> strays { audio / "Stray 1.wav", audio / "Stray 2.wav" };
-    const std::vector<fs::path> kept { take, audio / "Notes.txt", audio / "Freeze" / "Frozen.wav" };
+    const std::vector<fs::path> kept { take, cut, audio / "Notes.txt", audio / "Freeze" / "Frozen.wav" };
 
     auto steps = std::make_shared<std::vector<Step>>();
     const auto choose = [&host, &ctx, steps] (const std::string& how, std::function<void()> before)
@@ -1872,6 +1875,22 @@ std::optional<ScenarioResult> runCleanOutAlerts (GuiHost& host, ScenarioContext&
         session.track (0).regions = { region };
     });
     alerted ("with nothing to clean", "No unreferenced files found. The audio directory is already clean.");
+    const auto loop = ctx.tempDir() / "Looping mix.wav";
+    std::error_code linkError;
+    fs::create_symlink (loop, loop, linkError);
+    if (linkError)
+        ctx.note ("no symbolic link can be made here; the uncheckable-file leg is skipped");
+    else
+    {
+        choose ("with a file it cannot check", [&session, loop]
+        {
+            session.mastering().sourceFile = decltype (session.mastering().sourceFile) (loop.u8string().c_str());
+        });
+        alerted ("with a file it cannot check",
+                 "Could not check one of the audio files this session uses, so there is no telling what is "
+                 "unreferenced. Check that the drive holding it is still connected and that its folder can be "
+                 "opened, then try again.");
+    }
 
     const std::string confirm =
         "Found 2 unreferenced .wav file(s) totalling 1.5 MB.\n\nThese were created by past record passes that no "
@@ -1891,10 +1910,19 @@ std::optional<ScenarioResult> runCleanOutAlerts (GuiHost& host, ScenarioContext&
     {
         return std::all_of (files.begin(), files.end(), [] (const fs::path& file) { return fs::exists (file); });
     };
-    choose ("with stray takes", [&ctx, &engine, &session, strays]
+    choose ("with stray takes", [&ctx, &engine, &session, strays, cut, rate]
     {
+        session.mastering().sourceFile = decltype (session.mastering().sourceFile) ();
         for (const auto& stray : strays)
             ctx.expect (writeBytes (stray, 786432, 's'), "could not write " + stray.filename().string());
+        // An import is no take: once Cut, only the clipboard names its file.
+        ctx.expect (writeRampFixture (cut, rate, (std::int64_t) (rate / 4.0)), "could not write the cut region's file");
+        auto& clipboard = engine.getRegionClipboard();
+        clipboard = {};
+        clipboard.hasContent = true;
+        clipboard.sourceTrack = 1;
+        clipboard.region.lengthInSamples = (std::int64_t) (rate / 4.0);
+        clipboard.region.file = decltype (clipboard.region.file) (cut.u8string().c_str());
         if (! ctx.expect (session.track (0).regions.size() == 1, "the take's region is missing")) return;
         const auto before = session.track (0).regions.front();
         auto after = before;
@@ -1916,7 +1944,8 @@ std::optional<ScenarioResult> runCleanOutAlerts (GuiHost& host, ScenarioContext&
         ctx.expect (host.modalStackEmpty(), "Delete left '" + host.modalText() + "' up");
         for (const auto& stray : strays)
             ctx.expect (! fs::exists (stray), "Delete kept the unreferenced " + stray.filename().string());
-        ctx.expect (allExist (kept), "Delete removed the referenced take, a non-WAV file or a file in a subfolder");
+        ctx.expect (allExist (kept), "Delete removed the referenced take, the clipboard region's file, a non-WAV "
+                                     "file or a file in a subfolder");
         ctx.expect (session.track (0).regions.size() == 1
                         && fs::u8path (session.track (0).regions.front().file.getFullPathName().toStdString()) == take,
                     "Delete changed the region that points at the take");

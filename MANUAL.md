@@ -2795,11 +2795,12 @@ The format for each entry:
 
 ### Clean out
 
-Six variants:
+Seven variants:
 
 - **Recording**: "Stop recording before cleaning out. The take being recorded has no region pointing at its file until you stop, so Clean out would count it as unreferenced and delete it." — Buttons: OK. The same alert takes the place of the deletion when a take starts, from a control surface or a MIDI binding, while the confirmation below is open; nothing is deleted.
 - **Folder holds another session**: "Save this session before cleaning out. Another session has since been saved in the folder this one records into, and Clean out would count that session's recordings as unreferenced and delete them." — Buttons: OK. Shown for a session you have never saved when a `session.json` has appeared in its `Untitled` folder since it started. Save it somewhere of its own with **Save As…**, then Clean out works on that folder.
 - **Cannot read the directory**: "Could not read this session's audio directory, so there is no telling what is unreferenced. Check the folder's permissions and that its drive is still connected, then try again." — Buttons: OK.
+- **Cannot check a file the session uses**: "Could not check one of the audio files this session uses, so there is no telling what is unreferenced. Check that the drive holding it is still connected and that its folder can be opened, then try again." — Buttons: OK. Shown when a region, a take, a freeze render, the loaded mastering mix or a region waiting on the clipboard names a file that cannot be looked up, such as one on a network mount that stopped answering or behind a symbolic link that loops back on itself.
 - **No audio directory**: "This session has no audio directory yet, so there's nothing to clean." — Buttons: OK.
 - **No unreferenced files**: "No unreferenced files found. The audio directory is already clean." — Buttons: OK.
 - **Confirm delete**: "Found [N] unreferenced .wav file(s) totalling [size] MB. These were created by past record passes that no longer have any region or take pointing at them. Deleting cannot be undone, and the session's undo history will be cleared (undone edits may still reference these files)." — Buttons: **Delete** (destructive, red) / **Cancel**.

@@ -1849,7 +1849,7 @@ bool JoinRegionsAction::perform()
     writeSpec.format        = dusk::audio::WriteSpec::Format::Wav;
     auto writer = dusk::audio::FileWriter::create (audioPath (outFile), writeSpec);
     if (writer == nullptr) { outFile.deleteFile(); return false; }
-    if (! writer->write (mixBuf.data(), chs, totalSamples))
+    if (! writer->write (mixBuf.data(), chs, totalSamples) || ! writer->flush())
     {
         writer.reset();
         outFile.deleteFile();
@@ -2074,6 +2074,7 @@ bool ReverseRegionAction::perform()
             { ioOk = false; break; }
             remaining -= n;
         }
+        if (ioOk && ! writer->flush()) ioOk = false;
         writer.reset();   // close the file before any delete
         if (! ioOk) { outFile.deleteFile(); return false; }
 
