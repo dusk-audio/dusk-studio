@@ -212,11 +212,16 @@ public:
         return lastTouchedParamIndex.load (std::memory_order_relaxed);
     }
 
-    // Message thread; pair the content revision with the logical owner generation.
+    // Message thread. generation() names the slot's current owner and moves on
+    // every load, unload and restore. stateRevision() counts changes to the
+    // owner's persistent state and only ever grows: parameter, program and
+    // non-parameter changes the plug-in reports, writes queued through
+    // setParamNormalised, and for a sandboxed plug-in everything its child
+    // reports, its own editor included. The count carries across a change of
+    // child or of hosting mode. A latency report is not a change.
     std::uint32_t generation() const noexcept
         { return currentLoadEpoch.load (std::memory_order_acquire); }
-    std::uint64_t stateRevision() const noexcept
-        { return inProcessStateRevision.load (std::memory_order_acquire); }
+    std::uint64_t stateRevision() const noexcept;
 
     // Audio-thread entry. Lock-free push into the SPSC paramFifo; the
     // actual JUCE parameter setter runs on the message thread inside
@@ -243,8 +248,21 @@ public:
     juce::String getLegacyDescriptionXmlForSave() const;
     // A nonempty error distinguishes a failed live capture from valid empty state.
     // Callers without errorOut retain the last-known-state fallback.
+    //
+    // capturedRevisionOut receives, unless errorOut reports a failure, the
+    // stateRevision() the returned state is known to include. A live capture
+    // samples it after delivering the slot's queued writes and before reading
+    // the state - inside the child for a sandboxed plug-in, behind the writes it
+    // was sent - so stateRevision() == *capturedRevisionOut afterwards means
+    // nothing has changed since. A caller that samples stateRevision() itself
+    // around this call either counts the delivered writes as unsaved or
+    // acknowledges a change the read missed. A state the slot cannot vouch for
+    // that way - the cache of a crashed or released child, an inactive plug-in
+    // whose host may still hold a change - reports the older revision of the
+    // capture that produced it, which leaves the slot dirty.
     juce::String getStateBase64ForSave (int parkSleepMs = 25,
-                                       std::string* errorOut = nullptr);
+                                       std::string* errorOut = nullptr,
+                                       std::uint64_t* capturedRevisionOut = nullptr);
 
     bool restoreFromSavedState (const std::optional<PluginDescriptor>& descriptor,
                                 const juce::String& legacyDescriptionXml,
@@ -283,7 +301,7 @@ public:
     // shell instance; prepareToPlay is invoked so editor layout
     // matches the engine's current SR/BS, that's it.
     //
-    // Architectural note: PluginSlot returns a raw juce::AudioProcessor
+    // Architectural note: PluginSlot returns a raw JUCE AudioProcessor
     // Editor* rather than calling duskstudio::platform::createInProcess
     // EditorHost itself because CLAUDE.md forbids src/engine/ including
     // src/ui/. The factory call lives in ChannelStripComponent (which
@@ -452,6 +470,14 @@ private:
     std::atomic<duskstudio::ipc::RemotePluginConnection*>    currentRemote { nullptr };
     std::array<std::unique_ptr<duskstudio::ipc::RemotePluginConnection>, 2> previousRemotes;
 
+    // Message thread. The final revision of every child this slot has let go
+    // of, so a new child's count starts above the old one's.
+    std::uint64_t retiredRemoteStateRevision = 0;
+    // A write that could not be sent to the live child. The next capture
+    // reports it rather than saving state the write never reached. Raised from
+    // the Mac shell editor's listener too, which may run off the message thread.
+    std::atomic<bool> remoteParamWriteLost { false };
+
     std::atomic<int>  remoteNumIn       { 0 };
     std::atomic<int>  remoteNumOut      { 0 };
     std::atomic<bool> remoteIsInstrument { false };
@@ -534,6 +560,7 @@ private:
     juce::String offlineStateBase64;
     bool offlineCapturePlaceholder { false };
     juce::String lastKnownStateBase64;
+    std::uint64_t lastKnownStateRevision = 0;
 
    #if JUCE_MAC && DUSKSTUDIO_HAS_OOP_PLUGINS
     // Mac dual-load shell-instance state. Loaded lazily on first editor

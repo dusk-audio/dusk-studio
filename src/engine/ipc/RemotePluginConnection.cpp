@@ -113,6 +113,7 @@ bool RemotePluginConnection::spawnChild (const std::string& hostExecutablePath,
     hdr->cmdSeq.store (0, std::memory_order_relaxed);
     hdr->replySeq.store (0, std::memory_order_relaxed);
     hdr->state.store (kStateReady, std::memory_order_relaxed);
+    hdr->stateRevision.store (0, std::memory_order_relaxed);
 
     if (! commandSignal.create (errorOut) || ! replySignal.create (errorOut))
     {
@@ -555,7 +556,8 @@ bool RemotePluginConnection::release (std::string& errorOut)
 }
 
 bool RemotePluginConnection::getState (std::vector<std::uint8_t>& blobOut,
-                                         std::string& errorOut)
+                                         std::string& errorOut,
+                                         std::uint64_t* stateRevisionOut)
 {
     ControlMsgHeader hdr {};
     std::vector<std::uint8_t> reply;
@@ -563,17 +565,18 @@ bool RemotePluginConnection::getState (std::vector<std::uint8_t>& blobOut,
                                hdr, reply, errorOut, 30000))
         return false;
     if (hdr.status != 0) { errorOut = "GetState status != 0"; return false; }
-    if (reply.size() != sizeof (std::uint32_t))
+    if (reply.size() != sizeof (GetStateReply))
     {
-        errorOut = "GetState reply expected uint32 size";
+        errorOut = "GetState reply size mismatch";
         return false;
     }
-    std::uint32_t blobSize = 0;
-    std::memcpy (&blobSize, reply.data(), sizeof (blobSize));
-    if (blobSize > kStateBytes) { errorOut = "state blob exceeds staging area"; return false; }
+    GetStateReply r {};
+    std::memcpy (&r, reply.data(), sizeof (r));
+    if (r.stateBytes > kStateBytes) { errorOut = "state blob exceeds staging area"; return false; }
     blobOut.assign (
         reinterpret_cast<const std::uint8_t*> (shm.data()) + kStateOffset,
-        reinterpret_cast<const std::uint8_t*> (shm.data()) + kStateOffset + blobSize);
+        reinterpret_cast<const std::uint8_t*> (shm.data()) + kStateOffset + r.stateBytes);
+    if (stateRevisionOut != nullptr) *stateRevisionOut = r.stateRevision;
     return true;
 }
 
@@ -788,6 +791,25 @@ void RemotePluginConnection::readerLoop()
     replyCv.notify_all();
 }
 
+std::uint64_t RemotePluginConnection::stateRevision() const noexcept
+{
+    if (shm.isMapped())
+        return noteStateRevision (headerOf (shm.data())->stateRevision.load (std::memory_order_acquire));
+    return observedStateRevision.load (std::memory_order_acquire);
+}
+
+std::uint64_t RemotePluginConnection::noteStateRevision (std::uint64_t seen) const noexcept
+{
+    auto observed = observedStateRevision.load (std::memory_order_acquire);
+    while (seen > observed
+           && ! observedStateRevision.compare_exchange_weak (observed, seen,
+                                                              std::memory_order_acq_rel,
+                                                              std::memory_order_acquire))
+    {
+    }
+    return std::max (seen, observed);
+}
+
 bool RemotePluginConnection::pollReaper() noexcept
 {
     if (! child.isAlive()) return false;
@@ -826,6 +848,7 @@ void RemotePluginConnection::disconnect()
     }
     stopReaderThread();
     platform::closeHandle (controlChannel);
+    (void) stateRevision();
     shm.close();
     commandSignal.close();
     replySignal.close();

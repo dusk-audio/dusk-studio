@@ -90,6 +90,19 @@ void normalizeVst3Location (PluginDescriptor& descriptor)
     }
 }
 
+// The audio thread is held off and the plug-in is active. JUCE's VST3 and LV2
+// hosts keep a host parameter change until their next process call writes it
+// into the plug-in; an empty block, which both formats define for exactly this,
+// delivers it without advancing anything.
+void deliverQueuedParameterChanges (juce::AudioPluginInstance& instance)
+{
+    const int channels = std::max (instance.getTotalNumInputChannels(),
+                                   instance.getTotalNumOutputChannels());
+    juce::AudioBuffer<float> empty (channels, 0);
+    juce::MidiBuffer noMidi;
+    instance.processBlock (empty, noMidi);
+}
+
 PluginDescriptor refreshFromInstance (PluginManager& manager,
                                       juce::AudioPluginInstance& instance,
                                       const PluginDescriptor& reloadDescriptor)
@@ -482,7 +495,11 @@ void PluginSlot::retireRemoteConnection()
     // the eventual destructor is a no-op. Both calls are outside processLock -
     // a child teardown must never hold the audio path off.
     if (previousRemotes[0] != nullptr)
+    {
         previousRemotes[0]->disconnect();
+        retiredRemoteStateRevision += previousRemotes[0]->stateRevision();
+    }
+    remoteParamWriteLost.store (false, std::memory_order_relaxed);
     retired.reset();
 }
 #endif
@@ -776,10 +793,20 @@ void PluginSlot::releaseResources()
     {
         std::string err;
         std::vector<std::uint8_t> state;
-        if (ownedRemote->getState (state, err))
-            lastKnownStateBase64 = state.empty()
-                ? juce::String()
-                : juce::MemoryBlock (state.data(), state.size()).toBase64Encoding();
+        // A write still queued here is counted but never reaches the child, so
+        // the cached state can only vouch for the revision when none is.
+        const bool writesPending = paramFifo.getNumReady() > 0;
+        const auto parentRevision = inProcessStateRevision.load (std::memory_order_acquire)
+                                  + retiredRemoteStateRevision;
+        std::uint64_t childRevision = 0;
+        if (ownedRemote->getState (state, err, &childRevision))
+        {
+            lastKnownStateBase64.clear();
+            if (! state.empty())
+                lastKnownStateBase64 = juce::MemoryBlock (state.data(), state.size()).toBase64Encoding();
+            if (! writesPending)
+                lastKnownStateRevision = parentRevision + childRevision;
+        }
         // release() asks the child to drop its plugin instance but keeps
         // the SHM + child process alive, so a subsequent load doesn't
         // pay the fork+exec cost again.
@@ -1251,8 +1278,8 @@ void PluginSlot::beginInProcessLoad (PluginDescriptor descriptor,
         }
         if (inst == nullptr)
         {
-            if (onDone) onDone (false, err.isNotEmpty() ? err
-                                                        : juce::String ("plugin creation failed"));
+            if (err.isEmpty()) err = "plugin creation failed";
+            if (onDone) onDone (false, err);
             return;
         }
         const bool ok = installInProcessInstance (std::move (inst), descriptor);
@@ -1337,9 +1364,25 @@ bool PluginSlot::isLoadedPluginInstrument() const
     return loadedDescriptor.has_value() && loadedDescriptor->isInstrument;
 }
 
-juce::String PluginSlot::getStateBase64ForSave (int parkSleepMs, std::string* errorOut)
+std::uint64_t PluginSlot::stateRevision() const noexcept
+{
+    auto revision = inProcessStateRevision.load (std::memory_order_acquire);
+   #if DUSKSTUDIO_HAS_OOP_PLUGINS
+    revision += retiredRemoteStateRevision;
+    if (ownedRemote != nullptr)
+        revision += ownedRemote->stateRevision();
+   #endif
+    return revision;
+}
+
+juce::String PluginSlot::getStateBase64ForSave (int parkSleepMs, std::string* errorOut,
+                                                std::uint64_t* capturedRevisionOut)
 {
     if (errorOut != nullptr) errorOut->clear();
+    const auto reportRevision = [capturedRevisionOut] (std::uint64_t revision)
+    {
+        if (capturedRevisionOut != nullptr) *capturedRevisionOut = revision;
+    };
     // A parameter listener must not deactivate its own setter's plug-in stack.
     if (capturingState || drainingParamWrites)
     {
@@ -1356,12 +1399,22 @@ juce::String PluginSlot::getStateBase64ForSave (int parkSleepMs, std::string* er
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
     if (auto* r = currentRemote.load (std::memory_order_acquire))
     {
+        if (remoteParamWriteLost.exchange (false, std::memory_order_relaxed))
+        {
+            if (errorOut != nullptr)
+                *errorOut = "a parameter change could not be sent to the sandboxed plug-in";
+            return lastKnownStateBase64;
+        }
         // OOP path: the child parks its own audio worker and reads the
-        // state under MessageManagerLock, so no parent-side park is
-        // needed; the parent just blocks on the control-plane reply.
+        // state on its message thread, behind every write the drain above
+        // sent, so no parent-side park is needed; the parent just blocks on
+        // the control-plane reply.
+        const auto parentRevision = inProcessStateRevision.load (std::memory_order_acquire)
+                                  + retiredRemoteStateRevision;
         std::vector<std::uint8_t> blob;
         std::string err;
-        if (! r->getState (blob, err))
+        std::uint64_t childRevision = 0;
+        if (! r->getState (blob, err, &childRevision))
         {
             if (errorOut != nullptr)
                 *errorOut = err.empty() ? "plug-in state capture failed" : err;
@@ -1378,15 +1431,20 @@ juce::String PluginSlot::getStateBase64ForSave (int parkSleepMs, std::string* er
             blocksSinceLoad     = 0;
             consecutiveOverruns = 0;
         }
-        lastKnownStateBase64 = blob.empty()
-            ? juce::String()
-            : juce::MemoryBlock (blob.data(), blob.size()).toBase64Encoding();
+        lastKnownStateBase64.clear();
+        if (! blob.empty())
+            lastKnownStateBase64 = juce::MemoryBlock (blob.data(), blob.size()).toBase64Encoding();
+        lastKnownStateRevision = parentRevision + childRevision;
+        reportRevision (lastKnownStateRevision);
         return lastKnownStateBase64;
     }
     (void) parkSleepMs;
 
     if (ownedRemote != nullptr && loadedDescriptor.has_value())
+    {
+        reportRevision (lastKnownStateRevision);
         return lastKnownStateBase64;
+    }
    #endif
 
     // Slot is empty but holds an offline placeholder. Round-trip the
@@ -1394,18 +1452,29 @@ juce::String PluginSlot::getStateBase64ForSave (int parkSleepMs, std::string* er
     // data on disk.
     if (currentInstance.load (std::memory_order_acquire) == nullptr
         && offlineStateBase64.isNotEmpty())
+    {
+        reportRevision (stateRevision());
         return offlineStateBase64;
+    }
 
     if (currentInstance.load (std::memory_order_acquire) == nullptr
         && ownedInstance != nullptr && loadedDescriptor.has_value())
     {
+        // Inactive, so a value a deferring host still holds for the next
+        // process call cannot be delivered here; such a state keeps the older
+        // mark rather than vouch for a change it may lack.
+        const auto revision = stateRevision();
         juce::MemoryBlock inactiveState;
         ownedInstance->getStateInformation (inactiveState);
         lastKnownStateBase64 = inactiveState.toBase64Encoding();
+        if (! juce_compat::defersParameterChangesToProcess (loadedDescriptor->formatName))
+            lastKnownStateRevision = revision;
+        reportRevision (lastKnownStateRevision);
         return lastKnownStateBase64;
     }
 
     juce::MemoryBlock mb;
+    std::uint64_t revision = 0;
     // Atomic-park alone is NOT sufficient for state capture: it tells the
     // AUDIO thread to skip the plugin, but doesn't tell the PLUGIN that
     // it's now inactive. Plugins like u-he Diva keep their own
@@ -1424,6 +1493,10 @@ juce::String PluginSlot::getStateBase64ForSave (int parkSleepMs, std::string* er
     auto* p = withParkedAtomicPointer (currentInstance,
         [&] (juce::AudioPluginInstance& inst)
         {
+            if (preparedSampleRate > 0.0 && loadedDescriptor.has_value()
+                && juce_compat::defersParameterChangesToProcess (loadedDescriptor->formatName))
+                deliverQueuedParameterChanges (inst);
+            revision = stateRevision();
             inst.releaseResources();
             inst.getStateInformation (mb);
             if (preparedSampleRate > 0.0)
@@ -1447,8 +1520,14 @@ juce::String PluginSlot::getStateBase64ForSave (int parkSleepMs, std::string* er
             }
         },
         parkSleepMs);
-    if (p == nullptr) return lastKnownStateBase64;
+    if (p == nullptr)
+    {
+        reportRevision (stateRevision());
+        return lastKnownStateBase64;
+    }
     lastKnownStateBase64 = mb.toBase64Encoding();
+    lastKnownStateRevision = revision;
+    reportRevision (revision);
     return lastKnownStateBase64;
 }
 
@@ -1558,6 +1637,7 @@ bool PluginSlot::restoreFromSavedState (
             offlineStateBase64.clear();
             offlineCapturePlaceholder = false;
             lastKnownStateBase64 = stateBase64;
+            lastKnownStateRevision = stateRevision();
             return true;
         }
     }
@@ -1622,6 +1702,7 @@ bool PluginSlot::restoreFromSavedState (
     offlineStateBase64.clear();
     offlineCapturePlaceholder = false;
     lastKnownStateBase64 = stateBase64;
+    lastKnownStateRevision = stateRevision();
     return true;
 }
 
@@ -2176,7 +2257,8 @@ void PluginSlot::applyParamWriteOnMessageThread (const ParamWrite& pw, bool forC
     // load pairs with the message-thread release stores in
     // descriptor load / unload that swap currentRemote.
     if (auto* r = currentRemote.load (std::memory_order_acquire))
-        (void) r->setRemoteParam (pw.paramIndex, pw.value);
+        if (! r->setRemoteParam (pw.paramIndex, pw.value))
+            remoteParamWriteLost.store (true, std::memory_order_relaxed);
    #endif
 }
 
@@ -2264,11 +2346,11 @@ void PluginSlot::ShellParamListener::parameterValueChanged (int paramIndex, floa
     // 30 Hz timerCallback will detach this listener on the next tick;
     // until then any in-flight callbacks bail here.
     if (slot.ownedRemote->isCrashed()) return;
-    // Fire-and-forget over the existing 3c-3a control channel. Returns
-    // false only on socket peer-close (child died); in that case the
-    // OOP slot has already been auto-bypassed by the reaper, so the
-    // dropped write is harmless.
-    (void) slot.ownedRemote->setRemoteParam (paramIndex, newValue);
+    // Fire-and-forget over the existing 3c-3a control channel. A failed
+    // send means the channel is gone, and the next save must not pass off
+    // the child's state as including this edit.
+    if (! slot.ownedRemote->setRemoteParam (paramIndex, newValue))
+        slot.remoteParamWriteLost.store (true, std::memory_order_relaxed);
 }
 
 void PluginSlot::applyShellParamFromChild (int paramIndex, float value01) noexcept

@@ -645,6 +645,28 @@ TEST_CASE ("ipc-stub: transport snapshots cross whole and clear when absent", "[
     CHECK_THAT (header->ppqLoopEnd, WithinAbs (0.0, 1.0e-12));
 }
 
+// The child owns the counter, so the parent cannot trust it to only grow; the
+// revision a slot builds on must not fall when the child rewrites it or when the
+// connection's shared memory is gone.
+TEST_CASE ("ipc-stub: a connection's state revision never steps back", "[ipc][state]")
+{
+    namespace ipc = duskstudio::ipc;
+    ipc::RemotePluginConnection connection;
+    std::string error;
+    REQUIRE (connection.connect (DUSKSTUDIO_PLUGIN_HOST_PATH, "--ipc-stub", error));
+    auto* header = reinterpret_cast<ipc::BlockHeader*> (
+        reinterpret_cast<char*> (const_cast<float*> (connection.readOutChannel (0))) - ipc::kAudioOutOffset);
+    CHECK (connection.stateRevision() == 0);
+    header->stateRevision.store (5, std::memory_order_release);
+    CHECK (connection.stateRevision() == 5);
+    header->stateRevision.store (3, std::memory_order_release);
+    CHECK (connection.stateRevision() == 5);
+    header->stateRevision.store (7, std::memory_order_release);
+    CHECK (connection.stateRevision() == 7);
+    connection.disconnect();
+    CHECK (connection.stateRevision() == 7);
+}
+
 TEST_CASE ("ipc-stub: rejects oversize block", "[ipc]")
 {
     duskstudio::ipc::RemotePluginConnection conn;

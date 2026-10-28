@@ -95,8 +95,10 @@ public:
 
     // Plugin-state save / restore. The blob travels through the SHM
     // staging area, not the socket, to avoid exhausting the socket
-    // buffer for heavy plugins.
-    bool getState (std::vector<std::uint8_t>& blobOut, std::string& errorOut);
+    // buffer for heavy plugins. stateRevisionOut receives the child's
+    // revision as of the read (GetStateReply::stateRevision).
+    bool getState (std::vector<std::uint8_t>& blobOut, std::string& errorOut,
+                   std::uint64_t* stateRevisionOut = nullptr);
     bool setState (const std::uint8_t* data, std::size_t size,
                     std::string& errorOut);
 
@@ -239,6 +241,11 @@ public:
     // then SIGKILL. Unmaps SHM, closes fds.
     void disconnect();
 
+    // The child's count of persistent-state changes (BlockHeader::stateRevision).
+    // Never decreases, and keeps the last value it saw once disconnect() has
+    // unmapped the shared memory. Message thread.
+    std::uint64_t stateRevision() const noexcept;
+
     // Total round-trip blocks completed since connect() returned true.
     // Used by the self-test to assert progress; not RT-relevant.
     std::uint64_t getRoundTripCount() const noexcept
@@ -261,6 +268,11 @@ private:
     std::atomic<std::uint64_t> roundTrips { 0 };
     std::atomic<bool> crashed { false };
     std::atomic<bool> messageThreadWedged { false };
+
+    // Highest stateRevision seen, so a value read before teardown survives it
+    // and a child that rewrote the counter cannot move it backwards.
+    mutable std::atomic<std::uint64_t> observedStateRevision { 0 };
+    std::uint64_t noteStateRevision (std::uint64_t seen) const noexcept;
 
     std::shared_ptr<std::atomic<bool>> cancelFlag;
 

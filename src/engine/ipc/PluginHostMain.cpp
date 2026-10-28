@@ -23,7 +23,7 @@
 //                 answers block commands and can be driven by a live callback.
 //   --ipc-mute-handshake-stub: the same child with the ready byte withheld,
 //                 leaving the parent inside its handshake wait.
-//   --ipc-host  : full Phase-2 host. Loads a juce::AudioPluginInstance
+//   --ipc-host  : full Phase-2 host. Loads a JUCE AudioPluginInstance
 //                 via the format manager, runs processBlock on a worker
 //                 thread, services control RPCs on a separate socket-
 //                 reader thread, runs the JUCE message loop on main.
@@ -809,6 +809,30 @@ class ChildParamListener;  // forward - defined below HostState
 
 using PluginInstancePtr = std::unique_ptr<juce::AudioPluginInstance>;
 
+// Publishes every change the loaded plug-in reports to its persistent state
+// into the shared header, for the parent's dirty tracking. A plug-in reports
+// from whichever thread made the change - the audio worker inside processBlock
+// among them - so this does one lock-free increment and nothing else. Latency
+// and parameter-info changes are not state.
+class StateRevisionListener final : public juce::AudioProcessorListener
+{
+public:
+    explicit StateRevisionListener (BlockHeader* const& headerIn) noexcept : header (headerIn) {}
+
+    void audioProcessorChanged (juce::AudioProcessor*, const ChangeDetails& details) override
+    {
+        if (details.programChanged || details.nonParameterStateChanged)
+            bump();
+    }
+
+    void audioProcessorParameterChanged (juce::AudioProcessor*, int, float) override { bump(); }
+
+    void bump() noexcept { header->stateRevision.fetch_add (1, std::memory_order_release); }
+
+private:
+    BlockHeader* const& header;
+};
+
 struct HostState
 {
     ipcp::SharedMemory shm;
@@ -818,14 +842,20 @@ struct HostState
     ipcp::InterprocessSignal replySignal;
 
     duskstudio::juce_compat::FormatManager formatManager;
-    juce::KnownPluginList knownList;
 
     dusk::AtomicTransportPosition transportPosition;
     duskstudio::DuskStudioPlayHead playhead { transportPosition };
     PluginInstancePtr ownedInstance;
     std::atomic<juce::AudioPluginInstance*> currentInstance { nullptr };
 
+    // Attached to ownedInstance from the swap that installs it to the park that
+    // deposes it. One object for the host's lifetime, so a notification still
+    // in flight from a deposed instance lands on a live listener.
+    StateRevisionListener stateListener { hdr };
+
+    // The audio worker's, lent to a handler only while the worker is parked.
     juce::AudioBuffer<float> workBuffer { kMaxChans, kMaxBlock };
+    juce::MidiBuffer midiScratch;
 
     double currentSampleRate = 0.0;
     int    currentBlockSize  = 0;
@@ -1238,9 +1268,7 @@ std::uint32_t handleLoadPlugin (HostState& host,
         result->reply.numInChans     = fresh->getTotalNumInputChannels();
         result->reply.numOutChans    = fresh->getTotalNumOutputChannels();
         result->reply.latencySamples = fresh->getLatencySamples();
-        juce::PluginDescription loadedDescription;
-        fresh->fillInPluginDescription (loadedDescription);
-        result->reply.isInstrument = loadedDescription.isInstrument ? 1u : 0u;
+        result->reply.isInstrument = fresh->getPluginDescription().isInstrument ? 1u : 0u;
     }, static_cast<int> (remainingMs));
     if (dispatched != HostDispatchResult::Done)
         return kControlStatusLifecycleFailed;
@@ -1273,9 +1301,12 @@ std::uint32_t handleLoadPlugin (HostState& host,
         host.paramListener.reset();
         host.mirrorGeneration.fetch_add (1, std::memory_order_release);
        #endif
+        if (host.ownedInstance != nullptr)
+            host.ownedInstance->removeListener (&host.stateListener);
         deposed = std::move (host.ownedInstance);
         host.transportPosition.publish (nullptr);
         host.ownedInstance = std::move (fresh);
+        host.ownedInstance->addListener (&host.stateListener);
         host.currentSampleRate = hdr.sampleRate;
         host.currentBlockSize  = hdr.blockSize;
     });
@@ -1358,6 +1389,7 @@ std::uint32_t handleRelease (HostState& host)
                     if (p != nullptr) p->removeListener (host.paramListener.get());
             host.mirrorGeneration.fetch_add (1, std::memory_order_release);
            #endif
+            host.ownedInstance->removeListener (&host.stateListener);
             deposed = std::move (host.ownedInstance);
             host.transportPosition.publish (nullptr);
         }
@@ -1369,23 +1401,59 @@ std::uint32_t handleRelease (HostState& host)
     return 0;
 }
 
+// The audio worker, or a handler holding it parked: both use its buffers.
+void renderBlock (HostState& host, PluginInstancePtr::element_type& instance,
+                  int numChannels, int numSamples)
+{
+    juce::AudioBuffer<float> view (host.workBuffer.getArrayOfWritePointers(),
+                                   numChannels, numSamples);
+    instance.processBlock (view, host.midiScratch);
+}
+
+// Message thread, worker parked. Every SetParam queued ahead of the capture has
+// run by now, but JUCE's VST3 and LV2 hosts hand those values to the processor
+// only inside its next process call, and none happens while the worker is
+// parked; an empty block delivers them without advancing the plug-in.
+void deliverQueuedParameterChanges (HostState& host, PluginInstancePtr::element_type& instance)
+{
+    if (! duskstudio::juce_compat::defersParameterChangesToProcess (
+            instance.getPluginDescription().pluginFormatName.toStdString()))
+        return;
+    const int channels = std::max (instance.getTotalNumInputChannels(),
+                                   instance.getTotalNumOutputChannels());
+    if (channels > host.workBuffer.getNumChannels()) return;
+    host.midiScratch.clear();
+    renderBlock (host, instance, channels, 0);
+}
+
 std::uint32_t handleGetState (HostState& host,
                                 std::vector<std::uint8_t>& replyOut)
 {
     if (host.ownedInstance == nullptr) return 1;
-    auto mb = std::make_shared<juce::MemoryBlock>();
-    auto* instance = host.ownedInstance.get();
-    const auto parkStatus = withParkedHostWorkerOnMessageThread (host, [instance, mb]
+    struct Capture
     {
-        instance->getStateInformation (*mb);
+        juce::MemoryBlock state;
+        std::uint64_t revision = 0;
+    };
+    auto capture = std::make_shared<Capture>();
+    auto* instance = host.ownedInstance.get();
+    const auto parkStatus = withParkedHostWorkerOnMessageThread (host, [&host, instance, capture]
+    {
+        deliverQueuedParameterChanges (host, *instance);
+        // Read before the state, so a change racing the read leaves the
+        // parent's live revision ahead of this one rather than acknowledged.
+        capture->revision = host.hdr->stateRevision.load (std::memory_order_acquire);
+        instance->getStateInformation (capture->state);
     });
     if (parkStatus != 0) return parkStatus;
-    if (mb->getSize() > kStateBytes) return 2;
+    if (capture->state.getSize() > kStateBytes) return 2;
     std::memcpy (static_cast<char*> (host.shm.data()) + kStateOffset,
-                  mb->getData(), mb->getSize());
-    const std::uint32_t sz = (std::uint32_t) mb->getSize();
-    replyOut.resize (sizeof (sz));
-    std::memcpy (replyOut.data(), &sz, sizeof (sz));
+                  capture->state.getData(), capture->state.getSize());
+    GetStateReply reply {};
+    reply.stateBytes = (std::uint32_t) capture->state.getSize();
+    reply.stateRevision = capture->revision;
+    replyOut.resize (sizeof (reply));
+    std::memcpy (replyOut.data(), &reply, sizeof (reply));
     return 0;
 }
 
@@ -1401,9 +1469,10 @@ std::uint32_t handleSetState (HostState& host,
     std::memcpy (state.data(), static_cast<const char*> (host.shm.data()) + kStateOffset, sz);
     auto* instance = host.ownedInstance.get();
     const auto parkStatus = withParkedHostWorkerOnMessageThread (host,
-        [instance, state = std::move (state), sz]
+        [&host, instance, state = std::move (state), sz]
     {
         instance->setStateInformation (state.data(), (int) sz);
+        host.stateListener.bump();
     });
     return parkStatus;
 }
@@ -1550,6 +1619,13 @@ std::uint32_t handleResizeEditor (HostState& host,
 // One-shot: NO reply is written, matching the parent's setRemoteParam
 // fire-and-forget contract. SetParam frames are demuxed by opcode in
 // the sockThread switch below.
+//
+// The write targets the owner as of its arrival, not the worker's published
+// pointer: a GetState that follows parks that pointer before it posts its own
+// read, so a write still queued ahead of the read would find it null and be
+// lost from the saved state. Only this thread moves an instance out of
+// ownedInstance, and each one it moves out is destroyed by a post queued
+// behind this one, or never, so the target outlives the post.
 void handleSetParamAsync (HostState& host,
                             const std::vector<std::uint8_t>& payload)
 {
@@ -1557,10 +1633,14 @@ void handleSetParamAsync (HostState& host,
     SetParamPayload p {};
     std::memcpy (&p, payload.data(), sizeof (p));
 
-    dusk::callAsync ([&host, p]
+    auto* instance = host.ownedInstance.get();
+    if (instance == nullptr) return;
+
+    // Refused only once the dispatch loop is stopping. Every later GetState
+    // post is refused the same way and fails its RPC, so no capture can
+    // succeed without this write.
+    (void) dusk::callAsync ([&host, instance, p]
     {
-        auto* instance = host.currentInstance.load (std::memory_order_acquire);
-        if (instance == nullptr) return;
         const auto& params = instance->getParameters();
         if ((int) p.paramIndex >= params.size()) return;
         if (auto* param = params[(int) p.paramIndex])
@@ -1582,8 +1662,6 @@ void handleSetParamAsync (HostState& host,
 
 void audioWorkerLoop (HostState& host) noexcept
 {
-    juce::MidiBuffer midiScratch;
-    midiScratch.ensureSize (kMidiBytes);
     std::uint32_t lastSeq = 0;
 
     while (! host.shouldQuit.load (std::memory_order_acquire))
@@ -1647,6 +1725,7 @@ void audioWorkerLoop (HostState& host) noexcept
                                   (std::size_t) n * sizeof (float));
             }
 
+            auto& midiScratch = host.midiScratch;
             midiScratch.clear();
             const auto midiInBytes = host.hdr->midiInBytes;
             if (midiInBytes <= kMidiBytes)
@@ -1654,11 +1733,9 @@ void audioWorkerLoop (HostState& host) noexcept
                                         [&midiScratch] (const std::uint8_t* data, int numBytes, int sample)
                                         { midiScratch.addEvent (data, numBytes, sample); });
 
-            juce::AudioBuffer<float> view (host.workBuffer.getArrayOfWritePointers(),
-                                              bufCh, n);
             try
             {
-                p->processBlock (view, midiScratch);
+                renderBlock (host, *p, bufCh, n);
             }
             catch (...)
             {
@@ -1733,6 +1810,7 @@ int runIpcHost (int argc, const char* const* argv) noexcept
         if (! ipcp::writeExact (host.channel, &k, 1)) return 1;
     }
 
+    host.midiScratch.ensureSize (kMidiBytes);
     std::thread worker (audioWorkerLoop, std::ref (host));
 
     std::thread sockThread ([&host]

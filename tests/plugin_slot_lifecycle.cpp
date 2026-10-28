@@ -256,6 +256,34 @@ TEST_CASE ("PluginSlot refuses reentrant state capture during queued parameter n
     CHECK (listener.calls == 1);
 }
 
+// A save marks the slot clean against the revision its state reflects. The
+// writes the capture delivers are in that state, so they must not leave the slot
+// looking edited, while a change after the read must.
+TEST_CASE ("PluginSlot reports the revision its captured state reflects", "[plugin][state][lifecycle]")
+{
+    juce::ScopedJuceInitialiser_GUI juceInit;
+    PluginManager manager;
+    PluginSlot slot;
+    slot.setManager (manager);
+    slot.prepareToPlay (48000.0, 64);
+    auto instance = std::make_unique<StatefulLifecyclePluginInstance>();
+    auto* stateful = instance.get();
+    REQUIRE (slot.installInProcessInstanceForTest (std::move (instance)));
+    slot.setParamNormalised (0, 0.875f);
+    const auto queued = slot.stateRevision();
+    SECTION ("active owner") {}
+    SECTION ("released owner") { slot.releaseResources(); }
+    std::string error;
+    std::uint64_t captured = 0;
+    CHECK_THAT (capturedGain (slot.getStateBase64ForSave (0, &error, &captured)),
+                Catch::Matchers::WithinAbs (0.875f, 1.0e-6f));
+    CHECK (error.empty());
+    CHECK (captured > queued);
+    CHECK (slot.stateRevision() == captured);
+    stateful->changeOpaqueState (5);
+    CHECK (slot.stateRevision() > captured);
+}
+
 TEST_CASE ("PluginSlot republishes an in-process instance after release and prepare")
 {
     PluginManager manager;
@@ -528,6 +556,37 @@ TEST_CASE ("PluginSlot rejects malformed saved state and preserves its original 
         CHECK (slot.restoreFromSavedState (descriptor, {}, empty, error));
         CHECK_FALSE (slot.isOffline());
     }
+}
+
+// JUCE's LV2 and VST3 hosts hold a parameter change until the next process call
+// writes it into the plug-in, and a capture parks the audio thread first. The
+// slot has to deliver the change before it reads state or the save keeps the
+// value the plug-in had before the edit.
+TEST_CASE ("PluginSlot captures a hosted plug-in's parameter change before its next block", "[plugin][state][lifecycle]")
+{
+    juce::ScopedJuceInitialiser_GUI juceInit;
+    ScopedFixtureConfig fixtureConfig;
+    REQUIRE (fixtureConfig.seed());
+    PluginManager manager;
+    manager.setOopEnabled (false);
+    const auto descriptor = statefulStandardDescriptor();
+    const auto edited = nondefaultStandardState (manager, descriptor);
+    PluginSlot slot;
+    slot.setManager (manager);
+    slot.prepareToPlay (48000.0, 64);
+    juce::String error;
+    REQUIRE (slot.loadFromDescriptor (descriptor, error));
+    REQUIRE (slot.getInstance() != nullptr);
+    int gainIndex = -1;
+    const auto& parameters = slot.getInstance()->getParameters();
+    for (int index = 0; index < parameters.size(); ++index)
+        if (parameters[index]->getName (100) == "Gain") gainIndex = index;
+    REQUIRE (gainIndex >= 0);
+    SECTION ("a write the slot queued") { slot.setParamNormalised (gainIndex, 0.625f); }
+    SECTION ("an edit made on the plug-in") { parameters[gainIndex]->setValueNotifyingHost (0.625f); }
+    std::string captureError;
+    CHECK (slot.getStateBase64ForSave (0, &captureError) == edited);
+    CHECK (captureError.empty());
 }
 #endif
 
