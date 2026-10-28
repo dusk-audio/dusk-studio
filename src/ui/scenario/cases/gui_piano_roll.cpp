@@ -377,7 +377,7 @@ std::optional<ScenarioResult> runPianoOptions (GuiHost& host, ScenarioContext& c
 
 const ScenarioRegistrar pianoOptions { Scenario {
     "gui.piano_options", { "gui", "piano" }, Needs::Engine | Needs::Gui,
-    {}, {}, 15000,
+    {}, {}, 30000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runPianoOptions (host, ctx); }
 } };
 

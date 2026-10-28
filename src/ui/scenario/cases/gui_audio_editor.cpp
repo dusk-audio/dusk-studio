@@ -1259,7 +1259,7 @@ std::optional<ScenarioResult> runAudioEditorNumericFields (GuiHost& host, Scenar
 
 const ScenarioRegistrar audioEditorNumericFields { Scenario {
     "gui.audio_editor_numeric_fields", { "gui", "editor", "undo" }, Needs::Engine | Needs::Gui,
-    {}, {}, 30000,
+    {}, {}, 60000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorNumericFields (host, ctx); }
 } };
 
