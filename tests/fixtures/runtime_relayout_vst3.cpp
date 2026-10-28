@@ -232,7 +232,8 @@ public:
         const int32 expectedOutputs = expanded ? 3 : 2;
         if (data.symbolicSampleSize != kSample32
             || data.numInputs != 1 || data.inputs == nullptr
-            || data.numOutputs != expectedOutputs || data.outputs == nullptr)
+            || data.numOutputs < 1 || (! reportTransport && data.numOutputs != expectedOutputs)
+            || data.outputs == nullptr)
             return kResultFalse;
 
         const auto validStereoBus = [] (const AudioBusBuffers& bus)
@@ -243,15 +244,16 @@ public:
         if (! validStereoBus (data.inputs[0]))
             return kResultFalse;
         for (int32 bus = 0; bus < data.numOutputs; ++bus)
-            if (! validStereoBus (data.outputs[bus]))
+            if (! validStereoBus (data.outputs[bus]) && (! reportTransport || bus == 0))
                 return kResultFalse;
 
         for (int32 channel = 0; channel < 2; ++channel)
             std::copy_n (data.inputs[0].channelBuffers32[channel], data.numSamples,
                          data.outputs[0].channelBuffers32[channel]);
         for (int32 bus = 1; bus < data.numOutputs; ++bus)
-            for (int32 channel = 0; channel < 2; ++channel)
-                std::fill_n (data.outputs[bus].channelBuffers32[channel], data.numSamples, 0.0f);
+            if (validStereoBus (data.outputs[bus]))
+                for (int32 channel = 0; channel < 2; ++channel)
+                    std::fill_n (data.outputs[bus].channelBuffers32[channel], data.numSamples, 0.0f);
         if (reportTransport)
         {
             float report[11] {};
