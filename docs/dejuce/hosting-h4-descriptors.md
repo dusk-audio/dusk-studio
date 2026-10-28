@@ -1,4 +1,4 @@
-> **PARKED until 1.0.** See [docs/decisions/0001-ship-1.0-on-juce.md](../decisions/0001-ship-1.0-on-juce.md).
+> **Active again.** [Decision 0002](../decisions/0002-native-wayland-and-daf.md) supersedes the 1.0 park in 0001.
 
 # Hosting tower H4 — descriptor/plumbing de-JUCE (executable spec)
 
