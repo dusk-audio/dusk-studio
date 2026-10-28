@@ -447,8 +447,13 @@ private:
         {
             if (details.latencyChanged)
                 changed.store (true, std::memory_order_release);
-            if ((details.programChanged && programChangesAreState.load (std::memory_order_relaxed))
-                || details.nonParameterStateChanged)
+            // A restart the plug-in raises while the slot itself (de)activates
+            // it is that cycle; VST3 requires restarts on the message thread,
+            // where JUCE handles them at once, inside the slot's own call.
+            const bool ownActivationRestart = details.programChanged
+                && restartsAreProgramChanges.load (std::memory_order_relaxed)
+                && ownActivations.load (std::memory_order_relaxed) > 0;
+            if ((details.programChanged && ! ownActivationRestart) || details.nonParameterStateChanged)
                 stateRevision.fetch_add (1, std::memory_order_release);
         }
         void audioProcessorParameterChanged (juce::AudioProcessor* processor, int index, float) override
@@ -462,13 +467,23 @@ private:
             stateRevision.fetch_add (1, std::memory_order_release);
         }
         // Set from the owner's format before the listener is attached.
-        std::atomic<bool> programChangesAreState { true };
+        std::atomic<bool> restartsAreProgramChanges { false };
+        // Message thread: nonzero while the slot itself (de)activates the owner.
+        std::atomic<int> ownActivations { 0 };
     private:
         std::atomic<bool>& changed;
         std::atomic<std::uint64_t>& stateRevision;
     };
     std::atomic<bool> latencyChangePending { false };
     ProcessorListener processorListener { latencyChangePending, inProcessStateRevision };
+
+    struct OwnActivationScope
+    {
+        explicit OwnActivationScope (ProcessorListener& listenerIn) noexcept : listener (listenerIn)
+            { listener.ownActivations.fetch_add (1, std::memory_order_relaxed); }
+        ~OwnActivationScope() { listener.ownActivations.fetch_sub (1, std::memory_order_relaxed); }
+        ProcessorListener& listener;
+    };
 
     // Message thread. Every in-process instance the slot publishes carries
     // both listeners, and loses them before it leaves ownedInstance.

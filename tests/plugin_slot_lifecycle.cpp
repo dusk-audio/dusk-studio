@@ -43,8 +43,19 @@ public:
     {
         ++prepareCalls;
         setLatencySamples (latencyOnPrepare);
+        if (restartOnActivation) reportRestart();
     }
-    void releaseResources() override          { ++releaseCalls; }
+    void releaseResources() override
+    {
+        ++releaseCalls;
+        if (restartOnActivation) reportRestart();
+    }
+
+    // What JUCE's VST3 host reports for any restartComponent, whatever its flags.
+    void reportRestart()
+    {
+        updateHostDisplay (ChangeDetails {}.withProgramChanged (true).withParameterInfoChanged (true));
+    }
 
     void processBlock (juce::AudioBuffer<float>&,
                        juce::MidiBuffer&) override
@@ -77,6 +88,9 @@ public:
     // The format the slot takes this plug-in for: "VST3" and "LV2" get the
     // treatment JUCE's hosts for those formats need.
     juce::String formatName { "Test" };
+    // Restart on every (de)activation, as a plug-in that re-announces its
+    // latency from setActive does.
+    bool restartOnActivation = false;
     int prepareCalls = 0;
     int releaseCalls = 0;
     int processCalls = 0;
@@ -185,6 +199,7 @@ public:
     void getStateInformation (juce::MemoryBlock&) override { note(); }
 
     std::atomic<bool>* blockInFlight = nullptr;
+    std::atomic<bool> touched { false };
     std::atomic<bool> overlapped { false };
 
 private:
@@ -192,6 +207,7 @@ private:
     {
         if (blockInFlight != nullptr && blockInFlight->load (std::memory_order_acquire))
             overlapped.store (true, std::memory_order_release);
+        touched.store (true, std::memory_order_release);
     }
 };
 
@@ -350,10 +366,12 @@ TEST_CASE ("PluginSlot reports the revision its captured state reflects", "[plug
 }
 
 // JUCE's VST3 host reports every restartComponent as a program change, whatever
-// the flags - a latency re-announcement, a bus change, new parameter titles - so
-// for that format the flag says nothing about state. Its real program changes
-// arrive as a parameter change.
-TEST_CASE ("PluginSlot does not count a VST3 restart notification as a state change", "[plugin][state][lifecycle]")
+// its flags. One the plug-in raises while the slot itself (de)activates it - a
+// latency re-announced from setActive, on a device change or around a save - is
+// that cycle, not an edit. Any other may be the plug-in's only report of an
+// edit: a JUCE plug-in before 6.1 loading an IR restarts with no parameter
+// change and no setDirty.
+TEST_CASE ("PluginSlot counts a VST3 restart unless its own activation caused it", "[plugin][state][lifecycle]")
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
     PluginManager manager;
@@ -363,13 +381,23 @@ TEST_CASE ("PluginSlot does not count a VST3 restart notification as a state cha
     auto instance = std::make_unique<StatefulLifecyclePluginInstance>();
     auto* stateful = instance.get();
     stateful->formatName = "VST3";
+    stateful->restartOnActivation = true;
     REQUIRE (slot.installInProcessInstanceForTest (std::move (instance)));
     const auto revision = slot.stateRevision();
-    stateful->updateHostDisplay (juce::AudioProcessorListener::ChangeDetails {}
-                                     .withProgramChanged (true).withParameterInfoChanged (true));
+
+    slot.prepareToPlay (44100.0, 128);
+    CHECK (stateful->prepareCalls == 2);
     CHECK (slot.stateRevision() == revision);
-    stateful->changeOpaqueState (3);
-    CHECK (slot.stateRevision() > revision);
+    std::string error;
+    std::uint64_t captured = 0;
+    (void) slot.getStateBase64ForSave (0, &error, &captured);
+    CHECK (error.empty());
+    CHECK (stateful->prepareCalls == 3);
+    CHECK (captured == revision);
+    CHECK (slot.stateRevision() == captured);
+
+    stateful->reportRestart();
+    CHECK (slot.stateRevision() > captured);
 }
 
 // A plug-in reports its meters from inside processBlock, every block. None is an
@@ -432,7 +460,7 @@ TEST_CASE ("PluginSlot does not vouch for a held parameter change it could not d
 // still inside the plug-in when the capture's empty block and state read begin,
 // and JUCE's LV2 host would run the plug-in twice at once. The audio side holds
 // the process lock for the whole block, so the capture has to take it too.
-TEST_CASE ("PluginSlot does not capture state while an audio block is still running", "[plugin][state][lifecycle]")
+TEST_CASE ("PluginSlot does not capture state while an audio block is still running", "[plugin][state][lifecycle][ipc]")
 {
     using namespace std::chrono_literals;
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -446,12 +474,23 @@ TEST_CASE ("PluginSlot does not capture state while an audio block is still runn
     std::atomic<bool> blockInFlight { false };
     probe->blockInFlight = &blockInFlight;
     REQUIRE (slot.installInProcessInstanceForTest (std::move (instance)));
+    probe->touched.store (false, std::memory_order_release);
 
+    // The stand-in block ends only once the capture has parked the slot and then
+    // either reached into the plug-in - which it must not while the block runs -
+    // or had a quarter of a second to. Whatever that bound, a capture that waits
+    // for the block never overlaps it.
     std::thread audioThread ([&]
     {
         const juce::SpinLock::ScopedLockType processGuard (slot.getProcessLock());
         blockInFlight.store (true, std::memory_order_release);
-        std::this_thread::sleep_for (100ms);
+        const auto parkDeadline = std::chrono::steady_clock::now() + 10s;
+        while (slot.getInstance() != nullptr && std::chrono::steady_clock::now() < parkDeadline)
+            std::this_thread::yield();
+        const auto touchDeadline = std::chrono::steady_clock::now() + 250ms;
+        while (! probe->touched.load (std::memory_order_acquire)
+               && std::chrono::steady_clock::now() < touchDeadline)
+            std::this_thread::yield();
         blockInFlight.store (false, std::memory_order_release);
     });
     while (! blockInFlight.load (std::memory_order_acquire))

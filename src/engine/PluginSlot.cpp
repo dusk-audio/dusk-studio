@@ -566,8 +566,8 @@ void PluginSlot::attachInstanceListeners()
     lastTouchedListener = std::make_unique<LastTouchedListener> (lastTouchedParamIndex);
     for (auto* p : ownedInstance->getParameters())
         if (p != nullptr) p->addListener (lastTouchedListener.get());
-    processorListener.programChangesAreState.store (
-        juce_compat::programChangeReportsMeanState (
+    processorListener.restartsAreProgramChanges.store (
+        juce_compat::reportsRestartsAsProgramChanges (
             ownedInstance->getPluginDescription().pluginFormatName.toStdString()),
         std::memory_order_relaxed);
     ownedInstance->addListener (&processorListener);
@@ -710,12 +710,15 @@ void PluginSlot::prepareToPlay (double sampleRate, int blockSize)
         // INTERNAL buffers at the old size while it's fed the new one (overrun /
         // crash in a multi-bus instrument). releaseResources() clears isActive
         // so the re-prepare always takes. This is the conventional host cycle.
-        ownedInstance->releaseResources();
-        ownedInstance->setPlayConfigDetails (
-            ownedInstance->getTotalNumInputChannels(),
-            ownedInstance->getTotalNumOutputChannels(),
-            sampleRate, preparedBlockSize);
-        ownedInstance->prepareToPlay (sampleRate, preparedBlockSize);
+        {
+            const OwnActivationScope ownActivation (processorListener);
+            ownedInstance->releaseResources();
+            ownedInstance->setPlayConfigDetails (
+                ownedInstance->getTotalNumInputChannels(),
+                ownedInstance->getTotalNumOutputChannels(),
+                sampleRate, preparedBlockSize);
+            ownedInstance->prepareToPlay (sampleRate, preparedBlockSize);
+        }
         cachedLatencySamples.store (ownedInstance->getLatencySamples(),
                                       std::memory_order_relaxed);
         // Re-publish the live instance last: releaseResources() nulls
@@ -776,7 +779,10 @@ void PluginSlot::releaseResources()
         currentInstance.store (nullptr, std::memory_order_release);
         if (ownedInstance != nullptr)
         {
-            ownedInstance->releaseResources();
+            {
+                const OwnActivationScope ownActivation (processorListener);
+                ownedInstance->releaseResources();
+            }
             juce::MemoryBlock state;
             ownedInstance->getStateInformation (state);
             lastKnownStateBase64 = state.toBase64Encoding();
@@ -1514,6 +1520,7 @@ juce::String PluginSlot::getStateBase64ForSave (int parkSleepMs, std::string* er
             }
             vouchesForRevision = ! defers || delivers;
             revision = stateRevision();
+            const OwnActivationScope ownActivation (processorListener);
             inst.releaseResources();
             inst.getStateInformation (mb);
             if (preparedSampleRate > 0.0)

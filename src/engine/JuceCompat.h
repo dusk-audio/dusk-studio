@@ -49,11 +49,11 @@ inline bool defersParameterChangesToProcess (const std::string& formatName)
 }
 
 // JUCE's VST3 host reports every restartComponent as a program change, whatever
-// its flags - a latency re-announcement among them. A real program change there
-// arrives as a change of the program parameter.
-inline bool programChangeReportsMeanState (const std::string& formatName)
+// its flags: a latency re-announced from setActive as much as the restart that
+// is a plug-in's only report of an edit made in its own editor.
+inline bool reportsRestartsAsProgramChanges (const std::string& formatName)
 {
-    return formatName != "VST3";
+    return formatName == "VST3";
 }
 
 // The folders a format's own search may walk. Custom folders stay out of the

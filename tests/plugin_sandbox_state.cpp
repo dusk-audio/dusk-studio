@@ -37,6 +37,7 @@ constexpr int kGainIndex = 0;
 constexpr int kHoldIndex = 1;
 constexpr float kEditCue = 0.75f;
 constexpr float kEditedGain = 0.5f;
+constexpr float kEditorCue = 0.625f;
 constexpr int kBlockSize = 512;
 constexpr const char* kHoldFileVariable = "DUSKSTUDIO_SPLIT_STATE_HOLD_FILE";
 
@@ -141,6 +142,17 @@ struct SandboxedSplitSlot
         juce::MidiBuffer midi;
         (void) slot.processStereoBlock (left.data(), right.data(), kBlockSize, midi);
         return left.front();
+    }
+
+    // A block at `input` that starts with `firstSample`; returns its last output.
+    float process (float input, float firstSample)
+    {
+        std::vector<float> left ((size_t) kBlockSize, input);
+        std::vector<float> right ((size_t) kBlockSize, input);
+        left.front() = right.front() = firstSample;
+        juce::MidiBuffer midi;
+        (void) slot.processStereoBlock (left.data(), right.data(), kBlockSize, midi);
+        return left.back();
     }
 
     PluginManager manager;
@@ -391,6 +403,33 @@ TEST_CASE ("A sandbox child does not count a latency restart as a state change",
     slot.prepareToPlay (44100.0, kBlockSize);
     REQUIRE (slot.isRemote());
     CHECK (slot.stateRevision() == revision);
+}
+
+// A plug-in may report an edit made in its own editor only by restarting: a
+// JUCE plug-in before 6.1 that loads an IR changes no parameter and never calls
+// setDirty. JUCE's VST3 host turns that restart into a program change, the one
+// signal the edit leaves, and it must count. Restarts the slot's own activation
+// causes are covered by the latency case above and must not.
+TEST_CASE ("A sandbox child counts a restart its plug-in raises for an edit", "[plugin][ipc][state]")
+{
+    using namespace std::chrono_literals;
+    juce::ScopedJuceInitialiser_GUI juceInit;
+    const auto descriptor = splitStateDescriptor();
+    REQUIRE (descriptor.has_value());
+    SandboxedSplitSlot sandbox;
+    auto& slot = sandbox.slot;
+    REQUIRE (sandbox.load (*descriptor));
+
+    // The meter settles at the cue's level first, so the parameter resync the
+    // restart asks for finds no value that moved.
+    CHECK_THAT (sandbox.process (kEditorCue, 0.0f), Catch::Matchers::WithinAbs (kEditorCue, 1.0e-6f));
+    const auto revision = slot.stateRevision();
+    CHECK_THAT (sandbox.process (kEditorCue), Catch::Matchers::WithinAbs (kEditorCue, 1.0e-6f));
+    // The edit reaches the controller on the child's message thread, after the block.
+    const auto deadline = std::chrono::steady_clock::now() + 5s;
+    while (slot.stateRevision() == revision && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::yield();
+    CHECK (slot.stateRevision() > revision);
 }
 
 #if defined (__linux__)

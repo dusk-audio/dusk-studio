@@ -14,6 +14,13 @@
 // Two reports that are not state changes: every block writes the input peak to
 // a read-only Meter, and every activation re-announces the latency through
 // restartComponent, as plug-ins that recompute it in setActive do.
+//
+// One that is: a block whose first input sample is exactly kEditorCue stands in
+// for an edit made in the plug-in's editor that touches no parameter value - an
+// IR or a sample loaded. The controller reports it the only way a JUCE plug-in
+// before 6.1 does, restartComponent (kParamValuesChanged) on the message thread,
+// with no setDirty. The processor passes the cue on through a read-only output
+// parameter, which reaches the controller on the host's message thread.
 
 #include "public.sdk/source/main/pluginfactory.h"
 #include "public.sdk/source/vst/vstaudioeffect.h"
@@ -39,6 +46,8 @@ namespace
 constexpr ParamID kGain = 200;
 constexpr ParamID kHold = 201;
 constexpr ParamID kMeter = 202;
+constexpr ParamID kEditorAction = 203;
+constexpr float kEditorCue = 0.625f;
 constexpr const char* kRestartLatency = "RestartLatency";
 constexpr float kEditCue = 0.75f;
 constexpr float kEditedGain = 0.5f;
@@ -173,6 +182,12 @@ public:
                 int32 pointIndex = 0;
                 queue->addPoint (0, std::min (peak, 1.0f), pointIndex);
             }
+            if (input.channelBuffers32[0] != nullptr && input.channelBuffers32[0][0] == kEditorCue)
+                if (auto* queue = data.outputParameterChanges->addParameterData (kEditorAction, queueIndex))
+                {
+                    int32 pointIndex = 0;
+                    queue->addPoint (0, 1.0, pointIndex);
+                }
         }
         return kResultOk;
     }
@@ -209,6 +224,8 @@ public:
         parameters.addParameter (STR16 ("Gain"), nullptr, 0, 1.0, ParameterInfo::kCanAutomate, kGain);
         parameters.addParameter (STR16 ("Hold"), nullptr, 1, 0.0, ParameterInfo::kNoFlags, kHold);
         parameters.addParameter (STR16 ("Meter"), nullptr, 0, 0.0, ParameterInfo::kIsReadOnly, kMeter);
+        parameters.addParameter (STR16 ("Editor Action"), nullptr, 1, 0.0,
+                                 ParameterInfo::kIsReadOnly, kEditorAction);
         return kResultOk;
     }
 
@@ -223,7 +240,11 @@ public:
     tresult PLUGIN_API setParamNormalized (ParamID id, ParamValue value) override
     {
         if (id == kHold && value >= 0.5) holdUntilReleased();
-        return EditController::setParamNormalized (id, value);
+        const bool editorAction = id == kEditorAction && value >= 0.5
+                                && getParamNormalized (kEditorAction) < 0.5;
+        const auto result = EditController::setParamNormalized (id, value);
+        if (editorAction && componentHandler) componentHandler->restartComponent (kParamValuesChanged);
+        return result;
     }
 
     tresult PLUGIN_API setComponentState (IBStream* state) override

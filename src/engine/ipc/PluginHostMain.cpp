@@ -832,8 +832,13 @@ public:
 
     void audioProcessorChanged (juce::AudioProcessor*, const ChangeDetails& details) override
     {
-        if ((details.programChanged && programChangesAreState.load (std::memory_order_relaxed))
-            || details.nonParameterStateChanged)
+        // A restart the plug-in raises while the host itself (de)activates it is
+        // that cycle; VST3 requires restarts on the message thread, where JUCE
+        // handles them at once, inside the host's own call.
+        const bool ownActivationRestart = details.programChanged
+            && restartsAreProgramChanges.load (std::memory_order_relaxed)
+            && ownActivations.load (std::memory_order_relaxed) > 0;
+        if ((details.programChanged && ! ownActivationRestart) || details.nonParameterStateChanged)
             bump();
     }
 
@@ -851,10 +856,20 @@ public:
     void bump() noexcept { header->stateRevision.fetch_add (1, std::memory_order_release); }
 
     // Set from the owner's format before the listener is attached.
-    std::atomic<bool> programChangesAreState { true };
+    std::atomic<bool> restartsAreProgramChanges { false };
+    // Message thread: nonzero while the host itself (de)activates the owner.
+    std::atomic<int> ownActivations { 0 };
 
 private:
     BlockHeader* const& header;
+};
+
+struct OwnActivationScope
+{
+    explicit OwnActivationScope (StateRevisionListener& listenerIn) noexcept : listener (listenerIn)
+        { listener.ownActivations.fetch_add (1, std::memory_order_relaxed); }
+    ~OwnActivationScope() { listener.ownActivations.fetch_sub (1, std::memory_order_relaxed); }
+    StateRevisionListener& listener;
 };
 
 struct HostState
@@ -1330,8 +1345,8 @@ std::uint32_t handleLoadPlugin (HostState& host,
         deposed = std::move (host.ownedInstance);
         host.transportPosition.publish (nullptr);
         host.ownedInstance = std::move (fresh);
-        host.stateListener.programChangesAreState.store (
-            duskstudio::juce_compat::programChangeReportsMeanState (desc.pluginFormatName.toStdString()),
+        host.stateListener.restartsAreProgramChanges.store (
+            duskstudio::juce_compat::reportsRestartsAsProgramChanges (desc.pluginFormatName.toStdString()),
             std::memory_order_relaxed);
         host.ownedInstance->addListener (&host.stateListener);
         host.currentSampleRate = hdr.sampleRate;
@@ -1389,7 +1404,10 @@ std::uint32_t handlePrepareToPlay (HostState& host,
     return withParkedHostWorkerOnMessageThread (host, [&host, p]
     {
         host.transportPosition.publish (nullptr);
-        host.ownedInstance->prepareToPlay (p.sampleRate, p.blockSize);
+        {
+            const OwnActivationScope ownActivation (host.stateListener);
+            host.ownedInstance->prepareToPlay (p.sampleRate, p.blockSize);
+        }
         host.currentSampleRate = p.sampleRate;
         host.currentBlockSize  = p.blockSize;
     }, kHostPrepareWaitMs);
