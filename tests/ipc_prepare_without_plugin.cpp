@@ -1,9 +1,12 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "engine/ipc/PluginIpc.h"
 #include "engine/ipc/RemotePluginConnection.h"
 #include "engine/DuskStudioPlayHead.h"
+#include "engine/PluginManager.h"
+#include "engine/PluginSlot.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
@@ -22,6 +25,7 @@
 #include <chrono>
 #include <cmath>
 #include <string>
+#include <vector>
 
 // A Release leaves the child alive with no instance. Answering the next
 // PrepareToPlay with success let the parent republish the connection and route
@@ -96,6 +100,118 @@ TEST_CASE ("atomic transport playheads retain whole snapshots and clear absent p
 }
 
 #if defined(DUSKSTUDIO_RUNTIME_RELAYOUT_VST3_FIXTURE_PATH)
+TEST_CASE ("PluginSlot forwards transport to sandboxed mono and stereo blocks", "[plugin][ipc][transport]")
+{
+    using Catch::Matchers::WithinAbs;
+    using Context = Steinberg::Vst::ProcessContext;
+    const bool stereo = GENERATE (false, true);
+    CAPTURE (stereo);
+    juce::PluginDescription description;
+    description.name = "Dusk Runtime Relayout Fixture";
+    description.pluginFormatName = "VST3";
+    description.fileOrIdentifier = DUSKSTUDIO_RUNTIME_RELAYOUT_VST3_FIXTURE_PATH;
+    description.uniqueId = -216559363;
+    description.numInputChannels = description.numOutputChannels = 2;
+    const auto xml = description.createXml()->toString();
+    std::array<float, 64> left {}, right {};
+    left.fill (0.25f); right.fill (-0.25f);
+    const float* inputs[] { left.data(), right.data() };
+    std::vector<std::uint8_t> state;
+    std::string error;
+    {
+        duskstudio::ipc::RemotePluginConnection seed;
+        REQUIRE (seed.connect (DUSKSTUDIO_PLUGIN_HOST_PATH, "--ipc-host", error));
+        int numIn = 0, numOut = 0, latency = 0;
+        bool instrument = false;
+        REQUIRE (seed.loadPlugin (xml.toStdString(), 48000.0, 64, numIn, numOut, latency, instrument, error));
+        REQUIRE (seed.setRemoteParam (6, 1.0f));
+        dusk::MidiBuffer midi;
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds (2);
+        bool active = false;
+        do
+        {
+            REQUIRE (seed.processBlockSync (inputs, 2, 2, 64, midi, 500000000));
+            active = std::abs (seed.readOutChannel (0)[0] - 1.0f) < 1e-6f
+                  && std::abs (seed.readOutChannel (0)[1] - 48000.0f) < 1e-6f;
+        }
+        while (! active && std::chrono::steady_clock::now() < deadline);
+        REQUIRE (active);
+        REQUIRE (seed.getState (state, error));
+        REQUIRE_FALSE (state.empty());
+    }
+
+    duskstudio::PluginManager manager;
+    manager.setOopEnabled (true);
+    manager.setHostExecutableOverride (DUSKSTUDIO_PLUGIN_HOST_PATH, "--ipc-host");
+    duskstudio::PluginDescriptor descriptor;
+    REQUIRE (manager.descriptorFromLegacyXml (xml, descriptor));
+    duskstudio::PluginSlot slot;
+    slot.setManager (manager);
+    slot.prepareToPlay (48000.0, 64);
+    juce::String loadError;
+    REQUIRE (slot.restoreFromSavedState (descriptor, juce::String(),
+        juce::MemoryBlock (state.data(), state.size()).toBase64Encoding(), loadError));
+    REQUIRE (slot.isRemote());
+    juce::MidiBuffer midi;
+    const auto process = [&] (const dusk::TransportPosition* position)
+    {
+        left.fill (0.25f); right.fill (-0.25f);
+        const auto rendered = stereo
+            ? slot.processStereoBlock (left.data(), right.data(), 64, midi, position)
+            : slot.processMonoBlock (left.data(), 64, midi, position);
+        REQUIRE (rendered.has_value());
+        CHECK_THAT (left[63], WithinAbs (0.0f, 1e-6f));
+    };
+    const auto flags = [&] { return (std::uint32_t) std::lround (left[8]); };
+    process (nullptr);
+    REQUIRE_THAT (left[0], WithinAbs (1.0f, 1e-6f));
+    REQUIRE_THAT (left[1], WithinAbs (48000.0f, 1e-6f));
+    const auto valid = Context::kProjectTimeMusicValid | Context::kBarPositionValid
+                     | Context::kTempoValid | Context::kTimeSigValid | Context::kCycleValid;
+    dusk::TransportPosition position;
+    position.bpm = 93.5;
+    position.timeInSamples = 123456;
+    position.timeInSeconds = 123456.0 / 48000.0;
+    position.ppqPosition = 17.25;
+    position.timeSignatureNumerator = 7;
+    position.timeSignatureDenominator = 8;
+    position.isPlaying = position.isRecording = position.isLooping = true;
+    position.loopStartSamples = 24000;
+    position.loopEndSamples = 96000;
+    position.ppqLoopStart = 1.25;
+    position.ppqLoopEnd = 9.75;
+    process (&position);
+    CHECK_THAT (left[2], WithinAbs (123456.0f, 1e-6f));
+    CHECK_THAT (left[3], WithinAbs (17.25f, 1e-6f));
+    CHECK_THAT (left[4], WithinAbs (14.0f, 1e-6f));
+    CHECK_THAT (left[5], WithinAbs (93.5f, 1e-6f));
+    CHECK_THAT (left[6], WithinAbs (7.0f, 1e-6f));
+    CHECK_THAT (left[7], WithinAbs (8.0f, 1e-6f));
+    CHECK_THAT (left[9], WithinAbs (1.25f, 1e-6f));
+    CHECK_THAT (left[10], WithinAbs (9.75f, 1e-6f));
+    CHECK (flags() == (std::uint32_t) (valid | Context::kPlaying | Context::kRecording | Context::kCycleActive));
+    position.isPlaying = position.isRecording = position.isLooping = false;
+    process (&position);
+    CHECK_THAT (left[2], WithinAbs (123456.0f, 1e-6f));
+    CHECK_THAT (left[3], WithinAbs (17.25f, 1e-6f));
+    CHECK (flags() == (std::uint32_t) valid);
+    position.bpm = 137.0;
+    position.timeInSamples = -12000;
+    position.timeInSeconds = -0.25;
+    position.ppqPosition = -0.75;
+    position.timeSignatureNumerator = 6;
+    process (&position);
+    CHECK_THAT (left[2], WithinAbs (-12000.0f, 1e-6f));
+    CHECK_THAT (left[3], WithinAbs (-0.75f, 1e-6f));
+    CHECK_THAT (left[4], WithinAbs (-3.0f, 1e-6f));
+    CHECK_THAT (left[5], WithinAbs (137.0f, 1e-6f));
+    CHECK (flags() == (std::uint32_t) valid);
+    process (nullptr);
+    CHECK_THAT (left[2], WithinAbs (0.0f, 1e-6f));
+    CHECK_THAT (left[3], WithinAbs (0.0f, 1e-6f));
+    CHECK (flags() == 0);
+}
+
 TEST_CASE ("an out-of-process VST3 receives the current transport snapshot", "[ipc][transport]")
 {
     using Catch::Matchers::WithinAbs;

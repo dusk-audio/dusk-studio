@@ -6,6 +6,7 @@
 #include "PluginDescriptor.h"
 #include "../foundation/MessageThread.h"
 #include "../foundation/ProcessedBlock.h"
+#include "../foundation/TransportPosition.h"
 #include "../foundation/SpscIndexFifo.h"
 
 #if DUSKSTUDIO_HAS_OOP_PLUGINS
@@ -120,9 +121,11 @@ public:
     // the block's audio time for kOverrunStreak blocks in a row, the
     // plugin is auto-bypassed and the user has to re-enable manually.
     std::optional<dusk::ProcessedBlock> processMonoBlock (float* monoData, int numSamples,
-                           juce::MidiBuffer& midiMessages) noexcept;
+                           juce::MidiBuffer& midiMessages,
+                           const dusk::TransportPosition* transport = nullptr) noexcept;
     std::optional<dusk::ProcessedBlock> processStereoBlock (float* L, float* R, int numSamples,
-                             juce::MidiBuffer& midiMessages) noexcept;
+                             juce::MidiBuffer& midiMessages,
+                             const dusk::TransportPosition* transport = nullptr) noexcept;
 
     // Message thread. Hold while constructing the plugin's editor: sampler-
     // style plugins share an internal lock between processBlock and their

@@ -1613,7 +1613,8 @@ bool PluginSlot::restoreFromSavedState (
 }
 
 std::optional<dusk::ProcessedBlock> PluginSlot::processMonoBlock (float* monoData, int numSamples,
-                                   juce::MidiBuffer& midiMessages) noexcept
+                                   juce::MidiBuffer& midiMessages,
+                                   const dusk::TransportPosition* transport) noexcept
 {
     dusk::audio::ScopedNoDenormals noDenormals;
     if (numSamples == 0) return std::nullopt;
@@ -1672,7 +1673,7 @@ std::optional<dusk::ProcessedBlock> PluginSlot::processMonoBlock (float* monoDat
         if (! r->processBlockSync (inPtrs, std::max (rNumIn, 0),
                                        std::max (rNumOut, 0),
                                        numSamples, oopMidiScratch,
-                                       kOopProcessTimeoutNs))
+                                       kOopProcessTimeoutNs, transport))
         {
             engageAutoBypass();
             return std::nullopt;
@@ -1794,7 +1795,8 @@ std::optional<dusk::ProcessedBlock> PluginSlot::processMonoBlock (float* monoDat
 }
 
 std::optional<dusk::ProcessedBlock> PluginSlot::processStereoBlock (float* L, float* R, int numSamples,
-                                     juce::MidiBuffer& midiMessages) noexcept
+                                     juce::MidiBuffer& midiMessages,
+                                     const dusk::TransportPosition* transport) noexcept
 {
     dusk::audio::ScopedNoDenormals noDenormals;
     if (numSamples == 0) return std::nullopt;
@@ -1859,7 +1861,7 @@ std::optional<dusk::ProcessedBlock> PluginSlot::processStereoBlock (float* L, fl
         if (! r->processBlockSync (inPtrs, std::max (rNumIn, 0),
                                        std::max (rNumOut, 0),
                                        numSamples, oopMidiScratch,
-                                       kOopProcessTimeoutNs))
+                                       kOopProcessTimeoutNs, transport))
         {
             // Either the futex timed out or the connection was already
             // marked crashed. Engage auto-bypass so the engine sees a
