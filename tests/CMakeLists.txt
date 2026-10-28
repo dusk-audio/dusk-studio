@@ -355,7 +355,8 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         alsa_seq_output_schedule.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/midi/AlsaSeqMidi.cpp)
     target_include_directories(dusk-alsa-output-tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
-    target_compile_options(dusk-alsa-output-tests PRIVATE -Wall -Wextra -Wpedantic)
+    # A fortified poll() calls __poll_chk, which --wrap=poll cannot intercept.
+    target_compile_options(dusk-alsa-output-tests PRIVATE -Wall -Wextra -Wpedantic -U_FORTIFY_SOURCE)
     target_link_libraries(dusk-alsa-output-tests PRIVATE asound Catch2::Catch2WithMain)
     foreach(symbol IN ITEMS
         snd_seq_open snd_seq_close snd_seq_set_client_name snd_seq_client_id
