@@ -737,6 +737,8 @@ std::optional<ScenarioResult> runRecoverySaveFailure (GuiHost& host, ScenarioCon
         host.autosaveTick();
         ctx.expect (fs::exists (autosave),
                     "reverting an edit after the failed recovery save deleted the only copy of the recovered work");
+        ctx.expect (nearly (savedFaderOf (autosave), -6.0f),
+                    "after the failed recovery save, the recovery file kept a reverted edit instead of the recovered work");
         ctx.expect (host.sessionDirty(), "reverting an edit made the unsaved recovered session read as saved");
     }, [&host] { return ! host.modalStackEmpty(); }, "the failed recovery save raised no alert" });
     pushQuitAsksSteps (host, ctx, *steps, "quitting after a failed recovery save did not ask to save");
@@ -831,6 +833,7 @@ std::optional<ScenarioResult> runCaptureFailureSaveAnyway (GuiHost& host, Scenar
     struct Saved { std::string state, file; };
     auto saved = std::make_shared<Saved>();
     const int largeIndex = hosted->largeIndex;
+    const int gainIndex = hosted->gainIndex;
 
     auto steps = std::make_shared<std::vector<Step>>();
     steps->push_back ({ 0, [&ctx, &engine, &slot, load]
@@ -839,10 +842,11 @@ std::optional<ScenarioResult> runCaptureFailureSaveAnyway (GuiHost& host, Scenar
         engine.getChannelStrip (kFailingTrack).insertMode.store (ChannelStrip::kInsertPlugin);
     }, [load] { return load->done; }, "the state fixture did not finish loading" });
     pushSaveSteps (host, ctx, *steps);
-    steps->push_back ({ 0, [&ctx, &engine, &session, &slot, saved, largeIndex, canonical]
+    steps->push_back ({ 0, [&ctx, &engine, &session, &slot, saved, largeIndex, gainIndex, canonical]
     {
         saved->state = session.track (kFailingTrack).pluginStateBase64.toStdString();
         ctx.expect (! saved->state.empty(), "the sandboxed plug-in saved no state");
+        slot.setParamNormalised (gainIndex, 0.25f);
         slot.setParamNormalised (largeIndex, 1.0f);
       #if DUSKSTUDIO_HAS_NATIVE_CLAP
         engine.getChannelStrip (kFreshClapTrack).getNativeClapSlot().setParamValue (kAlpha, 0.6);
@@ -870,8 +874,11 @@ std::optional<ScenarioResult> runCaptureFailureSaveAnyway (GuiHost& host, Scenar
         ctx.expect (host.sessionDirty(), "Cancel left the session reading as saved");
     } });
     pushFileMenuSteps (host, ctx, *steps, "Save");
-    steps->push_back ({ 0, [&host, &ctx]
+    // Shrunk again, the state would now capture: Save anyway must still keep
+    // what the prompt listed rather than read it afresh.
+    steps->push_back ({ 0, [&host, &ctx, &slot, largeIndex]
     {
+        slot.setParamNormalised (largeIndex, 0.0f);
         ctx.expect (host.clickModalButton ("Save anyway"), "the capture failure offered no Save anyway: " + host.modalText());
     }, [&host] { return ! host.modalStackEmpty(); }, "the second failing Save raised nothing" });
     steps->push_back ({ 0, [&host, &ctx, saved, canonical]
@@ -887,7 +894,11 @@ std::optional<ScenarioResult> runCaptureFailureSaveAnyway (GuiHost& host, Scenar
         ctx.expect (host.sessionDirty(), "Save anyway counted the failed slot's lost changes as saved");
     }, [&host] { return host.modalStackEmpty() && host.statusMessage().rfind ("Saved:", 0) == 0; },
        "Save anyway did not save" });
-    steps->push_back ({ 0, [&host, other] { host.requestSessionSwitch (other); } });
+    steps->push_back ({ 0, [&host, &slot, largeIndex, other]
+    {
+        slot.setParamNormalised (largeIndex, 1.0f);
+        host.requestSessionSwitch (other);
+    } });
     steps->push_back ({ 0, [&host, &ctx]
     {
         ctx.expect (host.modalText().find ("Save changes before opening another session?") != std::string::npos,
@@ -917,6 +928,238 @@ std::optional<ScenarioResult> runCaptureFailureSaveAnyway (GuiHost& host, Scenar
 #endif
 }
 
+// A Save anyway prompt still up when another session opens belongs to the
+// session it was raised for: answering it then saves nothing and raises nothing.
+std::optional<ScenarioResult> runStaleSaveAnyway (GuiHost& host, ScenarioContext& ctx)
+{
+#if ! DUSKSTUDIO_HAS_OOP_PLUGINS
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("sandboxed plug-ins are unavailable");
+#else
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    std::string error;
+    const auto hosted = inspectHostedFixture (ctx, error);
+    if (! hosted) return ScenarioResult::fail (error);
+    fs::path canonical;
+    if (auto early = openCaseSession (host, ctx, "Stale prompt", canonical)) return early;
+    const auto other = ctx.tempDir() / "Opened over the prompt" / "session.json";
+    fs::create_directories (other.parent_path());
+    {
+        auto blank = std::make_unique<Session>();
+        if (! SessionSerializer::save (*blank, other))
+            return ScenarioResult::fail ("could not create the other session");
+    }
+    auto& slot = engine.getChannelStrip (kFailingTrack).getPluginSlot();
+    const auto load = loadHosted (ctx, *hosted, kFailingTrack, true);
+    const int largeIndex = hosted->largeIndex;
+    struct Files { std::string first, other; };
+    auto files = std::make_shared<Files>();
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 0, [&ctx, &engine, &slot, load]
+    {
+        ctx.expect (load->loaded && slot.isRemote(), "the state fixture did not load sandboxed: " + load->error);
+        engine.getChannelStrip (kFailingTrack).insertMode.store (ChannelStrip::kInsertPlugin);
+    }, [load] { return load->done; }, "the state fixture did not finish loading" });
+    pushSaveSteps (host, ctx, *steps);
+    steps->push_back ({ 0, [&slot, files, largeIndex, canonical, other]
+    {
+        slot.setParamNormalised (largeIndex, 1.0f);
+        files->first = dusk::fs::loadFileAsString (canonical);
+        files->other = dusk::fs::loadFileAsString (other);
+    } });
+    pushFileMenuSteps (host, ctx, *steps, "Save");
+    steps->push_back ({ 0, [&host, &ctx, &session, other]
+    {
+        ctx.expect (host.openSession (other) && currentSessionDirectory (session) == other.parent_path(),
+                    "the other session did not open over the prompt");
+        ctx.expect (confirmation (host).find ("could not capture plug-in state") != std::string::npos,
+                    "opening the other session took the capture-failure prompt down");
+        ctx.expect (host.clickModalButton ("Save anyway"), "the stale prompt offered no Save anyway");
+    }, [&host] { return confirmation (host).find ("could not capture plug-in state") != std::string::npos; },
+       "the failing Save raised no capture-failure prompt" });
+    steps->push_back ({ 300, [&host, &ctx, &session, files, canonical, other]
+    {
+        ctx.expect (host.modalStackEmpty(), "answering the stale prompt raised '" + host.modalText() + "'");
+        ctx.expect (currentSessionDirectory (session) == other.parent_path(),
+                    "answering the stale prompt moved the open session");
+        ctx.expect (dusk::fs::loadFileAsString (canonical) == files->first,
+                    "answering the stale prompt wrote the session it was raised for");
+        ctx.expect (dusk::fs::loadFileAsString (other) == files->other,
+                    "answering the stale prompt wrote the session opened over it");
+        ctx.expect (! host.sessionDirty(), "answering the stale prompt marked the other session unsaved");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+#endif
+}
+
+// A sandboxed plug-in cut off from the audio path keeps its child, and its
+// editor, but a Save can only return what it last read from it. It still
+// counts its edits, and a Save after one asks rather than writing the old state.
+std::optional<ScenarioResult> runCutOffSandboxStaysUnsaved (GuiHost& host, ScenarioContext& ctx)
+{
+#if ! DUSKSTUDIO_HAS_OOP_PLUGINS
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("sandboxed plug-ins are unavailable");
+#else
+    auto& engine = ctx.engine();
+    std::string error;
+    const auto hosted = inspectHostedFixture (ctx, error);
+    if (! hosted) return ScenarioResult::fail (error);
+    fs::path canonical;
+    if (auto early = openCaseSession (host, ctx, "Cut-off sandbox", canonical)) return early;
+    auto& slot = engine.getChannelStrip (kFailingTrack).getPluginSlot();
+    const auto load = loadHosted (ctx, *hosted, kFailingTrack, true);
+    const double rate = engine.getCurrentSampleRate();
+    const int blockSize = engine.getCurrentBlockSize();
+    ctx.cleanup ([&engine, rate, blockSize]
+    {
+        if (engine.getCurrentBlockSize() != blockSize) engine.prepareForSelfTest (rate, blockSize);
+    });
+    const int gainIndex = hosted->gainIndex;
+    auto file = std::make_shared<std::string>();
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 0, [&ctx, &engine, &slot, load]
+    {
+        ctx.expect (load->loaded && slot.isRemote(), "the state fixture did not load sandboxed: " + load->error);
+        engine.getChannelStrip (kFailingTrack).insertMode.store (ChannelStrip::kInsertPlugin);
+    }, [load] { return load->done; }, "the state fixture did not finish loading" });
+    pushSaveSteps (host, ctx, *steps);
+    steps->push_back ({ 0, [&host, &ctx, &engine, &slot, rate]
+    {
+        // A buffer larger than the sandbox carries leaves the slot silent until reload.
+        engine.prepareForSelfTest (rate, 2 * duskstudio::ipc::kMaxBlock);
+        ctx.expect (! slot.isRemote() && slot.getLoadedName().isNotEmpty(),
+                    "the oversized buffer did not cut the sandboxed plug-in off while keeping it");
+        ctx.expect (! host.sessionDirty(), "cutting the plug-in off counted as an unsaved change");
+    } });
+    pushSaveSteps (host, ctx, *steps);
+    steps->push_back ({ 0, [&host, &ctx, &slot, gainIndex, file, canonical]
+    {
+        ctx.expect (! host.sessionDirty(), "a Save with nothing changed left the cut-off plug-in unsaved");
+        slot.setParamNormalised (gainIndex, 0.25f);
+        ctx.expect (host.sessionDirty(), "an edit to a sandboxed plug-in cut off from the audio read as saved");
+        *file = dusk::fs::loadFileAsString (canonical);
+    } });
+    pushFileMenuSteps (host, ctx, *steps, "Save");
+    steps->push_back ({ 0, [&host, &ctx]
+    {
+        const auto text = confirmation (host);
+        ctx.expect (text.find ("Track 1 - Dusk Crash State Fixture") != std::string::npos
+                        && text.find ("stopped processing") != std::string::npos,
+                    "Save wrote the cut-off plug-in's old state without asking: '" + text + "' status '"
+                        + host.statusMessage() + "'");
+        if (! confirmation (host).empty())
+            ctx.expect (host.clickModalButton ("Cancel"), "the capture failure offered no Cancel");
+    }, [&host]
+    {
+        return ! host.modalStackEmpty() || host.statusMessage().rfind ("Saved:", 0) == 0;
+    }, "the Save neither asked nor finished" });
+    steps->push_back ({ 200, [&host, &ctx, file, canonical]
+    {
+        ctx.expect (dusk::fs::loadFileAsString (canonical) == *file, "Cancel wrote the session");
+        ctx.expect (host.sessionDirty(), "the cut-off plug-in's edit read as saved after Cancel");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+#endif
+}
+
+// Save anyway keeps exactly the slots its prompt listed. One that fails only
+// during that Save was never shown, so the prompt comes back listing it too.
+std::optional<ScenarioResult> runSaveAnywayAsksAgain (GuiHost& host, ScenarioContext& ctx)
+{
+#if ! DUSKSTUDIO_HAS_OOP_PLUGINS
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("sandboxed plug-ins are unavailable");
+#else
+    constexpr int kSecondTrack = 1;
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    std::string error;
+    const auto hosted = inspectHostedFixture (ctx, error);
+    if (! hosted) return ScenarioResult::fail (error);
+    fs::path canonical;
+    if (auto early = openCaseSession (host, ctx, "Save anyway again", canonical)) return early;
+    auto& first = engine.getChannelStrip (kFailingTrack).getPluginSlot();
+    auto& second = engine.getChannelStrip (kSecondTrack).getPluginSlot();
+    const auto firstLoad = loadHosted (ctx, *hosted, kFailingTrack, true);
+    const auto secondLoad = loadHosted (ctx, *hosted, kSecondTrack, true);
+    const int largeIndex = hosted->largeIndex;
+    struct Saved { std::string first, second; };
+    auto saved = std::make_shared<Saved>();
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 0, [&ctx, &engine, &first, &second, firstLoad, secondLoad]
+    {
+        ctx.expect (firstLoad->loaded && secondLoad->loaded && first.isRemote() && second.isRemote(),
+                    "the state fixtures did not load sandboxed: " + firstLoad->error + secondLoad->error);
+        engine.getChannelStrip (kFailingTrack).insertMode.store (ChannelStrip::kInsertPlugin);
+        engine.getChannelStrip (kSecondTrack).insertMode.store (ChannelStrip::kInsertPlugin);
+    }, [firstLoad, secondLoad] { return firstLoad->done && secondLoad->done; },
+       "the state fixtures did not finish loading" });
+    pushSaveSteps (host, ctx, *steps);
+    steps->push_back ({ 0, [&session, &first, saved, largeIndex]
+    {
+        saved->first = session.track (kFailingTrack).pluginStateBase64.toStdString();
+        saved->second = session.track (kSecondTrack).pluginStateBase64.toStdString();
+        first.setParamNormalised (largeIndex, 1.0f);
+    } });
+    pushFileMenuSteps (host, ctx, *steps, "Save");
+    steps->push_back ({ 0, [&host, &ctx, &second, largeIndex]
+    {
+        const auto text = confirmation (host);
+        ctx.expect (text.find ("Track 1 - Dusk Crash State Fixture") != std::string::npos
+                        && text.find ("Track 2 -") == std::string::npos,
+                    "the first prompt did not list the first slot alone: '" + text + "'");
+        second.setParamNormalised (largeIndex, 1.0f);
+        ctx.expect (host.clickModalButton ("Save anyway"), "the capture failure offered no Save anyway");
+    }, [&host] { return confirmation (host).find ("could not capture plug-in state") != std::string::npos; },
+       "the failing Save raised no capture-failure prompt" });
+    steps->push_back ({ 0, [&host, &ctx]
+    {
+        const auto text = confirmation (host);
+        ctx.expect (text.find ("Track 1 - Dusk Crash State Fixture") != std::string::npos
+                        && text.find ("Track 2 - Dusk Crash State Fixture") != std::string::npos,
+                    "the prompt that came back did not list both slots: '" + text + "'");
+        ctx.expect (host.clickModalButton ("Save anyway"), "the prompt that came back offered no Save anyway");
+    }, [&host] { return confirmation (host).find ("Track 2 - Dusk Crash State Fixture") != std::string::npos; },
+       "Save anyway saved past a slot its prompt never listed" });
+    steps->push_back ({ 0, [&host, &ctx, saved, canonical]
+    {
+        auto json = savedJson (canonical);
+        ctx.expect (json["tracks"][static_cast<std::size_t> (kFailingTrack)]["plugin_state"] == saved->first
+                        && json["tracks"][static_cast<std::size_t> (kSecondTrack)]["plugin_state"] == saved->second,
+                    "Save anyway did not keep both listed slots' last saved state");
+        ctx.expect (host.sessionDirty(), "Save anyway counted the listed slots' lost changes as saved");
+    }, [&host] { return host.modalStackEmpty() && host.statusMessage().rfind ("Saved:", 0) == 0; },
+       "the second Save anyway did not save" });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+#endif
+}
+
+const ScenarioRegistrar saveAnywayAsksAgain { Scenario {
+    "gui.save_anyway_asks_again", { "gui", "session", "save", "ipc", "messages" }, Needs::Engine | Needs::Gui,
+    { "crash_state.vst3" }, {}, 60000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runSaveAnywayAsksAgain (host, ctx); }
+} };
+const ScenarioRegistrar staleSaveAnyway { Scenario {
+    "gui.stale_save_anyway_saves_nothing", { "gui", "session", "save", "ipc", "messages" }, Needs::Engine | Needs::Gui,
+    { "crash_state.vst3" }, {}, 60000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runStaleSaveAnyway (host, ctx); }
+} };
+const ScenarioRegistrar cutOffSandbox { Scenario {
+    "gui.cut_off_sandbox_stays_unsaved", { "gui", "session", "save", "ipc", "plugin" }, Needs::Engine | Needs::Gui,
+    { "crash_state.vst3" }, {}, 60000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runCutOffSandboxStaysUnsaved (host, ctx); }
+} };
 const ScenarioRegistrar captureFailureSaveAnyway { Scenario {
     "gui.capture_failure_save_anyway", { "gui", "session", "save", "ipc", "messages" }, Needs::Engine | Needs::Gui,
     { "crash_state.vst3" }, {}, 90000,

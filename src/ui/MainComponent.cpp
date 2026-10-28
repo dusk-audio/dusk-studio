@@ -3638,32 +3638,40 @@ bool MainComponent::saveRefusedWhileBusy()
     return true;
 }
 
+// A prompt closed without an answer, by anything but its buttons, still owes
+// the caller a reply: a quit's Save has detached the audio.
+struct MainComponent::SaveReply
+{
+    std::function<void (bool)> onComplete;
+    ~SaveReply()
+    {
+        if (onComplete) dusk::callAsync ([done = std::move (onComplete)] { done (false); });
+    }
+    void answer (bool result)
+    {
+        if (auto done = std::exchange (onComplete, {})) done (result);
+    }
+};
+
 void MainComponent::saveSessionTo (const std::filesystem::path& sessionDir, std::function<void (bool)> onComplete)
 {
+    auto attempt = std::make_shared<AudioEngine::PreparedPluginState>();
     std::string captureError;
-    const bool saved = writeSessionTo (toFile (sessionDir), false, captureError);
+    const bool saved = writeSessionTo (toFile (sessionDir), nullptr, *attempt, captureError);
     if (saved || captureError.empty())
     {
         if (onComplete) onComplete (saved);
         return;
     }
-
-    // A prompt closed without an answer, by anything but its buttons, still
-    // owes the caller a reply: a quit's Save has detached the audio.
-    struct Reply
-    {
-        std::function<void (bool)> onComplete;
-        ~Reply()
-        {
-            if (onComplete) dusk::callAsync ([done = std::move (onComplete)] { done (false); });
-        }
-        void answer (bool result)
-        {
-            if (auto done = std::exchange (onComplete, {})) done (result);
-        }
-    };
-    auto reply = std::make_shared<Reply>();
+    auto reply = std::make_shared<SaveReply>();
     reply->onComplete = std::move (onComplete);
+    askToSaveAnyway (sessionDir, std::move (attempt), captureError, std::move (reply));
+}
+
+void MainComponent::askToSaveAnyway (const std::filesystem::path& sessionDir,
+                                     std::shared_ptr<AudioEngine::PreparedPluginState> failed,
+                                     const std::string& captureError, std::shared_ptr<SaveReply> reply)
+{
     std::string slots;
     for (std::size_t start = 0; start < captureError.size();)
     {
@@ -3672,26 +3680,41 @@ void MainComponent::saveSessionTo (const std::filesystem::path& sessionDir, std:
         start = end + 1;
     }
     SafePointer<MainComponent> safe (this);
+    const int serial = sessionLoadSerial;
     showDuskConfirm (*this, "Save failed",
                      "Dusk Studio could not capture plug-in state:\n" + slots + "\n\n"
                      "Save anyway saves the session with the last saved state of each plug-in "
                      "listed, so any changes made in it since are lost. Cancel saves nothing, "
                      "and the session's files and saved plug-in state stay as they are.",
-                     "Save anyway", [safe, sessionDir, reply]
+                     "Save anyway", [safe, sessionDir, failed, reply, serial]
                      {
-                         dusk::callAsync ([safe, sessionDir, reply]
+                         dusk::callAsync ([safe, sessionDir, failed, reply, serial]
                          {
                              auto* self = safe.getComponent();
-                             if (self == nullptr) return;
-                             std::string failedSlots;
-                             reply->answer (self->writeSessionTo (toFile (sessionDir), true, failedSlots));
+                             // The session this prompt was raised for has been
+                             // replaced; saving now would write another one.
+                             if (self == nullptr || self->sessionLoadSerial != serial)
+                             {
+                                 reply->answer (false);
+                                 return;
+                             }
+                             auto attempt = std::make_shared<AudioEngine::PreparedPluginState>();
+                             std::string error;
+                             if (self->writeSessionTo (toFile (sessionDir), failed.get(), *attempt, error))
+                                 reply->answer (true);
+                             else if (! error.empty())
+                                 self->askToSaveAnyway (sessionDir, std::move (attempt), error, reply);
+                             else
+                                 reply->answer (false);
                          });
                      },
                      "Cancel", [reply] { reply->answer (false); },
                      /*destructive*/ true);
 }
 
-bool MainComponent::writeSessionTo (const juce::File& requestedDir, bool keepLastKnownPluginState,
+bool MainComponent::writeSessionTo (const juce::File& requestedDir,
+                                    const AudioEngine::PreparedPluginState* keepFrom,
+                                    AudioEngine::PreparedPluginState& preparedPluginState,
                                     std::string& captureError)
 {
     captureError.clear();
@@ -3725,13 +3748,14 @@ bool MainComponent::writeSessionTo (const juce::File& requestedDir, bool keepLas
         if (transportBar != nullptr) transportBar->notifyRecordStopped();
     }
 
-    AudioEngine::PreparedPluginState preparedPluginState;
-    if (! engine.preparePluginStateForSave (preparedPluginState, captureError, keepLastKnownPluginState))
+    if (! engine.preparePluginStateForSave (preparedPluginState, captureError, keepFrom))
     {
         saveIncomplete = true;
         setStatusForPath ("Save failed", dir);
         return false;
     }
+    // Slots kept from an earlier attempt were the user's choice, not this Save's failure.
+    captureError.clear();
 
     // Save As to a different folder must take the audio along: copy every
     // session-owned file into the new dir and repoint the model BEFORE the
@@ -4008,7 +4032,7 @@ void MainComponent::writeAutosave()
     const auto target = getAutosaveFileFor (dir);
     if (toPath (target) != lastWrittenAutosavePath)
         setLastWrittenAutosaveJson ({}, {});
-    if (strippedHash == lastSavedSessionStrippedHash
+    if (savedBaselineOnDisk && strippedHash == lastSavedSessionStrippedHash
         && stripped == stripVolatileStateForDirtyCompare (lastSavedSessionJson))
     {
         if (! saveIncomplete) discardWrittenAutosave();
@@ -4028,6 +4052,7 @@ void MainComponent::writeAutosave()
 void MainComponent::setLastSavedSessionJson (const juce::String& json)
 {
     saveIncomplete = false;
+    savedBaselineOnDisk = true;
     lastSavedSessionJson = json;
     savedPluginNormalizationBaseline = engine.capturePluginNormalizationBaseline();
     auto pluginStates = engine.pluginStateBaseline();
@@ -4700,6 +4725,7 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
         return false;
     }
     const auto tAfterParse = juce::Time::getMillisecondCounterHiRes();
+    ++sessionLoadSerial;
 
     // The notepad is session-bound: drop any open editor from the previous
     // session and adopt the new session's sidecar.
@@ -4927,12 +4953,12 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     // and the save-failed alert fires.
     if (loadedFromAutosave)
     {
-        SafePointer<MainComponent> safe (this);
-        saveSessionTo (toPath (dir), [safe] (bool saved)
-        {
-            if (auto* self = safe.getComponent(); self != nullptr && ! saved)
-                self->saveIncomplete = true;
-        });
+        // Until a save lands, the recovered work is on disk only as the
+        // autosave. Only a successful save clears this, so no late answer from
+        // the save's prompt can land on a session opened after it.
+        saveIncomplete = true;
+        savedBaselineOnDisk = false;
+        saveSessionTo (toPath (dir));
     }
 
     std::fprintf (stderr,

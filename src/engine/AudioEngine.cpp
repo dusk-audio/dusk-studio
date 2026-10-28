@@ -289,6 +289,14 @@ static PluginStateToken pluginStateTokenOf (const SlotType& slot) noexcept
     return { static_cast<std::uint64_t> (slot.generation()), slot.stateRevision(), slot.isLoaded() };
 }
 
+// A hosted slot can own a plug-in the audio path no longer reaches - a sandbox
+// child cut off by a block size or a failed prepare, a crashed child - and its
+// edits still count.
+static PluginStateToken pluginStateTokenOf (const PluginSlot& slot) noexcept
+{
+    return { static_cast<std::uint64_t> (slot.generation()), slot.stateRevision(), slot.holdsPlugin() };
+}
+
 // Snapshot a loaded native slot's state into its session string. A plugin that
 // hands back nothing leaves an identity-matched stored copy alone; a replacement
 // has already cleared the predecessor's copy in bindNativeStateToLoadedIdentity.
@@ -2930,7 +2938,7 @@ void AudioEngine::jumpToLastRecordPoint()
 
 bool AudioEngine::preparePluginStateForSave (PreparedPluginState& prepared,
                                              std::string& error,
-                                             bool keepLastKnownOnFailure)
+                                             const PreparedPluginState* keepFrom)
 {
     error.clear();
     PreparedPluginState pending;
@@ -2943,9 +2951,28 @@ bool AudioEngine::preparePluginStateForSave (PreparedPluginState& prepared,
     };
     const ResumeGuard resume { *this };
     bool latencyMoved = false;
-    const auto capture = [&] (PluginSlot& slot, PreparedPluginState::Slot& saved,
-                              const std::string& location)
+    bool failed = false;
+    const auto keptFrom = [keepFrom] (int owner) -> const PreparedPluginState::Slot*
     {
+        if (keepFrom == nullptr) return nullptr;
+        for (const auto& kept : keepFrom->tracks)
+            if (kept.owner == owner && kept.keptLastKnown) return &kept;
+        for (const auto& lane : keepFrom->aux)
+            for (const auto& kept : lane)
+                if (kept.owner == owner && kept.keptLastKnown) return &kept;
+        return nullptr;
+    };
+    const auto capture = [&] (PluginSlot& slot, PreparedPluginState::Slot& saved,
+                              const std::string& location, int owner)
+    {
+        // What the user was shown and chose is what gets saved: a slot already
+        // listed is not read again, even if it would capture now.
+        if (const auto* kept = keptFrom (owner))
+        {
+            saved = *kept;
+            return;
+        }
+        saved.owner = owner;
         saved.descriptor = slot.getDescriptorForSave (0);
         saved.legacyDescriptionXml = slot.getLegacyDescriptionXmlForSave().toStdString();
         const int before = slot.getLatencySamples();
@@ -2953,30 +2980,44 @@ bool AudioEngine::preparePluginStateForSave (PreparedPluginState& prepared,
         std::uint64_t capturedRevision = 0;
         const auto state = slot.getStateBase64ForSave (0, &captureError, &capturedRevision);
         latencyMoved = latencyMoved || slot.getLatencySamples() != before;
+        // A slot the audio path no longer reaches hands back the state it last
+        // read, which is stale once the plug-in has changed since.
+        if (captureError.empty() && ! slot.isLoaded() && slot.holdsPlugin()
+            && capturedRevision != slot.stateRevision())
+            captureError = "it has stopped processing, so its latest changes could not be read";
         // On failure the slot hands back the state it last captured.
         saved.stateBase64 = state.toStdString();
         if (captureError.empty())
         {
-            saved.token = { slot.generation(), capturedRevision, slot.isLoaded() };
+            saved.token = { slot.generation(), capturedRevision, slot.holdsPlugin() };
             return;
         }
         saved.keptLastKnown = true;
-        if (! error.empty()) error += '\n';
-        error += location + " - " + slot.getLoadedName().toStdString() + ": " + captureError;
+        saved.failure = location + " - " + slot.getLoadedName().toStdString() + ": " + captureError;
+        failed = true;
     };
     for (int track = 0; track < Session::kNumTracks; ++track)
         capture (strips[(size_t) track]->getPluginSlot(), pending.tracks[(size_t) track],
-                 "Track " + std::to_string (track + 1));
+                 "Track " + std::to_string (track + 1), pluginNormalizationTrackOwner (track));
     for (int lane = 0; lane < Session::kNumAuxLanes; ++lane)
         for (int slot = 0; slot < AuxLaneParams::kMaxLanePlugins; ++slot)
             capture (auxLaneStrips[(size_t) lane].getPluginSlot (slot),
                      pending.aux[(size_t) lane][(size_t) slot],
-                     "Aux " + std::to_string (lane + 1) + " slot " + std::to_string (slot + 1));
+                     "Aux " + std::to_string (lane + 1) + " slot " + std::to_string (slot + 1),
+                     pluginNormalizationAuxOwner (lane, slot));
     // State capture may re-prepare an insert and move its latency, even on failure.
     if (latencyMoved) recomputePdc();
-    if (! error.empty() && ! keepLastKnownOnFailure) return false;
+    const auto listFailure = [&error] (const PreparedPluginState::Slot& saved)
+    {
+        if (! saved.keptLastKnown) return;
+        if (! error.empty()) error += '\n';
+        error += saved.failure;
+    };
+    for (const auto& saved : pending.tracks) listFailure (saved);
+    for (const auto& lane : pending.aux)
+        for (const auto& saved : lane) listFailure (saved);
     prepared = std::move (pending);
-    return true;
+    return ! failed;
 }
 
 bool AudioEngine::publishPluginStateForSave (bool capturePluginState,

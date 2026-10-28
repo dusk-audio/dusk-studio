@@ -841,6 +841,15 @@ juce::String PluginSlot::getLoadedName() const
     return {};
 }
 
+bool PluginSlot::holdsPlugin() const noexcept
+{
+    if (isLoaded() || ownedInstance != nullptr || isOffline()) return true;
+   #if DUSKSTUDIO_HAS_OOP_PLUGINS
+    if (ownedRemote != nullptr) return true;
+   #endif
+    return false;
+}
+
 bool PluginSlot::isOffline() const noexcept
 {
     return offlineDescriptor.has_value() || offlineLegacyDescriptionXml.isNotEmpty();

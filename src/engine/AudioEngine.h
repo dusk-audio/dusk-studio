@@ -755,17 +755,22 @@ public:
             PluginStateToken token;
             // The live capture failed; stateBase64 is the slot's last-known state.
             bool keptLastKnown = false;
+            int owner = -1;
+            std::string failure;
         };
         std::array<Slot, Session::kNumTracks> tracks;
         std::array<std::array<Slot, AuxLaneParams::kMaxLanePlugins>, Session::kNumAuxLanes> aux;
     };
     // Message thread only; consume the prepared snapshot before yielding to other edits.
-    // Preparation changes no Session fields or native sidecar files. error names
-    // every slot whose live capture failed, one per line; those fail the
-    // preparation unless keepLastKnownOnFailure, which saves their last-known
-    // state instead and leaves them unsaved in pluginStateBaseline().
+    // Preparation changes no Session fields or native sidecar files. A slot whose
+    // live capture fails keeps its last-known state, and error lists every such
+    // slot, one per line. keepFrom, an earlier failed preparation: the slots it
+    // could not capture keep what it fell back on, unread, and do not fail this
+    // one. False when a slot failed here; the preparation still comes back, so it
+    // can be offered to a later keepFrom. Kept slots stay unsaved in
+    // pluginStateBaseline().
     bool preparePluginStateForSave (PreparedPluginState&, std::string& error,
-                                    bool keepLastKnownOnFailure = false);
+                                    const PreparedPluginState* keepFrom = nullptr);
     bool publishPluginStateForSave (bool capturePluginState = false,
                                      const PreparedPluginState* prepared = nullptr,
                                      std::string* error = nullptr);

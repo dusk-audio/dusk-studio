@@ -101,6 +101,9 @@ public:
     void unload();
 
     bool isLoaded() const noexcept;
+    // Message thread. Whether the slot owns a plug-in, or the placeholder of
+    // one that could not be restored, reachable from the audio path or not.
+    bool holdsPlugin() const noexcept;
     juce::String getLoadedName() const;
     bool isLoadedStandardVst3() const noexcept
     {

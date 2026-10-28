@@ -174,11 +174,17 @@ private:
     // failed plug-in capture raises, or with false when that prompt goes away
     // unanswered.
     void saveSessionTo (const std::filesystem::path& sessionDir, std::function<void (bool saved)> onComplete = {});
-    // keepLastKnownPluginState: a slot whose live state cannot be captured
-    // saves its last-known state instead of stopping the Save, and stays
-    // unsaved. captureError names the slots that failed to capture.
-    bool writeSessionTo (const juce::File& sessionDir, bool keepLastKnownPluginState,
-                         std::string& captureError);
+    // keepFrom: the failed preparation whose listed slots keep their last-known
+    // state. attempt receives this Save's preparation. captureError names the
+    // slots that stopped the Save, and is empty when something else did.
+    bool writeSessionTo (const juce::File& sessionDir, const AudioEngine::PreparedPluginState* keepFrom,
+                         AudioEngine::PreparedPluginState& attempt, std::string& captureError);
+    struct SaveReply;
+    // The Save failed prompt for the slots a capture could not read; Save
+    // anyway saves with exactly those slots kept, and asks again if another fails.
+    void askToSaveAnyway (const std::filesystem::path& sessionDir,
+                          std::shared_ptr<AudioEngine::PreparedPluginState> failed,
+                          const std::string& captureError, std::shared_ptr<SaveReply> reply);
     // True, with a status line, while a render from any modal or a DP import is
     // unfinished.
     bool saveRefusedWhileBusy();
@@ -328,6 +334,12 @@ private:
     // save that puts a recovered autosave on disk. The session stays dirty and
     // keeps its recovery file until a save or load succeeds.
     bool saveIncomplete = false;
+    // False while a failed recovery save leaves the recovered work, which the
+    // saved baseline holds, on disk only as the autosave.
+    bool savedBaselineOnDisk = true;
+    // Moves with every session load, so a prompt raised for one session can
+    // tell that another has replaced it.
+    int sessionLoadSerial = 0;
     juce::String lastSavedSessionJson;
     juce::String lastWrittenAutosaveJson;
     std::string lastWrittenAutosaveComparisonJson;
