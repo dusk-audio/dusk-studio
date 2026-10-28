@@ -9,6 +9,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstring>
 #include <cstdlib>
 #include <functional>
 #include <fstream>
@@ -24,7 +25,7 @@ using namespace duskstudio;
 
 namespace
 {
-class LifecyclePluginInstance final : public juce::AudioPluginInstance
+class LifecyclePluginInstance : public juce::AudioPluginInstance
 {
 public:
     using juce::AudioPluginInstance::processBlock;
@@ -78,7 +79,182 @@ public:
     int processCalls = 0;
     int latencyOnPrepare = 0;
 };
+
+struct LifecycleGainParameter final : juce::HostedAudioProcessorParameter
+{
+    float getValue() const override { return value; }
+    float get() const { return value; }
+    void setValue (float v) override { value = v; }
+    float getDefaultValue() const override { return 0.25f; }
+    juce::String getName (int) const override { return "Gain"; }
+    juce::String getLabel() const override { return {}; }
+    juce::String getParameterID() const override { return "gain"; }
+    float getValueForText (const juce::String& text) const override { return text.getFloatValue(); }
+    float value = 0.25f;
+};
+
+class StatefulLifecyclePluginInstance final : public LifecyclePluginInstance
+{
+public:
+    StatefulLifecyclePluginInstance()
+    {
+        auto parameter = std::make_unique<LifecycleGainParameter>();
+        gain = parameter.get();
+        addHostedParameter (std::move (parameter));
+    }
+
+    int getNumPrograms() override { return 2; }
+    int getCurrentProgram() override { return program; }
+    void setCurrentProgram (int value) override
+    {
+        program = value;
+        updateHostDisplay (ChangeDetails {}.withProgramChanged (true));
+    }
+    void changeOpaqueState (std::int32_t value)
+    {
+        opaque = value;
+        updateHostDisplay (ChangeDetails {}.withNonParameterStateChanged (true));
+    }
+    void getStateInformation (juce::MemoryBlock& state) override
+    {
+        state.reset();
+        const float value = gain->get();
+        state.append (&value, sizeof (value));
+        state.append (&program, sizeof (program));
+        state.append (&opaque, sizeof (opaque));
+    }
+
+    LifecycleGainParameter* gain = nullptr;
+private:
+    std::int32_t program = 0;
+    std::int32_t opaque = 0;
+};
+
+float capturedGain (const juce::String& stateBase64)
+{
+    juce::MemoryBlock state;
+    REQUIRE (state.fromBase64Encoding (stateBase64));
+    REQUIRE (state.getSize() == sizeof (float) + 2 * sizeof (std::int32_t));
+    float value = 0.0f;
+    std::memcpy (&value, state.getData(), sizeof (value));
+    return value;
+}
 } // namespace
+
+TEST_CASE ("PluginSlot tracks content revisions independently of its loaded owner", "[plugin][state][lifecycle]")
+{
+    juce::ScopedJuceInitialiser_GUI juceInit;
+    PluginManager manager;
+    PluginSlot slot;
+    slot.setManager (manager);
+    slot.prepareToPlay (48000.0, 64);
+    CHECK (slot.stateRevision() == 0);
+    auto instance = std::make_unique<StatefulLifecyclePluginInstance>();
+    auto* stateful = instance.get();
+    REQUIRE (slot.installInProcessInstanceForTest (std::move (instance)));
+    const auto generation = slot.generation();
+    auto revision = slot.stateRevision();
+    stateful->gain->beginChangeGesture();
+    stateful->gain->endChangeGesture();
+    CHECK (slot.stateRevision() == revision);
+    stateful->gain->setValueNotifyingHost (0.75f);
+    CHECK (slot.stateRevision() > revision);
+    CHECK (slot.getLastTouchedParamIndex() == 0);
+    revision = slot.stateRevision();
+    stateful->setCurrentProgram (1);
+    CHECK (slot.stateRevision() > revision);
+    revision = slot.stateRevision();
+    stateful->changeOpaqueState (23);
+    CHECK (slot.stateRevision() > revision);
+    revision = slot.stateRevision();
+    stateful->setLatencySamples (64);
+    stateful->updateHostDisplay (juce::AudioProcessorListener::ChangeDetails {}.withParameterInfoChanged (true));
+    CHECK (slot.stateRevision() == revision);
+    CHECK (slot.refreshLatencyIfChanged());
+    CHECK (slot.getLatencySamples() == 64);
+    slot.setBypassed (true);
+    slot.setBypassed (false);
+    slot.releaseResources();
+    slot.prepareToPlay (48000.0, 128);
+    CHECK_THAT (capturedGain (slot.getStateBase64ForSave (0)), Catch::Matchers::WithinAbs (0.75f, 1.0e-6f));
+    CHECK (slot.stateRevision() == revision);
+    CHECK (slot.generation() == generation);
+    slot.unload();
+    REQUIRE (slot.generation() != generation);
+    REQUIRE (slot.installInProcessInstanceForTest (std::make_unique<StatefulLifecyclePluginInstance>()));
+    CHECK (slot.generation() != generation);
+    CHECK (slot.stateRevision() == revision);
+}
+
+TEST_CASE ("PluginSlot captures queued writes before its parameter timer runs", "[plugin][state][lifecycle]")
+{
+    juce::ScopedJuceInitialiser_GUI juceInit;
+    PluginManager manager;
+    PluginSlot slot;
+    slot.setManager (manager);
+    slot.prepareToPlay (48000.0, 64);
+    auto instance = std::make_unique<StatefulLifecyclePluginInstance>();
+    auto* stateful = instance.get();
+    REQUIRE (slot.installInProcessInstanceForTest (std::move (instance)));
+    const auto generation = slot.generation();
+    const auto beforeQueue = slot.stateRevision();
+    slot.setParamNormalised (0, 0.625f);
+    slot.setParamNormalised (0, 0.875f);
+    CHECK_THAT (stateful->gain->get(), Catch::Matchers::WithinAbs (0.25f, 1.0e-6f));
+    CHECK (slot.stateRevision() > beforeQueue);
+    bool replaced = false;
+    SECTION ("active owner") {}
+    SECTION ("released owner") { slot.releaseResources(); }
+    SECTION ("writes from the previous owner are discarded")
+    {
+        slot.unload();
+        REQUIRE (slot.installInProcessInstanceForTest (std::make_unique<StatefulLifecyclePluginInstance>()));
+        CHECK (slot.generation() != generation);
+        replaced = true;
+    }
+    const auto queuedRevision = slot.stateRevision();
+    std::string error;
+    const auto state = slot.getStateBase64ForSave (0, &error);
+    CHECK (error.empty());
+    CHECK_THAT (capturedGain (state), Catch::Matchers::WithinAbs (replaced ? 0.25f : 0.875f, 1.0e-6f));
+    if (replaced) CHECK (slot.stateRevision() == queuedRevision);
+    else CHECK (slot.stateRevision() > queuedRevision);
+}
+
+TEST_CASE ("PluginSlot refuses reentrant state capture during queued parameter notification", "[plugin][state][lifecycle]")
+{
+    juce::ScopedJuceInitialiser_GUI juceInit;
+    PluginManager manager;
+    PluginSlot slot;
+    slot.setManager (manager);
+    slot.prepareToPlay (48000.0, 64);
+    auto instance = std::make_unique<StatefulLifecyclePluginInstance>();
+    auto* stateful = instance.get();
+    REQUIRE (slot.installInProcessInstanceForTest (std::move (instance)));
+    struct Listener final : juce::AudioProcessorParameter::Listener
+    {
+        Listener (juce::AudioProcessorParameter& p, PluginSlot& s) : parameter (p), slot (s)
+            { parameter.addListener (this); }
+        ~Listener() override { parameter.removeListener (this); }
+        void parameterValueChanged (int, float) override
+        {
+            if (++calls == 1) (void) slot.getStateBase64ForSave (0, &error);
+        }
+        void parameterGestureChanged (int, bool) override {}
+        juce::AudioProcessorParameter& parameter;
+        PluginSlot& slot;
+        int calls = 0;
+        std::string error;
+    } listener (*stateful->gain, slot);
+    slot.setParamNormalised (0, 0.875f);
+    std::string error;
+    CHECK_THAT (capturedGain (slot.getStateBase64ForSave (0, &error)), Catch::Matchers::WithinAbs (0.875f, 1.0e-6f));
+    CHECK (error.empty());
+    CHECK (listener.calls == 1);
+    CHECK_FALSE (listener.error.empty());
+    CHECK_THAT (capturedGain (slot.getStateBase64ForSave (0)), Catch::Matchers::WithinAbs (0.875f, 1.0e-6f));
+    CHECK (listener.calls == 1);
+}
 
 TEST_CASE ("PluginSlot republishes an in-process instance after release and prepare")
 {

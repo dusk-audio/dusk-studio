@@ -194,7 +194,7 @@ PluginSlot::~PluginSlot()
     currentInstance.store (nullptr, std::memory_order_release);
     // Detach the listeners before the instance destructs so JUCE's listener
     // lists don't dangle on the released LastTouchedListener or on this
-    // slot's LatencyListener. Same detach-first ordering as unload() - closes
+    // slot's ProcessorListener. Same detach-first ordering as unload() - closes
     // the window where a plugin-UI-thread callback could race the destructor.
     detachInstanceListeners();
     if (ownedInstance != nullptr)
@@ -549,7 +549,7 @@ void PluginSlot::attachInstanceListeners()
     lastTouchedListener = std::make_unique<LastTouchedListener> (lastTouchedParamIndex);
     for (auto* p : ownedInstance->getParameters())
         if (p != nullptr) p->addListener (lastTouchedListener.get());
-    ownedInstance->addListener (&latencyListener);
+    ownedInstance->addListener (&processorListener);
 }
 
 void PluginSlot::detachInstanceListeners()
@@ -559,7 +559,7 @@ void PluginSlot::detachInstanceListeners()
         // Held so no block of this slot is inside the plug-in while JUCE edits
         // its listener lists: a plug-in can notify them from processBlock.
         const juce::SpinLock::ScopedLockType processGuard (processLock);
-        ownedInstance->removeListener (&latencyListener);
+        ownedInstance->removeListener (&processorListener);
         if (lastTouchedListener != nullptr)
             for (auto* p : ownedInstance->getParameters())
                 if (p != nullptr) p->removeListener (lastTouchedListener.get());
@@ -1340,6 +1340,19 @@ bool PluginSlot::isLoadedPluginInstrument() const
 juce::String PluginSlot::getStateBase64ForSave (int parkSleepMs, std::string* errorOut)
 {
     if (errorOut != nullptr) errorOut->clear();
+    // A parameter listener must not deactivate its own setter's plug-in stack.
+    if (capturingState || drainingParamWrites)
+    {
+        if (errorOut != nullptr) *errorOut = "plug-in state capture is already in progress";
+        return lastKnownStateBase64;
+    }
+    capturingState = true;
+    struct CaptureScope
+    {
+        bool& active;
+        ~CaptureScope() { active = false; }
+    } captureScope { capturingState };
+    drainPendingParamWrites (true);
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
     if (auto* r = currentRemote.load (std::memory_order_acquire))
     {
@@ -2060,25 +2073,38 @@ void PluginSlot::setParamNormalised (int paramIndex, float value01) noexcept
         currentLoadEpoch.load (std::memory_order_acquire)
     };
     paramFifo.finishedWrite (1);
+    inProcessStateRevision.fetch_add (1, std::memory_order_release);
+}
+
+void PluginSlot::drainPendingParamWrites (bool forCapture)
+{
+    if (drainingParamWrites || (capturingState && ! forCapture)) return;
+    // A parked owner may be preparing inside a nested message loop.
+    if (! forCapture && ownedInstance != nullptr
+        && currentInstance.load (std::memory_order_acquire) == nullptr)
+        return;
+    const int avail = paramFifo.getNumReady();
+    if (avail > 0)
+    {
+        drainingParamWrites = true;
+        struct DrainScope
+        {
+            bool& active;
+            ~DrainScope() { active = false; }
+        } drainScope { drainingParamWrites };
+        int s1 = 0, sz1 = 0, s2 = 0, sz2 = 0;
+        paramFifo.prepareToRead (avail, s1, sz1, s2, sz2);
+        for (int i = 0; i < sz1; ++i)
+            applyParamWriteOnMessageThread (paramQueue[(size_t) (s1 + i)], forCapture);
+        for (int i = 0; i < sz2; ++i)
+            applyParamWriteOnMessageThread (paramQueue[(size_t) (s2 + i)], forCapture);
+        paramFifo.finishedRead (sz1 + sz2);
+    }
 }
 
 void PluginSlot::timerCallback()
 {
-    // Message thread. Drain every pending ParamWrite into the live
-    // plugin instance. Bounded loop - caller (dusk::Timer) marshals us
-    // here so JUCE_ASSERT_MESSAGE_THREAD in applyParamWriteOnMessageThread
-    // is satisfied by construction.
-    const int avail = paramFifo.getNumReady();
-    if (avail > 0)
-    {
-        int s1 = 0, sz1 = 0, s2 = 0, sz2 = 0;
-        paramFifo.prepareToRead (avail, s1, sz1, s2, sz2);
-        for (int i = 0; i < sz1; ++i)
-            applyParamWriteOnMessageThread (paramQueue[(size_t) (s1 + i)]);
-        for (int i = 0; i < sz2; ++i)
-            applyParamWriteOnMessageThread (paramQueue[(size_t) (s2 + i)]);
-        paramFifo.finishedRead (sz1 + sz2);
-    }
+    drainPendingParamWrites (false);
 
     (void) refreshLatencyIfChanged();
 
@@ -2116,13 +2142,8 @@ void PluginSlot::timerCallback()
    #endif
 }
 
-void PluginSlot::applyParamWriteOnMessageThread (const ParamWrite& pw) noexcept
+void PluginSlot::applyParamWriteOnMessageThread (const ParamWrite& pw, bool forCapture) noexcept
 {
-    // This is the ONE place where a JUCE parameter setter is invoked.
-    // The assertion fires in any debug build (and therefore under
-    // DUSKSTUDIO_RUN_SELFTEST=1, which the test runner builds as Debug)
-    // if a future change ever routes the call from the audio thread -
-    // exactly the regression Phase 2 is meant to prevent.
     JUCE_ASSERT_MESSAGE_THREAD;
 
     // Discard writes queued against a prior plugin load. The audio
@@ -2136,7 +2157,9 @@ void PluginSlot::applyParamWriteOnMessageThread (const ParamWrite& pw) noexcept
 
     if (pw.paramIndex < 0) return;
 
-    if (auto* p = currentInstance.load (std::memory_order_acquire))
+    auto* p = currentInstance.load (std::memory_order_acquire);
+    if (p == nullptr && forCapture) p = ownedInstance.get();
+    if (p != nullptr)
     {
         const auto& params = p->getParameters();
         if (pw.paramIndex >= params.size()) return;

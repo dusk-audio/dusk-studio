@@ -212,6 +212,12 @@ public:
         return lastTouchedParamIndex.load (std::memory_order_relaxed);
     }
 
+    // Message thread; pair the content revision with the logical owner generation.
+    std::uint32_t generation() const noexcept
+        { return currentLoadEpoch.load (std::memory_order_acquire); }
+    std::uint64_t stateRevision() const noexcept
+        { return inProcessStateRevision.load (std::memory_order_acquire); }
+
     // Audio-thread entry. Lock-free push into the SPSC paramFifo; the
     // actual JUCE parameter setter runs on the message thread inside
     // timerCallback(). FIFO-full = silent drop (extremely rare; the
@@ -379,6 +385,9 @@ private:
 
     std::atomic<int> cachedLatencySamples { 0 };
     std::atomic<int> lastTouchedParamIndex { -1 };
+    std::atomic<std::uint64_t> inProcessStateRevision { 0 };
+    static_assert (std::atomic<std::uint64_t>::is_always_lock_free,
+                   "Plug-in state revisions must be lock-free");
 
     class LastTouchedListener final : public juce::AudioProcessorParameter::Listener
     {
@@ -395,28 +404,30 @@ private:
     };
     std::unique_ptr<LastTouchedListener> lastTouchedListener;
 
-    // A plug-in announces a latency change on the thread that makes it: the
-    // message thread for JUCE's VST3 host, the audio thread inside processBlock
-    // for its LV2 host. So the callback only raises a flag (release), and
-    // refreshLatencyIfChanged reads the value on the message thread (acquire).
-    // One listener for the slot's lifetime rather than one per instance, so a
-    // callback still in flight from an instance the slot has let go of lands
-    // on a live object; the worst it causes is one needless re-read.
-    class LatencyListener final : public juce::AudioProcessorListener
+    // Plug-ins announce changes from render and editor threads. Callbacks only
+    // publish atomics; latency is read later on the message thread.
+    class ProcessorListener final : public juce::AudioProcessorListener
     {
     public:
-        explicit LatencyListener (std::atomic<bool>& flag) noexcept : changed (flag) {}
+        ProcessorListener (std::atomic<bool>& flag, std::atomic<std::uint64_t>& revision) noexcept
+            : changed (flag), stateRevision (revision) {}
         void audioProcessorChanged (juce::AudioProcessor*, const ChangeDetails& details) override
         {
             if (details.latencyChanged)
                 changed.store (true, std::memory_order_release);
+            if (details.programChanged || details.nonParameterStateChanged)
+                stateRevision.fetch_add (1, std::memory_order_release);
         }
-        void audioProcessorParameterChanged (juce::AudioProcessor*, int, float) override {}
+        void audioProcessorParameterChanged (juce::AudioProcessor*, int, float) override
+        {
+            stateRevision.fetch_add (1, std::memory_order_release);
+        }
     private:
         std::atomic<bool>& changed;
+        std::atomic<std::uint64_t>& stateRevision;
     };
     std::atomic<bool> latencyChangePending { false };
-    LatencyListener latencyListener { latencyChangePending };
+    ProcessorListener processorListener { latencyChangePending, inProcessStateRevision };
 
     // Message thread. Every in-process instance the slot publishes carries
     // both listeners, and loses them before it leaves ownedInstance.
@@ -589,15 +600,16 @@ private:
     // ordering on the audio-thread read pairs with the release fetch_add
     // performed by the message-thread mutators.
     std::atomic<std::uint32_t> currentLoadEpoch { 0 };
+    bool drainingParamWrites = false;
+    bool capturingState = false;
+
+    void drainPendingParamWrites (bool forCapture);
 
     // Drains paramFifo on the message thread. Called by dusk::Timer at
     // 30 Hz; cheap when empty (one atomic load + branch).
     void timerCallback() override;
 
-    // Message-thread-only. Applies one queued ParamWrite to the live
-    // plugin instance. JUCE_ASSERT_MESSAGE_THREAD enforces the contract
-    // so any future caller that tries to invoke this from the audio
-    // thread trips in debug + selftest builds.
-    void applyParamWriteOnMessageThread (const ParamWrite& pw) noexcept;
+    // A capture may apply same-owner writes after releaseResources parked it.
+    void applyParamWriteOnMessageThread (const ParamWrite& pw, bool forCapture) noexcept;
 };
 } // namespace duskstudio
