@@ -10,11 +10,10 @@
 
 namespace duskstudio
 {
-// Strict, full-string float parse - reject "123abc" / junk rather than taking a
+// Strict, full-string number parse - reject "123abc" / junk rather than taking a
 // numeric prefix the way JUCE's String::getDoubleValue() does. Locale-INDEPENDENT:
 // the classic locale forces '.' as the decimal point, so "127.6" parses the same
-// on comma-decimal systems (fr_FR/de_DE) as on en_*. Shared by every tempo-entry
-// field (TransportBar, TapeStrip) so the validation lives in one place.
+// on comma-decimal systems (fr_FR/de_DE) as on en_*.
 // Not noexcept: the string + stream allocations can throw std::bad_alloc.
 // operator>> itself doesn't throw - it sets failbit, which the check below
 // handles - so parse failure stays exception-free.
@@ -27,6 +26,19 @@ inline bool parseFullFloat (std::string_view s, float& out)
     float v {};
     ss >> v;
     if (ss.fail() || ! ss.eof() || ! std::isfinite (v)) return false;   // junk / partial / inf / nan
+    out = v;
+    return true;
+}
+
+inline bool parseFullDouble (std::string_view s, double& out)
+{
+    const auto t = dusk::text::trim (s);
+    if (t.empty()) return false;
+    std::istringstream ss (t);
+    ss.imbue (std::locale::classic());
+    double v {};
+    ss >> v;
+    if (ss.fail() || ! ss.eof() || ! std::isfinite (v)) return false;
     out = v;
     return true;
 }

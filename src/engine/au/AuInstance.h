@@ -45,6 +45,11 @@ public:
     void processBlock (const hosting::PortBuffers& io) noexcept override;
     bool saveState (std::vector<std::uint8_t>& out) const override;
     bool loadState (const std::vector<std::uint8_t>& in) override;
+    std::uint64_t stateRevision() const noexcept override
+        { return revision.load (std::memory_order_acquire); }
+    // Writes apply at once; this re-reads the cached values, so late echoes of
+    // what the following capture saves are not counted as edits.
+    bool flushPendingWrites() override;
     int getLatencySamples() const noexcept override
         { return latencySamples.load (std::memory_order_relaxed); }
 
@@ -66,6 +71,7 @@ private:
     bool configureStream (AudioUnitScope scope, UInt32 element, UInt32 channels,
                           double sampleRate, std::string& errorOut);
     void enumerateParameters();
+    void rememberParameterValues();
     void installListeners();
     void removeListeners() noexcept;
     void refreshLatency() noexcept;
@@ -87,11 +93,18 @@ private:
     AuHost host;
     std::vector<ParamInfo> parameters;
     std::vector<AudioUnitParameter> observedParameters;
+    // Main run loop only. Listener notifications arrive late and coalesced, so
+    // an echo of a value the host already holds is not an edit. A preset or
+    // state change can move values without notifying, so it marks the cache
+    // stale until it is re-read; meanwhile every notification counts.
+    std::vector<AudioUnitParameterValue> knownValues;
+    std::atomic<bool> knownValuesStale { false };
     AUParameterListenerRef parameterListener = nullptr;
     std::atomic<int> lastTouched { -1 };
     std::atomic<bool> latencyDirty { false };
     std::atomic<int> latencySamples { 0 };
     std::atomic<bool> active { false };
+    std::atomic<std::uint64_t> revision { 0 };
 
     const hosting::PortBuffers* currentIo = nullptr;
     UInt32 mainInputElement = 0;

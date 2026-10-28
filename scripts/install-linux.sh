@@ -75,6 +75,15 @@ fi
 
 [ -x "$SRC/DuskStudio" ] || { echo "error: $SRC/DuskStudio not found - run install.sh from the extracted tarball" >&2; exit 1; }
 
+# The desktop entry launches through env for a path holding '%' and directly
+# for one holding '=' (see the Exec rewrite below); neither form starts a path
+# holding both.
+case "$OPT" in
+    *=*%*|*%*=*)
+        echo "error: the install path '$OPT' holds both '=' and '%', which no desktop launcher can start; install with --system or from a HOME without one of them" >&2
+        exit 1 ;;
+esac
+
 # Program dir.
 rm -rf "$OPT"
 mkdir -p "$OPT"
@@ -93,10 +102,32 @@ ln -sf "$BIN" "$BINDIR/DuskStudio"
 SRC_DESKTOP="$OPT/share/applications/audio.dusk.studio.desktop"
 [ -f "$SRC_DESKTOP" ] || { echo "error: $SRC_DESKTOP missing - tarball is incomplete" >&2; exit 1; }
 mkdir -p "$(dirname "$DESKTOP")" "$(dirname "$ICON")" "$(dirname "$MIME")" "$(dirname "$META")"
-# awk with a print-built line, not sed/awk-sub: the install path is data, and a
-# replacement context would treat '&' / '\' in it specially (e.g. an odd $HOME).
-# Pass $BIN via the environment (ENVIRON), not -v, which would escape-process it.
-BIN="$BIN" awk '/^Exec=/ { print "Exec=" ENVIRON["BIN"] " %f"; next } { print }' \
+# Desktop values are unescaped before Exec quoting; literal backslashes need
+# four escapes, and field-code percent signs need doubling. env keeps desktop
+# parsers from checking the executable path before expanding literal percents,
+# but GNU env takes any operand holding '=' for an assignment, so such a path
+# is launched directly.
+BIN="$BIN" awk '
+    /^Exec=/ {
+        bin = ENVIRON["BIN"]
+        escaped = ""
+        slash = sprintf("%c", 92)
+        for (i = 1; i <= length(bin); ++i) {
+            c = substr(bin, i, 1)
+            if (c == slash) c = slash slash slash slash
+            else if (c == "\"" || c == "`" || c == "$") c = slash slash c
+            else if (c == "%") c = "%%"
+            else if (c == "\n") c = slash "n"
+            else if (c == "\t") c = slash "t"
+            else if (c == "\r") c = slash "r"
+            escaped = escaped c
+        }
+        if (index(bin, "=")) print "Exec=\"" escaped "\" %f"
+        else print "Exec=env \"" escaped "\" %f"
+        next
+    }
+    { print }
+' \
     "$SRC_DESKTOP" > "$DESKTOP"
 cp "$OPT/share/icons/hicolor/256x256/apps/DuskStudio.png" "$ICON"
 cp "$OPT/share/mime/packages/DuskStudio.mime.xml" "$MIME"

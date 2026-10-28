@@ -1,6 +1,7 @@
 #include "PluginSlot.h"
 #include "AtomicPark.h"
 #include "PluginManager.h"
+#include "LegacyStateBase64.h"
 #include "../foundation/ScopedNoDenormals.h"
 #include <algorithm>
 #include <cmath>
@@ -87,6 +88,19 @@ void normalizeVst3Location (PluginDescriptor& descriptor)
         }
         if (walk.getParentDirectory() == walk) break;  // hit fs root
     }
+}
+
+// The audio thread is held off and the plug-in is active. JUCE's VST3 and LV2
+// hosts keep a host parameter change until their next process call writes it
+// into the plug-in; an empty block, which both formats define for exactly this,
+// delivers it without advancing anything.
+void deliverQueuedParameterChanges (juce::AudioPluginInstance& instance)
+{
+    const int channels = std::max (instance.getTotalNumInputChannels(),
+                                   instance.getTotalNumOutputChannels());
+    juce::AudioBuffer<float> empty (channels, 0);
+    juce::MidiBuffer noMidi;
+    instance.processBlock (empty, noMidi);
 }
 
 PluginDescriptor refreshFromInstance (PluginManager& manager,
@@ -193,7 +207,7 @@ PluginSlot::~PluginSlot()
     currentInstance.store (nullptr, std::memory_order_release);
     // Detach the listeners before the instance destructs so JUCE's listener
     // lists don't dangle on the released LastTouchedListener or on this
-    // slot's LatencyListener. Same detach-first ordering as unload() - closes
+    // slot's ProcessorListener. Same detach-first ordering as unload() - closes
     // the window where a plugin-UI-thread callback could race the destructor.
     detachInstanceListeners();
     if (ownedInstance != nullptr)
@@ -270,6 +284,7 @@ void PluginSlot::publishRemoteConnection (
     int numIn, int numOut, int latency, bool isInstrument)
 {
     ownedRemote = std::move (connection);
+    remoteReleased = false;
     {
         // Same drain-then-reset-and-publish as loadFromFile.
         const juce::SpinLock::ScopedLockType processGuard (processLock);
@@ -281,6 +296,7 @@ void PluginSlot::publishRemoteConnection (
         consecutiveOverruns = 0;
         autoBypassed .store (false, std::memory_order_relaxed);
         remoteCrashed.store (false, std::memory_order_relaxed);
+        historyResetPending.store (true, std::memory_order_release);
         currentRemote.store (ownedRemote.get(), std::memory_order_release);
     }
     reaperTimer.startTimer (kReaperPeriodMs);
@@ -292,7 +308,9 @@ void PluginSlot::publishRemoteConnection (
     offlineLegacyDescriptionXml.clear();
     offlineStateBase64.clear();
     offlineCapturePlaceholder = false;
+    // A fresh plug-in holds its default state, which no change since covers yet.
     lastKnownStateBase64.clear();
+    lastKnownStateRevision = stateRevision();
 }
 
 void PluginSlot::reapFinishedRemoteLoads() noexcept
@@ -471,6 +489,7 @@ void PluginSlot::retireRemoteConnection()
         previousRemotes[1] = std::move (previousRemotes[0]);
         previousRemotes[0] = std::move (ownedRemote);
     }
+    remoteReleased = false;
     // The ring only defers the destructor; the child must not wait for that,
     // or an unloaded slot keeps a host process alive until two more sandboxed
     // loads push it out. The connection that has just left the audio path is
@@ -480,7 +499,11 @@ void PluginSlot::retireRemoteConnection()
     // the eventual destructor is a no-op. Both calls are outside processLock -
     // a child teardown must never hold the audio path off.
     if (previousRemotes[0] != nullptr)
+    {
         previousRemotes[0]->disconnect();
+        retiredRemoteStateRevision += previousRemotes[0]->stateRevision();
+    }
+    remoteParamWriteLost.store (false, std::memory_order_relaxed);
     retired.reset();
 }
 #endif
@@ -547,7 +570,11 @@ void PluginSlot::attachInstanceListeners()
     lastTouchedListener = std::make_unique<LastTouchedListener> (lastTouchedParamIndex);
     for (auto* p : ownedInstance->getParameters())
         if (p != nullptr) p->addListener (lastTouchedListener.get());
-    ownedInstance->addListener (&latencyListener);
+    processorListener.restartsAreProgramChanges.store (
+        juce_compat::reportsRestartsAsProgramChanges (
+            ownedInstance->getPluginDescription().pluginFormatName.toStdString()),
+        std::memory_order_relaxed);
+    ownedInstance->addListener (&processorListener);
 }
 
 void PluginSlot::detachInstanceListeners()
@@ -557,7 +584,7 @@ void PluginSlot::detachInstanceListeners()
         // Held so no block of this slot is inside the plug-in while JUCE edits
         // its listener lists: a plug-in can notify them from processBlock.
         const juce::SpinLock::ScopedLockType processGuard (processLock);
-        ownedInstance->removeListener (&latencyListener);
+        ownedInstance->removeListener (&processorListener);
         if (lastTouchedListener != nullptr)
             for (auto* p : ownedInstance->getParameters())
                 if (p != nullptr) p->removeListener (lastTouchedListener.get());
@@ -687,17 +714,21 @@ void PluginSlot::prepareToPlay (double sampleRate, int blockSize)
         // INTERNAL buffers at the old size while it's fed the new one (overrun /
         // crash in a multi-bus instrument). releaseResources() clears isActive
         // so the re-prepare always takes. This is the conventional host cycle.
-        ownedInstance->releaseResources();
-        ownedInstance->setPlayConfigDetails (
-            ownedInstance->getTotalNumInputChannels(),
-            ownedInstance->getTotalNumOutputChannels(),
-            sampleRate, preparedBlockSize);
-        ownedInstance->prepareToPlay (sampleRate, preparedBlockSize);
+        {
+            const OwnActivationScope ownActivation (processorListener);
+            ownedInstance->releaseResources();
+            ownedInstance->setPlayConfigDetails (
+                ownedInstance->getTotalNumInputChannels(),
+                ownedInstance->getTotalNumOutputChannels(),
+                sampleRate, preparedBlockSize);
+            ownedInstance->prepareToPlay (sampleRate, preparedBlockSize);
+        }
         cachedLatencySamples.store (ownedInstance->getLatencySamples(),
                                       std::memory_order_relaxed);
         // Re-publish the live instance last: releaseResources() nulls
         // currentInstance while keeping ownedInstance, so without this a
         // release / re-prepare cycle leaves the slot silent until a reload.
+        historyResetPending.store (true, std::memory_order_release);
         currentInstance.store (ownedInstance.get(), std::memory_order_release);
         return;
     }
@@ -731,6 +762,7 @@ void PluginSlot::prepareToPlay (double sampleRate, int blockSize)
         // Re-publish the live remote: a prior oversized-block prepare or
         // releaseResources() may have nulled currentRemote, and the success
         // path must restore it or the slot stays silent until a reload.
+        historyResetPending.store (true, std::memory_order_release);
         currentRemote.store (ownedRemote.get(), std::memory_order_release);
         // Latency stays whatever loadPlugin reported; OOP doesn't currently
         // re-query it on prepareToPlay (the child reapplies the existing
@@ -751,7 +783,10 @@ void PluginSlot::releaseResources()
         currentInstance.store (nullptr, std::memory_order_release);
         if (ownedInstance != nullptr)
         {
-            ownedInstance->releaseResources();
+            {
+                const OwnActivationScope ownActivation (processorListener);
+                ownedInstance->releaseResources();
+            }
             juce::MemoryBlock state;
             ownedInstance->getStateInformation (state);
             lastKnownStateBase64 = state.toBase64Encoding();
@@ -772,14 +807,25 @@ void PluginSlot::releaseResources()
     {
         std::string err;
         std::vector<std::uint8_t> state;
-        if (ownedRemote->getState (state, err))
-            lastKnownStateBase64 = state.empty()
-                ? juce::String()
-                : juce::MemoryBlock (state.data(), state.size()).toBase64Encoding();
+        // A write still queued here is counted but never reaches the child, so
+        // the cached state can only vouch for the revision when none is.
+        const bool writesPending = paramFifo.getNumReady() > 0;
+        const auto parentRevision = inProcessStateRevision.load (std::memory_order_acquire)
+                                  + retiredRemoteStateRevision;
+        std::uint64_t childRevision = 0;
+        if (ownedRemote->getState (state, err, &childRevision))
+        {
+            lastKnownStateBase64.clear();
+            if (! state.empty())
+                lastKnownStateBase64 = juce::MemoryBlock (state.data(), state.size()).toBase64Encoding();
+            if (! writesPending)
+                lastKnownStateRevision = parentRevision + childRevision;
+        }
         // release() asks the child to drop its plugin instance but keeps
         // the SHM + child process alive, so a subsequent load doesn't
         // pay the fork+exec cost again.
         (void) ownedRemote->release (err);
+        remoteReleased = true;
     }
    #endif
 }
@@ -798,6 +844,15 @@ juce::String PluginSlot::getLoadedName() const
     if (loadedDescriptor.has_value())
         return loadedDescriptor->name;
     return {};
+}
+
+bool PluginSlot::holdsPlugin() const noexcept
+{
+    if (isLoaded() || ownedInstance != nullptr || loadedDescriptor.has_value() || isOffline()) return true;
+   #if DUSKSTUDIO_HAS_OOP_PLUGINS
+    if (ownedRemote != nullptr) return true;
+   #endif
+    return false;
 }
 
 bool PluginSlot::isOffline() const noexcept
@@ -956,6 +1011,7 @@ bool PluginSlot::loadFromFile (const juce::File& pluginFile, juce::String& error
         attachInstanceListeners();
         cachedLatencySamples.store (ownedInstance->getLatencySamples(),
                                       std::memory_order_relaxed);
+        historyResetPending.store (true, std::memory_order_release);
         currentInstance.store (ownedInstance.get(), std::memory_order_release);
     }
     loadedDescriptor = std::move (descriptor);
@@ -964,6 +1020,7 @@ bool PluginSlot::loadFromFile (const juce::File& pluginFile, juce::String& error
     offlineStateBase64.clear();
     offlineCapturePlaceholder = false;
     lastKnownStateBase64.clear();
+    lastKnownStateRevision = stateRevision();
     return true;
 }
 
@@ -1135,6 +1192,7 @@ bool PluginSlot::installInProcessInstance (PluginInstancePtr fresh,
         attachInstanceListeners();
         cachedLatencySamples.store (ownedInstance->getLatencySamples(),
                                       std::memory_order_relaxed);
+        historyResetPending.store (true, std::memory_order_release);
         currentInstance.store (ownedInstance.get(), std::memory_order_release);
     }
     loadedDescriptor = std::move (descriptor);
@@ -1143,6 +1201,7 @@ bool PluginSlot::installInProcessInstance (PluginInstancePtr fresh,
     offlineStateBase64.clear();
     offlineCapturePlaceholder = false;
     lastKnownStateBase64.clear();
+    lastKnownStateRevision = stateRevision();
     return true;
 }
 
@@ -1245,8 +1304,8 @@ void PluginSlot::beginInProcessLoad (PluginDescriptor descriptor,
         }
         if (inst == nullptr)
         {
-            if (onDone) onDone (false, err.isNotEmpty() ? err
-                                                        : juce::String ("plugin creation failed"));
+            if (err.isEmpty()) err = "plugin creation failed";
+            if (onDone) onDone (false, err);
             return;
         }
         const bool ok = installInProcessInstance (std::move (inst), descriptor);
@@ -1331,18 +1390,66 @@ bool PluginSlot::isLoadedPluginInstrument() const
     return loadedDescriptor.has_value() && loadedDescriptor->isInstrument;
 }
 
-juce::String PluginSlot::getStateBase64ForSave (int parkSleepMs)
+std::uint64_t PluginSlot::stateRevision() const noexcept
 {
+    auto revision = inProcessStateRevision.load (std::memory_order_acquire);
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
-    if (auto* r = currentRemote.load (std::memory_order_acquire))
+    revision += retiredRemoteStateRevision;
+    if (ownedRemote != nullptr)
+        revision += ownedRemote->stateRevision();
+   #endif
+    return revision;
+}
+
+juce::String PluginSlot::getStateBase64ForSave (int parkSleepMs, std::string* errorOut,
+                                                std::uint64_t* capturedRevisionOut)
+{
+    if (errorOut != nullptr) errorOut->clear();
+    const auto reportRevision = [capturedRevisionOut] (std::uint64_t revision)
     {
+        if (capturedRevisionOut != nullptr) *capturedRevisionOut = revision;
+    };
+    // A parameter listener must not deactivate its own setter's plug-in stack.
+    if (capturingState || drainingParamWrites)
+    {
+        if (errorOut != nullptr) *errorOut = "plug-in state capture is already in progress";
+        return lastKnownStateBase64;
+    }
+    capturingState = true;
+    struct CaptureScope
+    {
+        bool& active;
+        ~CaptureScope() { active = false; }
+    } captureScope { capturingState };
+    drainPendingParamWrites (true);
+   #if DUSKSTUDIO_HAS_OOP_PLUGINS
+    // A child cut off from the audio path by the block size or a failed
+    // prepare is alive and, with no blocks coming, idle: read it the same way.
+    auto* r = currentRemote.load (std::memory_order_acquire);
+    if (r == nullptr && liveCutOffRemote())
+        r = ownedRemote.get();
+    if (r != nullptr)
+    {
+        // Only a caller that reports errors may clear it; a silent snapshot
+        // leaves it for the next save.
+        if (errorOut != nullptr && remoteParamWriteLost.exchange (false, std::memory_order_relaxed))
+        {
+            *errorOut = "a parameter change could not be sent to the sandboxed plug-in";
+            return lastKnownStateBase64;
+        }
         // OOP path: the child parks its own audio worker and reads the
-        // state under MessageManagerLock, so no parent-side park is
-        // needed; the parent just blocks on the control-plane reply.
+        // state on its message thread, behind every write the drain above
+        // sent, so no parent-side park is needed; the parent just blocks on
+        // the control-plane reply.
+        const auto parentRevision = inProcessStateRevision.load (std::memory_order_acquire)
+                                  + retiredRemoteStateRevision;
         std::vector<std::uint8_t> blob;
         std::string err;
-        if (! r->getState (blob, err))
+        std::uint64_t childRevision = 0;
+        if (! r->getState (blob, err, &childRevision))
         {
+            if (errorOut != nullptr)
+                *errorOut = err.empty() ? "plug-in state capture failed" : err;
             std::fprintf (stderr,
                           "[Dusk Studio/PluginSlot] OOP getState failed: %s\n",
                           err.c_str());
@@ -1356,15 +1463,22 @@ juce::String PluginSlot::getStateBase64ForSave (int parkSleepMs)
             blocksSinceLoad     = 0;
             consecutiveOverruns = 0;
         }
-        lastKnownStateBase64 = blob.empty()
-            ? juce::String()
-            : juce::MemoryBlock (blob.data(), blob.size()).toBase64Encoding();
+        lastKnownStateBase64.clear();
+        if (! blob.empty())
+            lastKnownStateBase64 = juce::MemoryBlock (blob.data(), blob.size()).toBase64Encoding();
+        lastKnownStateRevision = parentRevision + childRevision;
+        reportRevision (lastKnownStateRevision);
         return lastKnownStateBase64;
     }
     (void) parkSleepMs;
 
-    if (ownedRemote != nullptr && loadedDescriptor.has_value())
+    // A crashed child, kept or dropped by Re-enable, can only return what was
+    // last read from it, and vouches for no change since.
+    if (loadedDescriptor.has_value() && ownedInstance == nullptr)
+    {
+        reportRevision (lastKnownStateRevision);
         return lastKnownStateBase64;
+    }
    #endif
 
     // Slot is empty but holds an offline placeholder. Round-trip the
@@ -1372,18 +1486,30 @@ juce::String PluginSlot::getStateBase64ForSave (int parkSleepMs)
     // data on disk.
     if (currentInstance.load (std::memory_order_acquire) == nullptr
         && offlineStateBase64.isNotEmpty())
+    {
+        reportRevision (stateRevision());
         return offlineStateBase64;
+    }
 
     if (currentInstance.load (std::memory_order_acquire) == nullptr
         && ownedInstance != nullptr && loadedDescriptor.has_value())
     {
+        // Inactive, so a value a deferring host still holds for the next
+        // process call cannot be delivered here; such a state keeps the older
+        // mark rather than vouch for a change it may lack.
+        const auto revision = stateRevision();
         juce::MemoryBlock inactiveState;
         ownedInstance->getStateInformation (inactiveState);
         lastKnownStateBase64 = inactiveState.toBase64Encoding();
+        if (! juce_compat::defersParameterChangesToProcess (loadedDescriptor->formatName))
+            lastKnownStateRevision = revision;
+        reportRevision (lastKnownStateRevision);
         return lastKnownStateBase64;
     }
 
     juce::MemoryBlock mb;
+    std::uint64_t revision = 0;
+    bool vouchesForRevision = false;
     // Atomic-park alone is NOT sufficient for state capture: it tells the
     // AUDIO thread to skip the plugin, but doesn't tell the PLUGIN that
     // it's now inactive. Plugins like u-he Diva keep their own
@@ -1402,6 +1528,22 @@ juce::String PluginSlot::getStateBase64ForSave (int parkSleepMs)
     auto* p = withParkedAtomicPointer (currentInstance,
         [&] (juce::AudioPluginInstance& inst)
         {
+            // The park only stops new blocks; one that loaded the pointer just
+            // before it may still be inside the plug-in, and holds this lock
+            // until it leaves.
+            const juce::SpinLock::ScopedLockType processGuard (processLock);
+            const bool defers = loadedDescriptor.has_value()
+                && juce_compat::defersParameterChangesToProcess (loadedDescriptor->formatName);
+            // An unprepared plug-in is inactive and takes no block.
+            const bool delivers = defers && preparedSampleRate > 0.0;
+            if (delivers)
+            {
+                const OwnBlockScope ownBlock;
+                deliverQueuedParameterChanges (inst);
+            }
+            vouchesForRevision = ! defers || delivers;
+            revision = stateRevision();
+            const OwnActivationScope ownActivation (processorListener);
             inst.releaseResources();
             inst.getStateInformation (mb);
             if (preparedSampleRate > 0.0)
@@ -1411,12 +1553,12 @@ juce::String PluginSlot::getStateBase64ForSave (int parkSleepMs)
                     inst.getTotalNumOutputChannels(),
                     preparedSampleRate, preparedBlockSize);
                 inst.prepareToPlay (preparedSampleRate, preparedBlockSize);
+                historyResetPending.store (true, std::memory_order_release);
 
                 // The plug-in starts cold again and may report a new latency,
                 // so the watchdog gets its warm-up grace back and the latency
                 // is re-read, as after any other prepare. An auto-bypassed
                 // slot still reports none until it is re-enabled.
-                const juce::SpinLock::ScopedLockType processGuard (processLock);
                 blocksSinceLoad     = 0;
                 consecutiveOverruns = 0;
                 cachedLatencySamples.store (inst.getLatencySamples(),
@@ -1424,8 +1566,15 @@ juce::String PluginSlot::getStateBase64ForSave (int parkSleepMs)
             }
         },
         parkSleepMs);
-    if (p == nullptr) return lastKnownStateBase64;
+    if (p == nullptr)
+    {
+        reportRevision (stateRevision());
+        return lastKnownStateBase64;
+    }
     lastKnownStateBase64 = mb.toBase64Encoding();
+    if (vouchesForRevision)
+        lastKnownStateRevision = revision;
+    reportRevision (lastKnownStateRevision);
     return lastKnownStateBase64;
 }
 
@@ -1472,11 +1621,25 @@ bool PluginSlot::restoreFromSavedState (
 
     PluginDescriptor descriptorToLoad = persistedDescriptor;
     normalizeVst3Location (descriptorToLoad);
-    offlineDescriptor = persistedDescriptor;
-    offlineLegacyDescriptionXml.clear();
-    offlineStateBase64 = stateBase64;
-    offlineCapturePlaceholder = false;
-    lastKnownStateBase64 = stateBase64;
+    const auto preserveSavedState = [&]
+    {
+        offlineDescriptor = persistedDescriptor;
+        offlineLegacyDescriptionXml.clear();
+        offlineStateBase64 = stateBase64;
+        offlineCapturePlaceholder = false;
+        lastKnownStateBase64 = stateBase64;
+    };
+    const auto rejectState = [&] (const char* reason)
+    {
+        unload();
+        preserveSavedState();
+        errorMessage = reason;
+        return false;
+    };
+    preserveSavedState();
+    const auto decodedState = decodeStoredStateBase64 (stateBase64.toStdString());
+    if (decodedState.unreadable)
+        return rejectState ("Saved plugin state is not valid base64");
 
     // Try the OOP path first if enabled. On any failure we fall through
     // to the in-process load below - the user's session restore should
@@ -1489,27 +1652,39 @@ bool PluginSlot::restoreFromSavedState (
     {
         if (loadFromDescriptor (descriptorToLoad, errorMessage))
         {
-            if (auto* r = currentRemote.load (std::memory_order_acquire);
-                r != nullptr && stateBase64.isNotEmpty())
+            if (! decodedState.bytes.empty())
             {
-                juce::MemoryBlock mb;
-                if (mb.fromBase64Encoding (stateBase64) && mb.getSize() > 0)
+                if (auto* r = currentRemote.load (std::memory_order_acquire))
                 {
                     std::string err;
-                    if (! r->setState (static_cast<const std::uint8_t*> (mb.getData()),
-                                         mb.getSize(), err))
-                    {
-                        std::fprintf (stderr,
-                                      "[Dusk Studio/PluginSlot] OOP setState failed: %s\n",
-                                      err.c_str());
-                    }
+                    if (! r->setState (decodedState.bytes.data(), decodedState.bytes.size(), err))
+                        return rejectState (err.c_str());
                 }
+                else if (ownedInstance != nullptr)
+                {
+                    const juce::SpinLock::ScopedLockType processGuard (processLock);
+                    currentInstance.store (nullptr, std::memory_order_release);
+                    ownedInstance->releaseResources();
+                    ownedInstance->setStateInformation (decodedState.bytes.data(),
+                                                        (int) decodedState.bytes.size());
+                    if (preparedSampleRate > 0.0)
+                        ownedInstance->prepareToPlay (preparedSampleRate, preparedBlockSize);
+                    blocksSinceLoad = 0;
+                    consecutiveOverruns = 0;
+                    cachedLatencySamples.store (ownedInstance->getLatencySamples(),
+                                                 std::memory_order_relaxed);
+                    historyResetPending.store (true, std::memory_order_release);
+                    currentInstance.store (ownedInstance.get(), std::memory_order_release);
+                }
+                else
+                    return rejectState ("Plugin load completed without an instance");
             }
             offlineDescriptor.reset();
             offlineLegacyDescriptionXml.clear();
             offlineStateBase64.clear();
             offlineCapturePlaceholder = false;
             lastKnownStateBase64 = stateBase64;
+            lastKnownStateRevision = stateRevision();
             return true;
         }
     }
@@ -1537,18 +1712,12 @@ bool PluginSlot::restoreFromSavedState (
     fresh->setPlayConfigDetails (fresh->getTotalNumInputChannels(),
                                   fresh->getTotalNumOutputChannels(),
                                   preparedSampleRate, preparedBlockSize);
+    if (! decodedState.bytes.empty())
+        fresh->setStateInformation (decodedState.bytes.data(), (int) decodedState.bytes.size());
     if (preparedSampleRate > 0.0)
         fresh->prepareToPlay (preparedSampleRate, preparedBlockSize);
     auto loaded = refreshFromInstance (*manager, *fresh, descriptorToLoad);
     logLoadedPlugin (*fresh, loaded);
-
-    // Apply the saved state blob (if any).
-    if (stateBase64.isNotEmpty())
-    {
-        juce::MemoryBlock mb;
-        if (mb.fromBase64Encoding (stateBase64) && mb.getSize() > 0)
-            fresh->setStateInformation (mb.getData(), (int) mb.getSize());
-    }
 
     ownedInstance = std::move (fresh);
     {
@@ -1571,6 +1740,7 @@ bool PluginSlot::restoreFromSavedState (
         attachInstanceListeners();
         cachedLatencySamples.store (ownedInstance->getLatencySamples(),
                                       std::memory_order_relaxed);
+        historyResetPending.store (true, std::memory_order_release);
         currentInstance.store (ownedInstance.get(), std::memory_order_release);
     }
     loadedDescriptor = std::move (loaded);
@@ -1579,23 +1749,26 @@ bool PluginSlot::restoreFromSavedState (
     offlineStateBase64.clear();
     offlineCapturePlaceholder = false;
     lastKnownStateBase64 = stateBase64;
+    lastKnownStateRevision = stateRevision();
     return true;
 }
 
-void PluginSlot::processMonoBlock (float* monoData, int numSamples,
-                                   juce::MidiBuffer& midiMessages) noexcept
+std::optional<dusk::ProcessedBlock> PluginSlot::processMonoBlock (float* monoData, int numSamples,
+                                   juce::MidiBuffer& midiMessages,
+                                   const dusk::TransportPosition* transport) noexcept
 {
     dusk::audio::ScopedNoDenormals noDenormals;
-    if (numSamples == 0) return;
+    if (numSamples == 0) return std::nullopt;
 
     if (bypassed.load (std::memory_order_relaxed)
         || autoBypassed.load (std::memory_order_relaxed))
-        return;
+        return std::nullopt;
 
     // Dry-pass if prepareToPlay / releaseResources holds the lock (see header).
     const juce::SpinLock::ScopedTryLockType processGuard (processLock);
     if (! processGuard.isLocked())
-        return;
+        return std::nullopt;
+    const int blockLatency = cachedLatencySamples.load (std::memory_order_relaxed);
 
     // Time-budget watchdog. A plugin that consistently overruns the buffer
     // gets auto-bypassed so it can't freeze the audio thread. Two
@@ -1626,7 +1799,7 @@ void PluginSlot::processMonoBlock (float* monoData, int numSamples,
         {
             // Stereo-in plugin in a mono slot: duplicate mono into both
             // channels of the scratch and feed both as input pointers.
-            if (numSamples > stereoScratch.getNumSamples()) return;
+            if (numSamples > stereoScratch.getNumSamples()) return std::nullopt;
             stereoScratch.copyFrom (0, 0, monoData, numSamples);
             stereoScratch.copyFrom (1, 0, monoData, numSamples);
             inPtrs[0] = stereoScratch.getReadPointer (0);
@@ -1641,10 +1814,10 @@ void PluginSlot::processMonoBlock (float* monoData, int numSamples,
         if (! r->processBlockSync (inPtrs, std::max (rNumIn, 0),
                                        std::max (rNumOut, 0),
                                        numSamples, oopMidiScratch,
-                                       kOopProcessTimeoutNs))
+                                       kOopProcessTimeoutNs, transport))
         {
             engageAutoBypass();
-            return;
+            return std::nullopt;
         }
 
         if (rNumOut == 1)
@@ -1676,12 +1849,15 @@ void PluginSlot::processMonoBlock (float* monoData, int numSamples,
             }
         }
         if (blocksSinceLoad < kGraceBlocks) ++blocksSinceLoad;
-        return;
+        if (rNumOut <= 0) return std::nullopt;
+        return dusk::ProcessedBlock { blockLatency,
+            historyResetPending.exchange (false, std::memory_order_acq_rel) };
     }
    #endif
 
     auto* p = currentInstance.load (std::memory_order_acquire);
-    if (p == nullptr) return;
+    if (p == nullptr) return std::nullopt;
+    const OwnBlockScope ownBlock;
 
     constexpr double kBudgetFraction = 0.6;
     const auto t0 = juce::Time::getHighResolutionTicks();
@@ -1705,7 +1881,7 @@ void PluginSlot::processMonoBlock (float* monoData, int numSamples,
         // picker filter prevents loading an instrument on a Mono channel
         // slot, so this branch is unreachable in normal use; keeping it
         // symmetrical avoids a foot-gun if filtering ever loosens.
-        if (numSamples > stereoScratch.getNumSamples()) return;
+        if (numSamples > stereoScratch.getNumSamples()) return std::nullopt;
 
         const int procCh = std::min (numOut, stereoScratch.getNumChannels());
         for (int c = 0; c < procCh; ++c)
@@ -1728,7 +1904,7 @@ void PluginSlot::processMonoBlock (float* monoData, int numSamples,
         // back to mono. Use the pre-allocated scratch so we don't touch
         // the heap.
         if (numSamples > stereoScratch.getNumSamples())
-            return;
+            return std::nullopt;
 
         stereoScratch.copyFrom (0, 0, monoData, numSamples);
         stereoScratch.copyFrom (1, 0, monoData, numSamples);
@@ -1755,22 +1931,27 @@ void PluginSlot::processMonoBlock (float* monoData, int numSamples,
         }
     }
     if (blocksSinceLoad < kGraceBlocks) ++blocksSinceLoad;
+    if (numOut <= 0) return std::nullopt;
+    return dusk::ProcessedBlock { blockLatency,
+        historyResetPending.exchange (false, std::memory_order_acq_rel) };
 }
 
-void PluginSlot::processStereoBlock (float* L, float* R, int numSamples,
-                                     juce::MidiBuffer& midiMessages) noexcept
+std::optional<dusk::ProcessedBlock> PluginSlot::processStereoBlock (float* L, float* R, int numSamples,
+                                     juce::MidiBuffer& midiMessages,
+                                     const dusk::TransportPosition* transport) noexcept
 {
     dusk::audio::ScopedNoDenormals noDenormals;
-    if (numSamples == 0) return;
+    if (numSamples == 0) return std::nullopt;
 
     if (bypassed.load (std::memory_order_relaxed)
         || autoBypassed.load (std::memory_order_relaxed))
-        return;
+        return std::nullopt;
 
     // Dry-pass if prepareToPlay / releaseResources holds the lock (see header).
     const juce::SpinLock::ScopedTryLockType processGuard (processLock);
     if (! processGuard.isLocked())
-        return;
+        return std::nullopt;
+    const int blockLatency = cachedLatencySamples.load (std::memory_order_relaxed);
 
     constexpr int    kGraceBlocks            = 16;
     constexpr int    kMaxConsecutiveOverruns = 4;
@@ -1797,7 +1978,7 @@ void PluginSlot::processStereoBlock (float* L, float* R, int numSamples,
             // Mono-in plugin on a stereo bus: average L+R into the
             // pre-allocated scratch and feed that as the single input
             // channel.
-            if (numSamples > stereoScratch.getNumSamples()) return;
+            if (numSamples > stereoScratch.getNumSamples()) return std::nullopt;
             float* mono = stereoScratch.getWritePointer (0);
             for (int i = 0; i < numSamples; ++i)
                 mono[i] = (L[i] + R[i]) * 0.5f;
@@ -1815,14 +1996,14 @@ void PluginSlot::processStereoBlock (float* L, float* R, int numSamples,
             // future build raises the cap and this code wasn't updated,
             // bail rather than read garbage.
             engageAutoBypass();
-            return;
+            return std::nullopt;
         }
 
         dusk::copyEventsWhole (midiMessages, oopMidiScratch);
         if (! r->processBlockSync (inPtrs, std::max (rNumIn, 0),
                                        std::max (rNumOut, 0),
                                        numSamples, oopMidiScratch,
-                                       kOopProcessTimeoutNs))
+                                       kOopProcessTimeoutNs, transport))
         {
             // Either the futex timed out or the connection was already
             // marked crashed. Engage auto-bypass so the engine sees a
@@ -1831,7 +2012,7 @@ void PluginSlot::processStereoBlock (float* L, float* R, int numSamples,
             // avoiding here - re-trying a dead connection still pays
             // the deadline cost).
             engageAutoBypass();
-            return;
+            return std::nullopt;
         }
 
         // Read output channels from SHM and copy into L/R.
@@ -1869,12 +2050,15 @@ void PluginSlot::processStereoBlock (float* L, float* R, int numSamples,
             }
         }
         if (blocksSinceLoad < kGraceBlocks) ++blocksSinceLoad;
-        return;
+        if (rNumOut <= 0) return std::nullopt;
+        return dusk::ProcessedBlock { blockLatency,
+            historyResetPending.exchange (false, std::memory_order_acq_rel) };
     }
    #endif
 
     auto* p = currentInstance.load (std::memory_order_acquire);
-    if (p == nullptr) return;
+    if (p == nullptr) return std::nullopt;
+    const OwnBlockScope ownBlock;
 
     constexpr double kBudgetFraction = 0.6;
     const auto t0 = juce::Time::getHighResolutionTicks();
@@ -1895,7 +2079,7 @@ void PluginSlot::processStereoBlock (float* L, float* R, int numSamples,
         // Mono-input plugin on a stereo bus: collapse to mono, run, then fan
         // out the (possibly stereo) output back across L/R. Use the
         // pre-allocated stereoScratch as the working buffer.
-        if (numSamples > stereoScratch.getNumSamples()) return;
+        if (numSamples > stereoScratch.getNumSamples()) return std::nullopt;
 
         float* mono = stereoScratch.getWritePointer (0);
         for (int i = 0; i < numSamples; ++i)
@@ -1933,7 +2117,7 @@ void PluginSlot::processStereoBlock (float* L, float* R, int numSamples,
         // contents). Caller (ChannelStrip MIDI path) already cleared L/R
         // before calling; we still clear stereoScratch because it's
         // separate storage that may hold the previous block's plugin output.
-        if (numSamples > stereoScratch.getNumSamples()) return;
+        if (numSamples > stereoScratch.getNumSamples()) return std::nullopt;
 
         const int procCh = std::min (numOut, stereoScratch.getNumChannels());
         for (int c = 0; c < procCh; ++c)
@@ -1953,7 +2137,7 @@ void PluginSlot::processStereoBlock (float* L, float* R, int numSamples,
     else
     {
         // Plugin layout we can't handle (zero outputs, etc.) - bail.
-        return;
+        return std::nullopt;
     }
 
     if (bufferMs > 0.0 && blocksSinceLoad >= kGraceBlocks)
@@ -1971,6 +2155,8 @@ void PluginSlot::processStereoBlock (float* L, float* R, int numSamples,
         }
     }
     if (blocksSinceLoad < kGraceBlocks) ++blocksSinceLoad;
+    return dusk::ProcessedBlock { blockLatency,
+        historyResetPending.exchange (false, std::memory_order_acq_rel) };
 }
 
 void PluginSlot::setParamNormalised (int paramIndex, float value01) noexcept
@@ -2017,25 +2203,44 @@ void PluginSlot::setParamNormalised (int paramIndex, float value01) noexcept
         currentLoadEpoch.load (std::memory_order_acquire)
     };
     paramFifo.finishedWrite (1);
+    inProcessStateRevision.fetch_add (1, std::memory_order_release);
+}
+
+void PluginSlot::drainPendingParamWrites (bool forCapture)
+{
+    if (drainingParamWrites || (capturingState && ! forCapture)) return;
+    // A parked owner may be preparing inside a nested message loop.
+    if (! forCapture && ownedInstance != nullptr
+        && currentInstance.load (std::memory_order_acquire) == nullptr)
+        return;
+   #if DUSKSTUDIO_HAS_OOP_PLUGINS
+    // A cut-off child takes its writes at the next capture or reconnect, not
+    // here, where they would have nowhere to go.
+    if (! forCapture && liveCutOffRemote())
+        return;
+   #endif
+    const int avail = paramFifo.getNumReady();
+    if (avail > 0)
+    {
+        drainingParamWrites = true;
+        struct DrainScope
+        {
+            bool& active;
+            ~DrainScope() { active = false; }
+        } drainScope { drainingParamWrites };
+        int s1 = 0, sz1 = 0, s2 = 0, sz2 = 0;
+        paramFifo.prepareToRead (avail, s1, sz1, s2, sz2);
+        for (int i = 0; i < sz1; ++i)
+            applyParamWriteOnMessageThread (paramQueue[(size_t) (s1 + i)], forCapture);
+        for (int i = 0; i < sz2; ++i)
+            applyParamWriteOnMessageThread (paramQueue[(size_t) (s2 + i)], forCapture);
+        paramFifo.finishedRead (sz1 + sz2);
+    }
 }
 
 void PluginSlot::timerCallback()
 {
-    // Message thread. Drain every pending ParamWrite into the live
-    // plugin instance. Bounded loop - caller (dusk::Timer) marshals us
-    // here so JUCE_ASSERT_MESSAGE_THREAD in applyParamWriteOnMessageThread
-    // is satisfied by construction.
-    const int avail = paramFifo.getNumReady();
-    if (avail > 0)
-    {
-        int s1 = 0, sz1 = 0, s2 = 0, sz2 = 0;
-        paramFifo.prepareToRead (avail, s1, sz1, s2, sz2);
-        for (int i = 0; i < sz1; ++i)
-            applyParamWriteOnMessageThread (paramQueue[(size_t) (s1 + i)]);
-        for (int i = 0; i < sz2; ++i)
-            applyParamWriteOnMessageThread (paramQueue[(size_t) (s2 + i)]);
-        paramFifo.finishedRead (sz1 + sz2);
-    }
+    drainPendingParamWrites (false);
 
     (void) refreshLatencyIfChanged();
 
@@ -2073,13 +2278,8 @@ void PluginSlot::timerCallback()
    #endif
 }
 
-void PluginSlot::applyParamWriteOnMessageThread (const ParamWrite& pw) noexcept
+void PluginSlot::applyParamWriteOnMessageThread (const ParamWrite& pw, bool forCapture) noexcept
 {
-    // This is the ONE place where a JUCE parameter setter is invoked.
-    // The assertion fires in any debug build (and therefore under
-    // DUSKSTUDIO_RUN_SELFTEST=1, which the test runner builds as Debug)
-    // if a future change ever routes the call from the audio thread -
-    // exactly the regression Phase 2 is meant to prevent.
     JUCE_ASSERT_MESSAGE_THREAD;
 
     // Discard writes queued against a prior plugin load. The audio
@@ -2093,7 +2293,9 @@ void PluginSlot::applyParamWriteOnMessageThread (const ParamWrite& pw) noexcept
 
     if (pw.paramIndex < 0) return;
 
-    if (auto* p = currentInstance.load (std::memory_order_acquire))
+    auto* p = currentInstance.load (std::memory_order_acquire);
+    if (p == nullptr && forCapture) p = ownedInstance.get();
+    if (p != nullptr)
     {
         const auto& params = p->getParameters();
         if (pw.paramIndex >= params.size()) return;
@@ -2109,8 +2311,10 @@ void PluginSlot::applyParamWriteOnMessageThread (const ParamWrite& pw) noexcept
     // SetParam -> callAsync -> setValueNotifyingHost path. Acquire
     // load pairs with the message-thread release stores in
     // descriptor load / unload that swap currentRemote.
-    if (auto* r = currentRemote.load (std::memory_order_acquire))
-        (void) r->setRemoteParam (pw.paramIndex, pw.value);
+    auto* r = currentRemote.load (std::memory_order_acquire);
+    if (r == nullptr && forCapture && liveCutOffRemote()) r = ownedRemote.get();
+    if (r != nullptr && ! r->setRemoteParam (pw.paramIndex, pw.value))
+        remoteParamWriteLost.store (true, std::memory_order_relaxed);
    #endif
 }
 
@@ -2198,11 +2402,11 @@ void PluginSlot::ShellParamListener::parameterValueChanged (int paramIndex, floa
     // 30 Hz timerCallback will detach this listener on the next tick;
     // until then any in-flight callbacks bail here.
     if (slot.ownedRemote->isCrashed()) return;
-    // Fire-and-forget over the existing 3c-3a control channel. Returns
-    // false only on socket peer-close (child died); in that case the
-    // OOP slot has already been auto-bypassed by the reaper, so the
-    // dropped write is harmless.
-    (void) slot.ownedRemote->setRemoteParam (paramIndex, newValue);
+    // Fire-and-forget over the existing 3c-3a control channel. A failed
+    // send means the channel is gone, and the next save must not pass off
+    // the child's state as including this edit.
+    if (! slot.ownedRemote->setRemoteParam (paramIndex, newValue))
+        slot.remoteParamWriteLost.store (true, std::memory_order_relaxed);
 }
 
 void PluginSlot::applyShellParamFromChild (int paramIndex, float value01) noexcept

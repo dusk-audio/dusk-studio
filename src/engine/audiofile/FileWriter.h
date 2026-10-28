@@ -43,13 +43,18 @@ public:
     // disk thread never touches the heap mid-record.
     bool writeInterleaved (const float* interleaved, int64_t numFrames) noexcept override;
 
+    // Finalizes the container and closes the file. Repeats return the first result.
     bool flush() override;
 
 private:
-    FileWriter (void* handle, int channels);
+    struct Output;
+    FileWriter (std::unique_ptr<Output> output, int channels);
 
-    void*              sf;           // SNDFILE*
+    std::unique_ptr<Output> output;
+    void*              sf = nullptr; // SNDFILE*
     int                channels;
     std::vector<float> interleaved;  // scratch for the deinterleaved entry point
+    bool finalized = false;
+    bool flushOkay = false;
 };
 } // namespace dusk::audio

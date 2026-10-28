@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_core/juce_core.h>
+#include "OfflineRenderQuality.h"
 #include "../session/Session.h"
 #include "../foundation/Text.h"
 #include "audiofile/IFileWriteSink.h"
@@ -213,7 +214,10 @@ public:
         return false;
     }
 
-    BounceEngine (AudioEngine& engine, Session& session) noexcept;
+    // Quality is captured before the worker starts; changing preferences applies
+    // to the next job. Realtime captures always use the live playback settings.
+    BounceEngine (AudioEngine& engine, Session& session,
+                  OfflineRenderQuality quality = OfflineRenderQuality::High) noexcept;
     ~BounceEngine() override;
 
     // False if a render is already in flight. sampleRate <= 0 uses
@@ -243,7 +247,7 @@ public:
     // Synchronous single-track FREEZE render (message thread; transport must be
     // stopped). Bakes trackIndex's PRE-FADER signal - instrument + EQ + comp,
     // before fader/pan/sends - to a 24-bit stereo WAV at outFile, lenSamples
-    // long at sampleRate. Reuses the offline drive (detach device, 4× oversample,
+    // long at sampleRate. Reuses the offline drive (detach device, selected oversampling,
     // PDC lead-in trim) like the stem path, but captures the strip's pre-fader
     // tap (ChannelStrip::setFreezeCapture) instead of the master mix. Blocks
     // until done; unlike start() it does NOT spin the worker thread. Returns
@@ -316,6 +320,7 @@ private:
 
     AudioEngine& engine;
     Session&     session;
+    const int    renderOversamplingFactor;
 
     juce::File   outputFile;
     // Mode::Stems: what collectStemTargets found when start() ran on the

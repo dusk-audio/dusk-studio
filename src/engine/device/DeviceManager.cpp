@@ -238,7 +238,7 @@ private:
 
 } // namespace
 
-struct DeviceManager::Impl
+struct DeviceManager::Impl : private dusk::Timer
 {
     // Channel counts the app asks for (the initialise(16, 2) arguments); default
     // channel masks take the first min(needed, deviceChannels) channels.
@@ -265,8 +265,9 @@ struct DeviceManager::Impl
     std::atomic<bool> broadcastPending { false };
     bool backendsRegistered = false;
 
-    ~Impl()
+    ~Impl() override
     {
+        stopTimer();
         // Pending async broadcasts must not touch this after teardown (the
         // message pump can outlive the manager during shutdown). Flip the latch
         // first, then stop + close the device so any still-registered client
@@ -279,6 +280,19 @@ struct DeviceManager::Impl
             currentDevice.reset();
         }
         listeners.clear();
+    }
+
+    void timerCallback() override
+    {
+        if (currentDevice != nullptr && currentDevice->isOpen()) return;
+        stopTimer();
+        if (currentDevice == nullptr) return;
+
+        // Retire before notifying clients: a stopped callback may select a new device.
+        auto lostDevice = std::move (currentDevice);
+        lostDevice->stop();
+        lostDevice->close();
+        broadcast();
     }
 
     void registerBackends()
@@ -389,6 +403,7 @@ struct DeviceManager::Impl
         // start() synchronously drives audioDeviceAboutToStart, clearing
         // deviceChangePending and sizing the fan-out scratch.
         currentDevice->start (&fanout);
+        startTimerHz (30);
 
         if (treatAsChosen)
         {

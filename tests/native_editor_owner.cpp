@@ -66,7 +66,7 @@ struct FakeBundle
     bool load (const std::string&, std::string&) { return true; }
 };
 
-struct FakeSlotInstance final : public duskstudio::hosting::INativeInstance
+struct FakeSlotInstance : public duskstudio::hosting::INativeInstance
 {
     bool create (FakeBundle&, const std::string&, std::string&)
     {
@@ -124,6 +124,17 @@ struct FakeTraits
     static bool pickPlugin (const Bundle&, const std::string&,
                             std::string& idOut, std::string&)
     { idOut = "fake"; return true; }
+};
+
+struct RevisionSlotInstance final : public FakeSlotInstance
+{
+    std::uint64_t stateRevision() const noexcept override { return revision; }
+    std::uint64_t revision = 0;
+};
+
+struct RevisionTraits : FakeTraits
+{
+    using Instance = RevisionSlotInstance;
 };
 } // namespace
 
@@ -184,6 +195,65 @@ TEST_CASE ("NativeInsertSlot bumps its generation on every identity change")
     slot.leakForShutdown();
     REQUIRE (slot.generation() != afterReload);
     REQUIRE (owner.isStale (slot));
+}
+
+TEST_CASE ("NativeInsertSlot keeps state revisions separate from instance identity", "[hosting][slot][state]")
+{
+    std::string error;
+    SECTION ("formats without state notifications retain the default zero revision")
+    {
+        duskstudio::hosting::NativeInsertSlot<FakeTraits> slot;
+        CHECK (slot.stateRevision() == 0);
+        REQUIRE (slot.load ("fake.bundle", 48000.0, 8, error));
+        const duskstudio::hosting::INativeInstance& instance = *slot.getInstance();
+        CHECK (instance.stateRevision() == 0);
+        CHECK (slot.stateRevision() == 0);
+        slot.unload();
+        CHECK (slot.stateRevision() == 0);
+    }
+    SECTION ("content changes follow the live owner through reactivation and quarantine")
+    {
+        duskstudio::hosting::NativeInsertSlot<RevisionTraits> slot;
+        CHECK (slot.stateRevision() == 0);
+        REQUIRE (slot.load ("fake.bundle", 48000.0, 8, error));
+        CHECK (slot.stateRevision() == 0);
+        auto* const instance = slot.getInstance();
+        const auto generation = slot.generation();
+        NativeEditorOwner owner;
+        owner.stamp (slot);
+        instance->revision = 17;
+        const duskstudio::hosting::INativeInstance& interface = *instance;
+        CHECK (interface.stateRevision() == 17);
+        CHECK (slot.stateRevision() == 17);
+        CHECK (slot.generation() == generation);
+        CHECK_FALSE (owner.isStale (slot));
+
+        slot.setBypassed (true);
+        CHECK (slot.stateRevision() == 17);
+        slot.setBypassed (false);
+        REQUIRE_FALSE (slot.reactivate (192000.0, 32, error));
+        slot.quarantineAfterFailedReactivation();
+        CHECK (slot.stateRevision() == 17);
+        instance->revision = 23;
+        CHECK (slot.stateRevision() == 23);
+        instance->failReactivation = false;
+        REQUIRE (slot.reactivate (48000.0, 8, error));
+        CHECK (slot.stateRevision() == 23);
+        CHECK (slot.getInstance() == instance);
+        CHECK (slot.generation() == generation);
+        CHECK_FALSE (owner.isStale (slot));
+
+        slot.unload();
+        CHECK (slot.stateRevision() == 0);
+        CHECK (slot.generation() != generation);
+        CHECK (owner.isStale (slot));
+        REQUIRE (slot.load ("fake.bundle", 48000.0, 8, error));
+        CHECK (slot.stateRevision() == 0);
+        slot.getInstance()->revision = 23;
+        CHECK (slot.stateRevision() == 23);
+        CHECK (slot.generation() != generation);
+        CHECK (owner.isStale (slot));
+    }
 }
 
 TEST_CASE ("NativeInsertSlot resizes its adapter after a partial reactivate failure",

@@ -2,8 +2,10 @@
 #include "public.sdk/source/common/pluginview.h"
 #include "public.sdk/source/vst/vstsinglecomponenteffect.h"
 #include "pluginterfaces/base/ibstream.h"
+#include "pluginterfaces/vst/ivstprocesscontext.h"
 
 #include <algorithm>
+#include <atomic>
 
 namespace Steinberg::Vst
 {
@@ -15,6 +17,7 @@ constexpr ParamID kTouchReport = 102;
 constexpr ParamID kRepeatIoOnActivate = 103;
 constexpr ParamID kFlipOutputsOnActivate = 104;
 constexpr ParamID kAnnounceLatencyChanges = 105;
+constexpr ParamID kReportTransport = 106;
 bool handlerDetachedBeforeTerminate = false;
 
 class LifecycleProbeView final : public CPluginView
@@ -66,6 +69,8 @@ public:
                                  ParameterInfo::kNoFlags, kFlipOutputsOnActivate);
         parameters.addParameter (STR16 ("Announce Latency Changes"), nullptr, 1, 0.0,
                                  ParameterInfo::kNoFlags, kAnnounceLatencyChanges);
+        parameters.addParameter (STR16 ("Report Transport"), nullptr, 1, 0.0,
+                                 ParameterInfo::kNoFlags, kReportTransport);
         handlerDetachedBeforeTerminate = false;
         rebuildBusses();
         return kResultOk;
@@ -111,6 +116,11 @@ public:
             announceLatencyChanges = value >= 0.5;
             return result;
         }
+        if (id == kReportTransport)
+        {
+            reportTransport = value >= 0.5;
+            return result;
+        }
         if (id == kRepeatIoOnActivate)
         {
             repeatIoOnActivate = value >= 0.5;
@@ -140,14 +150,16 @@ public:
         if (state == nullptr)
             return kInvalidArgument;
 
-        uint8 latencyMode = 0;
+        uint8 stateFlags = 0;
         int32 bytesRead = 0;
-        if (state->read (&latencyMode, sizeof (latencyMode), &bytesRead) != kResultOk
-            || bytesRead != sizeof (latencyMode))
+        if (state->read (&stateFlags, sizeof (stateFlags), &bytesRead) != kResultOk
+            || bytesRead != sizeof (stateFlags))
             return kResultFalse;
 
-        highLatency = latencyMode != 0;
+        highLatency = (stateFlags & 1u) != 0;
+        reportTransport = (stateFlags & 2u) != 0;
         SingleComponentEffect::setParamNormalized (kLatencyMode, highLatency ? 1.0 : 0.0);
+        SingleComponentEffect::setParamNormalized (kReportTransport, reportTransport ? 1.0 : 0.0);
         return kResultOk;
     }
 
@@ -156,12 +168,33 @@ public:
         if (state == nullptr)
             return kInvalidArgument;
 
-        uint8 latencyMode = highLatency ? 1 : 0;
+        uint8 stateFlags = (uint8) ((highLatency ? 1u : 0u) | (reportTransport ? 2u : 0u));
         int32 bytesWritten = 0;
-        if (state->write (&latencyMode, sizeof (latencyMode), &bytesWritten) != kResultOk
-            || bytesWritten != sizeof (latencyMode))
+        if (state->write (&stateFlags, sizeof (stateFlags), &bytesWritten) != kResultOk
+            || bytesWritten != sizeof (stateFlags))
             return kResultFalse;
         return kResultOk;
+    }
+
+    tresult PLUGIN_API setEditorState (IBStream* state) override
+    {
+        if (state == nullptr) return kInvalidArgument;
+        uint8 value = 0;
+        int32 count = 0;
+        if (state->read (&value, sizeof (value), &count) != kResultOk
+            || count != sizeof (value) || value > 1)
+            return kResultFalse;
+        controllerState = value;
+        return kResultOk;
+    }
+
+    tresult PLUGIN_API getEditorState (IBStream* state) override
+    {
+        if (state == nullptr) return kInvalidArgument;
+        int32 count = 0;
+        return state->write (&controllerState, sizeof (controllerState), &count) == kResultOk
+                   && count == sizeof (controllerState)
+            ? kResultOk : kResultFalse;
     }
 
     uint32 PLUGIN_API getLatencySamples() override
@@ -200,9 +233,11 @@ public:
     tresult PLUGIN_API process (ProcessData& data) override
     {
         const int32 expectedOutputs = expanded ? 3 : 2;
+        const bool reportsTransport = reportTransport;
         if (data.symbolicSampleSize != kSample32
             || data.numInputs != 1 || data.inputs == nullptr
-            || data.numOutputs != expectedOutputs || data.outputs == nullptr)
+            || data.numOutputs < 1 || (! reportsTransport && data.numOutputs != expectedOutputs)
+            || data.outputs == nullptr)
             return kResultFalse;
 
         const auto validStereoBus = [] (const AudioBusBuffers& bus)
@@ -213,15 +248,40 @@ public:
         if (! validStereoBus (data.inputs[0]))
             return kResultFalse;
         for (int32 bus = 0; bus < data.numOutputs; ++bus)
-            if (! validStereoBus (data.outputs[bus]))
+            if (! validStereoBus (data.outputs[bus]) && (! reportsTransport || bus == 0))
                 return kResultFalse;
 
         for (int32 channel = 0; channel < 2; ++channel)
             std::copy_n (data.inputs[0].channelBuffers32[channel], data.numSamples,
                          data.outputs[0].channelBuffers32[channel]);
         for (int32 bus = 1; bus < data.numOutputs; ++bus)
+            if (validStereoBus (data.outputs[bus]))
+                for (int32 channel = 0; channel < 2; ++channel)
+                    std::fill_n (data.outputs[bus].channelBuffers32[channel], data.numSamples, 0.0f);
+        if (reportsTransport)
+        {
+            float report[11] {};
+            if (const auto* transport = data.processContext)
+            {
+                report[0] = 1.0f;
+                report[1] = (float) transport->sampleRate;
+                report[2] = (float) transport->projectTimeSamples;
+                report[3] = (float) transport->projectTimeMusic;
+                report[4] = (float) transport->barPositionMusic;
+                report[5] = (float) transport->tempo;
+                report[6] = (float) transport->timeSigNumerator;
+                report[7] = (float) transport->timeSigDenominator;
+                report[8] = (float) transport->state;
+                report[9] = (float) transport->cycleStartMusic;
+                report[10] = (float) transport->cycleEndMusic;
+            }
             for (int32 channel = 0; channel < 2; ++channel)
-                std::fill_n (data.outputs[bus].channelBuffers32[channel], data.numSamples, 0.0f);
+            {
+                auto* output = data.outputs[0].channelBuffers32[channel];
+                std::fill_n (output, data.numSamples, 0.0f);
+                std::copy_n (report, std::min (data.numSamples, (int32) 11), output);
+            }
+        }
         return kResultOk;
     }
 
@@ -242,7 +302,10 @@ private:
         bus->setActive (true);
     }
 
-    bool expanded = false;
+    uint8 controllerState = 0;
+    // process() reads these on the audio thread while the host sets them.
+    std::atomic<bool> expanded { false };
+    std::atomic<bool> reportTransport { false };
     bool highLatency = false;
     bool announceLatencyChanges = false;
     bool repeatIoOnActivate = false;

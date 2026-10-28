@@ -68,9 +68,10 @@ std::string fmtF(double v, int dp)
     return std::string(buf);
 }
 
-// Extract one mono sample [start,end) of 16-bit PCM from the smpl chunk
-// into a WAV at the sample's own rate. Returns false on any I/O issue.
-bool writeSampleWav(juce::FileInputStream& in,
+enum class SampleWrite { Written, Invalid, Failed };
+
+// Extract one mono sample [start,end) of 16-bit PCM from the smpl chunk.
+SampleWrite writeSampleWav(juce::FileInputStream& in,
                      std::int64_t           smplOffset,
                      std::int64_t           smplSize,
                      const Sf2Sample&      s,
@@ -80,17 +81,17 @@ bool writeSampleWav(juce::FileInputStream& in,
     // smpl chunk's actual byte size before sizing any allocation (a crafted
     // end of 0x7FFFFFFF would otherwise request a ~4 GB buffer, and
     // frames*2 in int is signed-overflow UB).
-    if (s.end <= s.start) return false;
+    if (s.end <= s.start) return SampleWrite::Invalid;
     const std::int64_t frames64 = (std::int64_t) s.end - (std::int64_t) s.start;
-    if (smplSize <= 0 || (std::int64_t) s.end * 2 > smplSize) return false;
-    if (frames64 > 0x10000000) return false;   // 256 M frames ≈ 512 MB - no real instrument sample
+    if (smplSize <= 0 || (std::int64_t) s.end * 2 > smplSize) return SampleWrite::Invalid;
+    if (frames64 > 0x10000000) return SampleWrite::Invalid;
     const int numFrames = (int) frames64;
 
-    in.setPosition(smplOffset + (std::int64_t) s.start * 2);
+    if (! in.setPosition(smplOffset + (std::int64_t) s.start * 2)) return SampleWrite::Failed;
     juce::HeapBlock<int16_t> pcm ((size_t) numFrames);
     const std::int64_t wanted = frames64 * 2;
     if (in.read(pcm.getData(), (int) wanted) != (int) wanted)
-        return false;
+        return SampleWrite::Failed;
 
     std::vector<float> buf ((std::size_t) numFrames);
     float* w = buf.data();
@@ -110,11 +111,17 @@ bool writeSampleWav(juce::FileInputStream& in,
     spec.format        = dusk::audio::WriteSpec::Format::Wav;
     auto writer = dusk::audio::FileWriter::create (
         std::filesystem::u8path (outWav.getFullPathName().toStdString()), spec);
-    if (writer == nullptr) { outWav.deleteFile(); return false; }
+    if (writer == nullptr) { outWav.deleteFile(); return SampleWrite::Failed; }
     const float* const channels[1] = { buf.data() };
     const bool ok = writer->write (channels, 1, numFrames);
+    const bool flushed = writer->flush();
     writer.reset();
-    return ok;
+    if (! ok || ! flushed)
+    {
+        outWav.deleteFile();
+        return SampleWrite::Failed;
+    }
+    return SampleWrite::Written;
 }
 } // namespace
 
@@ -319,8 +326,14 @@ Sf2Conversion convertSf2Preset(const juce::File& sf2,
                 const std::string fname = "s" + std::to_string(sampleIdx) + "_"
                                         + sanitize(smp.name) + ".wav";
                 const auto wav = outDir.getChildFile(fname);
-                if (! writeSampleWav(in, parsed.smplOffset, parsed.smplSize, smp, wav))
-                    continue;
+                const auto written = writeSampleWav(in, parsed.smplOffset, parsed.smplSize, smp, wav);
+                if (written == SampleWrite::Invalid) continue;
+                if (written == SampleWrite::Failed)
+                {
+                    conv.error = "Could not write SF2 sample \"" + smp.name + "\" to "
+                               + wav.getFullPathName().toStdString();
+                    return conv;
+                }
                 exIt = extracted.emplace(sampleIdx, fname).first;
             }
             const auto& wavName = exIt->second;

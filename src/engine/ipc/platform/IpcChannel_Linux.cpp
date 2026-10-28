@@ -71,7 +71,7 @@ bool writeExact (NativeHandle& h, const void* buf, std::size_t n) noexcept
     auto* p = static_cast<const char*> (buf);
     while (n > 0)
     {
-        const ssize_t w = ::write (h.fd, p, n);
+        const ssize_t w = ::send (h.fd, p, n, MSG_NOSIGNAL);
         if (w < 0)
         {
             if (errno == EINTR) continue;
@@ -109,7 +109,7 @@ bool sendHandle (NativeHandle& channel, const NativeHandle& payload) noexcept
     cm->cmsg_len   = CMSG_LEN (sizeof (int));
     std::memcpy (CMSG_DATA (cm), &payload.fd, sizeof (payload.fd));
 
-    return ::sendmsg (channel.fd, &msg, 0) >= 0;
+    return ::sendmsg (channel.fd, &msg, MSG_NOSIGNAL) >= 0;
 }
 
 bool recvHandle (NativeHandle& channel, NativeHandle& payloadOut) noexcept

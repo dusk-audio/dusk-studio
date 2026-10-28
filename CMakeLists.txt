@@ -778,6 +778,7 @@ target_sources(DuskStudio PRIVATE
     src/engine/PlaybackEngine.cpp
     src/engine/PluginDescriptor.cpp
     src/engine/PluginManager.cpp
+    src/engine/ScanProcess.cpp
     src/engine/PluginSlot.cpp
     src/engine/sfz/SfzLibrary.cpp
     src/ui/multisample/SfzLibraryPanel.cpp
@@ -792,6 +793,7 @@ target_sources(DuskStudio PRIVATE
     src/engine/scenario/cases/bounce.cpp
     src/engine/scenario/cases/clap_choke_on_stop_loop_jump.cpp
     src/engine/scenario/cases/clap_latency_restart.cpp
+    src/engine/scenario/cases/clap_queued_param_capture.cpp
     src/engine/scenario/cases/clap_state_roundtrip.cpp
     src/engine/scenario/cases/clone_track_keeps_native_state.cpp
     src/engine/scenario/cases/device_loss.cpp
@@ -898,6 +900,7 @@ target_sources(DuskStudio PRIVATE
     src/ui/scenario/cases/gui_plugin_editors.cpp
     src/ui/scenario/cases/gui_plugin_folders.cpp
     src/ui/scenario/cases/gui_regions_markers.cpp
+    src/ui/scenario/cases/gui_session_dirty.cpp
     src/ui/scenario/cases/gui_session_file.cpp
     src/ui/scenario/cases/gui_sfz_live.cpp
     src/ui/scenario/cases/gui_sfz_repository.cpp

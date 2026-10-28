@@ -189,15 +189,16 @@ void PianoRollEdit::glueSelectedNotes (std::vector<MidiNote>& notes)
 {
     if (selectedNotes.size() < 2) return;
 
-    std::map<int, std::vector<int>> byPitch;
+    std::map<std::pair<int, int>, std::vector<int>> byChannelAndPitch;
     for (int idx : selectedNotes)
     {
         if (idx < 0 || idx >= (int) notes.size()) continue;
-        byPitch[notes[(std::size_t) idx].noteNumber].push_back (idx);
+        const auto& note = notes[(std::size_t) idx];
+        byChannelAndPitch[{ note.channel, note.noteNumber }].push_back (idx);
     }
 
     std::vector<int> toErase;
-    for (auto& group : byPitch)
+    for (auto& group : byChannelAndPitch)
     {
         auto& indices = group.second;
         std::sort (indices.begin(), indices.end(),

@@ -54,8 +54,8 @@ public:
     int  timeFormat() const noexcept          { return format; }
     bool isSmpteTimeFormat() const noexcept   { return format < 0; }
 
-    // Ticks per second for an SMPTE-format file; 0 for a PPQ file or an SMPTE
-    // division with no subframe resolution.
+    // Ticks per second for an SMPTE-format file; 0 for a PPQ file, an unsupported
+    // SMPTE frame code or a division with no subframe resolution.
     double smpteTicksPerSecond() const noexcept;
 
     const std::vector<std::vector<MidiFileEvent>>& tracks() const noexcept { return trackEvents; }

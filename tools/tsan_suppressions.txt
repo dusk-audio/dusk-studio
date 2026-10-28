@@ -35,3 +35,10 @@ deadlock:juce::TimeSliceThread
 # and TSan's happens-before model doesn't recognise the algorithmic
 # guarantee. Suppress + rely on the IPC self-test for correctness.
 race:juce::AbstractFifo
+
+# A MessageManagerLock taken on the message thread returns before
+# MessageManager::Lock marks itself acquired, so exit() never releases
+# the entry mutex and the destructor destroys it held. JUCE's VST3
+# prepareToPlay takes one, and the sandbox child prepares plug-ins on
+# its message thread. glibc refuses the destroy with EBUSY; nothing leaks.
+mutex:juce::MessageManager::Lock

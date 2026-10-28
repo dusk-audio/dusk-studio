@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../engine/OfflineRenderQuality.h"
 #include "../engine/StopBehavior.h"
 
 #include <string>
@@ -24,6 +25,11 @@ constexpr float kUiScaleDefault = 1.0f;
 
 float getUiScaleOverride();
 void  setUiScaleOverride (float scale);
+
+// High keeps 4x effect oversampling for offline renders. MatchPlayback uses
+// the session's playback factor instead. Persisted per-machine.
+OfflineRenderQuality getOfflineRenderQuality();
+void setOfflineRenderQuality (OfflineRenderQuality quality);
 
 // Scan installed plugin formats on every app launch (synchronous). When
 // false (default) the cached plugin descriptor list is used as-is and the user
@@ -97,9 +103,9 @@ int maxMulticoreWorkers();
 // Concrete worker count for this host given the stored mode. 0 = serial.
 int resolveWorkerCount();
 
-// Autosave cadence in seconds. Default 30; clamped to [10, 600] on write.
+// Autosave cadence in seconds. Default 120; clamped to [10, 600] on write.
 // Applied at launch and when the Settings panel closes.
-constexpr int kAutosaveIntervalDefaultSec = 30;
+constexpr int kAutosaveIntervalDefaultSec = 120;
 int  getAutosaveIntervalSeconds();
 void setAutosaveIntervalSeconds (int seconds);
 

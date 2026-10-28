@@ -384,7 +384,7 @@ struct PunchRange {
 ```
 MySong/
 ├── session.json              # everything: track layout, regions, MIDI events, markers, automation
-├── session.json.autosave     # written every 30s while dirty (see Autosave below)
+├── session.json.autosave     # written every 2 min by default while dirty (see Autosave below)
 ├── audio/
 │   ├── track01_take01.wav
 │   ├── track01_take02.wav    # punch-in creates new file
@@ -405,7 +405,7 @@ Note: MIDI event data is stored inline in `session.json` (not as separate .mid f
 
 **Autosave / crash recovery**:
 
-* While the session is dirty (any state change since the last clean save), an autosave timer writes `session.json.autosave` every **30 seconds** using the same atomic-write pattern (`session.json.autosave.tmp` → `fsync` → `rename` to `session.json.autosave`).
+* While the session is dirty (any state change since the last clean save), an autosave timer writes `session.json.autosave` every **2 minutes by default** (configurable in Settings; saved intervals keep their values) using the same atomic-write pattern (`session.json.autosave.tmp` → `fsync` → `rename` to `session.json.autosave`).
 * On session **load**, if `session.json.autosave` exists and its mtime is newer than `session.json`, the user is presented with a recovery dialog: "An autosave was found that is newer than the last manual save. Recover the autosave (last modified at ...) or discard it?" with options **Recover**, **Discard**, **Keep both** (the latter writes the autosave to `session.json.autosave.recovered.<timestamp>` and continues with `session.json`).
 * On a clean manual save, `session.json.autosave` is deleted.
 * On a crash, the autosave is preserved untouched; next launch triggers the recovery dialog above.
@@ -802,6 +802,8 @@ Bouncing in Dusk Studio spans three modes, all reached from a single "Bounce / E
 
 Default to **offline rendering**. The fixed signal graph is overwhelmingly time-invariant — EQ, compressors, saturation, and the Pultec/tape master chain all process samples deterministically without depending on wall-clock time, so they render correctly at faster-than-realtime. Offline render uses a non-realtime `AudioPlayHead` and processes the whole graph as fast as the CPU allows.
 
+**Render quality** in the **Audio** tab under **Settings → Settings...** is saved per-machine. **High (4× oversampling)** is the default for offline bounces, mixdowns, stems, master exports and track freezes. **Match playback (faster)** uses the current session **Effect Oversampling** factor instead. It reduces effect-processing work at 1× or 2×; at 4× the choices are equivalent. Speed still depends on the processors in the session. Realtime hardware bounces always use playback settings.
+
 A plugin (instrument or send) may declare it cannot run offline (`AudioProcessor::supportsDoublePrecisionProcessing()` is unrelated; the relevant signal is `getTailLengthSeconds()` plus an internal "needs realtime" hint that some plugins set via parameter or vendor extension). If any plugin in the active graph cannot guarantee correct offline behavior, the dialog auto-switches to **realtime mode** with an inline note: "Realtime render required — plugin '<Name>' does not support offline processing." The user can still proceed; the bounce just runs at 1× speed.
 
 The render runs on a dedicated `juce::Thread` (not the audio thread). Progress is shown as a determinate bar with an ETA based on the elapsed-vs-remaining sample ratio. Cancel is non-blocking — the dialog cancels the thread on the next callback boundary; partial output is discarded.
@@ -991,7 +993,7 @@ Add to Phase 1b:
 * Metronome / click track (engine-side, mute-able from the transport bar)
 * Arm tracks for recording, record to WAV files. RECORD requires at least one armed track (see Transport section).
 * Playback recorded audio through the mixer
-* Session model with save/load (JSON, atomic write, autosave every 30s while dirty)
+* Session model with save/load (JSON, atomic write, configurable autosave, every 2 minutes by default while dirty)
 * Basic tape strip view (colored blocks for recorded regions)
 * Latency compensation on recorded regions
 

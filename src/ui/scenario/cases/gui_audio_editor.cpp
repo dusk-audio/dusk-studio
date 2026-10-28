@@ -1172,6 +1172,97 @@ const ScenarioRegistrar audioEditorFields { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorFields (host, ctx); }
 } };
 
+std::optional<ScenarioResult> runAudioEditorNumericFields (GuiHost& host, ScenarioContext& ctx)
+{
+    if (auto early = beginEditorRegionCase (host, ctx)) return early;
+    auto& engine = ctx.engine();
+    auto& track = ctx.session().track (0);
+    track.regions[0].gainDb = -6.0f;
+    track.regions[0].fadeInSamples = 480;
+    track.regions[0].fadeOutSamples = 960;
+    const auto original = track.regions;
+    const auto region = [&track] { return track.regions.empty() ? AudioRegion() : track.regions[0]; };
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    const auto typeInto = [&host, &ctx, steps] (const char* control, const char* text)
+    {
+        steps->push_back ({ 100, [&host, &ctx, control]
+        { ctx.expect (host.doubleClickAudioEditorButton (control), std::string ("no ") + control + " to double-click"); } });
+        steps->push_back ({ 100, [&host, &ctx, text]
+        { ctx.expect (host.typeInAudioEditor (text), "typing into the numeric field failed"); } });
+        steps->push_back ({ 100, [&host, &ctx]
+        { ctx.expect (host.pressAudioEditorKey ("return"), "Enter was not delivered to the numeric field"); } });
+    };
+    steps->push_back ({ 100, [] {}, [&host] { return host.audioEditorPoint ("wave", 48000).size() == 2; },
+                        "the editor never laid out" });
+    typeInto ("Title", "Sentinel");
+    steps->push_back ({ 100, [&host, &ctx, &engine]
+    {
+        ctx.expect (undoDescription (engine) == "Rename region", "the undo sentinel was not recorded");
+        ctx.expect (host.clickAudioEditorButton ("Undo"), "the undo sentinel could not be undone");
+    } });
+    for (const auto& [control, text] : std::vector<std::pair<const char*, const char*>> {
+             { "Gain", "-" }, { "Gain", "." }, { "Gain", "1..2" }, { "Gain", "junk-12junk" },
+             { "Gain", "-6 dB tail" }, { "Gain", "1e309" }, { "Gain", "nan" }, { "Gain", "inf" },
+             { "Gain", "1,5" }, { "Gain", "dB-3" },
+             { "Fades", "-" }, { "Fades", "." }, { "Fades", "1..2 / 20" }, { "Fades", "junk / 20" },
+             { "Fades", "10 / junk" }, { "Fades", "10 / 20 / 30" }, { "Fades", "/ 20" },
+             { "Fades", "10 /" }, { "Fades", "10 / nan" }, { "Fades", "10 / inf" },
+             { "Fades", "1e309 / 20" }, { "Fades", "10 / 20 tail" },
+             { "Fades", "fadefade 10 / 20 ms" }, { "Fades", "10 / 20 msms" } })
+    {
+        typeInto (control, text);
+        steps->push_back ({ 100, [&ctx, &engine, &track, original, control, text]
+        {
+            const auto label = std::string (control) + " '" + text + "'";
+            ctx.expect (sameRegions (track.regions, original), label + " changed the region");
+            ctx.expect (! track.regions.empty()
+                            && std::abs (track.regions[0].gainDb - original[0].gainDb) < 1.0e-4f
+                            && track.regions[0].fadeInSamples == original[0].fadeInSamples
+                            && track.regions[0].fadeOutSamples == original[0].fadeOutSamples,
+                        label + " changed the gain or fades");
+            auto& undo = engine.getUndoManager();
+            ctx.expect (! undo.canUndo(), label + " added an undo step");
+            ctx.expect (undo.canRedo() && undo.getRedoDescription().toStdString() == "Rename region",
+                        label + " changed the redo history");
+        } });
+    }
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.clickAudioEditorButton ("Redo"), "the redo sentinel was lost after invalid input"); } });
+    steps->push_back ({ 100, [&ctx, region]
+    { ctx.expect (region().label.toStdString() == "Sentinel", "the preserved redo no longer renames the region"); } });
+    typeInto ("Gain", " -3.0 dB ");
+    steps->push_back ({ 100, [&ctx, region]
+    { ctx.expect (std::abs (region().gainDb + 3.0f) < 1.0e-4f, "the gain readout's dB syntax was refused"); } });
+    typeInto ("Fades", " fade 15 / 25 ms ");
+    steps->push_back ({ 100, [&ctx, region]
+    { ctx.expect (region().fadeInSamples == 720 && region().fadeOutSamples == 1200,
+                  "the fade readout's unit syntax was refused"); } });
+    typeInto ("Fades", "0.0312499999");
+    steps->push_back ({ 100, [&ctx, region]
+    { ctx.expect (region().fadeInSamples == 1 && region().fadeOutSamples == 0,
+                  "a single fade value lost double precision or kept the old fade-out"); } });
+    typeInto ("Fades", "-10 / -20");
+    steps->push_back ({ 100, [&ctx, region]
+    { ctx.expect (region().fadeInSamples == 0 && region().fadeOutSamples == 0, "negative fades were not clamped to zero"); } });
+    typeInto ("Fades", "1e300 / 20");
+    steps->push_back ({ 100, [&ctx, region]
+    { ctx.expect (region().fadeInSamples == kTakeCaseLength && region().fadeOutSamples == 0,
+                  "a huge finite fade-in did not clamp to the region length"); } });
+    typeInto ("Fades", "10 / 1e300");
+    steps->push_back ({ 100, [&ctx, region]
+    { ctx.expect (region().fadeInSamples == 480 && region().fadeOutSamples == kTakeCaseLength - 480,
+                  "a huge finite fade-out did not clamp to the remaining region length"); } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar audioEditorNumericFields { Scenario {
+    "gui.audio_editor_numeric_fields", { "gui", "editor", "undo" }, Needs::Engine | Needs::Gui,
+    {}, {}, 60000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorNumericFields (host, ctx); }
+} };
+
 // The waveform's right-click menu, clicked through the editor: split, cut range and
 // join, gain and fades, mute, lock and what it disables, and Reverse from the menu
 // and from the toolbar.

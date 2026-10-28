@@ -1,5 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include "TestTempDirectory.h"
 #include "engine/PluginManager.h"
 #include "engine/PluginSlot.h"
 
@@ -7,7 +9,11 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstring>
+#include <cstdlib>
 #include <functional>
+#include <fstream>
+#include <optional>
 #include <thread>
 
 #if ! defined (_WIN32)
@@ -19,7 +25,7 @@ using namespace duskstudio;
 
 namespace
 {
-class LifecyclePluginInstance final : public juce::AudioPluginInstance
+class LifecyclePluginInstance : public juce::AudioPluginInstance
 {
 public:
     using juce::AudioPluginInstance::processBlock;
@@ -37,8 +43,19 @@ public:
     {
         ++prepareCalls;
         setLatencySamples (latencyOnPrepare);
+        if (restartOnActivation) reportRestart();
     }
-    void releaseResources() override          { ++releaseCalls; }
+    void releaseResources() override
+    {
+        ++releaseCalls;
+        if (restartOnActivation) reportRestart();
+    }
+
+    // What JUCE's VST3 host reports for any restartComponent, whatever its flags.
+    void reportRestart()
+    {
+        updateHostDisplay (ChangeDetails {}.withProgramChanged (true).withParameterInfoChanged (true));
+    }
 
     void processBlock (juce::AudioBuffer<float>&,
                        juce::MidiBuffer&) override
@@ -64,16 +81,428 @@ public:
     void fillInPluginDescription (juce::PluginDescription& description) const override
     {
         description.name = getName();
-        description.pluginFormatName = "Test";
+        description.pluginFormatName = formatName;
         description.fileOrIdentifier = "lifecycle-test";
     }
 
+    // The format the slot takes this plug-in for: "VST3" and "LV2" get the
+    // treatment JUCE's hosts for those formats need.
+    juce::String formatName { "Test" };
+    // Restart on every (de)activation, as a plug-in that re-announces its
+    // latency from setActive does.
+    bool restartOnActivation = false;
     int prepareCalls = 0;
     int releaseCalls = 0;
     int processCalls = 0;
     int latencyOnPrepare = 0;
 };
+
+struct LifecycleGainParameter final : juce::HostedAudioProcessorParameter
+{
+    float getValue() const override { return value; }
+    float get() const { return value; }
+    void setValue (float v) override { value = v; }
+    float getDefaultValue() const override { return 0.25f; }
+    juce::String getName (int) const override { return "Gain"; }
+    juce::String getLabel() const override { return {}; }
+    juce::String getParameterID() const override { return "gain"; }
+    float getValueForText (const juce::String& text) const override { return text.getFloatValue(); }
+    float value = 0.25f;
+};
+
+class StatefulLifecyclePluginInstance final : public LifecyclePluginInstance
+{
+public:
+    StatefulLifecyclePluginInstance()
+    {
+        auto parameter = std::make_unique<LifecycleGainParameter>();
+        gain = parameter.get();
+        addHostedParameter (std::move (parameter));
+    }
+
+    int getNumPrograms() override { return 2; }
+    int getCurrentProgram() override { return program; }
+    void setCurrentProgram (int value) override
+    {
+        program = value;
+        updateHostDisplay (ChangeDetails {}.withProgramChanged (true));
+    }
+    void changeOpaqueState (std::int32_t value)
+    {
+        opaque = value;
+        updateHostDisplay (ChangeDetails {}.withNonParameterStateChanged (true));
+    }
+    void getStateInformation (juce::MemoryBlock& state) override
+    {
+        state.reset();
+        const float value = gain->get();
+        state.append (&value, sizeof (value));
+        state.append (&program, sizeof (program));
+        state.append (&opaque, sizeof (opaque));
+    }
+
+    LifecycleGainParameter* gain = nullptr;
+private:
+    std::int32_t program = 0;
+    std::int32_t opaque = 0;
+};
+
+struct LifecycleMeterParameter final : juce::HostedAudioProcessorParameter
+{
+    float getValue() const override { return value; }
+    void setValue (float v) override { value = v; }
+    float getDefaultValue() const override { return 0.0f; }
+    juce::String getName (int) const override { return "Meter"; }
+    juce::String getLabel() const override { return {}; }
+    juce::String getParameterID() const override { return "meter"; }
+    float getValueForText (const juce::String& text) const override { return text.getFloatValue(); }
+    bool isAutomatable() const override { return false; }
+    float value = 0.0f;
+};
+
+// Reports a meter from every block, and on request moves its own gain there too.
+class MeteringLifecyclePluginInstance final : public LifecyclePluginInstance
+{
+public:
+    MeteringLifecyclePluginInstance()
+    {
+        auto gainParameter = std::make_unique<LifecycleGainParameter>();
+        gain = gainParameter.get();
+        addHostedParameter (std::move (gainParameter));
+        auto meterParameter = std::make_unique<LifecycleMeterParameter>();
+        meter = meterParameter.get();
+        addHostedParameter (std::move (meterParameter));
+    }
+
+    void processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) override
+    {
+        LifecyclePluginInstance::processBlock (buffer, midi);
+        meter->setValueNotifyingHost (static_cast<float> (processCalls % 7) / 7.0f);
+        if (moveGain) gain->setValueNotifyingHost (0.9f);
+    }
+
+    LifecycleGainParameter* gain = nullptr;
+    LifecycleMeterParameter* meter = nullptr;
+    bool moveGain = false;
+};
+
+// Notes any call that lands while a test's stand-in audio block holds the slot.
+class OverlapProbePluginInstance final : public LifecyclePluginInstance
+{
+public:
+    void processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) override
+    {
+        note();
+        LifecyclePluginInstance::processBlock (buffer, midi);
+    }
+    void releaseResources() override { note(); LifecyclePluginInstance::releaseResources(); }
+    void getStateInformation (juce::MemoryBlock&) override { note(); }
+
+    std::atomic<bool>* blockInFlight = nullptr;
+    std::atomic<bool> touched { false };
+    std::atomic<bool> overlapped { false };
+
+private:
+    void note()
+    {
+        if (blockInFlight != nullptr && blockInFlight->load (std::memory_order_acquire))
+            overlapped.store (true, std::memory_order_release);
+        touched.store (true, std::memory_order_release);
+    }
+};
+
+float capturedGain (const juce::String& stateBase64)
+{
+    juce::MemoryBlock state;
+    REQUIRE (state.fromBase64Encoding (stateBase64));
+    REQUIRE (state.getSize() == sizeof (float) + 2 * sizeof (std::int32_t));
+    float value = 0.0f;
+    std::memcpy (&value, state.getData(), sizeof (value));
+    return value;
+}
 } // namespace
+
+TEST_CASE ("PluginSlot tracks content revisions independently of its loaded owner", "[plugin][state][lifecycle]")
+{
+    juce::ScopedJuceInitialiser_GUI juceInit;
+    PluginManager manager;
+    PluginSlot slot;
+    slot.setManager (manager);
+    slot.prepareToPlay (48000.0, 64);
+    CHECK (slot.stateRevision() == 0);
+    auto instance = std::make_unique<StatefulLifecyclePluginInstance>();
+    auto* stateful = instance.get();
+    REQUIRE (slot.installInProcessInstanceForTest (std::move (instance)));
+    const auto generation = slot.generation();
+    auto revision = slot.stateRevision();
+    stateful->gain->beginChangeGesture();
+    stateful->gain->endChangeGesture();
+    CHECK (slot.stateRevision() == revision);
+    stateful->gain->setValueNotifyingHost (0.75f);
+    CHECK (slot.stateRevision() > revision);
+    CHECK (slot.getLastTouchedParamIndex() == 0);
+    revision = slot.stateRevision();
+    stateful->setCurrentProgram (1);
+    CHECK (slot.stateRevision() > revision);
+    revision = slot.stateRevision();
+    stateful->changeOpaqueState (23);
+    CHECK (slot.stateRevision() > revision);
+    revision = slot.stateRevision();
+    stateful->setLatencySamples (64);
+    stateful->updateHostDisplay (juce::AudioProcessorListener::ChangeDetails {}.withParameterInfoChanged (true));
+    CHECK (slot.stateRevision() == revision);
+    CHECK (slot.refreshLatencyIfChanged());
+    CHECK (slot.getLatencySamples() == 64);
+    slot.setBypassed (true);
+    slot.setBypassed (false);
+    slot.releaseResources();
+    slot.prepareToPlay (48000.0, 128);
+    CHECK_THAT (capturedGain (slot.getStateBase64ForSave (0)), Catch::Matchers::WithinAbs (0.75f, 1.0e-6f));
+    CHECK (slot.stateRevision() == revision);
+    CHECK (slot.generation() == generation);
+    slot.unload();
+    REQUIRE (slot.generation() != generation);
+    REQUIRE (slot.installInProcessInstanceForTest (std::make_unique<StatefulLifecyclePluginInstance>()));
+    CHECK (slot.generation() != generation);
+    CHECK (slot.stateRevision() == revision);
+}
+
+TEST_CASE ("PluginSlot captures queued writes before its parameter timer runs", "[plugin][state][lifecycle]")
+{
+    juce::ScopedJuceInitialiser_GUI juceInit;
+    PluginManager manager;
+    PluginSlot slot;
+    slot.setManager (manager);
+    slot.prepareToPlay (48000.0, 64);
+    auto instance = std::make_unique<StatefulLifecyclePluginInstance>();
+    auto* stateful = instance.get();
+    REQUIRE (slot.installInProcessInstanceForTest (std::move (instance)));
+    const auto generation = slot.generation();
+    const auto beforeQueue = slot.stateRevision();
+    slot.setParamNormalised (0, 0.625f);
+    slot.setParamNormalised (0, 0.875f);
+    CHECK_THAT (stateful->gain->get(), Catch::Matchers::WithinAbs (0.25f, 1.0e-6f));
+    CHECK (slot.stateRevision() > beforeQueue);
+    bool replaced = false;
+    SECTION ("active owner") {}
+    SECTION ("released owner") { slot.releaseResources(); }
+    SECTION ("writes from the previous owner are discarded")
+    {
+        slot.unload();
+        REQUIRE (slot.installInProcessInstanceForTest (std::make_unique<StatefulLifecyclePluginInstance>()));
+        CHECK (slot.generation() != generation);
+        replaced = true;
+    }
+    const auto queuedRevision = slot.stateRevision();
+    std::string error;
+    const auto state = slot.getStateBase64ForSave (0, &error);
+    CHECK (error.empty());
+    CHECK_THAT (capturedGain (state), Catch::Matchers::WithinAbs (replaced ? 0.25f : 0.875f, 1.0e-6f));
+    if (replaced) CHECK (slot.stateRevision() == queuedRevision);
+    else CHECK (slot.stateRevision() > queuedRevision);
+}
+
+TEST_CASE ("PluginSlot refuses reentrant state capture during queued parameter notification", "[plugin][state][lifecycle]")
+{
+    juce::ScopedJuceInitialiser_GUI juceInit;
+    PluginManager manager;
+    PluginSlot slot;
+    slot.setManager (manager);
+    slot.prepareToPlay (48000.0, 64);
+    auto instance = std::make_unique<StatefulLifecyclePluginInstance>();
+    auto* stateful = instance.get();
+    REQUIRE (slot.installInProcessInstanceForTest (std::move (instance)));
+    struct Listener final : juce::AudioProcessorParameter::Listener
+    {
+        Listener (juce::AudioProcessorParameter& p, PluginSlot& s) : parameter (p), slot (s)
+            { parameter.addListener (this); }
+        ~Listener() override { parameter.removeListener (this); }
+        void parameterValueChanged (int, float) override
+        {
+            if (++calls == 1) (void) slot.getStateBase64ForSave (0, &error);
+        }
+        void parameterGestureChanged (int, bool) override {}
+        juce::AudioProcessorParameter& parameter;
+        PluginSlot& slot;
+        int calls = 0;
+        std::string error;
+    } listener (*stateful->gain, slot);
+    slot.setParamNormalised (0, 0.875f);
+    std::string error;
+    CHECK_THAT (capturedGain (slot.getStateBase64ForSave (0, &error)), Catch::Matchers::WithinAbs (0.875f, 1.0e-6f));
+    CHECK (error.empty());
+    CHECK (listener.calls == 1);
+    CHECK_FALSE (listener.error.empty());
+    CHECK_THAT (capturedGain (slot.getStateBase64ForSave (0)), Catch::Matchers::WithinAbs (0.875f, 1.0e-6f));
+    CHECK (listener.calls == 1);
+}
+
+// A save marks the slot clean against the revision its state reflects. The
+// writes the capture delivers are in that state, so they must not leave the slot
+// looking edited, while a change after the read must.
+TEST_CASE ("PluginSlot reports the revision its captured state reflects", "[plugin][state][lifecycle]")
+{
+    juce::ScopedJuceInitialiser_GUI juceInit;
+    PluginManager manager;
+    PluginSlot slot;
+    slot.setManager (manager);
+    slot.prepareToPlay (48000.0, 64);
+    auto instance = std::make_unique<StatefulLifecyclePluginInstance>();
+    auto* stateful = instance.get();
+    REQUIRE (slot.installInProcessInstanceForTest (std::move (instance)));
+    slot.setParamNormalised (0, 0.875f);
+    const auto queued = slot.stateRevision();
+    SECTION ("active owner") {}
+    SECTION ("released owner") { slot.releaseResources(); }
+    std::string error;
+    std::uint64_t captured = 0;
+    CHECK_THAT (capturedGain (slot.getStateBase64ForSave (0, &error, &captured)),
+                Catch::Matchers::WithinAbs (0.875f, 1.0e-6f));
+    CHECK (error.empty());
+    CHECK (captured > queued);
+    CHECK (slot.stateRevision() == captured);
+    stateful->changeOpaqueState (5);
+    CHECK (slot.stateRevision() > captured);
+}
+
+// JUCE's VST3 host reports every restartComponent as a program change, whatever
+// its flags. One the plug-in raises while the slot itself (de)activates it - a
+// latency re-announced from setActive, on a device change or around a save - is
+// that cycle, not an edit. Any other may be the plug-in's only report of an
+// edit: a JUCE plug-in before 6.1 loading an IR restarts with no parameter
+// change and no setDirty.
+TEST_CASE ("PluginSlot counts a VST3 restart unless its own activation caused it", "[plugin][state][lifecycle]")
+{
+    juce::ScopedJuceInitialiser_GUI juceInit;
+    PluginManager manager;
+    PluginSlot slot;
+    slot.setManager (manager);
+    slot.prepareToPlay (48000.0, 64);
+    auto instance = std::make_unique<StatefulLifecyclePluginInstance>();
+    auto* stateful = instance.get();
+    stateful->formatName = "VST3";
+    stateful->restartOnActivation = true;
+    REQUIRE (slot.installInProcessInstanceForTest (std::move (instance)));
+    const auto revision = slot.stateRevision();
+
+    slot.prepareToPlay (44100.0, 128);
+    CHECK (stateful->prepareCalls == 2);
+    CHECK (slot.stateRevision() == revision);
+    std::string error;
+    std::uint64_t captured = 0;
+    (void) slot.getStateBase64ForSave (0, &error, &captured);
+    CHECK (error.empty());
+    CHECK (stateful->prepareCalls == 3);
+    CHECK (captured == revision);
+    CHECK (slot.stateRevision() == captured);
+
+    stateful->reportRestart();
+    CHECK (slot.stateRevision() > captured);
+}
+
+// A plug-in reports its meters from inside processBlock, every block. None is an
+// edit; a parameter the user could automate that the plug-in moves there is.
+TEST_CASE ("PluginSlot does not count meters a plug-in reports from its own blocks", "[plugin][state][lifecycle]")
+{
+    juce::ScopedJuceInitialiser_GUI juceInit;
+    PluginManager manager;
+    PluginSlot slot;
+    slot.setManager (manager);
+    slot.prepareToPlay (48000.0, 64);
+    auto instance = std::make_unique<MeteringLifecyclePluginInstance>();
+    auto* metering = instance.get();
+    REQUIRE (slot.installInProcessInstanceForTest (std::move (instance)));
+    const auto revision = slot.stateRevision();
+    float left[64] {};
+    float right[64] {};
+    juce::MidiBuffer midi;
+    for (int block = 0; block < 4; ++block)
+        slot.processStereoBlock (left, right, 64, midi);
+    CHECK (metering->processCalls == 4);
+    CHECK (slot.stateRevision() == revision);
+    metering->moveGain = true;
+    slot.processStereoBlock (left, right, 64, midi);
+    CHECK (slot.stateRevision() > revision);
+}
+
+// With no device the slot has never been prepared, and an inactive plug-in takes
+// no block, so a value JUCE's VST3 or LV2 host is holding cannot reach its state.
+// The capture must not vouch for it.
+TEST_CASE ("PluginSlot does not vouch for a held parameter change it could not deliver", "[plugin][state][lifecycle]")
+{
+    juce::ScopedJuceInitialiser_GUI juceInit;
+    PluginManager manager;
+    PluginSlot slot;
+    slot.setManager (manager);
+    auto instance = std::make_unique<StatefulLifecyclePluginInstance>();
+    auto* stateful = instance.get();
+    stateful->formatName = "LV2";
+    REQUIRE (slot.installInProcessInstanceForTest (std::move (instance)));
+    REQUIRE (slot.getInstance() == stateful);
+    stateful->gain->setValueNotifyingHost (0.5f);
+
+    std::string error;
+    std::uint64_t captured = 0;
+    (void) slot.getStateBase64ForSave (0, &error, &captured);
+    CHECK (error.empty());
+    CHECK (stateful->processCalls == 0);
+    CHECK (slot.stateRevision() > captured);
+
+    slot.prepareToPlay (48000.0, 64);
+    (void) slot.getStateBase64ForSave (0, &error, &captured);
+    CHECK (error.empty());
+    CHECK (stateful->processCalls == 1);
+    CHECK (slot.stateRevision() == captured);
+}
+
+// A capture parks the audio pointer and, with a park sleep, merely waits for a
+// block to pass. A block that loaded the pointer just before and runs longer is
+// still inside the plug-in when the capture's empty block and state read begin,
+// and JUCE's LV2 host would run the plug-in twice at once. The audio side holds
+// the process lock for the whole block, so the capture has to take it too.
+TEST_CASE ("PluginSlot does not capture state while an audio block is still running", "[plugin][state][lifecycle][ipc]")
+{
+    using namespace std::chrono_literals;
+    juce::ScopedJuceInitialiser_GUI juceInit;
+    PluginManager manager;
+    PluginSlot slot;
+    slot.setManager (manager);
+    slot.prepareToPlay (48000.0, 64);
+    auto instance = std::make_unique<OverlapProbePluginInstance>();
+    auto* probe = instance.get();
+    probe->formatName = "LV2";
+    std::atomic<bool> blockInFlight { false };
+    probe->blockInFlight = &blockInFlight;
+    REQUIRE (slot.installInProcessInstanceForTest (std::move (instance)));
+    probe->touched.store (false, std::memory_order_release);
+
+    // The stand-in block ends only once the capture has parked the slot and then
+    // either reached into the plug-in - which it must not while the block runs -
+    // or had a quarter of a second to. Whatever that bound, a capture that waits
+    // for the block never overlaps it.
+    std::thread audioThread ([&]
+    {
+        const juce::SpinLock::ScopedLockType processGuard (slot.getProcessLock());
+        blockInFlight.store (true, std::memory_order_release);
+        const auto parkDeadline = std::chrono::steady_clock::now() + 10s;
+        while (slot.getInstance() != nullptr && std::chrono::steady_clock::now() < parkDeadline)
+            std::this_thread::yield();
+        const auto touchDeadline = std::chrono::steady_clock::now() + 250ms;
+        while (! probe->touched.load (std::memory_order_acquire)
+               && std::chrono::steady_clock::now() < touchDeadline)
+            std::this_thread::yield();
+        blockInFlight.store (false, std::memory_order_release);
+    });
+    while (! blockInFlight.load (std::memory_order_acquire))
+        std::this_thread::yield();
+
+    std::string error;
+    (void) slot.getStateBase64ForSave (0, &error);
+    audioThread.join();
+    CHECK (error.empty());
+    CHECK (probe->processCalls == 1);
+    CHECK_FALSE (probe->overlapped.load());
+}
 
 TEST_CASE ("PluginSlot republishes an in-process instance after release and prepare")
 {
@@ -117,7 +546,11 @@ TEST_CASE ("PluginSlot re-reads a plugin's latency when a save re-prepares it", 
     REQUIRE (slot.getLatencySamples() == 32);
 
     lifecycle->latencyOnPrepare = 128;
-    (void) slot.getStateBase64ForSave (0);
+    std::string captureError = "previous capture failure";
+    juce::MemoryBlock savedState;
+    CHECK (savedState.fromBase64Encoding (slot.getStateBase64ForSave (0, &captureError)));
+    CHECK (savedState.getSize() == 0);
+    CHECK (captureError.empty());
     CHECK (lifecycle->releaseCalls == 1);
     CHECK (lifecycle->prepareCalls == 2);
     CHECK (slot.getLatencySamples() == 128);
@@ -198,6 +631,184 @@ TEST_CASE ("PluginSlot refuses in-process loads until a device prepares it",
     CHECK (error.isNotEmpty());
     CHECK (error != "plugin slot not prepared");
 }
+
+#if defined(DUSKSTUDIO_FILE_STATE_LV2_FIXTURE_PATH) && JUCE_PLUGINHOST_LV2
+namespace
+{
+class ScopedFixtureConfig
+{
+public:
+    ScopedFixtureConfig()
+    {
+        if (const auto* value = std::getenv (dusk::fs::kConfigDirEnv)) previous = value;
+        set (directory.path().u8string().c_str());
+    }
+    ~ScopedFixtureConfig() { set (previous ? previous->c_str() : nullptr); }
+
+    bool seed() const
+    {
+        std::string error;
+        return pluginpaths::save ({ DUSKSTUDIO_FILE_STATE_LV2_FIXTURE_PATH }, error,
+                                   directory.path() / "lv2-custom-bundles.json");
+    }
+
+private:
+    static void set (const char* value)
+    {
+       #if defined(_WIN32)
+        ::_putenv_s (dusk::fs::kConfigDirEnv, value != nullptr ? value : "");
+       #else
+        if (value != nullptr) ::setenv (dusk::fs::kConfigDirEnv, value, 1);
+        else                  ::unsetenv (dusk::fs::kConfigDirEnv);
+       #endif
+    }
+    duskstudio::test::TempDirectory directory { "dusk-plugin-restore-config-" };
+    std::optional<std::string> previous;
+};
+
+PluginDescriptor statefulStandardDescriptor()
+{
+    juce::LV2PluginFormat format;
+    juce::OwnedArray<juce::PluginDescription> descriptions;
+    format.findAllTypesForFile (descriptions, DUSKSTUDIO_FILE_STATE_LV2_FIXTURE_PATH);
+    juce::PluginDescription* chosen = nullptr;
+    for (auto* description : descriptions)
+        if (description->fileOrIdentifier == "urn:duskstudio:test:control-state")
+            chosen = description;
+    REQUIRE (chosen != nullptr);
+    return PluginManager::descriptorFromJuceForTest (*chosen);
+}
+
+juce::String nondefaultStandardState (PluginManager& manager, const PluginDescriptor& descriptor)
+{
+    juce::String error;
+    auto source = manager.createPluginInstance (descriptor, 48000.0, 64, error);
+    REQUIRE (source != nullptr);
+    source->prepareToPlay (48000.0, 64);
+    bool changed = false;
+    for (auto* param : source->getParameters())
+        if (param->getName (100) == "Gain")
+        {
+            param->setValueNotifyingHost (0.625f);
+            changed = true;
+        }
+    REQUIRE (changed);
+    juce::AudioBuffer<float> audio (2, 64);
+    audio.clear();
+    juce::MidiBuffer midi;
+    source->processBlock (audio, midi);
+    juce::MemoryBlock state;
+    source->getStateInformation (state);
+    REQUIRE (state.getSize() > 0);
+    return state.toBase64Encoding();
+}
+}
+
+#if DUSKSTUDIO_HAS_OOP_PLUGINS
+TEST_CASE ("PluginSlot restores saved state into an in-process sandbox fallback", "[plugin][ipc][restore]")
+{
+    juce::ScopedJuceInitialiser_GUI juceInit;
+    ScopedFixtureConfig fixtureConfig;
+    REQUIRE (fixtureConfig.seed());
+    duskstudio::test::TempDirectory temp ("dusk-plugin-fallback-");
+    const auto hostPath = temp.path() / "unavailable-host";
+    SECTION ("missing child") {}
+    SECTION ("unlaunchable child") { std::ofstream (hostPath) << "not an executable"; }
+
+    PluginManager manager;
+    manager.setOopEnabled (true);
+    manager.setHostExecutableOverride (hostPath.u8string(), "--ipc-host");
+    const auto descriptor = statefulStandardDescriptor();
+    const auto saved = nondefaultStandardState (manager, descriptor);
+    PluginSlot slot;
+    slot.setManager (manager);
+    slot.prepareToPlay (48000.0, 64);
+    juce::String error;
+    REQUIRE (slot.restoreFromSavedState (descriptor, {}, saved, error));
+    REQUIRE_FALSE (slot.isRemote());
+    REQUIRE (slot.getInstance() != nullptr);
+    CHECK_FALSE (slot.isOffline());
+    bool checked = false;
+    for (auto* param : slot.getInstance()->getParameters())
+        if (param->getName (100) == "Gain")
+        {
+            CHECK_THAT (param->getValue(), Catch::Matchers::WithinAbs (0.625f, 1.0e-6f));
+            checked = true;
+        }
+    CHECK (checked);
+    CHECK (slot.getStateBase64ForSave (0) == saved);
+}
+#endif
+
+TEST_CASE ("PluginSlot rejects malformed saved state and preserves its original reference", "[plugin][ipc][restore]")
+{
+    juce::ScopedJuceInitialiser_GUI juceInit;
+    ScopedFixtureConfig fixtureConfig;
+    REQUIRE (fixtureConfig.seed());
+    duskstudio::test::TempDirectory temp ("dusk-plugin-corrupt-state-");
+    PluginManager manager;
+    manager.setHostExecutableOverride ((temp.path() / "missing-host").u8string(), "--ipc-host");
+    SECTION ("in-process") { manager.setOopEnabled (false); }
+    SECTION ("sandbox requested") { manager.setOopEnabled (true); }
+    auto descriptor = statefulStandardDescriptor();
+    const auto originalLocation = descriptor.location;
+    for (const char* malformed : { "not a blob", "1.", "9.+C" })
+    {
+        PluginSlot slot;
+        slot.setManager (manager);
+        slot.prepareToPlay (48000.0, 64);
+        juce::String error;
+        CHECK_FALSE (slot.restoreFromSavedState (descriptor, {}, malformed, error));
+        CHECK (error.isNotEmpty());
+        CHECK_FALSE (slot.isLoaded());
+        CHECK (slot.isOffline());
+        REQUIRE (slot.getDescriptorForSave (0).has_value());
+        CHECK (*slot.getDescriptorForSave (0) == descriptor);
+        CHECK (slot.getDescriptorForSave (0)->location == originalLocation);
+        CHECK (slot.getStateBase64ForSave (0) == malformed);
+    }
+    for (const char* empty : { "", "0." })
+    {
+        PluginSlot slot;
+        slot.setManager (manager);
+        slot.prepareToPlay (48000.0, 64);
+        juce::String error;
+        CHECK (slot.restoreFromSavedState (descriptor, {}, empty, error));
+        CHECK_FALSE (slot.isOffline());
+    }
+}
+
+// JUCE's LV2 and VST3 hosts hold a parameter change until the next process call
+// writes it into the plug-in, and a capture parks the audio thread first. The
+// slot has to deliver the change before it reads state or the save keeps the
+// value the plug-in had before the edit.
+TEST_CASE ("PluginSlot captures a hosted plug-in's parameter change before its next block", "[plugin][state][lifecycle]")
+{
+    juce::ScopedJuceInitialiser_GUI juceInit;
+    ScopedFixtureConfig fixtureConfig;
+    REQUIRE (fixtureConfig.seed());
+    PluginManager manager;
+    manager.setOopEnabled (false);
+    const auto descriptor = statefulStandardDescriptor();
+    const auto edited = nondefaultStandardState (manager, descriptor);
+    PluginSlot slot;
+    slot.setManager (manager);
+    slot.prepareToPlay (48000.0, 64);
+    juce::String error;
+    REQUIRE (slot.loadFromDescriptor (descriptor, error));
+    REQUIRE (slot.getInstance() != nullptr);
+    int gainIndex = -1;
+    const auto& parameters = slot.getInstance()->getParameters();
+    for (int index = 0; index < parameters.size(); ++index)
+        if (parameters[index]->getName (100) == "Gain") gainIndex = index;
+    REQUIRE (gainIndex >= 0);
+    SECTION ("a write the slot queued") { slot.setParamNormalised (gainIndex, 0.625f); }
+    SECTION ("an edit made on the plug-in") { parameters[gainIndex]->setValueNotifyingHost (0.625f); }
+    std::string captureError;
+    CHECK (slot.getStateBase64ForSave (0, &captureError) == edited);
+    CHECK (captureError.empty());
+}
+#endif
 
 #if DUSKSTUDIO_HAS_OOP_PLUGINS
 namespace

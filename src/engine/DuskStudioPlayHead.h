@@ -1,9 +1,7 @@
 #pragma once
 
 #include <juce_audio_processors/juce_audio_processors.h>
-#include "Transport.h"
-#include "TransportSnapshot.h"
-#include <atomic>
+#include "../foundation/AtomicTransportPosition.h"
 #include <cmath>
 
 namespace duskstudio
@@ -13,59 +11,57 @@ namespace duskstudio
 // delays with bar/beat divisions, tape-style transport-driven UIs) all
 // query this. Without a playhead set, JUCE-hosted plugins fall back to a
 // default 120 BPM regardless of session tempo.
-//
-// `bpmSource` is a non-owning pointer to Session::tempoBpm; the audio
-// thread reads it lock-free via memory_order_relaxed (UI mutates with
-// the same ordering on tempo changes). nullptr is allowed - the play-
-// head reports a fallback 120 BPM in that case.
-//
-// `sampleRateSource` is a pointer to AudioEngine::currentSampleRate for
-// converting the playhead's sample position into wall-clock seconds.
 class DuskStudioPlayHead final : public juce::AudioPlayHead
 {
 public:
-    DuskStudioPlayHead (Transport& t,
-                   const std::atomic<float>* bpm,
-                   const std::atomic<double>* sampleRate) noexcept
-        : transport (t), bpmSource (bpm), sampleRateSource (sampleRate) {}
+    explicit DuskStudioPlayHead (const dusk::AtomicTransportPosition& source) noexcept
+        : snapshotSource (source) {}
 
     juce::Optional<PositionInfo> getPosition() const override
     {
-        const double bpm = (bpmSource != nullptr)
-                            ? (double) bpmSource->load (std::memory_order_relaxed)
-                            : 120.0;
-        const double sr = (sampleRateSource != nullptr)
-                            ? sampleRateSource->load (std::memory_order_relaxed)
-                            : 0.0;
-        const auto position = snapshotTransport (transport, bpm, sr);
+        const auto snapshot = snapshotSource.read();
+        if (! snapshot) return {};
+        const auto& position = *snapshot;
 
         PositionInfo info;
-        info.setIsPlaying   (position.isPlaying);
+        info.setIsPlaying   (position.isPlaying || position.isRecording);
         info.setIsRecording (position.isRecording);
-        info.setBpm (position.bpm);
+        if (std::isfinite (position.bpm) && position.bpm >= 0.0)
+            info.setBpm (position.bpm);
 
-        // Plugins do better with 4/4 than with the default 0/0.
-        info.setTimeSignature (juce::AudioPlayHead::TimeSignature {
-            position.timeSignatureNumerator, position.timeSignatureDenominator });
+        const bool signatureValid = position.timeSignatureNumerator > 0
+                                 && position.timeSignatureDenominator > 0;
+        if (signatureValid)
+            info.setTimeSignature (TimeSignature {
+                position.timeSignatureNumerator, position.timeSignatureDenominator });
 
         info.setTimeInSamples (position.timeInSamples);
-        if (sr > 0.0)
+        if (std::isfinite (position.timeInSeconds))
             info.setTimeInSeconds (position.timeInSeconds);
-
-        // Beats-per-bar of 4 feeds setPpqPositionOfLastBarStart for plugins
-        // that need bar-start.
-        if (sr > 0.0 && bpm > 0.0)
+        const bool musicalPositionValid = std::isfinite (position.bpm) && position.bpm > 0.0
+                                       && std::isfinite (position.ppqPosition);
+        const bool loopValid = musicalPositionValid && std::isfinite (position.ppqLoopStart)
+                            && std::isfinite (position.ppqLoopEnd)
+                            && position.ppqLoopEnd > position.ppqLoopStart;
+        info.setIsLooping (position.isLooping && loopValid);
+        if (musicalPositionValid)
         {
             info.setPpqPosition (position.ppqPosition);
-            info.setPpqPositionOfLastBarStart (std::floor (position.ppqPosition / 4.0) * 4.0);
+            if (signatureValid)
+            {
+                const double quartersPerBar = (double) position.timeSignatureNumerator * 4.0
+                                             / (double) position.timeSignatureDenominator;
+                const double barStart = std::floor (position.ppqPosition / quartersPerBar) * quartersPerBar;
+                if (std::isfinite (barStart)) info.setPpqPositionOfLastBarStart (barStart);
+            }
+            if (loopValid)
+                info.setLoopPoints (LoopPoints { position.ppqLoopStart, position.ppqLoopEnd });
         }
 
         return info;
     }
 
 private:
-    Transport& transport;
-    const std::atomic<float>*  bpmSource;
-    const std::atomic<double>* sampleRateSource;
+    const dusk::AtomicTransportPosition& snapshotSource;
 };
 } // namespace duskstudio

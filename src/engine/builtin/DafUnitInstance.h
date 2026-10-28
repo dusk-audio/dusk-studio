@@ -27,9 +27,9 @@ namespace duskstudio::builtin
 // back what it wrote from a mirror, into which the audio thread copies the output
 // parameters after each block.
 //
-// State save/load is message-thread and must be called while the engine's process
-// gate fences the audio callback, as NativeInsertSlot requires for state access.
-// Threading otherwise matches INativeInstance.
+// Message-thread saveState reads atomic mirrors and immutable state snapshots;
+// registered built-ins must keep their state readers safe alongside run().
+// loadState and lifecycle changes require the engine's process gate.
 class DafUnitInstance final : public hosting::INativeInstance
 {
 public:

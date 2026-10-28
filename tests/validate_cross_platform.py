@@ -126,7 +126,7 @@ class ValidatorContract(unittest.TestCase):
             header.unlink();run(expect=False);header.write_text('fixture')
             metadata_script = validator.windows_cache_script(str(build))
             script.write_text(metadata_script)
-            result = subprocess.run([powershell, '-NoLogo', '-NoProfile', '-NonInteractive', '-File', str(script)], capture_output=True, text=True)
+            result = subprocess.run([powershell, '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', str(script)], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(validator.windows_cache_result(result.stdout), dict(generator='Ninja', mesa=''))
 
@@ -150,7 +150,7 @@ return $p
 '''.replace('__CODE__', '16' if mode == 'native-failure' else '0').replace('__WAIT__', 'return $false' if mode == 'timeout' else 'return $true')
                 script.write_text(mock + validator.windows_probe_script("C:/owned/probe.exe"))
                 env = dict(os.environ, TEMP=temp)
-                result = subprocess.run([powershell, '-NoLogo', '-NoProfile', '-NonInteractive', '-File', str(script)], env=env, capture_output=True, text=True)
+                result = subprocess.run([powershell, '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', str(script)], env=env, capture_output=True, text=True)
                 self.assertEqual(result.returncode == 0, mode == 'pass', result.stdout + result.stderr)
                 if mode == 'pass': validator.check_windows_probe(result.stdout)
                 self.assertEqual(list(Path(temp).glob('dusk-wgl-*')), [])

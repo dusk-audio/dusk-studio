@@ -5,6 +5,7 @@
 #include <array>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -70,6 +71,17 @@ public:
     bool saveState (std::vector<uint8_t>& out) const override;
     bool loadState (const std::vector<uint8_t>& in) override;
 
+    // Steps for a host or UI write that changes an input control port or a
+    // patch property, any other patch edit from the UI, a queued edit reaching
+    // run(), the plug-in's state:StateChanged or a patch value it reports
+    // changed (outside a patch:Get answer), and a restore.
+    std::uint64_t stateRevision() const noexcept override;
+
+    // Delivers queued patch and UI atoms in a zero-frame run(), and folds what
+    // the plug-in reported back into the read-back before returning. Without a
+    // live plug-in instance the atoms wait for the next one and this is false.
+    bool flushPendingWrites() override;
+
     // Session-scoped directory for FILE-BACKED plugin state (a sampler's
     // loaded bank, a convolution IR). Empty = blob-only save (control ports
     // + in-memory state:interface - the pre-file-state behaviour). Set by
@@ -91,6 +103,8 @@ public:
     // teardown). An embedded UI compares this against the epoch it captured at
     // embed time to detect that its instance-access handles went stale.
     std::uint64_t instanceEpoch() const noexcept;
+    // Message thread: close every UI before its instance-access handle is freed.
+    void addEditorReleaseHook (std::weak_ptr<std::function<void()>> hook);
     void*       uridMapFeature()   const noexcept;
     void*       uridUnmapFeature() const noexcept;
     // The options feature (sample rate, block lengths) the plugin was given.
@@ -102,7 +116,8 @@ public:
 
     // UI -> plugin control-port write (ui:floatProtocol). Staged into a lock-free
     // ring; the audio thread applies it at the top of its next processBlock so
-    // nothing writes portValues while run() reads it.
+    // nothing writes portValues while run() reads it. Only input control ports
+    // take a write.
     void setControlPortValue (uint32_t portIndex, float value) noexcept;
     // Same, from the plugin's OWN editor - also stamps the MIDI Learn
     // last-touched tracker (host-initiated writes must not self-stamp).
@@ -147,8 +162,9 @@ public:
 
 private:
     bool saveStateBlobOnly (std::vector<uint8_t>& out) const;
+    // restoreRan: the plug-in was handed the state, whatever it made of it.
     bool loadStateInternal (const std::vector<uint8_t>& in,
-                            bool recoverFileGeneration);
+                            bool recoverFileGeneration, bool& restoreRan);
     struct Impl;
     std::unique_ptr<Impl> impl;
 };

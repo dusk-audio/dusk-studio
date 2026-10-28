@@ -462,6 +462,7 @@ public:
         const std::lock_guard<std::mutex> lock (mutex);
         outputs.clear();
         pending.clear();
+        streamDeadlines.clear();
         queuedBytes = 0;
         wake.notify_all();
     }
@@ -472,7 +473,8 @@ public:
         return outputs.count (identifier) != 0;
     }
 
-    bool send (const std::string& identifier, const dusk::MidiBuffer& events, double baseTimeMs, double sampleRate) override
+    bool send (const std::string& identifier, int stream, const dusk::MidiBuffer& events,
+               double baseTimeMs, double sampleRate) override
     {
         const std::lock_guard<std::mutex> lock (mutex);
         const auto found = outputs.find (identifier);
@@ -486,10 +488,16 @@ public:
             bytes += sizeof (PendingMessage) + static_cast<std::size_t> (event.numBytes);
             if (bytes > kMaxQueuedBytes - queuedBytes) return false;
         }
+        // pending plays in due order, so the stream's floor applies
+        // (IMidiOutputBackend::send).
+        auto& streamDeadline = streamDeadlines[{ identifier, stream }];
+        const double notBefore = streamDeadline;
         for (const auto event : events)
         {
-            const double due = baseTimeMs + static_cast<double> (event.samplePosition) * 1000.0 / rate;
+            const double due = std::max (baseTimeMs + static_cast<double> (event.samplePosition) * 1000.0 / rate,
+                                         notBefore);
             pending.emplace (due, PendingMessage { found->second, { event.data, event.data + event.numBytes } });
+            streamDeadline = std::max (streamDeadline, due);
         }
         queuedBytes += bytes;
         // Direct panic/control sends are due now and must reach CoreMIDI before
@@ -561,6 +569,7 @@ private:
     bool running = true;
     std::map<std::string, MIDIEndpointRef> outputs;
     std::multimap<double, PendingMessage> pending;
+    std::map<std::pair<std::string, int>, double> streamDeadlines;
     std::size_t queuedBytes = 0;
     alignas(MIDIPacketList) std::array<std::uint8_t, 65536> packetStorage {};
 };

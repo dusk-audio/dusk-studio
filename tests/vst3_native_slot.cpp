@@ -6,6 +6,7 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "engine/vst3/NativeVst3Slot.h"
+#include "engine/hosting/NativeRestorePolicy.h"
 #include "engine/vst3/Vst3HostContext.h"
 
 #if defined(__GNUC__)
@@ -14,6 +15,7 @@
 #endif
 #include <pluginterfaces/gui/iplugview.h>
 #include <pluginterfaces/vst/ivsteditcontroller.h>
+#include <pluginterfaces/vst/ivstprocesscontext.h>
 #if defined(__GNUC__)
  #pragma GCC diagnostic pop
 #endif
@@ -22,6 +24,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -260,6 +263,133 @@ TEST_CASE ("NativeVst3Slot refreshes latency after restoring state",
     REQUIRE (slot.getLatencySamples() == 64);
 }
 
+TEST_CASE ("NativeVst3Slot supplies the current transport on every processed block",
+           "[vst3][slot][transport]")
+{
+    using Catch::Matchers::WithinAbs;
+    using Context = Steinberg::Vst::ProcessContext;
+    duskstudio::vst3::NativeVst3Slot slot;
+    std::string error;
+    constexpr int kFrames = 64;
+    REQUIRE (slot.load (
+        std::filesystem::u8path (DUSKSTUDIO_RUNTIME_RELAYOUT_VST3_FIXTURE_PATH),
+        48000.0, kFrames, error));
+    const auto enableReport = [&]
+    {
+        for (int index = 0; index < slot.paramCount(); ++index)
+            if (slot.paramInfo (index)->name == "Report Transport")
+            {
+                slot.setParamValue (slot.paramInfo (index)->id, 1.0);
+                return true;
+            }
+        return false;
+    };
+    REQUIRE (enableReport());
+    std::vector<float> left (kFrames), right (kFrames);
+    const auto process = [&] (const dusk::TransportPosition* position)
+    {
+        std::fill (left.begin(), left.end(), 0.0f);
+        std::fill (right.begin(), right.end(), 0.0f);
+        slot.processStereo (left.data(), right.data(), left.data(), right.data(),
+                            kFrames, nullptr, position);
+        for (int index = 0; index < 11; ++index)
+            CHECK_THAT (right[(size_t) index], WithinAbs (left[(size_t) index], 1.0e-6f));
+    };
+    const auto flags = [&] { return (Steinberg::uint32) std::lround (left[8]); };
+    const auto valid = Context::kProjectTimeMusicValid | Context::kBarPositionValid
+                     | Context::kTempoValid | Context::kTimeSigValid;
+    dusk::TransportPosition position;
+    position.isPlaying = true;
+    position.timeInSamples = 123456;
+    position.timeInSeconds = 123456.0 / 48000.0;
+    position.ppqPosition = 17.25;
+    position.bpm = 93.0;
+    position.timeSignatureNumerator = 6;
+    position.timeSignatureDenominator = 8;
+    process (&position);
+    CHECK_THAT (left[0], WithinAbs (1.0f, 1.0e-6f));
+    CHECK_THAT (left[1], WithinAbs (48000.0f, 1.0e-6f));
+    CHECK_THAT (left[2], WithinAbs (123456.0f, 1.0e-6f));
+    CHECK_THAT (left[3], WithinAbs (17.25f, 1.0e-6f));
+    CHECK_THAT (left[4], WithinAbs (15.0f, 1.0e-6f));
+    CHECK_THAT (left[5], WithinAbs (93.0f, 1.0e-6f));
+    CHECK_THAT (left[6], WithinAbs (6.0f, 1.0e-6f));
+    CHECK_THAT (left[7], WithinAbs (8.0f, 1.0e-6f));
+    CHECK (flags() == (Steinberg::uint32) (valid | Context::kPlaying));
+
+    position.isRecording = true;
+    position.timeInSamples = 123520;
+    position.ppqPosition = 17.375;
+    position.bpm = 137.0;
+    process (&position);
+    CHECK_THAT (left[2], WithinAbs (123520.0f, 1.0e-6f));
+    CHECK_THAT (left[3], WithinAbs (17.375f, 1.0e-6f));
+    CHECK_THAT (left[5], WithinAbs (137.0f, 1.0e-6f));
+    CHECK (flags() == (Steinberg::uint32) (valid | Context::kPlaying | Context::kRecording));
+
+    position.isPlaying = false;
+    position.isRecording = false;
+    position.timeInSamples = -24000;
+    position.ppqPosition = -0.75;
+    process (&position);
+    CHECK_THAT (left[2], WithinAbs (-24000.0f, 1.0e-6f));
+    CHECK_THAT (left[3], WithinAbs (-0.75f, 1.0e-6f));
+    CHECK_THAT (left[4], WithinAbs (-3.0f, 1.0e-6f));
+    CHECK (flags() == (Steinberg::uint32) valid);
+
+    position.isLooping = true;
+    position.loopStartSamples = 6000;
+    position.loopEndSamples = 46800;
+    position.ppqLoopStart = 1.25;
+    position.ppqLoopEnd = 9.75;
+    process (&position);
+    CHECK_THAT (left[9], WithinAbs (1.25f, 1.0e-6f));
+    CHECK_THAT (left[10], WithinAbs (9.75f, 1.0e-6f));
+    CHECK (flags() == (Steinberg::uint32) (valid | Context::kCycleValid | Context::kCycleActive));
+    position.isLooping = false;
+    process (&position);
+    CHECK_THAT (left[9], WithinAbs (1.25f, 1.0e-6f));
+    CHECK_THAT (left[10], WithinAbs (9.75f, 1.0e-6f));
+    CHECK (flags() == (Steinberg::uint32) (valid | Context::kCycleValid));
+    position.isLooping = true;
+    position.ppqLoopEnd = 0.5;
+    process (&position);
+    CHECK_THAT (left[9], WithinAbs (0.0f, 1.0e-6f));
+    CHECK_THAT (left[10], WithinAbs (0.0f, 1.0e-6f));
+    CHECK (flags() == (Steinberg::uint32) valid);
+    position.isLooping = false;
+    position.ppqLoopStart = position.ppqLoopEnd = 0.0;
+
+    process (nullptr);
+    for (int index = 0; index < 11; ++index)
+        CHECK_THAT (left[(size_t) index], WithinAbs (0.0f, 1.0e-6f));
+
+    REQUIRE (slot.reactivate (96000.0, kFrames, error));
+    REQUIRE (enableReport());
+    position.timeInSamples = 96000;
+    position.ppqPosition = 2.5;
+    position.timeSignatureNumerator = 7;
+    position.timeSignatureDenominator = 8;
+    position.isPlaying = true;
+    process (&position);
+    CHECK_THAT (left[1], WithinAbs (96000.0f, 1.0e-6f));
+    CHECK_THAT (left[2], WithinAbs (96000.0f, 1.0e-6f));
+    CHECK_THAT (left[3], WithinAbs (2.5f, 1.0e-6f));
+    CHECK_THAT (left[4], WithinAbs (0.0f, 1.0e-6f));
+    CHECK_THAT (left[6], WithinAbs (7.0f, 1.0e-6f));
+    CHECK_THAT (left[7], WithinAbs (8.0f, 1.0e-6f));
+    CHECK (flags() == (Steinberg::uint32) (valid | Context::kPlaying));
+
+    position.ppqPosition = std::numeric_limits<double>::quiet_NaN();
+    position.bpm = std::numeric_limits<double>::infinity();
+    position.timeSignatureNumerator = 0;
+    process (&position);
+    CHECK_THAT (left[3], WithinAbs (0.0f, 1.0e-6f));
+    CHECK_THAT (left[4], WithinAbs (0.0f, 1.0e-6f));
+    CHECK_THAT (left[5], WithinAbs (0.0f, 1.0e-6f));
+    CHECK (flags() == (Steinberg::uint32) Context::kPlaying);
+}
+
 TEST_CASE ("NativeVst3Slot keeps a bus-layout change from the plug-in's own activation only if it moved the buses",
            "[vst3][slot][regression][issue-769]")
 {
@@ -363,4 +493,52 @@ TEST_CASE ("Vst3Instance detaches host interfaces before plugin termination",
     REQUIRE (view->getSize (&teardownState) == Steinberg::kResultTrue);
     REQUIRE (teardownState.getWidth() == 1);
     REQUIRE (teardownState.getHeight() == 1);
+}
+
+TEST_CASE ("VST3 rejected controller state keeps the saved state offline",
+           "[vst3][slot][restore]")
+{
+    duskstudio::vst3::NativeVst3Slot slot;
+    std::string error;
+    REQUIRE (slot.load (
+        std::filesystem::u8path (DUSKSTUDIO_RUNTIME_RELAYOUT_VST3_FIXTURE_PATH),
+        48000.0, 64, error));
+    std::vector<uint8_t> saved;
+    REQUIRE (slot.saveState (saved));
+    REQUIRE (saved.size() == 14);
+    REQUIRE (saved.back() == 0);
+
+    SECTION ("accepted controller state round-trips independently of the component")
+    {
+        saved.back() = 1;
+        REQUIRE (slot.loadState (saved));
+        std::vector<uint8_t> captured;
+        REQUIRE (slot.saveState (captured));
+        CHECK (captured == saved);
+        CHECK (slot.getLatencySamples() == 0);
+    }
+
+    SECTION ("component-only saved state remains supported")
+    {
+        saved.pop_back();
+        saved[9] = 0;
+        REQUIRE (slot.loadState (saved));
+        CHECK (slot.isLoaded());
+    }
+
+    SECTION ("a nonempty rejected controller stream prevents recapturing replacement state")
+    {
+        saved.back() = 0xff;
+        const auto original = saved;
+        const bool accepted = slot.loadState (saved);
+        CHECK_FALSE (accepted);
+        const auto reason = duskstudio::hosting::enforceRestorePolicy (
+            true, true, accepted, {}, saved.size(), [&] { slot.unload(); });
+        CHECK_FALSE (slot.isLoaded());
+        CHECK (reason == "saved state was rejected (14 bytes); slot left offline "
+                         "to preserve the saved state");
+        if (slot.isLoaded())
+            slot.saveState (saved);
+        CHECK (saved == original);
+    }
 }

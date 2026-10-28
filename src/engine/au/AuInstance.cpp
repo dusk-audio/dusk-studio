@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <initializer_list>
 #include <limits>
 
 namespace duskstudio::au
@@ -75,6 +76,7 @@ void AuInstance::dispose() noexcept
     }
     parameters.clear();
     observedParameters.clear();
+    knownValues.clear();
     layout = {};
 }
 
@@ -470,7 +472,10 @@ bool AuInstance::loadState (const std::vector<std::uint8_t>& in)
                                               kAudioUnitScope_Global, 0,
                                               &state, sizeof state);
     CFRelease (state);
-    return status == noErr;
+    if (status != noErr) return false;
+    rememberParameterValues();
+    revision.fetch_add (1, std::memory_order_release);
+    return true;
 }
 
 const AuInstance::ParamInfo* AuInstance::paramInfo (int index) const noexcept
@@ -492,15 +497,31 @@ bool AuInstance::getParamValue (std::uint32_t id, double& out) const
 void AuInstance::setParamValue (std::uint32_t id, double value)
 {
     if (audioUnit == nullptr) return;
+    if (knownValuesStale.load (std::memory_order_acquire))
+        rememberParameterValues();
     AudioUnitParameter parameter { audioUnit, id, kAudioUnitScope_Global, 0 };
-    AUParameterSet (parameterListener, nullptr, &parameter,
-                    static_cast<AudioUnitParameterValue> (value), 0);
+    if (AUParameterSet (parameterListener, nullptr, &parameter,
+                        static_cast<AudioUnitParameterValue> (value), 0) != noErr)
+        return;
+    for (std::size_t i = 0; i < observedParameters.size(); ++i)
+        if (observedParameters[i].mParameterID == id)
+        {
+            AudioUnitParameterValue accepted = 0.0f;
+            if (! parameters[i].writable || i >= knownValues.size()
+                || AudioUnitGetParameter (audioUnit, id, kAudioUnitScope_Global, 0, &accepted) != noErr
+                || accepted == knownValues[i])
+                return;
+            knownValues[i] = accepted;
+            revision.fetch_add (1, std::memory_order_release);
+            return;
+        }
 }
 
 void AuInstance::enumerateParameters()
 {
     parameters.clear();
     observedParameters.clear();
+    knownValues.clear();
     if (audioUnit == nullptr) return;
 
     UInt32 listSize = 0;
@@ -540,13 +561,30 @@ void AuInstance::enumerateParameters()
                 CFRelease (info.unitName);
         }
     }
+    rememberParameterValues();
+}
+
+bool AuInstance::flushPendingWrites()
+{
+    rememberParameterValues();
+    return true;
+}
+
+void AuInstance::rememberParameterValues()
+{
+    knownValuesStale.store (false, std::memory_order_relaxed);
+    knownValues.assign (observedParameters.size(), 0.0f);
+    for (std::size_t i = 0; i < observedParameters.size(); ++i)
+        AudioUnitGetParameter (audioUnit, observedParameters[i].mParameterID,
+                               kAudioUnitScope_Global, 0, &knownValues[i]);
 }
 
 void AuInstance::installListeners()
 {
     if (audioUnit == nullptr) return;
-    AudioUnitAddPropertyListener (audioUnit, kAudioUnitProperty_Latency,
-                                  &AuInstance::propertyChanged, this);
+    for (const auto property : { kAudioUnitProperty_Latency, kAudioUnitProperty_PresentPreset,
+                                 kAudioUnitProperty_ClassInfo })
+        AudioUnitAddPropertyListener (audioUnit, property, &AuInstance::propertyChanged, this);
     if (AUListenerCreate (&AuInstance::parameterChanged, this, CFRunLoopGetMain(),
                           kCFRunLoopDefaultMode, 0.05f, &parameterListener) != noErr)
         parameterListener = nullptr;
@@ -563,12 +601,14 @@ void AuInstance::removeListeners() noexcept
         parameterListener = nullptr;
     }
     if (audioUnit != nullptr)
-        AudioUnitRemovePropertyListenerWithUserData (
-            audioUnit, kAudioUnitProperty_Latency, &AuInstance::propertyChanged, this);
+        for (const auto property : { kAudioUnitProperty_Latency, kAudioUnitProperty_PresentPreset,
+                                     kAudioUnitProperty_ClassInfo })
+            AudioUnitRemovePropertyListenerWithUserData (
+                audioUnit, property, &AuInstance::propertyChanged, this);
 }
 
 void AuInstance::parameterChanged (void* user, void*, const AudioUnitParameter* parameter,
-                                   AudioUnitParameterValue) noexcept
+                                   AudioUnitParameterValue value) noexcept
 {
     auto& self = *static_cast<AuInstance*> (user);
     if (parameter == nullptr) return;
@@ -576,6 +616,13 @@ void AuInstance::parameterChanged (void* user, void*, const AudioUnitParameter* 
         if (self.observedParameters[i].mParameterID == parameter->mParameterID)
         {
             self.lastTouched.store (static_cast<int> (i), std::memory_order_relaxed);
+            if (self.parameters[i].writable && i < self.knownValues.size()
+                && (self.knownValuesStale.load (std::memory_order_acquire)
+                    || self.knownValues[i] != value))
+            {
+                self.knownValues[i] = value;
+                self.revision.fetch_add (1, std::memory_order_release);
+            }
             return;
         }
 }
@@ -583,8 +630,14 @@ void AuInstance::parameterChanged (void* user, void*, const AudioUnitParameter* 
 void AuInstance::propertyChanged (void* user, AudioUnit, AudioUnitPropertyID property,
                                   AudioUnitScope, AudioUnitElement) noexcept
 {
+    auto& self = *static_cast<AuInstance*> (user);
     if (property == kAudioUnitProperty_Latency)
-        static_cast<AuInstance*> (user)->latencyDirty.store (true, std::memory_order_release);
+    {
+        self.latencyDirty.store (true, std::memory_order_release);
+        return;
+    }
+    self.knownValuesStale.store (true, std::memory_order_release);
+    self.revision.fetch_add (1, std::memory_order_release);
 }
 
 void AuInstance::refreshLatency() noexcept

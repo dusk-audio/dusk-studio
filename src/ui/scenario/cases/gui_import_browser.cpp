@@ -24,6 +24,10 @@
 #include <utility>
 #include <vector>
 
+#if defined (__linux__)
+ #include <dlfcn.h>
+#endif
+
 namespace duskstudio::scenario::gui
 {
 namespace
@@ -652,12 +656,36 @@ const ScenarioRegistrar importTargetShortWindow { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runImportTargetShortWindow (host, ctx); }
 } };
 
-std::optional<ScenarioResult> runDpImportConfirmation (GuiHost& host, ScenarioContext& ctx)
+std::optional<ScenarioResult> runDpImportConfirmation (GuiHost& host, ScenarioContext& ctx, bool failStereo = false)
 {
     auto& session = ctx.session();
     auto& engine = ctx.engine();
     if (! engine.getTransport().isStopped()) return ScenarioResult::skip ("requires stopped transport");
     if (! host.modalStackEmpty()) return ScenarioResult::skip ("requires no open modal");
+    void (*arm) (int, const char*) = nullptr;
+    int (*hits)() = nullptr;
+    void (*disarm)() = nullptr;
+    std::filesystem::path nativeTemp;
+    std::vector<std::filesystem::path> previousTemps;
+    if (failStereo)
+    {
+       #if defined (__linux__)
+        arm = reinterpret_cast<void (*) (int, const char*)> (dlsym (RTLD_DEFAULT, "dusk_audiofile_arm"));
+        hits = reinterpret_cast<int (*)()> (dlsym (RTLD_DEFAULT, "dusk_audiofile_hits"));
+        disarm = reinterpret_cast<void (*)()> (dlsym (RTLD_DEFAULT, "dusk_audiofile_disarm"));
+        const char* directory = std::getenv ("TMPDIR");
+        if (arm == nullptr || hits == nullptr || disarm == nullptr || directory == nullptr
+            || std::string (directory).find ("/tmp/dusk") != 0)
+            return ScenarioResult::skip ("requires an owned TMPDIR and native finalization fault fixture");
+        nativeTemp = std::filesystem::u8path (directory);
+        for (const auto& entry : std::filesystem::directory_iterator (nativeTemp)) previousTemps.push_back (entry.path());
+        ctx.cleanup ([disarm] { disarm(); });
+        if (! session.track (1).regions.empty())
+            return ScenarioResult::skip ("requires an empty stereo target track");
+       #else
+        return ScenarioResult::skip ("requires the native finalization fault fixture");
+       #endif
+    }
     const auto originalDir = currentSessionDirectory (session);
     const auto restore = ctx.tempDir() / "restore.json";
     if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save initial session");
@@ -743,8 +771,13 @@ std::optional<ScenarioResult> runDpImportConfirmation (GuiHost& host, ScenarioCo
     steps->push_back ({ 250, chooseFile });
     // The job writes into the audio folder the session had when it started, so
     // Save and Save As wait for it the way they wait for a render.
-    steps->push_back ({ 500, [&host, &ctx]
+    steps->push_back ({ 500, [&host, &ctx, failStereo, arm, nativeTemp]
     {
+        if (failStereo)
+        {
+            const auto prefix = (nativeTemp / "temp_").string() + "*";
+            arm (3, prefix.c_str());
+        }
         if (! ctx.expect (host.clickModalButton ("Import"), "DP confirmation Import is unavailable")) return;
         for (const auto* chord : { "command + S", "command + shift + S" })
         {
@@ -755,11 +788,31 @@ std::optional<ScenarioResult> runDpImportConfirmation (GuiHost& host, ScenarioCo
                         std::string (chord) + " during the DP import opened Save As");
         }
     } });
-    Step imported { 300, [&host, &ctx, &engine]
+    Step imported { 300, [&host, &ctx, &engine, &session, failStereo, hits, disarm, nativeTemp, previousTemps]
     {
         ctx.expect (host.modalText().rfind ("Import DP-24/32 Session\nImported ", 0) == 0,
                     "the DP import ended with '" + host.modalText() + "'");
         ctx.expect (! engine.getUndoManager().canUndo(), "the DP import left the undo history from before it");
+        if (failStereo)
+        {
+            const int injected = hits();
+            disarm();
+            const auto text = host.modalText();
+            ctx.expect (injected == 1, "the stereo helper did not hit its native finalization fault");
+            ctx.expect (text.find ("Imported 2 tracks.") != std::string::npos
+                        && text.find ("could not combine stereo halves") != std::string::npos,
+                        "the DP import did not report the failed stereo combine: " + text);
+            ctx.expect (session.track (1).regions.empty(), "DP import published the failed stereo temporary WAV");
+            ctx.expect (! session.track (0).regions.empty() && ! session.track (2).regions.empty(),
+                        "the failed stereo combine prevented the two independent mono imports");
+            for (const auto& entry : std::filesystem::directory_iterator (nativeTemp))
+            {
+                const auto name = entry.path().filename().string();
+                if (name.find ("temp_") == 0 && entry.path().extension() == ".wav")
+                    ctx.expect (std::find (previousTemps.begin(), previousTemps.end(), entry.path()) != previousTemps.end(),
+                                "the failed stereo helper left an unreferenced temporary WAV");
+            }
+        }
         dismissAlert (host);
     } };
     imported.until = [&host] { return host.modalText().rfind ("Import DP-24/32 Session\n", 0) == 0; };
@@ -773,6 +826,11 @@ const ScenarioRegistrar dpImportConfirmation { Scenario {
     "gui.dp_import_confirmation", { "gui", "import" }, Needs::Engine | Needs::Gui,
     {}, {}, 15000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runDpImportConfirmation (host, ctx); }
+} };
+const ScenarioRegistrar dpStereoFinalizeFailure { Scenario {
+    "gui.dp_stereo_finalization_failure", { "gui", "import" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runDpImportConfirmation (host, ctx, true); }
 } };
 
 // Open in an import browser with no file picked closes it like Cancel. Both

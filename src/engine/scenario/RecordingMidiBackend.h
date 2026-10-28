@@ -70,7 +70,7 @@ public:
         return port >= 0 && openPorts[(std::size_t) port];
     }
 
-    bool send (const std::string& identifier, const dusk::MidiBuffer& events,
+    bool send (const std::string& identifier, int, const dusk::MidiBuffer& events,
                double baseTimeMs, double sampleRate) override
     {
         const int port = indexOf (identifier);

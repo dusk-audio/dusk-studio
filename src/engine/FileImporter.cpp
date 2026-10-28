@@ -1,5 +1,6 @@
 #include "FileImporter.h"
 
+#include "../foundation/Fs.h"
 #include "../foundation/Text.h"
 #include "audiofile/FileReader.h"
 #include "audiofile/FileWriter.h"
@@ -11,6 +12,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <fstream>
 #include <map>
 #include <thread>
 #include <utility>
@@ -31,6 +33,28 @@ template <typename FileType>
 std::filesystem::path toStdPath (const FileType& file)
 {
     return std::filesystem::u8path (file.getFullPathName().toStdString());
+}
+
+// A copy counts only once its last byte is known to be written: a buffered
+// stream that reports success before its final flush hides a full disk there.
+bool copyWholeFile (const std::filesystem::path& from, const std::filesystem::path& to)
+{
+    std::ifstream in (dusk::fs::nativeIOPath (from), std::ios::binary);
+    std::ofstream out (dusk::fs::nativeIOPath (to), std::ios::binary | std::ios::trunc);
+    if (! in || ! out) return false;
+    std::vector<char> chunk ((size_t) 1 << 16);
+    while (in)
+    {
+        in.read (chunk.data(), (std::streamsize) chunk.size());
+        if (in.gcount() > 0 && ! out.write (chunk.data(), in.gcount())) return false;
+    }
+    if (in.bad()) return false;
+    out.close();
+    if (! out) return false;
+    std::error_code sourceError, copyError;
+    const auto expected = std::filesystem::file_size (dusk::fs::nativeIOPath (from), sourceError);
+    const auto written = std::filesystem::file_size (dusk::fs::nativeIOPath (to), copyError);
+    return ! sourceError && ! copyError && written == expected;
 }
 
 // Generated filename pattern - mirrors RecordManager::createFilename's
@@ -167,7 +191,7 @@ AudioImportResult importAudio (const AudioImportRequest& req)
                 outFile.getFileNameWithoutExtension(), ext);
 
         const bool copied = detail::retryTransientFileOperation (
-            [&] { return req.source.copyFileTo (outFile); },
+            [&] { return copyWholeFile (toStdPath (req.source), toStdPath (outFile)); },
             waitForTransientFileLock);
         if (! copied)
         {
@@ -241,11 +265,7 @@ AudioImportResult importAudio (const AudioImportRequest& req)
         return writer->write (channels.data(), buffer.numChannels(), frames);
     };
 
-    // Stream decode -> conform -> (sinc-)resample -> write in bounded chunks.
-    // The old whole-file path allocated three full-length buffers (a 30-min
-    // 96 kHz stereo stem needed ~1.4 GB before the writer even opened) and
-    // froze the message thread on the allocation; this loop peaks at a few
-    // hundred KB regardless of source length.
+    // Chunking and prepared filter phases bound memory independently of source length.
     constexpr int kGrain = 65536;
     // A refused chunk allocation discards the part-written file the same way a
     // failed read or write does, but reports its own reason.
@@ -298,7 +318,8 @@ AudioImportResult importAudio (const AudioImportRequest& req)
             || ! carry.setSize (req.targetChannels, needIn + kGrain))
             return failAllocation();
         std::array<dusk::audio::WindowedSincInterpolator, 2> interp;
-        for (auto& i : interp) i.reset();
+        for (int channel = 0; channel < req.targetChannels; ++channel)
+            if (! interp[(size_t) channel].prepareAntiAliasing (ratio)) return failAllocation();
 
         // The sinc kernel delays its output by getBaseLatency() INPUT samples;
         // without discarding that from the head, every resampled import lands
@@ -366,7 +387,8 @@ AudioImportResult importAudio (const AudioImportRequest& req)
         }
     }
 
-    writer.reset();   // flush + close before we read the file back
+    if (! writer->flush()) wrote = false;
+    writer.reset();
     if (! wrote)
     {
         outFile.deleteFile();

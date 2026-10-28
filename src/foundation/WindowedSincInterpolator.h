@@ -1,6 +1,9 @@
 #pragma once
 
+#include <algorithm>
 #include <cmath>
+#include <new>
+#include <vector>
 
 // Stateful windowed-sinc resampler, the algorithm JUCE's
 // WindowedSincInterpolator implements: a 200-sample history ring is fed one
@@ -10,10 +13,12 @@
 // is resampled block by block; reset() drops it at a discontinuity (seek, new
 // file). Algorithmic latency is 100 input samples.
 //
-// The table is built once, on the first construction, and process() itself
-// neither allocates nor locks. 201 taps per output sample is still an offline
-// cost - this is the import and conform resampler, not one for a block
-// callback. One instance per channel; sharing one smears their histories.
+// The default table is built once. prepareAntiAliasing() builds normalized
+// lowpass phases for a fixed downsampling ratio; process() neither allocates
+// nor locks in either mode. 201 taps per output sample is an offline cost.
+// One instance per channel; sharing one smears their histories.
+// The centered evaluator instead uses caller-owned lookahead and one prepared
+// kernel shared between channels, without the streaming path's delay.
 namespace dusk::audio
 {
 namespace detail
@@ -73,6 +78,83 @@ public:
         subSamplePos = 1.0;
     }
 
+    // Call off the audio thread before a stream at this fixed speed ratio.
+    // Upsampling retains the default kernel; false reports allocation failure.
+    bool prepareAntiAliasing (double speedRatio)
+    {
+        reset();
+        if (speedRatio <= 1.0)
+        {
+            lowpassPhases.clear();
+            return true;
+        }
+        return preparePhases (speedRatio, 1.0);
+    }
+
+    static constexpr int centeredRadius() noexcept { return kCrossings; }
+
+    bool prepareCentered (double speedRatio)
+    {
+        return preparePhases (speedRatio, 0.0);
+    }
+
+    // Input spans center-radius through center+radius, with zero padding
+    // outside the source. Preparation owns all kernel construction.
+    float centeredValue (const float* input, double fraction) const noexcept
+    {
+        const double phase = fraction * kPhases;
+        const int lower = std::min ((int) phase, kPhases - 1);
+        const float blend = (float) (phase - lower);
+        const auto* row = lowpassPhases.data() + (size_t) lower * kKernelSize;
+        const auto* next = row + kKernelSize;
+        float result = 0.0f;
+        for (int tap = 0; tap < kKernelSize; ++tap)
+            result += input[tap] * (row[tap] + blend * (next[tap] - row[tap]));
+        return result;
+    }
+
+private:
+    bool preparePhases (double speedRatio, double phaseOrigin)
+    {
+        if (! std::isfinite (speedRatio) || speedRatio <= 0.0) return false;
+        try
+        {
+            lowpassPhases.resize ((size_t) (kPhases + 1) * kKernelSize);
+        }
+        catch (const std::bad_alloc&)
+        {
+            lowpassPhases.clear();
+            return false;
+        }
+
+        constexpr double pi = 3.14159265358979323846;
+        const double cutoff = std::min (1.0, 1.0 / speedRatio);
+        for (int phase = 0; phase <= kPhases; ++phase)
+        {
+            auto* row = lowpassPhases.data() + (size_t) phase * kKernelSize;
+            const double offset = (double) phase / kPhases;
+            double sum = 0.0;
+            for (int tap = 0; tap < kKernelSize; ++tap)
+            {
+                const double x = phaseOrigin - offset + (double) (tap - kCrossings);
+                double coefficient = 0.0;
+                if (std::abs (x) < kCrossings)
+                {
+                    const double a = pi * cutoff * x;
+                    const double sinc = std::abs (a) < 1.0e-12 ? 1.0 : std::sin (a) / a;
+                    const double window = 0.5 * (1.0 + std::cos (pi * x / kCrossings));
+                    coefficient = cutoff * sinc * window;
+                }
+                row[tap] = (float) coefficient;
+                sum += coefficient;
+            }
+            for (int tap = 0; tap < kKernelSize; ++tap)
+                row[tap] = (float) ((double) row[tap] / sum);
+        }
+        return true;
+    }
+
+public:
     // Produces `numOutputSamples` from `input`, consuming `speedRatio` input
     // samples per output sample, and returns how many were actually consumed.
     // The carried fractional position can pull in up to two samples beyond
@@ -95,7 +177,8 @@ public:
                 pos -= 1.0;
             }
 
-            output[i] = valueAtOffset ((float) pos);
+            output[i] = lowpassPhases.empty() ? valueAtOffset ((float) pos)
+                                             : lowpassAtOffset ((float) pos);
             pos += speedRatio;
         }
 
@@ -107,6 +190,25 @@ private:
     static constexpr int kCrossings            = 100;
     static constexpr int kHistorySize          = kCrossings * 2;
     static constexpr int kReadStepsPerCrossing = 100;
+    static constexpr int kPhases               = 1024;
+    static constexpr int kKernelSize           = kHistorySize + 1;
+
+    float lowpassAtOffset (float offset) const noexcept
+    {
+        const float phase = offset * kPhases;
+        const int lower = std::min ((int) phase, kPhases - 1);
+        const float blend = phase - (float) lower;
+        const auto* row = lowpassPhases.data() + (size_t) lower * kKernelSize;
+        const auto* next = row + kKernelSize;
+        float result = 0.0f;
+        int at = writeIndex;
+        for (int tap = 0; tap < kKernelSize; ++tap)
+        {
+            result += history[(size_t) at] * (row[tap] + blend * (next[tap] - row[tap]));
+            if (++at == kHistorySize) at = 0;
+        }
+        return result;
+    }
 
     // Taps run from -kCrossings to +kCrossings around the read position, so the
     // kernel is sampled at whole-sample spacing and only the position of the
@@ -157,5 +259,6 @@ private:
     float        history[kHistorySize] {};
     int          writeIndex   = 0;
     double       subSamplePos = 1.0;
+    std::vector<float> lowpassPhases;
 };
 } // namespace dusk::audio

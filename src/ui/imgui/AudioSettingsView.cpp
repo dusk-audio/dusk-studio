@@ -42,11 +42,11 @@ constexpr float kComboW = 320.0f;
 constexpr float kSliderW = 260.0f;
 constexpr float kControlInset = 4.0f;
 
-constexpr std::array<const char*, 8> kTabLabels {
-    "Audio", "Control Surface", "MIDI Bindings", "MIDI Sync", "General", "Advanced", "SFZ Library", "Plug-ins"
+constexpr std::array<const char*, 7> kTabLabels {
+    "General", "Audio", "Control Surface", "MIDI Bindings", "MIDI Sync", "SFZ Library", "Plug-ins"
 };
-constexpr std::array<const char*, 8> kTabControls {
-    "tab-audio", "tab-control-surface", "tab-midi-bindings", "tab-midi-sync", "tab-general", "tab-advanced", "tab-sfz-library", "tab-plugins"
+constexpr std::array<const char*, 7> kTabControls {
+    "tab-general", "tab-audio", "tab-control-surface", "tab-midi-bindings", "tab-midi-sync", "tab-sfz-library", "tab-plugins"
 };
 
 constexpr unsigned int kHintText = 0x909094ff;
@@ -58,6 +58,7 @@ ImU32 rgba (unsigned int hex)
 
 const char* const kOversamplingItems[] = { "1\xc3\x97 (native)", "2\xc3\x97", "4\xc3\x97" };
 constexpr int kOversamplingFactors[] = { 1, 2, 4 };
+const char* const kRenderQualityItems[] = { "High (4\xc3\x97 oversampling)", "Match playback (faster)" };
 
 const char* const kFrameRateItems[] = { "24 fps", "25 fps", "29.97 DF", "30 fps" };
 
@@ -142,6 +143,7 @@ public:
         // leaving the dropdown blank.
         autosave = indexOfNearest (kAutosaveSeconds, 5,
                                    appconfig::getAutosaveIntervalSeconds());
+        renderQuality = static_cast<int> (appconfig::getOfflineRenderQuality());
 
         chaseClock = session.externalSyncChasesTransport.load (std::memory_order_relaxed);
         emitClock = session.syncOutputEmitClock.load (std::memory_order_relaxed);
@@ -189,6 +191,7 @@ public:
         else if (control == "midi-bindings") point = scenarioMidiBindings;
         else if (control == "rescan") point = scenarioRescan;
         else if (control == "autosave") point = scenarioAutosave;
+        else if (control == "render-quality") point = scenarioRenderQuality;
         else if (control == "tape-default") point = scenarioTape;
         else if (control == "follow-default") point = scenarioFollow;
         else if (control == "plugin-folder-add") point = scenarioPluginAdd;
@@ -205,6 +208,7 @@ public:
     ImVec2 scenarioMidiBindings {};
     ImVec2 scenarioRescan {};
     ImVec2 scenarioAutosave {};
+    ImVec2 scenarioRenderQuality {};
     ImVec2 scenarioTape {}, scenarioFollow {};
     ImVec2 scenarioScaleFirst {}, scenarioScaleLast {};
     ImVec2 scenarioOffset {}, scenarioOffsetMinus {}, scenarioOffsetPlus {};
@@ -224,6 +228,7 @@ public:
         keyboardWasActive = keyboardActive;
         scenarioTabs.fill ({});
         scenarioMidiBindings = scenarioRescan = scenarioAutosave = scenarioTape = scenarioFollow = {};
+        scenarioRenderQuality = {};
         scenarioScaleFirst = scenarioScaleLast = scenarioOffset = scenarioOffsetMinus = scenarioOffsetPlus = {};
         scenarioSfzFolder = scenarioSfzMove = {};
         scenarioPluginAdd = scenarioPluginScan = scenarioPluginRemove = {};
@@ -362,7 +367,7 @@ private:
                                label);
         };
 
-        if (selectedTab == 0)
+        if (selectedTab == 1)
         {
             heading ("Audio");
             selector->draw (ctx, ImVec2 (left, y), innerW);
@@ -388,7 +393,7 @@ private:
             }
         }
 
-        if (selectedTab == 1)
+        if (selectedTab == 2)
         {
             heading ("Control Surface");
             {
@@ -413,7 +418,7 @@ private:
             }
         }
 
-        if (selectedTab == 2)
+        if (selectedTab == 3)
         {
             heading ("MIDI Bindings");
             {
@@ -433,7 +438,7 @@ private:
             }
         }
 
-        if (selectedTab == 3)
+        if (selectedTab == 4)
         {
             heading ("MIDI Sync");
             const float toggleX = left + ctx.s (kLabelW + kComboW + 8.0f);
@@ -494,7 +499,7 @@ private:
             }
         }
 
-        if (selectedTab == 4)
+        if (selectedTab == 0)
         {
             heading ("General");
             const float generalToggleX = left + ctx.s (kLabelW + kControlInset);
@@ -584,18 +589,13 @@ private:
                     uiScale, appconfig::kUiScaleMin, appconfig::kUiScaleMax, "%.2fx");
                 scenarioScaleFirst = ImGui::IsItemVisible() ? ImGui::GetItemRectMin() : ImVec2 {};
                 scenarioScaleLast = ImGui::IsItemVisible() ? ImGui::GetItemRectMax() : ImVec2 {};
-                formTooltip ("Multiplier applied on top of the OS-reported display DPI. 1.00x "
-                             "= follow the OS. Range 0.50x to 2.00x.");
                 applyUiScale (moved);
-                drawHint (ctx, ImVec2 (x + ctx.s (kSliderW), top),
-                          right - (x + ctx.s (kSliderW)),
-                          "Previews live; saved per-machine when released.");
             }
         }
 
-        if (selectedTab == 5)
+        if (selectedTab == 1)
         {
-            heading ("Advanced");
+            heading ("Processing");
             {
                 const float top = takeRow (kTallRowH);
                #if defined(__linux__)
@@ -622,6 +622,18 @@ private:
                              "channel, bus and master EQ + compressor and the tape saturation "
                              "- roughly 2-3\xc3\x97 the mix-engine CPU at 4\xc3\x97. The "
                              "status bar shows an @2x / @4x badge while engaged.");
+            }
+            {
+                const float top = takeRow (kTallRowH);
+                labelled (top, "Render quality");
+                if (staticComboAt (top, "##render-quality", kRenderQualityItems, 2, renderQuality, kComboW))
+                    appconfig::setOfflineRenderQuality (static_cast<OfflineRenderQuality> (renderQuality));
+                const auto first = ImGui::GetItemRectMin(), last = ImGui::GetItemRectMax();
+                scenarioRenderQuality = ImGui::IsItemVisible()
+                    ? ImVec2 { (first.x + last.x) * 0.5f, (first.y + last.y) * 0.5f } : ImVec2 {};
+                formTooltip ("High forces 4\xc3\x97 effect oversampling. Match playback uses the "
+                             "Effect Oversampling setting above, reducing render time at 1\xc3\x97 or 2\xc3\x97. "
+                             "Applies to offline bounces and track freeze. Realtime hardware bounces use playback settings.");
             }
             {
                 const float top = takeRow (kTallRowH);
@@ -692,12 +704,12 @@ private:
             }
         }
 
-        if (selectedTab == 6)
+        if (selectedTab == 5)
         {
             drawSfzLibrary (ctx, { left, y });
             return;
         }
-        if (selectedTab == 7)
+        if (selectedTab == 6)
         {
             drawPluginFolders (ctx, { left, y });
             return;
@@ -1166,6 +1178,7 @@ private:
     std::vector<int> multicoreIds;
 
     int oversampling = 0;
+    int renderQuality = 0;
     int frameRate = 0;
     int stopBehavior = 0;
     int autosave = 1;

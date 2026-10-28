@@ -4,6 +4,7 @@
 #include "engine/audiofile/FileReader.h"
 #include "engine/audiofile/FileWriter.h"
 #include "engine/audiofile/ThreadedFileWriter.h"
+#include "TestTempDirectory.h"
 
 #include <sndfile.h>
 
@@ -250,4 +251,53 @@ TEST_CASE ("ThreadedFileWriter drops a block when the ring is full", "[audiofile
     }
 
     discard (path);
+}
+
+TEST_CASE ("FileWriter flush publishes the complete container before returning success", "[audiofile][finalization]")
+{
+    duskstudio::test::TempDirectory temp ("dusk-audiofile-finalize");
+    const auto directory = temp.path() / std::filesystem::u8path (u8"output-\u97f3");
+    REQUIRE (std::filesystem::create_directory (directory));
+    struct Format { const char* name; WriteSpec::Format format; };
+    const Format formats[] {
+        { "final.wav", WriteSpec::Format::Wav },
+        { "final.flac", WriteSpec::Format::Flac },
+        { "final.aiff", WriteSpec::Format::Aiff }
+    };
+    constexpr std::int64_t frames = kFrames + 17;
+    std::vector<float> interleaved (static_cast<std::size_t> (frames) * kChannels);
+    for (std::int64_t f = 0; f < frames; ++f)
+        for (int ch = 0; ch < kChannels; ++ch)
+            interleaved[static_cast<std::size_t> (f) * kChannels + static_cast<std::size_t> (ch)] = sample (ch, f);
+    for (const auto& format : formats)
+    {
+        SECTION (format.name)
+        {
+            const auto path = directory / format.name;
+            WriteSpec spec;
+            spec.sampleRate = 48000.0;
+            spec.numChannels = kChannels;
+            spec.bitsPerSample = 24;
+            spec.format = format.format;
+            auto writer = FileWriter::create (path, spec);
+            REQUIRE (writer != nullptr);
+            REQUIRE (writer->writeInterleaved (interleaved.data(), frames));
+            REQUIRE (writer->flush());
+            CHECK (writer->flush());
+
+            auto reader = FileReader::open (path);
+            REQUIRE (reader != nullptr);
+            REQUIRE (reader->info().numFrames == frames);
+            CHECK (reader->info().numChannels == kChannels);
+            CHECK_THAT (reader->info().sampleRate, WithinAbs (48000.0, 1.0e-6));
+            float left[17] {}, right[17] {};
+            float* outputs[] { left, right };
+            REQUIRE (reader->read (outputs, kChannels, frames - 17, 17) == 17);
+            for (int i = 0; i < 17; ++i)
+            {
+                CHECK_THAT (left[i], WithinAbs (sample (0, frames - 17 + i), 1.0e-5f));
+                CHECK_THAT (right[i], WithinAbs (sample (1, frames - 17 + i), 1.0e-5f));
+            }
+        }
+    }
 }

@@ -4,6 +4,8 @@
 #include <array>
 #include <atomic>
 #include <deque>
+#include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -16,6 +18,8 @@
 #include "MidiCaptureStream.h"
 #include "MidiMergePlayback.h"
 
+namespace dusk::audio { struct WriteSpec; }
+
 namespace duskstudio
 {
 // Per-track threaded WAV writer. Created on the message thread at
@@ -27,7 +31,14 @@ class RecordManager
     struct PerTrackMidi;
 
 public:
+    using WriteSinkFactory = std::function<std::unique_ptr<dusk::audio::IFileWriteSink> (
+        const std::filesystem::path&, const dusk::audio::WriteSpec&)>;
+    // One attempt at reading back how many frames a finished take's file holds;
+    // nullopt when the file could not be opened.
+    using PersistedFrameProbe = std::function<std::optional<std::int64_t> (
+        const std::filesystem::path&)>;
     explicit RecordManager (Session& s);
+    RecordManager (Session& s, WriteSinkFactory factory, PersistedFrameProbe probe = {});
     ~RecordManager();
 
     // Immutable message-thread snapshot supplied when a loop-record gesture
@@ -277,6 +288,8 @@ private:
     void waitForAudioThreadToLeave() const;
 
     Session& session;
+    WriteSinkFactory writeSinkFactory;
+    PersistedFrameProbe persistedFrameProbe;
 
     struct PassDescriptor
     {
@@ -289,6 +302,8 @@ private:
 
     struct PerTrackWriter
     {
+        // The destructor may reject a final flush; this status outlives it.
+        std::atomic<bool> sinkWriteFailed { false };
         std::unique_ptr<dusk::audio::ThreadedFileWriter> writer;
         juce::File file;
         std::int64_t framesWritten = 0;

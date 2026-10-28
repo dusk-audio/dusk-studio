@@ -9,6 +9,7 @@ namespace duskstudio
 {
 void AuxLaneStrip::prepare (double sampleRate, int blockSize)
 {
+    preReturnPeak = 0.0f;
     preparedSampleRate = sampleRate;
     preparedBlockSize  = std::max (1, blockSize);
 
@@ -511,6 +512,7 @@ void AuxLaneStrip::processStereoBlock (float* L, float* R, int numSamples,
                                           int   numDeviceOutputs) noexcept
 {
     dusk::audio::ScopedNoDenormals noDenormals;
+    preReturnPeak = 0.0f;
     if (numSamples == 0) return;
     if (paramsRef == nullptr) return;
 
@@ -533,10 +535,16 @@ void AuxLaneStrip::processStereoBlock (float* L, float* R, int numSamples,
         return;
     }
 
-    // Mute path: clear in-place so the engine's accumulator into master
-    // sees silence (the lane's buffer is reused across blocks). Reads
-    // liveMute (post-automation) so automated mutes also drop the lane.
-    if (paramsRef->liveMute.load (std::memory_order_relaxed))
+    const bool muted = paramsRef->liveMute.load (std::memory_order_relaxed);
+    const int cuePair = paramsRef->outputPair.load (std::memory_order_relaxed);
+    bool hasCue = false;
+    if (muted && cuePair > 0 && deviceOutputs != nullptr)
+    {
+        const int left = outputpair::decodePairL (cuePair), right = outputpair::decodePairR (cuePair);
+        hasCue = left >= 0 && right >= 0 && left < numDeviceOutputs && right < numDeviceOutputs
+              && deviceOutputs[left] != nullptr && deviceOutputs[right] != nullptr;
+    }
+    if (muted && ! hasCue)
     {
         std::memset (L, 0, sizeof (float) * (size_t) numSamples);
         std::memset (R, 0, sizeof (float) * (size_t) numSamples);
@@ -545,7 +553,7 @@ void AuxLaneStrip::processStereoBlock (float* L, float* R, int numSamples,
         return;
     }
 
-    updateGainTarget();
+    if (! muted) updateGainTarget();
 
     pluginMidiScratch.clear();
 
@@ -587,28 +595,28 @@ void AuxLaneStrip::processStereoBlock (float* L, float* R, int numSamples,
             // PluginSlot. processStereo is in-place safe (own scratch buffers).
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
             if (nativeClapSlots[sIdx].isLoaded())
-                nativeClapSlots[sIdx].processStereo (L, R, L, R, numSamples);
+                nativeClapSlots[sIdx].processStereo (L, R, L, R, numSamples, nullptr, transport);
             else
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_LV2
             if (nativeLv2Slots[sIdx].isLoaded())
-                nativeLv2Slots[sIdx].processStereo (L, R, L, R, numSamples);
+                nativeLv2Slots[sIdx].processStereo (L, R, L, R, numSamples, nullptr, transport);
             else
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_VST3
             if (nativeVst3Slots[sIdx].isLoaded())
-                nativeVst3Slots[sIdx].processStereo (L, R, L, R, numSamples);
+                nativeVst3Slots[sIdx].processStereo (L, R, L, R, numSamples, nullptr, transport);
             else
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_AU
             if (nativeAuSlots[sIdx].isLoaded())
-                nativeAuSlots[sIdx].processStereo (L, R, L, R, numSamples);
+                nativeAuSlots[sIdx].processStereo (L, R, L, R, numSamples, nullptr, transport);
             else
 #endif
             if (builtinSlots[sIdx].isLoaded())
                 builtinSlots[sIdx].processStereo (L, R, L, R, numSamples, nullptr, transport);
             else
-                slots[sIdx].processStereoBlock (L, R, numSamples, pluginMidiScratch);
+                slots[sIdx].processStereoBlock (L, R, numSamples, pluginMidiScratch, transport);
         }
         else if (activeInsertMode[sIdx] == kInsertHardware)
         {
@@ -627,11 +635,23 @@ void AuxLaneStrip::processStereoBlock (float* L, float* R, int numSamples,
         }
     }
 
+    for (int sample = 0; sample < numSamples; ++sample)
+        preReturnPeak = std::max ({ preReturnPeak, std::abs (L[sample]), std::abs (R[sample]) });
+
     // Cue / headphone tap. Send the processed aux mix to its routed output
     // pair BEFORE the return fader/mute below, so the hardware pair is an
     // independent cue send (the fader/mute govern only the fold into master).
     outputpair::tapStereoPairInto (deviceOutputs, numDeviceOutputs, L, R, numSamples,
-                                     paramsRef->outputPair.load (std::memory_order_relaxed));
+                                     cuePair);
+
+    if (muted)
+    {
+        std::memset (L, 0, sizeof (float) * (size_t) numSamples);
+        std::memset (R, 0, sizeof (float) * (size_t) numSamples);
+        paramsRef->meterPostL.store (-100.0f, std::memory_order_relaxed);
+        paramsRef->meterPostR.store (-100.0f, std::memory_order_relaxed);
+        return;
+    }
 
     // Return level + meter peak.
     float postPeakL = 0.0f, postPeakR = 0.0f;

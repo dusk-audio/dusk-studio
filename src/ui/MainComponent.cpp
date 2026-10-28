@@ -1210,23 +1210,23 @@ MainComponent::MainComponent()
     }
 
     // Autosave heartbeat. Writes session.json.autosave next to the canonical
-    // session.json on the configured cadence (default 30 s) so a crash loses at most
-    // ~30 s of work. The write is atomic (temp + rename), so even a kill
-    // during the timer fire never leaves a half-written autosave.
+    // session.json on the configured cadence. The write is atomic (temp + rename),
+    // so even a kill during the timer fire never leaves a half-written autosave.
     startTimer (appconfig::getAutosaveIntervalSeconds() * 1000);
 
     // Seed the dirty-compare baseline for the bootstrap "Untitled" session so
     // edits to a brand-new, never-saved session are caught at quit instead of
-    // only after the first 30 s autosave (the quit check skips when this is
+    // only after the first autosave (the quit check skips when this is
     // empty). saveSessionTo / finishLoadingSessionFrom reseed it on Save As /
     // load; an async startup-dialog load just overwrites this blank baseline.
     if (lastSavedSessionJson.isEmpty())
-        lastSavedSessionJson = SessionSerializer::serialize (session);
+        setLastSavedSessionJson (SessionSerializer::serialize (session));
 }
 
 MainComponent::~MainComponent()
 {
     tearingDown = true;
+    pluginpicker::closeForShutdown();
     stopTimer();   // halt autosave before tearing down engine / session
     guiRun.reset();
     engine.setPluginRestoreAlertSink ({});
@@ -2800,6 +2800,9 @@ void MainComponent::handOffAudioSettings (std::function<void()> showModal)
 
 void MainComponent::openAudioSettingsForCapture (const std::string& capturePath)
 {
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    audioSettingsTab = 1;
+   #endif
     openAudioSettings();
    #if DUSKSTUDIO_HAS_NATIVE_UI
     if (audioSettingsWindow != nullptr && audioSettingsWindow->isOpen())
@@ -3635,8 +3638,86 @@ bool MainComponent::saveRefusedWhileBusy()
     return true;
 }
 
-bool MainComponent::saveSessionTo (const juce::File& requestedDir)
+// A prompt closed without an answer, by anything but its buttons, still owes
+// the caller a reply: a quit's Save has detached the audio.
+struct MainComponent::SaveReply
 {
+    std::function<void (bool)> onComplete;
+    ~SaveReply()
+    {
+        if (onComplete) dusk::callAsync ([done = std::move (onComplete)] { done (false); });
+    }
+    void answer (bool result)
+    {
+        if (auto done = std::exchange (onComplete, {})) done (result);
+    }
+};
+
+void MainComponent::saveSessionTo (const std::filesystem::path& sessionDir, std::function<void (bool)> onComplete)
+{
+    auto attempt = std::make_shared<AudioEngine::PreparedPluginState>();
+    std::string captureError;
+    const bool saved = writeSessionTo (toFile (sessionDir), nullptr, *attempt, captureError);
+    if (saved || captureError.empty())
+    {
+        if (onComplete) onComplete (saved);
+        return;
+    }
+    auto reply = std::make_shared<SaveReply>();
+    reply->onComplete = std::move (onComplete);
+    askToSaveAnyway (sessionDir, std::move (attempt), captureError, std::move (reply));
+}
+
+void MainComponent::askToSaveAnyway (const std::filesystem::path& sessionDir,
+                                     std::shared_ptr<AudioEngine::PreparedPluginState> failed,
+                                     const std::string& captureError, std::shared_ptr<SaveReply> reply)
+{
+    std::string slots;
+    for (std::size_t start = 0; start < captureError.size();)
+    {
+        const auto end = std::min (captureError.find ('\n', start), captureError.size());
+        slots += "\n    " + captureError.substr (start, end - start);
+        start = end + 1;
+    }
+    SafePointer<MainComponent> safe (this);
+    const int serial = sessionLoadSerial;
+    showDuskConfirm (*this, "Save failed",
+                     "Dusk Studio could not capture plug-in state:\n" + slots + "\n\n"
+                     "Save anyway saves the session with the last saved state of each plug-in "
+                     "listed, so any changes made in it since are lost. Cancel saves nothing, "
+                     "and the session's files and saved plug-in state stay as they are.",
+                     "Save anyway", [safe, sessionDir, failed, reply, serial]
+                     {
+                         dusk::callAsync ([safe, sessionDir, failed, reply, serial]
+                         {
+                             auto* self = safe.getComponent();
+                             // The session this prompt was raised for has been
+                             // replaced; saving now would write another one.
+                             if (self == nullptr || self->sessionLoadSerial != serial)
+                             {
+                                 reply->answer (false);
+                                 return;
+                             }
+                             auto attempt = std::make_shared<AudioEngine::PreparedPluginState>();
+                             std::string error;
+                             if (self->writeSessionTo (toFile (sessionDir), failed.get(), *attempt, error))
+                                 reply->answer (true);
+                             else if (! error.empty())
+                                 self->askToSaveAnyway (sessionDir, std::move (attempt), error, reply);
+                             else
+                                 reply->answer (false);
+                         });
+                     },
+                     "Cancel", [reply] { reply->answer (false); },
+                     /*destructive*/ true);
+}
+
+bool MainComponent::writeSessionTo (const juce::File& requestedDir,
+                                    const AudioEngine::PreparedPluginState* keepFrom,
+                                    AudioEngine::PreparedPluginState& preparedPluginState,
+                                    std::string& captureError)
+{
+    captureError.clear();
     if (requestedDir == juce::File() || saveRefusedWhileBusy()) return false;
 
     const auto oldDir = session.getSessionDirectory();
@@ -3667,12 +3748,20 @@ bool MainComponent::saveSessionTo (const juce::File& requestedDir)
         if (transportBar != nullptr) transportBar->notifyRecordStopped();
     }
 
+    if (! engine.preparePluginStateForSave (preparedPluginState, captureError, keepFrom))
+    {
+        saveIncomplete = true;
+        setStatusForPath ("Save failed", dir);
+        return false;
+    }
+    // Slots kept from an earlier attempt were the user's choice, not this Save's failure.
+    captureError.clear();
+
     // Save As to a different folder must take the audio along: copy every
     // session-owned file into the new dir and repoint the model BEFORE the
     // directory swap, so serialize below emits relative paths. Plain Ctrl+S
-    // (same dir) is a no-op here. The copy runs before the plug-in state
-    // capture and outside its process gate - it touches no plugin state, so a
-    // long copy adds no dropout.
+    // (same dir) is a no-op here. State capture has succeeded; the copy runs
+    // outside its process gate, so a long copy adds no dropout.
     const bool isSaveAs = oldDir != juce::File() && dir != oldDir;
     SessionSerializer::ConsolidationResult consolidated;
     if (isSaveAs)
@@ -3728,14 +3817,9 @@ bool MainComponent::saveSessionTo (const juce::File& requestedDir)
     // to call even when the user picked an existing session folder.
     session.setSessionDirectory (dir);
 
-    // Plugin state I/O races the renderer on plugins that don't honour
-    // JUCE's "must not overlap" contract (u-he Diva is the smoking-gun
-    // example), corrupting the plugin's internal state and leading to
-    // an abort inside ~VST3PluginInstance later. The engine holds the
-    // audio thread out for the capture without leaving the device, so the
-    // user hears a short (~10-50 ms × N loaded plugins) dropout on Ctrl+S
-    // and the meters, envelopes and transport carry on afterwards.
-    engine.publishPluginStateForSave (/*capturePluginState*/ true);
+    // Native state sidecars use the destination directory; opaque third-party
+    // state was captured before any files changed and is reused without RPC.
+    engine.publishPluginStateForSave (true, &preparedPluginState);
     engine.publishTransportStateForSave();
 
     const auto target = dir.getChildFile ("session.json");
@@ -3799,7 +3883,7 @@ bool MainComponent::saveSessionTo (const juce::File& requestedDir)
         // Remember the JSON so the next autosave tick can recognise an
         // idle (no further edits) state and skip the write.
         setLastSavedSessionJson    (json);
-        setLastWrittenAutosaveJson (juce::String());
+        setLastWrittenAutosaveJson ({}, {});
         sessionOnDisk = true;
         setStatusForPath ("Saved", target);
         return true;
@@ -3828,7 +3912,7 @@ juce::File MainComponent::getAutosaveFileFor (const juce::File& sessionDir) cons
 // Hosted plugins (per-channel inserts, aux-lane slots) re-emit slightly
 // different APVTS state on each getStateInformation call - internal counters /
 // smoother phases that aren't user-meaningful. The autosave dirty-check must
-// ignore that drift, otherwise it fires every 30 s on a freshly-saved session
+// ignore that drift, otherwise it fires on every autosave of a freshly-saved session
 // and resurfaces the recovery dialog on the next launch. Strip the base64
 // state values to "" before any content compare.
 static juce::String stripVolatileStateForDirtyCompare (juce::String s)
@@ -3846,6 +3930,12 @@ static juce::String stripVolatileStateForDirtyCompare (juce::String s)
         pos = q1 + 2;
     }
     return s;
+}
+
+static std::uint32_t dirtyComparisonHash (const juce::String& stripped)
+{
+    return static_cast<std::uint32_t> (
+        juce::DefaultHashFunctions::generateHash (stripped, 0x7fffffff));
 }
 
 bool MainComponent::autosaveIsNewerThan (const juce::File& sessionJson) const
@@ -3902,8 +3992,25 @@ std::filesystem::path MainComponent::sidecarFolder() const
                                      privateUnsavedFolder());
 }
 
+void MainComponent::discardWrittenAutosave()
+{
+    // A clean launch can still have a recovery point from an earlier run.
+    if (lastWrittenAutosaveJson.isEmpty()) return;
+    const auto target = getAutosaveFileFor (toFile (sidecarFolder()));
+    if (toPath (target) != lastWrittenAutosavePath)
+    {
+        setLastWrittenAutosaveJson ({}, {});
+        return;
+    }
+    if (target.existsAsFile()
+        && dusk::fs::loadFileAsString (toPath (target)) == lastWrittenAutosaveJson.toStdString()
+        && ! target.deleteFile()) return;
+    setLastWrittenAutosaveJson ({}, {});
+}
+
 void MainComponent::writeAutosave()
 {
+    if (! runningRenders().empty()) return;
     const auto dir = toFile (sidecarFolder());
     if (dir == juce::File()) return;
 
@@ -3913,61 +4020,72 @@ void MainComponent::writeAutosave()
     // touched on disk yet.
     dir.createDirectory();
 
-    // Same publish bookend as the manual save - the serializer reads
-    // only from Session, not from the live engine. Audio is running on
-    // the autosave path (timer fires from the live message loop), so
-    // plug-in state stays as the last manual save captured it rather
-    // than cost a dropout every 30 s.
+    // Control snapshots are safe during playback; opaque plug-in state waits for Save.
     engine.publishPluginStateForSave (/*capturePluginState*/ false);
     engine.publishTransportStateForSave();
+    normalizePluginBaselines();
 
-    // Skip the write entirely when the snapshot matches what's already on
-    // disk - either the last manual save (no real edits since Ctrl+S) or
-    // the previous autosave tick (timer firing on idle state). Without
-    // this skip the autosave file's mtime would creep past session.json
-    // every 30 s, producing a false-positive recovery prompt on next load.
     const juce::String json = SessionSerializer::serialize (session);
-    // Strip volatile plugin / tape APVTS state before comparing - donor
-    // getStateInformation drifts between calls even with no user change,
-    // which would otherwise fire an autosave write every tick on idle
-    // sessions.
-    //
-    // M8: hash-based dedup. Hash the stripped JSON ONCE per tick + compare
-    // against the 32-bit fingerprint cached at last-save / last-autosave
-    // assignment. Avoids re-running a juce::String equality scan over the
-    // full serialised tree (potentially hundreds of KB) on every tick.
-    // JUCE's DefaultHashFunctions::generateHash is the JUCE-canonical fast
-    // hash used by HashMap; collision risk on a real session string is
-    // statistically negligible. Worst-case missed-write recovers next tick.
+    // A hash match is only a filter: names such as Aa and BB collide.
     const auto stripped = stripVolatileStateForDirtyCompare (json);
-    const auto strippedHash = (std::uint32_t) (std::uint32_t)
-        juce::DefaultHashFunctions::generateHash (stripped, 0x7fffffff);
-    if (strippedHash == lastSavedSessionStrippedHash)    return;
-    if (strippedHash == lastWrittenAutosaveStrippedHash) return;
-
+    const auto strippedHash = dirtyComparisonHash (stripped);
     const auto target = getAutosaveFileFor (dir);
+    if (toPath (target) != lastWrittenAutosavePath)
+        setLastWrittenAutosaveJson ({}, {});
+    if (savedBaselineOnDisk && strippedHash == lastSavedSessionStrippedHash
+        && stripped == stripVolatileStateForDirtyCompare (lastSavedSessionJson))
+    {
+        if (! saveIncomplete) discardWrittenAutosave();
+        return;
+    }
+    if (strippedHash == lastWrittenAutosaveStrippedHash
+        && stripped == stripVolatileStateForDirtyCompare (lastWrittenAutosaveComparisonJson)) return;
+
     if (! SessionSerializer::writeAtomic (target, json))
     {
         DBG ("MainComponent: autosave write failed at " << target.getFullPathName());
         return;
     }
-    setLastWrittenAutosaveJson (json);
+    setLastWrittenAutosaveJson (json, toPath (target));
 }
 
 void MainComponent::setLastSavedSessionJson (const juce::String& json)
 {
+    saveIncomplete = false;
+    savedBaselineOnDisk = true;
     lastSavedSessionJson = json;
+    savedPluginNormalizationBaseline = engine.capturePluginNormalizationBaseline();
+    auto pluginStates = engine.pluginStateBaseline();
+    pluginStates.keepUncapturedFrom (savedPluginStateBaseline);
+    savedPluginStateBaseline = pluginStates;
     const auto stripped  = stripVolatileStateForDirtyCompare (json);
-    lastSavedSessionStrippedHash = (std::uint32_t) (std::uint32_t)
-        juce::DefaultHashFunctions::generateHash (stripped, 0x7fffffff);
+    lastSavedSessionStrippedHash = dirtyComparisonHash (stripped);
 }
 
-void MainComponent::setLastWrittenAutosaveJson (const juce::String& json)
+void MainComponent::setLastWrittenAutosaveJson (const juce::String& json,
+                                               const std::filesystem::path& path)
 {
     lastWrittenAutosaveJson = json;
+    lastWrittenAutosaveComparisonJson = json.toStdString();
+    autosavePluginNormalizationBaseline = engine.capturePluginNormalizationBaseline();
+    lastWrittenAutosavePath = path;
     const auto stripped     = stripVolatileStateForDirtyCompare (json);
-    lastWrittenAutosaveStrippedHash = (std::uint32_t) (std::uint32_t)
-        juce::DefaultHashFunctions::generateHash (stripped, 0x7fffffff);
+    lastWrittenAutosaveStrippedHash = dirtyComparisonHash (stripped);
+}
+
+void MainComponent::normalizePluginBaselines()
+{
+    engine.normalizePluginStateBaseline (savedPluginStateBaseline);
+    auto saved = lastSavedSessionJson.toStdString();
+    if (engine.normalizePluginBaseline (savedPluginNormalizationBaseline, saved))
+    {
+        lastSavedSessionJson = saved;
+        lastSavedSessionStrippedHash = dirtyComparisonHash (
+            stripVolatileStateForDirtyCompare (lastSavedSessionJson));
+    }
+    if (engine.normalizePluginBaseline (autosavePluginNormalizationBaseline, lastWrittenAutosaveComparisonJson))
+        lastWrittenAutosaveStrippedHash = dirtyComparisonHash (
+            stripVolatileStateForDirtyCompare (lastWrittenAutosaveComparisonJson));
 }
 
 void MainComponent::timerCallback()
@@ -4013,30 +4131,26 @@ bool MainComponent::currentSessionDirty()
     // the serializer reads only from Session, so without this a just-touched
     // plugin/tape param stays at its last-published value and the compare would
     // falsely read clean. Audio is live here, so no plug-in state capture.
+    engine.serviceNativeParamQueues();
     engine.publishPluginStateForSave (/*capturePluginState*/ false);
     engine.publishTransportStateForSave();
+    normalizePluginBaselines();
+
+    if (saveIncomplete || engine.pluginStateChangedSince (savedPluginStateBaseline)) return true;
 
     // Compare with volatile state stripped (playhead / view / timestamps)
     // so transient fields don't flip the raw JSON on an otherwise-clean session.
     const auto strippedCurrent = stripVolatileStateForDirtyCompare (SessionSerializer::serialize (session));
     const auto strippedSaved   = stripVolatileStateForDirtyCompare (lastSavedSessionJson);
-    const bool divergedFromBaseline =
-        ! lastSavedSessionJson.isEmpty() && strippedCurrent != strippedSaved;
+    if (lastSavedSessionJson.isEmpty())
+        return autosaveIsNewerThan (toFile (sidecarFolder()).getChildFile ("session.json"));
 
-    // A session that was never saved has no session.json, only the autosave the
-    // heartbeat wrote from this very state. autosaveIsNewerThan answers "yes"
-    // there because there is nothing for it to be newer than, which on the
-    // bootstrap Untitled session means the first autosave tick makes an
-    // untouched app ask the user to save work they have not done. The baseline
-    // seeded at construction answers the question instead - and if that
-    // baseline is ever missing, the old reading stands rather than reporting an
-    // hour of unsaved work clean.
-    const auto sessionJson = toFile (sidecarFolder()).getChildFile ("session.json");
-    if (! sessionJson.existsAsFile())
-        return lastSavedSessionJson.isEmpty() ? autosaveIsNewerThan (sessionJson)
-                                              : divergedFromBaseline;
+    if (strippedCurrent != strippedSaved) return true;
 
-    return divergedFromBaseline || autosaveIsNewerThan (sessionJson);
+    // Undo can restore the saved state before the next heartbeat removes its
+    // previous recovery point. Only discard a sidecar this instance wrote.
+    discardWrittenAutosave();
+    return false;
 }
 
 void MainComponent::resumeQuitAfterRender()
@@ -4257,6 +4371,7 @@ void MainComponent::beginSafeShutdown()
         return;
     }
     shutdownInProgress = true;
+    pluginpicker::closeForShutdown();
 
     if (guiRun != nullptr)
     {
@@ -4363,9 +4478,7 @@ void MainComponent::saveSessionAndThen (std::function<void(bool)> onComplete)
     const auto dir = session.getSessionDirectory();
     if (saveGoesInPlace())
     {
-        // Sync save into the existing dir.
-        const bool ok = saveSessionTo (dir);
-        if (onComplete) onComplete (ok);
+        saveSessionTo (toPath (dir), std::move (onComplete));
         return;
     }
 
@@ -4397,8 +4510,7 @@ void MainComponent::saveSessionAndThen (std::function<void(bool)> onComplete)
             if (onComplete) onComplete (false);
             return;
         }
-        const bool ok = saveSessionTo (chosen);
-        if (onComplete) onComplete (ok);
+        saveSessionTo (toPath (chosen), onComplete);
     });
 }
 
@@ -4428,7 +4540,7 @@ void MainComponent::saveAsPrompt()
     [this] (juce::File chosen)
     {
         if (chosen == juce::File()) return;
-        saveSessionTo (chosen);
+        saveSessionTo (toPath (chosen));
     });
 }
 
@@ -4613,6 +4725,7 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
         return false;
     }
     const auto tAfterParse = juce::Time::getMillisecondCounterHiRes();
+    ++sessionLoadSerial;
 
     // The notepad is session-bound: drop any open editor from the previous
     // session and adopt the new session's sidecar.
@@ -4828,7 +4941,7 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     // tick compares against this snapshot and skips the write while the
     // session remains untouched.
     setLastSavedSessionJson    (SessionSerializer::serialize (session));
-    setLastWrittenAutosaveJson (juce::String());
+    setLastWrittenAutosaveJson ({}, {});
     sessionOnDisk = true;
 
     // Recovery must end with the recovered state on disk. Without this,
@@ -4839,7 +4952,14 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     // success) deletes the autosave; on failure the autosave survives
     // and the save-failed alert fires.
     if (loadedFromAutosave)
-        saveSessionTo (dir);
+    {
+        // Until a save lands, the recovered work is on disk only as the
+        // autosave. Only a successful save clears this, so no late answer from
+        // the save's prompt can land on a session opened after it.
+        saveIncomplete = true;
+        savedBaselineOnDisk = false;
+        saveSessionTo (toPath (dir));
+    }
 
     std::fprintf (stderr,
                   "[Dusk Studio/Load] %s: parse=%dms plugins=%dms midiOuts=%dms console=%dms total=%dms\n",
@@ -5381,6 +5501,10 @@ juce::File makeStereoTempWav (const juce::File& left, const juce::File& right)
         {
             writer.reset(); tmp.deleteFile(); return {};
         }
+    }
+    if (! writer->flush())
+    {
+        writer.reset(); tmp.deleteFile(); return {};
     }
     writer.reset();
     return tmp;
@@ -6049,7 +6173,7 @@ void MainComponent::menuItemSelected (int menuItemID, int /*topLevelMenuIndex*/)
         case kMenuFileSave:
         {
             if (saveGoesInPlace())
-                saveSessionTo (session.getSessionDirectory());
+                saveSessionTo (toPath (session.getSessionDirectory()));
             else
                 saveAsPrompt();
             break;
@@ -6247,6 +6371,13 @@ constexpr const char* kCleanOutFolderNotOwned =
     "Save this session before cleaning out. Another session has since been saved "
     "in the folder this one records into, and Clean out would count that "
     "session's recordings as unreferenced and delete them.";
+
+// A cut or copied region waits on the clipboard for its Paste, still needing its audio.
+UnreferencedAudio findCleanOutCandidates (const Session& session, AudioEngine& engine)
+{
+    const auto& clipboard = engine.getRegionClipboard();
+    return findUnreferencedAudio (session, clipboard.hasContent ? &clipboard.region : nullptr);
+}
 } // namespace
 
 bool MainComponent::refuseCleanOut()
@@ -6268,7 +6399,7 @@ void MainComponent::cleanOutUnreferencedFiles()
 {
     if (refuseCleanOut()) return;
 
-    const auto unreferenced = findUnreferencedAudio (session);
+    const auto unreferenced = findCleanOutCandidates (session, engine);
     if (unreferenced.scanFailed)
     {
         showDuskAlert (*this, "Clean out",
@@ -6276,6 +6407,15 @@ void MainComponent::cleanOutUnreferencedFiles()
                           "there is no telling what is unreferenced. Check the "
                           "folder's permissions and that its drive is still "
                           "connected, then try again.");
+        return;
+    }
+    if (unreferenced.referenceUnreadable)
+    {
+        showDuskAlert (*this, "Clean out",
+                          "Could not check one of the audio files this session "
+                          "uses, so there is no telling what is unreferenced. "
+                          "Check that the drive holding it is still connected "
+                          "and that its folder can be opened, then try again.");
         return;
     }
     if (! session.getAudioDirectory().isDirectory())
@@ -6316,7 +6456,7 @@ void MainComponent::cleanOutUnreferencedFiles()
                            // again: nothing goes that a take now holds or a
                            // region now points at.
                            if (self->refuseCleanOut()) return;
-                           const auto current = findUnreferencedAudio (self->session).files;
+                           const auto current = findCleanOutCandidates (self->session, self->engine).files;
                            int deleted = 0;
                            for (const auto& path : listed)
                                if (std::find (current.begin(), current.end(), path) != current.end()
@@ -6971,6 +7111,8 @@ void MainComponent::followTrackMove (const TrackMovePlan& plan)
 
 void MainComponent::undoOrRedo (bool redo)
 {
+    // Region previews name vector slots that a history step can reshape.
+    if (tapeStrip != nullptr && tapeStrip->isRegionDragActive()) return;
     auto& um = engine.getUndoManager();
     if ((redo ? um.getRedoDescription() : um.getUndoDescription()) == kMoveTracksTransaction)
     {

@@ -1,4 +1,5 @@
 #include "BounceDialog.h"
+#include "AppConfig.h"
 #include "../engine/AudioEngine.h"
 #include "../session/Session.h"
 
@@ -112,7 +113,7 @@ BounceDialog::BounceDialog (AudioEngine& e,
     // showed Close over Cancel for the whole render.
     addChildComponent (closeButton);
 
-    bounceEngine = std::make_unique<BounceEngine> (engine, session);
+    bounceEngine = std::make_unique<BounceEngine> (engine, session, appconfig::getOfflineRenderQuality());
     bounceEngine->onAccepted = std::move (beforeRender);
 
     // BounceEngine fires its callbacks on the worker thread. We don't touch

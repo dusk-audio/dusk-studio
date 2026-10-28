@@ -3,6 +3,7 @@
 #include "../foundation/ScopedNoDenormals.h"
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace duskstudio
 {
@@ -19,7 +20,10 @@ void BusStrip::bind (const BusParams& params) noexcept
 
 void BusStrip::prepare (double sampleRate, int blockSize, int oversamplingFactor)
 {
-    sampleRateForMeter = sampleRate > 0.0 ? sampleRate : 44100.0;
+    sampleRateForMeter = std::isfinite (sampleRate) && sampleRate > 0.0 ? sampleRate : 44100.0;
+    drainQuietTarget = (int) std::min ((double) std::numeric_limits<int>::max(),
+                                     std::max (128.0, std::ceil (sampleRateForMeter * 0.020)));
+    drainQuietRemaining = 0;
     vuRmsLinL = vuRmsLinR = 0.0f;
     meterBlockSize = std::max (1, blockSize);
     meterRmsAlpha  = std::exp (-((float) meterBlockSize / (float) sampleRateForMeter) / 0.3f);
@@ -72,6 +76,29 @@ void BusStrip::prepare (double sampleRate, int blockSize, int oversamplingFactor
     busComp.reset();
     compMaxBlock = prepBs;
 #endif
+}
+
+void BusStrip::discardPendingDrain() noexcept
+{
+    if (! hasPendingDrain()) return;
+    toneEq.reset();
+#if DUSKSTUDIO_HAS_DUSK_DSP
+    busComp.reset();
+    oversampler.reset();
+    osSkipDelayL.reset();
+    osSkipDelayR.reset();
+    prevCompOsActive = false;
+#endif
+    drainQuietRemaining = 0;
+    vuRmsLinL = vuRmsLinR = 0.0f;
+    if (paramsRef != nullptr)
+    {
+        paramsRef->meterPostBusLDb.store (-100.0f, std::memory_order_relaxed);
+        paramsRef->meterPostBusRDb.store (-100.0f, std::memory_order_relaxed);
+        paramsRef->meterPostBusRmsL.store (0.0f, std::memory_order_relaxed);
+        paramsRef->meterPostBusRmsR.store (0.0f, std::memory_order_relaxed);
+        paramsRef->meterGrDb.store (0.0f, std::memory_order_relaxed);
+    }
 }
 
 void BusStrip::updateEqParameters() noexcept
@@ -148,6 +175,14 @@ void BusStrip::processInPlace (float* L, float* R, int numSamples) noexcept
 {
     dusk::audio::ScopedNoDenormals noDenormals;
     if (numSamples == 0) return;
+
+    bool inputActive = false;
+    for (int sample = 0; sample < numSamples; ++sample)
+        if (std::abs (L[sample]) > 1.0e-6f || std::abs (R[sample]) > 1.0e-6f)
+        {
+            inputActive = true;
+            break;
+        }
 
     updateGainTargets();
 
@@ -227,8 +262,10 @@ void BusStrip::processInPlace (float* L, float* R, int numSamples) noexcept
 
     float postPeakL = 0.0f, postPeakR = 0.0f;
     float sumSqL = 0.0f, sumSqR = 0.0f;
+    bool outputActive = false;
     for (int i = 0; i < numSamples; ++i)
     {
+        outputActive = outputActive || std::abs (L[i]) > 1.0e-6f || std::abs (R[i]) > 1.0e-6f;
         const float fg = faderGain.getNextValue();
         const float gL = panGainL.getNextValue() * fg;
         const float gR = panGainR.getNextValue() * fg;
@@ -241,6 +278,10 @@ void BusStrip::processInPlace (float* L, float* R, int numSamples) noexcept
         sumSqL += L[i] * L[i];
         sumSqR += R[i] * R[i];
     }
+    // Measure before pan/fader so a closed fader cannot hide a live filter
+    // tail. The quiet dwell also drains the full FIR beyond its group delay.
+    drainQuietRemaining = inputActive || outputActive ? drainQuietTarget
+        : std::max (0, drainQuietRemaining - numSamples);
 
     if (paramsRef != nullptr)
     {

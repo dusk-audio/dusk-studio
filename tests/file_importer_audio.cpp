@@ -7,9 +7,21 @@
 
 #include "engine/FileImporter.h"
 
+#include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstdint>
 #include <memory>
 #include <stdexcept>
+#include <string>
+
+#if defined (__linux__)
+ #include <dlfcn.h>
+#endif
+#if ! defined (_WIN32)
+ #include <csignal>
+ #include <sys/resource.h>
+#endif
 
 using Catch::Matchers::WithinAbs;
 
@@ -255,6 +267,126 @@ TEST_CASE ("FileImporter: 96k mono -> 48k session preserves length",
     REQUIRE (std::abs (rb.lengthInSamples - 48000) <= 64);
 }
 
+TEST_CASE ("FileImporter: downsampling rejects ultrasonic aliases without changing the passband",
+           "[FileImporter][resample][antialias]")
+{
+    struct Rates { double source, target, ultrasonic; };
+    for (const auto rates : { Rates { 96000.0, 48000.0, 36000.0 },
+                              Rates { 192000.0, 48000.0, 68000.0 },
+                              Rates { 88200.0, 44100.0, 30000.0 },
+                              Rates { 96000.0, 44100.0, 36000.0 },
+                              Rates { 48000.0, 44100.0, 23900.0 } })
+    {
+        CAPTURE (rates.source, rates.target, rates.ultrasonic);
+        TempScope tmp;
+        const auto src = tmp.dir.getChildFile ("spectral.wav");
+        writeTestWav (src, rates.source, 2, (int) (2.0 * rates.source), [&] (int channel, int n)
+        {
+            const double frequency = channel == 0 ? 1000.0 : rates.ultrasonic;
+            return 0.25f * (float) std::sin (2.0 * kPi * frequency * (double) n / rates.source);
+        }, 32);
+        duskstudio::fileimport::AudioImportRequest req;
+        req.source = src;
+        req.audioDir = tmp.dir;
+        req.sessionSampleRate = rates.target;
+        req.targetChannels = 2;
+        const auto imported = duskstudio::fileimport::importAudio (req);
+        REQUIRE (imported.ok);
+        const auto output = readWav (imported.region.file);
+        REQUIRE (output.lengthInSamples == (std::int64_t) (2.0 * rates.target));
+        REQUIRE (output.numChannels == 2);
+        const auto amplitude = [&output, rates] (int channel, double frequency)
+        {
+            const int skip = (int) (rates.target / 10.0);
+            const int end = output.buffer.getNumSamples() - skip;
+            const float* samples = output.buffer.getReadPointer (channel);
+            double sine = 0.0, cosine = 0.0;
+            for (int n = skip; n < end; ++n)
+            {
+                const double phase = 2.0 * kPi * frequency * (double) n / rates.target;
+                sine += (double) samples[n] * std::sin (phase);
+                cosine += (double) samples[n] * std::cos (phase);
+            }
+            return 2.0 * std::hypot (sine, cosine) / (double) (end - skip);
+        };
+        const double alias = std::abs (std::remainder (rates.ultrasonic, rates.target));
+        CHECK_THAT (amplitude (0, 1000.0), WithinAbs (0.25, 0.001));
+        CHECK (amplitude (1, alias) < 0.00005);
+        CHECK (amplitude (0, alias) < 0.00005);
+        CHECK (amplitude (1, 1000.0) < 0.00005);
+    }
+}
+
+TEST_CASE ("FileImporter: downsampling preserves DC gain",
+           "[FileImporter][resample][antialias]")
+{
+    for (const double targetRate : { 48000.0, 44100.0 })
+    {
+        CAPTURE (targetRate);
+        TempScope tmp;
+        const auto src = tmp.dir.getChildFile ("dc.wav");
+        writeTestWav (src, 96000.0, 1, 96000, [] (int, int) { return 0.125f; }, 32);
+        duskstudio::fileimport::AudioImportRequest req;
+        req.source = src;
+        req.audioDir = tmp.dir;
+        req.sessionSampleRate = targetRate;
+        req.targetChannels = 1;
+        const auto imported = duskstudio::fileimport::importAudio (req);
+        REQUIRE (imported.ok);
+        const auto output = readWav (imported.region.file);
+        REQUIRE (output.lengthInSamples == (std::int64_t) targetRate);
+        float worst = 0.0f;
+        for (int n = 256; n < output.buffer.getNumSamples() - 256; ++n)
+            worst = std::max (worst, std::abs (output.buffer.getSample (0, n) - 0.125f));
+        CHECK_THAT (worst, WithinAbs (0.0f, 0.00002f));
+    }
+}
+
+TEST_CASE ("FileImporter: downsampled impulses retain timeline and grain-boundary alignment",
+           "[FileImporter][resample][antialias]")
+{
+    for (const double sourceRate : { 96000.0, 88200.0 })
+    {
+        CAPTURE (sourceRate);
+        constexpr double targetRate = 48000.0;
+        const double ratio = sourceRate / targetRate;
+        const int length = (int) (sourceRate * 2.0) + 123;
+        const std::array<int, 3> positions { 128, (int) std::llround (65536.0 * ratio) + 8, length - 128 };
+        TempScope tmp;
+        const auto src = tmp.dir.getChildFile ("impulses.wav");
+        writeTestWav (src, sourceRate, 2, length, [&] (int channel, int n)
+        {
+            for (const int at : positions)
+                if (n == at + channel * 31) return channel == 0 ? 0.5f : -0.75f;
+            return 0.0f;
+        }, 32);
+        duskstudio::fileimport::AudioImportRequest req;
+        req.source = src;
+        req.audioDir = tmp.dir;
+        req.sessionSampleRate = targetRate;
+        req.targetChannels = 2;
+        req.timelineStart = 9876;
+        const auto imported = duskstudio::fileimport::importAudio (req);
+        REQUIRE (imported.ok);
+        const auto output = readWav (imported.region.file);
+        REQUIRE (output.lengthInSamples == (std::int64_t) std::llround ((double) length / ratio));
+        CHECK (imported.region.timelineStart == 9876);
+        CHECK (imported.region.sourceOffset == 0);
+        for (int channel = 0; channel < 2; ++channel)
+            for (const int at : positions)
+            {
+                const int expected = (int) std::llround ((double) (at + channel * 31) / ratio);
+                int peakAt = expected - 8;
+                const auto* samples = output.buffer.getReadPointer (channel);
+                for (int n = expected - 7; n <= expected + 8; ++n)
+                    if (std::abs (samples[n]) > std::abs (samples[peakAt])) peakAt = n;
+                CHECK (std::abs (peakAt - expected) <= 1);
+                CHECK (std::abs (samples[peakAt]) > 0.05f);
+                CHECK ((samples[peakAt] > 0.0f) == (channel == 0));
+            }
+    }
+}
+
 TEST_CASE ("FileImporter: stereo -> mono sums L+R at 0.5 each",
            "[FileImporter][issue-377]")
 {
@@ -381,4 +513,116 @@ TEST_CASE ("FileImporter: a matching 32-bit source is not truncated to 24-bit",
     REQUIRE (src.loadFileAsData (srcBytes));
     REQUIRE (res.region.file.loadFileAsData (outBytes));
     REQUIRE (srcBytes == outBytes);   // 32-bit data preserved, not down-converted
+}
+
+#if ! defined (_WIN32)
+// A verbatim copy is the common import. Its final chunk reaches the disk only
+// when the copy is closed, so a full disk there has to fail the import rather
+// than leave a region over a short file.
+TEST_CASE ("FileImporter discards a verbatim copy whose last bytes never reach the disk",
+           "[FileImporter][finalization]")
+{
+    TempScope tmp;
+    const auto source = tmp.dir.getChildFile ("match.wav");
+    writeTestWav (source, 48000.0, 1, 4096, [] (int, int n)
+    { return 0.25f * (float) std::sin (2.0 * kPi * 1000.0 * (double) n / 48000.0); });
+    const auto audioDir = tmp.dir.getChildFile ("audio");
+    REQUIRE (audioDir.createDirectory().wasOk());
+
+    duskstudio::fileimport::AudioImportRequest req;
+    req.source = source;
+    req.audioDir = audioDir;
+    req.sessionSampleRate = 48000.0;
+    req.targetChannels = 1;
+
+    rlimit before {};
+    REQUIRE (::getrlimit (RLIMIT_FSIZE, &before) == 0);
+    const auto cap = (rlim_t) source.getSize() - 100;
+    if (before.rlim_max != RLIM_INFINITY && before.rlim_max < cap)
+        SKIP ("the file size hard limit is already below the source");
+    duskstudio::fileimport::AudioImportResult result;
+    {
+        struct FileSizeCap
+        {
+            rlimit restore;
+            void (*handler) (int);
+            ~FileSizeCap()
+            {
+                ::setrlimit (RLIMIT_FSIZE, &restore);
+                std::signal (SIGXFSZ, handler);
+            }
+        } scope { before, std::signal (SIGXFSZ, SIG_IGN) };
+        rlimit capped = before;
+        capped.rlim_cur = cap;
+        REQUIRE (::setrlimit (RLIMIT_FSIZE, &capped) == 0);
+        result = duskstudio::fileimport::importAudio (req);
+    }
+
+    CHECK_FALSE (result.ok);
+    CHECK (juce::String (result.errorMessage)
+               .startsWith ("Could not copy the file into the session audio folder: "));
+    CHECK (audioDir.findChildFiles (juce::File::findFiles, false, "*").isEmpty());
+}
+#endif
+
+TEST_CASE ("FileImporter rejects converted audio when final file synchronization fails",
+           "[FileImporter][finalization]")
+{
+    TempScope tmp;
+    const auto source = tmp.dir.getChildFile ("source.wav");
+    writeTestWav (source, 48000.0, 1, 4096, [] (int, int n)
+    { return 0.25f * (float) std::sin (2.0 * kPi * 1000.0 * (double) n / 48000.0); }, 32);
+    juce::MemoryBlock sourceBytes;
+    REQUIRE (source.loadFileAsData (sourceBytes));
+
+    duskstudio::fileimport::AudioImportRequest req;
+    req.source = source;
+    req.audioDir = tmp.dir.getChildFile ("normal");
+    req.trackIndex = 6;
+    req.sessionSampleRate = 48000.0;
+    req.targetChannels = 2;
+    const auto normal = duskstudio::fileimport::importAudio (req);
+    REQUIRE (normal.ok);
+    const auto audio = readWav (normal.region.file);
+    CHECK (audio.numChannels == 2);
+    CHECK (audio.lengthInSamples == 4096);
+    CHECK (bufferPeak (audio.buffer, 0) > 0.2f);
+
+   #if defined (__linux__)
+    const auto arm = reinterpret_cast<void (*) (int, const char*)> (dlsym (RTLD_DEFAULT, "dusk_audiofile_arm"));
+    const auto hits = reinterpret_cast<int (*)()> (dlsym (RTLD_DEFAULT, "dusk_audiofile_hits"));
+    const auto disarm = reinterpret_cast<void (*)()> (dlsym (RTLD_DEFAULT, "dusk_audiofile_disarm"));
+    if (arm == nullptr || hits == nullptr || disarm == nullptr)
+    {
+        WARN ("native finalization fault variations require the private preload fixture");
+        return;
+    }
+    struct FaultScope
+    {
+        void (*disarm)();
+        ~FaultScope() { disarm(); }
+    } fault { disarm };
+    for (const int kind : { 3, 4 })
+    {
+        CAPTURE (kind);
+        req.audioDir = tmp.dir.getChildFile ("failed-" + juce::String (kind));
+        REQUIRE (req.audioDir.createDirectory().wasOk());
+        const auto untouched = req.audioDir.getChildFile ("keep.txt");
+        REQUIRE (untouched.replaceWithText ("keep"));
+        const auto selector = req.audioDir.getChildFile ("import_track07_*").getFullPathName().toStdString();
+        arm (kind, selector.c_str());
+        const auto converted = duskstudio::fileimport::importAudio (req);
+        const int injected = hits();
+        disarm();
+        CHECK (injected == 1);
+        CHECK_FALSE (converted.ok);
+        CHECK (converted.errorMessage == "Audio decode or write failed");
+        CHECK (req.audioDir.findChildFiles (juce::File::findFiles, false, "import_*.wav").isEmpty());
+        CHECK (untouched.loadFileAsString() == "keep");
+        CHECK (normal.region.file.existsAsFile());
+        juce::MemoryBlock after;
+        REQUIRE (source.loadFileAsData (after));
+        CHECK (after == sourceBytes);
+    }
+   #endif
 }

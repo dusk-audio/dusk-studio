@@ -1,0 +1,13 @@
+# LeakSanitizer suppressions for the Dusk Studio Catch2 suite.
+#
+# Format: one rule per line, matched against the allocation stack. See
+# https://github.com/google/sanitizers/wiki/AddressSanitizerLeakSanitizer
+#
+# These cover JUCE-internal leaks only. Name the JUCE frame, never the
+# library call beneath it, so the same call from Dusk Studio's own hosts
+# stays checked.
+
+# JUCE's LV2 host wraps lilv_port_get_scale_points() in a non-owning
+# ScalePoints and never calls lilv_scale_points_free(), so each port with
+# scale points leaks its collection when JUCE builds the parameter list.
+leak:juce::lv2_host::Port::getScalePoints

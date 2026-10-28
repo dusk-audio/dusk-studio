@@ -83,7 +83,13 @@ inline std::string loadFileAsString (const std::filesystem::path& path)
 {
     std::ifstream in (nativeIOPath (path), std::ios::binary);
     if (! in) return {};
-    return std::string (std::istreambuf_iterator<char> (in), std::istreambuf_iterator<char>());
+    // libstdc++ throws when a read fails partway: EIO, a directory, or a /proc
+    // file whose process has just been reaped.
+    try
+    {
+        return std::string (std::istreambuf_iterator<char> (in), std::istreambuf_iterator<char>());
+    }
+    catch (const std::ios_base::failure&) { return {}; }
 }
 
 inline bool writeStringToFile (const std::filesystem::path& path, std::string_view text,

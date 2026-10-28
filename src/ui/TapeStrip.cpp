@@ -1040,16 +1040,22 @@ void sortTrackUpIndexDown (std::vector<Id>& ids)
 }
 } // namespace
 
+bool TapeStrip::audioRegionEditable (int track, int region) const
+{
+    if (track < 0 || track >= Session::kNumTracks) return false;
+    const auto& t = session.track (track);
+    return ! t.frozen.load (std::memory_order_relaxed)
+        && region >= 0 && region < (int) t.regions.size() && ! t.regions[(size_t) region].locked;
+}
+
 std::vector<TapeStrip::RegionId> TapeStrip::editableAudioRegions (std::vector<RegionId> targets,
                                                                   const std::function<bool (const AudioRegion&)>& keep) const
 {
     targets.erase (std::remove_if (targets.begin(), targets.end(), [this, &keep] (const RegionId& id)
     {
-        if (id.track < 0 || id.track >= Session::kNumTracks) return true;
-        const auto& regs = session.track (id.track).regions;
-        if (id.regionIdx < 0 || id.regionIdx >= (int) regs.size()) return true;
-        const auto& r = regs[(size_t) id.regionIdx];
-        return r.locked || (keep && ! keep (r));
+        if (! audioRegionEditable (id.track, id.regionIdx)) return true;
+        const auto& r = session.track (id.track).regions[(size_t) id.regionIdx];
+        return keep && ! keep (r);
     }), targets.end());
     sortTrackUpIndexDown (targets);
     return targets;
@@ -1760,12 +1766,11 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
 
     if (hit.op != RegionOp::None)
     {
-        // Locked regions reject drag / resize / fade / gain. Shift-click
+        // Protected regions reject drag / resize / fade / gain. Shift-click
         // for selection is still allowed so the user can pick up locked
         // regions to copy / paste somewhere else.
-        const auto& clickedRegion = session.track (hit.track).regions[(size_t) hit.regionIdx];
-        if (clickedRegion.locked
-            && ! (e.mods.isShiftDown() || e.mods.isCommandDown()))
+        if (! audioRegionEditable (hit.track, hit.regionIdx)
+            && ! (hit.op == RegionOp::Move && (e.mods.isShiftDown() || e.mods.isCommandDown())))
         {
             // Just select the region so the user knows what they
             // clicked on, but don't enter drag mode.
@@ -1896,9 +1901,8 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
         {
             for (auto& add : additionalSelections)
             {
+                if (! audioRegionEditable (add.track, add.regionIdx)) continue;
                 const auto& addRegions = session.track (add.track).regions;
-                if (add.regionIdx < 0 || add.regionIdx >= (int) addRegions.size())
-                    continue;
                 const auto& ar = addRegions[(size_t) add.regionIdx];
                 drag.additional.push_back ({ add.track, add.regionIdx,
                                                 ar.timelineStart, ar.gainDb });
@@ -2168,10 +2172,9 @@ void TapeStrip::mouseDrag (const juce::MouseEvent& e)
         return;
     }
 
-    if (drag.op == RegionOp::None) return;
+    if (drag.op == RegionOp::None || ! audioRegionEditable (drag.track, drag.regionIdx)) return;
 
     auto& regions = session.track (drag.track).regions;
-    if (drag.regionIdx < 0 || drag.regionIdx >= (int) regions.size()) return;
 
     const auto current = sampleAtX (e.x);
     std::int64_t deltaSamples = current - drag.mouseDownSample;
@@ -2186,6 +2189,7 @@ void TapeStrip::mouseDrag (const juce::MouseEvent& e)
     deltaSamples = snap::snapDeltaToGrid (deltaSamples, session, engine.getTimelineSampleRate());
 
     constexpr std::int64_t kMinLengthSamples = 1024;  // ~21 ms @ 48k
+    const auto minLength = std::min (kMinLengthSamples, drag.origLength);
     auto& r = regions[(size_t) drag.regionIdx];
 
     switch (drag.op)
@@ -2197,14 +2201,14 @@ void TapeStrip::mouseDrag (const juce::MouseEvent& e)
             // no region in the group falls off the timeline.
             std::int64_t minOrig = drag.origTimelineStart;
             for (const auto& a : drag.additional)
-                minOrig = std::min (minOrig, a.origTimelineStart);
+                if (audioRegionEditable (a.track, a.regionIdx))
+                    minOrig = std::min (minOrig, a.origTimelineStart);
             const std::int64_t clampedDelta = std::max (deltaSamples, -minOrig);
             r.timelineStart = drag.origTimelineStart + clampedDelta;
             for (const auto& a : drag.additional)
             {
+                if (! audioRegionEditable (a.track, a.regionIdx)) continue;
                 auto& addRegions = session.track (a.track).regions;
-                if (a.regionIdx < 0 || a.regionIdx >= (int) addRegions.size())
-                    continue;
                 addRegions[(size_t) a.regionIdx].timelineStart =
                     a.origTimelineStart + clampedDelta;
             }
@@ -2215,12 +2219,12 @@ void TapeStrip::mouseDrag (const juce::MouseEvent& e)
             // Bound delta so newSourceOffset >= 0 and length stays above the
             // floor. Equivalent constraints in sample space:
             //   delta >= -origSourceOffset            (don't expose negative source)
-            //   delta <=  origLength - kMinLength     (don't shrink below the floor)
+            //   delta <=  origLength - minLength      (don't shrink below the floor)
             //   timelineStart + delta >= 0            (don't fall off the timeline)
             std::int64_t d = deltaSamples;
             d = std::max (d, -drag.origSourceOffset);
             d = std::max (d, -drag.origTimelineStart);
-            d = std::min (d, drag.origLength - kMinLengthSamples);
+            d = std::min (d, drag.origLength - minLength);
             r.timelineStart   = drag.origTimelineStart + d;
             r.lengthInSamples = drag.origLength        - d;
             r.sourceOffset    = drag.origSourceOffset  + d;
@@ -2228,7 +2232,7 @@ void TapeStrip::mouseDrag (const juce::MouseEvent& e)
         }
         case RegionOp::TrimEnd:
         {
-            const std::int64_t newLen = std::max (kMinLengthSamples,
+            const std::int64_t newLen = std::max (minLength,
                                                     drag.origLength + deltaSamples);
             r.lengthInSamples = newLen;
             break;
@@ -2275,9 +2279,8 @@ void TapeStrip::mouseDrag (const juce::MouseEvent& e)
                                        drag.origGainDb + deltaDb);
             for (const auto& a : drag.additional)
             {
+                if (! audioRegionEditable (a.track, a.regionIdx)) continue;
                 auto& addRegions = session.track (a.track).regions;
-                if (a.regionIdx < 0 || a.regionIdx >= (int) addRegions.size())
-                    continue;
                 addRegions[(size_t) a.regionIdx].gainDb =
                     jlimit (-24.0f, 12.0f, a.origGainDb + deltaDb);
             }
@@ -2549,14 +2552,38 @@ void TapeStrip::mouseUp (const juce::MouseEvent& e)
 
     if (drag.op == RegionOp::None) return;
 
+    const bool isGroup = ! drag.additional.empty()
+        && (drag.op == RegionOp::Move || drag.op == RegionOp::AdjustGain);
+    const char* label =
+        drag.op == RegionOp::Move        ? (isGroup ? "Move regions" : "Move region") :
+        drag.op == RegionOp::FadeIn      ? "Adjust fade-in" :
+        drag.op == RegionOp::FadeOut     ? "Adjust fade-out" :
+        drag.op == RegionOp::AdjustGain  ? (isGroup ? "Adjust regions gain" : "Adjust region gain") :
+                                            "Trim region";
+    auto& um = engine.getUndoManager();
+    bool transactionStarted = false;
+    const RegionRebuildBatch batch (engine);
+    const auto commit = [this, &um, &transactionStarted, label]
+        (int track, int region, const AudioRegion& before, const AudioRegion& after)
+    {
+        // A refused action must leave the captured state, not its live preview.
+        session.track (track).regions[(size_t) region] = before;
+        if (! audioRegionEditable (track, region)
+            || (before.timelineStart == after.timelineStart && before.lengthInSamples == after.lengthInSamples
+                && before.sourceOffset == after.sourceOffset && before.fadeInSamples == after.fadeInSamples
+                && before.fadeOutSamples == after.fadeOutSamples && before.gainDb == after.gainDb))
+            return;
+        if (! transactionStarted)
+        {
+            um.beginNewTransaction (label);
+            transactionStarted = true;
+        }
+        performInPlace (new RegionEditAction (session, engine, track, region, before, after));
+    };
+
     auto& regions = session.track (drag.track).regions;
     if (drag.regionIdx >= 0 && drag.regionIdx < (int) regions.size())
     {
-        // The drag mutated `regions[idx]` in-place for live feedback; capture
-        // the final (after) state, rebuild the (before) state from the
-        // captured originals, and route the swap through UndoManager so it
-        // becomes one undoable transaction. perform() re-applies `after` to
-        // the region, which is idempotent - the user sees no glitch.
         AudioRegion afterState  = regions[(size_t) drag.regionIdx];
         AudioRegion beforeState = afterState;
         beforeState.timelineStart   = drag.origTimelineStart;
@@ -2566,48 +2593,17 @@ void TapeStrip::mouseUp (const juce::MouseEvent& e)
         beforeState.fadeOutSamples  = drag.origFadeOut;
         beforeState.gainDb          = drag.origGainDb;
 
-        // Skip if nothing actually moved (a click without a drag).
-        if (beforeState.timelineStart   != afterState.timelineStart
-            || beforeState.lengthInSamples != afterState.lengthInSamples
-            || beforeState.sourceOffset    != afterState.sourceOffset
-            || beforeState.fadeInSamples   != afterState.fadeInSamples
-            || beforeState.fadeOutSamples  != afterState.fadeOutSamples
-            || beforeState.gainDb          != afterState.gainDb)
-        {
-            const bool isGroup = ! drag.additional.empty()
-                && (drag.op == RegionOp::Move || drag.op == RegionOp::AdjustGain);
-            const char* label =
-                drag.op == RegionOp::Move        ? (isGroup ? "Move regions" : "Move region") :
-                drag.op == RegionOp::FadeIn      ? "Adjust fade-in" :
-                drag.op == RegionOp::FadeOut     ? "Adjust fade-out" :
-                drag.op == RegionOp::AdjustGain  ? (isGroup ? "Adjust regions gain" : "Adjust region gain") :
-                                                    "Trim region";
-            auto& um = engine.getUndoManager();
-            um.beginNewTransaction (label);
-            const RegionRebuildBatch batch (engine);
-            performInPlace (new RegionEditAction (session, engine,
-                                                    drag.track, drag.regionIdx,
-                                                    beforeState, afterState));
-            // Group drag: emit one RegionEditAction per additional
-            // selection, all bundled into the transaction we just
-            // started so undo reverts the whole group at once.
-            for (const auto& a : drag.additional)
-            {
-                auto& addRegions = session.track (a.track).regions;
-                if (a.regionIdx < 0 || a.regionIdx >= (int) addRegions.size())
-                    continue;
-                AudioRegion addAfter  = addRegions[(size_t) a.regionIdx];
-                AudioRegion addBefore = addAfter;
-                addBefore.timelineStart = a.origTimelineStart;
-                addBefore.gainDb        = a.origGainDb;
-                if (addBefore.timelineStart == addAfter.timelineStart
-                    && addBefore.gainDb == addAfter.gainDb)
-                    continue;
-                performInPlace (new RegionEditAction (session, engine,
-                                                        a.track, a.regionIdx,
-                                                        addBefore, addAfter));
-            }
-        }
+        commit (drag.track, drag.regionIdx, beforeState, afterState);
+    }
+    for (const auto& a : drag.additional)
+    {
+        auto& addRegions = session.track (a.track).regions;
+        if (a.regionIdx < 0 || a.regionIdx >= (int) addRegions.size()) continue;
+        AudioRegion addAfter  = addRegions[(size_t) a.regionIdx];
+        AudioRegion addBefore = addAfter;
+        addBefore.timelineStart = a.origTimelineStart;
+        addBefore.gainDb        = a.origGainDb;
+        commit (a.track, a.regionIdx, addBefore, addAfter);
     }
 
     drag = {};
@@ -4657,6 +4653,7 @@ bool TapeStrip::copySelectedRegion()
 
 bool TapeStrip::cutSelectedRegion()
 {
+    if (isRegionDragActive()) return true;
     // Copy first (non-undoable side effect on the clipboard), then push a
     // DeleteRegionAction so Cmd+Z brings the region back. The clipboard
     // keeps the cut content even after undo - same as Logic / Pro Tools.
@@ -4666,6 +4663,7 @@ bool TapeStrip::cutSelectedRegion()
 
 bool TapeStrip::pasteAtPlayhead()
 {
+    if (isRegionDragActive()) return true;
     auto& clip = engine.getRegionClipboard();
     if (! clip.hasContent) return false;
 
@@ -4689,6 +4687,7 @@ bool TapeStrip::pasteAtPlayhead()
 
 bool TapeStrip::deleteSelectedRegion()
 {
+    if (isRegionDragActive()) return true;
     const auto selection = allSelectedRegions();
     if (selection.empty())
     {
@@ -4716,6 +4715,7 @@ bool TapeStrip::deleteSelectedRegion()
 
 bool TapeStrip::duplicateSelectedRegion()
 {
+    if (isRegionDragActive()) return true;
     const auto selection = allSelectedRegions();
     if (selection.empty()) return false;
 
@@ -4738,6 +4738,7 @@ bool TapeStrip::duplicateSelectedRegion()
 
 bool TapeStrip::nudgeSelectedRegion (std::int64_t deltaSamples)
 {
+    if (isRegionDragActive()) return true;
     auto selection = allSelectedRegions();
     if (selection.empty()) return false;
     if (deltaSamples == 0) return false;
@@ -4819,6 +4820,7 @@ bool TapeStrip::cycleMidiTake (int track, int regionIdx, bool forward)
 
 bool TapeStrip::splitSelectedAtPlayhead()
 {
+    if (isRegionDragActive()) return true;
     const auto playhead = engine.getTransport().getPlayhead();
     const auto targets = splittableAudioRegions (allSelectedRegions(), playhead);
     if (targets.empty()) return false;

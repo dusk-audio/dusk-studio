@@ -38,6 +38,9 @@ public:
     // SIP gate (mute/solo) before invoking.
     void processInPlace (float* L, float* R, int numSamples) noexcept;
 
+    bool hasPendingDrain() const noexcept { return drainQuietRemaining > 0; }
+    void discardPendingDrain() noexcept;
+
     // How far the bus delays its output at the prepared oversampling factor,
     // comp on or off; 0 at 1x.
     int getOversamplingLatencySamples() const noexcept { return osLatencySamples; }
@@ -99,5 +102,7 @@ private:
     float  meterRmsAlpha  = 0.0f;
     float  vuRmsLinL = 0.0f;
     float  vuRmsLinR = 0.0f;
+    int drainQuietRemaining = 0;
+    int drainQuietTarget = 960;
 };
 } // namespace duskstudio

@@ -187,8 +187,10 @@ jobs:
     runs-on: ubuntu-22.04
 
     env:
-      # Leak detection stays on except for the two intentional shutdown-safety leaks.
+      # Leak detection stays on except for the two intentional shutdown-safety
+      # leaks and the JUCE-internal ones in tools/lsan_suppressions.txt.
       ASAN_OPTIONS: "halt_on_error=1:abort_on_error=1:detect_leaks=1:symbolize=1"
+      LSAN_OPTIONS: "suppressions=${{ github.workspace }}/tools/lsan_suppressions.txt"
       UBSAN_OPTIONS: "halt_on_error=1:abort_on_error=1:print_stacktrace=1"
       ASAN_SYMBOLIZER_PATH: /usr/bin/llvm-symbolizer
 

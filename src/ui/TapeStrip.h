@@ -105,6 +105,7 @@ public:
     // Ends a name drag without moving anything; true when one was under way. A
     // press that has not dragged yet is left to end as a click.
     bool cancelTrackMoveDrag();
+    bool isRegionDragActive() const noexcept { return drag.op != RegionOp::None || midiDrag.active(); }
     // Around every track move, its undo and redo included. Before: the rename
     // and any name drag, which name tracks by slot, are dropped. After: the
     // picked tracks and any region drag follow their tracks, region picks are
@@ -674,6 +675,7 @@ private:
     // The unlocked targets that keep accepts, ordered track ascending and
     // index descending, so deleting or splitting them in that order leaves
     // every index still to come valid.
+    bool audioRegionEditable (int track, int region) const;
     std::vector<RegionId> editableAudioRegions (std::vector<RegionId> targets,
                                                 const std::function<bool (const AudioRegion&)>& keep = {}) const;
     std::vector<RegionId> editableMidiRegions (std::vector<RegionId> targets) const;

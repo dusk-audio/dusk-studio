@@ -21,8 +21,10 @@ void HardwareInsertSlot::prepare (double sampleRate, int)
 
     dryDelayL.setMaximumDelayInSamples (kMaxDelaySamples);
     dryDelayR.setMaximumDelayInSamples (kMaxDelaySamples);
-    dryDelayL.setDelay (0);
-    dryDelayR.setDelay (0);
+    const int latency = paramsRef != nullptr
+        ? std::clamp (paramsRef->routing.current().latencySamples, 0, kMaxDelaySamples) : 0;
+    dryDelayL.setDelay (latency);
+    dryDelayR.setDelay (latency);
 
     // Ping calibration buffers. Chirp is pre-rendered at session SR so
     // the audio thread never builds a sine table in-callback. Capture
@@ -51,7 +53,7 @@ void HardwareInsertSlot::prepare (double sampleRate, int)
     inGainLin  .setCurrentAndTargetValue (1.0f);
     dryWetSmooth.setCurrentAndTargetValue (1.0f);
 
-    cachedLatencySamples.store (0, std::memory_order_relaxed);
+    cachedLatencySamples.store (latency, std::memory_order_relaxed);
 }
 
 void HardwareInsertSlot::bind (const HardwareInsertParams& params) noexcept
@@ -182,6 +184,18 @@ void HardwareInsertSlot::processStereoBlock (float* L, float* R, int numSamples,
         // the same trade ChannelStrip makes when it relatches its PDC.
         dryDelayL.reset();
         dryDelayR.reset();
+    }
+
+    if (offlineRender)
+    {
+        for (int i = 0; i < numSamples; ++i)
+        {
+            dryDelayL.pushSample (L[i]);
+            dryDelayR.pushSample (R[i]);
+            L[i] = dryDelayL.popSample();
+            R[i] = dryDelayR.popSample();
+        }
+        return;
     }
 
     // Pull the latest knob values onto the smoother targets.

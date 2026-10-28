@@ -1,4 +1,6 @@
 #include "RecordManager.h"
+#include "FileImporter.h"
+#include "audiofile/FileReader.h"
 #include "audiofile/FileWriter.h"
 #include "../session/TakeComp.h"
 #include <algorithm>
@@ -15,6 +17,34 @@ namespace duskstudio
 {
 namespace
 {
+class RecordingSink final : public dusk::audio::IFileWriteSink
+{
+public:
+    RecordingSink (std::unique_ptr<dusk::audio::IFileWriteSink> sinkIn,
+                   std::atomic<bool>& failedIn)
+        : sink (std::move (sinkIn)), failed (failedIn) {}
+
+    int numChannels() const noexcept override { return sink->numChannels(); }
+
+    bool writeInterleaved (const float* data, std::int64_t frames) noexcept override
+    {
+        const bool okay = sink->writeInterleaved (data, frames);
+        if (! okay) failed.store (true, std::memory_order_release);
+        return okay;
+    }
+
+    bool flush() override
+    {
+        const bool okay = sink->flush();
+        if (! okay) failed.store (true, std::memory_order_release);
+        return okay;
+    }
+
+private:
+    std::unique_ptr<dusk::audio::IFileWriteSink> sink;
+    std::atomic<bool>& failed;
+};
+
 // MIDI regions still carry their own take history. Repeated punch-recording
 // in one spot would otherwise grow it without bound; the oldest entries go.
 constexpr int kMaxMidiTakesPerRegion = 8;
@@ -137,7 +167,26 @@ bool sliceMidiTake (const MidiTakeRef& source,
 }
 } // namespace
 
-RecordManager::RecordManager (Session& s) : session (s) {}
+RecordManager::RecordManager (Session& s) : RecordManager (s, {}) {}
+
+RecordManager::RecordManager (Session& s, WriteSinkFactory factory, PersistedFrameProbe probe)
+    : session (s), writeSinkFactory (std::move (factory)), persistedFrameProbe (std::move (probe))
+{
+    if (! writeSinkFactory)
+        writeSinkFactory = [] (const std::filesystem::path& path,
+                               const dusk::audio::WriteSpec& spec)
+            -> std::unique_ptr<dusk::audio::IFileWriteSink>
+        {
+            return dusk::audio::FileWriter::create (path, spec);
+        };
+    if (! persistedFrameProbe)
+        persistedFrameProbe = [] (const std::filesystem::path& path) -> std::optional<std::int64_t>
+        {
+            auto reader = dusk::audio::FileReader::open (path);
+            if (reader == nullptr) return std::nullopt;
+            return std::max<std::int64_t> (0, reader->info().numFrames);
+        };
+}
 
 std::string RecordManager::describeRecordErrors (const std::vector<RecordError>& errors)
 {
@@ -412,8 +461,8 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
         spec.numChannels   = trackChannels;
         spec.bitsPerSample = 24;
         spec.format        = dusk::audio::WriteSpec::Format::Wav;
-        auto fileWriter = dusk::audio::FileWriter::create (
-            outFile.getFullPathName().toStdString(), spec);
+        auto fileWriter = writeSinkFactory (
+            std::filesystem::u8path (outFile.getFullPathName().toStdString()), spec);
         if (fileWriter == nullptr)
         {
             std::fprintf (stderr,
@@ -442,7 +491,7 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
             perTrack->file = outFile;
             perTrack->numChannels = trackChannels;
             perTrack->writer = std::make_unique<dusk::audio::ThreadedFileWriter> (
-                std::move (fileWriter), kRingFrames,
+                std::make_unique<RecordingSink> (std::move (fileWriter), perTrack->sinkWriteFailed), kRingFrames,
                 dusk::audio::ThreadedFileWriter::Drain::External);
         }
         catch (const std::bad_alloc&)
@@ -691,17 +740,12 @@ void RecordManager::stopRecording (std::int64_t endSample)
             collectMidiPasses (track);
         }
 
-    // Latch audio-thread error counters into lastRecordErrors before
-    // teardown so TransportBar can surface them after engine.stop(). Per-
-    // writer write failures + per-track MIDI overflows; setup-time
-    // failures are tracked separately by lastSetupFailures.
+    // MIDI overflows and pass limits are stable once capture stops. Disk-write
+    // errors are collected after each writer finishes its final drain and flush.
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
         if (auto& w = writers[(size_t) t])
         {
-            const auto fails = w->writeFailures.load (std::memory_order_relaxed);
-            if (fails > 0)
-                lastRecordErrors.push_back ({ t, RecordErrorKind::WavWrite, fails });
             if (w->droppedLoopPasses > 0)
                 lastRecordErrors.push_back ({ t, RecordErrorKind::LoopPassLimit,
                                               w->droppedLoopPasses });
@@ -1124,6 +1168,11 @@ void RecordManager::stopRecording (std::int64_t endSample)
         cap.reset();
     }
 
+    // Retries wait on the message thread, so a Stop gets one budget of them for
+    // all its takes: a mount that has gone away fails every take's check, and
+    // past the budget each take gets a single look.
+    int reopenRetriesLeft = fileimport::detail::kTransientFileAttempts - 1;
+
     // Tear down writers (this flushes the threaded queues and closes the
     // WAV files), then commit a Region for each.
     for (int t = 0; t < Session::kNumTracks; ++t)
@@ -1131,12 +1180,43 @@ void RecordManager::stopRecording (std::int64_t endSample)
         auto& slot = writers[(size_t) t];
         if (slot == nullptr) continue;
 
-        const auto frames = slot->framesWritten;
+        const auto acceptedFrames = slot->framesWritten;
         // Producer stopped (active false + audioInFlight drained above): the
         // pool drains this writer's ring to empty and flushes it on this thread,
         // then unregisters it, so the file is complete before reset() closes it.
         drainPool.remove (slot->writer.get());
         slot->writer.reset();  // flush + close
+
+        const auto path = std::filesystem::u8path (slot->file.getFullPathName().toStdString());
+        auto persistedFrames = persistedFrameProbe (path);
+        for (; ! persistedFrames && reopenRetriesLeft > 0; --reopenRetriesLeft)
+        {
+            std::this_thread::sleep_for (std::chrono::milliseconds (20));
+            persistedFrames = persistedFrameProbe (path);
+        }
+        // A file that cannot be reopened has not been shown to be short, so it
+        // stays, and the take stands unless the sink itself reported a failure.
+        const bool sinkFailed = slot->sinkWriteFailed.load (std::memory_order_acquire);
+        const auto frames = persistedFrames ? std::min (acceptedFrames, *persistedFrames)
+                          : sinkFailed      ? std::int64_t { 0 }
+                                            : acceptedFrames;
+        if (! persistedFrames)
+            std::fprintf (stderr,
+                          "[Dusk Studio/RecordManager] stopRecording: track %d could not "
+                          "reopen \"%s\" to count its frames; the file is kept.\n",
+                          t + 1, slot->file.getFullPathName().toRawUTF8());
+        auto fails = slot->writeFailures.load (std::memory_order_relaxed);
+        if (sinkFailed || frames < acceptedFrames)
+        {
+            fails = std::max<std::uint64_t> (1, fails);
+            std::fprintf (stderr,
+                          "[Dusk Studio/RecordManager] stopRecording: track %d WAV write "
+                          "failed; %lld of %lld accepted frames are readable in \"%s\".\n",
+                          t + 1, (long long) frames, (long long) acceptedFrames,
+                          slot->file.getFullPathName().toRawUTF8());
+        }
+        if (fails > 0)
+            lastRecordErrors.push_back ({ t, RecordErrorKind::WavWrite, fails });
 
         // Latency compensation is applied independently to every loop pass.
         // The writer remains one continuous spool; only each take reference's
@@ -1157,7 +1237,8 @@ void RecordManager::stopRecording (std::int64_t endSample)
             {
                 const auto& pass = slot->loopPasses[(size_t) i];
                 if (pass.writeFailed || pass.lengthInSamples <= 0
-                    || trim >= pass.lengthInSamples)
+                    || trim >= pass.lengthInSamples || pass.sourceOffset > frames
+                    || pass.lengthInSamples > frames - pass.sourceOffset)
                     continue;
                 AudioTake passTake;
                 passTake.file = slot->file;
@@ -1203,7 +1284,7 @@ void RecordManager::stopRecording (std::int64_t endSample)
         }
         else
         {
-            if (frames > 0)
+            if (frames > 0 && trim >= frames)
             {
                 std::fprintf (stderr,
                               "[Dusk Studio/RecordManager] stopRecording: track %d take "
@@ -1213,7 +1294,8 @@ void RecordManager::stopRecording (std::int64_t endSample)
                 lastRecordErrors.push_back (
                     { t, RecordErrorKind::OffsetConsumedTake, (std::uint64_t) frames });
             }
-            slot->file.deleteFile();
+            if (persistedFrames)
+                slot->file.deleteFile();
         }
         slot.reset();
     }

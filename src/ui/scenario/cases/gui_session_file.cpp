@@ -1,13 +1,17 @@
 #include "../GuiScenarioSupport.h"
 #include "../../../foundation/AppConfigDir.h"
 #include "../../../foundation/Fs.h"
+#include "../../../foundation/Json.h"
 #include "../../../engine/audiofile/FileWriter.h"
 #include "../../../engine/audiofile/FileReader.h"
+#include "../../../engine/scenario/cases/OopStubHarness.h"
 #include "../../../dsp/ChannelStrip.h"
+#include "../../../dsp/AuxLaneStrip.h"
 #include "../../../session/RegionEditActions.h"
 #include "../../../session/SessionSerializer.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <cstdint>
@@ -16,6 +20,7 @@
 #include <fstream>
 #include <functional>
 #include <iterator>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -312,6 +317,7 @@ std::optional<ScenarioResult> runAutosave (GuiHost& host, ScenarioContext& ctx)
     fs::create_directories (dir, error);
     const auto sessionJson = dir / "session.json";
     const auto autosave = dir / "session.json.autosave";
+    session.track (0).name = "Aa";
     if (! SessionSerializer::save (session, sessionJson))
         return ScenarioResult::fail ("could not write the session to open");
     if (! host.openSession (sessionJson) || ! host.modalStackEmpty())
@@ -320,12 +326,34 @@ std::optional<ScenarioResult> runAutosave (GuiHost& host, ScenarioContext& ctx)
     host.autosaveTick();
     ctx.expect (! fs::exists (autosave, error), "the heartbeat wrote an autosave for an unchanged session");
 
+    session.track (0).name = "BB";
+    host.autosaveTick();
+    ctx.expect (fs::exists (autosave, error), "a track rename colliding with the saved hash was not autosaved");
+    session.track (0).name = "Aa";
+    host.autosaveTick();
+    ctx.expect (! fs::exists (autosave, error), "undoing a rename kept its recovery file");
+
     fader.store (kEdited, std::memory_order_relaxed);
     host.autosaveTick();
     ctx.expect (fs::exists (autosave, error), "the heartbeat did not write the change");
     ctx.expect (! fs::exists (dir / "session.json.autosave.tmp", error), "the autosave left its temp file behind");
     ctx.expect (nearly (savedFaderOf (autosave), kEdited), "the autosave does not hold the change");
     ctx.expect (nearly (savedFaderOf (sessionJson), original), "the heartbeat touched session.json");
+
+    session.track (0).name = "BB";
+    host.autosaveTick();
+    auto renamed = std::make_unique<Session>();
+    ctx.expect (SessionSerializer::load (*renamed, autosave) && renamed->track (0).nameUtf8() == "BB",
+                "a track rename colliding with the previous autosave hash was not written");
+    session.track (0).name = "Aa";
+    host.autosaveTick();
+
+    fader.store (original, std::memory_order_relaxed);
+    host.autosaveTick();
+    ctx.expect (! fs::exists (autosave, error), "returning to the saved state kept a stale recovery file");
+    fader.store (kEdited, std::memory_order_relaxed);
+    host.autosaveTick();
+    ctx.expect (fs::exists (autosave, error), "editing again after returning to saved state wrote no recovery file");
 
     fs::remove (autosave, error);
     host.autosaveTick();
@@ -374,6 +402,404 @@ const ScenarioRegistrar autosave { Scenario {
     {},
     60000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runAutosave (host, ctx); }
+} };
+
+std::optional<ScenarioResult> runRevertedAutosaveQuitsClean (GuiHost& host, ScenarioContext& ctx)
+{
+    namespace fs = std::filesystem;
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires stopped transport and no modal");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    ctx.cleanup ([&host, &session, originalDir, restore]
+    {
+        drainModals (host);
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+    });
+
+    const auto folder = ctx.tempDir() / "Reverted autosave";
+    fs::create_directories (folder);
+    const auto canonical = folder / "session.json";
+    const auto autosaveFile = folder / "session.json.autosave";
+    auto saved = std::make_unique<Session>();
+    saved->sessionSampleRate = engine.getCurrentSampleRate();
+    saved->track (0).strip.faderDb.store (-3.0f);
+    if (! SessionSerializer::save (*saved, canonical)
+        || ! host.openSession (canonical) || ! host.modalStackEmpty())
+        return ScenarioResult::fail ("could not open the saved session");
+
+    auto& fader = session.track (0).strip.faderDb;
+    fader.store (-12.0f);
+    host.autosaveTick();
+    if (! ctx.expect (fs::exists (autosaveFile) && nearly (savedFaderOf (autosaveFile), -12.0f),
+                      "the edit did not create its recovery file"))
+        return ctx.verdict();
+    fader.store (-3.0f);
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 0, [&host, &ctx, autosaveFile]
+    {
+        // Quit must recognize the saved state before the next heartbeat.
+        ctx.expect (! host.requestQuit(), "reverting an autosaved edit still asked to save before quitting");
+        ctx.expect (! fs::exists (autosaveFile), "a clean quit check kept the stale recovery file");
+    } });
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        if (! host.modalStackEmpty())
+            ctx.expect (host.clickModalButton ("Cancel"), "the unexpected quit prompt could not be cancelled");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, &fader, canonical, autosaveFile]
+    {
+        ctx.expect (host.modalStackEmpty(), "cancelling the unexpected quit prompt left a modal up");
+        fader.store (-12.0f);
+        host.autosaveTick();
+        ctx.expect (fs::exists (autosaveFile) && nearly (savedFaderOf (autosaveFile), -12.0f),
+                    "editing again after a clean quit check wrote no recovery file");
+        ctx.expect (nearly (savedFaderOf (canonical), -3.0f), "the clean quit check changed the manual save");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar revertedAutosaveQuitsClean { Scenario {
+    "gui.reverted_autosave_quits_clean", { "gui", "session", "autosave", "quit" },
+    Needs::Engine | Needs::Gui, {}, {}, 10000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runRevertedAutosaveQuitsClean (host, ctx); }
+} };
+
+std::optional<ScenarioResult> runUnclaimedAutosaveSurvivesCleanQueries (GuiHost& host, ScenarioContext& ctx)
+{
+    namespace fs = std::filesystem;
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires stopped transport and no modal");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    ctx.cleanup ([&host, &session, originalDir, restore]
+    {
+        drainModals (host);
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+    });
+
+    const auto folder = ctx.tempDir() / "Unclaimed autosave";
+    fs::create_directories (folder);
+    const auto canonical = folder / "session.json";
+    const auto autosaveFile = folder / "session.json.autosave";
+    const auto replacement = folder / "replacement.json";
+    auto saved = std::make_unique<Session>();
+    saved->sessionSampleRate = engine.getCurrentSampleRate();
+    saved->track (0).strip.faderDb.store (-3.0f);
+    if (! SessionSerializer::save (*saved, canonical)
+        || ! host.openSession (canonical) || ! host.modalStackEmpty())
+        return ScenarioResult::fail ("could not open the saved session");
+
+    saved->track (0).strip.faderDb.store (-12.0f);
+    if (! SessionSerializer::save (*saved, autosaveFile))
+        return ScenarioResult::fail ("could not create the unclaimed recovery file");
+    const auto unclaimedBytes = fileBytes (autosaveFile);
+    saved->track (0).strip.faderDb.store (-18.0f);
+    if (! SessionSerializer::save (*saved, replacement))
+        return ScenarioResult::fail ("could not create the replacement recovery file");
+    const auto replacementBytes = fileBytes (replacement);
+
+    auto& fader = session.track (0).strip.faderDb;
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 0, [&host, &ctx, autosaveFile, unclaimedBytes]
+    {
+        ctx.expect (! host.requestQuit(), "an unclaimed recovery file made the unchanged session ask to save");
+        ctx.expect (fileBytes (autosaveFile) == unclaimedBytes, "a clean quit check removed the unclaimed recovery file");
+    } });
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        if (! host.modalStackEmpty())
+            ctx.expect (host.clickModalButton ("Cancel"), "the unexpected quit prompt could not be cancelled");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, &fader, autosaveFile, unclaimedBytes, replacement, replacementBytes]
+    {
+        ctx.expect (host.modalStackEmpty(), "cancelling the unexpected quit prompt left a modal up");
+        host.autosaveTick();
+        ctx.expect (fileBytes (autosaveFile) == unclaimedBytes, "a clean heartbeat removed the unclaimed recovery file");
+
+        fader.store (-6.0f);
+        host.autosaveTick();
+        ctx.expect (nearly (savedFaderOf (autosaveFile), -6.0f), "the live edit did not create an owned recovery file");
+        std::error_code error;
+        fs::copy_file (replacement, autosaveFile, fs::copy_options::overwrite_existing, error);
+        if (! ctx.expect (! error, "could not replace the owned recovery file")) return;
+        fader.store (-3.0f);
+        ctx.expect (! host.requestQuit(), "an externally replaced recovery file made the reverted session ask to save");
+        ctx.expect (fileBytes (autosaveFile) == replacementBytes, "a clean quit check removed the replaced recovery file");
+    } });
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        if (! host.modalStackEmpty())
+            ctx.expect (host.clickModalButton ("Cancel"), "the replacement's unexpected quit prompt could not be cancelled");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, &fader, canonical, autosaveFile, replacementBytes]
+    {
+        ctx.expect (host.modalStackEmpty(), "cancelling the replacement's quit prompt left a modal up");
+        host.autosaveTick();
+        ctx.expect (fileBytes (autosaveFile) == replacementBytes, "a clean heartbeat removed the replaced recovery file");
+        fader.store (-6.0f);
+        host.autosaveTick();
+        ctx.expect (nearly (savedFaderOf (autosaveFile), -6.0f),
+                    "the replaced recovery file left the previous live edit deduplicated");
+        ctx.expect (nearly (savedFaderOf (canonical), -3.0f), "a clean check changed the manual save");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, &session, &fader, canonical]
+    {
+        reopenSavedSession (host, canonical);
+        host.startUnsavedSessionIn (ctx.tempDir() / "Sidecar switch");
+        const auto folder = currentSessionDirectory (session);
+        const auto owned = folder / "session.json.autosave";
+        fader.store (-6.0f);
+        host.autosaveTick();
+        if (! ctx.expect (fs::exists (owned), "the unsaved session did not create its recovery file")) return;
+        const auto privateDir = dusk::fs::appConfigDir() / "unsaved-session";
+        const auto other = privateDir / "session.json.autosave";
+        const bool existed = fs::exists (other);
+        const auto previousBytes = existed ? fileBytes (other) : std::string();
+        ctx.cleanup ([other, existed, previousBytes]
+        {
+            if (existed) dusk::fs::writeStringToFile (other, previousBytes);
+            else { std::error_code ignored; fs::remove (other, ignored); }
+        });
+        fs::create_directories (privateDir);
+        std::error_code error;
+        fs::copy_file (owned, other, fs::copy_options::overwrite_existing, error);
+        if (! ctx.expect (! error, "could not prepare the other recovery file")) return;
+        const auto otherBytes = fileBytes (other);
+        auto occupant = std::make_unique<Session>();
+        occupant->track (0).name = "Another session";
+        if (! ctx.expect (SessionSerializer::save (*occupant, folder / "session.json"),
+                          "could not simulate a session appearing in the unsaved folder")) return;
+        fader.store (-3.0f);
+        ctx.expect (! host.requestQuit(), "a sidecar-folder switch made the reverted session dirty");
+        ctx.expect (fs::exists (other) && fileBytes (other) == otherBytes,
+                    "a clean check deleted an identical recovery file at a different path");
+        ctx.expect (fs::exists (owned), "a sidecar-folder switch deleted the previous recovery file");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar unclaimedAutosaveSurvivesCleanQueries { Scenario {
+    "gui.unclaimed_autosave_survives_clean_queries", { "gui", "session", "autosave", "quit" },
+    Needs::Engine | Needs::Gui, {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runUnclaimedAutosaveSurvivesCleanQueries (host, ctx); }
+} };
+
+std::optional<ScenarioResult> runBuiltinRecovery (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty()
+        || ! engine.isAudioCallbackRegistered())
+        return ScenarioResult::skip ("requires stopped live audio and no modal");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    engine.publishPluginStateForSave (true);
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    ctx.cleanup ([&host, &engine, &session, originalDir, restore]
+    {
+        engine.stop();
+        drainModals (host);
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+    });
+
+    const auto folder = ctx.tempDir() / "Built-in recovery";
+    std::filesystem::create_directories (folder);
+    const auto canonical = folder / "session.json";
+    const auto autosaveFile = folder / "session.json.autosave";
+    auto saved = std::make_unique<Session>();
+    saved->track (0).builtinUnitId = "dusk.builtin.utility";
+    saved->auxLane (0).builtinUnitId[0] = "dusk.builtin.delay";
+    if (! SessionSerializer::save (*saved, canonical))
+        return ScenarioResult::fail ("could not create the built-in session");
+    reopenSavedSession (host, canonical);
+
+    const auto parameter = [] (const builtin::NativeBuiltinSlot& slot, const char* id)
+    {
+        for (int i = 0; i < slot.paramCount(); ++i)
+            if (const auto* info = slot.paramInfo (i);
+                info != nullptr && info->id != nullptr && std::string_view (info->id) == id)
+                return i;
+        return -1;
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    pushFileMenuSteps (host, ctx, *steps, "Save");
+    steps->push_back ({ 300, [&host, &ctx, &engine, parameter]
+    {
+        if (host.requestQuit())
+        {
+            ctx.expect (false, "the freshly saved built-ins were dirty before an edit");
+            host.clickModalButton ("Cancel");
+        }
+        auto& track = engine.getChannelStrip (0).getBuiltinSlot();
+        auto& aux = engine.getAuxLaneStrip (0).getBuiltinSlot (0);
+        const int gain = parameter (track, "gain_db"), mix = parameter (aux, "mix");
+        if (! ctx.expect (gain >= 0 && mix >= 0, "the track or aux built-in did not load")) return;
+        track.setParamValue (gain, -12.0f);
+        aux.setParamValue (mix, 0.24f);
+        engine.play();
+    } });
+    steps->push_back ({ 300, [&host, &ctx, &engine, autosaveFile]
+    {
+        host.autosaveTick();
+        ctx.expect (std::filesystem::exists (autosaveFile), "built-in-only edits wrote no recovery file");
+        ctx.expect (engine.getTransport().isPlaying() && ! engine.isProcessingSuspended(),
+                    "capturing built-in recovery state interrupted playback");
+        engine.stop();
+        ctx.expect (host.requestQuit(), "built-in-only edits did not ask to save before quitting");
+    } });
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        if (! host.modalStackEmpty())
+            ctx.expect (host.clickModalButton ("Cancel"), "the quit prompt could not be cancelled");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, &engine, canonical, autosaveFile, parameter]
+    {
+        if (! ctx.expect (host.openSession (canonical) && ! host.modalStackEmpty(),
+                          "built-in-only edits did not offer recovery")) return;
+        if (! ctx.expect (host.answerRecovery (GuiHost::Recovery::Recover), "built-in recovery failed")) return;
+        auto& track = engine.getChannelStrip (0).getBuiltinSlot();
+        auto& aux = engine.getAuxLaneStrip (0).getBuiltinSlot (0);
+        const int gain = parameter (track, "gain_db"), mix = parameter (aux, "mix");
+        if (ctx.expect (gain >= 0 && mix >= 0, "recovery lost a built-in unit"))
+        {
+            ctx.expect (nearly (track.getParamValue (gain), -12.0f), "recovery lost the track's control edit");
+            ctx.expect (nearly (aux.getParamValue (mix), 0.24f), "recovery lost the aux control edit");
+        }
+        ctx.expect (! std::filesystem::exists (autosaveFile), "recovery left its sidecar behind");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar builtinRecovery { Scenario {
+    "gui.builtin_edits_autosave_and_prompt", { "gui", "session", "builtin", "autosave" },
+    Needs::Engine | Needs::Gui, {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runBuiltinRecovery (host, ctx); }
+} };
+
+std::optional<ScenarioResult> runMultisampleRecovery (GuiHost& host, ScenarioContext& ctx)
+{
+#if ! DUSKSTUDIO_HAS_MULTISAMPLE
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("multisample support is not built");
+#else
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty()
+        || ! engine.isAudioCallbackRegistered())
+        return ScenarioResult::skip ("requires stopped live audio and no modal");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    engine.publishPluginStateForSave (true);
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not save the initial session");
+    ctx.cleanup ([&host, &engine, &session, originalDir, restore]
+    {
+        engine.stop();
+        drainModals (host);
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+    });
+    const auto folder = ctx.tempDir() / "Multisample recovery";
+    std::filesystem::create_directories (folder);
+    const auto soundfont = folder / "Fixture.sfz";
+    if (! writeRampFixture (folder / "Tone.wav", 48000.0, 4096))
+        return ScenarioResult::fail ("could not write the multisample recovery WAV");
+    {
+        std::ofstream file (soundfont);
+        file << "<region> sample=Tone.wav key=60\n";
+        if (! file) return ScenarioResult::fail ("could not write the multisample recovery SFZ");
+    }
+    const auto canonical = folder / "session.json";
+    const auto autosaveFile = folder / "session.json.autosave";
+    auto saved = std::make_unique<Session>();
+    saved->track (0).mode.store (static_cast<int> (Track::Mode::Midi));
+    saved->track (0).nativeMultisamplePath = soundfont.u8string();
+    if (! SessionSerializer::save (*saved, canonical))
+        return ScenarioResult::fail ("could not create the multisample session");
+    reopenSavedSession (host, canonical);
+    const auto loaded = [&engine]
+    {
+        const auto* instance = engine.getChannelStrip (0).getNativeMultisampleSlot().getInstance();
+        return ! engine.hasPendingMultisampleLoads() && instance != nullptr && instance->hasLoadedRuntime();
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 0, [] {}, loaded, "the multisample recovery instrument did not load" });
+    pushFileMenuSteps (host, ctx, *steps, "Save");
+    steps->push_back ({ 300, [&host, &ctx, &engine]
+    {
+        if (host.requestQuit())
+        {
+            ctx.expect (false, "the freshly saved multisample was dirty before an edit");
+            host.clickModalButton ("Cancel");
+        }
+        auto* instance = engine.getChannelStrip (0).getNativeMultisampleSlot().getInstance();
+        if (! ctx.expect (instance != nullptr, "the multisample instance disappeared")) return;
+        engine.play();
+        instance->getOverrides().masterVolDb.store (-12.0f, std::memory_order_relaxed);
+        instance->getOverrides().masterTuneCents.store (37.0f, std::memory_order_relaxed);
+        instance->setPolyphony (96);
+        instance->setHDCC (74, 0.23f);
+        instance->setHDCC (258, 0.61f);
+    } });
+    steps->push_back ({ 300, [&host, &ctx, &engine, autosaveFile]
+    {
+        host.autosaveTick();
+        ctx.expect (std::filesystem::exists (autosaveFile), "multisample-only edits wrote no recovery file");
+        ctx.expect (engine.getTransport().isPlaying() && ! engine.isProcessingSuspended(),
+                    "capturing multisample recovery state interrupted playback");
+        engine.stop();
+        ctx.expect (host.requestQuit(), "multisample-only edits did not ask to save before quitting");
+    } });
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        if (! host.modalStackEmpty())
+            ctx.expect (host.clickModalButton ("Cancel"), "the multisample quit prompt could not be cancelled");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, canonical]
+    {
+        if (! ctx.expect (host.openSession (canonical) && ! host.modalStackEmpty(),
+                          "multisample-only edits did not offer recovery")) return;
+        ctx.expect (host.answerRecovery (GuiHost::Recovery::Recover), "multisample recovery failed");
+    } });
+    steps->push_back ({ 100, [&ctx, &engine, autosaveFile]
+    {
+        const auto* instance = engine.getChannelStrip (0).getNativeMultisampleSlot().getInstance();
+        if (! ctx.expect (instance != nullptr, "recovery lost the multisample instance")) return;
+        const auto& controls = instance->getOverrides();
+        ctx.expect (nearly (controls.masterVolDb.load (std::memory_order_relaxed), -12.0f), "recovery lost multisample volume");
+        ctx.expect (nearly (controls.masterTuneCents.load (std::memory_order_relaxed), 37.0f), "recovery lost multisample tune");
+        ctx.expect (controls.polyphony.load (std::memory_order_relaxed) == 96, "recovery lost multisample polyphony");
+        ctx.expect (nearly (instance->getHDCC (74), 0.23f) && nearly (instance->getHDCC (258), 0.61f),
+                    "recovery lost standard or extended ARIA control overrides");
+        ctx.expect (! std::filesystem::exists (autosaveFile), "multisample recovery left its sidecar behind");
+    }, loaded, "the recovered multisample instrument did not load" });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+#endif
+}
+
+const ScenarioRegistrar multisampleRecovery { Scenario {
+    "gui.multisample_edits_autosave_and_prompt", { "gui", "session", "multisample", "autosave" },
+    Needs::Engine | Needs::Gui, {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runMultisampleRecovery (host, ctx); }
 } };
 
 // The Save As browser a quit's Save opens holds the quit's audio and autosave
@@ -1348,9 +1774,10 @@ bool permissionsBite (const std::filesystem::path& probe)
 }
 
 // File > Clean out unreferenced files... in each state the manual lists: no
-// audio folder, one it cannot read, nothing to clean, and stray takes. Cancel
-// keeps the strays; Delete removes only the unreferenced .wav files in the
-// audio folder and clears the undo history.
+// audio folder, one it cannot read, nothing to clean, a file in use it cannot
+// check, and stray takes. Cancel keeps the strays; Delete removes only the
+// unreferenced .wav files in the audio folder, sparing the file a Cut region on
+// the clipboard plays, and clears the undo history.
 std::optional<ScenarioResult> runCleanOutAlerts (GuiHost& host, ScenarioContext& ctx)
 {
     namespace fs = std::filesystem;
@@ -1383,9 +1810,11 @@ std::optional<ScenarioResult> runCleanOutAlerts (GuiHost& host, ScenarioContext&
     const bool canLock = permissionsBite (ctx.tempDir() / "probe");
     if (! canLock) ctx.note ("an unreadable folder stays listable here, as it does for root; that leg is skipped");
 
+    ctx.cleanup ([&engine, clipboard = engine.getRegionClipboard()] { engine.getRegionClipboard() = clipboard; });
     const auto take = audio / "Take.wav";
+    const auto cut = audio / "Imported.wav";
     const std::vector<fs::path> strays { audio / "Stray 1.wav", audio / "Stray 2.wav" };
-    const std::vector<fs::path> kept { take, audio / "Notes.txt", audio / "Freeze" / "Frozen.wav" };
+    const std::vector<fs::path> kept { take, cut, audio / "Notes.txt", audio / "Freeze" / "Frozen.wav" };
 
     auto steps = std::make_shared<std::vector<Step>>();
     const auto choose = [&host, &ctx, steps] (const std::string& how, std::function<void()> before)
@@ -1446,6 +1875,22 @@ std::optional<ScenarioResult> runCleanOutAlerts (GuiHost& host, ScenarioContext&
         session.track (0).regions = { region };
     });
     alerted ("with nothing to clean", "No unreferenced files found. The audio directory is already clean.");
+    const auto loop = ctx.tempDir() / "Looping mix.wav";
+    std::error_code linkError;
+    fs::create_symlink (loop, loop, linkError);
+    if (linkError)
+        ctx.note ("no symbolic link can be made here; the uncheckable-file leg is skipped");
+    else
+    {
+        choose ("with a file it cannot check", [&session, loop]
+        {
+            session.mastering().sourceFile = decltype (session.mastering().sourceFile) (loop.u8string().c_str());
+        });
+        alerted ("with a file it cannot check",
+                 "Could not check one of the audio files this session uses, so there is no telling what is "
+                 "unreferenced. Check that the drive holding it is still connected and that its folder can be "
+                 "opened, then try again.");
+    }
 
     const std::string confirm =
         "Found 2 unreferenced .wav file(s) totalling 1.5 MB.\n\nThese were created by past record passes that no "
@@ -1465,10 +1910,19 @@ std::optional<ScenarioResult> runCleanOutAlerts (GuiHost& host, ScenarioContext&
     {
         return std::all_of (files.begin(), files.end(), [] (const fs::path& file) { return fs::exists (file); });
     };
-    choose ("with stray takes", [&ctx, &engine, &session, strays]
+    choose ("with stray takes", [&ctx, &engine, &session, strays, cut, rate]
     {
+        session.mastering().sourceFile = decltype (session.mastering().sourceFile) ();
         for (const auto& stray : strays)
             ctx.expect (writeBytes (stray, 786432, 's'), "could not write " + stray.filename().string());
+        // An import is no take: once Cut, only the clipboard names its file.
+        ctx.expect (writeRampFixture (cut, rate, (std::int64_t) (rate / 4.0)), "could not write the cut region's file");
+        auto& clipboard = engine.getRegionClipboard();
+        clipboard = {};
+        clipboard.hasContent = true;
+        clipboard.sourceTrack = 1;
+        clipboard.region.lengthInSamples = (std::int64_t) (rate / 4.0);
+        clipboard.region.file = decltype (clipboard.region.file) (cut.u8string().c_str());
         if (! ctx.expect (session.track (0).regions.size() == 1, "the take's region is missing")) return;
         const auto before = session.track (0).regions.front();
         auto after = before;
@@ -1490,7 +1944,8 @@ std::optional<ScenarioResult> runCleanOutAlerts (GuiHost& host, ScenarioContext&
         ctx.expect (host.modalStackEmpty(), "Delete left '" + host.modalText() + "' up");
         for (const auto& stray : strays)
             ctx.expect (! fs::exists (stray), "Delete kept the unreferenced " + stray.filename().string());
-        ctx.expect (allExist (kept), "Delete removed the referenced take, a non-WAV file or a file in a subfolder");
+        ctx.expect (allExist (kept), "Delete removed the referenced take, the clipboard region's file, a non-WAV "
+                                     "file or a file in a subfolder");
         ctx.expect (session.track (0).regions.size() == 1
                         && fs::u8path (session.track (0).regions.front().file.getFullPathName().toStdString()) == take,
                     "Delete changed the region that points at the take");
@@ -1755,6 +2210,435 @@ const ScenarioRegistrar cleanOutWhileRecording { Scenario {
     "gui.clean_out_while_recording", { "gui", "session", "recording", "messages" }, Needs::Engine | Needs::Gui,
     {}, {}, 20000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runCleanOutWhileRecording (host, ctx); }
+} };
+
+std::optional<ScenarioResult> runOopCaptureFailureSave (GuiHost& host, ScenarioContext& ctx,
+                                                       bool saveAs)
+{
+#if DUSKSTUDIO_HAS_OOP_PLUGINS
+    namespace fs = std::filesystem;
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& manager = engine.getPluginManager();
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty()
+        || ! engine.isAudioCallbackRegistered() || engine.getCurrentSampleRate() <= 0.0)
+        return ScenarioResult::skip ("requires stopped live audio and no modal");
+    const auto fixture = ctx.fixture ("crash_state.vst3");
+    if (! fixture) return ScenarioResult::fail ("the state fixture is unavailable");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    engine.publishPluginStateForSave (true);
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not preserve the initial session");
+    const bool wasOop = manager.isOopEnabled();
+    ctx.cleanup ([&host, &engine, &session, &manager, wasOop, originalDir, restore]
+    {
+        engine.stop();
+        drainModals (host);
+        engine.getChannelStrip (0).getPluginSlot().unload();
+        manager.setOopEnabled (wasOop);
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+    });
+
+    const auto folder = ctx.tempDir() / "OOP capture session";
+    const auto copy = ctx.tempDir() / "OOP capture copy";
+    const auto tone = folder / "audio" / "source.wav";
+    fs::create_directories (tone.parent_path());
+    {
+        dusk::audio::WriteSpec spec;
+        spec.sampleRate = engine.getCurrentSampleRate();
+        spec.numChannels = 1;
+        auto writer = dusk::audio::FileWriter::create (tone, spec);
+        const std::vector<float> samples (256, 0.25f);
+        const float* input[] { samples.data() };
+        if (! writer || ! writer->write (input, 1, 256) || ! writer->flush())
+            return ScenarioResult::fail ("could not create the source audio");
+    }
+    {
+        auto saved = std::make_unique<Session>();
+        applySessionDirectory (*saved, folder);
+        AudioRegion region;
+        using File = std::decay_t<decltype (region.file)>;
+        region.file = File (tone.u8string().c_str());
+        region.lengthInSamples = 256;
+        saved->track (1).regions = { region };
+        saved->track (1).mode.store ((int) Track::Mode::Mono);
+        if (! SessionSerializer::save (*saved, folder / "session.json"))
+            return ScenarioResult::fail ("could not create the source session");
+    }
+    if (! dusk::fs::writeStringToFile (folder / "notepad.md", "saved notes\n"))
+        return ScenarioResult::fail ("could not create the source notepad");
+    fs::create_directories (folder / "state" / "lv2" / "sentinel");
+    dusk::fs::writeStringToFile (folder / "state" / "lv2" / "sentinel" / "bank.bin", "keep source state");
+    fs::create_directories (copy / "audio");
+    dusk::fs::writeStringToFile (copy / "audio" / "existing.wav", "keep target media");
+    dusk::fs::writeStringToFile (copy / "notepad.md", "keep target notes\n");
+    reopenSavedSession (host, folder / "session.json");
+
+    using File = std::decay_t<decltype (session.getSessionDirectory())>;
+    using Text = std::decay_t<decltype (session.getSessionDirectory().getFullPathName())>;
+    Text loadError;
+    auto probe = manager.createPluginInstance (File (fixture->u8string().c_str()),
+        engine.getCurrentSampleRate(), ScenarioContext::kBlockSize, loadError);
+    if (! probe) return ScenarioResult::fail ("could not inspect the state fixture: " + loadError.toStdString());
+    struct State
+    {
+        bool done = false, loaded = false;
+        std::string error, originalState;
+        std::optional<PluginDescriptor> originalDescriptor;
+        int largeIndex = -1;
+        std::map<fs::path, std::string> sourceFiles, targetFiles;
+    };
+    auto state = std::make_shared<State>();
+    auto descriptor = manager.descriptorForInstance (*probe);
+    descriptor.location = fixture->u8string();
+    const auto& parameters = probe->getParameters();
+    for (int index = 0; index < parameters.size(); ++index)
+        if (parameters[index]->getName (100) == "Large State") state->largeIndex = index;
+    probe.reset();
+    if (descriptor.backend != PluginBackend::JuceLegacy || state->largeIndex < 0)
+        return ScenarioResult::fail ("the fixture lacks its legacy large-state control");
+    manager.setOopEnabled (true);
+    auto& slot = engine.getChannelStrip (0).getPluginSlot();
+    slot.loadFromDescriptorAsync (descriptor, [state] (bool loaded, auto error)
+    {
+        state->loaded = loaded;
+        state->error = error.toStdString();
+        state->done = true;
+    });
+    const auto tree = [&ctx] (const fs::path& root)
+    {
+        std::map<fs::path, std::string> files;
+        std::error_code error;
+        for (fs::recursive_directory_iterator it (root, error), end;
+             ! error && it != end; it.increment (error))
+        {
+            if (it->is_directory (error) && ! error)
+                files.emplace (it->path().lexically_relative (root), "directory");
+            else if (! error && it->is_regular_file (error) && ! error)
+                files.emplace (it->path().lexically_relative (root),
+                               "file:" + dusk::fs::loadFileAsString (it->path()));
+        }
+        ctx.expect (! error, "could not inspect fixture files: " + error.message());
+        return files;
+    };
+    const auto stateApplied = [&engine, &slot] (bool large)
+    {
+        std::array<float, ScenarioContext::kBlockSize> left {}, right {};
+        left.fill (0.25f); right.fill (0.25f);
+        oopstub::SlotMidiBuffer midi;
+        const int count = std::clamp (engine.getCurrentBlockSize(), 1, ScenarioContext::kBlockSize);
+        engine.suspendProcessing();
+        slot.processStereoBlock (left.data(), right.data(), count, midi);
+        engine.resumeProcessing();
+        return std::abs (left.front() - (large ? 0.125f : 0.25f)) < 1.0e-6f;
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 0, [&ctx, &engine, &slot, state]
+    {
+        ctx.expect (state->loaded && slot.isRemote(), "the actual fixture child did not load: " + state->error);
+        engine.getChannelStrip (0).insertMode.store (ChannelStrip::kInsertPlugin);
+    }, [state] { return state->done; }, "the fixture child did not finish loading" });
+    for (int pass = 0; pass < (saveAs ? 1 : 2); ++pass)
+    {
+        pushFileMenuSteps (host, ctx, *steps, "Save");
+        steps->push_back ({ 0, [&host, &ctx, &session]
+        {
+            ctx.expect (host.modalStackEmpty() && host.statusMessage().rfind ("Saved:", 0) == 0,
+                        "a healthy repeated Save failed: " + host.modalText());
+            ctx.expect (session.track (0).pluginStateBase64.isNotEmpty(),
+                        "a healthy child state was not saved");
+        } });
+    }
+    if (! saveAs)
+    {
+        steps->push_back ({ 0, [&host, &ctx, &slot, state]
+        {
+            if (host.requestQuit())
+            {
+                ctx.expect (false, "the healthy saved child was dirty before an opaque edit");
+                host.clickModalButton ("Cancel");
+            }
+            slot.setParamNormalised (state->largeIndex, 1.0f);
+        } });
+        steps->push_back ({ 0, [] {}, [stateApplied] { return stateApplied (true); }, "the opaque-only large-state edit did not reach the child" });
+        pushFileMenuSteps (host, ctx, *steps, "Save");
+        steps->push_back ({ 0, [&host, &ctx]
+        {
+            ctx.expect (host.modalText().find ("could not capture plug-in state") != std::string::npos,
+                        "the opaque-only edit did not reach a capture-failure alert: " + host.modalText());
+            drainModals (host);
+        } });
+        steps->push_back ({ 200, [&host, &ctx]
+        {
+            ctx.expect (host.requestQuit(), "an opaque-only failed Save did not ask to save before quitting");
+            if (! host.modalStackEmpty())
+                ctx.expect (host.modalText().find ("Save changes before quitting?") != std::string::npos,
+                            "failed Save raised the wrong quit prompt: " + host.modalText());
+        } });
+        steps->push_back ({ 200, [&host, &ctx]
+        {
+            if (! host.modalStackEmpty())
+                ctx.expect (host.clickModalButton ("Cancel"), "the failed-Save quit prompt could not be cancelled");
+        } });
+        steps->push_back ({ 200, [&host, &ctx]
+        {
+            ctx.expect (host.modalStackEmpty(), "Cancel left the failed-Save quit prompt open");
+        } });
+        steps->push_back ({ 0, [&slot, state]
+        {
+            slot.setParamNormalised (state->largeIndex, 0.0f);
+        } });
+        steps->push_back ({ 0, [] {}, [stateApplied] { return stateApplied (false); },
+                            "the child did not return to a serializable state" });
+        pushFileMenuSteps (host, ctx, *steps, "Save");
+        steps->push_back ({ 0, [&host, &ctx]
+        {
+            ctx.expect (host.modalStackEmpty() && host.statusMessage().rfind ("Saved:", 0) == 0,
+                        "a successful retry did not save after the child state shrank");
+            if (host.requestQuit())
+            {
+                ctx.expect (false, "a successful Save retained the earlier capture-failure dirty state");
+                host.clickModalButton ("Cancel");
+            }
+        } });
+    }
+    steps->push_back ({ 0, [&host, &ctx, &session, &slot, state, folder]
+    {
+        ctx.expect (host.closeNotepadAfterTyping ("notes pending in memory\n"),
+                    "could not set up the in-memory notepad");
+        ctx.expect (dusk::fs::writeStringToFile (folder / "notepad.md", "saved notes\n"),
+                    "could not restore the canonical notepad sentinel");
+        state->originalState = session.track (0).pluginStateBase64.toStdString();
+        state->originalDescriptor = session.track (0).pluginDescriptor;
+        slot.setParamNormalised (state->largeIndex, 1.0f);
+    } });
+    steps->push_back ({ 0, [] {}, [stateApplied] { return stateApplied (true); }, "the fixture child did not apply the large-state switch" });
+    steps->push_back ({ 0, [&host, &ctx, &session, state, tree, folder, copy]
+    {
+        session.track (0).strip.faderDb.store (-6.0f);
+        host.autosaveTick();
+        const auto recovery = folder / "session.json.autosave";
+        ctx.expect (fs::exists (recovery) && std::abs (savedFaderOf (recovery) + 6.0f) < 1.0e-6f,
+                    "live cheap controls did not reach autosave with a large opaque state");
+        state->sourceFiles = tree (folder);
+        state->targetFiles = tree (copy);
+    } });
+    if (saveAs) pushSaveAsSteps (host, ctx, *steps, copy);
+    else pushFileMenuSteps (host, ctx, *steps, "Save");
+    steps->push_back ({ 0, [&host, &ctx, &engine, &session, &slot, state, tree, folder, copy]
+    {
+        const auto message = host.modalText();
+        ctx.expect (message.find ("Save failed") != std::string::npos
+                        && message.find ("state") != std::string::npos
+                        && message.find ("Track 1") != std::string::npos
+                        && message.find ("Dusk Crash State Fixture") != std::string::npos,
+                    "Save did not explain the child state capture failure: " + message);
+        ctx.expect (currentSessionDirectory (session) == folder, "failed Save As changed the session directory");
+        ctx.expect (tree (folder) == state->sourceFiles, "failed Save changed canonical/audio/notepad/state/autosave files");
+        ctx.expect (tree (copy) == state->targetFiles, "failed Save As changed existing target files or copied new files");
+        ctx.expect (session.track (0).pluginStateBase64.toStdString() == state->originalState
+                        && session.track (0).pluginDescriptor == state->originalDescriptor,
+                    "failed capture replaced the original opaque state or identity");
+        ctx.expect (session.track (1).regions.size() == 1
+                        && session.track (1).regions.front().file.getFullPathName().toStdString()
+                        == (folder / "audio" / "source.wav").u8string(),
+                    "failed Save As repointed source audio");
+        ctx.expect (! engine.isProcessingSuspended() && slot.isRemote(), "failed save left audio gated or discarded the child");
+        ctx.expect (slot.getStateBase64ForSave (0).toStdString() == state->originalState,
+                    "failed capture lost the child's last known state");
+        const auto recovery = folder / "session.json.autosave";
+        session.track (0).strip.faderDb.store (-9.0f);
+        host.autosaveTick();
+        ctx.expect (fs::exists (recovery) && std::abs (savedFaderOf (recovery) + 9.0f) < 1.0e-6f,
+                    "failed Save stopped later control edits from reaching autosave");
+        const auto recoveryBytes = dusk::fs::loadFileAsString (recovery);
+        session.track (0).strip.faderDb.store (savedFaderOf (folder / "session.json"));
+        host.autosaveTick();
+        ctx.expect (fs::exists (recovery) && dusk::fs::loadFileAsString (recovery) == recoveryBytes,
+                    "a matching control snapshot discarded recovery after a failed Save");
+        drainModals (host);
+    }, [&host, &session, folder, copy, saveAs]
+    {
+        return host.modalText().find ("Save failed") != std::string::npos
+            || (saveAs ? currentSessionDirectory (session) == copy
+                       : ! fs::exists (folder / "session.json.autosave"));
+    }, "Save neither completed nor reported its capture failure" });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+#else
+    (void) host; (void) ctx; (void) saveAs;
+    return ScenarioResult::skip ("sandboxed plug-ins are unavailable");
+#endif
+}
+
+const ScenarioRegistrar oopCaptureFailureSave { Scenario {
+    "gui.oop_capture_failure_save", { "gui", "session", "save", "ipc", "messages" }, Needs::Engine | Needs::Gui,
+    { "crash_state.vst3" }, {}, 60000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runOopCaptureFailureSave (host, ctx, false); }
+} };
+const ScenarioRegistrar oopCaptureFailureSaveAs { Scenario {
+    "gui.oop_capture_failure_save_as", { "gui", "session", "save", "ipc", "messages" }, Needs::Engine | Needs::Gui,
+    { "crash_state.vst3" }, {}, 60000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runOopCaptureFailureSave (host, ctx, true); }
+} };
+std::optional<ScenarioResult> runDeferredPluginIdentityBaseline (GuiHost& host, ScenarioContext& ctx)
+{
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+    namespace fs = std::filesystem;
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty()
+        || engine.getCurrentSampleRate() <= 0.0)
+        return ScenarioResult::skip ("requires stopped prepared audio and no modal");
+    const auto fixture = ctx.fixture ("multi_bus.clap");
+    if (! fixture) return ScenarioResult::fail ("the CLAP state fixture is unavailable");
+    const auto restore = ctx.tempDir() / "restore.json";
+    const auto originalDir = currentSessionDirectory (session);
+    const double originalRate = engine.getCurrentSampleRate();
+    const int originalBlockSize = engine.getCurrentBlockSize();
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not preserve the initial session");
+    ctx.cleanup ([&host, &engine, &session, originalDir, originalRate, originalBlockSize, restore]
+    {
+        drainModals (host);
+        host.abandonPendingFlows();
+        if (std::abs (engine.getCurrentSampleRate() - originalRate) > 0.5
+            || engine.getCurrentBlockSize() != originalBlockSize)
+            engine.prepareForSelfTest (originalRate, originalBlockSize);
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+    });
+    const auto dir = ctx.tempDir() / "Deferred native restore";
+    fs::create_directories (dir);
+    const auto canonical = dir / "session.json";
+    const auto recovery = dir / "session.json.autosave";
+    auto clean = std::make_unique<Session>();
+    // Text that is not ASCII must survive the baseline's rewrite as UTF-8.
+    clean->track (9).name = std::string ("B\xc3\xa4sse \xe2\x99\xaa");
+    if (! SessionSerializer::save (*clean, canonical) || ! host.openSession (canonical))
+        return ScenarioResult::fail ("could not open the clean session");
+    clean.reset();
+
+    const std::vector<std::uint8_t> state { 'D', 'S', 'K', 'C', 1, 0, 0, 0, 0, 0, 0, 0 };
+    auto& track = session.track (0);
+    auto& lane = session.auxLane (0);
+    auto& strip = engine.getChannelStrip (0);
+    auto& aux = engine.getAuxLaneStrip (0);
+    track.nativeClapPath = fixture->u8string().c_str();
+    track.nativeClapPluginId.clear();
+    track.nativeClapStateBase64 = "RFNLQwEAAAAAAAAA";
+    lane.nativeClapPath[0] = fixture->u8string().c_str();
+    lane.nativeClapPluginId[0].clear();
+    lane.nativeClapStateBase64[0] = "RFNLQwEAAAAAAAAA";
+    strip.setPendingNativeClap (track.nativeClapPath, state);
+    aux.setPendingNativeClap (0, lane.nativeClapPath[0], state);
+    strip.insertMode.store (ChannelStrip::kInsertPlugin);
+    aux.insertMode[0].store (AuxLaneStrip::kInsertPlugin);
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    pushFileMenuSteps (host, ctx, *steps, "Save");
+    steps->push_back ({ 300, [&host, &ctx, &engine, &session, fixture, state, canonical, recovery,
+                             originalRate, originalBlockSize]
+    {
+        ctx.expect (host.modalStackEmpty(), "saving pending state raised '" + host.modalText() + "'");
+        auto saved = std::make_unique<Session>();
+        ctx.expect (SessionSerializer::load (*saved, canonical)
+                        && saved->track (0).nativeClapPath.isNotEmpty()
+                        && saved->track (0).nativeClapPluginId.isEmpty(),
+                    "Save did not establish the pending legacy-identity baseline");
+        auto beforeRestore = engine.capturePluginNormalizationBaseline();
+        const auto legacyBaseline = SessionSerializer::serialize (session).toStdString();
+        const auto move = planBlockMove ({ 0 }, 2);
+        TrackSlotMask followedInputs {};
+        for (int from = 0; from < Session::kNumTracks; ++from)
+            followedInputs[(size_t) from] = move.oldToNew[(size_t) from] != from
+                && session.track (from).inputSource.load (std::memory_order_relaxed) == kInputFollowsTrack;
+        ctx.expect (engine.moveTracks (move), "could not move the pending track");
+        engine.prepareForSelfTest (originalRate, originalBlockSize);
+        ctx.expect (session.track (1).nativeClapPluginId.isNotEmpty()
+                        && session.auxLane (0).nativeClapPluginId[0].isNotEmpty(),
+                    "prepare did not accept the deferred track and aux restores");
+        auto positiveCursor = beforeRestore;
+        auto normalizedBaseline = legacyBaseline;
+        ctx.expect (engine.normalizePluginBaseline (positiveCursor, normalizedBaseline),
+                    "the public baseline helper did not acknowledge the accepted restores");
+        const auto normalized = nlohmann::ordered_json::parse (normalizedBaseline);
+        ctx.expect (normalized["tracks"][0]["native_clap_plugin"] == session.track (1).nativeClapPluginId.toStdString()
+                        && normalized["aux_lanes"][0]["plugin_slots"][0]["native_clap_plugin"]
+                            == session.auxLane (0).nativeClapPluginId[0].toStdString(),
+                    "the public baseline helper patched the wrong owner rows");
+        host.autosaveTick();
+        ctx.expect (fs::exists (recovery), "normalization acknowledged the unsaved track reorder");
+        ctx.expect (engine.moveTracks (invertTrackMove (move), followedInputs), "could not undo the track move");
+        host.autosaveTick();
+        auto residual = nlohmann::ordered_json::array();
+        if (fs::exists (recovery))
+        {
+            const auto current = nlohmann::ordered_json::parse (SessionSerializer::serialize (session).toStdString());
+            for (const auto& difference : nlohmann::ordered_json::diff (normalized, current))
+                if (difference.value ("path", "").find ("/plugin_state") == std::string::npos)
+                    residual.push_back (difference);
+        }
+        ctx.expect (! fs::exists (recovery),
+                    "accepted identity normalization created a spurious recovery file; remaining delta: " + residual.dump());
+        session.track (0).strip.faderDb.store (-12.0f);
+        host.autosaveTick();
+        ctx.expect (fs::exists (recovery) && nearly (savedFaderOf (recovery), -12.0f),
+                    "normalization acknowledged an unrelated fader edit");
+        session.track (0).strip.faderDb.store (saved->track (0).strip.faderDb.load());
+        host.autosaveTick();
+        ctx.expect (! fs::exists (recovery), "undoing the ordinary edit retained normalization-only recovery");
+
+        auto differentStateCursor = beforeRestore;
+        auto differentState = nlohmann::ordered_json::parse (legacyBaseline);
+        differentState["tracks"][0]["native_clap_state"] = "another-owner-state";
+        auto differentJson = differentState.dump (2);
+        engine.normalizePluginBaseline (differentStateCursor, differentJson);
+        const auto stillDifferent = nlohmann::ordered_json::parse (differentJson);
+        ctx.expect (stillDifferent["tracks"][0]["native_clap_plugin"] == ""
+                        && stillDifferent["tracks"][0]["native_clap_state"] == "another-owner-state",
+                    "normalization acknowledged opaque state owned by another baseline");
+
+        auto failedCursor = beforeRestore;
+        auto failedJson = legacyBaseline;
+        auto& restoredStrip = engine.getChannelStrip (0);
+        restoredStrip.markNativeClapRestoreFailed();
+        engine.normalizePluginBaseline (failedCursor, failedJson);
+        ctx.expect (nlohmann::ordered_json::parse (failedJson)["tracks"][0]["native_clap_plugin"] == "",
+                    "normalization acknowledged a failed instance");
+        std::string error;
+        using SessionFile = decltype (session.getSessionDirectory());
+        engine.suspendProcessing();
+        const bool reloaded = restoredStrip.loadNativeClap (SessionFile (fixture->u8string().c_str()), error)
+                           && restoredStrip.getNativeClapSlot().loadState (state);
+        engine.resumeProcessing();
+        ctx.expect (reloaded, "could not replace the accepted instance: " + error);
+        auto replacedCursor = beforeRestore;
+        auto replacedJson = legacyBaseline;
+        engine.normalizePluginBaseline (replacedCursor, replacedJson);
+        ctx.expect (nlohmann::ordered_json::parse (replacedJson)["tracks"][0]["native_clap_plugin"] == "",
+                    "normalization acknowledged a same-identity replacement instance");
+
+        auto priorSessionCursor = beforeRestore;
+        auto priorSessionJson = legacyBaseline;
+        engine.consumePluginStateAfterLoad();
+        ctx.expect (! engine.normalizePluginBaseline (priorSessionCursor, priorSessionJson)
+                        && priorSessionJson == legacyBaseline,
+                    "a previous session's receipt changed its old baseline");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+#else
+    return ScenarioResult::skip ("native CLAP is unavailable");
+#endif
+}
+
+const ScenarioRegistrar deferredPluginIdentityBaseline { Scenario {
+    "gui.deferred_plugin_identity_baseline", { "gui", "session", "autosave", "plugin" },
+    Needs::Engine | Needs::Gui, { "multi_bus.clap" }, {}, 30000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runDeferredPluginIdentityBaseline (host, ctx); }
 } };
 } // namespace
 } // namespace duskstudio::scenario::gui

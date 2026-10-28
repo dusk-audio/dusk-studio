@@ -1,8 +1,8 @@
 #pragma once
 
 #include <juce_audio_basics/juce_audio_basics.h>
+#include <array>
 #include <atomic>
-#include <vector>
 #include "BrickwallLimiter.h"
 #include "LoudnessMeter.h"
 #include "MasteringDigitalEq.h"
@@ -67,11 +67,10 @@ public:
     // Spectrum-analyzer feed (post-EQ)
     // The audio thread writes mono-summed post-EQ samples into a free-running
     // ring; the message thread copies the most recent window for the mastering
-    // EQ's FFT overlay. A read overlapping a write tears at most one frame,
-    // which is invisible on a spectrum, so no FIFO accounting is needed - a
-    // single release/acquire write index is the whole contract.
+    // EQ's FFT overlay. Overlapping writes may mix windows; atomic samples
+    // keep this approximate UI view race-free, including during prepare.
     int    readScopeLatest (float* dest, int count) const noexcept;
-    double getScopeSampleRate() const noexcept { return sampleRateForMeter; }
+    double getScopeSampleRate() const noexcept { return scopeSampleRate.load (std::memory_order_relaxed); }
 
 private:
     const MasteringParams* paramsRef = nullptr;
@@ -86,9 +85,12 @@ private:
 
     // Post-EQ scope ring (power-of-two length; mask-indexed). Written on the
     // audio thread, read on the message thread - see readScopeLatest.
-    std::vector<float>       scopeRing;
+    static constexpr int kScopeRingSize = 1 << 14;
+    static_assert (std::atomic<float>::is_always_lock_free);
+    std::array<std::atomic<float>, kScopeRingSize> scopeRing {};
     std::atomic<long long>   scopeWritePos { 0 };
     std::atomic<int>         scopeRingMask { 0 };   // written in prepare, read by both threads
+    std::atomic<double>      scopeSampleRate { 44100.0 };
     void pushScope (const float* L, const float* R, int n) noexcept;
 
 #if DUSKSTUDIO_HAS_DUSK_DSP

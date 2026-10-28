@@ -489,3 +489,44 @@ TEST_CASE ("MidiFileReader continues reordering after an unmatched same-tick not
     REQUIRE (events[3].isNoteOn());
     REQUIRE (events[3].noteNumber() == 64);
 }
+
+TEST_CASE ("MidiFileReader reports only supported SMPTE time divisions", "[midi][import][smpte]")
+{
+    struct Division
+    {
+        int word;
+        double ticksPerSecond;
+    };
+    const Division divisions[] {
+        { 0xe850, 1920.0 },
+        { 0xe750, 2000.0 },
+        { 0xe350, 2400000.0 / 1001.0 },
+        { 0xe250, 2400.0 },
+        { 0xe800, 0.0 },
+        { 0xe700, 0.0 },
+        { 0xe300, 0.0 },
+        { 0xe200, 0.0 },
+        { 0xe450, 0.0 },
+        { 0xe150, 0.0 },
+        { 0xff50, 0.0 },
+        { 0x8050, 0.0 },
+        { 480, 0.0 }
+    };
+    for (const auto& division : divisions)
+    {
+        CAPTURE (division.word);
+        TrackWriter track;
+        track.event (2400000, 0x90, 60, 100);
+        track.event (4800000, 0x80, 60, 0);
+        track.endOfTrack (7200000);
+        SmfWriter file;
+        file.header (0, 1, division.word);
+        file.track (track.bytes);
+
+        MidiFileReader reader;
+        REQUIRE (reader.readData (file.bytes.data(), file.bytes.size()));
+        CHECK_THAT (reader.smpteTicksPerSecond(), WithinAbs (division.ticksPerSecond, 1.0e-9));
+        REQUIRE (reader.tracks().size() == 1);
+        CHECK (reader.tracks().front().front().tick == 2400000);
+    }
+}

@@ -68,7 +68,9 @@ add_executable(dusk-studio-tests
     plugin_slot_auto_bypass.cpp
     plugin_slot_lifecycle.cpp
     plugin_slot_live_latency.cpp
+    plugin_state_manifest.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/PluginManager.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/ScanProcess.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/PluginSlot.cpp
     native_plugin_cache.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/NativePluginCache.cpp
@@ -78,6 +80,8 @@ add_executable(dusk-studio-tests
     default_input_choice.cpp
     session_tick_conversion.cpp
     tempo_map_conversion.cpp
+    piano_roll_edit.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/PianoRollEdit.cpp
     midi_timeline_schedule.cpp
     hosting_midi_fit.cpp
     output_pair_routing.cpp
@@ -347,6 +351,25 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         realtime_cpu_guard.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/RealtimeKit.cpp)
     target_link_libraries(dusk-studio-tests PRIVATE asound)
+    add_executable(dusk-alsa-output-tests
+        alsa_seq_output_schedule.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/midi/AlsaSeqMidi.cpp)
+    target_include_directories(dusk-alsa-output-tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    # A fortified poll() calls __poll_chk, which --wrap=poll cannot intercept.
+    target_compile_options(dusk-alsa-output-tests PRIVATE -Wall -Wextra -Wpedantic -U_FORTIFY_SOURCE)
+    target_link_libraries(dusk-alsa-output-tests PRIVATE asound Catch2::Catch2WithMain)
+    foreach(symbol IN ITEMS
+        snd_seq_open snd_seq_close snd_seq_set_client_name snd_seq_client_id
+        snd_seq_create_simple_port snd_seq_nonblock snd_seq_set_client_pool_output snd_seq_query_next_client
+        snd_seq_query_next_port snd_seq_connect_to snd_seq_disconnect_to
+        snd_seq_alloc_named_queue snd_seq_control_queue snd_seq_drain_output
+        snd_seq_get_queue_status snd_seq_queue_status_get_real_time
+        snd_seq_free_queue snd_seq_drop_output snd_seq_event_output_direct
+        snd_seq_poll_descriptors_count snd_seq_poll_descriptors
+        snd_seq_poll_descriptors_revents poll)
+        target_link_options(dusk-alsa-output-tests PRIVATE "-Wl,--wrap=${symbol}")
+    endforeach()
+    add_dependencies(dusk-studio-tests dusk-alsa-output-tests)
 elseif(APPLE AND DUSKSTUDIO_NATIVE_COREMIDI)
     target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_HAS_NATIVE_COREMIDI=1)
 endif()
@@ -483,6 +506,9 @@ if(DUSKSTUDIO_NATIVE_CLAP)
         DUSKSTUDIO_PANIC_PROBE_CLAP_FIXTURE_PATH="$<TARGET_FILE:dusk-studio-panic-probe-clap-fixture>"
         DUSKSTUDIO_NO_WINDOW_CLAP_FIXTURE_PATH="$<TARGET_FILE:dusk-studio-no-window-clap-fixture>"
         DUSKSTUDIO_LATENCY_CLAP_FIXTURE_PATH="$<TARGET_FILE:dusk-studio-latency-clap-fixture>")
+    set_property(SOURCE clap_instance_process.cpp clap_host_state_flush.cpp
+        APPEND PROPERTY COMPILE_DEFINITIONS
+        DUSKSTUDIO_PARAM_TOUCH_CLAP_FIXTURE_PATH="$<TARGET_FILE:dusk-studio-param-touch-clap-fixture>")
 
     if(APPLE)
         # The directory-bundle resolver test needs a valid Mach-O image that
@@ -506,6 +532,7 @@ if(DUSKSTUDIO_NATIVE_CLAP)
         clap_scanner.cpp
         clap_params.cpp
         clap_host_thread_check.cpp
+        clap_host_state_flush.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/clap/ClapBundle.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/clap/ClapHost.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/clap/ClapInstance.cpp
@@ -552,10 +579,13 @@ if(DUSKSTUDIO_NATIVE_LV2)
         "${CMAKE_CURRENT_BINARY_DIR}/worker-fixture.lv2")
     set(DUSKSTUDIO_MIDI_PROBE_LV2_BUNDLE
         "${CMAKE_CURRENT_BINARY_DIR}/midi-probe-fixture.lv2")
+    set(DUSKSTUDIO_STATE_PROBE_LV2_BUNDLE
+        "${CMAKE_CURRENT_BINARY_DIR}/state-probe-fixture.lv2")
     file(MAKE_DIRECTORY "${DUSKSTUDIO_FILE_STATE_LV2_BUNDLE}")
     file(MAKE_DIRECTORY "${DUSKSTUDIO_MANY_PATCH_LV2_BUNDLE}")
     file(MAKE_DIRECTORY "${DUSKSTUDIO_WORKER_LV2_BUNDLE}")
     file(MAKE_DIRECTORY "${DUSKSTUDIO_MIDI_PROBE_LV2_BUNDLE}")
+    file(MAKE_DIRECTORY "${DUSKSTUDIO_STATE_PROBE_LV2_BUNDLE}")
     configure_file(fixtures/file_state_manifest.ttl
         "${DUSKSTUDIO_FILE_STATE_LV2_BUNDLE}/manifest.ttl" COPYONLY)
     # The bundle only declares a UI where one can be built: the fixture UI is an
@@ -596,6 +626,28 @@ if(DUSKSTUDIO_NATIVE_LV2)
         target_compile_features(dusk-studio-file-state-lv2-ui-fixture PRIVATE cxx_std_17)
         target_link_libraries(dusk-studio-file-state-lv2-ui-fixture PRIVATE PkgConfig::LV2 X11)
         add_dependencies(dusk-studio-tests dusk-studio-file-state-lv2-ui-fixture)
+
+        add_executable(dusk-lv2-editor-tests
+            lv2_editor_lifetime.cpp
+            ${CMAKE_SOURCE_DIR}/src/engine/hosting/InsertAdapter.cpp
+            ${CMAKE_SOURCE_DIR}/src/engine/lv2/Lv2Bundle.cpp
+            ${CMAKE_SOURCE_DIR}/src/engine/lv2/Lv2Instance.cpp
+            ${CMAKE_SOURCE_DIR}/src/engine/lv2/Lv2Editor.cpp
+            ${CMAKE_SOURCE_DIR}/src/engine/lv2/Lv2Worker.cpp)
+        target_compile_features(dusk-lv2-editor-tests PRIVATE cxx_std_17)
+        target_include_directories(dusk-lv2-editor-tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+        target_compile_definitions(dusk-lv2-editor-tests PRIVATE
+            DUSKSTUDIO_FILE_STATE_LV2_FIXTURE_PATH="${DUSKSTUDIO_FILE_STATE_LV2_BUNDLE}")
+        target_link_libraries(dusk-lv2-editor-tests PRIVATE Catch2::Catch2WithMain
+            PkgConfig::LILV PkgConfig::SUIL PkgConfig::LV2 X11 Threads::Threads ${CMAKE_DL_LIBS})
+        add_dependencies(dusk-lv2-editor-tests
+            dusk-studio-file-state-lv2-fixture dusk-studio-file-state-lv2-ui-fixture)
+        add_dependencies(dusk-studio-tests dusk-lv2-editor-tests)
+        add_test(NAME lv2-editor-lifetime
+            COMMAND ${CMAKE_COMMAND} -E env DUSKSTUDIO_SELFTEST_TIMEOUT=20s
+                ${CMAKE_SOURCE_DIR}/scripts/run-selftest-xvfb.sh
+                $<TARGET_FILE:dusk-lv2-editor-tests>)
+        set_tests_properties(lv2-editor-lifetime PROPERTIES RUN_SERIAL TRUE TIMEOUT 30)
     endif()
 
     set(DUSKSTUDIO_MANY_PATCH_PROPERTY_DEFINITIONS "")
@@ -652,6 +704,19 @@ if(DUSKSTUDIO_NATIVE_LV2)
     target_compile_features(dusk-studio-midi-probe-lv2-fixture PRIVATE cxx_std_17)
     target_link_libraries(dusk-studio-midi-probe-lv2-fixture PRIVATE PkgConfig::LV2)
 
+    configure_file(fixtures/state_probe_manifest.ttl
+        "${DUSKSTUDIO_STATE_PROBE_LV2_BUNDLE}/manifest.ttl" COPYONLY)
+    configure_file(fixtures/state_probe_plugin.ttl
+        "${DUSKSTUDIO_STATE_PROBE_LV2_BUNDLE}/state_probe_plugin.ttl" COPYONLY)
+    add_library(dusk-studio-state-probe-lv2-fixture MODULE
+        fixtures/state_probe_lv2.cpp)
+    set_target_properties(dusk-studio-state-probe-lv2-fixture PROPERTIES
+        PREFIX ""
+        OUTPUT_NAME "state_probe_fixture"
+        LIBRARY_OUTPUT_DIRECTORY "$<1:${DUSKSTUDIO_STATE_PROBE_LV2_BUNDLE}>")
+    target_compile_features(dusk-studio-state-probe-lv2-fixture PRIVATE cxx_std_17)
+    target_link_libraries(dusk-studio-state-probe-lv2-fixture PRIVATE PkgConfig::LV2)
+
     target_sources(dusk-studio-tests PRIVATE
         lv2_bundle_load.cpp
         lv2_file_state.cpp
@@ -659,6 +724,7 @@ if(DUSKSTUDIO_NATIVE_LV2)
         lv2_instance_process.cpp
         lv2_midi_probe.cpp
         lv2_native_slot.cpp
+        lv2_state_revision.cpp
         lv2_worker.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/lv2/Lv2Bundle.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/lv2/Lv2Instance.cpp
@@ -670,12 +736,14 @@ if(DUSKSTUDIO_NATIVE_LV2)
         DUSKSTUDIO_FILE_STATE_LV2_FIXTURE_PATH="${DUSKSTUDIO_FILE_STATE_LV2_BUNDLE}"
         DUSKSTUDIO_MANY_PATCH_LV2_FIXTURE_PATH="${DUSKSTUDIO_MANY_PATCH_LV2_BUNDLE}"
         DUSKSTUDIO_WORKER_LV2_FIXTURE_PATH="${DUSKSTUDIO_WORKER_LV2_BUNDLE}"
-        DUSKSTUDIO_MIDI_PROBE_LV2_FIXTURE_PATH="${DUSKSTUDIO_MIDI_PROBE_LV2_BUNDLE}")
+        DUSKSTUDIO_MIDI_PROBE_LV2_FIXTURE_PATH="${DUSKSTUDIO_MIDI_PROBE_LV2_BUNDLE}"
+        DUSKSTUDIO_STATE_PROBE_LV2_FIXTURE_PATH="${DUSKSTUDIO_STATE_PROBE_LV2_BUNDLE}")
     add_dependencies(dusk-studio-tests
         dusk-studio-file-state-lv2-fixture
         dusk-studio-many-patch-lv2-fixture
         dusk-studio-worker-lv2-fixture
-        dusk-studio-midi-probe-lv2-fixture)
+        dusk-studio-midi-probe-lv2-fixture
+        dusk-studio-state-probe-lv2-fixture)
 endif()
 
 if(DUSKSTUDIO_NATIVE_CLAP OR DUSKSTUDIO_NATIVE_LV2 OR DUSKSTUDIO_NATIVE_VST3)
@@ -758,6 +826,55 @@ if(DUSKSTUDIO_NATIVE_VST3)
     target_compile_definitions(dusk-studio-crash-state-vst3-fixture
         PRIVATE PROJECT_INCLUDES_VSTEDITCONTROLLER=1)
 
+    smtg_add_vst3plugin(dusk-studio-split-state-vst3-fixture
+        fixtures/split_state_vst3.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/common/pluginview.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/main/moduleinit.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/main/pluginfactory.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/vstaudioeffect.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/vstbus.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/vstcomponent.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/vstcomponentbase.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/vsteditcontroller.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/vstparameters.cpp)
+    target_link_libraries(dusk-studio-split-state-vst3-fixture PRIVATE dusk-vst3-hosting)
+    target_compile_definitions(dusk-studio-split-state-vst3-fixture
+        PRIVATE PROJECT_INCLUDES_VSTEDITCONTROLLER=1)
+    get_target_property(DUSKSTUDIO_SPLIT_STATE_VST3_BUNDLE
+        dusk-studio-split-state-vst3-fixture SMTG_PLUGIN_PACKAGE_PATH)
+
+    smtg_add_vst3plugin(dusk-studio-state-probe-vst3-fixture
+        fixtures/state_probe_vst3.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/common/pluginview.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/main/moduleinit.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/main/pluginfactory.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/vstbus.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/vstcomponentbase.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/vsteditcontroller.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/vstparameters.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/vstsinglecomponenteffect.cpp)
+    target_link_libraries(dusk-studio-state-probe-vst3-fixture PRIVATE dusk-vst3-hosting)
+    target_compile_definitions(dusk-studio-state-probe-vst3-fixture
+        PRIVATE PROJECT_INCLUDES_VSTEDITCONTROLLER=1)
+    get_target_property(DUSKSTUDIO_STATE_PROBE_VST3_BUNDLE
+        dusk-studio-state-probe-vst3-fixture SMTG_PLUGIN_PACKAGE_PATH)
+
+    smtg_add_vst3plugin(dusk-studio-many-params-vst3-fixture
+        fixtures/many_params_vst3.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/common/pluginview.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/main/moduleinit.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/main/pluginfactory.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/vstbus.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/vstcomponentbase.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/vsteditcontroller.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/vstparameters.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/vstsinglecomponenteffect.cpp)
+    target_link_libraries(dusk-studio-many-params-vst3-fixture PRIVATE dusk-vst3-hosting)
+    target_compile_definitions(dusk-studio-many-params-vst3-fixture
+        PRIVATE PROJECT_INCLUDES_VSTEDITCONTROLLER=1)
+    get_target_property(DUSKSTUDIO_MANY_PARAMS_VST3_BUNDLE
+        dusk-studio-many-params-vst3-fixture SMTG_PLUGIN_PACKAGE_PATH)
+
     if(MSVC)
         # The SDK compiles its plug-in targets with /Zi in Release. Under Ninja
         # a fixture's translation units then race for one vc140.pdb (C1041),
@@ -765,7 +882,10 @@ if(DUSKSTUDIO_NATIVE_VST3)
         foreach(vst3Fixture
                 dusk-studio-runtime-relayout-vst3-fixture
                 dusk-studio-panic-probe-vst3-fixture
-                dusk-studio-crash-state-vst3-fixture)
+                dusk-studio-crash-state-vst3-fixture
+                dusk-studio-split-state-vst3-fixture
+                dusk-studio-state-probe-vst3-fixture
+                dusk-studio-many-params-vst3-fixture)
             get_target_property(DUSKSTUDIO_VST3_FIXTURE_OPTIONS ${vst3Fixture} COMPILE_OPTIONS)
             if(DUSKSTUDIO_VST3_FIXTURE_OPTIONS)
                 list(TRANSFORM DUSKSTUDIO_VST3_FIXTURE_OPTIONS REPLACE "/Zi" "/Z7")
@@ -797,6 +917,7 @@ if(DUSKSTUDIO_NATIVE_VST3)
         support/AllocationObserver.cpp
         vst3_native_slot.cpp
         vst3_scanner.cpp
+        vst3_state_revision.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/vst3/Vst3Bundle.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/vst3/Vst3HostContext.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/vst3/Vst3Instance.cpp
@@ -805,11 +926,18 @@ if(DUSKSTUDIO_NATIVE_VST3)
     target_compile_definitions(dusk-studio-tests PRIVATE
         DUSKSTUDIO_HAS_NATIVE_VST3=1
         DUSKSTUDIO_RUNTIME_RELAYOUT_VST3_FIXTURE_PATH="${DUSKSTUDIO_RUNTIME_RELAYOUT_VST3_BUNDLE}"
-        DUSKSTUDIO_PANIC_PROBE_VST3_FIXTURE_PATH="${DUSKSTUDIO_PANIC_PROBE_VST3_BUNDLE}")
+        DUSKSTUDIO_PANIC_PROBE_VST3_FIXTURE_PATH="${DUSKSTUDIO_PANIC_PROBE_VST3_BUNDLE}"
+        DUSKSTUDIO_SPLIT_STATE_VST3_FIXTURE_PATH="${DUSKSTUDIO_SPLIT_STATE_VST3_BUNDLE}"
+        DUSKSTUDIO_STATE_PROBE_VST3_FIXTURE_PATH="${DUSKSTUDIO_STATE_PROBE_VST3_BUNDLE}")
+    set_property(SOURCE vst3_state_revision.cpp APPEND PROPERTY COMPILE_DEFINITIONS
+        DUSKSTUDIO_MANY_PARAMS_VST3_FIXTURE_PATH="${DUSKSTUDIO_MANY_PARAMS_VST3_BUNDLE}")
     add_dependencies(dusk-studio-tests
         dusk-studio-runtime-relayout-vst3-fixture
         dusk-studio-panic-probe-vst3-fixture
-        dusk-studio-crash-state-vst3-fixture)
+        dusk-studio-crash-state-vst3-fixture
+        dusk-studio-split-state-vst3-fixture
+        dusk-studio-state-probe-vst3-fixture
+        dusk-studio-many-params-vst3-fixture)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         target_sources(dusk-studio-tests PRIVATE vst3_hostcontext_runloop.cpp)
     endif()
@@ -896,9 +1024,13 @@ elseif (APPLE)
         ${CMAKE_SOURCE_DIR}/src/engine/ipc/platform/IpcSync_Mac.cpp)
 endif()
 if (_duskstudio_ipc_test_enabled)
+    if (UNIX)
+        target_sources(dusk-studio-tests PRIVATE ipc_channel_peer_close.cpp)
+    endif()
     target_sources(dusk-studio-tests PRIVATE
         ipc_stub_round_trip.cpp
         ipc_prepare_without_plugin.cpp
+        plugin_sandbox_state.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/ipc/RemotePluginConnection.cpp
         ${_duskstudio_ipc_test_sources})
     # The parent pipe endpoint uses overlapped I/O on Windows, so the reader's
@@ -1018,6 +1150,9 @@ endif()
 
 list(APPEND CMAKE_MODULE_PATH ${catch2_SOURCE_DIR}/extras)
 include(Catch)
+if(TARGET dusk-alsa-output-tests)
+    catch_discover_tests(dusk-alsa-output-tests)
+endif()
 # The environment-gated ALSA-seq loopback tests SKIP() on headless CI. Run in
 # isolation (catch_discover_tests filters each case by exact name) a skip-only
 # Catch2 run exits 4, which ctest scores as a failure. --allow-running-no-tests
@@ -1058,7 +1193,7 @@ catch_discover_tests(dusk-studio-tests
 # [ipc] cases start plug-in hosts and assert on bounded response times. Run
 # them serially so other cases cannot starve their control threads.
 catch_discover_tests(dusk-studio-tests
-    TEST_SPEC "[ipc]~[sfz-shutdown]~[sfz-service-disk-full]"
+    TEST_SPEC "[ipc]~[scan-grandchild-fixture]~[sfz-shutdown]~[sfz-service-disk-full]"
     PROPERTIES RUN_SERIAL TRUE)
 catch_discover_tests(dusk-studio-tests
     TEST_SPEC "[sfz-shutdown]"

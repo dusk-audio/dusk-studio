@@ -56,6 +56,7 @@ public:
     void cancel();
     bool requestInstalled();
     bool remove (InstalledPack, std::vector<ManagedSfzLocator> inUse);
+    bool canLoadInstrument (const std::filesystem::path&, const std::optional<ManagedSfzLocator>&) const;
     bool verify (InstalledPack);
     bool changeLocation (std::filesystem::path destination, bool moveExisting);
     bool isMovingPacks() const noexcept { return movingPacks.load (std::memory_order_acquire); }
@@ -115,6 +116,8 @@ private:
     std::optional<Job> pending;
     std::optional<Job> paused;
     std::optional<BrowseSession> allBrowse;
+    std::string removingPackKey;
+    std::vector<std::filesystem::path> removingPackDirectories;
     std::atomic<bool> stopping { false }, cancelRequested { false }, heavyWork { false };
     std::atomic<bool> movingPacks { false };
     std::thread worker;

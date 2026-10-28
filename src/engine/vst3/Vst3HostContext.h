@@ -7,9 +7,10 @@ namespace duskstudio::vst3
 {
 // The host-side COM object a VST3 plugin talks back to: IHostApplication (name +
 // IMessage/IAttributeList factory via the SDK's HostApplication), IComponentHandler
-// (editor->host parameter edits + restartComponent), IPlugFrame (editor resize
-// requests), and the Linux IRunLoop (fd/timer registry plugin UIs - and some DSP -
-// require on Linux). VST3's analog of ClapHost.
+// (editor->host parameter edits + restartComponent), IComponentHandler2 (the
+// plug-in marking its own state dirty), IPlugFrame (editor resize requests), and
+// the Linux IRunLoop (fd/timer registry plugin UIs - and some DSP - require on
+// Linux). VST3's analog of ClapHost.
 //
 // Threading: everything here is message-thread. VST3 routes controller-side calls
 // (component handler, plug frame, run-loop handlers) through the UI thread; pump()
@@ -28,6 +29,8 @@ public:
         virtual void onPerformEdit (uint32_t /*paramId*/, double /*normalised*/) {}
         virtual void onEndEdit (uint32_t /*paramId*/) {}
         virtual void onRestartComponent (int32_t /*RestartFlags*/) {}
+        // IComponentHandler2::setDirty (true): state changed outside its parameters.
+        virtual void onSetDirty() {}
         // The editor asked to resize. Return true when the host honoured it.
         virtual bool onResizeView (int /*w*/, int /*h*/) { return false; }
     };

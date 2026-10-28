@@ -5,12 +5,28 @@
 #include <clap/clap.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <string>
+#include <thread>
 
 namespace duskstudio::clap
 {
+namespace
+{
+bool toFixedTime (double value, std::int64_t factor, std::int64_t& result) noexcept
+{
+    const long double scaled = std::round ((long double) value * (long double) factor);
+    constexpr long double limit = 9223372036854775808.0L;
+    if (! std::isfinite (scaled) || scaled >= limit || scaled < -limit)
+        return false;
+    result = (std::int64_t) scaled;
+    return true;
+}
+}
+
 ClapInstance::ClapInstance()
 {
     // Input event list backed by eventScratch[0..eventCount); reports 0 events when
@@ -26,20 +42,24 @@ ClapInstance::ClapInstance()
         return idx < self->eventCount ? &self->eventScratch[(size_t) idx].header : nullptr;
     };
 
-    // Output sink: events are accepted and dropped, EXCEPT that parameter
-    // value/gesture events stamp the last-touched id (audio thread, relaxed) so
-    // MIDI Learn can bind "the knob the user just moved in the plugin's GUI".
+    // Touches feed MIDI Learn; global writable values also publish state edits.
     emptyOut.ctx      = this;
     emptyOut.try_push = [] (const clap_output_events* list, const clap_event_header_t* ev) -> bool
     {
-        if (ev != nullptr && ev->space_id == CLAP_CORE_EVENT_SPACE_ID
-            && (ev->type == CLAP_EVENT_PARAM_VALUE || ev->type == CLAP_EVENT_PARAM_GESTURE_BEGIN))
+        if (ev != nullptr && ev->space_id == CLAP_CORE_EVENT_SPACE_ID)
         {
             auto* self = static_cast<ClapInstance*> (const_cast<void*> (list->ctx));
-            const auto id = ev->type == CLAP_EVENT_PARAM_VALUE
-                              ? reinterpret_cast<const clap_event_param_value_t*> (ev)->param_id
-                              : reinterpret_cast<const clap_event_param_gesture_t*> (ev)->param_id;
-            self->lastTouchedParamId.store ((int64_t) id, std::memory_order_relaxed);
+            if (ev->type == CLAP_EVENT_PARAM_VALUE && ev->size >= sizeof (clap_event_param_value_t))
+            {
+                const auto& value = *reinterpret_cast<const clap_event_param_value_t*> (ev);
+                self->lastTouchedParamId.store ((int64_t) value.param_id, std::memory_order_relaxed);
+                if (value.note_id == -1 && value.port_index == -1 && value.channel == -1 && value.key == -1
+                    && std::binary_search (self->writableParamIds.begin(), self->writableParamIds.end(), value.param_id))
+                    self->hostObj.markStateChanged();
+            }
+            else if (ev->type == CLAP_EVENT_PARAM_GESTURE_BEGIN && ev->size >= sizeof (clap_event_param_gesture_t))
+                self->lastTouchedParamId.store ((int64_t) reinterpret_cast<const clap_event_param_gesture_t*> (ev)->param_id,
+                                               std::memory_order_relaxed);
         }
         return true;
     };
@@ -242,10 +262,12 @@ bool ClapInstance::create (const ClapBundle& bundle, const std::string& pluginId
     // Snapshot the parameter list for automation / display. [main-thread]
     paramsExt = static_cast<const clap_plugin_params_t*> (
         plugin->get_extension (plugin, CLAP_EXT_PARAMS));
+    writableParamIds.clear();
     if (paramsExt != nullptr && paramsExt->count != nullptr && paramsExt->get_info != nullptr)
     {
         const uint32_t n = std::min<uint32_t> (paramsExt->count (plugin), 4096u);   // clamp: count is plugin-supplied
         params.reserve (n);
+        writableParamIds.reserve (n);
         for (uint32_t i = 0; i < n; ++i)
         {
             clap_param_info_t info {};
@@ -260,8 +282,11 @@ bool ClapInstance::create (const ClapBundle& bundle, const std::string& pluginId
             pi.defaultValue = info.default_value;
             pi.flags        = info.flags;
             pi.cookie       = info.cookie;
+            if ((info.flags & CLAP_PARAM_IS_READONLY) == 0)
+                writableParamIds.push_back (info.id);
             params.push_back (std::move (pi));
         }
+        std::sort (writableParamIds.begin(), writableParamIds.end());
     }
     return true;
 }
@@ -326,6 +351,7 @@ bool ClapInstance::activate (double sampleRate, int maxBlock, std::string& error
     prepareAudioPorts (audioOutPorts, clapOutBuffers, clapOutData, clapOutScratch);
 
     startFailed = false;   // a fresh activation may try start_processing again
+    activeSampleRate = sampleRate;
     active = true;
     return true;
 }
@@ -349,8 +375,8 @@ void ClapInstance::deactivate()
             // thread (the engine process gate has quiesced the real audio thread, so
             // exactly one thread is the "audio thread" right now). Re-designate this
             // thread so the plugin's thread-check inside stop_processing is satisfied,
-            // then hand the stamp back - process() only re-stamps on its next start,
-            // which a bypassed slot never reaches.
+            // then hand the stamp back - a block re-stamps only when it arrives on
+            // another thread than the last one, and a bypassed slot runs none.
             const auto previousAudioThread =
                 hostObj.exchangeAudioThread (std::this_thread::get_id());
             plugin->stop_processing (plugin);
@@ -362,6 +388,7 @@ void ClapInstance::deactivate()
             plugin->deactivate (plugin);
     }
     active = false;
+    activeSampleRate = 0.0;
 }
 
 bool ClapInstance::saveState (std::vector<uint8_t>& out) const
@@ -425,6 +452,7 @@ bool ClapInstance::loadState (const std::vector<uint8_t>& in)
             latencySamples = (int) lat->get (plugin);
     }
 
+    hostObj.markStateChanged();
     return true;
 }
 
@@ -445,17 +473,24 @@ bool ClapInstance::paramValueToText (clap_id id, double value, std::string& out)
 
 void ClapInstance::setParamValue (clap_id id, double value) noexcept
 {
-    void* cookie = nullptr;
-    for (const auto& p : params) if (p.id == id) { cookie = p.cookie; break; }
-    paramRing.push ({ id, value, cookie });   // full => drop (pathological flood only)
+    for (const auto& p : params)
+        if (p.id == id)
+        {
+            if ((p.flags & CLAP_PARAM_IS_READONLY) != 0) return;
+            if (paramRing.push ({ id, value, p.cookie }))
+                hostObj.markStateChanged();
+            return;
+        }
 }
 
-void ClapInstance::drainParamRing() noexcept
+bool ClapInstance::drainParamRing() noexcept
 {
-    // Drain queued parameter changes into this block's CLAP event list (audio thread
-    // = single consumer). All at time 0 - sample-accurate automation is a later step.
+    // Drain queued parameter changes into this block's CLAP event list (the
+    // audio-thread role = single consumer). All at time 0 - sample-accurate
+    // automation is a later step.
     eventCount = 0;
-    paramRing.drain ([this] (const ParamChange& pc)
+    const bool passCookies = ! hostObj.paramCookiesRevoked();
+    return paramRing.drain ([this, passCookies] (const ParamChange& pc)
     {
         auto& ev = eventScratch[(size_t) eventCount++].param;
         ev.header.size     = sizeof (clap_event_param_value_t);
@@ -464,13 +499,68 @@ void ClapInstance::drainParamRing() noexcept
         ev.header.type     = CLAP_EVENT_PARAM_VALUE;
         ev.header.flags    = 0;
         ev.param_id        = pc.id;
-        ev.cookie          = pc.cookie;
+        ev.cookie          = passCookies ? pc.cookie : nullptr;
         ev.note_id         = -1;
         ev.port_index      = -1;
         ev.channel         = -1;
         ev.key             = -1;
         ev.value           = pc.value;
-    }, (uint32_t) eventScratch.size());
+    }, (uint32_t) eventScratch.size()) != 0;
+}
+
+bool ClapInstance::claimAudioRole (bool wait) noexcept
+{
+    while (audioRoleHeld.exchange (true, std::memory_order_acquire))
+    {
+        if (! wait) return false;
+        std::this_thread::yield();
+    }
+    return true;
+}
+
+bool ClapInstance::flushParamsOutsideProcess() noexcept
+{
+    if (plugin == nullptr) return true;
+    if (! claimAudioRole (false)) return false;
+    const AudioRoleRelease role { audioRoleHeld };
+
+    const bool requested = hostObj.consumeFlushRequest();
+    if (paramsExt == nullptr || paramsExt->flush == nullptr)
+        return paramRing.empty();
+    const bool queued = drainParamRing();
+    if (queued || requested)
+    {
+        // params.flush is [active ? audio-thread : main-thread].
+        if (active)
+        {
+            const auto previous = hostObj.exchangeAudioThread (std::this_thread::get_id());
+            paramsExt->flush (plugin, &inEvents, &emptyOut);
+            hostObj.restoreAudioThread (previous);
+        }
+        else
+            paramsExt->flush (plugin, &inEvents, &emptyOut);
+        eventCount = 0;
+        if (queued)
+            hostObj.markStateChanged();
+    }
+    return paramRing.empty();
+}
+
+void ClapInstance::serviceIdleParams (std::chrono::steady_clock::time_point now) noexcept
+{
+    // Longer than any block period, so an insert that is running is never
+    // taken for an idle one.
+    constexpr auto kIdleAfter = std::chrono::milliseconds (500);
+    const auto processed = processCalls.load (std::memory_order_relaxed);
+    if (processed != processCallsSeen)
+    {
+        processCallsSeen = processed;
+        processSeenAt = now;
+        return;
+    }
+    if (now - processSeenAt < kIdleAfter) return;
+    if (hostObj.isFlushRequested() || ! paramRing.empty())
+        (void) flushParamsOutsideProcess();
 }
 
 std::size_t ClapInstance::clapEventsFor (const uint8_t* d, int numBytes) const noexcept
@@ -636,9 +726,22 @@ void ClapInstance::processBlock (const hosting::PortBuffers& io) noexcept
         return;
     }
 
+    if (! claimAudioRole (io.offlineRender))
+    {
+        clearOutputs();
+        return;
+    }
+    const AudioRoleRelease role { audioRoleHeld };
+
+    const auto thisThread = std::this_thread::get_id();
+    if (thisThread != stampedAudioThread)
+    {
+        stampedAudioThread = thisThread;
+        hostObj.setAudioThread (thisThread);
+    }
+
     if (! processing)
     {
-        hostObj.setAudioThread (std::this_thread::get_id());
         if (plugin->start_processing != nullptr && ! plugin->start_processing (plugin))
         {
             startFailed = true;
@@ -648,7 +751,7 @@ void ClapInstance::processBlock (const hosting::PortBuffers& io) noexcept
         processing = true;
     }
 
-    drainParamRing();
+    const bool paramsApplied = drainParamRing();
     if (io.midiIn != nullptr)
         appendMidiEvents (*io.midiIn);
 
@@ -693,8 +796,9 @@ void ClapInstance::processBlock (const hosting::PortBuffers& io) noexcept
     resetPortBuffers (audioOutPorts, clapOutBuffers, clapOutData, clapOutScratch,
                       mainAudioOutPort, io.mainOut, io.mainOutChannels, false);
 
+    clap_event_transport_t transport {};
     clap_process_t p {};
-    p.steady_time         = -1;          // free-running
+    p.steady_time         = -1;
     p.frames_count        = (uint32_t) numFrames;
     p.transport           = nullptr;
     p.audio_inputs        = clapInBuffers.empty() ? nullptr : clapInBuffers.data();
@@ -704,7 +808,76 @@ void ClapInstance::processBlock (const hosting::PortBuffers& io) noexcept
     p.in_events           = &inEvents;
     p.out_events          = &emptyOut;
 
+    if (const auto* position = io.transport)
+    {
+        transport.header.size = sizeof (transport);
+        transport.header.space_id = CLAP_CORE_EVENT_SPACE_ID;
+        transport.header.type = CLAP_EVENT_TRANSPORT;
+        if (position->isPlaying || position->isRecording)
+            transport.flags |= CLAP_TRANSPORT_IS_PLAYING;
+        if (position->isRecording)
+            transport.flags |= CLAP_TRANSPORT_IS_RECORDING;
+        if (std::isfinite (position->bpm) && position->bpm > 0.0)
+        {
+            transport.tempo = position->bpm;
+            transport.flags |= CLAP_TRANSPORT_HAS_TEMPO;
+        }
+        if (toFixedTime (position->ppqPosition, CLAP_BEATTIME_FACTOR, transport.song_pos_beats))
+            transport.flags |= CLAP_TRANSPORT_HAS_BEATS_TIMELINE;
+        if (toFixedTime (position->timeInSeconds, CLAP_SECTIME_FACTOR, transport.song_pos_seconds))
+            transport.flags |= CLAP_TRANSPORT_HAS_SECONDS_TIMELINE;
+        if (position->timeSignatureNumerator > 0 && position->timeSignatureDenominator > 0
+            && position->timeSignatureNumerator <= std::numeric_limits<std::uint16_t>::max()
+            && position->timeSignatureDenominator <= std::numeric_limits<std::uint16_t>::max())
+        {
+            transport.tsig_num = (std::uint16_t) position->timeSignatureNumerator;
+            transport.tsig_denom = (std::uint16_t) position->timeSignatureDenominator;
+            transport.flags |= CLAP_TRANSPORT_HAS_TIME_SIGNATURE;
+            if ((transport.flags & CLAP_TRANSPORT_HAS_BEATS_TIMELINE) != 0)
+            {
+                const double quartersPerBar = (double) transport.tsig_num * 4.0
+                                            / (double) transport.tsig_denom;
+                const double bar = std::floor (position->ppqPosition / quartersPerBar);
+                if (bar >= (double) std::numeric_limits<std::int32_t>::min()
+                    && bar <= (double) std::numeric_limits<std::int32_t>::max()
+                    && toFixedTime (bar * quartersPerBar, CLAP_BEATTIME_FACTOR, transport.bar_start))
+                    transport.bar_number = (std::int32_t) bar;
+                else
+                {
+                    transport.flags &= ~(std::uint32_t) CLAP_TRANSPORT_HAS_BEATS_TIMELINE;
+                    transport.song_pos_beats = 0;
+                }
+            }
+        }
+        clap_beattime loopStartBeats = 0, loopEndBeats = 0;
+        clap_sectime loopStartSeconds = 0, loopEndSeconds = 0;
+        if (position->loopEndSamples > position->loopStartSamples
+            && position->ppqLoopEnd > position->ppqLoopStart
+            && std::isfinite (activeSampleRate) && activeSampleRate > 0.0
+            && toFixedTime (position->ppqLoopStart, CLAP_BEATTIME_FACTOR, loopStartBeats)
+            && toFixedTime (position->ppqLoopEnd, CLAP_BEATTIME_FACTOR, loopEndBeats)
+            && toFixedTime ((double) position->loopStartSamples / activeSampleRate,
+                            CLAP_SECTIME_FACTOR, loopStartSeconds)
+            && toFixedTime ((double) position->loopEndSamples / activeSampleRate,
+                            CLAP_SECTIME_FACTOR, loopEndSeconds))
+        {
+            transport.loop_start_beats = loopStartBeats;
+            transport.loop_end_beats = loopEndBeats;
+            transport.loop_start_seconds = loopStartSeconds;
+            transport.loop_end_seconds = loopEndSeconds;
+            if (position->isLooping)
+                transport.flags |= CLAP_TRANSPORT_IS_LOOP_ACTIVE;
+        }
+        p.transport = &transport;
+    }
+
+    // This process() answers any request_flush made before it.
+    (void) hostObj.consumeFlushRequest();
+    processCalls.store (processCalls.load (std::memory_order_relaxed) + 1, std::memory_order_relaxed);
     if (plugin->process (plugin, &p) == CLAP_PROCESS_ERROR)
         clearOutputs();
+    // A capture between enqueue and application must not make this edit clean.
+    if (paramsApplied)
+        hostObj.markStateChanged();
 }
 } // namespace duskstudio::clap

@@ -299,8 +299,19 @@ double MidiFileReader::smpteTicksPerSecond() const noexcept
 {
     if (format >= 0) return 0.0;
 
-    const int framesPerSecond = -(format >> 8);
-    const int ticksPerFrame   = format & 0xff;
-    return (double) framesPerSecond * (double) ticksPerFrame;
+    const int frameCode = (int) ((std::uint16_t) format >> 8) - 256;
+    const int ticksPerFrame = format & 0xff;
+    if (ticksPerFrame == 0) return 0.0;
+
+    double framesPerSecond = 0.0;
+    switch (frameCode)
+    {
+        case -24: framesPerSecond = 24.0; break;
+        case -25: framesPerSecond = 25.0; break;
+        case -29: framesPerSecond = 30000.0 / 1001.0; break;
+        case -30: framesPerSecond = 30.0; break;
+        default: return 0.0;
+    }
+    return framesPerSecond * (double) ticksPerFrame;
 }
 } // namespace duskstudio::midi

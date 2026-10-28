@@ -17,6 +17,10 @@
 #include <utility>
 #include <vector>
 
+#if defined (__linux__)
+ #include <dlfcn.h>
+#endif
+
 namespace duskstudio::scenario
 {
 namespace
@@ -87,7 +91,168 @@ ScenarioResult frozenTrackRefusesEdits (ScenarioContext& ctx)
     ctx.expect (! undo.perform (new DeleteRegionAction (ctx.session(), ctx.engine(), kTrack, 0)),
                 "a frozen track's region was deleted");
     ctx.expect (regs.size() == 1 && sameSpan (regs[0], 0, 48000, 0), "the frozen region changed");
+
+    {
+        auto& session = ctx.session();
+        auto& engine = ctx.engine();
+        std::vector<std::unique_ptr<UndoableAction>> actions;
+        const MidiRegion midi;
+        actions.push_back (std::make_unique<RegionEditAction> (session, engine, kTrack, 0, regs[0], regs[0]));
+        actions.push_back (std::make_unique<SplitRegionAction> (session, engine, kTrack, 0, 24000));
+        actions.push_back (std::make_unique<PasteRegionAction> (session, engine, kTrack, regs[0]));
+        actions.push_back (std::make_unique<CreateMidiRegionAction> (session, kTrack, midi));
+        actions.push_back (std::make_unique<MidiRegionEditAction> (session, engine, kTrack, 0, midi, midi));
+        actions.push_back (std::make_unique<DeleteRegionAction> (session, engine, kTrack, 0));
+        actions.push_back (std::make_unique<PromoteTakeRangeAction> (session, engine, kTrack, 1, 0, 100));
+        actions.push_back (std::make_unique<DeleteTakeAction> (session, engine, kTrack, 1));
+        actions.push_back (std::make_unique<RenameTakeAction> (session, kTrack, 1, "Renamed"));
+        actions.push_back (std::make_unique<JoinRegionsAction> (session, engine, kTrack, std::vector<int> { 0 }));
+        actions.push_back (std::make_unique<ReverseRegionAction> (session, engine, kTrack, 0));
+        actions.push_back (std::make_unique<DeleteMidiRegionAction> (session, engine, kTrack, 0));
+        actions.push_back (std::make_unique<CloneTrackAction> (session, engine, kTrack + 1, kTrack));
+        MidiMergePassAction::TrackDiff merge;
+        merge.trackIndex = kTrack;
+        actions.push_back (std::make_unique<MidiMergePassAction> (
+            session, engine, std::vector<MidiMergePassAction::TrackDiff> { merge }));
+        RecordCommitAction::TrackDiff record;
+        record.trackIndex = kTrack;
+        actions.push_back (std::make_unique<RecordCommitAction> (
+            session, engine, std::vector<RecordCommitAction::TrackDiff> { record }));
+        for (std::size_t i = 0; i < actions.size(); ++i)
+        {
+            const UndoableAction* action = actions[i].get();
+            for (const bool redo : { false, true })
+            {
+                ctx.expect (! canReplayTransaction (engine, &action, 1, redo),
+                            "a frozen action escaped preflight at index " + std::to_string (i));
+                session.track (kTrack).frozen.store (false, std::memory_order_relaxed);
+                ctx.expect (canReplayTransaction (engine, &action, 1, redo),
+                            "unfreezing did not release an action at index " + std::to_string (i));
+                session.track (kTrack).frozen.store (true, std::memory_order_relaxed);
+            }
+        }
+        const CloneTrackAction sourceFrozen (session, engine, kTrack, kTrack + 1);
+        const UndoableAction* clone = &sourceFrozen;
+        ctx.expect (canReplayTransaction (engine, &clone, 1, false)
+                        && ! canReplayTransaction (engine, &clone, 1, true),
+                    "clone preflight did not distinguish its undo destination from its redo source");
+        session.track (kTrack).frozen.store (false, std::memory_order_relaxed);
+        auto& transport = engine.getTransport();
+        const auto state = transport.getState();
+        transport.setState (Transport::State::Recording);
+        ctx.expect (! canReplayTransaction (engine, &clone, 1, false)
+                        && ! canReplayTransaction (engine, &clone, 1, true),
+                    "clone history was permitted during recording");
+        transport.setState (Transport::State::Playing);
+        ctx.expect (canReplayTransaction (engine, &clone, 1, false)
+                        && canReplayTransaction (engine, &clone, 1, true),
+                    "clone history was refused during playback");
+        transport.setState (state);
+    }
     ctx.session().track (kTrack).frozen.store (false, std::memory_order_relaxed);
+
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    for (const bool direct : { false, true })
+    {
+        const auto step = [&engine, &undo, direct] (bool redo)
+        {
+            return direct ? (redo ? undo.redo() : undo.undo())
+                          : (redo ? redoTransaction (engine) : undoTransaction (engine));
+        };
+        const std::string route = direct ? "direct history: " : "transaction wrapper: ";
+        for (const bool grouped : { false, true })
+        {
+            undo.clearUndoHistory();
+            undo.beginNewTransaction ("Frozen history regression");
+            regs = { regionAt (0, 48000) };
+            session.track (kTrack + 1).regions = regs;
+            for (int t = kTrack; t <= kTrack + (grouped ? 1 : 0); ++t)
+            {
+                const auto before = session.track (t).regions.front();
+                auto after = before;
+                after.timelineStart = 1000;
+                ctx.expect (undo.perform (new RegionEditAction (session, engine, t, 0, before, after)),
+                            route + "the setup edit was refused");
+            }
+            undo.beginNewTransaction();
+            const auto undoBefore = undo.getUndoDescriptions();
+            session.track (kTrack).frozen.store (true, std::memory_order_relaxed);
+            ctx.expect (! step (false), route + "undo ran on a frozen participant");
+            ctx.expect (undo.getUndoDescriptions() == undoBefore && ! undo.canRedo(),
+                        route + "refused undo changed the history");
+            ctx.expect (regs.front().timelineStart == 1000
+                            && session.track (kTrack + 1).regions.front().timelineStart == (grouped ? 1000 : 0),
+                        route + "refused undo partially changed the transaction");
+            session.track (kTrack).frozen.store (false, std::memory_order_relaxed);
+            ctx.expect (step (false), route + "unfreezing did not leave a usable undo");
+            ctx.expect (regs.front().timelineStart == 0
+                            && session.track (kTrack + 1).regions.front().timelineStart == 0,
+                        route + "undo after unfreezing did not restore every region");
+            const auto redoBefore = undo.getRedoDescriptions();
+            session.track (kTrack).frozen.store (true, std::memory_order_relaxed);
+            ctx.expect (! step (true), route + "redo ran on a frozen participant");
+            ctx.expect (undo.getRedoDescriptions() == redoBefore && ! undo.canUndo(),
+                        route + "refused redo changed the history");
+            ctx.expect (regs.front().timelineStart == 0
+                            && session.track (kTrack + 1).regions.front().timelineStart == 0,
+                        route + "refused redo partially changed the transaction");
+            session.track (kTrack).frozen.store (false, std::memory_order_relaxed);
+            ctx.expect (step (true), route + "unfreezing did not leave a usable redo");
+        }
+
+        for (const bool redo : { false, true })
+        {
+            undo.clearUndoHistory();
+            undo.beginNewTransaction ("Frozen record regression");
+            std::vector<RecordCommitAction::TrackDiff> diffs;
+            for (int t = kTrack; t <= kTrack + 1; ++t)
+            {
+                RecordCommitAction::TrackDiff diff;
+                diff.trackIndex = t;
+                diff.audioAfter = { regionAt (2000, 48000) };
+                MidiRegion midi;
+                midi.timelineStart = 2000;
+                midi.lengthInSamples = midi.lengthInTicks = 100;
+                diff.midiAfter = { midi };
+                AudioTake take;
+                take.id = session.allocateTakeId();
+                take.timelineStart = 2000;
+                take.lengthInSamples = 48000;
+                diff.takesAfter = { take };
+                auto& track = session.track (t);
+                track.regions = diff.audioAfter;
+                track.takes = diff.takesAfter;
+                track.midiRegions.mutate ([&diff] (std::vector<MidiRegion>& regions) { regions = diff.midiAfter; });
+                diffs.push_back (std::move (diff));
+            }
+            ctx.expect (undo.perform (new RecordCommitAction (session, engine, std::move (diffs))),
+                        route + "the record commit was refused");
+            undo.beginNewTransaction();
+            if (redo) ctx.expect (step (false), route + "the record setup undo was refused");
+            const auto undoBefore = undo.getUndoDescriptions();
+            const auto redoBefore = undo.getRedoDescriptions();
+            const auto firstGeneration = session.track (kTrack).midiRegions.generation();
+            const auto secondGeneration = session.track (kTrack + 1).midiRegions.generation();
+            session.track (kTrack).frozen.store (true, std::memory_order_relaxed);
+            ctx.expect (! step (redo), route + "record history ran on a frozen participant");
+            ctx.expect (undo.getUndoDescriptions() == undoBefore && undo.getRedoDescriptions() == redoBefore,
+                        route + "refused record history advanced");
+            for (int t = kTrack; t <= kTrack + 1; ++t)
+            {
+                const auto& track = session.track (t);
+                const auto expected = redo ? 0u : 1u;
+                ctx.expect (track.regions.size() == expected && track.takes.size() == expected
+                                && track.midiRegions.current().size() == expected,
+                            route + "refused record history changed a participant");
+            }
+            ctx.expect (session.track (kTrack).midiRegions.generation() == firstGeneration
+                            && session.track (kTrack + 1).midiRegions.generation() == secondGeneration,
+                        route + "refused record history republished MIDI");
+            session.track (kTrack).frozen.store (false, std::memory_order_relaxed);
+            ctx.expect (step (redo), route + "unfreezing did not leave usable record history");
+        }
+    }
     return ctx.verdict();
 }
 
@@ -412,6 +577,65 @@ ScenarioResult joinRendersAGapAsSilence (ScenarioContext& ctx)
     return ctx.verdict();
 }
 
+// A render whose file never reached the disk whole is no render: Join and
+// Reverse refuse, the regions stay as they were and takes/ keeps nothing.
+std::optional<ScenarioResult> rendersRefuseAFileThatFailsToSync (ScenarioContext& ctx)
+{
+#if ! defined (__linux__)
+    (void) ctx;
+    return ScenarioResult::skip ("requires the native audio-file fault fixture");
+#else
+    const auto arm = reinterpret_cast<void (*) (int, const char*)> (dlsym (RTLD_DEFAULT, "dusk_audiofile_arm"));
+    const auto hits = reinterpret_cast<int (*)()> (dlsym (RTLD_DEFAULT, "dusk_audiofile_hits"));
+    const auto disarm = reinterpret_cast<void (*)()> (dlsym (RTLD_DEFAULT, "dusk_audiofile_disarm"));
+    if (arm == nullptr || hits == nullptr || disarm == nullptr)
+        return ScenarioResult::skip ("requires the native audio-file fault fixture");
+    constexpr int kFsync = 3;
+    disarm();
+    ctx.cleanup ([disarm] { disarm(); });
+    const auto first = writtenFile (ctx, "sync-first", tone (4800, 0.5f));
+    const auto second = writtenFile (ctx, "sync-second", tone (4800, 0.3f));
+    if (! first || ! second) return ScenarioResult::fail ("could not write the source files");
+    const auto takes = pathOf (ctx.session().getSessionDirectory().getChildFile ("takes"));
+    std::error_code error;
+    std::filesystem::create_directories (takes, error);
+    const auto realTakes = std::filesystem::canonical (takes, error);
+    if (error) return ScenarioResult::fail ("could not resolve the session's takes folder");
+    const auto failSyncOf = [&] (const std::string& render)
+    {
+        arm (kFsync, ((realTakes / ("sync-first-" + render)).string() + "*").c_str());
+    };
+    auto& regs = regionsOf (ctx);
+    auto& undo = ctx.engine().getUndoManager();
+    undo.clearUndoHistory();
+
+    regs = { regionOf (*first, 0, 4800, 0), regionOf (*second, 4800, 4800, 0) };
+    undo.beginNewTransaction();
+    failSyncOf ("joined");
+    const bool joined = undo.perform (new JoinRegionsAction (ctx.session(), ctx.engine(), kTrack, { 0, 1 }));
+    const int joinHits = hits();
+    disarm();
+    ctx.expect (joinHits == 1, "the sync fault never reached the joined render");
+    ctx.expect (! joined, "a join whose render failed to sync was accepted");
+    ctx.expect (regs.size() == 2 && regs[0].file == *first && regs[1].file == *second,
+                "a refused join changed the regions");
+    ctx.expect (rendersIn (ctx) == 0, "a refused join left its render in takes/");
+
+    regs = { regionOf (*first, 0, 4800, 0) };
+    undo.beginNewTransaction();
+    failSyncOf ("reversed");
+    const bool reversed = undo.perform (new ReverseRegionAction (ctx.session(), ctx.engine(), kTrack, 0));
+    const int reverseHits = hits();
+    disarm();
+    ctx.expect (reverseHits == 1, "the sync fault never reached the reversed render");
+    ctx.expect (! reversed, "a reverse whose render failed to sync was accepted");
+    ctx.expect (regs.size() == 1 && regs[0].file == *first && ! regs[0].reversedFrom,
+                "a refused reverse changed the region");
+    ctx.expect (rendersIn (ctx) == 0, "a refused reverse left its render in takes/");
+    return ctx.verdict();
+#endif
+}
+
 // An edit over several MIDI regions of one track publishes the track's regions
 // once on perform, undo and redo: the snapshot keeps one retired vector, so a
 // second publish inside an audio block frees the vector that block reads. A
@@ -543,6 +767,9 @@ const ScenarioRegistrar joinSeamRegistrar { Scenario {
 const ScenarioRegistrar joinGapRegistrar { Scenario {
     "region.join_renders_a_gap_as_silence", { "region", "edit" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (joinRendersAGapAsSilence, ctx); } } };
+const ScenarioRegistrar syncFailureRegistrar { Scenario {
+    "region.renders_refuse_a_file_that_fails_to_sync", { "region", "edit", "finalization" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return rendersRefuseAFileThatFailsToSync (ctx); } } };
 const ScenarioRegistrar batchedRegistrar { Scenario {
     "region.batched_edits_publish_and_rebuild_once", { "region", "edit", "undo", "midi" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (batchedEditsPublishAndRebuildOnce, ctx); } } };

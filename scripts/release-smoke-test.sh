@@ -131,10 +131,30 @@ if [[ -f "$ART_DIR/SHA256SUMS" && -f "$ART_DIR/SHA256SUMS.asc" ]]; then
         fi
         # The signature covers the checksum file; this is what ties the artifact
         # in hand to it.
-        if ( cd "$ART_DIR" && sha256sum --ignore-missing --check SHA256SUMS >/dev/null 2>&1 ); then
-            pass "checksum matches the artifact"
+        if expected_hash="$(ARTIFACT_NAME="$(basename "$ARTIFACT")" awk '
+            substr($0, 67) == ENVIRON["ARTIFACT_NAME"] {
+                ++count
+                hash = substr($0, 1, 64)
+                marker = substr($0, 65, 2)
+                if (length(hash) != 64 || hash ~ /[^0-9a-fA-F]/ ||
+                    (marker != "  " && marker != " *")) invalid = 1
+                expected = tolower(hash)
+            }
+            END {
+                if (count != 1 || invalid) exit 1
+                print expected
+            }
+        ' "$ART_DIR/SHA256SUMS")"; then
+            hash_command=(sha256sum)
+            command -v sha256sum >/dev/null 2>&1 || hash_command=(shasum -a 256)
+            if actual_hash="$("${hash_command[@]}" < "$ARTIFACT" | awk '{ print $1 }')" \
+               && [[ "$actual_hash" == "$expected_hash" ]]; then
+                pass "checksum matches the artifact"
+            else
+                fail "the artifact's checksum is not the one SHA256SUMS records"
+            fi
         else
-            fail "the artifact's checksum is not the one SHA256SUMS records"
+            fail "checksum manifest must contain exactly one valid entry for $(basename "$ARTIFACT")"
         fi
     fi
 else

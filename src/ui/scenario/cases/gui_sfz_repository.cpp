@@ -1438,7 +1438,48 @@ std::optional<ScenarioResult> runPauseCancel (GuiHost& host, ScenarioContext& ct
                     "Resume did not publish exactly one complete pack");
     } });
     pushInstalledSelection (*steps, host, ctx, state);
-    pushWorkClick (*steps, host, ctx, state, "remove", LibraryState::Complete);
+    auto removalLoads = std::make_shared<std::array<bool, 3>>();
+    steps->push_back ({ 0, [&ctx, state]
+    {
+        ctx.engine().setAssetRenderActive (true);
+        state->rendering = true;
+    } });
+    pushWorkClick (*steps, host, ctx, state, "remove", LibraryState::Paused);
+    steps->push_back ({ 0, [&ctx, state, removalLoads]
+    {
+        auto& engine = ctx.engine();
+        engine.setAssetRenderActive (false);
+        state->rendering = false;
+        if (! ctx.expect (state->installed && ! state->installed->programs.empty(),
+                          "paused removal lost its selected pack")) return;
+        const auto& pack = *state->installed;
+        const auto locator = pack.locatorFor (pack.programs.front());
+        const auto path = pack.directory / pack.programs.front().relativePath;
+        (*removalLoads)[0] = engine.requestNativeMultisampleLoad (1, path, locator);
+        (*removalLoads)[1] = engine.requestNativeMultisampleLoad (2, path);
+        (*removalLoads)[2] = engine.requestNativeMultisampleLoad (3, path, locator, {}, -1, true);
+        ctx.expect (std::none_of (removalLoads->begin(), removalLoads->end(), [] (bool accepted) { return accepted; }),
+                    "a paused removal accepted a managed, direct-path or restoring instrument load");
+    } });
+    steps->push_back ({ 0, [&ctx, removalLoads]
+    {
+        for (std::size_t i = 0; i < removalLoads->size(); ++i)
+            if ((*removalLoads)[i])
+            {
+                const auto* instance = ctx.engine().getChannelStrip (static_cast<int> (i) + 1)
+                                           .getNativeMultisampleSlot().getInstance();
+                ctx.expect (instance != nullptr && instance->hasLoadedRuntime(),
+                            "the accepted removal regression load did not reach a live runtime");
+            }
+    }, [&ctx] { return ! ctx.engine().hasPendingMultisampleLoads(); },
+       "loads admitted during paused removal did not finish", {}, kSettleBoundMs });
+    pushWorkClick (*steps, host, ctx, state, "resume", LibraryState::Complete);
+    steps->push_back ({ 0, [&ctx, state, removalLoads]
+    {
+        if (std::any_of (removalLoads->begin(), removalLoads->end(), [] (bool accepted) { return accepted; }))
+            ctx.expect (fs::exists (state->installed->directory / "Samples/tone.wav"),
+                        "resuming a stale removal deleted a pack now used by a live instrument");
+    } });
     steps->push_back ({ 0, [&ctx, state]
     {
         const auto installed = ctx.engine().getSfzLibrary().snapshot().installed;
@@ -1606,19 +1647,28 @@ std::optional<ScenarioResult> runPortableRestore (GuiHost& host, ScenarioContext
     const auto directory = ctx.tempDir() / "portable-session";
     const auto sessionJson = directory / "session.json";
     const auto autosave = directory / "session.json.autosave";
-    const auto foreignPath = (ctx.tempDir() / "other-computer" / "Piano.sfz").u8string();
+    struct SavedReference { std::string path, state; };
+    auto saved = std::make_shared<SavedReference>();
     auto steps = std::make_shared<std::vector<Step>>();
     pushStart (*steps, host, ctx, state);
     pushWorkClick (*steps, host, ctx, state, "enabled-download", LibraryState::Complete);
     pushInstalledSelection (*steps, host, ctx, state);
-    steps->push_back ({ 0, [&host, &ctx, state, directory, sessionJson, foreignPath]
+    steps->push_back ({ 0, [&host, &ctx, state, directory, sessionJson, saved]
     {
         if (! ctx.expect (state->installed.has_value(), "portable restore fixture was not installed"))
         { ctx.complete (ctx.verdict()); return; }
         const auto& pack = *state->installed;
         const auto& instrument = pack.instruments.front();
+        // The other computer's copy names its own path inside the saved controls too.
+        const auto otherComputer = ctx.tempDir() / "other-computer" / "pack";
+        std::error_code ec;
+        fs::create_directories (otherComputer.parent_path(), ec);
+        fs::copy (pack.directory, otherComputer, fs::copy_options::recursive, ec);
+        if (! ctx.expect (! ec, "could not copy the pack for the other computer: " + ec.message()))
+        { ctx.complete (ctx.verdict()); return; }
+        const auto foreignFile = otherComputer / instrument.relativePath;
         std::string error;
-        auto primed = NativeMultisampleSlot::prime (pack.directory / instrument.relativePath,
+        auto primed = NativeMultisampleSlot::prime (foreignFile,
             ctx.engine().getCurrentSampleRate(), ctx.engine().getCurrentBlockSize(), error);
         if (! ctx.expect (static_cast<bool> (primed), "could not prime the portable controls: " + error))
         { ctx.complete (ctx.verdict()); return; }
@@ -1628,25 +1678,29 @@ std::optional<ScenarioResult> runPortableRestore (GuiHost& host, ScenarioContext
         std::vector<std::uint8_t> bytes;
         if (! ctx.expect (primed.instance->saveState (bytes), "could not save the portable controls"))
         { ctx.complete (ctx.verdict()); return; }
+        primed = {};
+        fs::remove_all (otherComputer, ec);
+        saved->path = foreignFile.u8string();
+        saved->state = dusk::base64::encode (bytes.data(), bytes.size());
         auto& track = ctx.session().track (kStripIndex);
         track.mode.store (static_cast<int> (Track::Mode::Midi));
-        track.nativeMultisamplePath = foreignPath;
+        track.nativeMultisamplePath = saved->path;
         track.nativeMultisampleLocator = pack.locatorFor (instrument);
-        track.nativeMultisampleStateBase64 = dusk::base64::encode (bytes.data(), bytes.size());
+        track.nativeMultisampleStateBase64 = saved->state;
         host.closeSfzLibrary (kStripIndex);
-        std::error_code ec;
         fs::create_directories (directory, ec);
-        if (! ctx.expect (! ec && SessionSerializer::save (ctx.session(), sessionJson), "could not save the portable session")
+        if (! ctx.expect (! ec && ! fs::exists (foreignFile) && SessionSerializer::save (ctx.session(), sessionJson),
+                          "could not save the portable session")
             || ! ctx.expect (host.openSession (sessionJson), "could not open the portable session"))
             ctx.complete (ctx.verdict());
     } });
-    steps->push_back ({ 0, [&host, &ctx, state, sessionJson, autosave, foreignPath]
+    steps->push_back ({ 0, [&host, &ctx, state, autosave, saved]
     {
         auto& track = ctx.session().track (kStripIndex);
         auto& slot = ctx.engine().getChannelStrip (kStripIndex).getNativeMultisampleSlot();
         auto* instance = slot.getInstance();
         bool clean = ctx.expect (instance && instance->hasLoadedRuntime(), "the portable instrument did not load");
-        clean &= ctx.expect (track.nativeMultisamplePath.toStdString() == foreignPath,
+        clean &= ctx.expect (track.nativeMultisamplePath.toStdString() == saved->path,
                              "portable restore rewrote the saved absolute path");
         const auto& pack = *state->installed;
         clean &= ctx.expect (sameFile (slot.getLoadedSoundfontPath(), pack.directory / pack.instruments.front().relativePath),
@@ -1662,13 +1716,49 @@ std::optional<ScenarioResult> runPortableRestore (GuiHost& host, ScenarioContext
         const bool asked = host.requestQuit();
         clean &= ctx.expect (! asked, "portable restore triggered an unsaved-changes prompt");
         if (asked) host.clickModalButton ("Cancel");
-        if (! clean) { ctx.complete (ctx.verdict()); return; }
-        ctx.expect (host.openSession (sessionJson) && host.modalStackEmpty(), "portable reopen offered recovery");
+        if (! clean) ctx.complete (ctx.verdict());
     }, [&ctx]
     {
         ctx.engine().serviceMultisampleLoads();
         return ! ctx.engine().hasPendingMultisampleLoads();
     }, "portable instrument restoration did not settle" });
+    pushFileMenuSteps (host, ctx, *steps, "Save");
+    steps->push_back ({ 300, [&host, &ctx, state, sessionJson, autosave, saved]
+    {
+        auto written = std::make_unique<Session>();
+        const auto& pack = *state->installed;
+        ctx.expect (host.modalStackEmpty() && SessionSerializer::load (*written, sessionJson)
+            && written->track (kStripIndex).nativeMultisamplePath.toStdString() == saved->path
+            && written->track (kStripIndex).nativeMultisampleStateBase64.toStdString() == saved->state
+            && written->track (kStripIndex).nativeMultisampleLocator == pack.locatorFor (pack.instruments.front()),
+            "Save replaced the portable reference with this computer's file");
+        auto* instance = ctx.engine().getChannelStrip (kStripIndex).getNativeMultisampleSlot().getInstance();
+        if (! ctx.expect (instance != nullptr, "the portable instrument disappeared after Save"))
+        { ctx.complete (ctx.verdict()); return; }
+        instance->getOverrides().masterVolDb.store (-6.0f);
+        host.autosaveTick();
+        ctx.expect (fs::exists (autosave), "a control edit after portable restore was not autosaved");
+        ctx.expect (host.requestQuit(), "a control edit after portable restore did not ask before quitting");
+    } });
+    steps->push_back ({ 300, [&host, &ctx]
+    {
+        ctx.expect (host.clickModalButton ("Cancel"), "could not cancel the control edit's quit prompt");
+    } });
+    steps->push_back ({ 0, [&host, &ctx, autosave]
+    {
+        auto* instance = ctx.engine().getChannelStrip (kStripIndex).getNativeMultisampleSlot().getInstance();
+        if (! ctx.expect (instance != nullptr, "the portable instrument disappeared after the quit prompt"))
+        { ctx.complete (ctx.verdict()); return; }
+        instance->getOverrides().masterVolDb.store (-13.0f);
+        host.autosaveTick();
+        ctx.expect (! fs::exists (autosave), "reverting the control edit kept its recovery file");
+        ctx.expect (! host.requestQuit(), "reverting the control edit still asked before quitting");
+    }, [&host] { return host.modalStackEmpty(); }, "the control edit's quit prompt did not close" });
+    steps->push_back ({ 300, [&host] { if (! host.modalStackEmpty()) host.clickModalButton ("Cancel"); } });
+    steps->push_back ({ 0, [&host, &ctx, sessionJson]
+    {
+        ctx.expect (host.openSession (sessionJson) && host.modalStackEmpty(), "portable reopen offered recovery");
+    }, [&host] { return host.modalStackEmpty(); }, "the reverted edit's quit prompt did not close" });
     steps->push_back ({ 0, [&host, &ctx, autosave]
     {
         ctx.session().track (kStripIndex).strip.faderDb.store (-7.0f);
@@ -1678,7 +1768,11 @@ std::optional<ScenarioResult> runPortableRestore (GuiHost& host, ScenarioContext
         ctx.expect (host.clickModalButton ("Cancel"), "could not cancel the real edit's quit prompt");
         std::error_code ec;
         fs::remove (autosave, ec);
-    }, [&ctx] { return ! ctx.engine().hasPendingMultisampleLoads(); }, "portable reopen did not settle" });
+    }, [&ctx]
+    {
+        ctx.engine().serviceMultisampleLoads();
+        return ! ctx.engine().hasPendingMultisampleLoads();
+    }, "portable reopen did not settle" });
     pushFinish (*steps, host, ctx, state);
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;

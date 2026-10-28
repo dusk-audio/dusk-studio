@@ -369,23 +369,43 @@ private:
     bool frozen() const { return trackIdx < 0 || trackIdx >= Session::kNumTracks || session.track (trackIdx).frozen.load (std::memory_order_relaxed); }
     bool editable() const { const auto* r = region(); return r != nullptr && ! frozen() && ! r->locked; }
 
-    std::array<Box, 15> toolbarBoxes() const
+    std::array<Box, 16> toolbarBoxes() const
     {
-        constexpr float widths[] { 28, 28, 28, 28, 28, 28, 34, 34, 42, 90, 52, 28, 28, 28, 28 };
-        std::array<Box, 15> boxes;
-        float x = 8, y = 10;
+        constexpr float widths[] { 36, 36, 36, 36, 36, 36, 44, 44, 44, 88, 90, 36, 56, 36, 36, 36 };
+        constexpr float gaps[] { 8, 16, 8, 8, 8, 12, 2, 10, 4, 12, 8, 16, 16, 8, 8, 0 };
+        std::array<Box, 16> boxes;
+        float x = 8, y = 6;
         for (std::size_t i = 0; i < boxes.size(); ++i)
         {
-            if (x > 8 && x + widths[i] > width - 8) { x = 8; y += 38; }
-            boxes[i] = { x, y, widths[i], 28 };
-            x += widths[i] + (i == 6 || i == 7 || i == 8 ? 4 : i == 9 || i == 10 ? 8 : 6);
+            if (i == 12 && x + 196 <= static_cast<float> (width - 8)) x = static_cast<float> (width - 204);
+            if (x > 8 && x + widths[i] > static_cast<float> (width - 8)) { x = 8; y += 44; }
+            boxes[i] = { x, y, widths[i], 36 };
+            x += widths[i] + gaps[i];
+        }
+        return boxes;
+    }
+    std::array<Box, 7> statusBoxes() const
+    {
+        constexpr float widths[] { 110, 84, 130, 140, 86, 60, 60 };
+        std::array<Box, 7> boxes;
+        float x = 8, y = 4;
+        for (std::size_t i = 0; i < boxes.size(); ++i)
+        {
+            if (x > 8 && x + widths[i] > static_cast<float> (width - 8)) { x = 8; y += 28; }
+            boxes[i] = { x, y, widths[i], 22 };
+            x += widths[i] + 6;
+        }
+        if (boxes.back().y < 28)
+        {
+            boxes[5].x = static_cast<float> (width - 132);
+            boxes[6].x = static_cast<float> (width - 68);
         }
         return boxes;
     }
     void layout()
     {
-        toolbarHeight = static_cast<int> (toolbarBoxes().back().bottom()) + 10;
-        statusHeight = width < 920 ? 56 : 30;
+        toolbarHeight = static_cast<int> (toolbarBoxes().back().bottom()) + 6;
+        statusHeight = static_cast<int> (statusBoxes().back().bottom()) + 4;
         const float bottom = static_cast<float> (height - statusHeight - kScrollBarH);
         const float top = static_cast<float> (toolbarHeight + kHeaderHeight);
         const float laneRoom = std::max (0.0f, bottom - top - 40.0f);
@@ -470,8 +490,25 @@ private:
         popupRegion = regionIdx;
         popupRevision = trackIdx >= 0 && trackIdx < Session::kNumTracks ? session.track (trackIdx).midiRegions.edits() : 0;
     }
+    void extendForNotes (MidiRegion& r)
+    {
+        auto end = r.lengthInTicks;
+        for (const auto& note : r.notes)
+            end = std::max (end, note.startTick + note.lengthInTicks);
+        if (end <= r.lengthInTicks) return;
+        r.lengthInTicks = end;
+        const auto rate = engine.getTimelineSampleRate();
+        const auto startTick = session.samplesToTicks (r.timelineStart, rate);
+        r.lengthInSamples = session.ticksToSamples (startTick + end, rate) - r.timelineStart;
+    }
     void quantize (std::int64_t ticks, float strength)
-    { changeNotes ("Quantize notes", [&] (MidiRegion& r) { edit.quantizeSelected (r.notes, ticks, strength); }); }
+    {
+        changeNotes ("Quantize notes", [&] (MidiRegion& r)
+        {
+            edit.quantizeSelected (r.notes, ticks, strength);
+            extendForNotes (r);
+        });
+    }
     void setVelocity (int value)
     { changeNotes ("Set velocity", [&] (MidiRegion& r) { edit.setVelocityFor (r.notes, value); }); }
     void humanize (int percent)
@@ -563,7 +600,14 @@ private:
                 return true;
             }
             if (k.key == ImGuiKey_D)
-            { changeNotes ("Duplicate notes", [&] (MidiRegion& r) { edit.duplicateSelectedNotes (r.notes, kMidiTicksPerQuarter); }); return true; }
+            {
+                changeNotes ("Duplicate notes", [&] (MidiRegion& r)
+                {
+                    edit.duplicateSelectedNotes (r.notes, kMidiTicksPerQuarter);
+                    extendForNotes (r);
+                });
+                return true;
+            }
             if (k.key == ImGuiKey_G) { glue(); return true; }
             return false;
         }
@@ -1016,13 +1060,16 @@ private:
             if (y + kNoteHeight < grid.y || y >= grid.bottom()) continue;
             const int pitch = note % 12;
             const bool black = pitch == 1 || pitch == 3 || pitch == 6 || pitch == 8 || pitch == 10;
-            fill (ctx, { 0, y, kKeyboardWidth, kNoteHeight }, black ? 0xff242428 : 0xffe0e0e6);
+            fill (ctx, { 0, y, kKeyboardWidth, kNoteHeight }, 0xffc2c2ca);
+            if (black) fill (ctx, { 0, y, 48, kNoteHeight - 1 }, 0xff242428);
             fill (ctx, { grid.x, y, grid.w, kNoteHeight }, black ? 0xff141418 : 0xff1c1c24);
             if (! isInScale (note)) fill (ctx, { grid.x, y, grid.w, kNoteHeight }, 0xff000000, 0.30f);
-            line (ctx, { 0, y + kNoteHeight }, { static_cast<float> (width), y + kNoteHeight }, note % 12 == 0 ? 0xff55555f : 0xff2a2a32);
+            line (ctx, { 0, y + kNoteHeight }, { kKeyboardWidth, y + kNoteHeight }, 0xff85858f);
+            line (ctx, { grid.x, y + kNoteHeight }, { grid.right(), y + kNoteHeight }, note % 12 == 0 ? 0xff45454f : 0xff2a2a32);
             if (note % 12 == 0) text (ctx, { 44, y, 30, kNoteHeight }, "C" + std::to_string (note / 12 - 1), 0xff404048, 11);
         }
         ctx.dl->PopClipRect();
+        line (ctx, { grid.x, grid.y }, { grid.x, grid.bottom() }, 0xff5a5a64);
         const auto* r = region();
         if (r == nullptr) { text (ctx, grid, "MIDI region unavailable"); return; }
         ctx.dl->PushClipRect (screen ({ grid.x, rulerArea.y }), screen ({ grid.right(), grid.bottom() }), true);
@@ -1046,7 +1093,8 @@ private:
         const auto snap = effectiveSnapTicks();
         if (snap > 0 && pixelsPerTick * static_cast<float> (snap) >= 6)
             for (auto tick = first / snap * snap; tick <= last; tick += snap)
-                line (ctx, { xForTick (tick), grid.y }, { xForTick (tick), grid.bottom() }, 0xff2a2a32);
+                if (tick % ticksPerBar != 0 && tick % beatStep != 0)
+                    line (ctx, { xForTick (tick), grid.y }, { xForTick (tick), grid.bottom() }, 0xff2a2a32);
         if (! barMode)
         {
             const auto sr = engine.getTimelineSampleRate();
@@ -1137,8 +1185,17 @@ private:
             const auto area = cc ? ccArea : velocityArea;
             if (area.h <= 0) continue;
             fill (ctx, area, 0xff121218);
+            fill (ctx, { 0, area.y, kKeyboardWidth, area.h }, 0xff202028);
             fill (ctx, { area.x, area.y - 5, area.w, 5 }, 0xff30303c);
-            text (ctx, { 4, area.y, kKeyboardWidth - 8, 20 }, cc ? "CC " + std::to_string (activeCcController) : "Velocity");
+            line (ctx, { area.x + area.w * 0.5f - 12, area.y - 3 }, { area.x + area.w * 0.5f + 12, area.y - 3 }, 0xff707078);
+            text (ctx, { 4, area.y, 44, 20 }, cc ? "CC " + std::to_string (activeCcController) : "Velocity", 0xffb0b0b8, 11);
+            if (area.h >= 80)
+            {
+                text (ctx, { 50, area.y, 24, 20 }, "127", 0xff909098, 10);
+                text (ctx, { 44, area.y + area.h * 0.5f - 8, 28, 16 }, "64", 0xff909098, 10);
+                line (ctx, { area.x, area.y + area.h * 0.5f }, { area.right(), area.y + area.h * 0.5f }, 0xff24242e);
+            }
+            if (area.h >= 48) text (ctx, { 44, area.bottom() - 16, 28, 16 }, "0", 0xff909098, 10);
             remember (cc ? "cc-strip" : "velocity-strip", area);
             if (r == nullptr) continue;
             ctx.dl->PushClipRect (screen ({ area.x, area.y }), screen ({ area.right(), area.bottom() }), true);
@@ -1176,34 +1233,66 @@ private:
 
     bool button (dw::Context& ctx, const char* id, Box b, const char* label, bool on = false, bool enabled = true)
     {
+        if (b.h > 28) { b.y += (b.h - 28) * 0.5f; b.h = 28; }
         ImGui::BeginDisabled (! enabled);
         dw::ButtonStyle style; style.fontSize = 11;
+        if (std::string (id) == "chase")
+        {
+            style.offFill = argb (0xff222226); style.onFill = argb (0xff406030);
+            style.offText = argb (0xff909094); style.onText = argb (0xffe0e0e0);
+        }
         if (! enabled) { style.offText = argb (kDisabledInk); style.onFill = argb (kDisabledInk); }
         const bool clicked = dw::textButton (ctx, id, screen ({ b.x, b.y }), screen ({ b.right(), b.bottom() }), label, on, style).clicked;
         ImGui::EndDisabled();
         remember (id, b, enabled);
         return enabled && clicked;
     }
-    bool icon (dw::Context& ctx, const char* id, Box b, Glyph glyph, const char* tooltip, bool enabled = true)
+    bool tickBox (dw::Context& ctx, const char* id, Box b, const char* label, bool on, bool enabled = true)
+    {
+        ImGui::BeginDisabled (! enabled);
+        const bool hovered = dw::hitArea (ctx, id, screen ({ b.x, b.y }), screen ({ b.right(), b.bottom() }));
+        const bool clicked = hovered && ImGui::IsItemDeactivated();
+        ImGui::EndDisabled();
+        remember (id, b, enabled);
+        const float y = b.y + (b.h - 14) * 0.5f;
+        const auto ink = argb (0xffd0d0d8, enabled ? 1.0f : 0.4f);
+        ctx.dl->AddRect (screen ({ b.x + 2, y }), screen ({ b.x + 16, y + 14 }), ink, ctx.s (3), 0, ctx.s (1.2f));
+        if (on)
+        {
+            const ImVec2 points[] { screen ({ b.x + 5, y + 7 }), screen ({ b.x + 8, y + 10 }), screen ({ b.x + 13, y + 4 }) };
+            ctx.dl->AddPolyline (points, 3, ink, ImDrawFlags_None, ctx.s (1.8f));
+        }
+        text (ctx, { b.x + 21, b.y, b.w - 21, b.h }, label, enabled ? 0xffd0d0d8 : kDisabledInk);
+        return enabled && clicked;
+    }
+    bool icon (dw::Context& ctx, const char* id, Box b, Glyph glyph, const char* tooltip, bool enabled = true, bool on = false)
     {
         ImGui::BeginDisabled (! enabled);
         dw::hitArea (ctx, id, screen ({ b.x, b.y }), screen ({ b.right(), b.bottom() }));
         const bool click = ImGui::IsItemClicked();
         const bool hovered = ImGui::IsItemHovered();
-        if (hovered) ImGui::SetTooltip ("%s", tooltip);
+        const bool down = hovered && ImGui::IsItemActive();
+        formTooltip (tooltip);
         ImGui::EndDisabled();
         remember (id, b, enabled);
         const auto centre = screen ({ b.x + b.w * 0.5f, b.y + b.h * 0.5f });
-        ctx.dl->AddCircleFilled (centre, ctx.s (13), argb (hovered ? 0xff353544 : 0xff262630));
-        ctx.dl->AddCircle (centre, ctx.s (13), argb (0xff3a3a44));
-        const auto colour = argb (enabled ? 0xffd0d0d0 : kDisabledInk);
+        const auto disc = argb (on ? 0xff305a82 : 0xff262630);
+        ctx.dl->AddCircleFilled (centre, ctx.s (16), enabled && hovered ? dw::brighter (disc, down ? 0.14f : 0.08f) : disc, 32);
+        ctx.dl->AddCircle (centre, ctx.s (16), argb (0xff3a3a44), 32, ctx.s (down ? 2.0f : 1.4f));
+        const auto colour = argb (0xffd0d0d0, enabled ? 1.0f : 0.35f);
         const auto p = [&] (float x, float y) { return ImVec2 (centre.x + ctx.s (x), centre.y + ctx.s (y)); };
         const auto stroke = [&] (float x, float y, float x1, float y1) { ctx.dl->AddLine (p (x, y), p (x1, y1), colour, ctx.s (1.5f)); };
         if (glyph == Glyph::undo || glyph == Glyph::redo)
         {
-            const float sign = glyph == Glyph::undo ? 1.0f : -1.0f;
-            ctx.dl->PathArcTo (p (0, 1), ctx.s (6), -2.8f, 1.5f, 18); ctx.dl->PathStroke (colour, 0, ctx.s (1.5f));
-            stroke (-6 * sign, -6, -6 * sign, 0); stroke (-6 * sign, 0, 0, -1);
+            const float mirror = glyph == Glyph::undo ? -1.0f : 1.0f;
+            for (int i = 0; i <= 24; ++i)
+            {
+                const float a = 3.14159265f * (0.30f + 1.55f * static_cast<float> (i) / 24);
+                ctx.dl->PathLineTo (p (mirror * std::sin (a) * 9, -std::cos (a) * 9));
+            }
+            ctx.dl->PathStroke (colour, 0, ctx.s (1.6f));
+            stroke (mirror * 7.3f, -5.3f, mirror * 3.0f, -5.3f);
+            stroke (mirror * 7.3f, -5.3f, mirror * 7.3f, -9.5f);
         }
         else if (glyph == Glyph::zoomIn || glyph == Glyph::zoomOut)
         {
@@ -1212,12 +1301,38 @@ private:
         }
         else if (glyph == Glyph::zoomFit)
         {
-            for (const int sign : { -1, 1 }) { stroke (-7, 6.0f * sign, 7, 6.0f * sign); stroke (7.0f * sign, -6, 7.0f * sign, 6); }
-            stroke (-3, 0, 3, 0);
+            for (const float sign : { -1.0f, 1.0f })
+            {
+                stroke (8.0f * sign, -5, 8.0f * sign, 5);
+                stroke (8.0f * sign, -5, 4.0f * sign, -5);
+                stroke (8.0f * sign, 5, 4.0f * sign, 5);
+            }
+            ctx.dl->AddCircleFilled (centre, ctx.s (1.5f), colour, 12);
         }
-        else if (glyph == Glyph::split) { stroke (-6, -5, 6, 5); stroke (6, -5, -6, 5); stroke (0, -8, 0, 8); }
-        else if (glyph == Glyph::glue) { stroke (-7, -5, -2, -5); stroke (-2, -5, -2, 5); stroke (2, -5, 2, 5); stroke (2, 5, 7, 5); stroke (-7, 0, 7, 0); }
-        else text (ctx, { b.x + 5, b.y + 3, b.w - 8, b.h - 6 }, glyph == Glyph::cc ? "CC" : glyph == Glyph::quantize ? "Q" : "i", enabled ? 0xffd0d0d0 : kDisabledInk, 12);
+        else if (glyph == Glyph::split)
+        {
+            stroke (0, -8, 0, 8); stroke (-9, 0, -3, 0); stroke (3, 0, 9, 0);
+            stroke (-9, 0, -6, -3); stroke (-9, 0, -6, 3);
+            stroke (9, 0, 6, -3); stroke (9, 0, 6, 3);
+        }
+        else if (glyph == Glyph::glue)
+        {
+            ctx.dl->AddRect (p (-10, -4), p (-1, 4), colour, ctx.s (2), 0, ctx.s (1.5f));
+            ctx.dl->AddRect (p (1, -4), p (10, 4), colour, ctx.s (2), 0, ctx.s (1.5f));
+            stroke (-4, 0, 4, 0);
+        }
+        else if (glyph == Glyph::properties)
+        {
+            ctx.dl->AddCircle (centre, ctx.s (5), colour, 24, ctx.s (1.4f));
+            for (int i = 0; i < 6; ++i)
+            {
+                const float a = 6.2831853f * static_cast<float> (i) / 6;
+                stroke (std::cos (a) * 7, std::sin (a) * 7, std::cos (a) * 10, std::sin (a) * 10);
+            }
+            ctx.dl->AddCircleFilled (centre, ctx.s (1.5f), colour, 12);
+        }
+        else dw::text (ctx, ctx.fonts->band, ctx.s (12), screen ({ b.x, b.y + (b.h - 12) * 0.5f }), ctx.s (b.w), colour,
+                       glyph == Glyph::cc ? "CC" : "Q", dw::Align::centre);
         return enabled && click;
     }
     void drawToolbar (dw::Context& ctx)
@@ -1235,6 +1350,14 @@ private:
         if (button (ctx, "grab", next(), "Grab", session.editMode == EditMode::Grab)) session.editMode = EditMode::Grab;
         if (button (ctx, "draw", next(), "Draw", session.editMode == EditMode::Draw)) session.editMode = EditMode::Draw;
         if (button (ctx, "snap", next(), "Snap", session.midiEditorSnap)) session.midiEditorSnap = ! session.midiEditorSnap;
+        auto gridBox = next();
+        gridBox.y += 4; gridBox.h = 28;
+        int gridIndex = 6;
+        for (int i = 0; i < 7; ++i) if (snapTicks == kGridTicks[i]) gridIndex = i;
+        if (formCombo (ctx, "##piano-grid", screen ({ gridBox.x, gridBox.y }), screen ({ gridBox.right(), gridBox.bottom() }),
+                       kGridNames, 7, gridIndex)) snapTicks = kGridTicks[gridIndex];
+        remember ("snap-resolution", gridBox);
+        formTooltip ("Snap resolution (1-6, 0 for Off)");
         const bool merge = session.midiMergeEnabled.load (std::memory_order_relaxed);
         const bool mergeEnabled = ! engine.getRecordManager().isActive() && ! covered();
         const auto mergeBox = next();
@@ -1242,57 +1365,86 @@ private:
                                                : std::array<int, 2> { -1, -1 };
         if (button (ctx, "midi-merge", mergeBox, "MIDI Merge", merge, mergeEnabled))
             session.midiMergeEnabled.store (! session.midiMergeEnabled.load (std::memory_order_relaxed), std::memory_order_relaxed);
+        formTooltip ("Add recorded MIDI to the existing region. Set before recording.");
+        if (icon (ctx, "toggle-cc", next(), Glyph::cc, "Show / hide CC lane (L cycles controller)", true, ccStripH > 0)) ccStripH = ccStripH > 0 ? 0 : 100;
         if (button (ctx, "chase", next(), "Chase", chase)) chase = ! chase;
-        if (icon (ctx, "toggle-cc", next(), Glyph::cc, "Show / hide CC lane")) ccStripH = ccStripH > 0 ? 0 : 100;
+        formTooltip ("Scroll the view to follow the playhead when it leaves the visible window");
         if (icon (ctx, "zoom-out", next(), Glyph::zoomOut, "Zoom out (-)")) zoomByFactor (1 / 1.15f);
         if (icon (ctx, "zoom-in", next(), Glyph::zoomIn, "Zoom in (=)")) zoomByFactor (1.15f);
         if (icon (ctx, "zoom-fit", next(), Glyph::zoomFit, "Zoom fit")) zoomFit();
+        if (std::abs (boxes[11].y - boxes[12].y) < 1 && boxes[12].x - boxes[11].right() > 140
+            && trackIdx >= 0 && trackIdx < Session::kNumTracks)
+        {
+            const auto title = [&] (Box b, const std::string& value, ImU32 colour)
+            {
+                ctx.dl->PushClipRect (screen ({ b.x, b.y }), screen ({ b.right(), b.bottom() }), true);
+                dw::text (ctx, ctx.fonts->title, ctx.s (12.5f), screen ({ b.x, b.y + (b.h - 12.5f) * 0.5f }),
+                          ctx.s (b.w), colour, value.c_str(), dw::Align::left);
+                ctx.dl->PopClipRect();
+            };
+            const auto& track = session.track (trackIdx);
+            const float x = boxes[11].right() + 16, room = boxes[12].x - x - 16;
+            const float nameWidth = std::min (130.0f, room * 0.45f);
+            const auto name = track.nameUtf8();
+            title ({ x, boxes[11].y, nameWidth, 36 }, name == std::to_string (trackIdx + 1) ? "Track " + name : name,
+                   dw::brighter (argb (track.colourArgb()), 0.3f));
+            if (const auto* r = region())
+                title ({ x + nameWidth + 8, boxes[11].y, room - nameWidth - 8, 36 },
+                       r->label.isEmpty() ? "MIDI region" : r->label.toStdString(), argb (0xffd0d0d8));
+        }
+        line (ctx, { 0, static_cast<float> (toolbarHeight - 1) }, { static_cast<float> (width), static_cast<float> (toolbarHeight - 1) }, 0xff5a5a64);
     }
 
     void drawStatus (dw::Context& ctx)
     {
         const float top = static_cast<float> (height - statusHeight);
+        fill (ctx, { 0, top, static_cast<float> (width), static_cast<float> (statusHeight) }, 0xff181820);
+        line (ctx, { 0, top }, { static_cast<float> (width), top }, 0xff5a5a64);
+        auto boxes = statusBoxes();
+        for (auto& box : boxes) box.y += top;
+        const auto readout = [&] (Box b, const std::string& value)
+        {
+            if (b.w <= 0) return;
+            ctx.dl->AddRect (screen ({ b.x, b.y }), screen ({ b.right(), b.bottom() }), argb (0xff3a3a44));
+            text (ctx, { b.x + 4, b.y, b.w - 8, b.h }, value, 0xffd0d0d8);
+        };
         const auto* r = region();
         const auto sr = engine.getTimelineSampleRate();
         const auto position = r != nullptr ? session.ticksToSamples (session.samplesToTicks (r->timelineStart, sr) + editCursorTick, sr) : 0;
         const auto mode = static_cast<TimeDisplayMode> (session.timeDisplayMode.load (std::memory_order_relaxed));
-        text (ctx, { 8, top, 108, 28 }, "pos " + formatSamplePosition (position, sr, session.tempoMap,
+        readout (boxes[0], "pos " + formatSamplePosition (position, sr, session.tempoMap,
             session.tempoBpm.load (std::memory_order_relaxed), session.beatsPerBar.load (std::memory_order_relaxed), mode));
         int velocity = -1;
         if (r != nullptr && ! edit.selectedNotes.empty() && edit.selectedNotes.front() < static_cast<int> (r->notes.size()))
             velocity = r->notes[static_cast<std::size_t> (edit.selectedNotes.front())].velocity;
-        text (ctx, { 120, top, 64, 28 }, velocity < 0 ? "Vel: --" : "Vel: " + std::to_string (velocity));
-        const float y = statusHeight > 30 ? top + 28 : top;
-        float x = statusHeight > 30 ? 8.0f : 190.0f;
-        const auto combo = [&] (const char* id, float w, const char* const* labels, int count, int& selected)
+        readout (boxes[1], velocity < 0 ? "Vel: --" : "Vel: " + std::to_string (velocity));
+        const auto combo = [&] (const char* id, Box b, const char* label, const char* const* labels, int count, int& selected)
         {
-            const Box b { x, y + 3, w, 22 }; x += w + 6;
-            const bool changed = formCombo (ctx, id, screen ({ b.x, b.y }), screen ({ b.right(), b.bottom() }), labels, count, selected);
+            text (ctx, { b.x, b.y, 44, b.h }, label);
+            b.x += 44; b.w -= 44;
+            const auto hiddenId = std::string ("##piano-") + id;
+            const bool changed = formCombo (ctx, hiddenId.c_str(), screen ({ b.x, b.y }), screen ({ b.right(), b.bottom() }), labels, count, selected);
             remember (id, b); return changed;
         };
-        int gridIndex = 6;
-        for (int i = 0; i < 7; ++i) if (snapTicks == kGridTicks[i]) gridIndex = i;
-        if (combo ("grid", 72, kGridNames, 7, gridIndex)) snapTicks = kGridTicks[gridIndex];
         constexpr const char* entries[] { "Grid", "Free", "Triplet", "Dotted" };
         constexpr const char* colours[] { "Pitch", "Velocity", "Channel" };
-        combo ("notes", 82, entries, 4, noteEntryMode);
-        combo ("color", 88, colours, 3, colorMode);
-        if (button (ctx, "key-snap", { x, y + 3, 78, 22 }, "Key snap", keySnap)) { keySnap = ! keySnap; session.pianoRollKeySnap = keySnap; }
-        x += 84;
-        if (button (ctx, "mute", { x, y + 3, 44, 22 }, "Mute", r != nullptr && r->muted, r != nullptr && ! frozen()))
+        combo ("notes", boxes[2], "Notes", entries, 4, noteEntryMode);
+        formTooltip ("Note-entry length: grid, free, triplet or dotted");
+        combo ("color", boxes[3], "Colour", colours, 3, colorMode);
+        formTooltip ("Note colours: pitch, velocity or MIDI channel (C)");
+        if (tickBox (ctx, "key-snap", boxes[4], "Key snap", keySnap)) { keySnap = ! keySnap; session.pianoRollKeySnap = keySnap; }
+        if (tickBox (ctx, "mute", boxes[5], "Mute", r != nullptr && r->muted, r != nullptr && ! frozen()))
             changeRegion (r->muted ? "Unmute MIDI region" : "Mute MIDI region", [] (MidiRegion& a) { a.muted = ! a.muted; });
-        x += 50;
         r = region();
-        if (button (ctx, "lock", { x, y + 3, 44, 22 }, "Lock", r != nullptr && r->locked, r != nullptr && ! frozen()))
+        if (tickBox (ctx, "lock", boxes[6], "Lock", r != nullptr && r->locked, r != nullptr && ! frozen()))
             changeRegion (r->locked ? "Unlock MIDI region" : "Lock MIDI region", [] (MidiRegion& a) { a.locked = ! a.locked; });
-        const float captionX = statusHeight > 30 ? 190.0f : x + 54;
-        if (trackIdx >= 0 && trackIdx < Session::kNumTracks)
+        r = region();
+        if (statusHeight == 30 && r != nullptr)
         {
-            const auto& track = session.track (trackIdx);
-            const auto name = track.name.toStdString();
-            const auto caption = name == std::to_string (trackIdx + 1) ? "Track " + name : name;
-            const int channel = region() != nullptr && ! region()->notes.empty() ? region()->notes.front().channel : 1;
-            text (ctx, { captionX, top, std::max (0.0f, width - captionX - 8), 28 }, caption + "  -  ch " + std::to_string (channel), track.colour.getARGB());
+            const float x = boxes[4].right() + 10, room = boxes[5].x - x - 10;
+            if (room >= 100)
+                readout ({ x, top + 4, room, 22 }, std::to_string (r->notes.size()) + " notes  -  ch "
+                         + std::to_string (r->notes.empty() ? 1 : r->notes.front().channel));
         }
     }
     void drawScroll (dw::Context& ctx)
@@ -1301,11 +1453,11 @@ private:
         const double regionPixels = r != nullptr ? static_cast<double> (r->lengthInTicks) * pixelsPerTick : 0;
         const double total = std::max (regionPixels, static_cast<double> (scrollX) + grid.w);
         const Box bar { kKeyboardWidth, ccArea.bottom(), grid.w, kScrollBarH };
-        fill (ctx, bar, 0xff101018);
+        fill (ctx, bar, 0xff15151b);
         const float thumbWidth = std::clamp (static_cast<float> (grid.w * grid.w / std::max (1.0, total)), 20.0f, std::max (20.0f, bar.w));
         const double maxScroll = std::max (0.0, total - grid.w);
         const float thumbX = bar.x + static_cast<float> (maxScroll > 0 ? scrollX / maxScroll : 0) * (bar.w - thumbWidth);
-        fill (ctx, { thumbX, bar.y + 2, thumbWidth, bar.h - 4 }, 0xff606070);
+        ctx.dl->AddRectFilled (screen ({ thumbX, bar.y + 2 }), screen ({ thumbX + thumbWidth, bar.bottom() - 2 }), argb (0xff4a4a54), ctx.s (4));
         ImGui::SetCursorScreenPos (screen ({ bar.x, bar.y }));
         ImGui::InvisibleButton ("##piano-scroll", { bar.w * scaleFactor, bar.h * scaleFactor });
         if (ImGui::IsItemActive() && ImGui::IsMousePosValid())
@@ -1361,6 +1513,9 @@ private:
     }
     void drawPopups (dw::Context& ctx)
     {
+        ImGui::PushFont (ctx.fonts->valueLarge != nullptr ? ctx.fonts->valueLarge : ctx.fonts->band);
+        ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2 (ctx.s (10.0f), ctx.s (8.0f)));
+        ImGui::PushStyleVar (ImGuiStyleVar_ItemSpacing, ImVec2 (ctx.s (10.0f), ctx.s (8.0f)));
         if (popupRequested != Popup::none)
         {
             ImGui::OpenPopup (popupId (popupRequested));
@@ -1368,6 +1523,12 @@ private:
         }
         for (const auto kind : { Popup::quantize, Popup::scale, Popup::velocity, Popup::note, Popup::region, Popup::rename })
         {
+            if (kind == Popup::region)
+            {
+                ImGui::SetNextWindowPos (screen ({ toolbarBoxes()[5].x, static_cast<float> (toolbarHeight + 4) }), ImGuiCond_Appearing);
+                ImGui::SetNextWindowSizeConstraints ({ ctx.s (260.0f), 0.0f },
+                                                     { std::numeric_limits<float>::max(), std::numeric_limits<float>::max() });
+            }
             if (! ImGui::BeginPopup (popupId (kind))) continue;
             if (cancelPopups || regionIdx != popupRegion || trackIdx < 0 || trackIdx >= Session::kNumTracks
                 || session.track (trackIdx).midiRegions.edits() != popupRevision)
@@ -1454,12 +1615,15 @@ private:
             ImGui::EndPopup();
         }
         cancelPopups = false;
+        ImGui::PopStyleVar (2);
+        ImGui::PopFont();
     }
     void drawRegionMenu()
     {
         const auto* r = region();
         if (r == nullptr) return;
-        ImGui::Text ("Track %d  MIDI region %d", trackIdx + 1, regionIdx + 1);
+        ImGui::TextDisabled ("Track %d  MIDI region %d", trackIdx + 1, regionIdx + 1);
+        ImGui::Separator();
         if (menu (r->label.isEmpty() ? "Add label..." : "Rename label...", "region:rename", ! frozen()))
         {
             const auto label = r->label.toStdString();
@@ -1468,12 +1632,14 @@ private:
             renameFocus = true;
             showPopup (Popup::rename);
         }
+        ImGui::Separator();
         if (menu (r->muted ? "Unmute region" : "Mute region", "region:mute", ! frozen()))
             changeRegion (r->muted ? "Unmute MIDI region" : "Mute MIDI region", [] (MidiRegion& a) { a.muted = ! a.muted; });
         r = region();
         if (r == nullptr) return;
         if (menu (r->locked ? "Unlock region" : "Lock region", "region:lock", ! frozen()))
             changeRegion (r->locked ? "Unlock MIDI region" : "Lock MIDI region", [] (MidiRegion& a) { a.locked = ! a.locked; });
+        ImGui::Separator();
         if (beginMenu ("Color", ! frozen()))
         {
             for (const auto& colour : kPalette)
@@ -1481,6 +1647,7 @@ private:
                     changeRegion ("Set MIDI region colour", [&] (MidiRegion& a) { a.customColour = decltype (a.customColour) (colour.argb); });
             ImGui::EndMenu();
         }
+        ImGui::Separator();
         if (menu ("Delete region", "region:delete", editable()))
         {
             auto& undo = engine.getUndoManager(); undo.beginNewTransaction ("Delete MIDI region");
@@ -1488,9 +1655,12 @@ private:
             dismissRequested = true;
         }
         if (const auto* current = region())
+        {
+            ImGui::Separator();
             ImGui::TextDisabled ("%zu notes  -  %lld bars  -  ch %d", current->notes.size(),
                 static_cast<long long> (current->lengthInTicks / (kMidiTicksPerQuarter * std::max (1, session.beatsPerBar.load (std::memory_order_relaxed)))),
                 current->notes.empty() ? 1 : current->notes.front().channel);
+        }
     }
 };
 

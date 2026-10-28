@@ -5,6 +5,7 @@
 
 #include "foundation/WindowedSincInterpolator.h"
 
+#include <algorithm>
 #include <cmath>
 #include <vector>
 
@@ -134,4 +135,46 @@ TEST_CASE ("dusk::audio::WindowedSincInterpolator delays by its base latency",
     for (int i = 0; i < kCount; ++i)
         if (i != latency)
             REQUIRE (std::abs (out[(size_t) i]) < 0.02f);
+}
+
+TEST_CASE ("WindowedSinc anti-alias preparation preserves streaming and reset boundaries",
+           "[foundation][audio][antialias]")
+{
+    constexpr int count = 4096;
+    for (const double ratio : { 0.5, 44100.0 / 48000.0, 1.0, 2.0, 96000.0 / 44100.0,
+                                192000.0 / 44100.0 })
+    {
+        CAPTURE (ratio);
+        const auto source = makeSource ((int) std::ceil (count * ratio) + 16);
+        dusk::audio::WindowedSincInterpolator whole, chunked;
+        REQUIRE (whole.prepareAntiAliasing (ratio));
+        REQUIRE (chunked.prepareAntiAliasing (ratio));
+        std::vector<float> reference (count), output (count);
+        const int consumed = whole.process (ratio, source.data(), reference.data(), count);
+        int read = 0, written = 0;
+        const int grains[] { 1, 17, 257, 64, 1033 };
+        int grain = 0;
+        while (written < count)
+        {
+            const int frames = std::min (grains[grain++ % 5], count - written);
+            read += chunked.process (ratio, source.data() + read, output.data() + written, frames);
+            written += frames;
+        }
+        REQUIRE (read == consumed);
+        for (int n = 0; n < count; ++n)
+            REQUIRE_THAT (output[(size_t) n], WithinAbs (reference[(size_t) n], 1.0e-6f));
+
+        chunked.reset();
+        REQUIRE (chunked.process (ratio, source.data(), output.data(), count) == consumed);
+        for (int n = 0; n < count; ++n)
+            REQUIRE_THAT (output[(size_t) n], WithinAbs (reference[(size_t) n], 1.0e-6f));
+
+        if (ratio <= 1.0)
+        {
+            juce::WindowedSincInterpolator legacy;
+            REQUIRE (legacy.process (ratio, source.data(), output.data(), count) == consumed);
+            for (int n = 0; n < count; ++n)
+                REQUIRE_THAT (output[(size_t) n], WithinAbs (reference[(size_t) n], 1.0e-6f));
+        }
+    }
 }

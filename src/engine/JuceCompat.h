@@ -40,6 +40,22 @@ inline void addDefaultFormats (juce::AudioPluginFormatManager& fm)
         }
 }
 
+// JUCE's VST3 and LV2 hosts cache a host-side parameter change and write it into
+// the plug-in only inside the next process call, so state read before that call
+// lacks it. Its AudioUnit host sets the parameter on the unit at once.
+inline bool defersParameterChangesToProcess (const std::string& formatName)
+{
+    return formatName == "VST3" || formatName == "LV2";
+}
+
+// JUCE's VST3 host reports every restartComponent as a program change, whatever
+// its flags: a latency re-announced from setActive as much as the restart that
+// is a plug-in's only report of an edit made in its own editor.
+inline bool reportsRestartsAsProgramChanges (const std::string& formatName)
+{
+    return formatName == "VST3";
+}
+
 // The folders a format's own search may walk. Custom folders stay out of the
 // VST3 search: JUCE's walk follows directory links with no record of where it
 // has been and never sees a cancel request. The native VST3 scan, whose rows

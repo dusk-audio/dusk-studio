@@ -360,8 +360,8 @@ Click playClick (ScenarioContext& ctx, std::int64_t through)
 }
 
 // FREEZE renders the track and plays the render with the track's DSP out of
-// the way, at every oversampling factor: the frozen track is heard where it was
-// heard live, and turning an EQ band up does not touch it.
+// the way, at every oversampling factor and both render qualities: the frozen
+// track is heard where it was heard live, and turning an EQ band up does not touch it.
 std::optional<ScenarioResult> freezeRendersAndBypasses (ScenarioContext& ctx)
 {
     static constexpr std::int64_t kStart = 24000;
@@ -382,16 +382,24 @@ std::optional<ScenarioResult> freezeRendersAndBypasses (ScenarioContext& ctx)
     if (! placeClick (ctx, kStart, kClick, kLength))
         return ScenarioResult::fail ("could not write the source take");
 
+    session.oversamplingFactor.store (4);
+    engine.prepareForSelfTest (kRate, kFrames);
+    const int highLatency = engine.getChannelStrip (kTrack).getOversamplingLatencySamples();
+
     struct Pass
     {
         int factor;
+        OfflineRenderQuality quality;
+        int liveLatency = 0;
         std::int64_t live = -1;
     };
-    auto passes = std::make_shared<std::vector<Pass>> (std::vector<Pass> { { 1 }, { 2 }, { 4 } });
+    auto passes = std::make_shared<std::vector<Pass>>();
+    for (const auto quality : { OfflineRenderQuality::High, OfflineRenderQuality::MatchPlayback })
+        for (const int factor : { 1, 2, 4 }) passes->push_back ({ factor, quality });
     auto next = std::make_shared<std::function<void (std::size_t)>>();
     std::weak_ptr<std::function<void (std::size_t)>> weakNext = next;
 
-    *next = [&ctx, &engine, &session, &strip, passes, weakNext] (std::size_t index)
+    *next = [&ctx, &engine, &session, &strip, passes, weakNext, highLatency] (std::size_t index)
     {
         if (index >= passes->size())
         {
@@ -402,6 +410,9 @@ std::optional<ScenarioResult> freezeRendersAndBypasses (ScenarioContext& ctx)
         engine.unfreezeTrack (kTrack);
         session.oversamplingFactor.store (pass.factor);
         engine.prepareForSelfTest (kRate, kFrames);
+        pass.liveLatency = engine.getChannelStrip (kTrack).getOversamplingLatencySamples();
+        const int expectedRenderLatency = pass.quality == OfflineRenderQuality::MatchPlayback
+                                             ? pass.liveLatency : highLatency;
         const auto live = playClick (ctx, kStart + kLength);
         pass.live = live.at;
         if (! ctx.expect (pass.live >= 0, std::to_string (pass.factor) + "x: the live track was silent"))
@@ -427,10 +438,16 @@ std::optional<ScenarioResult> freezeRendersAndBypasses (ScenarioContext& ctx)
             ctx.complete (ctx.verdict());
             return;
         }
-        auto bounce = std::make_shared<BounceEngine> (engine, session);
+        auto bounce = std::make_shared<BounceEngine> (engine, session, pass.quality);
         ctx.cleanup ([bounce] { bounce->cancel(); });
         auto finished = std::make_shared<std::atomic<bool>> (false);
         auto ok = std::make_shared<std::atomic<bool>> (false);
+        auto renderLatency = std::make_shared<std::atomic<int>> (-1);
+        bounce->onProgressUpdated = [&engine, renderLatency] (float)
+        {
+            renderLatency->store (engine.getChannelStrip (kTrack).getOversamplingLatencySamples(),
+                                  std::memory_order_relaxed);
+        };
         bounce->onFinished = [finished, ok] (bool success, std::string)
         {
             ok->store (success);
@@ -447,7 +464,8 @@ std::optional<ScenarioResult> freezeRendersAndBypasses (ScenarioContext& ctx)
         ctx.waitUntil ([finished, bounce] { return finished->load (std::memory_order_acquire)
                                                    && ! bounce->isRendering(); },
                        kRenderTimeoutMs,
-                       [&ctx, &engine, &session, &strip, passes, index, out, length, ok, self]
+                       [&ctx, &engine, &session, &strip, passes, index, out, length, ok, self,
+                        renderLatency, expectedRenderLatency]
                        {
                            auto& done = (*passes)[index];
                            if (! ctx.expect (ok->load(), std::to_string (done.factor) + "x: the freeze render failed"))
@@ -455,10 +473,19 @@ std::optional<ScenarioResult> freezeRendersAndBypasses (ScenarioContext& ctx)
                                ctx.complete (ctx.verdict());
                                return;
                            }
+                           const auto qualityName = done.quality == OfflineRenderQuality::MatchPlayback
+                                                        ? "match playback" : "high quality";
+                           const auto label = std::string (qualityName) + ", live " + std::to_string (done.factor) + "x: ";
+                           ctx.expect (renderLatency->load (std::memory_order_relaxed) == expectedRenderLatency,
+                                       label + "the render did not use the selected oversampling quality");
+                           ctx.expect (session.oversamplingFactor.load() == done.factor,
+                                       label + "the render changed the session's live oversampling setting");
                            engine.commitFreeze (kTrack, out, length);
                            // A render hands the engine back to the device, whose
                            // restart re-prepares it; this world has no device.
                            engine.prepareForSelfTest (kRate, kFrames);
+                           ctx.expect (engine.getChannelStrip (kTrack).getOversamplingLatencySamples() == done.liveLatency,
+                                       label + "the render's oversampling override was not cleared");
                            ctx.expect (session.track (kTrack).frozen.load(),
                                        std::to_string (done.factor) + "x: the track is not frozen");
                            ctx.expect (std::filesystem::exists (pathOf (out)),
@@ -469,7 +496,6 @@ std::optional<ScenarioResult> freezeRendersAndBypasses (ScenarioContext& ctx)
                            const auto boosted = playClick (ctx, kStart + kLength);
                            strip.eqEnabled.store (false);
                            strip.hfGainDb.store (0.0f);
-                           const auto label = std::to_string (done.factor) + "x: ";
                            ctx.note (label + "live click at " + std::to_string (done.live) + ", frozen at "
                                      + std::to_string (frozen.at) + " peak " + std::to_string (frozen.peak)
                                      + ", with HF +15 dB peak " + std::to_string (boosted.peak));

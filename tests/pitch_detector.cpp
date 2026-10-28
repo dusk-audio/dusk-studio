@@ -4,6 +4,7 @@
 #include "dsp/PitchDetector.h"
 
 #include <cmath>
+#include <cstdint>
 #include <vector>
 
 using Catch::Matchers::WithinAbs;
@@ -21,7 +22,7 @@ constexpr double kPi = 3.14159265358979323846;
 float detectTone (double f0, double sr, float amp, int blocks, int blockSize = 512)
 {
     PitchDetector d;
-    d.prepare (sr);   // default 2048-sample history, as the engine uses
+    d.prepare (sr);
     std::vector<float> buf ((size_t) blockSize);
     constexpr double harm[4] = { 1.0, 0.5, 0.33, 0.25 };
     double norm = 0.0; for (double h : harm) norm += h;
@@ -125,5 +126,133 @@ TEST_CASE ("PitchDetector: accurate across the 50-1500 Hz range", "[pitch]")
         {
             REQUIRE_THAT (detectTone (f, sr, 0.5f, 16), WithinRel ((float) f, 0.02f));
         }
+    }
+}
+
+TEST_CASE ("PitchDetector: guitar range survives device sample-rate changes", "[pitch]")
+{
+    for (double sr : { 44100.0, 48000.0, 88200.0, 96000.0, 176400.0, 192000.0, 384000.0 })
+    {
+        for (double frequency : { 50.0, 82.41, 146.83, 329.63, 659.26, 1500.0 })
+        {
+            DYNAMIC_SECTION ("rate " << sr << ", frequency " << frequency)
+            {
+                const int blocks = static_cast<int> (std::ceil (sr * 0.26 / 256.0));
+                REQUIRE_THAT (detectTone (frequency, sr, 0.5f, blocks, 256),
+                              WithinRel (static_cast<float> (frequency), 0.02f));
+            }
+        }
+    }
+}
+
+TEST_CASE ("PitchDetector: small blocks keep low guitar notes visible at every device rate", "[pitch]")
+{
+    constexpr int blockSize = 64;
+    for (double sr : { 44100.0, 48000.0, 88200.0, 96000.0, 176400.0, 192000.0, 384000.0 })
+    {
+        DYNAMIC_SECTION ("rate " << sr)
+        {
+            PitchDetector detector;
+            detector.prepare (sr);
+            std::vector<float> block (blockSize);
+            const int warmupBlocks = static_cast<int> (std::ceil (sr * 0.2 / blockSize));
+            std::int64_t frame = 0;
+            for (int b = 0; b < warmupBlocks + 80; ++b)
+            {
+                for (float& sample : block)
+                    sample = 0.5f * static_cast<float> (std::sin (2.0 * kPi * 82.41 * frame++ / sr));
+                detector.pushBlock (block.data(), blockSize);
+                if (b >= warmupBlocks)
+                    REQUIRE_THAT (detector.getLatestHz(), WithinRel (82.41f, 0.02f));
+            }
+
+            std::fill (block.begin(), block.end(), 0.0f);
+            detector.pushBlock (block.data(), blockSize);
+            REQUIRE_THAT (detector.getLatestHz(), WithinAbs (0.0f, 1.0e-6f));
+            REQUIRE_THAT (detector.getLatestLevel(), WithinAbs (0.0f, 1.0e-6f));
+        }
+    }
+}
+
+TEST_CASE ("PitchDetector: audible unvoiced input remains unpitched at every device rate", "[pitch]")
+{
+    for (double sr : { 44100.0, 48000.0, 88200.0, 96000.0, 176400.0, 192000.0, 384000.0 })
+    {
+        DYNAMIC_SECTION ("rate " << sr)
+        {
+            PitchDetector detector;
+            detector.prepare (sr);
+            std::vector<float> block (256);
+            std::uint32_t random = 0x6a09e667u;
+            const int blocks = static_cast<int> (std::ceil (sr * 0.25 / block.size()));
+            for (int b = 0; b < blocks; ++b)
+            {
+                for (float& sample : block)
+                {
+                    random ^= random << 13;
+                    random ^= random >> 17;
+                    random ^= random << 5;
+                    sample = static_cast<float> (static_cast<double> (random) / 4294967295.0 - 0.5);
+                }
+                detector.pushBlock (block.data(), static_cast<int> (block.size()));
+            }
+            REQUIRE (detector.getLatestLevel() > PitchDetector::kSilenceThreshold);
+            REQUIRE_THAT (detector.getLatestHz(), WithinAbs (0.0f, 1.0e-6f));
+        }
+    }
+}
+
+TEST_CASE ("PitchDetector: high-rate filtering excludes ultrasonic aliases", "[pitch]")
+{
+    for (double sr : { 88200.0, 96000.0, 176400.0, 192000.0, 384000.0 })
+    {
+        DYNAMIC_SECTION ("rate " << sr)
+        {
+            const double frequency = sr * 0.25 - 1000.0;
+            const int blocks = static_cast<int> (std::ceil (sr * 0.25 / 256.0));
+            PitchDetector detector;
+            detector.prepare (sr);
+            std::vector<float> block (256);
+            std::int64_t frame = 0;
+            for (int b = 0; b < blocks; ++b)
+            {
+                for (float& sample : block)
+                    sample = 0.5f * static_cast<float> (std::sin (2.0 * kPi * frequency * frame++ / sr));
+                detector.pushBlock (block.data(), static_cast<int> (block.size()));
+            }
+            REQUIRE (detector.getLatestLevel() > PitchDetector::kSilenceThreshold);
+            REQUIRE_THAT (detector.getLatestHz(), WithinAbs (0.0f, 1.0e-6f));
+        }
+    }
+}
+
+TEST_CASE ("PitchDetector: rate changes reset filtering without coupling callback partitions", "[pitch]")
+{
+    PitchDetector detector;
+    for (double sr : { 192000.0, 48000.0, 96000.0, 44100.0, 384000.0 })
+    {
+        INFO ("rate " << sr);
+        detector.prepare (sr);
+        REQUIRE_THAT (detector.getLatestHz(), WithinAbs (0.0f, 1.0e-6f));
+        REQUIRE_THAT (detector.getLatestLevel(), WithinAbs (0.0f, 1.0e-6f));
+        std::vector<float> tone (static_cast<std::size_t> (sr * 0.25));
+        for (std::size_t n = 0; n < tone.size(); ++n)
+            tone[n] = 0.5f * static_cast<float> (std::sin (2.0 * kPi * 82.41 * n / sr));
+
+        constexpr int partitions[] = { 1, 7, 63, 257 };
+        std::size_t cursor = 0;
+        std::size_t partition = 0;
+        while (cursor < tone.size())
+        {
+            const auto count = std::min (static_cast<std::size_t> (partitions[partition++ % 4]),
+                                         tone.size() - cursor);
+            detector.pushBlock (tone.data() + cursor, static_cast<int> (count));
+            cursor += count;
+        }
+        REQUIRE_THAT (detector.getLatestHz(), WithinRel (82.41f, 0.02f));
+
+        const float pitched = detector.getLatestHz();
+        detector.pushBlock (tone.data(), 0);
+        REQUIRE_THAT (detector.getLatestHz(), WithinAbs (pitched, 1.0e-6f));
     }
 }

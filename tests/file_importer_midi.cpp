@@ -34,10 +34,13 @@ std::vector<std::uint8_t> singleNoteFile (int ppq, int startTick, int lengthTick
     ByteWriter track;
     auto delta = [&track] (int v)
     {
-        // Every fixture tick here fits a two-byte variable-length value.
-        if (v < 0x80) { track.u8 (v); return; }
-        track.u8 (0x80 | ((v >> 7) & 0x7f));
-        track.u8 (v & 0x7f);
+        std::uint8_t encoded[4] {};
+        int first = 3;
+        encoded[first] = (std::uint8_t) (v & 0x7f);
+        while ((v >>= 7) != 0)
+            encoded[--first] = (std::uint8_t) ((v & 0x7f) | 0x80);
+        for (; first < 4; ++first)
+            track.u8 (encoded[first]);
     };
 
     delta (startTick);              track.u8 (0x90); track.u8 (60); track.u8 (100);
@@ -242,4 +245,41 @@ TEST_CASE ("importMidi preserves channel controls and two-byte running status", 
     REQUIRE (result.region.notes.size() == 1);
     const MidiNote expectedNote { 1, 60, 99, 1320, 120 };
     CHECK (result.region.notes.front() == expectedNote);
+}
+
+TEST_CASE ("importMidi interprets only supported SMPTE time divisions", "[midi][import][smpte]")
+{
+    fileimport::MidiImportRequest request;
+    request.sessionSampleRate = 48000.0;
+    request.sessionBpm = 120.0f;
+    request.timelineStart = 1234;
+
+    SECTION ("drop-frame ticks preserve elapsed time beyond a frame-count minute")
+    {
+        const ScopedMidiFile source (singleNoteFile (0xe350, 2400000, 2400000, 7200000));
+        request.source = source.file;
+        const auto result = fileimport::importMidi (request);
+        REQUIRE (result.ok);
+        CHECK (result.region.timelineStart == request.timelineStart);
+        REQUIRE (result.region.notes.size() == 1);
+        const auto ticksPer1001Seconds = 2002 * kMidiTicksPerQuarter;
+        CHECK (result.region.notes.front().startTick == ticksPer1001Seconds);
+        CHECK (result.region.notes.front().lengthInTicks == ticksPer1001Seconds);
+        CHECK (result.region.lengthInTicks == 3 * ticksPer1001Seconds);
+        CHECK (result.region.lengthInSamples == 3003 * 48000);
+    }
+
+    SECTION ("unsupported frame codes and zero subframes cannot be imported")
+    {
+        for (const auto division : { 0xe450, 0xe150, 0xff50, 0x8050,
+                                     0xe800, 0xe700, 0xe300, 0xe200 })
+        {
+            CAPTURE (division);
+            const ScopedMidiFile source (singleNoteFile (division, 0, 80, 160));
+            request.source = source.file;
+            const auto result = fileimport::importMidi (request);
+            CHECK_FALSE (result.ok);
+            CHECK (result.errorMessage == "Unsupported MIDI time format");
+        }
+    }
 }

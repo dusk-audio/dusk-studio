@@ -79,7 +79,7 @@ void keepStage (GuiHost& host, ScenarioContext& ctx);
 void drainModals (GuiHost& host);
 
 // Reopening a session that a case saved into the directory it also made the
-// session directory: the 30 s autosave heartbeat writes session.json.autosave
+// session directory: the configured autosave heartbeat writes session.json.autosave
 // beside it while the case runs, and an autosave newer than the file being
 // opened raises the recovery prompt. Take the saved file - it is the state the
 // case wrote and means to go back to. A no-op when no prompt came up.

@@ -239,6 +239,99 @@ TEST_CASE ("SFZ library upgrades retain packs in the former default folder", "[s
     else CHECK (dusk::fs::loadFileAsString (libraryLocationsFile()) == configuration);
 }
 
+TEST_CASE ("SFZ relocation retains source files changed after they were copied", "[sfz][storage]")
+{
+    LibraryTree tree;
+    const auto configBefore = dusk::fs::loadFileAsString (tree.configuration);
+    const auto program = tree.pack.directory / fs::u8path (u8"Programs/Étude.sfz");
+    const auto programBefore = dusk::fs::loadFileAsString (program);
+    bool addFile = false, afterConfiguration = false;
+    SECTION ("an equal-length rewrite is preserved") {}
+    SECTION ("a new file is preserved") { addFile = true; }
+    SECTION ("a change after the new settings are published keeps both copies") { afterConfiguration = true; }
+    bool changed = false;
+    const auto mutate = [&]
+    {
+        changed = true;
+        REQUIRE (dusk::fs::writeStringToFile (addFile ? tree.pack.directory / "new.sfz" : program,
+                                             addFile ? "new instrument" : std::string (programBefore.size(), 'z')));
+    };
+    OperationControl control;
+    control.progress = [&] (const auto& progress)
+    {
+        if (! changed && ! afterConfiguration
+            && progress.completedBytes >= tree.sample.size() + programBefore.size()) mutate();
+    };
+    control.cancelled = [&]
+    {
+        if (! changed && afterConfiguration
+            && dusk::fs::loadFileAsString (tree.configuration) != configBefore) mutate();
+        return false;
+    };
+    const auto result = changeLibraryLocation (tree.before, tree.destination, true, control, tree.configuration);
+    REQUIRE (changed);
+    if (afterConfiguration)
+    {
+        CHECK (result);
+        CHECK_FALSE (result.error.empty());
+        CHECK (readLibraryLocations (tree.configuration).previous.size() == 1);
+    }
+    else
+    {
+        CHECK_FALSE (result);
+        CHECK (result.failureKind == FailureKind::Integrity);
+        CHECK (dusk::fs::loadFileAsString (tree.configuration) == configBefore);
+    }
+    CHECK ((dusk::fs::loadFileAsString (tree.pack.directory / "Samples/tone.wav") == tree.sample));
+    if (addFile)
+        CHECK (dusk::fs::loadFileAsString (tree.pack.directory / "new.sfz") == "new instrument");
+    else
+        CHECK (dusk::fs::loadFileAsString (program) == std::string (programBefore.size(), 'z'));
+}
+
+TEST_CASE ("SFZ relocation can pause or cancel cleanup after publishing its location", "[sfz][storage]")
+{
+    LibraryTree tree;
+    const auto configBefore = dusk::fs::loadFileAsString (tree.configuration);
+    bool cancel = false;
+    bool atomic = false;
+    bool stopping = false;
+    SECTION ("pause retains a resumable cleanup") {}
+    SECTION ("cancel retains both copies") { cancel = true; }
+    SECTION ("atomic pause interrupts callback-free final verification") { atomic = true; }
+    SECTION ("atomic cancellation interrupts callback-free final verification") { atomic = cancel = true; }
+    SECTION ("atomic shutdown interrupts callback-free final verification") { atomic = cancel = stopping = true; }
+    const auto published = [&] { return dusk::fs::loadFileAsString (tree.configuration) != configBefore; };
+    std::atomic<bool> requested { false };
+    OperationControl control;
+    if (atomic)
+    {
+        if (stopping)    control.stopFlag = &requested;
+        else if (cancel) control.cancelFlag = &requested;
+        else             control.pauseFlag = &requested;
+    }
+    control.cancelled = [&]
+    {
+        if (! atomic) return cancel && published();
+        if (published()) requested.store (true, std::memory_order_release);
+        return false;
+    };
+    control.paused = [&] { return ! atomic && ! cancel && published(); };
+    const auto result = changeLibraryLocation (tree.before, tree.destination, true, control, tree.configuration);
+    CHECK (result.status == (cancel ? OperationStatus::Cancelled : OperationStatus::Paused));
+    REQUIRE (result.locations);
+    CHECK (result.locations->active.root == fs::canonical (tree.destination));
+    CHECK ((dusk::fs::loadFileAsString (tree.pack.directory / "Samples/tone.wav") == tree.sample));
+    CHECK ((dusk::fs::loadFileAsString (tree.destination / "packs" / tree.pack.directory.filename()
+                                      / "Samples/tone.wav") == tree.sample));
+    if (! cancel)
+    {
+        const auto resumed = changeLibraryLocation (*result.locations, tree.destination, true, {}, tree.configuration);
+        REQUIRE (resumed);
+        CHECK_FALSE (fs::exists (tree.pack.directory));
+    }
+}
+
 TEST_CASE ("SFZ library locations preserve identities across copies and future-download folders", "[sfz][storage]")
 {
     LibraryTree tree (GENERATE (false, true));

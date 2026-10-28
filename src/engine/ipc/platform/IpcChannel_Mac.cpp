@@ -35,6 +35,17 @@ bool createChannelPair (ChannelPair& out, std::string& errorOut) noexcept
 
     for (const int fd : sv)
     {
+        const int noSigPipe = 1;
+        if (::setsockopt (fd, SOL_SOCKET, SO_NOSIGPIPE,
+                          &noSigPipe, sizeof (noSigPipe)) != 0)
+        {
+            errorOut = std::string ("setsockopt(SO_NOSIGPIPE) failed: ")
+                + std::strerror (errno);
+            ::close (sv[0]);
+            ::close (sv[1]);
+            return false;
+        }
+
         const int flags = ::fcntl (fd, F_GETFD);
         if (flags >= 0 && ::fcntl (fd, F_SETFD, flags | FD_CLOEXEC) >= 0)
             continue;

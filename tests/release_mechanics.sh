@@ -13,6 +13,8 @@ bash -n "$SOURCE_ROOT/scripts/run-selftest-xvfb.sh"
 SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/duskstudio-release-mechanics.XXXXXX")
 trap 'rm -rf "$SCRATCH"' EXIT
 
+"$PYTHON" "$SOURCE_ROOT/tests/release_artifacts.py" "$SOURCE_ROOT"
+
 # The canonical helper must remain usable by dev.sh on macOS, where neither
 # Xvfb nor GNU timeout ships. Simulate Darwin and require the direct path to
 # carry the self-test flag to the selected binary.

@@ -19,6 +19,7 @@ namespace stdfs = std::filesystem;
 namespace
 {
 constexpr const char* kKeyUiScale            = "ui_scale";
+constexpr const char* kKeyOfflineRenderQuality = "offline_render_quality";
 constexpr const char* kKeyScanOnStartup      = "scan_plugins_on_startup";
 constexpr const char* kKeyNotepadEnabled     = "notepad_enabled";
 constexpr const char* kKeyTapeStripExpanded  = "tape_strip_expanded_default";
@@ -165,6 +166,17 @@ void setUiScaleOverride (float scale)
 {
     const float clamped = std::clamp (scale, kUiScaleMin, kUiScaleMax);
     writeKey (kKeyUiScale, floatToString (clamped));
+}
+
+OfflineRenderQuality getOfflineRenderQuality()
+{
+    return readKey (kKeyOfflineRenderQuality) == "1" ? OfflineRenderQuality::MatchPlayback
+                                                    : OfflineRenderQuality::High;
+}
+
+void setOfflineRenderQuality (OfflineRenderQuality quality)
+{
+    writeKey (kKeyOfflineRenderQuality, quality == OfflineRenderQuality::MatchPlayback ? "1" : "0");
 }
 
 bool getScanPluginsOnStartup()

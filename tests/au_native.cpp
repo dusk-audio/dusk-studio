@@ -8,8 +8,10 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <filesystem>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -21,6 +23,24 @@ constexpr std::uint32_t fourcc (const char (&text)[5]) noexcept
          | (static_cast<std::uint32_t> (text[1]) << 16)
          | (static_cast<std::uint32_t> (text[2]) << 8)
          |  static_cast<std::uint32_t> (text[3]);
+}
+
+// Parameter listener notifications arrive through the main run loop.
+template <typename Done>
+bool runMainLoopUntil (Done&& done)
+{
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds (2);
+    while (! done() && std::chrono::steady_clock::now() < deadline)
+        CFRunLoopRunInMode (kCFRunLoopDefaultMode, 0.01, true);
+    return done();
+}
+
+void runMainLoopFor (double seconds)
+{
+    const auto deadline = std::chrono::steady_clock::now()
+        + std::chrono::duration<double> (seconds);
+    while (std::chrono::steady_clock::now() < deadline)
+        CFRunLoopRunInMode (kCFRunLoopDefaultMode, 0.01, true);
 }
 
 std::string loadAppleEffect (duskstudio::au::NativeAuSlot& slot)
@@ -100,6 +120,8 @@ TEST_CASE ("Audio Unit host callbacks report musical and transport state",
     position.timeSignatureDenominator = 8;
     position.isPlaying = true;
     position.isLooping = true;
+    position.ppqLoopStart = 1.25;
+    position.ppqLoopEnd = 4.75;
     host.beginBlock (&position, 128);
 
     const auto& callbacks = host.callbacks();
@@ -126,10 +148,144 @@ TEST_CASE ("Audio Unit host callbacks report musical and transport state",
                  &cycleStart, &cycleEnd) == noErr);
     CHECK (playing);
     CHECK (changed);
-    CHECK_FALSE (cycling); // loop bounds are not part of TransportPosition
+    CHECK (cycling);
     CHECK_THAT (sample, WithinAbs (96000.0, 1.0e-12));
-    CHECK_THAT (cycleStart, WithinAbs (0.0, 1.0e-12));
-    CHECK_THAT (cycleEnd, WithinAbs (0.0, 1.0e-12));
+    CHECK_THAT (cycleStart, WithinAbs (1.25, 1.0e-12));
+    CHECK_THAT (cycleEnd, WithinAbs (4.75, 1.0e-12));
+}
+
+TEST_CASE ("Audio Unit transport continuity follows the previous rolling state",
+           "[au][host][transport]")
+{
+    duskstudio::au::AuHost host;
+    dusk::TransportPosition position;
+    position.timeInSamples = 1000;
+    const auto& callbacks = host.callbacks();
+    const auto queryChange = [&]
+    {
+        Boolean changed = false;
+        REQUIRE (callbacks.transportStateProc (callbacks.hostUserData, nullptr,
+                     &changed, nullptr, nullptr, nullptr, nullptr) == noErr);
+        return static_cast<bool> (changed);
+    };
+    host.beginBlock (&position, 128);
+    CHECK (queryChange());
+    host.beginBlock (&position, 128);
+    CHECK_FALSE (queryChange());
+    position.timeInSamples = 2000;
+    host.beginBlock (&position, 128);
+    CHECK (queryChange());
+    host.beginBlock (&position, 128);
+    CHECK_FALSE (queryChange());
+
+    SECTION ("playback advances") { position.isPlaying = true; }
+    SECTION ("recording advances") { position.isRecording = true; }
+    host.beginBlock (&position, 128);
+    CHECK (queryChange());
+    position.timeInSamples += 128;
+    host.beginBlock (&position, 64);
+    CHECK_FALSE (queryChange());
+    Boolean playing = false;
+    Boolean recording = false;
+    REQUIRE (callbacks.transportStateProc2 (callbacks.hostUserData, &playing,
+                 &recording, nullptr, nullptr, nullptr, nullptr, nullptr) == noErr);
+    CHECK (playing);
+    CHECK (static_cast<bool> (recording) == position.isRecording);
+    position.timeInSamples += 64;
+    host.beginBlock (&position, 256);
+    CHECK_FALSE (queryChange());
+    position.timeInSamples += 512;
+    host.beginBlock (&position, 256);
+    CHECK (queryChange());
+}
+
+TEST_CASE ("Audio Unit transport changes survive blocks without a callback query",
+           "[au][host][transport]")
+{
+    duskstudio::au::AuHost host;
+    dusk::TransportPosition position;
+    position.isPlaying = true;
+    const auto& callbacks = host.callbacks();
+    const auto queryChange = [&]
+    {
+        Boolean changed = false;
+        REQUIRE (callbacks.transportStateProc (callbacks.hostUserData, nullptr,
+                     &changed, nullptr, nullptr, nullptr, nullptr) == noErr);
+        return static_cast<bool> (changed);
+    };
+    host.beginBlock (&position, 128);
+    position.timeInSamples += 128;
+    host.beginBlock (&position, 128);
+    CHECK (queryChange());
+    CHECK_FALSE (queryChange());
+
+    position.timeInSamples = 1000;
+    host.beginBlock (&position, 128);
+    position.timeInSamples += 128;
+    host.beginBlock (&position, 128);
+    CHECK (queryChange());
+    CHECK_FALSE (queryChange());
+
+    host.beginBlock (nullptr, 128);
+    host.beginBlock (nullptr, 128);
+    CHECK (queryChange());
+    CHECK_FALSE (queryChange());
+    Boolean playing = true;
+    Boolean cycling = true;
+    Float64 sample = -1.0;
+    Float64 cycleStart = -1.0, cycleEnd = -1.0;
+    REQUIRE (callbacks.transportStateProc (callbacks.hostUserData, &playing,
+                 nullptr, &sample, &cycling, &cycleStart, &cycleEnd) == noErr);
+    CHECK_FALSE (playing);
+    CHECK_FALSE (cycling);
+    CHECK_THAT (sample, Catch::Matchers::WithinAbs (0.0, 1.0e-12));
+    CHECK_THAT (cycleStart, Catch::Matchers::WithinAbs (0.0, 1.0e-12));
+    CHECK_THAT (cycleEnd, Catch::Matchers::WithinAbs (0.0, 1.0e-12));
+}
+
+TEST_CASE ("Audio Unit transport cycles use usable common loop bounds",
+           "[au][host][transport]")
+{
+    using Catch::Matchers::WithinAbs;
+    duskstudio::au::AuHost host;
+    dusk::TransportPosition position;
+    position.isPlaying = position.isLooping = true;
+    position.loopStartSamples = 24000;
+    position.loopEndSamples = 96000;
+    position.ppqLoopStart = 1.0;
+    position.ppqLoopEnd = 4.0;
+    const auto& callbacks = host.callbacks();
+    host.beginBlock (&position, 128);
+    REQUIRE (callbacks.transportStateProc (callbacks.hostUserData, nullptr,
+                 nullptr, nullptr, nullptr, nullptr, nullptr) == noErr);
+    position.timeInSamples += 128;
+    position.loopStartSamples = 48000;
+    position.ppqLoopStart = 2.0;
+    host.beginBlock (&position, 128);
+    Boolean changed = false, cycling = false;
+    Float64 cycleStart = 0.0, cycleEnd = 0.0;
+    REQUIRE (callbacks.transportStateProc (callbacks.hostUserData, nullptr,
+                 &changed, nullptr, &cycling, &cycleStart, &cycleEnd) == noErr);
+    CHECK (changed);
+    CHECK (cycling);
+    CHECK_THAT (cycleStart, WithinAbs (2.0, 1.0e-12));
+    CHECK_THAT (cycleEnd, WithinAbs (4.0, 1.0e-12));
+
+    SECTION ("disabled cycle") { position.isLooping = false; }
+    SECTION ("empty bounds") { position.ppqLoopEnd = position.ppqLoopStart; }
+    SECTION ("reversed bounds") { position.ppqLoopEnd = position.ppqLoopStart - 1.0; }
+    SECTION ("nonfinite bounds") { position.ppqLoopEnd = std::numeric_limits<double>::quiet_NaN(); }
+    position.timeInSamples += 128;
+    host.beginBlock (&position, 128);
+    cycling = true;
+    REQUIRE (callbacks.transportStateProc2 (callbacks.hostUserData, nullptr,
+                 nullptr, nullptr, nullptr, &cycling, &cycleStart, &cycleEnd) == noErr);
+    CHECK_FALSE (cycling);
+    if (position.isLooping)
+    {
+        CHECK_THAT (cycleStart, WithinAbs (0.0, 1.0e-12));
+        CHECK_THAT (cycleEnd, WithinAbs (0.0, 1.0e-12));
+    }
 }
 
 TEST_CASE ("Native Audio Unit slot lifecycle, process, parameters, state, and latency",
@@ -187,8 +343,10 @@ TEST_CASE ("Native Audio Unit slot lifecycle, process, parameters, state, and la
     const auto* parameter = slot.paramInfo (writable);
     double original = 0.0;
     REQUIRE (slot.getParamValue (parameter->id, original));
+    const auto beforeBinding = slot.stateRevision();
     slot.queueParamBinding (static_cast<std::uint32_t> (writable), 0.73f);
     slot.drainQueuedParamBindings();
+    CHECK (slot.stateRevision() > beforeBinding);
     double changed = 0.0;
     REQUIRE (slot.getParamValue (parameter->id, changed));
     const double expected = parameter->minValue
@@ -196,7 +354,21 @@ TEST_CASE ("Native Audio Unit slot lifecycle, process, parameters, state, and la
     CHECK_THAT (changed, WithinAbs (expected,
         std::max (1.0e-5, (parameter->maxValue - parameter->minValue) * 1.0e-5)));
 
+    // An edit in the unit's own view reaches the host only as a listener notification.
+    AudioUnitParameter viewEdit { static_cast<AudioUnit> (slot.getInstance()->nativeAudioUnit()),
+                                  parameter->id, kAudioUnitScope_Global, 0 };
+    const auto beforeViewEdit = slot.stateRevision();
+    REQUIRE (AUParameterSet (nullptr, nullptr, &viewEdit, static_cast<AudioUnitParameterValue> (
+        parameter->minValue + 0.31 * (parameter->maxValue - parameter->minValue)), 0) == noErr);
+    CHECK (runMainLoopUntil ([&] { return slot.stateRevision() > beforeViewEdit; }));
+
+    runMainLoopFor (0.2);
+    const auto beforeRestore = slot.stateRevision();
     REQUIRE (slot.loadState (saved));
+    const auto afterRestore = slot.stateRevision();
+    CHECK (afterRestore > beforeRestore);
+    runMainLoopFor (0.2);
+    CHECK (slot.stateRevision() == afterRestore);
     double restored = 0.0;
     REQUIRE (slot.getParamValue (parameter->id, restored));
     CHECK_THAT (restored, WithinAbs (original,

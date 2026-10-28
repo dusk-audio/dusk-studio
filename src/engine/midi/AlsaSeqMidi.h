@@ -63,7 +63,7 @@ public:
     bool open (const std::string& identifier) override;
     void closeAll() override;
     bool isOpen (const std::string& identifier) const override;
-    bool send (const std::string& identifier, const dusk::MidiBuffer& events,
+    bool send (const std::string& identifier, int stream, const dusk::MidiBuffer& events,
                double baseTimeMs, double sampleRate) override;
 
 private:

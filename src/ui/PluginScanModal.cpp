@@ -148,10 +148,13 @@ void PluginScanModal::timerCallback()
         // unwind back into a freed object. Copy the callback + count so the
         // lambda never touches `this`.
         if (onFinished)
+        {
+            SafePointer<PluginScanModal> safe (this);
             dusk::callAsync (
-                [cb = onFinished, count = addedCount.load (std::memory_order_relaxed),
+                [safe, cb = onFinished, count = addedCount.load (std::memory_order_relaxed),
                  cancelled = aborting.load (std::memory_order_relaxed)]
-                { cb (count, cancelled); });
+                { if (safe != nullptr) cb (count, cancelled); });
+        }
     }
 }
 

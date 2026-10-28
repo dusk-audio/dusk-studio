@@ -197,6 +197,7 @@ public:
     virtual int audioEditorKeyboardRequests() const = 0;
     virtual bool openPiano (int track, int region) = 0;
     virtual void closePiano() = 0;
+    virtual bool clickPianoControl (const std::string& name) = 0;
     virtual bool clickPianoCcToggle() = 0;
     virtual bool pianoCcPointer (std::int64_t tick, int value, bool down) = 0;
     virtual int pianoCcController() const = 0;
@@ -542,6 +543,9 @@ public:
     virtual bool clickMidiRegion (int track, int region, bool right = false) = 0;
     // Presses a region's middle and drags it `pixels` to the right.
     virtual bool dragTapeRegion (int track, int region, bool midi, int pixels) = 0;
+    virtual std::vector<int> tapeRegionPoint (int track, int region, const std::string& kind) const = 0;
+    // Window coordinates; modifiers: 1 Shift, 2 Cmd/Ctrl, 4 right button, 8 Alt.
+    virtual bool tapeRegionPointer (int x, int y, bool down, int modifiers = 0) = 0;
     // The take-count badge in a track's label cell, as drawn ("3 takes"), and
     // one or more clicks on it. Empty text and false when that track shows no badge.
     virtual std::string tapeTakeBadgeText (int track) const = 0;
@@ -613,6 +617,9 @@ public:
     // False, with nothing asked, when there are no unsaved changes: that quit
     // would end the run.
     virtual bool requestQuit() = 0;
+    // The unsaved-changes question every prompt asks, answered with nothing
+    // stopped first and no prompt raised.
+    virtual bool sessionDirty() = 0;
     virtual bool mixdownRunning() const = 0;
     // Whether any modal's render is still running: bounce, mixdown, master export or freeze.
     virtual bool renderRunning() const = 0;

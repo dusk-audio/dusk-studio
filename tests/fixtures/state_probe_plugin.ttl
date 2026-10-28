@@ -1,0 +1,43 @@
+@prefix atom:  <http://lv2plug.in/ns/ext/atom#> .
+@prefix doap:  <http://usefulinc.com/ns/doap#> .
+@prefix lv2:   <http://lv2plug.in/ns/lv2core#> .
+@prefix patch: <http://lv2plug.in/ns/ext/patch#> .
+@prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix state: <http://lv2plug.in/ns/ext/state#> .
+@prefix urid:  <http://lv2plug.in/ns/ext/urid#> .
+
+<urn:duskstudio:test:state-probe#level>
+    a lv2:Parameter ;
+    rdfs:label "level" ;
+    rdfs:range atom:Float ;
+    lv2:minimum 0.0 ; lv2:maximum 1.0 ; lv2:default 0.0 .
+
+<urn:duskstudio:test:state-probe>
+    a lv2:Plugin ;
+    doap:name "Dusk state-probe fixture" ;
+    lv2:requiredFeature urid:map ;
+    lv2:extensionData state:interface ;
+    patch:writable <urn:duskstudio:test:state-probe#level> ;
+    lv2:port
+        [ a lv2:InputPort, lv2:AudioPort ;
+          lv2:index 0 ; lv2:symbol "in_l" ; lv2:name "Input L" ],
+        [ a lv2:InputPort, lv2:AudioPort ;
+          lv2:index 1 ; lv2:symbol "in_r" ; lv2:name "Input R" ],
+        [ a lv2:OutputPort, lv2:AudioPort ;
+          lv2:index 2 ; lv2:symbol "out_l" ; lv2:name "Output L" ],
+        [ a lv2:OutputPort, lv2:AudioPort ;
+          lv2:index 3 ; lv2:symbol "out_r" ; lv2:name "Output R" ],
+        [ a lv2:InputPort, lv2:ControlPort ;
+          lv2:index 4 ; lv2:symbol "gain" ; lv2:name "Gain" ;
+          lv2:minimum 0.0 ; lv2:maximum 1.0 ; lv2:default 0.25 ],
+        [ a lv2:OutputPort, lv2:ControlPort ;
+          lv2:index 5 ; lv2:symbol "meter" ; lv2:name "Meter" ;
+          lv2:minimum 0.0 ; lv2:maximum 1.0 ],
+        [ a lv2:InputPort, atom:AtomPort ;
+          lv2:index 6 ; lv2:symbol "control_in" ; lv2:name "Control In" ;
+          lv2:designation lv2:control ;
+          atom:bufferType atom:Sequence ; atom:supports patch:Message ],
+        [ a lv2:OutputPort, atom:AtomPort ;
+          lv2:index 7 ; lv2:symbol "control_out" ; lv2:name "Control Out" ;
+          lv2:designation lv2:control ;
+          atom:bufferType atom:Sequence ; atom:supports patch:Message ] .

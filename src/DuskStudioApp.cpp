@@ -2080,9 +2080,14 @@ private:
         spec.format = dusk::audio::WriteSpec::Format::Wav;
         auto writer = dusk::audio::FileWriter::create (
             std::filesystem::u8path (file.getFullPathName().toStdString()), spec);
-        if (writer == nullptr
-            || ! writer->write (buf.data(), numCh, numFrames))
+        const bool written = writer != nullptr && writer->write (buf.data(), numCh, numFrames);
+        const bool flushed = writer != nullptr && writer->flush();
+        writer.reset();
+        if (! written || ! flushed)
+        {
+            file.deleteFile();
             return {};
+        }
         return file;
     }
 

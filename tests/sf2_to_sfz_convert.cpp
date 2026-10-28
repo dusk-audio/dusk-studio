@@ -2,15 +2,21 @@
 
 #include "engine/multisample/Sf2ToSfz.h"
 #include "foundation/Text.h"
+#include "TestTempDirectory.h"
 
 #include <juce_core/juce_core.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <string>
 #include <vector>
+
+#if defined (__linux__)
+ #include <dlfcn.h>
+#endif
 
 namespace
 {
@@ -37,7 +43,12 @@ struct Sf2Buf
     void s16  (int v)           { u16((std::uint16_t) (std::int16_t) v); }
     void u32  (std::uint32_t v) { for (int i = 0; i < 4; ++i) u8((std::uint8_t) (v >> (8 * i))); }
     void id   (const char* s)   { for (int i = 0; i < 4; ++i) u8((std::uint8_t) s[i]); }
-    void name (const char* s)   { char n[20] {}; std::strncpy(n, s, 20); for (int i = 0; i < 20; ++i) u8((std::uint8_t) n[i]); }
+    void name (const char* s)
+    {
+        char n[20] {};
+        std::memcpy (n, s, std::min (sizeof (n), std::strlen (s)));
+        for (int i = 0; i < 20; ++i) u8((std::uint8_t) n[i]);
+    }
     void raw  (const std::vector<std::uint8_t>& x) { b.insert(b.end(), x.begin(), x.end()); }
 };
 
@@ -57,8 +68,7 @@ struct TuningOpts
     int pitchCorrection { 0 };   // shdr, cents
 };
 
-// One preset -> one instrument zone -> one 100-frame sample looping 10..90.
-std::vector<std::uint8_t> tunedSf2 (const TuningOpts& o)
+std::vector<std::uint8_t> tunedSf2 (const TuningOpts& o, int numSamples = 1, bool malformedFirst = false)
 {
     Sf2Buf phdr;
     phdr.name("pre0"); phdr.u16(0); phdr.u16(0); phdr.u16(0); phdr.u32(0); phdr.u32(0); phdr.u32(0);
@@ -69,20 +79,28 @@ std::vector<std::uint8_t> tunedSf2 (const TuningOpts& o)
 
     Sf2Buf inst;
     inst.name("inst0"); inst.u16(0);
-    inst.name("EOI");   inst.u16(1);
+    inst.name("EOI");   inst.u16(static_cast<std::uint16_t> (numSamples));
 
-    Sf2Buf ibag; ibag.u16(0); ibag.u16(0); ibag.u16(5); ibag.u16(0);
+    Sf2Buf ibag;
     Sf2Buf igen;
-    igen.u16(43); igen.u16(0x7F00);        // keyRange 0..127
-    igen.u16(51); igen.s16(o.coarseTune);
-    igen.u16(52); igen.s16(o.fineTune);
-    igen.u16(54); igen.s16(o.sampleModes);
-    igen.u16(53); igen.u16(0);              // sampleID -> sample 0 (terminal)
-
     Sf2Buf shdr;
-    shdr.name("samp0"); shdr.u32(0); shdr.u32(100); shdr.u32(10); shdr.u32(90);
-    shdr.u32(44100); shdr.u8(60); shdr.u8((std::uint8_t) (std::int8_t) o.pitchCorrection);
-    shdr.u16(0); shdr.u16(1);
+    for (int sample = 0; sample < numSamples; ++sample)
+    {
+        ibag.u16(static_cast<std::uint16_t> (sample * 5)); ibag.u16(0);
+        igen.u16(43); igen.u16(0x7F00);
+        igen.u16(51); igen.s16(o.coarseTune);
+        igen.u16(52); igen.s16(o.fineTune);
+        igen.u16(54); igen.s16(o.sampleModes);
+        igen.u16(53); igen.u16(static_cast<std::uint16_t> (sample));
+        shdr.name(("samp" + std::to_string (sample)).c_str());
+        shdr.u32(static_cast<std::uint32_t> (sample * 100));
+        shdr.u32(malformedFirst && sample == 0 ? 0x7fffffffU : static_cast<std::uint32_t> ((sample + 1) * 100));
+        shdr.u32(static_cast<std::uint32_t> (sample * 100 + 10));
+        shdr.u32(static_cast<std::uint32_t> (sample * 100 + 90));
+        shdr.u32(44100); shdr.u8(60); shdr.u8((std::uint8_t) (std::int8_t) o.pitchCorrection);
+        shdr.u16(0); shdr.u16(1);
+    }
+    ibag.u16(static_cast<std::uint16_t> (numSamples * 5)); ibag.u16(0);
     shdr.name("EOS");  shdr.u32(0); shdr.u32(0); shdr.u32(0); shdr.u32(0);
     shdr.u32(0);     shdr.u8(0);  shdr.u8(0); shdr.u16(0); shdr.u16(0);
 
@@ -92,7 +110,7 @@ std::vector<std::uint8_t> tunedSf2 (const TuningOpts& o)
     sf2Chunk(pdta, "shdr", shdr.b);
 
     Sf2Buf sdta; sdta.id("sdta");
-    sf2Chunk(sdta, "smpl", std::vector<std::uint8_t> (200, 0));   // 100 16-bit frames
+    sf2Chunk(sdta, "smpl", std::vector<std::uint8_t> (static_cast<std::size_t> (numSamples) * 200, 0));
 
     Sf2Buf content; content.id("sfbk");
     sf2Chunk(content, "LIST", sdta.b);
@@ -226,6 +244,64 @@ TEST_CASE("Sf2ToSfz: maps the SF2 loop modes onto their SFZ equivalents", "[sf2c
         const auto sfz = convertTuned({ 0, 0, 0, 0 });
         REQUIRE_FALSE(dusk::text::contains(sfz, "loop_mode="));
     }
+}
+
+TEST_CASE ("Sf2ToSfz separates malformed sample bounds from extraction finalization errors", "[sf2conv][finalization]")
+{
+    duskstudio::test::TempDirectory temp ("dusk-sf2-finalization");
+    const auto input = temp.path() / "fixture.sf2";
+    const auto putInput = [&] (bool malformed)
+    {
+        const auto bytes = tunedSf2 ({}, 2, malformed);
+        std::ofstream stream (input, std::ios::binary | std::ios::trunc);
+        stream.write (reinterpret_cast<const char*> (bytes.data()), static_cast<std::streamsize> (bytes.size()));
+        REQUIRE (stream.good());
+    };
+    const auto file = [&] (const std::filesystem::path& path)
+    { return juce::File (path.u8string().c_str()); };
+    putInput (false);
+    const auto normal = duskstudio::convertSf2Preset (file (input), 0, file (temp.path() / "normal"));
+    REQUIRE (normal.ok);
+    CHECK (normal.sfzText.find ("sample=s0_samp0.wav") != std::string::npos);
+    CHECK (normal.sfzText.find ("sample=s1_samp1.wav") != std::string::npos);
+
+    putInput (true);
+    const auto malformed = duskstudio::convertSf2Preset (file (input), 0, file (temp.path() / "malformed"));
+    REQUIRE (malformed.ok);
+    CHECK (malformed.sfzText.find ("sample=s0_samp0.wav") == std::string::npos);
+    CHECK (malformed.sfzText.find ("sample=s1_samp1.wav") != std::string::npos);
+    putInput (false);
+
+   #if defined (__linux__)
+    const auto arm = reinterpret_cast<void (*) (int, const char*)> (dlsym (RTLD_DEFAULT, "dusk_audiofile_arm"));
+    const auto hits = reinterpret_cast<int (*)()> (dlsym (RTLD_DEFAULT, "dusk_audiofile_hits"));
+    const auto disarm = reinterpret_cast<void (*)()> (dlsym (RTLD_DEFAULT, "dusk_audiofile_disarm"));
+    if (arm == nullptr || hits == nullptr || disarm == nullptr)
+    {
+        WARN ("native finalization fault variations require the private preload fixture");
+        return;
+    }
+    struct FaultScope
+    {
+        void (*disarm)();
+        ~FaultScope() { disarm(); }
+    } fault { disarm };
+    for (const int index : { 0, 1 })
+    {
+        const auto directory = temp.path() / ("failed-" + std::to_string (index));
+        const auto name = "s" + std::to_string (index) + "_samp" + std::to_string (index) + ".wav";
+        const auto output = directory / name;
+        arm (3, output.c_str());
+        const auto converted = duskstudio::convertSf2Preset (file (input), 0, file (directory));
+        const int injected = hits();
+        disarm();
+        CHECK (injected == 1);
+        CHECK_FALSE (converted.ok);
+        CHECK (converted.sfzText.empty());
+        CHECK (converted.error.find ("samp" + std::to_string (index)) != std::string::npos);
+        CHECK_FALSE (std::filesystem::exists (output));
+    }
+   #endif
 }
 
 TEST_CASE("Sf2ToSfz: converts FluidR3 preset 0 to SFZ + WAVs", "[sf2conv][.fixture]")

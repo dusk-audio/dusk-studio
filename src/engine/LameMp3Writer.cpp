@@ -5,6 +5,13 @@
 #endif
 
 #include <algorithm>
+#include <cerrno>
+
+#if defined (_WIN32)
+ #include <io.h>
+#else
+ #include <unistd.h>
+#endif
 
 namespace duskstudio
 {
@@ -79,33 +86,49 @@ LameMp3Writer::~LameMp3Writer()
 bool LameMp3Writer::flush()
 {
 #if DUSKSTUDIO_HAS_LAME
-    if (encoder == nullptr || file == nullptr) return false;
     if (flushed) return flushOk;
     flushed = true;
-    auto* g = static_cast<lame_global_flags*> (encoder);
-    if (mp3buf.size() < 7200) mp3buf.resize (7200);
-    const int bytes = lame_encode_flush (g, mp3buf.data(), (int) mp3buf.size());
-    if (bytes < 0)  return false;
-    if (bytes > 0 && std::fwrite (mp3buf.data(), 1, (size_t) bytes, file) != (size_t) bytes)
-        return false;
-
-    // Rewrite the Info placeholder (first frame) with the real frame/byte counts.
-    // Best-effort: a stream that can't seek keeps the placeholder, which decodes
-    // as silence and merely costs the duration metadata.
-    unsigned char tag[2880];
-    const size_t tagSize = lame_get_lametag_frame (g, tag, sizeof (tag));
-    if (tagSize > 0 && tagSize <= sizeof (tag))
+    bool okay = encoder != nullptr && file != nullptr;
+    if (okay)
     {
-        const long endPos = std::ftell (file);
-        if (endPos >= 0 && std::fseek (file, 0, SEEK_SET) == 0)
+        auto* g = static_cast<lame_global_flags*> (encoder);
+        const int bytes = lame_encode_flush (g, mp3buf.data(), (int) mp3buf.size());
+        if (bytes < 0 || (bytes > 0
+            && std::fwrite (mp3buf.data(), 1, (size_t) bytes, file) != (size_t) bytes))
+            okay = false;
+
+        unsigned char tag[2880];
+        const size_t tagSize = lame_get_lametag_frame (g, tag, sizeof (tag));
+        if (tagSize == 0 || tagSize > sizeof (tag))
+            okay = false;
+        else
         {
-            std::fwrite (tag, 1, tagSize, file);
-            std::fseek (file, endPos, SEEK_SET);
+            const long endPos = std::ftell (file);
+            if (endPos < 0 || std::fseek (file, 0, SEEK_SET) != 0)
+                okay = false;
+            else
+            {
+                if (std::fwrite (tag, 1, tagSize, file) != tagSize) okay = false;
+                if (std::fseek (file, endPos, SEEK_SET) != 0) okay = false;
+            }
         }
     }
-    std::fflush (file);
-    flushOk = true;
-    return true;
+    if (file != nullptr)
+    {
+        if (std::ferror (file) != 0) okay = false;
+        if (std::fflush (file) != 0) okay = false;
+       #if defined (_WIN32)
+        if (::_commit (::_fileno (file)) != 0) okay = false;
+       #else
+        int syncResult;
+        do { syncResult = ::fsync (::fileno (file)); } while (syncResult < 0 && errno == EINTR);
+        if (syncResult != 0) okay = false;
+       #endif
+        if (std::fclose (file) != 0) okay = false;
+        file = nullptr;
+    }
+    flushOk = okay;
+    return flushOk;
 #else
     return false;
 #endif

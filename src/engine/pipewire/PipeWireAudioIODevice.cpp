@@ -568,7 +568,17 @@ std::string PipeWireAudioIODevice::open (const device::ChannelSet& inputChannels
     if (wantOutput) outputLatency = nq;
     if (wantInput)  inputLatency  = nq;
 
-    isDeviceOpen.store (true, std::memory_order_release);
+    pw_thread_loop_lock (threadLoop);
+    const bool stillStreaming = pw_filter_get_state (filter, nullptr) == PW_FILTER_STATE_STREAMING;
+    if (stillStreaming)
+        isDeviceOpen.store (true, std::memory_order_release);
+    pw_thread_loop_unlock (threadLoop);
+    if (! stillStreaming)
+    {
+        lastError = "PipeWire disconnected before opening completed";
+        close();
+        return lastError;
+    }
     lastError.clear();
 
     std::fprintf (stderr,
@@ -681,6 +691,7 @@ int PipeWireAudioIODevice::linkToHardware()
 
 void PipeWireAudioIODevice::close()
 {
+    isDeviceOpen.store (false, std::memory_order_release);
     stop();
 
     // Destroy the links we created (on the filter's core) before stopping the
@@ -712,8 +723,6 @@ void PipeWireAudioIODevice::close()
     outPorts.clear();
     silenceIn.clear();
     dumpOut.clear();
-
-    isDeviceOpen.store (false, std::memory_order_release);
 }
 
 // ----- start / stop ----------------------------------------------------------
@@ -809,6 +818,12 @@ void PipeWireAudioIODevice::onProcess (struct spa_io_position* position) noexcep
 
 void PipeWireAudioIODevice::onFilterStateChanged() noexcept
 {
+    if (filter != nullptr)
+    {
+        const auto state = pw_filter_get_state (filter, nullptr);
+        if (state == PW_FILTER_STATE_ERROR || state == PW_FILTER_STATE_UNCONNECTED)
+            isDeviceOpen.store (false, std::memory_order_release);
+    }
     // Wake open()'s bounded wait; it re-reads pw_filter_get_state for the truth.
     if (threadLoop != nullptr)
         pw_thread_loop_signal (threadLoop, false);

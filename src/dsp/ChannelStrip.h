@@ -5,10 +5,12 @@
 #include <array>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <vector>
 #include "../foundation/IntDelayLine.h"
 #include "../foundation/MidiBuffer.h"
 #include "../foundation/PlanarBuffer.h"
+#include "../foundation/ProcessedBlock.h"
 #include "../foundation/SmoothedValue.h"
 #include "../foundation/StereoOversampler.h"
 #include "../foundation/TransportPosition.h"
@@ -106,6 +108,7 @@ public:
     // Session restore before the engine is prepared: stash {path,state}; prepare() loads it.
     void setPendingNativeClap (const juce::File& path, std::vector<uint8_t> state,
                                const juce::String& pluginId = {}) noexcept;
+    bool hasPendingNativeClapRestore() const noexcept { return pendingClapPath.isNotEmpty(); }
     // True when the last prepare()-time reactivate / pending-restore load failed. Lets
     // the save path tell "failed restore" (keep the persisted path) from "user removed".
     bool nativeClapReloadFailed() const noexcept { return nativeReloadFailed.load (std::memory_order_relaxed); }
@@ -129,6 +132,7 @@ public:
     void setPendingNativeLv2 (const juce::File& path, std::vector<uint8_t> state,
                               const juce::String& pluginId = {},
                               const std::filesystem::path& stateDir = {}) noexcept;
+    bool hasPendingNativeLv2Restore() const noexcept { return pendingLv2Path.isNotEmpty(); }
     bool nativeLv2ReloadFailed() const noexcept { return lv2ReloadFailed.load (std::memory_order_relaxed); }
     void markNativeLv2RestoreFailed() noexcept { lv2ReloadFailed.store (true, std::memory_order_relaxed); }
 #else
@@ -147,6 +151,7 @@ public:
     const vst3::NativeVst3Slot& getNativeVst3Slot() const noexcept { return nativeVst3Slot; }
     void setPendingNativeVst3 (const juce::File& path, std::vector<uint8_t> state,
                                const juce::String& pluginId = {}) noexcept;
+    bool hasPendingNativeVst3Restore() const noexcept { return pendingVst3Path.isNotEmpty(); }
     bool nativeVst3ReloadFailed() const noexcept { return vst3ReloadFailed.load (std::memory_order_relaxed); }
     void markNativeVst3RestoreFailed() noexcept { vst3ReloadFailed.store (true, std::memory_order_relaxed); }
 #else
@@ -165,6 +170,7 @@ public:
     const au::NativeAuSlot& getNativeAuSlot() const noexcept { return nativeAuSlot; }
     void setPendingNativeAu (const juce::String& identifier,
                              std::vector<uint8_t> state) noexcept;
+    bool hasPendingNativeAuRestore() const noexcept { return pendingAuIdentifier.isNotEmpty(); }
     bool nativeAuReloadFailed() const noexcept
         { return auReloadFailed.load (std::memory_order_relaxed); }
     void markNativeAuRestoreFailed() noexcept
@@ -467,6 +473,25 @@ private:
 
     std::vector<float> insertScratchL;
     std::vector<float> insertScratchR;
+    std::vector<float> insertDryHistoryL;
+    std::vector<float> insertDryHistoryR;
+    int insertDryWrite = 0;
+    bool insertDryHistoryActive = false;
+    int insertDrySource = 0;
+    int insertDryLatency = 0;
+    // Weight of the latency-aligned dry against the undelayed one in the
+    // insert gate's dry input. It only ever moves by ramp, and a mode flip
+    // waits for it to reach zero, so the dry never changes its delay at a
+    // weight the gate lets through. insertDryFilled counts the history samples
+    // written since it last held nothing worth replaying.
+    dusk::audio::SmoothedValue<float> insertDryAlign;
+    int insertDryFilled = 0;
+    bool insertDryAlignWanted = false;
+    void resetInsertDryHistory() noexcept;
+    void discardInsertDryHistory() noexcept;
+    void alignInsertDry (int numSamples, bool mono, int latency) noexcept;
+    void followInsertDry (int numSamples, bool mono,
+                          const std::optional<dusk::ProcessedBlock>& rendered) noexcept;
 
     // PDC compensation delay (post-insert / pre-EQ). Two single-channel lines
     // mirror the HardwareInsertSlot dry-delay pattern. The delay length only
@@ -481,13 +506,13 @@ private:
     std::int64_t  pdcSilentRun = 0;
     void relatchPdcIfDrained (float blockPeakAbs, int numSamples) noexcept;
     void drainPdcForSkip() noexcept;
+    bool silentTailActive = false;
+    std::int64_t silentTailInputSamples = 0;
+    int silentTailQuietSamples = 0;
+    int silentTailHoldSamples = 0;
 
-    // The per-strip oversampler's rounded internal latency (half-band filter
-    // state). The EQ - which carries the always-on console saturation - runs
-    // every block, so the oversampler is never skipped; this value is kept only
-    // so the silent-skip can account for the oversampler's tail before dropping
-    // a block (see requiredDrain in processAndAccumulate). The FIR round trip is
-    // 23 (2x) / lround(26.5)=27 (4x) base-rate samples.
+    // Rounded group delay for PDC / frozen alignment. Twice this bounds the
+    // full FIR support that the silent-source drain must let through.
     static constexpr int kMaxOsLatency = 32;
     int          osLatencySamples = 0;
 

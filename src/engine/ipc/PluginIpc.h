@@ -23,7 +23,7 @@ namespace duskstudio::ipc
 {
 
 constexpr std::uint32_t kMagic     = 0x46434C30;  // 'FCL0'
-constexpr std::uint32_t kVersion   = 4;
+constexpr std::uint32_t kVersion   = 6;
 constexpr int           kMaxBlock  = 1024;        // upper bound on numSamples per block
 constexpr int           kMaxChans  = 2;           // stereo plenty for this host
 // Serialised MIDI-block byte cap. At least a track's routing ceiling
@@ -90,7 +90,7 @@ enum class OpCode : std::uint32_t
                             //          reply: numIn / numOut / latency.
     PrepareToPlay    = 3,   // payload: sr (double) + bs (int).
     Release          = 4,   // payload: empty.
-    GetState         = 5,   // payload: empty. reply: state size; bytes are at kStateOffset.
+    GetState         = 5,   // payload: empty. reply: GetStateReply; bytes are at kStateOffset.
     SetState         = 6,   // payload: state size; bytes at kStateOffset.
     SetParam         = 7,   // payload: SetParamPayload. ONE-SHOT - child sends NO reply.
                             //          The reader loop must not enqueue a reply slot.
@@ -152,6 +152,20 @@ struct LoadPluginReply
     std::uint32_t isInstrument;
 };
 
+// GetState reply. stateRevision is BlockHeader::stateRevision as the child
+// read it after applying every SetParam queued ahead of the request and before
+// it read the state, so a parent comparing it with the live counter sees any
+// change the captured bytes cannot contain.
+struct GetStateReply
+{
+    std::uint32_t stateBytes;
+    std::uint32_t reserved;
+    std::uint64_t stateRevision;
+};
+
+static_assert (sizeof (GetStateReply) == 16,
+               "GetStateReply wire layout changed without a protocol update");
+
 // The latency the load stubs (--ipc-load-reply-stub, --ipc-load-audio-stub)
 // report for the plug-in they stand in for, so a test can watch a sandboxed
 // slot's latency arrive with the child and leave with it.
@@ -186,9 +200,11 @@ struct ResizeEditorPayload
     std::uint64_t reserved;
 };
 
-// Cache-line aligned so the parent's `cmdSeq` write doesn't false-share
-// with the child's `replySeq` write. 64 bytes covers all live fields with
-// room to grow without breaking the layout.
+constexpr std::uint32_t kTransportPlaying   = 1u << 0;
+constexpr std::uint32_t kTransportLooping   = 1u << 1;
+constexpr std::uint32_t kTransportRecording = 1u << 2;
+constexpr std::uint32_t kTransportPresent   = 1u << 3;
+
 struct alignas (64) BlockHeader
 {
     // Bumped by the parent immediately before signalling the child.
@@ -218,14 +234,34 @@ struct alignas (64) BlockHeader
     double  bpm;
     std::int64_t timeInSamples;
     std::uint64_t hostFrameCounter;
-    std::uint32_t flags;            // bit 0 = isPlaying, bit 1 = isLooping
+    std::uint32_t flags;
 
     // Sanity check. Set once at SHM init by the parent, read by the
     // child to refuse mismatched layouts.
     std::uint64_t magic;
     std::uint32_t version;
     std::uint32_t reservedTail;
+
+    double ppqPosition;
+    double timeInSeconds;
+    std::int64_t loopStartSamples;
+    std::int64_t loopEndSamples;
+    double ppqLoopStart;
+    double ppqLoopEnd;
+    std::int32_t timeSignatureNumerator;
+    std::int32_t timeSignatureDenominator;
+
+    // Raised by the child whenever its plug-in reports a change to persistent
+    // state: a parameter, program or non-parameter state change, an accepted
+    // SetParam, a SetState. Producers run on any child thread, the audio worker
+    // inside processBlock included, so this is a lock-free fetch_add with
+    // release; the parent reads it with acquire. It never decreases for the
+    // life of the shared memory.
+    std::atomic<std::uint64_t> stateRevision;
 };
+
+static_assert (std::atomic<std::uint64_t>::is_always_lock_free,
+               "BlockHeader::stateRevision is shared across processes");
 
 // Layout offsets within the shared mmap region. Computed at compile time
 // so both processes see identical addresses.

@@ -8,6 +8,7 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <utility>
@@ -438,4 +439,138 @@ TEST_CASE ("BusStrip: meters read the post-fader peak and a 300 ms VU per side",
         REQUIRE_THAT (params.meterPostBusRmsL.load(), WithinRel ((float) (steadyL * g), 0.01f));
         REQUIRE_THAT (params.meterPostBusRmsR.load(), WithinRel ((float) (steadyR * g), 0.01f));
     }
+}
+
+TEST_CASE ("BusStrip: silent-input skipping preserves delayed and filtered output", "[BusStrip][drain]")
+{
+    for (int factor : { 1, 2, 4 })
+        for (int blockSize : { 1, 16, 64, 512 })
+            for (int effect : { 0, 1, 2 })
+            {
+                CAPTURE (factor, blockSize, effect);
+                duskstudio::BusParams params;
+                params.eqEnabled.store (effect == 1);
+                params.hpfEnabled.store (effect == 1);
+                params.hpfFreq.store (20.0f);
+                params.compEnabled.store (effect == 2);
+                duskstudio::BusStrip gated, reference;
+                for (auto* strip : { &gated, &reference })
+                {
+                    strip->bind (params);
+                    strip->prepare (kSr, blockSize, factor);
+                }
+                REQUIRE_FALSE (gated.hasPendingDrain());
+                std::vector<float> left ((std::size_t) blockSize), right (left),
+                                   expectedLeft (left), expectedRight (left);
+                float worst = 0.0f, referenceTail = 0.0f;
+                bool slept = false;
+                for (int block = 0; block < 48000 / blockSize + 2; ++block)
+                {
+                    std::fill (left.begin(), left.end(), 0.0f);
+                    std::fill (right.begin(), right.end(), 0.0f);
+                    if (block == 0)
+                    {
+                        left.back() = 0.5f;
+                        right.back() = -0.25f;
+                    }
+                    expectedLeft = left;
+                    expectedRight = right;
+                    reference.processInPlace (expectedLeft.data(), expectedRight.data(), blockSize);
+                    if (block == 0 || gated.hasPendingDrain())
+                        gated.processInPlace (left.data(), right.data(), blockSize);
+                    else
+                        slept = true;
+                    for (int sample = 0; sample < blockSize; ++sample)
+                    {
+                        const auto i = (std::size_t) sample;
+                        worst = std::max (worst, std::abs (left[i] - expectedLeft[i]));
+                        worst = std::max (worst, std::abs (right[i] - expectedRight[i]));
+                        if (block > 0) referenceTail = std::max (referenceTail, std::abs (expectedLeft[i]));
+                    }
+                }
+                CHECK (worst < 2.0e-6f);
+                CHECK (slept);
+                CHECK_FALSE (gated.hasPendingDrain());
+                if (factor > 1 || effect == 1) CHECK (referenceTail > 1.0e-6f);
+            }
+}
+
+TEST_CASE ("BusStrip: a closed fader cannot hide a pending filter tail", "[BusStrip][drain]")
+{
+    constexpr int blockSize = 64;
+    duskstudio::BusParams params;
+    params.eqEnabled.store (true);
+    params.hpfEnabled.store (true);
+    params.hpfFreq.store (20.0f);
+    params.liveFaderDb.store (duskstudio::ChannelStripParams::kFaderMinDb);
+    duskstudio::BusStrip gated, reference;
+    for (auto* strip : { &gated, &reference })
+    {
+        strip->bind (params);
+        strip->prepare (kSr, blockSize, 4);
+    }
+    std::array<float, blockSize> left {}, right {}, expectedLeft {}, expectedRight {};
+    float worst = 0.0f, reopenedTail = 0.0f;
+    for (int block = 0; block < 1000; ++block)
+    {
+        if (block == 60)
+        {
+            CHECK (gated.hasPendingDrain());
+            params.liveFaderDb.store (0.0f);
+        }
+        left.fill (block < 20 ? 0.5f : 0.0f);
+        right = expectedLeft = expectedRight = left;
+        reference.processInPlace (expectedLeft.data(), expectedRight.data(), blockSize);
+        if (block < 20 || gated.hasPendingDrain())
+            gated.processInPlace (left.data(), right.data(), blockSize);
+        for (int sample = 0; sample < blockSize; ++sample)
+        {
+            const auto i = (std::size_t) sample;
+            worst = std::max (worst, std::abs (left[i] - expectedLeft[i]));
+            if (block >= 60) reopenedTail = std::max (reopenedTail, std::abs (expectedLeft[i]));
+        }
+    }
+    CHECK (reopenedTail > 1.0e-5f);
+    CHECK (worst < 2.0e-6f);
+    CHECK_FALSE (gated.hasPendingDrain());
+    left.fill (0.5f);
+    right = left;
+    gated.processInPlace (left.data(), right.data(), blockSize);
+    REQUIRE (gated.hasPendingDrain());
+    gated.prepare (kSr, blockSize, 4);
+    CHECK_FALSE (gated.hasPendingDrain());
+}
+
+TEST_CASE ("BusStrip: an explicit output gate discards held audio before resuming", "[BusStrip][drain]")
+{
+    for (int factor : { 1, 4 })
+        for (bool compressor : { false, true })
+        {
+            CAPTURE (factor, compressor);
+            duskstudio::BusParams params;
+            params.eqEnabled.store (true);
+            params.hpfEnabled.store (true);
+            params.hpfFreq.store (20.0f);
+            params.compEnabled.store (compressor);
+            duskstudio::BusStrip strip;
+            strip.bind (params);
+            strip.prepare (kSr, 16, factor);
+            std::array<float, 16> left {}, right {};
+            left.back() = right.back() = 0.5f;
+            strip.processInPlace (left.data(), right.data(), 16);
+            REQUIRE (strip.hasPendingDrain());
+            strip.discardPendingDrain();
+            REQUIRE_FALSE (strip.hasPendingDrain());
+            float worst = 0.0f;
+            for (int block = 0; block < 300; ++block)
+            {
+                left.fill (0.0f);
+                right.fill (0.0f);
+                strip.processInPlace (left.data(), right.data(), 16);
+                for (float sample : left) worst = std::max (worst, std::abs (sample));
+                for (float sample : right) worst = std::max (worst, std::abs (sample));
+            }
+            CHECK (worst < 1.0e-7f);
+            CHECK_FALSE (strip.hasPendingDrain());
+        }
 }

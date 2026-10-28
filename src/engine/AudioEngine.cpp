@@ -1,5 +1,6 @@
 #include "AudioEngine.h"
 #include "BounceEngine.h"
+#include "DuskStudioPlayHead.h"
 #include "GeneratedMidiBudget.h"
 #include "LoopTimeline.h"
 #include "MidiPanic.h"
@@ -42,6 +43,8 @@
  #include "RealtimeKit.h"
 #endif
 #include "../foundation/Decibels.h"
+#include "../foundation/Fs.h"
+#include "../foundation/Json.h"
 #include "../foundation/VectorOps.h"
 #include "../foundation/ScopedNoDenormals.h"
 #include <algorithm>
@@ -49,7 +52,9 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <thread>
+#include <type_traits>
 
 namespace duskstudio
 {
@@ -59,6 +64,9 @@ constexpr std::int64_t kMinLoopRecordSamples = 128;
 // taken as a locate. The cap keeps the window's loop-seam resets inside the
 // generated-MIDI budget.
 constexpr int kMaxMidiLatencyBridge = 1024;
+// MIDI-out producer streams: each track queues as its own index, the sync
+// output after them.
+constexpr int kSyncOutputMidiStream = Session::kNumTracks;
 
 using dusk::audio::findSignedMinMax;
 
@@ -273,6 +281,20 @@ static DecodedStateBlob decodeBase64Blob (const juce::String& s, const char* slo
         std::fflush (stderr);
     }
     return decoded;
+}
+
+template <typename SlotType>
+static PluginStateToken pluginStateTokenOf (const SlotType& slot) noexcept
+{
+    return { static_cast<std::uint64_t> (slot.generation()), slot.stateRevision(), slot.isLoaded() };
+}
+
+// A hosted slot can own a plug-in the audio path no longer reaches - a sandbox
+// child cut off by a block size or a failed prepare, a crashed child - and its
+// edits still count.
+static PluginStateToken pluginStateTokenOf (const PluginSlot& slot) noexcept
+{
+    return { static_cast<std::uint64_t> (slot.generation()), slot.stateRevision(), slot.holdsPlugin() };
 }
 
 // Snapshot a loaded native slot's state into its session string. A plugin that
@@ -499,7 +521,58 @@ void AudioEngine::printPerfTable()
 // audio thread's binding apply can't touch the instances' single-producer param
 // rings directly). Built-in slots exist in every build, so the drain does too; each
 // native format's calls stay behind its own flag. 30 Hz matches PluginSlot's own
-// drain cadence; a tick over empty rings is one atomic load per slot.
+// drain cadence; a tick over empty rings is one atomic load per slot. A CLAP insert
+// no block is running also gets its plug-in's flush requests and queued writes here.
+void AudioEngine::serviceNativeParamQueues()
+{
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+    const auto now = std::chrono::steady_clock::now();
+#endif
+    for (int t = 0; t < Session::kNumTracks; ++t)
+    {
+        auto& strip = getChannelStrip (t);
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+        strip.getNativeClapSlot().drainQueuedParamBindings();
+        strip.getNativeClapSlot().serviceIdleParams (now);
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+        strip.getNativeLv2Slot().drainQueuedParamBindings();
+        if (auto* inst = strip.getNativeLv2Slot().getInstance())
+            inst->drainPatchFeedback();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+        strip.getNativeVst3Slot().drainQueuedParamBindings();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
+        strip.getNativeAuSlot().drainQueuedParamBindings();
+#endif
+        strip.getBuiltinSlot().drainQueuedParamBindings();
+    }
+    for (int a = 0; a < Session::kNumAuxLanes; ++a)
+    {
+        auto& lane = getAuxLaneStrip (a);
+        for (int s = 0; s < AuxLaneParams::kMaxLanePlugins; ++s)
+        {
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+            lane.getNativeClapSlot (s).drainQueuedParamBindings();
+            lane.getNativeClapSlot (s).serviceIdleParams (now);
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+            lane.getNativeLv2Slot (s).drainQueuedParamBindings();
+            if (auto* inst = lane.getNativeLv2Slot (s).getInstance())
+                inst->drainPatchFeedback();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+            lane.getNativeVst3Slot (s).drainQueuedParamBindings();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
+            lane.getNativeAuSlot (s).drainQueuedParamBindings();
+#endif
+            lane.getBuiltinSlot (s).drainQueuedParamBindings();
+        }
+    }
+}
+
 class AudioEngine::NativeParamDrain final : public dusk::Timer
 {
 public:
@@ -507,47 +580,7 @@ public:
     ~NativeParamDrain() override { stopTimer(); }
     void timerCallback() override
     {
-        for (int t = 0; t < Session::kNumTracks; ++t)
-        {
-            auto& strip = engine.getChannelStrip (t);
-#if DUSKSTUDIO_HAS_NATIVE_CLAP
-            strip.getNativeClapSlot().drainQueuedParamBindings();
-#endif
-#if DUSKSTUDIO_HAS_NATIVE_LV2
-            strip.getNativeLv2Slot().drainQueuedParamBindings();
-            if (auto* inst = strip.getNativeLv2Slot().getInstance())
-                inst->drainPatchFeedback();
-#endif
-#if DUSKSTUDIO_HAS_NATIVE_VST3
-            strip.getNativeVst3Slot().drainQueuedParamBindings();
-#endif
-#if DUSKSTUDIO_HAS_NATIVE_AU
-            strip.getNativeAuSlot().drainQueuedParamBindings();
-#endif
-            strip.getBuiltinSlot().drainQueuedParamBindings();
-        }
-        for (int a = 0; a < Session::kNumAuxLanes; ++a)
-        {
-            auto& lane = engine.getAuxLaneStrip (a);
-            for (int s = 0; s < AuxLaneParams::kMaxLanePlugins; ++s)
-            {
-#if DUSKSTUDIO_HAS_NATIVE_CLAP
-                lane.getNativeClapSlot (s).drainQueuedParamBindings();
-#endif
-#if DUSKSTUDIO_HAS_NATIVE_LV2
-                lane.getNativeLv2Slot (s).drainQueuedParamBindings();
-                if (auto* inst = lane.getNativeLv2Slot (s).getInstance())
-                    inst->drainPatchFeedback();
-#endif
-#if DUSKSTUDIO_HAS_NATIVE_VST3
-                lane.getNativeVst3Slot (s).drainQueuedParamBindings();
-#endif
-#if DUSKSTUDIO_HAS_NATIVE_AU
-                lane.getNativeAuSlot (s).drainQueuedParamBindings();
-#endif
-                lane.getBuiltinSlot (s).drainQueuedParamBindings();
-            }
-        }
+        engine.serviceNativeParamQueues();
 
 #if DUSKSTUDIO_HAS_NATIVE_VST3 || DUSKSTUDIO_HAS_NATIVE_CLAP
         // A VST3 latency or bus-layout change, and a CLAP restart request (how
@@ -748,12 +781,25 @@ struct AudioEngine::MultisampleLoadState
         std::uint64_t requestGeneration, slotGeneration;
         PluginLoadFailure failure;
     };
+    // A locator restore resolves the saved reference to this machine's file.
+    // Until the instrument changes, the session keeps persisting what it saved.
+    struct PortableRestore
+    {
+        std::uint64_t slotGeneration = 0;
+        sfz::ManagedSfzLocator locator;
+        std::string resolvedPath;
+        std::vector<std::uint8_t> restoredState;
+        decltype (Track::nativeMultisamplePath) savedPath;
+        decltype (Track::nativeMultisampleStateBase64) savedState;
+    };
     MultisampleLoader worker;
     std::uint64_t sessionGeneration = 1;
     std::array<std::uint64_t, Session::kNumTracks> generations {};
     std::array<bool, Session::kNumTracks> pending {};
     std::array<std::optional<MultisampleLoader::Request>, Session::kNumTracks> deferred;
     std::vector<RestoreFailure> restoreFailures;
+    // Indexed by strip owner, so a track move keeps its receipt.
+    std::array<std::optional<PortableRestore>, Session::kNumTracks> portableRestores;
 };
 #endif
 
@@ -809,15 +855,12 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
     // callback never touches stdio. Cheap when nothing has stalled.
     diagTimer.startTimer (1000);
 
-    // Hosted plugins get this via setPlayHead so tempo-synced features
-    // (LFOs, arps, delays) read live session BPM + playhead.
-    playHead = std::make_unique<DuskStudioPlayHead> (transport,
-                                                  &session.tempoBpm,
-                                                  &currentSampleRate);
+    playHead = std::make_unique<DuskStudioPlayHead> (hostedTransport);
 
     midiScheduledAhead.fill (-1);
 
     publishTempoMap();   // seed the snapshot (empty -> constant tempoBpm)
+    seedStoppedHostedTransport();
 
     // High priority so a loaded message thread can't starve clock /
     // note delivery; still below the audio thread.
@@ -1225,28 +1268,35 @@ void AudioEngine::fireChangeListeners()
 
 void AudioEngine::publishTempoMap()
 {
-    // Message thread. Heap-allocate an immutable copy, keep it alive in the
-    // pool, then release-store its pointer so the audio thread's next
-    // acquire-load sees a fully-built map. The old copy is NOT freed here - a
-    // concurrent callback may still hold it (publishes can be as frequent as a
-    // drag's mouse-moves); the pool is trimmed in audioDeviceStopped, when no
-    // callback can be in flight. Each copy is tiny (a few tempo points).
-    auto fresh = std::make_unique<TempoMap> (session.tempoMap);
-    const TempoMap* raw = fresh.get();
-    rtTempoMapPool.push_back (std::move (fresh));
-    rtTempoMap.store (raw, std::memory_order_release);
+    rtTempoMap.publish (std::make_unique<TempoMap> (session.tempoMap));
+}
 
-    // Backstop bound so a marathon drag session can't grow the pool without
-    // limit between audioDeviceStopped reclamations. Generous on purpose: a
-    // queued-event burst (post-stall drain of a tempo-handle drag) can land
-    // many publishes inside ONE audio block while the callback still holds
-    // an old map across its MIDI-region scheduling scan - a tight bound here
-    // would free that map under the reader. 256 publishes inside a single
-    // block is not a reachable burst; each map is a few tempo points.
-    constexpr size_t kMaxRtTempoMaps = 256;
-    if (rtTempoMapPool.size() > kMaxRtTempoMaps)
-        rtTempoMapPool.erase (rtTempoMapPool.begin(),
-                               rtTempoMapPool.end() - (std::ptrdiff_t) kMaxRtTempoMaps);
+dusk::TransportPosition AudioEngine::captureHostedTransport (
+    Transport::State state, std::int64_t samples, bool loopEnabled,
+    std::int64_t loopStart, std::int64_t loopEnd) const noexcept
+{
+    const double sampleRate = currentSampleRate.load (std::memory_order_relaxed);
+    auto position = snapshotTransport (state, samples,
+        (double) session.tempoBpm.load (std::memory_order_acquire), sampleRate,
+        session.beatsPerBar.load (std::memory_order_relaxed),
+        session.beatUnit.load (std::memory_order_relaxed), loopEnabled, loopStart, loopEnd);
+    applyTransportTempoMap (position, rtTempoMap.read(), sampleRate, kMidiTicksPerQuarter);
+    return position;
+}
+
+void AudioEngine::seedStoppedHostedTransport() noexcept
+{
+    // Device-stop callbacks defer publication to the owner's parked stop path.
+    if (std::this_thread::get_id() != ownerThread) return;
+    const SnapshotReadScope snapshotReads;
+    auto position = captureHostedTransport (Transport::State::Stopped,
+        transport.getCommittedPlayhead(), transport.isLoopEnabled(),
+        transport.getLoopStart(), transport.getLoopEnd());
+    const double sampleRate = currentSampleRate.load (std::memory_order_relaxed);
+    if (! std::isfinite (sampleRate) || sampleRate <= 0.0)
+        position.timeInSeconds = position.ppqPosition = position.ppqLoopStart = position.ppqLoopEnd
+            = std::numeric_limits<double>::quiet_NaN();
+    hostedTransport.publish (&position);
 }
 
 void AudioEngine::setTempoPoints (std::vector<TempoPoint> pts)
@@ -1828,6 +1878,12 @@ void AudioEngine::updateAssetWorkPause() noexcept
 
 void AudioEngine::setOfflineRenderActive (bool active) noexcept
 {
+    if (! active && offlineRenderActive.load (std::memory_order_acquire))
+    {
+        session.pendingTransportAction.exchange ((int) PendingTransportAction::None,
+                                                 std::memory_order_acquire);
+        session.pendingTransportPlayhead.exchange ((std::int64_t) -1, std::memory_order_relaxed);
+    }
     offlineRenderActive.store (active, std::memory_order_release);
     updateAssetWorkPause();
 }
@@ -1871,11 +1927,18 @@ std::vector<sfz::ManagedSfzLocator> AudioEngine::managedSfzInUse() const
             && multisampleLoads->deferred[(std::size_t) t]->locator)
             result.push_back (*multisampleLoads->deferred[(std::size_t) t]->locator);
         else if (const auto& pending = multisampleLoads->deferred[(std::size_t) t]; pending)
+        {
+            std::error_code error;
             for (const auto& pack : installed)
                 for (const auto& instrument : pack.instruments)
-                    if ((pack.directory / std::filesystem::u8path (instrument.relativePath)).lexically_normal()
-                        == pending->path.lexically_normal())
+                {
+                    const auto file = pack.directory / std::filesystem::u8path (instrument.relativePath);
+                    if (file.lexically_normal() == pending->path.lexically_normal()
+                        || std::filesystem::equivalent (dusk::fs::nativeIOPath (file),
+                                                       dusk::fs::nativeIOPath (pending->path), error))
                         result.push_back (pack.locatorFor (instrument));
+                }
+        }
 #endif
     }
     return result;
@@ -1888,7 +1951,7 @@ bool AudioEngine::requestNativeMultisampleLoad (
     bool restoring, std::vector<std::uint8_t> state, std::function<void()> beforeCommit,
     bool preserveSavedState)
 {
-    if (sfzLibrary->isMovingPacks()) return false;
+    if (std::this_thread::get_id() != ownerThread || ! sfzLibrary->canLoadInstrument (path, locator)) return false;
     if (trackIndex < 0 || trackIndex >= Session::kNumTracks
         || (! restoring && session.track (trackIndex).frozen.load (std::memory_order_acquire))) return false;
     auto& loads = *multisampleLoads;
@@ -2058,6 +2121,14 @@ void AudioEngine::serviceMultisampleLoads()
             track.nativeAuIdentifier.clear(); track.nativeAuStateBase64.clear();
             track.pluginDescriptor.reset(); track.pluginLegacyDescriptionXml.clear(); track.pluginStateBase64.clear();
             track.builtinUnitId.clear(); track.builtinStateBase64.clear();
+            auto& portable = loads.portableRestores[(std::size_t) pluginNormalizationTrackOwner (request.trackIndex)];
+            portable.reset();
+            std::vector<std::uint8_t> restoredState;
+            auto& committedSlot = strip.getNativeMultisampleSlot();
+            if (request.restoring && request.locator && committedSlot.saveState (restoredState))
+                portable = MultisampleLoadState::PortableRestore { committedSlot.generation(), *request.locator,
+                    committedSlot.getLoadedSoundfontPath(), std::move (restoredState),
+                    track.nativeMultisamplePath, track.nativeMultisampleStateBase64 };
             auto* instance = strip.getNativeMultisampleSlot().getInstance();
             const auto alive = playbackServiceAlive;
             instance->setReplacementLoader ([this, alive, instance] (std::filesystem::path path, int preset,
@@ -2465,6 +2536,13 @@ void AudioEngine::pressStop()
 AudioEngine::TransportService AudioEngine::serviceTransportRequests()
 {
     TransportService done;
+    if (offlineRenderActive.load (std::memory_order_acquire))
+    {
+        session.pendingTransportAction.exchange ((int) PendingTransportAction::None,
+                                                 std::memory_order_acquire);
+        session.pendingTransportPlayhead.exchange ((std::int64_t) -1, std::memory_order_relaxed);
+        return done;
+    }
 
     // Auto-punch post-roll: stop once the playhead passes punch-out plus the
     // post-roll. A post-roll of 0 keeps rolling, and so does loop recording.
@@ -2858,180 +2936,112 @@ void AudioEngine::jumpToLastRecordPoint()
     transport.locate (session.lastRecordPointSamples.load (std::memory_order_relaxed));
 }
 
-void AudioEngine::publishPluginStateForSave (bool capturePluginState)
+bool AudioEngine::preparePluginStateForSave (PreparedPluginState& prepared,
+                                             std::string& error,
+                                             const PreparedPluginState* keepFrom)
 {
-    // Snapshot each track's PluginSlot into its session-model strings so
-    // SessionSerializer (which only sees Session) can serialise plugin
-    // state alongside everything else. Empty strings = no plugin loaded.
-    //
-    // Plugin state I/O briefly suspends each plugin (releaseResources /
-    // prepareToPlay around getStateInformation) - JUCE's contract says
-    // state I/O must not race the renderer, and plugins like u-he Diva
-    // crash hard when it does. The engine's master output goes silent for
-    // a few milliseconds per loaded plugin during the save.
-    //
-    // For the autosave timer (capturePluginState=false) that runs
-    // every 30 s during normal playback, that dropout is unacceptable.
-    // We skip plugin state entirely on that path: the existing values
-    // in Session::pluginStateBase64 (set by the most recent manual save
-    // or session load) are preserved, so a crash recovery still gets
-    // valid plugin state - just possibly stale relative to in-flight
-    // knob tweaks. Manual save (Ctrl+S, File>Save, quit-save) is the
-    // path that captures fresh plugin state.
-    if (! capturePluginState)
-        return;
-
-    // Hold the audio thread out with the process gate, as a re-prepare does,
-    // rather than detaching from the device: reattaching fires
-    // audioDeviceAboutToStart, which re-prepares the whole engine and so
-    // resets every meter, envelope, delay line and plug-in on each Save.
-    // Callbacks during the capture emit silence; the quiesce catches a lane
-    // orphaned by a force-killed dispatcher.
+    error.clear();
+    PreparedPluginState pending;
     suspendProcessing();
     workerPool.quiesce();
     struct ResumeGuard
     {
-        AudioEngine& e;
-        ~ResumeGuard() { e.resumeProcessing(); }
+        AudioEngine& engine;
+        ~ResumeGuard() { engine.resumeProcessing(); }
     };
-    const ResumeGuard resumeGuard { *this };
-
-    static constexpr int parkSleepMs = 0;  // the gate keeps the audio thread out
-
-    // Reading a JUCE-hosted plug-in's state re-prepares it, and a plug-in may
-    // settle on another latency when it does.
+    const ResumeGuard resume { *this };
     bool latencyMoved = false;
-    const auto readState = [&latencyMoved] (PluginSlot& slot)
+    bool failed = false;
+    const auto keptFrom = [keepFrom] (int owner) -> const PreparedPluginState::Slot*
     {
-        const int latencyBefore = slot.getLatencySamples();
-        auto state = slot.getStateBase64ForSave (parkSleepMs);
-        latencyMoved = latencyMoved || slot.getLatencySamples() != latencyBefore;
-        return state;
+        if (keepFrom == nullptr) return nullptr;
+        for (const auto& kept : keepFrom->tracks)
+            if (kept.owner == owner && kept.keptLastKnown) return &kept;
+        for (const auto& lane : keepFrom->aux)
+            for (const auto& kept : lane)
+                if (kept.owner == owner && kept.keptLastKnown) return &kept;
+        return nullptr;
     };
+    const auto capture = [&] (PluginSlot& slot, PreparedPluginState::Slot& saved,
+                              const std::string& location, int owner)
+    {
+        // What the user was shown and chose is what gets saved: a slot already
+        // listed is not read again, even if it would capture now.
+        if (const auto* kept = keptFrom (owner))
+        {
+            saved = *kept;
+            return;
+        }
+        saved.owner = owner;
+        saved.descriptor = slot.getDescriptorForSave (0);
+        saved.legacyDescriptionXml = slot.getLegacyDescriptionXmlForSave().toStdString();
+        const int before = slot.getLatencySamples();
+        std::string captureError;
+        std::uint64_t capturedRevision = 0;
+        const auto state = slot.getStateBase64ForSave (0, &captureError, &capturedRevision);
+        latencyMoved = latencyMoved || slot.getLatencySamples() != before;
+        // A slot whose sandbox child has crashed, kept or dropped, hands back
+        // the state last read from it, which is stale once it has changed since.
+        if (captureError.empty() && ! slot.isLoaded() && slot.holdsPlugin()
+            && capturedRevision != slot.stateRevision())
+            captureError = "it has stopped processing, so its latest changes could not be read";
+        // On failure the slot hands back the state it last captured.
+        saved.stateBase64 = state.toStdString();
+        if (captureError.empty())
+        {
+            saved.token = { slot.generation(), capturedRevision, slot.holdsPlugin() };
+            return;
+        }
+        saved.keptLastKnown = true;
+        saved.failure = location + " - " + slot.getLoadedName().toStdString() + ": " + captureError;
+        failed = true;
+    };
+    for (int track = 0; track < Session::kNumTracks; ++track)
+        capture (strips[(size_t) track]->getPluginSlot(), pending.tracks[(size_t) track],
+                 "Track " + std::to_string (track + 1), pluginNormalizationTrackOwner (track));
+    for (int lane = 0; lane < Session::kNumAuxLanes; ++lane)
+        for (int slot = 0; slot < AuxLaneParams::kMaxLanePlugins; ++slot)
+            capture (auxLaneStrips[(size_t) lane].getPluginSlot (slot),
+                     pending.aux[(size_t) lane][(size_t) slot],
+                     "Aux " + std::to_string (lane + 1) + " slot " + std::to_string (slot + 1),
+                     pluginNormalizationAuxOwner (lane, slot));
+    // State capture may re-prepare an insert and move its latency, even on failure.
+    if (latencyMoved) recomputePdc();
+    const auto listFailure = [&error] (const PreparedPluginState::Slot& saved)
+    {
+        if (! saved.keptLastKnown) return;
+        if (! error.empty()) error += '\n';
+        error += saved.failure;
+    };
+    for (const auto& saved : pending.tracks) listFailure (saved);
+    for (const auto& lane : pending.aux)
+        for (const auto& saved : lane) listFailure (saved);
+    prepared = std::move (pending);
+    return ! failed;
+}
 
+bool AudioEngine::publishPluginStateForSave (bool capturePluginState,
+                                             const PreparedPluginState* prepared,
+                                             std::string* error)
+{
+    if (error != nullptr) error->clear();
+    std::optional<PreparedPluginState> captured;
+    if (capturePluginState && prepared == nullptr)
+    {
+        captured.emplace();
+        std::string captureError;
+        if (! preparePluginStateForSave (*captured, captureError))
+        {
+            if (error != nullptr) *error = std::move (captureError);
+            return false;
+        }
+        prepared = &*captured;
+    }
+    // Built-ins and multisample snapshot controls without pausing DSP.
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
         auto& track = session.track (t);
         auto& strip = *strips[(size_t) t];
-        auto& slot  = strip.getPluginSlot();
-        track.pluginDescriptor = slot.getDescriptorForSave (parkSleepMs);
-        track.pluginLegacyDescriptionXml = slot.getLegacyDescriptionXmlForSave();
-        track.pluginStateBase64    = readState (slot);
-
-        // Native CLAP insert (parallel to the JUCE plugin; at most one is loaded).
-        // Linux-only; on other platforms the saved path/state are preserved untouched
-        // so a session authored on Linux round-trips through a non-Linux build.
-#if DUSKSTUDIO_HAS_NATIVE_CLAP
-        if (strip.isNativeClapLoaded())
-        {
-            auto& nativeSlot = strip.getNativeClapSlot();
-            bindNativeStateToLoadedIdentity (
-                "CLAP", track.nativeClapPath, track.nativeClapPluginId,
-                track.nativeClapStateBase64,
-                nativeSlot.getPath(), nativeSlot.getPluginId());
-            if (! strip.nativeClapReloadFailed())
-                captureNativeState (nativeSlot, track.nativeClapStateBase64,
-                                    "track CLAP", t);
-        }
-        else if (! strip.nativeClapReloadFailed())
-        {
-            // Slot genuinely empty (user removed it, or never had one) - drop the
-            // persisted refs. When a restore FAILED (e.g. the .clap was missing this
-            // launch) the slot is also empty, but we keep the path/state so the
-            // reference survives to reconnect on a future launch - mirrors how an
-            // offline JUCE plugin preserves its descXml.
-            track.nativeClapPath.clear();
-            track.nativeClapPluginId.clear();
-            track.nativeClapStateBase64.clear();
-        }
-#endif
-#if DUSKSTUDIO_HAS_NATIVE_LV2
-        if (strip.isNativeLv2Loaded())
-        {
-            auto& nativeSlot = strip.getNativeLv2Slot();
-            bindNativeStateToLoadedIdentity (
-                "LV2", track.nativeLv2Path, track.nativeLv2PluginId,
-                track.nativeLv2StateBase64,
-                nativeSlot.getPath(), nativeSlot.getPluginId());
-            nativeSlot.setStateDirectory (
-                lv2StateDirFor (session, session.lv2StateTagFor (t)));
-            // Preserve the carried blob when a plugin can't serialize (no state
-            // extension / save failure) - don't wipe it on a save round-trip.
-            if (! strip.nativeLv2ReloadFailed())
-                captureNativeState (nativeSlot, track.nativeLv2StateBase64,
-                                    "track LV2", t);
-        }
-        else if (! strip.nativeLv2ReloadFailed())
-        {
-            track.nativeLv2Path.clear();
-            track.nativeLv2PluginId.clear();
-            track.nativeLv2StateBase64.clear();
-        }
-#endif
-#if DUSKSTUDIO_HAS_NATIVE_VST3
-        if (strip.isNativeVst3Loaded())
-        {
-            auto& nativeSlot = strip.getNativeVst3Slot();
-            bindNativeStateToLoadedIdentity (
-                "VST3", track.nativeVst3Path, track.nativeVst3PluginId,
-                track.nativeVst3StateBase64,
-                nativeSlot.getPath(), nativeSlot.getPluginId());
-            // See the LV2 block above: preserve the carried blob when the plugin
-            // can't serialize.
-            if (! strip.nativeVst3ReloadFailed())
-                captureNativeState (nativeSlot, track.nativeVst3StateBase64,
-                                    "track VST3", t);
-        }
-        else if (! strip.nativeVst3ReloadFailed())
-        {
-            track.nativeVst3Path.clear();
-            track.nativeVst3PluginId.clear();
-            track.nativeVst3StateBase64.clear();
-        }
-#endif
-#if DUSKSTUDIO_HAS_NATIVE_AU
-        if (strip.isNativeAuLoaded())
-        {
-            auto& nativeSlot = strip.getNativeAuSlot();
-            bindNativeStateToLoadedIdentity (
-                "AU", track.nativeAuIdentifier, track.nativeAuStateBase64,
-                nativeSlot.getPluginId());
-            if (! strip.nativeAuReloadFailed())
-                captureNativeState (nativeSlot, track.nativeAuStateBase64,
-                                    "track AU", t);
-        }
-        else if (! strip.nativeAuReloadFailed())
-        {
-            track.nativeAuIdentifier.clear();
-            track.nativeAuStateBase64.clear();
-        }
-#endif
-#if DUSKSTUDIO_HAS_MULTISAMPLE
-        // The editor can swap or CLEAR the soundfont in place, so the retained
-        // reference off the instance - not the slot's original bundle path - is
-        // what the session persists. It deliberately survives a failed load.
-        const auto persistedSoundfont = strip.isNativeMultisampleLoaded()
-            ? juce::String::fromUTF8 (
-                  strip.getNativeMultisampleSlot().getLoadedSoundfontPath().c_str())
-            : juce::String();
-        if (persistedSoundfont.isNotEmpty())
-        {
-            bindNativeStateToLoadedIdentity (
-                "multisample", track.nativeMultisamplePath,
-                track.nativeMultisampleStateBase64,
-                persistedSoundfont.toStdString());
-            if (! strip.nativeMultisampleReloadFailed())
-                captureNativeState (strip.getNativeMultisampleSlot(),
-                                    track.nativeMultisampleStateBase64,
-                                    "track multisample", t);
-        }
-        else if (! strip.nativeMultisampleReloadFailed())
-        {
-            track.nativeMultisamplePath.clear();
-            track.nativeMultisampleStateBase64.clear();
-            track.nativeMultisampleLocator.reset();
-        }
-#endif
         if (strip.isBuiltinLoaded())
         {
             auto& builtinSlot = strip.getBuiltinSlot();
@@ -3046,111 +3056,50 @@ void AudioEngine::publishPluginStateForSave (bool capturePluginState)
             track.builtinUnitId.clear();
             track.builtinStateBase64.clear();
         }
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+        // The editor can swap or CLEAR the soundfont in place, so the retained
+        // reference off the instance - not the slot's original bundle path - is
+        // what the session persists. It deliberately survives a failed load.
+        const auto persistedSoundfont = strip.isNativeMultisampleLoaded()
+            ? juce::String::fromUTF8 (
+                  strip.getNativeMultisampleSlot().getLoadedSoundfontPath().c_str())
+            : juce::String();
+        auto& multisampleSlot = strip.getNativeMultisampleSlot();
+        const auto& portable = multisampleLoads->portableRestores[(size_t) pluginNormalizationTrackOwner (t)];
+        std::vector<std::uint8_t> liveState;
+        if (persistedSoundfont.isNotEmpty() && portable && ! strip.nativeMultisampleReloadFailed()
+            && portable->slotGeneration == multisampleSlot.generation()
+            && track.nativeMultisampleLocator == portable->locator
+            && portable->resolvedPath == multisampleSlot.getLoadedSoundfontPath()
+            && multisampleSlot.saveState (liveState) && liveState == portable->restoredState)
+        {
+            track.nativeMultisamplePath = portable->savedPath;
+            track.nativeMultisampleStateBase64 = portable->savedState;
+        }
+        else if (persistedSoundfont.isNotEmpty())
+        {
+            bindNativeStateToLoadedIdentity (
+                "multisample", track.nativeMultisamplePath,
+                track.nativeMultisampleStateBase64,
+                persistedSoundfont.toStdString());
+            if (! strip.nativeMultisampleReloadFailed())
+                captureNativeState (multisampleSlot, track.nativeMultisampleStateBase64,
+                                    "track multisample", t);
+        }
+        else if (! strip.nativeMultisampleReloadFailed())
+        {
+            track.nativeMultisamplePath.clear();
+            track.nativeMultisampleStateBase64.clear();
+            track.nativeMultisampleLocator.reset();
+        }
+#endif
     }
     for (int a = 0; a < Session::kNumAuxLanes; ++a)
     {
         auto& lane = session.auxLane (a);
+        auto& strip = auxLaneStrips[(size_t) a];
         for (int s = 0; s < AuxLaneParams::kMaxLanePlugins; ++s)
         {
-            auto& strip = auxLaneStrips[(size_t) a];
-            auto& slot  = strip.getPluginSlot (s);
-            lane.pluginDescriptor[(size_t) s] = slot.getDescriptorForSave (parkSleepMs);
-            lane.pluginLegacyDescriptionXml[(size_t) s]
-                = slot.getLegacyDescriptionXmlForSave();
-            lane.pluginStateBase64[(size_t) s]    = readState (slot);
-
-            // Native CLAP slot (parallel to the JUCE plugin; at most one is loaded).
-            // Linux-only; preserved untouched elsewhere (see the track block above).
-#if DUSKSTUDIO_HAS_NATIVE_CLAP
-            if (strip.isNativeClapLoaded (s))
-            {
-                auto& nativeSlot = strip.getNativeClapSlot (s);
-                bindNativeStateToLoadedIdentity (
-                    "CLAP", lane.nativeClapPath[(size_t) s],
-                    lane.nativeClapPluginId[(size_t) s],
-                    lane.nativeClapStateBase64[(size_t) s],
-                    nativeSlot.getPath(), nativeSlot.getPluginId());
-                if (! strip.nativeClapReloadFailed (s))
-                    captureNativeState (nativeSlot,
-                                        lane.nativeClapStateBase64[(size_t) s],
-                                        "aux CLAP", s);
-            }
-            else if (! strip.nativeClapReloadFailed (s))
-            {
-                // See the track block above: keep the persisted refs when a restore
-                // failed (path preserved to reconnect later); clear only a genuinely
-                // empty / user-removed slot.
-                lane.nativeClapPath[(size_t) s].clear();
-                lane.nativeClapPluginId[(size_t) s].clear();
-                lane.nativeClapStateBase64[(size_t) s].clear();
-            }
-#endif
-#if DUSKSTUDIO_HAS_NATIVE_LV2
-            if (strip.isNativeLv2Loaded (s))
-            {
-                auto& nativeSlot = strip.getNativeLv2Slot (s);
-                bindNativeStateToLoadedIdentity (
-                    "LV2", lane.nativeLv2Path[(size_t) s],
-                    lane.nativeLv2PluginId[(size_t) s],
-                    lane.nativeLv2StateBase64[(size_t) s],
-                    nativeSlot.getPath(), nativeSlot.getPluginId());
-                nativeSlot.setStateDirectory (
-                    lv2StateDirFor (session, "aux" + juce::String (a + 1)
-                                                 + "_slot" + juce::String (s + 1)));
-                // See the track block above: preserve the carried blob when the
-                // plugin can't serialize.
-                if (! strip.nativeLv2ReloadFailed (s))
-                    captureNativeState (nativeSlot,
-                                        lane.nativeLv2StateBase64[(size_t) s],
-                                        "aux LV2", s);
-            }
-            else if (! strip.nativeLv2ReloadFailed (s))
-            {
-                lane.nativeLv2Path[(size_t) s].clear();
-                lane.nativeLv2PluginId[(size_t) s].clear();
-                lane.nativeLv2StateBase64[(size_t) s].clear();
-            }
-#endif
-#if DUSKSTUDIO_HAS_NATIVE_VST3
-            if (strip.isNativeVst3Loaded (s))
-            {
-                auto& nativeSlot = strip.getNativeVst3Slot (s);
-                bindNativeStateToLoadedIdentity (
-                    "VST3", lane.nativeVst3Path[(size_t) s],
-                    lane.nativeVst3PluginId[(size_t) s],
-                    lane.nativeVst3StateBase64[(size_t) s],
-                    nativeSlot.getPath(), nativeSlot.getPluginId());
-                if (! strip.nativeVst3ReloadFailed (s))
-                    captureNativeState (nativeSlot,
-                                        lane.nativeVst3StateBase64[(size_t) s],
-                                        "aux VST3", s);
-            }
-            else if (! strip.nativeVst3ReloadFailed (s))
-            {
-                lane.nativeVst3Path[(size_t) s].clear();
-                lane.nativeVst3PluginId[(size_t) s].clear();
-                lane.nativeVst3StateBase64[(size_t) s].clear();
-            }
-#endif
-#if DUSKSTUDIO_HAS_NATIVE_AU
-            if (strip.isNativeAuLoaded (s))
-            {
-                auto& nativeSlot = strip.getNativeAuSlot (s);
-                bindNativeStateToLoadedIdentity (
-                    "AU", lane.nativeAuIdentifier[(size_t) s],
-                    lane.nativeAuStateBase64[(size_t) s],
-                    nativeSlot.getPluginId());
-                if (! strip.nativeAuReloadFailed (s))
-                    captureNativeState (nativeSlot,
-                                        lane.nativeAuStateBase64[(size_t) s],
-                                        "aux AU", s);
-            }
-            else if (! strip.nativeAuReloadFailed (s))
-            {
-                lane.nativeAuIdentifier[(size_t) s].clear();
-                lane.nativeAuStateBase64[(size_t) s].clear();
-            }
-#endif
             if (strip.isBuiltinLoaded (s))
             {
                 auto& builtinSlot = strip.getBuiltinSlot (s);
@@ -3171,11 +3120,320 @@ void AudioEngine::publishPluginStateForSave (bool capturePluginState)
         }
     }
 
-    // The mixer recomputes PDC at the top of every block it runs. Doing it here
-    // as well, under the gate, leaves nothing reading the compensation for the
-    // old latency, even while the Mastering stage keeps the mixer idle.
-    if (latencyMoved)
-        recomputePdc();
+    const auto publishIdentity = [] (PluginSlot& slot, auto& carriedDescriptor,
+                                      auto& carriedLegacyXml, auto& carriedState)
+    {
+        auto descriptor = slot.getDescriptorForSave (0);
+        auto legacyXml = slot.getLegacyDescriptionXmlForSave();
+        const bool sameDescriptor = descriptor.has_value() && carriedDescriptor.has_value()
+            && descriptor->backend == carriedDescriptor->backend
+            && descriptor->formatName == carriedDescriptor->formatName
+            && descriptor->location == carriedDescriptor->location
+            && descriptor->pluginId == carriedDescriptor->pluginId
+            && descriptor->uniqueId == carriedDescriptor->uniqueId
+            && descriptor->deprecatedUid == carriedDescriptor->deprecatedUid;
+        const bool sameLegacyXml = ! descriptor.has_value() && ! carriedDescriptor.has_value()
+            && legacyXml.isNotEmpty() && legacyXml == carriedLegacyXml;
+        if (! sameDescriptor && ! sameLegacyXml) carriedState.clear();
+        carriedDescriptor = std::move (descriptor);
+        carriedLegacyXml = std::move (legacyXml);
+    };
+
+    // Hold the audio thread out with the process gate, as a re-prepare does,
+    // rather than detaching from the device: reattaching fires
+    // audioDeviceAboutToStart, which re-prepares the whole engine and so
+    // resets every meter, envelope, delay line and plug-in on each Save.
+    // Callbacks during the capture emit silence; the quiesce catches a lane
+    // orphaned by a force-killed dispatcher.
+    if (capturePluginState)
+    {
+        suspendProcessing();
+        workerPool.quiesce();
+    }
+    struct ResumeGuard
+    {
+        AudioEngine& e;
+        bool active;
+        ~ResumeGuard() { if (active) e.resumeProcessing(); }
+    };
+    const ResumeGuard resumeGuard { *this, capturePluginState };
+    // A native token is sampled after the flush and before the read, so a
+    // change landing during the read stays unsaved.
+    PluginStateTokens stateTokens {};
+    std::array<bool, kPluginStateSlots> uncaptured {};
+    if (capturePluginState) stateTokens = livePluginStates();
+    const auto notePreparedPluginState = [&stateTokens, &uncaptured] (const PreparedPluginState::Slot& saved,
+                                                                      std::size_t index)
+    {
+        if (saved.keptLastKnown) uncaptured[index] = true;
+        else stateTokens[index] = saved.token;
+    };
+
+    for (int t = 0; t < Session::kNumTracks; ++t)
+    {
+        auto& track = session.track (t);
+        [[maybe_unused]] auto& strip = *strips[(size_t) t];
+        const int owner = pluginNormalizationTrackOwner (t);
+        if (capturePluginState)
+        {
+            const auto& saved = prepared->tracks[(size_t) t];
+            track.pluginDescriptor = saved.descriptor;
+            track.pluginLegacyDescriptionXml = saved.legacyDescriptionXml;
+            track.pluginStateBase64 = saved.stateBase64;
+            notePreparedPluginState (saved, pluginStateIndex (owner, PluginStateKind::Hosted));
+        }
+        else
+            publishIdentity (strip.getPluginSlot(), track.pluginDescriptor,
+                              track.pluginLegacyDescriptionXml, track.pluginStateBase64);
+
+        // Native CLAP insert (parallel to the JUCE plugin; at most one is loaded).
+        // Linux-only; on other platforms the saved path/state are preserved untouched
+        // so a session authored on Linux round-trips through a non-Linux build.
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+        if (strip.isNativeClapLoaded())
+        {
+            auto& nativeSlot = strip.getNativeClapSlot();
+            bindNativeStateToLoadedIdentity (
+                "CLAP", track.nativeClapPath, track.nativeClapPluginId,
+                track.nativeClapStateBase64,
+                nativeSlot.getPath(), nativeSlot.getPluginId());
+            if (capturePluginState && ! strip.nativeClapReloadFailed())
+            {
+                nativeSlot.flushPendingWrites();
+                stateTokens[pluginStateIndex (owner, PluginStateKind::Clap)] = pluginStateTokenOf (nativeSlot);
+                captureNativeState (nativeSlot, track.nativeClapStateBase64,
+                                    "track CLAP", t);
+            }
+        }
+        else if (! strip.hasPendingNativeClapRestore()
+                 && ! strip.nativeClapReloadFailed())
+        {
+            // Slot genuinely empty (user removed it, or never had one) - drop the
+            // persisted refs. When a restore FAILED (e.g. the .clap was missing this
+            // launch) the slot is also empty, but we keep the path/state so the
+            // reference survives to reconnect on a future launch - mirrors how an
+            // offline JUCE plugin preserves its descXml.
+            track.nativeClapPath.clear();
+            track.nativeClapPluginId.clear();
+            track.nativeClapStateBase64.clear();
+        }
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+        if (strip.isNativeLv2Loaded())
+        {
+            auto& nativeSlot = strip.getNativeLv2Slot();
+            bindNativeStateToLoadedIdentity (
+                "LV2", track.nativeLv2Path, track.nativeLv2PluginId,
+                track.nativeLv2StateBase64,
+                nativeSlot.getPath(), nativeSlot.getPluginId());
+            if (capturePluginState)
+                nativeSlot.setStateDirectory (
+                    lv2StateDirFor (session, session.lv2StateTagFor (t)));
+            // Preserve the carried blob when a plugin can't serialize (no state
+            // extension / save failure) - don't wipe it on a save round-trip.
+            if (capturePluginState && ! strip.nativeLv2ReloadFailed())
+            {
+                nativeSlot.flushPendingWrites();
+                stateTokens[pluginStateIndex (owner, PluginStateKind::Lv2)] = pluginStateTokenOf (nativeSlot);
+                captureNativeState (nativeSlot, track.nativeLv2StateBase64,
+                                    "track LV2", t);
+            }
+        }
+        else if (! strip.hasPendingNativeLv2Restore()
+                 && ! strip.nativeLv2ReloadFailed())
+        {
+            track.nativeLv2Path.clear();
+            track.nativeLv2PluginId.clear();
+            track.nativeLv2StateBase64.clear();
+        }
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+        if (strip.isNativeVst3Loaded())
+        {
+            auto& nativeSlot = strip.getNativeVst3Slot();
+            bindNativeStateToLoadedIdentity (
+                "VST3", track.nativeVst3Path, track.nativeVst3PluginId,
+                track.nativeVst3StateBase64,
+                nativeSlot.getPath(), nativeSlot.getPluginId());
+            // See the LV2 block above: preserve the carried blob when the plugin
+            // can't serialize.
+            if (capturePluginState && ! strip.nativeVst3ReloadFailed())
+            {
+                nativeSlot.flushPendingWrites();
+                stateTokens[pluginStateIndex (owner, PluginStateKind::Vst3)] = pluginStateTokenOf (nativeSlot);
+                captureNativeState (nativeSlot, track.nativeVst3StateBase64,
+                                    "track VST3", t);
+            }
+        }
+        else if (! strip.hasPendingNativeVst3Restore()
+                 && ! strip.nativeVst3ReloadFailed())
+        {
+            track.nativeVst3Path.clear();
+            track.nativeVst3PluginId.clear();
+            track.nativeVst3StateBase64.clear();
+        }
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
+        if (strip.isNativeAuLoaded())
+        {
+            auto& nativeSlot = strip.getNativeAuSlot();
+            bindNativeStateToLoadedIdentity (
+                "AU", track.nativeAuIdentifier, track.nativeAuStateBase64,
+                nativeSlot.getPluginId());
+            if (capturePluginState && ! strip.nativeAuReloadFailed())
+            {
+                nativeSlot.flushPendingWrites();
+                stateTokens[pluginStateIndex (owner, PluginStateKind::Au)] = pluginStateTokenOf (nativeSlot);
+                captureNativeState (nativeSlot, track.nativeAuStateBase64,
+                                    "track AU", t);
+            }
+        }
+        else if (! strip.hasPendingNativeAuRestore()
+                 && ! strip.nativeAuReloadFailed())
+        {
+            track.nativeAuIdentifier.clear();
+            track.nativeAuStateBase64.clear();
+        }
+#endif
+    }
+    for (int a = 0; a < Session::kNumAuxLanes; ++a)
+    {
+        auto& lane = session.auxLane (a);
+        for (int s = 0; s < AuxLaneParams::kMaxLanePlugins; ++s)
+        {
+            [[maybe_unused]] auto& strip = auxLaneStrips[(size_t) a];
+            const int owner = pluginNormalizationAuxOwner (a, s);
+            if (capturePluginState)
+            {
+                const auto& saved = prepared->aux[(size_t) a][(size_t) s];
+                lane.pluginDescriptor[(size_t) s] = saved.descriptor;
+                lane.pluginLegacyDescriptionXml[(size_t) s] = saved.legacyDescriptionXml;
+                lane.pluginStateBase64[(size_t) s] = saved.stateBase64;
+                notePreparedPluginState (saved, pluginStateIndex (owner, PluginStateKind::Hosted));
+            }
+            else
+                publishIdentity (strip.getPluginSlot (s), lane.pluginDescriptor[(size_t) s],
+                                  lane.pluginLegacyDescriptionXml[(size_t) s], lane.pluginStateBase64[(size_t) s]);
+
+            // Native CLAP slot (parallel to the JUCE plugin; at most one is loaded).
+            // Linux-only; preserved untouched elsewhere (see the track block above).
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+            if (strip.isNativeClapLoaded (s))
+            {
+                auto& nativeSlot = strip.getNativeClapSlot (s);
+                bindNativeStateToLoadedIdentity (
+                    "CLAP", lane.nativeClapPath[(size_t) s],
+                    lane.nativeClapPluginId[(size_t) s],
+                    lane.nativeClapStateBase64[(size_t) s],
+                    nativeSlot.getPath(), nativeSlot.getPluginId());
+                if (capturePluginState && ! strip.nativeClapReloadFailed (s))
+                {
+                    nativeSlot.flushPendingWrites();
+                    stateTokens[pluginStateIndex (owner, PluginStateKind::Clap)] = pluginStateTokenOf (nativeSlot);
+                    captureNativeState (nativeSlot,
+                                        lane.nativeClapStateBase64[(size_t) s],
+                                        "aux CLAP", s);
+                }
+            }
+            else if (! strip.hasPendingNativeClapRestore (s)
+                     && ! strip.nativeClapReloadFailed (s))
+            {
+                // See the track block above: keep the persisted refs when a restore
+                // failed (path preserved to reconnect later); clear only a genuinely
+                // empty / user-removed slot.
+                lane.nativeClapPath[(size_t) s].clear();
+                lane.nativeClapPluginId[(size_t) s].clear();
+                lane.nativeClapStateBase64[(size_t) s].clear();
+            }
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+            if (strip.isNativeLv2Loaded (s))
+            {
+                auto& nativeSlot = strip.getNativeLv2Slot (s);
+                bindNativeStateToLoadedIdentity (
+                    "LV2", lane.nativeLv2Path[(size_t) s],
+                    lane.nativeLv2PluginId[(size_t) s],
+                    lane.nativeLv2StateBase64[(size_t) s],
+                    nativeSlot.getPath(), nativeSlot.getPluginId());
+                if (capturePluginState)
+                    nativeSlot.setStateDirectory (
+                        lv2StateDirFor (session, "aux" + juce::String (a + 1)
+                                                     + "_slot" + juce::String (s + 1)));
+                // See the track block above: preserve the carried blob when the
+                // plugin can't serialize.
+                if (capturePluginState && ! strip.nativeLv2ReloadFailed (s))
+                {
+                    nativeSlot.flushPendingWrites();
+                    stateTokens[pluginStateIndex (owner, PluginStateKind::Lv2)] = pluginStateTokenOf (nativeSlot);
+                    captureNativeState (nativeSlot,
+                                        lane.nativeLv2StateBase64[(size_t) s],
+                                        "aux LV2", s);
+                }
+            }
+            else if (! strip.hasPendingNativeLv2Restore (s)
+                     && ! strip.nativeLv2ReloadFailed (s))
+            {
+                lane.nativeLv2Path[(size_t) s].clear();
+                lane.nativeLv2PluginId[(size_t) s].clear();
+                lane.nativeLv2StateBase64[(size_t) s].clear();
+            }
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+            if (strip.isNativeVst3Loaded (s))
+            {
+                auto& nativeSlot = strip.getNativeVst3Slot (s);
+                bindNativeStateToLoadedIdentity (
+                    "VST3", lane.nativeVst3Path[(size_t) s],
+                    lane.nativeVst3PluginId[(size_t) s],
+                    lane.nativeVst3StateBase64[(size_t) s],
+                    nativeSlot.getPath(), nativeSlot.getPluginId());
+                if (capturePluginState && ! strip.nativeVst3ReloadFailed (s))
+                {
+                    nativeSlot.flushPendingWrites();
+                    stateTokens[pluginStateIndex (owner, PluginStateKind::Vst3)] = pluginStateTokenOf (nativeSlot);
+                    captureNativeState (nativeSlot,
+                                        lane.nativeVst3StateBase64[(size_t) s],
+                                        "aux VST3", s);
+                }
+            }
+            else if (! strip.hasPendingNativeVst3Restore (s)
+                     && ! strip.nativeVst3ReloadFailed (s))
+            {
+                lane.nativeVst3Path[(size_t) s].clear();
+                lane.nativeVst3PluginId[(size_t) s].clear();
+                lane.nativeVst3StateBase64[(size_t) s].clear();
+            }
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
+            if (strip.isNativeAuLoaded (s))
+            {
+                auto& nativeSlot = strip.getNativeAuSlot (s);
+                bindNativeStateToLoadedIdentity (
+                    "AU", lane.nativeAuIdentifier[(size_t) s],
+                    lane.nativeAuStateBase64[(size_t) s],
+                    nativeSlot.getPluginId());
+                if (capturePluginState && ! strip.nativeAuReloadFailed (s))
+                {
+                    nativeSlot.flushPendingWrites();
+                    stateTokens[pluginStateIndex (owner, PluginStateKind::Au)] = pluginStateTokenOf (nativeSlot);
+                    captureNativeState (nativeSlot,
+                                        lane.nativeAuStateBase64[(size_t) s],
+                                        "aux AU", s);
+                }
+            }
+            else if (! strip.hasPendingNativeAuRestore (s)
+                     && ! strip.nativeAuReloadFailed (s))
+            {
+                lane.nativeAuIdentifier[(size_t) s].clear();
+                lane.nativeAuStateBase64[(size_t) s].clear();
+            }
+#endif
+        }
+    }
+
+    if (capturePluginState)
+        pluginStateCapture = { pluginNormalizationEpoch, pluginStateReceipts.size(), stateTokens, uncaptured };
+    return true;
 }
 
 void AudioEngine::releaseAllPluginResources()
@@ -3196,6 +3454,11 @@ void AudioEngine::setNativeInsertsOfflineRender (bool offline,
 {
     nativeInsertsOffline.store (offline, std::memory_order_relaxed);
     nativeInsertsRenderCancelled.store (renderCancelled, std::memory_order_relaxed);
+    for (auto& strip : stripStorage)
+        strip.getHardwareInsertSlot().setOfflineRender (offline);
+    for (auto& laneStrip : auxLaneStrips)
+        for (int s = 0; s < AuxLaneParams::kMaxLanePlugins; ++s)
+            laneStrip.getHardwareInsertSlot (s).setOfflineRender (offline);
     // LV2 is the one host that acts on it: its Worker replies are waited for.
 #if DUSKSTUDIO_HAS_NATIVE_LV2
     for (auto& strip : stripStorage)
@@ -3266,13 +3529,326 @@ void AudioEngine::consumeTransportStateAfterLoad()
     transport.setPunchEnabled (session.savedPunchEnabled);
 }
 
+int AudioEngine::pluginNormalizationTrackOwner (int track) const noexcept
+{
+    return static_cast<int> (strips[(size_t) track] - stripStorage.data());
+}
+
+int AudioEngine::pluginNormalizationAuxOwner (int lane, int slot) noexcept
+{
+    return Session::kNumTracks + lane * AuxLaneParams::kMaxLanePlugins + slot;
+}
+
+template <typename Visitor>
+bool AudioEngine::visitNativePluginOwner (int owner, NativePluginFormat format, [[maybe_unused]] Visitor&& visitor)
+{
+    if (owner < 0) return false;
+    if (owner < Session::kNumTracks)
+    {
+        const auto found = std::find (strips.begin(), strips.end(), &stripStorage[(size_t) owner]);
+        if (found == strips.end()) return false;
+        [[maybe_unused]] auto& track = session.track (static_cast<int> (found - strips.begin()));
+        [[maybe_unused]] auto& strip = **found;
+        switch (format)
+        {
+            case NativePluginFormat::Clap:
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+                return visitor (strip.getNativeClapSlot(), track.nativeClapPath, track.nativeClapPluginId,
+                                track.nativeClapStateBase64, ! strip.nativeClapReloadFailed(), false);
+#else
+                return false;
+#endif
+            case NativePluginFormat::Lv2:
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+                return visitor (strip.getNativeLv2Slot(), track.nativeLv2Path, track.nativeLv2PluginId,
+                                track.nativeLv2StateBase64, ! strip.nativeLv2ReloadFailed(), false);
+#else
+                return false;
+#endif
+            case NativePluginFormat::Vst3:
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+                return visitor (strip.getNativeVst3Slot(), track.nativeVst3Path, track.nativeVst3PluginId,
+                                track.nativeVst3StateBase64, ! strip.nativeVst3ReloadFailed(), false);
+#else
+                return false;
+#endif
+            case NativePluginFormat::Au:
+#if DUSKSTUDIO_HAS_NATIVE_AU
+            {
+                decltype (track.nativeAuIdentifier) noPluginId;
+                return visitor (strip.getNativeAuSlot(), track.nativeAuIdentifier, noPluginId,
+                                track.nativeAuStateBase64, ! strip.nativeAuReloadFailed(), true);
+            }
+#else
+                return false;
+#endif
+        }
+        return false;
+    }
+    const int laneIndex = (owner - Session::kNumTracks) / AuxLaneParams::kMaxLanePlugins;
+    [[maybe_unused]] const int slot = (owner - Session::kNumTracks) % AuxLaneParams::kMaxLanePlugins;
+    if (laneIndex >= Session::kNumAuxLanes) return false;
+    [[maybe_unused]] auto& lane = session.auxLane (laneIndex);
+    [[maybe_unused]] auto& strip = auxLaneStrips[(size_t) laneIndex];
+    switch (format)
+    {
+        case NativePluginFormat::Clap:
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+            return visitor (strip.getNativeClapSlot (slot), lane.nativeClapPath[(size_t) slot],
+                            lane.nativeClapPluginId[(size_t) slot], lane.nativeClapStateBase64[(size_t) slot],
+                            ! strip.nativeClapReloadFailed (slot), false);
+#else
+            return false;
+#endif
+        case NativePluginFormat::Lv2:
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+            return visitor (strip.getNativeLv2Slot (slot), lane.nativeLv2Path[(size_t) slot],
+                            lane.nativeLv2PluginId[(size_t) slot], lane.nativeLv2StateBase64[(size_t) slot],
+                            ! strip.nativeLv2ReloadFailed (slot), false);
+#else
+            return false;
+#endif
+        case NativePluginFormat::Vst3:
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+            return visitor (strip.getNativeVst3Slot (slot), lane.nativeVst3Path[(size_t) slot],
+                            lane.nativeVst3PluginId[(size_t) slot], lane.nativeVst3StateBase64[(size_t) slot],
+                            ! strip.nativeVst3ReloadFailed (slot), false);
+#else
+            return false;
+#endif
+        case NativePluginFormat::Au:
+#if DUSKSTUDIO_HAS_NATIVE_AU
+        {
+            std::remove_reference_t<decltype (lane.nativeAuIdentifier[0])> noPluginId;
+            return visitor (strip.getNativeAuSlot (slot), lane.nativeAuIdentifier[(size_t) slot],
+                            noPluginId, lane.nativeAuStateBase64[(size_t) slot],
+                            ! strip.nativeAuReloadFailed (slot), true);
+        }
+#else
+            return false;
+#endif
+    }
+    return false;
+}
+
+void AudioEngine::normalizeAcceptedNativePluginIdentity (int owner, NativePluginFormat format)
+{
+    visitNativePluginOwner (owner, format,
+        [&] (auto& slot, auto& location, auto& pluginId, auto& state, bool healthy, bool identifierOnly)
+        {
+            if (! healthy || ! slot.isLoaded()) return false;
+            const auto liveLocation = identifierOnly ? slot.getPluginId() : slot.getPath();
+            const auto livePluginId = identifierOnly ? std::string {} : slot.getPluginId();
+            if (location.toStdString() == liveLocation && pluginId.toStdString() == livePluginId) return false;
+            constexpr auto maxReceipts = static_cast<size_t> (
+                (Session::kNumTracks + Session::kNumAuxLanes * AuxLaneParams::kMaxLanePlugins) * 4);
+            // Repeated replacement beyond a load's slot budget remains conservatively dirty.
+            if (pluginNormalizations.size() < maxReceipts)
+                pluginNormalizations.push_back ({ owner, format, slot.generation(), location.toStdString(),
+                    pluginId.toStdString(), liveLocation, livePluginId, state.toStdString() });
+            location = liveLocation.c_str();
+            pluginId = livePluginId.c_str();
+            return true;
+        });
+}
+
+AudioEngine::PluginNormalizationBaseline AudioEngine::capturePluginNormalizationBaseline() const
+{
+    PluginNormalizationBaseline result;
+    result.epoch = pluginNormalizationEpoch;
+    result.sequence = pluginNormalizations.size();
+    for (int track = 0; track < Session::kNumTracks; ++track)
+        result.trackOwners[(size_t) track] = pluginNormalizationTrackOwner (track);
+    return result;
+}
+
+bool AudioEngine::normalizePluginBaseline (PluginNormalizationBaseline& baseline, std::string& json)
+{
+    if (baseline.epoch != pluginNormalizationEpoch || baseline.sequence >= pluginNormalizations.size())
+        return false;
+    auto parsed = nlohmann::ordered_json::parse (json, nullptr, false);
+    if (! parsed.is_object()) return false;
+    bool changed = false;
+    for (size_t sequence = baseline.sequence; sequence < pluginNormalizations.size(); ++sequence)
+    {
+        const auto& receipt = pluginNormalizations[sequence];
+        const bool current = visitNativePluginOwner (receipt.owner, receipt.format,
+            [&] (auto& slot, const auto& location, const auto& pluginId, const auto& state,
+                  bool healthy, bool)
+            {
+                return healthy && slot.isLoaded() && slot.generation() == receipt.generation
+                    && location.toStdString() == receipt.location && pluginId.toStdString() == receipt.pluginId
+                    && state.toStdString() == receipt.state;
+            });
+        if (! current) continue;
+        nlohmann::ordered_json* node = nullptr;
+        if (receipt.owner < Session::kNumTracks)
+        {
+            const auto row = std::find (baseline.trackOwners.begin(), baseline.trackOwners.end(), receipt.owner);
+            if (row == baseline.trackOwners.end() || ! parsed.contains ("tracks") || ! parsed["tracks"].is_array()) continue;
+            const auto index = static_cast<size_t> (row - baseline.trackOwners.begin());
+            if (index < parsed["tracks"].size()) node = &parsed["tracks"][index];
+        }
+        else
+        {
+            const int lane = (receipt.owner - Session::kNumTracks) / AuxLaneParams::kMaxLanePlugins;
+            const int slot = (receipt.owner - Session::kNumTracks) % AuxLaneParams::kMaxLanePlugins;
+            if (! parsed.contains ("aux_lanes") || ! parsed["aux_lanes"].is_array()
+                || static_cast<size_t> (lane) >= parsed["aux_lanes"].size()) continue;
+            auto& aux = parsed["aux_lanes"][(size_t) lane];
+            if (aux.is_object() && aux.contains ("plugin_slots") && aux["plugin_slots"].is_array()
+                && static_cast<size_t> (slot) < aux["plugin_slots"].size()) node = &aux["plugin_slots"][(size_t) slot];
+        }
+        if (node == nullptr || ! node->is_object()) continue;
+        const char* locationKey = nullptr;
+        const char* pluginKey = nullptr;
+        const char* stateKey = nullptr;
+        switch (receipt.format)
+        {
+            case NativePluginFormat::Clap:
+                locationKey = "native_clap_path"; pluginKey = "native_clap_plugin"; stateKey = "native_clap_state"; break;
+            case NativePluginFormat::Lv2:
+                locationKey = "native_lv2_path"; pluginKey = "native_lv2_plugin"; stateKey = "native_lv2_state"; break;
+            case NativePluginFormat::Vst3:
+                locationKey = "native_vst3_path"; pluginKey = "native_vst3_plugin"; stateKey = "native_vst3_state"; break;
+            case NativePluginFormat::Au:
+                locationKey = "native_au_identifier"; stateKey = "native_au_state"; break;
+        }
+        const auto matches = [&] (const char* key, const std::string& expected)
+        {
+            return node->contains (key) && (*node)[key].is_string() && (*node)[key].get<std::string>() == expected;
+        };
+        if (! matches (locationKey, receipt.oldLocation) || ! matches (stateKey, receipt.state)
+            || (pluginKey != nullptr && ! matches (pluginKey, receipt.oldPluginId))) continue;
+        (*node)[locationKey] = receipt.location;
+        if (pluginKey != nullptr) (*node)[pluginKey] = receipt.pluginId;
+        changed = true;
+    }
+    baseline.sequence = pluginNormalizations.size();
+    if (changed) json = parsed.dump (2, ' ', false, nlohmann::ordered_json::error_handler_t::replace);
+    return changed;
+}
+
+static_assert (AudioEngine::kPluginStateKinds == 5, "one token per hosting format: hosted, CLAP, LV2, VST3, AU");
+
+std::size_t AudioEngine::pluginStateIndex (int owner, PluginStateKind kind) noexcept
+{
+    return static_cast<std::size_t> (owner) * kPluginStateKinds + static_cast<std::size_t> (kind);
+}
+
+PluginStateToken AudioEngine::livePluginState (int owner, PluginStateKind kind) const noexcept
+{
+    if (owner < Session::kNumTracks)
+    {
+        [[maybe_unused]] const auto& strip = stripStorage[(size_t) owner];
+        switch (kind)
+        {
+            case PluginStateKind::Hosted:
+                return pluginStateTokenOf (strip.getPluginSlot());
+            case PluginStateKind::Clap:
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+                return pluginStateTokenOf (strip.getNativeClapSlot());
+#else
+                return {};
+#endif
+            case PluginStateKind::Lv2:
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+                return pluginStateTokenOf (strip.getNativeLv2Slot());
+#else
+                return {};
+#endif
+            case PluginStateKind::Vst3:
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+                return pluginStateTokenOf (strip.getNativeVst3Slot());
+#else
+                return {};
+#endif
+            case PluginStateKind::Au:
+#if DUSKSTUDIO_HAS_NATIVE_AU
+                return pluginStateTokenOf (strip.getNativeAuSlot());
+#else
+                return {};
+#endif
+        }
+        return {};
+    }
+    const int lane = (owner - Session::kNumTracks) / AuxLaneParams::kMaxLanePlugins;
+    [[maybe_unused]] const int slot = (owner - Session::kNumTracks) % AuxLaneParams::kMaxLanePlugins;
+    if (lane >= Session::kNumAuxLanes) return {};
+    [[maybe_unused]] const auto& strip = auxLaneStrips[(size_t) lane];
+    switch (kind)
+    {
+        case PluginStateKind::Hosted:
+            return pluginStateTokenOf (strip.getPluginSlot (slot));
+        case PluginStateKind::Clap:
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+            return pluginStateTokenOf (strip.getNativeClapSlot (slot));
+#else
+            return {};
+#endif
+        case PluginStateKind::Lv2:
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+            return pluginStateTokenOf (strip.getNativeLv2Slot (slot));
+#else
+            return {};
+#endif
+        case PluginStateKind::Vst3:
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+            return pluginStateTokenOf (strip.getNativeVst3Slot (slot));
+#else
+            return {};
+#endif
+        case PluginStateKind::Au:
+#if DUSKSTUDIO_HAS_NATIVE_AU
+            return pluginStateTokenOf (strip.getNativeAuSlot (slot));
+#else
+            return {};
+#endif
+    }
+    return {};
+}
+
+AudioEngine::PluginStateTokens AudioEngine::livePluginStates() const noexcept
+{
+    PluginStateTokens tokens {};
+    constexpr int owners = static_cast<int> (kPluginStateSlots / kPluginStateKinds);
+    for (int owner = 0; owner < owners; ++owner)
+        for (const auto kind : { PluginStateKind::Hosted, PluginStateKind::Clap, PluginStateKind::Lv2,
+                                 PluginStateKind::Vst3, PluginStateKind::Au })
+            tokens[pluginStateIndex (owner, kind)] = livePluginState (owner, kind);
+    return tokens;
+}
+
+void AudioEngine::notePluginStateRestored (const PluginStateTokens& beforePrepare, int owner, PluginStateKind kind)
+{
+    // A pending restore exists only between a load and the prepare that takes
+    // it, so a load produces at most one receipt per slot.
+    if (pluginStateReceipts.size() >= kPluginStateSlots) return;
+    const auto index = pluginStateIndex (owner, kind);
+    pluginStateReceipts.push_back ({ index, beforePrepare[index].generation, livePluginState (owner, kind) });
+}
+
+void AudioEngine::normalizePluginStateBaseline (PluginStateBaseline& baseline) const noexcept
+{
+    baseline.adopt (pluginNormalizationEpoch, pluginStateReceipts);
+}
+
+bool AudioEngine::pluginStateChangedSince (const PluginStateBaseline& baseline) const noexcept
+{
+    return baseline.differsFrom (livePluginStates());
+}
+
 void AudioEngine::consumePluginStateAfterLoad()
 {
+    ++pluginNormalizationEpoch;
+    pluginNormalizations.clear();
+    pluginStateReceipts.clear();
 #if DUSKSTUDIO_HAS_MULTISAMPLE
     ++multisampleLoads->sessionGeneration;
     multisampleLoads->worker.cancelAll();
     multisampleLoads->pending.fill (false);
     multisampleLoads->restoreFailures.clear();
+    for (auto& portable : multisampleLoads->portableRestores) portable.reset();
     for (auto& request : multisampleLoads->deferred) request.reset();
 #endif
     // Mirror of publish: read the (just-deserialised) strings on each track
@@ -3459,6 +4035,8 @@ void AudioEngine::consumePluginStateAfterLoad()
                 const auto reason = hosting::enforceRestorePolicy (
                     loaded, stateWasSupplied, stateAccepted, err, blob.size(),
                     [&] { strip.unloadNativeClap(); });
+                if (loaded && stateAccepted)
+                    normalizeAcceptedNativePluginIdentity (pluginNormalizationTrackOwner (t), NativePluginFormat::Clap);
                 resumeProcessing();
                 if (! reason.empty())
                 {
@@ -3516,6 +4094,8 @@ void AudioEngine::consumePluginStateAfterLoad()
                 const auto reason = hosting::enforceRestorePolicy (
                     loaded, stateWasSupplied, stateAccepted, err, blob.size(),
                     [&] { strip.unloadNativeLv2(); });
+                if (loaded && stateAccepted)
+                    normalizeAcceptedNativePluginIdentity (pluginNormalizationTrackOwner (t), NativePluginFormat::Lv2);
                 resumeProcessing();
                 if (! reason.empty())
                 {
@@ -3568,6 +4148,8 @@ void AudioEngine::consumePluginStateAfterLoad()
                 const auto reason = hosting::enforceRestorePolicy (
                     loaded, stateWasSupplied, stateAccepted, err, blob.size(),
                     [&] { strip.unloadNativeVst3(); });
+                if (loaded && stateAccepted)
+                    normalizeAcceptedNativePluginIdentity (pluginNormalizationTrackOwner (t), NativePluginFormat::Vst3);
                 resumeProcessing();
                 if (! reason.empty())
                 {
@@ -3616,6 +4198,8 @@ void AudioEngine::consumePluginStateAfterLoad()
                 const auto reason = hosting::enforceRestorePolicy (
                     loaded, stateWasSupplied, stateAccepted, err, blob.size(),
                     [&] { strip.unloadNativeAu(); });
+                if (loaded && stateAccepted)
+                    normalizeAcceptedNativePluginIdentity (pluginNormalizationTrackOwner (t), NativePluginFormat::Au);
                 resumeProcessing();
                 if (! reason.empty())
                 {
@@ -3847,6 +4431,8 @@ void AudioEngine::consumePluginStateAfterLoad()
                     const auto reason = hosting::enforceRestorePolicy (
                         loaded, stateWasSupplied, stateAccepted, err, blob.size(),
                         [&] { strip.unloadNativeClap (s); });
+                    if (loaded && stateAccepted)
+                        normalizeAcceptedNativePluginIdentity (pluginNormalizationAuxOwner (a, s), NativePluginFormat::Clap);
                     resumeProcessing();
                     if (! reason.empty())
                     {
@@ -3905,6 +4491,8 @@ void AudioEngine::consumePluginStateAfterLoad()
                     const auto reason = hosting::enforceRestorePolicy (
                         loaded, stateWasSupplied, stateAccepted, err, blob.size(),
                         [&] { strip.unloadNativeLv2 (s); });
+                    if (loaded && stateAccepted)
+                        normalizeAcceptedNativePluginIdentity (pluginNormalizationAuxOwner (a, s), NativePluginFormat::Lv2);
                     resumeProcessing();
                     if (! reason.empty())
                     {
@@ -3962,6 +4550,8 @@ void AudioEngine::consumePluginStateAfterLoad()
                     const auto reason = hosting::enforceRestorePolicy (
                         loaded, stateWasSupplied, stateAccepted, err, blob.size(),
                         [&] { strip.unloadNativeVst3 (s); });
+                    if (loaded && stateAccepted)
+                        normalizeAcceptedNativePluginIdentity (pluginNormalizationAuxOwner (a, s), NativePluginFormat::Vst3);
                     resumeProcessing();
                     if (! reason.empty())
                     {
@@ -4015,6 +4605,8 @@ void AudioEngine::consumePluginStateAfterLoad()
                     const auto reason = hosting::enforceRestorePolicy (
                         loaded, stateWasSupplied, stateAccepted, err, blob.size(),
                         [&] { strip.unloadNativeAu (s); });
+                    if (loaded && stateAccepted)
+                        normalizeAcceptedNativePluginIdentity (pluginNormalizationAuxOwner (a, s), NativePluginFormat::Au);
                     resumeProcessing();
                     if (! reason.empty())
                     {
@@ -4157,6 +4749,9 @@ void AudioEngine::consumePluginStateAfterLoad()
             legacyXml = slot.getLegacyDescriptionXmlForSave();
         }
     }
+    // Every restore above has returned; one the device prepare completes
+    // later arrives as a receipt.
+    pluginStateCapture = { pluginNormalizationEpoch, pluginStateReceipts.size(), livePluginStates(), {} };
 }
 
 void AudioEngine::audioDeviceAboutToStart (device::IODevice* device)
@@ -4311,9 +4906,6 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
 
     for (auto& edges : midiButtonEdges) edges.reset();
 
-    if (rtTempoMapPool.size() > 1)
-        rtTempoMapPool.erase (rtTempoMapPool.begin(), rtTempoMapPool.end() - 1);
-
     // A finished render's cancel flag dies with its BounceEngine, and only the
     // next callback would clear the pointer; a slot processed directly before
     // then must not wait on it.
@@ -4335,6 +4927,7 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
 
     currentSampleRate.store (sr, std::memory_order_relaxed);
     currentBlockSize.store  (bs, std::memory_order_relaxed);
+    seedStoppedHostedTransport();
 
     // Cache the tick->seconds reciprocal once - the xrun watchdog hits this
     // twice per callback otherwise, and highResolutionTicksToSeconds does a
@@ -4358,10 +4951,119 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
                              ? oxOverride
                              : session.oversamplingFactor.load (std::memory_order_relaxed);
 
-    for (auto& s : stripStorage)  s.prepare (sr, bs, oxFactor);
+    [[maybe_unused]] const auto beforePrepare = livePluginStates();
+    for (int track = 0; track < Session::kNumTracks; ++track)
+    {
+        auto& strip = *strips[(size_t) track];
+        [[maybe_unused]] const int owner = pluginNormalizationTrackOwner (track);
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+        const bool pendingClap = strip.hasPendingNativeClapRestore();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+        const bool pendingLv2 = strip.hasPendingNativeLv2Restore();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+        const bool pendingVst3 = strip.hasPendingNativeVst3Restore();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
+        const bool pendingAu = strip.hasPendingNativeAuRestore();
+#endif
+        strip.prepare (sr, bs, oxFactor);
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+        if (pendingClap && ! strip.hasPendingNativeClapRestore()
+            && strip.isNativeClapLoaded() && ! strip.nativeClapReloadFailed())
+        {
+            normalizeAcceptedNativePluginIdentity (owner, NativePluginFormat::Clap);
+            notePluginStateRestored (beforePrepare, owner, PluginStateKind::Clap);
+        }
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+        if (pendingLv2 && ! strip.hasPendingNativeLv2Restore()
+            && strip.isNativeLv2Loaded() && ! strip.nativeLv2ReloadFailed())
+        {
+            normalizeAcceptedNativePluginIdentity (owner, NativePluginFormat::Lv2);
+            notePluginStateRestored (beforePrepare, owner, PluginStateKind::Lv2);
+        }
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+        if (pendingVst3 && ! strip.hasPendingNativeVst3Restore()
+            && strip.isNativeVst3Loaded() && ! strip.nativeVst3ReloadFailed())
+        {
+            normalizeAcceptedNativePluginIdentity (owner, NativePluginFormat::Vst3);
+            notePluginStateRestored (beforePrepare, owner, PluginStateKind::Vst3);
+        }
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
+        if (pendingAu && ! strip.hasPendingNativeAuRestore()
+            && strip.isNativeAuLoaded() && ! strip.nativeAuReloadFailed())
+        {
+            normalizeAcceptedNativePluginIdentity (owner, NativePluginFormat::Au);
+            notePluginStateRestored (beforePrepare, owner, PluginStateKind::Au);
+        }
+#endif
+    }
     for (auto& a : busStrips)     a.prepare (sr, bs, oxFactor);
     busAlignSamples.store (busStrips[0].getOversamplingLatencySamples(), std::memory_order_relaxed);
-    for (auto& a : auxLaneStrips) a.prepare (sr, bs);
+    for (int lane = 0; lane < Session::kNumAuxLanes; ++lane)
+    {
+        auto& strip = auxLaneStrips[(size_t) lane];
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+        std::array<bool, AuxLaneParams::kMaxLanePlugins> pendingClap {};
+        for (int slot = 0; slot < AuxLaneParams::kMaxLanePlugins; ++slot)
+            pendingClap[(size_t) slot] = strip.hasPendingNativeClapRestore (slot);
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+        std::array<bool, AuxLaneParams::kMaxLanePlugins> pendingLv2 {};
+        for (int slot = 0; slot < AuxLaneParams::kMaxLanePlugins; ++slot)
+            pendingLv2[(size_t) slot] = strip.hasPendingNativeLv2Restore (slot);
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+        std::array<bool, AuxLaneParams::kMaxLanePlugins> pendingVst3 {};
+        for (int slot = 0; slot < AuxLaneParams::kMaxLanePlugins; ++slot)
+            pendingVst3[(size_t) slot] = strip.hasPendingNativeVst3Restore (slot);
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
+        std::array<bool, AuxLaneParams::kMaxLanePlugins> pendingAu {};
+        for (int slot = 0; slot < AuxLaneParams::kMaxLanePlugins; ++slot)
+            pendingAu[(size_t) slot] = strip.hasPendingNativeAuRestore (slot);
+#endif
+        strip.prepare (sr, bs);
+        for (int slot = 0; slot < AuxLaneParams::kMaxLanePlugins; ++slot)
+        {
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+            if (pendingClap[(size_t) slot] && ! strip.hasPendingNativeClapRestore (slot)
+                && strip.isNativeClapLoaded (slot) && ! strip.nativeClapReloadFailed (slot))
+            {
+                normalizeAcceptedNativePluginIdentity (pluginNormalizationAuxOwner (lane, slot), NativePluginFormat::Clap);
+                notePluginStateRestored (beforePrepare, pluginNormalizationAuxOwner (lane, slot), PluginStateKind::Clap);
+            }
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+            if (pendingLv2[(size_t) slot] && ! strip.hasPendingNativeLv2Restore (slot)
+                && strip.isNativeLv2Loaded (slot) && ! strip.nativeLv2ReloadFailed (slot))
+            {
+                normalizeAcceptedNativePluginIdentity (pluginNormalizationAuxOwner (lane, slot), NativePluginFormat::Lv2);
+                notePluginStateRestored (beforePrepare, pluginNormalizationAuxOwner (lane, slot), PluginStateKind::Lv2);
+            }
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+            if (pendingVst3[(size_t) slot] && ! strip.hasPendingNativeVst3Restore (slot)
+                && strip.isNativeVst3Loaded (slot) && ! strip.nativeVst3ReloadFailed (slot))
+            {
+                normalizeAcceptedNativePluginIdentity (pluginNormalizationAuxOwner (lane, slot), NativePluginFormat::Vst3);
+                notePluginStateRestored (beforePrepare, pluginNormalizationAuxOwner (lane, slot), PluginStateKind::Vst3);
+            }
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
+            if (pendingAu[(size_t) slot] && ! strip.hasPendingNativeAuRestore (slot)
+                && strip.isNativeAuLoaded (slot) && ! strip.nativeAuReloadFailed (slot))
+            {
+                normalizeAcceptedNativePluginIdentity (pluginNormalizationAuxOwner (lane, slot), NativePluginFormat::Au);
+                notePluginStateRestored (beforePrepare, pluginNormalizationAuxOwner (lane, slot), PluginStateKind::Au);
+            }
+#endif
+        }
+    }
     collectDeferredNativeRestoreFailures();
     master.prepare (sr, bs, oxFactor);
 
@@ -4433,7 +5135,7 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
     }
     metronome.prepare (sr);
     playbackEngine.prepare (bs, sr);
-    pitchDetector.prepare (sr);   // ~46 ms history at the device rate
+    pitchDetector.prepare (sr);
 
     mixL.assign ((size_t) bs, 0.0f);
     mixR.assign ((size_t) bs, 0.0f);
@@ -4559,10 +5261,14 @@ void AudioEngine::suspendProcessing()
                           "in-flight audio callback to drain (wedged plugin?)\n",
                           waitedMs / 1000);
     }
+    seedStoppedHostedTransport();
 }
 
 void AudioEngine::resumeProcessing() noexcept
 {
+    if (processingSuspended.load (std::memory_order_seq_cst)
+        && callbacksInFlight.load (std::memory_order_seq_cst) == 0)
+        seedStoppedHostedTransport();
     processingSuspended.store (false, std::memory_order_release);
 }
 
@@ -4918,9 +5624,12 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         silentDims.store (((std::uint64_t) (std::uint32_t) mixL.size() << 32)
                           | (std::uint32_t) numSamples, std::memory_order_relaxed);
         silentBlocks.fetch_add (1, std::memory_order_relaxed);
+        hostedTransport.publish (nullptr);
         clearOutputs();
         return;
     }
+    const bool offlineRender = context.offlineRender
+                            || offlineRenderActive.load (std::memory_order_acquire);
     const auto transportBlockState = transport.getState();
     const auto transportLoopStart = transport.getLoopStart(), transportLoopEnd = transport.getLoopEnd();
     const bool transportLoopEnabled = transport.isLoopEnabled();
@@ -4993,15 +5702,10 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     // duration of THIS callback only - never cached across blocks.
     currentDeviceInputs     = inputChannelData;
     numCurrentDeviceInputs  = numInputChannels;
-    currentDeviceOutputs    = outputChannelData;
-    numCurrentDeviceOutputs = numOutputChannels;
+    // Physical cue taps must not accumulate into the offline render buffer.
+    currentDeviceOutputs    = offlineRender ? nullptr : outputChannelData;
+    numCurrentDeviceOutputs = offlineRender ? 0 : numOutputChannels;
 
-    // Zero every device output up front. The master bus + click
-    // overwrite their assigned channels at the end of the callback via
-    // memcpy so pre-zeroing them is harmless. Hardware-insert sends
-    // accumulate into their assigned channels via `+=`, which requires
-    // a clean zero baseline. Pre-zeroing everything avoids baking in a
-    // "master is always 0/1" assumption.
     for (int ch = 0; ch < numOutputChannels; ++ch)
         if (outputChannelData != nullptr && outputChannelData[ch] != nullptr)
             std::memset (outputChannelData[ch], 0,
@@ -5029,6 +5733,9 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         testInjectMidi.clear();
         testInjectReady.store (false, std::memory_order_release);
     }
+    if (offlineRender)
+        for (auto& events : perInputMidi)
+            events.clear();
 
     // External MIDI Clock sync. Feed the chosen input's per-block
     // buffer to the receiver; if it derived a fresh BPM and the
@@ -5041,7 +5748,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     // wrap / Cmd-jump / scrub - using it for clock intervals would
     // produce wild BPM swings whenever the user moves the playhead.
     const int syncIdx = session.syncSourceInputIdx.load (std::memory_order_acquire);
-    if (syncIdx != lastSyncSourceIdx)
+    if (! offlineRender && syncIdx != lastSyncSourceIdx)
     {
         // Source changed (or first run). Reset both the receiver's
         // history and the local sample clock so the new source starts
@@ -5065,14 +5772,14 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     // Gate on the resolved index so MCU decode is a no-op when no
     // controller is selected. Audio-thread only; receiver writes
     // directly to Session atoms.
-    if (mcuReceiver != nullptr)
+    if (! offlineRender && mcuReceiver != nullptr)
     {
         const int mcuIdx = session.mcu.resolvedInputIdx.load (std::memory_order_acquire);
         if (mcuIdx >= 0 && (size_t) mcuIdx < perInputMidi.size())
             mcuReceiver->process (perInputMidi[(size_t) mcuIdx], midiSyncSampleClock);
     }
 
-    if (syncIdx >= 0 && (size_t) syncIdx < perInputMidi.size())
+    if (! offlineRender && syncIdx >= 0 && (size_t) syncIdx < perInputMidi.size())
     {
         // The drained input block is already a dusk::MidiBuffer - feed it
         // straight to the receivers (Clock + MTC multiplex on the same port).
@@ -5236,7 +5943,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         }
         lastExtRolling = extRolling;
     }
-    else
+    else if (! offlineRender)
     {
         // Clear the readouts when no source is selected so the UI badge
         // doesn't stay frozen at the last value after the user turns
@@ -5248,7 +5955,8 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         session.externalTimeCodeReversed.store (false, std::memory_order_relaxed);
         lastExtRolling = false;
     }
-    midiSyncSampleClock += numSamples;
+    if (! offlineRender)
+        midiSyncSampleClock += numSamples;
 
     // MIDI Clock OUTPUT (master mode). Generates F8 + FA/FC (+ MTC) bytes into
     // a dusk scratch buffer and hands it to the out-bank's RT queue for the
@@ -5260,13 +5968,13 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     // index (the opened output port + its background-thread state) is visible
     // here before we route bytes to it.
     const int syncOutIdx = session.syncOutputIdx.load (std::memory_order_acquire);
-    if (syncOutIdx != lastSyncOutputIdx)
+    if (! offlineRender && syncOutIdx != lastSyncOutputIdx)
     {
         midiClockEmitter.reset();
         midiTimeCodeEmitter.reset();
         lastSyncOutputIdx = syncOutIdx;
     }
-    const bool portReady = syncOutIdx >= 0 && midiOut.isOpen (syncOutIdx);
+    const bool portReady = ! offlineRender && syncOutIdx >= 0 && midiOut.isOpen (syncOutIdx);
     const bool emitClock = portReady
                          && session.syncOutputEmitClock.load (std::memory_order_relaxed);
     const bool emitTimeCode = portReady
@@ -5300,7 +6008,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         }
 
         if (! midiClockOutScratch.isEmpty())
-            midiOut.queueRt (syncOutIdx, midiClockOutScratch,
+            midiOut.queueRt (syncOutIdx, kSyncOutputMidiStream, midiClockOutScratch,
                              currentSampleRate.load (std::memory_order_relaxed));
     }
 
@@ -6063,6 +6771,13 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     // the audio thread.
     if (stage.load (std::memory_order_acquire) == Stage::Mastering)
     {
+        auto stopped = captureHostedTransport (Transport::State::Stopped, transportBlockStart,
+            transportLoopEnabled, transportLoopStart, transportLoopEnd);
+        const double sampleRate = currentSampleRate.load (std::memory_order_relaxed);
+        if (! std::isfinite (sampleRate) || sampleRate <= 0.0)
+            stopped.timeInSeconds = stopped.ppqPosition = stopped.ppqLoopStart = stopped.ppqLoopEnd
+                = std::numeric_limits<double>::quiet_NaN();
+        hostedTransport.publish (&stopped);
         const auto block = masteringPlayer.process (mixL.data(), mixR.data(), numSamples);
         const bool capturePhase = ! context.offlineRender && block.stable && block.completeSourceRead;
         const auto gatedBlocks = getGatedBlockCount();
@@ -6165,11 +6880,6 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     const bool isRecording = (state == Transport::State::Recording);
     std::int64_t blockStartSamples = transportBlockStart;
 
-    // Offline renders must be deterministic - live input never prints. An offline
-    // bounce/stem/freeze drives this callback from a worker thread while the MIDI
-    // input path stays open, so this latch gates every live-MIDI pull below.
-    const bool offlineRender = offlineRenderActive.load (std::memory_order_acquire);
-
     // Loop recording uses the immutable plan published before Record entered
     // the rolling state. Live Loop/Punch edits apply to the next gesture, so a
     // current take cannot change shape halfway through a callback or pass.
@@ -6215,6 +6925,11 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     const std::int64_t loopReadEnd = loopRecordingActive
         ? loopRecordPlan.loopEndSample
         : (playbackLoopActive ? liveLoopEnd : -1);
+    blockTransport = captureHostedTransport (transportBlockState, blockStartSamples,
+        loopRecordingActive || transportLoopEnabled,
+        loopRecordingActive ? loopReadStart : transportLoopStart,
+        loopRecordingActive ? loopReadEnd : transportLoopEnd);
+    hostedTransport.publish (&blockTransport);
     playbackEngine.beginAudioBlock (blockStartSamples, loopReadStart, loopReadEnd);
 
     // Re-enumerated at each capture site instead of storing a variable-size
@@ -6804,7 +7519,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             // Lock-free tempo-map snapshot. When non-empty, note/CC ticks resolve
             // to absolute timeline samples through the map (so playback follows
             // tempo changes); when null/empty this is the exact constant-bpm path.
-            const TempoMap* tm = rtTempoMap.load (std::memory_order_acquire);
+            const TempoMap* tm = rtTempoMap.read();
             const bool useMap = (tm != nullptr && ! tm->empty());
             // The timeline window, from where the last one ended to the
             // instrument's latency past this block's end (see
@@ -7021,7 +7736,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         // loaded instrument plugin (if any) does. Handed to the pump thread
         // via the out-bank's lock-free RT queue, which validates the port
         // under its mutex. Empty buffer skipped to avoid pointless slot use.
-        if (midiTrack && ! perTrackMidi[(size_t) t].isEmpty())
+        if (! offlineRender && midiTrack && ! perTrackMidi[(size_t) t].isEmpty())
         {
             const int outIdx = session.track (t).midiOutputIndex.load (
                                   std::memory_order_relaxed);
@@ -7035,7 +7750,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                 midi::copyMidiSorted (perTrackMidi[(size_t) t], midiOutTrackScratch,
                                       midiOutSortScratch);
                 if (! midiOutTrackScratch.isEmpty())
-                    midiOut.queueRt (outIdx, midiOutTrackScratch,
+                    midiOut.queueRt (outIdx, t, midiOutTrackScratch,
                                      currentSampleRate.load (std::memory_order_relaxed));
             }
         }
@@ -7090,17 +7805,6 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                                   stereoTrackInput || isFrozen, isFrozen,
                                   strips[(size_t) t]->insertMode.load (std::memory_order_relaxed)
                                       == ChannelStrip::kInsertHardware };
-    }
-
-    {
-        // Plug-ins see the tempo in effect at the block's start, like the click;
-        // the constant session tempo when no map is published.
-        const TempoMap* tmBlock = rtTempoMap.load (std::memory_order_acquire);
-        const double blockBpm = (tmBlock != nullptr && ! tmBlock->empty())
-                                  ? (double) tmBlock->bpmAt (blockStartSamples)
-                                  : (double) session.tempoBpm.load (std::memory_order_acquire);
-        blockTransport = snapshotTransport (transport, blockBpm,
-                                            currentSampleRate.load (std::memory_order_relaxed));
     }
 
     // DSP pass
@@ -7331,23 +8035,20 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         const bool soloed  = params.solo.load (std::memory_order_relaxed);
         const bool passes  = ! muted && (anyBusSolo ? soloed : true);
 
-        if (! passes) continue;
+        if (! passes)
+        {
+            busStrips[(size_t) a].discardPendingDrain();
+            continue;
+        }
 
-        // Skip aux DSP entirely when the bus buffer is silent - no channel
-        // routed to it AND no smoothing tail from a recently-unassigned
-        // channel. UniversalCompressor (Bus mode) is one of the heaviest
-        // per-block ops in the engine; skipping the whole EQ + comp pass on
-        // an idle aux is a big saving when only 1-2 of the 4 buses are in
-        // use. Aux's own fader/pan smoothers don't tick during the skip,
-        // but they pick up correctly from their last-known current value
-        // when audio resumes, so no click on re-engage.
+        // Let held DSP output drain before sleeping an input-silent subgroup.
         {
             const auto rngL = findSignedMinMax (busL[(size_t) a].data(), numSamples);
             const auto rngR = findSignedMinMax (busR[(size_t) a].data(), numSamples);
             const float peak = std::max (
                 std::max (std::abs (rngL.min), std::abs (rngL.max)),
                 std::max (std::abs (rngR.min), std::abs (rngR.max)));
-            if (peak <= 1e-6f)
+            if (peak <= 1e-6f && ! busStrips[(size_t) a].hasPendingDrain())
             {
                 // Bus pass is being skipped (no audio routed). Reset the
                 // post-bus meter to silence so the UI doesn't keep showing
@@ -7358,6 +8059,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                 params.meterPostBusRDb.store (-100.0f, std::memory_order_relaxed);
                 params.meterPostBusRmsL.store (0.0f, std::memory_order_relaxed);
                 params.meterPostBusRmsR.store (0.0f, std::memory_order_relaxed);
+                params.meterGrDb.store (0.0f, std::memory_order_relaxed);
                 continue;
             }
         }
@@ -7578,7 +8280,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         // the skip engages on the next silent-input block.
         if (laneHasPlugin && ! laneHasHardware)
         {
-            if (lanePeak (a) <= 1e-6f)
+            if (std::max (lanePeak (a), auxLaneStrips[(size_t) a].getPreReturnPeak()) <= 1e-6f)
                 auxSilentRunSamples[(size_t) a] += numSamples;
             else
                 auxSilentRunSamples[(size_t) a] = 0;
@@ -7653,16 +8355,8 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     const bool polyphonic    = session.metronomePolyphonic         .load (std::memory_order_relaxed);
 
     metronome.setEnabled    (session.metronomeEnabled.load (std::memory_order_relaxed));
-    {
-        // Click follows the tempo map: use the tempo in effect at the block's
-        // playhead (per-block is plenty for a monitoring click). Falls back to
-        // the constant tempo when no map is published.
-        const TempoMap* tmMetro = rtTempoMap.load (std::memory_order_acquire);
-        const float metroBpm = (tmMetro != nullptr && ! tmMetro->empty())
-                                 ? tmMetro->bpmAt (blockStartSamples)
-                                 : session.tempoBpm.load (std::memory_order_relaxed);
-        metronome.setBpm (metroBpm);
-    }
+    const TempoMap* tmMetro = rtTempoMap.read();
+    metronome.setBpm (session.tempoBpm.load (std::memory_order_relaxed));
     metronome.setBeatsPerBar(session.beatsPerBar.load (std::memory_order_relaxed));
     metronome.setVolumeDb   (session.metronomeVolDb.load (std::memory_order_relaxed));
     metronome.setPolyphonic (polyphonic);
@@ -7700,10 +8394,36 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                              + busAlignSamples.load (std::memory_order_relaxed)
                              + masterDryPdcApplied + master.getOversamplingLatencySamples()
                              + getMasterTapeLatencySamples();
-        metronome.process (blockStartSamples - (std::int64_t) mixLatency,
-                            clickRolling,
-                            mixL.data(), mixR.data(), numSamples,
-                            /*forceEnable*/ inCountIn);
+        const auto clickStart = blockStartSamples - (std::int64_t) mixLatency;
+        const double clickRate = currentSampleRate.load (std::memory_order_relaxed);
+        if (! clickRolling || (! metronome.isEnabled() && ! inCountIn)
+            || tmMetro == nullptr || tmMetro->empty() || clickRate <= 0.0)
+        {
+            metronome.process (clickStart, clickRolling, mixL.data(), mixR.data(), numSamples, inCountIn);
+        }
+        else
+        {
+            const auto& points = tmMetro->points();
+            auto next = std::upper_bound (points.begin(), points.end(), clickStart,
+                [] (std::int64_t sample, const TempoPoint& point) { return sample < point.timelineSamples; });
+            int offset = 0;
+            while (offset < numSamples)
+            {
+                const auto start = clickStart + offset;
+                int count = numSamples - offset;
+                if (next != points.end())
+                    count = (int) std::min<std::int64_t> (count, next->timelineSamples - start);
+                const float bpm = tmMetro->bpmAt (start);
+                const double quarterNote = start < 0
+                    ? (double) start * (double) points.front().bpm / (60.0 * clickRate)
+                    : tmMetro->samplesToTicksFractional (start, clickRate) / (double) kMidiTicksPerQuarter;
+                metronome.setBpm (bpm);
+                metronome.process (start, clickRolling, mixL.data() + offset, mixR.data() + offset,
+                                    count, inCountIn, quarterNote);
+                offset += count;
+                if (next != points.end() && clickStart + offset == next->timelineSamples) ++next;
+            }
+        }
     }
 
     writeMasterMixToOutput (outputChannelData, numOutputChannels, numSamples);

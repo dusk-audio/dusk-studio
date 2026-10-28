@@ -880,6 +880,76 @@ TEST_CASE ("DeviceManager listeners: owner removed mid-fire is skipped", "[audio
 }
 
 #if ! defined (__APPLE__)
+TEST_CASE ("DeviceManager retires a backend that closes itself once on the message thread", "[audio][device][loss]")
+{
+    juce::ScopedJuceInitialiser_GUI juceInit;
+    Harness lostHarness, closedHarness, replacedHarness, failedHarness;
+    MockCallback lostCallback, closedCallback, replacedCallback, failedCallback;
+    DeviceManager lost, closed, replaced, failed;
+    lost.setDeviceTypesForTest (lostHarness.build());
+    closed.setDeviceTypesForTest (closedHarness.build());
+    replaced.setDeviceTypesForTest (replacedHarness.build());
+    failed.setDeviceTypesForTest (failedHarness.build());
+    lost.addCallback (&lostCallback);
+    closed.addCallback (&closedCallback);
+    replaced.addCallback (&replacedCallback);
+    failed.addCallback (&failedCallback);
+    REQUIRE (lost.initialise (2, 2, "", true).empty());
+    REQUIRE (closed.initialise (2, 2, "", true).empty());
+    REQUIRE (replaced.initialise (2, 2, "", true).empty());
+
+    int lossNotifications = 0;
+    bool deliberateLoss = true;
+    lost.addChangeListener (&lossNotifications, [&]
+    {
+        if (lost.getCurrentDevice() == nullptr)
+        {
+            ++lossNotifications;
+            deliberateLoss = lost.isDeviceChangePending();
+        }
+    });
+    lostHarness.pw->created.back()->close();
+    REQUIRE (lost.getCurrentDevice() != nullptr);
+    REQUIRE (lostCallback.stopped == 0);
+
+    closed.closeDevice();
+    REQUIRE (closedCallback.stopped == 1);
+    replacedHarness.pw->created.back()->close();
+    REQUIRE (replaced.setSetup (replaced.getSetup(), false).empty());
+    REQUIRE (replacedCallback.aboutToStart == 2);
+    REQUIRE (replacedCallback.stopped == 1);
+    failedHarness.pw->busy.insert ("pw-default");
+    REQUIRE_FALSE (failed.initialise (2, 2, "", true).empty());
+
+    pumpUntil ([&] { return lossNotifications > 0; });
+    REQUIRE (lost.getCurrentDevice() == nullptr);
+    REQUIRE (lostCallback.stopped == 1);
+    REQUIRE (lossNotifications == 1);
+    REQUIRE_FALSE (deliberateLoss);
+    REQUIRE_FALSE (lost.isDeviceChangePending());
+    lost.closeDevice();
+    REQUIRE (lostCallback.stopped == 1);
+    REQUIRE (closed.getCurrentDevice() == nullptr);
+    REQUIRE (closedCallback.stopped == 1);
+    REQUIRE (closed.isDeviceChangePending());
+    REQUIRE (replaced.getCurrentDevice() != nullptr);
+    REQUIRE (replaced.getCurrentDevice()->isPlaying());
+    REQUIRE (replacedCallback.stopped == 1);
+    REQUIRE (failed.getCurrentDevice() == nullptr);
+    REQUIRE (failedCallback.aboutToStart == 0);
+    REQUIRE (failedCallback.stopped == 0);
+    REQUIRE (lost.setSetup (lost.getSetup(), false).empty());
+    REQUIRE (lost.getCurrentDevice() != nullptr);
+    REQUIRE (lost.getCurrentDevice()->isPlaying());
+    REQUIRE (lostCallback.aboutToStart == 2);
+
+    lost.removeChangeListener (&lossNotifications);
+    lost.removeCallback (&lostCallback);
+    closed.removeCallback (&closedCallback);
+    replaced.removeCallback (&replacedCallback);
+    failed.removeCallback (&failedCallback);
+}
+
 TEST_CASE ("DeviceManager broadcast: async and coalesced on the message thread", "[audio][device]")
 {
     // A single message-loop pump per case: JUCE's stopDispatchLoop latches the

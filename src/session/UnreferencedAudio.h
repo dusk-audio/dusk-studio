@@ -7,11 +7,12 @@
 namespace duskstudio
 {
 class Session;
+struct AudioRegion;
 
 // What Clean out would delete: the .wav files sitting in the session's audio
-// directory that no region, no take on a track and no loaded mastering source
-// points at. Subdirectories are left alone, so freeze renders and
-// anything the user dropped in by hand are never candidates.
+// directory that no region, take, freeze render, loaded mastering source or
+// held region points at, including through a filesystem alias. Subdirectories
+// are left alone.
 struct UnreferencedAudio
 {
     std::vector<std::filesystem::path> files;
@@ -20,7 +21,12 @@ struct UnreferencedAudio
     // list then means "could not tell", not "nothing to clean", and the files
     // listed are only what was reached before the walk stopped.
     bool scanFailed = false;
+    // A file the session uses could not be looked up, so any candidate might be
+    // an alias of it; nothing is listed.
+    bool referenceUnreadable = false;
 };
 
-UnreferencedAudio findUnreferencedAudio (const Session& session);
+// heldRegion is a region kept off the timeline, such as the region clipboard's.
+UnreferencedAudio findUnreferencedAudio (const Session& session,
+                                         const AudioRegion* heldRegion = nullptr);
 } // namespace duskstudio

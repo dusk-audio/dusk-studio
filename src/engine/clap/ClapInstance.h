@@ -9,7 +9,9 @@
 
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <string>
+#include <thread>
 #include <vector>
 
 struct clap_plugin;
@@ -23,7 +25,8 @@ class ClapBundle;
 // full lifecycle (init -> activate -> start_processing -> process -> stop_processing
 // -> deactivate -> destroy). Setup is message-thread; processBlock is the audio
 // path. Parameters are enumerated at create(); changes are queued (message thread,
-// single producer) and consumed as CLAP events by the next process() block.
+// single producer) and consumed as CLAP events by the next process() block, or by
+// a params.flush outside process() for an instance no block is running.
 //
 // Implements the host-agnostic INativeInstance so one plugin slot can drive
 // CLAP, VST3 and LV2 through a single pointer. processStereo() is a compatibility
@@ -88,6 +91,7 @@ public:
     // call fails. Used for session persistence of a native CLAP.
     bool saveState (std::vector<uint8_t>& out) const override;
     bool loadState (const std::vector<uint8_t>& in) override;
+    std::uint64_t stateRevision() const noexcept override { return hostObj.stateRevision(); }
 
     // Parameters (message thread). Enumerated once at create().
     int               paramCount() const noexcept { return (int) params.size(); }
@@ -98,9 +102,25 @@ public:
 
     // Queue a parameter change. SINGLE PRODUCER: call from the message thread only
     // (the ring has no inter-producer synchronisation). Applied on the next process()
-    // block - i.e. the next audio buffer while the device runs. Silently dropped only
-    // if the ring overflows (pathological flood).
+    // block - i.e. the next audio buffer while the device runs - or the next flush
+    // outside process(). Silently dropped only if the ring overflows (pathological flood).
     void setParamValue (clap_id id, double value) noexcept;
+
+    // Message thread, outside process(): hands host writes still queued for the
+    // audio thread, and a pending request_flush, to the plug-in through
+    // params.flush, so a saveState() that follows captures them and a
+    // stateRevision() read after it covers them. An active plug-in takes the
+    // call on its audio thread, which this thread becomes for the call (CLAP
+    // lets any thread be it while no other is). False when writes stay queued:
+    // a block is inside process() right now and delivers them itself, or the
+    // plug-in has no flush.
+    bool flushParamsOutsideProcess() noexcept;
+    bool flushPendingWrites() override { return flushParamsOutsideProcess(); }
+
+    // Message thread, on a timer: the same flush, for an instance no block has
+    // processed for a while, so a request_flush or a queued write reaches a
+    // bypassed, skipped or stopped insert. A running one is left to process().
+    void serviceIdleParams (std::chrono::steady_clock::time_point now) noexcept;
 
     // MIDI Learn: index (into paramInfo order) of the parameter the user last moved
     // in the plugin's own GUI, stamped from the plugin's outgoing param events.
@@ -130,6 +150,7 @@ private:
     bool processing = false;
     bool startFailed = false;   // plugin refused start_processing - stay asleep, don't retry every block
     int  maxFrames = 0;
+    double activeSampleRate = 0.0;
 
     hosting::PortLayout layout;   // negotiated at create()
     int latencySamples = 0;       // cached at activate() from CLAP_EXT_LATENCY
@@ -157,10 +178,8 @@ private:
     std::vector<float*> clapInData, clapOutData;
     std::vector<float> clapInScratch, clapOutScratch;
 
-    // Output event list handed to every process() call. We accept and ignore the
-    // plugin's outgoing events for now (try_push returns true). Member, not a
-    // function-static, so the audio thread's first process() never trips a
-    // thread-safe-static-init guard. Wired in the constructor.
+    // Output sink for parameter touches and persistent state changes. Instance
+    // storage avoids a first-process thread-safe-static initialization guard.
     clap_output_events_t emptyOut {};
 
     // Parameter automation. UI->RT ring of pending changes (message-thread
@@ -198,9 +217,33 @@ private:
     uint32_t             eventCount = 0;
     clap_input_events_t  inEvents {};
 
-    // Audio thread. Refills eventScratch[0..eventCount) from the param ring; shared
-    // by processStereo and processBlock.
-    void drainParamRing() noexcept;
+    // Refills eventScratch[0..eventCount) from the param ring. Audio-thread role.
+    bool drainParamRing() noexcept;
+
+    // Whoever calls the plug-in's [audio-thread] functions holds this: the
+    // block in processBlock, or the message thread flushing outside process().
+    // The audio thread only ever tries for it - a block that meets a flush in
+    // flight stays silent rather than wait, except an offline render, which has
+    // no deadline. Acquire on claim, release on hand-back, so the event scratch,
+    // the ring's consumer side and the thread stamp move between holders whole.
+    std::atomic<bool> audioRoleHeld { false };
+    bool claimAudioRole (bool wait) noexcept;
+    struct AudioRoleRelease
+    {
+        std::atomic<bool>& held;
+        ~AudioRoleRelease() { held.store (false, std::memory_order_release); }
+    };
+    // Audio-thread role. The thread the host's is_audio_thread answers for;
+    // re-stamped whenever a block arrives on another one (a worker-lane change).
+    std::thread::id stampedAudioThread {};
+
+    // Blocks that reached process(): written in the audio-thread role, read by
+    // the message-thread idle check, which owns the two fields after it. The
+    // seen count starts at a value no block count reaches, so the first look
+    // only starts the idle clock.
+    std::atomic<std::uint64_t> processCalls { 0 };
+    std::uint64_t processCallsSeen = ~std::uint64_t { 0 };
+    std::chrono::steady_clock::time_point processSeenAt {};
 
     const clap_plugin_params_t* paramsExt = nullptr;
     std::vector<ParamInfo>      params;
@@ -208,5 +251,7 @@ private:
     // Last param id the plugin's GUI touched (audio-thread store from the output
     // event sink, message-thread read). -1 = none since create().
     std::atomic<int64_t> lastTouchedParamId { -1 };
+    // Sorted once at create so output events never scan the parameter metadata.
+    std::vector<clap_id> writableParamIds;
 };
 } // namespace duskstudio::clap

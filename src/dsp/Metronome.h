@@ -35,10 +35,13 @@ public:
     //   forceEnable      - bypasses the user's CLICK toggle. The audio
     //     engine sets this during count-in pre-roll so the click plays
     //     even if the user hasn't manually engaged the metronome.
+    //   quarterNoteAtStart - integrated timeline phase for a constant-tempo
+    //     segment. Omit when the tempo is constant across the whole timeline.
     void process (std::int64_t playheadStartSample,
                    bool transportRolling,
                    float* L, float* R, int numSamples,
-                   bool forceEnable = false) noexcept;
+                   bool forceEnable = false,
+                   double quarterNoteAtStart = std::numeric_limits<double>::quiet_NaN()) noexcept;
 
     // Atomic setters - message thread.
     void setEnabled (bool e) noexcept              { enabled.store (e, std::memory_order_relaxed); }

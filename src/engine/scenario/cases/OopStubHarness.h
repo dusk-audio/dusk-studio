@@ -70,8 +70,8 @@ inline void useStub (PluginManager& manager, const std::filesystem::path& host,
 // The slot's process entry takes the framework's MIDI buffer by reference;
 // deducing the type from the member function keeps these cases free of the
 // framework header.
-template <typename Ret, typename Class, typename A0, typename A1, typename A2, typename A3>
-A3 midiBufferArgOf (Ret (Class::*) (A0, A1, A2, A3&) noexcept);
+template <typename Ret, typename Class, typename A0, typename A1, typename A2, typename A3, typename... Tail>
+A3 midiBufferArgOf (Ret (Class::*) (A0, A1, A2, A3&, Tail...) noexcept);
 
 using SlotMidiBuffer = decltype (midiBufferArgOf (&PluginSlot::processStereoBlock));
 #endif

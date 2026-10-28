@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cstddef>
 #include <functional>
 #include <map>
 #include <memory>
@@ -19,6 +20,7 @@
 #include "../dsp/Metronome.h"
 #include "../dsp/PitchDetector.h"
 #include "../foundation/IntDelayLine.h"
+#include "../foundation/AtomicTransportPosition.h"
 #include "../foundation/MessageThread.h"
 #include "../foundation/SmoothedValue.h"
 #include "../foundation/TransportPosition.h"
@@ -35,21 +37,133 @@
 #include "device/IODeviceCallback.h"
 #include "device/MicrophoneAccess.h"
 #include "../session/Session.h"
+#include "../session/RegionEditActions.h"
 #include "MidiTimelineSchedule.h"
 #include "AudioWorkerPool.h"
 #include "MasteringPlayer.h"
 #include "PlaybackEngine.h"
 #include "PluginManager.h"
+#include "PluginStateManifest.h"
 #include "RecordManager.h"
 #include "TimelineSampleRate.h"
 #include "Transport.h"
-#include "DuskStudioPlayHead.h"
 
 namespace dusk::audio { class ThreadedFileWriter; }
 namespace duskstudio::sfz { class LibraryService; }
 
 namespace duskstudio
 {
+class DuskStudioPlayHead;
+
+class SessionUndoManager final : private juce::UndoManager
+{
+public:
+    using Actions = juce::Array<const UndoableAction*>;
+    using Name = decltype (std::declval<const UndoManager&>().getUndoDescription());
+
+    explicit SessionUndoManager (std::function<bool (const Actions&, bool)> guard = {})
+        : canReplay (std::move (guard)) {}
+
+    using UndoManager::addChangeListener;
+    using UndoManager::removeChangeListener;
+    using UndoManager::dispatchPendingMessages;
+    using UndoManager::beginNewTransaction;
+    using UndoManager::canUndo;
+    using UndoManager::canRedo;
+    using UndoManager::getUndoDescription;
+    using UndoManager::getRedoDescription;
+    using UndoManager::getUndoDescriptions;
+    using UndoManager::getRedoDescriptions;
+    using UndoManager::getNumberOfUnitsTakenUpByStoredCommands;
+    using UndoManager::setMaxNumberOfStoredUnits;
+
+    void clearUndoHistory()
+    {
+        UndoManager::clearUndoHistory();
+        past.clear();
+        future.clear();
+        synchronized = true;
+    }
+
+    bool perform (UndoableAction* action)
+    {
+        if (! matchesHistory())
+        {
+            delete action;
+            return false;
+        }
+        const bool append = getNumActionsInCurrentTransaction() > 0;
+        if (! UndoManager::perform (action)) return false;
+        future.clear();
+        Actions actions;
+        getActionsInCurrentTransaction (actions);
+        if (append) past.back() = std::move (actions);
+        else        past.push_back (std::move (actions));
+        const auto retained = (std::size_t) getUndoDescriptions().size();
+        if (past.size() > retained)
+            past.erase (past.begin(), past.begin() + (std::ptrdiff_t) (past.size() - retained));
+        synchronized = matchesHistory();
+        return true;
+    }
+
+    bool perform (UndoableAction* action, const Name& name)
+    {
+        if (! perform (action)) return false;
+        if (name.isNotEmpty()) setCurrentTransactionName (name);
+        return true;
+    }
+
+    const Actions* actionsForReplay (bool redo) const
+    {
+        if (! matchesHistory()) return nullptr;
+        const auto& replayStack = redo ? future : past;
+        return replayStack.empty() ? nullptr : &replayStack.back();
+    }
+
+    bool undo() { return replay (false); }
+    bool redo() { return replay (true); }
+
+private:
+    bool matchesHistory() const
+    {
+        return synchronized
+            && past.size() == (std::size_t) getUndoDescriptions().size()
+            && future.size() == (std::size_t) getRedoDescriptions().size();
+    }
+
+    bool allowed (bool redo) const
+    {
+        const auto* actions = actionsForReplay (redo);
+        return actions != nullptr && (! canReplay || canReplay (*actions, redo));
+    }
+
+    bool replay (bool redo)
+    {
+        if (! allowed (redo)) return false;
+        const bool result = redo ? UndoManager::redo() : UndoManager::undo();
+        if (! result) return false;
+        // A refused action makes the underlying manager return true after
+        // deleting the history. Its action pointers must not survive here.
+        if (! UndoManager::canUndo() && ! UndoManager::canRedo())
+        {
+            past.clear();
+            future.clear();
+            synchronized = true;
+            return false;
+        }
+        auto& from = redo ? future : past;
+        auto& to = redo ? past : future;
+        to.push_back (std::move (from.back()));
+        from.pop_back();
+        synchronized = matchesHistory();
+        return true;
+    }
+
+    std::function<bool (const Actions&, bool)> canReplay;
+    std::vector<Actions> past, future;
+    bool synchronized = true;
+};
+
 // input -> channel strip (live or playback source) -> aux/master.
 // Owns Transport, recording, playback, plugin host.
 class AudioEngine final : public device::IODeviceCallback
@@ -313,7 +427,7 @@ public:
     // output availability is published atomically to the audio thread.
     void openConfiguredMidiOutputs();
 
-    juce::UndoManager& getUndoManager() noexcept { return undoManager; }
+    SessionUndoManager& getUndoManager() noexcept { return undoManager; }
 
     // MIDI soft takeover (pickup) for continuous absolute bindings - see the
     // member block below. Pushed from the UI at startup and on toggle.
@@ -627,16 +741,71 @@ public:
     // PluginSlot's description + state into the Track fields; consume
     // restores in reverse.
     //
-    // capturePluginState false keeps the plug-in state strings the session
-    // already holds, so a save with audio running costs no dropout. true reads
-    // fresh state from every plug-in with the process gate held: the callback
-    // emits silence and calls no plug-in until the capture ends. A JUCE-hosted
-    // plug-in is released and re-prepared around its state read, so it starts
-    // cold again, and its slot re-arms the overrun watchdog's grace and re-reads
-    // its latency. The engine stays attached to the device, so its own DSP is
-    // not re-prepared and keeps its meters, envelopes and delay lines.
-    void publishPluginStateForSave (bool capturePluginState = false);
+    // false refreshes safe built-in and multisample controls, retaining opaque
+    // third-party state. true gates processing while reading that state; hosted
+    // inserts may re-prepare and change latency. The engine remains attached to
+    // the device, retaining its own meters, envelopes and delay lines.
+    struct PreparedPluginState
+    {
+        struct Slot
+        {
+            std::optional<PluginDescriptor> descriptor;
+            std::string legacyDescriptionXml;
+            std::string stateBase64;
+            PluginStateToken token;
+            // The live capture failed; stateBase64 is the slot's last-known state.
+            bool keptLastKnown = false;
+            int owner = -1;
+            std::string failure;
+        };
+        std::array<Slot, Session::kNumTracks> tracks;
+        std::array<std::array<Slot, AuxLaneParams::kMaxLanePlugins>, Session::kNumAuxLanes> aux;
+    };
+    // Message thread only; consume the prepared snapshot before yielding to other edits.
+    // Preparation changes no Session fields or native sidecar files. A slot whose
+    // live capture fails keeps its last-known state, and error lists every such
+    // slot, one per line. keepFrom, an earlier failed preparation: the slots it
+    // could not capture keep what it fell back on, unread, and do not fail this
+    // one. False when a slot failed here; the preparation still comes back, so it
+    // can be offered to a later keepFrom. Kept slots stay unsaved in
+    // pluginStateBaseline().
+    bool preparePluginStateForSave (PreparedPluginState&, std::string& error,
+                                    const PreparedPluginState* keepFrom = nullptr);
+    bool publishPluginStateForSave (bool capturePluginState = false,
+                                     const PreparedPluginState* prepared = nullptr,
+                                     std::string* error = nullptr);
     void consumePluginStateAfterLoad();
+
+    struct PluginNormalizationBaseline
+    {
+        std::uint64_t epoch = 0;
+        std::size_t sequence = 0;
+        std::array<int, Session::kNumTracks> trackOwners {};
+    };
+    // Message thread; acknowledge only accepted restore identity substitutions.
+    PluginNormalizationBaseline capturePluginNormalizationBaseline() const;
+    bool normalizePluginBaseline (PluginNormalizationBaseline&, std::string& json);
+
+    // One token per insert slot of every hosting format, keyed like the
+    // normalization receipts by the strip that owns it, so a track move leaves
+    // them where they were.
+    static constexpr std::size_t kPluginStateKinds = 5;
+    static constexpr std::size_t kPluginStateSlots = kPluginStateKinds
+        * static_cast<std::size_t> (Session::kNumTracks + Session::kNumAuxLanes * AuxLaneParams::kMaxLanePlugins);
+    using PluginStateBaseline = PluginStateManifest<kPluginStateSlots>;
+    // Message thread. The tokens of the opaque plug-in state the session model
+    // took from its latest Save capture or session restore, for the caller to
+    // adopt when that Save or load succeeds.
+    const PluginStateBaseline& pluginStateBaseline() const noexcept { return pluginStateCapture; }
+    // Acknowledges native restores that the device prepare completed since.
+    void normalizePluginStateBaseline (PluginStateBaseline&) const noexcept;
+    // Whether any slot's live state has moved from the baseline. Reads only
+    // counters, so it is safe with audio running and captures nothing.
+    bool pluginStateChangedSince (const PluginStateBaseline&) const noexcept;
+    // Message thread: what the native-parameter drain timer does on each tick -
+    // MIDI-binding writes, CLAP flushes for idle inserts, LV2 patch reports -
+    // run now, so a change still queued for the next tick counts.
+    void serviceNativeParamQueues();
 
     struct PluginLoadFailure
     {
@@ -780,13 +949,17 @@ private:
     juce::String lastFreezeError;
 
     Transport       transport;
-    // Heap-allocated so we can pass &session.tempoBpm / &currentSampleRate
-    // from the ctor body, after those addresses are known.
+    dusk::AtomicTransportPosition hostedTransport;
     std::unique_ptr<DuskStudioPlayHead> playHead;
-    // The transport built-in inserts see for the current block. The audio thread
+    // The transport all inserts see for the current block. The audio thread
     // rewrites it before the strip pass, and the strips (worker lanes included)
     // read it only inside that pass.
     dusk::TransportPosition blockTransport;
+    // Caller holds a SnapshotReadScope for the tempo-map read.
+    dusk::TransportPosition captureHostedTransport (Transport::State state, std::int64_t samples,
+                                                    bool loopEnabled, std::int64_t loopStart,
+                                                    std::int64_t loopEnd) const noexcept;
+    void seedStoppedHostedTransport() noexcept;
     RecordManager   recordManager   { session };
     std::unique_ptr<sfz::LibraryService> sfzLibrary;
     std::atomic<unsigned> assetRenderHolds { 0 };
@@ -805,11 +978,37 @@ private:
 
     std::vector<PluginLoadFailure> lastPluginLoadFailures;
     void collectDeferredNativeRestoreFailures();
+    enum class NativePluginFormat { Clap, Lv2, Vst3, Au };
+    struct PluginNormalization
+    {
+        int owner = -1;
+        NativePluginFormat format = NativePluginFormat::Clap;
+        std::uint64_t generation = 0;
+        std::string oldLocation, oldPluginId, location, pluginId, state;
+    };
+    std::uint64_t pluginNormalizationEpoch = 1;
+    std::vector<PluginNormalization> pluginNormalizations;
+    int pluginNormalizationTrackOwner (int track) const noexcept;
+    static int pluginNormalizationAuxOwner (int lane, int slot) noexcept;
+    template <typename Visitor>
+    bool visitNativePluginOwner (int owner, NativePluginFormat, Visitor&&);
+    void normalizeAcceptedNativePluginIdentity (int owner, NativePluginFormat);
+    enum class PluginStateKind { Hosted, Clap, Lv2, Vst3, Au };
+    using PluginStateTokens = std::array<PluginStateToken, kPluginStateSlots>;
+    static std::size_t pluginStateIndex (int owner, PluginStateKind) noexcept;
+    PluginStateToken livePluginState (int owner, PluginStateKind) const noexcept;
+    PluginStateTokens livePluginStates() const noexcept;
+    void notePluginStateRestored (const PluginStateTokens& beforePrepare, int owner, PluginStateKind);
+    PluginStateBaseline pluginStateCapture;
+    std::vector<PluginStateReceipt> pluginStateReceipts;
     PlaybackEngine  playbackEngine  { session };
     PlaybackReadObserver playbackReadObserver = nullptr;
     void* playbackReadContext = nullptr;
     PluginManager   pluginManager;
-    juce::UndoManager undoManager;
+    SessionUndoManager undoManager { [this] (const SessionUndoManager::Actions& actions, bool redo)
+    {
+        return canReplayTransaction (*this, actions.begin(), (std::size_t) actions.size(), redo);
+    } };
     RegionClipboard   regionClipboard;
 
     MasteringPlayer  masteringPlayer;
@@ -821,16 +1020,7 @@ private:
     bool phaseContinuityValid = false;
     Metronome        metronome;
 
-    // Lock-free tempo-map snapshot for the audio thread (MIDI scheduler +
-    // metronome). publishTempoMap heap-allocates an immutable copy, keeps it
-    // alive in the pool, and release-stores its pointer; the audio thread
-    // acquire-loads and never frees. The pool is only ever appended to, and
-    // only from the message thread, so the audio thread can read a published
-    // copy without it being freed or reallocated under it. Retired copies stay
-    // alive for the session (each is tiny - a few tempo points) and are freed
-    // when the engine is destroyed. null pointer = treat as constant tempoBpm.
-    std::vector<std::unique_ptr<TempoMap>> rtTempoMapPool;
-    std::atomic<const TempoMap*>           rtTempoMap { nullptr };
+    AtomicSnapshot<TempoMap> rtTempoMap;
 
     PitchDetector    pitchDetector;
     MidiSyncReceiver       midiSyncReceiver;

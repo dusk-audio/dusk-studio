@@ -72,7 +72,8 @@ public:
 
     // MainWindow's close-confirm dialog calls this. Save-to-current if
     // session.json exists, else opens Save As. onComplete fires on the
-    // message thread (sync if no chooser, async after dismissal).
+    // message thread: at once when nothing asks, else once the Save As
+    // browser or the plug-in capture-failure prompt is answered.
     void saveSessionAndThen (std::function<void(bool)> onComplete);
 
     // Industry-standard dirty-only prompt. If autosave is newer than
@@ -168,7 +169,22 @@ private:
     void releaseMasteringMixFor (const std::filesystem::path& target);
     void reloadMasteringMixAfterRender (const std::filesystem::path& target);
 
-    bool saveSessionTo (const juce::File& sessionDir);
+    // Every Save, Save As and prompt Save runs through here. onComplete hears
+    // once whether the session was saved, after the user answers the prompt a
+    // failed plug-in capture raises, or with false when that prompt goes away
+    // unanswered.
+    void saveSessionTo (const std::filesystem::path& sessionDir, std::function<void (bool saved)> onComplete = {});
+    // keepFrom: the failed preparation whose listed slots keep their last-known
+    // state. attempt receives this Save's preparation. captureError names the
+    // slots that stopped the Save, and is empty when something else did.
+    bool writeSessionTo (const juce::File& sessionDir, const AudioEngine::PreparedPluginState* keepFrom,
+                         AudioEngine::PreparedPluginState& attempt, std::string& captureError);
+    struct SaveReply;
+    // The Save failed prompt for the slots a capture could not read; Save
+    // anyway saves with exactly those slots kept, and asks again if another fails.
+    void askToSaveAnyway (const std::filesystem::path& sessionDir,
+                          std::shared_ptr<AudioEngine::PreparedPluginState> failed,
+                          const std::string& captureError, std::shared_ptr<SaveReply> reply);
     // True, with a status line, while a render from any modal or a DP import is
     // unfinished.
     bool saveRefusedWhileBusy();
@@ -297,11 +313,12 @@ private:
     int  pendingImportInitialHint   = -1;
     int  pendingImportLastCommitted = -2;
 
-    // 30 s autosave to session.json.autosave (atomic temp+rename). On
+    // Autosave to session.json.autosave on the configured cadence (atomic temp+rename). On
     // load, if newer than session.json, prompt to recover. Manual save
     // deletes the autosave.
     void timerCallback() override;
     void writeAutosave();
+    void discardWrittenAutosave();
     juce::File getAutosaveFileFor (const juce::File& sessionDir) const;
     bool autosaveIsNewerThan (const juce::File& sessionJson) const;
     void deleteAutosaveFor   (const juce::File& sessionDir) const;
@@ -313,22 +330,33 @@ private:
     static std::filesystem::path defaultSessionsFolder();
     void startUnsavedSessionIn (const std::filesystem::path& parent);
 
-    // Full JSON kept for quit-prompt diff + recovery; the heavy compare
-    // path uses the hash fields below.
+    // A Save that had to happen and did not: a failed plug-in capture, or the
+    // save that puts a recovered autosave on disk. The session stays dirty and
+    // keeps its recovery file until a save or load succeeds.
+    bool saveIncomplete = false;
+    // False while a failed recovery save leaves the recovered work, which the
+    // saved baseline holds, on disk only as the autosave.
+    bool savedBaselineOnDisk = true;
+    // Moves with every session load, so a prompt raised for one session can
+    // tell that another has replaced it.
+    int sessionLoadSerial = 0;
     juce::String lastSavedSessionJson;
     juce::String lastWrittenAutosaveJson;
-    // M8 fingerprint: cached hash of the volatile-state-stripped JSON
-    // so writeAutosave's dedup is a single 32-bit compare instead of a
-    // full juce::String equality scan against a possibly-MB-sized
-    // serialisation. juce::DefaultHashFunctions::generateHash returns
-    // an int; we store as uint32 to avoid the sign bit. 0 = unseen
-    // sentinel (legitimate hash collisions at 0 are vanishingly rare;
-    // the worst-case false positive is a missed autosave on the first
-    // tick after load, recovered on the next).
+    std::string lastWrittenAutosaveComparisonJson;
+    AudioEngine::PluginNormalizationBaseline savedPluginNormalizationBaseline;
+    // The plug-in state the last successful Save, Open, New or Recover left the
+    // session model holding. Opaque plug-in state reaches the session JSON only
+    // at a Save, so these tokens, not the JSON, show a plug-in-only edit.
+    AudioEngine::PluginStateBaseline savedPluginStateBaseline;
+    AudioEngine::PluginNormalizationBaseline autosavePluginNormalizationBaseline;
+    std::filesystem::path lastWrittenAutosavePath;
+    // Hashes filter repeated autosaves; matching hashes still require an exact
+    // comparison of JSON with volatile state stripped.
     std::uint32_t lastSavedSessionStrippedHash    { 0 };
     std::uint32_t lastWrittenAutosaveStrippedHash { 0 };
     void setLastSavedSessionJson (const juce::String& json);
-    void setLastWrittenAutosaveJson (const juce::String& json);
+    void setLastWrittenAutosaveJson (const juce::String& json, const std::filesystem::path& path);
+    void normalizePluginBaselines();
 
     Session session;
     AudioEngine engine { session, appconfig::resolveWorkerCount() };

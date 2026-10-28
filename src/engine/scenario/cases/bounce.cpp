@@ -7,6 +7,8 @@
 #include "../../builtin/BuiltinRegistry.h"
 #include "../../audiofile/FileReader.h"
 #include "../../audiofile/FileWriter.h"
+#include "../../device/DeviceManager.h"
+#include "../../device/IODevice.h"
 #include "../../../dsp/ChannelStrip.h"
 #include "../../../foundation/AutoResetEvent.h"
 #include "../../../foundation/Fs.h"
@@ -30,6 +32,10 @@
 #include <type_traits>
 #include <utility>
 #include <vector>
+
+#if defined (__linux__)
+ #include <dlfcn.h>
+#endif
 
 namespace duskstudio::scenario
 {
@@ -154,6 +160,7 @@ struct Render
     double sampleRate = kRate;
     double tailSeconds = 5.0;
     int wavBitDepth = 24;
+    OfflineRenderQuality quality = OfflineRenderQuality::High;
 };
 
 // One bounce in flight. The worker hands its device detach and reattach back to
@@ -168,11 +175,13 @@ struct BounceRun
 
 std::shared_ptr<BounceRun> startRender (ScenarioContext& ctx, const std::filesystem::path& out,
                                         const Render& render,
-                                        std::function<void()> onWorkerStarted = {})
+                                        std::function<void()> onWorkerStarted = {},
+                                        std::function<void(float)> onProgress = {})
 {
     auto run = std::make_shared<BounceRun>();
-    run->bounce = std::make_unique<BounceEngine> (ctx.engine(), ctx.session());
+    run->bounce = std::make_unique<BounceEngine> (ctx.engine(), ctx.session(), render.quality);
     run->bounce->onStarted = std::move (onWorkerStarted);
+    run->bounce->onProgressUpdated = std::move (onProgress);
     // Joins the worker before the world resets, even when a wait times out.
     ctx.cleanup ([run] { run->bounce.reset(); });
     run->bounce->onFinished = [raw = run.get()] (bool ok, std::string error)
@@ -204,6 +213,132 @@ void renderThen (ScenarioContext& ctx, const std::filesystem::path& out, const R
 }
 
 // -------------------------------------------------------- the master mix file
+
+std::optional<ScenarioResult> finalizationFailures (ScenarioContext& ctx)
+{
+#if ! defined (__linux__) || ! defined (DUSKSTUDIO_HAS_PIPEWIRE)
+    (void) ctx;
+    return ScenarioResult::skip ("requires the native PipeWire fault harness");
+#else
+    const auto arm = reinterpret_cast<void (*) (int, const char*)> (dlsym (RTLD_DEFAULT, "dusk_audiofile_arm"));
+    const auto hits = reinterpret_cast<int (*)()> (dlsym (RTLD_DEFAULT, "dusk_audiofile_hits"));
+    const auto disarm = reinterpret_cast<void (*)()> (dlsym (RTLD_DEFAULT, "dusk_audiofile_disarm"));
+    const char* runtime = std::getenv ("PIPEWIRE_RUNTIME_DIR");
+    if (arm == nullptr || hits == nullptr || disarm == nullptr || runtime == nullptr
+        || std::string (runtime).find ("/tmp/dusk-pw.") != 0)
+        return ScenarioResult::skip ("requires the owned null graph and native fault fixture");
+    disarm();
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    ctx.keep (session.oversamplingFactor);
+    ctx.keep (session.deviceCaptureChannels);
+    ctx.keep (session.track (0).strip.auxSendDb[0]);
+    ctx.keep (session.auxLane (0).params.returnLevelDb);
+    session.oversamplingFactor.store (1);
+    session.track (0).strip.auxSendDb[0].store (0.0f);
+    session.auxLane (0).params.returnLevelDb.store (0.0f);
+    constexpr int length = 8192;
+    const auto source = ctx.tempDir() / "finalization-source.wav";
+    if (! writeMono (source, sine (440.0f, 0.125f, length)))
+        return ScenarioResult::fail ("could not write the finalization source");
+    placeRegion (ctx, 0, source, 0, length);
+    ctx.cleanup ([&engine, disarm]
+    {
+        disarm();
+        engine.stop();
+        engine.detachAudioCallback();
+        engine.getDeviceManager().closeDevice();
+        engine.prepareForSelfTest (kRate, ScenarioContext::kBlockSize);
+    });
+    engine.reattachAudioCallback();
+    const auto openError = engine.getDeviceManager().initialise (2, 2, {}, false);
+    if (! ctx.expect (openError.empty(), "the private duplex device did not open: " + openError))
+        return ctx.verdict();
+    auto* device = engine.getDeviceManager().getCurrentDevice();
+    if (! ctx.expect (device != nullptr && device->isOpen() && device->isPlaying()
+                      && device->getActiveInputChannels().count() == 2,
+                      "the finalization fixture is not a live duplex graph")) return ctx.verdict();
+
+    auto next = std::make_shared<std::function<void (int)>>();
+    std::weak_ptr<std::function<void (int)>> weakNext = next;
+    *next = [&ctx, &engine, &session, arm, hits, disarm, weakNext] (int pass)
+    {
+        if (pass == 12) { ctx.complete (ctx.verdict()); return; }
+        disarm();
+        const int kind = pass / 2;
+        const bool inject = (pass % 2) != 0;
+        const bool realtime = kind >= 4;
+        const bool stems = kind == 2 || kind == 5;
+        const bool freeze = kind == 3;
+        const bool mp3 = kind == 1;
+        const auto label = std::string (realtime ? "realtime " : "offline ")
+                         + (stems ? "stems" : freeze ? "freeze" : mp3 ? "MP3 mix" : "WAV mix");
+        const auto out = ctx.sessionDir() / ("finalization-" + std::to_string (pass) + (mp3 ? ".mp3" : ".wav"));
+        std::vector<std::filesystem::path> outputs { out };
+        if (stems)
+        {
+            outputs.clear();
+            for (const auto& target : BounceEngine::collectStemTargets (session, sessionFile (out)))
+                outputs.push_back (pathOf (target.file));
+            if (! ctx.expect (outputs.size() == 2, label + ": the fixture did not name track and aux stems"))
+            { ctx.complete (ctx.verdict()); return; }
+        }
+        auto armed = std::make_shared<bool> (false);
+        auto run = std::make_shared<BounceRun>();
+        run->bounce = std::make_unique<BounceEngine> (engine, session, OfflineRenderQuality::MatchPlayback);
+        ctx.cleanup ([run, disarm] { disarm(); run->bounce.reset(); });
+        run->bounce->onProgressUpdated = [arm, armed, inject, mp3, target = outputs.back()] (float progress)
+        {
+            if (inject && progress >= 1.0f && ! *armed)
+            { arm (mp3 ? 5 : 3, target.c_str()); *armed = true; }
+        };
+        run->bounce->onFinished = [raw = run.get()] (bool ok, std::string error)
+        { raw->ok = ok; raw->error = std::move (error); raw->finished.store (true, std::memory_order_release); };
+        const auto mode = stems ? BounceEngine::Mode::Stems : BounceEngine::Mode::MasterMix;
+        const auto format = mp3 ? BounceEngine::Format::Mp3 : BounceEngine::Format::Wav;
+        const bool started = freeze ? run->bounce->startFreeze (0, sessionFile (out), length, kRate, 1024)
+            : run->bounce->start (sessionFile (out), kRate, 1024, 0.0, mode, format, 320, 24, realtime);
+        if (! ctx.expect (started, label + ": the render refused to start"))
+        { ctx.complete (ctx.verdict()); return; }
+        auto self = weakNext.lock();
+        ctx.waitUntil ([run] { return run->finished.load (std::memory_order_acquire) && ! run->bounce->isRendering(); },
+            kRenderTimeoutMs, [&ctx, run, self, armed, outputs, hits, disarm, pass, inject, mp3, label]
+            {
+                const int faultCount = hits();
+                disarm();
+                if (inject)
+                {
+                    ctx.expect (*armed && faultCount == 1, label + ": finalization did not hit the native fault");
+                    ctx.expect (! run->ok && ! run->error.empty(), label + ": finalization failure reported success");
+                    for (const auto& output : outputs)
+                        ctx.expect (! std::filesystem::exists (output), label + ": finalization failure kept an opened output");
+                }
+                else
+                {
+                    ctx.expect (run->ok && run->error.empty(), label + ": normal finalization failed: " + run->error);
+                    for (const auto& output : outputs)
+                    {
+                        if (mp3)
+                        {
+                            const auto bytes = dusk::fs::loadFileAsString (output);
+                            ctx.expect (bytes.size() > 1000 && bytes.find ("Info") != std::string::npos,
+                                        label + ": the MP3 header was not finalized");
+                        }
+                        else
+                        {
+                            const auto audio = readBack (output);
+                            ctx.expect (audio && audio->info.numFrames == length && audio->peak() > 0.01f,
+                                        label + ": the finalized WAV lost its duration or samples");
+                        }
+                    }
+                }
+                if (self) (*self) (pass + 1);
+            }, label + ": the render did not finish");
+    };
+    (*next) (0);
+    return std::nullopt;
+#endif
+}
 
 // The default bounce: stereo 24-bit WAV at the session rate, as long as the
 // last region plus a fixed 5 s tail, with the timeline in place from sample 0.
@@ -405,6 +540,938 @@ std::optional<ScenarioResult> cancelLeavesNoFile (ScenarioContext& ctx)
                        ctx.complete (ctx.verdict());
                    },
                    "the cancelled bounce never finished");
+    return std::nullopt;
+}
+
+std::optional<ScenarioResult> wholeSongIgnoresPlaybackLoop (ScenarioContext& ctx)
+{
+    static constexpr int length = 32000;
+    static constexpr std::int64_t loopStart = 8000, loopEnd = 16000, savedPlayhead = 777;
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+    const bool loopWas = transport.isLoopEnabled();
+    const auto startWas = transport.getLoopStart(), endWas = transport.getLoopEnd();
+    const auto playheadWas = transport.getPlayhead();
+    ctx.cleanup ([&transport, loopWas, startWas, endWas, playheadWas]
+    {
+        transport.setLoopEnabled (false);
+        transport.setLoopRange (startWas, endWas);
+        transport.setPlayhead (playheadWas);
+        transport.setLoopEnabled (loopWas);
+    });
+    ctx.keep (ctx.session().oversamplingFactor);
+    ctx.session().oversamplingFactor.store (1, std::memory_order_relaxed);
+
+    std::vector<float> samples (length, 0.0f);
+    samples[4096] = 0.125f;
+    samples[12288] = -0.25f;
+    samples[24576] = 0.5f;
+    const auto source = ctx.tempDir() / "linear-song.wav";
+    if (! writeMono (source, samples))
+        return ScenarioResult::fail ("could not write the three-impulse song");
+    placeRegion (ctx, 0, source, 0, length);
+
+    struct Observed
+    {
+        int blocks = 0;
+        bool looped = false;
+        bool wentBackwards = false;
+        bool restoredAtFinish = false;
+        std::int64_t previousPosition = -1;
+    };
+    auto reference = std::make_shared<std::array<std::optional<Rendered>, 3>>();
+    auto next = std::make_shared<std::function<void (int)>>();
+    std::weak_ptr<std::function<void (int)>> weakNext = next;
+    *next = [&ctx, &engine, &transport, reference, weakNext] (int pass)
+    {
+        if (pass == 12) { ctx.complete (ctx.verdict()); return; }
+        const int kind = pass / 4, leg = pass % 4;
+        const bool loopEnabled = leg != 0;
+        const auto mode = kind == 0 ? BounceEngine::Mode::MasterMix
+                        : kind == 1 ? BounceEngine::Mode::Stems : BounceEngine::Mode::FreezeTrack;
+        const auto label = std::string (kind == 0 ? "mix" : kind == 1 ? "stems" : "freeze")
+                         + (leg == 0 ? ", loop off" : leg == 1 ? ", loop on"
+                                                 : leg == 2 ? ", cancelled" : ", refused target");
+        transport.setLoopRange (loopStart, loopEnd);
+        transport.setLoopEnabled (loopEnabled);
+        transport.setPlayhead (savedPlayhead);
+        const auto out = ctx.sessionDir() / ("linear-" + std::to_string (pass) + ".wav");
+        auto output = out;
+        if (mode == BounceEngine::Mode::Stems)
+        {
+            const auto targets = BounceEngine::collectStemTargets (ctx.session(), sessionFile (out));
+            if (! ctx.expect (targets.size() == 1, "the loop fixture did not name one track stem"))
+            { ctx.complete (ctx.verdict()); return; }
+            output = pathOf (targets.front().file);
+        }
+        if (leg == 3)
+        {
+            std::error_code error;
+            if (! std::filesystem::create_directory (output, error))
+            { ctx.complete (ScenarioResult::fail ("could not block the render target")); return; }
+        }
+
+        auto observed = std::make_shared<Observed>();
+        auto run = std::make_shared<BounceRun>();
+        run->bounce = std::make_unique<BounceEngine> (engine, ctx.session(), OfflineRenderQuality::MatchPlayback);
+        ctx.cleanup ([run] { run->bounce.reset(); });
+        run->bounce->onProgressUpdated = [&transport, observed, raw = run->bounce.get(), leg] (float)
+        {
+            ++observed->blocks;
+            observed->looped |= transport.isLoopEnabled();
+            const auto position = transport.getCommittedPlayhead();
+            observed->wentBackwards |= position < observed->previousPosition;
+            observed->previousPosition = position;
+            if (leg == 2) raw->cancel();
+        };
+        run->bounce->onFinished = [raw = run.get(), observed, &transport, loopEnabled] (bool ok, std::string error)
+        {
+            observed->restoredAtFinish = transport.isLoopEnabled() == loopEnabled
+                && transport.getLoopStart() == loopStart && transport.getLoopEnd() == loopEnd;
+            raw->ok = ok;
+            raw->error = std::move (error);
+            raw->finished.store (true, std::memory_order_release);
+        };
+        const bool started = mode == BounceEngine::Mode::FreezeTrack
+            ? run->bounce->startFreeze (0, sessionFile (out), length, kRate, 1024)
+            : run->bounce->start (sessionFile (out), kRate, 1024, 0.0, mode);
+        if (! ctx.expect (started, label + ": the render did not start"))
+        { ctx.complete (ctx.verdict()); return; }
+        auto self = weakNext.lock();
+        ctx.waitUntil ([run] { return run->finished.load (std::memory_order_acquire)
+                                      && ! run->bounce->isRendering(); }, kRenderTimeoutMs,
+            [&ctx, &transport, reference, self, run, observed, pass, kind, leg, loopEnabled, output, label]
+            {
+                ctx.expect (observed->restoredAtFinish, label + ": loop state/range was not restored before completion");
+                ctx.expect (transport.isLoopEnabled() == loopEnabled
+                            && transport.getLoopStart() == loopStart && transport.getLoopEnd() == loopEnd,
+                            label + ": the render changed the loop state/range");
+                ctx.expect (transport.getPlayhead() == savedPlayhead, label + ": the render changed the playhead");
+                if (leg < 2)
+                {
+                    const auto audio = readBack (output);
+                    if (! ctx.expect (run->ok && audio.has_value(), label + ": render failed: " + run->error))
+                    { ctx.complete (ctx.verdict()); return; }
+                    ctx.expect (audio->info.numFrames == length, label + ": the whole song was not rendered");
+                    for (const int at : { 4096, 12288, 24576 })
+                    {
+                        float peak = 0.0f;
+                        for (int i = at - 256; i < at + 256 && i < (int) audio->left.size(); ++i)
+                            peak = std::max (peak, std::abs (audio->left[(std::size_t) i]));
+                        ctx.expect (peak > 0.01f, label + ": impulse missing near sample " + std::to_string (at));
+                    }
+                    if (leg == 0) (*reference)[(std::size_t) kind] = *audio;
+                    else
+                    {
+                        const auto& expected = *(*reference)[(std::size_t) kind];
+                        float difference = 0.0f;
+                        for (std::size_t i = 0; i < std::min (audio->left.size(), expected.left.size()); ++i)
+                            difference = std::max ({ difference, std::abs (audio->left[i] - expected.left[i]),
+                                                                  std::abs (audio->right[i] - expected.right[i]) });
+                        ctx.note (label + ": max sample difference " + std::to_string (difference));
+                        ctx.expect (difference < 1.0e-5f, label + ": enabling the playback loop changed the rendered samples");
+                    }
+                }
+                else
+                {
+                    ctx.expect (! run->ok, label + ": an incomplete render reported success");
+                    ctx.expect (leg == 2 ? run->error == BounceEngine::kCancelledError : ! run->error.empty(),
+                                label + ": the render returned the wrong error");
+                }
+                if (leg != 3)
+                {
+                    ctx.expect (observed->blocks > 0, label + ": no block reached the render path");
+                    ctx.expect (! observed->looped, label + ": the render exposed the playback loop to the engine");
+                    ctx.expect (! observed->wentBackwards, label + ": committed plugin/timeline position wrapped");
+                }
+                if (self != nullptr) (*self) (pass + 1);
+            }, "the loop-isolation render never finished");
+    };
+    (*next) (0);
+    return std::nullopt;
+}
+
+std::optional<ScenarioResult> offlineMidiIsolation (ScenarioContext& ctx)
+{
+    static constexpr int length = 32000;
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& transport = engine.getTransport();
+    auto& strip = session.track (0).strip;
+    const int input = engine.getVirtualKeyboardInputIndex();
+    if (input < 0) return ScenarioResult::fail ("the virtual MIDI input is missing");
+    const bool hardware = engine.setHardwareMidiInputsEnabledForScenario (false);
+    const bool takeover = engine.getMidiSoftTakeover();
+    engine.setMidiSoftTakeover (false);
+    ctx.cleanup ([&engine, hardware, takeover]
+    {
+        engine.setOfflineRenderActive (false);
+        engine.setHardwareMidiInputsEnabledForScenario (hardware);
+        engine.setMidiSoftTakeover (takeover);
+    });
+    ctx.keep (session.oversamplingFactor); ctx.keep (session.tempoBpm);
+    ctx.keep (strip.faderDb); ctx.keep (strip.pan);
+    ctx.keep (session.syncSourceInputIdx); ctx.keep (session.syncOutputIdx);
+    ctx.keep (session.externalSyncFollowsTempo); ctx.keep (session.externalSyncChasesTransport);
+    ctx.keep (session.externalTimeCodeChasesTransport);
+    ctx.keep (session.syncOutputEmitClock); ctx.keep (session.syncOutputEmitTimeCode);
+    ctx.keep (session.mcu.resolvedInputIdx); ctx.keep (session.mcu.resolvedOutputIdx);
+    ctx.keep (session.mcu.bank);
+    ctx.keep (session.pendingTransportAction); ctx.keep (session.pendingTransportPlayhead);
+    ctx.keep (session.externalBpm); ctx.keep (session.externalSyncRolling);
+    ctx.keep (session.externalTimeCodeFrames); ctx.keep (session.externalTimeCodeRolling);
+    ctx.keep (session.externalTimeCodeReversed); ctx.keep (session.externalTimeCodeFrameRate);
+    ctx.keep (session.track (1).midiOutputIndex);
+    ctx.keep (session.heldMidiNotes[60]);
+    session.oversamplingFactor.store (1);
+    session.syncSourceInputIdx.store (input);
+    session.externalSyncFollowsTempo.store (true);
+    session.externalSyncChasesTransport.store (true);
+    session.externalTimeCodeChasesTransport.store (true);
+    session.syncOutputIdx.store (1);
+    session.syncOutputEmitClock.store (true);
+    session.syncOutputEmitTimeCode.store (true);
+    session.mcu.resolvedInputIdx.store (input);
+    session.mcu.resolvedOutputIdx.store (-1);
+    session.mcu.bank.store (0);
+    session.track (1).mode.store ((int) Track::Mode::Midi);
+    session.track (1).midiOutputIndex.store (0);
+    MidiRegion region;
+    region.timelineStart = 0;
+    region.lengthInSamples = length;
+    region.lengthInTicks = kMidiTicksPerQuarter;
+    region.notes.push_back ({ 1, 64, 100, 0, kMidiTicksPerQuarter / 4 });
+    session.track (1).midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (1, region));
+    std::vector<MidiBinding> bindings;
+    if (const auto* current = session.midiBindings.read()) bindings = *current;
+    ctx.cleanup ([&session, bindings]
+    { session.midiBindings.publish (std::make_unique<std::vector<MidiBinding>> (bindings)); });
+    MidiBinding binding;
+    binding.trigger = MidiBindingTrigger::CC;
+    binding.channel = 1;
+    binding.dataNumber = 23;
+    binding.target = MidiBindingTarget::TrackPan;
+    binding.targetIndex = 0;
+    session.midiBindings.publish (std::make_unique<std::vector<MidiBinding>> (1, binding));
+    const auto source = ctx.tempDir() / "isolated-midi.wav";
+    if (! writeMono (source, sine (440.0f, 0.1f, length)))
+        return ScenarioResult::fail ("could not write the MIDI isolation source");
+    placeRegion (ctx, 0, source, 0, length);
+    auto owned = std::make_unique<RecordingMidiBackend> (2, 32768);
+    auto* recorder = owned.get();
+    engine.installMidiOutputBackend (std::move (owned));
+    if (! engine.ensureMidiOutputOpen (0) || ! engine.ensureMidiOutputOpen (1))
+        return ScenarioResult::fail ("the MIDI isolation outputs would not open");
+    const auto traffic = []
+    {
+        dusk::MidiBuffer events;
+        const std::uint8_t start = 0xFA, clock = 0xF8;
+        const std::uint8_t fader[] { 0xE0, 0, 0 }, pan[] { 0xB0, 23, 127 }, note[] { 0x90, 60, 100 };
+        events.addEvent (&start, 1, 0);
+        events.addEvent (fader, 3, 0); events.addEvent (pan, 3, 0); events.addEvent (note, 3, 72);
+        for (int n = 0; n < 8; ++n)
+        {
+            const std::uint8_t qf[] { 0xF1, (std::uint8_t) ((n << 4) | (n == 7 ? 6 : 0)) };
+            events.addEvent (qf, 2, n * 8);
+        }
+        events.addEvent (&clock, 1, 64); events.addEvent (&clock, 1, 192);
+        return events;
+    };
+    auto settle = std::make_shared<std::function<void (std::function<void()>)>>();
+    *settle = [&ctx, recorder] (std::function<void()> done)
+    {
+        auto last = std::make_shared<std::pair<std::size_t, int>> (recorder->count(), 0);
+        ctx.waitUntil ([last, recorder]
+        {
+            const auto count = recorder->count();
+            last->second = count == last->first ? last->second + 1 : 0;
+            last->first = count;
+            return last->second >= 3;
+        }, 5000, std::move (done), "the MIDI isolation outputs did not settle");
+    };
+    auto reference = std::make_shared<std::array<std::vector<Rendered>, 3>>();
+    auto next = std::make_shared<std::function<void (int)>>();
+    std::weak_ptr<std::function<void (int)>> weakNext = next;
+    *next = [&ctx, &engine, &session, &transport, &strip, input, recorder, traffic, settle, reference, weakNext] (int pass)
+    {
+        if (pass == 6)
+        {
+            (*settle) ([&ctx, &engine, &session, &transport, &strip, input, recorder, traffic, settle]
+            {
+                ctx.expect (recorder->count() == 0, "offline renders sent physical MIDI notes or sync bytes");
+                session.tempoBpm.store (120.0f); strip.faderDb.store (0.0f); strip.pan.store (0.0f);
+                session.pendingTransportAction.store ((int) PendingTransportAction::None);
+                session.pendingTransportPlayhead.store (-1);
+                ctx.pump (1);
+                transport.setPlayhead (0);
+                engine.play();
+                ctx.pumpWithMidi (input, traffic());
+                ctx.expect (session.tempoBpm.load() > 200.0f, "realtime MIDI Clock did not follow tempo");
+                ctx.expect (strip.faderDb.load() < -40.0f, "realtime MCU fader input was suppressed");
+                ctx.expect (strip.pan.load() > 0.9f, "realtime controller binding was suppressed");
+                ctx.expect (session.externalTimeCodeRolling.load(), "realtime MTC input was suppressed");
+                ctx.pump (4);
+                (*settle) ([&ctx, &engine, &session, &transport, &strip, input, recorder, traffic, settle]
+                {
+                    bool notes = false, clock = false, timecode = false;
+                    for (const auto& message : recorder->captured())
+                    {
+                        notes |= message.port == 0 && (message.bytes[0] & 0xF0) == 0x90;
+                        clock |= message.port == 1 && message.bytes[0] == 0xF8;
+                        timecode |= message.port == 1 && (message.bytes[0] == 0xF1 || message.bytes[0] == 0xF0);
+                    }
+                    ctx.expect (notes && clock && timecode, "realtime physical MIDI/sync output was suppressed");
+                    const auto sent = recorder->count();
+                    engine.setOfflineRenderActive (true);
+                    session.tempoBpm.store (120.0f); strip.faderDb.store (0.0f); strip.pan.store (0.0f);
+                    session.pendingTransportAction.store ((int) PendingTransportAction::None);
+                    session.pendingTransportPlayhead.store (-1);
+                    const auto frames = session.externalTimeCodeFrames.load();
+                    ctx.pumpWithMidi (input, traffic());
+                    ctx.pump (200);
+                    ctx.expect (session.externalTimeCodeRolling.load() && session.externalTimeCodeFrames.load() == frames,
+                                "offline blocks advanced the external MTC receiver/watchdog");
+                    ctx.expect (session.pendingTransportAction.load() == (int) PendingTransportAction::None,
+                                "offline blocks queued an external transport action");
+                    ctx.expect (session.tempoBpm.load() == 120.0f && strip.faderDb.load() == 0.0f && strip.pan.load() == 0.0f,
+                                "offline ownership admitted live control changes");
+                    (*settle) ([&ctx, &engine, &session, &transport, &strip, recorder, sent]
+                    {
+                        ctx.expect (recorder->count() == sent, "offline ownership sent physical MIDI/sync output");
+                        session.syncOutputEmitClock.store (false); session.syncOutputEmitTimeCode.store (false);
+                        session.track (1).midiOutputIndex.store (-1);
+                        const auto position = transport.getPlayhead();
+                        session.pendingTransportAction.store ((int) PendingTransportAction::SyncStop);
+                        session.pendingTransportPlayhead.store (45000);
+                        engine.setOfflineRenderActive (false);
+                        const auto serviced = engine.serviceTransportRequests();
+                        ctx.expect (! serviced.stopped && transport.isPlaying() && transport.getPlayhead() == position,
+                                    "a live transport request escaped the end of offline ownership");
+                        ctx.expect (session.pendingTransportAction.load() == (int) PendingTransportAction::None
+                                    && session.pendingTransportPlayhead.load() == -1,
+                                    "the offline ownership boundary retained a stale transport request");
+                        ctx.pump (1);
+                        ctx.expect (strip.faderDb.load() == 0.0f && strip.pan.load() == 0.0f,
+                                    "discarded MIDI controls burst after offline rendering");
+                        ctx.expect (! recorder->hasDropped(), "the MIDI isolation recorder overflowed");
+                        ctx.complete (ctx.verdict());
+                    });
+                });
+            });
+            return;
+        }
+        const int kind = pass / 2;
+        const bool inject = (pass % 2) != 0;
+        const auto label = std::string (kind == 0 ? "mix" : kind == 1 ? "stems" : "freeze")
+                         + (inject ? ", live traffic" : ", reference");
+        session.tempoBpm.store (120.0f); strip.faderDb.store (0.0f); strip.pan.store (0.0f);
+        session.heldMidiNotes[60].store (false);
+        session.pendingTransportAction.store ((int) PendingTransportAction::None);
+        session.pendingTransportPlayhead.store (-1);
+        transport.setPlayhead (777);
+        const auto out = ctx.sessionDir() / ("midi-" + std::to_string (pass) + ".wav");
+        std::vector<std::filesystem::path> outputs { out };
+        const auto mode = kind == 0 ? BounceEngine::Mode::MasterMix
+                        : kind == 1 ? BounceEngine::Mode::Stems : BounceEngine::Mode::FreezeTrack;
+        if (kind == 1)
+        {
+            outputs.clear();
+            for (const auto& target : BounceEngine::collectStemTargets (session, sessionFile (out)))
+                outputs.push_back (pathOf (target.file));
+        }
+        struct Progress
+        {
+            std::atomic<bool> reached { false };
+            dusk::AutoResetEvent gate;
+            bool changed = false;
+        };
+        auto observed = std::make_shared<Progress>();
+        auto run = std::make_shared<BounceRun>();
+        run->bounce = std::make_unique<BounceEngine> (engine, session, OfflineRenderQuality::MatchPlayback);
+        ctx.cleanup ([run, observed] { observed->gate.signal(); run->bounce.reset(); });
+        run->bounce->onProgressUpdated = [&engine, &session, &strip, observed, inject, input, traffic] (float progress)
+        {
+            observed->changed |= session.tempoBpm.load() != 120.0f || strip.faderDb.load() != 0.0f
+                || strip.pan.load() != 0.0f || session.heldMidiNotes[60].load();
+            if (inject && ! observed->reached.exchange (true, std::memory_order_acq_rel))
+                observed->gate.wait (5000);
+            if (inject && progress < 1.0f) engine.stageTestMidiInjection (input, traffic());
+        };
+        run->bounce->onFinished = [raw = run.get()] (bool ok, std::string error)
+        { raw->ok = ok; raw->error = std::move (error); raw->finished.store (true, std::memory_order_release); };
+        if (inject) engine.stageTestMidiInjection (input, traffic());
+        const bool started = kind == 2 ? run->bounce->startFreeze (0, sessionFile (out), length, kRate, 1024)
+            : run->bounce->start (sessionFile (out), kRate, 1024, 0.0, mode);
+        if (! ctx.expect (started, label + ": render did not start")) { ctx.complete (ctx.verdict()); return; }
+        auto self = weakNext.lock();
+        const auto waitForFinish = [&ctx, &transport, observed, run, reference, self, outputs, kind, inject, pass, label]
+        {
+            ctx.waitUntil ([run] { return run->finished.load (std::memory_order_acquire) && ! run->bounce->isRendering(); },
+                kRenderTimeoutMs, [&ctx, &transport, observed, run, reference, self, outputs, kind, inject, pass, label]
+                {
+                    ctx.expect (run->ok, label + ": render failed: " + run->error);
+                    ctx.expect (! observed->changed, label + ": live MIDI changed the render controls");
+                    ctx.expect (transport.getPlayhead() == 777 && transport.isStopped(), label + ": transport was not restored");
+                    for (std::size_t file = 0; file < outputs.size(); ++file)
+                    {
+                        const auto audio = readBack (outputs[file]);
+                        if (! ctx.expect (audio.has_value(), label + ": output could not be read")) continue;
+                        if (! inject) (*reference)[(std::size_t) kind].push_back (*audio);
+                        else if (file < (*reference)[(std::size_t) kind].size())
+                        {
+                            const auto& expected = (*reference)[(std::size_t) kind][file];
+                            float difference = 0.0f;
+                            for (std::size_t n = 0; n < std::min (audio->left.size(), expected.left.size()); ++n)
+                                difference = std::max ({ difference, std::abs (audio->left[n] - expected.left[n]),
+                                                                      std::abs (audio->right[n] - expected.right[n]) });
+                            ctx.expect (audio->info.numFrames == expected.info.numFrames && difference < 1.0e-5f,
+                                        label + ": live input changed the rendered samples");
+                        }
+                    }
+                    if (self) (*self) (pass + 1);
+                }, "the MIDI isolation render did not finish");
+        };
+        if (! inject) { waitForFinish(); return; }
+        ctx.waitUntil ([observed] { return observed->reached.load (std::memory_order_acquire); }, kRenderTimeoutMs,
+            [&ctx, &engine, &session, &transport, observed, waitForFinish, label]
+            {
+                const auto position = transport.getPlayhead();
+                session.pendingTransportAction.store ((int) PendingTransportAction::SyncStop);
+                session.pendingTransportPlayhead.store (45000);
+                const auto result = engine.serviceTransportRequests();
+                ctx.expect (! result.stopped && ! result.recordRequested && transport.isPlaying()
+                            && transport.getPlayhead() == position, label + ": message-thread transport service interrupted the render");
+                ctx.expect (session.pendingTransportAction.load() == (int) PendingTransportAction::None
+                            && session.pendingTransportPlayhead.load() == -1,
+                            label + ": suppressed transport requests were left queued");
+                observed->gate.signal();
+                waitForFinish();
+            }, "the MIDI isolation render did not reach its first block");
+    };
+    (*next) (0);
+    return std::nullopt;
+}
+
+ScenarioResult hardwareOfflineCallbackProbe (ScenarioContext& ctx)
+{
+    constexpr int frames = 256;
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& transport = engine.getTransport();
+    auto& trackHardware = session.track (0).hardwareInsert;
+    auto& auxHardware = session.auxLane (0).hardwareInserts[0];
+    std::array<std::array<float, frames>, 2> input {};
+    std::array<std::array<float, frames>, 8> output {};
+    std::array<const float*, 2> inputs {};
+    std::array<float*, 8> outputs {};
+    std::array<std::array<float, frames>, 4> taps {};
+    for (int channel = 0; channel < 2; ++channel)
+    {
+        for (int sample = 0; sample < frames; ++sample)
+            input[(std::size_t) channel][(std::size_t) sample] = (channel == 0 ? 0.125f : -0.0625f)
+                * std::sin (2.0f * kPi * (float) sample / 32.0f);
+        inputs[(std::size_t) channel] = input[(std::size_t) channel].data();
+    }
+    for (int channel = 0; channel < 8; ++channel)
+        outputs[(std::size_t) channel] = output[(std::size_t) channel].data();
+    auto& strip = engine.getChannelStrip (0);
+    strip.setStemCapture (taps[0].data(), taps[1].data());
+    engine.setAuxStemCapture (0, taps[2].data(), taps[3].data());
+    ctx.cleanup ([&engine, &strip]
+    {
+        strip.setStemCapture (nullptr, nullptr);
+        engine.setAuxStemCapture (0, nullptr, nullptr);
+        engine.setOfflineRenderActive (false);
+        engine.stop();
+    });
+    engine.setOfflineRenderActive (true);
+    engine.prepareForSelfTest (kRate, frames);
+    transport.setPlayhead (0);
+    transport.setState (Transport::State::Playing);
+    engine.getPlaybackEngine().preparePlayback();
+    trackHardware.pingPending.store (true); auxHardware.pingPending.store (true);
+    trackHardware.pingResult.store (731); auxHardware.pingResult.store (731);
+    device::CallbackContext offline;
+    offline.offlineRender = true;
+    float sendPeak = 0.0f, dryPeak = 0.0f;
+    for (int block = 0; block < 256; ++block)
+    {
+        for (auto& channel : taps) channel.fill (0.0f);
+        engine.getPlaybackEngine().primeAt (transport.getPlayhead());
+        engine.audioDeviceIOCallback (inputs.data(), 2, outputs.data(), 8, frames, offline);
+        for (int channel = 2; channel < 6; ++channel)
+            for (const float sample : output[(std::size_t) channel]) sendPeak = std::max (sendPeak, std::abs (sample));
+        for (const auto& channel : taps)
+            for (const float sample : channel) dryPeak = std::max (dryPeak, std::abs (sample));
+    }
+    ctx.expect (sendPeak < 1.0e-8f, "offline callbacks emitted a hardware send or ping");
+    ctx.expect (dryPeak > 0.01f, "offline callbacks did not process dry audio");
+    ctx.expect (trackHardware.pingPending.load() && auxHardware.pingPending.load()
+                && trackHardware.pingResult.load() == 731 && auxHardware.pingResult.load() == 731,
+                "offline callbacks advanced the hardware ping state");
+    engine.stop();
+    engine.setOfflineRenderActive (false);
+    trackHardware.pingPending.store (false); auxHardware.pingPending.store (false);
+    engine.prepareForSelfTest (kRate, frames);
+    transport.setPlayhead (0);
+    engine.play();
+    std::array<float, 2> liveSendPeaks {};
+    float wetPeak = 0.0f;
+    for (int block = 0; block < 16; ++block)
+    {
+        for (auto& channel : taps) channel.fill (0.0f);
+        engine.getPlaybackEngine().primeAt (transport.getPlayhead());
+        engine.audioDeviceIOCallback (inputs.data(), 2, outputs.data(), 8, frames, {});
+        for (int channel = 2; channel < 6; ++channel)
+            for (const float sample : output[(std::size_t) channel])
+                liveSendPeaks[(std::size_t) (channel - 2) / 2] = std::max (liveSendPeaks[(std::size_t) (channel - 2) / 2], std::abs (sample));
+        if (block > 8)
+            for (const auto& channel : taps)
+                for (const float sample : channel) wetPeak = std::max (wetPeak, std::abs (sample));
+    }
+    ctx.expect (liveSendPeaks[0] > 0.01f && liveSendPeaks[1] > 0.01f && wetPeak > 0.01f,
+                "realtime hardware sends or returns were bypassed");
+    trackHardware.pingPending.store (true); auxHardware.pingPending.store (true);
+    float pingPeak = 0.0f;
+    for (int block = 0; block < 8; ++block)
+    {
+        engine.getPlaybackEngine().primeAt (transport.getPlayhead());
+        engine.audioDeviceIOCallback (inputs.data(), 2, outputs.data(), 8, frames, {});
+        for (int channel = 2; channel < 6; ++channel)
+            for (const float sample : output[(std::size_t) channel]) pingPeak = std::max (pingPeak, std::abs (sample));
+    }
+    ctx.expect (pingPeak > 0.1f, "hardware pings did not resume in realtime");
+    strip.setStemCapture (nullptr, nullptr);
+    engine.setAuxStemCapture (0, nullptr, nullptr);
+    engine.stop();
+    return ctx.verdict();
+}
+
+std::optional<ScenarioResult> offlineHardwareIsDry (ScenarioContext& ctx)
+{
+    static constexpr int length = 65536;
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& strip = engine.getChannelStrip (0);
+    auto& aux = engine.getAuxLaneStrip (0);
+    auto& transport = engine.getTransport();
+    const bool loopWas = transport.isLoopEnabled();
+    const auto playheadWas = transport.getPlayhead();
+    ctx.cleanup ([&engine, &transport, loopWas, playheadWas]
+    {
+        engine.stop();
+        transport.setLoopEnabled (loopWas);
+        transport.setPlayhead (playheadWas);
+    });
+    transport.setLoopEnabled (false);
+    ctx.keep (session.oversamplingFactor);
+    ctx.keep (session.track (0).strip.auxSendDb[0]);
+    ctx.keep (session.auxLane (0).params.returnLevelDb);
+    ctx.keep (session.auxLane (0).params.outputPair);
+    ctx.keep (strip.insertMode); ctx.keep (aux.insertMode[0]);
+    session.oversamplingFactor.store (1);
+    session.track (0).strip.auxSendDb[0].store (0.0f);
+    session.auxLane (0).params.returnLevelDb.store (0.0f);
+    session.auxLane (0).params.outputPair.store (-1);
+    std::array<HardwareInsertParams*, 2> hardware { &session.track (0).hardwareInsert,
+                                                 &session.auxLane (0).hardwareInserts[0] };
+    for (std::size_t index = 0; index < hardware.size(); ++index)
+    {
+        auto& params = *hardware[index];
+        const auto saved = params.routing.current();
+        ctx.cleanup ([&params, saved]
+        { params.routing.publish (std::make_unique<HardwareInsertRouting> (saved)); });
+        ctx.keep (params.enabled); ctx.keep (params.dryWet);
+        ctx.keep (params.outputGainDb); ctx.keep (params.inputGainDb);
+        ctx.keep (params.pingPending); ctx.keep (params.pingResult);
+        HardwareInsertRouting routing;
+        routing.outputChL = 2 + 2 * (int) index; routing.outputChR = 3 + 2 * (int) index;
+        routing.inputChL = 0; routing.inputChR = 1;
+        routing.latencySamples = index == 0 ? 577 : 911;
+        params.routing.publish (std::make_unique<HardwareInsertRouting> (routing));
+        params.outputGainDb.store (6.0f); params.inputGainDb.store (-6.0f);
+        params.dryWet.store (1.0f);
+    }
+    const auto source = ctx.tempDir() / "hardware-dry-source.wav";
+    std::vector<float> samples (length, 0.0f);
+    samples[128] = 0.125f; samples[24576] = -0.25f; samples[length - 128] = 0.5f;
+    if (! writeMono (source, samples)) return ScenarioResult::fail ("could not write the dry hardware source");
+    placeRegion (ctx, 0, source, 0, length);
+    auto reference = std::make_shared<std::array<std::vector<Rendered>, 3>>();
+    auto next = std::make_shared<std::function<void (int)>>();
+    std::weak_ptr<std::function<void (int)>> weakNext = next;
+    *next = [&ctx, &engine, &session, &strip, &aux, hardware, reference, weakNext] (int pass)
+    {
+        if (pass == 9) { ctx.complete (hardwareOfflineCallbackProbe (ctx)); return; }
+        const int kind = pass / 3, leg = pass % 3;
+        const bool enabled = leg != 0;
+        strip.insertMode.store (enabled ? ChannelStrip::kInsertHardware : ChannelStrip::kInsertEmpty);
+        aux.insertMode[0].store (enabled ? AuxLaneStrip::kInsertHardware : AuxLaneStrip::kInsertEmpty);
+        for (auto* params : hardware)
+        {
+            params->enabled.store (enabled);
+            params->dryWet.store (leg == 2 ? 1.0f : 0.0f);
+            params->pingPending.store (enabled);
+            params->pingResult.store (731);
+        }
+        const auto out = ctx.sessionDir() / ("hardware-dry-" + std::to_string (pass) + ".wav");
+        const auto mode = kind == 0 ? BounceEngine::Mode::MasterMix
+                        : kind == 1 ? BounceEngine::Mode::Stems : BounceEngine::Mode::FreezeTrack;
+        std::vector<std::filesystem::path> outputs { out };
+        if (kind == 1)
+        {
+            outputs.clear();
+            for (const auto& target : BounceEngine::collectStemTargets (session, sessionFile (out)))
+                outputs.push_back (pathOf (target.file));
+        }
+        auto run = std::make_shared<BounceRun>();
+        run->bounce = std::make_unique<BounceEngine> (engine, session, OfflineRenderQuality::MatchPlayback);
+        ctx.cleanup ([run] { run->bounce.reset(); });
+        run->bounce->onFinished = [raw = run.get()] (bool ok, std::string error)
+        { raw->ok = ok; raw->error = std::move (error); raw->finished.store (true, std::memory_order_release); };
+        const bool started = kind == 2 ? run->bounce->startFreeze (0, sessionFile (out), length, kRate, 1024)
+            : run->bounce->start (sessionFile (out), kRate, 1024, 0.0, mode);
+        if (! started) { ctx.complete (ScenarioResult::fail ("the dry hardware render did not start")); return; }
+        auto self = weakNext.lock();
+        ctx.waitUntil ([run] { return run->finished.load (std::memory_order_acquire) && ! run->bounce->isRendering(); },
+            kRenderTimeoutMs, [&ctx, reference, self, run, outputs, hardware, enabled, kind, leg, pass]
+            {
+                const auto label = std::string (kind == 0 ? "mix" : kind == 1 ? "stems" : "freeze")
+                    + (leg == 0 ? ", no insert" : leg == 1 ? ", delayed dry" : ", offline full wet");
+                ctx.expect (run->ok, label + ": dry hardware render failed: " + run->error);
+                for (std::size_t file = 0; file < outputs.size(); ++file)
+                {
+                    const auto audio = readBack (outputs[file]);
+                    if (! ctx.expect (audio.has_value(), label + ": rendered file is missing")) continue;
+                    ctx.expect (audio->info.numFrames == length, label + ": hardware changed the render length");
+                    for (const int at : { 128, 24576, length - 128 })
+                    {
+                        float peak = 0.0f;
+                        int peakAt = -1;
+                        for (int n = at - 64; n < at + 64 && n < (int) audio->left.size(); ++n)
+                            if (const float magnitude = std::abs (audio->left[(std::size_t) n]); magnitude > peak)
+                            { peak = magnitude; peakAt = n; }
+                        ctx.expect (peak > (leg == 0 ? 0.0001f : 0.01f), label + ": hardware lost a dry head/tail impulse");
+                        ctx.expect (peakAt == at, label + ": dry impulse landed at " + std::to_string (peakAt)
+                                                + " instead of " + std::to_string (at));
+                    }
+                    if (leg == 1) (*reference)[(std::size_t) kind].push_back (*audio);
+                    else if (leg == 2 && ctx.expect (file < (*reference)[(std::size_t) kind].size(), "missing dry reference"))
+                    {
+                        const auto& expected = (*reference)[(std::size_t) kind][file];
+                        float difference = 0.0f;
+                        for (std::size_t n = 0; n < std::min (audio->left.size(), expected.left.size()); ++n)
+                            difference = std::max ({ difference, std::abs (audio->left[n] - expected.left[n]),
+                                                                  std::abs (audio->right[n] - expected.right[n]) });
+                        ctx.expect (difference < 1.0e-5f, label + ": positive hardware latency changed aligned dry samples");
+                    }
+                }
+                if (enabled)
+                    for (auto* params : hardware)
+                        ctx.expect (params->pingPending.load() && params->pingResult.load() == 731,
+                                    label + ": offline rendering advanced a hardware ping");
+                if (self) (*self) (pass + 1);
+            }, "the dry hardware render did not finish");
+    };
+    (*next) (0);
+    return std::nullopt;
+}
+
+std::optional<ScenarioResult> offlineCueDoesNotPrint (ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& aux = session.auxLane (0).params;
+    ctx.keep (session.oversamplingFactor);
+    ctx.keep (session.track (0).strip.auxSendDb[0]);
+    ctx.keep (aux.returnLevelDb);
+    ctx.keep (aux.mute);
+    ctx.keep (aux.outputPair);
+    session.oversamplingFactor.store (1);
+    session.track (0).strip.auxSendDb[0].store (0.0f);
+    aux.returnLevelDb.store (-6.0f);
+    const auto source = ctx.tempDir() / "cue-source.wav";
+    if (! writeMono (source, sine (440.0f, 0.125f, 32768)))
+        return ScenarioResult::fail ("could not write the cue source");
+    placeRegion (ctx, 0, source, 0, 32768);
+    auto references = std::make_shared<std::array<std::optional<Rendered>, 2>>();
+    auto next = std::make_shared<std::function<void (int)>>();
+    std::weak_ptr<std::function<void (int)>> weakNext = next;
+    *next = [&ctx, &aux, references, weakNext] (int pass)
+    {
+        if (pass == 4) { ctx.complete (ctx.verdict()); return; }
+        const bool muted = pass >= 2;
+        const bool routed = (pass % 2) != 0;
+        aux.mute.store (muted);
+        aux.outputPair.store (routed ? 2 : -1);
+        Render render;
+        render.tailSeconds = 0.0;
+        render.wavBitDepth = 32;
+        render.quality = OfflineRenderQuality::MatchPlayback;
+        const auto out = ctx.sessionDir() / ("cue-" + std::to_string (pass) + ".wav");
+        auto self = weakNext.lock();
+        renderThen (ctx, out, render, [&ctx, references, self, out, pass, muted, routed]
+            (bool ok, const std::string& error)
+        {
+            if (! ctx.expect (ok, "cue comparison render failed: " + error))
+            { ctx.complete (ctx.verdict()); return; }
+            auto rendered = readBack (out);
+            if (! ctx.expect (rendered.has_value(), "cue comparison file was unreadable"))
+            { ctx.complete (ctx.verdict()); return; }
+            auto& reference = (*references)[muted ? 1 : 0];
+            if (! routed)
+            {
+                ctx.expect (rendered->peak() > 0.01f, "cue reference was silent");
+                reference = std::move (*rendered);
+            }
+            else if (ctx.expect (reference && reference->left.size() == rendered->left.size(),
+                                  "cue routing changed the render length"))
+            {
+                float difference = 0.0f;
+                for (std::size_t i = 0; i < rendered->left.size(); ++i)
+                {
+                    difference = std::max (difference, std::abs (rendered->left[i] - reference->left[i]));
+                    difference = std::max (difference, std::abs (rendered->right[i] - reference->right[i]));
+                }
+                ctx.expect (difference < 1.0e-6f, muted
+                    ? "a muted aux's physical cue printed into the offline mix"
+                    : "an aux's physical cue printed into the offline mix");
+            }
+            (*self) (pass + 1);
+        });
+    };
+    (*next) (0);
+    return std::nullopt;
+}
+
+std::optional<ScenarioResult> freezeIgnoresMixGate (ScenarioContext& ctx)
+{
+    static constexpr int length = 32768, blockSize = 1024;
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& params = session.track (0).strip;
+    auto& strip = engine.getChannelStrip (0);
+    ctx.cleanup ([&engine, &session, &strip]
+    {
+        strip.setStemCapture (nullptr, nullptr);
+        engine.setBusStemCapture (1, nullptr, nullptr);
+        engine.setAuxStemCapture (0, nullptr, nullptr);
+        session.recomputeRtCounters();
+    });
+    ctx.keep (session.oversamplingFactor); ctx.keep (params.mute);
+    ctx.keep (params.auxSendDb[0]);
+    for (int bus = 0; bus < Session::kNumBuses; ++bus)
+    {
+        ctx.keep (params.busAssign[(std::size_t) bus]);
+        ctx.keep (session.bus (bus).strip.solo);
+        params.busAssign[(std::size_t) bus].store (false);
+        session.bus (bus).strip.solo.store (false);
+    }
+    session.oversamplingFactor.store (1);
+    params.busAssign[1].store (true);
+    params.auxSendDb[0].store (0.0f);
+    const auto source = ctx.tempDir() / "freeze-gate-source.wav";
+    std::vector<float> samples (length, 0.0f);
+    samples[512] = 0.125f; samples[24576] = -0.25f; samples[length - 512] = 0.5f;
+    if (! writeMono (source, samples)) return ScenarioResult::fail ("could not write the gated freeze source");
+    placeRegion (ctx, 0, source, 0, length);
+    auto reference = std::make_shared<std::optional<Rendered>>();
+    auto next = std::make_shared<std::function<void (int)>>();
+    std::weak_ptr<std::function<void (int)>> weakNext = next;
+    *next = [&ctx, &engine, &session, &params, &strip, reference, weakNext] (int pass)
+    {
+        if (pass == 3) { ctx.complete (ctx.verdict()); return; }
+        params.mute.store (pass == 1);
+        session.bus (0).strip.solo.store (pass == 2);
+        session.recomputeRtCounters();
+        struct Taps
+        {
+            std::array<std::array<float, blockSize>, 6> audio {};
+            std::array<float, 3> peaks {};
+        };
+        auto taps = std::make_shared<Taps>();
+        strip.setStemCapture (taps->audio[0].data(), taps->audio[1].data());
+        engine.setBusStemCapture (1, taps->audio[2].data(), taps->audio[3].data());
+        engine.setAuxStemCapture (0, taps->audio[4].data(), taps->audio[5].data());
+        auto run = std::make_shared<BounceRun>();
+        run->bounce = std::make_unique<BounceEngine> (engine, session, OfflineRenderQuality::MatchPlayback);
+        ctx.cleanup ([run, taps] { run->bounce.reset(); });
+        run->bounce->onProgressUpdated = [taps] (float)
+        {
+            for (std::size_t channel = 0; channel < taps->audio.size(); ++channel)
+                for (auto& sample : taps->audio[channel])
+                {
+                    taps->peaks[channel / 2] = std::max (taps->peaks[channel / 2], std::abs (sample));
+                    sample = 0.0f;
+                }
+        };
+        run->bounce->onFinished = [raw = run.get()] (bool ok, std::string error)
+        { raw->ok = ok; raw->error = std::move (error); raw->finished.store (true, std::memory_order_release); };
+        const auto out = ctx.sessionDir() / ("freeze-gate-" + std::to_string (pass) + ".wav");
+        if (! run->bounce->startFreeze (0, sessionFile (out), length, kRate, blockSize))
+        { ctx.complete (ScenarioResult::fail ("the gated freeze did not start")); return; }
+        auto self = weakNext.lock();
+        ctx.waitUntil ([run] { return run->finished.load (std::memory_order_acquire) && ! run->bounce->isRendering(); },
+            kRenderTimeoutMs, [&ctx, &engine, &session, &params, &strip, reference, self, run, taps, out, pass]
+            {
+                strip.setStemCapture (nullptr, nullptr);
+                engine.setBusStemCapture (1, nullptr, nullptr);
+                engine.setAuxStemCapture (0, nullptr, nullptr);
+                const auto label = std::string (pass == 0 ? "reference" : pass == 1 ? "muted" : "bus-solo excluded");
+                const auto audio = readBack (out);
+                if (! ctx.expect (run->ok && audio.has_value(), label + ": freeze failed: " + run->error))
+                { ctx.complete (ctx.verdict()); return; }
+                ctx.expect (audio->info.numFrames == length && audio->peak() > 0.01f,
+                            label + ": the freeze tap did not capture the complete source");
+                ctx.expect (params.mute.load() == (pass == 1) && session.bus (0).strip.solo.load() == (pass == 2),
+                            label + ": the render changed the mix gate");
+                if (pass == 0)
+                {
+                    *reference = *audio;
+                    ctx.expect (taps->peaks[0] > 0.01f && taps->peaks[1] > 0.01f && taps->peaks[2] > 0.01f,
+                                "the reference did not exercise track, bus and aux accumulation");
+                }
+                else
+                {
+                    float difference = 0.0f;
+                    const auto& expected = **reference;
+                    for (std::size_t n = 0; n < std::min (audio->left.size(), expected.left.size()); ++n)
+                        difference = std::max ({ difference, std::abs (audio->left[n] - expected.left[n]),
+                                                              std::abs (audio->right[n] - expected.right[n]) });
+                    ctx.expect (difference < 1.0e-5f, label + ": the mix gate changed pre-fader freeze samples");
+                    ctx.expect (*std::max_element (taps->peaks.begin(), taps->peaks.end()) < 1.0e-8f,
+                                label + ": the freeze tap leaked through the mix/bus/aux gate");
+                }
+                if (self) (*self) (pass + 1);
+            }, "the gated freeze did not finish");
+    };
+    (*next) (0);
+    return std::nullopt;
+}
+
+std::optional<ScenarioResult> defaultRenderRateWithoutDevice (ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    const auto savedRate = session.sessionSampleRate;
+    const auto lastDeviceRate = engine.getLastDeviceSampleRate();
+    const bool registered = engine.isAudioCallbackRegistered();
+    ctx.cleanup ([&engine, &session, savedRate, lastDeviceRate, registered]
+    {
+        engine.observeAudioRegistrationForScenario ({});
+        session.sessionSampleRate = savedRate;
+        engine.setLastDeviceSampleRateForScenario (lastDeviceRate);
+        if (registered) engine.reattachAudioCallback();
+        else engine.detachAudioCallback();
+    });
+    ctx.keep (session.oversamplingFactor);
+    session.oversamplingFactor.store (2);
+    auto next = std::make_shared<std::function<void (int)>>();
+    std::weak_ptr<std::function<void (int)>> weakNext = next;
+    *next = [&ctx, &engine, &session, weakNext] (int pass)
+    {
+        if (pass == 12) { ctx.complete (ctx.verdict()); return; }
+        const int setting = pass / 3, kind = pass % 3;
+        const double expectedRate = setting == 0 || setting == 3 ? 44100.0 : 96000.0;
+        const double requestedRate = setting == 3 ? expectedRate : 0.0;
+        const double savedRate = setting == 1 || setting == 3 ? 96000.0 : 44100.0;
+        const double cachedRate = setting >= 2 ? 96000.0 : 0.0;
+        const auto length = (std::int64_t) expectedRate;
+        const auto label = std::string (kind == 0 ? "mix" : kind == 1 ? "stems" : "freeze")
+                         + ", rate setting " + std::to_string (setting);
+        const auto source = ctx.tempDir() / ("rate-source-" + std::to_string (pass) + ".wav");
+        std::vector<float> samples ((std::size_t) length);
+        for (std::int64_t n = 0; n < length; ++n)
+            samples[(std::size_t) n] = 0.1f * std::sin (2.0f * kPi * 1000.0f * (float) n / (float) expectedRate);
+        dusk::audio::WriteSpec spec;
+        spec.sampleRate = expectedRate; spec.numChannels = 1; spec.bitsPerSample = 32;
+        auto writer = dusk::audio::FileWriter::create (source, spec);
+        const float* channels[] { samples.data() };
+        if (writer == nullptr || ! writer->write (channels, 1, length) || ! writer->flush())
+        { ctx.complete (ScenarioResult::fail ("could not write the rate fixture")); return; }
+        writer.reset();
+        session.track (0).regions.clear();
+        placeRegion (ctx, 0, source, 0, length);
+        session.sessionSampleRate = savedRate;
+        engine.prepareForSelfTest (expectedRate, 1024);
+        const int liveLatency = engine.getChannelStrip (0).getOversamplingLatencySamples();
+        engine.setLastDeviceSampleRateForScenario (cachedRate);
+        engine.reattachAudioCallback();
+        engine.detachAudioCallback();
+        engine.audioDeviceStopped();
+        engine.reattachAudioCallback();
+        if (! ctx.expect (engine.getCurrentSampleRate() <= 0.0 && engine.isAudioCallbackRegistered(),
+                          label + ": the fixture still has a running device rate"))
+        { ctx.complete (ctx.verdict()); return; }
+        auto registration = std::make_shared<std::vector<bool>>();
+        engine.observeAudioRegistrationForScenario ([registration] (bool attached) { registration->push_back (attached); });
+        struct Observed
+        {
+            bool stayedDetached = true;
+            int renderLatency = -1;
+        };
+        auto observed = std::make_shared<Observed>();
+        auto run = std::make_shared<BounceRun>();
+        const auto quality = setting == 3 ? OfflineRenderQuality::High : OfflineRenderQuality::MatchPlayback;
+        run->bounce = std::make_unique<BounceEngine> (engine, session, quality);
+        ctx.cleanup ([run] { run->bounce.reset(); });
+        run->bounce->onProgressUpdated = [&engine, observed] (float)
+        {
+            observed->stayedDetached &= ! engine.isAudioCallbackRegistered();
+            observed->renderLatency = engine.getChannelStrip (0).getOversamplingLatencySamples();
+        };
+        run->bounce->onFinished = [raw = run.get()] (bool ok, std::string error)
+        { raw->ok = ok; raw->error = std::move (error); raw->finished.store (true, std::memory_order_release); };
+        const auto out = ctx.sessionDir() / ("device-less-rate-" + std::to_string (pass) + ".wav");
+        auto output = out;
+        const auto mode = kind == 0 ? BounceEngine::Mode::MasterMix : BounceEngine::Mode::Stems;
+        if (kind == 1)
+        {
+            const auto targets = BounceEngine::collectStemTargets (session, sessionFile (out));
+            if (! ctx.expect (targets.size() == 1, "the rate fixture did not name one stem"))
+            { ctx.complete (ctx.verdict()); return; }
+            output = pathOf (targets.front().file);
+        }
+        const bool started = kind == 2 ? run->bounce->startFreeze (0, sessionFile (out), length, requestedRate, 1024)
+            : run->bounce->start (sessionFile (out), requestedRate, 1024, 0.0, mode);
+        if (! ctx.expect (started, label + ": render did not start")) { ctx.complete (ctx.verdict()); return; }
+        auto self = weakNext.lock();
+        ctx.waitUntil ([run] { return run->finished.load (std::memory_order_acquire) && ! run->bounce->isRendering(); },
+            kRenderTimeoutMs, [&ctx, &engine, &session, registration, observed, run, self, output, pass, setting,
+                               expectedRate, savedRate, cachedRate, length, liveLatency, label]
+            {
+                engine.observeAudioRegistrationForScenario ({});
+                ctx.expect (run->ok, label + ": render failed: " + run->error);
+                ctx.expect (observed->stayedDetached && engine.isAudioCallbackRegistered()
+                            && *registration == std::vector<bool> { false, true },
+                            label + ": callback registration was not restored");
+                ctx.expect (session.sessionSampleRate == savedRate && engine.getLastDeviceSampleRate() == cachedRate,
+                            label + ": the render changed the session/device rate fallback");
+                ctx.expect (setting == 3 ? observed->renderLatency > liveLatency : observed->renderLatency == liveLatency,
+                            label + ": the render used the wrong quality");
+                engine.prepareForSelfTest (expectedRate, ScenarioContext::kBlockSize);
+                ctx.expect (session.oversamplingFactor.load() == 2
+                            && engine.getChannelStrip (0).getOversamplingLatencySamples() == liveLatency,
+                            label + ": render quality was not restored");
+                const auto audio = readBack (output);
+                if (ctx.expect (audio.has_value(), label + ": output is unreadable"))
+                {
+                    ctx.expect (std::abs (audio->info.sampleRate - expectedRate) < 0.5,
+                                label + ": default render ignored the timeline rate");
+                    ctx.expect (audio->info.numFrames == length, label + ": timeline frame length changed");
+                    const auto begin = (std::size_t) length / 4, end = 3 * (std::size_t) length / 4;
+                    int crossings = 0;
+                    for (auto n = begin + 1; n < end && n < audio->left.size(); ++n)
+                        if (audio->left[n - 1] <= 0.0f && audio->left[n] > 0.0f) ++crossings;
+                    const double frequency = (double) crossings * expectedRate / (double) (end - begin);
+                    ctx.note (label + ": tone " + std::to_string (frequency) + " Hz, header "
+                              + std::to_string (audio->info.sampleRate));
+                    ctx.expect (audio->peak() > 0.01f && std::abs (frequency - 1000.0) < 5.0,
+                                label + ": the rendered tone/timeline duration changed");
+                }
+                if (self) (*self) (pass + 1);
+            }, "the device-less rate render did not finish");
+    };
+    (*next) (0);
     return std::nullopt;
 }
 
@@ -785,7 +1852,7 @@ std::optional<ScenarioResult> stemsRenderWhatStartNamed (ScenarioContext& ctx)
 }
 
 // An impulse on a direct track and one on a bus-routed track, rendered as a
-// mix and as stems, all land where they sit on the timeline.
+// mix and as stems at both render qualities, all land where they sit on the timeline.
 std::optional<ScenarioResult> rendersLandOnTheTimeline (ScenarioContext& ctx)
 {
     static constexpr std::int64_t kAt = 24000;
@@ -818,37 +1885,82 @@ std::optional<ScenarioResult> rendersLandOnTheTimeline (ScenarioContext& ctx)
                     label + ": the impulse moved by " + std::to_string (at - want) + " samples");
     };
 
-    Render mixRender;
-    mixRender.tailSeconds = 0.2;
-    Render stemRender = mixRender;
-    stemRender.mode = BounceEngine::Mode::Stems;
-    renderThen (ctx, mixPath, mixRender, [&ctx, mixPath, base, targets, stemRender, landed] (bool ok, const std::string& error)
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    const int savedFactor = session.oversamplingFactor.load (std::memory_order_relaxed);
+    ctx.cleanup ([&session, &engine, savedFactor]
     {
-        const auto mix = readBack (mixPath);
-        if (! ctx.expect (ok && mix.has_value(), "the mix bounce failed: " + error))
+        session.oversamplingFactor.store (savedFactor, std::memory_order_relaxed);
+        engine.prepareForSelfTest (kRate, ScenarioContext::kBlockSize);
+    });
+    session.oversamplingFactor.store (4, std::memory_order_relaxed);
+    engine.prepareForSelfTest (kRate, ScenarioContext::kBlockSize);
+    const int highLatency = engine.getChannelStrip (0).getOversamplingLatencySamples();
+    session.oversamplingFactor.store (1, std::memory_order_relaxed);
+    engine.prepareForSelfTest (kRate, ScenarioContext::kBlockSize);
+    const int liveLatency = engine.getChannelStrip (0).getOversamplingLatencySamples();
+
+    auto next = std::make_shared<std::function<void (int)>>();
+    std::weak_ptr<std::function<void (int)>> weakNext = next;
+    *next = [&ctx, &session, &engine, weakNext, mixPath, base, targets, landed, highLatency, liveLatency] (int pass)
+    {
+        if (pass >= 4)
         {
             ctx.complete (ctx.verdict());
             return;
         }
-        landed (mix->left, 0, kAt + 6000, kAt, "mix, direct track");
-        landed (mix->left, kAt + 6000, (std::int64_t) mix->left.size(), kAt + 12000, "mix, bus-routed track");
-
-        renderThen (ctx, base, stemRender, [&ctx, targets, landed] (bool stemsOk, const std::string& stemsError)
-        {
-            if (ctx.expect (stemsOk, "the stem bounce failed: " + stemsError))
-                for (const auto& target : targets)
-                    if (const auto stem = readBack (pathOf (target.file)))
+        const bool stems = pass % 2 != 0;
+        Render render;
+        render.tailSeconds = 0.2;
+        render.mode = stems ? BounceEngine::Mode::Stems : BounceEngine::Mode::MasterMix;
+        render.quality = pass < 2 ? OfflineRenderQuality::High : OfflineRenderQuality::MatchPlayback;
+        const auto label = std::string (pass < 2 ? "high quality, " : "match playback, ") + (stems ? "stems" : "mix");
+        const int expectedLatency = pass < 2 ? highLatency : liveLatency;
+        auto renderLatency = std::make_shared<std::atomic<int>> (-1);
+        auto run = startRender (ctx, stems ? base : mixPath, render, {}, [&engine, renderLatency] (float)
+        { renderLatency->store (engine.getChannelStrip (0).getOversamplingLatencySamples(), std::memory_order_relaxed); });
+        if (run == nullptr) return;
+        auto self = weakNext.lock();
+        ctx.waitUntil ([run] { return run->finished.load (std::memory_order_acquire) && ! run->bounce->isRendering(); },
+            kRenderTimeoutMs,
+            [&ctx, &session, &engine, run, self, pass, stems, label, expectedLatency, renderLatency,
+             mixPath, targets, landed, liveLatency]
+            {
+                if (! ctx.expect (run->ok, label + ": bounce failed: " + run->error))
+                { ctx.complete (ctx.verdict()); return; }
+                ctx.expect (renderLatency->load (std::memory_order_relaxed) == expectedLatency,
+                            label + ": the render did not use the selected oversampling quality");
+                ctx.expect (session.oversamplingFactor.load (std::memory_order_relaxed) == 1,
+                            label + ": the render changed the live oversampling setting");
+                engine.prepareForSelfTest (kRate, ScenarioContext::kBlockSize);
+                ctx.expect (engine.getChannelStrip (0).getOversamplingLatencySamples() == liveLatency,
+                            label + ": the render's oversampling override was not cleared");
+                if (! stems)
+                {
+                    const auto mix = readBack (mixPath);
+                    if (ctx.expect (mix.has_value(), label + ": the mix bounce wrote no readable file"))
+                    {
+                        landed (mix->left, 0, kAt + 6000, kAt, label + ", direct track");
+                        landed (mix->left, kAt + 6000, (std::int64_t) mix->left.size(), kAt + 12000, label + ", bus-routed track");
+                    }
+                }
+                else for (const auto& target : targets)
+                {
+                    const auto stem = readBack (pathOf (target.file));
+                    if (ctx.expect (stem.has_value(), label + ": a stem file was not readable"))
                     {
                         const bool routed = target.kind == BounceEngine::StemTarget::Kind::Bus
                                          || (target.kind == BounceEngine::StemTarget::Kind::Track
                                              && target.index == 1);
                         landed (stem->left, 0, (std::int64_t) stem->left.size(),
                                 routed ? kAt + 12000 : kAt,
-                                pathOf (target.file).filename().u8string());
+                                label + ", " + pathOf (target.file).filename().u8string());
                     }
-            ctx.complete (ctx.verdict());
-        });
-    });
+                }
+                (*self) (pass + 1);
+            }, "the alignment bounce never finished");
+    };
+    (*next) (0);
     return std::nullopt;
 }
 
@@ -2371,6 +3483,24 @@ std::optional<ScenarioResult> pendingInstrumentRefusesRender (ScenarioContext& c
 const ScenarioRegistrar mixRegistrar { Scenario {
     "bounce.master_mix_file", { "bounce" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return masterMixFile (ctx); }, 120000 } };
+const ScenarioRegistrar wholeSongLoopRegistrar { Scenario {
+    "bounce.whole_song_ignores_playback_loop", { "bounce", "stems", "freeze", "loop" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return wholeSongIgnoresPlaybackLoop (ctx); }, 180000 } };
+const ScenarioRegistrar offlineMidiRegistrar { Scenario {
+    "bounce.offline_midi_isolation", { "bounce", "stems", "freeze", "midi", "sync" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return offlineMidiIsolation (ctx); }, 180000 } };
+const ScenarioRegistrar offlineHardwareRegistrar { Scenario {
+    "bounce.offline_hardware_is_dry", { "bounce", "stems", "freeze", "hardware" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return offlineHardwareIsDry (ctx); }, 180000 } };
+const ScenarioRegistrar freezeGateRegistrar { Scenario {
+    "bounce.freeze_ignores_mix_gate", { "bounce", "freeze", "mute", "solo" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return freezeIgnoresMixGate (ctx); }, 180000 } };
+const ScenarioRegistrar offlineCueRegistrar { Scenario {
+    "bounce.offline_cue_does_not_print", { "bounce", "aux", "cue" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return offlineCueDoesNotPrint (ctx); }, 180000 } };
+const ScenarioRegistrar defaultRateRegistrar { Scenario {
+    "bounce.default_rate_without_device", { "bounce", "stems", "freeze", "rate" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return defaultRenderRateWithoutDevice (ctx); }, 180000 } };
 const ScenarioRegistrar mp3Registrar { Scenario {
     "bounce.mp3_by_format", { "bounce", "mp3" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return mp3Bounce (ctx); }, 120000 } };
@@ -2465,5 +3595,8 @@ const ScenarioRegistrar exportMp3Registrar { Scenario {
 const ScenarioRegistrar exportDitherRegistrar { Scenario {
     "bounce.export_master_cd_dither_is_tpdf", { "bounce", "mastering" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return exportMasterDither (ctx); }, 120000 } };
+const ScenarioRegistrar finalizationRegistrar { Scenario {
+    "bounce.native_finalization_failures", { "bounce", "stems", "freeze", "realtime" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return finalizationFailures (ctx); }, 120000 } };
 } // namespace
 } // namespace duskstudio::scenario

@@ -5,6 +5,8 @@
 
 #include "PluginDescriptor.h"
 #include "../foundation/MessageThread.h"
+#include "../foundation/ProcessedBlock.h"
+#include "../foundation/TransportPosition.h"
 #include "../foundation/SpscIndexFifo.h"
 
 #if DUSKSTUDIO_HAS_OOP_PLUGINS
@@ -99,6 +101,11 @@ public:
     void unload();
 
     bool isLoaded() const noexcept;
+    // Message thread. Whether the slot owns a plug-in, reachable from the
+    // audio path or not: a live or parked instance, a sandbox child cut off or
+    // crashed, the identity a dropped crashed child leaves, or the placeholder
+    // of one that could not be restored.
+    bool holdsPlugin() const noexcept;
     juce::String getLoadedName() const;
     bool isLoadedStandardVst3() const noexcept
     {
@@ -111,15 +118,19 @@ public:
 
     // In-place process. Empty MIDI buffer for FX inserts; per-track MIDI
     // for instrument plugins. Mono-only plugins on stereo input are
-    // averaged to mono and broadcast back to both channels.
+    // averaged to mono and broadcast back to both channels. Returns the
+    // rendered block's timing, or no value on dry fallback. A reset flag marks
+    // the first rendered block after the host reinitialised the processor.
     //
     // Time-budget watchdog: if wall-clock exceeds kTimeBudgetFraction of
     // the block's audio time for kOverrunStreak blocks in a row, the
     // plugin is auto-bypassed and the user has to re-enable manually.
-    void processMonoBlock (float* monoData, int numSamples,
-                           juce::MidiBuffer& midiMessages) noexcept;
-    void processStereoBlock (float* L, float* R, int numSamples,
-                             juce::MidiBuffer& midiMessages) noexcept;
+    std::optional<dusk::ProcessedBlock> processMonoBlock (float* monoData, int numSamples,
+                           juce::MidiBuffer& midiMessages,
+                           const dusk::TransportPosition* transport = nullptr) noexcept;
+    std::optional<dusk::ProcessedBlock> processStereoBlock (float* L, float* R, int numSamples,
+                             juce::MidiBuffer& midiMessages,
+                             const dusk::TransportPosition* transport = nullptr) noexcept;
 
     // Message thread. Hold while constructing the plugin's editor: sampler-
     // style plugins share an internal lock between processBlock and their
@@ -206,6 +217,17 @@ public:
         return lastTouchedParamIndex.load (std::memory_order_relaxed);
     }
 
+    // Message thread. generation() names the slot's current owner and moves on
+    // every load, unload and restore. stateRevision() counts changes to the
+    // owner's persistent state and only ever grows: parameter, program and
+    // non-parameter changes the plug-in reports, writes queued through
+    // setParamNormalised, and for a sandboxed plug-in everything its child
+    // reports, its own editor included. The count carries across a change of
+    // child or of hosting mode. A latency report is not a change.
+    std::uint32_t generation() const noexcept
+        { return currentLoadEpoch.load (std::memory_order_acquire); }
+    std::uint64_t stateRevision() const noexcept;
+
     // Audio-thread entry. Lock-free push into the SPSC paramFifo; the
     // actual JUCE parameter setter runs on the message thread inside
     // timerCallback(). FIFO-full = silent drop (extremely rare; the
@@ -229,7 +251,23 @@ public:
     // re-reads its latency afterwards, as a device re-prepare does.
     std::optional<PluginDescriptor> getDescriptorForSave (int parkSleepMs = 25);
     juce::String getLegacyDescriptionXmlForSave() const;
-    juce::String getStateBase64ForSave   (int parkSleepMs = 25);
+    // A nonempty error distinguishes a failed live capture from valid empty state.
+    // Callers without errorOut retain the last-known-state fallback.
+    //
+    // capturedRevisionOut receives, unless errorOut reports a failure, the
+    // stateRevision() the returned state is known to include. A live capture
+    // samples it after delivering the slot's queued writes and before reading
+    // the state - inside the child for a sandboxed plug-in, behind the writes it
+    // was sent - so stateRevision() == *capturedRevisionOut afterwards means
+    // nothing has changed since. A caller that samples stateRevision() itself
+    // around this call either counts the delivered writes as unsaved or
+    // acknowledges a change the read missed. A state the slot cannot vouch for
+    // that way - the cache of a crashed or released child, an inactive plug-in
+    // whose host may still hold a change - reports the older revision of the
+    // capture that produced it, which leaves the slot dirty.
+    juce::String getStateBase64ForSave (int parkSleepMs = 25,
+                                       std::string* errorOut = nullptr,
+                                       std::uint64_t* capturedRevisionOut = nullptr);
 
     bool restoreFromSavedState (const std::optional<PluginDescriptor>& descriptor,
                                 const juce::String& legacyDescriptionXml,
@@ -259,6 +297,10 @@ public:
     // prepare-and-publish path used by descriptor loads.
     bool installInProcessInstanceForTest (
         PluginInstancePtr instance);
+
+    // Watchdog seam: trips the auto-bypass the overrun counter would, without
+    // a wall-clock overrun.
+    void engageAutoBypassForTest() noexcept { engageAutoBypass(); }
    #endif
 
    #if JUCE_MAC && DUSKSTUDIO_HAS_OOP_PLUGINS
@@ -268,7 +310,7 @@ public:
     // shell instance; prepareToPlay is invoked so editor layout
     // matches the engine's current SR/BS, that's it.
     //
-    // Architectural note: PluginSlot returns a raw juce::AudioProcessor
+    // Architectural note: PluginSlot returns a raw JUCE AudioProcessor
     // Editor* rather than calling duskstudio::platform::createInProcess
     // EditorHost itself because CLAUDE.md forbids src/engine/ including
     // src/ui/. The factory call lives in ChannelStripComponent (which
@@ -335,6 +377,7 @@ private:
     std::atomic<juce::AudioPluginInstance*> currentInstance { nullptr };
     std::atomic<bool> bypassed { false };
     std::atomic<bool> autoBypassed { false };
+    std::atomic<bool> historyResetPending { true };
 
     // Per-instance prepare<->process exclusion (the Tracktion ExternalPlugin
     // pattern). The audio/worker thread TRY-locks around the plugin's
@@ -369,6 +412,9 @@ private:
 
     std::atomic<int> cachedLatencySamples { 0 };
     std::atomic<int> lastTouchedParamIndex { -1 };
+    std::atomic<std::uint64_t> inProcessStateRevision { 0 };
+    static_assert (std::atomic<std::uint64_t>::is_always_lock_free,
+                   "Plug-in state revisions must be lock-free");
 
     class LastTouchedListener final : public juce::AudioProcessorParameter::Listener
     {
@@ -385,28 +431,64 @@ private:
     };
     std::unique_ptr<LastTouchedListener> lastTouchedListener;
 
-    // A plug-in announces a latency change on the thread that makes it: the
-    // message thread for JUCE's VST3 host, the audio thread inside processBlock
-    // for its LV2 host. So the callback only raises a flag (release), and
-    // refreshLatencyIfChanged reads the value on the message thread (acquire).
-    // One listener for the slot's lifetime rather than one per instance, so a
-    // callback still in flight from an instance the slot has let go of lands
-    // on a live object; the worst it causes is one needless re-read.
-    class LatencyListener final : public juce::AudioProcessorListener
+    // True on a thread while it is inside this slot's own call into the
+    // plug-in's processBlock: the audio thread, or a capture's empty block.
+    inline static thread_local bool renderingOwnBlock = false;
+    struct OwnBlockScope
+    {
+        OwnBlockScope() noexcept : previous (renderingOwnBlock) { renderingOwnBlock = true; }
+        ~OwnBlockScope() { renderingOwnBlock = previous; }
+        const bool previous;
+    };
+
+    // Plug-ins announce changes from render and editor threads. Callbacks only
+    // publish atomics; latency is read later on the message thread.
+    class ProcessorListener final : public juce::AudioProcessorListener
     {
     public:
-        explicit LatencyListener (std::atomic<bool>& flag) noexcept : changed (flag) {}
+        ProcessorListener (std::atomic<bool>& flag, std::atomic<std::uint64_t>& revision) noexcept
+            : changed (flag), stateRevision (revision) {}
         void audioProcessorChanged (juce::AudioProcessor*, const ChangeDetails& details) override
         {
             if (details.latencyChanged)
                 changed.store (true, std::memory_order_release);
+            // A restart the plug-in raises while the slot itself (de)activates
+            // it is that cycle; VST3 requires restarts on the message thread,
+            // where JUCE handles them at once, inside the slot's own call.
+            const bool ownActivationRestart = details.programChanged
+                && restartsAreProgramChanges.load (std::memory_order_relaxed)
+                && ownActivations.load (std::memory_order_relaxed) > 0;
+            if ((details.programChanged && ! ownActivationRestart) || details.nonParameterStateChanged)
+                stateRevision.fetch_add (1, std::memory_order_release);
         }
-        void audioProcessorParameterChanged (juce::AudioProcessor*, int, float) override {}
+        void audioProcessorParameterChanged (juce::AudioProcessor* processor, int index, float) override
+        {
+            // A plug-in reports its meters from inside its render; a value it
+            // reports there is state only if the user could automate it.
+            if (renderingOwnBlock)
+                if (auto* parameter = processor->getParameters()[index];
+                    parameter == nullptr || ! parameter->isAutomatable())
+                    return;
+            stateRevision.fetch_add (1, std::memory_order_release);
+        }
+        // Set from the owner's format before the listener is attached.
+        std::atomic<bool> restartsAreProgramChanges { false };
+        // Message thread: nonzero while the slot itself (de)activates the owner.
+        std::atomic<int> ownActivations { 0 };
     private:
         std::atomic<bool>& changed;
+        std::atomic<std::uint64_t>& stateRevision;
     };
     std::atomic<bool> latencyChangePending { false };
-    LatencyListener latencyListener { latencyChangePending };
+    ProcessorListener processorListener { latencyChangePending, inProcessStateRevision };
+
+    struct OwnActivationScope
+    {
+        explicit OwnActivationScope (ProcessorListener& listenerIn) noexcept : listener (listenerIn)
+            { listener.ownActivations.fetch_add (1, std::memory_order_relaxed); }
+        ~OwnActivationScope() { listener.ownActivations.fetch_sub (1, std::memory_order_relaxed); }
+        ProcessorListener& listener;
+    };
 
     // Message thread. Every in-process instance the slot publishes carries
     // both listeners, and loses them before it leaves ownedInstance.
@@ -429,7 +511,26 @@ private:
     // per load: switching modes requires unload + reload.
     std::unique_ptr<duskstudio::ipc::RemotePluginConnection> ownedRemote;
     std::atomic<duskstudio::ipc::RemotePluginConnection*>    currentRemote { nullptr };
+    // Message thread. Set once releaseResources has had the child drop its
+    // plug-in: what it read just before is all a save can have.
+    bool remoteReleased = false;
+    // Message thread. A child the audio path no longer reaches though it still
+    // runs its plug-in: a block size over the IPC limit, or a failed prepare.
+    bool liveCutOffRemote() const noexcept
+    {
+        return ownedRemote != nullptr && currentRemote.load (std::memory_order_acquire) == nullptr
+            && ! remoteReleased && ! remoteCrashed.load (std::memory_order_relaxed)
+            && ! ownedRemote->isCrashed();
+    }
     std::array<std::unique_ptr<duskstudio::ipc::RemotePluginConnection>, 2> previousRemotes;
+
+    // Message thread. The final revision of every child this slot has let go
+    // of, so a new child's count starts above the old one's.
+    std::uint64_t retiredRemoteStateRevision = 0;
+    // A write that could not be sent to the live child. The next capture
+    // reports it rather than saving state the write never reached. Raised from
+    // the Mac shell editor's listener too, which may run off the message thread.
+    std::atomic<bool> remoteParamWriteLost { false };
 
     std::atomic<int>  remoteNumIn       { 0 };
     std::atomic<int>  remoteNumOut      { 0 };
@@ -513,6 +614,7 @@ private:
     juce::String offlineStateBase64;
     bool offlineCapturePlaceholder { false };
     juce::String lastKnownStateBase64;
+    std::uint64_t lastKnownStateRevision = 0;
 
    #if JUCE_MAC && DUSKSTUDIO_HAS_OOP_PLUGINS
     // Mac dual-load shell-instance state. Loaded lazily on first editor
@@ -579,15 +681,16 @@ private:
     // ordering on the audio-thread read pairs with the release fetch_add
     // performed by the message-thread mutators.
     std::atomic<std::uint32_t> currentLoadEpoch { 0 };
+    bool drainingParamWrites = false;
+    bool capturingState = false;
+
+    void drainPendingParamWrites (bool forCapture);
 
     // Drains paramFifo on the message thread. Called by dusk::Timer at
     // 30 Hz; cheap when empty (one atomic load + branch).
     void timerCallback() override;
 
-    // Message-thread-only. Applies one queued ParamWrite to the live
-    // plugin instance. JUCE_ASSERT_MESSAGE_THREAD enforces the contract
-    // so any future caller that tries to invoke this from the audio
-    // thread trips in debug + selftest builds.
-    void applyParamWriteOnMessageThread (const ParamWrite& pw) noexcept;
+    // A capture may apply same-owner writes after releaseResources parked it.
+    void applyParamWriteOnMessageThread (const ParamWrite& pw, bool forCapture) noexcept;
 };
 } // namespace duskstudio

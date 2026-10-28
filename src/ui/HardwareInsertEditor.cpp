@@ -79,7 +79,6 @@ HardwareInsertEditor::HardwareInsertEditor (HardwareInsertParams& paramsRef,
     setupCombo (inChCombo);
     outChCombo.onChange = [this] { publishRoutingFromUi(); };
     inChCombo .onChange = [this] { publishRoutingFromUi(); };
-    populateDropdowns();
 
     // Rebuild the channel lists when the audio device changes under an open
     // editor (hot-swap, backend switch in Audio settings) so the dropdowns
@@ -155,6 +154,7 @@ HardwareInsertEditor::HardwareInsertEditor (HardwareInsertParams& paramsRef,
         formatMidSideButton.setToggleState (routing.format == 1, juce::dontSendNotification);
         formatMonoButton   .setToggleState (routing.format == 2, juce::dontSendNotification);
     }
+    populateDropdowns();
     // Flipping to or from Mono changes the channel lists from pairs to
     // singles, so the dropdowns rebuild along with the publish.
     formatStereoButton .onClick = [this] { populateDropdowns(); publishRoutingFromUi(); };

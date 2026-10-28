@@ -670,11 +670,20 @@ std::optional<ScenarioResult> runSettingsRecordingOffset (GuiHost& host, Scenari
         else { std::error_code error; std::filesystem::remove (config, error); }
     });
     appconfig::setRecordingLatencyOffsetSamples (0);
+    appconfig::setOfflineRenderQuality (OfflineRenderQuality::High);
     engine.setRecordingLatencyOffsetSamples (0);
     auto steps = std::make_shared<std::vector<Step>>();
     steps->push_back ({ 0, [&host, &ctx]
     { ctx.expect (host.openAudioSettings(), "settings did not open"); } });
-    pushSettingsTab (*steps, host, "advanced");
+    pushSettingsTab (*steps, host, "audio");
+    steps->push_back ({ 200, [&host, &ctx]
+    { ctx.expect (host.clickAudioSettingsControl ("render-quality"), "render quality dropdown was not visible"); } });
+    steps->push_back ({ 200, [&host] { host.inputAudioSettings ("focus-out"); } });
+    steps->push_back ({ 200, [&host] { host.inputAudioSettings ("end"); } });
+    steps->push_back ({ 200, [&host] { host.inputAudioSettings ("enter"); } });
+    steps->push_back ({ 200, [&ctx]
+    { ctx.expect (appconfig::getOfflineRenderQuality() == OfflineRenderQuality::MatchPlayback,
+                  "render quality dropdown did not save Match playback"); } });
     steps->push_back ({ 0, [&host, &ctx]
     {
         ctx.expect (! host.pointerAudioSettings ("autosave", 0.5f, false), "hidden General control retained a click target");
@@ -715,7 +724,11 @@ std::optional<ScenarioResult> runSettingsRecordingOffset (GuiHost& host, Scenari
     { ctx.expect (host.openAudioSettings(), "settings did not reopen"); },
     [&host] { return ! host.audioSettingsOpen(); }, "settings did not finish closing before reopening", {}, kSettleBoundMs });
     steps->push_back ({ 0, [&host, &ctx]
-    { ctx.expect (host.pointerAudioSettings ("record-offset", 0.5f, false), "Settings did not retain the selected Advanced tab"); } });
+    {
+        ctx.expect (host.pointerAudioSettings ("record-offset", 0.5f, false), "Settings did not retain the selected Audio tab");
+        ctx.expect (appconfig::getOfflineRenderQuality() == OfflineRenderQuality::MatchPlayback,
+                    "reopening Settings lost the render quality preference");
+    } });
     steps->push_back ({ 0, [] {}, [&host] { return host.pointerAudioSettings ("record-offset-plus", 0.5f, false); },
                        "reopened offset plus button was not visible", {}, kSettleBoundMs });
     steps->push_back ({ 0, [&host, &ctx]

@@ -4,6 +4,7 @@
 
 #include "dsp/ChannelStrip.h"
 #include "engine/PdcMath.h"
+#include "engine/PluginManager.h"
 
 #include <array>
 #include <cmath>
@@ -29,15 +30,15 @@ struct StripPdcHarness
     std::array<float*, ChannelStrip::kNumAuxSends> auxLPtrs {}, auxRPtrs {};
     bool stereo;
 
-    StripPdcHarness (bool useStereo, int delay) : stereo (useStereo)
+    StripPdcHarness (bool useStereo, int delay, int factor = 1, bool allowSilentSkip = true) : stereo (useStereo)
     {
         params.eqEnabled.store (false);
         params.compEnabled.store (false);
         params.faderDb.store (0.0f);
         params.pan.store (0.0f);
         strip.bind (params);
-        strip.insertMode.store (ChannelStrip::kInsertEmpty);
-        strip.prepare (48000.0, kBlock, 1);
+        strip.insertMode.store (allowSilentSkip ? ChannelStrip::kInsertEmpty : ChannelStrip::kInsertPlugin);
+        strip.prepare (48000.0, kBlock, factor);
         strip.setPdcCompensationSamples (delay);
         for (std::size_t i = 0; i < busL.size(); ++i)
         {
@@ -51,7 +52,7 @@ struct StripPdcHarness
         }
     }
 
-    void run (bool gate = true)
+    void run (bool gate = true, bool frozen = false)
     {
         masterL.fill (0.0f); masterR.fill (0.0f);
         for (auto& bus : busL) bus.fill (0.0f);
@@ -61,7 +62,8 @@ struct StripPdcHarness
         juce::MidiBuffer midi;
         strip.processAndAccumulate (left.data(), stereo ? right.data() : nullptr, midi, false,
                                     masterL.data(), masterR.data(), busLPtrs, busRPtrs,
-                                    auxLPtrs, auxRPtrs, kBlock, gate);
+                                    auxLPtrs, auxRPtrs, kBlock, gate,
+                                    nullptr, 0, nullptr, 0, frozen);
     }
 
     void signal (int block)
@@ -105,6 +107,176 @@ struct StripPdcHarness
     }
 };
 
+class TransparentDelay final : public juce::AudioPluginInstance
+{
+public:
+    using juce::AudioPluginInstance::processBlock;
+
+    explicit TransparentDelay (int delay)
+        : AudioPluginInstance (BusesProperties()
+            .withInput ("Input", juce::AudioChannelSet::stereo(), true)
+            .withOutput ("Output", juce::AudioChannelSet::stereo(), true)), latency (delay) {}
+
+    const juce::String getName() const override { return "Transparent delay"; }
+    void prepareToPlay (double, int) override
+    {
+        for (auto& line : lines) line.setMaximumDelayInSamples (ChannelStrip::kMaxPdcSamples);
+        setDelay (latency);
+    }
+    void setDelay (int delay)
+    {
+        latency = delay;
+        for (auto& line : lines) line.setDelay (delay);
+        setLatencySamples (delay);
+    }
+    void releaseResources() override {}
+    void processBlock (juce::AudioBuffer<float>& audio, juce::MidiBuffer&) override
+    {
+        for (int c = 0; c < audio.getNumChannels(); ++c)
+            for (int i = 0; i < audio.getNumSamples(); ++i)
+            {
+                lines[(std::size_t) c].pushSample (audio.getSample (c, i));
+                audio.setSample (c, i, lines[(std::size_t) c].popSample());
+            }
+        if (bypassAfterProcess != nullptr)
+        {
+            bypassAfterProcess->setBypassed (true);
+            bypassAfterProcess = nullptr;
+        }
+    }
+    juce::AudioProcessorEditor* createEditor() override { return nullptr; }
+    bool hasEditor() const override { return false; }
+    bool acceptsMidi() const override { return false; }
+    bool producesMidi() const override { return false; }
+    double getTailLengthSeconds() const override { return 0.0; }
+    int getNumPrograms() override { return 1; }
+    int getCurrentProgram() override { return 0; }
+    void setCurrentProgram (int) override {}
+    const juce::String getProgramName (int) override { return {}; }
+    void changeProgramName (int, const juce::String&) override {}
+    void getStateInformation (juce::MemoryBlock&) override {}
+    void setStateInformation (const void*, int) override {}
+    void fillInPluginDescription (juce::PluginDescription& description) const override
+    {
+        description.name = getName();
+        description.pluginFormatName = "Test";
+        description.fileOrIdentifier = "transparent-delay";
+    }
+
+    duskstudio::PluginSlot* bypassAfterProcess = nullptr;
+
+private:
+    std::array<dusk::audio::IntDelayLine, 2> lines;
+    int latency;
+};
+
+struct InsertPdcHarness : StripPdcHarness
+{
+    duskstudio::PluginManager manager;
+    duskstudio::HardwareInsertParams hardwareParams;
+    TransparentDelay* plugin = nullptr;
+
+    InsertPdcHarness (bool useStereo, int latency, bool hardware = false)
+        : StripPdcHarness (useStereo, 0)
+    {
+        strip.insertMode.store (hardware ? ChannelStrip::kInsertHardware : ChannelStrip::kInsertPlugin);
+        if (hardware)
+        {
+            hardwareParams.routing.mutate ([latency] (auto& routing) { routing.latencySamples = latency; });
+            strip.bindHardwareInsert (hardwareParams);
+        }
+        strip.prepare (48000.0, kBlock, 1);
+        if (hardware)
+            strip.getHardwareInsertSlot().setOfflineRender (true);
+        else
+        {
+            strip.bindPluginManager (manager);
+            auto instance = std::make_unique<TransparentDelay> (latency);
+            plugin = instance.get();
+            REQUIRE (strip.getPluginSlot().installInProcessInstanceForTest (std::move (instance)));
+        }
+    }
+
+    void setLatency (int latency)
+    {
+        if (plugin != nullptr)
+        {
+            plugin->setDelay (latency);
+            REQUIRE (strip.getPluginSlot().refreshLatencyIfChanged());
+        }
+        else
+        {
+            hardwareParams.routing.mutate ([latency] (auto& routing) { routing.latencySamples = latency; });
+        }
+    }
+};
+
+struct NativeDelayBundle
+{
+    bool load (const std::string&, std::string&) { return true; }
+};
+
+struct NativeDelayInstance final : duskstudio::hosting::INativeInstance
+{
+    bool create (NativeDelayBundle&, const std::string& id, std::string&)
+    {
+        duskstudio::hosting::BusInfo input;
+        input.channelCount = 2;
+        input.active = true;
+        input.role = duskstudio::hosting::BusInfo::Role::Main;
+        input.dir = duskstudio::hosting::BusInfo::Direction::Input;
+        auto output = input;
+        output.dir = duskstudio::hosting::BusInfo::Direction::Output;
+        layout.inputs = { input };
+        layout.outputs = id == "sink" ? std::vector<duskstudio::hosting::BusInfo>()
+                                      : std::vector<duskstudio::hosting::BusInfo> { output };
+        layout.mainInIndex = 0;
+        layout.mainOutIndex = id == "sink" ? -1 : 0;
+        return true;
+    }
+    const duskstudio::hosting::PortLayout& portLayout() const noexcept override { return layout; }
+    bool activate (double, int, std::string&) override
+    {
+        for (auto& line : lines)
+        {
+            line.setMaximumDelayInSamples (193);
+            line.setDelay (193);
+        }
+        active = true;
+        return true;
+    }
+    void deactivate() override { active = false; }
+    bool reactivate (double rate, int frames, std::string& error) override { return activate (rate, frames, error); }
+    bool isActive() const noexcept override { return active; }
+    void processBlock (const duskstudio::hosting::PortBuffers& io) noexcept override
+    {
+        ++processCalls;
+        for (int c = 0; c < io.mainOutChannels; ++c)
+            for (int i = 0; i < io.numFrames; ++i)
+            {
+                lines[(std::size_t) c].pushSample (io.mainIn[c][i]);
+                io.mainOut[c][i] = lines[(std::size_t) c].popSample();
+            }
+    }
+    bool saveState (std::vector<uint8_t>&) const override { return true; }
+    bool loadState (const std::vector<uint8_t>&) override { return true; }
+    int getLatencySamples() const noexcept override { return 193; }
+
+    duskstudio::hosting::PortLayout layout;
+    std::array<dusk::audio::IntDelayLine, 2> lines;
+    bool active = false;
+    int processCalls = 0;
+};
+
+struct NativeDelayTraits
+{
+    using Bundle = NativeDelayBundle;
+    using Instance = NativeDelayInstance;
+    static constexpr const char* bundleNoun = "delay";
+    static bool pickPlugin (const Bundle&, const std::string& requested, std::string& id, std::string&)
+    { id = requested.empty() ? "delay" : requested; return true; }
+};
+
 void expectSameOutput (const StripPdcHarness& actual, const StripPdcHarness& reference)
 {
     for (std::size_t i = 0; i < actual.masterL.size(); ++i)
@@ -115,12 +287,80 @@ void expectSameOutput (const StripPdcHarness& actual, const StripPdcHarness& ref
     }
 }
 
+void expectSameProcessedOutput (const StripPdcHarness& actual, const StripPdcHarness& reference)
+{
+    const auto* expectedL = reference.strip.getLastProcessedMono();
+    const auto* expectedR = reference.strip.getLastProcessedR();
+    const auto* actualL = actual.strip.getLastProcessedMono();
+    const auto* actualR = actual.strip.getLastProcessedR();
+    REQUIRE (expectedL != nullptr);
+    for (int i = 0; i < kBlock; ++i)
+    {
+        CAPTURE (i);
+        REQUIRE_THAT (actualL != nullptr ? actualL[i] : 0.0f, WithinAbs (expectedL[i], 1e-6f));
+        if (expectedR != nullptr)
+            REQUIRE_THAT (actualR != nullptr ? actualR[i] : 0.0f, WithinAbs (expectedR[i], 1e-6f));
+    }
+}
+
 void warm (StripPdcHarness& actual, StripPdcHarness& reference)
 {
     for (int block = 0; block < 40; ++block)
     {
         actual.signal (block); reference.signal (block);
         actual.run(); reference.run();
+    }
+}
+
+// Low tones the console's transformer passes whole. They bend so little per
+// sample that a step of any audible size stands out in the second difference,
+// and a 193-sample slip moves them by a large part of their swing.
+void toneSignal (StripPdcHarness& harness, int block)
+{
+    constexpr double kTwoPi = 6.283185307179586;
+    for (int i = 0; i < kBlock; ++i)
+    {
+        const double t = (double) (block * kBlock + i) / 48000.0;
+        harness.left[(std::size_t) i] = (float) (0.15 * std::sin (kTwoPi * 100.0 * t)
+                                               + 0.1 * std::sin (kTwoPi * 137.0 * t + 0.5));
+        harness.right[(std::size_t) i] = (float) (0.12 * std::sin (kTwoPi * 113.0 * t + 1.0)
+                                                + 0.08 * std::sin (kTwoPi * 151.0 * t));
+    }
+}
+
+// A linear gain ramp over the tones keeps the second difference near zero; a
+// jump or a dropout spikes it twice, entering and leaving.
+struct StepCounter
+{
+    static constexpr float kSpike = 2.0e-3f;
+    std::array<std::array<float, 2>, 2> history {};
+    std::array<int, 2> spikes {};
+    int seen = 0;
+
+    void observe (const StripPdcHarness& harness)
+    {
+        for (int i = 0; i < kBlock; ++i, ++seen)
+            for (std::size_t c = 0; c < spikes.size(); ++c)
+            {
+                const float y = (c == 0 ? harness.masterL : harness.masterR)[(std::size_t) i];
+                auto& h = history[c];
+                if (seen >= 2 && std::abs (y - 2.0f * h[0] + h[1]) > kSpike) ++spikes[c];
+                h[1] = h[0];
+                h[0] = y;
+            }
+    }
+};
+
+// The console's transformer remembers audio from before a flip or an outage
+// for a while, so strips with different histories compare within a margin
+// that a 193-sample slip of the tones exceeds many times over.
+void expectAlignedOutput (const StripPdcHarness& actual, const StripPdcHarness& reference)
+{
+    for (std::size_t i = 0; i < actual.masterL.size(); ++i)
+    {
+        CAPTURE (i);
+        REQUIRE_THAT (actual.masterL[i], WithinAbs (reference.masterL[i], 5e-3f));
+        REQUIRE_THAT (actual.masterR[i], WithinAbs (reference.masterR[i], 5e-3f));
     }
 }
 }
@@ -196,7 +436,7 @@ TEST_CASE ("Channel strip PDC preserves its tail and retargets after silence", "
         actual.run(); reference.run();
         expectSameOutput (actual, reference);
     }
-    for (int block = 0; block < 8; ++block) actual.run();
+    for (int block = 0; block < 512; ++block) actual.run();
     REQUIRE (actual.strip.getLastProcessedSamples() == 0);
     actual.expectImpulseAt (change[1]);
 }
@@ -212,4 +452,369 @@ TEST_CASE ("Channel strip PDC retargets after an inactive gate", "[pdc][channel-
     actual.run (false);
     REQUIRE (actual.strip.getLastProcessedSamples() == 0);
     actual.expectImpulseAt (change[1]);
+}
+
+TEST_CASE ("Channel insert LED preserves the wet path timing through both transitions", "[pdc][channel-strip][insert-led]")
+{
+    const bool stereo = GENERATE (false, true);
+    const int latency = GENERATE (96, 193, ChannelStrip::kMaxPdcSamples);
+    CAPTURE (stereo, latency);
+    InsertPdcHarness actual { stereo, latency }, reference { stereo, latency };
+    for (int block = 0; block < latency / kBlock + 40; ++block)
+    {
+        actual.signal (block); reference.signal (block);
+        actual.run(); reference.run();
+    }
+    for (const bool bypassed : { true, false })
+    {
+        actual.params.insertBypassed.store (bypassed);
+        for (int block = 40; block < 72; ++block)
+        {
+            CAPTURE (bypassed, block);
+            actual.signal (block); reference.signal (block);
+            actual.run(); reference.run();
+            expectSameOutput (actual, reference);
+        }
+    }
+    actual.params.insertBypassed.store (true);
+    warm (actual, reference);
+    actual.plugin->bypassAfterProcess = &actual.strip.getPluginSlot();
+    reference.plugin->bypassAfterProcess = &reference.strip.getPluginSlot();
+    for (int block = 72; block < 76; ++block)
+    {
+        actual.signal (block); reference.signal (block);
+        actual.run(); reference.run();
+        REQUIRE (actual.strip.getPluginSlot().getLatencySamples() == 0);
+        expectSameOutput (actual, reference);
+    }
+}
+
+TEST_CASE ("Channel insert LED follows changed plugin latency with warm dry history", "[pdc][channel-strip][insert-led]")
+{
+    const bool stereo = GENERATE (false, true);
+    const int latency = GENERATE (0, 96, 257);
+    CAPTURE (stereo, latency);
+    InsertPdcHarness actual { stereo, 193 }, reference { stereo, 193 };
+    warm (actual, reference);
+    actual.params.insertBypassed.store (true);
+    for (int block = 40; block < 88; ++block)
+    {
+        if (block == 60) { actual.setLatency (latency); reference.setLatency (latency); }
+        if (block == 68) actual.params.insertBypassed.store (false);
+        actual.signal (block); reference.signal (block);
+        actual.run(); reference.run();
+        CAPTURE (block);
+        expectSameOutput (actual, reference);
+    }
+}
+
+TEST_CASE ("Channel insert LED aligns hardware dry audio including frozen playback", "[pdc][channel-strip][insert-led]")
+{
+    const bool frozen = GENERATE (false, true);
+    const bool stereo = GENERATE (false, true);
+    CAPTURE (frozen, stereo);
+    InsertPdcHarness actual { stereo, 193, true }, reference { stereo, 193, true };
+    for (int block = 0; block < 120; ++block)
+    {
+        if (block == 40 || block == 80) actual.params.insertBypassed.store (true);
+        if (block == 60 || block == 100) actual.params.insertBypassed.store (false);
+        if (block == 85) { actual.setLatency (96); reference.setLatency (96); }
+        actual.signal (block); reference.signal (block);
+        actual.run (true, frozen); reference.run (true, frozen);
+        CAPTURE (block);
+        expectSameOutput (actual, reference);
+    }
+}
+
+TEST_CASE ("Channel insert LED uses zero delay for a slot that dry-passes a busy process lock", "[pdc][channel-strip][insert-led]")
+{
+    const bool stereo = GENERATE (false, true);
+    const bool reengaging = GENERATE (false, true);
+    CAPTURE (stereo, reengaging);
+    InsertPdcHarness actual { stereo, 193 }, reference { stereo, 193 };
+    warm (actual, reference);
+    actual.params.insertBypassed.store (true);
+    warm (actual, reference);
+    if (reengaging) actual.params.insertBypassed.store (false);
+    reference.strip.getPluginSlot().setBypassed (true);
+    actual.signal (90); reference.signal (90);
+    {
+        const juce::SpinLock::ScopedLockType guard (actual.strip.getPluginSlot().getProcessLock());
+        actual.run();
+    }
+    reference.run();
+    expectSameOutput (actual, reference);
+    reference.strip.getPluginSlot().setBypassed (false);
+    for (int block = 91; block < 99; ++block)
+    {
+        actual.signal (block); reference.signal (block);
+        actual.run(); reference.run();
+        expectSameOutput (actual, reference);
+    }
+}
+
+TEST_CASE ("Channel insert LED discards dry history after a same-latency plugin restart", "[pdc][channel-strip][insert-led]")
+{
+    const bool stereo = GENERATE (false, true);
+    const int restart = GENERATE (0, 1, 2);
+    CAPTURE (stereo, restart);
+    InsertPdcHarness actual { stereo, 193 }, reference { stereo, 193 };
+    warm (actual, reference);
+    actual.params.insertBypassed.store (true);
+    warm (actual, reference);
+    for (auto* harness : { &actual, &reference })
+    {
+        auto& slot = harness->strip.getPluginSlot();
+        if (restart == 0)
+            slot.prepareToPlay (48000.0, kBlock);
+        else if (restart == 1)
+        {
+            slot.unload();
+            auto instance = std::make_unique<TransparentDelay> (193);
+            harness->plugin = instance.get();
+            REQUIRE (slot.installInProcessInstanceForTest (std::move (instance)));
+        }
+        else
+            (void) slot.getStateBase64ForSave (0);
+    }
+    for (int block = 90; block < 98; ++block)
+    {
+        actual.signal (block); reference.signal (block);
+        actual.run(); reference.run();
+        expectSameOutput (actual, reference);
+    }
+}
+
+TEST_CASE ("Channel insert mode flips crossfade a latent insert without a dropout or a jump", "[pdc][channel-strip][insert-flip]")
+{
+    const int variant = GENERATE (0, 1, 2);
+    const bool stereo = GENERATE (false, true);
+    const bool bypassed = GENERATE (false, true);
+    const bool hardware = variant > 0;
+    const bool frozen = variant == 2;
+    CAPTURE (hardware, frozen, stereo, bypassed);
+    InsertPdcHarness actual { stereo, 193, hardware }, reference { stereo, 193, hardware };
+    actual.strip.insertMode.store (ChannelStrip::kInsertEmpty);
+    actual.strip.prepare (48000.0, kBlock, 1);
+    actual.params.insertBypassed.store (bypassed);
+    StepCounter counter;
+    for (int block = 0; block < 100; ++block)
+    {
+        if (block == 20)
+            actual.strip.insertMode.store (hardware ? ChannelStrip::kInsertHardware : ChannelStrip::kInsertPlugin);
+        if (block == 60)
+            actual.strip.insertMode.store (ChannelStrip::kInsertEmpty);
+        toneSignal (actual, block); toneSignal (reference, block);
+        actual.run (true, frozen); reference.run (true, frozen);
+        if (block >= 19) counter.observe (actual);
+        CAPTURE (block);
+        if (block >= 50 && block < 60) expectAlignedOutput (actual, reference);
+    }
+    // An engaged insert starts cold: its first returned sample steps in at the
+    // gate's weight.
+    const int allowed = bypassed ? 0 : 2;
+    CHECK (counter.spikes[0] <= allowed);
+    CHECK (counter.spikes[1] <= allowed);
+}
+
+TEST_CASE ("Channel insert LED realigns the dry path without stale audio when its slot rejoins", "[pdc][channel-strip][insert-led]")
+{
+    const bool stereo = GENERATE (false, true);
+    const bool watchdog = GENERATE (false, true);
+    CAPTURE (stereo, watchdog);
+    InsertPdcHarness actual { stereo, 193 }, reference { stereo, 193 };
+    actual.params.insertBypassed.store (true);
+    reference.params.insertBypassed.store (true);
+    auto& slot = actual.strip.getPluginSlot();
+    StepCounter counter;
+    for (int block = 0; block < 120; ++block)
+    {
+        if (block == 40)
+        {
+            if (watchdog) slot.engageAutoBypassForTest();
+            else          slot.setBypassed (true);
+        }
+        if (block == 80)
+        {
+            if (watchdog) slot.clearAutoBypass();
+            else          slot.setBypassed (false);
+        }
+        toneSignal (actual, block); toneSignal (reference, block);
+        actual.run(); reference.run();
+        if (block >= 79) counter.observe (actual);
+        CAPTURE (block);
+        if (block >= 105) expectAlignedOutput (actual, reference);
+    }
+    CHECK (counter.spikes[0] == 0);
+    CHECK (counter.spikes[1] == 0);
+}
+
+TEST_CASE ("Channel insert LED dry plays through a freeze and an unfreeze without a gap", "[pdc][channel-strip][insert-led]")
+{
+    const bool stereo = GENERATE (false, true);
+    const bool hardware = GENERATE (false, true);
+    CAPTURE (stereo, hardware);
+    InsertPdcHarness actual { stereo, 193, hardware }, reference { stereo, 193, hardware };
+    actual.params.insertBypassed.store (true);
+    reference.params.insertBypassed.store (true);
+    std::array<double, 2> heard {}, expected {};
+    for (int block = 0; block < 120; ++block)
+    {
+        toneSignal (actual, block); toneSignal (reference, block);
+        actual.run (true, block >= 40 && block < 80); reference.run();
+        CAPTURE (block);
+        // The first 192 samples on each new source, shorter than the latency.
+        for (std::size_t edge = 0; edge < heard.size(); ++edge)
+            if (const int start = edge == 0 ? 40 : 80; block >= start && block < start + 3)
+                for (std::size_t i = 0; i < actual.masterL.size(); ++i)
+                {
+                    heard[edge] += actual.masterL[i] * actual.masterL[i] + actual.masterR[i] * actual.masterR[i];
+                    expected[edge] += reference.masterL[i] * reference.masterL[i] + reference.masterR[i] * reference.masterR[i];
+                }
+        if (block >= 110) expectAlignedOutput (actual, reference);
+    }
+    for (std::size_t edge = 0; edge < heard.size(); ++edge)
+    {
+        CAPTURE (edge);
+        REQUIRE (heard[edge] > 0.5 * expected[edge]);
+    }
+}
+
+TEST_CASE ("Native insert returns rendered timing and no value for fallbacks", "[pdc][insert-led][native]")
+{
+    duskstudio::hosting::NativeInsertSlot<NativeDelayTraits> slot;
+    std::string error;
+    REQUIRE (slot.load ("delay", 48000.0, kBlock, error));
+    Block left, right, outL {}, outR {};
+    left.fill (0.25f); right.fill (-0.5f);
+    const auto run = [&] { return slot.processStereo (left.data(), right.data(), outL.data(), outR.data(), kBlock); };
+    const auto first = run();
+    REQUIRE (first.has_value());
+    REQUIRE (first->latencySamples == 193);
+    REQUIRE (first->historyReset);
+    REQUIRE_THAT (outL[0], WithinAbs (0.0f, 1e-7f));
+    REQUIRE (slot.getInstance()->processCalls == 1);
+    const auto expectDry = [&]
+    {
+        REQUIRE_FALSE (run().has_value());
+        for (std::size_t i = 0; i < outL.size(); ++i)
+        {
+            REQUIRE_THAT (outL[i], WithinAbs (left[i], 1e-7f));
+            REQUIRE_THAT (outR[i], WithinAbs (right[i], 1e-7f));
+        }
+    };
+    slot.setBypassed (true);
+    expectDry();
+    slot.setBypassed (false);
+    slot.quarantineAfterFailedReactivation();
+    expectDry();
+    const auto generation = slot.generation();
+    REQUIRE (slot.reactivate (48000.0, kBlock / 2, error));
+    expectDry();
+    REQUIRE (slot.getInstance()->processCalls == 1);
+    const auto resumed = slot.processStereo (left.data(), right.data(), outL.data(), outR.data(), kBlock / 2);
+    REQUIRE (resumed.has_value());
+    REQUIRE (resumed->latencySamples == 193);
+    REQUIRE (resumed->historyReset);
+    const auto continuing = slot.processStereo (left.data(), right.data(), outL.data(), outR.data(), kBlock / 2);
+    REQUIRE (continuing.has_value());
+    REQUIRE_FALSE (continuing->historyReset);
+    REQUIRE (slot.generation() == generation);
+    slot.getInstance()->deactivate();
+    REQUIRE_FALSE (run().has_value());
+    REQUIRE_THAT (outL[0], WithinAbs (0.0f, 1e-7f));
+    REQUIRE_THAT (outR[0], WithinAbs (0.0f, 1e-7f));
+    REQUIRE (slot.load ("delay", 48000.0, kBlock, error, "sink"));
+    expectDry();
+    REQUIRE (slot.getInstance()->processCalls == 1);
+}
+
+TEST_CASE ("Channel silent-input skip drains the console and full oversampler tail", "[channel-strip][tail]")
+{
+    const bool stereo = GENERATE (false, true);
+    const int factor = GENERATE (1, 2, 4);
+    const int delay = GENERATE (0, 96);
+    CAPTURE (stereo, factor, delay);
+    StripPdcHarness actual { stereo, delay, factor }, reference { stereo, delay, factor, false };
+    warm (actual, reference);
+    actual.silence(); reference.silence();
+    bool skipped = false;
+    for (int block = 0; block < 512; ++block)
+    {
+        CAPTURE (block);
+        actual.run(); reference.run();
+        expectSameProcessedOutput (actual, reference);
+        expectSameOutput (actual, reference);
+        skipped = skipped || actual.strip.getLastProcessedSamples() == 0;
+    }
+    REQUIRE (skipped);
+    for (int block = 552; block < 560; ++block)
+    {
+        actual.signal (block); reference.signal (block);
+        actual.run(); reference.run();
+        expectSameProcessedOutput (actual, reference);
+        expectSameOutput (actual, reference);
+    }
+}
+
+TEST_CASE ("Channel silent-input skip preserves slow filter tails before a closed fader", "[channel-strip][tail]")
+{
+    const bool stereo = GENERATE (false, true);
+    const int factor = GENERATE (1, 4);
+    const bool highQ = GENERATE (false, true);
+    const bool compressed = GENERATE (false, true);
+    CAPTURE (stereo, factor, highQ, compressed);
+    StripPdcHarness actual { stereo, 96, factor }, reference { stereo, 96, factor, false },
+                    frozen { stereo, 96, factor, false };
+    for (auto* harness : { &actual, &reference, &frozen })
+    {
+        auto& params = harness->params;
+        params.liveFaderDb.store (-100.0f);
+        params.eqEnabled.store (true);
+        params.compEnabled.store (compressed);
+        params.compMode.store (2);
+        params.compVcaThreshDb.store (-38.0f);
+        params.compVcaRatio.store (8.0f);
+        if (highQ)
+        {
+            params.lmFreq.store (100.0f);
+            params.lmGainDb.store (15.0f);
+            params.lmQ.store (3.5f);
+        }
+        else
+        {
+            params.hpfEnabled.store (true);
+            params.hpfFreq.store (20.0f);
+        }
+    }
+    for (int block = 0; block < 200; ++block)
+    {
+        actual.signal (block); reference.signal (block); frozen.signal (block);
+        actual.run(); reference.run(); frozen.run();
+    }
+    actual.silence(); reference.silence(); frozen.silence();
+    bool skipped = false;
+    bool heardLateTail = false;
+    for (int block = 0; block < 512; ++block)
+    {
+        CAPTURE (block);
+        actual.run(); reference.run();
+        const bool asleep = actual.strip.getLastProcessedSamples() == 0;
+        if (skipped) REQUIRE (asleep);
+        if (! asleep) frozen.run();
+        expectSameProcessedOutput (actual, reference);
+        const auto* output = reference.strip.getLastProcessedMono();
+        if (block >= 16)
+            for (int i = 0; i < kBlock; ++i)
+                heardLateTail = heardLateTail || std::abs (output[i]) > 1e-5f;
+        skipped = skipped || asleep;
+    }
+    REQUIRE (heardLateTail);
+    REQUIRE (skipped);
+    for (int block = 712; block < 720; ++block)
+    {
+        actual.signal (block); reference.signal (block); frozen.signal (block);
+        actual.run(); reference.run(); frozen.run();
+        expectSameProcessedOutput (actual, compressed ? frozen : reference);
+    }
 }

@@ -7,6 +7,7 @@
 #include "../../foundation/MessageThread.h"
 
 #include <algorithm>
+#include <exception>
 
 namespace duskstudio
 {
@@ -264,12 +265,23 @@ void SfzLibraryPanel::startScan()
     auto result = pendingResult;
     scanThread = std::thread ([this, roots = std::move (roots), result]
     {
-        *result = sfz::scanLibraryRoots (roots, &cancelScan,
-                                         [this] (std::size_t done, std::size_t)
-                                         {
-                                             rootsDone.store ((int) done,
-                                                              std::memory_order_relaxed);
-                                         });
+        try
+        {
+            *result = sfz::scanLibraryRoots (roots, &cancelScan,
+                                             [this] (std::size_t done, std::size_t)
+                                             {
+                                                 rootsDone.store ((int) done,
+                                                                  std::memory_order_relaxed);
+                                             });
+        }
+        catch (const std::exception& error)
+        {
+            result->problems.push_back ({ {}, "scan failed: " + std::string (error.what()) });
+        }
+        catch (...)
+        {
+            result->problems.push_back ({ {}, "scan failed: unexpected error" });
+        }
         scanDone.store (true, std::memory_order_release);
     });
 }
