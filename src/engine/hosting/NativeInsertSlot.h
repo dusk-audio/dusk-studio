@@ -208,6 +208,10 @@ public:
     bool loadState (const std::vector<uint8_t>& in)
     { return instance != nullptr && instance->loadState (in); }
 
+    // Message thread; bypass and quarantine do not change the state owner.
+    std::uint64_t stateRevision() const noexcept
+    { return instance != nullptr ? instance->stateRevision() : 0; }
+
     // Whether the loaded plugin is an instrument (no main audio input - the
     // block's MIDI drives it and its output IS the signal).
     bool isLoadedInstrument() const noexcept

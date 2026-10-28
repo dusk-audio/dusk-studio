@@ -53,6 +53,10 @@ public:
     virtual bool saveState (std::vector<uint8_t>& out) const = 0;
     virtual bool loadState (const std::vector<uint8_t>& in) = 0;
 
+    // Message thread. Plugin-owned content revision; pair it with the slot's
+    // identity generation. Formats without change notifications return zero.
+    virtual std::uint64_t stateRevision() const noexcept { return 0; }
+
     // Plugin-reported processing latency in samples at the active config; 0 until
     // activate(). Fed into the engine's plugin-delay-compensation aggregator.
     virtual int getLatencySamples() const noexcept = 0;
