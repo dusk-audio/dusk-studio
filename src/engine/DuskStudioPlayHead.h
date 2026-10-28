@@ -1,11 +1,7 @@
 #pragma once
 
 #include <juce_audio_processors/juce_audio_processors.h>
-#include "Transport.h"
-#include "TransportSnapshot.h"
 #include "../foundation/AtomicTransportPosition.h"
-#include "../session/Session.h"
-#include <atomic>
 #include <cmath>
 
 namespace duskstudio
@@ -18,77 +14,54 @@ namespace duskstudio
 class DuskStudioPlayHead final : public juce::AudioPlayHead
 {
 public:
-    DuskStudioPlayHead (Transport& t,
-                       const std::atomic<float>* bpm,
-                       const std::atomic<double>* sampleRate,
-                       const AtomicSnapshot<TempoMap>* tempoMap = nullptr,
-                       const std::atomic<int>* numerator = nullptr,
-                       const std::atomic<int>* denominator = nullptr) noexcept
-        : transport (&t), bpmSource (bpm), sampleRateSource (sampleRate),
-          tempoMapSource (tempoMap), numeratorSource (numerator), denominatorSource (denominator) {}
-
     explicit DuskStudioPlayHead (const dusk::AtomicTransportPosition& source) noexcept
-        : snapshotSource (&source) {}
+        : snapshotSource (source) {}
 
     juce::Optional<PositionInfo> getPosition() const override
     {
-        dusk::TransportPosition position;
-        const double sr = (sampleRateSource != nullptr)
-                            ? sampleRateSource->load (std::memory_order_relaxed) : 0.0;
-        if (snapshotSource != nullptr)
-        {
-            const auto snapshot = snapshotSource->read();
-            if (! snapshot) return {};
-            position = *snapshot;
-        }
-        else
-        {
-            const double bpm = (bpmSource != nullptr)
-                                ? (double) bpmSource->load (std::memory_order_relaxed)
-                                : 120.0;
-            const int numerator = numeratorSource != nullptr
-                                ? numeratorSource->load (std::memory_order_relaxed) : 4;
-            const int denominator = denominatorSource != nullptr
-                                  ? denominatorSource->load (std::memory_order_relaxed) : 4;
-            const SnapshotReadScope snapshotReads;
-            position = snapshotTransport (*transport, bpm, sr, numerator, denominator);
-            if (tempoMapSource != nullptr)
-                applyTransportTempoMap (position, tempoMapSource->read(), sr, kMidiTicksPerQuarter);
-        }
+        const auto snapshot = snapshotSource.read();
+        if (! snapshot) return {};
+        const auto& position = *snapshot;
 
         PositionInfo info;
-        info.setIsPlaying   (position.isPlaying);
+        info.setIsPlaying   (position.isPlaying || position.isRecording);
         info.setIsRecording (position.isRecording);
-        info.setIsLooping   (position.isLooping);
-        info.setBpm (position.bpm);
+        if (std::isfinite (position.bpm) && position.bpm >= 0.0)
+            info.setBpm (position.bpm);
 
-        info.setTimeSignature (TimeSignature {
-            position.timeSignatureNumerator, position.timeSignatureDenominator });
+        const bool signatureValid = position.timeSignatureNumerator > 0
+                                 && position.timeSignatureDenominator > 0;
+        if (signatureValid)
+            info.setTimeSignature (TimeSignature {
+                position.timeSignatureNumerator, position.timeSignatureDenominator });
 
         info.setTimeInSamples (position.timeInSamples);
-        if (snapshotSource != nullptr || (std::isfinite (sr) && sr > 0.0))
-        {
+        if (std::isfinite (position.timeInSeconds))
             info.setTimeInSeconds (position.timeInSeconds);
-            if (position.bpm > 0.0)
+        const bool musicalPositionValid = std::isfinite (position.bpm) && position.bpm > 0.0
+                                       && std::isfinite (position.ppqPosition);
+        const bool loopValid = musicalPositionValid && std::isfinite (position.ppqLoopStart)
+                            && std::isfinite (position.ppqLoopEnd)
+                            && position.ppqLoopEnd > position.ppqLoopStart;
+        info.setIsLooping (position.isLooping && loopValid);
+        if (musicalPositionValid)
+        {
+            info.setPpqPosition (position.ppqPosition);
+            if (signatureValid)
             {
-                info.setPpqPosition (position.ppqPosition);
                 const double quartersPerBar = (double) position.timeSignatureNumerator * 4.0
                                              / (double) position.timeSignatureDenominator;
-                info.setPpqPositionOfLastBarStart (std::floor (position.ppqPosition / quartersPerBar) * quartersPerBar);
-                info.setLoopPoints (LoopPoints { position.ppqLoopStart, position.ppqLoopEnd });
+                const double barStart = std::floor (position.ppqPosition / quartersPerBar) * quartersPerBar;
+                if (std::isfinite (barStart)) info.setPpqPositionOfLastBarStart (barStart);
             }
+            if (loopValid)
+                info.setLoopPoints (LoopPoints { position.ppqLoopStart, position.ppqLoopEnd });
         }
 
         return info;
     }
 
 private:
-    Transport* transport = nullptr;
-    const std::atomic<float>*  bpmSource = nullptr;
-    const std::atomic<double>* sampleRateSource = nullptr;
-    const AtomicSnapshot<TempoMap>* tempoMapSource = nullptr;
-    const std::atomic<int>* numeratorSource = nullptr;
-    const std::atomic<int>* denominatorSource = nullptr;
-    const dusk::AtomicTransportPosition* snapshotSource = nullptr;
+    const dusk::AtomicTransportPosition& snapshotSource;
 };
 } // namespace duskstudio

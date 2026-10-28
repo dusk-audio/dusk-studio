@@ -4,6 +4,7 @@
 #include "engine/TransportSnapshot.h"
 #include "engine/DuskStudioPlayHead.h"
 #include "session/Session.h"
+#include <limits>
 
 using Catch::Matchers::WithinAbs;
 
@@ -274,11 +275,14 @@ TEST_CASE ("Hosted playhead: active loops retain their musical bounds", "[transp
     duskstudio::Transport transport;
     std::atomic<float> bpm { 120.0f };
     std::atomic<double> sampleRate { 48000.0 };
-    duskstudio::DuskStudioPlayHead playhead (transport, &bpm, &sampleRate);
+    dusk::AtomicTransportPosition published;
+    duskstudio::DuskStudioPlayHead playhead (published);
     transport.setState (duskstudio::Transport::State::Playing);
     transport.setPlayhead (72000);
     transport.setLoopRange (24000, 96000);
     transport.setLoopEnabled (true);
+    auto source = duskstudio::snapshotTransport (transport, (double) bpm.load(), sampleRate.load());
+    published.publish (&source);
     const auto position = playhead.getPosition();
     REQUIRE (position);
     CHECK (position->getIsLooping());
@@ -288,7 +292,19 @@ TEST_CASE ("Hosted playhead: active loops retain their musical bounds", "[transp
     CHECK_THAT (loop->ppqEnd, WithinAbs (4.0, 1.0e-12));
 
     transport.setLoopEnabled (false);
+    source = duskstudio::snapshotTransport (transport, (double) bpm.load(), sampleRate.load());
+    published.publish (&source);
     CHECK_FALSE (playhead.getPosition()->getIsLooping());
+    source.timeSignatureNumerator = 0;
+    published.publish (&source);
+    CHECK_FALSE (playhead.getPosition()->getTimeSignature());
+    CHECK_FALSE (playhead.getPosition()->getPpqPositionOfLastBarStart());
+    source.timeSignatureNumerator = 4;
+    source.ppqLoopEnd = source.ppqLoopStart;
+    source.isLooping = true;
+    published.publish (&source);
+    CHECK_FALSE (playhead.getPosition()->getIsLooping());
+    CHECK_FALSE (playhead.getPosition()->getLoopPoints());
 }
 
 TEST_CASE ("Hosted playhead: tempo maps and signatures preserve bar phase", "[transport][host-playhead]")
@@ -301,12 +317,22 @@ TEST_CASE ("Hosted playhead: tempo maps and signatures preserve bar phase", "[tr
     auto fresh = std::make_unique<duskstudio::TempoMap>();
     fresh->setPoints ({ { 0, 120.0f }, { 48000, 60.0f } });
     map.publish (std::move (fresh));
-    duskstudio::DuskStudioPlayHead playhead (transport, &bpm, &sampleRate, &map, &numerator, &denominator);
+    dusk::AtomicTransportPosition published;
+    duskstudio::DuskStudioPlayHead playhead (published);
+    const auto publish = [&]
+    {
+        const duskstudio::SnapshotReadScope reads;
+        auto source = duskstudio::snapshotTransport (transport, (double) bpm.load(), sampleRate.load(),
+                                                     numerator.load(), denominator.load());
+        duskstudio::applyTransportTempoMap (source, map.read(), sampleRate.load(), duskstudio::kMidiTicksPerQuarter);
+        published.publish (&source);
+    };
     transport.setPlayhead (144000);
     transport.setLoopRange (24000, 144000);
     transport.setLoopEnabled (true);
     transport.setState (duskstudio::Transport::State::Recording);
     transport.requestLocate (240000);
+    publish();
     auto position = playhead.getPosition();
     REQUIRE (position);
     CHECK (position->getIsPlaying());
@@ -327,10 +353,12 @@ TEST_CASE ("Hosted playhead: tempo maps and signatures preserve bar phase", "[tr
     CHECK_THAT (position->getLoopPoints()->ppqEnd, WithinAbs (4.0, 1.0e-12));
 
     CHECK (transport.beginAudioBlock() == 240000);
+    publish();
     position = playhead.getPosition();
     REQUIRE (position);
     CHECK_THAT (*position->getPpqPosition(), WithinAbs (6.0, 1.0e-12));
     transport.setState (duskstudio::Transport::State::Stopped);
+    publish();
     position = playhead.getPosition();
     REQUIRE (position);
     CHECK_FALSE (position->getIsPlaying());
@@ -339,6 +367,7 @@ TEST_CASE ("Hosted playhead: tempo maps and signatures preserve bar phase", "[tr
     map.publish (std::make_unique<duskstudio::TempoMap>());
     bpm.store (90.0f);
     numerator.store (6);
+    publish();
     position = playhead.getPosition();
     REQUIRE (position);
     CHECK_THAT (*position->getBpm(), WithinAbs (90.0, 1.0e-12));
@@ -351,9 +380,13 @@ TEST_CASE ("Hosted playhead: tempo maps and signatures preserve bar phase", "[tr
 
 TEST_CASE ("Hosted playhead: unavailable sources retain useful defaults", "[transport][host-playhead]")
 {
-    duskstudio::Transport transport;
-    transport.setPlayhead (48000);
-    duskstudio::DuskStudioPlayHead playhead (transport, nullptr, nullptr);
+    dusk::TransportPosition source;
+    source.timeInSamples = 48000;
+    source.timeInSeconds = source.ppqPosition = source.ppqLoopStart = source.ppqLoopEnd
+        = std::numeric_limits<double>::quiet_NaN();
+    dusk::AtomicTransportPosition published;
+    published.publish (&source);
+    duskstudio::DuskStudioPlayHead playhead (published);
     const auto position = playhead.getPosition();
     REQUIRE (position);
     REQUIRE (position->getBpm());
@@ -368,13 +401,49 @@ TEST_CASE ("Hosted playhead: unavailable sources retain useful defaults", "[tran
     CHECK_FALSE (position->getLoopPoints());
 }
 
+TEST_CASE ("Hosted playhead: UI changes wait for canonical block publication", "[transport][host-playhead]")
+{
+    duskstudio::Transport transport;
+    std::atomic<float> bpm { 120.0f };
+    std::atomic<double> sampleRate { 48000.0 };
+    dusk::AtomicTransportPosition published;
+    const auto publish = [&]
+    {
+        const auto source = duskstudio::snapshotTransport (transport, (double) bpm.load(), sampleRate.load());
+        published.publish (&source);
+    };
+    transport.setPlayhead (48000);
+    transport.setState (duskstudio::Transport::State::Playing);
+    publish();
+    duskstudio::DuskStudioPlayHead playhead (published);
+    transport.setPlayhead (96000);
+    transport.setState (duskstudio::Transport::State::Stopped);
+    bpm.store (90.0f);
+    auto position = playhead.getPosition();
+    REQUIRE (position);
+    CHECK (position->getIsPlaying());
+    CHECK (*position->getTimeInSamples() == 48000);
+    CHECK_THAT (*position->getBpm(), WithinAbs (120.0, 1.0e-12));
+    CHECK_THAT (*position->getPpqPosition(), WithinAbs (2.0, 1.0e-12));
+    publish();
+    position = playhead.getPosition();
+    REQUIRE (position);
+    CHECK_FALSE (position->getIsPlaying());
+    CHECK (*position->getTimeInSamples() == 96000);
+    CHECK_THAT (*position->getBpm(), WithinAbs (90.0, 1.0e-12));
+    CHECK_THAT (*position->getPpqPosition(), WithinAbs (3.0, 1.0e-12));
+}
+
 TEST_CASE ("Hosted playhead: a disabled beat grid has no musical position", "[transport][host-playhead]")
 {
     duskstudio::Transport transport;
     std::atomic<float> bpm { 0.0f };
     std::atomic<double> sampleRate { 48000.0 };
     transport.setPlayhead (48000);
-    duskstudio::DuskStudioPlayHead playhead (transport, &bpm, &sampleRate);
+    dusk::AtomicTransportPosition published;
+    const auto source = duskstudio::snapshotTransport (transport, (double) bpm.load(), sampleRate.load());
+    published.publish (&source);
+    duskstudio::DuskStudioPlayHead playhead (published);
     const auto position = playhead.getPosition();
     REQUIRE (position);
     REQUIRE (position->getBpm());

@@ -20,6 +20,7 @@
 #include "../dsp/Metronome.h"
 #include "../dsp/PitchDetector.h"
 #include "../foundation/IntDelayLine.h"
+#include "../foundation/AtomicTransportPosition.h"
 #include "../foundation/MessageThread.h"
 #include "../foundation/SmoothedValue.h"
 #include "../foundation/TransportPosition.h"
@@ -45,13 +46,14 @@
 #include "RecordManager.h"
 #include "TimelineSampleRate.h"
 #include "Transport.h"
-#include "DuskStudioPlayHead.h"
 
 namespace dusk::audio { class ThreadedFileWriter; }
 namespace duskstudio::sfz { class LibraryService; }
 
 namespace duskstudio
 {
+class DuskStudioPlayHead;
+
 class SessionUndoManager final : private juce::UndoManager
 {
 public:
@@ -903,13 +905,17 @@ private:
     juce::String lastFreezeError;
 
     Transport       transport;
-    // Heap-allocated so we can pass &session.tempoBpm / &currentSampleRate
-    // from the ctor body, after those addresses are known.
+    dusk::AtomicTransportPosition hostedTransport;
     std::unique_ptr<DuskStudioPlayHead> playHead;
-    // The transport built-in inserts see for the current block. The audio thread
+    // The transport all inserts see for the current block. The audio thread
     // rewrites it before the strip pass, and the strips (worker lanes included)
     // read it only inside that pass.
     dusk::TransportPosition blockTransport;
+    // Caller holds a SnapshotReadScope for the tempo-map read.
+    dusk::TransportPosition captureHostedTransport (Transport::State state, std::int64_t samples,
+                                                    bool loopEnabled, std::int64_t loopStart,
+                                                    std::int64_t loopEnd) const noexcept;
+    void seedStoppedHostedTransport() noexcept;
     RecordManager   recordManager   { session };
     std::unique_ptr<sfz::LibraryService> sfzLibrary;
     std::atomic<unsigned> assetRenderHolds { 0 };

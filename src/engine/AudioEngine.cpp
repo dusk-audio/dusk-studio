@@ -1,5 +1,6 @@
 #include "AudioEngine.h"
 #include "BounceEngine.h"
+#include "DuskStudioPlayHead.h"
 #include "GeneratedMidiBudget.h"
 #include "LoopTimeline.h"
 #include "MidiPanic.h"
@@ -50,6 +51,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <thread>
 
 namespace duskstudio
@@ -810,18 +812,12 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
     // callback never touches stdio. Cheap when nothing has stalled.
     diagTimer.startTimer (1000);
 
-    // Hosted plugins get this via setPlayHead so tempo-synced features
-    // (LFOs, arps, delays) read live session BPM + playhead.
-    playHead = std::make_unique<DuskStudioPlayHead> (transport,
-                                                  &session.tempoBpm,
-                                                  &currentSampleRate,
-                                                  &rtTempoMap,
-                                                  &session.beatsPerBar,
-                                                  &session.beatUnit);
+    playHead = std::make_unique<DuskStudioPlayHead> (hostedTransport);
 
     midiScheduledAhead.fill (-1);
 
     publishTempoMap();   // seed the snapshot (empty -> constant tempoBpm)
+    seedStoppedHostedTransport();
 
     // High priority so a loaded message thread can't starve clock /
     // note delivery; still below the audio thread.
@@ -1230,6 +1226,34 @@ void AudioEngine::fireChangeListeners()
 void AudioEngine::publishTempoMap()
 {
     rtTempoMap.publish (std::make_unique<TempoMap> (session.tempoMap));
+}
+
+dusk::TransportPosition AudioEngine::captureHostedTransport (
+    Transport::State state, std::int64_t samples, bool loopEnabled,
+    std::int64_t loopStart, std::int64_t loopEnd) const noexcept
+{
+    const double sampleRate = currentSampleRate.load (std::memory_order_relaxed);
+    auto position = snapshotTransport (state, samples,
+        (double) session.tempoBpm.load (std::memory_order_acquire), sampleRate,
+        session.beatsPerBar.load (std::memory_order_relaxed),
+        session.beatUnit.load (std::memory_order_relaxed), loopEnabled, loopStart, loopEnd);
+    applyTransportTempoMap (position, rtTempoMap.read(), sampleRate, kMidiTicksPerQuarter);
+    return position;
+}
+
+void AudioEngine::seedStoppedHostedTransport() noexcept
+{
+    // Device-stop callbacks defer publication to the owner's parked stop path.
+    if (std::this_thread::get_id() != ownerThread) return;
+    const SnapshotReadScope snapshotReads;
+    auto position = captureHostedTransport (Transport::State::Stopped,
+        transport.getCommittedPlayhead(), transport.isLoopEnabled(),
+        transport.getLoopStart(), transport.getLoopEnd());
+    const double sampleRate = currentSampleRate.load (std::memory_order_relaxed);
+    if (! std::isfinite (sampleRate) || sampleRate <= 0.0)
+        position.timeInSeconds = position.ppqPosition = position.ppqLoopStart = position.ppqLoopEnd
+            = std::numeric_limits<double>::quiet_NaN();
+    hostedTransport.publish (&position);
 }
 
 void AudioEngine::setTempoPoints (std::vector<TempoPoint> pts)
@@ -4382,6 +4406,7 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
 
     currentSampleRate.store (sr, std::memory_order_relaxed);
     currentBlockSize.store  (bs, std::memory_order_relaxed);
+    seedStoppedHostedTransport();
 
     // Cache the tick->seconds reciprocal once - the xrun watchdog hits this
     // twice per callback otherwise, and highResolutionTicksToSeconds does a
@@ -4606,10 +4631,14 @@ void AudioEngine::suspendProcessing()
                           "in-flight audio callback to drain (wedged plugin?)\n",
                           waitedMs / 1000);
     }
+    seedStoppedHostedTransport();
 }
 
 void AudioEngine::resumeProcessing() noexcept
 {
+    if (processingSuspended.load (std::memory_order_seq_cst)
+        && callbacksInFlight.load (std::memory_order_seq_cst) == 0)
+        seedStoppedHostedTransport();
     processingSuspended.store (false, std::memory_order_release);
 }
 
@@ -4965,6 +4994,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         silentDims.store (((std::uint64_t) (std::uint32_t) mixL.size() << 32)
                           | (std::uint32_t) numSamples, std::memory_order_relaxed);
         silentBlocks.fetch_add (1, std::memory_order_relaxed);
+        hostedTransport.publish (nullptr);
         clearOutputs();
         return;
     }
@@ -6111,6 +6141,13 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     // the audio thread.
     if (stage.load (std::memory_order_acquire) == Stage::Mastering)
     {
+        auto stopped = captureHostedTransport (Transport::State::Stopped, transportBlockStart,
+            transportLoopEnabled, transportLoopStart, transportLoopEnd);
+        const double sampleRate = currentSampleRate.load (std::memory_order_relaxed);
+        if (! std::isfinite (sampleRate) || sampleRate <= 0.0)
+            stopped.timeInSeconds = stopped.ppqPosition = stopped.ppqLoopStart = stopped.ppqLoopEnd
+                = std::numeric_limits<double>::quiet_NaN();
+        hostedTransport.publish (&stopped);
         const auto block = masteringPlayer.process (mixL.data(), mixR.data(), numSamples);
         const bool capturePhase = ! context.offlineRender && block.stable && block.completeSourceRead;
         const auto gatedBlocks = getGatedBlockCount();
@@ -6258,6 +6295,11 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     const std::int64_t loopReadEnd = loopRecordingActive
         ? loopRecordPlan.loopEndSample
         : (playbackLoopActive ? liveLoopEnd : -1);
+    blockTransport = captureHostedTransport (transportBlockState, blockStartSamples,
+        loopRecordingActive || transportLoopEnabled,
+        loopRecordingActive ? loopReadStart : transportLoopStart,
+        loopRecordingActive ? loopReadEnd : transportLoopEnd);
+    hostedTransport.publish (&blockTransport);
     playbackEngine.beginAudioBlock (blockStartSamples, loopReadStart, loopReadEnd);
 
     // Re-enumerated at each capture site instead of storing a variable-size
@@ -7133,18 +7175,6 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                                   stereoTrackInput || isFrozen, isFrozen,
                                   strips[(size_t) t]->insertMode.load (std::memory_order_relaxed)
                                       == ChannelStrip::kInsertHardware };
-    }
-
-    {
-        const double sampleRate = currentSampleRate.load (std::memory_order_relaxed);
-        blockTransport = snapshotTransport (transportBlockState, blockStartSamples,
-                                            (double) session.tempoBpm.load (std::memory_order_acquire), sampleRate,
-                                            session.beatsPerBar.load (std::memory_order_relaxed),
-                                            session.beatUnit.load (std::memory_order_relaxed),
-                                            loopRecordingActive || transportLoopEnabled,
-                                            loopRecordingActive ? loopReadStart : transportLoopStart,
-                                            loopRecordingActive ? loopReadEnd : transportLoopEnd);
-        applyTransportTempoMap (blockTransport, rtTempoMap.read(), sampleRate, kMidiTicksPerQuarter);
     }
 
     // DSP pass
