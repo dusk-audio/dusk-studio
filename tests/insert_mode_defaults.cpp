@@ -226,6 +226,7 @@ TEST_CASE ("Aux cue keeps processed audio while the master return is muted", "[a
                     sendError = std::max ({ sendError, std::abs (physical[0][n] - 0.25f), std::abs (physical[1][n] - 0.125f) });
             }
             CHECK_THAT (cueError, WithinAbs (0.0f, 1.0e-5f));
+            CHECK_THAT (strip->getPreReturnPeak(), WithinAbs (std::max (std::abs (processedL), std::abs (processedR)), 1.0e-5f));
             CHECK_THAT (returnError, WithinAbs (0.0f, 1.0e-5f));
             CHECK_THAT (sendError, WithinAbs (0.0f, 1.0e-5f));
             if (state.liveMute)
@@ -245,8 +246,11 @@ TEST_CASE ("Aux cue keeps processed audio while the master return is muted", "[a
             if (! validCue) params.outputPair.store (-1);
             for (int n = 0; n < kSettleBlocks; ++n) block();
             if (! validCue)
+            {
+                CHECK_THAT (strip->getPreReturnPeak(), WithinAbs (0.0f, 0.0f));
                 for (const auto& output : physical)
                     for (const float sample : output) REQUIRE_THAT (sample, WithinAbs (0.0f, 1.0e-7f));
+            }
             params.liveMute.store (false);
             block();
             const float firstGain = 1.0f + (std::pow (10.0f, -12.0f / 20.0f) - 1.0f) / 960.0f;
@@ -257,6 +261,7 @@ TEST_CASE ("Aux cue keeps processed audio while the master return is muted", "[a
         params.liveMute.store (true);
         hardware.pingPending.store (true); hardware.pingResult.store (531);
         for (int n = 0; n < kSettleBlocks; ++n) block (2);
+        CHECK_THAT (strip->getPreReturnPeak(), WithinAbs (0.0f, 0.0f));
         for (const auto& output : physical)
             for (const float sample : output) REQUIRE_THAT (sample, WithinAbs (0.0f, 1.0e-7f));
         CHECK (hardware.pingPending.load());

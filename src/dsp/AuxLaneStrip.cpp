@@ -9,6 +9,7 @@ namespace duskstudio
 {
 void AuxLaneStrip::prepare (double sampleRate, int blockSize)
 {
+    preReturnPeak = 0.0f;
     preparedSampleRate = sampleRate;
     preparedBlockSize  = std::max (1, blockSize);
 
@@ -511,6 +512,7 @@ void AuxLaneStrip::processStereoBlock (float* L, float* R, int numSamples,
                                           int   numDeviceOutputs) noexcept
 {
     dusk::audio::ScopedNoDenormals noDenormals;
+    preReturnPeak = 0.0f;
     if (numSamples == 0) return;
     if (paramsRef == nullptr) return;
 
@@ -632,6 +634,9 @@ void AuxLaneStrip::processStereoBlock (float* L, float* R, int numSamples,
             R[i] = (1.0f - g) * insertScratchR[(size_t) i] + g * R[i];
         }
     }
+
+    for (int sample = 0; sample < numSamples; ++sample)
+        preReturnPeak = std::max ({ preReturnPeak, std::abs (L[sample]), std::abs (R[sample]) });
 
     // Cue / headphone tap. Send the processed aux mix to its routed output
     // pair BEFORE the return fader/mute below, so the hardware pair is an

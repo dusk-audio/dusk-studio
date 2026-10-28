@@ -220,7 +220,7 @@ public:
 
     std::array<std::atomic<int>, kMaxPlugins> insertMode {};
 
-    // Mute clears L/R and skips processing.
+    // Mute clears the master return; a valid cue output keeps processing.
     // deviceInputs/Outputs forwarded to HardwareInsertSlot. Defaulted
     // to null so non-engine callers still compile.
     void processStereoBlock (float* L, float* R, int numSamples,
@@ -228,10 +228,13 @@ public:
                               int   numDeviceInputs             = 0,
                               float* const*       deviceOutputs = nullptr,
                               int   numDeviceOutputs            = 0) noexcept;
+    // Audio thread only: return gain/mute must not hide a cue tail.
+    float getPreReturnPeak() const noexcept { return preReturnPeak; }
 
 private:
     const AuxLaneParams* paramsRef = nullptr;
     dusk::audio::SmoothedValue<float> returnGain { 1.0f };
+    float preReturnPeak = 0.0f;
 
     std::array<PluginSlot, kMaxPlugins> slots;
     std::array<HardwareInsertSlot, kMaxPlugins> hardwareSlots;
