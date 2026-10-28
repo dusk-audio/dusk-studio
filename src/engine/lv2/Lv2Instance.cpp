@@ -18,6 +18,7 @@
 #include <lv2/midi/midi.h>
 #include <lv2/patch/patch.h>
 #include <lv2/state/state.h>
+#include <lv2/time/time.h>
 #include <lv2/urid/urid.h>
 
 #include <algorithm>
@@ -31,6 +32,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -42,7 +44,6 @@ namespace duskstudio::lv2
 {
 namespace
 {
-// The control input's sequence: the staged patches, then the block's MIDI.
 constexpr size_t kControlInBytes = 64 * 1024;
 } // namespace
 
@@ -115,12 +116,28 @@ struct Lv2Instance::Impl
         uridSequence      = mapUri (this, LV2_ATOM__Sequence);
         uridFloatType     = mapUri (this, LV2_ATOM__Float);
         uridUridType      = mapUri (this, LV2_ATOM__URID);
+        uridTimePosition = mapUri (this, LV2_TIME__Position);
+        uridTimeFrame = mapUri (this, LV2_TIME__frame);
+        uridTimeSpeed = mapUri (this, LV2_TIME__speed);
+        uridTimeBeat = mapUri (this, LV2_TIME__beat);
+        uridTimeBar = mapUri (this, LV2_TIME__bar);
+        uridTimeBarBeat = mapUri (this, LV2_TIME__barBeat);
+        uridTimeBeatUnit = mapUri (this, LV2_TIME__beatUnit);
+        uridTimeBeatsPerBar = mapUri (this, LV2_TIME__beatsPerBar);
+        uridTimeBeatsPerMinute = mapUri (this, LV2_TIME__beatsPerMinute);
+        uridTimeFramesPerSecond = mapUri (this, LV2_TIME__framesPerSecond);
+        lv2_atom_forge_init (&timeForge, &mapFeature);
     }
     LV2_URID uridFloat = 0, uridDouble = 0, uridInt = 0, uridLong = 0;
     LV2_URID uridObject = 0, uridPatchGet = 0, uridPatchSet = 0, uridPatchProperty = 0,
              uridPatchValue = 0, uridEventTransfer = 0, uridMidiEvent = 0,
              uridPatchPut = 0, uridPatchBody = 0, uridSequence = 0, uridFloatType = 0,
              uridUridType = 0;
+    LV2_URID uridTimePosition = 0, uridTimeFrame = 0, uridTimeSpeed = 0,
+             uridTimeBeat = 0, uridTimeBar = 0, uridTimeBarBeat = 0,
+             uridTimeBeatUnit = 0, uridTimeBeatsPerBar = 0, uridTimeBeatsPerMinute = 0,
+             uridTimeFramesPerSecond = 0;
+    LV2_Atom_Forge timeForge {};
 
     // state:mapPath / state:makePath / state:freePath for file-backed state
     // Save side: lilv builds its own map/make-path from the directories we
@@ -247,6 +264,7 @@ struct Lv2Instance::Impl
 
     // Port classification (indices into the plugin's port list).
     std::vector<uint32_t> audioInPorts, audioOutPorts, controlPorts, atomInPorts, atomOutPorts;
+    std::vector<std::size_t> timeAtomInPositions;
     std::vector<uint32_t> otherPorts;   // CV / unclassified - LV2 requires every port connected
     int latencyPortIndex = -1;
 
@@ -323,6 +341,55 @@ struct Lv2Instance::Impl
         lv2_atom_forge_set_buffer (&forge, data, capacity);
         LV2_Atom_Forge_Frame frame;
         if (lv2_atom_forge_object (&forge, &frame, 0, uridPatchGet) == 0) return 0;
+        lv2_atom_forge_pop (&forge, &frame);
+        const auto* atom = reinterpret_cast<const LV2_Atom*> (data);
+        const auto size = (uint32_t) sizeof (LV2_Atom) + atom->size;
+        return size <= capacity ? size : 0;
+    }
+
+    uint32_t forgeTimePosition (const dusk::TransportPosition& position,
+                                uint8_t* data, size_t capacity) const noexcept
+    {
+        auto forge = timeForge;
+        lv2_atom_forge_set_buffer (&forge, data, capacity);
+        LV2_Atom_Forge_Frame frame;
+        if (lv2_atom_forge_object (&forge, &frame, 0, uridTimePosition) == 0) return 0;
+        lv2_atom_forge_key (&forge, uridTimeFrame);
+        lv2_atom_forge_long (&forge, position.timeInSamples);
+        lv2_atom_forge_key (&forge, uridTimeSpeed);
+        lv2_atom_forge_float (&forge, position.isPlaying || position.isRecording ? 1.0f : 0.0f);
+        if (std::isfinite (sampleRate) && sampleRate > 0.0
+            && sampleRate <= (double) std::numeric_limits<float>::max())
+        {
+            lv2_atom_forge_key (&forge, uridTimeFramesPerSecond);
+            lv2_atom_forge_float (&forge, (float) sampleRate);
+        }
+        if (position.timeSignatureNumerator > 0 && position.timeSignatureDenominator > 0)
+        {
+            const double beatScale = (double) position.timeSignatureDenominator / 4.0;
+            const double beat = position.ppqPosition * beatScale;
+            const double bar = std::floor (beat / (double) position.timeSignatureNumerator);
+            if (std::isfinite (beat) && bar >= -9223372036854775808.0 && bar < 9223372036854775808.0)
+            {
+                lv2_atom_forge_key (&forge, uridTimeBeat);
+                lv2_atom_forge_double (&forge, beat);
+                lv2_atom_forge_key (&forge, uridTimeBar);
+                lv2_atom_forge_long (&forge, (std::int64_t) bar);
+                lv2_atom_forge_key (&forge, uridTimeBarBeat);
+                lv2_atom_forge_float (&forge, (float) (beat - bar * (double) position.timeSignatureNumerator));
+            }
+            lv2_atom_forge_key (&forge, uridTimeBeatUnit);
+            lv2_atom_forge_int (&forge, position.timeSignatureDenominator);
+            lv2_atom_forge_key (&forge, uridTimeBeatsPerBar);
+            lv2_atom_forge_float (&forge, (float) position.timeSignatureNumerator);
+            const double tempo = position.bpm * beatScale;
+            if (std::isfinite (tempo) && tempo > 0.0
+                && tempo <= (double) std::numeric_limits<float>::max())
+            {
+                lv2_atom_forge_key (&forge, uridTimeBeatsPerMinute);
+                lv2_atom_forge_float (&forge, (float) tempo);
+            }
+        }
         lv2_atom_forge_pop (&forge, &frame);
         const auto* atom = reinterpret_cast<const LV2_Atom*> (data);
         const auto size = (uint32_t) sizeof (LV2_Atom) + atom->size;
@@ -592,11 +659,13 @@ bool Lv2Instance::create (const Lv2Bundle& bundle, const std::string& uri, std::
     LilvNode* controlClass = lilv_new_uri (world, LV2_CORE__ControlPort);
     LilvNode* inputClass   = lilv_new_uri (world, LV2_CORE__InputPort);
     LilvNode* atomClass    = lilv_new_uri (world, LV2_ATOM__AtomPort);
+    LilvNode* timePosition = lilv_new_uri (world, LV2_TIME__Position);
     LilvNode* latencyDesig = lilv_new_uri (world, LV2_CORE__latency);
     const uint32_t numPorts = lilv_plugin_get_num_ports (impl->plugin);
 
     impl->audioInPorts.clear();  impl->audioOutPorts.clear();
     impl->controlPorts.clear();  impl->atomInPorts.clear(); impl->atomOutPorts.clear();
+    impl->timeAtomInPositions.clear();
     impl->otherPorts.clear();
     impl->portIndexBySymbol.clear();
     impl->controlRestoreInfo.assign ((size_t) numPorts, {});
@@ -616,7 +685,11 @@ bool Lv2Instance::create (const Lv2Bundle& bundle, const std::string& uri, std::
         else if (lilv_port_is_a (impl->plugin, port, controlClass))
             impl->controlPorts.push_back (i);
         else if (lilv_port_is_a (impl->plugin, port, atomClass))
+        {
+            if (isInput && lilv_port_supports_event (impl->plugin, port, timePosition))
+                impl->timeAtomInPositions.push_back (impl->atomInPorts.size());
             (isInput ? impl->atomInPorts : impl->atomOutPorts).push_back (i);
+        }
         else
             impl->otherPorts.push_back (i);   // CV / unknown -> scratch in activate()
     }
@@ -861,6 +934,7 @@ bool Lv2Instance::create (const Lv2Bundle& bundle, const std::string& uri, std::
 
     lilv_node_free (audioClass);   lilv_node_free (controlClass);
     lilv_node_free (inputClass);   lilv_node_free (atomClass);
+    lilv_node_free (timePosition);
     lilv_node_free (latencyDesig);
     return true;
 }
@@ -1072,15 +1146,35 @@ void Lv2Instance::processBlock (const hosting::PortBuffers& io) noexcept
             impl->portValues[(size_t) pw.idx] = pw.value;
     });
 
-    // Rebuild the control atom input's sequence: staged patch/UI atoms first
-    // (frame 0), then the block's MIDI at its sample offsets - the sequence
-    // stays time-sorted. Input sequences are host-owned, so the reset is cheap
-    // and the other atom inputs keep their empty headers from activate().
+    for (size_t input = 0; input < impl->atomInPorts.size(); ++input)
+    {
+        auto* sequence = reinterpret_cast<LV2_Atom_Sequence*> (impl->atomBuffers[input].data());
+        sequence->atom.type = impl->uridSequence;
+        sequence->atom.size = sizeof (LV2_Atom_Sequence_Body);
+        sequence->body.unit = 0;
+        sequence->body.pad = 0;
+    }
+    if (io.transport != nullptr && ! impl->timeAtomInPositions.empty())
+    {
+        alignas (8) std::array<uint8_t, 512> eventData {};
+        auto* event = reinterpret_cast<LV2_Atom_Event*> (eventData.data());
+        const auto size = impl->forgeTimePosition (*io.transport,
+            eventData.data() + sizeof (event->time), eventData.size() - sizeof (event->time));
+        if (size != 0)
+            for (const auto input : impl->timeAtomInPositions)
+            {
+                auto& buf = impl->atomBuffers[input];
+                auto* sequence = reinterpret_cast<LV2_Atom_Sequence*> (buf.data());
+                lv2_atom_sequence_append_event (sequence,
+                    (uint32_t) (buf.size() - sizeof (LV2_Atom)), event);
+            }
+    }
+
+    // Frame-zero transport and patch objects precede MIDI at its sample offsets.
     if (! impl->atomInPorts.empty())
     {
         auto& buf = impl->atomBuffers[(size_t) impl->controlAtomInPos];
         auto* seq = reinterpret_cast<LV2_Atom_Sequence*> (buf.data());
-        seq->atom.size = sizeof (LV2_Atom_Sequence_Body);
         const auto midiEventBytes = [] (const uint8_t*, int numBytes) -> size_t
         {
             return numBytes > 0 && numBytes <= 3

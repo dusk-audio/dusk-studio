@@ -2,6 +2,7 @@
 #include <lv2/atom/util.h>
 #include <lv2/core/lv2.h>
 #include <lv2/midi/midi.h>
+#include <lv2/time/time.h>
 #include <lv2/urid/urid.h>
 
 #include <array>
@@ -32,11 +33,55 @@ struct Instance
 {
     bool checkThread = false;
     const LV2_Atom_Sequence* events = nullptr;
+    const LV2_Atom_Sequence* timeEvents = nullptr;
+    const float* reportTransport = nullptr;
     float* outL = nullptr;
     float* outR = nullptr;
     LV2_URID midiEvent = 0;
+    LV2_URID atomObject = 0, atomFloat = 0, atomDouble = 0, atomInt = 0, atomLong = 0;
+    LV2_URID timePosition = 0;
+    std::array<LV2_URID, 9> timeProperties {};
     std::array<bool, 16 * 128> held {};
     int voices = 0;
+
+    std::array<float, 12> timeReport (const LV2_Atom_Sequence* sequence) const noexcept
+    {
+        std::array<float, 12> report {};
+        if (sequence == nullptr) return report;
+        std::int64_t previousFrame = 0;
+        bool ordered = true;
+        LV2_ATOM_SEQUENCE_FOREACH (sequence, event)
+        {
+            ordered = ordered && event->time.frames >= previousFrame;
+            previousFrame = event->time.frames;
+            if (event->body.type != atomObject || event->body.size < sizeof (LV2_Atom_Object_Body))
+                continue;
+            const auto* object = reinterpret_cast<const LV2_Atom_Object*> (&event->body);
+            if (object->body.otype != timePosition) continue;
+            report[0] += 1.0f;
+            report[1] = (float) event->time.frames;
+            for (std::size_t property = 0; property < timeProperties.size(); ++property)
+            {
+                const LV2_Atom* value = nullptr;
+                lv2_atom_object_get (object, timeProperties[property], &value, 0);
+                float number = -10000.0f;
+                if (value != nullptr)
+                {
+                    if (value->type == atomFloat && value->size == sizeof (float))
+                        number = reinterpret_cast<const LV2_Atom_Float*> (value)->body;
+                    else if (value->type == atomDouble && value->size == sizeof (double))
+                        number = (float) reinterpret_cast<const LV2_Atom_Double*> (value)->body;
+                    else if (value->type == atomInt && value->size == sizeof (std::int32_t))
+                        number = (float) reinterpret_cast<const LV2_Atom_Int*> (value)->body;
+                    else if (value->type == atomLong && value->size == sizeof (std::int64_t))
+                        number = (float) reinterpret_cast<const LV2_Atom_Long*> (value)->body;
+                }
+                report[property + 2] = number;
+            }
+        }
+        report[11] = ordered ? 1.0f : 0.0f;
+        return report;
+    }
 
     void set (int channel, int key, bool down) noexcept
     {
@@ -69,6 +114,19 @@ LV2_Handle instantiate (const LV2_Descriptor*, double, const char* bundlePath,
     auto* self = new Instance;
     self->checkThread = checkThread;
     self->midiEvent = map->map (map->handle, LV2_MIDI__MidiEvent);
+    self->atomObject = map->map (map->handle, LV2_ATOM__Object);
+    self->atomFloat = map->map (map->handle, LV2_ATOM__Float);
+    self->atomDouble = map->map (map->handle, LV2_ATOM__Double);
+    self->atomInt = map->map (map->handle, LV2_ATOM__Int);
+    self->atomLong = map->map (map->handle, LV2_ATOM__Long);
+    self->timePosition = map->map (map->handle, LV2_TIME__Position);
+    const std::array<const char*, 9> properties {
+        LV2_TIME__frame, LV2_TIME__speed, LV2_TIME__beat, LV2_TIME__bar,
+        LV2_TIME__barBeat, LV2_TIME__beatUnit, LV2_TIME__beatsPerBar,
+        LV2_TIME__beatsPerMinute, LV2_TIME__framesPerSecond
+    };
+    for (std::size_t property = 0; property < properties.size(); ++property)
+        self->timeProperties[property] = map->map (map->handle, properties[property]);
     return self;
 }
 
@@ -80,6 +138,8 @@ void connectPort (LV2_Handle instance, uint32_t port, void* data)
         case 0: self.events = static_cast<const LV2_Atom_Sequence*> (data); break;
         case 1: self.outL = static_cast<float*> (data); break;
         case 2: self.outR = static_cast<float*> (data); break;
+        case 3: self.timeEvents = static_cast<const LV2_Atom_Sequence*> (data); break;
+        case 4: self.reportTransport = static_cast<const float*> (data); break;
         default: break;
     }
 }
@@ -109,6 +169,16 @@ void run (LV2_Handle instance, uint32_t frames)
     {
         if (self.outL != nullptr) self.outL[i] = level;
         if (self.outR != nullptr) self.outR[i] = level;
+    }
+    if (self.reportTransport != nullptr && *self.reportTransport > 0.5f)
+    {
+        const auto controlReport = self.timeReport (self.events);
+        const auto dedicatedReport = self.timeReport (self.timeEvents);
+        for (std::size_t sample = 0; sample < controlReport.size() && sample < frames; ++sample)
+        {
+            if (self.outL != nullptr) self.outL[sample] = controlReport[sample];
+            if (self.outR != nullptr) self.outR[sample] = dedicatedReport[sample];
+        }
     }
 }
 

@@ -2,6 +2,7 @@
 @prefix doap:  <http://usefulinc.com/ns/doap#> .
 @prefix lv2:   <http://lv2plug.in/ns/lv2core#> .
 @prefix midi:  <http://lv2plug.in/ns/ext/midi#> .
+@prefix time:  <http://lv2plug.in/ns/ext/time#> .
 @prefix urid:  <http://lv2plug.in/ns/ext/urid#> .
 
 <urn:duskstudio:test:midi-probe>
@@ -12,8 +13,15 @@
         [ a lv2:InputPort, atom:AtomPort ;
           lv2:index 0 ; lv2:symbol "events_in" ; lv2:name "Events In" ;
           lv2:designation lv2:control ;
-          atom:bufferType atom:Sequence ; atom:supports midi:MidiEvent ],
+          atom:bufferType atom:Sequence ; atom:supports midi:MidiEvent , time:Position ],
         [ a lv2:OutputPort, lv2:AudioPort ;
           lv2:index 1 ; lv2:symbol "out_l" ; lv2:name "Output L" ],
         [ a lv2:OutputPort, lv2:AudioPort ;
-          lv2:index 2 ; lv2:symbol "out_r" ; lv2:name "Output R" ] .
+          lv2:index 2 ; lv2:symbol "out_r" ; lv2:name "Output R" ],
+        [ a lv2:InputPort, atom:AtomPort ;
+          lv2:index 3 ; lv2:symbol "time_in" ; lv2:name "Time In" ;
+          atom:bufferType atom:Sequence ; atom:supports time:Position ],
+        [ a lv2:InputPort, lv2:ControlPort ;
+          lv2:index 4 ; lv2:symbol "report_transport" ; lv2:name "Report Transport" ;
+          lv2:default 0 ; lv2:minimum 0 ; lv2:maximum 1 ;
+          lv2:portProperty lv2:toggled ] .
