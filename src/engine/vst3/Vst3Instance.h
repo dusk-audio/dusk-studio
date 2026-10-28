@@ -59,6 +59,16 @@ public:
     bool saveState (std::vector<uint8_t>& out) const override;
     bool loadState (const std::vector<uint8_t>& in) override;
 
+    // Steps for editor edits, setDirty, a restart announcing new parameter values
+    // or MIDI assignments, accepted host writes and their application, a
+    // processor-reported change to a writable parameter, and a restore.
+    std::uint64_t stateRevision() const noexcept override;
+
+    // Hands the queued parameter changes to the processor in a zero-sample
+    // process call. An inactive instance is activated for that call alone; one
+    // never set up keeps them queued and returns false.
+    bool flushPendingWrites() override;
+
     // Parameters (message thread). Enumerated once at create().
     int              paramCount() const noexcept;
     const ParamInfo* paramInfo (int index) const noexcept;
@@ -69,7 +79,8 @@ public:
     // Reaches the processor via IParameterChanges on the next audio block, and the
     // controller immediately so an open editor tracks the move. Editor-originated
     // edits (IComponentHandler::performEdit) feed the same ring - without that a
-    // spec-compliant plugin's knob moves never reach its processor.
+    // spec-compliant plugin's knob moves never reach its processor. A read-only
+    // parameter is left alone.
     void setParamValue (uint32_t id, double value) noexcept;
 
     // The editor asked to resize through IPlugFrame (message thread). The active

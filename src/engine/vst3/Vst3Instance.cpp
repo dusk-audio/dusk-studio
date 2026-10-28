@@ -32,6 +32,12 @@ namespace duskstudio::vst3
 {
 using namespace Steinberg;
 
+namespace
+{
+// Bit for bit, so a processor repeating the value it last reported changes nothing.
+bool sameValue (double a, double b) noexcept { return std::memcmp (&a, &b, sizeof a) == 0; }
+} // namespace
+
 // Impl is the host-context Callbacks owner: editor param edits (performEdit) land
 // here and join host-initiated setParamValue in one UI->RT ring; resize requests
 // forward to whatever Vst3Editor is attached.
@@ -82,6 +88,7 @@ struct Vst3Instance::Impl : public Vst3HostContext::Callbacks
     Vst::HostProcessData     processData;
     Vst::ProcessContext      processContext {};
     detail::BoundedParameterChanges inParams;
+    detail::OutputParameterChanges  outParams;
     // The SDK's EventList defaults to 50 and addEvent() silently drops past
     // that. A block denser than this keeps its note-offs and drops other
     // events first (MidiFit.h).
@@ -99,6 +106,85 @@ struct Vst3Instance::Impl : public Vst3HostContext::Callbacks
     std::vector<ParamInfo> params;
     struct ParamChange { uint32_t id; double value; };
     hosting::SpscRing<ParamChange, detail::kEditorParameterRingSize> paramRing;
+
+    // setupProcessing succeeded, so the component may be activated again.
+    bool setupDone = false;
+
+    static_assert (std::atomic<std::uint64_t>::is_always_lock_free,
+                   "VST3 state revision must be lock-free");
+    std::atomic<std::uint64_t> revision { 0 };
+    void markStateChanged() noexcept { revision.fetch_add (1, std::memory_order_release); }
+
+    // The writable parameters, sorted by id, each with the value the processor
+    // last reported or the controller held. Rebuilt with no block in flight
+    // (create, activate), so process() can tell a change of state apart from a
+    // meter, a parameter the controller never declared, or a repeated value.
+    static_assert (std::atomic<double>::is_always_lock_free,
+                   "reported parameter values must be lock-free");
+    struct WritableParam
+    {
+        uint32_t id = 0;
+        std::atomic<double> reported { 0.0 };
+    };
+    std::unique_ptr<WritableParam[]> writable;
+    std::size_t writableCount = 0;
+
+    const ParamInfo* findParam (uint32_t id) const noexcept
+    {
+        for (const auto& p : params)
+            if (p.id == id) return &p;
+        return nullptr;
+    }
+
+    void rebuildWritable()
+    {
+        std::vector<uint32_t> ids;
+        ids.reserve (params.size());
+        for (const auto& p : params)
+            if (! p.isReadOnly) ids.push_back (p.id);
+        std::sort (ids.begin(), ids.end());
+        ids.erase (std::unique (ids.begin(), ids.end()), ids.end());
+        writable = std::make_unique<WritableParam[]> (ids.size());
+        writableCount = ids.size();
+        for (size_t i = 0; i < ids.size(); ++i)
+            writable[i].id = ids[i];
+        syncReportedValues();
+    }
+
+    // Message thread: a value the controller already holds is no change when
+    // the processor reports it.
+    void syncReportedValues()
+    {
+        if (! controller) return;
+        for (size_t i = 0; i < writableCount; ++i)
+            writable[i].reported.store (controller->getParamNormalized ((Vst::ParamID) writable[i].id),
+                                        std::memory_order_relaxed);
+    }
+
+    WritableParam* findWritable (uint32_t id) const noexcept
+    {
+        auto* const first = writable.get();
+        auto* const last = first + writableCount;
+        auto* const it = std::lower_bound (first, last, id, [] (const WritableParam& p, uint32_t v)
+                                           { return p.id < v; });
+        return it != last && it->id == id ? it : nullptr;
+    }
+
+    // After process(): one step for queued host writes the processor has now
+    // taken, or for a writable parameter it reports at a new value.
+    void publishProcessedChanges (bool hostWritesApplied) noexcept
+    {
+        bool changed = hostWritesApplied;
+        for (std::size_t i = 0; i < outParams.queueCount(); ++i)
+        {
+            if (outParams.pointCount (i) == 0) continue;
+            auto* const param = findWritable (outParams.parameterId (i));
+            const double value = outParams.lastValue (i);
+            if (param != nullptr && ! sameValue (param->reported.exchange (value, std::memory_order_relaxed), value))
+                changed = true;
+        }
+        if (changed) markStateChanged();
+    }
 
     std::function<bool (int, int)> resizeViewFn;
 
@@ -305,9 +391,14 @@ struct Vst3Instance::Impl : public Vst3HostContext::Callbacks
     {
         // The controller already holds the new value (the edit came from its own
         // editor); the processor hears it through the ring -> IParameterChanges.
+        // An id the snapshot lacks may be one announced since; it still counts.
+        const auto* param = findParam (paramId);
+        if (param != nullptr && param->isReadOnly) return;
         paramRing.push ({ paramId, normalised });
         lastTouchedParamId.store ((int64_t) paramId, std::memory_order_relaxed);
+        markStateChanged();
     }
+    void onSetDirty() override { markStateChanged(); }
     bool onResizeView (int w, int h) override
     {
         return resizeViewFn != nullptr && resizeViewFn (w, h);
@@ -324,6 +415,10 @@ struct Vst3Instance::Impl : public Vst3HostContext::Callbacks
             latencyChanged.store (true, std::memory_order_relaxed);
         if ((flags & Vst::RestartFlags::kIoChanged) != 0)
             ioChanged.store (true, std::memory_order_release);
+        // A program or preset load, or a MIDI-learned assignment.
+        if ((flags & (Vst::RestartFlags::kParamValuesChanged
+                      | Vst::RestartFlags::kMidiCCAssignmentChanged)) != 0)
+            markStateChanged();
     }
 
     void destroy()
@@ -354,6 +449,9 @@ struct Vst3Instance::Impl : public Vst3HostContext::Callbacks
 
         host.setCallbacks (nullptr);
         params.clear();
+        writable.reset();
+        writableCount = 0;
+        setupDone = false;
         audioBuses = {};
         ioChanged.store (false, std::memory_order_relaxed);
         resizeViewFn = nullptr;
@@ -412,11 +510,75 @@ bool Vst3Instance::paramValueToText (uint32_t id, double value, std::string& out
 
 void Vst3Instance::setParamValue (uint32_t id, double value) noexcept
 {
+    const auto* param = impl->findParam (id);
+    if (param != nullptr && param->isReadOnly) return;
     // Controller first so an open editor tracks the move; processor hears it
     // through the ring -> IParameterChanges on the next block.
     if (impl->controller)
         impl->controller->setParamNormalized ((Vst::ParamID) id, value);
-    impl->paramRing.push ({ id, value });   // full => drop (pathological flood only)
+    if (impl->paramRing.push ({ id, value }))   // full => drop (pathological flood only)
+        impl->markStateChanged();
+}
+
+std::uint64_t Vst3Instance::stateRevision() const noexcept
+{
+    return impl->revision.load (std::memory_order_acquire);
+}
+
+bool Vst3Instance::flushPendingWrites()
+{
+    auto& d = *impl;
+    if (! d.created || d.paramRing.empty()) return true;
+    // The SDK allows a parameter flush only between setActive (true) and
+    // setActive (false), and setActive (true) only after setupProcessing. The
+    // processing bracket matches the SDK validator's flush test.
+    const bool temporarilyActive = ! d.active;
+    if (temporarilyActive)
+    {
+        if (! d.setupDone || d.component->setActive (true) != kResultOk)
+            return false;
+        d.processor->setProcessing (true);
+    }
+
+    d.inParams.beginBlock (0);
+    std::uint64_t order = 0;
+    d.paramRing.drain ([&d, &order] (const Impl::ParamChange& pc)
+    {
+        d.inParams.append (pc.id, 0, pc.value, order++, detail::ParameterPointPriority::Chase);
+    });
+    d.inParams.finalize();
+    d.outParams.beginBlock();
+    d.inEvents.clear();
+    d.outEvents.clear();
+
+    // No audio buses: the SDK's flush form, valid even while a bus change is pending.
+    Vst::ProcessData data;
+    data.processMode = Vst::kRealtime;
+    data.symbolicSampleSize = Vst::kSample32;
+    data.inputParameterChanges = &d.inParams;
+    data.outputParameterChanges = &d.outParams;
+    data.inputEvents = &d.inEvents;
+    data.outputEvents = &d.outEvents;
+    const bool taken = d.processor->process (data) == kResultOk;
+    d.publishProcessedChanges (taken);
+    // A plug-in refusing the flush gets the latest value of each change again
+    // with its next block, rather than losing it.
+    if (! taken)
+        for (int32 i = 0; i < d.inParams.getParameterCount(); ++i)
+        {
+            auto* queue = d.inParams.getParameterData (i);
+            int32 offset = 0;
+            double value = 0.0;
+            if (queue != nullptr && queue->getPoint (queue->getPointCount() - 1, offset, value) == kResultTrue)
+                d.paramRing.push ({ queue->getParameterId(), value });
+        }
+
+    if (temporarilyActive)
+    {
+        d.processor->setProcessing (false);
+        d.component->setActive (false);
+    }
+    return taken;
 }
 
 void Vst3Instance::setResizeViewHandler (std::function<bool (int, int)> fn)
@@ -534,6 +696,7 @@ bool Vst3Instance::create (const Vst3Bundle& bundle, const std::string& classId,
         impl->snapshotParams();
         impl->rebuildMidiCcMap();
     }
+    impl->rebuildWritable();
     impl->host.setCallbacks (impl.get());
 
     if (! impl->discoverBuses (errorOut))
@@ -557,8 +720,14 @@ bool Vst3Instance::activate (double sampleRate, int maxBlockFrames, std::string&
     setup.symbolicSampleSize = Vst::kSample32;
     setup.maxSamplesPerBlock = impl->maxFrames;
     setup.sampleRate         = sampleRate;
+    impl->setupDone = false;
     if (impl->processor->setupProcessing (setup) != kResultOk)
     { errorOut = "setupProcessing() failed"; return false; }
+    impl->setupDone = true;
+    // Sized for every declared parameter, plus a margin for ids the controller
+    // announces later.
+    impl->outParams.prepare (std::min<std::size_t> (impl->params.size() + 16, 4096));
+    impl->rebuildWritable();
 
     // HostProcessData builds the AudioBusBuffers arrays from the component's bus
     // config. bufferSamples MUST be 0: a non-zero count makes it allocate and OWN
@@ -585,7 +754,7 @@ bool Vst3Instance::activate (double sampleRate, int maxBlockFrames, std::string&
             buffers[bus].numChannels = channels;
         });
     impl->processData.inputParameterChanges  = &impl->inParams;
-    impl->processData.outputParameterChanges = nullptr;
+    impl->processData.outputParameterChanges = &impl->outParams;
     impl->processData.inputEvents  = &impl->inEvents;
     impl->processData.outputEvents = &impl->outEvents;
     impl->processData.processContext = nullptr;
@@ -718,6 +887,7 @@ void Vst3Instance::processBlock (const hosting::PortBuffers& io) noexcept
     impl->inEvents.clear();
     impl->outEvents.clear();
     impl->inParams.beginBlock (numFrames);
+    impl->outParams.beginBlock();
 
     bool recoveringMidi = impl->pendingMidiPanicChannels != 0 || impl->pendingMidiParameterResetChannels != 0;
     if (impl->hasEventIn)
@@ -777,10 +947,10 @@ void Vst3Instance::processBlock (const hosting::PortBuffers& io) noexcept
                 queueCcParam (channel, Vst::kAfterTouch, 0.0, 0, Priority::Reset);
             return true;
         });
-    impl->paramRing.drain ([&] (const Impl::ParamChange& pc)
+    const bool hostWritesApplied = impl->paramRing.drain ([&] (const Impl::ParamChange& pc)
     {
         impl->inParams.append (pc.id, 0, pc.value, parameterOrder++, Priority::Chase);
-    });
+    }) != 0;
 
     // Notes -> the event bus; CCs / pitch bend / channel pressure -> the
     // IMidiMapping-assigned parameters (VST3 has no CC events by design).
@@ -968,6 +1138,8 @@ void Vst3Instance::processBlock (const hosting::PortBuffers& io) noexcept
     impl->inParams.finalize();
     if (impl->processor->process (impl->processData) != kResultOk)
         clearOutputs();
+    // A capture taken between a write and this block must not leave it clean.
+    impl->publishProcessedChanges (hostWritesApplied);
 }
 
 // State blob: "DV31" magic, then u32-LE-length-prefixed component and
@@ -1059,7 +1231,12 @@ bool Vst3Instance::loadState (const std::vector<uint8_t>& in)
     }
     const bool accepted = componentOk && controllerOk;
     if (accepted)
+    {
         impl->latencyChanged.store (true, std::memory_order_relaxed);
+        impl->syncReportedValues();
+    }
+    // Even a rejected stream may have reached the plug-in's state part way.
+    impl->markStateChanged();
     return accepted;
 }
 } // namespace duskstudio::vst3

@@ -212,6 +212,17 @@ public:
     std::uint64_t stateRevision() const noexcept
     { return instance != nullptr ? instance->stateRevision() : 0; }
 
+    // Message thread, with the engine's process gate held. Applies the slot's
+    // queued MIDI-binding writes, then hands every write still queued for the
+    // plug-in to it. A capture calls this first, then samples stateRevision(),
+    // then saveState(), so the revision it records covers the blob exactly.
+    // False when the plug-in could not take every queued write.
+    bool flushPendingWrites()
+    {
+        drainQueuedParamBindings();
+        return instance == nullptr || instance->flushPendingWrites();
+    }
+
     // Whether the loaded plugin is an instrument (no main audio input - the
     // block's MIDI drives it and its output IS the signal).
     bool isLoadedInstrument() const noexcept

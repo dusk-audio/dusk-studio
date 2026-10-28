@@ -45,6 +45,9 @@ namespace duskstudio::lv2
 namespace
 {
 constexpr size_t kControlInBytes = 64 * 1024;
+
+// Bit for bit, so a write repeating the stored value is no edit.
+bool sameValue (float a, float b) noexcept { return std::memcmp (&a, &b, sizeof a) == 0; }
 } // namespace
 
 struct Lv2Instance::Impl
@@ -112,6 +115,11 @@ struct Lv2Instance::Impl
         uridEventTransfer = mapUri (this, LV2_ATOM__eventTransfer);
         uridMidiEvent     = mapUri (this, LV2_MIDI__MidiEvent);
         uridPatchPut      = mapUri (this, LV2_PATCH__Put);
+        uridPatchPatch    = mapUri (this, LV2_PATCH__Patch);
+        uridPatchDelete   = mapUri (this, LV2_PATCH__Delete);
+        uridPatchCopy     = mapUri (this, LV2_PATCH__Copy);
+        uridPatchMove     = mapUri (this, LV2_PATCH__Move);
+        uridStateChanged  = mapUri (this, LV2_STATE__StateChanged);
         uridPatchBody     = mapUri (this, LV2_PATCH__body);
         uridSequence      = mapUri (this, LV2_ATOM__Sequence);
         uridFloatType     = mapUri (this, LV2_ATOM__Float);
@@ -133,11 +141,25 @@ struct Lv2Instance::Impl
              uridPatchValue = 0, uridEventTransfer = 0, uridMidiEvent = 0,
              uridPatchPut = 0, uridPatchBody = 0, uridSequence = 0, uridFloatType = 0,
              uridUridType = 0;
+    LV2_URID uridPatchPatch = 0, uridPatchDelete = 0, uridPatchCopy = 0, uridPatchMove = 0,
+             uridStateChanged = 0;
     LV2_URID uridTimePosition = 0, uridTimeFrame = 0, uridTimeSpeed = 0,
              uridTimeBeat = 0, uridTimeBar = 0, uridTimeBarBeat = 0,
              uridTimeBeatUnit = 0, uridTimeBeatsPerBar = 0, uridTimeBeatsPerMinute = 0,
              uridTimeFramesPerSecond = 0;
     LV2_Atom_Forge timeForge {};
+
+    // A patch message that edits the plug-in's state, rather than asking about it.
+    bool isPatchEdit (LV2_URID otype) const noexcept
+    {
+        return otype == uridPatchSet || otype == uridPatchPut || otype == uridPatchPatch
+            || otype == uridPatchDelete || otype == uridPatchCopy || otype == uridPatchMove;
+    }
+
+    static_assert (std::atomic<std::uint64_t>::is_always_lock_free,
+                   "LV2 state revision must be lock-free");
+    std::atomic<std::uint64_t> revision { 0 };
+    void markStateChanged() noexcept { revision.fetch_add (1, std::memory_order_release); }
 
     // state:mapPath / state:makePath / state:freePath for file-backed state
     // Save side: lilv builds its own map/make-path from the directories we
@@ -264,6 +286,8 @@ struct Lv2Instance::Impl
 
     // Port classification (indices into the plugin's port list).
     std::vector<uint32_t> audioInPorts, audioOutPorts, controlPorts, atomInPorts, atomOutPorts;
+    // By port index: an input control port, the only kind a UI or the host writes.
+    std::vector<uint8_t> inputControlPorts;
     std::vector<std::size_t> timeAtomInPositions;
     std::vector<uint32_t> otherPorts;   // CV / unclassified - LV2 requires every port connected
     int latencyPortIndex = -1;
@@ -313,7 +337,8 @@ struct Lv2Instance::Impl
     // at the top of the next process block. 128 bytes covers a patch:Set with a
     // float payload several times over; larger UI atoms are dropped (only the
     // instance-access shortcut loses nothing - see forwardUiAtomEvent).
-    struct AtomBlob { uint32_t size = 0; uint8_t data[128]; };
+    // changesState marks one whose queueing counted as a state change.
+    struct AtomBlob { uint32_t size = 0; uint8_t data[128]; bool changesState = false; };
     hosting::SpscRing<AtomBlob, 64> atomRing;
 
     uint32_t forgePatchSet (LV2_URID property, float value,
@@ -406,8 +431,13 @@ struct Lv2Instance::Impl
     // output, drained into patchShadow on the message thread). Size this once
     // from the declared float patch surface: one generic patch:Get may return
     // every property in a single patch:Put, so a fixed queue silently truncates
-    // otherwise-valid large plug-ins.
-    struct PatchFeedback { LV2_URID prop; float value; };
+    // otherwise-valid large plug-ins. Many blocks run between two drains, each
+    // able to echo a value, and an overflow drops the newest one and leaves the
+    // read-back stale, so the queue also holds a burst of single reports.
+    // answersRequest marks a value sent in the run that delivered a patch:Get:
+    // a report of state, not a change to it.
+    static constexpr size_t kPatchFeedbackBurst = 256;
+    struct PatchFeedback { LV2_URID prop; float value; bool answersRequest; };
     class PatchFeedbackRing
     {
     public:
@@ -456,22 +486,25 @@ struct Lv2Instance::Impl
     std::atomic<uint32_t> patchFeedbackOverflows { 0 };
     std::atomic<uint32_t> patchGetQueueFailures { 0 };
     std::atomic<bool> patchRefreshPending { false };
+    std::atomic<bool> changeFeedbackDropped { false };
 
-    void queuePatchFeedback (LV2_URID property, float value) noexcept
+    void queuePatchFeedback (LV2_URID property, float value, bool answersRequest) noexcept
     {
         // A generic patch:Get may include readable or internal properties that
         // are not part of the host's declared parameter surface. They cannot
         // update a parameter and must not consume capacity reserved for one.
         if (patchPropertyUrids.find (property) == patchPropertyUrids.end()) return;
-        if (! patchOutRing.push ({ property, value }))
+        if (! patchOutRing.push ({ property, value, answersRequest }))
         {
             patchFeedbackOverflows.fetch_add (1, std::memory_order_relaxed);
+            if (! answersRequest)
+                changeFeedbackDropped.store (true, std::memory_order_release);
             patchRefreshPending.store (true, std::memory_order_release);
         }
     }
 
     // Audio thread. Queue one patch:Set / patch:Put object's float properties.
-    void queuePatchObject (const LV2_Atom_Object* obj) noexcept
+    void queuePatchObject (const LV2_Atom_Object* obj, bool answersRequest) noexcept
     {
         if (obj->body.otype == uridPatchSet)
         {
@@ -483,7 +516,8 @@ struct Lv2Instance::Impl
                 && valAtom != nullptr && valAtom->type == uridFloatType)
                 queuePatchFeedback (
                     reinterpret_cast<const LV2_Atom_URID*> (propAtom)->body,
-                    reinterpret_cast<const LV2_Atom_Float*> (valAtom)->body);
+                    reinterpret_cast<const LV2_Atom_Float*> (valAtom)->body,
+                    answersRequest);
         }
         else if (obj->body.otype == uridPatchPut)
         {
@@ -495,8 +529,110 @@ struct Lv2Instance::Impl
                 if (p->value.type == uridFloatType)
                     queuePatchFeedback (
                         p->key,
-                        reinterpret_cast<const LV2_Atom_Float*> (&p->value)->body);
+                        reinterpret_cast<const LV2_Atom_Float*> (&p->value)->body,
+                        answersRequest);
         }
+    }
+
+    // The block runners below are shared by processBlock and the capture flush:
+    // the audio thread, or the message thread with no block in flight.
+
+    void applyQueuedPortWrites() noexcept
+    {
+        writeRing.drain ([this] (const PortWrite& pw)
+        {
+            if ((size_t) pw.idx < portValues.size())
+                portValues[(size_t) pw.idx] = pw.value;
+        });
+    }
+
+    void resetAtomInputs() noexcept
+    {
+        for (size_t input = 0; input < atomInPorts.size(); ++input)
+        {
+            auto* sequence = reinterpret_cast<LV2_Atom_Sequence*> (atomBuffers[input].data());
+            sequence->atom.type = uridSequence;
+            sequence->atom.size = sizeof (LV2_Atom_Sequence_Body);
+            sequence->body.unit = 0;
+            sequence->body.pad = 0;
+        }
+    }
+
+    std::vector<uint8_t>& controlInBuffer() noexcept { return atomBuffers[(size_t) controlAtomInPos]; }
+
+    // Appends one event to the control input sequence, or drops it when it
+    // would end past `limit` bytes into the buffer.
+    void appendControlEvent (int64_t frames, uint32_t type, const uint8_t* data,
+                             uint32_t size, size_t limit) noexcept
+    {
+        auto& buf = controlInBuffer();
+        auto* seq = reinterpret_cast<LV2_Atom_Sequence*> (buf.data());
+        const uint32_t padded = lv2_atom_pad_size ((uint32_t) sizeof (LV2_Atom_Event) + size);
+        const uint32_t used   = (uint32_t) sizeof (LV2_Atom) + seq->atom.size;
+        if (used + padded > limit) return;
+        auto* ev = reinterpret_cast<LV2_Atom_Event*> (buf.data() + used);
+        ev->time.frames = frames;
+        ev->body.size   = size;
+        ev->body.type   = type;
+        std::memcpy (ev + 1, data, size);
+        seq->atom.size += padded;
+    }
+
+    struct DeliveredAtoms { bool changesState = false, requestsValues = false; };
+
+    // The queued host and editor atoms open the block at frame 0, leaving
+    // `reserved` bytes of the buffer free.
+    DeliveredAtoms appendQueuedAtoms (size_t reserved) noexcept
+    {
+        DeliveredAtoms delivered;
+        const size_t limit = controlInBuffer().size() - reserved;
+        atomRing.drain ([&] (const AtomBlob& blob)
+        {
+            // blob is a full atom (header + body); re-emit as header + payload.
+            const auto* atom = reinterpret_cast<const LV2_Atom*> (blob.data);
+            delivered.changesState = delivered.changesState || blob.changesState;
+            delivered.requestsValues = delivered.requestsValues
+                || (atom->type == uridObject
+                    && reinterpret_cast<const LV2_Atom_Object*> (atom)->body.otype == uridPatchGet);
+            appendControlEvent (0, atom->type, blob.data + sizeof (LV2_Atom), atom->size, limit);
+        });
+        return delivered;
+    }
+
+    // Re-advertise output-atom capacity before every run(): the plugin overwrites
+    // atom->size with the bytes it wrote last block, so without this the buffer
+    // reads as monotonically shrinking (never-recovering) capacity. Output atom
+    // buffers follow the input ones in atomBuffers (inputs connected first).
+    void readyAtomOutputs() noexcept
+    {
+        for (size_t i = atomInPorts.size(); i < atomBuffers.size(); ++i)
+        {
+            auto* atom = reinterpret_cast<LV2_Atom*> (atomBuffers[i].data());
+            atom->type = atomChunkType;
+            atom->size = (uint32_t) (atomBuffers[i].size() - sizeof (LV2_Atom));
+        }
+    }
+
+    // After run(): stage the float properties the plug-in reports (its own UI,
+    // a preset it loaded) for the message-thread read-back, and say whether it
+    // announced a state change the host cannot otherwise see.
+    bool collectPluginMessages (bool answeringRequest) noexcept
+    {
+        if (controlAtomOutPos < 0) return false;
+        const auto& buf = atomBuffers[atomInPorts.size() + (size_t) controlAtomOutPos];
+        const auto* seq = reinterpret_cast<const LV2_Atom_Sequence*> (buf.data());
+        if (seq->atom.type != uridSequence) return false;
+        bool stateChanged = false;
+        LV2_ATOM_SEQUENCE_FOREACH (seq, ev)
+        {
+            if (ev->body.type != uridObject) continue;
+            const auto* obj = reinterpret_cast<const LV2_Atom_Object*> (&ev->body);
+            if (obj->body.otype == uridStateChanged)
+                stateChanged = true;
+            else
+                queuePatchObject (obj, answeringRequest);
+        }
+        return stateChanged;
     }
 
     // Last host/UI-written value per patch property (message thread) - the
@@ -669,6 +805,7 @@ bool Lv2Instance::create (const Lv2Bundle& bundle, const std::string& uri, std::
     impl->otherPorts.clear();
     impl->portIndexBySymbol.clear();
     impl->controlRestoreInfo.assign ((size_t) numPorts, {});
+    impl->inputControlPorts.assign ((size_t) numPorts, 0);
     impl->uiShadow.clear();
     impl->uiDirty.clear();
     impl->latencyPortIndex = -1;
@@ -683,7 +820,10 @@ bool Lv2Instance::create (const Lv2Bundle& bundle, const std::string& uri, std::
         if (lilv_port_is_a (impl->plugin, port, audioClass))
             (isInput ? impl->audioInPorts : impl->audioOutPorts).push_back (i);
         else if (lilv_port_is_a (impl->plugin, port, controlClass))
+        {
             impl->controlPorts.push_back (i);
+            impl->inputControlPorts[(size_t) i] = isInput ? 1 : 0;
+        }
         else if (lilv_port_is_a (impl->plugin, port, atomClass))
         {
             if (isInput && lilv_port_supports_event (impl->plugin, port, timePosition))
@@ -863,10 +1003,12 @@ bool Lv2Instance::create (const Lv2Bundle& bundle, const std::string& uri, std::
         impl->patchPropertyUrids.insert (param.id & ~Impl::kPatchIdFlag);
         ++patchPropertyCount;
     }
-    impl->patchOutRing.configure (patchPropertyCount);
+    impl->patchOutRing.configure (patchPropertyCount == 0
+        ? 0 : std::max (Impl::kPatchFeedbackBurst, patchPropertyCount * 2));
     impl->patchFeedbackOverflows.store (0, std::memory_order_relaxed);
     impl->patchGetQueueFailures.store (0, std::memory_order_relaxed);
     impl->patchRefreshPending.store (false, std::memory_order_relaxed);
+    impl->changeFeedbackDropped.store (false, std::memory_order_relaxed);
 
     // Which atom input takes injected patch events: the lv2:control-designated
     // one, else the first.
@@ -1085,7 +1227,8 @@ bool Lv2Instance::reactivate (double sampleRate, int maxBlockFrames, std::string
         // from the persisted session. Its file paths already describe the
         // active cur/ generation, so do not require byte equality with the
         // older session blob stored there.
-        if (! loadStateInternal (blob, false))
+        bool restoreRan = false;
+        if (! loadStateInternal (blob, false, restoreRan))
         {
             errorOut = "LV2 state restore failed after reactivation";
             return false;
@@ -1140,20 +1283,9 @@ void Lv2Instance::processBlock (const hosting::PortBuffers& io) noexcept
         lilv_instance_connect_port (impl->instance, impl->audioOutPorts[(size_t) c], io.mainOut[c]);
 
     // Drain the UI's staged control-port writes (single consumer - this thread).
-    impl->writeRing.drain ([this] (const Impl::PortWrite& pw)
-    {
-        if ((size_t) pw.idx < impl->portValues.size())
-            impl->portValues[(size_t) pw.idx] = pw.value;
-    });
+    impl->applyQueuedPortWrites();
 
-    for (size_t input = 0; input < impl->atomInPorts.size(); ++input)
-    {
-        auto* sequence = reinterpret_cast<LV2_Atom_Sequence*> (impl->atomBuffers[input].data());
-        sequence->atom.type = impl->uridSequence;
-        sequence->atom.size = sizeof (LV2_Atom_Sequence_Body);
-        sequence->body.unit = 0;
-        sequence->body.pad = 0;
-    }
+    impl->resetAtomInputs();
     if (io.transport != nullptr && ! impl->timeAtomInPositions.empty())
     {
         alignas (8) std::array<uint8_t, 512> eventData {};
@@ -1171,9 +1303,10 @@ void Lv2Instance::processBlock (const hosting::PortBuffers& io) noexcept
     }
 
     // Frame-zero transport and patch objects precede MIDI at its sample offsets.
+    Impl::DeliveredAtoms delivered;
     if (! impl->atomInPorts.empty())
     {
-        auto& buf = impl->atomBuffers[(size_t) impl->controlAtomInPos];
+        auto& buf = impl->controlInBuffer();
         auto* seq = reinterpret_cast<LV2_Atom_Sequence*> (buf.data());
         const auto midiEventBytes = [] (const uint8_t*, int numBytes) -> size_t
         {
@@ -1182,71 +1315,28 @@ void Lv2Instance::processBlock (const hosting::PortBuffers& io) noexcept
                        : 0;
         };
         const size_t resetBytes = (size_t) midi::kTransportStopResetMessageCount * midiEventBytes (nullptr, 3);
-        auto appendEvent = [&] (int64_t frames, uint32_t type,
-                                const uint8_t* data, uint32_t size, size_t limit)
-        {
-            const uint32_t evSize = (uint32_t) sizeof (LV2_Atom_Event) + size;
-            const uint32_t padded = lv2_atom_pad_size (evSize);
-            const uint32_t used   = (uint32_t) sizeof (LV2_Atom) + seq->atom.size;
-            if (used + padded > limit) return;   // sequence full - drop
-            auto* ev = reinterpret_cast<LV2_Atom_Event*> (buf.data() + used);
-            ev->time.frames = frames;
-            ev->body.size   = size;
-            ev->body.type   = type;
-            std::memcpy (ev + 1, data, size);
-            seq->atom.size += padded;
-        };
         // UI atoms must not consume the transport reset's capacity.
-        impl->atomRing.drain ([&] (const Impl::AtomBlob& blob)
-        {
-            // blob is a full atom (header + body); re-emit as header + payload.
-            const auto* atom = reinterpret_cast<const LV2_Atom*> (blob.data);
-            appendEvent (0, atom->type,
-                         blob.data + sizeof (LV2_Atom), atom->size, buf.size() - resetBytes);
-        });
+        delivered = impl->appendQueuedAtoms (resetBytes);
         if (io.midiIn != nullptr)
             hosting::deliverWithinRoom (
                 *io.midiIn, buf.size() - sizeof (LV2_Atom) - seq->atom.size, midiEventBytes,
                 [&] (const uint8_t* data, int numBytes, int samplePosition)
                 {
-                    appendEvent ((int64_t) samplePosition, impl->uridMidiEvent,
-                                 data, (uint32_t) numBytes, buf.size());
+                    impl->appendControlEvent ((int64_t) samplePosition, impl->uridMidiEvent,
+                                              data, (uint32_t) numBytes, buf.size());
                 });
     }
 
-    // Re-advertise output-atom capacity before every run(): the plugin overwrites
-    // atom->size with the bytes it wrote last block, so without this the buffer
-    // reads as monotonically shrinking (never-recovering) capacity. Output atom
-    // buffers follow the input ones in atomBuffers (inputs connected first).
-    for (size_t i = impl->atomInPorts.size(); i < impl->atomBuffers.size(); ++i)
-    {
-        auto* atom = reinterpret_cast<LV2_Atom*> (impl->atomBuffers[i].data());
-        atom->type = impl->atomChunkType;
-        atom->size = (uint32_t) (impl->atomBuffers[i].size() - sizeof (LV2_Atom));
-    }
+    impl->readyAtomOutputs();
 
     impl->worker.beginRun();
     lilv_instance_run (impl->instance, (uint32_t) numFrames);
     impl->worker.finishRun (io.offlineRender, io.renderCancelled);
 
-    // The plugin's outgoing patch responses (its own UI / preset loads) keep
-    // the read-back shadow honest - parse the control atom output and stage
-    // the float properties for the message-thread drain.
-    if (impl->controlAtomOutPos >= 0)
-    {
-        const auto& buf = impl->atomBuffers[impl->atomInPorts.size()
-                                            + (size_t) impl->controlAtomOutPos];
-        const auto* seq = reinterpret_cast<const LV2_Atom_Sequence*> (buf.data());
-        if (seq->atom.type == impl->uridSequence)
-        {
-            LV2_ATOM_SEQUENCE_FOREACH (seq, ev)
-            {
-                if (ev->body.type == impl->uridObject)
-                    impl->queuePatchObject (
-                        reinterpret_cast<const LV2_Atom_Object*> (&ev->body));
-            }
-        }
-    }
+    // A queued edit counts again once run() has taken it, so a capture taken in
+    // between does not leave it clean.
+    if (impl->collectPluginMessages (delivered.requestsValues) || delivered.changesState)
+        impl->markStateChanged();
 
     if (impl->latencyPortIndex >= 0)
         impl->latencySamples.store ((int) impl->portValues[(size_t) impl->latencyPortIndex],
@@ -1381,11 +1471,20 @@ bool Lv2Instance::saveState (std::vector<uint8_t>& out) const
 
 bool Lv2Instance::loadState (const std::vector<uint8_t>& in)
 {
-    return loadStateInternal (in, true);
+    bool restoreRan = false;
+    const bool accepted = loadStateInternal (in, true, restoreRan);
+    // Even a rejected state may have reached the plug-in part way.
+    if (restoreRan)
+        impl->markStateChanged();
+    // The plug-in's answer brings the patch read-back up to the restored values,
+    // and arrives marked as a report rather than a change.
+    if (accepted)
+        requestPatchParameterValuesForUi();
+    return accepted;
 }
 
 bool Lv2Instance::loadStateInternal (const std::vector<uint8_t>& in,
-                                     bool recoverFileGeneration)
+                                     bool recoverFileGeneration, bool& restoreRan)
 {
     if (impl->instance == nullptr || impl->world == nullptr || in.empty())
         return false;
@@ -1501,6 +1600,7 @@ bool Lv2Instance::loadStateInternal (const std::vector<uint8_t>& in,
         lilv_state_restore (state, impl->instance, &Impl::setPortValue, impl.get(),
                             0, feats.data());
     }
+    restoreRan = true;
     lilv_state_free (state);
     return ! impl->stateRestoreFailed;
 }
@@ -1517,16 +1617,23 @@ void Lv2Instance::stopHelperThreads() noexcept { impl->worker.stop(); }
 
 void Lv2Instance::setControlPortValue (uint32_t portIndex, float value) noexcept
 {
-    if ((size_t) portIndex >= impl->uiShadow.size()) return;
+    const auto idx = (size_t) portIndex;
+    if (idx >= impl->uiShadow.size() || idx >= impl->portValues.size()
+        || idx >= impl->inputControlPorts.size() || impl->inputControlPorts[idx] == 0)
+        return;
+    // The value a capture reads now; a UI echoing it back changes nothing.
+    const float captured = impl->uiDirty[idx] != 0 ? impl->uiShadow[idx] : impl->portValues[idx];
     // Shadow first: saves/reactivate read the latest UI value from here even when
     // the audio thread never drains the ring (bypassed slot), and a ring overflow
     // can only delay the RT application, never lose the value for persistence.
-    impl->uiShadow[(size_t) portIndex] = value;
-    impl->uiDirty [(size_t) portIndex] = 1;
+    impl->uiShadow[idx] = value;
+    impl->uiDirty [idx] = 1;
 
     // Stage into the SPSC ring - the audio thread owns portValues (run() reads
     // it concurrently) and applies these at the top of its next processBlock.
     impl->writeRing.push ({ portIndex, value });   // full => drop (pathological flood only)
+    if (! sameValue (captured, value))
+        impl->markStateChanged();
 }
 
 void Lv2Instance::setControlPortValueFromUi (uint32_t portIndex, float value) noexcept
@@ -1584,18 +1691,32 @@ void Lv2Instance::setParamValue (uint32_t paramId, double value) noexcept
     const LV2_URID propUrid = paramId & ~Impl::kPatchIdFlag;
     Impl::AtomBlob blob;
     blob.size = impl->forgePatchSet (propUrid, v, blob.data, sizeof (blob.data));
-
-    impl->patchShadow[propUrid] = v;
-    if (blob.size != 0)
-        impl->atomRing.push (blob);   // full => drop (pathological flood only)
+    auto& known = impl->patchShadow[propUrid];
+    blob.changesState = ! sameValue (known, v);
+    // A dropped write never reaches the plug-in, so the read-back keeps its value.
+    if (blob.size == 0 || ! impl->atomRing.push (blob))   // full => drop (pathological flood only)
+        return;
+    known = v;
+    if (blob.changesState)
+        impl->markStateChanged();
 }
 
 void Lv2Instance::drainPatchFeedback()
 {
-    impl->patchOutRing.drain ([this] (const Impl::PatchFeedback& f)
+    bool changed = false;
+    impl->patchOutRing.drain ([this, &changed] (const Impl::PatchFeedback& f)
     {
-        impl->patchShadow[f.prop] = f.value;
+        auto& known = impl->patchShadow[f.prop];
+        if (! f.answersRequest && ! sameValue (known, f.value))
+            changed = true;
+        known = f.value;
     });
+
+    // A dropped change may be one the refresh below would only report.
+    if (impl->changeFeedbackDropped.exchange (false, std::memory_order_acq_rel))
+        changed = true;
+    if (changed)
+        impl->markStateChanged();
 
     const auto overflows = impl->patchFeedbackOverflows.exchange (
         0, std::memory_order_acq_rel);
@@ -1678,10 +1799,14 @@ void Lv2Instance::forwardUiAtomEvent (const void* atomData, uint32_t sizeBytes) 
     const auto* atom = static_cast<const LV2_Atom*> (atomData);
     if (sizeof (LV2_Atom) + atom->size != sizeBytes) return;
 
-    // patch:Set -> stamp MIDI Learn's last-touched + the read-back shadow.
+    // patch:Set -> stamp MIDI Learn's last-touched + the read-back shadow. Any
+    // patch edit counts as a state change, except a float the shadow already
+    // holds; requests and the editor's own messages do not.
+    bool changesState = false;
     if (atom->type == impl->uridObject)
     {
         const auto* obj = reinterpret_cast<const LV2_Atom_Object*> (atom);
+        changesState = impl->isPatchEdit (obj->body.otype);
         if (obj->body.otype == impl->uridPatchSet)
         {
             const LV2_Atom* propAtom = nullptr;
@@ -1695,11 +1820,19 @@ void Lv2Instance::forwardUiAtomEvent (const void* atomData, uint32_t sizeBytes) 
                 if (idx >= 0)
                     impl->lastTouchedParam.store ((int64_t) idx, std::memory_order_relaxed);
                 if (valAtom != nullptr && valAtom->type == impl->uridFloat)
-                    impl->patchShadow[prop] =
-                        reinterpret_cast<const LV2_Atom_Float*> (valAtom)->body;
+                {
+                    const float value = reinterpret_cast<const LV2_Atom_Float*> (valAtom)->body;
+                    const auto known = impl->patchShadow.find (prop);
+                    changesState = known == impl->patchShadow.end() || ! sameValue (known->second, value);
+                    impl->patchShadow[prop] = value;
+                }
             }
         }
     }
+    // Counted whether or not it fits the ring: a dropped atom has reached the
+    // plug-in through instance access.
+    if (changesState)
+        impl->markStateChanged();
 
     // Forward onto the control atom port so the DSP hears the event without
     // relying on the instance-access shortcut. Oversized atoms are dropped -
@@ -1709,8 +1842,44 @@ void Lv2Instance::forwardUiAtomEvent (const void* atomData, uint32_t sizeBytes) 
         Impl::AtomBlob blob;
         std::memcpy (blob.data, atomData, sizeBytes);
         blob.size = sizeBytes;
+        blob.changesState = changesState;
         impl->atomRing.push (blob);
     }
+}
+
+std::uint64_t Lv2Instance::stateRevision() const noexcept
+{
+    return impl->revision.load (std::memory_order_acquire);
+}
+
+bool Lv2Instance::flushPendingWrites()
+{
+    auto& d = *impl;
+    // Queued atoms stay for the next instance; port writes need no run(), as a
+    // capture reads them from the shadow.
+    if (d.instance == nullptr || ! d.active)
+        return d.atomRing.empty();
+    d.applyQueuedPortWrites();
+    if (! d.atomRing.empty() && ! d.atomInPorts.empty())
+    {
+        // LV2 core allows run (0): the plug-in only updates its control outputs
+        // and must not crash. Its audio ports still point at the last block's
+        // buffers, so give it our own scratch instead.
+        for (const auto idx : d.audioInPorts)
+            lilv_instance_connect_port (d.instance, idx, d.audioSilence.data());
+        for (const auto idx : d.audioOutPorts)
+            lilv_instance_connect_port (d.instance, idx, d.audioSink.data());
+        d.resetAtomInputs();
+        const auto delivered = d.appendQueuedAtoms (0);
+        d.readyAtomOutputs();
+        d.worker.beginRun();
+        lilv_instance_run (d.instance, 0);
+        d.worker.finishRun (false);
+        if (d.collectPluginMessages (delivered.requestsValues) || delivered.changesState)
+            d.markStateChanged();
+    }
+    drainPatchFeedback();
+    return true;
 }
 
 int Lv2Instance::portIndexForSymbol (const char* symbol) const noexcept

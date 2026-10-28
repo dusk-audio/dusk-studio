@@ -57,6 +57,12 @@ public:
     // identity generation. Formats without change notifications return zero.
     virtual std::uint64_t stateRevision() const noexcept { return 0; }
 
+    // Message thread, with no processBlock in flight: the engine's process gate
+    // is held, or the instance is not yet published. Delivers the writes still
+    // queued for the audio thread, so the plug-in state a following saveState
+    // captures includes them. False when some stay queued.
+    virtual bool flushPendingWrites() { return true; }
+
     // Plugin-reported processing latency in samples at the active config; 0 until
     // activate(). Fed into the engine's plugin-delay-compensation aggregator.
     virtual int getLatencySamples() const noexcept = 0;

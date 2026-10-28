@@ -46,6 +46,13 @@ public:
         return n;
     }
 
+    // Consumer side: nothing is queued.
+    bool empty() const noexcept
+    {
+        return readIdx.load (std::memory_order_relaxed)
+            == writeIdx.load (std::memory_order_acquire);
+    }
+
     // Consumer side: discard everything queued so far (e.g. entries aimed at a
     // plugin that was just replaced). Items the producer pushes concurrently
     // may survive - callers reset again once the swap is fully published.

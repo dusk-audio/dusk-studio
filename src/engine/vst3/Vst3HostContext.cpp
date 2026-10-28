@@ -30,6 +30,7 @@ int hostObjectsDestroyed = 0;
 // plug-frame facets and keeps no fd or timer registry.
 class HostObject final : public Vst::HostApplication,
                          public Vst::IComponentHandler,
+                         public Vst::IComponentHandler2,
                          public IPlugFrame
 #if defined(__linux__)
                        , public Linux::IRunLoop
@@ -54,6 +55,7 @@ public:
     tresult PLUGIN_API queryInterface (const TUID iid, void** obj) override
     {
         QUERY_INTERFACE (iid, obj, Vst::IComponentHandler::iid, Vst::IComponentHandler)
+        QUERY_INTERFACE (iid, obj, Vst::IComponentHandler2::iid, Vst::IComponentHandler2)
         QUERY_INTERFACE (iid, obj, IPlugFrame::iid, IPlugFrame)
 #if defined(__linux__)
         QUERY_INTERFACE (iid, obj, Linux::IRunLoop::iid, Linux::IRunLoop)
@@ -92,6 +94,17 @@ public:
         if (callbacks != nullptr) callbacks->onRestartComponent ((int32_t) flags);
         return kResultOk;
     }
+
+    // IComponentHandler2. Group edits only bracket edits the handler already
+    // takes one at a time, and no editor opens on a plug-in's request.
+    tresult PLUGIN_API setDirty (TBool state) override
+    {
+        if (state && callbacks != nullptr) callbacks->onSetDirty();
+        return kResultOk;
+    }
+    tresult PLUGIN_API requestOpenEditor (FIDString) override { return kResultFalse; }
+    tresult PLUGIN_API startGroupEdit() override { return kResultOk; }
+    tresult PLUGIN_API finishGroupEdit() override { return kResultOk; }
 
     // IPlugFrame (editor asks the host to resize its window)
     tresult PLUGIN_API resizeView (IPlugView* /*view*/, ViewRect* newSize) override
