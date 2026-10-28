@@ -106,6 +106,10 @@ canonical source.
 - **Linux installer.** The installed launcher works from install paths that
   contain quotes, dollar signs, percent signs or backslashes. A path holding
   both an equals sign and a percent sign is refused.
+- **File drops from GNOME Files.** Audio and MIDI files dragged from GNOME
+  Files onto the tape strip land there instead of being refused. GNOME hands
+  these drags to Dusk Studio with a newer drag-and-drop protocol version than
+  it accepted.
 
 ## [0.16.0] - 2026-10-24
 
