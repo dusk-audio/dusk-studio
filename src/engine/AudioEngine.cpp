@@ -7559,23 +7559,20 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         const bool soloed  = params.solo.load (std::memory_order_relaxed);
         const bool passes  = ! muted && (anyBusSolo ? soloed : true);
 
-        if (! passes) continue;
+        if (! passes)
+        {
+            busStrips[(size_t) a].discardPendingDrain();
+            continue;
+        }
 
-        // Skip aux DSP entirely when the bus buffer is silent - no channel
-        // routed to it AND no smoothing tail from a recently-unassigned
-        // channel. UniversalCompressor (Bus mode) is one of the heaviest
-        // per-block ops in the engine; skipping the whole EQ + comp pass on
-        // an idle aux is a big saving when only 1-2 of the 4 buses are in
-        // use. Aux's own fader/pan smoothers don't tick during the skip,
-        // but they pick up correctly from their last-known current value
-        // when audio resumes, so no click on re-engage.
+        // Let held DSP output drain before sleeping an input-silent subgroup.
         {
             const auto rngL = findSignedMinMax (busL[(size_t) a].data(), numSamples);
             const auto rngR = findSignedMinMax (busR[(size_t) a].data(), numSamples);
             const float peak = std::max (
                 std::max (std::abs (rngL.min), std::abs (rngL.max)),
                 std::max (std::abs (rngR.min), std::abs (rngR.max)));
-            if (peak <= 1e-6f)
+            if (peak <= 1e-6f && ! busStrips[(size_t) a].hasPendingDrain())
             {
                 // Bus pass is being skipped (no audio routed). Reset the
                 // post-bus meter to silence so the UI doesn't keep showing
@@ -7586,6 +7583,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                 params.meterPostBusRDb.store (-100.0f, std::memory_order_relaxed);
                 params.meterPostBusRmsL.store (0.0f, std::memory_order_relaxed);
                 params.meterPostBusRmsR.store (0.0f, std::memory_order_relaxed);
+                params.meterGrDb.store (0.0f, std::memory_order_relaxed);
                 continue;
             }
         }
@@ -7806,7 +7804,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         // the skip engages on the next silent-input block.
         if (laneHasPlugin && ! laneHasHardware)
         {
-            if (lanePeak (a) <= 1e-6f)
+            if (std::max (lanePeak (a), auxLaneStrips[(size_t) a].getPreReturnPeak()) <= 1e-6f)
                 auxSilentRunSamples[(size_t) a] += numSamples;
             else
                 auxSilentRunSamples[(size_t) a] = 0;

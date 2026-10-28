@@ -305,6 +305,103 @@ ScenarioResult busHpfCornerAndSlope (ScenarioContext& ctx)
     return ctx.verdict();
 }
 
+ScenarioResult busDrainsAfterInputStops (ScenarioContext& ctx)
+{
+    liveInput (ctx, Track::Mode::Stereo);
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    auto& strip = session.track (kTrack).strip;
+    ctx.keep (strip.busAssign[1]);
+    ctx.keep (strip.mute);
+    strip.mute.store (false);
+    for (int bus = 0; bus < 2; ++bus)
+    {
+        auto& params = session.bus (bus).strip;
+        ctx.keep (params.eqEnabled);
+        ctx.keep (params.compEnabled);
+        ctx.keep (params.mute);
+        ctx.keep (params.faderDb);
+        ctx.keep (params.pan);
+        params.eqEnabled.store (false);
+        params.compEnabled.store (false);
+        params.mute.store (false);
+        params.faderDb.store (0.0f);
+        params.pan.store (0.0f);
+        strip.busAssign[(std::size_t) bus].store (true);
+    }
+    ctx.cleanup ([&engine]
+    {
+        for (int bus = 0; bus < 2; ++bus) engine.setBusStemCapture (bus, nullptr, nullptr);
+        engine.prepareForSelfTest (ScenarioContext::kSampleRate, kFrames);
+    });
+    engine.prepareForSelfTest (ScenarioContext::kSampleRate, kFrames);
+    engine.getChannelStrip (kTrack).prepare (ScenarioContext::kSampleRate, kFrames, 1);
+    engine.getBusStrip (0).prepare (ScenarioContext::kSampleRate, kFrames, 4);
+    engine.getBusStrip (1).prepare (ScenarioContext::kSampleRate, kFrames, 1);
+
+    BusParams referenceParams;
+    BusStrip reference;
+    reference.bind (referenceParams);
+    reference.prepare (ScenarioContext::kSampleRate, kFrames, 4);
+    std::array<float, kFrames> input {}, outL {}, outR {};
+    std::array<std::array<float, kFrames>, 2> busL {}, busR {};
+    const float* inputs[] { input.data(), input.data() };
+    float* outputs[] { outL.data(), outR.data() };
+    for (int bus = 0; bus < 2; ++bus)
+        engine.setBusStemCapture (bus, busL[(std::size_t) bus].data(), busR[(std::size_t) bus].data());
+    float error = 0.0f, expectedTail = 0.0f, actualTail = 0.0f, mutedInputPeak = 0.0f;
+    for (int block = 0; block < 100; ++block)
+    {
+        if (block == 61 || block == 81) strip.mute.store (true);
+        if (block == 80) strip.mute.store (false);
+        if (block == 81)
+        {
+            session.bus (0).strip.mute.store (true);
+            reference.prepare (ScenarioContext::kSampleRate, kFrames, 4);
+        }
+        if (block == 82) session.bus (0).strip.mute.store (false);
+        input.fill (0.0f);
+        if (block < 60) input.fill (0.01f);
+        if (block == 60 || block == 80) input.back() = 0.5f;
+        for (auto& channel : busL) channel.fill (0.0f);
+        for (auto& channel : busR) channel.fill (0.0f);
+        engine.audioDeviceIOCallback (inputs, 2, outputs, 2, kFrames, {});
+        if (strip.mute.load())
+            for (int sample = 0; sample < kFrames; ++sample)
+            {
+                const auto i = (std::size_t) sample;
+                mutedInputPeak = std::max (mutedInputPeak, std::abs (busL[1][i]));
+                mutedInputPeak = std::max (mutedInputPeak, std::abs (busR[1][i]));
+            }
+        if (block == 81)
+        {
+            busL[1].fill (0.0f);
+            busR[1].fill (0.0f);
+        }
+        else
+            reference.processInPlace (busL[1].data(), busR[1].data(), kFrames);
+        if (block < 60) continue;
+        for (int sample = 0; sample < kFrames; ++sample)
+        {
+            const auto i = (std::size_t) sample;
+            error = std::max (error, std::abs (busL[0][i] - busL[1][i]));
+            error = std::max (error, std::abs (busR[0][i] - busR[1][i]));
+            if (block > 60 && block < 80)
+            {
+                expectedTail = std::max (expectedTail, std::abs (busL[1][i]));
+                actualTail = std::max (actualTail, std::abs (busL[0][i]));
+            }
+        }
+    }
+    ctx.note ("bus delayed tail " + std::to_string (actualTail) + " vs "
+              + std::to_string (expectedTail) + ", reference error " + std::to_string (error)
+              + ", muted source peak " + std::to_string (mutedInputPeak));
+    ctx.expect (mutedInputPeak < 1.0e-9f, "the source track mute did not silence the bus input");
+    ctx.expect (expectedTail > 0.1f, "the bus drain reference did not contain the delayed impulse");
+    ctx.expect (error < 1.0e-5f, "the bus dropped delayed output or retained it across mute");
+    return ctx.verdict();
+}
+
 // ---------------------------------------------------------------- sends
 
 // A send is post-fader by default, so pulling the fader down takes it away;
@@ -637,6 +734,82 @@ ScenarioResult auxReverbTailOutlivesTheSend (ScenarioContext& ctx)
     return ctx.verdict();
 }
 
+ScenarioResult auxCueTailOutlivesReturnGate (ScenarioContext& ctx)
+{
+    liveInput (ctx, Track::Mode::Mono);
+    auto& engine = ctx.engine();
+    auto& strip = ctx.session().track (kTrack).strip;
+    auto& lane = engine.getAuxLaneStrip (0);
+    auto& params = ctx.session().auxLane (0).params;
+    ctx.keep (lane.insertMode[0]);
+    ctx.keep (params.mute);
+    ctx.keep (params.returnLevelDb);
+    ctx.keep (params.outputPair);
+    ctx.cleanup ([&lane] { lane.unloadBuiltin (0); });
+    strip.auxSendDb[0].store (0.0f);
+    strip.auxSendPreFader[0].store (true);
+    strip.auxSendsBypassed.store (false);
+    strip.faderDb.store (ChannelStripParams::kFaderMinDb);
+    params.outputPair.store (2004);
+    std::string error;
+    if (! ctx.expect (lane.loadBuiltin (0, "dusk.builtin.reverb", error), "could not load the cue reverb: " + error))
+        return ctx.verdict();
+    lane.insertMode[0].store (AuxLaneStrip::kInsertPlugin);
+    auto& slot = lane.getBuiltinSlot (0);
+    int mixIndex = -1, decayIndex = -1;
+    for (int index = 0; index < slot.paramCount(); ++index)
+        if (const auto* info = slot.paramInfo (index))
+        {
+            if (std::string (info->id) == "mix") mixIndex = index;
+            if (std::string (info->id) == "decay") decayIndex = index;
+        }
+    if (! ctx.expect (mixIndex >= 0 && decayIndex >= 0, "the cue reverb did not expose mix and decay controls"))
+        return ctx.verdict();
+
+    std::array<float, kFrames> input {};
+    std::array<std::array<float, kFrames>, 4> physical {};
+    const float* inputs[] { input.data() };
+    float* outputs[] { physical[0].data(), physical[1].data(), physical[2].data(), physical[3].data() };
+    for (bool muted : { true, false })
+    {
+        params.mute.store (muted);
+        params.returnLevelDb.store (muted ? 0.0f : ChannelStripParams::kFaderMinDb);
+        engine.prepareForSelfTest (ScenarioContext::kSampleRate, kFrames);
+        slot.setParamValue (mixIndex, slot.paramInfo (mixIndex)->maxValue);
+        slot.setParamValue (decayIndex, 8.0f);
+        double phase = 0.0;
+        const double step = kTwoPi * 1000.0 / ScenarioContext::kSampleRate;
+        for (int block = 0; block < 40; ++block)
+        {
+            for (auto& sample : input)
+            {
+                sample = 0.25f * (float) std::sin (phase);
+                phase = std::fmod (phase + step, kTwoPi);
+            }
+            engine.audioDeviceIOCallback (inputs, 1, outputs, 4, kFrames, {});
+        }
+        input.fill (0.0f);
+        float lateCue = 0.0f, lateMaster = 0.0f;
+        for (int block = 0; block < 600; ++block)
+        {
+            engine.audioDeviceIOCallback (inputs, 1, outputs, 4, kFrames, {});
+            if (block < 480) continue;
+            for (int sample = 0; sample < kFrames; ++sample)
+            {
+                const auto i = (std::size_t) sample;
+                lateCue = std::max ({ lateCue, std::abs (physical[2][i]), std::abs (physical[3][i]) });
+                lateMaster = std::max ({ lateMaster, std::abs (physical[0][i]), std::abs (physical[1][i]) });
+            }
+        }
+        ctx.note (std::string (muted ? "muted return" : "return fader at floor")
+                  + ": cue peak after 2.56 seconds " + std::to_string (lateCue)
+                  + ", master peak " + std::to_string (lateMaster));
+        ctx.expect (lateCue > 1.0e-5f, "the cue tail stopped while the master return was closed");
+        ctx.expect (lateMaster < 1.0e-6f, "the closed aux return leaked into the master");
+    }
+    return ctx.verdict();
+}
+
 std::optional<ScenarioResult> run (ScenarioResult (*body) (ScenarioContext&), ScenarioContext& ctx)
 {
     return body (ctx);
@@ -720,6 +893,9 @@ const ScenarioRegistrar busEqRegistrar { Scenario {
 const ScenarioRegistrar busHpfRegistrar { Scenario {
     "bus.hpf_corner_and_slope", { "bus", "dsp" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (busHpfCornerAndSlope, ctx); } } };
+const ScenarioRegistrar busDrainRegistrar { Scenario {
+    "bus.drains_after_input_stops", { "bus", "dsp" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (busDrainsAfterInputStops, ctx); } } };
 const ScenarioRegistrar sendsRegistrar { Scenario {
     "strip.sends_pre_post_and_bypass", { "strip", "aux", "dsp" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (sendsPrePostAndBypass, ctx); } } };
@@ -732,6 +908,9 @@ const ScenarioRegistrar insertBypassRegistrar { Scenario {
 const ScenarioRegistrar auxTailRegistrar { Scenario {
     "aux.reverb_tail_outlives_the_send", { "aux", "insert", "dsp" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (auxReverbTailOutlivesTheSend, ctx); } } };
+const ScenarioRegistrar auxCueTailRegistrar { Scenario {
+    "aux.cue_tail_outlives_return_gate", { "aux", "cue", "insert", "dsp" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (auxCueTailOutlivesReturnGate, ctx); } } };
 const ScenarioRegistrar vcaRegistrar { Scenario {
     "strip.vca_sidechain_ignores_bass", { "strip", "comp", "dsp" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (vcaSidechainIgnoresBass, ctx); } } };
