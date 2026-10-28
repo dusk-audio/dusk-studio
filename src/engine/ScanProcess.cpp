@@ -263,10 +263,10 @@ struct ScanProcess::Impl
             ~AttributeCleanup() { ::posix_spawnattr_destroy (&value); }
         } attributeCleanup { attributes };
         sigset_t empty, defaults;
-        ::sigemptyset (&empty);
-        ::sigfillset (&defaults);
-        ::sigdelset (&defaults, SIGKILL);
-        ::sigdelset (&defaults, SIGSTOP);
+        sigemptyset (&empty);
+        sigfillset (&defaults);
+        sigdelset (&defaults, SIGKILL);
+        sigdelset (&defaults, SIGSTOP);
         result = ::posix_spawnattr_setpgroup (&attributes, 0);
         if (result == 0) result = ::posix_spawnattr_setsigmask (&attributes, &empty);
         if (result == 0) result = ::posix_spawnattr_setsigdefault (&attributes, &defaults);
