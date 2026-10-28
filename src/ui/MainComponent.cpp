@@ -1220,7 +1220,7 @@ MainComponent::MainComponent()
     // empty). saveSessionTo / finishLoadingSessionFrom reseed it on Save As /
     // load; an async startup-dialog load just overwrites this blank baseline.
     if (lastSavedSessionJson.isEmpty())
-        lastSavedSessionJson = SessionSerializer::serialize (session);
+        setLastSavedSessionJson (SessionSerializer::serialize (session));
 }
 
 MainComponent::~MainComponent()
@@ -3858,6 +3858,12 @@ static juce::String stripVolatileStateForDirtyCompare (juce::String s)
     return s;
 }
 
+static std::uint32_t dirtyComparisonHash (const juce::String& stripped)
+{
+    return static_cast<std::uint32_t> (
+        juce::DefaultHashFunctions::generateHash (stripped, 0x7fffffff));
+}
+
 bool MainComponent::autosaveIsNewerThan (const juce::File& sessionJson) const
 {
     const auto autosave = getAutosaveFileFor (sessionJson.getParentDirectory());
@@ -3943,12 +3949,12 @@ void MainComponent::writeAutosave()
     // Control snapshots are safe during playback; opaque plug-in state waits for Save.
     engine.publishPluginStateForSave (/*capturePluginState*/ false);
     engine.publishTransportStateForSave();
+    normalizePluginBaselines();
 
     const juce::String json = SessionSerializer::serialize (session);
     // A hash match is only a filter: names such as Aa and BB collide.
     const auto stripped = stripVolatileStateForDirtyCompare (json);
-    const auto strippedHash = (std::uint32_t) (std::uint32_t)
-        juce::DefaultHashFunctions::generateHash (stripped, 0x7fffffff);
+    const auto strippedHash = dirtyComparisonHash (stripped);
     const auto target = getAutosaveFileFor (dir);
     if (toPath (target) != lastWrittenAutosavePath)
         setLastWrittenAutosaveJson ({}, {});
@@ -3959,7 +3965,7 @@ void MainComponent::writeAutosave()
         return;
     }
     if (strippedHash == lastWrittenAutosaveStrippedHash
-        && stripped == stripVolatileStateForDirtyCompare (lastWrittenAutosaveJson)) return;
+        && stripped == stripVolatileStateForDirtyCompare (lastWrittenAutosaveComparisonJson.c_str())) return;
 
     if (! SessionSerializer::writeAtomic (target, json))
     {
@@ -3973,19 +3979,34 @@ void MainComponent::setLastSavedSessionJson (const juce::String& json)
 {
     pluginStateCaptureFailed = false;
     lastSavedSessionJson = json;
+    savedPluginNormalizationBaseline = engine.capturePluginNormalizationBaseline();
     const auto stripped  = stripVolatileStateForDirtyCompare (json);
-    lastSavedSessionStrippedHash = (std::uint32_t) (std::uint32_t)
-        juce::DefaultHashFunctions::generateHash (stripped, 0x7fffffff);
+    lastSavedSessionStrippedHash = dirtyComparisonHash (stripped);
 }
 
 void MainComponent::setLastWrittenAutosaveJson (const juce::String& json,
                                                const std::filesystem::path& path)
 {
     lastWrittenAutosaveJson = json;
+    lastWrittenAutosaveComparisonJson = json.toStdString();
+    autosavePluginNormalizationBaseline = engine.capturePluginNormalizationBaseline();
     lastWrittenAutosavePath = path;
     const auto stripped     = stripVolatileStateForDirtyCompare (json);
-    lastWrittenAutosaveStrippedHash = (std::uint32_t) (std::uint32_t)
-        juce::DefaultHashFunctions::generateHash (stripped, 0x7fffffff);
+    lastWrittenAutosaveStrippedHash = dirtyComparisonHash (stripped);
+}
+
+void MainComponent::normalizePluginBaselines()
+{
+    auto saved = lastSavedSessionJson.toStdString();
+    if (engine.normalizePluginBaseline (savedPluginNormalizationBaseline, saved))
+    {
+        lastSavedSessionJson = saved.c_str();
+        lastSavedSessionStrippedHash = dirtyComparisonHash (
+            stripVolatileStateForDirtyCompare (lastSavedSessionJson));
+    }
+    if (engine.normalizePluginBaseline (autosavePluginNormalizationBaseline, lastWrittenAutosaveComparisonJson))
+        lastWrittenAutosaveStrippedHash = dirtyComparisonHash (
+            stripVolatileStateForDirtyCompare (lastWrittenAutosaveComparisonJson.c_str()));
 }
 
 void MainComponent::timerCallback()
@@ -4033,6 +4054,7 @@ bool MainComponent::currentSessionDirty()
     // falsely read clean. Audio is live here, so no plug-in state capture.
     engine.publishPluginStateForSave (/*capturePluginState*/ false);
     engine.publishTransportStateForSave();
+    normalizePluginBaselines();
 
     if (pluginStateCaptureFailed) return true;
 

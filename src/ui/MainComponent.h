@@ -318,6 +318,9 @@ private:
     bool pluginStateCaptureFailed = false;
     juce::String lastSavedSessionJson;
     juce::String lastWrittenAutosaveJson;
+    std::string lastWrittenAutosaveComparisonJson;
+    AudioEngine::PluginNormalizationBaseline savedPluginNormalizationBaseline;
+    AudioEngine::PluginNormalizationBaseline autosavePluginNormalizationBaseline;
     std::filesystem::path lastWrittenAutosavePath;
     // Hashes filter repeated autosaves; matching hashes still require an exact
     // comparison of JSON with volatile state stripped.
@@ -325,6 +328,7 @@ private:
     std::uint32_t lastWrittenAutosaveStrippedHash { 0 };
     void setLastSavedSessionJson (const juce::String& json);
     void setLastWrittenAutosaveJson (const juce::String& json, const std::filesystem::path& path);
+    void normalizePluginBaselines();
 
     Session session;
     AudioEngine engine { session, appconfig::resolveWorkerCount() };

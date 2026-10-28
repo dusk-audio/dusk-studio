@@ -763,6 +763,16 @@ public:
                                      std::string* error = nullptr);
     void consumePluginStateAfterLoad();
 
+    struct PluginNormalizationBaseline
+    {
+        std::uint64_t epoch = 0;
+        std::size_t sequence = 0;
+        std::array<int, Session::kNumTracks> trackOwners {};
+    };
+    // Message thread; acknowledge only accepted restore identity substitutions.
+    PluginNormalizationBaseline capturePluginNormalizationBaseline() const;
+    bool normalizePluginBaseline (PluginNormalizationBaseline&, std::string& json);
+
     struct PluginLoadFailure
     {
         juce::String location;
@@ -934,6 +944,21 @@ private:
 
     std::vector<PluginLoadFailure> lastPluginLoadFailures;
     void collectDeferredNativeRestoreFailures();
+    enum class NativePluginFormat { Clap, Lv2, Vst3, Au };
+    struct PluginNormalization
+    {
+        int owner = -1;
+        NativePluginFormat format = NativePluginFormat::Clap;
+        std::uint64_t generation = 0;
+        std::string oldLocation, oldPluginId, location, pluginId, state;
+    };
+    std::uint64_t pluginNormalizationEpoch = 1;
+    std::vector<PluginNormalization> pluginNormalizations;
+    int pluginNormalizationTrackOwner (int track) const noexcept;
+    static int pluginNormalizationAuxOwner (int lane, int slot) noexcept;
+    template <typename Visitor>
+    bool visitNativePluginOwner (int owner, NativePluginFormat, Visitor&&);
+    void normalizeAcceptedNativePluginIdentity (int owner, NativePluginFormat);
     PlaybackEngine  playbackEngine  { session };
     PlaybackReadObserver playbackReadObserver = nullptr;
     void* playbackReadContext = nullptr;

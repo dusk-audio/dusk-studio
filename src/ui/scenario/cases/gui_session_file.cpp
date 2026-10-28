@@ -1,6 +1,7 @@
 #include "../GuiScenarioSupport.h"
 #include "../../../foundation/AppConfigDir.h"
 #include "../../../foundation/Fs.h"
+#include "../../../foundation/Json.h"
 #include "../../../engine/audiofile/FileWriter.h"
 #include "../../../engine/audiofile/FileReader.h"
 #include "../../../engine/scenario/cases/OopStubHarness.h"
@@ -2310,18 +2311,17 @@ std::optional<ScenarioResult> runOopCaptureFailureSave (GuiHost& host, ScenarioC
         ctx.expect (state->loaded && slot.isRemote(), "the actual fixture child did not load: " + state->error);
         engine.getChannelStrip (0).insertMode.store (ChannelStrip::kInsertPlugin);
     }, [state] { return state->done; }, "the fixture child did not finish loading" });
-    if (! saveAs)
-        for (int pass = 0; pass < 2; ++pass)
+    for (int pass = 0; pass < (saveAs ? 1 : 2); ++pass)
+    {
+        pushFileMenuSteps (host, ctx, *steps, "Save");
+        steps->push_back ({ 0, [&host, &ctx, &session]
         {
-            pushFileMenuSteps (host, ctx, *steps, "Save");
-            steps->push_back ({ 0, [&host, &ctx, &session]
-            {
-                ctx.expect (host.modalStackEmpty() && host.statusMessage().rfind ("Saved:", 0) == 0,
-                            "a healthy repeated Save failed: " + host.modalText());
-                ctx.expect (session.track (0).pluginStateBase64.isNotEmpty(),
-                            "a healthy child state was not saved");
-            } });
-        }
+            ctx.expect (host.modalStackEmpty() && host.statusMessage().rfind ("Saved:", 0) == 0,
+                        "a healthy repeated Save failed: " + host.modalText());
+            ctx.expect (session.track (0).pluginStateBase64.isNotEmpty(),
+                        "a healthy child state was not saved");
+        } });
+    }
     if (! saveAs)
     {
         steps->push_back ({ 0, [&host, &ctx, &slot, state]
@@ -2453,6 +2453,161 @@ const ScenarioRegistrar oopCaptureFailureSaveAs { Scenario {
     "gui.oop_capture_failure_save_as", { "gui", "session", "save", "ipc", "messages" }, Needs::Engine | Needs::Gui,
     { "crash_state.vst3" }, {}, 60000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runOopCaptureFailureSave (host, ctx, true); }
+} };
+std::optional<ScenarioResult> runDeferredPluginIdentityBaseline (GuiHost& host, ScenarioContext& ctx)
+{
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+    namespace fs = std::filesystem;
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty()
+        || engine.getCurrentSampleRate() <= 0.0)
+        return ScenarioResult::skip ("requires stopped prepared audio and no modal");
+    const auto fixture = ctx.fixture ("multi_bus.clap");
+    if (! fixture) return ScenarioResult::fail ("the CLAP state fixture is unavailable");
+    const auto restore = ctx.tempDir() / "restore.json";
+    const auto originalDir = currentSessionDirectory (session);
+    const double originalRate = engine.getCurrentSampleRate();
+    const int originalBlockSize = engine.getCurrentBlockSize();
+    if (! SessionSerializer::save (session, restore))
+        return ScenarioResult::fail ("could not preserve the initial session");
+    ctx.cleanup ([&host, &engine, &session, originalDir, originalRate, originalBlockSize, restore]
+    {
+        drainModals (host);
+        host.abandonPendingFlows();
+        if (std::abs (engine.getCurrentSampleRate() - originalRate) > 0.5
+            || engine.getCurrentBlockSize() != originalBlockSize)
+            engine.prepareForSelfTest (originalRate, originalBlockSize);
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+    });
+    const auto dir = ctx.tempDir() / "Deferred native restore";
+    fs::create_directories (dir);
+    const auto canonical = dir / "session.json";
+    const auto recovery = dir / "session.json.autosave";
+    auto clean = std::make_unique<Session>();
+    if (! SessionSerializer::save (*clean, canonical) || ! host.openSession (canonical))
+        return ScenarioResult::fail ("could not open the clean session");
+    clean.reset();
+
+    const std::vector<std::uint8_t> state { 'D', 'S', 'K', 'C', 1, 0, 0, 0, 0, 0, 0, 0 };
+    auto& track = session.track (0);
+    auto& lane = session.auxLane (0);
+    auto& strip = engine.getChannelStrip (0);
+    auto& aux = engine.getAuxLaneStrip (0);
+    track.nativeClapPath = fixture->u8string().c_str();
+    track.nativeClapPluginId.clear();
+    track.nativeClapStateBase64 = "RFNLQwEAAAAAAAAA";
+    lane.nativeClapPath[0] = fixture->u8string().c_str();
+    lane.nativeClapPluginId[0].clear();
+    lane.nativeClapStateBase64[0] = "RFNLQwEAAAAAAAAA";
+    strip.setPendingNativeClap (track.nativeClapPath, state);
+    aux.setPendingNativeClap (0, lane.nativeClapPath[0], state);
+    strip.insertMode.store (ChannelStrip::kInsertPlugin);
+    aux.insertMode[0].store (AuxLaneStrip::kInsertPlugin);
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    pushFileMenuSteps (host, ctx, *steps, "Save");
+    steps->push_back ({ 300, [&host, &ctx, &engine, &session, fixture, state, canonical, recovery,
+                             originalRate, originalBlockSize]
+    {
+        ctx.expect (host.modalStackEmpty(), "saving pending state raised '" + host.modalText() + "'");
+        auto saved = std::make_unique<Session>();
+        ctx.expect (SessionSerializer::load (*saved, canonical)
+                        && saved->track (0).nativeClapPath.isNotEmpty()
+                        && saved->track (0).nativeClapPluginId.isEmpty(),
+                    "Save did not establish the pending legacy-identity baseline");
+        auto beforeRestore = engine.capturePluginNormalizationBaseline();
+        const auto legacyBaseline = SessionSerializer::serialize (session).toStdString();
+        const auto move = planBlockMove ({ 0 }, 2);
+        TrackSlotMask followedInputs {};
+        for (int from = 0; from < Session::kNumTracks; ++from)
+            followedInputs[(size_t) from] = move.oldToNew[(size_t) from] != from
+                && session.track (from).inputSource.load (std::memory_order_relaxed) == kInputFollowsTrack;
+        ctx.expect (engine.moveTracks (move), "could not move the pending track");
+        engine.prepareForSelfTest (originalRate, originalBlockSize);
+        ctx.expect (session.track (1).nativeClapPluginId.isNotEmpty()
+                        && session.auxLane (0).nativeClapPluginId[0].isNotEmpty(),
+                    "prepare did not accept the deferred track and aux restores");
+        auto positiveCursor = beforeRestore;
+        auto normalizedBaseline = legacyBaseline;
+        ctx.expect (engine.normalizePluginBaseline (positiveCursor, normalizedBaseline),
+                    "the public baseline helper did not acknowledge the accepted restores");
+        const auto normalized = nlohmann::ordered_json::parse (normalizedBaseline);
+        ctx.expect (normalized["tracks"][0]["native_clap_plugin"] == session.track (1).nativeClapPluginId.toStdString()
+                        && normalized["aux_lanes"][0]["plugin_slots"][0]["native_clap_plugin"]
+                            == session.auxLane (0).nativeClapPluginId[0].toStdString(),
+                    "the public baseline helper patched the wrong owner rows");
+        host.autosaveTick();
+        ctx.expect (fs::exists (recovery), "normalization acknowledged the unsaved track reorder");
+        ctx.expect (engine.moveTracks (invertTrackMove (move), followedInputs), "could not undo the track move");
+        host.autosaveTick();
+        auto residual = nlohmann::ordered_json::array();
+        if (fs::exists (recovery))
+        {
+            const auto current = nlohmann::ordered_json::parse (SessionSerializer::serialize (session).toStdString());
+            for (const auto& difference : nlohmann::ordered_json::diff (normalized, current))
+                if (difference.value ("path", "").find ("/plugin_state") == std::string::npos)
+                    residual.push_back (difference);
+        }
+        ctx.expect (! fs::exists (recovery),
+                    "accepted identity normalization created a spurious recovery file; remaining delta: " + residual.dump());
+        session.track (0).strip.faderDb.store (-12.0f);
+        host.autosaveTick();
+        ctx.expect (fs::exists (recovery) && nearly (savedFaderOf (recovery), -12.0f),
+                    "normalization acknowledged an unrelated fader edit");
+        session.track (0).strip.faderDb.store (saved->track (0).strip.faderDb.load());
+        host.autosaveTick();
+        ctx.expect (! fs::exists (recovery), "undoing the ordinary edit retained normalization-only recovery");
+
+        auto differentStateCursor = beforeRestore;
+        auto differentState = nlohmann::ordered_json::parse (legacyBaseline);
+        differentState["tracks"][0]["native_clap_state"] = "another-owner-state";
+        auto differentJson = differentState.dump (2);
+        engine.normalizePluginBaseline (differentStateCursor, differentJson);
+        const auto stillDifferent = nlohmann::ordered_json::parse (differentJson);
+        ctx.expect (stillDifferent["tracks"][0]["native_clap_plugin"] == ""
+                        && stillDifferent["tracks"][0]["native_clap_state"] == "another-owner-state",
+                    "normalization acknowledged opaque state owned by another baseline");
+
+        auto failedCursor = beforeRestore;
+        auto failedJson = legacyBaseline;
+        auto& restoredStrip = engine.getChannelStrip (0);
+        restoredStrip.markNativeClapRestoreFailed();
+        engine.normalizePluginBaseline (failedCursor, failedJson);
+        ctx.expect (nlohmann::ordered_json::parse (failedJson)["tracks"][0]["native_clap_plugin"] == "",
+                    "normalization acknowledged a failed instance");
+        std::string error;
+        using SessionFile = decltype (session.getSessionDirectory());
+        engine.suspendProcessing();
+        const bool reloaded = restoredStrip.loadNativeClap (SessionFile (fixture->u8string().c_str()), error)
+                           && restoredStrip.getNativeClapSlot().loadState (state);
+        engine.resumeProcessing();
+        ctx.expect (reloaded, "could not replace the accepted instance: " + error);
+        auto replacedCursor = beforeRestore;
+        auto replacedJson = legacyBaseline;
+        engine.normalizePluginBaseline (replacedCursor, replacedJson);
+        ctx.expect (nlohmann::ordered_json::parse (replacedJson)["tracks"][0]["native_clap_plugin"] == "",
+                    "normalization acknowledged a same-identity replacement instance");
+
+        auto priorSessionCursor = beforeRestore;
+        auto priorSessionJson = legacyBaseline;
+        engine.consumePluginStateAfterLoad();
+        ctx.expect (! engine.normalizePluginBaseline (priorSessionCursor, priorSessionJson)
+                        && priorSessionJson == legacyBaseline,
+                    "a previous session's receipt changed its old baseline");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+#else
+    return ScenarioResult::skip ("native CLAP is unavailable");
+#endif
+}
+
+const ScenarioRegistrar deferredPluginIdentityBaseline { Scenario {
+    "gui.deferred_plugin_identity_baseline", { "gui", "session", "autosave", "plugin" },
+    Needs::Engine | Needs::Gui, { "multi_bus.clap" }, {}, 30000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runDeferredPluginIdentityBaseline (host, ctx); }
 } };
 } // namespace
 } // namespace duskstudio::scenario::gui
