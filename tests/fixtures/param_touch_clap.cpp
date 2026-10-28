@@ -1,5 +1,7 @@
 #include <clap/clap.h>
 
+#include <array>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -16,7 +18,8 @@ constexpr const char* kFeatures[] = { CLAP_PLUGIN_FEATURE_AUDIO_EFFECT,
 // wrong parameter, and the fixture is here to catch exactly that.
 constexpr clap_id kAlphaId = 40;
 constexpr clap_id kBetaId  = 41;
-constexpr uint32_t kParamCount = 2;
+constexpr clap_id kMeterId = 42;
+constexpr uint32_t kParamCount = 3;
 
 const clap_plugin_descriptor_t kDescriptor {
     CLAP_VERSION_INIT,
@@ -34,10 +37,14 @@ const clap_plugin_descriptor_t kDescriptor {
 struct Instance
 {
     clap_plugin_t plugin {};
-    double values[kParamCount] { 0.0, 0.0 };
+    double values[kParamCount] { 0.0, 0.0, 0.0 };
     // Set by an incoming parameter change, consumed by the next process(): the
     // id whose value the plug-in is about to announce on its output queue.
     clap_id reportId = CLAP_INVALID_ID;
+    clap_event_param_value_t outputValue {};
+    clap_event_param_mod_t outputModulation {};
+    clap_event_param_gesture_t outputGesture {};
+    const clap_event_header_t* outputEvent = nullptr;
 };
 
 Instance& self (const clap_plugin_t* plugin)
@@ -49,6 +56,7 @@ int indexForId (clap_id id)
 {
     if (id == kAlphaId) return 0;
     if (id == kBetaId)  return 1;
+    if (id == kMeterId) return 2;
     return -1;
 }
 
@@ -76,9 +84,9 @@ bool CLAP_ABI paramGetInfo (const clap_plugin_t*, uint32_t index, clap_param_inf
 {
     if (index >= kParamCount || info == nullptr) return false;
     *info = {};
-    info->id = index == 0 ? kAlphaId : kBetaId;
-    info->flags = CLAP_PARAM_IS_AUTOMATABLE;
-    std::snprintf (info->name, sizeof (info->name), "%s", index == 0 ? "Alpha" : "Beta");
+    info->id = index == 0 ? kAlphaId : index == 1 ? kBetaId : kMeterId;
+    info->flags = index == 2 ? CLAP_PARAM_IS_READONLY : CLAP_PARAM_IS_AUTOMATABLE;
+    std::snprintf (info->name, sizeof (info->name), "%s", index == 0 ? "Alpha" : index == 1 ? "Beta" : "Meter");
     std::snprintf (info->module, sizeof (info->module), "%s", "");
     info->min_value = 0.0;
     info->max_value = 1.0;
@@ -123,7 +131,7 @@ void readInputEvents (Instance& instance, const clap_input_events_t* events)
             continue;
         const auto* event = reinterpret_cast<const clap_event_param_value_t*> (header);
         const int index = indexForId (event->param_id);
-        if (index < 0) continue;
+        if (index < 0 || index == 2) continue;
         instance.values[index] = event->value;
         instance.reportId = event->param_id;
     }
@@ -171,17 +179,110 @@ void announceMove (Instance& instance, const clap_output_events_t* events)
     instance.reportId = CLAP_INVALID_ID;
 }
 
+struct EventControl
+{
+    bool (CLAP_ABI *queue) (const clap_plugin_t*, const clap_event_header_t*);
+};
+
+bool CLAP_ABI queueOutputEvent (const clap_plugin_t* plugin, const clap_event_header_t* event)
+{
+    if (event == nullptr) return false;
+    auto& instance = self (plugin);
+    if (instance.outputEvent != nullptr) return false;
+    switch (event->type)
+    {
+        case CLAP_EVENT_PARAM_VALUE:
+            if (event->size != sizeof (instance.outputValue)) return false;
+            std::memcpy (&instance.outputValue, event, event->size);
+            instance.outputEvent = &instance.outputValue.header;
+            break;
+        case CLAP_EVENT_PARAM_MOD:
+            if (event->size != sizeof (instance.outputModulation)) return false;
+            std::memcpy (&instance.outputModulation, event, event->size);
+            instance.outputEvent = &instance.outputModulation.header;
+            break;
+        case CLAP_EVENT_PARAM_GESTURE_BEGIN:
+        case CLAP_EVENT_PARAM_GESTURE_END:
+            if (event->size != sizeof (instance.outputGesture)) return false;
+            std::memcpy (&instance.outputGesture, event, event->size);
+            instance.outputEvent = &instance.outputGesture.header;
+            break;
+        default: return false;
+    }
+    return true;
+}
+
+void emitQueuedOutput (Instance& instance, const clap_output_events_t* events)
+{
+    const auto* event = instance.outputEvent;
+    if (event == nullptr || events == nullptr || events->try_push == nullptr) return;
+    if (event->space_id == CLAP_CORE_EVENT_SPACE_ID && event->type == CLAP_EVENT_PARAM_VALUE)
+    {
+        const auto& value = instance.outputValue;
+        if (value.note_id == -1 && value.port_index == -1 && value.channel == -1 && value.key == -1)
+        {
+            const int index = indexForId (value.param_id);
+            if (index >= 0) instance.values[index] = value.value;
+        }
+    }
+    events->try_push (events, event);
+    instance.outputEvent = nullptr;
+}
+
+const EventControl kEventControl { queueOutputEvent };
+
 void CLAP_ABI paramFlush (const clap_plugin_t* plugin, const clap_input_events_t* in,
                           const clap_output_events_t* out)
 {
     auto& instance = self (plugin);
     readInputEvents (instance, in);
     announceMove (instance, out);
+    emitQueuedOutput (instance, out);
 }
 
 const clap_plugin_params_t kParams {
     paramCount, paramGetInfo, paramGetValue, paramValueToText, paramTextToValue, paramFlush
 };
+
+bool CLAP_ABI stateSave (const clap_plugin_t* plugin, const clap_ostream_t* stream)
+{
+    if (stream == nullptr || stream->write == nullptr) return false;
+    std::array<std::uint8_t, 20> bytes { 'P', 'T', 1, 0 };
+    std::memcpy (bytes.data() + 4, self (plugin).values, 2 * sizeof (double));
+    std::size_t offset = 0;
+    while (offset < bytes.size())
+    {
+        const auto written = stream->write (stream, bytes.data() + offset, bytes.size() - offset);
+        if (written <= 0 || (std::uint64_t) written > bytes.size() - offset) return false;
+        offset += (std::size_t) written;
+    }
+    return true;
+}
+
+bool CLAP_ABI stateLoad (const clap_plugin_t* plugin, const clap_istream_t* stream)
+{
+    if (stream == nullptr || stream->read == nullptr) return false;
+    std::array<std::uint8_t, 20> bytes {};
+    std::size_t offset = 0;
+    while (offset < bytes.size())
+    {
+        const auto read = stream->read (stream, bytes.data() + offset, bytes.size() - offset);
+        if (read <= 0 || (std::uint64_t) read > bytes.size() - offset) return false;
+        offset += (std::size_t) read;
+    }
+    if (bytes[0] != 'P' || bytes[1] != 'T' || bytes[2] != 1 || bytes[3] != 0) return false;
+    std::array<double, 2> values {};
+    std::memcpy (values.data(), bytes.data() + 4, 2 * sizeof (double));
+    for (const double value : values)
+        if (! std::isfinite (value) || value < 0.0 || value > 1.0) return false;
+    auto& instance = self (plugin);
+    instance.values[0] = values[0];
+    instance.values[1] = values[1];
+    instance.reportId = CLAP_INVALID_ID;
+    return true;
+}
+
+const clap_plugin_state_t kState { stateSave, stateLoad };
 
 bool CLAP_ABI pluginInit (const clap_plugin_t*) { return true; }
 void CLAP_ABI pluginDestroy (const clap_plugin_t* plugin) { delete static_cast<Instance*> (plugin->plugin_data); }
@@ -215,6 +316,7 @@ clap_process_status CLAP_ABI pluginProcess (const clap_plugin_t* plugin,
             out.data32[channel][frame] = in.data32[channel][frame];
 
     announceMove (instance, process->out_events);
+    emitQueuedOutput (instance, process->out_events);
     return CLAP_PROCESS_CONTINUE;
 }
 
@@ -222,6 +324,8 @@ const void* CLAP_ABI pluginExtension (const clap_plugin_t*, const char* id)
 {
     if (std::strcmp (id, CLAP_EXT_AUDIO_PORTS) == 0) return &kAudioPorts;
     if (std::strcmp (id, CLAP_EXT_PARAMS) == 0) return &kParams;
+    if (std::strcmp (id, CLAP_EXT_STATE) == 0) return &kState;
+    if (std::strcmp (id, "studio.dusk.test.param-touch-events") == 0) return &kEventControl;
     return nullptr;
 }
 void CLAP_ABI pluginMainThread (const clap_plugin_t*) {}
