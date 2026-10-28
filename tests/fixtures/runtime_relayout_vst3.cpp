@@ -149,14 +149,16 @@ public:
         if (state == nullptr)
             return kInvalidArgument;
 
-        uint8 latencyMode = 0;
+        uint8 stateFlags = 0;
         int32 bytesRead = 0;
-        if (state->read (&latencyMode, sizeof (latencyMode), &bytesRead) != kResultOk
-            || bytesRead != sizeof (latencyMode))
+        if (state->read (&stateFlags, sizeof (stateFlags), &bytesRead) != kResultOk
+            || bytesRead != sizeof (stateFlags))
             return kResultFalse;
 
-        highLatency = latencyMode != 0;
+        highLatency = (stateFlags & 1u) != 0;
+        reportTransport = (stateFlags & 2u) != 0;
         SingleComponentEffect::setParamNormalized (kLatencyMode, highLatency ? 1.0 : 0.0);
+        SingleComponentEffect::setParamNormalized (kReportTransport, reportTransport ? 1.0 : 0.0);
         return kResultOk;
     }
 
@@ -165,10 +167,10 @@ public:
         if (state == nullptr)
             return kInvalidArgument;
 
-        uint8 latencyMode = highLatency ? 1 : 0;
+        uint8 stateFlags = (uint8) ((highLatency ? 1u : 0u) | (reportTransport ? 2u : 0u));
         int32 bytesWritten = 0;
-        if (state->write (&latencyMode, sizeof (latencyMode), &bytesWritten) != kResultOk
-            || bytesWritten != sizeof (latencyMode))
+        if (state->write (&stateFlags, sizeof (stateFlags), &bytesWritten) != kResultOk
+            || bytesWritten != sizeof (stateFlags))
             return kResultFalse;
         return kResultOk;
     }
