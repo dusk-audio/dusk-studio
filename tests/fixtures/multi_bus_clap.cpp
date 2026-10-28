@@ -19,6 +19,7 @@ constexpr std::size_t kNotePortCount = 80;
 struct PluginData
 {
     std::uint32_t processCount = 0;
+    std::uint32_t stateSaveCount = 0;
     std::array<std::array<bool, 16>, kNotePortCount> voiceActive {};
     clap_event_transport_t transport {};
     std::int64_t steadyTime = -1;
@@ -111,7 +112,8 @@ bool readAll (const clap_istream_t* stream, void* data, std::uint64_t size)
 
 bool CLAP_ABI stateSave (const clap_plugin_t* plugin, const clap_ostream_t* stream)
 {
-    const auto* data = static_cast<const PluginData*> (plugin->plugin_data);
+    auto* data = static_cast<PluginData*> (plugin->plugin_data);
+    ++data->stateSaveCount;
     const std::array<std::uint8_t, 4> count {
         static_cast<std::uint8_t> (data->processCount),
         static_cast<std::uint8_t> (data->processCount >> 8),
@@ -241,6 +243,8 @@ const void* CLAP_ABI pluginExtension (const clap_plugin_t* plugin, const char* i
         return data->hasTransport ? &data->transport : nullptr;
     if (std::strcmp (id, "studio.dusk.test.steady-time") == 0)
         return &data->steadyTime;
+    if (std::strcmp (id, "studio.dusk.test.state-save-count") == 0)
+        return &data->stateSaveCount;
     return nullptr;
 }
 void CLAP_ABI pluginMainThread (const clap_plugin_t*) {}

@@ -106,6 +106,7 @@ public:
     // Session restore before the engine is prepared: stash {path,state}; prepare() loads it.
     void setPendingNativeClap (const juce::File& path, std::vector<uint8_t> state,
                                const juce::String& pluginId = {}) noexcept;
+    bool hasPendingNativeClapRestore() const noexcept { return pendingClapPath.isNotEmpty(); }
     // True when the last prepare()-time reactivate / pending-restore load failed. Lets
     // the save path tell "failed restore" (keep the persisted path) from "user removed".
     bool nativeClapReloadFailed() const noexcept { return nativeReloadFailed.load (std::memory_order_relaxed); }
@@ -129,6 +130,7 @@ public:
     void setPendingNativeLv2 (const juce::File& path, std::vector<uint8_t> state,
                               const juce::String& pluginId = {},
                               const std::filesystem::path& stateDir = {}) noexcept;
+    bool hasPendingNativeLv2Restore() const noexcept { return pendingLv2Path.isNotEmpty(); }
     bool nativeLv2ReloadFailed() const noexcept { return lv2ReloadFailed.load (std::memory_order_relaxed); }
     void markNativeLv2RestoreFailed() noexcept { lv2ReloadFailed.store (true, std::memory_order_relaxed); }
 #else
@@ -147,6 +149,7 @@ public:
     const vst3::NativeVst3Slot& getNativeVst3Slot() const noexcept { return nativeVst3Slot; }
     void setPendingNativeVst3 (const juce::File& path, std::vector<uint8_t> state,
                                const juce::String& pluginId = {}) noexcept;
+    bool hasPendingNativeVst3Restore() const noexcept { return pendingVst3Path.isNotEmpty(); }
     bool nativeVst3ReloadFailed() const noexcept { return vst3ReloadFailed.load (std::memory_order_relaxed); }
     void markNativeVst3RestoreFailed() noexcept { vst3ReloadFailed.store (true, std::memory_order_relaxed); }
 #else
@@ -165,6 +168,7 @@ public:
     const au::NativeAuSlot& getNativeAuSlot() const noexcept { return nativeAuSlot; }
     void setPendingNativeAu (const juce::String& identifier,
                              std::vector<uint8_t> state) noexcept;
+    bool hasPendingNativeAuRestore() const noexcept { return pendingAuIdentifier.isNotEmpty(); }
     bool nativeAuReloadFailed() const noexcept
         { return auReloadFailed.load (std::memory_order_relaxed); }
     void markNativeAuRestoreFailed() noexcept

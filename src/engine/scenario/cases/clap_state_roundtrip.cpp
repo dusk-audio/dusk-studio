@@ -190,6 +190,185 @@ ScenarioResult runRoundTrip (ScenarioContext& ctx)
 
     return ctx.verdict();
 }
+
+ScenarioResult runCheapNativeIdentity (ScenarioContext& ctx)
+{
+    const auto fixture = *ctx.fixture ("multi_bus.clap");
+    auto& engine = ctx.engine();
+    auto& track = ctx.session().track (kTrackIndex);
+    auto& lane = ctx.session().auxLane (kAuxLaneIndex);
+    auto& trackStrip = engine.getChannelStrip (kTrackIndex);
+    auto& auxStrip = engine.getAuxLaneStrip (kAuxLaneIndex);
+    ctx.cleanup ([&trackStrip, &auxStrip]
+    {
+        trackStrip.unloadNativeClap();
+        auxStrip.unloadNativeClap (kAuxSlotIndex);
+    });
+    const auto priorState = engine.getTransport().getState();
+    ctx.cleanup ([&engine, priorState] { engine.getTransport().setState (priorState); });
+    std::string error;
+    if (! ctx.expect (trackStrip.getNativeClapSlot().load (fixture, ScenarioContext::kSampleRate,
+                         ScenarioContext::kBlockSize, error, kPluginId), "could not load track CLAP: " + error)
+        || ! ctx.expect (auxStrip.getNativeClapSlot (kAuxSlotIndex).load (fixture, ScenarioContext::kSampleRate,
+                         ScenarioContext::kBlockSize, error, kPluginId), "could not load aux CLAP: " + error))
+        return ctx.verdict();
+    const auto saveCount = [] (auto& slot)
+    {
+        const auto* plugin = slot.getInstance()->getPlugin();
+        return static_cast<const std::uint32_t*> (plugin->get_extension (plugin, "studio.dusk.test.state-save-count"));
+    };
+    const auto* trackSaves = saveCount (trackStrip.getNativeClapSlot());
+    const auto* auxSaves = saveCount (auxStrip.getNativeClapSlot (kAuxSlotIndex));
+    if (! ctx.expect (trackSaves != nullptr && auxSaves != nullptr, "the CLAP save counter extension is missing"))
+        return ctx.verdict();
+    track.nativeClapPath = "old.clap";
+    track.nativeClapPluginId = "old-plugin";
+    track.nativeClapStateBase64 = "old-track-state";
+    lane.nativeClapPath[kAuxSlotIndex] = "old.clap";
+    lane.nativeClapPluginId[kAuxSlotIndex] = "old-plugin";
+    lane.nativeClapStateBase64[kAuxSlotIndex] = "old-aux-state";
+    engine.getTransport().setState (Transport::State::Playing);
+    ctx.expect (engine.publishPluginStateForSave (false), "capture-free publication failed");
+    ctx.expect (track.nativeClapPath.toStdString() == fixture.u8string() && track.nativeClapPluginId == kPluginId,
+                "capture-free publication missed the track's native identity");
+    ctx.expect (lane.nativeClapPath[kAuxSlotIndex].toStdString() == fixture.u8string()
+                    && lane.nativeClapPluginId[kAuxSlotIndex] == kPluginId,
+                "capture-free publication missed the aux slot's native identity");
+    ctx.expect (track.nativeClapStateBase64.isEmpty() && lane.nativeClapStateBase64[kAuxSlotIndex].isEmpty(),
+                "a replacement retained state owned by its predecessor");
+    track.nativeClapStateBase64 = "cached-track-state";
+    lane.nativeClapStateBase64[kAuxSlotIndex] = "cached-aux-state";
+    ctx.expect (engine.publishPluginStateForSave (false), "repeated capture-free publication failed");
+    ctx.expect (track.nativeClapStateBase64 == "cached-track-state"
+                    && lane.nativeClapStateBase64[kAuxSlotIndex] == "cached-aux-state",
+                "capture-free publication changed matching opaque state");
+    ctx.expect (*trackSaves == 0 && *auxSaves == 0, "capture-free publication called CLAP state save");
+    ctx.expect (engine.getTransport().isPlaying(), "capture-free publication stopped playback");
+    trackStrip.unloadNativeClap();
+    auxStrip.unloadNativeClap (kAuxSlotIndex);
+    ctx.expect (engine.publishPluginStateForSave (false), "empty native-slot publication failed");
+    ctx.expect (track.nativeClapPath.isEmpty() && track.nativeClapPluginId.isEmpty()
+                    && track.nativeClapStateBase64.isEmpty(), "capture-free publication missed track removal");
+    ctx.expect (lane.nativeClapPath[kAuxSlotIndex].isEmpty() && lane.nativeClapPluginId[kAuxSlotIndex].isEmpty()
+                    && lane.nativeClapStateBase64[kAuxSlotIndex].isEmpty(),
+                "capture-free publication missed aux slot removal");
+
+    const char* const legacyState = "RFNLQwEAAAAAAAAA";
+    const std::vector<std::uint8_t> legacyBytes { 'D', 'S', 'K', 'C', 1, 0, 0, 0, 0, 0, 0, 0 };
+    const auto legacyReferences = [&]
+    {
+        track.nativeClapPath = fixture.u8string().c_str();
+        track.nativeClapPluginId.clear();
+        track.nativeClapStateBase64 = legacyState;
+        lane.nativeClapPath[kAuxSlotIndex] = fixture.u8string().c_str();
+        lane.nativeClapPluginId[kAuxSlotIndex].clear();
+        lane.nativeClapStateBase64[kAuxSlotIndex] = legacyState;
+    };
+    legacyReferences();
+    trackStrip.setPendingNativeClap (track.nativeClapPath, legacyBytes);
+    auxStrip.setPendingNativeClap (kAuxSlotIndex, lane.nativeClapPath[kAuxSlotIndex], legacyBytes);
+    ctx.expect (trackStrip.hasPendingNativeClapRestore() && auxStrip.hasPendingNativeClapRestore (kAuxSlotIndex),
+                "queued restores were not visible before prepare");
+    ctx.expect (engine.publishPluginStateForSave (false), "pending native restore publication failed");
+    ctx.expect (track.nativeClapStateBase64 == legacyState && lane.nativeClapStateBase64[kAuxSlotIndex] == legacyState,
+                "capture-free publication discarded a queued restore");
+    trackStrip.unloadNativeClap();
+    auxStrip.unloadNativeClap (kAuxSlotIndex);
+    ctx.expect (! trackStrip.hasPendingNativeClapRestore() && ! auxStrip.hasPendingNativeClapRestore (kAuxSlotIndex),
+                "explicit unload left a queued restore behind");
+    ctx.expect (engine.publishPluginStateForSave (false), "removed pending restore publication failed");
+    ctx.expect (track.nativeClapPath.isEmpty() && track.nativeClapStateBase64.isEmpty()
+                    && lane.nativeClapPath[kAuxSlotIndex].isEmpty() && lane.nativeClapStateBase64[kAuxSlotIndex].isEmpty(),
+                "a removed pending restore was retained as an offline plug-in");
+
+    legacyReferences();
+    engine.getTransport().setState (Transport::State::Stopped);
+    engine.consumePluginStateAfterLoad();
+    if (! ctx.expect (engine.getLastPluginLoadFailures().empty() && trackStrip.isNativeClapLoaded()
+                         && auxStrip.isNativeClapLoaded (kAuxSlotIndex), "the legacy-ID fixture did not restore"))
+        return ctx.verdict();
+    ctx.expect (track.nativeClapPluginId == kPluginId && lane.nativeClapPluginId[kAuxSlotIndex] == kPluginId,
+                "accepted restore did not publish its canonical plug-in ID");
+    ctx.expect (track.nativeClapStateBase64 == legacyState && lane.nativeClapStateBase64[kAuxSlotIndex] == legacyState,
+                "accepted restore changed its opaque state");
+    const auto baseline = SessionSerializer::serialize (ctx.session());
+    ctx.expect (engine.publishPluginStateForSave (false), "restored identity publication failed");
+    ctx.expect (SessionSerializer::serialize (ctx.session()) == baseline,
+                "capture-free publication dirtied a freshly restored legacy-ID session");
+    ctx.expect (*saveCount (trackStrip.getNativeClapSlot()) == 0
+                    && *saveCount (auxStrip.getNativeClapSlot (kAuxSlotIndex)) == 0,
+                "legacy-ID normalization captured opaque state");
+
+    trackStrip.unloadNativeClap();
+    auxStrip.unloadNativeClap (kAuxSlotIndex);
+    legacyReferences();
+    trackStrip.setPendingNativeClap (track.nativeClapPath, legacyBytes);
+    auxStrip.setPendingNativeClap (kAuxSlotIndex, lane.nativeClapPath[kAuxSlotIndex], legacyBytes);
+    engine.prepareForSelfTest (ScenarioContext::kSampleRate, ScenarioContext::kBlockSize);
+    if (! ctx.expect (trackStrip.isNativeClapLoaded() && auxStrip.isNativeClapLoaded (kAuxSlotIndex),
+                      "prepare did not finish the queued native restores"))
+        return ctx.verdict();
+    ctx.expect (! trackStrip.hasPendingNativeClapRestore() && ! auxStrip.hasPendingNativeClapRestore (kAuxSlotIndex),
+                "successful prepare left pending restore references");
+    ctx.expect (track.nativeClapPluginId == kPluginId && lane.nativeClapPluginId[kAuxSlotIndex] == kPluginId,
+                "prepare did not publish accepted canonical plug-in IDs");
+    ctx.expect (track.nativeClapStateBase64 == legacyState && lane.nativeClapStateBase64[kAuxSlotIndex] == legacyState,
+                "prepare changed accepted opaque state");
+    const auto preparedBaseline = SessionSerializer::serialize (ctx.session());
+    ctx.expect (engine.publishPluginStateForSave (false), "prepared identity publication failed");
+    ctx.expect (SessionSerializer::serialize (ctx.session()) == preparedBaseline,
+                "capture-free publication changed accepted deferred-restore state");
+    ctx.expect (*saveCount (trackStrip.getNativeClapSlot()) == 0
+                    && *saveCount (auxStrip.getNativeClapSlot (kAuxSlotIndex)) == 0,
+                "deferred restore normalization captured opaque state");
+    return ctx.verdict();
+}
+#endif
+
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+ScenarioResult runCheapStandardIdentity (ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& track = ctx.session().track (4);
+    auto& lane = ctx.session().auxLane (3);
+    auto& trackSlot = engine.getChannelStrip (4).getPluginSlot();
+    auto& auxSlot = engine.getAuxLaneStrip (3).getPluginSlot (0);
+    ctx.cleanup ([&trackSlot, &auxSlot] { trackSlot.unload(); auxSlot.unload(); });
+    const auto priorState = engine.getTransport().getState();
+    ctx.cleanup ([&engine, priorState] { engine.getTransport().setState (priorState); });
+    using SessionFile = decltype (ctx.session().getSessionDirectory());
+    const SessionFile fixture (ctx.fixture ("relayout.vst3")->u8string().c_str());
+    decltype (trackSlot.getLoadedName()) error;
+    if (! ctx.expect (trackSlot.loadFromFile (fixture, error), "could not load standard track insert: " + error.toStdString())
+        || ! ctx.expect (auxSlot.loadFromFile (fixture, error), "could not load standard aux insert: " + error.toStdString()))
+        return ctx.verdict();
+    const auto trackDescriptor = trackSlot.getDescriptorForSave (0);
+    const auto auxDescriptor = auxSlot.getDescriptorForSave (0);
+    if (! ctx.expect (trackDescriptor.has_value() && auxDescriptor.has_value(), "loaded standard inserts have no descriptors"))
+        return ctx.verdict();
+    track.pluginStateBase64 = "old-track-state";
+    lane.pluginStateBase64[0] = "old-aux-state";
+    engine.getTransport().setState (Transport::State::Playing);
+    ctx.expect (engine.publishPluginStateForSave (false), "standard identity publication failed");
+    ctx.expect (track.pluginDescriptor == trackDescriptor && lane.pluginDescriptor[0] == auxDescriptor,
+                "capture-free publication missed loaded standard insert descriptors");
+    ctx.expect (track.pluginStateBase64.isEmpty() && lane.pluginStateBase64[0].isEmpty(),
+                "a new standard insert retained state with no matching owner");
+    track.pluginStateBase64 = "cached-track-state";
+    lane.pluginStateBase64[0] = "cached-aux-state";
+    ctx.expect (engine.publishPluginStateForSave (false), "standard repeated publication failed");
+    ctx.expect (track.pluginStateBase64 == "cached-track-state" && lane.pluginStateBase64[0] == "cached-aux-state",
+                "capture-free publication read standard insert state");
+    ctx.expect (engine.getTransport().isPlaying(), "standard identity publication stopped playback");
+    trackSlot.unload();
+    auxSlot.unload();
+    ctx.expect (engine.publishPluginStateForSave (false), "empty standard insert publication failed");
+    ctx.expect (! track.pluginDescriptor.has_value() && track.pluginLegacyDescriptionXml.isEmpty()
+                    && track.pluginStateBase64.isEmpty(), "capture-free publication missed standard track removal");
+    ctx.expect (! lane.pluginDescriptor[0].has_value() && lane.pluginLegacyDescriptionXml[0].isEmpty()
+                    && lane.pluginStateBase64[0].isEmpty(), "capture-free publication missed standard aux removal");
+    return ctx.verdict();
+}
 #endif
 
 const ScenarioRegistrar registrar { Scenario {
@@ -204,6 +383,30 @@ const ScenarioRegistrar registrar { Scenario {
        #else
         (void) ctx;
         return ScenarioResult::skip ("built without the native CLAP host");
+       #endif
+    }
+} };
+const ScenarioRegistrar cheapNativeIdentityRegistrar { Scenario {
+    "plugin.native_identity_without_capture", { "plugin", "state", "autosave" }, Needs::Engine, { "multi_bus.clap" },
+    [] (ScenarioContext& ctx) -> std::optional<ScenarioResult>
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_CLAP
+        return runCheapNativeIdentity (ctx);
+       #else
+        (void) ctx;
+        return ScenarioResult::skip ("built without the native CLAP host");
+       #endif
+    }
+} };
+const ScenarioRegistrar cheapStandardIdentityRegistrar { Scenario {
+    "plugin.standard_identity_without_capture", { "plugin", "state", "autosave" }, Needs::Engine, { "relayout.vst3" },
+    [] (ScenarioContext& ctx) -> std::optional<ScenarioResult>
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_VST3
+        return runCheapStandardIdentity (ctx);
+       #else
+        (void) ctx;
+        return ScenarioResult::skip ("built without the VST3 fixture");
        #endif
     }
 } };
