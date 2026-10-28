@@ -2419,8 +2419,8 @@ std::optional<ScenarioResult> runOopCaptureFailureSave (GuiHost& host, ScenarioC
     {
         session.track (0).strip.faderDb.store (-6.0f);
         host.autosaveTick();
-        const auto autosave = folder / "session.json.autosave";
-        ctx.expect (fs::exists (autosave) && std::abs (savedFaderOf (autosave) + 6.0f) < 1.0e-6f,
+        const auto recovery = folder / "session.json.autosave";
+        ctx.expect (fs::exists (recovery) && std::abs (savedFaderOf (recovery) + 6.0f) < 1.0e-6f,
                     "live cheap controls did not reach autosave with a large opaque state");
         state->sourceFiles = tree (folder);
         state->targetFiles = tree (copy);
@@ -2448,15 +2448,15 @@ std::optional<ScenarioResult> runOopCaptureFailureSave (GuiHost& host, ScenarioC
         ctx.expect (! engine.isProcessingSuspended() && slot.isRemote(), "failed save left audio gated or discarded the child");
         ctx.expect (slot.getStateBase64ForSave (0).toStdString() == state->originalState,
                     "failed capture lost the child's last known state");
-        const auto autosave = folder / "session.json.autosave";
+        const auto recovery = folder / "session.json.autosave";
         session.track (0).strip.faderDb.store (-9.0f);
         host.autosaveTick();
-        ctx.expect (fs::exists (autosave) && std::abs (savedFaderOf (autosave) + 9.0f) < 1.0e-6f,
+        ctx.expect (fs::exists (recovery) && std::abs (savedFaderOf (recovery) + 9.0f) < 1.0e-6f,
                     "failed Save stopped later control edits from reaching autosave");
-        const auto recoveryBytes = dusk::fs::loadFileAsString (autosave);
+        const auto recoveryBytes = dusk::fs::loadFileAsString (recovery);
         session.track (0).strip.faderDb.store (savedFaderOf (folder / "session.json"));
         host.autosaveTick();
-        ctx.expect (fs::exists (autosave) && dusk::fs::loadFileAsString (autosave) == recoveryBytes,
+        ctx.expect (fs::exists (recovery) && dusk::fs::loadFileAsString (recovery) == recoveryBytes,
                     "a matching control snapshot discarded recovery after a failed Save");
         drainModals (host);
     }, [&host, &session, folder, copy, saveAs]

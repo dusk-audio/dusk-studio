@@ -1257,7 +1257,7 @@ std::optional<ScenarioResult> runSaveAnywayAsksAgain (GuiHost& host, ScenarioCon
     (void) ctx;
     return ScenarioResult::skip ("sandboxed plug-ins are unavailable");
 #else
-    constexpr int kSecondTrack = 1;
+    static constexpr int kSecondTrack = 1;
     auto& engine = ctx.engine();
     auto& session = ctx.session();
     std::string error;

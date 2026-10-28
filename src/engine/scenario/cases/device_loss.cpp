@@ -140,6 +140,7 @@ public:
 std::optional<ScenarioResult> pipewireServerLossCommits (ScenarioContext& ctx)
 {
 #if ! defined(DUSKSTUDIO_HAS_PIPEWIRE)
+    (void) ctx;
     return ScenarioResult::skip ("built without the native PipeWire backend");
 #else
     const char* handshakeEnv = std::getenv ("DUSKSTUDIO_PIPEWIRE_LOSS_HANDSHAKE");

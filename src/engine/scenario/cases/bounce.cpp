@@ -545,8 +545,8 @@ std::optional<ScenarioResult> cancelLeavesNoFile (ScenarioContext& ctx)
 
 std::optional<ScenarioResult> wholeSongIgnoresPlaybackLoop (ScenarioContext& ctx)
 {
-    constexpr int length = 32000;
-    constexpr std::int64_t loopStart = 8000, loopEnd = 16000, savedPlayhead = 777;
+    static constexpr int length = 32000;
+    static constexpr std::int64_t loopStart = 8000, loopEnd = 16000, savedPlayhead = 777;
     auto& engine = ctx.engine();
     auto& transport = engine.getTransport();
     const bool loopWas = transport.isLoopEnabled();
@@ -693,7 +693,7 @@ std::optional<ScenarioResult> wholeSongIgnoresPlaybackLoop (ScenarioContext& ctx
 
 std::optional<ScenarioResult> offlineMidiIsolation (ScenarioContext& ctx)
 {
-    constexpr int length = 32000;
+    static constexpr int length = 32000;
     auto& engine = ctx.engine();
     auto& session = ctx.session();
     auto& transport = engine.getTransport();
@@ -1049,7 +1049,7 @@ ScenarioResult hardwareOfflineCallbackProbe (ScenarioContext& ctx)
 
 std::optional<ScenarioResult> offlineHardwareIsDry (ScenarioContext& ctx)
 {
-    constexpr int length = 65536;
+    static constexpr int length = 65536;
     auto& engine = ctx.engine();
     auto& session = ctx.session();
     auto& strip = engine.getChannelStrip (0);
@@ -1245,7 +1245,7 @@ std::optional<ScenarioResult> offlineCueDoesNotPrint (ScenarioContext& ctx)
 
 std::optional<ScenarioResult> freezeIgnoresMixGate (ScenarioContext& ctx)
 {
-    constexpr int length = 32768, blockSize = 1024;
+    static constexpr int length = 32768, blockSize = 1024;
     auto& engine = ctx.engine();
     auto& session = ctx.session();
     auto& params = session.track (0).strip;
