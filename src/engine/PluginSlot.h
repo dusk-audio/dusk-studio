@@ -292,6 +292,10 @@ public:
     // prepare-and-publish path used by descriptor loads.
     bool installInProcessInstanceForTest (
         PluginInstancePtr instance);
+
+    // Watchdog seam: trips the auto-bypass the overrun counter would, without
+    // a wall-clock overrun.
+    void engageAutoBypassForTest() noexcept { engageAutoBypass(); }
    #endif
 
    #if JUCE_MAC && DUSKSTUDIO_HAS_OOP_PLUGINS

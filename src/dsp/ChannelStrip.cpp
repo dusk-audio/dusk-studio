@@ -72,6 +72,10 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
     insertDryHistoryActive = false;
     insertDrySource = 0;
     insertDryLatency = 0;
+    insertDryAlign.reset (sampleRate, rampSeconds);
+    insertDryAlign.setCurrentAndTargetValue (0.0f);
+    insertDryFilled = 0;
+    insertDryAlignWanted = false;
     silentTailActive = false;
     silentTailInputSamples = 0;
     silentTailQuietSamples = 0;
@@ -977,13 +981,27 @@ int ChannelStrip::getInsertPluginLatencySamples() const noexcept
     return pluginSlot.getLatencySamples();
 }
 
+// While the dry is (even partly) aligned, the zeros stand in for the latency's
+// onset the way the insert's own cold start does. Otherwise the history must
+// fill with real input again before the dry may move onto it.
 void ChannelStrip::resetInsertDryHistory() noexcept
 {
+    if (insertDryAlign.getCurrentValue() <= 0.0f) insertDryFilled = 0;
     if (! insertDryHistoryActive) return;
     std::fill (insertDryHistoryL.begin(), insertDryHistoryL.end(), 0.0f);
     std::fill (insertDryHistoryR.begin(), insertDryHistoryR.end(), 0.0f);
     insertDryWrite = 0;
     insertDryHistoryActive = false;
+}
+
+// Drops the alignment without a ramp, which only suits a moment the dry may
+// change its delay unheard or with the change already happening: the weight
+// has ramped to zero for a mode flip, the insert's latency just left the path,
+// or the dry's source itself changed.
+void ChannelStrip::discardInsertDryHistory() noexcept
+{
+    insertDryAlign.setCurrentAndTargetValue (0.0f);
+    resetInsertDryHistory();
 }
 
 void ChannelStrip::alignInsertDry (int numSamples, bool mono, int latency) noexcept
@@ -992,13 +1010,18 @@ void ChannelStrip::alignInsertDry (int numSamples, bool mono, int latency) noexc
     if (activeInsertMode == kInsertEmpty
         || latency < 0 || latency > kMaxPdcSamples)
     {
-        resetInsertDryHistory();
+        discardInsertDryHistory();
         return;
     }
     // Hardware clears its dry history when the measured loop latency changes.
     if (activeInsertMode == kInsertHardware && latency != insertDryLatency)
         resetInsertDryHistory();
     insertDryLatency = latency;
+    insertDryAlign.setTargetValue (insertDryAlignWanted && insertDryFilled >= latency
+                                    ? 1.0f : 0.0f);
+    insertDryFilled = std::min (kMaxPdcSamples, insertDryFilled + numSamples);
+    const bool ramping = insertDryAlign.isSmoothing();
+    const bool aligned = insertDryAlign.getCurrentValue() >= 1.0f;
     // Keep history warm at full wet, including both lines on a mono pass.
     static_assert ((kMaxPdcSamples & (kMaxPdcSamples - 1)) == 0);
     constexpr int mask = kMaxPdcSamples - 1;
@@ -1013,10 +1036,41 @@ void ChannelStrip::alignInsertDry (int numSamples, bool mono, int latency) noexc
         insertDryHistoryL[(size_t) insertDryWrite] = leftInput;
         insertDryHistoryR[(size_t) insertDryWrite] = rightInput;
         insertDryWrite = (insertDryWrite + 1) & mask;
-        insertScratchL[index] = left;
-        if (! mono) insertScratchR[index] = right;
+        if (ramping)
+        {
+            const float weight = insertDryAlign.getNextValue();
+            insertScratchL[index] = leftInput + weight * (left - leftInput);
+            if (! mono) insertScratchR[index] = rightInput + weight * (right - rightInput);
+        }
+        else if (aligned)
+        {
+            insertScratchL[index] = left;
+            if (! mono) insertScratchR[index] = right;
+        }
     }
     insertDryHistoryActive = true;
+}
+
+// A rendered block keeps the history running at the insert's latency. A
+// dry-pass that keeps that latency in the path (a missed try-lock) freezes it,
+// as the plug-in's own state froze. One that takes the latency out (bypass, the
+// watchdog, an unload) discards it, so the dry realigns by ramp when the insert
+// returns instead of replaying audio from before it left.
+void ChannelStrip::followInsertDry (int numSamples, bool mono,
+                                     const std::optional<dusk::ProcessedBlock>& rendered) noexcept
+{
+    if (activeInsertMode == kInsertHardware)
+        alignInsertDry (numSamples, mono, hardwareSlot.getLatencySamples());
+    else if (rendered.has_value())
+    {
+        if (rendered->historyReset) resetInsertDryHistory();
+        alignInsertDry (numSamples, mono, rendered->latencySamples);
+    }
+    else if (activeInsertMode == kInsertEmpty || ! hasLoadedEffectMidiConsumer()
+             || getInsertPluginLatencySamples() == 0)
+        discardInsertDryHistory();
+    else
+        insertDryAlign.skip (numSamples);
 }
 
 void ChannelStrip::drainPdcForSkip() noexcept
@@ -1139,14 +1193,18 @@ void ChannelStrip::processAndAccumulate (const float* inL,
     const float engagedTarget = (insertBypassed ? 0.0f : 1.0f);
     if (req != activeInsertMode)
     {
-        if (activeInsertGain.getCurrentValue() > 1.0e-4f)
+        // The dry drops its alignment over the same ramp, so the swap below
+        // never moves the delay of a dry the gate is letting through.
+        if (activeInsertGain.getCurrentValue() > 1.0e-4f
+            || insertDryAlign.getCurrentValue() > 1.0e-4f)
         {
             activeInsertGain.setTargetValue (0.0f);
+            insertDryAlign.setTargetValue (0.0f);
         }
         else
         {
             activeInsertMode = req;
-            resetInsertDryHistory();
+            discardInsertDryHistory();
             if (activeInsertMode == kInsertHardware)
                 hardwareSlot.resetTailsAndDelayLine();
             activeInsertGain.setTargetValue (activeInsertMode == kInsertEmpty
@@ -1158,6 +1216,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
         activeInsertGain.setTargetValue (activeInsertMode == kInsertEmpty
                                           ? 0.0f : engagedTarget);
     }
+    insertDryAlignWanted = req == activeInsertMode;
 
     lastProcessedPtr = nullptr;
     lastProcessedR   = nullptr;
@@ -1172,9 +1231,10 @@ void ChannelStrip::processAndAccumulate (const float* inL,
     if (numSamples == 0) return;
 
     const int drySource = isMidi && ! isFrozen ? 0 : (isFrozen ? 2 : 1);
+    // The old source's history says nothing about the new one.
     if (drySource != insertDrySource)
     {
-        resetInsertDryHistory();
+        discardInsertDryHistory();
         insertDrySource = drySource;
     }
 
@@ -1455,15 +1515,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
                 tempMono[(size_t) i] = 0.5f
                     * (tempMono[(size_t) i] + insertScratchR[(size_t) i]);
         }
-        if (activeInsertMode == kInsertHardware)
-            alignInsertDry (numSamples, true, hardwareSlot.getLatencySamples());
-        else if (insertResult.has_value())
-        {
-            if (insertResult->historyReset) resetInsertDryHistory();
-            alignInsertDry (numSamples, true, insertResult->latencySamples);
-        }
-        else if (activeInsertMode == kInsertEmpty || ! hasLoadedEffectMidiConsumer())
-            resetInsertDryHistory();
+        followInsertDry (numSamples, true, insertResult);
         // Crossfade pre-insert vs post-insert by the gate.
         for (int i = 0; i < numSamples; ++i)
         {
@@ -1604,10 +1656,11 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             }
             else
             {
-                // Keep the insert-gate smoother ticking so an un-freeze or a
+                // Keep the insert-gate smoothers ticking so an un-freeze or a
                 // hardware engage mid-session resumes click-free.
                 for (int i = 0; i < numSamples; ++i)
                     activeInsertGain.getNextValue();
+                insertDryAlign.skip (numSamples);
             }
         }
         else if (isMidi)
@@ -1658,6 +1711,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             insertOwesMidiReset = false;
             for (int i = 0; i < numSamples; ++i)
                 activeInsertGain.getNextValue();
+            insertDryAlign.skip (numSamples);
         }
         else
         {
@@ -1717,15 +1771,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
                                                   deviceInputs, numDeviceInputs,
                                                   deviceOutputs, numDeviceOutputs);
             }
-            if (activeInsertMode == kInsertHardware)
-                alignInsertDry (numSamples, false, hardwareSlot.getLatencySamples());
-            else if (insertResult.has_value())
-            {
-                if (insertResult->historyReset) resetInsertDryHistory();
-                alignInsertDry (numSamples, false, insertResult->latencySamples);
-            }
-            else if (activeInsertMode == kInsertEmpty || ! hasLoadedEffectMidiConsumer())
-                resetInsertDryHistory();
+            followInsertDry (numSamples, false, insertResult);
             // Crossfade pre vs post by the gate (empty mode collapses to
             // pre, plugin/hardware ramp from pre to their processed output).
             for (int i = 0; i < numSamples; ++i)

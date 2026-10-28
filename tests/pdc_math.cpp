@@ -311,6 +311,58 @@ void warm (StripPdcHarness& actual, StripPdcHarness& reference)
         actual.run(); reference.run();
     }
 }
+
+// Low tones the console's transformer passes whole. They bend so little per
+// sample that a step of any audible size stands out in the second difference,
+// and a 193-sample slip moves them by a large part of their swing.
+void toneSignal (StripPdcHarness& harness, int block)
+{
+    constexpr double kTwoPi = 6.283185307179586;
+    for (int i = 0; i < kBlock; ++i)
+    {
+        const double t = (double) (block * kBlock + i) / 48000.0;
+        harness.left[(std::size_t) i] = (float) (0.15 * std::sin (kTwoPi * 100.0 * t)
+                                               + 0.1 * std::sin (kTwoPi * 137.0 * t + 0.5));
+        harness.right[(std::size_t) i] = (float) (0.12 * std::sin (kTwoPi * 113.0 * t + 1.0)
+                                                + 0.08 * std::sin (kTwoPi * 151.0 * t));
+    }
+}
+
+// A linear gain ramp over the tones keeps the second difference near zero; a
+// jump or a dropout spikes it twice, entering and leaving.
+struct StepCounter
+{
+    static constexpr float kSpike = 2.0e-3f;
+    std::array<std::array<float, 2>, 2> history {};
+    std::array<int, 2> spikes {};
+    int seen = 0;
+
+    void observe (const StripPdcHarness& harness)
+    {
+        for (int i = 0; i < kBlock; ++i, ++seen)
+            for (std::size_t c = 0; c < spikes.size(); ++c)
+            {
+                const float y = (c == 0 ? harness.masterL : harness.masterR)[(std::size_t) i];
+                auto& h = history[c];
+                if (seen >= 2 && std::abs (y - 2.0f * h[0] + h[1]) > kSpike) ++spikes[c];
+                h[1] = h[0];
+                h[0] = y;
+            }
+    }
+};
+
+// The console's transformer remembers audio from before a flip or an outage
+// for a while, so strips with different histories compare within a margin
+// that a 193-sample slip of the tones exceeds many times over.
+void expectAlignedOutput (const StripPdcHarness& actual, const StripPdcHarness& reference)
+{
+    for (std::size_t i = 0; i < actual.masterL.size(); ++i)
+    {
+        CAPTURE (i);
+        REQUIRE_THAT (actual.masterL[i], WithinAbs (reference.masterL[i], 5e-3f));
+        REQUIRE_THAT (actual.masterR[i], WithinAbs (reference.masterR[i], 5e-3f));
+    }
+}
 }
 
 TEST_CASE ("PDC: every track compensates to the deepest latency", "[pdc]")
@@ -530,6 +582,101 @@ TEST_CASE ("Channel insert LED discards dry history after a same-latency plugin 
         actual.signal (block); reference.signal (block);
         actual.run(); reference.run();
         expectSameOutput (actual, reference);
+    }
+}
+
+TEST_CASE ("Channel insert mode flips crossfade a latent insert without a dropout or a jump", "[pdc][channel-strip][insert-flip]")
+{
+    const int variant = GENERATE (0, 1, 2);
+    const bool stereo = GENERATE (false, true);
+    const bool bypassed = GENERATE (false, true);
+    const bool hardware = variant > 0;
+    const bool frozen = variant == 2;
+    CAPTURE (hardware, frozen, stereo, bypassed);
+    InsertPdcHarness actual { stereo, 193, hardware }, reference { stereo, 193, hardware };
+    actual.strip.insertMode.store (ChannelStrip::kInsertEmpty);
+    actual.strip.prepare (48000.0, kBlock, 1);
+    actual.params.insertBypassed.store (bypassed);
+    StepCounter counter;
+    for (int block = 0; block < 100; ++block)
+    {
+        if (block == 20)
+            actual.strip.insertMode.store (hardware ? ChannelStrip::kInsertHardware : ChannelStrip::kInsertPlugin);
+        if (block == 60)
+            actual.strip.insertMode.store (ChannelStrip::kInsertEmpty);
+        toneSignal (actual, block); toneSignal (reference, block);
+        actual.run (true, frozen); reference.run (true, frozen);
+        if (block >= 19) counter.observe (actual);
+        CAPTURE (block);
+        if (block >= 50 && block < 60) expectAlignedOutput (actual, reference);
+    }
+    // An engaged insert starts cold: its first returned sample steps in at the
+    // gate's weight.
+    const int allowed = bypassed ? 0 : 2;
+    CHECK (counter.spikes[0] <= allowed);
+    CHECK (counter.spikes[1] <= allowed);
+}
+
+TEST_CASE ("Channel insert LED realigns the dry path without stale audio when its slot rejoins", "[pdc][channel-strip][insert-led]")
+{
+    const bool stereo = GENERATE (false, true);
+    const bool watchdog = GENERATE (false, true);
+    CAPTURE (stereo, watchdog);
+    InsertPdcHarness actual { stereo, 193 }, reference { stereo, 193 };
+    actual.params.insertBypassed.store (true);
+    reference.params.insertBypassed.store (true);
+    auto& slot = actual.strip.getPluginSlot();
+    StepCounter counter;
+    for (int block = 0; block < 120; ++block)
+    {
+        if (block == 40)
+        {
+            if (watchdog) slot.engageAutoBypassForTest();
+            else          slot.setBypassed (true);
+        }
+        if (block == 80)
+        {
+            if (watchdog) slot.clearAutoBypass();
+            else          slot.setBypassed (false);
+        }
+        toneSignal (actual, block); toneSignal (reference, block);
+        actual.run(); reference.run();
+        if (block >= 79) counter.observe (actual);
+        CAPTURE (block);
+        if (block >= 105) expectAlignedOutput (actual, reference);
+    }
+    CHECK (counter.spikes[0] == 0);
+    CHECK (counter.spikes[1] == 0);
+}
+
+TEST_CASE ("Channel insert LED dry plays through a freeze and an unfreeze without a gap", "[pdc][channel-strip][insert-led]")
+{
+    const bool stereo = GENERATE (false, true);
+    const bool hardware = GENERATE (false, true);
+    CAPTURE (stereo, hardware);
+    InsertPdcHarness actual { stereo, 193, hardware }, reference { stereo, 193, hardware };
+    actual.params.insertBypassed.store (true);
+    reference.params.insertBypassed.store (true);
+    std::array<double, 2> heard {}, expected {};
+    for (int block = 0; block < 120; ++block)
+    {
+        toneSignal (actual, block); toneSignal (reference, block);
+        actual.run (true, block >= 40 && block < 80); reference.run();
+        CAPTURE (block);
+        // The first 192 samples on each new source, shorter than the latency.
+        for (std::size_t edge = 0; edge < heard.size(); ++edge)
+            if (const int start = edge == 0 ? 40 : 80; block >= start && block < start + 3)
+                for (std::size_t i = 0; i < actual.masterL.size(); ++i)
+                {
+                    heard[edge] += actual.masterL[i] * actual.masterL[i] + actual.masterR[i] * actual.masterR[i];
+                    expected[edge] += reference.masterL[i] * reference.masterL[i] + reference.masterR[i] * reference.masterR[i];
+                }
+        if (block >= 110) expectAlignedOutput (actual, reference);
+    }
+    for (std::size_t edge = 0; edge < heard.size(); ++edge)
+    {
+        CAPTURE (edge);
+        REQUIRE (heard[edge] > 0.5 * expected[edge]);
     }
 }
 

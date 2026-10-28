@@ -5,10 +5,12 @@
 #include <array>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <vector>
 #include "../foundation/IntDelayLine.h"
 #include "../foundation/MidiBuffer.h"
 #include "../foundation/PlanarBuffer.h"
+#include "../foundation/ProcessedBlock.h"
 #include "../foundation/SmoothedValue.h"
 #include "../foundation/StereoOversampler.h"
 #include "../foundation/TransportPosition.h"
@@ -477,8 +479,19 @@ private:
     bool insertDryHistoryActive = false;
     int insertDrySource = 0;
     int insertDryLatency = 0;
+    // Weight of the latency-aligned dry against the undelayed one in the
+    // insert gate's dry input. It only ever moves by ramp, and a mode flip
+    // waits for it to reach zero, so the dry never changes its delay at a
+    // weight the gate lets through. insertDryFilled counts the history samples
+    // written since it last held nothing worth replaying.
+    dusk::audio::SmoothedValue<float> insertDryAlign;
+    int insertDryFilled = 0;
+    bool insertDryAlignWanted = false;
     void resetInsertDryHistory() noexcept;
+    void discardInsertDryHistory() noexcept;
     void alignInsertDry (int numSamples, bool mono, int latency) noexcept;
+    void followInsertDry (int numSamples, bool mono,
+                          const std::optional<dusk::ProcessedBlock>& rendered) noexcept;
 
     // PDC compensation delay (post-insert / pre-EQ). Two single-channel lines
     // mirror the HardwareInsertSlot dry-delay pattern. The delay length only
