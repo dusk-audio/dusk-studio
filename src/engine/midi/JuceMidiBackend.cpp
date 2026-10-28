@@ -4,6 +4,7 @@
  #include "CoreMidiBackend.h"
 #endif
 
+#include <algorithm>
 #include <map>
 #include <mutex>
 #include <utility>
@@ -125,6 +126,7 @@ public:
     {
         const std::lock_guard<std::mutex> lock (m);
         outputs.clear();
+        streamDeadlines.clear();
     }
 
     bool isOpen (const std::string& identifier) const override
@@ -133,7 +135,7 @@ public:
         return outputs.count (identifier) > 0;
     }
 
-    bool send (const std::string& identifier, const dusk::MidiBuffer& events,
+    bool send (const std::string& identifier, int stream, const dusk::MidiBuffer& events,
                double baseTimeMs, double sampleRate) override
     {
         // Held across the send, not just the lookup: releasing early would let a
@@ -143,10 +145,6 @@ public:
         const auto it = outputs.find (identifier);
         if (it == outputs.end() || it->second == nullptr) return false;
 
-        scratch.clear();
-        for (const auto meta : events)
-            scratch.addEvent (meta.data, meta.numBytes, meta.samplePosition);
-
         // baseTimeMs is stamped in the seam's clock; sendBlockOfMessages
         // schedules against JUCE's counter, which runs off a different epoch.
         // Shift by the current offset between the two rather than substituting
@@ -154,9 +152,22 @@ public:
         // stamped with. Both clocks are monotonic, so the offset is read fresh
         // per send rather than cached.
         const double toJuceClock = juce::Time::getMillisecondCounterHiRes() - backendClockMs();
-        it->second->sendBlockOfMessages (scratch,
-                                         baseTimeMs + toJuceClock,
-                                         sampleRate > 0.0 ? sampleRate : 48000.0);
+        const double rate = sampleRate > 0.0 ? sampleRate : 48000.0;
+
+        // JUCE plays its queue in timestamp order, so the stream's floor applies
+        // (IMidiOutputBackend::send). A message per call, at offset 0, lets each
+        // carry its own clamped time exactly.
+        auto& streamDeadline = streamDeadlines[{ identifier, stream }];
+        const double notBefore = streamDeadline;
+        for (const auto meta : events)
+        {
+            const double due = std::max (baseTimeMs + toJuceClock + meta.samplePosition * 1000.0 / rate,
+                                         notBefore);
+            scratch.clear();
+            scratch.addEvent (meta.data, meta.numBytes, 0);
+            it->second->sendBlockOfMessages (scratch, due, rate);
+            streamDeadline = std::max (streamDeadline, due);
+        }
         return true;
     }
 
@@ -167,6 +178,7 @@ private:
     // the MIDI path and the ALSA backend's equivalent guard does not apply.
     mutable std::mutex m;
     std::map<std::string, std::unique_ptr<juce::MidiOutput>> outputs;
+    std::map<std::pair<std::string, int>, double> streamDeadlines;   // JUCE clock, guarded by m
     juce::MidiBuffer scratch;   // guarded by m
 };
 } // namespace

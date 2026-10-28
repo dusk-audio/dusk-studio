@@ -88,8 +88,14 @@ public:
 
     // Pump / message thread only; blocking is allowed. baseTimeMs + sampleRate
     // carry the sample-offset -> ms scheduling (mirrors JUCE's
-    // sendBlockOfMessages semantics).
-    [[nodiscard]] virtual bool send (const std::string& identifier,
+    // sendBlockOfMessages semantics). stream names the producer. A block's base
+    // time is a clock reading taken in the audio callback and jitters with its
+    // wake-up, so an early reading would put the head of a block ahead of the
+    // tail of the one before it - a note-off ahead of its note-on. A backend
+    // that orders by timestamp must therefore schedule nothing earlier than the
+    // latest event an earlier send of the same stream put on this destination.
+    // Within a send, and between streams, events go by timestamp.
+    [[nodiscard]] virtual bool send (const std::string& identifier, int stream,
                                      const dusk::MidiBuffer& events,
                                      double baseTimeMs, double sampleRate) = 0;
 };

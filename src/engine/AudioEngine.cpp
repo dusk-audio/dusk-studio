@@ -64,6 +64,9 @@ constexpr std::int64_t kMinLoopRecordSamples = 128;
 // taken as a locate. The cap keeps the window's loop-seam resets inside the
 // generated-MIDI budget.
 constexpr int kMaxMidiLatencyBridge = 1024;
+// MIDI-out producer streams: each track queues as its own index, the sync
+// output after them.
+constexpr int kSyncOutputMidiStream = Session::kNumTracks;
 
 using dusk::audio::findSignedMinMax;
 
@@ -5964,7 +5967,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         }
 
         if (! midiClockOutScratch.isEmpty())
-            midiOut.queueRt (syncOutIdx, midiClockOutScratch,
+            midiOut.queueRt (syncOutIdx, kSyncOutputMidiStream, midiClockOutScratch,
                              currentSampleRate.load (std::memory_order_relaxed));
     }
 
@@ -7706,7 +7709,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                 midi::copyMidiSorted (perTrackMidi[(size_t) t], midiOutTrackScratch,
                                       midiOutSortScratch);
                 if (! midiOutTrackScratch.isEmpty())
-                    midiOut.queueRt (outIdx, midiOutTrackScratch,
+                    midiOut.queueRt (outIdx, t, midiOutTrackScratch,
                                      currentSampleRate.load (std::memory_order_relaxed));
             }
         }

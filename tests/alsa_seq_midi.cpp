@@ -178,7 +178,7 @@ bool loopbackAvailable()
     dusk::MidiBuffer buf;
     const std::uint8_t note[] { 0x90, 60, 100 };
     buf.addEvent (note, 3, 0);
-    out.send (dst, buf, 0.0, 48000.0);
+    out.send (dst, 0, buf, 0.0, 48000.0);
     const bool ok = sink.waitFor (1);
     in.stop();
     return ok;
@@ -279,7 +279,7 @@ TEST_CASE ("MidiOutputBank RT queue delivers through the pump, bounded by its de
     // kQueueDepth of the notes below still commit.
     REQUIRE_FALSE (bank.isOpen (dst));
     for (int i = 0; i < MidiOutputBank::kQueueDepth; ++i)
-        bank.queueRt (dst, oneNote (0x7f), 48000.0);
+        bank.queueRt (dst, 0, oneNote (0x7f), 48000.0);
 
     REQUIRE (bank.ensureOpen (dst));
     REQUIRE (bank.isOpen (dst));
@@ -297,14 +297,14 @@ TEST_CASE ("MidiOutputBank RT queue delivers through the pump, bounded by its de
     for (; slotSized.addEvent (filler, 3, n); ++n)
         REQUIRE (big.addEvent (filler, 3, n));
     REQUIRE (big.addEvent (filler, 3, n));
-    bank.queueRt (dst, big, 48000.0);
+    bank.queueRt (dst, 0, big, 48000.0);
 
     // The pump is not running, so only kQueueDepth blocks can commit; the rest
     // drop. Each carries its own note number, so the delivered set identifies
     // exactly which ones survived.
     constexpr int kPushed = MidiOutputBank::kQueueDepth * 3;
     for (int i = 0; i < kPushed; ++i)
-        bank.queueRt (dst, oneNote (i), 48000.0);
+        bank.queueRt (dst, 0, oneNote (i), 48000.0);
 
     bank.startPump();
     REQUIRE (sink.waitFor ((std::size_t) MidiOutputBank::kQueueDepth));
@@ -343,7 +343,7 @@ TEST_CASE ("MidiOutputBank RT queue delivers through the pump, bounded by its de
 
     SECTION ("a close discards what was queued before it, even if the port reopens")
     {
-        bank.queueRt (dst, oneNote (0x11), 48000.0);
+        bank.queueRt (dst, 0, oneNote (0x11), 48000.0);
         bank.closeAll();
         REQUIRE_FALSE (bank.isOpen (dst));
         consumeCleanup();
@@ -355,7 +355,7 @@ TEST_CASE ("MidiOutputBank RT queue delivers through the pump, bounded by its de
         REQUIRE_FALSE (sink.waitFor (1, 250));
 
         // Delivery still works for anything queued after the reopen.
-        bank.queueRt (dst, oneNote (0x22), 48000.0);
+        bank.queueRt (dst, 0, oneNote (0x22), 48000.0);
         REQUIRE (sink.waitFor (1));
         bank.stopPump();
 
@@ -366,7 +366,7 @@ TEST_CASE ("MidiOutputBank RT queue delivers through the pump, bounded by its de
 
     SECTION ("a re-enumeration discards what was queued against the old order")
     {
-        bank.queueRt (dst, oneNote (0x33), 48000.0);
+        bank.queueRt (dst, 0, oneNote (0x33), 48000.0);
         bank.rebuild();
         consumeCleanup();
 
@@ -378,7 +378,7 @@ TEST_CASE ("MidiOutputBank RT queue delivers through the pump, bounded by its de
         bank.startPump();
         REQUIRE_FALSE (sink.waitFor (1, 250));
 
-        bank.queueRt (again, oneNote (0x44), 48000.0);
+        bank.queueRt (again, 0, oneNote (0x44), 48000.0);
         REQUIRE (sink.waitFor (1));
         bank.stopPump();
 
@@ -431,7 +431,7 @@ TEST_CASE ("ALSA seq identifier migration is safe while the poll thread runs",
     {
         // The send keeps the poll thread busy on the same handle the migration
         // walks.
-        REQUIRE (out.send (inAsDest, note, 0.0, 48000.0));
+        REQUIRE (out.send (inAsDest, 0, note, 0.0, 48000.0));
         REQUIRE (in.migrateIdentifier (legacy) == outAsSource);
     }
 
@@ -468,7 +468,7 @@ TEST_CASE ("ALSA seq MIDI loopback round-trips bytes exactly", "[midi][alsa]")
         const std::uint8_t noteOff[] { 0x80, 60, 0 };
         REQUIRE (buf.addEvent (noteOn,  3, 0));
         REQUIRE (buf.addEvent (noteOff, 3, 0));
-        REQUIRE (out.send (inAsDest, buf, 0.0, 48000.0));
+        REQUIRE (out.send (inAsDest, 0, buf, 0.0, 48000.0));
 
         REQUIRE (sink.waitFor (2));
         std::lock_guard<std::mutex> lk (sink.m);
@@ -486,7 +486,7 @@ TEST_CASE ("ALSA seq MIDI loopback round-trips bytes exactly", "[midi][alsa]")
         dusk::MidiBuffer buf;
         const std::uint8_t burst[] { 0x90, 60, 100, 62, 101, 64, 102 };
         REQUIRE (buf.addEvent (burst, (int) sizeof burst, 0));
-        REQUIRE (out.send (inAsDest, buf, 0.0, 48000.0));
+        REQUIRE (out.send (inAsDest, 0, buf, 0.0, 48000.0));
 
         REQUIRE (sink.waitFor (3));
         std::lock_guard<std::mutex> lk (sink.m);
@@ -507,12 +507,55 @@ TEST_CASE ("ALSA seq MIDI loopback round-trips bytes exactly", "[midi][alsa]")
 
         dusk::MidiBuffer buf;
         REQUIRE (buf.addEvent (sysex.data(), (int) sysex.size(), 0));
-        REQUIRE (out.send (inAsDest, buf, 0.0, 48000.0));
+        REQUIRE (out.send (inAsDest, 0, buf, 0.0, 48000.0));
 
         REQUIRE (sink.waitFor (1));
         std::lock_guard<std::mutex> lk (sink.m);
         REQUIRE (sink.messages.size() == 1);
         REQUIRE (sink.messages[0] == sysex);
+    }
+
+    in.stop();
+    out.closeAll();
+}
+
+TEST_CASE ("ALSA seq kernel queue delivers a producer's blocks in the order it sent them",
+           "[midi][alsa]")
+{
+    if (! loopbackAvailable())
+        SKIP ("ALSA sequencer loopback unavailable - headless CI");
+
+    Sink sink;
+    AlsaSeqMidiInput  in;
+    AlsaSeqMidiOutput out;
+    in.setReceiver ([&] (const std::string& id, const std::uint8_t* b, int n, double)
+                    { sink.onMidi (id, b, n); });
+
+    const std::string outAsSource = findId (in.enumerate(),  "Dusk Studio: MIDI Out");
+    const std::string inAsDest    = findId (out.enumerate(), "Dusk Studio: MIDI In");
+    REQUIRE_FALSE (outAsSource.empty());
+    REQUIRE_FALSE (inAsDest.empty());
+    REQUIRE (in.enable (outAsSource));
+    REQUIRE (out.open (inAsDest));
+    in.start();
+
+    // The second block's clock reading came back behind the first's, so its
+    // note-off at offset 0 is nominally due before the note-on at offset 500.
+    const std::vector<std::uint8_t> on { 0x90, 60, 100 };
+    const std::vector<std::uint8_t> off { 0x80, 60, 0 };
+    dusk::MidiBuffer first, second;
+    REQUIRE (first.addEvent (on.data(), 3, 500));
+    REQUIRE (second.addEvent (off.data(), 3, 0));
+    const double base = backendClockMs() + 30.0;
+    REQUIRE (out.send (inAsDest, 0, first, base, 48000.0));
+    REQUIRE (out.send (inAsDest, 0, second, base - 5.0, 48000.0));
+
+    REQUIRE (sink.waitFor (2));
+    {
+        std::lock_guard<std::mutex> lk (sink.m);
+        REQUIRE (sink.messages.size() == 2);
+        CHECK (sink.messages[0] == on);
+        CHECK (sink.messages[1] == off);
     }
 
     in.stop();

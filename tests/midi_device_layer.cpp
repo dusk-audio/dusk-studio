@@ -4,7 +4,9 @@
 #include "engine/midi/MidiDevices.h"
 #include "foundation/MidiBuffer.h"
 #include <cstdint>
+#include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -286,5 +288,108 @@ TEST_CASE ("MidiInputClient rebuild fences the backend's dispatch", "[midi][devi
             REQUIRE (countProbeNotes (out) == 1);
         }
         REQUIRE (client.setHardwareInputsEnabledForTest (true));
+    }
+}
+
+namespace
+{
+// An output backend that, like the ALSA client after a hard error, drops every
+// route when a send fails.
+class RetiringOutputBackend final : public duskstudio::midi::IMidiOutputBackend
+{
+public:
+    std::vector<duskstudio::midi::BackendDeviceInfo> enumerate() override
+    {
+        return { { "Retiring A", "retiring:a" }, { "Retiring B", "retiring:b" } };
+    }
+
+    std::string migrateIdentifier (const std::string&) override { return {}; }
+
+    bool open (const std::string& identifier) override
+    {
+        ++opens;
+        if (refuseOpen) return false;
+        routes.insert (identifier);
+        return true;
+    }
+
+    void closeAll() override { routes.clear(); }
+    bool isOpen (const std::string& identifier) const override { return routes.count (identifier) > 0; }
+
+    bool send (const std::string& identifier, int, const dusk::MidiBuffer&, double, double) override
+    {
+        if (! isOpen (identifier)) return false;
+        if (failures > 0)
+        {
+            --failures;
+            routes.clear();
+            return false;
+        }
+        ++delivered[identifier];
+        return true;
+    }
+
+    std::set<std::string> routes;
+    std::map<std::string, int> delivered;
+    int failures = 0;
+    int opens = 0;
+    bool refuseOpen = false;
+};
+
+dusk::MidiBuffer probeNote()
+{
+    dusk::MidiBuffer buffer;
+    REQUIRE (buffer.addEvent (kProbeNote, 3, 0));
+    return buffer;
+}
+} // namespace
+
+TEST_CASE ("MidiOutputBank reopens the routes a failed send made its backend drop", "[midi][devices]")
+{
+    auto owned = std::make_unique<RetiringOutputBackend>();
+    auto* backend = owned.get();
+    MidiOutputBank bank;
+    bank.installBackend (std::move (owned));
+    REQUIRE (bank.ensureOpen (0));
+    REQUIRE (bank.ensureOpen (1));
+
+    backend->failures = 1;
+    CHECK_FALSE (bank.send (0, probeNote()));
+    CHECK (backend->isOpen ("retiring:a"));
+    CHECK (backend->isOpen ("retiring:b"));
+    CHECK (bank.isOpen (0));
+    CHECK (bank.isOpen (1));
+    REQUIRE (bank.send (0, probeNote()));
+    REQUIRE (bank.send (1, probeNote()));
+    CHECK (backend->delivered["retiring:a"] == 1);
+    CHECK (backend->delivered["retiring:b"] == 1);
+
+    SECTION ("a success between failures earns another reopen")
+    {
+        backend->failures = 1;
+        CHECK_FALSE (bank.send (1, probeNote()));
+        REQUIRE (bank.send (1, probeNote()));
+        CHECK (backend->delivered["retiring:b"] == 2);
+    }
+
+    SECTION ("a backend that fails again before any success is given up")
+    {
+        backend->failures = 2;
+        CHECK_FALSE (bank.send (0, probeNote()));
+        CHECK_FALSE (bank.send (0, probeNote()));
+        CHECK_FALSE (bank.isOpen (0));
+        CHECK_FALSE (bank.isOpen (1));
+        REQUIRE (bank.ensureOpen (0));
+        REQUIRE (bank.send (0, probeNote()));
+        CHECK (backend->delivered["retiring:a"] == 2);
+    }
+
+    SECTION ("a route that cannot be reopened stops being offered")
+    {
+        backend->failures = 1;
+        backend->refuseOpen = true;
+        CHECK_FALSE (bank.send (0, probeNote()));
+        CHECK_FALSE (bank.isOpen (0));
+        CHECK_FALSE (bank.isOpen (1));
     }
 }

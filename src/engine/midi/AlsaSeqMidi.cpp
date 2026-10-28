@@ -466,12 +466,15 @@ struct AlsaSeqMidiOutput::Impl
     snd_seq_t*        seq     = nullptr;
     int               outPort = -1;
     int               queue   = -1;
+    bool              queueRunning = false;
     snd_midi_event_t* coder   = nullptr;
     struct Destination
     {
         int client = 0;
         int port = 0;
         std::uint16_t channels = 0;
+        // Per producer stream, the latest queue time it has scheduled here.
+        std::map<int, std::uint64_t> streamDeadlineNs {};
     };
     std::map<std::string, Destination> openDests;
     std::vector<pollfd> pollDescriptors;
@@ -512,8 +515,25 @@ struct AlsaSeqMidiOutput::Impl
                       SND_SEQ_PORT_TYPE_MIDI_GENERIC | SND_SEQ_PORT_TYPE_APPLICATION);
         if (outPort < 0 || snd_midi_event_new (kOutputCoderBufferBytes, &coder) != 0) return false;
         queue = snd_seq_alloc_named_queue (seq, "Dusk MIDI output");
-        if (queue < 0 || snd_seq_start_queue (seq, queue, nullptr) < 0
-            || snd_seq_drain_output (seq) < 0) return false;
+        if (queue < 0) return false;
+        const int count = snd_seq_poll_descriptors_count (seq, POLLOUT);
+        if (count <= 0) return false;
+        pollDescriptors.resize (static_cast<std::size_t> (count));
+        if (snd_seq_poll_descriptors (seq, pollDescriptors.data(), static_cast<unsigned int> (count), POLLOUT) != count)
+            return false;
+        cleanup.complete = true;
+        return true;
+    }
+
+    // A running queue's timer ticks whether or not anything is scheduled, so
+    // the queue runs only while a destination is open. Every start resets the
+    // queue clock, which is why the origin is taken here and nowhere else:
+    // re-sampling it per block can invert closely spaced producer deadlines.
+    bool startQueue()
+    {
+        if (queueRunning) return true;
+        if (snd_seq_start_queue (seq, queue, nullptr) < 0 || snd_seq_drain_output (seq) < 0) return false;
+        queueRunning = true;
         snd_seq_queue_status_t* status;
         snd_seq_queue_status_alloca (&status);
         const double beforeStatus = backendClockMs();
@@ -522,16 +542,16 @@ struct AlsaSeqMidiOutput::Impl
         if (statusResult < 0) return false;
         const auto* time = snd_seq_queue_status_get_real_time (status);
         if (time->tv_nsec >= 1000000000) return false;
-        // Re-sampling this offset per block can invert closely spaced producer deadlines.
         queueClockOriginMs = (beforeStatus + afterStatus) * 0.5;
         queueClockOriginNs = static_cast<std::uint64_t> (time->tv_sec) * 1000000000 + time->tv_nsec;
-        const int count = snd_seq_poll_descriptors_count (seq, POLLOUT);
-        if (count <= 0) return false;
-        pollDescriptors.resize (static_cast<std::size_t> (count));
-        if (snd_seq_poll_descriptors (seq, pollDescriptors.data(), static_cast<unsigned int> (count), POLLOUT) != count)
-            return false;
-        cleanup.complete = true;
         return true;
+    }
+
+    bool stopQueue()
+    {
+        if (! queueRunning) return true;
+        queueRunning = false;
+        return snd_seq_stop_queue (seq, queue, nullptr) >= 0 && snd_seq_drain_output (seq) >= 0;
     }
 
     ~Impl()
@@ -551,6 +571,7 @@ struct AlsaSeqMidiOutput::Impl
         seq = nullptr;
         coder = nullptr;
         outPort = queue = -1;
+        queueRunning = false;
         pollDescriptors.clear();
         latestQueuedTimeMs = 0.0;
         queueClockOriginMs = 0.0;
@@ -558,19 +579,21 @@ struct AlsaSeqMidiOutput::Impl
         openDests.clear();
     }
 
-    void closeAll (bool retire = false)
+    // Cancels everything this client has scheduled and silences whatever
+    // already sounded. False when the cancel had to delete the queue.
+    bool cancelPending()
     {
-        if (seq == nullptr) return;
-        if (snd_seq_drop_output (seq) < 0)
+        const bool dropped = snd_seq_drop_output (seq) >= 0;
+        if (! dropped && queue >= 0)
         {
-            if (queue >= 0) snd_seq_free_queue (seq, queue);
+            snd_seq_free_queue (seq, queue);
             queue = -1;
-            retire = true;
+            queueRunning = false;
         }
         // Purging a scheduled note-off must not leave an already delivered note on.
-        for (const auto& entry : openDests)
+        for (auto& entry : openDests)
         {
-            const auto& destination = entry.second;
+            auto& destination = entry.second;
             for (int channel = 0; channel < 16; ++channel)
                 if ((destination.channels & (1u << channel)) != 0)
                     for (const unsigned int controller : { 120u, 123u })
@@ -585,18 +608,50 @@ struct AlsaSeqMidiOutput::Impl
                         snd_seq_ev_set_direct (&event);
                         snd_seq_event_output_direct (seq, &event);
                     }
-            snd_seq_disconnect_to (seq, outPort, destination.client, destination.port);
+            destination.channels = 0;
         }
-        openDests.clear();
         latestQueuedTimeMs = 0.0;
+        return dropped;
+    }
+
+    void disconnectAll()
+    {
+        for (const auto& entry : openDests)
+            snd_seq_disconnect_to (seq, outPort, entry.second.client, entry.second.port);
+        openDests.clear();
+    }
+
+    void closeAll (bool retire = false)
+    {
+        if (seq == nullptr) return;
+        if (! cancelPending()) retire = true;
+        disconnectAll();
+        if (! retire && ! stopQueue()) retire = true;
         if (retire) releaseClient();
     }
 
+    // The client cannot be trusted any more: retire it. The seam sees its
+    // routes gone and reopens them on a fresh client.
     bool fail (const char* operation, int error)
     {
         std::fprintf (stderr, "[Dusk Studio/MIDI] ALSA output %s failed: %s; output closed.\n",
                       operation, snd_strerror (error));
         closeAll (true);
+        return false;
+    }
+
+    // A pool still full this long after its last deadline means the queue's
+    // timer is not running (softirq starvation, say), not that the client is
+    // broken. What is pending is already late, so it goes, and the routes stay.
+    bool abandonPending (const char* operation)
+    {
+        std::fprintf (stderr, "[Dusk Studio/MIDI] ALSA output %s timed out; pending output dropped.\n",
+                      operation);
+        if (! cancelPending())
+        {
+            disconnectAll();
+            releaseClient();
+        }
         return false;
     }
 
@@ -609,19 +664,19 @@ struct AlsaSeqMidiOutput::Impl
             if (result != -EAGAIN && result != -EINTR) return fail ("send", result);
             if (result == -EINTR)
             {
-                if (backendClockMs() >= deadlineMs) return fail ("send", -ETIMEDOUT);
+                if (backendClockMs() >= deadlineMs) return abandonPending ("send");
                 continue;
             }
             for (;;)
             {
                 const double remaining = std::ceil (deadlineMs - backendClockMs());
-                if (remaining <= 0.0) return fail ("wait", -ETIMEDOUT);
+                if (remaining <= 0.0) return abandonPending ("wait");
                 const int timeout = static_cast<int> (std::min (remaining,
                     static_cast<double> (std::numeric_limits<int>::max())));
                 const int waited = ::poll (pollDescriptors.data(), pollDescriptors.size(), timeout);
                 if (waited < 0 && errno == EINTR) continue;
                 if (waited < 0) return fail ("wait", -errno);
-                if (waited == 0) return fail ("wait", -ETIMEDOUT);
+                if (waited == 0) return abandonPending ("wait");
                 unsigned short revents = 0;
                 const int status = snd_seq_poll_descriptors_revents (seq, pollDescriptors.data(),
                     static_cast<unsigned int> (pollDescriptors.size()), &revents);
@@ -662,8 +717,17 @@ bool AlsaSeqMidiOutput::open (const std::string& identifier)
     for (auto& p : queryPorts (impl->seq, false))
     {
         if (p.identifier != identifier) continue;
+        if (! impl->startQueue())
+        {
+            impl->releaseClient();
+            return false;
+        }
         const int rc = snd_seq_connect_to (impl->seq, impl->outPort, p.client, p.port);
-        if (rc < 0 && rc != -EBUSY) return false;   // -EBUSY: already subscribed = already connected
+        if (rc < 0 && rc != -EBUSY)   // -EBUSY: already subscribed = already connected
+        {
+            if (impl->openDests.empty() && ! impl->stopQueue()) impl->releaseClient();
+            return false;
+        }
         impl->openDests[identifier] = { p.client, p.port };
         return true;
     }
@@ -682,7 +746,7 @@ bool AlsaSeqMidiOutput::isOpen (const std::string& identifier) const
     return impl->openDests.count (identifier) > 0;
 }
 
-bool AlsaSeqMidiOutput::send (const std::string& identifier, const dusk::MidiBuffer& events,
+bool AlsaSeqMidiOutput::send (const std::string& identifier, int stream, const dusk::MidiBuffer& events,
                               double baseTimeMs, double sampleRate)
 {
     const std::lock_guard<std::mutex> lock (impl->seqMutex);
@@ -701,34 +765,41 @@ bool AlsaSeqMidiOutput::send (const std::string& identifier, const dusk::MidiBuf
     if (queueTime->tv_nsec >= 1000000000) return impl->fail ("queue time", -ERANGE);
     const long double baseQueueNs = static_cast<long double> (impl->queueClockOriginNs)
         + (static_cast<long double> (baseTimeMs) - impl->queueClockOriginMs) * 1000000.0L;
-    const auto timestamp = [baseQueueNs, sampleRate] (int offset, snd_seq_real_time_t& result)
+    const auto queueNs = [baseQueueNs, sampleRate] (int offset, std::uint64_t& result)
     {
         constexpr std::uint64_t maximumNs = (static_cast<std::uint64_t> (
             std::numeric_limits<unsigned int>::max()) + 1) * 1000000000 - 1;
         const long double when = baseQueueNs + static_cast<long double> (offset) * 1000000000.0L / sampleRate;
         if (! std::isfinite (when) || when > static_cast<long double> (maximumNs)) return false;
-        const auto ns = static_cast<std::uint64_t> (std::max (0.0L, std::round (when)));
-        result.tv_sec = static_cast<unsigned int> (ns / 1000000000);
-        result.tv_nsec = static_cast<unsigned int> (ns % 1000000000);
+        result = static_cast<std::uint64_t> (std::max (0.0L, std::round (when)));
         return true;
     };
     double latestBlockTimeMs = afterStatus;
     for (const auto meta : events)
     {
         const double dueMs = baseTimeMs + static_cast<double> (meta.samplePosition) * 1000.0 / sampleRate;
-        snd_seq_real_time_t time;
-        if (! std::isfinite (dueMs) || ! timestamp (meta.samplePosition, time)) return false;
+        std::uint64_t ns = 0;
+        if (! std::isfinite (dueMs) || ! queueNs (meta.samplePosition, ns)) return false;
         latestBlockTimeMs = std::max (latestBlockTimeMs, dueMs);
     }
     constexpr double kOutputWaitGraceMs = 20.0;
     const double waitDeadlineMs = std::max (latestBlockTimeMs, impl->latestQueuedTimeMs) + kOutputWaitGraceMs;
 
+    // The floor is the stream's deadline before this block, not a running
+    // maximum: events within the block keep their own times, so a buffer
+    // filled out of offset order (Clock, then MTC) still interleaves by time.
+    auto& streamDeadlineNs = it->second.streamDeadlineNs[stream];
+    const std::uint64_t floorNs = streamDeadlineNs;
     bool allOk = true;
     for (const auto meta : events)
     {
         const double dueMs = baseTimeMs + static_cast<double> (meta.samplePosition) * 1000.0 / sampleRate;
+        std::uint64_t ns = 0;
+        queueNs (meta.samplePosition, ns);
+        ns = std::max (ns, floorNs);
         snd_seq_real_time_t time;
-        timestamp (meta.samplePosition, time);
+        time.tv_sec = static_cast<unsigned int> (ns / 1000000000);
+        time.tv_nsec = static_cast<unsigned int> (ns % 1000000000);
         const std::uint8_t* bytes = meta.data;
         long remaining = meta.numBytes;
         snd_midi_event_reset_encode (impl->coder);   // isolate running status per dusk event
@@ -749,6 +820,7 @@ bool AlsaSeqMidiOutput::send (const std::string& identifier, const dusk::MidiBuf
             ev.queue = static_cast<unsigned char> (impl->queue);
             ev.time.time = time;
             if (! impl->submit (ev, waitDeadlineMs)) return false;
+            streamDeadlineNs = std::max (streamDeadlineNs, ns);
             impl->latestQueuedTimeMs = std::max (impl->latestQueuedTimeMs, dueMs);
             if (ev.type == SND_SEQ_EVENT_NOTEON && ev.data.note.velocity != 0)
                 it->second.channels |= static_cast<std::uint16_t> (1u << ev.data.note.channel);
@@ -783,7 +855,7 @@ std::string AlsaSeqMidiOutput::migrateIdentifier (const std::string&) { return {
 bool AlsaSeqMidiOutput::open (const std::string&) { return false; }
 void AlsaSeqMidiOutput::closeAll() {}
 bool AlsaSeqMidiOutput::isOpen (const std::string&) const { return false; }
-bool AlsaSeqMidiOutput::send (const std::string&, const dusk::MidiBuffer&, double, double) { return false; }
+bool AlsaSeqMidiOutput::send (const std::string&, int, const dusk::MidiBuffer&, double, double) { return false; }
 } // namespace duskstudio::midi
 
 #endif

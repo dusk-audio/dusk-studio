@@ -44,8 +44,12 @@ struct Client
     bool nonblocking = false;
     bool closed = false;
     int starts = 0;
+    int stops = 0;
     std::size_t poolCells = 500;
     snd_seq_real_time_t now { 7, 990000000 };
+    // A START resets the real kernel queue clock. Each one here lands 100 s
+    // further on, so a deadline mapped through a stale origin is plainly wrong.
+    std::int64_t startNs = 7990000000LL;
     double startClockMs = 0.0;
     double statusClockMs = 0.0;
     std::int64_t statusOffsetNs = 0;
@@ -219,6 +223,12 @@ int __wrap_snd_seq_control_queue (snd_seq_t* handle, int, int type, int, snd_seq
         client.calls.push_back ("start");
         ++client.starts;
         client.startClockMs = backendClockMs();
+        client.startNs = 7990000000LL + (client.starts - 1) * 100000000000LL;
+    }
+    if (type == SND_SEQ_EVENT_STOP)
+    {
+        client.calls.push_back ("stop");
+        ++client.stops;
     }
     return Fixture::current->startResult;
 }
@@ -229,7 +239,7 @@ int __wrap_snd_seq_get_queue_status (snd_seq_t* handle, int, snd_seq_queue_statu
 {
     auto& client = clientOf (handle);
     client.statusClockMs = backendClockMs();
-    const auto now = 7990000000LL
+    const auto now = client.startNs
         + static_cast<std::int64_t> (std::llround ((client.statusClockMs - client.startClockMs) * 1000000.0))
         + client.statusOffsetNs;
     client.now.tv_sec = static_cast<unsigned int> (now / 1000000000);
@@ -335,15 +345,15 @@ TEST_CASE ("ALSA output schedules producer deadlines and sample offsets", "[alsa
     {
         CAPTURE (rate);
         Fixture fixture;
-        const double beforeCreation = backendClockMs();
         AlsaSeqMidiOutput output;
-        const double afterCreation = backendClockMs();
         REQUIRE (output.enumerate().size() == 2);
+        const double beforeOpen = backendClockMs();
         REQUIRE (output.open (kFirstId));
+        const double afterOpen = backendClockMs();
         auto& client = fixture.last();
         const double before = backendClockMs();
         const double base = before + 1000.0;
-        REQUIRE (output.send (kFirstId, notes (0, 1000), base, rate));
+        REQUIRE (output.send (kFirstId, 0, notes (0, 1000), base, rate));
         const double after = backendClockMs();
         REQUIRE (client.accepted.size() == 2);
         for (const auto& event : client.accepted) expectScheduled (event, client);
@@ -355,27 +365,27 @@ TEST_CASE ("ALSA output schedules producer deadlines and sample offsets", "[alsa
                     WithinAbs (1000.0 * 1000000000.0 / rate, 2.0));
         CHECK_THAT (static_cast<double> (timestampNs (client.accepted[0].event) - queueNowNs (client)),
                     WithinAbs ((base - client.statusClockMs) * 1000000.0,
-                               (afterCreation - beforeCreation + after - before) * 1000000.0 + 2.0));
+                               (afterOpen - beforeOpen + after - before) * 1000000.0 + 2.0));
     }
 }
 
 TEST_CASE ("ALSA output retains the producer clock after pump delay", "[alsa-output-schedule]")
 {
     Fixture fixture;
-    const double beforeCreation = backendClockMs();
     AlsaSeqMidiOutput output;
-    const double afterCreation = backendClockMs();
+    const double beforeOpen = backendClockMs();
     REQUIRE (output.open (kFirstId));
+    const double afterOpen = backendClockMs();
     auto& client = fixture.last();
     const double before = backendClockMs();
     const double base = before - 200.0;
-    REQUIRE (output.send (kFirstId, notes (48000), base, 48000.0));
+    REQUIRE (output.send (kFirstId, 0, notes (48000), base, 48000.0));
     const double after = backendClockMs();
     REQUIRE (client.accepted.size() == 1);
     expectScheduled (client.accepted.front(), client);
     const double expected = (base + 1000.0 - client.statusClockMs) * 1000000.0;
     CHECK_THAT (static_cast<double> (timestampNs (client.accepted.front().event) - queueNowNs (client)),
-                WithinAbs (expected, (afterCreation - beforeCreation + after - before) * 1000000.0 + 2.0));
+                WithinAbs (expected, (afterOpen - beforeOpen + after - before) * 1000000.0 + 2.0));
 }
 
 TEST_CASE ("ALSA output keeps one deadline across encoded SysEx fragments", "[alsa-output-schedule]")
@@ -391,7 +401,7 @@ TEST_CASE ("ALSA output keeps one deadline across encoded SysEx fragments", "[al
     sysex.back() = 0xf7;
     dusk::MidiBuffer buffer;
     REQUIRE (buffer.addEvent (sysex.data(), static_cast<int> (sysex.size()), 4800));
-    REQUIRE (output.send (kFirstId, buffer, backendClockMs() + 50.0, 48000.0));
+    REQUIRE (output.send (kFirstId, 0, buffer, backendClockMs() + 50.0, 48000.0));
     auto& client = fixture.last();
     CHECK (client.poolCells == 2000);
     REQUIRE (client.accepted.size() > 1);
@@ -414,7 +424,7 @@ TEST_CASE ("ALSA close purges pending events and sends panic before disconnect",
     Fixture fixture;
     AlsaSeqMidiOutput output;
     REQUIRE (output.open (kFirstId));
-    REQUIRE (output.send (kFirstId, notes (0, 4800, 2), backendClockMs() + 50.0, 48000.0));
+    REQUIRE (output.send (kFirstId, 0, notes (0, 4800, 2), backendClockMs() + 50.0, 48000.0));
     auto& client = fixture.last();
     client.calls.clear();
     output.closeAll();
@@ -429,9 +439,9 @@ TEST_CASE ("ALSA close purges pending events and sends panic before disconnect",
     CHECK (drop < notesOff);
     CHECK (notesOff < disconnect);
     REQUIRE (output.open (kFirstId));
-    REQUIRE (output.send (kFirstId, notes (2400), backendClockMs() + 30.0, 48000.0));
+    REQUIRE (output.send (kFirstId, 0, notes (2400), backendClockMs() + 30.0, 48000.0));
     expectScheduled (client.accepted.back(), client);
-    CHECK (client.starts == 1);
+    CHECK (fixture.clients.size() == 1);
 }
 
 TEST_CASE ("ALSA close leaves another output client's scheduled events intact", "[alsa-output-schedule]")
@@ -440,8 +450,8 @@ TEST_CASE ("ALSA close leaves another output client's scheduled events intact", 
     AlsaSeqMidiOutput first, second;
     REQUIRE (first.open (kFirstId));
     REQUIRE (second.open (kFirstId));
-    REQUIRE (first.send (kFirstId, notes (4800), backendClockMs() + 50.0, 48000.0));
-    REQUIRE (second.send (kFirstId, notes (4800), backendClockMs() + 50.0, 48000.0));
+    REQUIRE (first.send (kFirstId, 0, notes (4800), backendClockMs() + 50.0, 48000.0));
+    REQUIRE (second.send (kFirstId, 0, notes (4800), backendClockMs() + 50.0, 48000.0));
     auto& a = *fixture.clients[0];
     auto& b = *fixture.clients[1];
     REQUIRE (b.pending.size() == 1);
@@ -464,7 +474,7 @@ TEST_CASE ("ALSA output retries a full pool without moving or duplicating an eve
         fixture.pollResults = { -1, 1 };
         fixture.pollErrors = { EINTR };
     }
-    REQUIRE (output.send (kFirstId, notes (2400), backendClockMs() + 100.0, 48000.0));
+    REQUIRE (output.send (kFirstId, 0, notes (2400), backendClockMs() + 100.0, 48000.0));
     CHECK (client.nonblocking);
     REQUIRE (client.attempts.size() == 2);
     REQUIRE (client.accepted.size() == 1);
@@ -482,11 +492,6 @@ TEST_CASE ("ALSA output retires a failed submission until explicit reopening", "
     auto& client = fixture.last();
     client.outputResults = { 0, -EIO };
     SECTION ("a terminal write error follows a submitted note-on") {}
-    SECTION ("a full pool does not become writable")
-    {
-        client.outputResults = { 0, -EAGAIN };
-        fixture.pollResults = { 0 };
-    }
     SECTION ("waiting for the pool fails")
     {
         client.outputResults = { 0, -EAGAIN };
@@ -503,7 +508,7 @@ TEST_CASE ("ALSA output retires a failed submission until explicit reopening", "
         client.outputResults = { 0, -EAGAIN };
         fixture.descriptorStatusResult = -EIO;
     }
-    CHECK_FALSE (output.send (kFirstId, notes (0, 4800, 4), backendClockMs() + 50.0, 48000.0));
+    CHECK_FALSE (output.send (kFirstId, 0, notes (0, 4800, 4), backendClockMs() + 50.0, 48000.0));
     CHECK_FALSE (output.isOpen (kFirstId));
     CHECK (client.closed);
     CHECK (client.pending.empty());
@@ -511,13 +516,13 @@ TEST_CASE ("ALSA output retires a failed submission until explicit reopening", "
     CHECK (callIndex (client, "cc:4:123") < callIndex (client, "disconnect:7"));
     CHECK (callIndex (client, "disconnect:7") < callIndex (client, "close"));
     const auto attempts = client.attempts.size();
-    CHECK_FALSE (output.send (kFirstId, notes (0), backendClockMs(), 48000.0));
+    CHECK_FALSE (output.send (kFirstId, 0, notes (0), backendClockMs(), 48000.0));
     CHECK (client.attempts.size() == attempts);
     REQUIRE (output.open (kFirstId));
     REQUIRE (fixture.clients.size() == 2);
     auto& replacement = fixture.last();
     CHECK_FALSE (replacement.closed);
-    REQUIRE (output.send (kFirstId, notes (2400), backendClockMs() + 50.0, 48000.0));
+    REQUIRE (output.send (kFirstId, 0, notes (2400), backendClockMs() + 50.0, 48000.0));
     REQUIRE (replacement.accepted.size() == 1);
     expectScheduled (replacement.accepted.front(), replacement);
 }
@@ -529,34 +534,36 @@ TEST_CASE ("ALSA pool retry accounts for later events on another destination", "
     REQUIRE (output.open (kFirstId));
     REQUIRE (output.open (kSecondId));
     const double later = backendClockMs() + 500.0;
-    REQUIRE (output.send (kFirstId, notes (0), later, 48000.0));
+    REQUIRE (output.send (kFirstId, 0, notes (0), later, 48000.0));
     auto& client = fixture.last();
     client.outputResults = { -EAGAIN };
     fixture.pollResults = { 0 };
     const double before = backendClockMs();
-    CHECK_FALSE (output.send (kSecondId, notes (0), before, 48000.0));
+    CHECK_FALSE (output.send (kSecondId, 0, notes (0), before, 48000.0));
     const double after = backendClockMs();
     REQUIRE (fixture.pollTimeouts.size() == 1);
     CHECK (fixture.pollTimeouts.front() >= static_cast<int> (std::floor (later - after)) + 20);
     CHECK (fixture.pollTimeouts.front() <= static_cast<int> (std::ceil (later - before)) + 20);
-    CHECK (client.closed);
-    CHECK_FALSE (output.isOpen (kFirstId));
-    CHECK_FALSE (output.isOpen (kSecondId));
+    CHECK_FALSE (client.closed);
+    CHECK (client.pending.empty());
+    CHECK (output.isOpen (kFirstId));
+    CHECK (output.isOpen (kSecondId));
 }
 
 TEST_CASE ("ALSA output rejects incomplete queue initialisation", "[alsa-output-schedule]")
 {
     Fixture fixture;
+    bool clientUsable = false;
     SECTION ("queue allocation fails") { fixture.allocationResult = -ENOMEM; }
-    SECTION ("queue start fails") { fixture.startResult = -EIO; }
-    SECTION ("queue start cannot drain") { fixture.drainResult = -EAGAIN; }
     SECTION ("no output descriptor exists") { fixture.descriptorResult = -EIO; }
     SECTION ("the output pool cannot be configured") { fixture.poolResult = -ENOMEM; }
-    SECTION ("the initial queue clock cannot be read") { fixture.statusResult = -EIO; }
+    SECTION ("queue start fails") { fixture.startResult = -EIO; clientUsable = true; }
+    SECTION ("queue start cannot drain") { fixture.drainResult = -EAGAIN; clientUsable = true; }
+    SECTION ("the initial queue clock cannot be read") { fixture.statusResult = -EIO; clientUsable = true; }
     AlsaSeqMidiOutput output;
-    CHECK (output.enumerate().empty());
+    CHECK (output.enumerate().empty() != clientUsable);
     CHECK_FALSE (output.open (kFirstId));
-    CHECK_FALSE (output.send (kFirstId, notes (0), backendClockMs(), 48000.0));
+    CHECK_FALSE (output.send (kFirstId, 0, notes (0), backendClockMs(), 48000.0));
     for (const auto& client : fixture.clients) CHECK (client->closed);
 }
 
@@ -565,10 +572,10 @@ TEST_CASE ("ALSA output retires a queue whose clock cannot be read", "[alsa-outp
     Fixture fixture;
     AlsaSeqMidiOutput output;
     REQUIRE (output.open (kFirstId));
-    REQUIRE (output.send (kFirstId, notes (0, 4800, 3), backendClockMs() + 50.0, 48000.0));
+    REQUIRE (output.send (kFirstId, 0, notes (0, 4800, 3), backendClockMs() + 50.0, 48000.0));
     auto& client = fixture.last();
     fixture.statusResult = -EIO;
-    CHECK_FALSE (output.send (kFirstId, notes (0), backendClockMs(), 48000.0));
+    CHECK_FALSE (output.send (kFirstId, 0, notes (0), backendClockMs(), 48000.0));
     CHECK (client.closed);
     CHECK (client.pending.empty());
     CHECK_FALSE (output.isOpen (kFirstId));
@@ -580,7 +587,7 @@ TEST_CASE ("ALSA cancellation retires the client if pending output cannot be dro
     Fixture fixture;
     AlsaSeqMidiOutput output;
     REQUIRE (output.open (kFirstId));
-    REQUIRE (output.send (kFirstId, notes (0, 4800, 1), backendClockMs() + 50.0, 48000.0));
+    REQUIRE (output.send (kFirstId, 0, notes (0, 4800, 1), backendClockMs() + 50.0, 48000.0));
     auto& client = fixture.last();
     fixture.dropResult = -EIO;
     SECTION ("deleting the queue cancels its events") {}
@@ -604,15 +611,143 @@ TEST_CASE ("ALSA producer deadlines stay stable across queue status sampling jit
     REQUIRE (output.open (kSecondId));
     auto& client = fixture.last();
     const double firstDue = backendClockMs() + 500.0;
-    REQUIRE (output.send (kFirstId, notes (0), firstDue, 48000.0));
+    REQUIRE (output.send (kFirstId, 0, notes (0), firstDue, 48000.0));
     bool earlier = false;
+    const char* route = kFirstId;
+    int stream = 0;
     SECTION ("successive producer blocks retain their order") {}
-    SECTION ("an intentionally earlier event on another route stays earlier") { earlier = true; }
+    SECTION ("an intentionally earlier event on another route stays earlier")
+    {
+        earlier = true;
+        route = kSecondId;
+    }
+    SECTION ("an earlier event from another producer on the same route stays earlier")
+    {
+        earlier = true;
+        stream = 1;
+    }
     client.statusOffsetNs = -20000000;
-    REQUIRE (output.send (earlier ? kSecondId : kFirstId, notes (0),
-                          firstDue + (earlier ? -10.0 : 1.0), 48000.0));
+    REQUIRE (output.send (route, stream, notes (0), firstDue + (earlier ? -10.0 : 1.0), 48000.0));
     REQUIRE (client.accepted.size() == 2);
     CHECK_THAT (static_cast<double> (timestampNs (client.accepted[1].event)
                                     - timestampNs (client.accepted[0].event)),
                 WithinAbs (earlier ? -10000000.0 : 1000000.0, 2.0));
+}
+
+TEST_CASE ("ALSA output keeps a producer's next block behind its last when the block clock jitters",
+           "[alsa-output-schedule]")
+{
+    Fixture fixture;
+    AlsaSeqMidiOutput output;
+    REQUIRE (output.open (kFirstId));
+    auto& client = fixture.last();
+    constexpr double rate = 48000.0;
+    constexpr double blockMs = 512.0 * 1000.0 / rate;
+    const double base = backendClockMs() + 100.0;
+    double early = 0.27;
+    SECTION ("the next callback read its clock 0.27 ms early") {}
+    SECTION ("the next block's clock reading went backwards") { early = blockMs + 5.0; }
+
+    dusk::MidiBuffer first;
+    const std::uint8_t on[] { 0x90, 60, 100 };
+    REQUIRE (first.addEvent (on, 3, 500));
+    REQUIRE (output.send (kFirstId, 0, first, base, rate));
+
+    dusk::MidiBuffer next;
+    const std::uint8_t off[] { 0x80, 60, 0 };
+    const std::uint8_t later[] { 0x90, 62, 100 };
+    REQUIRE (next.addEvent (off, 3, 0));
+    REQUIRE (next.addEvent (later, 3, 256));
+    REQUIRE (output.send (kFirstId, 0, next, base + blockMs - early, rate));
+
+    REQUIRE (client.accepted.size() == 3);
+    const auto onNs = timestampNs (client.accepted[0].event);
+    CHECK (timestampNs (client.accepted[1].event) == onNs);
+    const double laterNominalNs = (blockMs - early + (256.0 - 500.0) * 1000.0 / rate) * 1000000.0;
+    CHECK_THAT (static_cast<double> (timestampNs (client.accepted[2].event) - onNs),
+                WithinAbs (std::max (0.0, laterNominalNs), 2.0));
+}
+
+TEST_CASE ("ALSA output times a block's events by offset whatever order they were added in",
+           "[alsa-output-schedule]")
+{
+    Fixture fixture;
+    AlsaSeqMidiOutput output;
+    REQUIRE (output.open (kFirstId));
+    auto& client = fixture.last();
+    const double base = backendClockMs() + 100.0;
+    REQUIRE (output.send (kFirstId, 0, notes (0), base, 48000.0));
+
+    // The sync emitters fill a block Clock first, then append MTC behind it.
+    dusk::MidiBuffer sync;
+    const std::uint8_t clock[] { 0xf8 };
+    const std::uint8_t quarterFrame[] { 0xf1, 0x10 };
+    REQUIRE (sync.addEvent (clock, 1, 400));
+    REQUIRE (sync.addEvent (quarterFrame, 2, 100));
+    REQUIRE (output.send (kFirstId, 0, sync, base + 512.0 * 1000.0 / 48000.0, 48000.0));
+
+    REQUIRE (client.accepted.size() == 3);
+    CHECK (client.accepted[1].event.type == SND_SEQ_EVENT_CLOCK);
+    CHECK (client.accepted[2].event.type == SND_SEQ_EVENT_QFRAME);
+    CHECK_THAT (static_cast<double> (timestampNs (client.accepted[2].event)
+                                    - timestampNs (client.accepted[1].event)),
+                WithinAbs (-300.0 * 1000000000.0 / 48000.0, 2.0));
+}
+
+TEST_CASE ("ALSA output keeps its client when the pool stays full past its grace", "[alsa-output-schedule]")
+{
+    Fixture fixture;
+    AlsaSeqMidiOutput output;
+    REQUIRE (output.open (kFirstId));
+    REQUIRE (output.open (kSecondId));
+    auto& client = fixture.last();
+    client.outputResults = { 0, -EAGAIN };
+    fixture.pollResults = { 0 };
+    CHECK_FALSE (output.send (kFirstId, 0, notes (0, 4800, 4), backendClockMs() + 50.0, 48000.0));
+    CHECK_FALSE (client.closed);
+    CHECK (client.pending.empty());
+    CHECK (output.isOpen (kFirstId));
+    CHECK (output.isOpen (kSecondId));
+    CHECK (callIndex (client, "drop") < callIndex (client, "cc:4:120"));
+    CHECK (callIndex (client, "cc:4:123") < client.calls.size());
+    CHECK (callIndex (client, "disconnect:7") == client.calls.size());
+
+    REQUIRE (output.send (kFirstId, 0, notes (2400), backendClockMs() + 50.0, 48000.0));
+    REQUIRE (output.send (kSecondId, 0, notes (2400), backendClockMs() + 50.0, 48000.0));
+    CHECK (fixture.clients.size() == 1);
+    REQUIRE (client.pending.size() == 2);
+    expectScheduled (client.pending[0], client);
+    expectScheduled (client.pending[1], client, kSecondPort);
+}
+
+TEST_CASE ("ALSA output runs its queue only while an output is open", "[alsa-output-schedule]")
+{
+    Fixture fixture;
+    AlsaSeqMidiOutput output;
+    REQUIRE (output.enumerate().size() == 2);
+    auto& client = fixture.last();
+    CHECK (client.starts == 0);
+    CHECK (callIndex (client, "allocate") < client.calls.size());
+
+    REQUIRE (output.open (kFirstId));
+    REQUIRE (output.open (kSecondId));
+    CHECK (client.starts == 1);
+    CHECK (client.stops == 0);
+
+    client.calls.clear();
+    output.closeAll();
+    CHECK (client.stops == 1);
+    CHECK (callIndex (client, "disconnect:8") < callIndex (client, "stop"));
+    CHECK_FALSE (client.closed);
+
+    const double before = backendClockMs();
+    REQUIRE (output.open (kFirstId));
+    CHECK (client.starts == 2);
+    CHECK (fixture.clients.size() == 1);
+    const double base = before + 50.0;
+    REQUIRE (output.send (kFirstId, 0, notes (0), base, 48000.0));
+    const double after = backendClockMs();
+    REQUIRE (client.accepted.size() == 1);
+    CHECK_THAT (static_cast<double> (timestampNs (client.accepted.front().event) - queueNowNs (client)),
+                WithinAbs ((base - client.statusClockMs) * 1000000.0, (after - before) * 1000000.0 + 2.0));
 }

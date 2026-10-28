@@ -191,8 +191,10 @@ public:
     // lock-free queue and the pump drains them. Slot buffers are pre-sized so
     // the copy never allocates; a closed port, a block past the slot cap, or a
     // full queue drops the block (dropping clock bytes beats an xrun).
-    // sampleRate carries the sample-offset->ms math.
-    void queueRt (int port, const dusk::MidiBuffer& events, double sampleRate) noexcept;
+    // stream (>= 0) names the producer - one per track, one for the sync
+    // output - whose blocks a port must receive in the order they were queued
+    // (IMidiOutputBackend::send). sampleRate carries the sample-offset->ms math.
+    void queueRt (int port, int stream, const dusk::MidiBuffer& events, double sampleRate) noexcept;
 
     // Pump lifecycle (message thread).
     void startPump();
@@ -202,8 +204,21 @@ private:
     void drainQueue();     // pump thread
     void pumpLoop();
 
+    // bankMutex held. A send through the backend that reopens, once per failure
+    // streak, every port the open flags still promise but the backend dropped.
+    bool deliver (int port, int stream, const dusk::MidiBuffer& events,
+                  double baseTimeMs, double sampleRate);
+    void reopenDroppedPorts();
+
+    // Message-thread direct sends (MCU feedback) are their own stream.
+    static constexpr int kDirectStream = -1;
+
     std::unique_ptr<IMidiOutputBackend> backend;
     std::vector<MidiDeviceInfo> devices;
+
+    // bankMutex. Set by an automatic reopen, cleared by the next send that
+    // succeeds: a backend failing again before then is not recovering.
+    bool reopenUnconfirmed = false;
 
     // Ports the audio thread may see beyond this are not addressable; no
     // sequencer exposes anywhere near it.
@@ -213,7 +228,8 @@ private:
     // thread reads these in isOpen while the message thread re-enumerates, so
     // neither the array nor its bound may be swapped under it. rebuild()
     // publishes 0 before it touches anything and the new count after, so a
-    // racing reader sees "closed", never a stale bound.
+    // racing reader sees "closed", never a stale bound. The pump also clears a
+    // flag, under bankMutex, when a failed send leaves its port unrecoverable.
     std::array<std::atomic<bool>, kMaxPorts> openFlags {};
     std::atomic<int> numOpenFlags { 0 };
 
@@ -225,6 +241,7 @@ private:
     struct QueuedMidiOut
     {
         int              port       = -1;
+        int              stream     = 0;
         double           timeMs     = 0.0;
         double           sampleRate = 48000.0;
         std::uint32_t    generation = 0;

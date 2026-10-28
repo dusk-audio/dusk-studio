@@ -226,6 +226,7 @@ void MidiOutputBank::installBackend (std::unique_ptr<IMidiOutputBackend> backend
         backend->closeAll();
         devices.clear();
         backend = std::move (backendIn);
+        reopenUnconfirmed = false;
     }
 
     rebuild();
@@ -252,6 +253,7 @@ void MidiOutputBank::rebuild()
     readCount.store (writeCount.load (std::memory_order_acquire), std::memory_order_release);
 
     backend->closeAll();
+    reopenUnconfirmed = false;
     devices.clear();
     for (const auto& d : backend->enumerate())
     {
@@ -322,6 +324,7 @@ void MidiOutputBank::closeAll()
     readCount.store (writeCount.load (std::memory_order_acquire), std::memory_order_release);
 
     backend->closeAll();
+    reopenUnconfirmed = false;
 }
 
 bool MidiOutputBank::isOpen (int index) const noexcept
@@ -336,10 +339,46 @@ bool MidiOutputBank::send (int index, const dusk::MidiBuffer& events) noexcept
     const std::lock_guard<std::mutex> lock (bankMutex);
     // sampleRate is for the offset->ms conversion only; a direct send carries no
     // offsets, and backendClockMs() = "ASAP".
-    return backend->send (devices[(size_t) index].identifier, events, backendClockMs(), 48000.0);
+    return deliver (index, kDirectStream, events, backendClockMs(), 48000.0);
 }
 
-void MidiOutputBank::queueRt (int port, const dusk::MidiBuffer& events, double sampleRate) noexcept
+bool MidiOutputBank::deliver (int port, int stream, const dusk::MidiBuffer& events,
+                              double baseTimeMs, double sampleRate)
+{
+    const auto& identifier = devices[(size_t) port].identifier;
+    if (backend->send (identifier, stream, events, baseTimeMs, sampleRate))
+    {
+        reopenUnconfirmed = false;
+        return true;
+    }
+    // A backend may retire its routes when a send leaves it unusable. The open
+    // flags still promise them to every producer, and ensureOpen trusts the
+    // flags, so nothing else would ever reopen them.
+    if (isOpen (port) && ! backend->isOpen (identifier))
+        reopenDroppedPorts();
+    return false;
+}
+
+void MidiOutputBank::reopenDroppedPorts()
+{
+    const bool retry = ! std::exchange (reopenUnconfirmed, true);
+    const int count = numOpenFlags.load (std::memory_order_acquire);
+    for (int i = 0; i < count; ++i)
+    {
+        const auto& device = devices[(size_t) i];
+        if (! openFlags[(size_t) i].load (std::memory_order_acquire) || backend->isOpen (device.identifier))
+            continue;
+        if (retry && backend->open (device.identifier))
+            continue;
+        openFlags[(size_t) i].store (false, std::memory_order_release);
+        std::fprintf (stderr,
+                      "[Dusk Studio/MidiDevices] WARNING: MIDI output \"%s\" (id %s) failed and "
+                      "could not be reopened; select it again to retry.\n",
+                      device.name.c_str(), device.identifier.c_str());
+    }
+}
+
+void MidiOutputBank::queueRt (int port, int stream, const dusk::MidiBuffer& events, double sampleRate) noexcept
 {
     // Sampled before the port is tested, not after: a close landing between the
     // two must leave this block carrying the pre-close generation so the pump
@@ -365,6 +404,7 @@ void MidiOutputBank::queueRt (int port, const dusk::MidiBuffer& events, double s
     if (slot.events.isEmpty()) return;
 
     slot.port       = port;
+    slot.stream     = stream;
     slot.timeMs     = backendClockMs();
     slot.sampleRate = sampleRate > 0.0 ? sampleRate : 48000.0;
     slot.generation = generation;
@@ -387,8 +427,7 @@ void MidiOutputBank::drainQueue()
         const auto& slot = queue[(size_t) (r % (std::uint32_t) kQueueDepth)];
         if (slot.generation == generation
               && slot.port >= 0 && slot.port < (int) devices.size())
-            (void) backend->send (devices[(size_t) slot.port].identifier, slot.events,
-                                  slot.timeMs, slot.sampleRate);
+            (void) deliver (slot.port, slot.stream, slot.events, slot.timeMs, slot.sampleRate);
         ++r;
     }
     readCount.store (r, std::memory_order_release);

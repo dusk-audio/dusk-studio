@@ -161,7 +161,7 @@ TEST_CASE ("CoreMIDI virtual endpoints carry channel system and SysEx messages",
     };
     dusk::MidiBuffer events;
     for (const auto& bytes : expected) REQUIRE (events.addEvent (bytes.data(), static_cast<int> (bytes.size()), 0));
-    REQUIRE (output->send (outputId, events, backendClockMs(), 48000.0));
+    REQUIRE (output->send (outputId, 0, events, backendClockMs(), 48000.0));
     REQUIRE (sink.wait (expected.size()));
     input->stop();
     REQUIRE (sink.events.size() == expected.size());
@@ -172,7 +172,7 @@ TEST_CASE ("CoreMIDI virtual endpoints carry channel system and SysEx messages",
     }
     output->closeAll();
     REQUIRE_FALSE (output->isOpen (outputId));
-    REQUIRE_FALSE (output->send (outputId, events, backendClockMs(), 48000.0));
+    REQUIRE_FALSE (output->send (outputId, 0, events, backendClockMs(), 48000.0));
 }
 
 TEST_CASE ("CoreMIDI preserves packet time and reassembles SysEx across packets", "[coremidi-native][issue-298]")
@@ -215,7 +215,7 @@ TEST_CASE ("CoreMIDI schedules queued sample offsets in time order", "[coremidi-
     const std::uint8_t off[] { 0x80, 60, 0 };
     REQUIRE (events.addEvent (off, 3, 0));
     const double baseMs = backendClockMs() - 10.0;
-    REQUIRE (output->send (outputId, events, baseMs, 48000.0));
+    REQUIRE (output->send (outputId, 0, events, baseMs, 48000.0));
     REQUIRE (sink.wait (2));
     input->stop();
     REQUIRE (sink.events[0].bytes == std::vector<std::uint8_t> { 0x80, 60, 0 });
@@ -352,8 +352,8 @@ TEST_CASE ("CoreMIDI future output does not delay a different destination", "[co
     dusk::MidiBuffer events;
     const std::uint8_t note[] { 0x90, 60, 100 };
     REQUIRE (events.addEvent (note, 3, 0));
-    REQUIRE (output->send (firstOutput, events, backendClockMs() + 500.0, 48000.0));
-    REQUIRE (output->send (secondOutput, events, backendClockMs(), 48000.0));
+    REQUIRE (output->send (firstOutput, 0, events, backendClockMs() + 500.0, 48000.0));
+    REQUIRE (output->send (secondOutput, 0, events, backendClockMs(), 48000.0));
     REQUIRE (sink.wait (2));
     input->stop();
     REQUIRE (sink.events[0].id == secondInput);
@@ -378,8 +378,8 @@ TEST_CASE ("CoreMIDI close cancels owned pending output and preserves another se
     REQUIRE (cancelled.addEvent (note, 3, 0));
     REQUIRE (retained.addEvent (off, 3, 0));
     const auto now = backendClockMs();
-    REQUIRE (first->send (outputId, cancelled, now + 200.0, 48000.0));
-    REQUIRE (second->send (outputId, retained, now + 250.0, 48000.0));
+    REQUIRE (first->send (outputId, 0, cancelled, now + 200.0, 48000.0));
+    REQUIRE (second->send (outputId, 0, retained, now + 250.0, 48000.0));
     first->closeAll();
     REQUIRE (first->open (outputId));
     REQUIRE (sink.wait (1));
@@ -403,7 +403,7 @@ TEST_CASE ("CoreMIDI direct output survives immediate close or destruction", "[c
     const std::uint8_t off[] { 0x80, 60, 0 }, note[] { 0x90, 60, 100 };
     REQUIRE (events.addEvent (off, 3, 0));
     REQUIRE (events.addEvent (note, 3, 48000));
-    REQUIRE (output->send (outputId, events, backendClockMs(), 48000.0));
+    REQUIRE (output->send (outputId, 0, events, backendClockMs(), 48000.0));
     SECTION ("closeAll") { output->closeAll(); }
     SECTION ("destruction") { output.reset(); }
     REQUIRE (sink.wait (1));
