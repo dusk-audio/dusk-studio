@@ -51,12 +51,12 @@ TEST_CASE ("POSIX IPC sends survive a closed peer", "[ipc][posix]")
     {
         struct sigaction defaultAction {};
         defaultAction.sa_handler = SIG_DFL;
-        ::sigemptyset (&defaultAction.sa_mask);
+        sigemptyset (&defaultAction.sa_mask);
         if (::sigaction (SIGPIPE, &defaultAction, nullptr) != 0) ::_exit (2);
 
         sigset_t pipeSignal;
-        ::sigemptyset (&pipeSignal);
-        ::sigaddset (&pipeSignal, SIGPIPE);
+        sigemptyset (&pipeSignal);
+        sigaddset (&pipeSignal, SIGPIPE);
         if (::sigprocmask (SIG_UNBLOCK, &pipeSignal, nullptr) != 0) ::_exit (3);
 
         const char byte = 'x';
@@ -71,7 +71,7 @@ TEST_CASE ("POSIX IPC sends survive a closed peer", "[ipc][posix]")
 
         ::_exit (! sent && sendError == EPIPE
                  && currentAction.sa_handler == SIG_DFL
-                 && ::sigismember (&currentMask, SIGPIPE) == 0 ? 0 : 1);
+                 && sigismember (&currentMask, SIGPIPE) == 0 ? 0 : 1);
     }
 
     REQUIRE (probe > 0);
