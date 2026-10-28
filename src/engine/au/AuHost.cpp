@@ -13,6 +13,12 @@ void setIfPresent (T* target, U value) noexcept
 {
     if (target != nullptr) *target = static_cast<T> (value);
 }
+
+bool hasLoopBounds (const dusk::TransportPosition& position) noexcept
+{
+    return std::isfinite (position.ppqLoopStart) && std::isfinite (position.ppqLoopEnd)
+        && position.ppqLoopEnd > position.ppqLoopStart;
+}
 } // namespace
 
 AuHost::AuHost()
@@ -29,17 +35,25 @@ void AuHost::beginBlock (const dusk::TransportPosition* position, int numFrames)
     if (position == nullptr)
     {
         current = {};
-        stateChanged = havePosition;
+        stateChanged = stateChanged || havePosition;
         havePosition = false;
         previousBlockFrames = numFrames;
         return;
     }
 
-    const auto expectedStart = previousBlockStart + previousBlockFrames;
-    stateChanged = ! havePosition || current.isPlaying != position->isPlaying
+    const auto advance = current.isPlaying || current.isRecording
+        ? std::max (0, previousBlockFrames) : 0;
+    const bool contiguous = previousBlockStart <= std::numeric_limits<std::int64_t>::max() - advance
+        && position->timeInSamples == previousBlockStart + advance;
+    stateChanged = stateChanged || ! havePosition || current.isPlaying != position->isPlaying
         || current.isRecording != position->isRecording
         || current.isLooping != position->isLooping
-        || position->timeInSamples != expectedStart;
+        || current.loopStartSamples != position->loopStartSamples
+        || current.loopEndSamples != position->loopEndSamples
+        || hasLoopBounds (current) != hasLoopBounds (*position)
+        || std::islessgreater (current.ppqLoopStart, position->ppqLoopStart)
+        || std::islessgreater (current.ppqLoopEnd, position->ppqLoopEnd)
+        || ! contiguous;
     current = *position;
     previousBlockStart = position->timeInSamples;
     previousBlockFrames = numFrames;
@@ -81,15 +95,13 @@ OSStatus AuHost::transportState (void* user, Boolean* playing, Boolean* changed,
                                  Float64* cycleStart, Float64* cycleEnd) noexcept
 {
     auto& self = *static_cast<AuHost*> (user);
-    setIfPresent (playing, self.current.isPlaying);
+    setIfPresent (playing, self.current.isPlaying || self.current.isRecording);
     setIfPresent (changed, self.stateChanged);
     setIfPresent (sample, self.current.timeInSamples);
-    // TransportPosition carries no loop bounds, and a cycling flag with a
-    // zero-length range reads as a degenerate cycle - report not-cycling until
-    // real start/end beats exist to hand over.
-    setIfPresent (cycling, false);
-    setIfPresent (cycleStart, 0.0);
-    setIfPresent (cycleEnd, 0.0);
+    const bool validLoop = hasLoopBounds (self.current);
+    setIfPresent (cycling, self.current.isLooping && validLoop);
+    setIfPresent (cycleStart, validLoop ? self.current.ppqLoopStart : 0.0);
+    setIfPresent (cycleEnd, validLoop ? self.current.ppqLoopEnd : 0.0);
     self.stateChanged = false;
     return noErr;
 }
