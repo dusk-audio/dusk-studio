@@ -10,6 +10,7 @@
 #include <cstring>
 #include <limits>
 #include <string>
+#include <thread>
 
 namespace duskstudio::clap
 {
@@ -54,7 +55,7 @@ ClapInstance::ClapInstance()
                 self->lastTouchedParamId.store ((int64_t) value.param_id, std::memory_order_relaxed);
                 if (value.note_id == -1 && value.port_index == -1 && value.channel == -1 && value.key == -1
                     && std::binary_search (self->writableParamIds.begin(), self->writableParamIds.end(), value.param_id))
-                    self->revision.fetch_add (1, std::memory_order_release);
+                    self->hostObj.markStateChanged();
             }
             else if (ev->type == CLAP_EVENT_PARAM_GESTURE_BEGIN && ev->size >= sizeof (clap_event_param_gesture_t))
                 self->lastTouchedParamId.store ((int64_t) reinterpret_cast<const clap_event_param_gesture_t*> (ev)->param_id,
@@ -374,8 +375,8 @@ void ClapInstance::deactivate()
             // thread (the engine process gate has quiesced the real audio thread, so
             // exactly one thread is the "audio thread" right now). Re-designate this
             // thread so the plugin's thread-check inside stop_processing is satisfied,
-            // then hand the stamp back - process() only re-stamps on its next start,
-            // which a bypassed slot never reaches.
+            // then hand the stamp back - a block re-stamps only when it arrives on
+            // another thread than the last one, and a bypassed slot runs none.
             const auto previousAudioThread =
                 hostObj.exchangeAudioThread (std::this_thread::get_id());
             plugin->stop_processing (plugin);
@@ -451,7 +452,7 @@ bool ClapInstance::loadState (const std::vector<uint8_t>& in)
             latencySamples = (int) lat->get (plugin);
     }
 
-    revision.fetch_add (1, std::memory_order_release);
+    hostObj.markStateChanged();
     return true;
 }
 
@@ -477,17 +478,19 @@ void ClapInstance::setParamValue (clap_id id, double value) noexcept
         {
             if ((p.flags & CLAP_PARAM_IS_READONLY) != 0) return;
             if (paramRing.push ({ id, value, p.cookie }))
-                revision.fetch_add (1, std::memory_order_release);
+                hostObj.markStateChanged();
             return;
         }
 }
 
 bool ClapInstance::drainParamRing() noexcept
 {
-    // Drain queued parameter changes into this block's CLAP event list (audio thread
-    // = single consumer). All at time 0 - sample-accurate automation is a later step.
+    // Drain queued parameter changes into this block's CLAP event list (the
+    // audio-thread role = single consumer). All at time 0 - sample-accurate
+    // automation is a later step.
     eventCount = 0;
-    return paramRing.drain ([this] (const ParamChange& pc)
+    const bool passCookies = ! hostObj.paramCookiesRevoked();
+    return paramRing.drain ([this, passCookies] (const ParamChange& pc)
     {
         auto& ev = eventScratch[(size_t) eventCount++].param;
         ev.header.size     = sizeof (clap_event_param_value_t);
@@ -496,13 +499,68 @@ bool ClapInstance::drainParamRing() noexcept
         ev.header.type     = CLAP_EVENT_PARAM_VALUE;
         ev.header.flags    = 0;
         ev.param_id        = pc.id;
-        ev.cookie          = pc.cookie;
+        ev.cookie          = passCookies ? pc.cookie : nullptr;
         ev.note_id         = -1;
         ev.port_index      = -1;
         ev.channel         = -1;
         ev.key             = -1;
         ev.value           = pc.value;
     }, (uint32_t) eventScratch.size()) != 0;
+}
+
+bool ClapInstance::claimAudioRole (bool wait) noexcept
+{
+    while (audioRoleHeld.exchange (true, std::memory_order_acquire))
+    {
+        if (! wait) return false;
+        std::this_thread::yield();
+    }
+    return true;
+}
+
+bool ClapInstance::flushParamsOutsideProcess() noexcept
+{
+    if (plugin == nullptr) return true;
+    if (! claimAudioRole (false)) return false;
+    const AudioRoleRelease role { audioRoleHeld };
+
+    const bool requested = hostObj.consumeFlushRequest();
+    if (paramsExt == nullptr || paramsExt->flush == nullptr)
+        return paramRing.empty();
+    const bool queued = drainParamRing();
+    if (queued || requested)
+    {
+        // params.flush is [active ? audio-thread : main-thread].
+        if (active)
+        {
+            const auto previous = hostObj.exchangeAudioThread (std::this_thread::get_id());
+            paramsExt->flush (plugin, &inEvents, &emptyOut);
+            hostObj.restoreAudioThread (previous);
+        }
+        else
+            paramsExt->flush (plugin, &inEvents, &emptyOut);
+        eventCount = 0;
+        if (queued)
+            hostObj.markStateChanged();
+    }
+    return paramRing.empty();
+}
+
+void ClapInstance::serviceIdleParams (std::chrono::steady_clock::time_point now) noexcept
+{
+    // Longer than any block period, so an insert that is running is never
+    // taken for an idle one.
+    constexpr auto kIdleAfter = std::chrono::milliseconds (500);
+    const auto processed = processCalls.load (std::memory_order_relaxed);
+    if (processed != processCallsSeen)
+    {
+        processCallsSeen = processed;
+        processSeenAt = now;
+        return;
+    }
+    if (now - processSeenAt < kIdleAfter) return;
+    if (hostObj.isFlushRequested() || ! paramRing.empty())
+        (void) flushParamsOutsideProcess();
 }
 
 std::size_t ClapInstance::clapEventsFor (const uint8_t* d, int numBytes) const noexcept
@@ -668,9 +726,22 @@ void ClapInstance::processBlock (const hosting::PortBuffers& io) noexcept
         return;
     }
 
+    if (! claimAudioRole (io.offlineRender))
+    {
+        clearOutputs();
+        return;
+    }
+    const AudioRoleRelease role { audioRoleHeld };
+
+    const auto thisThread = std::this_thread::get_id();
+    if (thisThread != stampedAudioThread)
+    {
+        stampedAudioThread = thisThread;
+        hostObj.setAudioThread (thisThread);
+    }
+
     if (! processing)
     {
-        hostObj.setAudioThread (std::this_thread::get_id());
         if (plugin->start_processing != nullptr && ! plugin->start_processing (plugin))
         {
             startFailed = true;
@@ -800,10 +871,13 @@ void ClapInstance::processBlock (const hosting::PortBuffers& io) noexcept
         p.transport = &transport;
     }
 
+    // This process() answers any request_flush made before it.
+    (void) hostObj.consumeFlushRequest();
+    processCalls.store (processCalls.load (std::memory_order_relaxed) + 1, std::memory_order_relaxed);
     if (plugin->process (plugin, &p) == CLAP_PROCESS_ERROR)
         clearOutputs();
     // A capture between enqueue and application must not make this edit clean.
     if (paramsApplied)
-        revision.fetch_add (1, std::memory_order_release);
+        hostObj.markStateChanged();
 }
 } // namespace duskstudio::clap

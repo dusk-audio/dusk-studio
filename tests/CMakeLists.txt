@@ -504,7 +504,8 @@ if(DUSKSTUDIO_NATIVE_CLAP)
         DUSKSTUDIO_PANIC_PROBE_CLAP_FIXTURE_PATH="$<TARGET_FILE:dusk-studio-panic-probe-clap-fixture>"
         DUSKSTUDIO_NO_WINDOW_CLAP_FIXTURE_PATH="$<TARGET_FILE:dusk-studio-no-window-clap-fixture>"
         DUSKSTUDIO_LATENCY_CLAP_FIXTURE_PATH="$<TARGET_FILE:dusk-studio-latency-clap-fixture>")
-    set_property(SOURCE clap_instance_process.cpp APPEND PROPERTY COMPILE_DEFINITIONS
+    set_property(SOURCE clap_instance_process.cpp clap_host_state_flush.cpp
+        APPEND PROPERTY COMPILE_DEFINITIONS
         DUSKSTUDIO_PARAM_TOUCH_CLAP_FIXTURE_PATH="$<TARGET_FILE:dusk-studio-param-touch-clap-fixture>")
 
     if(APPLE)
@@ -529,6 +530,7 @@ if(DUSKSTUDIO_NATIVE_CLAP)
         clap_scanner.cpp
         clap_params.cpp
         clap_host_thread_check.cpp
+        clap_host_state_flush.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/clap/ClapBundle.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/clap/ClapHost.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/clap/ClapInstance.cpp

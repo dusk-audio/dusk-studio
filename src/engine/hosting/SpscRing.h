@@ -46,11 +46,10 @@ public:
         return n;
     }
 
-    // Consumer side: nothing is queued.
+    // Either side: nothing queued at the moment of the call.
     bool empty() const noexcept
     {
-        return readIdx.load (std::memory_order_relaxed)
-            == writeIdx.load (std::memory_order_acquire);
+        return readIdx.load (std::memory_order_acquire) == writeIdx.load (std::memory_order_acquire);
     }
 
     // Consumer side: discard everything queued so far (e.g. entries aimed at a

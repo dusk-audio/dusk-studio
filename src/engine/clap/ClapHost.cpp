@@ -22,7 +22,10 @@ ClapHost::ClapHost()
     host.get_extension = &ClapHost::getExtension;
     host.request_restart  = [] (const clap_host_t* h)
         { self (h).restartRequested.store (true, std::memory_order_release); };
-    host.request_process  = [] (const clap_host_t*) {};
+    // The params extension lets a plug-in ask for process() instead of
+    // request_flush after a GUI edit; a flush is what reaches an idle one.
+    host.request_process  = [] (const clap_host_t* h)
+        { self (h).flushRequested.store (true, std::memory_order_release); };
     // request_callback is [thread-safe]: record the request and drain it on the main
     // thread in pumpGui by calling plugin->on_main_thread().
     host.request_callback = [] (const clap_host_t* h)
@@ -50,6 +53,16 @@ ClapHost::ClapHost()
 
     timerExt.register_timer   = &ClapHost::registerTimer;
     timerExt.unregister_timer = &ClapHost::unregisterTimer;
+
+    stateExt.mark_dirty = [] (const clap_host_t* h) { self (h).markStateChanged(); };
+
+    paramsExt.rescan        = &ClapHost::rescanParams;
+    // MIDI bindings name a parameter by its index in the snapshot, and the host
+    // keeps no automation or modulation of its own, so no reference is keyed
+    // on the id being cleared.
+    paramsExt.clear         = [] (const clap_host_t*, clap_id, clap_param_clear_flags) {};
+    paramsExt.request_flush = [] (const clap_host_t* h)
+        { self (h).flushRequested.store (true, std::memory_order_release); };
 }
 
 const void* ClapHost::getExtension (const clap_host_t* h, const char* id) noexcept
@@ -63,7 +76,22 @@ const void* ClapHost::getExtension (const clap_host_t* h, const char* id) noexce
     if (std::strcmp (id, CLAP_EXT_POSIX_FD_SUPPORT)  == 0) return &s.fdExt;
 #endif
     if (std::strcmp (id, CLAP_EXT_TIMER_SUPPORT)     == 0) return &s.timerExt;
+    if (std::strcmp (id, CLAP_EXT_STATE)             == 0) return &s.stateExt;
+    if (std::strcmp (id, CLAP_EXT_PARAMS)            == 0) return &s.paramsExt;
     return nullptr;
+}
+
+// [main-thread]. Values changed means a preset or other state the host must
+// save again. Text and info need nothing: text is formatted on demand, and the
+// parameter list is the create() snapshot for the instance's life, which also
+// means a parameter set rebuilt under RESCAN_ALL is not picked up.
+void ClapHost::rescanParams (const clap_host_t* h, clap_param_rescan_flags flags) noexcept
+{
+    auto& s = self (h);
+    if ((flags & (CLAP_PARAM_RESCAN_VALUES | CLAP_PARAM_RESCAN_ALL)) != 0)
+        s.markStateChanged();
+    if ((flags & CLAP_PARAM_RESCAN_ALL) != 0)
+        s.cookiesRevoked.store (true, std::memory_order_release);
 }
 
 bool ClapHost::isMainThread (const clap_host_t* h) noexcept

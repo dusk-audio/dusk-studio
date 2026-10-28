@@ -4,6 +4,8 @@
 #include "ClapInstance.h"
 #include "../hosting/NativeInsertSlot.h"
 
+#include <chrono>
+
 namespace duskstudio::clap
 {
 struct ClapSlotTraits
@@ -50,6 +52,11 @@ public:
     // slot, and activate() reads the latency again.
     bool consumeRestartRequest() noexcept
         { return instance != nullptr && instance->getHost().consumeRestartRequest(); }
+
+    // Message thread, the engine's drain timer: an insert no block is running
+    // still answers its plug-in's request_flush and takes queued writes.
+    void serviceIdleParams (std::chrono::steady_clock::time_point now) noexcept
+        { if (instance != nullptr) instance->serviceIdleParams (now); }
 
 protected:
     // MIDI binding: 0..1 fraction -> the parameter's own min..max range.

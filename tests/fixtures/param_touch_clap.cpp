@@ -34,9 +34,29 @@ const clap_plugin_descriptor_t kDescriptor {
     kFeatures
 };
 
+// Handed out as parameter cookies, so a test can tell whether the host passes
+// back what get_info issued or nullptr.
+char kCookies[kParamCount] {};
+
+// What the host-facing test extension reports. Tests declare the same layout.
+struct HostProbe
+{
+    std::uint32_t processCalls = 0;
+    std::uint32_t flushCalls = 0;
+    bool processOnAudioThread = false;
+    bool flushOnAudioThread = false;
+    bool flushOnMainThread = false;
+    bool overlapped = false;
+    const void* lastCookie = nullptr;
+};
+
 struct Instance
 {
     clap_plugin_t plugin {};
+    const clap_host_t* host = nullptr;
+    const clap_host_thread_check_t* threadCheck = nullptr;
+    const clap_host_state_t* hostState = nullptr;
+    const clap_host_params_t* hostParams = nullptr;
     double values[kParamCount] { 0.0, 0.0, 0.0 };
     // Set by an incoming parameter change, consumed by the next process(): the
     // id whose value the plug-in is about to announce on its output queue.
@@ -45,6 +65,16 @@ struct Instance
     clap_event_param_mod_t outputModulation {};
     clap_event_param_gesture_t outputGesture {};
     const clap_event_header_t* outputEvent = nullptr;
+    // An edit made in the plug-in's own GUI: it reaches the audio side, and
+    // the host, on the next process() or flush().
+    clap_id guiId = CLAP_INVALID_ID;
+    double guiValue = 0.0;
+    void (*reentry) (void*) = nullptr;
+    void* reentryContext = nullptr;
+    bool inProcess = false;
+    bool inFlush = false;
+    bool markDirtyOnDestroy = false;
+    HostProbe probe;
 };
 
 Instance& self (const clap_plugin_t* plugin)
@@ -88,6 +118,7 @@ bool CLAP_ABI paramGetInfo (const clap_plugin_t*, uint32_t index, clap_param_inf
     info->flags = index == 2 ? CLAP_PARAM_IS_READONLY : CLAP_PARAM_IS_AUTOMATABLE;
     std::snprintf (info->name, sizeof (info->name), "%s", index == 0 ? "Alpha" : index == 1 ? "Beta" : "Meter");
     std::snprintf (info->module, sizeof (info->module), "%s", "");
+    info->cookie = &kCookies[index];
     info->min_value = 0.0;
     info->max_value = 1.0;
     info->default_value = 0.0;
@@ -130,11 +161,36 @@ void readInputEvents (Instance& instance, const clap_input_events_t* events)
             || header->type != CLAP_EVENT_PARAM_VALUE)
             continue;
         const auto* event = reinterpret_cast<const clap_event_param_value_t*> (header);
+        instance.probe.lastCookie = event->cookie;
         const int index = indexForId (event->param_id);
         if (index < 0 || index == 2) continue;
         instance.values[index] = event->value;
         instance.reportId = event->param_id;
     }
+}
+
+void applyGuiEdit (Instance& instance)
+{
+    const int index = indexForId (instance.guiId);
+    if (index >= 0)
+    {
+        instance.values[index] = instance.guiValue;
+        instance.reportId = instance.guiId;
+    }
+    instance.guiId = CLAP_INVALID_ID;
+}
+
+void runReentry (Instance& instance)
+{
+    if (instance.reentry == nullptr) return;
+    const auto fn = instance.reentry;
+    instance.reentry = nullptr;
+    fn (instance.reentryContext);
+}
+
+bool onHostAudioThread (const Instance& instance)
+{
+    return instance.threadCheck != nullptr && instance.threadCheck->is_audio_thread (instance.host);
 }
 
 // What a plug-in with a GUI emits when the user moves a knob: a gesture around
@@ -235,9 +291,19 @@ void CLAP_ABI paramFlush (const clap_plugin_t* plugin, const clap_input_events_t
                           const clap_output_events_t* out)
 {
     auto& instance = self (plugin);
+    auto& probe = instance.probe;
+    ++probe.flushCalls;
+    probe.flushOnAudioThread = onHostAudioThread (instance);
+    probe.flushOnMainThread = instance.threadCheck != nullptr
+                           && instance.threadCheck->is_main_thread (instance.host);
+    probe.overlapped = probe.overlapped || instance.inProcess || instance.inFlush;
+    instance.inFlush = true;
+    runReentry (instance);
+    applyGuiEdit (instance);
     readInputEvents (instance, in);
     announceMove (instance, out);
     emitQueuedOutput (instance, out);
+    instance.inFlush = false;
 }
 
 const clap_plugin_params_t kParams {
@@ -284,8 +350,105 @@ bool CLAP_ABI stateLoad (const clap_plugin_t* plugin, const clap_istream_t* stre
 
 const clap_plugin_state_t kState { stateSave, stateLoad };
 
-bool CLAP_ABI pluginInit (const clap_plugin_t*) { return true; }
-void CLAP_ABI pluginDestroy (const clap_plugin_t* plugin) { delete static_cast<Instance*> (plugin->plugin_data); }
+// Drives the host side of the state and params extensions the way a plug-in's
+// GUI or preset browser would.
+struct HostControl
+{
+    bool (CLAP_ABI *markDirty) (const clap_plugin_t*);
+    bool (CLAP_ABI *requestFlush) (const clap_plugin_t*);
+    bool (CLAP_ABI *rescan) (const clap_plugin_t*, std::uint32_t flags);
+    bool (CLAP_ABI *clear) (const clap_plugin_t*, clap_id id, std::uint32_t flags);
+    // Records a GUI edit for the next process() or flush(), then asks the host
+    // for a flush. False when the host has no params extension to ask.
+    bool (CLAP_ABI *editFromGui) (const clap_plugin_t*, clap_id id, double value);
+    // Runs fn once, inside the next process() or flush().
+    void (CLAP_ABI *reenter) (const clap_plugin_t*, void (*fn) (void*), void* context);
+    void (CLAP_ABI *markDirtyOnDestroy) (const clap_plugin_t*);
+    const HostProbe* (CLAP_ABI *probe) (const clap_plugin_t*);
+};
+
+bool CLAP_ABI controlMarkDirty (const clap_plugin_t* plugin)
+{
+    const auto& instance = self (plugin);
+    if (instance.hostState == nullptr || instance.hostState->mark_dirty == nullptr) return false;
+    instance.hostState->mark_dirty (instance.host);
+    return true;
+}
+
+bool CLAP_ABI controlRequestFlush (const clap_plugin_t* plugin)
+{
+    const auto& instance = self (plugin);
+    if (instance.hostParams == nullptr || instance.hostParams->request_flush == nullptr) return false;
+    instance.hostParams->request_flush (instance.host);
+    return true;
+}
+
+bool CLAP_ABI controlRescan (const clap_plugin_t* plugin, std::uint32_t flags)
+{
+    const auto& instance = self (plugin);
+    if (instance.hostParams == nullptr || instance.hostParams->rescan == nullptr) return false;
+    instance.hostParams->rescan (instance.host, flags);
+    return true;
+}
+
+bool CLAP_ABI controlClear (const clap_plugin_t* plugin, clap_id id, std::uint32_t flags)
+{
+    const auto& instance = self (plugin);
+    if (instance.hostParams == nullptr || instance.hostParams->clear == nullptr) return false;
+    instance.hostParams->clear (instance.host, id, flags);
+    return true;
+}
+
+bool CLAP_ABI controlEditFromGui (const clap_plugin_t* plugin, clap_id id, double value)
+{
+    auto& instance = self (plugin);
+    instance.guiId = id;
+    instance.guiValue = value;
+    return controlRequestFlush (plugin);
+}
+
+void CLAP_ABI controlReenter (const clap_plugin_t* plugin, void (*fn) (void*), void* context)
+{
+    auto& instance = self (plugin);
+    instance.reentry = fn;
+    instance.reentryContext = context;
+}
+
+void CLAP_ABI controlMarkDirtyOnDestroy (const clap_plugin_t* plugin)
+{
+    self (plugin).markDirtyOnDestroy = true;
+}
+
+const HostProbe* CLAP_ABI controlProbe (const clap_plugin_t* plugin) { return &self (plugin).probe; }
+
+const HostControl kHostControl {
+    controlMarkDirty, controlRequestFlush, controlRescan, controlClear,
+    controlEditFromGui, controlReenter, controlMarkDirtyOnDestroy, controlProbe
+};
+
+bool CLAP_ABI pluginInit (const clap_plugin_t* plugin)
+{
+    auto& instance = self (plugin);
+    const auto* host = instance.host;
+    instance.threadCheck = static_cast<const clap_host_thread_check_t*> (
+        host->get_extension (host, CLAP_EXT_THREAD_CHECK));
+    instance.hostState = static_cast<const clap_host_state_t*> (
+        host->get_extension (host, CLAP_EXT_STATE));
+    instance.hostParams = static_cast<const clap_host_params_t*> (
+        host->get_extension (host, CLAP_EXT_PARAMS));
+    return true;
+}
+
+void CLAP_ABI pluginDestroy (const clap_plugin_t* plugin)
+{
+    auto* instance = static_cast<Instance*> (plugin->plugin_data);
+    if (instance->markDirtyOnDestroy)
+    {
+        controlMarkDirty (plugin);
+        controlRequestFlush (plugin);
+    }
+    delete instance;
+}
 bool CLAP_ABI pluginActivate (const clap_plugin_t*, double, uint32_t, uint32_t) { return true; }
 void CLAP_ABI pluginDeactivate (const clap_plugin_t*) {}
 bool CLAP_ABI pluginStart (const clap_plugin_t*) { return true; }
@@ -309,6 +472,13 @@ clap_process_status CLAP_ABI pluginProcess (const clap_plugin_t* plugin,
         return CLAP_PROCESS_ERROR;
 
     auto& instance = self (plugin);
+    auto& probe = instance.probe;
+    ++probe.processCalls;
+    probe.processOnAudioThread = onHostAudioThread (instance);
+    probe.overlapped = probe.overlapped || instance.inProcess || instance.inFlush;
+    instance.inProcess = true;
+    runReentry (instance);
+    applyGuiEdit (instance);
     readInputEvents (instance, process->in_events);
 
     for (uint32_t channel = 0; channel < 2; ++channel)
@@ -317,6 +487,7 @@ clap_process_status CLAP_ABI pluginProcess (const clap_plugin_t* plugin,
 
     announceMove (instance, process->out_events);
     emitQueuedOutput (instance, process->out_events);
+    instance.inProcess = false;
     return CLAP_PROCESS_CONTINUE;
 }
 
@@ -326,6 +497,7 @@ const void* CLAP_ABI pluginExtension (const clap_plugin_t*, const char* id)
     if (std::strcmp (id, CLAP_EXT_PARAMS) == 0) return &kParams;
     if (std::strcmp (id, CLAP_EXT_STATE) == 0) return &kState;
     if (std::strcmp (id, "studio.dusk.test.param-touch-events") == 0) return &kEventControl;
+    if (std::strcmp (id, "studio.dusk.test.param-touch-host") == 0) return &kHostControl;
     return nullptr;
 }
 void CLAP_ABI pluginMainThread (const clap_plugin_t*) {}
@@ -341,6 +513,7 @@ const clap_plugin_t* CLAP_ABI createPlugin (const clap_plugin_factory_t*,
 
     auto* instance = new (std::nothrow) Instance;
     if (instance == nullptr) return nullptr;
+    instance->host = host;
 
     auto& plugin = instance->plugin;
     plugin.desc = &kDescriptor;

@@ -504,7 +504,8 @@ void AudioEngine::printPerfTable()
 // audio thread's binding apply can't touch the instances' single-producer param
 // rings directly). Built-in slots exist in every build, so the drain does too; each
 // native format's calls stay behind its own flag. 30 Hz matches PluginSlot's own
-// drain cadence; a tick over empty rings is one atomic load per slot.
+// drain cadence; a tick over empty rings is one atomic load per slot. A CLAP insert
+// no block is running also gets its plug-in's flush requests and queued writes here.
 class AudioEngine::NativeParamDrain final : public dusk::Timer
 {
 public:
@@ -512,11 +513,15 @@ public:
     ~NativeParamDrain() override { stopTimer(); }
     void timerCallback() override
     {
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+        const auto now = std::chrono::steady_clock::now();
+#endif
         for (int t = 0; t < Session::kNumTracks; ++t)
         {
             auto& strip = engine.getChannelStrip (t);
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
             strip.getNativeClapSlot().drainQueuedParamBindings();
+            strip.getNativeClapSlot().serviceIdleParams (now);
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_LV2
             strip.getNativeLv2Slot().drainQueuedParamBindings();
@@ -538,6 +543,7 @@ public:
             {
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
                 lane.getNativeClapSlot (s).drainQueuedParamBindings();
+                lane.getNativeClapSlot (s).serviceIdleParams (now);
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_LV2
                 lane.getNativeLv2Slot (s).drainQueuedParamBindings();
@@ -3088,8 +3094,11 @@ bool AudioEngine::publishPluginStateForSave (bool capturePluginState,
                 track.nativeClapStateBase64,
                 nativeSlot.getPath(), nativeSlot.getPluginId());
             if (capturePluginState && ! strip.nativeClapReloadFailed())
+            {
+                nativeSlot.flushPendingWrites();
                 captureNativeState (nativeSlot, track.nativeClapStateBase64,
                                     "track CLAP", t);
+            }
         }
         else if (! strip.hasPendingNativeClapRestore()
                  && ! strip.nativeClapReloadFailed())
@@ -3199,9 +3208,12 @@ bool AudioEngine::publishPluginStateForSave (bool capturePluginState,
                     lane.nativeClapStateBase64[(size_t) s],
                     nativeSlot.getPath(), nativeSlot.getPluginId());
                 if (capturePluginState && ! strip.nativeClapReloadFailed (s))
+                {
+                    nativeSlot.flushPendingWrites();
                     captureNativeState (nativeSlot,
                                         lane.nativeClapStateBase64[(size_t) s],
                                         "aux CLAP", s);
+                }
             }
             else if (! strip.hasPendingNativeClapRestore (s)
                      && ! strip.nativeClapReloadFailed (s))

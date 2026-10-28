@@ -12,10 +12,10 @@
 namespace duskstudio::clap
 {
 // Minimal CLAP host: owns a clap_host_t and the host extensions an embedded-GUI
-// audio host needs - log, thread-check, latency, gui, timer-support, and
-// posix-fd-support everywhere but Windows (the extension must not exist there).
-// One per plugin instance. The plugin's embedded editor asks us to pump its fds
-// + timers; pumpGui() does that from the message thread.
+// audio host needs - log, thread-check, latency, gui, timer-support, state,
+// params, and posix-fd-support everywhere but Windows (the extension must not
+// exist there). One per plugin instance. The plugin's embedded editor asks us
+// to pump its fds + timers; pumpGui() does that from the message thread.
 // See docs/archive/native-clap-host-plan.md.
 class ClapHost
 {
@@ -71,6 +71,28 @@ public:
     bool consumeRestartRequest() noexcept
         { return restartRequested.exchange (false, std::memory_order_acquire); }
 
+    // The plug-in's persistent-state revision. The instance bumps it for host
+    // writes and the values the plug-in announces; the plug-in bumps it through
+    // clap_host_state.mark_dirty and value rescans. Kept here, not on the
+    // instance, so a call the plug-in makes from inside destroy() still lands on
+    // live storage. Any thread bumps (release); readers acquire.
+    void markStateChanged() noexcept { revision.fetch_add (1, std::memory_order_release); }
+    std::uint64_t stateRevision() const noexcept { return revision.load (std::memory_order_acquire); }
+
+    // request_flush is [thread-safe] and only raises this flag. The next
+    // process() answers it; for an instance no block is running, the
+    // instance's flush outside process() does.
+    bool isFlushRequested() const noexcept { return flushRequested.load (std::memory_order_acquire); }
+    bool consumeFlushRequest() noexcept
+    {
+        return flushRequested.load (std::memory_order_relaxed)
+            && flushRequested.exchange (false, std::memory_order_acquire);
+    }
+
+    // After rescan(CLAP_PARAM_RESCAN_ALL) every cookie the plug-in issued is
+    // void, including those on writes already queued; events carry nullptr.
+    bool paramCookiesRevoked() const noexcept { return cookiesRevoked.load (std::memory_order_acquire); }
+
     // Message thread: poll the plugin's registered fds (level-triggered, POSIX
     // platforms) and fire its registered timers, so the embedded GUI processes
     // its events + repaints.
@@ -98,6 +120,9 @@ private:
     static bool registerTimer   (const clap_host_t*, uint32_t, clap_id*) noexcept;
     static bool unregisterTimer (const clap_host_t*, clap_id) noexcept;
 
+    // params
+    static void rescanParams (const clap_host_t*, clap_param_rescan_flags) noexcept;
+
     static ClapHost& self (const clap_host_t* h) noexcept
         { return *static_cast<ClapHost*> (h->host_data); }
 
@@ -110,6 +135,8 @@ private:
     clap_host_posix_fd_support_t fdExt {};
 #endif
     clap_host_timer_support_t    timerExt {};
+    clap_host_state_t            stateExt {};
+    clap_host_params_t           paramsExt {};
 
     const clap_plugin*       plugin = nullptr;
     std::atomic<Callbacks*>  callbacks { nullptr };
@@ -124,6 +151,11 @@ private:
     clap_id nextTimerId = 1;
     std::atomic<bool> callbackRequested { false };   // request_callback -> on_main_thread, drained in pumpGui
     std::atomic<bool> restartRequested  { false };   // request_restart -> engine drain reactivates
+    std::atomic<bool> flushRequested    { false };
+    std::atomic<bool> cookiesRevoked    { false };
+    static_assert (std::atomic<std::uint64_t>::is_always_lock_free,
+                   "CLAP state revision must be lock-free");
+    std::atomic<std::uint64_t> revision { 0 };
 
     const std::thread::id mainThreadId { std::this_thread::get_id() };
     std::atomic<std::size_t> audioThreadHash { 0 };
