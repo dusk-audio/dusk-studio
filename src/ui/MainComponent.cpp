@@ -3638,8 +3638,63 @@ bool MainComponent::saveRefusedWhileBusy()
     return true;
 }
 
-bool MainComponent::saveSessionTo (const juce::File& requestedDir)
+void MainComponent::saveSessionTo (const std::filesystem::path& sessionDir, std::function<void (bool)> onComplete)
 {
+    std::string captureError;
+    const bool saved = writeSessionTo (toFile (sessionDir), false, captureError);
+    if (saved || captureError.empty())
+    {
+        if (onComplete) onComplete (saved);
+        return;
+    }
+
+    // A prompt closed without an answer, by anything but its buttons, still
+    // owes the caller a reply: a quit's Save has detached the audio.
+    struct Reply
+    {
+        std::function<void (bool)> onComplete;
+        ~Reply()
+        {
+            if (onComplete) dusk::callAsync ([done = std::move (onComplete)] { done (false); });
+        }
+        void answer (bool result)
+        {
+            if (auto done = std::exchange (onComplete, {})) done (result);
+        }
+    };
+    auto reply = std::make_shared<Reply>();
+    reply->onComplete = std::move (onComplete);
+    std::string slots;
+    for (std::size_t start = 0; start < captureError.size();)
+    {
+        const auto end = std::min (captureError.find ('\n', start), captureError.size());
+        slots += "\n    " + captureError.substr (start, end - start);
+        start = end + 1;
+    }
+    SafePointer<MainComponent> safe (this);
+    showDuskConfirm (*this, "Save failed",
+                     "Dusk Studio could not capture plug-in state:\n" + slots + "\n\n"
+                     "Save anyway saves the session with the last saved state of each plug-in "
+                     "listed, so any changes made in it since are lost. Cancel saves nothing, "
+                     "and the session's files and saved plug-in state stay as they are.",
+                     "Save anyway", [safe, sessionDir, reply]
+                     {
+                         dusk::callAsync ([safe, sessionDir, reply]
+                         {
+                             auto* self = safe.getComponent();
+                             if (self == nullptr) return;
+                             std::string failedSlots;
+                             reply->answer (self->writeSessionTo (toFile (sessionDir), true, failedSlots));
+                         });
+                     },
+                     "Cancel", [reply] { reply->answer (false); },
+                     /*destructive*/ true);
+}
+
+bool MainComponent::writeSessionTo (const juce::File& requestedDir, bool keepLastKnownPluginState,
+                                    std::string& captureError)
+{
+    captureError.clear();
     if (requestedDir == juce::File() || saveRefusedWhileBusy()) return false;
 
     const auto oldDir = session.getSessionDirectory();
@@ -3671,15 +3726,10 @@ bool MainComponent::saveSessionTo (const juce::File& requestedDir)
     }
 
     AudioEngine::PreparedPluginState preparedPluginState;
-    std::string captureError;
-    if (! engine.preparePluginStateForSave (preparedPluginState, captureError))
+    if (! engine.preparePluginStateForSave (preparedPluginState, captureError, keepLastKnownPluginState))
     {
-        pluginStateCaptureFailed = true;
+        saveIncomplete = true;
         setStatusForPath ("Save failed", dir);
-        showDuskAlert (*this, "Save failed",
-                       "Dusk Studio could not capture plug-in state:\n\n    "
-                           + captureError + "\n\nThe session was not saved. "
-                             "Its files and saved plug-in state are unchanged.");
         return false;
     }
 
@@ -3961,11 +4011,11 @@ void MainComponent::writeAutosave()
     if (strippedHash == lastSavedSessionStrippedHash
         && stripped == stripVolatileStateForDirtyCompare (lastSavedSessionJson))
     {
-        if (! pluginStateCaptureFailed) discardWrittenAutosave();
+        if (! saveIncomplete) discardWrittenAutosave();
         return;
     }
     if (strippedHash == lastWrittenAutosaveStrippedHash
-        && stripped == stripVolatileStateForDirtyCompare (lastWrittenAutosaveComparisonJson.c_str())) return;
+        && stripped == stripVolatileStateForDirtyCompare (lastWrittenAutosaveComparisonJson)) return;
 
     if (! SessionSerializer::writeAtomic (target, json))
     {
@@ -3977,9 +4027,12 @@ void MainComponent::writeAutosave()
 
 void MainComponent::setLastSavedSessionJson (const juce::String& json)
 {
-    pluginStateCaptureFailed = false;
+    saveIncomplete = false;
     lastSavedSessionJson = json;
     savedPluginNormalizationBaseline = engine.capturePluginNormalizationBaseline();
+    auto pluginStates = engine.pluginStateBaseline();
+    pluginStates.keepUncapturedFrom (savedPluginStateBaseline);
+    savedPluginStateBaseline = pluginStates;
     const auto stripped  = stripVolatileStateForDirtyCompare (json);
     lastSavedSessionStrippedHash = dirtyComparisonHash (stripped);
 }
@@ -3997,16 +4050,17 @@ void MainComponent::setLastWrittenAutosaveJson (const juce::String& json,
 
 void MainComponent::normalizePluginBaselines()
 {
+    engine.normalizePluginStateBaseline (savedPluginStateBaseline);
     auto saved = lastSavedSessionJson.toStdString();
     if (engine.normalizePluginBaseline (savedPluginNormalizationBaseline, saved))
     {
-        lastSavedSessionJson = saved.c_str();
+        lastSavedSessionJson = saved;
         lastSavedSessionStrippedHash = dirtyComparisonHash (
             stripVolatileStateForDirtyCompare (lastSavedSessionJson));
     }
     if (engine.normalizePluginBaseline (autosavePluginNormalizationBaseline, lastWrittenAutosaveComparisonJson))
         lastWrittenAutosaveStrippedHash = dirtyComparisonHash (
-            stripVolatileStateForDirtyCompare (lastWrittenAutosaveComparisonJson.c_str()));
+            stripVolatileStateForDirtyCompare (lastWrittenAutosaveComparisonJson));
 }
 
 void MainComponent::timerCallback()
@@ -4052,11 +4106,12 @@ bool MainComponent::currentSessionDirty()
     // the serializer reads only from Session, so without this a just-touched
     // plugin/tape param stays at its last-published value and the compare would
     // falsely read clean. Audio is live here, so no plug-in state capture.
+    engine.serviceNativeParamQueues();
     engine.publishPluginStateForSave (/*capturePluginState*/ false);
     engine.publishTransportStateForSave();
     normalizePluginBaselines();
 
-    if (pluginStateCaptureFailed) return true;
+    if (saveIncomplete || engine.pluginStateChangedSince (savedPluginStateBaseline)) return true;
 
     // Compare with volatile state stripped (playhead / view / timestamps)
     // so transient fields don't flip the raw JSON on an otherwise-clean session.
@@ -4398,9 +4453,7 @@ void MainComponent::saveSessionAndThen (std::function<void(bool)> onComplete)
     const auto dir = session.getSessionDirectory();
     if (saveGoesInPlace())
     {
-        // Sync save into the existing dir.
-        const bool ok = saveSessionTo (dir);
-        if (onComplete) onComplete (ok);
+        saveSessionTo (toPath (dir), std::move (onComplete));
         return;
     }
 
@@ -4432,8 +4485,7 @@ void MainComponent::saveSessionAndThen (std::function<void(bool)> onComplete)
             if (onComplete) onComplete (false);
             return;
         }
-        const bool ok = saveSessionTo (chosen);
-        if (onComplete) onComplete (ok);
+        saveSessionTo (toPath (chosen), onComplete);
     });
 }
 
@@ -4463,7 +4515,7 @@ void MainComponent::saveAsPrompt()
     [this] (juce::File chosen)
     {
         if (chosen == juce::File()) return;
-        saveSessionTo (chosen);
+        saveSessionTo (toPath (chosen));
     });
 }
 
@@ -4874,7 +4926,14 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     // success) deletes the autosave; on failure the autosave survives
     // and the save-failed alert fires.
     if (loadedFromAutosave)
-        saveSessionTo (dir);
+    {
+        SafePointer<MainComponent> safe (this);
+        saveSessionTo (toPath (dir), [safe] (bool saved)
+        {
+            if (auto* self = safe.getComponent(); self != nullptr && ! saved)
+                self->saveIncomplete = true;
+        });
+    }
 
     std::fprintf (stderr,
                   "[Dusk Studio/Load] %s: parse=%dms plugins=%dms midiOuts=%dms console=%dms total=%dms\n",
@@ -6088,7 +6147,7 @@ void MainComponent::menuItemSelected (int menuItemID, int /*topLevelMenuIndex*/)
         case kMenuFileSave:
         {
             if (saveGoesInPlace())
-                saveSessionTo (session.getSessionDirectory());
+                saveSessionTo (toPath (session.getSessionDirectory()));
             else
                 saveAsPrompt();
             break;

@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <new>
+#include <utility>
 
 namespace
 {
@@ -74,6 +75,7 @@ struct Instance
     bool inProcess = false;
     bool inFlush = false;
     bool markDirtyOnDestroy = false;
+    bool markDirtyOnSave = false;
     HostProbe probe;
 };
 
@@ -310,6 +312,8 @@ const clap_plugin_params_t kParams {
     paramCount, paramGetInfo, paramGetValue, paramValueToText, paramTextToValue, paramFlush
 };
 
+bool CLAP_ABI controlMarkDirty (const clap_plugin_t* plugin);
+
 bool CLAP_ABI stateSave (const clap_plugin_t* plugin, const clap_ostream_t* stream)
 {
     if (stream == nullptr || stream->write == nullptr) return false;
@@ -322,6 +326,9 @@ bool CLAP_ABI stateSave (const clap_plugin_t* plugin, const clap_ostream_t* stre
         if (written <= 0 || (std::uint64_t) written > bytes.size() - offset) return false;
         offset += (std::size_t) written;
     }
+    // A change landing while the host reads the state, which the bytes above may lack.
+    if (std::exchange (self (plugin).markDirtyOnSave, false))
+        controlMarkDirty (plugin);
     return true;
 }
 
@@ -365,6 +372,8 @@ struct HostControl
     void (CLAP_ABI *reenter) (const clap_plugin_t*, void (*fn) (void*), void* context);
     void (CLAP_ABI *markDirtyOnDestroy) (const clap_plugin_t*);
     const HostProbe* (CLAP_ABI *probe) (const clap_plugin_t*);
+    // Marks the state dirty from inside the next state save, once.
+    void (CLAP_ABI *markDirtyOnSave) (const clap_plugin_t*);
 };
 
 bool CLAP_ABI controlMarkDirty (const clap_plugin_t* plugin)
@@ -421,9 +430,15 @@ void CLAP_ABI controlMarkDirtyOnDestroy (const clap_plugin_t* plugin)
 
 const HostProbe* CLAP_ABI controlProbe (const clap_plugin_t* plugin) { return &self (plugin).probe; }
 
+void CLAP_ABI controlMarkDirtyOnSave (const clap_plugin_t* plugin)
+{
+    self (plugin).markDirtyOnSave = true;
+}
+
 const HostControl kHostControl {
     controlMarkDirty, controlRequestFlush, controlRescan, controlClear,
-    controlEditFromGui, controlReenter, controlMarkDirtyOnDestroy, controlProbe
+    controlEditFromGui, controlReenter, controlMarkDirtyOnDestroy, controlProbe,
+    controlMarkDirtyOnSave
 };
 
 bool CLAP_ABI pluginInit (const clap_plugin_t* plugin)

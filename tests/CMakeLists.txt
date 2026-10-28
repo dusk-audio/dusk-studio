@@ -68,6 +68,7 @@ add_executable(dusk-studio-tests
     plugin_slot_auto_bypass.cpp
     plugin_slot_lifecycle.cpp
     plugin_slot_live_latency.cpp
+    plugin_state_manifest.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/PluginManager.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/ScanProcess.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/PluginSlot.cpp

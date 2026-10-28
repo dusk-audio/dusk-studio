@@ -57,6 +57,27 @@ void paintTitleAndBody (juce::Graphics& g,
 
 constexpr int kButtonStripH = 32;
 
+// drawFittedText stops honouring its line limit as soon as the message
+// carries a newline: it word-wraps at full size and runs past the body,
+// through the button strip, to wherever the component clip cuts it. The
+// plugin-scan report names two filesystem paths and overruns a fixed panel
+// by several lines, so a panel sizes itself to its message instead.
+template <typename Text>
+int panelHeightForMessage (const Text& message, int width)
+{
+    juce::AttributedString body (message);
+    body.setFont (bodyFont());
+    juce::TextLayout layout;
+    // Narrower than it is drawn, plus a line of slack - this pass and
+    // drawFittedText are separate text engines whose wrap points and line
+    // heights need not agree. Over-measuring only pads the panel.
+    layout.createLayout (body, (float) (width - 48));
+    const int chrome = 20 + 24 + 10 + 8 + kButtonStripH + 20 + 16;
+    // Capped: EmbeddedModal clamps the panel to the host window, and a body
+    // taller than that would push the buttons off screen.
+    return std::clamp ((int) std::ceil (layout.getHeight()) + chrome, 220, 620);
+}
+
 // -----------------------------------------------------------------------------
 // Single-OK alert panel
 // -----------------------------------------------------------------------------
@@ -73,7 +94,7 @@ public:
         okBtn.onClick = [this] { if (onOK) onOK(); };
         addAndMakeVisible (okBtn);
         setWantsKeyboardFocus (true);
-        setSize (kWidth, heightForMessage());
+        setSize (kWidth, panelHeightForMessage (messageStr, kWidth));
     }
     std::function<void()> onOK;
 
@@ -100,26 +121,6 @@ public:
 private:
     static constexpr int kWidth = 460;
 
-    // drawFittedText stops honouring its line limit as soon as the message
-    // carries a newline: it word-wraps at full size and runs past the body,
-    // through the button strip, to wherever the component clip cuts it. The
-    // plugin-scan report names two filesystem paths and overruns a fixed panel
-    // by several lines, so size the panel to the message instead.
-    int heightForMessage() const
-    {
-        juce::AttributedString body (messageStr);
-        body.setFont (bodyFont());
-        juce::TextLayout layout;
-        // Narrower than it is drawn, plus a line of slack - this pass and
-        // drawFittedText are separate text engines whose wrap points and line
-        // heights need not agree. Over-measuring only pads the panel.
-        layout.createLayout (body, (float) (kWidth - 48));
-        const int chrome = 20 + 24 + 10 + 8 + kButtonStripH + 20 + 16;
-        // Capped: EmbeddedModal clamps the panel to the host window, and a body
-        // taller than that would push the OK button off screen.
-        return std::clamp ((int) std::ceil (layout.getHeight()) + chrome, 220, 620);
-    }
-
     juce::String titleStr, messageStr;
     juce::TextButton okBtn { "OK" };
 };
@@ -135,6 +136,8 @@ public:
                    bool destructive)
         : titleStr (std::move (title)), messageStr (std::move (message))
     {
+        setTitle (titleStr);
+        setDescription (messageStr);
         setOpaque (true);
         primaryBtn.setButtonText (primaryLabel);
         secondaryBtn.setButtonText (secondaryLabel);
@@ -145,7 +148,7 @@ public:
         addAndMakeVisible (primaryBtn);
         addAndMakeVisible (secondaryBtn);
         setWantsKeyboardFocus (true);
-        setSize (480, 220);
+        setSize (480, panelHeightForMessage (messageStr, 480));
     }
     std::vector<std::string> textForScenario() const
     { return { titleStr.toStdString(), messageStr.toStdString() }; }

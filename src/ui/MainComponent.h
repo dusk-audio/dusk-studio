@@ -72,7 +72,8 @@ public:
 
     // MainWindow's close-confirm dialog calls this. Save-to-current if
     // session.json exists, else opens Save As. onComplete fires on the
-    // message thread (sync if no chooser, async after dismissal).
+    // message thread: at once when nothing asks, else once the Save As
+    // browser or the plug-in capture-failure prompt is answered.
     void saveSessionAndThen (std::function<void(bool)> onComplete);
 
     // Industry-standard dirty-only prompt. If autosave is newer than
@@ -168,7 +169,16 @@ private:
     void releaseMasteringMixFor (const std::filesystem::path& target);
     void reloadMasteringMixAfterRender (const std::filesystem::path& target);
 
-    bool saveSessionTo (const juce::File& sessionDir);
+    // Every Save, Save As and prompt Save runs through here. onComplete hears
+    // once whether the session was saved, after the user answers the prompt a
+    // failed plug-in capture raises, or with false when that prompt goes away
+    // unanswered.
+    void saveSessionTo (const std::filesystem::path& sessionDir, std::function<void (bool saved)> onComplete = {});
+    // keepLastKnownPluginState: a slot whose live state cannot be captured
+    // saves its last-known state instead of stopping the Save, and stays
+    // unsaved. captureError names the slots that failed to capture.
+    bool writeSessionTo (const juce::File& sessionDir, bool keepLastKnownPluginState,
+                         std::string& captureError);
     // True, with a status line, while a render from any modal or a DP import is
     // unfinished.
     bool saveRefusedWhileBusy();
@@ -314,12 +324,18 @@ private:
     static std::filesystem::path defaultSessionsFolder();
     void startUnsavedSessionIn (const std::filesystem::path& parent);
 
-    // A failed capture keeps the session dirty until a save or load succeeds.
-    bool pluginStateCaptureFailed = false;
+    // A Save that had to happen and did not: a failed plug-in capture, or the
+    // save that puts a recovered autosave on disk. The session stays dirty and
+    // keeps its recovery file until a save or load succeeds.
+    bool saveIncomplete = false;
     juce::String lastSavedSessionJson;
     juce::String lastWrittenAutosaveJson;
     std::string lastWrittenAutosaveComparisonJson;
     AudioEngine::PluginNormalizationBaseline savedPluginNormalizationBaseline;
+    // The plug-in state the last successful Save, Open, New or Recover left the
+    // session model holding. Opaque plug-in state reaches the session JSON only
+    // at a Save, so these tokens, not the JSON, show a plug-in-only edit.
+    AudioEngine::PluginStateBaseline savedPluginStateBaseline;
     AudioEngine::PluginNormalizationBaseline autosavePluginNormalizationBaseline;
     std::filesystem::path lastWrittenAutosavePath;
     // Hashes filter repeated autosaves; matching hashes still require an exact

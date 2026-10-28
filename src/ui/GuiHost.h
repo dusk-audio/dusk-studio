@@ -617,6 +617,9 @@ public:
     // False, with nothing asked, when there are no unsaved changes: that quit
     // would end the run.
     virtual bool requestQuit() = 0;
+    // The unsaved-changes question every prompt asks, answered with nothing
+    // stopped first and no prompt raised.
+    virtual bool sessionDirty() = 0;
     virtual bool mixdownRunning() const = 0;
     // Whether any modal's render is still running: bounce, mixdown, master export or freeze.
     virtual bool renderRunning() const = 0;

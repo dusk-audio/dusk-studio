@@ -2486,6 +2486,8 @@ std::optional<ScenarioResult> runDeferredPluginIdentityBaseline (GuiHost& host, 
     const auto canonical = dir / "session.json";
     const auto recovery = dir / "session.json.autosave";
     auto clean = std::make_unique<Session>();
+    // Text that is not ASCII must survive the baseline's rewrite as UTF-8.
+    clean->track (9).name = std::string ("B\xc3\xa4sse \xe2\x99\xaa");
     if (! SessionSerializer::save (*clean, canonical) || ! host.openSession (canonical))
         return ScenarioResult::fail ("could not open the clean session");
     clean.reset();

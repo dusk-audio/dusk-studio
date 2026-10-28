@@ -2319,6 +2319,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         owner.requestQuit();
         return true;
     }
+    bool sessionDirty() override { return owner.currentSessionDirty(); }
     bool doubleClickTempo() override
     {
         auto* bar = owner.transportBar.get();

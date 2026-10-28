@@ -43,6 +43,7 @@
 #include "MasteringPlayer.h"
 #include "PlaybackEngine.h"
 #include "PluginManager.h"
+#include "PluginStateManifest.h"
 #include "RecordManager.h"
 #include "TimelineSampleRate.h"
 #include "Transport.h"
@@ -751,13 +752,20 @@ public:
             std::optional<PluginDescriptor> descriptor;
             std::string legacyDescriptionXml;
             std::string stateBase64;
+            PluginStateToken token;
+            // The live capture failed; stateBase64 is the slot's last-known state.
+            bool keptLastKnown = false;
         };
         std::array<Slot, Session::kNumTracks> tracks;
         std::array<std::array<Slot, AuxLaneParams::kMaxLanePlugins>, Session::kNumAuxLanes> aux;
     };
     // Message thread only; consume the prepared snapshot before yielding to other edits.
-    // Preparation changes no Session fields or native sidecar files.
-    bool preparePluginStateForSave (PreparedPluginState&, std::string& error);
+    // Preparation changes no Session fields or native sidecar files. error names
+    // every slot whose live capture failed, one per line; those fail the
+    // preparation unless keepLastKnownOnFailure, which saves their last-known
+    // state instead and leaves them unsaved in pluginStateBaseline().
+    bool preparePluginStateForSave (PreparedPluginState&, std::string& error,
+                                    bool keepLastKnownOnFailure = false);
     bool publishPluginStateForSave (bool capturePluginState = false,
                                      const PreparedPluginState* prepared = nullptr,
                                      std::string* error = nullptr);
@@ -772,6 +780,27 @@ public:
     // Message thread; acknowledge only accepted restore identity substitutions.
     PluginNormalizationBaseline capturePluginNormalizationBaseline() const;
     bool normalizePluginBaseline (PluginNormalizationBaseline&, std::string& json);
+
+    // One token per insert slot of every hosting format, keyed like the
+    // normalization receipts by the strip that owns it, so a track move leaves
+    // them where they were.
+    static constexpr std::size_t kPluginStateKinds = 5;
+    static constexpr std::size_t kPluginStateSlots = kPluginStateKinds
+        * static_cast<std::size_t> (Session::kNumTracks + Session::kNumAuxLanes * AuxLaneParams::kMaxLanePlugins);
+    using PluginStateBaseline = PluginStateManifest<kPluginStateSlots>;
+    // Message thread. The tokens of the opaque plug-in state the session model
+    // took from its latest Save capture or session restore, for the caller to
+    // adopt when that Save or load succeeds.
+    const PluginStateBaseline& pluginStateBaseline() const noexcept { return pluginStateCapture; }
+    // Acknowledges native restores that the device prepare completed since.
+    void normalizePluginStateBaseline (PluginStateBaseline&) const noexcept;
+    // Whether any slot's live state has moved from the baseline. Reads only
+    // counters, so it is safe with audio running and captures nothing.
+    bool pluginStateChangedSince (const PluginStateBaseline&) const noexcept;
+    // Message thread: what the native-parameter drain timer does on each tick -
+    // MIDI-binding writes, CLAP flushes for idle inserts, LV2 patch reports -
+    // run now, so a change still queued for the next tick counts.
+    void serviceNativeParamQueues();
 
     struct PluginLoadFailure
     {
@@ -959,6 +988,14 @@ private:
     template <typename Visitor>
     bool visitNativePluginOwner (int owner, NativePluginFormat, Visitor&&);
     void normalizeAcceptedNativePluginIdentity (int owner, NativePluginFormat);
+    enum class PluginStateKind { Hosted, Clap, Lv2, Vst3, Au };
+    using PluginStateTokens = std::array<PluginStateToken, kPluginStateSlots>;
+    static std::size_t pluginStateIndex (int owner, PluginStateKind) noexcept;
+    PluginStateToken livePluginState (int owner, PluginStateKind) const noexcept;
+    PluginStateTokens livePluginStates() const noexcept;
+    void notePluginStateRestored (const PluginStateTokens& beforePrepare, int owner, PluginStateKind);
+    PluginStateBaseline pluginStateCapture;
+    std::vector<PluginStateReceipt> pluginStateReceipts;
     PlaybackEngine  playbackEngine  { session };
     PlaybackReadObserver playbackReadObserver = nullptr;
     void* playbackReadContext = nullptr;
