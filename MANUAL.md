@@ -187,7 +187,7 @@ In compact mode (window narrower than 1850 px) labels shorten: `TIMELINE` become
 | #   | Name                | Description                                                                                                 |
 | --- | ------------------- | ----------------------------------------------------------------------------------------------------------- |
 | 1   | Name                | Double-click to rename; right-click for the eight track colours.                                            |
-| 2   | Insert slot         | One plugin or one hardware insert. 20 ms equal-power crossfade between modes.                               |
+| 2   | Insert slot         | One plugin or one hardware insert. 20 ms crossfade between modes.                                           |
 | 3   | HPF                 | High-pass filter, 20–300 Hz. LED green when on.                                                             |
 | 4   | LPF                 | Low-pass filter, 3 kHz–20 kHz.                                                                              |
 | 5   | 4-band EQ           | LF (shelf) / LM (peak) / HM (peak) / HF (shelf). Click the header's left status light to bypass/engage, click the **EQ** label to open the editor, or right-click anywhere on it for the EQ menu (E / G character, reset, open editor). |
@@ -779,7 +779,7 @@ A note you are holding ends when the track stops listening to it: choosing anoth
 
 ## Insert slot
 
-Each channel has one insert slot, which can hold either a plugin or a hardware insert (configured via the Settings or right-click menu). Switching between plugin and hardware uses a 20-millisecond equal-power crossfade, so the change is inaudible.
+Each channel has one insert slot, which can hold either a plugin or a hardware insert (configured via the Settings or right-click menu). Switching between plugin and hardware uses a 20-millisecond crossfade, so the change is inaudible.
 
 - Click the empty slot (it reads **Insert**) and choose **Plugin (VST3 / CLAP / LV2 / AU)** to open the plugin picker.
 - Right-click an empty slot for **Add insert...**. A loaded plugin offers **Open editor** (or **Close editor**), **Replace insert...**, and **Remove plugin**. A hardware insert offers **Edit hardware insert...**, **Replace insert...**, and **Remove hardware insert**. Choose **Hardware Insert** in the Add or Replace chooser to configure outboard gear.
