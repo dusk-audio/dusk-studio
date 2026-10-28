@@ -96,8 +96,8 @@ jobs:
         # detects which surface is present at configure time).
         env:
           JUCE_MIRROR: https://github.com/dusk-audio/JUCE-wayland.git
-          JUCE_TAG: dusk-wayland-v3
-          JUCE_REV: 075eed7a1000b6b9dfce6aae93e7f2b82fa35f68
+          JUCE_TAG: dusk-wayland-v4
+          JUCE_REV: c6be35b4d604247bd65132694ba73da2274e4528
         run: |
           set -euo pipefail
           git init -q "${RUNNER_TEMP}/JUCE-wayland"
