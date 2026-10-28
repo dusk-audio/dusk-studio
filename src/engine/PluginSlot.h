@@ -422,6 +422,16 @@ private:
     };
     std::unique_ptr<LastTouchedListener> lastTouchedListener;
 
+    // True on a thread while it is inside this slot's own call into the
+    // plug-in's processBlock: the audio thread, or a capture's empty block.
+    inline static thread_local bool renderingOwnBlock = false;
+    struct OwnBlockScope
+    {
+        OwnBlockScope() noexcept : previous (renderingOwnBlock) { renderingOwnBlock = true; }
+        ~OwnBlockScope() { renderingOwnBlock = previous; }
+        const bool previous;
+    };
+
     // Plug-ins announce changes from render and editor threads. Callbacks only
     // publish atomics; latency is read later on the message thread.
     class ProcessorListener final : public juce::AudioProcessorListener
@@ -433,13 +443,22 @@ private:
         {
             if (details.latencyChanged)
                 changed.store (true, std::memory_order_release);
-            if (details.programChanged || details.nonParameterStateChanged)
+            if ((details.programChanged && programChangesAreState.load (std::memory_order_relaxed))
+                || details.nonParameterStateChanged)
                 stateRevision.fetch_add (1, std::memory_order_release);
         }
-        void audioProcessorParameterChanged (juce::AudioProcessor*, int, float) override
+        void audioProcessorParameterChanged (juce::AudioProcessor* processor, int index, float) override
         {
+            // A plug-in reports its meters from inside its render; a value it
+            // reports there is state only if the user could automate it.
+            if (renderingOwnBlock)
+                if (auto* parameter = processor->getParameters()[index];
+                    parameter == nullptr || ! parameter->isAutomatable())
+                    return;
             stateRevision.fetch_add (1, std::memory_order_release);
         }
+        // Set from the owner's format before the listener is attached.
+        std::atomic<bool> programChangesAreState { true };
     private:
         std::atomic<bool>& changed;
         std::atomic<std::uint64_t>& stateRevision;

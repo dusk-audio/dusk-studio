@@ -10,6 +10,10 @@
 // A block whose first input sample is exactly kEditCue makes the processor move
 // its own Gain and report it as an output parameter change: a change the
 // plug-in made, with no host parameter write behind it.
+//
+// Two reports that are not state changes: every block writes the input peak to
+// a read-only Meter, and every activation re-announces the latency through
+// restartComponent, as plug-ins that recompute it in setActive do.
 
 #include "public.sdk/source/main/pluginfactory.h"
 #include "public.sdk/source/vst/vstaudioeffect.h"
@@ -34,6 +38,8 @@ namespace
 {
 constexpr ParamID kGain = 200;
 constexpr ParamID kHold = 201;
+constexpr ParamID kMeter = 202;
+constexpr const char* kRestartLatency = "RestartLatency";
 constexpr float kEditCue = 0.75f;
 constexpr float kEditedGain = 0.5f;
 
@@ -102,6 +108,13 @@ public:
         return kResultOk;
     }
 
+    tresult PLUGIN_API setActive (TBool state) override
+    {
+        const auto result = AudioEffect::setActive (state);
+        if (result == kResultOk && state) sendMessageID (kRestartLatency);
+        return result;
+    }
+
     tresult PLUGIN_API process (ProcessData& data) override
     {
         if (auto* changes = data.inputParameterChanges)
@@ -140,13 +153,26 @@ public:
         }
 
         const float scale = gain.load (std::memory_order_relaxed);
+        float peak = 0.0f;
         for (int32 channel = 0; channel < channels; ++channel)
         {
             const auto* in = input.channelBuffers32[channel];
             auto* out = output.channelBuffers32[channel];
             if (in == nullptr || out == nullptr) continue;
             for (int32 frame = 0; frame < data.numSamples; ++frame)
+            {
+                peak = std::max (peak, std::abs (in[frame]));
                 out[frame] = in[frame] * scale;
+            }
+        }
+        if (data.outputParameterChanges != nullptr)
+        {
+            int32 queueIndex = 0;
+            if (auto* queue = data.outputParameterChanges->addParameterData (kMeter, queueIndex))
+            {
+                int32 pointIndex = 0;
+                queue->addPoint (0, std::min (peak, 1.0f), pointIndex);
+            }
         }
         return kResultOk;
     }
@@ -182,6 +208,15 @@ public:
         if (result != kResultOk) return result;
         parameters.addParameter (STR16 ("Gain"), nullptr, 0, 1.0, ParameterInfo::kCanAutomate, kGain);
         parameters.addParameter (STR16 ("Hold"), nullptr, 1, 0.0, ParameterInfo::kNoFlags, kHold);
+        parameters.addParameter (STR16 ("Meter"), nullptr, 0, 0.0, ParameterInfo::kIsReadOnly, kMeter);
+        return kResultOk;
+    }
+
+    tresult PLUGIN_API notify (IMessage* message) override
+    {
+        if (message == nullptr || std::strcmp (message->getMessageID(), kRestartLatency) != 0)
+            return EditController::notify (message);
+        if (componentHandler) componentHandler->restartComponent (kLatencyChanged);
         return kResultOk;
     }
 

@@ -858,6 +858,22 @@ if(DUSKSTUDIO_NATIVE_VST3)
     get_target_property(DUSKSTUDIO_STATE_PROBE_VST3_BUNDLE
         dusk-studio-state-probe-vst3-fixture SMTG_PLUGIN_PACKAGE_PATH)
 
+    smtg_add_vst3plugin(dusk-studio-many-params-vst3-fixture
+        fixtures/many_params_vst3.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/common/pluginview.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/main/moduleinit.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/main/pluginfactory.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/vstbus.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/vstcomponentbase.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/vsteditcontroller.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/vstparameters.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/vstsinglecomponenteffect.cpp)
+    target_link_libraries(dusk-studio-many-params-vst3-fixture PRIVATE dusk-vst3-hosting)
+    target_compile_definitions(dusk-studio-many-params-vst3-fixture
+        PRIVATE PROJECT_INCLUDES_VSTEDITCONTROLLER=1)
+    get_target_property(DUSKSTUDIO_MANY_PARAMS_VST3_BUNDLE
+        dusk-studio-many-params-vst3-fixture SMTG_PLUGIN_PACKAGE_PATH)
+
     if(MSVC)
         # The SDK compiles its plug-in targets with /Zi in Release. Under Ninja
         # a fixture's translation units then race for one vc140.pdb (C1041),
@@ -867,7 +883,8 @@ if(DUSKSTUDIO_NATIVE_VST3)
                 dusk-studio-panic-probe-vst3-fixture
                 dusk-studio-crash-state-vst3-fixture
                 dusk-studio-split-state-vst3-fixture
-                dusk-studio-state-probe-vst3-fixture)
+                dusk-studio-state-probe-vst3-fixture
+                dusk-studio-many-params-vst3-fixture)
             get_target_property(DUSKSTUDIO_VST3_FIXTURE_OPTIONS ${vst3Fixture} COMPILE_OPTIONS)
             if(DUSKSTUDIO_VST3_FIXTURE_OPTIONS)
                 list(TRANSFORM DUSKSTUDIO_VST3_FIXTURE_OPTIONS REPLACE "/Zi" "/Z7")
@@ -911,12 +928,15 @@ if(DUSKSTUDIO_NATIVE_VST3)
         DUSKSTUDIO_PANIC_PROBE_VST3_FIXTURE_PATH="${DUSKSTUDIO_PANIC_PROBE_VST3_BUNDLE}"
         DUSKSTUDIO_SPLIT_STATE_VST3_FIXTURE_PATH="${DUSKSTUDIO_SPLIT_STATE_VST3_BUNDLE}"
         DUSKSTUDIO_STATE_PROBE_VST3_FIXTURE_PATH="${DUSKSTUDIO_STATE_PROBE_VST3_BUNDLE}")
+    set_property(SOURCE vst3_state_revision.cpp APPEND PROPERTY COMPILE_DEFINITIONS
+        DUSKSTUDIO_MANY_PARAMS_VST3_FIXTURE_PATH="${DUSKSTUDIO_MANY_PARAMS_VST3_BUNDLE}")
     add_dependencies(dusk-studio-tests
         dusk-studio-runtime-relayout-vst3-fixture
         dusk-studio-panic-probe-vst3-fixture
         dusk-studio-crash-state-vst3-fixture
         dusk-studio-split-state-vst3-fixture
-        dusk-studio-state-probe-vst3-fixture)
+        dusk-studio-state-probe-vst3-fixture
+        dusk-studio-many-params-vst3-fixture)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         target_sources(dusk-studio-tests PRIVATE vst3_hostcontext_runloop.cpp)
     endif()

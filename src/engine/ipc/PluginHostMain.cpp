@@ -809,6 +809,17 @@ class ChildParamListener;  // forward - defined below HostState
 
 using PluginInstancePtr = std::unique_ptr<juce::AudioPluginInstance>;
 
+// True on a thread while it is inside renderBlock: the audio worker, or a
+// capture's empty block.
+thread_local bool renderingOwnBlock = false;
+
+struct OwnBlockScope
+{
+    OwnBlockScope() noexcept : previous (renderingOwnBlock) { renderingOwnBlock = true; }
+    ~OwnBlockScope() { renderingOwnBlock = previous; }
+    const bool previous;
+};
+
 // Publishes every change the loaded plug-in reports to its persistent state
 // into the shared header, for the parent's dirty tracking. A plug-in reports
 // from whichever thread made the change - the audio worker inside processBlock
@@ -821,13 +832,26 @@ public:
 
     void audioProcessorChanged (juce::AudioProcessor*, const ChangeDetails& details) override
     {
-        if (details.programChanged || details.nonParameterStateChanged)
+        if ((details.programChanged && programChangesAreState.load (std::memory_order_relaxed))
+            || details.nonParameterStateChanged)
             bump();
     }
 
-    void audioProcessorParameterChanged (juce::AudioProcessor*, int, float) override { bump(); }
+    // A plug-in reports its meters from inside its render; a value it reports
+    // there is state only if the user could automate it.
+    void audioProcessorParameterChanged (juce::AudioProcessor* processor, int index, float) override
+    {
+        if (renderingOwnBlock)
+            if (auto* parameter = processor->getParameters()[index];
+                parameter == nullptr || ! parameter->isAutomatable())
+                return;
+        bump();
+    }
 
     void bump() noexcept { header->stateRevision.fetch_add (1, std::memory_order_release); }
+
+    // Set from the owner's format before the listener is attached.
+    std::atomic<bool> programChangesAreState { true };
 
 private:
     BlockHeader* const& header;
@@ -1306,6 +1330,9 @@ std::uint32_t handleLoadPlugin (HostState& host,
         deposed = std::move (host.ownedInstance);
         host.transportPosition.publish (nullptr);
         host.ownedInstance = std::move (fresh);
+        host.stateListener.programChangesAreState.store (
+            duskstudio::juce_compat::programChangeReportsMeanState (desc.pluginFormatName.toStdString()),
+            std::memory_order_relaxed);
         host.ownedInstance->addListener (&host.stateListener);
         host.currentSampleRate = hdr.sampleRate;
         host.currentBlockSize  = hdr.blockSize;
@@ -1407,6 +1434,7 @@ void renderBlock (HostState& host, PluginInstancePtr::element_type& instance,
 {
     juce::AudioBuffer<float> view (host.workBuffer.getArrayOfWritePointers(),
                                    numChannels, numSamples);
+    const OwnBlockScope ownBlock;
     instance.processBlock (view, host.midiScratch);
 }
 

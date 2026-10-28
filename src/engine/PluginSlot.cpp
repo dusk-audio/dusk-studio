@@ -566,6 +566,10 @@ void PluginSlot::attachInstanceListeners()
     lastTouchedListener = std::make_unique<LastTouchedListener> (lastTouchedParamIndex);
     for (auto* p : ownedInstance->getParameters())
         if (p != nullptr) p->addListener (lastTouchedListener.get());
+    processorListener.programChangesAreState.store (
+        juce_compat::programChangeReportsMeanState (
+            ownedInstance->getPluginDescription().pluginFormatName.toStdString()),
+        std::memory_order_relaxed);
     ownedInstance->addListener (&processorListener);
 }
 
@@ -1399,10 +1403,11 @@ juce::String PluginSlot::getStateBase64ForSave (int parkSleepMs, std::string* er
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
     if (auto* r = currentRemote.load (std::memory_order_acquire))
     {
-        if (remoteParamWriteLost.exchange (false, std::memory_order_relaxed))
+        // Only a caller that reports errors may clear it; a silent snapshot
+        // leaves it for the next save.
+        if (errorOut != nullptr && remoteParamWriteLost.exchange (false, std::memory_order_relaxed))
         {
-            if (errorOut != nullptr)
-                *errorOut = "a parameter change could not be sent to the sandboxed plug-in";
+            *errorOut = "a parameter change could not be sent to the sandboxed plug-in";
             return lastKnownStateBase64;
         }
         // OOP path: the child parks its own audio worker and reads the
@@ -1475,6 +1480,7 @@ juce::String PluginSlot::getStateBase64ForSave (int parkSleepMs, std::string* er
 
     juce::MemoryBlock mb;
     std::uint64_t revision = 0;
+    bool vouchesForRevision = false;
     // Atomic-park alone is NOT sufficient for state capture: it tells the
     // AUDIO thread to skip the plugin, but doesn't tell the PLUGIN that
     // it's now inactive. Plugins like u-he Diva keep their own
@@ -1493,9 +1499,20 @@ juce::String PluginSlot::getStateBase64ForSave (int parkSleepMs, std::string* er
     auto* p = withParkedAtomicPointer (currentInstance,
         [&] (juce::AudioPluginInstance& inst)
         {
-            if (preparedSampleRate > 0.0 && loadedDescriptor.has_value()
-                && juce_compat::defersParameterChangesToProcess (loadedDescriptor->formatName))
+            // The park only stops new blocks; one that loaded the pointer just
+            // before it may still be inside the plug-in, and holds this lock
+            // until it leaves.
+            const juce::SpinLock::ScopedLockType processGuard (processLock);
+            const bool defers = loadedDescriptor.has_value()
+                && juce_compat::defersParameterChangesToProcess (loadedDescriptor->formatName);
+            // An unprepared plug-in is inactive and takes no block.
+            const bool delivers = defers && preparedSampleRate > 0.0;
+            if (delivers)
+            {
+                const OwnBlockScope ownBlock;
                 deliverQueuedParameterChanges (inst);
+            }
+            vouchesForRevision = ! defers || delivers;
             revision = stateRevision();
             inst.releaseResources();
             inst.getStateInformation (mb);
@@ -1512,7 +1529,6 @@ juce::String PluginSlot::getStateBase64ForSave (int parkSleepMs, std::string* er
                 // so the watchdog gets its warm-up grace back and the latency
                 // is re-read, as after any other prepare. An auto-bypassed
                 // slot still reports none until it is re-enabled.
-                const juce::SpinLock::ScopedLockType processGuard (processLock);
                 blocksSinceLoad     = 0;
                 consecutiveOverruns = 0;
                 cachedLatencySamples.store (inst.getLatencySamples(),
@@ -1526,8 +1542,9 @@ juce::String PluginSlot::getStateBase64ForSave (int parkSleepMs, std::string* er
         return lastKnownStateBase64;
     }
     lastKnownStateBase64 = mb.toBase64Encoding();
-    lastKnownStateRevision = revision;
-    reportRevision (revision);
+    if (vouchesForRevision)
+        lastKnownStateRevision = revision;
+    reportRevision (lastKnownStateRevision);
     return lastKnownStateBase64;
 }
 
@@ -1810,6 +1827,7 @@ std::optional<dusk::ProcessedBlock> PluginSlot::processMonoBlock (float* monoDat
 
     auto* p = currentInstance.load (std::memory_order_acquire);
     if (p == nullptr) return std::nullopt;
+    const OwnBlockScope ownBlock;
 
     constexpr double kBudgetFraction = 0.6;
     const auto t0 = juce::Time::getHighResolutionTicks();
@@ -2010,6 +2028,7 @@ std::optional<dusk::ProcessedBlock> PluginSlot::processStereoBlock (float* L, fl
 
     auto* p = currentInstance.load (std::memory_order_acquire);
     if (p == nullptr) return std::nullopt;
+    const OwnBlockScope ownBlock;
 
     constexpr double kBudgetFraction = 0.6;
     const auto t0 = juce::Time::getHighResolutionTicks();

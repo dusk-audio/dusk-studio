@@ -70,10 +70,13 @@ public:
     void fillInPluginDescription (juce::PluginDescription& description) const override
     {
         description.name = getName();
-        description.pluginFormatName = "Test";
+        description.pluginFormatName = formatName;
         description.fileOrIdentifier = "lifecycle-test";
     }
 
+    // The format the slot takes this plug-in for: "VST3" and "LV2" get the
+    // treatment JUCE's hosts for those formats need.
+    juce::String formatName { "Test" };
     int prepareCalls = 0;
     int releaseCalls = 0;
     int processCalls = 0;
@@ -128,6 +131,68 @@ public:
 private:
     std::int32_t program = 0;
     std::int32_t opaque = 0;
+};
+
+struct LifecycleMeterParameter final : juce::HostedAudioProcessorParameter
+{
+    float getValue() const override { return value; }
+    void setValue (float v) override { value = v; }
+    float getDefaultValue() const override { return 0.0f; }
+    juce::String getName (int) const override { return "Meter"; }
+    juce::String getLabel() const override { return {}; }
+    juce::String getParameterID() const override { return "meter"; }
+    float getValueForText (const juce::String& text) const override { return text.getFloatValue(); }
+    bool isAutomatable() const override { return false; }
+    float value = 0.0f;
+};
+
+// Reports a meter from every block, and on request moves its own gain there too.
+class MeteringLifecyclePluginInstance final : public LifecyclePluginInstance
+{
+public:
+    MeteringLifecyclePluginInstance()
+    {
+        auto gainParameter = std::make_unique<LifecycleGainParameter>();
+        gain = gainParameter.get();
+        addHostedParameter (std::move (gainParameter));
+        auto meterParameter = std::make_unique<LifecycleMeterParameter>();
+        meter = meterParameter.get();
+        addHostedParameter (std::move (meterParameter));
+    }
+
+    void processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) override
+    {
+        LifecyclePluginInstance::processBlock (buffer, midi);
+        meter->setValueNotifyingHost (static_cast<float> (processCalls % 7) / 7.0f);
+        if (moveGain) gain->setValueNotifyingHost (0.9f);
+    }
+
+    LifecycleGainParameter* gain = nullptr;
+    LifecycleMeterParameter* meter = nullptr;
+    bool moveGain = false;
+};
+
+// Notes any call that lands while a test's stand-in audio block holds the slot.
+class OverlapProbePluginInstance final : public LifecyclePluginInstance
+{
+public:
+    void processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) override
+    {
+        note();
+        LifecyclePluginInstance::processBlock (buffer, midi);
+    }
+    void releaseResources() override { note(); LifecyclePluginInstance::releaseResources(); }
+    void getStateInformation (juce::MemoryBlock&) override { note(); }
+
+    std::atomic<bool>* blockInFlight = nullptr;
+    std::atomic<bool> overlapped { false };
+
+private:
+    void note()
+    {
+        if (blockInFlight != nullptr && blockInFlight->load (std::memory_order_acquire))
+            overlapped.store (true, std::memory_order_release);
+    }
 };
 
 float capturedGain (const juce::String& stateBase64)
@@ -282,6 +347,122 @@ TEST_CASE ("PluginSlot reports the revision its captured state reflects", "[plug
     CHECK (slot.stateRevision() == captured);
     stateful->changeOpaqueState (5);
     CHECK (slot.stateRevision() > captured);
+}
+
+// JUCE's VST3 host reports every restartComponent as a program change, whatever
+// the flags - a latency re-announcement, a bus change, new parameter titles - so
+// for that format the flag says nothing about state. Its real program changes
+// arrive as a parameter change.
+TEST_CASE ("PluginSlot does not count a VST3 restart notification as a state change", "[plugin][state][lifecycle]")
+{
+    juce::ScopedJuceInitialiser_GUI juceInit;
+    PluginManager manager;
+    PluginSlot slot;
+    slot.setManager (manager);
+    slot.prepareToPlay (48000.0, 64);
+    auto instance = std::make_unique<StatefulLifecyclePluginInstance>();
+    auto* stateful = instance.get();
+    stateful->formatName = "VST3";
+    REQUIRE (slot.installInProcessInstanceForTest (std::move (instance)));
+    const auto revision = slot.stateRevision();
+    stateful->updateHostDisplay (juce::AudioProcessorListener::ChangeDetails {}
+                                     .withProgramChanged (true).withParameterInfoChanged (true));
+    CHECK (slot.stateRevision() == revision);
+    stateful->changeOpaqueState (3);
+    CHECK (slot.stateRevision() > revision);
+}
+
+// A plug-in reports its meters from inside processBlock, every block. None is an
+// edit; a parameter the user could automate that the plug-in moves there is.
+TEST_CASE ("PluginSlot does not count meters a plug-in reports from its own blocks", "[plugin][state][lifecycle]")
+{
+    juce::ScopedJuceInitialiser_GUI juceInit;
+    PluginManager manager;
+    PluginSlot slot;
+    slot.setManager (manager);
+    slot.prepareToPlay (48000.0, 64);
+    auto instance = std::make_unique<MeteringLifecyclePluginInstance>();
+    auto* metering = instance.get();
+    REQUIRE (slot.installInProcessInstanceForTest (std::move (instance)));
+    const auto revision = slot.stateRevision();
+    float left[64] {};
+    float right[64] {};
+    juce::MidiBuffer midi;
+    for (int block = 0; block < 4; ++block)
+        slot.processStereoBlock (left, right, 64, midi);
+    CHECK (metering->processCalls == 4);
+    CHECK (slot.stateRevision() == revision);
+    metering->moveGain = true;
+    slot.processStereoBlock (left, right, 64, midi);
+    CHECK (slot.stateRevision() > revision);
+}
+
+// With no device the slot has never been prepared, and an inactive plug-in takes
+// no block, so a value JUCE's VST3 or LV2 host is holding cannot reach its state.
+// The capture must not vouch for it.
+TEST_CASE ("PluginSlot does not vouch for a held parameter change it could not deliver", "[plugin][state][lifecycle]")
+{
+    juce::ScopedJuceInitialiser_GUI juceInit;
+    PluginManager manager;
+    PluginSlot slot;
+    slot.setManager (manager);
+    auto instance = std::make_unique<StatefulLifecyclePluginInstance>();
+    auto* stateful = instance.get();
+    stateful->formatName = "LV2";
+    REQUIRE (slot.installInProcessInstanceForTest (std::move (instance)));
+    REQUIRE (slot.getInstance() == stateful);
+    stateful->gain->setValueNotifyingHost (0.5f);
+
+    std::string error;
+    std::uint64_t captured = 0;
+    (void) slot.getStateBase64ForSave (0, &error, &captured);
+    CHECK (error.empty());
+    CHECK (stateful->processCalls == 0);
+    CHECK (slot.stateRevision() > captured);
+
+    slot.prepareToPlay (48000.0, 64);
+    (void) slot.getStateBase64ForSave (0, &error, &captured);
+    CHECK (error.empty());
+    CHECK (stateful->processCalls == 1);
+    CHECK (slot.stateRevision() == captured);
+}
+
+// A capture parks the audio pointer and, with a park sleep, merely waits for a
+// block to pass. A block that loaded the pointer just before and runs longer is
+// still inside the plug-in when the capture's empty block and state read begin,
+// and JUCE's LV2 host would run the plug-in twice at once. The audio side holds
+// the process lock for the whole block, so the capture has to take it too.
+TEST_CASE ("PluginSlot does not capture state while an audio block is still running", "[plugin][state][lifecycle]")
+{
+    using namespace std::chrono_literals;
+    juce::ScopedJuceInitialiser_GUI juceInit;
+    PluginManager manager;
+    PluginSlot slot;
+    slot.setManager (manager);
+    slot.prepareToPlay (48000.0, 64);
+    auto instance = std::make_unique<OverlapProbePluginInstance>();
+    auto* probe = instance.get();
+    probe->formatName = "LV2";
+    std::atomic<bool> blockInFlight { false };
+    probe->blockInFlight = &blockInFlight;
+    REQUIRE (slot.installInProcessInstanceForTest (std::move (instance)));
+
+    std::thread audioThread ([&]
+    {
+        const juce::SpinLock::ScopedLockType processGuard (slot.getProcessLock());
+        blockInFlight.store (true, std::memory_order_release);
+        std::this_thread::sleep_for (100ms);
+        blockInFlight.store (false, std::memory_order_release);
+    });
+    while (! blockInFlight.load (std::memory_order_acquire))
+        std::this_thread::yield();
+
+    std::string error;
+    (void) slot.getStateBase64ForSave (0, &error);
+    audioThread.join();
+    CHECK (error.empty());
+    CHECK (probe->processCalls == 1);
+    CHECK_FALSE (probe->overlapped.load());
 }
 
 TEST_CASE ("PluginSlot republishes an in-process instance after release and prepare")

@@ -726,7 +726,7 @@ bool Vst3Instance::activate (double sampleRate, int maxBlockFrames, std::string&
     impl->setupDone = true;
     // Sized for every declared parameter, plus a margin for ids the controller
     // announces later.
-    impl->outParams.prepare (std::min<std::size_t> (impl->params.size() + 16, 4096));
+    impl->outParams.prepare (impl->params.size() + 16);
     impl->rebuildWritable();
 
     // HostProcessData builds the AudioBusBuffers arrays from the component's bus

@@ -15,11 +15,17 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <optional>
 #include <string>
 #include <thread>
 #include <vector>
+
+#if defined (__linux__)
+ #include <csignal>
+ #include <sys/types.h>
+#endif
 
 #if DUSKSTUDIO_HAS_OOP_PLUGINS && defined (DUSKSTUDIO_SPLIT_STATE_VST3_FIXTURE_PATH)
 using namespace duskstudio;
@@ -339,4 +345,105 @@ TEST_CASE ("A released sandbox keeps the revision of the state it cached", "[plu
     if (writeQueued) CHECK (slot.stateRevision() > captured);
     else             CHECK (slot.stateRevision() == captured);
 }
+
+// A plug-in writes its meters from inside every block. JUCE's VST3 host passes
+// each one to the parameter listeners, so a session with audio running would
+// never stay saved if a meter counted as an edit.
+TEST_CASE ("A sandbox child does not count the meters its plug-in reports", "[plugin][ipc][state]")
+{
+    juce::ScopedJuceInitialiser_GUI juceInit;
+    const auto descriptor = splitStateDescriptor();
+    REQUIRE (descriptor.has_value());
+    SandboxedSplitSlot sandbox;
+    auto& slot = sandbox.slot;
+    REQUIRE (sandbox.load (*descriptor));
+
+    const auto revision = slot.stateRevision();
+    for (const float level : { 0.25f, 0.5f, 0.125f, 0.0625f })
+        CHECK_THAT (sandbox.process (level), Catch::Matchers::WithinAbs (level, 1.0e-6f));
+    CHECK (slot.stateRevision() == revision);
+
+    std::string captureError;
+    std::uint64_t captured = 0;
+    (void) slot.getStateBase64ForSave (0, &captureError, &captured);
+    CHECK (captureError.empty());
+    CHECK (captured == revision);
+    CHECK (sandbox.process (0.5f) > 0.0f);
+    CHECK (slot.stateRevision() == captured);
+}
+
+// JUCE's VST3 host reports every restartComponent as a program change, whatever
+// the flags. The fixture re-announces its latency on each activation, which a
+// re-prepare for a new block size triggers: no state moved.
+TEST_CASE ("A sandbox child does not count a latency restart as a state change", "[plugin][ipc][state]")
+{
+    juce::ScopedJuceInitialiser_GUI juceInit;
+    const auto descriptor = splitStateDescriptor();
+    REQUIRE (descriptor.has_value());
+    SandboxedSplitSlot sandbox;
+    auto& slot = sandbox.slot;
+    REQUIRE (sandbox.load (*descriptor));
+
+    const auto revision = slot.stateRevision();
+    slot.prepareToPlay (48000.0, kBlockSize / 2);
+    REQUIRE (slot.isRemote());
+    CHECK (slot.stateRevision() == revision);
+    slot.prepareToPlay (44100.0, kBlockSize);
+    REQUIRE (slot.isRemote());
+    CHECK (slot.stateRevision() == revision);
+}
+
+#if defined (__linux__)
+namespace
+{
+// The child's descriptors - its end of the control channel among them - close
+// when its last thread has exited, which is when only the zombie leader is left.
+bool waitUntilDefunct (int pid)
+{
+    const auto proc = std::filesystem::path ("/proc") / std::to_string (pid);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds (10);
+    while (std::chrono::steady_clock::now() < deadline)
+    {
+        std::ifstream stat (proc / "stat");
+        std::string line;
+        if (! std::getline (stat, line)) return true;
+        const auto close = line.rfind (')');
+        const bool zombie = close != std::string::npos && close + 2 < line.size()
+                         && line[close + 2] == 'Z';
+        std::error_code error;
+        std::size_t threads = 0;
+        for (auto it = std::filesystem::directory_iterator (proc / "task", error);
+             ! error && it != std::filesystem::directory_iterator(); it.increment (error))
+            ++threads;
+        if (zombie && threads <= 1) return true;
+        std::this_thread::yield();
+    }
+    return false;
+}
+} // namespace
+
+// A write that never reached the child must fail the next save that reports
+// errors. A capture that asks for no report - the region clone's snapshot - must
+// not swallow it on the way.
+TEST_CASE ("A sandboxed write the child never received survives a capture without an error report", "[plugin][ipc][state]")
+{
+    juce::ScopedJuceInitialiser_GUI juceInit;
+    const auto descriptor = splitStateDescriptor();
+    REQUIRE (descriptor.has_value());
+    SandboxedSplitSlot sandbox;
+    auto& slot = sandbox.slot;
+    REQUIRE (sandbox.load (*descriptor));
+
+    const int pid = slot.getRemoteChildPid();
+    REQUIRE (pid > 0);
+    REQUIRE (::kill ((pid_t) pid, SIGKILL) == 0);
+    REQUIRE (waitUntilDefunct (pid));
+
+    slot.setParamNormalised (kGainIndex, 0.25f);
+    (void) slot.getStateBase64ForSave (0);
+    std::string captureError;
+    (void) slot.getStateBase64ForSave (0, &captureError);
+    CHECK (captureError == "a parameter change could not be sent to the sandboxed plug-in");
+}
+#endif
 #endif

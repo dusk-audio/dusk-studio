@@ -48,6 +48,14 @@ inline bool defersParameterChangesToProcess (const std::string& formatName)
     return formatName == "VST3" || formatName == "LV2";
 }
 
+// JUCE's VST3 host reports every restartComponent as a program change, whatever
+// its flags - a latency re-announcement among them. A real program change there
+// arrives as a change of the program parameter.
+inline bool programChangeReportsMeanState (const std::string& formatName)
+{
+    return formatName != "VST3";
+}
+
 // The folders a format's own search may walk. Custom folders stay out of the
 // VST3 search: JUCE's walk follows directory links with no record of where it
 // has been and never sees a cancel request. The native VST3 scan, whose rows

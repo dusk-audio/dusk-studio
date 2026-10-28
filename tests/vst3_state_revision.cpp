@@ -11,6 +11,7 @@
 #include "engine/vst3/Vst3HostContext.h"
 #include "engine/vst3/Vst3Instance.h"
 #include "engine/vst3/Vst3ParameterChanges.h"
+#include "fixtures/ManyParamsVst3.h"
 #include "fixtures/StateProbeVst3.h"
 #include "support/AllocationObserver.h"
 
@@ -415,3 +416,31 @@ TEST_CASE ("NativeVst3Slot flushes bindings and queued edits before a capture",
         CHECK (slot.stateRevision() == 0);
     }
 }
+
+#if defined(DUSKSTUDIO_MANY_PARAMS_VST3_FIXTURE_PATH)
+// A plug-in may report every parameter it has in one block, as one echoing its
+// values after a preset load does. A queue the host refuses is a null pointer
+// the plug-in may dereference, so every declared parameter needs one however
+// many there are.
+TEST_CASE ("Vst3Instance gives every declared parameter an output queue", "[vst3][instance][state]")
+{
+    namespace Many = duskstudio::test::manyparamsvst3;
+    duskstudio::vst3::Vst3Bundle bundle;
+    duskstudio::vst3::Vst3Instance instance;
+    duskstudio::hosting::InsertAdapter adapter;
+    std::string error;
+    REQUIRE (bundle.load (DUSKSTUDIO_MANY_PARAMS_VST3_FIXTURE_PATH, error));
+    REQUIRE (bundle.plugins().size() == 1);
+    REQUIRE (instance.create (bundle, bundle.plugins().front().id, error));
+    REQUIRE (instance.activate (48000.0, kFrames, error));
+    adapter.prepare (instance.portLayout(), kFrames);
+
+    std::array<float, kFrames> left {}, right {};
+    left[0] = Many::kReportAll;
+    adapter.process (instance, left.data(), right.data(), kFrames);
+
+    double refused = -1.0;
+    REQUIRE (instance.getParamValue (Many::kRefusedQueues, refused));
+    CHECK (std::lround (refused * Many::kCounterScale) == 0);
+}
+#endif
