@@ -1,0 +1,259 @@
+{
+  "date": "2026-10-29",
+  "base_commit": "265b437c827e453a9000a14bc697356fd16865f1",
+  "working_tree": "Uncommitted changes; no branches, commits, pushes, tags, issue updates or release workflows created.",
+  "scope": [
+    "0.16 release metadata and current open milestone issues",
+    "Recent engine/session persistence and lifecycle changes",
+    "Updated DAF integration and local build caches",
+    "fix/016-release-candidate branch completeness"
+  ],
+  "fixes": [
+    {
+      "area": "Never-saved session recovery",
+      "before": "The first autosave after relaunch could replace a crashed never-saved session recovery because folder selection checked session.json only. Notes could be replaced independently.",
+      "after": "Folder selection reserves saved state, recovery and notes, including directories and dangling links; it continues past 99 occupied names. Private fallback selection uses the same policy.",
+      "limits": "No automatic recovery prompt was added for never-saved sessions. They still require renaming the preserved autosave and opening it. The GUI recovery scenario exercises existing recovery behavior; an actual crash/relaunch was not simulated."
+    },
+    {
+      "area": "Release metadata",
+      "before": "Current commit date 2026-10-28 rejected the 2026-10-24 release metadata.",
+      "after": "CHANGELOG and AppStream date 0.16.0 to 2026-10-29. All 71 prior pending/release bullets are preserved; one recovery fix is added. Release notes and AppStream have four identical summary paragraphs including the format-11 warning.",
+      "limits": "If tagging on another date, refresh metadata. No tag or release was created."
+    }
+  ],
+  "daf": {
+    "revision": "5b5d4bf6e5616ed5754b23c33ab0460d03ddc4de",
+    "source": "/Users/marckorte/projects/DAF",
+    "previous_cached_revision": "ccd8665f",
+    "build_trees": [
+      "build",
+      "build-tests"
+    ],
+    "api_review": "Existing constructor and UI exporter calls remain compatible with newly defaulted arguments.",
+    "limits": "Linux/Windows were not rebuilt here. Dusk Studio still uses X11/XWayland on Linux; the DAF update does not complete native Wayland integration."
+  },
+  "branch_audit": {
+    "branch": "fix/016-release-candidate",
+    "local_and_tracking_ref": "6c94459d",
+    "actual_pr_head": "0b96afb2",
+    "pull_request": "https://github.com/dusk-audio/dusk-studio/pull/918",
+    "squash": "65bfda19",
+    "changed_files_compared": 31,
+    "matching_blob_hashes": 31,
+    "mismatches": 0,
+    "result": "All final branch content landed in the squash already present in current main; local refs are stale. No stranded changes found."
+  },
+  "checks": {
+    "recovery_regression": {
+      "before": "test cases: 1 | 0 passed | 1 failed; assertions: 25 | 18 passed | 7 failed",
+      "after": "All tests passed (66 assertions in 8 test cases)",
+      "active_sidecar_negative_control": "1 assertion failed out of 25",
+      "audio_only_folder_negative_control": "5 assertions failed out of 25",
+      "method": "Controls compiled the unchanged test source against deliberately broken private header copies. Production headers were not modified by these controls."
+    },
+    "app_build": {
+      "command": "CCACHE_DIR=\"$PWD/build/016-review-ccache\" cmake --build build -j6",
+      "exit": 0,
+      "baseline_warning_lines": 2143,
+      "final_incremental_warning_lines": 43,
+      "new_warning_messages": 0,
+      "warning_comparison": "Unique warning messages after removing line/column numbers, against the full pre-fix build with the same updated DAF. Existing warnings remain."
+    },
+    "test_build": {
+      "command": "CCACHE_DIR=\"$PWD/build/016-review-ccache\" cmake --build build-tests --target dusk-studio-tests -j6",
+      "exit": 0
+    },
+    "ctest_environment_controls": {
+      "sandboxed": "282 failures of 1919, with denied JUCE cache writes and shared-memory IPC.",
+      "isolated_home_and_long_temp_path": "13 failures of 1919: one home-parity mismatch from CFFIXED_USER_HOME and twelve 104-byte socket-path guard failures from the chosen TMPDIR.",
+      "correction": "Use build-tests/tmp for shorter paths; run the home-parity test separately without CFFIXED_USER_HOME. These are execution-environment corrections, not source/test assertion changes."
+    },
+    "selftest": {
+      "pass": 14,
+      "fail": 0,
+      "skip": 1,
+      "exit": 0,
+      "skip_reason": "CLAP state fixture unset for clone-track insert check.",
+      "first_attempt": "Sandboxed app aborted in macOS RegisterApplication/NSApplication initialization, before test output; permission helper lacked Accessibility access there. Unsandboxed isolated retry passed."
+    },
+    "gui": {
+      "cases": [
+        "gui.unsaved_session_spares_untitled",
+        "gui.autosave_writes_and_recovers",
+        "gui.builtin_edits_autosave_and_prompt",
+        "gui.mastering_combo_keeps_panels",
+        "gui.mastering_phase_panel"
+      ],
+      "first_attempt": {
+        "pass": 3,
+        "fail": 2,
+        "skip": 0,
+        "failures": [
+          "File menu has no Clean out unreferenced files...",
+          "Q text entry never captured the keyboard"
+        ]
+      },
+      "repeat": {
+        "pass": 5,
+        "fail": 0,
+        "skip": 0,
+        "exit": 0
+      },
+      "limits": "Repeat attempted explicit activation. The foreground monitor recorded 0 of 102 samples as owned, so it does not establish foreground ownership or explain the initial failures. No source changed between attempts; exact cause remains unproven. This is five automated cases, not full GUI acceptance."
+    },
+    "coverage": {
+      "behaviours": 655,
+      "headings": 241,
+      "auto": 581,
+      "partial": 21,
+      "manual": 16,
+      "gap": 0,
+      "not_applicable": 37
+    },
+    "catch_declarations": 1975,
+    "catch_sources": 289,
+    "juce_ratchet": {
+      "files": 157,
+      "uses": 6861,
+      "unchanged": true
+    },
+    "release_metadata": {
+      "before_exit": 1,
+      "before_output": "release metadata: CHANGELOG dates 0.16.0 2026-10-24; the tagged commit is from 2026-10-28",
+      "after_exit": 0,
+      "after_output": "release metadata: release-ready, 0.16.0 dated 2026-10-29"
+    },
+    "ctest_final": {
+      "command": "CFFIXED_USER_HOME=\"$PWD/build-tests/016-review-home\" TMPDIR=\"$PWD/build-tests/tmp\" ctest --test-dir build-tests --output-on-failure -E \"special locations match\"",
+      "exit": 0,
+      "registered": 1918,
+      "passed": 1916,
+      "failed": 0,
+      "skipped": 2,
+      "elapsed_seconds": 162.0,
+      "separate_home_parity": {
+        "command": "TMPDIR=\"$PWD/build-tests/tmp\" ctest --test-dir build-tests --output-on-failure -R \"special locations match\"",
+        "exit": 0,
+        "passed": 1
+      },
+      "combined": {
+        "registered": 1919,
+        "passed": 1917,
+        "failed": 0,
+        "skipped": 2
+      },
+      "skip_reasons": [
+        "SFZ pack publication rejects case-distinct license aliases: filesystem does not preserve case-distinct names",
+        "SFZ installed tree hashing refuses case-distinct aliases: filesystem does not preserve case-distinct names"
+      ]
+    }
+  },
+  "neighbours_checked": [
+    "Saved-session and Save As ownership helpers",
+    "Active never-saved session retains its own sidecar directory after creating autosave",
+    "Empty/audio-only folder reuse",
+    "Recovery/notes directories and dangling links",
+    "More than 99 occupied folder names",
+    "Empty and non-directory parent rejection",
+    "Existing autosave recovery, built-in edits and save prompts in focused GUI scenarios"
+  ],
+  "remaining": [
+    "Current changed source plus updated DAF still needs Linux/Windows CI and final package validation. Earlier maintainer Linux/macOS/Windows walkthrough evidence in issue886 remains acknowledged.",
+    "Canonical prepush was not run: mac.sh force-pushes/checks out temporary branches and the Windows runner checks out source, contrary to standing Git restrictions.",
+    "Native Wayland integration and explicitly deferred post-0.16 performance/UI issues were not undertaken.",
+    "No macOS 11 runtime/package claim is made from this macOS 26 development build.",
+    "Pre-existing untracked external/sfizz/ left untouched."
+  ],
+  "evidence_note": "Some broad initial tool reads were truncated. Findings were verified with narrower source reads, complete branch blob comparisons and retained log files.",
+  "logs": [
+    {
+      "path": "build-tests/016-review-recovery-before.log",
+      "sha256": "5bf42b3b1e2f97d1a811b1c12384af9b852cadc5dab4de8e229eac5313dad60a"
+    },
+    {
+      "path": "build-tests/016-review-recovery-after.log",
+      "sha256": "bd3631c19a6918ace6af78c5a73ee5e67301ed8f7da31fafb781b983024519da"
+    },
+    {
+      "path": "build-tests/016-review-mutations/active-sidecar/failure.log",
+      "sha256": "430df6b5791c0d5ae72f030d55cc2573e20f1fd405102b2e9e638f1ce2f5a27f"
+    },
+    {
+      "path": "build-tests/016-review-mutations/empty-audio-folder/failure.log",
+      "sha256": "33bfbc8f2d247a910cdae68c6648ba880df249900a0ab52e6f769a6b360c9d89"
+    },
+    {
+      "path": "build/016-review-app-build.log",
+      "sha256": "96164bea06f36b7ad64a95d23d615e399956dd6e2889090bdb507253d1d07228"
+    },
+    {
+      "path": "build/016-review-daf-app-build.log",
+      "sha256": "e86dc91aa113192d4f54597771453df700ac1c75aebb4dd72da7ba89620d8127"
+    },
+    {
+      "path": "build/016-review-final-app-build.log",
+      "sha256": "6cce6928c0d7b15ebcac331758b4492050f3b47a1fbedaf51492ad67df6b7c51"
+    },
+    {
+      "path": "build-tests/016-review-daf-tests-build.log",
+      "sha256": "07065bd98af4e0cf19d281599343811363e5f1dd3ca1dd9130fef514c588ea7b"
+    },
+    {
+      "path": "build-tests/016-review-ctest.log",
+      "sha256": "4dae996cc86f81810715d3271c39711e494dffbb09b11feb1272e4ba07d4d20b"
+    },
+    {
+      "path": "build-tests/016-review-ctest-isolated.log",
+      "sha256": "3a632828ce925baff1376e7388794bab1da34f48f8956bd37ac06ce7affc4a0c"
+    },
+    {
+      "path": "build-tests/016-review-ctest-sockets.log",
+      "sha256": "f7ff50ff965593d5f59fdb3010cc74e4879f07b9a06c9e98177e9d8ec8a401ac"
+    },
+    {
+      "path": "build-tests/016-review-ctest-special-locations.log",
+      "sha256": "448271f57d1205979e7624faea507f8b8277ca534157c9408d122d15df02c0b7"
+    },
+    {
+      "path": "build/016-review-selftest/app.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "build/016-review-selftest/permissions.log",
+      "sha256": "ccb75dd8e1cdeb4a0e94e5c316297eb91a3c0b643b96317a5a857dfe6fe26872"
+    },
+    {
+      "path": "build/016-review-selftest-unsandboxed/app.log",
+      "sha256": "f0df40cfd0678b452a629ca1f9cf274146be0273701a59bbb74031f613c5b261"
+    },
+    {
+      "path": "build/016-review-selftest-unsandboxed/permissions.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "build/016-review-gui/app.log",
+      "sha256": "26b7e4839f6c13d75b1cca0032f0ebf2604c0e031443ef5294d23a6a60665619"
+    },
+    {
+      "path": "build/016-review-gui-foreground/app.log",
+      "sha256": "297b869174a057f93599a94c6be96ecd8a97a7c09da850cc419d4d1e814128c0"
+    },
+    {
+      "path": "build/016-review-gui-foreground/focus.log",
+      "sha256": "017eca904ddd451dfce7314a15ecd3a7f2a265a81be613e648c1b693f4703eb2"
+    },
+    {
+      "path": "build/016-review-metadata-before.log",
+      "sha256": "fb8f7fa97da3495f94c351c2548dd3c5464456a70c0c7862729a5e988e2a4c6c"
+    },
+    {
+      "path": "build/016-review-metadata-after.log",
+      "sha256": "5db5c2f5c95a780336775d67dfb6dfe33b72acd87ee72615ca11653d2c895000"
+    },
+    {
+      "path": "build-tests/016-review-ctest-final.log",
+      "sha256": "1beac437e3e89df9698977f28e91af3486255ac5c899ffe0ba531d0341c06fbd"
+    }
+  ]
+}
