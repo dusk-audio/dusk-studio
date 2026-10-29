@@ -169,13 +169,71 @@ TEST_CASE ("a never-saved session starts in the first Untitled folder that holds
 
     CHECK (unsavedSessionFolder (s.root) == s.root / "Untitled");
 
-    stdfs::create_directories (s.root / "Untitled");
-    std::ofstream (s.root / "Untitled" / "notepad.md") << "notes";
+    stdfs::create_directories (s.root / "Untitled" / "audio");
     CHECK (unsavedSessionFolder (s.root) == s.root / "Untitled");
 
-    std::ofstream (s.root / "Untitled" / "session.json") << "{}";
-    CHECK (unsavedSessionFolder (s.root) == s.root / "Untitled 2");
+    SECTION ("crashed recovery and notes reserve their folders")
+    {
+        std::ofstream (s.root / "Untitled" / "session.json.autosave") << "recovery";
+        CHECK (unsavedSessionFolder (s.root) == s.root / "Untitled 2");
+        CHECK (duskstudio::savecheck::sidecarFolder (s.root / "Untitled", false, s.other)
+               == s.root / "Untitled");
 
-    stdfs::create_directories (s.root / "Untitled 2" / "session.json");
-    CHECK (unsavedSessionFolder (s.root) == s.root / "Untitled 3");
+        stdfs::create_directories (s.root / "Untitled 2");
+        std::ofstream (s.root / "Untitled 2" / "notepad.md") << "notes";
+        CHECK (unsavedSessionFolder (s.root) == s.root / "Untitled 3");
+    }
+
+    SECTION ("saved sessions reserve their folders")
+    {
+        std::ofstream (s.root / "Untitled" / "session.json") << "{}";
+        CHECK (unsavedSessionFolder (s.root) == s.root / "Untitled 2");
+
+        stdfs::create_directories (s.root / "Untitled 2" / "session.json");
+        CHECK (unsavedSessionFolder (s.root) == s.root / "Untitled 3");
+    }
+
+    SECTION ("recovery directories and dangling notes links reserve their folders")
+    {
+        stdfs::create_directories (s.root / "Untitled" / "session.json.autosave");
+        CHECK (unsavedSessionFolder (s.root) == s.root / "Untitled 2");
+        stdfs::create_directories (s.root / "Untitled 2");
+        std::error_code ec;
+        stdfs::create_symlink (s.root / "Gone", s.root / "Untitled 2" / "notepad.md", ec);
+        if (! ec)
+            CHECK (unsavedSessionFolder (s.root) == s.root / "Untitled 3");
+    }
+
+    SECTION ("occupied names do not exhaust the search after 99 sessions")
+    {
+        for (int n = 1; n < 100; ++n)
+        {
+            const auto dir = s.root / (n == 1 ? "Untitled" : "Untitled " + std::to_string (n));
+            stdfs::create_directories (dir);
+            std::ofstream (dir / "session.json") << "{}";
+        }
+        CHECK (unsavedSessionFolder (s.root) == s.root / "Untitled 100");
+    }
+
+    SECTION ("a missing sessions folder is created before it is offered")
+    {
+        const auto parent = s.root / "Music" / "Dusk Studio";
+        CHECK (unsavedSessionFolder (parent) == parent / "Untitled");
+        CHECK (stdfs::is_directory (parent));
+    }
+
+    SECTION ("an unavailable parent cannot supply a session folder")
+    {
+        CHECK (unsavedSessionFolder ({}).empty());
+        CHECK (unsavedSessionFolder (s.mine / "session.json").empty());
+        CHECK (unsavedSessionFolder (s.mine / "session.json" / "Dusk Studio").empty());
+
+        const auto locked = s.root / "Locked";
+        stdfs::create_directories (locked);
+        std::error_code ec;
+        stdfs::permissions (locked, stdfs::perms::owner_read | stdfs::perms::owner_exec, ec);
+        if (! ec && ! stdfs::create_directory (locked / "probe", ec))
+            CHECK (unsavedSessionFolder (locked / "Dusk Studio").empty());
+        stdfs::permissions (locked, stdfs::perms::owner_all, ec);
+    }
 }

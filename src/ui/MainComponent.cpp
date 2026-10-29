@@ -3980,8 +3980,8 @@ std::filesystem::path MainComponent::defaultSessionsFolder()
 // autosave or notes, so the launch session starts in a folder holding none.
 void MainComponent::startUnsavedSessionIn (const std::filesystem::path& parent)
 {
-    auto dir = parent.empty() ? parent : savecheck::unsavedSessionFolder (parent);
-    if (dir.empty()) dir = privateUnsavedFolder();
+    auto dir = savecheck::unsavedSessionFolder (parent);
+    if (dir.empty()) dir = savecheck::unsavedSessionFolder (privateUnsavedFolder());
     if (dir.empty() && ! parent.empty()) dir = parent / "Untitled";
     session.setSessionDirectory (toFile (dir));
 }
