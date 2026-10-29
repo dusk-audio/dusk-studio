@@ -479,19 +479,26 @@ scripts/regress.sh windows --release-run 1234567890
 scripts/regress.sh windows --release-run 1234567890 --fixtures-run 2345678901
 scripts/regress.sh all --perf --msi /path/to/installer.msi
 scripts/regress.sh all --release-run 1234567890 --fixtures-run 2345678901
-scripts/regress.sh prepush               # linux + mac source legs, before a push
+scripts/regress.sh windows-source        # build + ctest HEAD in the win11 guest
+scripts/regress.sh prepush               # linux, mac and windows source legs, before a push
 ```
 
 `prepush` is the check before a branch goes to GitHub: the Linux and macOS
 source legs (build, tests, `ctest-runner-limits`, JUCE gate, self-test,
-headless scenarios) run at the same time, since one runs here and the other on
-the Air, and one table ends the run. Each platform's output goes to a log under
-`$TMPDIR` named above the table. Linux options and `--host` pass through;
-package, release-run and Windows options are refused. Windows is left to CI:
-the `windows-tests.yml` run builds the MSVC artifact the guest tests. Green here
-means CI should find nothing new, so a branch needs one CI round rather than
-several, and pushes are batched, because each one cancels the macOS job in
-progress (about 45 minutes on a cold cache) and starts it again.
+headless scenarios) and the Windows source leg (MSVC build of CI's targets,
+the Mesa check, ctest; see "Windows source" below) run at the same time, one
+here, one on the Air and one in the `win11` guest, and one table ends the run.
+Each platform's output goes to `linux.log`, `mac.log` and `windows.log` in a
+directory under `$TMPDIR` named above the table, each log opening and closing
+with a timestamped `started` / `finished` line. Linux options and `--host` pass
+through; package, release-run and Windows package options are refused, and
+`--no-scenarios` goes to Linux only. Ctrl-C stops all three, the guest's build
+or test processes included. A fresh checkout needs its submodules and both
+`build/` and `build-tests/` configured before the Linux leg can run (its
+`configure-check` fails without the two caches). Green here means CI should
+find nothing new, so a branch needs one CI round rather than several, and
+pushes are batched, because each one cancels the macOS job in progress (about
+45 minutes on a cold cache) and starts it again.
 
 The Mac source leg can use a dedicated validation tree:
 
@@ -537,6 +544,7 @@ and the Windows MSI of the same `release.yml` run, which is the release
 gate. A platform given a local package on the same line (`--tarball`, `--dmg`,
 `--msi`) tests that one, and the release run goes to the others.
 `--no-scenarios` goes to Linux and Windows; `--fixtures-run` to Windows.
+`all` runs the Windows package leg, never the source one.
 `DUSK_REGRESS_DRY_RUN=1` prints what each platform would get and stops.
 
 Each platform prints its own table as it finishes, and `all` ends with one
@@ -545,13 +553,13 @@ runner exits non-zero without a failed leg (a usage error, a missing tool) gets
 a `<platform>/runner` row, so it cannot drop out of the table unseen.
 
 Layout: `scripts/regress.sh` only dispatches and routes options. The work is in
-`scripts/regress/{linux,mac,windows}.sh` (and `mac-package.sh`, which `mac.sh`
-hands a package run to) over the shared leg bookkeeping in
+`scripts/regress/{linux,mac,windows,windows-source}.sh` (and `mac-package.sh`,
+which `mac.sh` hands a package run to) over the shared leg bookkeeping in
 `scripts/regress/common.sh`, the private-display plumbing in
 `scripts/regress/xvfb.sh` and the scenario legs in
 `scripts/regress/scenarios.sh`, plus the guest-side helpers in
-`scripts/regress/windows/` and the Screen Sharing helper in
-`scripts/regress/mac/`.
+`scripts/regress/windows/` (the source leg's in `scripts/regress/windows/source/`)
+and the Screen Sharing helper in `scripts/regress/mac/`.
 
 ### Linux
 
@@ -991,9 +999,10 @@ ssh host), `DUSK_REGRESS_MAC_VNC_LOGIN`, `DUSK_JOBS`.
 
 ### Windows
 
-The libvirt domain `win11` on this box has no qemu-guest-agent and no SSH. The
-channel is: `virsh send-key` types into a guest PowerShell console, an HTTP
-server on `192.168.122.1:8000` serves the phase scripts and the payload, a
+The package leg drives the libvirt domain `win11` without a guest agent or
+ssh (the source leg below uses ssh). The channel is: `virsh send-key` types
+into a guest PowerShell console, an HTTP server on `192.168.122.1:8000` serves
+the phase scripts and the payload, a
 collector on `:9000` receives each phase's POSTed report (and, under
 `posts/` in the run directory, the whole output of each scenario run), and
 `virsh screenshot` shows what the guest is actually doing. Both servers are
@@ -1162,6 +1171,55 @@ something else driving the VM has been the cause before.
 Overrides: `DUSK_REGRESS_VM`, `DUSK_REGRESS_LIBVIRT_URI`, `DUSK_REGRESS_HOST_IP`,
 `DUSK_REGRESS_UAC_WAIT`, `DUSK_REGRESS_UAC_ACCEPT`.
 
+### Windows source
+
+`scripts/regress.sh windows-source`, and the Windows third of `prepush`,
+builds this checkout's HEAD (detached is fine; uncommitted changes are not
+included) in the same `win11` guest over ssh, in a tree configured the way
+`windows-tests.yml` configures CI's: Ninja, MSVC x64 Release, the vcpkg
+`x64-windows-static` packages, the donor at `DONOR_REV`, DAF at the tip of
+main, the pinned Mesa. It takes no options, needs no UAC and installs nothing.
+
+```bash
+scripts/regress.sh windows-source
+DUSK_REGRESS_WIN_ROOT='C:\Users\marc\other-tree' scripts/regress.sh windows-source
+```
+
+Every run first replaces `<tree>\regress\` in the guest with
+`scripts/regress/windows/source/`, so the guest never runs a stale script. The
+guest's ssh shell is PowerShell; each remote command is a single PowerShell line
+ending in `exit $LASTEXITCODE`, and the two scripts that must work before or
+without that copy, the preflight and the cancel, travel inline as
+`-EncodedCommand`. Closing an ssh session does not end the processes under it,
+so a leg that times out, loses its connection or is interrupted (Ctrl-C, or
+`prepush` stopping its runners) sends the cancel, which ends everything whose
+command line names the tree. If that cannot be confirmed the leg says so;
+check the guest before the next run, since the preflight refuses a busy tree.
+
+| Leg | What it proves |
+|---|---|
+| `vm-preflight` | the guest answers over ssh, nothing is already running in the tree, and the scripts are copied. A failure ends the run. |
+| `update` | the tree is at HEAD: the merge base with `origin/main` (and any other commit the local ones stand on) fetched from GitHub by hash, the local commits sent as a git bundle, submodules synced, the donor at `DONOR_REV`, DAF at main. Mesa and Python are reinstalled when `scripts/fetch-windows-software-opengl.ps1` changed, the vcpkg packages when `vcpkg.json` did. |
+| `build` | `DuskStudio`, `dusk-studio-tests` and `dusk-windows-software-opengl-probe` at `-j4`, as CI builds them, reconfiguring first when the configure script changed. A failure's note counts the compile and link errors and names the first. |
+| `mesa` | CI's "Verify packaged Mesa selects llvmpipe" step, and the fixture plug-ins and app files CI's upload steps require. |
+| `ctest-inventory` | every test name the `windows-tests.yml` at HEAD requires is in the CTest inventory. The names are read from the workflow, so the two never drift; finding none fails. |
+| `ctest` | the whole suite, serially, as CI runs it. The note names the failed tests. |
+
+A failed `update` or `build` turns the legs after it into `SKIP` rows. Timings
+on the 8 GB guest: about 5 minutes for ctest; a build after a DAF move
+rebuilds the native UI.
+
+Prerequisites on this box: the key (`~/.ssh/dusk_winvm`) and an `origin/main`
+ref, whose merge base with HEAD is a commit GitHub has. In the guest: the tree,
+which the first run creates; its tool prerequisites and the per-script table are
+in [scripts/regress/windows/source/README.md](../scripts/regress/windows/source/README.md).
+Never reboot or destroy the guest for this leg.
+
+Overrides: `DUSK_REGRESS_WIN_HOST` (default `marc@192.168.122.85`),
+`DUSK_REGRESS_WIN_KEY`, `DUSK_REGRESS_WIN_ROOT` (default
+`C:\Users\marc\dusk-audit-win`; plain names only, since it is spliced into
+command lines), and in the guest the `DUSK_WIN_*` tool paths in `env.cmd`.
+
 ### Adding a leg
 
 1. Write the check as a shell function in the platform's script that returns 0
@@ -1190,6 +1248,12 @@ Overrides: `DUSK_REGRESS_VM`, `DUSK_REGRESS_LIBVIRT_URI`, `DUSK_REGRESS_HOST_IP`
    the `serve_script` line passes, and refuses to serve a script with a
    placeholder left over. `REGRESS-NOTE` and `REGRESS-WARN` lines go into the
    leg's note, the second making it a `WARN`.
+
+   For the Windows source leg, add a `.cmd` under
+   `scripts/regress/windows/source/` that calls `env.cmd` first and names the
+   tree on the command line of anything long-running (the cancel finds the
+   guest processes by it), and register it with `regress_leg` around
+   `win_run <deadline> "$(remote_cmd <script>)"`.
 4. `bash -n` and `shellcheck` every script you touched. There is no PowerShell
    on this box: parse a changed `.ps1` in the guest with
    `[System.Management.Automation.Language.Parser]::ParseInput` before a full

@@ -36,7 +36,8 @@ with tempfile.TemporaryDirectory(prefix="dusk-regress-contract-") as scratch:
     runners = scripts / "regress"
     runners.mkdir(parents=True)
     shutil.copyfile(repo / "scripts/regress.sh", scripts / "regress.sh")
-    for platform in ("linux", "mac"):
+    stub_runners = ("linux", "mac", "windows-source")
+    for platform in stub_runners:
         (runners / f"{platform}.sh").write_text(
             "#!/usr/bin/env bash\n"
             "set -eu\n"
@@ -58,7 +59,7 @@ with tempfile.TemporaryDirectory(prefix="dusk-regress-contract-") as scratch:
     groups = {process.pid}
     try:
         markers = [root / f"{platform}.{kind}"
-                   for platform in ("linux", "mac")
+                   for platform in stub_runners
                    for kind in ("pid", "timeout", "managed", "child")]
         wait_for(lambda: all(marker.exists() and marker.read_text().strip()
                              for marker in markers))
@@ -304,4 +305,171 @@ else:
         assert "app binary missing:" in result.stdout + result.stderr, result
         assert "regress linux: OK" not in result.stdout, result.stdout
 
-print("regression runner: interrupt cleanup, timing cache, Mac paths and missing app pass")
+    win_root = root / "windows-source"
+    win_runners = win_root / "scripts/regress"
+    (win_runners / "windows").mkdir(parents=True)
+    shutil.copyfile(repo / "scripts/regress.sh", win_root / "scripts/regress.sh")
+    for name in ("windows-source.sh", "common.sh"):
+        shutil.copyfile(repo / "scripts/regress" / name, win_runners / name)
+    shutil.copytree(repo / "scripts/regress/windows/source", win_runners / "windows/source")
+    (win_root / ".github/workflows").mkdir(parents=True)
+    (win_root / ".github/workflows/windows-tests.yml").write_text(
+        "          for required in \\\n"
+        "            \"cross-platform-validator-contract\"; do\n"
+        "            grep -Fq \"$required\" <<< \"$inventory\" || exit 1\n"
+        "          for required in \\\n"
+        "            \"FileImporter: a matching 32-bit source is not truncated to 24-bit\"; do\n"
+        "          ctest --test-dir build-tests --output-on-failure\n")
+    for platform in ("linux", "mac"):
+        (win_runners / f"{platform}.sh").write_text("#!/usr/bin/env bash\nexit 0\n")
+    git_environment = dict(os.environ, GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull,
+                           GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t",
+                           GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
+
+    def git(*args):
+        return subprocess.run(["git", "-C", str(win_root), *args], env=git_environment,
+                              check=True, capture_output=True, text=True).stdout.strip()
+
+    git("init", "-q")
+    git("add", "-A")
+    git("commit", "-q", "-m", "base")
+    base_sha = git("rev-parse", "HEAD")
+    git("update-ref", "refs/remotes/origin/main", base_sha)
+    (win_root / "local.txt").write_text("local\n")
+    git("add", "-A")
+    git("commit", "-q", "-m", "local")
+    head_sha = git("rev-parse", "HEAD")
+
+    win_mocks = win_root / "bin"
+    win_mocks.mkdir()
+    win_trace = win_root / "ssh-trace"
+    copied = win_root / "copied"
+    copied.mkdir()
+    required = ["cross-platform-validator-contract",
+                "FileImporter: a matching 32-bit source is not truncated to 24-bit"]
+    (win_mocks / "ssh").write_text(f'''#!/usr/bin/python3
+import base64, os, re, sys, time
+command = sys.argv[-1]
+encoded = re.search(r"-EncodedCommand (\\S+);", command)
+if encoded:
+    script = base64.b64decode(encoded.group(1)).decode("utf-16-le")
+    kind = "cancel" if "taskkill" in script else "preflight"
+    command = next(line for line in script.splitlines() if line.startswith("$root"))
+else:
+    kind = re.search(r"\\\\regress\\\\([a-z]+)\\.cmd", command).group(1)
+with open("{win_trace}", "a") as out:
+    out.write(kind + "\\t" + command + "\\n")
+if kind == "build" and os.environ.get("REGRESS_TEST_BUILD_HANG"):
+    with open("{win_root}/build-ssh.pid", "w") as out:
+        out.write(str(os.getpid()))
+    time.sleep(60)
+if kind == "build" and os.environ.get("REGRESS_TEST_BUILD_FAIL"):
+    print("C:\\\\t\\\\src\\\\src\\\\a.cpp(1): error C2065: y: undeclared identifier\\r")
+    print("FAILED: a.obj")
+    sys.exit(1)
+if kind == "ctest" and " list" in command:
+    print("Total Tests: 2")
+    for name in os.environ.get("REGRESS_TEST_INVENTORY", "").split("|"):
+        print("  Test #1: " + name + "\\r")
+elif kind == "ctest":
+    print("100% tests passed, 0 tests failed out of 2")
+''')
+    (win_mocks / "scp").write_text(f'''#!/usr/bin/python3
+import shutil, sys
+for arg in sys.argv[1:-1]:
+    if arg.endswith((".cmd", ".ps1", ".bundle")):
+        shutil.copy(arg, "{copied}")
+''')
+    for name in ("ssh", "scp"):
+        (win_mocks / name).chmod(0o755)
+    win_environment = dict(child_environment, PATH=f"{win_mocks}:{os.environ['PATH']}",
+                           REGRESS_TEST_INVENTORY="|".join(required + ["Other test"]))
+    win_environment.pop("DUSK_REGRESS_RECORD_FILE")
+
+    def windows_source(overrides):
+        win_trace.write_text("")
+        result = subprocess.run(["/bin/bash", str(win_runners / "windows-source.sh")],
+                                env=dict(win_environment, **overrides), capture_output=True,
+                                text=True, timeout=20)
+        calls = [line.split("\t", 1) for line in win_trace.read_text().splitlines()]
+        return result, calls
+
+    result, calls = windows_source({})
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert [kind for kind, _ in calls] == ["preflight", "update", "build", "mesa", "ctest", "ctest"], calls
+    assert calls[0][1] == "$root = 'C:\\Users\\marc\\dusk-audit-win'", calls[0]
+    update = calls[1][1]
+    assert f"update.cmd {head_sha} {base_sha} C:\\Users\\marc\\dusk-audit-win\\regress\\head.bundle; exit $LASTEXITCODE" in update, update
+    assert (copied / "head.bundle").exists()
+    for script in ("update.cmd", "build.cmd", "env.cmd", "verify-mesa.ps1"):
+        text = (copied / script).read_bytes()
+        assert b"\r\n" in text and b"\n" not in text.replace(b"\r\n", b""), script
+    for leg in ("vm-preflight", "update", "build", "mesa", "ctest-inventory", "ctest"):
+        assert f"[PASS] {leg} " in result.stdout, (leg, result.stdout)
+
+    result, calls = windows_source({"REGRESS_TEST_INVENTORY": required[0]})
+    assert result.returncode != 0, result.stdout
+    assert "missing from CTest: " + required[1] in result.stderr, result.stderr
+    assert [kind for kind, _ in calls][-1] == "ctest", calls
+
+    result, calls = windows_source({"REGRESS_TEST_BUILD_FAIL": "1"})
+    assert result.returncode != 0, result.stdout
+    assert [kind for kind, _ in calls] == ["preflight", "update", "build"], calls
+    assert "FAIL   build" in result.stdout and "1 errors, first a.cpp(1): error C2065" in result.stdout, result.stdout
+    for leg in ("mesa", "ctest-inventory", "ctest"):
+        assert f"SKIP   {leg} " in result.stdout, (leg, result.stdout)
+
+    result, calls = windows_source({"DUSK_REGRESS_WIN_ROOT": "C:\\a b"})
+    assert result.returncode != 0 and not calls, (result.stdout, calls)
+
+    git("checkout", "-q", "--detach", base_sha)
+    result, calls = windows_source({})
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert f"update.cmd {base_sha} {base_sha}; exit" in calls[1][1], calls[1]
+    git("checkout", "-q", "--detach", head_sha)
+
+    for arguments in (["--msi", "x.msi"], ["--fixtures-run", "1"], ["--release-run", "1"]):
+        result = subprocess.run(["/bin/bash", str(win_root / "scripts/regress.sh"), "prepush", *arguments],
+                                env=dict(win_environment, DUSK_REGRESS_DRY_RUN="1"),
+                                capture_output=True, text=True, timeout=5)
+        assert result.returncode == 2, (arguments, result.stdout, result.stderr)
+    result = subprocess.run(["/bin/bash", str(win_root / "scripts/regress.sh"), "prepush", "--no-scenarios"],
+                            env=dict(win_environment, DUSK_REGRESS_DRY_RUN="1"),
+                            capture_output=True, text=True, timeout=5)
+    assert result.returncode == 0, result.stderr
+    assert "linux:   --no-scenarios\n" in result.stdout, result.stdout
+    assert "windows: source leg" in result.stdout, result.stdout
+
+    win_trace.write_text("")
+    process = subprocess.Popen(
+        ["/bin/bash", str(win_root / "scripts/regress.sh"), "prepush"],
+        env=dict(win_environment, REGRESS_TEST_BUILD_HANG="1"),
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        start_new_session=True,
+    )
+    hung = None
+    try:
+        marker = win_root / "build-ssh.pid"
+        wait_for(lambda: marker.exists() and marker.read_text().strip())
+        hung = int(marker.read_text())
+        process.send_signal(signal.SIGINT)
+        stdout, stderr = process.communicate(timeout=20)
+        assert process.returncode == 130, (process.returncode, stdout, stderr)
+        assert not running(hung), "the Windows leg's ssh outlived the interrupt"
+        kinds = [line.split("\t", 1)[0] for line in win_trace.read_text().splitlines()]
+        assert kinds[-1] == "cancel", kinds
+        log_dir = Path(stdout.split("logs in ", 1)[1].splitlines()[0])
+        windows_log = (log_dir / "windows.log").read_text()
+        assert "windows-source started" in windows_log, windows_log
+        assert "stopping the run in" in windows_log, windows_log
+        assert "could not confirm" not in windows_log, windows_log
+    finally:
+        for pid in (hung, process.pid):
+            if pid is not None and running(pid):
+                try:
+                    os.killpg(os.getpgid(pid), signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+        process.wait()
+
+print("regression runner: interrupt cleanup, timing cache, Mac paths, missing app and Windows source leg pass")

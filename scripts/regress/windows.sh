@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Windows leg of the regression runner: drives the libvirt win11 guest.
 #
-# The guest has no qemu-guest-agent and no SSH. The whole channel is
+# This runner uses no guest agent and no ssh (windows-source.sh, which builds
+# from source in the same guest, does). Its whole channel is
 #   - virsh send-key to type into a PowerShell console,
 #   - an HTTP server on the host serving the phase scripts and the payload,
 #   - a collector on the host that the phase scripts POST their report to,

@@ -12,7 +12,8 @@
 #   scripts/regress.sh windows --release-run <id> --fixtures-run <id>
 #   scripts/regress.sh all --msi <path>
 #   scripts/regress.sh all --release-run <id>
-#   scripts/regress.sh prepush               linux + mac source legs, at once
+#   scripts/regress.sh windows-source        build + ctest HEAD in the win11 guest
+#   scripts/regress.sh prepush               linux, mac and windows source legs, at once
 #
 # Per-platform prerequisites and what each leg proves: docs/MAINTAINER-GUIDE.md,
 # "Part 9b - Regression run across platforms".
@@ -24,7 +25,7 @@ REGRESS_DIR="${REPO_ROOT}/scripts/regress"
 
 usage() {
     cat <<'EOF'
-usage: scripts/regress.sh [linux|mac|windows|all|prepush] [options]
+usage: scripts/regress.sh [linux|mac|windows|windows-source|all|prepush] [options]
 
   linux    (default) build, tests, ctest, JUCE gate, self-test, IPC and
            scenario legs
@@ -72,6 +73,11 @@ usage: scripts/regress.sh [linux|mac|windows|all|prepush] [options]
              --extract-only        unpack with msiexec /a instead of installing:
                                    no UAC, for runner development only
              --no-scenarios        leave the scenario legs out
+  windows-source
+           drive the libvirt win11 guest over ssh: bring its CI-equivalent
+           tree to HEAD, build CI's targets, run the Mesa check and ctest.
+           No options; DUSK_REGRESS_WIN_HOST, DUSK_REGRESS_WIN_KEY and
+           DUSK_REGRESS_WIN_ROOT override the guest, key and tree
   all      linux, then mac, then windows (windows needs --msi/--release-run),
            then one table of every platform's legs. Options are routed to the
            platform that owns them, so `all --perf --msi <path>` is one run
@@ -81,13 +87,12 @@ usage: scripts/regress.sh [linux|mac|windows|all|prepush] [options]
            that one instead. DUSK_REGRESS_DRY_RUN=1 prints the routing and
            stops.
 
-  prepush  before asking for a push: the linux and mac source legs at the
-           same time (they run on different machines), then one table. The
-           linux options above go to linux and --host to mac; package and
-           Windows options are refused, since a push is about this checkout.
-           Each platform's full output goes to a log named in the table's
-           header. Windows is left to CI, which builds the artifact the
-           guest runs.
+  prepush  before asking for a push: the linux, mac and windows-source legs
+           at the same time (they run on three machines), then one table.
+           The linux options above go to linux and --host to mac; package
+           options, the windows package options among them, are refused,
+           since a push is about this checkout. Each platform's full output
+           goes to a log named in the table's header.
 
   -h, --help   this text
 EOF
@@ -105,7 +110,7 @@ if [[ $# -gt 0 && "$1" != -* ]]; then
 fi
 
 case "$TARGET" in
-    linux | mac | windows | all | prepush) ;;
+    linux | mac | windows | windows-source | all | prepush) ;;
     *)
         usage >&2
         echo >&2
@@ -202,7 +207,7 @@ while [[ $# -gt 0 ]]; do
         done
         owner="$kept"
         if [[ -z "$owner" ]]; then
-            echo "error: prepush runs no Windows leg; $1 does not belong in it" >&2
+            echo "error: $1 is for the Windows package run; prepush runs the Windows source leg" >&2
             exit 2
         fi
     fi
@@ -236,7 +241,11 @@ fi
 if [[ "${DUSK_REGRESS_DRY_RUN:-0}" == 1 ]]; then
     printf 'linux:   %s\n' "${LINUX_ARGS[*]-}"
     printf 'mac:     %s\n' "${MAC_ARGS[*]-}"
-    printf 'windows: %s\n' "${WINDOWS_ARGS[*]-}"
+    if [[ "$TARGET" == prepush ]]; then
+        printf 'windows: source leg (windows-source.sh)\n'
+    else
+        printf 'windows: %s\n' "${WINDOWS_ARGS[*]-}"
+    fi
     exit 0
 fi
 
@@ -247,12 +256,20 @@ export DUSK_REGRESS_RECORD_FILE="$RECORD_FILE"
 # A runner that dies before its first leg (a usage error, a missing tool)
 # records nothing, so its exit status gets a row of its own.
 rc=0
+# run_platform <platform> <runner> [options]: the platform labels the rows,
+# the runner is the script under scripts/regress/ that records them.
 run_platform() {
-    local platform="$1" status=0
-    shift
+    local platform="$1" runner="$2" status=0
+    shift 2
     # Keep the wrapper alive until its runner finishes signal cleanup.
-    if [[ "$TARGET" == prepush ]]; then trap ':' INT TERM; fi
-    bash "${REGRESS_DIR}/${platform}.sh" "$@" || status=$?
+    if [[ "$TARGET" == prepush ]]; then
+        trap ':' INT TERM
+        printf '%s %s started\n' "$(date '+%F %T')" "$runner"
+    fi
+    bash "${REGRESS_DIR}/${runner}.sh" "$@" || status=$?
+    if [[ "$TARGET" == prepush ]]; then
+        printf '%s %s finished, exit %s\n' "$(date '+%F %T')" "$runner" "$status"
+    fi
     if ((status != 0)); then
         rc=1
         if ! grep -q "^${platform}"$'\tFAIL\t' "$RECORD_FILE"; then
@@ -262,7 +279,7 @@ run_platform() {
     return 0
 }
 if [[ "$TARGET" == prepush ]]; then
-    # In parallel the two outputs would interleave, so each goes to a log that
+    # In parallel the three outputs would interleave, so each goes to a log that
     # outlives the run; run_platform's rc is lost in the background, but a
     # failing runner always leaves a FAIL row, which the check below reads.
     LOG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dusk-prepush.XXXXXX")"
@@ -294,20 +311,21 @@ if [[ "$TARGET" == prepush ]]; then
     }
     trap stop_runners INT TERM
     set -m
-    run_platform linux ${LINUX_ARGS[@]+"${LINUX_ARGS[@]}"} >"${LOG_DIR}/linux.log" 2>&1 &
-    run_platform mac ${MAC_ARGS[@]+"${MAC_ARGS[@]}"} >"${LOG_DIR}/mac.log" 2>&1 &
-    echo "prepush: linux and mac running; logs in ${LOG_DIR}"
+    run_platform linux linux ${LINUX_ARGS[@]+"${LINUX_ARGS[@]}"} >"${LOG_DIR}/linux.log" 2>&1 &
+    run_platform mac mac ${MAC_ARGS[@]+"${MAC_ARGS[@]}"} >"${LOG_DIR}/mac.log" 2>&1 &
+    run_platform windows windows-source >"${LOG_DIR}/windows.log" 2>&1 &
+    echo "prepush: linux, mac and windows running; logs in ${LOG_DIR}"
     wait
     set +m
     trap - INT TERM
 else
-    run_platform linux ${LINUX_ARGS[@]+"${LINUX_ARGS[@]}"}
-    run_platform mac ${MAC_ARGS[@]+"${MAC_ARGS[@]}"}
-    run_platform windows ${WINDOWS_ARGS[@]+"${WINDOWS_ARGS[@]}"}
+    run_platform linux linux ${LINUX_ARGS[@]+"${LINUX_ARGS[@]}"}
+    run_platform mac mac ${MAC_ARGS[@]+"${MAC_ARGS[@]}"}
+    run_platform windows windows ${WINDOWS_ARGS[@]+"${WINDOWS_ARGS[@]}"}
 fi
 
 printf '\n===== regress %s =====\n' "$TARGET"
-[[ -z "${LOG_DIR:-}" ]] || printf 'logs: %s/{linux,mac}.log\n' "$LOG_DIR"
+[[ -z "${LOG_DIR:-}" ]] || printf 'logs: %s/{linux,mac,windows}.log\n' "$LOG_DIR"
 printf '%-6s %-40s %8s  %s\n' "RESULT" "LEG" "SECONDS" "NOTE"
 while IFS=$'\t' read -r platform status name secs note; do
     printf '%-6s %-40s %8s  %s\n' "$status" "${platform}/${name}" "$secs" "$note"
