@@ -5,16 +5,93 @@ All notable changes to Dusk Studio. Format loosely follows
 back-filled from `git log`; once tags exist this file is the
 canonical source.
 
-## [Unreleased]
+## [0.16.0] - 2026-10-29
 
 ### Added
 
+- **Mastering phase analysis.** A fourth native panel shows correlation,
+  coherence, phase offsets and mono loss across 4 to 64 frequency bands.
+  Held minima and warnings retain passages that cancel in mono. Bands, Q and
+  averaging save with the session; a temporary Mono monitor leaves exports
+  stereo. Compact windows show one mastering module at a time. A resizable,
+  frequency-labelled segmented graph, blue rotary controls and concise readouts
+  match the mastering console; settling guidance and held warnings open in Details.
+- **MIDI Merge.** Matching toggles in the transport and piano-roll toolbar add
+  each MIDI performance to an existing region, growing it and keeping its earlier
+  notes, controls and takes. Each completed loop pass is one undo step while
+  recording continues. The final partial pass is one step too, and Stop keeps an
+  undone pass undone.
+- **Live notes in the piano roll.** Incoming notes appear while recording, and
+  held notes grow until release. The preview leaves the region and undo history
+  alone, and the roll follows the region a merge updates.
+- **Creative Commons SFZ repositories.** Browse SFZ Instruments, Musical
+  Artifacts, FreePats and Versilian Studios from the instrument library, check a
+  pack's license, and download it to Installed. Only CC0, CC BY and CC BY-SA
+  packs are offered; NonCommercial and NoDerivatives packs are refused.
+  SFZ Manager makes HTTPS requests when you browse repositories, view pack
+  details, download packs or fetch online artwork. It makes no repository
+  requests at startup or during session restore.
+  Downloads can pause, resume and cancel; validated partial downloads survive
+  a connection failure or quitting. Installed versions coexist, and
+  sessions find the same pack on another machine without its old absolute path.
+  Missing packs stay offline without downloading on session load. Explicit
+  relinking selects an installed version of the same pack and keeps its controls.
+  A larger, responsive browser shows source stars or favorites and opens
+  published demos before downloading an instrument pack. Both tabs group
+  instruments by type, show repository artwork or licensed instrument cutouts,
+  and reuse background image caches. The 39-image set adds cello, brass,
+  woodwind, bell and other instrument cutouts. Selected programs take precedence
+  over collection covers and unrelated repository logos. All instruments shows
+  a library overview. Installed search includes program names and
+  descriptions without rescanning packs. Each pack counts once per category,
+  with ARIA program choices and access to internal mappings. Enter and keypad
+  Enter submit searches. ZIP packs use portable stored or deflate compression.
+  All repositories is the default search, combining all four sources with separate
+  page progress and repository labels; one unavailable source leaves the others'
+  results usable. Versilian offers the official VSCO 2 CE and VCSL SFZ releases.
+- **Settings tabs and SFZ storage.** A larger panel and graphite/gold tabs match
+  the DAW. A Plug-ins page adds custom CLAP, VST3 and LV2 search folders with
+  recursive discovery and direct scanning. Top tabs replace the long settings page.
+  Downloaded packs default to the platform's application data directory.
+  Choose a download folder on an external drive, keep existing packs in place or
+  move them after copying and verification. Session instrument references survive
+  the move, and disconnected drives are reported. Moves support FAT32 drives and
+  keep originals until verification succeeds. Packs in an existing configuration
+  folder remain available in place; saved locations retain their folders.
+- **Complete MIDI channel controls.** Recording, import, session save and
+  playback keep pitch bend, channel and polyphonic pressure, and program changes
+  alongside notes and CCs.
 - **Offline render quality.** High keeps 4× effect oversampling. Match playback
   uses the session's effect oversampling for faster offline bounces and track
   freezes at 1× or 2×. Realtime hardware bounces keep the playback settings.
 
 ### Changed
 
+- **Mastering workspace balance.** A narrower multiband compressor gives more
+  room to the limiter and Phase display. Subdued compressor buttons, matching
+  header spacing and a tighter playback area give the modules equal prominence.
+- **Session format 11.** New saves preserve the complete MIDI channel
+  performance and managed SFZ references. Dusk Studio 0.15.1 and earlier cannot
+  open them. Keep a copy before saving if you need an older version.
+- **Shared audio reader workers.** Three workers fill immutable playback
+  windows near the playhead and release distant sample buffers. Rolling seeks
+  keep current playback and recording running until the target is ready, and
+  automation follows the audio. Loop and offline render paths keep their
+  read-ahead coverage.
+- **Background instrument replacement.** The current instrument keeps playing
+  while its replacement loads. Failed and stale requests leave it in place,
+  and retired instruments are destroyed after the audio swap.
+- **Native piano roll.** The piano roll uses the native renderer. Locked
+  regions allow selection and copying while blocking edits and step recording.
+- **MIDI Stop and device changes.** Stop resets controllers, centres pitch bend
+  and clears channel pressure on all 16 instrument channels. Explicit MIDI
+  rescans wait for Stop. Recording refuses a device change during preparation
+  with an alert instead of starting an invalid take.
+- **Exact recording offset.** Type a sample value or adjust it one sample at a
+  time with minus and plus buttons.
+- **SFZ Manager entry point.** The insert chooser opens one manager for online,
+  downloaded and local instruments. Its separate Soundfont choice is removed;
+  local SFZ, SF2 and ARIA bank files remain available through the manager.
 - **MIDI and audio editors.** Matching toolbar and status controls, clearer
   piano keys, larger region menus and a linked-note Glue Selection icon.
 - **Settings.** General opens first; Audio includes the processing controls.
@@ -23,6 +100,91 @@ canonical source.
 
 ### Fixed
 
+- **macOS compatibility.** Bundled audio and plug-in hosting libraries now
+  honour the documented macOS 11 minimum.
+- **Timeline selection.** A new region click keeps its selection when an older
+  edit notification is still waiting to be delivered.
+- **Custom LV2 loading.** Reusing a format avoids repeated folder walks;
+  explicit scans, changed folders and reconnected roots refresh discovery.
+- **Piano-roll keypad zoom.** Holding keypad plus or minus repeats zoom.
+- **Sandboxed plug-in lifecycle.** Preparation and state changes run on the
+  message thread while audio processing is parked, preventing races with
+  queued LV2 UI updates when loading or changing the sample rate.
+- **LV2 instrument classification.** The fallback host refreshes embedded LV2
+  definitions before discovery so instruments retain their MIDI-track identity
+  on computers without system LV2 definitions.
+- **Windows LV2 folders.** Scanning, loading and saving LV2 plug-ins use Unicode
+  file paths, including plug-ins inside custom folders with accented names.
+- **Autosave recovery during shutdown.** Recovery actions retain their session
+  paths if the dialog is destroyed immediately while message posting is stopped.
+- **Empty LV2 state.** Saving a plug-in with no state properties avoids an
+  invalid memory operation in the bundled LV2 library.
+- **Step-record chords.** Releasing a note rejected by a locked region keeps
+  later accepted notes held together at the same position.
+- **SFZ controller labels.** Instrument labels remain valid while the editor
+  reads them, preventing corrupted captions and possible crashes.
+- **SFZ session restoration.** Missing instruments raise one detailed alert
+  while preserving their saved references and controls. Resolving an installed
+  pack on another computer does not mark an unchanged session as edited. Renders refuse
+  pending soundfont loads rather than printing a silent or stale instrument.
+- **MIDI recording with tempo changes.** Recorded notes and controls follow the
+  tempo map, and MIDI Merge keeps the timing of existing events and takes when
+  growing a region. Notes heard on the next loop pass match the committed pass.
+- **Insert changes during soundfont loading.** Choosing hardware, replacing an
+  insert or removing it cancels an earlier soundfont request, so its completion
+  cannot replace the newer choice or convert the track to MIDI.
+- **Sandboxed plugin editors on X11.** Editors open when optional window-manager
+  properties are absent, and closing an editor leaves its host child alive until
+  the plugin is unloaded.
+- **Dropdown keyboard navigation.** Home highlights the first dropdown choice
+  instead of seeking the transport. Mastering dropdowns retain keyboard focus
+  after a covered native panel closes.
+- **Windows SFZ paths.** Instruments in long folders can open their SFZ files,
+  included files and relative samples beyond the legacy 260-character limit.
+- **Sampler buffers.** Empty buffers initialize and copy without undefined
+  memory operations.
+- **MIDI punch-out.** Linear MIDI takes stop capturing at punch-out with MIDI
+  Merge on or off. Post-roll notes and controls stay out of the preview and
+  recorded region, and held notes end at the punch boundary. Turning Punch off
+  or changing punch-out during a take updates MIDI capture at the next block.
+  Notes released after punch-out stay ended if Punch is later switched off.
+- **Piano roll controls.** Zoom Fit fits long regions to the full grid width,
+  keypad plus and minus zoom again, and shifted bracket shortcuts work with
+  hexadecimal window key codes. Note Properties uses the singular for one note.
+- **Held virtual keyboard keys on Linux.** A key held past the system's
+  auto-repeat delay plays one note. Step record no longer inserts a second
+  note, and recording no longer leaves short repeated notes after release.
+- **Step record after reopening the virtual keyboard.** Closing and reopening
+  the keyboard no longer stacks the next note onto the last chord; it advances
+  one snap step, unless the playhead moved while the keyboard was closed.
+- **PDC changes during playback.** Tracks already playing without compensation
+  wait for silence before adding delay. Silent and muted tracks adopt the new
+  compensation when their audio resumes.
+- **Sampler shutdown.** File-loading workers use atomic stop flags, removing a
+  race when an instrument is replaced or destroyed.
+- **Settings dropdown keys.** Open dropdowns keep Home and End for navigating
+  their choices, preventing repeated Home events through the main window.
+- **SFZ playback volume.** Fresh instruments apply the displayed master volume
+  before their first note. The default 0 dB previously left sfizz's −7.35 dB
+  initial attenuation in place until the volume control was moved.
+- **SFZ instrument captions.** Crowded ARIA skin labels stay centred over their
+  controls and fit between adjacent captions, keeping drum-kit text readable.
+- **MIDI device refresh preserves audio state.** It keeps a deliberately
+  detached callback detached and no longer re-prepares the whole engine,
+  changing a no-device import's timeline rate or clearing a finished master
+  export's loudness readings. Hot-plug and explicit MIDI refreshes wait until
+  an offline bounce, stem export or freeze finishes.
+- **MIDI Press bindings.** Press mode fires only when a button goes down, as
+  the manual describes: a controller value rising to 64 or more, or a note-on.
+  A value repeated while the button is held no longer fires it again. A button
+  that sends 127 and never a release value fires once in Press mode; set its
+  binding to Toggle.
+- **MTC chase.** Chasing MIDI Time Code holds lock with large audio buffers,
+  and the re-locate after a master jump lands where the master has rolled to,
+  even when the audio files take a while to read.
+- **Recovery after a crash.** Starting a new unsaved session preserves the
+  previous session's recovery file and notes by choosing another Untitled
+  folder, including after more than 99 sessions.
 - **Plug-in edits and save prompts.** A change made inside a plug-in's own
   editor, through a MIDI binding or by loading a preset now counts as unsaved,
   so Quit, Open and New ask to save it. This covers CLAP, VST3, LV2 and Audio
@@ -110,176 +272,6 @@ canonical source.
   Files onto the tape strip land there instead of being refused. GNOME hands
   these drags to Dusk Studio with a newer drag-and-drop protocol version than
   it accepted.
-
-## [0.16.0] - 2026-10-24
-
-### Added
-
-- **Mastering phase analysis.** A fourth native panel shows correlation,
-  coherence, phase offsets and mono loss across 4 to 64 frequency bands.
-  Held minima and warnings retain passages that cancel in mono. Bands, Q and
-  averaging save with the session; a temporary Mono monitor leaves exports
-  stereo. Compact windows show one mastering module at a time. A resizable,
-  frequency-labelled segmented graph, blue rotary controls and concise readouts
-  match the mastering console; settling guidance and held warnings open in Details.
-- **MIDI Merge.** Matching toggles in the transport and piano-roll toolbar add
-  each MIDI performance to an existing region, growing it and keeping its earlier
-  notes, controls and takes. Each completed loop pass is one undo step while
-  recording continues. The final partial pass is one step too, and Stop keeps an
-  undone pass undone.
-- **Live notes in the piano roll.** Incoming notes appear while recording, and
-  held notes grow until release. The preview leaves the region and undo history
-  alone, and the roll follows the region a merge updates.
-- **Creative Commons SFZ repositories.** Browse SFZ Instruments, Musical
-  Artifacts, FreePats and Versilian Studios from the instrument library, check a
-  pack's license, and download it to Installed. Only CC0, CC BY and CC BY-SA
-  packs are offered; NonCommercial and NoDerivatives packs are refused.
-  SFZ Manager makes HTTPS requests when you browse repositories, view pack
-  details, download packs or fetch online artwork. It makes no repository
-  requests at startup or during session restore.
-  Downloads can pause, resume and cancel; validated partial downloads survive
-  a connection failure or quitting. Installed versions coexist, and
-  sessions find the same pack on another machine without its old absolute path.
-  Missing packs stay offline without downloading on session load. Explicit
-  relinking selects an installed version of the same pack and keeps its controls.
-  A larger, responsive browser shows source stars or favorites and opens
-  published demos before downloading an instrument pack. Both tabs group
-  instruments by type, show repository artwork or licensed instrument cutouts,
-  and reuse background image caches. The 39-image set adds cello, brass,
-  woodwind, bell and other instrument cutouts. Selected programs take precedence
-  over collection covers and unrelated repository logos. All instruments shows
-  a library overview. Installed search includes program names and
-  descriptions without rescanning packs. Each pack counts once per category,
-  with ARIA program choices and access to internal mappings. Enter and keypad
-  Enter submit searches. ZIP packs use portable stored or deflate compression.
-  All repositories is the default search, combining all four sources with separate
-  page progress and repository labels; one unavailable source leaves the others'
-  results usable. Versilian offers the official VSCO 2 CE and VCSL SFZ releases.
-- **Settings tabs and SFZ storage.** A larger panel and graphite/gold tabs match
-  the DAW. A Plug-ins page adds custom CLAP, VST3 and LV2 search folders with
-  recursive discovery and direct scanning. Top tabs replace the long settings page.
-  Downloaded packs default to the platform's application data directory.
-  Choose a download folder on an external drive, keep existing packs in place or
-  move them after copying and verification. Session instrument references survive
-  the move, and disconnected drives are reported. Moves support FAT32 drives and
-  keep originals until verification succeeds. Packs in an existing configuration
-  folder remain available in place; saved locations retain their folders.
-- **Complete MIDI channel controls.** Recording, import, session save and
-  playback keep pitch bend, channel and polyphonic pressure, and program changes
-  alongside notes and CCs.
-
-### Changed
-
-- **Mastering workspace balance.** A narrower multiband compressor gives more
-  room to the limiter and Phase display. Subdued compressor buttons, matching
-  header spacing and a tighter playback area give the modules equal prominence.
-- **Session format 11.** New saves preserve the complete MIDI channel
-  performance and managed SFZ references. Dusk Studio 0.15.1 and earlier cannot
-  open them. Keep a copy before saving if you need an older version.
-- **Shared audio reader workers.** Three workers fill immutable playback
-  windows near the playhead and release distant sample buffers. Rolling seeks
-  keep current playback and recording running until the target is ready, and
-  automation follows the audio. Loop and offline render paths keep their
-  read-ahead coverage.
-- **Background instrument replacement.** The current instrument keeps playing
-  while its replacement loads. Failed and stale requests leave it in place,
-  and retired instruments are destroyed after the audio swap.
-- **Native piano roll.** The piano roll uses the native renderer. Locked
-  regions allow selection and copying while blocking edits and step recording.
-- **MIDI Stop and device changes.** Stop resets controllers, centres pitch bend
-  and clears channel pressure on all 16 instrument channels. Explicit MIDI
-  rescans wait for Stop. Recording refuses a device change during preparation
-  with an alert instead of starting an invalid take.
-- **Exact recording offset.** Type a sample value or adjust it one sample at a
-  time with minus and plus buttons.
-- **SFZ Manager entry point.** The insert chooser opens one manager for online,
-  downloaded and local instruments. Its separate Soundfont choice is removed;
-  local SFZ, SF2 and ARIA bank files remain available through the manager.
-
-### Fixed
-
-- **macOS compatibility.** Bundled audio and plug-in hosting libraries now
-  honour the documented macOS 11 minimum.
-- **Timeline selection.** A new region click keeps its selection when an older
-  edit notification is still waiting to be delivered.
-- **Custom LV2 loading.** Reusing a format avoids repeated folder walks;
-  explicit scans, changed folders and reconnected roots refresh discovery.
-- **Piano-roll keypad zoom.** Holding keypad plus or minus repeats zoom.
-- **Sandboxed plug-in lifecycle.** Preparation and state changes run on the
-  message thread while audio processing is parked, preventing races with
-  queued LV2 UI updates when loading or changing the sample rate.
-- **LV2 instrument classification.** The fallback host refreshes embedded LV2
-  definitions before discovery so instruments retain their MIDI-track identity
-  on computers without system LV2 definitions.
-- **Windows LV2 folders.** Scanning, loading and saving LV2 plug-ins use Unicode
-  file paths, including plug-ins inside custom folders with accented names.
-- **Autosave recovery during shutdown.** Recovery actions retain their session
-  paths if the dialog is destroyed immediately while message posting is stopped.
-- **Empty LV2 state.** Saving a plug-in with no state properties avoids an
-  invalid memory operation in the bundled LV2 library.
-- **Step-record chords.** Releasing a note rejected by a locked region keeps
-  later accepted notes held together at the same position.
-- **SFZ controller labels.** Instrument labels remain valid while the editor
-  reads them, preventing corrupted captions and possible crashes.
-- **SFZ session restoration.** Missing instruments raise one detailed alert
-  while preserving their saved references and controls. Resolving an installed
-  pack on another computer does not mark an unchanged session as edited. Renders refuse
-  pending soundfont loads rather than printing a silent or stale instrument.
-- **MIDI recording with tempo changes.** Recorded notes and controls follow the
-  tempo map, and MIDI Merge keeps the timing of existing events and takes when
-  growing a region. Notes heard on the next loop pass match the committed pass.
-- **Insert changes during soundfont loading.** Choosing hardware, replacing an
-  insert or removing it cancels an earlier soundfont request, so its completion
-  cannot replace the newer choice or convert the track to MIDI.
-- **Sandboxed plugin editors on X11.** Editors open when optional window-manager
-  properties are absent, and closing an editor leaves its host child alive until
-  the plugin is unloaded.
-- **Dropdown keyboard navigation.** Home highlights the first dropdown choice
-  instead of seeking the transport. Mastering dropdowns retain keyboard focus
-  after a covered native panel closes.
-- **Windows SFZ paths.** Instruments in long folders can open their SFZ files,
-  included files and relative samples beyond the legacy 260-character limit.
-- **Sampler buffers.** Empty buffers initialize and copy without undefined
-  memory operations.
-- **MIDI punch-out.** Linear MIDI takes stop capturing at punch-out with MIDI
-  Merge on or off. Post-roll notes and controls stay out of the preview and
-  recorded region, and held notes end at the punch boundary. Turning Punch off
-  or changing punch-out during a take updates MIDI capture at the next block.
-  Notes released after punch-out stay ended if Punch is later switched off.
-- **Piano roll controls.** Zoom Fit fits long regions to the full grid width,
-  keypad plus and minus zoom again, and shifted bracket shortcuts work with
-  hexadecimal window key codes. Note Properties uses the singular for one note.
-- **Held virtual keyboard keys on Linux.** A key held past the system's
-  auto-repeat delay plays one note. Step record no longer inserts a second
-  note, and recording no longer leaves short repeated notes after release.
-- **Step record after reopening the virtual keyboard.** Closing and reopening
-  the keyboard no longer stacks the next note onto the last chord; it advances
-  one snap step, unless the playhead moved while the keyboard was closed.
-- **PDC changes during playback.** Tracks already playing without compensation
-  wait for silence before adding delay. Silent and muted tracks adopt the new
-  compensation when their audio resumes.
-- **Sampler shutdown.** File-loading workers use atomic stop flags, removing a
-  race when an instrument is replaced or destroyed.
-- **Settings dropdown keys.** Open dropdowns keep Home and End for navigating
-  their choices, preventing repeated Home events through the main window.
-- **SFZ playback volume.** Fresh instruments apply the displayed master volume
-  before their first note. The default 0 dB previously left sfizz's −7.35 dB
-  initial attenuation in place until the volume control was moved.
-- **SFZ instrument captions.** Crowded ARIA skin labels stay centred over their
-  controls and fit between adjacent captions, keeping drum-kit text readable.
-- **MIDI device refresh preserves audio state.** It keeps a deliberately
-  detached callback detached and no longer re-prepares the whole engine,
-  changing a no-device import's timeline rate or clearing a finished master
-  export's loudness readings. Hot-plug and explicit MIDI refreshes wait until
-  an offline bounce, stem export or freeze finishes.
-- **MIDI Press bindings.** Press mode fires only when a button goes down, as
-  the manual describes: a controller value rising to 64 or more, or a note-on.
-  A value repeated while the button is held no longer fires it again. A button
-  that sends 127 and never a release value fires once in Press mode; set its
-  binding to Toggle.
-- **MTC chase.** Chasing MIDI Time Code holds lock with large audio buffers,
-  and the re-locate after a master jump lands where the master has rolled to,
-  even when the audio files take a while to read.
 
 ## [0.15.1] - 2026-10-11
 

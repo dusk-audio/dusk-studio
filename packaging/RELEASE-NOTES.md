@@ -3,6 +3,8 @@ MIDI Merge layers performances into a region, with one undo step per loop pass w
 
 The mastering stage adds multiband phase analysis with held warnings, coherence and mono-loss readings. Its Mono monitor checks the fold-down while exports stay stereo.
 
+Offline render quality can follow playback settings for faster bounces and freezes. Plug-in edits trigger save prompts, failed state captures keep their last saved copy, and new unsaved sessions preserve earlier crash recovery and notes. Recording, export finalization and plug-in shutdown fixes protect sessions and generated audio.
+
 Sessions save in format 11, which Dusk Studio 0.15.1 and earlier cannot open. Keep a copy before saving if you need to use an older version.
 <!-- summary-end -->
 
