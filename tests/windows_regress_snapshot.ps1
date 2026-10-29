@@ -62,13 +62,13 @@ try {
     Assert-Snapshot (($beforeTemp -join "`n") -ne ($afterTemp -join "`n")) `
         'The snapshot missed a real change in a watched temporary directory'
     $allowed = Get-RegressWindowsGuiSkips
-    Assert-Snapshot ($allowed.Count -eq 14) 'The Windows skip policy must name exactly 14 unsupported paths'
-    $fullNames = @(0..259 | ForEach-Object { 'gui.supported_' + $_.ToString('000') }) + @($allowed.Keys)
+    Assert-Snapshot ($allowed.Count -eq 17) 'The Windows skip policy must name exactly 17 unsupported paths'
+    $fullNames = @(0..288 | ForEach-Object { 'gui.supported_' + $_.ToString('000') }) + @($allowed.Keys)
     $fullRows = @($fullNames | ForEach-Object {
         if ($allowed.Contains($_)) { '[SKIP] ' + $_ + ': ' + $allowed[$_] }
         else { '[PASS] ' + $_ + ' (1 ms)' }
     })
-    $footer = '=== scenarios: 260 pass, 0 fail, 14 skip ==='
+    $footer = '=== scenarios: 289 pass, 0 fail, 17 skip ==='
     $fullText = ($fullRows + $footer) -join "`n"
     Assert-RegressScenarioResults $fullText 0 $fullNames $allowed
     & {
@@ -111,9 +111,9 @@ try {
     Assert-GuiRejected { Assert-RegressScenarioResults $fullText 1 $fullNames $allowed } 'native failure'
     Assert-GuiRejected { Assert-RegressScenarioResults $fullText 'TIMEOUT' $fullNames $allowed } 'native timeout'
     Assert-GuiRejected { Assert-RegressScenarioResults $fullText $null $fullNames $allowed } 'missing native exit'
-    Assert-GuiRejected { Assert-RegressScenarioResults (($fullRows[1..273] + $footer) -join "`n") 0 $fullNames $allowed } 'missing identity'
+    Assert-GuiRejected { Assert-RegressScenarioResults (($fullRows[1..305] + $footer) -join "`n") 0 $fullNames $allowed } 'missing identity'
     Assert-GuiRejected { Assert-RegressScenarioResults (($fullRows + $fullRows[0] + $footer) -join "`n") 0 $fullNames $allowed } 'duplicate identity'
-    $reordered = @($fullRows[1], $fullRows[0]) + $fullRows[2..273]
+    $reordered = @($fullRows[1], $fullRows[0]) + $fullRows[2..305]
     Assert-GuiRejected { Assert-RegressScenarioResults (($reordered + $footer) -join "`n") 0 $fullNames $allowed } 'reordered identities'
     $foreign = @($fullRows); $foreign[0] = '[PASS] gui.foreign (1 ms)'
     Assert-GuiRejected { Assert-RegressScenarioResults (($foreign + $footer) -join "`n") 0 $fullNames $allowed } 'foreign identity'
@@ -121,19 +121,19 @@ try {
     $badPass = @($fullRows); $badPass[0] = '[PASS] ' + $fullNames[0] + ' no elapsed time'
     Assert-GuiRejected { Assert-RegressScenarioResults (($badPass + $footer) -join "`n") 0 $fullNames $allowed } 'malformed pass detail'
     $supportedSkip = @($fullRows); $supportedSkip[0] = '[SKIP] ' + $fullNames[0] + ': missing fixture: required.clap'
-    Assert-GuiRejected { Assert-RegressScenarioResults (($supportedSkip + '=== scenarios: 259 pass, 0 fail, 15 skip ===') -join "`n") 0 $fullNames $allowed } 'supported missing-fixture skip'
-    $wrongReason = @($fullRows); $wrongReason[260] = '[SKIP] ' + $fullNames[260] + ': another reason'
+    Assert-GuiRejected { Assert-RegressScenarioResults (($supportedSkip + '=== scenarios: 288 pass, 0 fail, 18 skip ===') -join "`n") 0 $fullNames $allowed } 'supported missing-fixture skip'
+    $wrongReason = @($fullRows); $wrongReason[289] = '[SKIP] ' + $fullNames[289] + ': another reason'
     Assert-GuiRejected { Assert-RegressScenarioResults (($wrongReason + $footer) -join "`n") 0 $fullNames $allowed } 'changed unsupported reason'
-    $unsupportedPass = @($fullRows); $unsupportedPass[260] = '[PASS] ' + $fullNames[260] + ' (1 ms)'
-    Assert-GuiRejected { Assert-RegressScenarioResults (($unsupportedPass + '=== scenarios: 261 pass, 0 fail, 13 skip ===') -join "`n") 0 $fullNames $allowed } 'unsupported path reported pass'
+    $unsupportedPass = @($fullRows); $unsupportedPass[289] = '[PASS] ' + $fullNames[289] + ' (1 ms)'
+    Assert-GuiRejected { Assert-RegressScenarioResults (($unsupportedPass + '=== scenarios: 290 pass, 0 fail, 16 skip ===') -join "`n") 0 $fullNames $allowed } 'unsupported path reported pass'
     Assert-GuiRejected { Assert-RegressScenarioResults ($fullRows -join "`n") 0 $fullNames $allowed } 'missing footer'
     Assert-GuiRejected { Assert-RegressScenarioResults (($fullRows + $footer + $footer) -join "`n") 0 $fullNames $allowed } 'duplicate footer'
-    Assert-GuiRejected { Assert-RegressScenarioResults (($fullRows + '=== scenarios: 261 pass, 0 fail, 14 skip ===') -join "`n") 0 $fullNames $allowed } 'wrong footer count'
-    Assert-GuiRejected { Assert-RegressScenarioResults (($fullRows + '=== scenarios: 260 pass, 1 fail, 14 skip ===') -join "`n") 0 $fullNames $allowed } 'footer failure'
+    Assert-GuiRejected { Assert-RegressScenarioResults (($fullRows + '=== scenarios: 290 pass, 0 fail, 17 skip ===') -join "`n") 0 $fullNames $allowed } 'wrong footer count'
+    Assert-GuiRejected { Assert-RegressScenarioResults (($fullRows + '=== scenarios: 289 pass, 1 fail, 17 skip ===') -join "`n") 0 $fullNames $allowed } 'footer failure'
     Assert-GuiRejected { Assert-RegressScenarioResults ("[DIRTY] cleanup`n" + $fullText) 0 $fullNames $allowed } 'dirty cleanup'
     Assert-GuiRejected { Assert-RegressScenarioResults ("REGRESS-TIMEOUT app`n" + $fullText) 0 $fullNames $allowed } 'timeout marker'
     $failed = @($fullRows); $failed[0] = '[FAIL] ' + $fullNames[0] + ': regression (1 ms)'
-    Assert-GuiRejected { Assert-RegressScenarioResults (($failed + '=== scenarios: 259 pass, 1 fail, 14 skip ===') -join "`n") 0 $fullNames $allowed } 'failed result'
+    Assert-GuiRejected { Assert-RegressScenarioResults (($failed + '=== scenarios: 288 pass, 1 fail, 17 skip ===') -join "`n") 0 $fullNames $allowed } 'failed result'
     Assert-GuiRejected { Assert-RegressScenarioResults '=== scenarios: 0 pass, 0 fail, 0 skip ===' 0 @() ([ordered]@{}) } 'empty inventory'
     Assert-GuiRejected { Assert-RegressScenarioResults $focusedText 0 @($focused[0], $focused[0]) ([ordered]@{}) } 'duplicate expected identity'
     $malformed = @($fullRows); $malformed[0] = '[PASS] broken result'
@@ -142,7 +142,7 @@ try {
 
     $catalogText = ((@($fullNames | ForEach-Object { $_ + ' [gui]' }) + @('gui.helper [gui,helper]', 'gui.helpful [gui,helperful]')) -join "`n")
     $catalog = @(Get-RegressGuiCatalog $catalogText 0)
-    Assert-Snapshot ($catalog.Count -eq 275 -and $catalog[-1] -ceq 'gui.helpful' -and $catalog -cnotcontains 'gui.helper') 'Catalog did not exclude precisely the helper tag'
+    Assert-Snapshot ($catalog.Count -eq 307 -and $catalog[-1] -ceq 'gui.helpful' -and $catalog -cnotcontains 'gui.helper') 'Catalog did not exclude precisely the helper tag'
     Assert-GuiRejected { Get-RegressGuiCatalog $catalogText 1 } 'inventory native failure'
     Assert-GuiRejected { Get-RegressGuiCatalog ($catalogText + "`ngui.helpful [gui]") 0 } 'duplicate catalog identity'
     Assert-GuiRejected { Get-RegressGuiCatalog 'gui.case [gui] trailing' 0 } 'malformed catalog'
@@ -181,7 +181,7 @@ try {
             Assert-Snapshot (-not [IO.Directory]::Exists($missingCache)) 'Missing fixture left a partial picker cache'
         } finally { [IO.File]::WriteAllText($missingPath, 'fixture') }
     }
-    Write-Output "Windows GUI validation contracts: full 260/14 and focused 2/0 accepted, $script:guiRejections bad inputs rejected"
+    Write-Output "Windows GUI validation contracts: full 289/17 and focused 2/0 accepted, $script:guiRejections bad inputs rejected"
 
     function New-ForegroundEvidence([long]$foreignOffset = 1200) {
         [long]$origin = 9007199254745001

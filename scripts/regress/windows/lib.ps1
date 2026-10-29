@@ -255,7 +255,9 @@ function Get-RegressGuiCatalog([string]$text, $exitCode) {
 function Get-RegressWindowsGuiSkips {
     return [ordered]@{
         'gui.clap_no_window_message' = 'only the Linux host looks for a plug-in window in the container'
+        'gui.dp_stereo_finalization_failure' = 'requires the native finalization fault fixture'
         'gui.dsp_readout_realtime_count' = 'the realtime CPU-time guard is Linux-only'
+        'gui.fresh_sandbox_crash_saves_clean' = 'needs sandboxed plug-ins and a child that can be killed by pid'
         'gui.lv2_editor_reflects_state' = 'missing fixture: file_state.lv2'
         'gui.lv2_midi_learn' = 'missing fixture: file_state.lv2'
         'gui.midi_io_selectors' = 'virtual MIDI destination fixture requires ALSA sequencer'
@@ -266,6 +268,7 @@ function Get-RegressWindowsGuiSkips {
         'gui.piano_roll_keeps_its_region' = 'reads the window back through the X server'
         'gui.piano_roll_shows_each_take' = 'reads the window back through the X server'
         'gui.plugin_editor_tab_left_alone' = 'needs the Linux CLAP fixture'
+        'gui.plugin_edits_prompt_lv2' = 'missing fixture: state_probe.lv2'
         'gui.settings_rescan_devices' = 'requires native settings and ALSA sequencer'
         'gui.slot_health_labels' = 'the sandbox stub children are driven on POSIX only'
     }
