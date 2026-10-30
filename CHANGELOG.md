@@ -185,11 +185,12 @@ canonical source.
 - **Recovery after a crash.** Starting a new unsaved session preserves the
   previous session's recovery file and notes by choosing another Untitled
   folder, including after more than 99 sessions.
-- **Plug-in edits and save prompts.** A change made inside a plug-in's own
-  editor, through a MIDI binding or by loading a preset now counts as unsaved,
-  so Quit, Open and New ask to save it. This covers CLAP, VST3, LV2 and Audio
-  Unit plug-ins, hosted directly or in the sandbox. Parameter writes still
-  queued for the audio thread reach the plug-in before Save reads its state.
+- **Plug-in edits and save prompts.** A change a plug-in reports, whether made
+  inside its own editor, through a MIDI binding or by loading a preset, now
+  counts as unsaved, so Quit, Open and New ask to save it. This covers CLAP,
+  VST3, LV2 and Audio Unit plug-ins, hosted directly or in the sandbox.
+  Parameter writes still queued for the audio thread reach the plug-in before
+  Save reads its state.
 - **Sandboxed plug-in capture failures.** When a sandboxed plug-in cannot
   return its state, Save stops with a Save failed alert naming each slot and
   offering Save anyway or Cancel. Cancel leaves the session's files untouched;
