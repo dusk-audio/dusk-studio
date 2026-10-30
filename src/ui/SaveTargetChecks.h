@@ -59,8 +59,9 @@ inline bool mayHoldSession (const std::filesystem::path& dir)
 }
 
 // The folder a never-saved session starts in: parent/Untitled, or the first
-// "Untitled N" beside it without saved state, recovery or notes. Creates parent
-// if needed; empty when it cannot, or on error.
+// "Untitled N" beside it without saved state, recovery or notes; one whose
+// contents cannot be checked counts as holding them. Creates parent if needed;
+// empty when it cannot, or when parent cannot be searched.
 inline std::filesystem::path unsavedSessionFolder (const std::filesystem::path& parent)
 {
     if (parent.empty()) return {};
@@ -81,7 +82,6 @@ inline std::filesystem::path unsavedSessionFolder (const std::filesystem::path& 
         {
             const auto fileStatus = std::filesystem::symlink_status (dir / name, ec);
             if (fileStatus.type() == std::filesystem::file_type::not_found) continue;
-            if (ec) return {};
             occupied = true;
             break;
         }

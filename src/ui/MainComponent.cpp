@@ -3982,6 +3982,9 @@ void MainComponent::startUnsavedSessionIn (const std::filesystem::path& parent)
 {
     auto dir = savecheck::unsavedSessionFolder (parent);
     if (dir.empty()) dir = savecheck::unsavedSessionFolder (privateUnsavedFolder());
+    // Reached only when parent cannot be created or searched, so nothing in it
+    // can be written. A folder still matters: Quit skips its unsaved-changes
+    // check for a session without one.
     if (dir.empty() && ! parent.empty()) dir = parent / "Untitled";
     session.setSessionDirectory (toFile (dir));
 }

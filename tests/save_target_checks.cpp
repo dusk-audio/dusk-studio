@@ -204,6 +204,18 @@ TEST_CASE ("a never-saved session starts in the first Untitled folder that holds
             CHECK (unsavedSessionFolder (s.root) == s.root / "Untitled 3");
     }
 
+    SECTION ("a folder whose contents cannot be checked is passed over")
+    {
+        std::ofstream (s.root / "Untitled" / "session.json.autosave") << "recovery";
+        const auto unreadable = s.root / "Untitled 2";
+        stdfs::create_directories (unreadable);
+        std::error_code ec;
+        stdfs::permissions (unreadable, stdfs::perms::none, ec);
+        if (! ec && stdfs::symlink_status (unreadable / "notepad.md", ec).type() != stdfs::file_type::not_found)
+            CHECK (unsavedSessionFolder (s.root) == s.root / "Untitled 3");
+        stdfs::permissions (unreadable, stdfs::perms::owner_all, ec);
+    }
+
     SECTION ("occupied names do not exhaust the search after 99 sessions")
     {
         for (int n = 1; n < 100; ++n)
