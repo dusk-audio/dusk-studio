@@ -58,10 +58,12 @@ inline bool mayHoldSession (const std::filesystem::path& dir)
            != std::filesystem::file_type::not_found;
 }
 
-// The folder a never-saved session starts in: parent/Untitled, or the first
-// "Untitled N" beside it without saved state, recovery or notes; one whose
-// contents cannot be checked counts as holding them. Creates parent if needed;
-// empty when it cannot, or when parent cannot be searched.
+// The folder a never-saved session starts in, made with its audio folder:
+// parent/Untitled, or the first "Untitled N" beside it without saved state,
+// recovery or notes. One whose contents cannot be checked counts as holding
+// them, and one that cannot take an audio folder is passed over. Creates
+// parent if needed; empty when it cannot, or when parent cannot be searched
+// or written in.
 inline std::filesystem::path unsavedSessionFolder (const std::filesystem::path& parent)
 {
     if (parent.empty()) return {};
@@ -73,7 +75,11 @@ inline std::filesystem::path unsavedSessionFolder (const std::filesystem::path& 
     {
         const auto dir = parent / (n == 1 ? std::string ("Untitled") : "Untitled " + std::to_string (n));
         const auto status = std::filesystem::symlink_status (dir, ec);
-        if (status.type() == std::filesystem::file_type::not_found) return dir;
+        if (status.type() == std::filesystem::file_type::not_found)
+        {
+            std::filesystem::create_directories (dir / "audio", ec);
+            return ec ? std::filesystem::path() : dir;
+        }
         if (ec) return {};
         if (! std::filesystem::is_directory (status)) continue;
 
@@ -85,9 +91,25 @@ inline std::filesystem::path unsavedSessionFolder (const std::filesystem::path& 
             occupied = true;
             break;
         }
-        if (! occupied) return dir;
+        if (occupied) continue;
+        std::filesystem::create_directories (dir / "audio", ec);
+        if (! ec) return dir;
     }
     return {};
+}
+
+// The launch session's folder: a free Untitled folder in parent, else in
+// privateDir, else in the private temporary folder makeTempDir creates, asked
+// for only when both fail. Empty when none of them can hold one.
+template <typename MakeTempDir>
+std::filesystem::path launchSessionFolder (const std::filesystem::path& parent,
+                                           const std::filesystem::path& privateDir,
+                                           MakeTempDir&& makeTempDir)
+{
+    auto dir = unsavedSessionFolder (parent);
+    if (dir.empty()) dir = unsavedSessionFolder (privateDir);
+    if (dir.empty()) dir = unsavedSessionFolder (makeTempDir());
+    return dir;
 }
 
 // Where a session keeps its autosave and notepad. A never-saved session starts

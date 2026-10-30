@@ -185,6 +185,13 @@ canonical source.
 - **Recovery after a crash.** Starting a new unsaved session preserves the
   previous session's recovery file and notes by choosing another Untitled
   folder, including after more than 99 sessions.
+- **A launch with nowhere to keep the session.** The new session no longer
+  starts in a sessions folder Dusk Studio cannot write in, where recording
+  and autosave failed. When neither the Music folder nor the configuration
+  folder can hold it, it starts in a private folder in the system's temporary
+  folder. Without a Music folder it used to get no folder at all: recording
+  tried to write at the top of the drive and Quit did not ask to save
+  changes.
 - **Plug-in edits and save prompts.** A change a plug-in reports, whether made
   inside its own editor, through a MIDI binding or by loading a preset, now
   counts as unsaved, so Quit, Open and New ask to save it. This covers CLAP,
