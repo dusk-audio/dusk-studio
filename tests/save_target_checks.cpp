@@ -5,6 +5,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
 
 namespace
@@ -169,6 +170,8 @@ TEST_CASE ("a never-saved session starts in the first Untitled folder that holds
 
     CHECK (unsavedSessionFolder (s.root) == s.root / "Untitled");
     CHECK (stdfs::is_directory (s.root / "Untitled" / "audio"));
+    CHECK (stdfs::is_empty (s.root / "Untitled" / "audio"));
+    CHECK (std::distance (stdfs::directory_iterator (s.root / "Untitled"), stdfs::directory_iterator()) == 1);
     CHECK (unsavedSessionFolder (s.root) == s.root / "Untitled");
 
     SECTION ("crashed recovery and notes reserve their folders")
@@ -230,6 +233,19 @@ TEST_CASE ("a never-saved session starts in the first Untitled folder that holds
         if (! ec && ! stdfs::create_directory (readOnly / "probe", ec))
             CHECK (unsavedSessionFolder (s.root) == s.root / "Untitled 5");
         stdfs::permissions (readOnly, stdfs::perms::owner_all, ec);
+    }
+
+    SECTION ("a folder that already has its audio folder is passed over when either cannot be written in")
+    {
+        const auto readOnly = stdfs::perms::owner_read | stdfs::perms::owner_exec;
+        std::error_code ec;
+        for (const auto& locked : { s.root / "Untitled" / "audio", s.root / "Untitled" })
+        {
+            stdfs::permissions (locked, readOnly, ec);
+            if (! ec && ! stdfs::create_directory (locked / "probe", ec))
+                CHECK (unsavedSessionFolder (s.root) == s.root / "Untitled 2");
+            stdfs::permissions (locked, stdfs::perms::owner_all, ec);
+        }
     }
 
     SECTION ("occupied names do not exhaust the search after 99 sessions")
