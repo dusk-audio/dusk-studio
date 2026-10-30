@@ -5,6 +5,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
 
 namespace
@@ -168,14 +169,152 @@ TEST_CASE ("a never-saved session starts in the first Untitled folder that holds
     REQUIRE_FALSE (s.root.empty());
 
     CHECK (unsavedSessionFolder (s.root) == s.root / "Untitled");
-
-    stdfs::create_directories (s.root / "Untitled");
-    std::ofstream (s.root / "Untitled" / "notepad.md") << "notes";
+    CHECK (stdfs::is_directory (s.root / "Untitled" / "audio"));
+    CHECK (stdfs::is_empty (s.root / "Untitled" / "audio"));
+    CHECK (std::distance (stdfs::directory_iterator (s.root / "Untitled"), stdfs::directory_iterator()) == 1);
     CHECK (unsavedSessionFolder (s.root) == s.root / "Untitled");
 
-    std::ofstream (s.root / "Untitled" / "session.json") << "{}";
-    CHECK (unsavedSessionFolder (s.root) == s.root / "Untitled 2");
+    SECTION ("crashed recovery and notes reserve their folders")
+    {
+        std::ofstream (s.root / "Untitled" / "session.json.autosave") << "recovery";
+        CHECK (unsavedSessionFolder (s.root) == s.root / "Untitled 2");
+        CHECK (duskstudio::savecheck::sidecarFolder (s.root / "Untitled", false, s.other)
+               == s.root / "Untitled");
 
-    stdfs::create_directories (s.root / "Untitled 2" / "session.json");
-    CHECK (unsavedSessionFolder (s.root) == s.root / "Untitled 3");
+        stdfs::create_directories (s.root / "Untitled 2");
+        std::ofstream (s.root / "Untitled 2" / "notepad.md") << "notes";
+        CHECK (unsavedSessionFolder (s.root) == s.root / "Untitled 3");
+    }
+
+    SECTION ("saved sessions reserve their folders")
+    {
+        std::ofstream (s.root / "Untitled" / "session.json") << "{}";
+        CHECK (unsavedSessionFolder (s.root) == s.root / "Untitled 2");
+
+        stdfs::create_directories (s.root / "Untitled 2" / "session.json");
+        CHECK (unsavedSessionFolder (s.root) == s.root / "Untitled 3");
+    }
+
+    SECTION ("recovery directories and dangling notes links reserve their folders")
+    {
+        stdfs::create_directories (s.root / "Untitled" / "session.json.autosave");
+        CHECK (unsavedSessionFolder (s.root) == s.root / "Untitled 2");
+        stdfs::create_directories (s.root / "Untitled 2");
+        std::error_code ec;
+        stdfs::create_symlink (s.root / "Gone", s.root / "Untitled 2" / "notepad.md", ec);
+        if (! ec)
+            CHECK (unsavedSessionFolder (s.root) == s.root / "Untitled 3");
+    }
+
+    SECTION ("a folder whose contents cannot be checked is passed over")
+    {
+        std::ofstream (s.root / "Untitled" / "session.json.autosave") << "recovery";
+        const auto unreadable = s.root / "Untitled 2";
+        stdfs::create_directories (unreadable);
+        std::error_code ec;
+        stdfs::permissions (unreadable, stdfs::perms::none, ec);
+        if (! ec && stdfs::symlink_status (unreadable / "notepad.md", ec).type() != stdfs::file_type::not_found)
+            CHECK (unsavedSessionFolder (s.root) == s.root / "Untitled 3");
+        stdfs::permissions (unreadable, stdfs::perms::owner_all, ec);
+    }
+
+    SECTION ("a folder that cannot take an audio folder is passed over")
+    {
+        std::ofstream (s.root / "Untitled" / "session.json.autosave") << "recovery";
+        stdfs::create_directories (s.root / "Untitled 2");
+        std::ofstream (s.root / "Untitled 2" / "audio") << "not a folder";
+        CHECK (unsavedSessionFolder (s.root) == s.root / "Untitled 3");
+
+        const auto readOnly = s.root / "Untitled 4";
+        std::ofstream (s.root / "Untitled 3" / "notepad.md") << "notes";
+        stdfs::create_directories (readOnly);
+        std::error_code ec;
+        stdfs::permissions (readOnly, stdfs::perms::owner_read | stdfs::perms::owner_exec, ec);
+        if (! ec && ! stdfs::create_directory (readOnly / "probe", ec))
+            CHECK (unsavedSessionFolder (s.root) == s.root / "Untitled 5");
+        stdfs::permissions (readOnly, stdfs::perms::owner_all, ec);
+    }
+
+    SECTION ("a folder that already has its audio folder is passed over when either cannot be written in")
+    {
+        const auto readOnly = stdfs::perms::owner_read | stdfs::perms::owner_exec;
+        std::error_code ec;
+        for (const auto& locked : { s.root / "Untitled" / "audio", s.root / "Untitled" })
+        {
+            stdfs::permissions (locked, readOnly, ec);
+            if (! ec && ! stdfs::create_directory (locked / "probe", ec))
+                CHECK (unsavedSessionFolder (s.root) == s.root / "Untitled 2");
+            stdfs::permissions (locked, stdfs::perms::owner_all, ec);
+        }
+    }
+
+    SECTION ("occupied names do not exhaust the search after 99 sessions")
+    {
+        for (int n = 1; n < 100; ++n)
+        {
+            const auto dir = s.root / (n == 1 ? "Untitled" : "Untitled " + std::to_string (n));
+            stdfs::create_directories (dir);
+            std::ofstream (dir / "session.json") << "{}";
+        }
+        CHECK (unsavedSessionFolder (s.root) == s.root / "Untitled 100");
+    }
+
+    SECTION ("a missing sessions folder is created before it is offered")
+    {
+        const auto parent = s.root / "Music" / "Dusk Studio";
+        CHECK (unsavedSessionFolder (parent) == parent / "Untitled");
+        CHECK (stdfs::is_directory (parent));
+    }
+
+    SECTION ("an unavailable parent cannot supply a session folder")
+    {
+        CHECK (unsavedSessionFolder ({}).empty());
+        CHECK (unsavedSessionFolder (s.mine / "session.json").empty());
+        CHECK (unsavedSessionFolder (s.mine / "session.json" / "Dusk Studio").empty());
+
+        const auto locked = s.root / "Locked";
+        stdfs::create_directories (locked);
+        std::error_code ec;
+        stdfs::permissions (locked, stdfs::perms::owner_read | stdfs::perms::owner_exec, ec);
+        if (! ec && ! stdfs::create_directory (locked / "probe", ec))
+        {
+            CHECK (unsavedSessionFolder (locked / "Dusk Studio").empty());
+            CHECK (unsavedSessionFolder (locked).empty());
+        }
+        stdfs::permissions (locked, stdfs::perms::owner_all, ec);
+    }
+}
+
+TEST_CASE ("a launch with no usable sessions or configuration folder starts in a private temporary folder")
+{
+    using duskstudio::savecheck::launchSessionFolder;
+    const ScratchSessions s;
+    REQUIRE_FALSE (s.root.empty());
+    const auto sessions    = s.root / "Music" / "Dusk Studio";
+    const auto config      = s.root / "config" / "unsaved-session";
+    const auto unavailable = s.mine / "session.json" / "Dusk Studio";
+    const auto temp        = s.root / "temp";
+    int tempFoldersMade = 0;
+    const auto makeTemp = [&] { ++tempFoldersMade; return temp; };
+
+    SECTION ("the temporary folder is made only when both others fail")
+    {
+        CHECK (launchSessionFolder (sessions, config, makeTemp) == sessions / "Untitled");
+        CHECK (launchSessionFolder (unavailable, config, makeTemp) == config / "Untitled");
+        CHECK (launchSessionFolder ({}, config, makeTemp) == config / "Untitled");
+        CHECK (tempFoldersMade == 0);
+
+        CHECK (launchSessionFolder (unavailable, {}, makeTemp) == temp / "Untitled");
+        CHECK (launchSessionFolder ({}, s.mine / "session.json" / "unsaved-session", makeTemp)
+               == temp / "Untitled");
+        CHECK (tempFoldersMade == 2);
+    }
+
+    SECTION ("with no temporary folder either there is no folder")
+    {
+        const auto noTemp = [&] { ++tempFoldersMade; return stdfs::path(); };
+        CHECK (launchSessionFolder (unavailable, {}, noTemp).empty());
+        CHECK (launchSessionFolder ({}, {}, noTemp).empty());
+        CHECK (tempFoldersMade == 2);
+    }
 }

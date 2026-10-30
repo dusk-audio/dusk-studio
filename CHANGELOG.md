@@ -5,113 +5,7 @@ All notable changes to Dusk Studio. Format loosely follows
 back-filled from `git log`; once tags exist this file is the
 canonical source.
 
-## [Unreleased]
-
-### Added
-
-- **Offline render quality.** High keeps 4× effect oversampling. Match playback
-  uses the session's effect oversampling for faster offline bounces and track
-  freezes at 1× or 2×. Realtime hardware bounces keep the playback settings.
-
-### Changed
-
-- **MIDI and audio editors.** Matching toolbar and status controls, clearer
-  piano keys, larger region menus and a linked-note Glue Selection icon.
-- **Settings.** General opens first; Audio includes the processing controls.
-  UI scale help is removed. New configurations autosave every two minutes;
-  saved intervals stay unchanged.
-
-### Fixed
-
-- **Plug-in edits and save prompts.** A change made inside a plug-in's own
-  editor, through a MIDI binding or by loading a preset now counts as unsaved,
-  so Quit, Open and New ask to save it. This covers CLAP, VST3, LV2 and Audio
-  Unit plug-ins, hosted directly or in the sandbox. Parameter writes still
-  queued for the audio thread reach the plug-in before Save reads its state.
-- **Sandboxed plug-in capture failures.** When a sandboxed plug-in cannot
-  return its state, Save stops with a Save failed alert naming each slot and
-  offering Save anyway or Cancel. Cancel leaves the session's files untouched;
-  Save anyway keeps the listed plug-ins at their last saved state and they
-  still count as unsaved. A crashed plug-in that changed since its last read
-  keeps asking, even after Re-enable plugin (crashed).
-- **Autosave contents.** Autosave now records built-in effect and multisample
-  controls and which plug-in each slot holds, without interrupting playback.
-  Third-party plug-in state is still only captured by a manual Save. Undo back
-  to the saved state removes the recovery file this instance wrote, and a
-  recovery file left by an earlier run is kept.
-- **Failed recovery saves.** If Recover autosave cannot write `session.json`,
-  the session stays unsaved, so quitting or switching sessions asks first.
-- **Plug-in state on load.** A sandboxed plug-in that falls back to running
-  in-process gets its saved state. Unreadable saved state, or VST3 controller
-  state the plug-in rejects, keeps the stored copy instead of losing it.
-- **Transport for hosted plug-ins.** VST3, CLAP, LV2 and Audio Unit plug-ins,
-  sandboxed ones included, receive tempo, time signature, musical position,
-  play and record state and the loop range on every block, on channel and aux
-  inserts alike. Tempo-map changes keep bar phase.
-- **Sandbox and editor stability.** A sandboxed plug-in whose process exits no
-  longer takes Dusk Studio down with it on Linux and macOS. Removing an LV2
-  plug-in closes its editor before the plug-in is released.
-- **Plug-in scanning.** A scan that times out, is cancelled or finishes now
-  ends every helper process the scanned plug-in started, so a stray child can
-  no longer hang the scan. Quitting during a scan started from Settings no
-  longer crashes.
-- **Insert bypass timing.** Bypassing a channel insert that adds latency keeps
-  the track in time, because the dry signal is delayed to match. This holds
-  across plug-in restarts, sandbox fallbacks and freezing.
-- **Effect tails.** Channel filters and oversamplers, subgroup DSP and aux cue
-  effects run until their tails have drained when the input stops, instead of
-  being cut off. An aux cue output keeps playing while the aux return is
-  muted.
-- **Mastering playback.** A mix at a different sample rate from the device is
-  band-limited when resampled, so it no longer aliases. A seek made during
-  playback is no longer lost, and an older Play or end-of-file can no longer
-  override a newer request.
-- **Metronome and tuner.** The click keeps its beat and accents through tempo
-  changes. The tuner detects low notes at sample rates above 48 kHz.
-- **External MIDI output.** On Linux, notes sent to external MIDI devices play
-  at their position in the block rather than at the start of it.
-- **MIDI editing and import.** Glue joins only notes on the same MIDI channel.
-  Quantize and Duplicate grow the region when notes move past its end. MIDI
-  files with 29.97 fps drop-frame timing import at the right speed.
-- **Region edits and frozen tracks.** Undo and Redo check a whole step against
-  frozen tracks before applying any of it. Holding a region drag blocks Undo,
-  Redo and the other edit shortcuts until you release the mouse, and frozen
-  regions stay put during a drag. The audio editor's gain and fade fields
-  reject input that is not a complete number.
-- **Recording finalization.** A take whose final disk write fails keeps only
-  the audio that reached the disk. Takes are committed when the PipeWire server
-  goes away mid-recording, and recording works in session folders with
-  non-ASCII names on Windows.
-- **Bounces and generated audio.** Exports, MP3 included, report a failure
-  when the file cannot be finished on disk. Join and Reverse refuse a render
-  that did not reach the disk. File imports, stereo pairs from DP-24/32
-  session imports and SF2 conversions reject output that was not written
-  completely.
-- **Audio import quality.** Importing a file at a higher sample rate than the
-  session filters it before downsampling, so it no longer aliases.
-- **Offline renders and freeze.** Offline bounces, stems and freezes ignore the
-  playback loop, live MIDI input, sync and control surface traffic. Hardware
-  inserts pass dry, aux cue outputs do not print, freeze ignores mute and solo,
-  and the render rate follows the session when no device is open.
-- **Clean out.** Freeze renders, files reached through a filesystem alias and
-  a region waiting on the clipboard are no longer offered for deletion. A file
-  the session uses that cannot be looked up raises its own alert and nothing
-  is deleted.
-- **SFZ library.** A folder that becomes unreadable during a library scan is
-  reported instead of closing Dusk Studio. Moving the library keeps an original
-  that changed during the copy, and pausing or cancelling after the new folder
-  is saved keeps it active.
-- **Hardware insert editor.** Reopening a hardware insert's editor shows its
-  saved channels instead of an unrouted one, and keeps the saved routing.
-- **Linux installer.** The installed launcher works from install paths that
-  contain quotes, dollar signs, percent signs or backslashes. A path holding
-  both an equals sign and a percent sign is refused.
-- **File drops from GNOME Files.** Audio and MIDI files dragged from GNOME
-  Files onto the tape strip land there instead of being refused. GNOME hands
-  these drags to Dusk Studio with a newer drag-and-drop protocol version than
-  it accepted.
-
-## [0.16.0] - 2026-10-24
+## [0.16.0] - 2026-10-29
 
 ### Added
 
@@ -167,6 +61,9 @@ canonical source.
 - **Complete MIDI channel controls.** Recording, import, session save and
   playback keep pitch bend, channel and polyphonic pressure, and program changes
   alongside notes and CCs.
+- **Offline render quality.** High keeps 4× effect oversampling. Match playback
+  uses the session's effect oversampling for faster offline bounces and track
+  freezes at 1× or 2×. Realtime hardware bounces keep the playback settings.
 
 ### Changed
 
@@ -195,6 +92,11 @@ canonical source.
 - **SFZ Manager entry point.** The insert chooser opens one manager for online,
   downloaded and local instruments. Its separate Soundfont choice is removed;
   local SFZ, SF2 and ARIA bank files remain available through the manager.
+- **MIDI and audio editors.** Matching toolbar and status controls, clearer
+  piano keys, larger region menus and a linked-note Glue Selection icon.
+- **Settings.** General opens first; Audio includes the processing controls.
+  UI scale help is removed. New configurations autosave every two minutes;
+  saved intervals stay unchanged.
 
 ### Fixed
 
@@ -280,6 +182,104 @@ canonical source.
 - **MTC chase.** Chasing MIDI Time Code holds lock with large audio buffers,
   and the re-locate after a master jump lands where the master has rolled to,
   even when the audio files take a while to read.
+- **Recovery after a crash.** Starting a new unsaved session preserves the
+  previous session's recovery file and notes by choosing another Untitled
+  folder, including after more than 99 sessions.
+- **A launch with nowhere to keep the session.** The new session no longer
+  starts in a sessions folder Dusk Studio cannot write in, where recording
+  and autosave failed. When neither the Music folder nor the configuration
+  folder can hold it, it starts in a private folder in the system's temporary
+  folder. Without a Music folder it used to get no folder at all: recording
+  tried to write at the top of the drive and Quit did not ask to save
+  changes.
+- **Plug-in edits and save prompts.** A change a plug-in reports, whether made
+  inside its own editor, through a MIDI binding or by loading a preset, now
+  counts as unsaved, so Quit, Open and New ask to save it. This covers CLAP,
+  VST3, LV2 and Audio Unit plug-ins, hosted directly or in the sandbox.
+  Parameter writes still queued for the audio thread reach the plug-in before
+  Save reads its state.
+- **Sandboxed plug-in capture failures.** When a sandboxed plug-in cannot
+  return its state, Save stops with a Save failed alert naming each slot and
+  offering Save anyway or Cancel. Cancel leaves the session's files untouched;
+  Save anyway keeps the listed plug-ins at their last saved state and they
+  still count as unsaved. A crashed plug-in that changed since its last read
+  keeps asking, even after Re-enable plugin (crashed).
+- **Autosave contents.** Autosave now records built-in effect and multisample
+  controls and which plug-in each slot holds, without interrupting playback.
+  Third-party plug-in state is still only captured by a manual Save. Undo back
+  to the saved state removes the recovery file this instance wrote, and a
+  recovery file left by an earlier run is kept.
+- **Failed recovery saves.** If Recover autosave cannot write `session.json`,
+  the session stays unsaved, so quitting or switching sessions asks first.
+- **Plug-in state on load.** A sandboxed plug-in that falls back to running
+  in-process gets its saved state. Unreadable saved state, or VST3 controller
+  state the plug-in rejects, keeps the stored copy instead of losing it.
+- **Transport for hosted plug-ins.** VST3, CLAP, LV2 and Audio Unit plug-ins,
+  sandboxed ones included, receive tempo, time signature, musical position,
+  play and record state and the loop range on every block, on channel and aux
+  inserts alike. Tempo-map changes keep bar phase.
+- **Sandbox and editor stability.** A sandboxed plug-in whose process exits no
+  longer takes Dusk Studio down with it on Linux and macOS. Removing an LV2
+  plug-in closes its editor before the plug-in is released.
+- **Plug-in scanning.** A scan that times out, is cancelled or finishes now
+  ends every helper process the scanned plug-in started, so a stray child can
+  no longer hang the scan. Quitting during a scan started from Settings no
+  longer crashes.
+- **Insert bypass timing.** Bypassing a channel insert that adds latency keeps
+  the track in time, because the dry signal is delayed to match. This holds
+  across plug-in restarts, sandbox fallbacks and freezing.
+- **Effect tails.** Channel filters and oversamplers, subgroup DSP and aux cue
+  effects run until their tails have drained when the input stops, instead of
+  being cut off. An aux cue output keeps playing while the aux return is
+  muted.
+- **Mastering playback.** A mix at a different sample rate from the device is
+  band-limited when resampled, so it no longer aliases. A seek made during
+  playback is no longer lost, and an older Play or end-of-file can no longer
+  override a newer request.
+- **Metronome and tuner.** The click keeps its beat and accents through tempo
+  changes. The tuner detects low notes at sample rates above 48 kHz.
+- **External MIDI output.** On Linux, notes sent to external MIDI devices play
+  at their position in the block rather than at the start of it.
+- **MIDI editing and import.** Glue joins only notes on the same MIDI channel.
+  Quantize and Duplicate grow the region when notes move past its end. MIDI
+  files with 29.97 fps drop-frame timing import at the right speed.
+- **Region edits and frozen tracks.** Undo and Redo check a whole step against
+  frozen tracks before applying any of it. Holding a region drag blocks Undo,
+  Redo and the other edit shortcuts until you release the mouse, and frozen
+  regions stay put during a drag. The audio editor's gain and fade fields
+  reject input that is not a complete number.
+- **Recording finalization.** A take whose final disk write fails keeps only
+  the audio that reached the disk. Takes are committed when the PipeWire server
+  goes away mid-recording, and recording works in session folders with
+  non-ASCII names on Windows.
+- **Bounces and generated audio.** Exports, MP3 included, report a failure
+  when the file cannot be finished on disk. Join and Reverse refuse a render
+  that did not reach the disk. File imports, stereo pairs from DP-24/32
+  session imports and SF2 conversions reject output that was not written
+  completely.
+- **Audio import quality.** Importing a file at a higher sample rate than the
+  session filters it before downsampling, so it no longer aliases.
+- **Offline renders and freeze.** Offline bounces, stems and freezes ignore the
+  playback loop, live MIDI input, sync and control surface traffic. Hardware
+  inserts pass dry, aux cue outputs do not print, freeze ignores mute and solo,
+  and the render rate follows the session when no device is open.
+- **Clean out.** Freeze renders, files reached through a filesystem alias and
+  a region waiting on the clipboard are no longer offered for deletion. A file
+  the session uses that cannot be looked up raises its own alert and nothing
+  is deleted.
+- **SFZ library.** A folder that becomes unreadable during a library scan is
+  reported instead of closing Dusk Studio. Moving the library keeps an original
+  that changed during the copy, and pausing or cancelling after the new folder
+  is saved keeps it active.
+- **Hardware insert editor.** Reopening a hardware insert's editor shows its
+  saved channels instead of an unrouted one, and keeps the saved routing.
+- **Linux installer.** The installed launcher works from install paths that
+  contain quotes, dollar signs, percent signs or backslashes. A path holding
+  both an equals sign and a percent sign is refused.
+- **File drops from GNOME Files.** Audio and MIDI files dragged from GNOME
+  Files onto the tape strip land there instead of being refused. GNOME hands
+  these drags to Dusk Studio with a newer drag-and-drop protocol version than
+  it accepted.
 
 ## [0.15.1] - 2026-10-11
 

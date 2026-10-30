@@ -3980,9 +3980,8 @@ std::filesystem::path MainComponent::defaultSessionsFolder()
 // autosave or notes, so the launch session starts in a folder holding none.
 void MainComponent::startUnsavedSessionIn (const std::filesystem::path& parent)
 {
-    auto dir = parent.empty() ? parent : savecheck::unsavedSessionFolder (parent);
-    if (dir.empty()) dir = privateUnsavedFolder();
-    if (dir.empty() && ! parent.empty()) dir = parent / "Untitled";
+    const auto dir = savecheck::launchSessionFolder (parent, privateUnsavedFolder(), []
+        { return dusk::fs::createUniqueTempDirectory ("dusk-studio-unsaved-"); });
     session.setSessionDirectory (toFile (dir));
 }
 
@@ -4124,9 +4123,6 @@ void MainComponent::timerCallback()
 
 bool MainComponent::currentSessionDirty()
 {
-    const auto dir = session.getSessionDirectory();
-    if (dir == juce::File()) return false;
-
     // Publish live plugin + transport/tape state into the Session model first -
     // the serializer reads only from Session, so without this a just-touched
     // plugin/tape param stays at its last-published value and the compare would
