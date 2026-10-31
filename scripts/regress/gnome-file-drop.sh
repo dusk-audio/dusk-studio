@@ -97,12 +97,17 @@ env -i PATH="/usr/local/bin:/usr/bin:/bin" HOME="$HOME_DIR" USER="$(id -un)" LAN
     bash -c 'python3 -I "$1" drive "$2" "$3" "$4" > "$5/driver.log" 2>&1; echo $? > "$5/driver.rc"' \
     drive "$HERE/gnome_file_drop.py" "$APP" "$WORK/app" "$WORK/files" "$WORK" \
     >"$WORK/mutter.log" 2>&1
+session_rc=$?
 
 cat "$WORK/driver.log" 2>/dev/null
 rc="$(cat "$WORK/driver.rc" 2>/dev/null || echo 1)"
 if [[ ! -s "$WORK/driver.rc" ]]; then
     echo "the private GNOME session ended before the driver did:"
     tail -20 "$WORK/mutter.log" | sed 's/^/  /'
+elif [[ "$rc" == 0 && "$session_rc" != 0 ]]; then
+    echo "the private GNOME session ended with status $session_rc after the driver passed:"
+    tail -20 "$WORK/mutter.log" | sed 's/^/  /'
+    rc=1
 fi
 if [[ "$rc" != 0 ]]; then
     echo "app output:"
