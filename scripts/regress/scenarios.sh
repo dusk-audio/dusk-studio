@@ -401,11 +401,18 @@ leg_bb_gnome_file_drop() {
         return "$REGRESS_SKIP_RC"
     fi
     local pipewire_dir="${NULL_AUDIO_DIR:-${PIPEWIRE_RUNTIME_DIR:-${XDG_RUNTIME_DIR:-}}}"
+    local no_socket="no PipeWire socket; the app would open the sound card through ALSA"
     if [[ ! -S "${pipewire_dir}/pipewire-0" ]]; then
-        REGRESS_SKIP_REASON="no PipeWire socket; the app would open the sound card through ALSA"
+        REGRESS_SKIP_REASON="$no_socket"
         return "$REGRESS_SKIP_RC"
     fi
-    DUSK_DROP_PIPEWIRE_DIR="$pipewire_dir" bash "${SCENARIOS_DIR}/gnome-file-drop.sh" "$APP_BIN"
+    local rc=0
+    DUSK_DROP_PIPEWIRE_DIR="$pipewire_dir" bash "${SCENARIOS_DIR}/gnome-file-drop.sh" "$APP_BIN" || rc=$?
+    # The script skips only when the socket has gone since the check above.
+    if ((rc == REGRESS_SKIP_RC)); then
+        REGRESS_SKIP_REASON="$no_socket"
+    fi
+    return "$rc"
 }
 
 leg_bb_handoff() {
