@@ -80,7 +80,7 @@ Stock JUCE on Linux uses X11 for top-level windows, which under GNOME / Wayland 
 
 Cross-platform Dusk Studio source compiles against either upstream JUCE or the fork; the wayland fork is required at runtime on Linux desktops. Mac dev uses upstream JUCE.
 
-`wayland-juce8` is a third-party branch head that moves under you, so the clone below is a dev convenience, not a reproducible input. CI and every release build the Dusk-owned mirror at an immutable tag instead - `dusk-audio/JUCE-wayland`, tag `dusk-wayland-v4`, rev `c6be35b4d604247bd65132694ba73da2274e4528` ([release.yml](../.github/workflows/release.yml)). Match a release exactly by cloning that tag rather than the branch.
+`wayland-juce8` is a third-party branch head that moves under you, so the clone below is a dev convenience, not a reproducible input. CI and every release build the Dusk-owned mirror at an immutable tag instead - `dusk-audio/JUCE-wayland`, tag `dusk-wayland-v6`, rev `ade1e12df2f1b2453e32d1d252dc1757c6957d8d` ([release.yml](../.github/workflows/release.yml)). Match a release exactly by cloning that tag rather than the branch.
 
 ### Clone everything
 

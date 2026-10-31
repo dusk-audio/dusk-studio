@@ -580,6 +580,7 @@ Prerequisites: `build/` and `build-tests/` already configured, `Xvfb`, GNU
 | `scenario-fixtures` | every logical fixture the scenarios name resolves under `DUSKSTUDIO_FIXTURE_DIR`; `SKIP` naming the ones that do not. |
 | `scenarios-headless` | `DUSKSTUDIO_RUN_SCENARIOS=all`: the in-app scenario suite. Passes only on exit 0, no `[FAIL]` line, and the terminal `=== scenarios: ` summary - a crash after the last case must not pass on a lucky exit code. Skipped cases go into the leg's note. |
 | `bb-handoff`, `bb-crash-relaunch`, `bb-no-runtime-dir`, `bb-damaged-recent`, `bb-clean-quit`, `bb-window-close`, `bb-quit-twice`, `bb-quit-during-mixdown`, `bb-quit-save-rate`, `bb-oop-child-kill`, `bb-oop-quit-during-load` | the black-box legs: real app processes spawned, killed and read back through their stderr. See "Scenario legs" below. |
+| `bb-gnome-file-drop` | real file drags from a GTK app onto the tape strip in a private headless GNOME session, through Mutter's XWayland relay as on a GNOME desktop: a WAV, a MIDI file and three WAVs at once, each imported through its picker and read back from the autosave. Linux only; `SKIP` without Mutter, XWayland, `dbus-run-session`, xdotool, ImageMagick's `import`, `fusermount3`, or python3 with GTK 4, NumPy and Pillow. See "Scenario legs" below. |
 | `scenarios-gui` | `DUSKSTUDIO_RUN_SCENARIOS=gui:<cases>`: the scenarios that need a window, split across several app instances that run at once, each in its own sandbox on its own Xvfb display (half the cores, at most four; `DUSK_REGRESS_GUI_SHARDS=N` overrides, `1` runs them in one instance). Cases are dealt longest first by the times the last run recorded in `~/.cache/dusk-regress/gui-case-ms.tsv`. The leg passes only if every instance reaches its summary line and every case dealt out reports. Off unless `--gui-scenarios`. |
 | `gui-plugin-picker`, `gui-settings-defaults` | `tests/gui_plugin_picker.sh` and `tests/gui_settings_defaults.sh` against the same binary: the GUI cases that need a seeded config (the picker filter, the native-row pick and the settings defaults), which the suite runs without (the picker cases skip there). With `--gui-scenarios` only. |
 | `release-metadata` | `scripts/release-metadata-check.sh`: `VERSION`, the top changelog heading, the AppStream entry and the release-notes summary agree, in the development or the release-ready state. Off unless `--release-checks`. |
@@ -597,7 +598,8 @@ fixtures.
 
 Everything from `selftest-xvfb` down runs on a private Xvfb display with
 `WAYLAND_DISPLAY` unset - the binary aborts against a live Wayland session, so
-no leg may ever launch it on the desktop.
+no leg may ever launch it on the desktop. `bb-gnome-file-drop` is the one
+exception to Xvfb: it brings its own private compositor instead.
 
 `DUSK_REGRESS_BUILD_LOCK=/path/to/lockfile` wraps the two compile legs in
 `flock` when something else may be building the same tree.
@@ -746,6 +748,24 @@ hardware pass). The leg accepts either `picker shown` or `picker unavailable on
 this display` - what it will not accept is neither. Set
 `DUSK_REGRESS_REQUIRE_PICKER=1` on a host where GLX does work to demand the
 first.
+
+`bb-gnome-file-drop` runs `scripts/regress/gnome-file-drop.sh`, which starts a
+headless Mutter (`--wayland --headless --virtual-monitor 1920x1080`, XWayland
+on) under its own `dbus-run-session`, from `env -i` with a private `HOME`, all
+four `XDG_*_HOME`, a 0700 `XDG_RUNTIME_DIR` and `GSETTINGS_BACKEND=memory`. The
+app gets both `WAYLAND_DISPLAY` and `DISPLAY`, so it takes the production
+XWayland path. `scripts/regress/gnome_file_drop.py` drives the pointer through
+`org.gnome.Mutter.RemoteDesktop` on the private bus (never ydotool) and drags
+from a GTK 4 window offering a `GdkFileList`, the content GNOME Files offers, so
+Mutter relays the same XDND type list: text/plain before text/uri-list. The
+fixture tracks paint their label stripes in fixed colours and the picker
+buttons are found by colour in a grab of the app window, so a layout change
+does not move the targets. The pointer device is created before the app starts:
+the app lists its X input devices once at startup and ignores clicks from any
+added later. Everything carrying the session's runtime dir is killed at the
+end, and FUSE mounts under it are unmounted. The leg needs a PipeWire socket,
+the private null graph or the machine's; without one the app would open the
+sound card through ALSA, so it skips instead.
 
 Legs whose app-side seam is not in the binary report `SKIP` with the name of
 what is missing (`DUSKSTUDIO_QUIT_AFTER_MS`, the `[Dusk Studio/startup]`

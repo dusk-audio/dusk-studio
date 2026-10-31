@@ -37,6 +37,7 @@ SCENARIO_FIXTURE_ROOTS="${REPO_ROOT}/build-tests:${REPO_ROOT}/tests/fixtures"
 # missing-binary skips so the two cannot drift apart.
 SCENARIO_BB_LEG_NAMES=(
     bb-no-display
+    bb-gnome-file-drop
     bb-handoff
     bb-crash-relaunch
     bb-no-runtime-dir
@@ -382,6 +383,36 @@ bb_no_display_body() {
             bb_assert_marker "$tag" "DISPLAY is set (:65535) but connecting to it failed" || return 1
         fi
     done
+}
+
+# A desktop file drag, which the in-process scenarios cannot make: GTK file
+# drags reach the app through Mutter's Xwayland relay in a private headless
+# GNOME session that brings its own display, so this leg needs no Xvfb.
+leg_bb_gnome_file_drop() {
+    local -a needs=()
+    local tool
+    for tool in mutter Xwayland dbus-run-session xdotool import fusermount3; do
+        command -v "$tool" >/dev/null 2>&1 || needs+=("$tool")
+    done
+    python3 -c 'import gi, numpy, PIL; gi.require_version("Gtk", "4.0"); from gi.repository import Gtk' \
+        2>/dev/null || needs+=("python3 with GTK 4, NumPy and Pillow")
+    if ((${#needs[@]})); then
+        REGRESS_SKIP_REASON="needs ${needs[*]}"
+        return "$REGRESS_SKIP_RC"
+    fi
+    local pipewire_dir="${NULL_AUDIO_DIR:-${PIPEWIRE_RUNTIME_DIR:-${XDG_RUNTIME_DIR:-}}}"
+    local no_socket="no PipeWire socket; the app would open the sound card through ALSA"
+    if [[ ! -S "${pipewire_dir}/pipewire-0" ]]; then
+        REGRESS_SKIP_REASON="$no_socket"
+        return "$REGRESS_SKIP_RC"
+    fi
+    local rc=0
+    DUSK_DROP_PIPEWIRE_DIR="$pipewire_dir" bash "${SCENARIOS_DIR}/gnome-file-drop.sh" "$APP_BIN" || rc=$?
+    # The script skips only when the socket has gone since the check above.
+    if ((rc == REGRESS_SKIP_RC)); then
+        REGRESS_SKIP_REASON="$no_socket"
+    fi
+    return "$rc"
 }
 
 leg_bb_handoff() {
@@ -1143,6 +1174,11 @@ regress_scenarios_run() {
     else
         regress_skip "bb-no-display" "Linux X11 startup diagnostic"
     fi
+    if [[ "$(uname -s)" == Linux ]]; then
+        regress_leg "bb-gnome-file-drop" leg_bb_gnome_file_drop
+    else
+        regress_skip "bb-gnome-file-drop" "GNOME on Linux"
+    fi
 
     scenarios_fixture_leg
 
@@ -1159,7 +1195,7 @@ regress_scenarios_run() {
     if ! xvfb_session_start; then
         local leg
         for leg in "${SCENARIO_BB_LEG_NAMES[@]}"; do
-            [[ "$leg" == bb-no-display ]] && continue
+            [[ "$leg" == bb-no-display || "$leg" == bb-gnome-file-drop ]] && continue
             regress_skip "$leg" "no Xvfb display"
         done
         if ((want_gui)); then
