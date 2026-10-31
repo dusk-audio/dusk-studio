@@ -282,6 +282,9 @@ canonical source.
   files as plain text before the file list, which Dusk Studio read as text.
   The Alt key does not reach Dusk Studio during such a drag, so the files land
   at the playhead.
+- **Title bar buttons on KDE.** The main window shows its minimise, maximise
+  and close buttons on KDE Plasma. Dusk Studio told the window manager that
+  it draws its own title bar, so KDE drew none.
 
 ## [0.15.1] - 2026-10-11
 
