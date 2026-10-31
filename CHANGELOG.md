@@ -285,6 +285,11 @@ canonical source.
 - **Title bar buttons on KDE.** The main window shows its minimise, maximise
   and close buttons on KDE Plasma. Dusk Studio told the window manager that
   it draws its own title bar, so KDE drew none.
+- **License notices.** `LICENSES.txt` now carries the notices for three parts
+  of the UI framework that were compiled in without one: the Linux file
+  dialog (libSOFD), two helper classes derived from JUCE, and the stb
+  libraries that Dear ImGui includes. It also says that the built-in plug-ins
+  compile the framework's plug-in core.
 
 ## [0.15.1] - 2026-10-11
 
