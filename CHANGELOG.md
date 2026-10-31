@@ -277,9 +277,11 @@ canonical source.
   contain quotes, dollar signs, percent signs or backslashes. A path holding
   both an equals sign and a percent sign is refused.
 - **File drops from GNOME Files.** Audio and MIDI files dragged from GNOME
-  Files onto the tape strip land there instead of being refused. GNOME hands
-  these drags to Dusk Studio with a newer drag-and-drop protocol version than
-  it accepted.
+  Files onto the tape strip land there. GNOME hands these drags to Dusk Studio
+  with a newer drag-and-drop protocol version than it accepted, and lists the
+  files as plain text before the file list, which Dusk Studio read as text.
+  The Alt key does not reach Dusk Studio during such a drag, so the files land
+  at the playhead.
 
 ## [0.15.1] - 2026-10-11
 
