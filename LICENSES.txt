@@ -294,12 +294,16 @@ DAF / DGL and widgets (Dusk Audio Framework graphics layer — backs the native 
   License  : ISC — Copyright (C) 2012-2025 Filipe Coelho <falktx@falktx.com>
              (DAF/LICENSE)
   Path     : ../DAF (or -DDAF_PATH=...), with widgets/ in the same checkout.
-             Only the DGL OpenGL3 and widget targets are built
-             (daf__add_dgl_opengl3); the resulting dgl-opengl3 static library
-             is linked into the Dusk Studio binary. No plugin wrappers, no
-             examples.
+             daf__add_dgl_opengl3 builds the dgl-opengl3 static library,
+             which is linked into the Dusk Studio binary;
+             daf__add_widgets_dusk and daf__add_widgets_imgui build the
+             widget targets described under DAF widgets below. The
+             built-in Tape Echo 2, Tape Machine 2, Sunset and DuskVerb 2
+             compile DAF's plug-in core as its static target
+             (daf/DafPluginMain.cpp), and their editors add
+             daf/DafUIMain.cpp. No plug-in format wrappers, no examples.
   Source   : https://github.com/dusk-audio/DAF
-  Notes    : The sub-components below ship vendored inside DGL and ARE compiled
+  Notes    : The sub-components below ship vendored inside DAF and ARE compiled
              into the Dusk Studio binary; each keeps its own license (full text
              beside each path):
                - pugl          ISC   dgl/src/pugl-upstream/COPYING
@@ -340,6 +344,15 @@ DAF / DGL and widgets (Dusk Audio Framework graphics layer — backs the native 
                                khrplatform.h — The Khronos Group Inc.,
                                2013-2026 and 2008-2018 respectively; on the
                                include path for MSVC builds only)
+               - ScopedPointer, LeakDetector  ISC
+                               daf/extra/ScopedPointer.hpp and
+                               daf/extra/LeakDetector.hpp (Raw Material
+                               Software Ltd. 2013; both headers carry the same
+                               ISC notice, reproduced below)
+               - libSOFD       MIT   daf/extra/sofd/libsofd.c and libsofd.h
+                               (Robin Gareus 2014). DGL's file browser
+                               compiles it on Linux builds with X11
+                               (HAVE_X11) only.
 
 DAF widgets (Dear ImGui bridge and Dusk console widget set)
   Version  : included in the DAF monorepo revision above
@@ -360,9 +373,17 @@ Dear ImGui (immediate-mode GUI — notepad editor, toolbar, chord charts)
   Path     : vendored inside DAF at widgets/imgui/DearImGui/; pulled into the
              build as one translation unit by that repo's DearImGui.cpp.
   Upstream : https://github.com/ocornut/imgui
-  Notes    : DearImGui.cpp also #includes three further projects into the same
+  Notes    : DearImGui.cpp also #includes four further projects into the same
              translation unit, so they compile into the Dusk Studio binary
              alongside Dear ImGui itself:
+               - stb_rectpack, stb_textedit, stb_truetype  MIT / public
+                               domain dual, caller's choice (Sean Barrett
+                               2017), vendored by Dear ImGui as
+                               widgets/imgui/DearImGui/imstb_rectpack.h,
+                               imstb_textedit.h and imstb_truetype.h;
+                               imgui_draw.cpp and imgui_widgets.cpp compile
+                               them in. The notice at the foot of each is the
+                               stb_truetype text reproduced below.
                - imgui-knobs   MIT   widgets/imgui/DearImGuiKnobs/LICENSE
                                (Copyright (c) 2022 Simon Altschuler)
                - imgui_toggle  ISC-style permission grant
@@ -4341,7 +4362,8 @@ SOFTWARE.
 --------------------------------------------------------------------------------
 stb_truetype — MIT / public domain dual license
 Notice at the foot of dgl/src/nanovg/stb_truetype.h at dusk-audio/DAF rev
-@DAF_REV@
+@DAF_REV@. The same text closes widgets/imgui/DearImGui/imstb_rectpack.h,
+imstb_textedit.h and imstb_truetype.h at that rev.
 --------------------------------------------------------------------------------
 
 ------------------------------------------------------------------------------
@@ -4631,6 +4653,55 @@ IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
 CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
 TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 MATERIALS OR THE USE OR OTHER DEALINGS IN THE MATERIALS.
+
+--------------------------------------------------------------------------------
+ScopedPointer and LeakDetector - ISC
+Notice in daf/extra/ScopedPointer.hpp and daf/extra/LeakDetector.hpp at
+dusk-audio/DAF rev @DAF_REV@ (the same text in both)
+--------------------------------------------------------------------------------
+
+Copyright (C) 2013 Raw Material Software Ltd.
+
+Permission is granted to use this software under the terms of the ISC license
+http://www.isc.org/downloads/software-support-policy/isc-license/
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND ISC DISCLAIMS ALL WARRANTIES WITH REGARD
+TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
+FITNESS. IN NO EVENT SHALL ISC BE LIABLE FOR ANY SPECIAL, DIRECT, INDIRECT,
+OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF
+USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
+TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE
+OF THIS SOFTWARE.
+
+--------------------------------------------------------------------------------
+libSOFD - MIT
+Notice at the head of daf/extra/sofd/libsofd.c and libsofd.h at
+dusk-audio/DAF rev @DAF_REV@ (the same text in both)
+--------------------------------------------------------------------------------
+
+Copyright (C) 2014 Robin Gareus <robin@gareus.org>
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
 
 --------------------------------------------------------------------------------
 DAF widgets — ISC
