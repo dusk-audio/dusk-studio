@@ -198,7 +198,7 @@ PackPublishResult PackStore::publish (const ProviderPack& provider, const std::s
     std::error_code ec;
     if (! initialize (error, &ec)) return failure (error, storageFailureKind (ec));
     if (! isSha256 (digest) || ! providerPackFromJson (providerPackToJson (provider)))
-        return failure ("Invalid SFZ pack identity or Creative Commons license receipt");
+        return failure ("Invalid SFZ pack identity or license receipt");
     if (! provider.expectedSha256.empty() && provider.expectedSha256 != digest)
         return failure ("The SFZ archive does not match its published SHA-256", FailureKind::Integrity);
     if (sfzPaths.empty()) return failure ("The archive contains no SFZ instruments");
@@ -225,7 +225,9 @@ PackPublishResult PackStore::publish (const ProviderPack& provider, const std::s
             if (! validateRelativePath (relative, error)) return failure ("SFZ staging directory path is unsafe");
             continue;
         }
-        if (relative != provider.license.path && ! isPackLicenseDocument (relative)) continue;
+        // SFZ Instruments packs install whatever licensing documents they carry; only the resolved file is checked.
+        if (relative != provider.license.path
+            && (provider.sourceId == "sfzinstruments" || ! isPackLicenseDocument (relative))) continue;
         const auto key = portablePathKey (relative);
         if (++licenseCount > kMaxLicenseDocuments || ! key || ! licenseKeys.insert (*key).second
             || ! plainPath (staging, relative)) return failure ("SFZ licensing paths are unsafe, ambiguous, or too numerous");

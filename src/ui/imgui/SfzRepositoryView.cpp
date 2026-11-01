@@ -159,7 +159,7 @@ public:
         if (ImGui::BeginChild ("##sfz-repository-body", size, ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NoBackground))
         {
             heading (ctx, "SFZ Manager", 24);
-            muted ("Creative Commons instruments from community repositories.");
+            muted ("SFZ instruments from community repositories.");
             if (forceInstalled) { onlineTab = false; forceInstalled = false; }
             const float tabWidth = std::min (ctx.s (158), (ImGui::GetContentRegionAvail().x - ctx.s (12)) * 0.5f);
             if (button ("installed-tab", "Installed", true, { tabWidth, ctx.s (38) }, ! onlineTab)) onlineTab = false;
@@ -549,6 +549,29 @@ private:
         }
     }
 
+    void declaredLicense (const sfz::ProviderLicense& license)
+    {
+        auto label = "Declared license: " + license.id;
+        if (license.id == "Unknown") label = "License: not stated";
+        else if (license.id == "Other")
+        {
+            const auto declared = license.path.empty() ? license.text.substr (0, license.text.find ('\n')) : std::string();
+            label = "Declared license: " + (declared.empty() ? std::string ("not recognized") : declared);
+        }
+        ImGui::PushStyleColor (ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4 (consolePalette().eqAccent));
+        ImGui::TextWrapped ("%s", label.c_str());
+        ImGui::PopStyleColor();
+    }
+
+    void licenseConstraints (const sfz::ProviderLicense& license)
+    {
+        const bool caution = license.id == "Unknown" || license.id == "Other"
+            || license.id.find ("-NC") != std::string::npos || license.id.find ("-ND") != std::string::npos;
+        if (caution) ImGui::PushStyleColor (ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4 (consolePalette().compGold));
+        ImGui::TextWrapped ("%s", license.constraints.c_str());
+        if (caution) ImGui::PopStyleColor();
+    }
+
     void licenseText (const sfz::ProviderPack& pack)
     {
         if (ImGui::CollapsingHeader (pack.license.path.empty() ? "License declaration" : "License text"))
@@ -726,8 +749,7 @@ private:
             }
             if (resolved)
             {
-                ImGui::TextColored (ImGui::ColorConvertU32ToFloat4 (consolePalette().eqAccent),
-                                    "Declared license: %s", resolved->license.id.c_str());
+                declaredLicense (resolved->license);
                 muted (sizeLabel (resolved->advertisedBytes) + (resolutionCached ? "  |  Cached details" : ""));
                 bool installed = false;
                 for (const auto& pack : snapshot.installed)
@@ -737,7 +759,7 @@ private:
                     start (Intent::Install, [&] { return service.install (*resolved); });
                 demoLinks (ctx, resolved->presentation, deferred, true);
                 if (installed) ImGui::TextWrapped ("Choose this version in Installed to load it.");
-                ImGui::TextWrapped ("%s", resolved->license.constraints.c_str());
+                licenseConstraints (resolved->license);
                 ImGui::Separator();
                 sourceButton (resolved->sourceUrl, deferred);
                 licenseButton (*resolved, deferred);
@@ -750,8 +772,8 @@ private:
             {
                 button ("download", "Download", false, { ctx.s (154), ctx.s (40) }, true);
                 if (! selectedSummary->presentation.demos.empty()) demoLinks (ctx, selectedSummary->presentation, deferred, true);
-                muted (pendingIntent == Intent::Resolve ? "Checking this version's Creative Commons license..."
-                    : "A Creative Commons license and a downloadable version must be checked before Download is available.");
+                muted (pendingIntent == Intent::Resolve ? "Checking this version's license..."
+                    : "Download is available once this version is checked.");
                 sourceButton (selectedSummary->sourceUrl, deferred);
                 if (! selectedSummary->description.empty()) ImGui::TextWrapped ("%s", selectedSummary->description.c_str());
             }
@@ -851,7 +873,7 @@ private:
                 if (snapshot.installed.empty())
                 {
                     heading (ctx, "Your instrument library", 18);
-                    muted ("Downloaded packs appear here. Open Online to find Creative Commons instruments, or use Local SFZ folders.");
+                    muted ("Downloaded packs appear here. Open Online to find SFZ instruments, or use Local SFZ folders.");
                 }
                 ImGuiListClipper clipper;
                 clipper.Begin (static_cast<int> (visibleInstalled.size()), ctx.s (64) + ImGui::GetStyle().ItemSpacing.y);
@@ -892,8 +914,7 @@ private:
             {
                 heading (ctx, displayTitle (selected->provider.displayName, selected->provider.sourceId));
                 muted (sourceName (selected->provider.sourceId));
-                ImGui::TextColored (ImGui::ColorConvertU32ToFloat4 (consolePalette().eqAccent),
-                                    "Declared license: %s", selected->provider.license.id.c_str());
+                declaredLicense (selected->provider.license);
                 if (selected->programs.size() < selected->instruments.size())
                 {
                     ImGui::PushStyleVar (ImGuiStyleVar_FramePadding, { ctx.s (3), ctx.s (3) });
@@ -970,7 +991,7 @@ private:
                 ImGui::Separator();
                 if (! selected->provider.author.empty() && selected->provider.author != selected->provider.sourceId
                     && selected->provider.author != sourceName (selected->provider.sourceId)) muted (selected->provider.author);
-                ImGui::TextWrapped ("%s", selected->provider.license.constraints.c_str());
+                licenseConstraints (selected->provider.license);
                 sourceButton (selected->provider.sourceUrl, deferred);
                 licenseButton (selected->provider, deferred);
                 if (ImGui::CollapsingHeader ("Version and download details"))

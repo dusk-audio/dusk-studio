@@ -1178,7 +1178,7 @@ std::optional<ScenarioResult> runWorkflow (GuiHost& host, ScenarioContext& ctx)
         const auto snapshot = ctx.engine().getSfzLibrary().snapshot();
         ctx.expect (snapshot.page.items.size() == 4 && snapshot.page.items.front().packId == state->transport->packId,
                     "failed refresh discarded the last good repository page");
-        ctx.expect (snapshot.error.find ("Retry-After: 25") != std::string::npos,
+        ctx.expect (snapshot.error.find ("Try again in 25 seconds") != std::string::npos,
                     "repository failure discarded actionable retry information");
         state->requests = state->transport->requests.load();
     } });

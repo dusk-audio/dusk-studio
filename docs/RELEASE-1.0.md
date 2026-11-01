@@ -28,7 +28,7 @@ Each line below is a check somebody can run and get a yes or a no.
   `notepad.md` in the session folder.
 - A local SFZ and SF2 instrument browser lists what is on disk and loads from
   it, with no network access at any point.
-- SFZ Manager browses Creative Commons repositories and installs versioned
+- SFZ Manager browses community SFZ repositories and installs versioned
   packs with portable session references; session loading stays offline.
 - Quitting through any route (window close, application quit, SIGTERM, logout)
   runs the same staged shutdown and offers the unsaved-changes prompt.
@@ -83,7 +83,7 @@ tracks the release blockers and final validation that must finish before its tag
 | 124 | Playlist comping (Option B) | done | Shipped in 0.15 as take folders: every recording pass is kept whole as a take on its track, and the comp is built in the audio editor's take lanes. |
 | 252 | SFZ library: cancellable download and hardened ZIP install | superseded | Implemented under #804 in 0.16, including libcurl and libarchive. |
 | 253 | SFZ library: portable session locator and asynchronous loading | superseded | Implemented under #804 in 0.16. |
-| 254 | SFZ library: embedded catalog UI and audited launch packs | superseded | #804 implements browsing external Creative Commons repositories in 0.16; no signed catalog or instrument packs are bundled. |
+| 254 | SFZ library: embedded catalog UI and audited launch packs | superseded | #804 implements browsing external SFZ repositories in 0.16; no signed catalog or instrument packs are bundled. |
 | 286 | Allow builds without signed SFZ catalog support | post-1.0 | Build-option convenience. Does not change what a shipped release does. |
 | 294 | Consolidate and pin the reusable DSP/UI source of truth | post-1.0 | Framework-removal campaign. |
 | 295 | [H2] Replace the mastering multiband processor | post-1.0 | Framework-removal campaign. |
@@ -125,7 +125,7 @@ tracks the release blockers and final validation that must finish before its tag
 | 535 | Local instrument browser for soundfonts on disk | done | Local browsing shipped in 0.14; #804 adds repository browsing alongside it in 0.16. |
 | 536 | Walk the demo path on packaged builds and file what it snags on | 1.0 | Individual demo-path bugs have been fixed one at a time. Nobody has walked the whole path on a shipped build. |
 | 605 | Self-test coverage across CI platforms | 1.0 | macOS CI and the Linux and macOS release jobs now run it; the Windows leg stays manual (see the checklist). |
-| 804 | SFZ library: online catalog, downloads and portable locators | 0.16 (validation pending) | Four external Creative Commons sources, staged installation, portable references and asynchronous loading; follow-up fixes and final validation remain on milestone 0.16. |
+| 804 | SFZ library: online catalog, downloads and portable locators | 0.16 (validation pending) | Four external SFZ sources, staged installation, portable references and asynchronous loading; follow-up fixes and final validation remain on milestone 0.16. |
 | 606 | Built-in suite placeholder in package contract | 1.0 | The contract listed plugin files the in-binary suite never produces. |
 | 607 | Signing wording in release docs | 1.0 | README, QUICKSTART and MANUAL described all builds as unsigned after the workflow gained signing. |
 | 608 | Release-plan status drift | 1.0 | This document listed #531 to #534 as open after they shipped. |

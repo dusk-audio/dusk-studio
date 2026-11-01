@@ -37,6 +37,7 @@ struct ProviderSummary
 struct ProviderRateLimit
 {
     std::string remaining, reset, retryAfter;
+    bool limited = false;
 };
 
 struct ProviderPageResult : OperationResult

@@ -33,7 +33,7 @@ DuskMultisampleEditor::DuskMultisampleEditor (DuskMultisampleProcessor& proc,
     browseButton.onClick = [this] { openFileChooser(); };
     addAndMakeVisible (browseButton);
 
-    libraryButton.setTooltip ("Browse installed soundfonts and Creative Commons SFZ repositories.");
+    libraryButton.setTooltip ("Browse installed soundfonts and online SFZ repositories.");
     libraryButton.onClick = [this]
     {
         if (libraryRequested)

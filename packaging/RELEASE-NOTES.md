@@ -1,5 +1,5 @@
 <!-- summary-start -->
-MIDI Merge layers performances into a region, with one undo step per loop pass while recording continues. The piano roll shows incoming notes live. Browse CC0, CC BY and CC BY-SA SFZ instruments from SFZ Instruments, Musical Artifacts, FreePats and Versilian Studios, then download them to your installed library. Sessions keep the exact installed pack reference across computers. Playback readers share three fill workers and keep sample buffers near the playhead.
+MIDI Merge layers performances into a region, with one undo step per loop pass while recording continues. The piano roll shows incoming notes live. Browse SFZ instruments from SFZ Instruments, Musical Artifacts, FreePats and Versilian Studios, see each pack's license, then download them to your installed library. Sessions keep the exact installed pack reference across computers. Playback readers share three fill workers and keep sample buffers near the playhead.
 
 The mastering stage adds multiband phase analysis with held warnings, coherence and mono-loss readings. Its Mono monitor checks the fold-down while exports stay stereo.
 

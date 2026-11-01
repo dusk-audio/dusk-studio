@@ -24,10 +24,16 @@ canonical source.
 - **Live notes in the piano roll.** Incoming notes appear while recording, and
   held notes grow until release. The preview leaves the region and undo history
   alone, and the roll follows the region a merge updates.
-- **Creative Commons SFZ repositories.** Browse SFZ Instruments, Musical
-  Artifacts, FreePats and Versilian Studios from the instrument library, check a
-  pack's license, and download it to Installed. Only CC0, CC BY and CC BY-SA
-  packs are offered; NonCommercial and NoDerivatives packs are refused.
+- **Online SFZ repositories.** Browse SFZ Instruments, Musical Artifacts,
+  FreePats and Versilian Studios from the instrument library, see a pack's
+  license, and download it to Installed. Any SFZ Instruments repository with
+  samples can be downloaded whatever its license. Its license comes from the
+  repository's license file, or from the SFZ Instruments community catalog when
+  there is none, and unknown, unrecognized, NonCommercial and NoDerivatives
+  terms show a warning. SFZ Instruments repositories with SFZ files but no
+  samples are refused. Musical Artifacts, FreePats and Versilian Studios offer
+  only CC0, CC BY and CC BY-SA packs. A rate-limited repository says when to
+  try again.
   SFZ Manager makes HTTPS requests when you browse repositories, view pack
   details, download packs or fetch online artwork. It makes no repository
   requests at startup or during session restore.
