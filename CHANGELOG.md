@@ -5,6 +5,14 @@ All notable changes to Dusk Studio. Format loosely follows
 back-filled from `git log`; once tags exist this file is the
 canonical source.
 
+## [0.16.1] - Unreleased
+
+### Fixed
+
+- **Rate-limit notice.** When an online SFZ repository is rate limited, a
+  reset time that has already passed, or lies more than a day away, reads
+  "Try again later." instead of a clock time.
+
 ## [0.16.0] - 2026-11-01
 
 ### Added

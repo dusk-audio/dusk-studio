@@ -974,6 +974,11 @@ TEST_CASE ("SFZ errors give rate-limit timing only for rate limits", "[sfz][serv
     const std::string limited = "Repository rate limit reached; the source link remains available.";
     std::string expected;
     bool resolving = false, freepats = false;
+    const auto resetAt = std::chrono::duration_cast<std::chrono::seconds> (
+        std::chrono::system_clock::now().time_since_epoch()).count() + 3600;
+    const auto reset = std::to_string (resetAt);
+    const auto two = [] (long long value) { return (value < 10 ? "0" : "") + std::to_string (value); };
+    const auto resetTime = " Try again after " + two (resetAt % 86400 / 3600) + ":" + two (resetAt % 3600 / 60) + " UTC.";
     SECTION ("A missing repository is not a rate limit")
     {
         transport->append ({ "{\"message\":\"Not Found\"}", 404,
@@ -990,13 +995,23 @@ TEST_CASE ("SFZ errors give rate-limit timing only for rate limits", "[sfz][serv
     SECTION ("An exhausted quota gives its reset time of day")
     {
         transport->append ({ "{\"message\":\"API rate limit exceeded\"}", 403,
-                             { { "X-RateLimit-Remaining", "0" }, { "X-RateLimit-Reset", "1793503601" } } });
-        expected = limited + " Try again after 03:26 UTC.";
+                             { { "X-RateLimit-Remaining", "0" }, { "X-RateLimit-Reset", reset } } });
+        expected = limited + resetTime;
     }
     SECTION ("A zero Retry-After falls back to the reset time")
     {
-        transport->append ({ {}, 429, { { "Retry-After", "0" }, { "X-RateLimit-Reset", "1793503601" } } });
-        expected = limited + " Try again after 03:26 UTC.";
+        transport->append ({ {}, 429, { { "Retry-After", "0" }, { "X-RateLimit-Reset", reset } } });
+        expected = limited + resetTime;
+    }
+    SECTION ("A reset that has passed says later")
+    {
+        transport->append ({ {}, 429, { { "X-RateLimit-Reset", std::to_string (resetAt - 7200) } } });
+        expected = limited + " Try again later.";
+    }
+    SECTION ("A reset counted in seconds says later")
+    {
+        transport->append ({ {}, 429, { { "X-RateLimit-Reset", "60" } } });
+        expected = limited + " Try again later.";
     }
     SECTION ("A license file GitHub cannot identify is not a rate limit")
     {

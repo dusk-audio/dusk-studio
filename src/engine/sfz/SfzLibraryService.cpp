@@ -360,7 +360,12 @@ std::string rateLimitError (std::string error, const ProviderRateLimit& limit)
     };
     if (const auto wait = seconds (limit.retryAfter); wait && *wait > 0)
         return error + " Try again in " + std::to_string (*wait) + (*wait == 1 ? " second." : " seconds.");
-    if (const auto reset = seconds (limit.reset))
+    const auto now = std::chrono::duration_cast<std::chrono::seconds> (
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    // A reset already past, or more than a day away, is no usable time: some servers send the wait in
+    // seconds under this header rather than the moment the limit resets.
+    if (const auto reset = seconds (limit.reset);
+        reset && now > 0 && *reset > static_cast<std::uint64_t> (now) && *reset - static_cast<std::uint64_t> (now) <= 86400)
     {
         const auto minute = *reset % 86400 / 60;
         const auto digits = [] (std::uint64_t value) { return (value < 10 ? "0" : "") + std::to_string (value); };
