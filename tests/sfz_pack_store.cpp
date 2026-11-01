@@ -145,6 +145,28 @@ TEST_CASE ("SFZ packs publish complete trees atomically and resolve portable loc
         pack = pinnedProvider();
         REQUIRE (dusk::fs::writeStringToFile (staging / "README.md", pack.license.text));
     }
+    SECTION ("SFZ Instruments packs publish whatever licensing documents they carry")
+    {
+        pack = pinnedProvider();
+        REQUIRE (dusk::fs::writeStringToFile (staging / "README.md", pack.license.text));
+        const std::pair<const char*, std::string> documents[] = {
+            { "Samples/LICENSE.txt", "https://creativecommons.org/licenses/by-nc/4.0/" },
+            { "Samples/tone.wav.license", "https://creativecommons.org/licenses/by-nd/4.0/" },
+            { "Samples/COPYING", "https://creativecommons.org/licenses/by/4.0/" },
+            { "LICENSES/audio.txt", "Free to download." },
+            { "LICENSE", std::string (kMaxLicenseBytes + 1, 'x') } };
+        for (const auto& document : documents)
+            REQUIRE (dusk::fs::writeStringToFile (staging / document.first, document.second));
+        for (std::size_t i = 0; i <= kMaxLicenseDocuments; ++i)
+            REQUIRE (dusk::fs::writeStringToFile (staging / ("LICENSE-" + std::to_string (i)), pack.license.text));
+    }
+    SECTION ("An SFZ Instruments pack without a license file publishes its declaration")
+    {
+        pack = pinnedProvider();
+        const auto declaration = "Unknown\nNo license Dusk Studio can read was found at " + pack.sourceUrl
+            + " or in the SFZ Instruments catalog.";
+        pack.license = { "Unknown", declaration, {}, hash (declaration), pack.sourceUrl, {} };
+    }
     SECTION ("Initialization reports native failures and clears stale errors")
     {
         const auto blocked = tree.root / "blocked";
@@ -191,6 +213,8 @@ TEST_CASE ("SFZ packs publish complete trees atomically and resolve portable loc
     REQUIRE (result.pack);
     REQUIRE_FALSE (fs::exists (dusk::fs::nativeIOPath (staging)));
     REQUIRE (original.installed().size() == 1);
+    CHECK (original.installed().front().provider.license.id == pack.license.id);
+    CHECK (original.installed().front().provider.license.text == pack.license.text);
     CHECK (original.installed().front().provider.presentation.artworkUrl == pack.presentation.artworkUrl);
     CHECK (original.installed().front().provider.presentation.categoryHint == "piano");
     REQUIRE (isSha256 (result.pack->installedTreeSha256));

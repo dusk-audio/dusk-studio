@@ -201,8 +201,17 @@ std::string catalogDescription (std::string value, bool block)
 
 struct CatalogMetadata
 {
-    std::string page, description;
+    std::string page, description, license;
+    bool licenseUnreadable = false;
 };
+
+struct CatalogLookup
+{
+    std::optional<CatalogMetadata> declared, described;
+};
+
+// Catalog entries that link an author's site instead of the repository, paired after a manual review.
+constexpr std::pair<std::string_view, std::string_view> kCatalogLinks[] { { "smdrums", "drums/sm_drums" } };
 
 void appendMetadataText (std::string& text, const std::string& extra)
 {
@@ -212,53 +221,84 @@ void appendMetadataText (std::string& text, const std::string& extra)
     text += extra;
 }
 
-std::optional<CatalogMetadata> catalogMetadata (std::string_view text, const std::string& repository)
+CatalogLookup catalogLookup (std::string_view text, const std::string& repository)
 {
     // Project explicit repository URLs and simple page slugs, without interpreting general YAML.
     struct Entry
     {
         bool active = false, invalid = false, downloads = false, hasPage = false, hasUrl = false;
         bool hasDescription = false, continuingDescription = false, descriptionBlock = false, descriptionInvalid = false;
-        std::string category, page, name, description;
-        std::set<std::string> repositories;
+        bool hasLicense = false, licenseUnreadable = false, github = false;
+        std::string category, page, name, description, license;
+        std::set<std::string> repositories, references;
     } entry;
+    CatalogLookup result;
+    if (text.empty()) return result;
+    const auto key = lower (repository);
     std::string category;
-    bool categoryPage = false;
-    std::vector<CatalogMetadata> matches;
+    bool categoryPage = false, ambiguous = false;
+    std::vector<CatalogMetadata> described, admitted;
     const auto pageSegment = [] (const std::string& value)
     { return repositoryName (value) && value.find ('.') == std::string::npos; };
     const auto finish = [&]
     {
-        const auto slug = [] (std::string text)
+        const auto slug = [] (std::string value)
         {
-            for (auto& c : text)
+            for (auto& c : value)
             {
                 if (c >= 'A' && c <= 'Z') c = static_cast<char> (c + 'a' - 'A');
                 if (c == ' ' || c == '-' || c == '.') c = '_';
             }
-            return text;
+            return value;
         };
         const auto shortRepository = repository.substr (repository.find ('.') == std::string::npos
             ? 0 : repository.find ('.') + 1);
         const bool nameMatch = repository.find ('.') != std::string::npos && entry.repositories.empty()
             && ! entry.name.empty() && slug (entry.name) == slug (shortRepository);
-        const bool repositoryMatch = entry.repositories.size() == 1 && *entry.repositories.begin() == lower (repository);
+        const bool repositoryMatch = entry.repositories.size() == 1 && *entry.repositories.begin() == key;
         if ((nameMatch || repositoryMatch) && ! entry.hasPage) entry.page = slug (entry.name);
-        if (entry.active && ! entry.invalid && pageSegment (entry.category) && pageSegment (entry.page)
-            && (nameMatch || repositoryMatch))
-            matches.push_back ({ entry.category + "/" + entry.page,
-                entry.descriptionInvalid ? std::string {} : catalogDescription (entry.description, entry.descriptionBlock) });
+        const bool valid = entry.active && ! entry.invalid && pageSegment (entry.category) && pageSegment (entry.page);
+        CatalogMetadata metadata { entry.category + "/" + entry.page,
+            entry.descriptionInvalid ? std::string {} : catalogDescription (entry.description, entry.descriptionBlock),
+            entry.license, entry.licenseUnreadable };
+        const bool linked = entry.hasPage && ! entry.github && std::any_of (std::begin (kCatalogLinks), std::end (kCatalogLinks),
+            [&] (const auto& link) { return link.first == key && link.second == metadata.page; });
+        if (valid && (nameMatch || repositoryMatch)) described.push_back (metadata);
+        if (valid && (repositoryMatch || linked)) admitted.push_back (std::move (metadata));
+        else if (entry.active && (nameMatch || repositoryMatch || linked || entry.references.count (key) != 0))
+            ambiguous = true;
     };
+    const auto printable = [] (const std::string& value)
+    { return std::all_of (value.begin(), value.end(), [] (char c) { return c >= 32 && c < 127; }); };
     std::istringstream input { std::string (text) };
     std::string line;
     std::size_t lines = 0, entries = 0;
     while (std::getline (input, line))
     {
-        if (++lines > 8192 || line.size() > 2048 || line.find ('\t') != std::string::npos) return {};
+        if (++lines > 8192 || line.size() > 2048 || line.find ('\t') != std::string::npos) return result;
         if (! line.empty() && line.back() == '\r') line.pop_back();
         const auto indent = line.find_first_not_of (' ');
         if (indent == std::string::npos || line[indent] == '#') continue;
         const auto content = line.substr (indent);
+        if (entry.active && ! (indent <= 2 && content.compare (0, 7, "- name:") == 0))
+        {
+            const auto lowered = lower (content);
+            constexpr std::string_view organization = "github.com/sfzinstruments/";
+            if (lowered.find ("github.com/") != std::string::npos) entry.github = true;
+            for (auto at = lowered.find (organization); at != std::string::npos; at = lowered.find (organization, at + 1))
+            {
+                const auto from = at + organization.size();
+                const auto end = lowered.find_first_not_of ("abcdefghijklmnopqrstuvwxyz0123456789-_.", from);
+                auto name = lowered.substr (from, end == std::string::npos ? end : end - from);
+                for (;;)
+                {
+                    if (! name.empty() && name.back() == '.') name.pop_back();
+                    else if (name.size() > 4 && name.compare (name.size() - 4, 4, ".git") == 0) name.resize (name.size() - 4);
+                    else break;
+                }
+                entry.references.insert (name);
+            }
+        }
         if (entry.continuingDescription && indent >= 6)
         {
             if (content.size() + entry.description.size() + 1 > 2048) entry.descriptionInvalid = true;
@@ -273,11 +313,11 @@ std::optional<CatalogMetadata> catalogMetadata (std::string_view text, const std
         if (indent == 0 && content.compare (0, 7, "- name:") == 0)
         { finish(); entry = {}; category.clear(); categoryPage = false; }
         else if (indent == 2 && content.compare (0, 5, "page:") == 0)
-        { if (categoryPage) return {}; category = scalar (content.substr (5)); categoryPage = true; }
+        { if (categoryPage) return result; category = scalar (content.substr (5)); categoryPage = true; }
         else if (indent == 2 && content.compare (0, 7, "- name:") == 0)
         {
             finish(); entry = {}; entry.active = true; entry.category = category; entry.name = scalar (content.substr (7));
-            if (++entries > 4096) return {};
+            if (++entries > 4096) return result;
         }
         else if (entry.active && indent == 4)
         {
@@ -286,6 +326,18 @@ std::optional<CatalogMetadata> catalogMetadata (std::string_view text, const std
             if (content.compare (0, 5, "page:") == 0)
             { if (entry.hasPage) entry.invalid = true; entry.page = scalar (content.substr (5)); entry.hasPage = true; }
             if (content.compare (0, 4, "url:") == 0 && entry.hasUrl) entry.invalid = true;
+            if (content.compare (0, 8, "license:") == 0)
+            {
+                auto declared = content.substr (8);
+                declared.resize (std::min (declared.size(), declared.find (" #")));
+                declared.erase (0, std::min (declared.size(), declared.find_first_not_of (' ')));
+                while (! declared.empty() && declared.back() == ' ') declared.pop_back();
+                const bool stated = ! declared.empty() && declared != "\"\"" && declared != "''";
+                entry.license = stated ? scalar (content.substr (8)) : std::string {};
+                if (entry.hasLicense || (stated && (entry.license.empty() || entry.license.size() > 64
+                    || ! printable (entry.license)))) entry.licenseUnreadable = true;
+                entry.hasLicense = true;
+            }
             if (content.compare (0, 18, "short_description:") == 0)
             {
                 if (entry.hasDescription) entry.invalid = true;
@@ -300,6 +352,9 @@ std::optional<CatalogMetadata> catalogMetadata (std::string_view text, const std
                 if (entry.descriptionBlock) entry.description.clear();
             }
         }
+        else if (entry.active && indent > 4
+            && (content.compare (0, 8, "license:") == 0 || content.compare (0, 10, "- license:") == 0))
+            entry.licenseUnreadable = true;
         if (! entry.active || ! ((indent == 4 || ((indent == 6 || indent == 8) && entry.downloads))
             && content.compare (0, 4, "url:") == 0)) continue;
         if (indent == 4) entry.hasUrl = true;
@@ -312,7 +367,10 @@ std::optional<CatalogMetadata> catalogMetadata (std::string_view text, const std
             entry.repositories.insert (lower (name));
     }
     finish();
-    return matches.size() == 1 ? std::optional<CatalogMetadata> (std::move (matches.front())) : std::nullopt;
+    if (described.size() == 1) result.described = std::move (described.front());
+    if (! ambiguous && admitted.size() == 1 && ! admitted.front().licenseUnreadable)
+        result.declared = std::move (admitted.front());
+    return result;
 }
 
 OperationResult githubCatalog (HttpTransport& transport, std::string& text, const OperationControl& control)
@@ -334,13 +392,10 @@ OperationResult githubCatalog (HttpTransport& transport, std::string& text, cons
     return { catalogStatus, catalogStatus == OperationStatus::Complete ? std::string {} : "Source metadata lookup interrupted" };
 }
 
-OperationResult githubDemos (HttpTransport& transport, const std::string& repository,
+OperationResult githubDemos (HttpTransport& transport, const CatalogLookup& catalog,
                              ProviderPresentation& presentation, const OperationControl& control)
 {
-    std::string text;
-    const auto catalog = githubCatalog (transport, text, control);
-    if (! catalog) return catalog;
-    const auto metadata = catalogMetadata (text, repository);
+    const auto& metadata = catalog.described;
     if (! metadata) return { OperationStatus::Complete, {} };
     appendMetadataText (presentation.categoryHint, metadata->description);
     const auto& page = metadata->page;
@@ -412,16 +467,28 @@ std::string sha256 (std::string_view value)
     return hex.data();
 }
 
-struct CcLicense
+struct LicenseKind
 {
     std::string id, slug, version, url, constraints;
 };
 
-std::optional<CcLicense> ccLicense (std::string identifier)
+std::optional<LicenseKind> licenseKind (std::string identifier)
 {
     identifier = lower (std::move (identifier));
+    if (identifier == "unlicense")
+        return LicenseKind { "Unlicense", "unlicense", {}, "https://unlicense.org/",
+                             "Unlicense public-domain dedication; no attribution condition." };
+    if (identifier == "public-domain")
+        return LicenseKind { "Public-Domain", "public-domain", {}, {},
+                             "Public domain as declared by the SFZ Instruments catalog; no attribution condition." };
+    if (identifier == "unknown")
+        return LicenseKind { "Unknown", "unknown", {}, {},
+                             "No license is stated. Check the source's terms before you use or share these samples." };
+    if (identifier == "other")
+        return LicenseKind { "Other", "other", {}, {},
+                             "Dusk Studio does not recognize these terms. Read them before you use or share these samples." };
     if (identifier == "cc0-1.0")
-        return CcLicense { "CC0-1.0", "zero", "1.0", "https://creativecommons.org/publicdomain/zero/1.0/",
+        return LicenseKind { "CC0-1.0", "zero", "1.0", "https://creativecommons.org/publicdomain/zero/1.0/",
                            "CC0 public-domain dedication; no attribution condition." };
     constexpr const char* types[] = { "by", "by-sa", "by-nd", "by-nc", "by-nc-sa", "by-nc-nd" };
     constexpr const char* versions[] = { "1.0", "2.0", "2.5", "3.0", "4.0" };
@@ -435,31 +502,36 @@ std::optional<CcLicense> ccLicense (std::string identifier)
                 if (std::string_view (type).find ("nc") != std::string_view::npos) constraints += " NonCommercial restriction.";
                 if (std::string_view (type).find ("sa") != std::string_view::npos) constraints += " ShareAlike requirement.";
                 if (std::string_view (type).find ("nd") != std::string_view::npos) constraints += " NoDerivatives restriction.";
-                return CcLicense { id, type, version,
+                return LicenseKind { id, type, version,
                     std::string ("https://creativecommons.org/licenses/") + type + "/" + version + "/", constraints };
             }
     return {};
 }
 
-std::optional<CcLicense> artifactLicense (const std::string& shortName)
+std::optional<LicenseKind> artifactLicense (const std::string& shortName)
 {
-    if (shortName == "cc-zero") return ccLicense ("CC0-1.0");
+    if (shortName == "cc-zero") return licenseKind ("CC0-1.0");
     auto type = shortName;
     std::string version = "4.0";
     if (type.size() > 2 && type.substr (type.size() - 2) == "-3")
     { type.resize (type.size() - 2); version = "3.0"; }
-    return ccLicense ("cc-" + type + "-" + version);
+    return licenseKind ("cc-" + type + "-" + version);
 }
 
-bool downloadLicenseAllowed (const CcLicense& license)
+bool downloadLicenseAllowed (const LicenseKind& license)
 {
     return license.slug == "zero" || license.slug == "by" || license.slug == "by-sa";
+}
+
+bool creativeCommons (const LicenseKind& license)
+{
+    return license.url.compare (0, 28, "https://creativecommons.org/") == 0;
 }
 
 constexpr const char* kRestrictedLicense =
     "NonCommercial and NoDerivatives packs are unavailable. Choose CC0, CC BY or CC BY-SA content.";
 
-bool formalLicenseTitle (const std::string& text, const CcLicense& license)
+bool formalLicenseTitle (const std::string& text, const LicenseKind& license)
 {
     auto title = lower (text);
     std::replace (title.begin(), title.end(), '-', ' ');
@@ -475,7 +547,7 @@ bool formalLicenseTitle (const std::string& text, const CcLicense& license)
     return title.find (name + " " + license.version) != std::string::npos;
 }
 
-std::optional<CcLicense> licenseText (const std::string& text, const std::string& hint, bool wholePack = true)
+std::optional<LicenseKind> licenseText (const std::string& text, const std::string& hint, bool wholePack = true)
 {
     const auto content = lower (text);
     for (const auto* conflict : { "all rights reserved", "not covered by this license", "separate license",
@@ -509,13 +581,13 @@ std::optional<CcLicense> licenseText (const std::string& text, const std::string
     for (const auto* type : types)
         for (const auto* version : versions)
         {
-            const auto license = ccLicense (std::string ("cc-") + type + "-" + version);
+            const auto license = licenseKind (std::string ("cc-") + type + "-" + version);
             const auto marker = std::string ("//creativecommons.org/licenses/") + type + "/" + version;
             if (containsUrl (marker) || formalLicenseTitle (text, *license)) found.insert (license->id);
         }
     if (found.size() != 1) return {};
-    const auto actual = ccLicense (*found.begin());
-    const auto claimed = ccLicense (hint);
+    const auto actual = licenseKind (*found.begin());
+    const auto claimed = licenseKind (hint);
     if (claimed && claimed->id != actual->id) return {};
     const auto identifierChar = [] (char c)
     { return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '.'; };
@@ -539,7 +611,7 @@ std::optional<CcLicense> licenseText (const std::string& text, const std::string
         if (identifier.compare (0, 5, "cc-by") == 0
             || (identifier.size() > 4 && identifier.compare (0, 4, "cc0-") == 0))
         {
-            const auto declared = ccLicense (identifier);
+            const auto declared = licenseKind (identifier);
             if (! declared || declared->id != actual->id) return {};
         }
         begin = end;
@@ -591,6 +663,63 @@ std::optional<CcLicense> licenseText (const std::string& text, const std::string
     return actual;
 }
 
+constexpr std::string_view kUnlicense = R"unlicense(This is free and unencumbered software released into the public domain.
+
+Anyone is free to copy, modify, publish, use, compile, sell, or
+distribute this software, either in source code form or as a compiled
+binary, for any purpose, commercial or non-commercial, and by any
+means.
+
+In jurisdictions that recognize copyright laws, the author or authors
+of this software dedicate any and all copyright interest in the
+software to the public domain. We make this dedication for the benefit
+of the public at large and to the detriment of our heirs and
+successors. We intend this dedication to be an overt act of
+relinquishment in perpetuity of all present and future rights to this
+software under copyright law.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR
+OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+OTHER DEALINGS IN THE SOFTWARE.
+
+For more information, please refer to <https://unlicense.org>
+)unlicense";
+
+std::string collapsedWhitespace (std::string_view text)
+{
+    std::string result;
+    for (const auto c : text)
+    {
+        if (c != ' ' && c != '\t' && c != '\r' && c != '\n') result += c;
+        else if (! result.empty() && result.back() != ' ') result += ' ';
+    }
+    if (! result.empty() && result.back() == ' ') result.pop_back();
+    return result;
+}
+
+bool unlicenseText (std::string_view text)
+{
+    auto collapsed = collapsedWhitespace (text);
+    for (const std::string_view link : { "<http://unlicense.org>", "<http://unlicense.org/>", "<https://unlicense.org/>" })
+        if (collapsed.size() >= link.size() && collapsed.compare (collapsed.size() - link.size(), link.size(), link) == 0)
+        {
+            collapsed.replace (collapsed.size() - link.size(), link.size(), "<https://unlicense.org>");
+            break;
+        }
+    return collapsed == collapsedWhitespace (kUnlicense);
+}
+
+std::optional<LicenseKind> fileLicense (const std::string& text, const std::string& hint)
+{
+    if (unlicenseText (text) && (hint.empty() || hint == "NOASSERTION" || lower (hint) == "unlicense"))
+        return licenseKind ("Unlicense");
+    return licenseText (text, hint);
+}
+
 std::string responseHeader (const HttpResponse& response, const char* name, std::size_t limit = 128)
 {
     const auto found = response.headers.find (name);
@@ -628,15 +757,17 @@ ApiResult api (HttpTransport& transport, const std::string& url, std::uint64_t m
     const auto first = response.body.find_first_not_of (" \r\n\t");
     const bool html = contentType.find ("text/html") != std::string::npos
         || (first != std::string::npos && response.body[first] == '<');
-    if (response.response.statusCode == 429
-        || (response.response.statusCode == 403 && result.rateLimit.remaining == "0"))
-        result.error = "Repository rate limit reached. Retry after the server's indicated wait; the source link remains available.";
+    const auto code = response.response.statusCode;
+    result.rateLimit.limited = code == 429 || (code == 403 && result.rateLimit.remaining == "0")
+        || (code == 403 && ! html && ! result.rateLimit.retryAfter.empty());
+    if (result.rateLimit.limited)
+        result.error = "Repository rate limit reached; the source link remains available.";
     else if (html)
         result.error = "Repository returned a browser or anti-bot page. Open the source website; automated downloads are unavailable.";
-    else if (response.response.statusCode == 403)
+    else if (code == 403)
         result.error = "Repository denied API access. Try again later or open the source website.";
-    else if (response.response.statusCode != 200)
-        result.error = "Repository request failed (HTTP " + std::to_string (response.response.statusCode) + ").";
+    else if (code != 200)
+        result.error = "Repository request failed (HTTP " + std::to_string (code) + ").";
     if (! result.error.empty()) { result.status = OperationStatus::Failed; return result; }
     const auto parsed = detail::parseJsonRejectingDuplicateKeys (response.body, "Repository response");
     if (! parsed) { result.status = OperationStatus::Failed; result.error = parsed.error; return result; }
@@ -667,6 +798,25 @@ bool addInstrument (ProviderPack& pack, const std::string& path, std::set<std::s
     pack.instruments.push_back ({ "sfz-" + sha256 (path).substr (0, 32),
         path.substr (slash == std::string::npos ? 0 : slash + 1), path, true });
     return true;
+}
+
+ProviderLicense catalogLicense (const CatalogLookup& catalog, const std::string& treeUrl)
+{
+    const auto value = catalog.declared ? catalog.declared->license : std::string {};
+    const auto name = lower (value);
+    if (name.empty() || name == "unknown")
+    {
+        const auto unknown = licenseKind ("Unknown");
+        const auto text = "Unknown\nNo license Dusk Studio can read was found at " + treeUrl + " or in the SFZ Instruments catalog.";
+        return { unknown->id, text, {}, sha256 (text), treeUrl, unknown->constraints };
+    }
+    auto kind = licenseKind (name == "public domain" ? "Public-Domain" : value);
+    if (! kind) kind = licenseKind ("Other");
+    // The declared value and URLs only: other catalog edits must not change the download's resume key.
+    const auto page = "https://sfzinstruments.github.io/" + catalog.declared->page + "/";
+    const auto text = (kind->id == "Other" ? value : kind->id) + "\nDeclared in the SFZ Instruments catalog: " + page
+        + "\nRepository: " + treeUrl;
+    return { kind->id, text, {}, sha256 (text), page, kind->constraints };
 }
 
 ProviderPackResult githubPack (HttpTransport& transport, const ProviderSummary& summary,
@@ -727,6 +877,8 @@ ProviderPackResult githubPack (HttpTransport& transport, const ProviderSummary& 
     presentationMetadata (repository.json, pack.presentation, summary.sourceId);
     if (summary.sourceId == "sfzinstruments")
         appendMetadataText (pack.presentation.categoryHint, summary.presentation.categoryHint);
+    // SFZ Instruments packs download whatever license they carry; it is resolved only to show it.
+    const bool sfzInstruments = summary.sourceId == "sfzinstruments";
     std::set<std::string> paths;
     std::set<std::string> regularFiles;
     std::set<std::string> licensePaths, licenseKeys;
@@ -742,7 +894,7 @@ ProviderPackResult githubPack (HttpTransport& transport, const ProviderSummary& 
             continue;
         }
         const bool regular = type == "blob" && (mode == "100644" || mode == "100755");
-        if (isPackLicenseDocument (path))
+        if (! sfzInstruments && isPackLicenseDocument (path))
         {
             std::string error;
             const auto key = portablePathKey (path);
@@ -756,6 +908,15 @@ ProviderPackResult githubPack (HttpTransport& transport, const ProviderSummary& 
         if (sfzPath (path) && ! addInstrument (pack, path, paths)) return fail ("Repository has unsafe or ambiguous SFZ paths");
     }
     if (pack.instruments.empty()) return fail ("Repository contains no SFZ files at the pinned revision");
+    if (sfzInstruments && std::none_of (regularFiles.begin(), regularFiles.end(), [] (const std::string& path)
+    {
+        const auto name = lower (path);
+        const auto dot = name.find_last_of ('.');
+        const auto extension = dot == std::string::npos || name.find ('/', dot) != std::string::npos
+            ? std::string {} : name.substr (dot);
+        return extension == ".wav" || extension == ".flac" || extension == ".ogg"
+            || extension == ".aif" || extension == ".aiff";
+    })) return fail ("This repository has SFZ files but no samples to download.");
     for (const auto& image : regularFiles)
     {
         if (! pack.presentation.artworkUrl.empty()) break;
@@ -768,42 +929,68 @@ ProviderPackResult githubPack (HttpTransport& transport, const ProviderSummary& 
         pack.presentation.artworkUrl = "https://raw.githubusercontent.com/" + std::string (owner)
             + "/" + summary.locator + "/" + revision + "/" + encode (image, true);
     }
-    // The VCSL SFZ release predates its LICENSE file; its archived README carries the CC0 grant.
+    // GitHub's license detection also covers a root UNLICENSE file. The VCSL SFZ release predates its
+    // LICENSE file; its archived README carries the CC0 grant.
     const bool hasLicenseFile = std::any_of (regularFiles.begin(), regularFiles.end(), [] (const std::string& path)
     {
         const auto name = lower (path);
-        return name.find ('/') == std::string::npos && isPackLicenseDocument (name);
+        return name.find ('/') == std::string::npos
+            && (isPackLicenseDocument (name) || name.compare (0, 9, "unlicense") == 0);
     });
     const bool readmeLicense = summary.sourceId == "versilian" && summary.locator == "VCSL"
         && ! hasLicenseFile && regularFiles.count ("README.md") != 0;
-    const auto license = api (transport,
-        base + (readmeLicense ? "/contents/README.md?ref=" : "/license?ref=") + revision, 400000, control);
-    result.rateLimit = license.rateLimit;
-    if (! license) { result.status = license.status; result.error = license.error; return result; }
-    const auto path = string (license.json, "path", 512);
-    const auto encoded = string (license.json, "content", 300000);
-    const auto hint = string (dusk::json::child (license.json, "license"), "spdx_id", 100);
-    std::string pathError;
-    if (string (license.json, "encoding", 16) != "base64" || ! validateRelativePath (path, pathError)
-        || regularFiles.count (path) == 0 || encoded.empty()) return fail ("Repository LICENSE file cannot be verified at the pinned revision");
-    std::string text (kMaxLicenseBytes, '\0');
-    std::size_t decoded = 0;
-    if (sodium_init() < 0 || sodium_base642bin (reinterpret_cast<unsigned char*> (text.data()), text.size(),
-        encoded.data(), encoded.size(), " \t\r\n", &decoded, nullptr, sodium_base64_VARIANT_ORIGINAL) != 0)
-        return fail ("Repository LICENSE content is invalid or too large");
-    text.resize (decoded);
-    if (text.find ('\0') != std::string::npos || ! portablePathKey (text)) return fail ("Repository LICENSE is not valid text");
-    const auto recognized = licenseText (text, hint);
-    if (! recognized) return fail ("Repository LICENSE does not establish one supported Creative Commons license");
-    if (! downloadLicenseAllowed (*recognized)) return fail (kRestrictedLicense);
-    pack.license = { recognized->id, text, path, sha256 (text),
-        webBase + "/blob/" + revision + "/" + encode (path, true), recognized->constraints };
-    licensePaths.insert (path);
+    if (! sfzInstruments && ! hasLicenseFile && ! readmeLicense)
+        return fail ("This repository has no license file, so Dusk Studio cannot check its terms. Open the source website.");
+    if (hasLicenseFile || readmeLicense)
+    {
+        const auto license = api (transport,
+            base + (readmeLicense ? "/contents/README.md?ref=" : "/license?ref=") + revision, 400000, control);
+        result.rateLimit = license.rateLimit;
+        const bool notFound = license.status == OperationStatus::Failed && license.response.statusCode == 404;
+        if (! license && ! (sfzInstruments && notFound))
+        {
+            result.status = license.status;
+            result.error = ! readmeLicense && notFound
+                ? "GitHub could not identify this repository's license file. Open the source website for its terms."
+                : license.error;
+            return result;
+        }
+        if (license)
+        {
+            const auto path = string (license.json, "path", 512);
+            const auto encoded = string (license.json, "content", 300000);
+            const auto hint = string (dusk::json::child (license.json, "license"), "spdx_id", 100);
+            const bool base64 = string (license.json, "encoding", 16) == "base64" && ! encoded.empty();
+            std::string pathError;
+            if (! validateRelativePath (path, pathError) || regularFiles.count (path) == 0 || (! sfzInstruments && ! base64))
+                return fail ("Repository LICENSE file cannot be verified at the pinned revision");
+            std::string text (kMaxLicenseBytes, '\0');
+            std::size_t decoded = 0;
+            const bool decodable = base64 && sodium_init() >= 0
+                && sodium_base642bin (reinterpret_cast<unsigned char*> (text.data()), text.size(), encoded.data(),
+                    encoded.size(), " \t\r\n", &decoded, nullptr, sodium_base64_VARIANT_ORIGINAL) == 0;
+            text.resize (decodable ? decoded : 0);
+            const bool readable = decodable && text.find ('\0') == std::string::npos && portablePathKey (text);
+            if (! sfzInstruments && ! decodable) return fail ("Repository LICENSE content is invalid or too large");
+            if (! sfzInstruments && ! readable) return fail ("Repository LICENSE is not valid text");
+            if (readable)
+            {
+                auto recognized = sfzInstruments ? fileLicense (text, hint) : licenseText (text, hint);
+                if (! sfzInstruments && ! recognized)
+                    return fail ("Repository LICENSE does not establish one supported Creative Commons license");
+                if (! sfzInstruments && ! downloadLicenseAllowed (*recognized)) return fail (kRestrictedLicense);
+                if (! recognized) recognized = licenseKind ("Other");
+                pack.license = { recognized->id, text, path, sha256 (text),
+                    webBase + "/blob/" + revision + "/" + encode (path, true), recognized->constraints };
+                licensePaths.insert (path);
+            }
+        }
+    }
     if (licensePaths.size() > kMaxLicenseDocuments) return fail ("Repository contains too many licensing documents");
-    std::size_t licenseBytes = text.size();
+    std::size_t licenseBytes = pack.license.text.size();
     for (const auto& secondaryPath : licensePaths)
     {
-        if (secondaryPath == path) continue;
+        if (secondaryPath == pack.license.path) continue;
         const auto document = api (transport, base + "/contents/" + encode (secondaryPath, true) + "?ref=" + revision,
                                    400000, control);
         result.rateLimit = document.rateLimit;
@@ -824,14 +1011,30 @@ ProviderPackResult githubPack (HttpTransport& transport, const ProviderSummary& 
         const auto checked = validatePackLicenseDocument (pack.license, secondaryPath, secondaryText);
         if (! checked) return fail (checked.error + ": " + secondaryPath);
     }
+    std::optional<CatalogLookup> catalog;
+    if (sfzInstruments && pack.license.id.empty())
+    {
+        std::string text;
+        const auto fetched = githubCatalog (transport, text, control);
+        if (! fetched) { result.status = fetched.status; result.error = fetched.error; return result; }
+        catalog = catalogLookup (text, summary.locator);
+        pack.license = catalogLicense (*catalog, pack.sourceUrl);
+    }
     std::sort (pack.instruments.begin(), pack.instruments.end(), [] (const auto& a, const auto& b)
     { return a.relativePath < b.relativePath; });
     pack.presentation.stars = popularity (repository.json, "stargazers_count");
     try
     {
-        if (summary.sourceId == "sfzinstruments")
+        if (sfzInstruments)
         {
-            const auto demo = githubDemos (transport, summary.locator, pack.presentation, control);
+            if (! catalog)
+            {
+                std::string text;
+                const auto fetched = githubCatalog (transport, text, control);
+                if (! fetched) { result.status = fetched.status; result.error = fetched.error; return result; }
+                catalog = catalogLookup (text, summary.locator);
+            }
+            const auto demo = githubDemos (transport, *catalog, pack.presentation, control);
             if (! demo) { result.status = demo.status; result.error = demo.error; return result; }
         }
     }
@@ -1085,13 +1288,11 @@ ProviderPageResult browseProvider (HttpTransport& transport, const std::string& 
                 || (privateRepo != entry.end() && privateRepo->is_boolean() && privateRepo->get<bool>())) continue;
             summary.sourceUrl = "https://github.com/" + std::string (owner) + "/" + summary.locator;
             summary.licenseHint = string (dusk::json::child (entry, "license"), "spdx_id", 100);
-            const auto license = ccLicense (summary.licenseHint);
-            if (! summary.licenseHint.empty() && summary.licenseHint != "NOASSERTION"
-                && (! license || ! downloadLicenseAllowed (*license))) continue;
-            if (sourceId != "sfzinstruments" && ! license) continue;
+            const auto license = licenseKind (summary.licenseHint);
+            if (sourceId != "sfzinstruments" && (! license || ! downloadLicenseAllowed (*license))) continue;
             if (! catalog.empty())
             {
-                const auto metadata = catalogMetadata (catalog, summary.locator);
+                const auto metadata = catalogLookup (catalog, summary.locator).described;
                 if (metadata)
                 {
                     appendMetadataText (summary.description, metadata->description);
@@ -1220,12 +1421,15 @@ ProviderPackResult providerPackFromJson (std::string_view source, PackDescriptor
     pack.license = { string (license, "id", 100), string (license, "text", kMaxLicenseBytes),
         string (license, "path", 512), string (license, "sha256", 64), string (license, "source_url"),
         string (license, "constraints", 1024) };
-    const auto recognized = ccLicense (pack.license.id);
-    if (use == PackDescriptorUse::Download && recognized && ! downloadLicenseAllowed (*recognized))
+    const bool sfzInstruments = pack.sourceId == "sfzinstruments";
+    const auto recognized = licenseKind (pack.license.id);
+    if (use == PackDescriptorUse::Download && ! sfzInstruments && recognized && creativeCommons (*recognized)
+        && ! downloadLicenseAllowed (*recognized))
         return fail (kRestrictedLicense);
     std::string pathError;
     if (! decimalId (pack.packId) || pack.displayName.empty() || ! https (pack.sourceUrl) || ! https (pack.downloadUrl)
-        || ! https (pack.license.sourceUrl) || ! recognized || pack.license.text.empty()
+        || ! https (pack.license.sourceUrl) || ! recognized || (! sfzInstruments && ! creativeCommons (*recognized))
+        || pack.license.text.empty()
         || ! isSha256 (pack.license.sha256) || sha256 (pack.license.text) != pack.license.sha256
         || (! pack.expectedSha256.empty() && ! isSha256 (pack.expectedSha256))
         || (! pack.expectedRoot.empty() && (pack.expectedRoot.find ('/') != std::string::npos
@@ -1237,13 +1441,33 @@ ProviderPackResult providerPackFromJson (std::string_view source, PackDescriptor
         const auto prefix = "https://github.com/" + std::string (owner) + "/";
         const auto suffix = pack.downloadUrl.substr (std::min (pack.downloadUrl.size(), prefix.size()));
         const auto repository = suffix.substr (0, suffix.find ('/'));
+        const auto& terms = pack.license.sourceUrl;
+        const auto stated = [&pack] (const std::string& value) { return pack.license.text.find (value) != std::string::npos; };
+        const auto declaration = pack.license.text.substr (0, pack.license.text.find ('\n'));
+        bool licensed = false;
+        if (! pack.license.path.empty())
+            licensed = recognized->id != "Public-Domain" && recognized->id != "Unknown"
+                && terms == prefix + repository + "/blob/" + pack.releaseId + "/" + encode (pack.license.path, true)
+                && (sfzInstruments || use != PackDescriptorUse::Download || licenseText (pack.license.text, pack.license.id));
+        else if (sfzInstruments && recognized->id == "Unknown")
+            licensed = terms == pack.sourceUrl && declaration == "Unknown" && stated (pack.sourceUrl);
+        else if (sfzInstruments)
+        {
+            constexpr std::string_view site = "https://sfzinstruments.github.io/";
+            const auto page = terms.size() > site.size() + 1 && terms.compare (0, site.size(), site) == 0
+                && terms.back() == '/' ? terms.substr (site.size(), terms.size() - site.size() - 1) : std::string {};
+            const auto slash = page.find ('/');
+            const auto segment = [] (const std::string& value)
+            { return repositoryName (value) && value.find ('.') == std::string::npos; };
+            licensed = slash != std::string::npos && segment (page.substr (0, slash)) && segment (page.substr (slash + 1))
+                && (recognized->id == "Other" ? ! declaration.empty() : declaration == recognized->id)
+                && stated (terms) && stated (pack.sourceUrl);
+        }
         if (! gitSha (pack.releaseId) || ! pack.versionPinned || ! pack.expectedSha256.empty()
-            || ! githubRepositoryAllowed (pack.sourceId, repository) || pack.license.path.empty()
+            || ! githubRepositoryAllowed (pack.sourceId, repository)
             || pack.downloadUrl != prefix + repository + "/archive/" + pack.releaseId + ".zip"
             || pack.expectedRoot != repository + "-" + pack.releaseId
-            || pack.sourceUrl != prefix + repository + "/tree/" + pack.releaseId
-            || pack.license.sourceUrl != prefix + repository + "/blob/" + pack.releaseId + "/" + encode (pack.license.path, true)
-            || (use == PackDescriptorUse::Download && ! licenseText (pack.license.text, pack.license.id)))
+            || pack.sourceUrl != prefix + repository + "/tree/" + pack.releaseId || ! licensed)
             return fail ("Cached GitHub SFZ version is not pinned and licensed");
     }
     else if (pack.sourceId == "musical-artifacts")

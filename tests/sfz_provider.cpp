@@ -6,6 +6,7 @@
 #include <nlohmann/json.hpp>
 #include <sodium.h>
 
+#include <algorithm>
 #include <array>
 #include <filesystem>
 #include <functional>
@@ -134,14 +135,112 @@ ProviderSummary artifactSummary()
              "https://musical-artifacts.com/artifacts/77", "CC-BY-4.0" };
 }
 
-ProviderPack resolvedGithub()
+ProviderPack resolvedGithub (const std::string& source = "sfzinstruments")
 {
     FakeTransport transport;
     transport.replies = githubReplies();
-    const auto result = resolveProviderPack (transport, githubSummary());
+    auto summary = githubSummary();
+    summary.sourceId = source;
+    transport.replies[0].json["owner"]["login"] = source;
+    const auto result = resolveProviderPack (transport, summary);
     REQUIRE (result);
     REQUIRE (result.pack);
     return *result.pack;
+}
+
+std::string hashText (const std::string& text)
+{
+    REQUIRE (sodium_init() >= 0);
+    std::array<unsigned char, crypto_hash_sha256_BYTES> hash {};
+    crypto_hash_sha256 (hash.data(), reinterpret_cast<const unsigned char*> (text.data()), text.size());
+    std::array<char, crypto_hash_sha256_BYTES * 2 + 1> hex {};
+    sodium_bin2hex (hex.data(), hex.size(), hash.data(), hash.size());
+    return hex.data();
+}
+
+const std::string kUnlicense = R"(This is free and unencumbered software released into the public domain.
+
+Anyone is free to copy, modify, publish, use, compile, sell, or
+distribute this software, either in source code form or as a compiled
+binary, for any purpose, commercial or non-commercial, and by any
+means.
+
+In jurisdictions that recognize copyright laws, the author or authors
+of this software dedicate any and all copyright interest in the
+software to the public domain. We make this dedication for the benefit
+of the public at large and to the detriment of our heirs and
+successors. We intend this dedication to be an overt act of
+relinquishment in perpetuity of all present and future rights to this
+software under copyright law.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR
+OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+OTHER DEALINGS IN THE SOFTWARE.
+
+For more information, please refer to <https://unlicense.org>
+)";
+
+const std::string kCatalogUrl = "https://raw.githubusercontent.com/sfzinstruments/sfzinstruments.github.io/master/data/sfz/instruments.yml";
+
+// SFZ Instruments' catalog, trimmed to the entries these fixtures need; the shapes follow the live file.
+const std::string kSplendidEntry = "  - name:    \"Splendid Grand Piano\"\n    page:    \"splendid_grand_piano\"\n"
+    "  # version: \"\"\n    author:  \"AKAI\"\n    license: \"Public Domain\"\n"
+    "    url: \"https://github.com/sfzinstruments/SplendidGrandPiano/\"\n    download_size: \"77 MB\"\n"
+    "    short_description:\n      \"Steinway Piano.\"\n";
+const std::string kPianoCategory = "- name: \"Pianos\"\n  page: \"pianos\"\n  instruments:\n";
+const std::string kSmDrumsCatalog = "- name: \"Drums\"\n  page: \"drums\"\n  instruments:\n"
+    "  - name:    \"SM Drums\"\n    page:    \"sm_drums\"\n    version: \"1.2\"\n"
+    "    author:  \"Scott McLean, Tod Stillwell, Suleiman Ali\"\n    license: \"Public Domain\"\n"
+    "    url:     \"https://smmdrums.wordpress.com/for-sfz-sforzando/\"\n    download_size: \"2.2+ GB\"\n"
+    "    short_description: \"Deeply Sampled Free Drums for the Masses.\"\n    downloads:\n"
+    "    - label: \"Drum Kit\"\n      url: \"https://drive.google.com/file/d/1DHs_jQyNGfls6j3mvyO9F8DpK8vkySLa/view?usp=sharing\"\n"
+    "      format: \"wav\"\n";
+
+std::vector<Reply> unlicensedReplies (const std::string& name)
+{
+    auto replies = githubReplies();
+    replies[0].json = repository (42, name, "NOASSERTION");
+    replies[0].json["license"] = nullptr;
+    replies[2].json["tree"].erase (0);
+    replies.pop_back();
+    return replies;
+}
+
+ProviderSummary summaryFor (const std::string& name, const std::string& source = "sfzinstruments")
+{
+    const std::string owner = source == "versilian" ? "sgossner" : source;
+    return { source, "42", name, name, owner, {}, "https://github.com/" + owner + "/" + name, {} };
+}
+
+std::string treeUrl (const std::string& name)
+{
+    return "https://github.com/sfzinstruments/" + name + "/tree/" + kCommit;
+}
+
+std::string unknownDeclaration (const std::string& name)
+{
+    return "Unknown\nNo license Dusk Studio can read was found at " + treeUrl (name) + " or in the SFZ Instruments catalog.";
+}
+
+ProviderPack resolvedFromCatalog (const std::string& name, const std::string& catalog)
+{
+    FakeTransport transport;
+    transport.replies = unlicensedReplies (name);
+    transport.replies.push_back ({ {}, 200, {}, catalog });
+    const auto result = resolveProviderPack (transport, summaryFor (name));
+    REQUIRE (result);
+    REQUIRE (result.pack);
+    return *result.pack;
+}
+
+std::size_t requestsTo (const FakeTransport& transport, const std::string& fragment)
+{
+    return static_cast<std::size_t> (std::count_if (transport.requests.begin(), transport.requests.end(),
+        [&fragment] (const HttpRequest& request) { return request.url.find (fragment) != std::string::npos; }));
 }
 } // namespace
 
@@ -253,7 +352,7 @@ TEST_CASE ("Versilian SFZ resolution requires a published release of an approved
     CHECK (transport.requests.size() <= 2);
 }
 
-TEST_CASE ("SFZ Instruments browsing filters known non-CC licenses and retains pagination", "[sfz][provider]")
+TEST_CASE ("SFZ Instruments browsing lists every repository and retains pagination", "[sfz][provider]")
 {
     FakeTransport transport;
     auto item = repository();
@@ -270,11 +369,12 @@ TEST_CASE ("SFZ Instruments browsing filters known non-CC licenses and retains p
                              { "x-ratelimit-remaining", "57" } } } };
     const auto result = browseProvider (transport, "sfzinstruments");
     REQUIRE (result);
-    REQUIRE (result.items.size() == 2);
+    REQUIRE (result.items.size() == 3);
     CHECK (result.items[0].packId == "42");
     CHECK (result.items[0].presentation.stars == stars);
     CHECK_FALSE (result.items[0].presentation.favorites);
-    CHECK (result.items[1].licenseHint == "NOASSERTION");
+    CHECK (result.items[1].licenseHint == "GPL-3.0");
+    CHECK (result.items[2].licenseHint == "NOASSERTION");
     CHECK (result.nextPage == 2);
     CHECK (result.rateLimit.remaining == "57");
     CHECK (transport.requests.front().headers.at ("accept") == "application/vnd.github+json");
@@ -466,8 +566,10 @@ TEST_CASE ("SFZ Instruments does not accept SPDX hints without actual matching l
 {
     FakeTransport transport;
     bool combinedLimit = false;
+    std::string shown = "Other";
     const auto secondaryLicense = [&] (const std::string& text, const std::string& path = "Samples/LICENSE.txt")
     {
+        shown = "CC-BY-4.0";
         transport.replies = githubReplies();
         transport.replies[2].json["tree"].push_back (
             { { "path", path }, { "type", "blob" }, { "mode", "100644" } });
@@ -513,6 +615,7 @@ TEST_CASE ("SFZ Instruments does not accept SPDX hints without actual matching l
     SECTION ("Combined licensing bytes are bounded")
     {
         combinedLimit = true;
+        shown = "CC-BY-4.0";
         transport.replies = githubReplies();
         const auto text = kLicenseText + std::string (kMaxLicenseBytes - kLicenseText.size(), ' ');
         for (int i = 0; i < 11; ++i)
@@ -586,9 +689,18 @@ TEST_CASE ("SFZ Instruments does not accept SPDX hints without actual matching l
     { transport.replies = githubReplies ("Code: " + kLicenseText); }
     SECTION ("An exception to the grant needs manual licensing review")
     { transport.replies = githubReplies (kLicenseText + "\nThe samples are not covered by this license."); }
-    const auto result = resolveProviderPack (transport, githubSummary());
+    FakeTransport sfzInstruments;
+    sfzInstruments.replies = transport.replies;
+    auto summary = githubSummary();
+    summary.sourceId = "freepats";
+    transport.replies[0].json["owner"]["login"] = "freepats";
+    const auto result = resolveProviderPack (transport, summary);
     CHECK_FALSE (result);
     if (combinedLimit) CHECK (result.error.find ("combined size limit") != std::string::npos);
+    const auto displayed = resolveProviderPack (sfzInstruments, githubSummary());
+    REQUIRE (displayed);
+    CHECK (displayed.pack->license.id == shown);
+    CHECK (requestsTo (sfzInstruments, "/contents/") == 0);
 }
 
 TEST_CASE ("SFZ Instruments accepts formal Creative Commons license text", "[sfz][provider][issue-903]")
@@ -745,12 +857,13 @@ TEST_CASE ("Musical Artifacts preserves license constraints and version distinct
     }
 }
 
-TEST_CASE ("GitHub SFZ sources refuse restricted licenses in listings and resolved packs", "[sfz][provider]")
+TEST_CASE ("FreePats and Versilian refuse restricted licenses that SFZ Instruments packs show", "[sfz][provider]")
 {
     for (const std::string source : { "sfzinstruments", "freepats", "versilian" })
         for (const auto& license : kLicenseExamples)
         {
             CAPTURE (source, license.id);
+            const bool admitted = license.allowed || source == "sfzinstruments";
             const std::string owner = source == "versilian" ? "sgossner" : source;
             const std::string name = source == "versilian" ? "VSCO-2-CE" : "Grand-Piano";
             auto item = repository (42, name, license.id);
@@ -759,7 +872,7 @@ TEST_CASE ("GitHub SFZ sources refuse restricted licenses in listings and resolv
             listing.replies = { { Json::array ({ item }) } };
             const auto page = browseProvider (listing, source);
             REQUIRE (page);
-            CHECK (page.items.size() == (license.allowed ? 1 : 0));
+            CHECK (page.items.size() == (admitted ? 1 : 0));
 
             FakeTransport transport;
             transport.replies = githubReplies (license.title);
@@ -771,8 +884,8 @@ TEST_CASE ("GitHub SFZ sources refuse restricted licenses in listings and resolv
             ProviderSummary summary { source, "42", name, name, owner, {},
                 "https://github.com/" + owner + "/" + name, "NOASSERTION" };
             const auto result = resolveProviderPack (transport, summary);
-            REQUIRE (static_cast<bool> (result) == license.allowed);
-            if (license.allowed)
+            REQUIRE (static_cast<bool> (result) == admitted);
+            if (admitted)
             {
                 REQUIRE (result.pack);
                 CHECK (result.pack->license.id == license.id);
@@ -782,9 +895,10 @@ TEST_CASE ("GitHub SFZ sources refuse restricted licenses in listings and resolv
                     {
                         auto cached = *result.pack;
                         cached.license.id = restricted.id;
-                        const auto refused = providerPackFromJson (providerPackToJson (cached));
-                        CHECK_FALSE (refused);
-                        CHECK (refused.error.find ("NonCommercial and NoDerivatives") != std::string::npos);
+                        const auto descriptor = providerPackFromJson (providerPackToJson (cached));
+                        CHECK (static_cast<bool> (descriptor) == (source == "sfzinstruments"));
+                        if (source != "sfzinstruments")
+                            CHECK (descriptor.error.find ("NonCommercial and NoDerivatives") != std::string::npos);
                     }
             }
             else
@@ -845,7 +959,8 @@ TEST_CASE ("SFZ providers report rate limits and browser challenges without bypa
         const auto result = browseProvider (transport, "sfzinstruments");
         CHECK_FALSE (result);
         CHECK (result.rateLimit.remaining == "0");
-        CHECK (result.error.find ("rate limit") != std::string::npos);
+        CHECK (result.rateLimit.limited);
+        CHECK (result.error == "Repository rate limit reached; the source link remains available.");
     }
     SECTION ("Retry-After response")
     {
@@ -853,12 +968,43 @@ TEST_CASE ("SFZ providers report rate limits and browser challenges without bypa
         const auto result = browseProvider (transport, "musical-artifacts");
         CHECK_FALSE (result);
         CHECK (result.rateLimit.retryAfter == "120");
+        CHECK (result.rateLimit.limited);
+    }
+    SECTION ("A 403 with only Retry-After is a rate limit")
+    {
+        transport.replies = { { { { "message", "You have exceeded a secondary rate limit" } }, 403, { { "retry-after", "60" } } } };
+        const auto result = browseProvider (transport, "sfzinstruments");
+        CHECK_FALSE (result);
+        CHECK (result.rateLimit.limited);
+        CHECK (result.error == "Repository rate limit reached; the source link remains available.");
+    }
+    SECTION ("A 404 with rate-limit headers is not a rate limit")
+    {
+        transport.replies = { { { { "message", "Not Found" } }, 404,
+                               { { "x-ratelimit-remaining", "4999" }, { "x-ratelimit-reset", "1793503601" } } } };
+        const auto result = browseProvider (transport, "sfzinstruments");
+        CHECK_FALSE (result);
+        CHECK_FALSE (result.rateLimit.limited);
+        CHECK (result.rateLimit.remaining == "4999");
+        CHECK (result.rateLimit.reset == "1793503601");
+        CHECK (result.error == "Repository request failed (HTTP 404).");
+    }
+    SECTION ("A denied 403 without rate-limit signals is not a rate limit")
+    {
+        transport.replies = { { { { "message", "Forbidden" } }, 403, { { "x-ratelimit-remaining", "12" } } } };
+        const auto result = browseProvider (transport, "sfzinstruments");
+        CHECK_FALSE (result);
+        CHECK_FALSE (result.rateLimit.limited);
+        CHECK (result.error.find ("denied API access") != std::string::npos);
     }
     SECTION ("HTML anti-bot response")
     {
         transport.replies = { { {}, 403, { { "content-type", "text/html" } }, "<html>Just a moment...</html>" } };
+        SECTION ("Without Retry-After") {}
+        SECTION ("With Retry-After") { transport.replies.front().headers["retry-after"] = "30"; }
         const auto result = browseProvider (transport, "musical-artifacts");
         CHECK_FALSE (result);
+        CHECK_FALSE (result.rateLimit.limited);
         CHECK (result.error.find ("browser or anti-bot") != std::string::npos);
     }
     CHECK (transport.requests.size() == 1);
@@ -885,7 +1031,6 @@ TEST_CASE ("SFZ cached descriptors validate paths, pins, and license receipts of
         REQUIRE (result);
         CHECK (result.pack->releaseId == pack.releaseId);
         CHECK (result.pack->instruments.front().id == pack.instruments.front().id);
-        return;
     }
     SECTION ("Presentation does not change receipt or resume identity")
     {
@@ -902,12 +1047,12 @@ TEST_CASE ("SFZ cached descriptors validate paths, pins, and license receipts of
         CHECK_FALSE (result.pack->presentation.stars);
         CHECK_FALSE (result.pack->presentation.favorites);
         CHECK (result.pack->presentation.demos.empty());
-        return;
     }
     SECTION ("Installed receipts retain licensing admitted before stricter download rules")
     {
         auto installed = pack;
-        SECTION ("GitHub") {}
+        bool downloadable = false;
+        SECTION ("FreePats") { installed = resolvedGithub ("freepats"); }
         SECTION ("Musical Artifacts")
         {
             FakeTransport transport;
@@ -916,28 +1061,459 @@ TEST_CASE ("SFZ cached descriptors validate paths, pins, and license receipts of
             REQUIRE (result);
             installed = *result.pack;
         }
+        SECTION ("SFZ Instruments downloads whatever license it carries") { downloadable = true; }
         installed.license.text += "\nSamples have a separate license.\n";
-        REQUIRE (sodium_init() >= 0);
-        std::array<unsigned char, crypto_hash_sha256_BYTES> hash {};
-        crypto_hash_sha256 (hash.data(), reinterpret_cast<const unsigned char*> (installed.license.text.data()),
-                            installed.license.text.size());
-        std::array<char, crypto_hash_sha256_BYTES * 2 + 1> hex {};
-        sodium_bin2hex (hex.data(), hex.size(), hash.data(), hash.size());
-        installed.license.sha256 = hex.data();
+        installed.license.sha256 = hashText (installed.license.text);
         const auto serialized = providerPackToJson (installed);
         REQUIRE (providerPackFromJson (serialized, PackDescriptorUse::InstalledReceipt));
-        CHECK_FALSE (providerPackFromJson (serialized));
-        return;
+        CHECK (static_cast<bool> (providerPackFromJson (serialized)) == downloadable);
     }
-    SECTION ("Traversal path") { cached["instruments"][0]["path"] = "../Piano.sfz"; }
-    SECTION ("Mutable Git branch") { cached["release_id"] = "main"; }
-    SECTION ("Tampered license text") { cached["license"]["text"] = "MIT License"; }
-    SECTION ("Different download pin") { cached["download_url"] = "https://github.com/sfzinstruments/Grand-Piano/archive/main.zip"; }
-    SECTION ("Invented upstream checksum") { cached["expected_sha256"] = kArchiveHash; }
-    SECTION ("Unsafe instrument identity") { cached["instruments"][0]["id"] = "../id"; }
-    SECTION ("Invalid field type") { cached["version_pinned"] = 1; }
-    CHECK_FALSE (providerPackFromJson (cached.dump()));
-    CHECK_FALSE (providerPackFromJson (cached.dump(), PackDescriptorUse::InstalledReceipt));
+    SECTION ("Catalog declarations and undeclared packs stay valid offline")
+    {
+        auto declared = resolvedFromCatalog ("SMDrums", kSmDrumsCatalog);
+        SECTION ("Declared by the catalog") { CHECK (declared.license.id == "Public-Domain"); }
+        SECTION ("No license stated")
+        {
+            declared = resolvedFromCatalog ("Krumhorn", kSmDrumsCatalog);
+            CHECK (declared.license.id == "Unknown");
+        }
+        SECTION ("Another value the catalog states")
+        {
+            declared = resolvedFromCatalog ("SMDrums", std::string (kSmDrumsCatalog).replace (
+                kSmDrumsCatalog.find ("Public Domain"), 13, "Custom"));
+            CHECK (declared.license.id == "Other");
+        }
+        for (const auto use : { PackDescriptorUse::Download, PackDescriptorUse::InstalledReceipt })
+        {
+            const auto result = providerPackFromJson (providerPackToJson (declared), use);
+            REQUIRE (result);
+            CHECK (result.pack->license.id == declared.license.id);
+            CHECK (result.pack->license.path.empty());
+            CHECK (result.pack->license.constraints == declared.license.constraints);
+        }
+    }
+    SECTION ("Declarations without a license file must name their catalog page or tree")
+    {
+        auto declared = resolvedFromCatalog ("SMDrums", kSmDrumsCatalog);
+        const auto rehash = [&declared] { declared.license.sha256 = hashText (declared.license.text); };
+        SECTION ("Foreign declaration source")
+        {
+            declared.license.sourceUrl = "https://example.org/drums/sm_drums/";
+            declared.license.text = "Public-Domain\nDeclared in the SFZ Instruments catalog: " + declared.license.sourceUrl
+                + "\nRepository: " + declared.sourceUrl;
+            rehash();
+        }
+        SECTION ("Unsafe catalog page")
+        {
+            declared.license.sourceUrl = "https://sfzinstruments.github.io/drums/../sm_drums/";
+            declared.license.text = "Public-Domain\nDeclared in the SFZ Instruments catalog: " + declared.license.sourceUrl
+                + "\nRepository: " + declared.sourceUrl;
+            rehash();
+        }
+        SECTION ("First line differs from the license")
+        {
+            declared.license.text.replace (0, 13, "CC0-1.0");
+            rehash();
+        }
+        SECTION ("Repository missing from the declaration")
+        {
+            declared.license.text = declared.license.text.substr (0, declared.license.text.find ("\nRepository: "));
+            rehash();
+        }
+        SECTION ("Undeclared pack with a foreign source")
+        {
+            declared = resolvedFromCatalog ("Krumhorn", kSmDrumsCatalog);
+            declared.license.sourceUrl = "https://example.org/Krumhorn";
+        }
+        SECTION ("Undeclared pack whose text names another tree")
+        {
+            declared = resolvedFromCatalog ("Krumhorn", kSmDrumsCatalog);
+            declared.license.text = unknownDeclaration ("Clavecin");
+            rehash();
+        }
+        SECTION ("Another GitHub source")
+        {
+            declared = resolvedFromCatalog ("SMDrums", std::string (kSmDrumsCatalog).replace (
+                kSmDrumsCatalog.find ("Public Domain"), 13, "CC0-1.0"));
+            REQUIRE (declared.license.id == "CC0-1.0");
+            declared.sourceId = "freepats";
+            for (auto* url : { &declared.sourceUrl, &declared.downloadUrl })
+                url->replace (url->find ("sfzinstruments"), 14, "freepats");
+            declared.license.text.replace (declared.license.text.find ("github.com/sfzinstruments"), 25, "github.com/freepats");
+            rehash();
+        }
+        CHECK_FALSE (providerPackFromJson (providerPackToJson (declared)));
+        CHECK_FALSE (providerPackFromJson (providerPackToJson (declared), PackDescriptorUse::InstalledReceipt));
+    }
+    SECTION ("Musical Artifacts descriptors refuse the SFZ Instruments license kinds")
+    {
+        FakeTransport transport;
+        transport.replies = { { artifact() }, { artifactLicenses() } };
+        const auto result = resolveProviderPack (transport, artifactSummary());
+        REQUIRE (result);
+        for (const auto* id : { "Unlicense", "Public-Domain", "Unknown", "Other" })
+        {
+            CAPTURE (id);
+            auto foreign = *result.pack;
+            foreign.license.id = id;
+            foreign.license.text = std::string (id) + "\n" + foreign.license.text;
+            foreign.license.sha256 = hashText (foreign.license.text);
+            CHECK_FALSE (providerPackFromJson (providerPackToJson (foreign)));
+            CHECK_FALSE (providerPackFromJson (providerPackToJson (foreign), PackDescriptorUse::InstalledReceipt));
+        }
+    }
+    SECTION ("Tampered descriptors are refused")
+    {
+        SECTION ("Traversal path") { cached["instruments"][0]["path"] = "../Piano.sfz"; }
+        SECTION ("Mutable Git branch") { cached["release_id"] = "main"; }
+        SECTION ("Tampered license text") { cached["license"]["text"] = "MIT License"; }
+        SECTION ("Different download pin") { cached["download_url"] = "https://github.com/sfzinstruments/Grand-Piano/archive/main.zip"; }
+        SECTION ("Invented upstream checksum") { cached["expected_sha256"] = kArchiveHash; }
+        SECTION ("Unsafe instrument identity") { cached["instruments"][0]["id"] = "../id"; }
+        SECTION ("Invalid field type") { cached["version_pinned"] = 1; }
+        SECTION ("License file kind without a file")
+        {
+            cached["license"]["id"] = "Unknown";
+            SECTION ("Unknown") {}
+            SECTION ("Public domain") { cached["license"]["id"] = "Public-Domain"; }
+        }
+        CHECK_FALSE (providerPackFromJson (cached.dump()));
+        CHECK_FALSE (providerPackFromJson (cached.dump(), PackDescriptorUse::InstalledReceipt));
+    }
+}
+
+TEST_CASE ("GitHub SFZ packs without a license file use the SFZ Instruments catalog's declaration", "[sfz][provider]")
+{
+    std::string name = "SplendidGrandPiano", catalog = kPianoCategory + kSplendidEntry, page = "pianos/splendid_grand_piano";
+    std::string id = "Public-Domain", declaration = "Public-Domain";
+    std::string constraints = "Public domain as declared by the SFZ Instruments catalog; no attribution condition.";
+    bool licenseFile = false;
+    FakeTransport transport;
+    transport.replies = unlicensedReplies (name);
+    const auto declare = [&] (const std::string& value) { catalog.replace (catalog.find ("Public Domain"), 13, value); };
+    SECTION ("A linked Public Domain entry declares the pack") {}
+    SECTION ("A Creative Commons entry keeps its attribution condition")
+    { declare ("CC-BY-4.0"); id = declaration = "CC-BY-4.0"; constraints = "Attribution required."; }
+    SECTION ("A NonCommercial entry downloads and shows its restriction")
+    {
+        declare ("CC-BY-NC-SA-3.0");
+        id = declaration = "CC-BY-NC-SA-3.0";
+        constraints = "Attribution required. NonCommercial restriction. ShareAlike requirement.";
+    }
+    SECTION ("An unrecognised catalog value is shown as written")
+    {
+        declare ("Custom");
+        id = "Other";
+        declaration = "Custom";
+        constraints = "Dusk Studio does not recognize these terms. Read them before you use or share these samples.";
+    }
+    SECTION ("SM Drums uses its reviewed catalog link")
+    {
+        name = "SMDrums";
+        transport.replies = unlicensedReplies (name);
+        catalog = kSmDrumsCatalog;
+        page = "drums/sm_drums";
+    }
+    SECTION ("A license file GitHub cannot identify falls through to the catalog")
+    {
+        licenseFile = true;
+        transport.replies[2].json["tree"].push_back ({ { "path", "LICENSE.txt" }, { "type", "blob" }, { "mode", "100644" } });
+        transport.replies.push_back ({ { { "message", "Not Found" } }, 404,
+                                       { { "x-ratelimit-remaining", "4999" }, { "x-ratelimit-reset", "1793503601" } } });
+    }
+    SECTION ("Licensing documents elsewhere in the tree are neither fetched nor refused")
+    {
+        for (const auto* path : { "Samples/LICENSE.txt", "LICENSES/audio.txt", "Samples/a.wav.license" })
+            transport.replies[2].json["tree"].push_back ({ { "path", path }, { "type", "blob" }, { "mode", "100644" } });
+    }
+    transport.replies.push_back ({ {}, 200, {}, catalog });
+    transport.replies.push_back ({ {}, 200, {}, "<audio src=\"/assets/audio/" + page + ".mp3\"></audio>" });
+    const auto result = resolveProviderPack (transport, summaryFor (name));
+    INFO (result.error);
+    REQUIRE (result);
+    REQUIRE (result.pack);
+    const auto& license = result.pack->license;
+    const auto source = "https://sfzinstruments.github.io/" + page + "/";
+    CHECK (license.id == id);
+    CHECK (license.path.empty());
+    CHECK (license.sourceUrl == source);
+    CHECK (license.text == declaration + "\nDeclared in the SFZ Instruments catalog: " + source + "\nRepository: " + treeUrl (name));
+    CHECK (license.constraints == constraints);
+    CHECK (requestsTo (transport, "/license?ref=") == (licenseFile ? 1u : 0u));
+    CHECK (requestsTo (transport, "/contents/") == 0);
+    CHECK (requestsTo (transport, kCatalogUrl) == 1);
+    CHECK (result.pack->presentation.demos.size() == (name == "SplendidGrandPiano" ? 1u : 0u));
+    for (const auto use : { PackDescriptorUse::Download, PackDescriptorUse::InstalledReceipt })
+        CHECK (providerPackFromJson (providerPackToJson (*result.pack), use));
+}
+
+TEST_CASE ("SFZ Instruments packs with no license stated anywhere download with a warning", "[sfz][provider]")
+{
+    std::string name = "Krumhorn", source = "sfzinstruments", catalog = kPianoCategory + kSplendidEntry, refusal;
+    int catalogStatus = 200;
+    FakeTransport transport;
+    transport.replies = unlicensedReplies (name);
+    const auto repositoryNamed = [&] (const std::string& value) { name = value; transport.replies = unlicensedReplies (name); };
+    SECTION ("The catalog has no entry for the repository") {}
+    SECTION ("A catalog entry that states no license")
+    {
+        repositoryNamed ("Terkelsen.Marimba");
+        catalog = "- name: \"Melodic Percussion\"\n  page: \"melodic-percussion\"\n  instruments:\n"
+            "  - name:    \"Terkelsen's Marimba\"\n    page:    \"terkelsen_marimba\"\n    # license: \"unknown\"\n"
+            "    url:     \"https://github.com/sfzinstruments/Terkelsen.Marimba\"\n    downloads:\n"
+            "    - label: \"Instrument\"\n"
+            "      url: \"https://github.com/sfzinstruments/Terkelsen.Marimba/archive/refs/heads/master.zip\"\n";
+    }
+    SECTION ("A catalog entry whose license is unknown")
+    {
+        repositoryNamed ("SplendidGrandPiano");
+        catalog.replace (catalog.find ("Public Domain"), 13, "unknown");
+    }
+    SECTION ("An archive link in another entry makes the catalog ambiguous")
+    {
+        repositoryNamed ("SplendidGrandPiano");
+        catalog += "  - name:    \"Other Piano\"\n    page:    \"other_piano\"\n    downloads:\n    - label: \"Instrument\"\n"
+            "      url: \"https://github.com/sfzinstruments/SplendidGrandPiano/archive/refs/heads/master.zip\"\n";
+    }
+    SECTION ("A title-only match is not a declaration")
+    {
+        repositoryNamed ("akai.Splendid-Grand-Piano");
+        const std::string link = "https://github.com/sfzinstruments/SplendidGrandPiano/";
+        catalog.replace (catalog.find (link), link.size(), "https://example.org/splendid");
+    }
+    SECTION ("The SM Drums link is not used once its entry links a repository")
+    {
+        repositoryNamed ("SMDrums");
+        catalog = kSmDrumsCatalog;
+        catalog.replace (catalog.find ("https://smmdrums.wordpress.com/for-sfz-sforzando/"), 49,
+                         "https://github.com/sfzinstruments/SMDrums-Samples/");
+    }
+    SECTION ("A comment-only license states none")
+    {
+        repositoryNamed ("SplendidGrandPiano");
+        catalog.replace (catalog.find ("\"Public Domain\""), 15, "# see README");
+    }
+    SECTION ("A link in another entry is a reference whatever its suffix")
+    {
+        repositoryNamed ("SplendidGrandPiano");
+        std::string link;
+        SECTION ("Git clone URL") { link = "    url:     \"https://github.com/sfzinstruments/SplendidGrandPiano.git\"\n"; }
+        SECTION ("End of a sentence")
+        { link = "    short_description: \"Mapped from github.com/sfzinstruments/SplendidGrandPiano.\"\n"; }
+        catalog += "  - name:    \"Other Piano\"\n    page:    \"other_piano\"\n" + link;
+    }
+    SECTION ("A duplicated license is unreadable")
+    {
+        repositoryNamed ("SplendidGrandPiano");
+        catalog += "    license: \"CC0-1.0\"\n";
+    }
+    SECTION ("A license value outside plain scalars is unreadable")
+    {
+        repositoryNamed ("SplendidGrandPiano");
+        catalog.replace (catalog.find ("\"Public Domain\""), 15, "[CC0-1.0]");
+    }
+    SECTION ("A malformed catalog is not trusted")
+    {
+        repositoryNamed ("SplendidGrandPiano");
+        catalog = "\t" + catalog;
+    }
+    SECTION ("An unavailable catalog is not trusted")
+    {
+        repositoryNamed ("SplendidGrandPiano");
+        catalogStatus = 503;
+    }
+    SECTION ("Repositories without samples are refused")
+    {
+        transport.replies[2].json["tree"].erase (2);
+        refusal = "This repository has SFZ files but no samples to download.";
+    }
+    SECTION ("FreePats repositories without a license file are refused")
+    {
+        source = "freepats";
+        transport.replies[0].json["owner"]["login"] = "freepats";
+        refusal = "This repository has no license file, so Dusk Studio cannot check its terms. Open the source website.";
+    }
+    transport.replies.push_back ({ {}, catalogStatus, {}, catalog });
+    transport.replies.push_back ({ {}, 200, {}, "<p>No preview published.</p>" });
+    const auto result = resolveProviderPack (transport, summaryFor (name, source));
+    if (! refusal.empty())
+    {
+        CHECK_FALSE (result);
+        CHECK (result.error == refusal);
+        CHECK (transport.requests.size() == 3);
+    }
+    else
+    {
+        INFO (result.error);
+        REQUIRE (result);
+        REQUIRE (result.pack);
+        const auto& license = result.pack->license;
+        CHECK (license.id == "Unknown");
+        CHECK (license.path.empty());
+        CHECK (license.sourceUrl == treeUrl (name));
+        CHECK (license.text == unknownDeclaration (name));
+        CHECK (license.constraints == "No license is stated. Check the source's terms before you use or share these samples.");
+        CHECK (requestsTo (transport, "/license?ref=") == 0);
+        CHECK (requestsTo (transport, kCatalogUrl) == 1);
+        if (name == "akai.Splendid-Grand-Piano")
+            CHECK (result.pack->presentation.categoryHint.find ("Steinway Piano.") != std::string::npos);
+        for (const auto use : { PackDescriptorUse::Download, PackDescriptorUse::InstalledReceipt })
+            CHECK (providerPackFromJson (providerPackToJson (*result.pack), use));
+    }
+}
+
+TEST_CASE ("GitHub SFZ packs accept the Unlicense as a public-domain dedication", "[sfz][provider]")
+{
+    SECTION ("Listings keep Unlicense repositories from SFZ Instruments only")
+    {
+        for (const std::string source : { "sfzinstruments", "freepats" })
+        {
+            CAPTURE (source);
+            auto item = repository (42, "jlearman.SteelDrum", "Unlicense");
+            item["owner"]["login"] = source;
+            FakeTransport listing;
+            listing.replies = { { Json::array ({ item }) } };
+            const auto page = browseProvider (listing, source);
+            REQUIRE (page);
+            CHECK (page.items.size() == (source == "sfzinstruments" ? 1u : 0u));
+        }
+    }
+    SECTION ("License files")
+    {
+        std::string text = kUnlicense, hint = "Unlicense", expected = "Unlicense", source = "sfzinstruments";
+        std::string path = "LICENSE", refusal;
+        const auto link = text.find ("https://unlicense.org");
+        SECTION ("Canonical text") {}
+        SECTION ("The http link of older copies") { text.replace (link, 21, "http://unlicense.org"); }
+        SECTION ("A trailing slash and rewrapped lines")
+        {
+            text.replace (link, 21, "https://unlicense.org/");
+            std::replace (text.begin(), text.end(), '\n', ' ');
+            text = "  " + text;
+        }
+        SECTION ("Without GitHub's detection") { hint = "NOASSERTION"; }
+        SECTION ("Altered text is not the Unlicense")
+        { text.replace (text.find ("any purpose"), 11, "noncommercial purposes"); expected = "Other"; }
+        SECTION ("A conflicting detection is not the Unlicense") { hint = "CC0-1.0"; expected = "Other"; }
+        SECTION ("FreePats keeps its Creative Commons rule")
+        {
+            source = "freepats";
+            expected.clear();
+            refusal = "Repository LICENSE does not establish one supported Creative Commons license";
+        }
+        SECTION ("A root UNLICENSE file")
+        {
+            path = "UNLICENSE";
+            SECTION ("SFZ Instruments") {}
+            SECTION ("FreePats keeps its Creative Commons rule")
+            {
+                source = "freepats";
+                expected.clear();
+                refusal = "Repository LICENSE does not establish one supported Creative Commons license";
+            }
+        }
+        FakeTransport transport;
+        transport.replies = githubReplies (text);
+        transport.replies[0].json = repository (42, "jlearman.SteelDrum", hint);
+        transport.replies[0].json["owner"]["login"] = source;
+        transport.replies[2].json["tree"][0]["path"] = path;
+        transport.replies.back().json["path"] = path;
+        transport.replies.back().json["license"]["spdx_id"] = hint;
+        const auto result = resolveProviderPack (transport, summaryFor ("jlearman.SteelDrum", source));
+        INFO (result.error);
+        REQUIRE (static_cast<bool> (result) == ! expected.empty());
+        CHECK (requestsTo (transport, "/license?ref=") == 1);
+        if (! refusal.empty()) CHECK (result.error == refusal);
+        if (result)
+        {
+            const auto& license = result.pack->license;
+            CHECK (license.id == expected);
+            CHECK (license.text == text);
+            CHECK (license.path == path);
+            CHECK (license.sourceUrl == "https://github.com/sfzinstruments/jlearman.SteelDrum/blob/" + kCommit + "/" + path);
+            if (expected == "Unlicense")
+                CHECK (license.constraints == "Unlicense public-domain dedication; no attribution condition.");
+            CHECK (providerPackFromJson (providerPackToJson (*result.pack)));
+        }
+    }
+}
+
+TEST_CASE ("SFZ Instruments packs download whatever license they carry", "[sfz][provider]")
+{
+    SECTION ("Listings keep NonCommercial, MIT and GPL repositories from SFZ Instruments only")
+    {
+        for (const std::string source : { "sfzinstruments", "freepats" })
+        {
+            CAPTURE (source);
+            auto items = Json::array();
+            unsigned id = 42;
+            for (const auto* hint : { "CC-BY-NC-4.0", "MIT", "GPL-3.0", "NOASSERTION" })
+            {
+                auto item = repository (id, "Pack-" + std::to_string (id), hint);
+                item["owner"]["login"] = source;
+                items.push_back (item);
+                ++id;
+            }
+            FakeTransport listing;
+            listing.replies = { { items } };
+            const auto page = browseProvider (listing, source);
+            REQUIRE (page);
+            CHECK (page.items.size() == (source == "sfzinstruments" ? 4u : 0u));
+        }
+    }
+    SECTION ("Resolved packs")
+    {
+        std::string text = kLicenseText, hint = "CC-BY-4.0", expected = "CC-BY-4.0", source = "sfzinstruments";
+        std::string constraints = "Attribution required.";
+        bool nested = false;
+        const std::string nonCommercial = "Creative Commons Attribution-NonCommercial 4.0 International Public License\n"
+            "https://creativecommons.org/licenses/by-nc/4.0/\n";
+        SECTION ("A NonCommercial license file")
+        {
+            text = nonCommercial;
+            hint = expected = "CC-BY-NC-4.0";
+            constraints = "Attribution required. NonCommercial restriction.";
+        }
+        SECTION ("Custom terms are shown as unrecognised")
+        {
+            text = "Free for personal use only. Ask the author before you sell anything made with these samples.\n";
+            hint = "NOASSERTION";
+            expected = "Other";
+            constraints = "Dusk Studio does not recognize these terms. Read them before you use or share these samples.";
+        }
+        SECTION ("Conflicting nested licensing documents are not fetched") { nested = true; }
+        SECTION ("FreePats still refuses NonCommercial")
+        {
+            text = nonCommercial;
+            hint = "CC-BY-NC-4.0";
+            source = "freepats";
+            expected.clear();
+        }
+        FakeTransport transport;
+        transport.replies = githubReplies (text);
+        transport.replies[0].json["license"]["spdx_id"] = hint;
+        transport.replies[0].json["owner"]["login"] = source;
+        transport.replies.back().json["license"]["spdx_id"] = hint;
+        if (nested)
+            for (const auto* path : { "Samples/LICENSE.txt", "LICENSES/audio.txt", "Samples/a.wav.license" })
+                transport.replies[2].json["tree"].push_back ({ { "path", path }, { "type", "blob" }, { "mode", "100644" } });
+        const auto result = resolveProviderPack (transport, summaryFor ("Grand-Piano", source));
+        INFO (result.error);
+        REQUIRE (static_cast<bool> (result) == ! expected.empty());
+        if (result)
+        {
+            const auto& license = result.pack->license;
+            CHECK (license.id == expected);
+            CHECK (license.text == text);
+            CHECK (license.path == "LICENSE");
+            CHECK (license.sourceUrl == "https://github.com/sfzinstruments/Grand-Piano/blob/" + kCommit + "/LICENSE");
+            CHECK (license.constraints == constraints);
+            CHECK (requestsTo (transport, "/contents/") == 0);
+            for (const auto use : { PackDescriptorUse::Download, PackDescriptorUse::InstalledReceipt })
+                CHECK (providerPackFromJson (providerPackToJson (*result.pack), use));
+        }
+        else CHECK (result.error.find ("NonCommercial and NoDerivatives") != std::string::npos);
+    }
 }
 
 TEST_CASE ("SFZ repository artwork uses declared images and immutable repository paths", "[sfz][provider][artwork]")

@@ -349,8 +349,10 @@ std::optional<ScenarioResult> runLive (GuiHost& host, ScenarioContext& ctx)
         const auto& license = pack.license.id;
         const std::array<const char*, 11> allowed { "CC0-1.0", "CC-BY-1.0", "CC-BY-2.0", "CC-BY-2.5", "CC-BY-3.0", "CC-BY-4.0",
             "CC-BY-SA-1.0", "CC-BY-SA-2.0", "CC-BY-SA-2.5", "CC-BY-SA-3.0", "CC-BY-SA-4.0" };
-        if (! require (ctx, std::find (allowed.begin(), allowed.end(), license) != allowed.end(),
-                       "GUI resolution did not admit an allowed Creative Commons license")) return;
+        const bool admitted = state->source == "sfzinstruments"
+            ? static_cast<bool> (providerPackFromJson (providerPackToJson (pack), PackDescriptorUse::Download))
+            : std::find (allowed.begin(), allowed.end(), license) != allowed.end();
+        if (! require (ctx, admitted, "GUI resolution did not admit an allowed license")) return;
         state->evidence["license"] = { { "id", license }, { "source", pack.license.sourceUrl }, { "sha256", pack.license.sha256 } };
         state->evidence["release"] = pack.releaseId;
         state->evidence["download_url"] = pack.downloadUrl;

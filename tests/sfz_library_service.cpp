@@ -967,6 +967,69 @@ TEST_CASE ("SFZ repository revalidation sends saved ETags and retains the valida
     }
 }
 
+TEST_CASE ("SFZ errors give rate-limit timing only for rate limits", "[sfz][service][ipc]")
+{
+    Tree tree;
+    const auto transport = std::make_shared<ScriptedTransport>();
+    const std::string limited = "Repository rate limit reached; the source link remains available.";
+    std::string expected;
+    bool resolving = false, freepats = false;
+    SECTION ("A missing repository is not a rate limit")
+    {
+        transport->append ({ "{\"message\":\"Not Found\"}", 404,
+                             { { "X-RateLimit-Remaining", "4999" }, { "X-RateLimit-Reset", "1793503601" } } });
+        expected = "Repository request failed (HTTP 404).";
+        SECTION ("Browsing") {}
+        SECTION ("Resolving") { resolving = true; }
+    }
+    SECTION ("Retry-After gives the wait in seconds")
+    {
+        transport->append ({ {}, 429, { { "Retry-After", "25" }, { "X-RateLimit-Reset", "1793503601" } } });
+        expected = limited + " Try again in 25 seconds.";
+    }
+    SECTION ("An exhausted quota gives its reset time of day")
+    {
+        transport->append ({ "{\"message\":\"API rate limit exceeded\"}", 403,
+                             { { "X-RateLimit-Remaining", "0" }, { "X-RateLimit-Reset", "1793503601" } } });
+        expected = limited + " Try again after 03:26 UTC.";
+    }
+    SECTION ("A zero Retry-After falls back to the reset time")
+    {
+        transport->append ({ {}, 429, { { "Retry-After", "0" }, { "X-RateLimit-Reset", "1793503601" } } });
+        expected = limited + " Try again after 03:26 UTC.";
+    }
+    SECTION ("A license file GitHub cannot identify is not a rate limit")
+    {
+        using Json = dusk::json::Json;
+        const std::string revision (40, 'a'), treeSha (40, 'b');
+        transport->append ({ Json::parse (githubListing ("Woodwinds", 42, "freepats"))[0].dump() });
+        transport->append ({ Json { { "sha", revision }, { "commit", { { "tree", { { "sha", treeSha } } } } } }.dump() });
+        transport->append ({ Json { { "truncated", false }, { "tree", Json::array ({
+            { { "path", "LICENSE" }, { "type", "blob" }, { "mode", "100644" } },
+            { { "path", "Woodwinds.sfz" }, { "type", "blob" }, { "mode", "100644" } }
+        }) } }.dump() });
+        transport->append ({ "{\"message\":\"Not Found\"}", 404,
+                             { { "X-RateLimit-Remaining", "4999" }, { "X-RateLimit-Reset", "1793503601" } } });
+        expected = "GitHub could not identify this repository's license file. Open the source website for its terms.";
+        freepats = true;
+    }
+    SECTION ("A rate limit without usable timing says later")
+    {
+        transport->append ({ {}, 429, { { "Retry-After", "Sun, 01 Nov 2026 03:30:00 GMT" }, { "X-RateLimit-Reset", "soon" } } });
+        expected = limited + " Try again later.";
+    }
+    LibraryService service (tree.root, transport);
+    settled (service);
+    auto selected = summary();
+    if (freepats) selected = { "freepats", "42", "Woodwinds", "Woodwinds", "freepats", {},
+                               "https://github.com/freepats/Woodwinds", "CC0-1.0" };
+    REQUIRE ((resolving || freepats ? service.resolve (selected) : service.browse ("musical-artifacts")));
+    const auto result = settled (service);
+    CHECK (result.state == LibraryState::Failed);
+    CHECK (result.error == expected);
+    CHECK (transport->count() == (freepats ? 4u : 1u));
+}
+
 TEST_CASE ("SFZ repository does not accept an unsolicited not-modified response", "[sfz][service][ipc]")
 {
     Tree tree;

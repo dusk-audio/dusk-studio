@@ -7,7 +7,10 @@
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <chrono>
+#include <cstdint>
+#include <optional>
 #include <system_error>
 
 #if defined(__APPLE__)
@@ -346,20 +349,24 @@ LibraryState stateFor (OperationStatus status)
 
 std::string rateLimitError (std::string error, const ProviderRateLimit& limit)
 {
-    const auto append = [&error] (const char* label, const std::string& value)
+    if (! limit.limited) return error;
+    const auto seconds = [] (const std::string& value) -> std::optional<std::uint64_t>
     {
-        if (value.empty()) return;
-        std::string safe;
-        for (const char character : value.substr (0, 128))
-        {
-            const auto c = static_cast<unsigned char> (character);
-            if (c >= 32 && c < 127) safe += character;
-        }
-        if (! safe.empty()) error += std::string ("; ") + label + safe;
+        std::uint64_t parsed = 0;
+        const auto end = value.data() + value.size();
+        const auto [at, failure] = std::from_chars (value.data(), end, parsed);
+        if (value.empty() || failure != std::errc {} || at != end) return {};
+        return parsed;
     };
-    append ("Retry-After: ", limit.retryAfter);
-    append ("Rate limit resets at Unix time ", limit.reset);
-    return error;
+    if (const auto wait = seconds (limit.retryAfter); wait && *wait > 0)
+        return error + " Try again in " + std::to_string (*wait) + (*wait == 1 ? " second." : " seconds.");
+    if (const auto reset = seconds (limit.reset))
+    {
+        const auto minute = *reset % 86400 / 60;
+        const auto digits = [] (std::uint64_t value) { return (value < 10 ? "0" : "") + std::to_string (value); };
+        return error + " Try again after " + digits (minute / 60) + ":" + digits (minute % 60) + " UTC.";
+    }
+    return error + " Try again later.";
 }
 } // namespace
 
