@@ -4,7 +4,7 @@ You are picking up a release that is code-complete. Every defect that blocked it
 fixed and merged or sitting in one open PR. What remains is a merge, a tag, and an
 acceptance pass on the artifacts the tag produces.
 
-Read [.claude/commands/release.md](../../.claude/commands/release.md) first. It is the
+Read the `/release` command first. It is the
 procedure. This document only records where the work stopped and what the previous
 session learned the hard way.
 

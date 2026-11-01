@@ -22,6 +22,9 @@ __pycache__/
 # Agent scratch/staging trees (extracted CI artifacts, worktrees, sysroots)
 .codex/
 
+# Local agent settings, hooks, commands and skills
+.claude/
+
 # Local session test data
 sessions/
 !scripts/regress/sessions/
