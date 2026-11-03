@@ -29,6 +29,11 @@ canonical source.
   source leaves before it sends the file list, and a source that leaves
   without ever sending it hears back within three seconds instead of waiting
   on its own timeout.
+- **LV2 bundles loaded twice.** Dusk Studio no longer loads every LV2 bundle a
+  second time at startup, which filled the log with "Reloading plugin"
+  warnings, and its native LV2 scan loads a bundle that two search folders
+  reach once. On Linux and macOS, a custom plug-in folder that is also a
+  standard LV2 folder is searched once.
 
 ## [0.16.0] - 2026-11-01
 

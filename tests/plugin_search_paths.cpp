@@ -9,6 +9,8 @@
 #if defined(_WIN32)
 #include "../cmake/JuceLv2WindowsPaths.h"
 #else
+#include "TestProcessEnvironment.h"
+
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -681,3 +683,47 @@ TEST_CASE ("Nested custom LV2 bundles prime the parent scanner and fresh scan ch
     restarted.findAllTypesForFile (removed, uri);
     CHECK (removed.isEmpty());
 }
+
+#if ! defined(_WIN32)
+TEST_CASE ("Registering the LV2 format loads each default bundle once", "[plugins][paths][lv2][regression][issue-936]")
+{
+    Tree tree;
+    const std::string uri = "urn:duskstudio:test:default-load-once";
+    const auto bundle = tree.directory (".lv2/LoadOnce.lv2");
+    REQUIRE (dusk::fs::writeStringToFile (bundle / "manifest.ttl", R"ttl(
+@prefix lv2: <http://lv2plug.in/ns/lv2core#> .
+@prefix doap: <http://usefulinc.com/ns/doap#> .
+<urn:duskstudio:test:default-load-once> a lv2:Plugin, lv2:ReverbPlugin ;
+ doap:name "Default load once fixture" ; lv2:binary <missing.so> ;
+ lv2:port [ a lv2:InputPort, lv2:AudioPort ; lv2:index 0 ; lv2:symbol "in" ; lv2:name "Input" ],
+          [ a lv2:OutputPort, lv2:AudioPort ; lv2:index 1 ; lv2:symbol "out" ; lv2:name "Output" ] .
+)ttl"));
+    const duskstudio::test::ScopedEnvironmentVariable home ("HOME", tree.root.u8string());
+    std::optional<RegisteredLv2Format> registered;
+    const auto output = duskstudio::test::captureStderr (tree.root, [&] { registered.emplace(); });
+    INFO (output);
+    CHECK (output.find ("Reloading plugin") == std::string::npos);
+
+    juce::OwnedArray<juce::PluginDescription> descriptions;
+    registered->format->findAllTypesForFile (descriptions, uri);
+    REQUIRE (descriptions.size() == 1);
+    CHECK (descriptions[0]->category == "Reverb Plugin");
+}
+
+TEST_CASE ("A custom folder that is also a default LV2 location is searched once", "[plugins][paths][lv2][regression][issue-936]")
+{
+    Tree tree;
+    const auto other = tree.directory ("other");
+    RegisteredLv2Format registered;
+    const auto defaults = registered.format->getDefaultLocationsToSearch();
+    const auto tilde = defaults.getRawString (0);
+    REQUIRE (tilde.startsWithChar ('~'));
+    // The same default spelled out, as a folder picker hands it over. JUCE
+    // expands the tilde itself (on macOS from NSHomeDirectory, not HOME), so the
+    // spelling comes from it.
+    const fs::path spelledOut (juce::File (tilde).getFullPathName().toStdString());
+    const auto locations = duskstudio::juce_compat::pluginSearchLocations (*registered.format, { spelledOut, other });
+    CHECK (locations.getNumPaths() == defaults.getNumPaths() + 1);
+    CHECK (locations.toString().contains (juce::String (other.u8string())));
+}
+#endif
