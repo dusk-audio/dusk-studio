@@ -78,7 +78,10 @@ if [[ -n "$DMG" ]]; then
     DMG="$(cd "$(dirname "$DMG")" && pwd)/$(basename "$DMG")"
 fi
 regress_require ssh scp git timeout
-if [[ -n "$RELEASE_RUN" ]]; then regress_require gh; fi
+if [[ -n "$RELEASE_RUN" ]]; then
+    regress_require gh
+    regress_require_release_run "$REPO_SLUG" "$RELEASE_RUN"
+fi
 
 MAC_VNC_HOST="${DUSK_REGRESS_MAC_VNC_HOST:-${MAC_HOST#*@}}"
 MAC_VNC_USER="$USER"

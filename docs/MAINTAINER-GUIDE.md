@@ -474,9 +474,11 @@ scripts/regress.sh linux --release-run 1234567890
 scripts/regress.sh mac
 scripts/regress.sh mac --dmg /path/to/dusk-studio-X.Y.Z-macOS-arm64.dmg
 scripts/regress.sh mac --release-run 1234567890
+scripts/regress.sh mac --window-activation-only
 scripts/regress.sh windows --msi /path/to/dusk-studio-X.Y.Z-Windows-x64.msi
 scripts/regress.sh windows --release-run 1234567890
 scripts/regress.sh windows --release-run 1234567890 --fixtures-run 2345678901
+scripts/regress.sh windows --installed X.Y.Z
 scripts/regress.sh all --perf --msi /path/to/installer.msi
 scripts/regress.sh all --release-run 1234567890 --fixtures-run 2345678901
 scripts/regress.sh windows-source        # build + ctest HEAD in the win11 guest
@@ -547,6 +549,12 @@ gate. A platform given a local package on the same line (`--tarball`, `--dmg`,
 `all` runs the Windows package leg, never the source one.
 `DUSK_REGRESS_DRY_RUN=1` prints what each platform would get and stops.
 
+Every `--release-run <id>` first asks GitHub for that run's status and
+conclusion and stops, before anything is downloaded, unless the run has
+completed with `success`: a run still going, failed or cancelled can hold a
+partial or stale artifact. Every runner exports `GH_PAGER=cat`
+(`scripts/regress/common.sh`), so no `gh` call can open a pager and stall a run.
+
 Each platform prints its own table as it finishes, and `all` ends with one
 table of every platform's legs, named `<platform>/<leg>`. A platform whose
 runner exits non-zero without a failed leg (a usage error, a missing tool) gets
@@ -554,7 +562,8 @@ a `<platform>/runner` row, so it cannot drop out of the table unseen.
 
 Layout: `scripts/regress.sh` only dispatches and routes options. The work is in
 `scripts/regress/{linux,mac,windows,windows-source}.sh` (and `mac-package.sh`,
-which `mac.sh` hands a package run to) over the shared leg bookkeeping in
+which `mac.sh` hands a package run to, with the window-activation cases in
+`mac-window-activation.sh`) over the shared leg bookkeeping in
 `scripts/regress/common.sh`, the private-display plumbing in
 `scripts/regress/xvfb.sh` and the scenario legs in
 `scripts/regress/scenarios.sh`, plus the guest-side helpers in
@@ -993,6 +1002,8 @@ next build is incremental.
 | `mic-permission` | every new build is a new ad-hoc identity, so its first launch asks for the microphone, and an app started while that prompt is up comes up with no audio device. One throwaway launch through `open` gets the prompt answered Allow before any suite runs, confirmed from tccd's log. A build already denied fails with the `tccutil reset Microphone audio.dusk.studio` to run. |
 | `scenarios-headless` | `DUSKSTUDIO_RUN_SCENARIOS=all` against the installed binary over ssh, in a private `HOME`, XDG directories, `DUSKSTUDIO_CONFIG_DIR` and `DUSKSTUDIO_MUSIC_DIR`, with `DUSKSTUDIO_FIXTURE_DIR` pointed at the worktree and `DUSKSTUDIO_EXPECT_MP3=1`. Judged as on Linux; a `BAILING` teardown line anywhere in the log adds a failed `scenarios-headless:bailing` row. |
 | `scenarios-gui` | `DUSKSTUDIO_RUN_SCENARIOS=gui` in the desktop session, started with `open -n --env ...` (a GUI launched over plain ssh aborts), with the same environment. `open` hands back no exit status, so a crash shows as a missing terminal line or in `crash-reports`. `[DIRTY]` lines are printed; `BAILING` fails as above. |
+| `window-activation:setup` | the app in `/Applications` reports a version and is not running, Calculator is not running, and the window-server probe (`scripts/regress/mac/window-probe.m`) builds on the node with `clang`. |
+| `window-activation:launch`, `:session-open`, `:minimized`, `:handoff` | the four cases of [tests/window_activation_smoke_test.md](../tests/window_activation_smoke_test.md), against the installed app in a private `HOME`: each time Dusk Studio is the frontmost application, its one main window is the topmost normal window with its title-bar buttons in colour in a capture, and one process runs. The cases open sessions through Cmd+O and through LaunchServices (`open -a`), with Calculator in front, and check the load alert and the save prompt in captures. Evidence (captures, probe snapshots) in `window-activation/` under the run directory. |
 | `privacy-prompts` | a watcher reads tccd's log over ssh from the first launch to the last, and answers the microphone prompt Allow over Screen Sharing. It never clicks any other prompt. Fails on a microphone prompt left unanswered while the process that asked still ran, or answered the other way, and on any folder prompt or prompt of another kind, however it was answered: the suites run in a private `HOME` and should raise none. |
 | `crash-reports` | no `DuskStudio*` report in `~/Library/Logs/DiagnosticReports` since the leg started. |
 
@@ -1015,7 +1026,35 @@ stay in `$TMPDIR/dusk-regress-mac-<timestamp>/`; everything on the node lives
 under `~/dusk-regress-pkg/<timestamp>/` and is removed on exit, Ctrl-C
 included, along with any app the leg started and its `caffeinate`. Other
 overrides: `DUSK_REGRESS_MAC_HOST`, `DUSK_REGRESS_MAC_VNC_HOST` (default: the
-ssh host), `DUSK_REGRESS_MAC_VNC_LOGIN`, `DUSK_JOBS`.
+ssh host), `DUSK_REGRESS_MAC_VNC_LOGIN`, `DUSK_JOBS`,
+`DUSK_REGRESS_MAC_TITLE_BAR` (the title-bar height the window-activation cases
+centre the in-window panels below, default 28).
+
+#### Window activation only
+
+```bash
+TMPDIR=/var/tmp scripts/regress.sh mac --window-activation-only
+```
+
+runs only the window-activation cases, against whatever is installed in
+`/Applications`, and installs nothing: `mac-preflight`, `screen-unlocked`,
+`window-activation:setup`, the four cases, `privacy-prompts` and
+`crash-reports`. It takes about 4.5 minutes. It needs what package mode needs
+for Screen Sharing (the password file and the `vncdotool` Python, whose Pillow
+also reads the captures), plus:
+
+- Screen Sharing free: disconnect any other viewer of the Air (Remmina) first.
+  The cases type and click through Screen Sharing, and judge the screen from
+  captures taken over it.
+- Dusk Studio not running on the Air and Calculator not running; the leg
+  starts and quits its own of each.
+- `clang` on the node, to build the window-server probe.
+- The Air's 1920x1080 desktop at 1x, where window-server points are capture
+  pixels.
+
+The leg quits the app with Cmd+Q, so it gives up its single-instance socket,
+and removes a socket it left only when there was none before it started. The
+evidence stays in `$TMPDIR/dusk-wa-mac-<timestamp>/window-activation/`.
 
 ### Windows
 
@@ -1033,6 +1072,7 @@ scripts/regress.sh windows --msi /path/to/dusk-studio-X.Y.Z-Windows-x64.msi
 scripts/regress.sh windows --release-run 1234567890
 scripts/regress.sh windows --release-run 1234567890 --fixtures-run 2345678901
 scripts/regress.sh windows --msi /path/to/installer.msi --extract-only
+scripts/regress.sh windows --installed X.Y.Z
 ```
 
 | Option | Effect |
@@ -1043,12 +1083,16 @@ scripts/regress.sh windows --msi /path/to/installer.msi --extract-only
 | `--reinstall` | uninstall this very package first when it is already installed, and any per-user install of Dusk Studio (0.13 and earlier, and the early 0.14.0 candidates), then install it again: one UAC prompt per uninstall plus one for the install. |
 | `--extract-only` | no install and no UAC: `msiexec /a` unpacks the package into the run folder and the legs run that. For development of the runner, never for the gate. |
 | `--no-scenarios` | leave out the scenario rows. |
+| `--installed X.Y.Z` | install nothing: test the package the guest already has, which must be X.Y.Z. See "Window activation against the installed package" below. Takes no installer, fixtures, `--reinstall` or `--extract-only`. |
 
 Prerequisites: libvirt access to `win11` without sudo (`qemu:///system`), the
 guest running and unlocked, `7z`, `zip`, `sha256sum`, `python3` (Pillow for
 the PNG screenshots), `gh` authenticated for `--release-run` and
 `--fixtures-run`. Nothing has to be set up inside the guest: the phases bring
-their own session and fixtures, and none of them clicks anything.
+their own session and fixtures. Only `phase4-window-activation` clicks and
+types, so nobody may use the guest's desktop while it runs (about 4 minutes).
+Notepad already running there keeps that phase from backing up and restoring
+Notepad's saved session, which it notes.
 
 **The install and UAC.** The package goes into `C:\Program Files\Dusk Studio`
 through `msiexec /i ... /passive`, as a user installs it. That needs
@@ -1136,13 +1180,14 @@ ones stay unresolved on Windows in any case, since Windows builds no LV2 host.
 | `phase1-selftest` | headless `DUSKSTUDIO_RUN_SELFTEST=1` with stdout and stderr captured through `ProcessStartInfo` redirection: exit code 0, at least one `[PASS]`, no `[FAIL]`. |
 | `phase2-handoff` | the first instance opens the shipped session through `DUSKSTUDIO_LOAD_SESSION` and the phase waits for its `[Dusk Studio/Load] session.json` line, then a second launch carrying `handoff.json` hands over and exits 0 within 30 s while the first instance stays alive, `GetForegroundWindow()` is its window afterwards, and its stderr shows `[Dusk Studio/Load] handoff.json` after the first load - the handoff is supposed to raise the window and load the path, which the exit code alone cannot see. Both launches share one private profile. |
 | `phase3-session-close` | the session the payload ships is loaded through `DUSKSTUDIO_LOAD_SESSION` (waited for by its `[Dusk Studio/Load]` line), then two `WM_CLOSE` messages are posted back to back to the process's visible window titled Dusk Studio. Exit 0 within 50 s, at least eight `[Dusk Studio/shutdown] phase` markers, and `re-entry ignored: shutdown already in progress` from the second close landing on the latch. |
+| `phase4-window-activation` | the four cases of [tests/window_activation_smoke_test.md](../tests/window_activation_smoke_test.md) against the installed app: an initial launch from Explorer, File > Open from inside, an Explorer handoff into a minimized window and one over an unsaved edit, each with Notepad in front. Each case passes on the foreground or on a taskbar flash (recorded through the shell hook); needs exactly one main window, and for the handoffs one `DuskStudio.exe` and a second process, a child of `explorer.exe`, that exited 0; and checks the load alert and the save prompt through UI Automation. For the Explorer launch, `DUSKSTUDIO_CONFIG_DIR` and `DUSKSTUDIO_MUSIC_DIR` are lent to Explorer through `HKCU\Environment`, with a `DUSKSTUDIO_REGRESS_ENV_OWNER` marker, and cleared after the launch and again in a `finally` block. The note says whether each case got the foreground or a flash; `shot-phase4-<case>.png` and `posts/phase4-window-activation-events.log` are the evidence. Notepad's saved session is backed up and put back when Notepad was not already running. |
 | `ipc-selftest` | `SKIP`. `DUSKSTUDIO_RUN_IPC_SELFTEST` never returns on Windows (issue #504), so the out-of-process transport is only compile- and contract-verified there. Remove the skip when #504 closes. |
 | `scenario-fixtures` | as on Linux, against the two staged roots. |
 | `scenarios-headless` | `DUSKSTUDIO_RUN_SCENARIOS=all` against the installed app, 900 s budget in the guest. The whole output comes back and is judged by the same rules as the Linux leg: exit 0, no `[FAIL]`, the terminal `=== scenarios: ` line; skips in the note, missing fixtures in a `:fixtures` row. A run that hits its budget is announced before it is killed, screenshotted as `<leg>-stall.png`, and reported as `timed out in <case>`, the last case the suite started without finishing. |
 | `scenarios-gui` | `DUSKSTUDIO_RUN_SCENARIOS=gui` on the guest desktop, 1800 s budget, judged the same way. `[DIRTY]` lines are listed. |
 | `gui-settings-defaults` | `tests/gui_settings_defaults.sh` for the guest: `gui.settings_defaults` with a seeded `app-config.properties`, both values, three launches each. |
 | `gui-plugin-picker` | `SKIP`: its seeded cache names the LV2 fixture, and Windows builds no LV2 host. It runs on Linux. |
-| `isolation-audit` | nothing in the real user's Documents, Music, Desktop, `%APPDATA%\Dusk Studio` or `%LOCALAPPDATA%\Dusk Studio`, no entry at the top of the real home folder (by name; the `NTUSER*` hive files are left out), and no `dusk-studio-*` entry in the real temp folder appeared, changed or went away since `msi-install`; and every folder a launch resolves (home, AppData, Documents, Music, temp, config, the Music folder) sits inside its private profile. Either an escape or a folder that does not resolve is a `FAIL`. The Profile known folder is logged, never judged (see Isolation). |
+| `isolation-audit` | nothing in the real user's Documents, Music, Desktop, `%APPDATA%\Dusk Studio` or `%LOCALAPPDATA%\Dusk Studio`, no entry at the top of the real home folder (by name; the `NTUSER*` hive files are left out), and no `dusk-studio-*` entry in the real temp folder appeared, changed or went away since `msi-install`; the user environment (`HKCU\Environment`) names no `DUSKSTUDIO_*` variable, so a value phase 4 lent Explorer and failed to clear fails the run; and every folder a launch resolves (home, AppData, Documents, Music, temp, config, the Music folder) sits inside its private profile. Either an escape or a folder that does not resolve is a `FAIL`. The Profile known folder is logged, never judged (see Isolation). |
 | `package-uninstall` | `SKIP`: the package is left installed. |
 
 Every phase opens its own console from the Start menu: a phase that calls
@@ -1172,8 +1217,10 @@ wrong here:
 - The app writes `\r\n` on Windows; the runner strips the `\r` before judging.
 - `WM_CLOSE` on a fresh launch is swallowed while the startup picker is open:
   `requestQuit` returns with a modal up. That is why phase 3 passes the session
-  in through `DUSKSTUDIO_LOAD_SESSION`, which skips the picker entirely. No
-  phase depends on a screen coordinate or on synthesized mouse input.
+  in through `DUSKSTUDIO_LOAD_SESSION`, which skips the picker entirely.
+  Phases 1 to 3 depend on no screen coordinate and no synthesized input.
+  Phase 4 clicks through `SendInput`, and checks first that the pixel it is
+  about to click belongs to the window it means.
 - Redirected stderr cannot be read with `ReadToEndAsync` while the app is still
   running: that task only completes when the pipe closes. The phases drain it
   one bounded `ReadLineAsync` at a time, which is how they wait for a marker
@@ -1190,6 +1237,26 @@ something else driving the VM has been the cause before.
 
 Overrides: `DUSK_REGRESS_VM`, `DUSK_REGRESS_LIBVIRT_URI`, `DUSK_REGRESS_HOST_IP`,
 `DUSK_REGRESS_UAC_WAIT`, `DUSK_REGRESS_UAC_ACCEPT`.
+
+#### Window activation against the installed package
+
+```bash
+TMPDIR=/var/tmp scripts/regress.sh windows --installed X.Y.Z
+```
+
+runs `phase4-window-activation` and `isolation-audit` against the MSI already
+installed in the guest, with no payload, no install and no UAC prompt. It takes
+about 4 minutes, and needs the guest and host set up as for package mode
+(including the host tools package mode checks for), the guest's desktop left
+alone while it runs, and no `DUSKSTUDIO_*` variable in the guest user's
+environment. Its legs, after `host-servers`, `guest-wake` and `console-probe`:
+
+| Leg | What it proves |
+|---|---|
+| `installed-check` | stands in for `msi-install`: exactly one Dusk Studio is installed for all users, at X.Y.Z, under `Program Files`; its `DuskStudio.exe` FileVersion and `--version` report X.Y.Z. Records the executable and the real-profile snapshot for the audit in a run folder of its own. |
+| `phase4-window-activation` | as in package mode. |
+| `isolation-audit` | as in package mode, against the snapshot `installed-check` took. |
+| `run-cleanup` | leaves the guest as it found it: no `DuskStudio.exe` or plug-in host running, no `DUSKSTUDIO_*` variable in the user environment, and the run folder removed (only with its `.dusk-regress-run` marker). It first waits up to 90 s for a phase 4 the host stopped waiting for to finish putting Notepad's saved session back, and leaves the run folder, backup included, when it has not. Variables phase 4 lent and left behind still fail the leg, and are cleared when phase 4's owner marker is with them. |
 
 ### Windows source
 
@@ -1671,8 +1738,11 @@ manual checks that the script cannot cover:
   verifier rejects an empty slot but cannot judge editorial accuracy.
 - Confirm all seven filenames exactly match the list above. Inspect the
   executable inside the DMG and MSI and confirm arm64 and x64 respectively;
-  do not infer architecture from the filename. The DMG must carry the `.app`,
-  `LICENSE` and `LICENSES.txt` and nothing else; a `share/` tree of XDG desktop
+  do not infer architecture from the filename. The DMG's top level must hold
+  what the `macos` records of `packaging/contents.txt` name and nothing else:
+  `DuskStudio.app`, the `Applications` link to `/Applications`, `LICENSE`,
+  `LICENSES.txt` and `QUICKSTART.md`. `verify-package-contents.sh` proves
+  those are there, not that nothing else is; a `share/` tree of XDG desktop
   files in it is a Linux install rule leaking into the macOS package.
 - Run `sha256sum --check SHA256SUMS` against the downloaded payloads and
   require every one of the five to pass. A payload rebuilt after the checksums
@@ -1687,8 +1757,11 @@ manual checks that the script cannot cover:
   `JUCE-*` paths, and each must contain the complete
   [LICENSES.txt](../LICENSES.txt), not merely a file by that name.
 - On macOS and Windows, run the
-  [window-activation smoke test](../tests/window_activation_smoke_test.md) for
-  initial launch, session open, minimized restore, and second-process handoff.
+  [window-activation smoke test](../tests/window_activation_smoke_test.md)
+  against the installed release: its four cases through
+  `TMPDIR=/var/tmp scripts/regress.sh mac --window-activation-only` and
+  `TMPDIR=/var/tmp scripts/regress.sh windows --installed X.Y.Z` (package mode
+  runs them too), and its "What still needs a person" checks by hand.
 - In every bundled `LICENSES.txt`, confirm the full-text section is present and
   the JUCE-bundled entries cover HarfBuzz, SheenBidi, libjpeg, libpng, zlib,
   FLAC, and Ogg/Vorbis. If a future SheenBidi source adds a NOTICE file, ship

@@ -107,6 +107,7 @@ regress_require virsh python3 7z zip ss sha256sum
 if [[ -n "$RELEASE_RUN" || -n "$FIXTURES_RUN" ]]; then
     regress_require gh
 fi
+if [[ -n "$RELEASE_RUN" ]]; then regress_require_release_run "$REPO_SLUG" "$RELEASE_RUN"; fi
 
 STAMP="$(date +%Y%m%d-%H%M%S)"
 RUN_DIR="${TMPDIR:-/tmp}/dusk-regress-windows-${STAMP}"

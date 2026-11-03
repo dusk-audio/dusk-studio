@@ -165,6 +165,7 @@ check_configure() {
 }
 
 REPO_SLUG="dusk-audio/dusk-studio"
+if [[ -n "$RELEASE_RUN" ]]; then regress_require_release_run "$REPO_SLUG" "$RELEASE_RUN"; fi
 RULESET_ID="${DUSK_REGRESS_RULESET_ID:-17313833}"
 PATREON_CONFIG="${DUSK_REGRESS_PATREON_CONFIG:-$HOME/.config/dusk-audio/patreon.json}"
 
