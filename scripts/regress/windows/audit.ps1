@@ -1,8 +1,9 @@
 # Isolation audit, after every launch of the run: nothing in the real user's
 # Documents, Music, Desktop or Dusk Studio config, nor at the top of the real
 # home folder, may have appeared, changed or gone since the install phase took
-# its snapshot, and every folder the app resolves inside a launch's private
-# profile has to sit in that profile.
+# its snapshot, the user environment may name no DUSKSTUDIO_* variable, and
+# every folder the app resolves inside a launch's private profile has to sit in
+# that profile.
 #
 # The child resolves them the way the app does: home from USERPROFILE, the
 # known folders from SHGetKnownFolderPath, temp from GetTempPath, config and
@@ -46,6 +47,8 @@ try {
     }
     foreach ($l in $rgChanged) { $rgLog += "written: $l`n" }
     foreach ($l in $rgGone) { $rgLog += "before, now gone or changed: $l`n" }
+    $rgEnvLeft = @(Get-RegressUserEnvLeftovers)
+    foreach ($l in $rgEnvLeft) { $rgLog += "error: $l`n" }
 
     # The same private profile a launch gets, asked from a child process that
     # inherits it, which is how the app sees it.
@@ -87,7 +90,7 @@ try {
         }
     }
     $rgLog += "Profile known folder, information only (the account's, not USERPROFILE's; the app does not use it here): $($rgResolved['Profile'])`n"
-    if ($rgChanged.Count -eq 0 -and $rgGone.Count -eq 0 -and $rgEscaped -eq 0) { $rgResult = 'PASS' }
+    if ($rgChanged.Count -eq 0 -and $rgGone.Count -eq 0 -and $rgEnvLeft.Count -eq 0 -and $rgEscaped -eq 0) { $rgResult = 'PASS' }
 } catch {
     $rgLog += "isolation-audit failed: $_`n"
 }

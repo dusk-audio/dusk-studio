@@ -10,6 +10,9 @@
 # The installer goes into Program Files through msiexec. The guest is a test
 # machine and nothing else, so its UAC prompt is accepted from here with Alt+Y;
 # DUSK_REGRESS_UAC_ACCEPT=0 leaves it for a person at the VM console.
+# --installed X.Y.Z runs only the window-activation phase, and the isolation
+# audit after it, against the package already installed in the guest; it
+# installs nothing and removes its run folder from the guest when it is done.
 # See docs/MAINTAINER-GUIDE.md, "Regression run across platforms".
 
 set -euo pipefail
@@ -39,6 +42,7 @@ FIXTURES_DIR=""
 FIXTURES_RUN=""
 INSTALL_MODE="install"
 RUN_SCENARIOS=1
+INSTALLED_VERSION=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -74,12 +78,23 @@ while [[ $# -gt 0 ]]; do
             RUN_SCENARIOS=0
             shift
             ;;
+        --installed)
+            [[ $# -ge 2 ]] || regress_die "--installed needs the version the guest has installed"
+            INSTALLED_VERSION="$2"
+            shift 2
+            ;;
         *) regress_die "unknown option '$1' for the windows target" ;;
     esac
 done
 
-[[ -n "$MSI_PATH" || -n "$RELEASE_RUN" ]] \
-    || regress_die "the windows target needs --msi <path> or --release-run <run id>"
+if [[ -n "$INSTALLED_VERSION" ]]; then
+    [[ "$INSTALLED_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+        || regress_die "--installed takes a version, X.Y.Z"
+    [[ -z "$MSI_PATH$RELEASE_RUN$FIXTURES_DIR$FIXTURES_RUN" && "$INSTALL_MODE" == install ]] \
+        || regress_die "--installed tests what the guest has; it takes no installer, fixtures, --reinstall or --extract-only"
+fi
+[[ -n "$MSI_PATH" || -n "$RELEASE_RUN" || -n "$INSTALLED_VERSION" ]] \
+    || regress_die "the windows target needs --msi <path>, --release-run <run id> or --installed <version>"
 [[ -z "$MSI_PATH" || -z "$RELEASE_RUN" ]] \
     || regress_die "--msi and --release-run both name the installer; pass one"
 [[ -z "$FIXTURES_DIR" || -z "$FIXTURES_RUN" ]] \
@@ -258,6 +273,9 @@ install_scripts() {
         serve_script phase1-selftest.ps1 p1.ps1 &&
         serve_script phase2-handoff.ps1 p2.ps1 &&
         serve_script phase3-session-close.ps1 p3.ps1 &&
+        serve_script phase4-window-activation.ps1 p4.ps1 &&
+        serve_script installed.ps1 pc.ps1 &&
+        serve_script cleanup.ps1 px.ps1 &&
         serve_script scenarios.ps1 pe.ps1 PHASE=scenarios-headless SPEC=all TIMEOUT="$ENGINE_TIMEOUT" &&
         serve_script scenarios.ps1 pg.ps1 PHASE=scenarios-gui SPEC=gui TIMEOUT="$GUI_TIMEOUT" &&
         serve_script settings-defaults.ps1 pd.ps1 &&
@@ -338,12 +356,15 @@ whole_lines() {
 # phase's report in PHASE_BODY, its REGRESS-NOTE lines in PHASE_NOTE and its
 # REGRESS-WARN lines in PHASE_WARN. While a UAC prompt the phase reported is
 # open, the guest is screenshotted every 30 s; otherwise every 2 minutes, so a
-# stall leaves a picture of what the guest was showing.
+# stall leaves a picture of what the guest was showing. A REGRESS-SHOT <label>
+# line is a phase asking for a screenshot at that moment: it is saved as
+# shot-<label>.png, and shot-<label>.done is served to say it has been.
 PHASE_BODY=""
 run_guest_phase() {
     local name="$1" script="$2" deadline="$3"
     local offset start raw body result
     local uac_open=0 last_shot=0 stalled=0 uac_handled=0 uac_seen line label
+    local shots_handled=0 shots_seen shot_note
     offset="$(stat -c %s "$REPORT")"
     PHASE_NOTE=""
     PHASE_WARN=""
@@ -401,6 +422,25 @@ run_guest_phase() {
                     ;;
             esac
         done < <(whole_lines "$raw" | grep '^REGRESS-UAC ' || true)
+        shots_seen=0
+        while IFS= read -r line; do
+            ((++shots_seen > shots_handled)) || continue
+            shots_handled=$shots_seen
+            label="${line#REGRESS-SHOT }"
+            if [[ ! "$label" =~ ^[A-Za-z0-9._-]+$ ]]; then
+                echo "  screenshot request with an unusable label ignored: ${label}"
+                continue
+            fi
+            # The marker tells the guest the evidence exists, so a failed capture
+            # leaves the request unanswered and the guest reports it not taken.
+            if shot_note="$(screenshot "${RUN_DIR}/shot-${label}.png")" \
+                && [[ -s "${RUN_DIR}/shot-${label}.png" || -s "${RUN_DIR}/shot-${label}.png.ppm" ]]; then
+                echo "  screenshot ${label}: ${shot_note}"
+                : >"${SERVE_DIR}/shot-${label}.done"
+            else
+                echo "  screenshot ${label} failed: ${shot_note}"
+            fi
+        done < <(whole_lines "$raw" | grep '^REGRESS-SHOT ' || true)
         if ((!stalled)) && grep -q '^REGRESS-TIMEOUT ' <<<"$body"; then
             stalled=1
             grep -m1 '^REGRESS-TIMEOUT ' <<<"$body"
@@ -502,7 +542,7 @@ echo "guest    ${VM} (${LIBVIRT_URI}), host ${HOST_IP}"
 echo "run dir  ${RUN_DIR}"
 echo "guest    %LOCALAPPDATA%\\${GUEST_ROOT}"
 
-APP_LEGS=(phase1-selftest phase2-handoff phase3-session-close)
+APP_LEGS=(phase1-selftest phase2-handoff phase3-session-close phase4-window-activation)
 SCENARIO_ROWS=(scenario-fixtures scenarios-headless scenarios-gui gui-settings-defaults gui-plugin-picker)
 
 skip_rest() {
@@ -510,6 +550,42 @@ skip_rest() {
     shift
     for leg in "$@"; do regress_skip "$leg" "$reason"; done
 }
+
+trailer() {
+    echo
+    echo "report:      ${REPORT}"
+    echo "suite logs:  ${POST_DIR}/"
+    echo "screenshots: ${RUN_DIR}/*.png"
+}
+
+if [[ -n "$INSTALLED_VERSION" ]]; then
+    PACKAGE_VERSION="$INSTALLED_VERSION"
+    echo "package  ${PACKAGE_VERSION}, as installed in the guest; nothing is installed"
+    regress_leg "host-servers" leg_servers
+    channel_ok=0
+    if regress_last_passed; then
+        regress_leg "guest-wake" leg_wake
+        guest_leg "console-probe" p0.ps1 90
+        regress_last_passed && channel_ok=1
+    else
+        skip_rest "no host servers" guest-wake console-probe
+    fi
+    if ((channel_ok)); then
+        guest_leg "installed-check" pc.ps1 300
+        if regress_last_passed; then
+            guest_leg "phase4-window-activation" p4.ps1 600
+            guest_leg "isolation-audit" pa.ps1 300
+        else
+            skip_rest "the installed package is not ${PACKAGE_VERSION}" phase4-window-activation isolation-audit
+        fi
+        guest_leg "run-cleanup" px.ps1 240
+    else
+        skip_rest "the guest channel is not up" installed-check phase4-window-activation isolation-audit run-cleanup
+    fi
+    trailer
+    regress_summary "regress windows (installed ${PACKAGE_VERSION})"
+    exit $?
+fi
 
 regress_leg "payload" leg_payload
 payload_ok=0
@@ -548,6 +624,7 @@ if ((installed)); then
     guest_leg "phase1-selftest" p1.ps1 900
     guest_leg "phase2-handoff" p2.ps1 300
     guest_leg "phase3-session-close" p3.ps1 300
+    guest_leg "phase4-window-activation" p4.ps1 600
     regress_skip "ipc-selftest" "hangs on Windows (issue #504)"
     if ((RUN_SCENARIOS)); then
         SCENARIO_FIXTURE_ROOTS="${RUN_DIR}/fixtures/build-tests:${RUN_DIR}/fixtures/tests-fixtures"
@@ -571,8 +648,5 @@ else
     regress_skip "package-uninstall" "left installed: uninstalling needs another UAC prompt"
 fi
 
-echo
-echo "report:      ${REPORT}"
-echo "suite logs:  ${POST_DIR}/"
-echo "screenshots: ${RUN_DIR}/*.png"
+trailer
 regress_summary "regress windows"
