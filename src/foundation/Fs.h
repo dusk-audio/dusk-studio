@@ -199,9 +199,11 @@ inline std::int64_t lastModificationTimeSecs (const std::filesystem::path& path)
 }
 
 // JUCE hasFileExtension: case-insensitive, tolerant of a leading dot on either side.
+// u8string, not string: on Windows string() converts to the ANSI code page and
+// throws for a character it has no mapping for.
 inline bool hasExtension (const std::filesystem::path& path, std::string_view ext)
 {
-    std::string a = text::toLowerCase (path.extension().string());   // ".wav"
+    std::string a = text::toLowerCase (path.extension().u8string());   // ".wav"
     std::string b = text::toLowerCase (std::string (ext));           // "wav" or ".wav"
     if (! a.empty() && a[0] == '.') a.erase (0, 1);
     if (! b.empty() && b[0] == '.') b.erase (0, 1);

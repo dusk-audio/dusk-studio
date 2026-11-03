@@ -138,7 +138,7 @@ src/ui/SteppedKnob.h	12
 src/ui/SupportersPanel.h	41
 src/ui/SystemStatusBar.cpp	30
 src/ui/SystemStatusBar.h	11
-src/ui/TapeStrip.cpp	330
+src/ui/TapeStrip.cpp	329
 src/ui/TapeStrip.h	54
 src/ui/TransportBar.cpp	178
 src/ui/TransportBar.h	32

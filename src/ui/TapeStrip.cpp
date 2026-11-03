@@ -8,6 +8,7 @@
 #include "DuskLabelEditor.h"
 #include "EditCursors.h"
 #include "EmbeddedModal.h"
+#include "DroppedFiles.h"
 #include "FadeCurve.h"
 #include "TimelineFollow.h"
 #if defined (__linux__)
@@ -4833,12 +4834,8 @@ bool TapeStrip::splitSelectedAtPlayhead()
 bool TapeStrip::isInterestedInFileDrag (const juce::StringArray& files)
 {
     for (const auto& path : files)
-    {
-        const auto ext = juce::File (path).getFileExtension().toLowerCase();
-        if (ext == ".wav" || ext == ".aiff" || ext == ".aif"
-            || ext == ".flac" || ext == ".mid" || ext == ".midi")
+        if (droppedfiles::isImportableFile (path.toStdString()))
             return true;
-    }
     return false;
 }
 
@@ -4912,13 +4909,8 @@ void TapeStrip::filesDropped (const juce::StringArray& files, int x, int y)
 
     juce::Array<juce::File> compatible;
     for (const auto& path : files)
-    {
-        const juce::File f (path);
-        const auto ext = f.getFileExtension().toLowerCase();
-        if (ext == ".wav" || ext == ".aiff" || ext == ".aif"
-            || ext == ".flac" || ext == ".mid" || ext == ".midi")
-            compatible.add (f);
-    }
+        if (droppedfiles::isImportableFile (path.toStdString()))
+            compatible.add (juce::File (path));
     if (! compatible.isEmpty())
         onFilesDropped (compatible, timelineStart, trackHint);
 }

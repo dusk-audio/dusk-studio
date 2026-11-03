@@ -264,6 +264,7 @@ add_executable(dusk-studio-tests
     filebrowser_choice.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/FileBrowserChoice.cpp
     save_target_checks.cpp
+    dropped_files_filter.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/AppConfig.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/NotepadDocument.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/NotepadEditorCore.cpp

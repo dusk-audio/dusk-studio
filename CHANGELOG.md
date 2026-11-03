@@ -19,6 +19,10 @@ canonical source.
 - **Rate-limit notice.** When an online SFZ repository is rate limited, a
   reset time that has already passed, or lies more than a day away, reads
   "Try again later." instead of a clock time.
+- **Web links dropped on the tape strip.** A link dragged from a web browser
+  is ignored, even when its address ends in `.wav`, instead of ending in an
+  "Unsupported or unreadable audio file" alert. Only existing local files
+  import.
 
 ## [0.16.0] - 2026-11-01
 
