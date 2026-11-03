@@ -663,6 +663,7 @@ if(DUSKSTUDIO_ENABLE_NATIVE_UI)
         src/ui/imgui/DuskImGuiHost.cpp
         src/ui/imgui/DuskTheme.cpp
         src/ui/imgui/DuskPanelWindow.cpp
+        src/ui/imgui/PanelText.cpp
         src/ui/NotepadDocument.cpp
         src/ui/NotepadChords.cpp
         src/ui/NotepadEditorCore.cpp

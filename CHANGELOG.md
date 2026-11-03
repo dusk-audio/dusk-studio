@@ -47,6 +47,12 @@ canonical source.
   descriptions with a space, so they ran together or repeated a sentence.
   The second now starts its own sentence, and a description the other one
   already contains is left out.
+- **Full-width characters in SFZ pack names.** The SFZ Manager drew "?" for
+  characters its font lacks, such as the full-width brackets in
+  `Model（sfz）`. Full-width letters, digits and punctuation now show as
+  their plain forms, so that name reads `Model(sfz)`. Any other character
+  the font lacks, such as Chinese or Japanese text, shows the Unicode
+  replacement mark instead of "?".
 
 ## [0.16.0] - 2026-11-01
 

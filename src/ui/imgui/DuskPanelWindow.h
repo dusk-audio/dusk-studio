@@ -102,6 +102,11 @@ public:
     // uploaded; both are called again whenever the atlas is rebuilt for a new scale.
     virtual void reserveAtlasImages (ImFontAtlas&) {}
     virtual void rasteriseAtlasImages (ImFontAtlas&) {}
+
+    // True for a view that draws text from outside the app, such as a repository's pack
+    // names, in the text entry face. That face then draws a character it lacks as the
+    // replacement mark rather than as '?'. Read when the atlas is built.
+    virtual bool marksMissingGlyphs() const { return false; }
 };
 
 // A native modal panel over the JUCE shell.

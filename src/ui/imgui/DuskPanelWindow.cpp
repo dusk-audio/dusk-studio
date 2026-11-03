@@ -1,6 +1,7 @@
 #include "DuskPanelWindow.h"
 #include "DuskImGuiHost.h"
 #include "DuskTheme.h"
+#include "PanelText.h"
 #include "../../foundation/AppConfigDir.h"
 #include "../../foundation/MessageThread.h"
 
@@ -785,8 +786,9 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
        #ifndef DGL_NO_SHARED_RESOURCES
         auto& io = ImGui::GetIO();
         io.Fonts->Clear();
-        fonts = dw::buildFonts (*io.Fonts, daf_resources::dejavusans_ttf,
-                                static_cast<int> (daf_resources::dejavusans_ttf_size), scale);
+        fonts = buildPanelFonts (*io.Fonts, daf_resources::dejavusans_ttf,
+                                 static_cast<int> (daf_resources::dejavusans_ttf_size), scale,
+                                 view != nullptr && view->marksMissingGlyphs());
         // Reserved before the pack and filled in after, so a knob costs three quads
         // rather than the thousand vertices a drawn dome does.
         knobAtlas.reserve (*io.Fonts, static_cast<int> (128.0f * std::max (1.0f, scale)));
