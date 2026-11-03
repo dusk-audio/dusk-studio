@@ -1,4 +1,4 @@
-# Last step of an --installed run, which leaves the guest as it found it: no
+# Last step of an --installed run, which leaves the guest clean: no
 # instance running, nothing of the run on disk, and the user environment free
 # of the private folders phase 4 lends Explorer for one launch.
 try {

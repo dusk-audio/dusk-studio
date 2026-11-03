@@ -1282,14 +1282,15 @@ installed in the guest, with no payload, no install and no UAC prompt. It takes
 about 4 minutes, and needs the guest and host set up as for package mode
 (including the host tools package mode checks for), the guest's desktop left
 alone while it runs, and no `DUSKSTUDIO_*` variable in the guest user's
-environment. Its legs, after `host-servers`, `guest-wake` and `console-probe`:
+environment. Close Dusk Studio in the guest first: the run stops any instance
+it finds and does not start it again. Its legs, after `host-servers`, `guest-wake` and `console-probe`:
 
 | Leg | What it proves |
 |---|---|
 | `installed-check` | stands in for `msi-install`: exactly one Dusk Studio is installed for all users, at X.Y.Z, under `Program Files`; its `DuskStudio.exe` FileVersion and `--version` report X.Y.Z. Records the executable and the real-profile snapshot for the audit in a run folder of its own. |
 | `phase4-window-activation` | as in package mode. |
 | `isolation-audit` | as in package mode, against the snapshot `installed-check` took. |
-| `run-cleanup` | leaves the guest as it found it: no `DuskStudio.exe` or plug-in host running, no `DUSKSTUDIO_*` variable in the user environment, and the run folder removed (only with its `.dusk-regress-run` marker). It first waits up to 90 s for a phase 4 the host stopped waiting for to finish putting Notepad's saved session back, and leaves the run folder, backup included, when it has not. Variables phase 4 lent and left behind still fail the leg, and are cleared when phase 4's owner marker is with them. |
+| `run-cleanup` | leaves the guest clean: no `DuskStudio.exe` or plug-in host running, no `DUSKSTUDIO_*` variable in the user environment, and the run folder removed (only with its `.dusk-regress-run` marker). It first waits up to 90 s for a phase 4 the host stopped waiting for to finish putting Notepad's saved session back, and leaves the run folder, backup included, when it has not. Variables phase 4 lent and left behind still fail the leg, and are cleared when phase 4's owner marker is with them. |
 
 ### Windows source
 
@@ -1298,7 +1299,10 @@ builds this checkout's HEAD (detached is fine; uncommitted changes are not
 included) in the same `win11` guest over ssh, in a tree configured the way
 `windows-tests.yml` configures CI's: Ninja, MSVC x64 Release, the vcpkg
 `x64-windows-static` packages, the donor at `DONOR_REV`, DAF at `DAF_REV`,
-the pinned Mesa. It takes no options, needs no UAC and installs nothing.
+the pinned Mesa. It takes no options and needs no UAC. It does not install
+Dusk Studio, but its update step reinstalls Mesa, Python and the vcpkg
+packages when the file that pins them changes, and the first run creates the
+guest tree and clones its dependencies.
 
 ```bash
 scripts/regress.sh windows-source
