@@ -7,6 +7,13 @@ canonical source.
 
 ## [0.16.1] - Unreleased
 
+### Changed
+
+- **DSP readout colours.** The readout turns red only for a backend xrun, a
+  stream disruption the audio backend reported. An engine overrun on its own,
+  load above 85% or a realtime warning turns it amber, since device buffering
+  can absorb a late block.
+
 ### Fixed
 
 - **Rate-limit notice.** When an online SFZ repository is rate limited, a

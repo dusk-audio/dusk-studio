@@ -1,5 +1,6 @@
 #pragma once
 
+#include "DspReadout.h"
 #include "../dsp/PhaseAnalyzer.h"
 
 #include <cstdint>
@@ -275,6 +276,11 @@ public:
     // The menu bar's DSP segment, and a double-click on it.
     virtual std::string dspReadout() const = 0;
     virtual bool doubleClickDspReadout() = 0;
+    // Readings the segment shows instead of the engine's until nullopt; false
+    // without a status bar. The paint is the segment's strongest text pixel as
+    // ARGB, 0 without a status bar.
+    virtual bool pinDspReadings (std::optional<DspReadings>) = 0;
+    virtual std::uint32_t dspReadoutPaint() = 0;
     virtual bool clickRecord() = 0;
     virtual bool clickMidiMerge() = 0;
     virtual bool clickPianoMidiMerge() = 0;

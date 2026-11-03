@@ -192,6 +192,7 @@ add_executable(dusk-studio-tests
     timeline_follow.cpp
     timeline_sample_rate.cpp
     aux_send_text.cpp
+    dsp_readout_severity.cpp
     loop_timeline.cpp
     generated_midi_budget.cpp
     midi_bindings_preset.cpp
