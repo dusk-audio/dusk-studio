@@ -47,7 +47,9 @@ public:
     // Drives numBlocks callbacks with silent inputs and returns the peak
     // absolute output sample seen across them.
     float pump (int numBlocks);
-    // Stages events on an input, then drives exactly one block.
+    // Stages events on an input, then drives exactly one block. Expects the
+    // block to have taken them: an injection dropped or sent to an index the
+    // input bank no longer has fails the scenario, naming the input.
     float pumpWithMidi (int inputIdx, dusk::MidiBuffer events);
     // What the last pumped block wrote to an output channel.
     const std::vector<float>& lastBlock (int channel) const { return outputs[(std::size_t) channel]; }

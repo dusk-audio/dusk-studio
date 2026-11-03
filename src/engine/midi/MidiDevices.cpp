@@ -107,7 +107,8 @@ void MidiInputClient::rebuild (double sampleRate)
         collectors.push_back (std::move (col));
     }
 
-    // Appended after real hardware so the VKB's index is stable across hot-plug.
+    // Appended after real hardware, so a hot-plug that adds or removes a source
+    // moves the VKB's index; its identifier is what stays put.
     // Not bound to any OS device - the on-screen keyboard posts into its
     // collector directly; the audio thread drains it like any other input.
     devices.push_back ({ "Virtual Keyboard (Dusk Studio)", kVirtualKeyboardIdentifier });

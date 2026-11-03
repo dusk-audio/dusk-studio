@@ -88,8 +88,17 @@ float ScenarioContext::pump (int numBlocks)
 
 float ScenarioContext::pumpWithMidi (int inputIdx, dusk::MidiBuffer events)
 {
+    const auto before = engineRef.getTestMidiInjectionMisses();
     engineRef.stageTestMidiInjection (inputIdx, std::move (events));
-    return pump (1);
+    const float peak = pump (1);
+    const auto after = engineRef.getTestMidiInjectionMisses();
+    const auto staged = "the MIDI staged for input " + std::to_string (inputIdx);
+    expect (after.dropped == before.dropped,
+            staged + " was dropped: the injection before it was still pending");
+    expect (after.unrouted == before.unrouted,
+            staged + " reached no input: the MIDI input bank has "
+            + std::to_string (engineRef.getMidiInputDevices().size()) + " inputs");
+    return peak;
 }
 
 std::optional<std::filesystem::path> ScenarioContext::fixture (const std::string& logical) const

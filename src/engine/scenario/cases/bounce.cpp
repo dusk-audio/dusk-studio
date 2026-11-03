@@ -698,8 +698,10 @@ std::optional<ScenarioResult> offlineMidiIsolation (ScenarioContext& ctx)
     auto& session = ctx.session();
     auto& transport = engine.getTransport();
     auto& strip = session.track (0).strip;
-    const int input = engine.getVirtualKeyboardInputIndex();
-    if (input < 0) return ScenarioResult::fail ("the virtual MIDI input is missing");
+    // The virtual keyboard sits after every hardware source, so a hot-plug
+    // rebuild that adds or drops one renumbers it: read its index when used.
+    const auto keyboard = [&engine] { return engine.getVirtualKeyboardInputIndex(); };
+    if (keyboard() < 0) return ScenarioResult::fail ("the virtual MIDI input is missing");
     const bool hardware = engine.setHardwareMidiInputsEnabledForScenario (false);
     const bool takeover = engine.getMidiSoftTakeover();
     engine.setMidiSoftTakeover (false);
@@ -723,15 +725,30 @@ std::optional<ScenarioResult> offlineMidiIsolation (ScenarioContext& ctx)
     ctx.keep (session.externalTimeCodeReversed); ctx.keep (session.externalTimeCodeFrameRate);
     ctx.keep (session.track (1).midiOutputIndex);
     ctx.keep (session.heldMidiNotes[60]);
+    // Wired by identifier, as a session is: each hot-plug rebuild resolves the
+    // sync and control-surface indices again from these, and on Linux the
+    // recorder swap below arms one by closing this process's own output client.
+    const auto syncSource = session.syncSourceInputIdentifier, syncOutput = session.syncOutputIdentifier;
+    const auto surfaceIn = session.mcu.inputIdentifier, surfaceOut = session.mcu.outputIdentifier;
+    ctx.cleanup ([&session, syncSource, syncOutput, surfaceIn, surfaceOut]
+    {
+        session.syncSourceInputIdentifier = syncSource;
+        session.syncOutputIdentifier = syncOutput;
+        session.mcu.inputIdentifier = surfaceIn;
+        session.mcu.outputIdentifier = surfaceOut;
+    });
+    session.syncSourceInputIdentifier = midi::MidiInputClient::kVirtualKeyboardIdentifier;
+    session.mcu.inputIdentifier = midi::MidiInputClient::kVirtualKeyboardIdentifier;
+    session.mcu.outputIdentifier = {};
     session.oversamplingFactor.store (1);
-    session.syncSourceInputIdx.store (input);
+    session.syncSourceInputIdx.store (keyboard());
     session.externalSyncFollowsTempo.store (true);
     session.externalSyncChasesTransport.store (true);
     session.externalTimeCodeChasesTransport.store (true);
     session.syncOutputIdx.store (1);
     session.syncOutputEmitClock.store (true);
     session.syncOutputEmitTimeCode.store (true);
-    session.mcu.resolvedInputIdx.store (input);
+    session.mcu.resolvedInputIdx.store (keyboard());
     session.mcu.resolvedOutputIdx.store (-1);
     session.mcu.bank.store (0);
     session.track (1).mode.store ((int) Track::Mode::Midi);
@@ -759,6 +776,7 @@ std::optional<ScenarioResult> offlineMidiIsolation (ScenarioContext& ctx)
     placeRegion (ctx, 0, source, 0, length);
     auto owned = std::make_unique<RecordingMidiBackend> (2, 32768);
     auto* recorder = owned.get();
+    session.syncOutputIdentifier = recorder->enumerate()[1].identifier;
     engine.installMidiOutputBackend (std::move (owned));
     if (! engine.ensureMidiOutputOpen (0) || ! engine.ensureMidiOutputOpen (1))
         return ScenarioResult::fail ("the MIDI isolation outputs would not open");
@@ -792,26 +810,30 @@ std::optional<ScenarioResult> offlineMidiIsolation (ScenarioContext& ctx)
     auto reference = std::make_shared<std::array<std::vector<Rendered>, 3>>();
     auto next = std::make_shared<std::function<void (int)>>();
     std::weak_ptr<std::function<void (int)>> weakNext = next;
-    *next = [&ctx, &engine, &session, &transport, &strip, input, recorder, traffic, settle, reference, weakNext] (int pass)
+    *next = [&ctx, &engine, &session, &transport, &strip, keyboard, recorder, traffic, settle, reference, weakNext] (int pass)
     {
         if (pass == 6)
         {
-            (*settle) ([&ctx, &engine, &session, &transport, &strip, input, recorder, traffic, settle]
+            (*settle) ([&ctx, &engine, &session, &transport, &strip, keyboard, recorder, traffic, settle]
             {
                 ctx.expect (recorder->count() == 0, "offline renders sent physical MIDI notes or sync bytes");
                 session.tempoBpm.store (120.0f); strip.faderDb.store (0.0f); strip.pan.store (0.0f);
                 session.pendingTransportAction.store ((int) PendingTransportAction::None);
                 session.pendingTransportPlayhead.store (-1);
+                // The rebuild the recorder swap arms runs only if its timer meets
+                // a gap between renders. Forced here, the live step always runs
+                // behind one.
+                engine.refreshMidiInputs();
                 ctx.pump (1);
                 transport.setPlayhead (0);
                 engine.play();
-                ctx.pumpWithMidi (input, traffic());
+                ctx.pumpWithMidi (keyboard(), traffic());
                 ctx.expect (session.tempoBpm.load() > 200.0f, "realtime MIDI Clock did not follow tempo");
                 ctx.expect (strip.faderDb.load() < -40.0f, "realtime MCU fader input was suppressed");
                 ctx.expect (strip.pan.load() > 0.9f, "realtime controller binding was suppressed");
                 ctx.expect (session.externalTimeCodeRolling.load(), "realtime MTC input was suppressed");
                 ctx.pump (4);
-                (*settle) ([&ctx, &engine, &session, &transport, &strip, input, recorder, traffic, settle]
+                (*settle) ([&ctx, &engine, &session, &transport, &strip, keyboard, recorder, traffic, settle]
                 {
                     bool notes = false, clock = false, timecode = false;
                     for (const auto& message : recorder->captured())
@@ -827,7 +849,7 @@ std::optional<ScenarioResult> offlineMidiIsolation (ScenarioContext& ctx)
                     session.pendingTransportAction.store ((int) PendingTransportAction::None);
                     session.pendingTransportPlayhead.store (-1);
                     const auto frames = session.externalTimeCodeFrames.load();
-                    ctx.pumpWithMidi (input, traffic());
+                    ctx.pumpWithMidi (keyboard(), traffic());
                     ctx.pump (200);
                     ctx.expect (session.externalTimeCodeRolling.load() && session.externalTimeCodeFrames.load() == frames,
                                 "offline blocks advanced the external MTC receiver/watchdog");
@@ -889,6 +911,9 @@ std::optional<ScenarioResult> offlineMidiIsolation (ScenarioContext& ctx)
         auto run = std::make_shared<BounceRun>();
         run->bounce = std::make_unique<BounceEngine> (engine, session, OfflineRenderQuality::MatchPlayback);
         ctx.cleanup ([run, observed] { observed->gate.signal(); run->bounce.reset(); });
+        // The render thread stages with this copy: the index belongs to the
+        // message thread, which is where the input bank is rebuilt.
+        const int input = keyboard();
         run->bounce->onProgressUpdated = [&engine, &session, &strip, observed, inject, input, traffic] (float progress)
         {
             observed->changed |= session.tempoBpm.load() != 120.0f || strip.faderDb.load() != 0.0f
