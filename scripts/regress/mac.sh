@@ -29,13 +29,10 @@ MAC_DAF="${DUSK_REGRESS_MAC_DAF:-src/DAF}"
 MAC_CONFIGURE="${DUSK_REGRESS_MAC_CONFIGURE:-mac-configure.sh}"
 MAC_BUILD_DIR="${DUSK_REGRESS_MAC_BUILD_DIR:-build}"
 MAC_TEST_BUILD_DIR="${DUSK_REGRESS_MAC_TEST_BUILD_DIR:-build-tests}"
-MAC_DAF_REV="${DUSK_REGRESS_MAC_DAF_REV:-}"
 MAC_DEDICATED=0
 if [[ -n "${DUSK_REGRESS_MAC_REPO:-}" ]]; then
     [[ -n "${DUSK_REGRESS_MAC_DAF:-}" && -n "${DUSK_REGRESS_MAC_CONFIGURE:-}" ]] \
         || regress_die "a dedicated Mac repository requires explicit DAF and configure-helper paths"
-    [[ "$MAC_DAF_REV" =~ ^[0-9a-f]{40}$ ]] \
-        || regress_die "a dedicated Mac repository requires a 40-character DAF revision"
     MAC_DEDICATED=1
 fi
 JOBS="${DUSK_JOBS:-5}"
@@ -159,6 +156,8 @@ trap mac_interrupt INT TERM
 
 DONOR_REV="$(tr -d '[:space:]' < DONOR_REV)"
 [[ "$DONOR_REV" =~ ^[0-9a-f]{40}$ ]] || regress_die "DONOR_REV does not hold a valid commit"
+MAC_DAF_REV="$(tr -d '[:space:]' < DAF_REV)"
+[[ "$MAC_DAF_REV" =~ ^[0-9a-f]{40}$ ]] || regress_die "DAF_REV does not hold a valid commit"
 
 # mac_run <deadline seconds> <<'REMOTE' ... REMOTE
 mac_run() {
@@ -275,23 +274,21 @@ git submodule status
 REMOTE
 }
 
-# Dedicated builds verify their pinned DAF checkout; the legacy node follows
-# main best-effort when it can reach GitHub.
+# A dedicated DAF checkout is only verified; the legacy node's is moved to
+# DAF_REV and left there.
 leg_daf() {
     mac_run 900 <<'REMOTE'
 set -euo pipefail
 cd "$REGRESS_DAF"
-if [[ "$REGRESS_DEDICATED" == 1 ]]; then
-    [[ "$(git rev-parse HEAD)" == "$REGRESS_DAF_REV" ]]
-    echo "DAF $REGRESS_DAF_REV (verified dedicated checkout)"
-    exit 0
+before="$(git rev-parse HEAD)"
+if [[ "$REGRESS_DEDICATED" != 1 && "$before" != "$REGRESS_DAF_REV" ]]; then
+    git cat-file -e "$REGRESS_DAF_REV^{commit}" 2>/dev/null \
+        || git fetch -q origin "$REGRESS_DAF_REV"
+    git -c advice.detachedHead=false checkout -q --detach "$REGRESS_DAF_REV"
 fi
-before="$(git rev-parse --short HEAD)"
-if ! git pull -q --ff-only >/dev/null 2>&1; then
-    echo "warn: DAF could not follow main (left at ${before})"
-    exit 0
-fi
-echo "DAF $(git rev-parse --short HEAD) (was ${before})"
+[[ "$(git rev-parse HEAD)" == "$REGRESS_DAF_REV" ]] || {
+    echo "error: DAF is at $(git rev-parse HEAD), DAF_REV is $REGRESS_DAF_REV" >&2; exit 1; }
+echo "DAF $REGRESS_DAF_REV (was $before)"
 REMOTE
 }
 
@@ -521,11 +518,7 @@ fi
 
 regress_leg "push-head" leg_push
 regress_leg "mac-checkout" leg_checkout
-if ((MAC_DEDICATED)); then
-    regress_leg "daf-revision" leg_daf
-else
-    regress_leg_soft "daf-main" leg_daf
-fi
+regress_leg "daf-revision" leg_daf
 
 regress_leg "configure-app" leg_configure_app
 regress_leg "configure-tests" leg_configure_tests

@@ -1,11 +1,5 @@
 name: Clone DAF
-description: DAF checkout into RUNNER_TEMP for the native UI; tip of main unless a revision is given.
-
-inputs:
-  rev:
-    description: DAF commit to check out. Empty takes the tip of main.
-    required: false
-    default: ''
+description: DAF checkout into RUNNER_TEMP for the native UI at the commit in DAF_REV.
 
 runs:
   using: composite
@@ -14,17 +8,18 @@ runs:
       shell: bash
       env:
         DAF_REPO: https://github.com/dusk-audio/DAF.git
-        DAF_REV: ${{ inputs.rev }}
       run: |
         set -euo pipefail
+        rev="$(tr -d '[:space:]' < "${GITHUB_WORKSPACE}/DAF_REV")"
+        [[ "${rev}" =~ ^[0-9a-f]{40}$ ]] || {
+          echo "ERROR: DAF_REV must hold one full commit hash (got '${rev}')" >&2; exit 1; }
         git init -q "${RUNNER_TEMP}/DAF"
         cd "${RUNNER_TEMP}/DAF"
         git remote add origin "${DAF_REPO}"
-        git fetch --depth 1 origin "${DAF_REV:-main}"
+        git fetch --depth 1 origin "${rev}"
         git checkout -q FETCH_HEAD
-        rev="$(git rev-parse HEAD)"
-        [[ -z "${DAF_REV}" || "${rev}" == "${DAF_REV}" ]] || {
-          echo "ERROR: DAF checkout ${rev} != requested ${DAF_REV}" >&2; exit 1; }
+        [[ "$(git rev-parse HEAD)" == "${rev}" ]] || {
+          echo "ERROR: DAF checkout $(git rev-parse HEAD) != DAF_REV ${rev}" >&2; exit 1; }
         echo "DAF ${rev}"
         # LICENSES.txt ships in every package and must name the DAF commit
         # that was compiled in.

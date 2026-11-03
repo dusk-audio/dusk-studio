@@ -83,6 +83,7 @@ with tempfile.TemporaryDirectory(prefix="dusk-regress-contract-") as scratch:
     shutil.copyfile(repo / "scripts/regress/mac.sh", runners / "mac.sh")
     shutil.copyfile(repo / "scripts/regress/common.sh", runners / "common.sh")
     (root / "DONOR_REV").write_text("0" * 40 + "\n")
+    (root / "DAF_REV").write_text("2" * 40 + "\n")
     mocks = root / "bin"
     mocks.mkdir()
     remote_home = root / "remote"
@@ -233,8 +234,7 @@ else:
                        DUSK_REGRESS_MAC_DAF=str(configured_daf),
                        DUSK_REGRESS_MAC_CONFIGURE=str(configured_helper),
                        DUSK_REGRESS_MAC_BUILD_DIR="app build",
-                       DUSK_REGRESS_MAC_TEST_BUILD_DIR="test build",
-                       DUSK_REGRESS_MAC_DAF_REV="2" * 40)
+                       DUSK_REGRESS_MAC_TEST_BUILD_DIR="test build")
 
     def configured_run(overrides):
         trace.write_text("")
@@ -278,8 +278,11 @@ else:
                       {"REGRESS_TEST_DAF_HEAD": "3" * 40},
                       {"REGRESS_TEST_DAF_DIRTY": "1"},
                       {"DUSK_REGRESS_MAC_CONFIGURE": ""},
-                      {"DUSK_REGRESS_MAC_DAF_REV": ""}):
+                      {"DAF_REV": "main\n"}):
+        daf_rev = overrides.pop("DAF_REV", "2" * 40 + "\n")
+        (root / "DAF_REV").write_text(daf_rev)
         result, calls = configured_run(overrides)
+        (root / "DAF_REV").write_text("2" * 40 + "\n")
         assert result.returncode != 0, result.stdout
         assert not any(call["args"][:1] == ["push"] for call in calls), calls
         assert not any(call["command"] == configured_helper.name for call in calls), calls

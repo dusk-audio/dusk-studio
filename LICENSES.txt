@@ -288,9 +288,10 @@ pffft (FFT backend behind dusk::audio::Fft — spectrum analyser, DP alignment)
              top of external/pffft/pffft.h.
 
 DAF / DGL and widgets (Dusk Audio Framework graphics layer — backs the native notepad UI)
-  Version  : dusk-audio/DAF main, rev @DAF_REV@
-             (release builds write the exact DAF commit they compiled in
-             here and below; .github/actions/clone-daf-stack/action.yml)
+  Version  : dusk-audio/DAF rev @DAF_REV@
+             (the DAF_REV file at the top of the Dusk Studio source; release
+             builds write the DAF commit they compiled in here and below,
+             .github/actions/clone-daf-stack/action.yml)
   License  : ISC — Copyright (C) 2012-2025 Filipe Coelho <falktx@falktx.com>
              (DAF/LICENSE)
   Path     : ../DAF (or -DDAF_PATH=...), with widgets/ in the same checkout.

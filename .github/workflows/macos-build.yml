@@ -155,7 +155,7 @@ jobs:
       - name: Clone Dusk plugins
         uses: ./.github/actions/clone-donor
 
-      - name: Clone DAF main
+      - name: Clone DAF
         uses: ./.github/actions/clone-daf-stack
 
       - name: Configure (Release)

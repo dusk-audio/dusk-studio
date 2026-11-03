@@ -44,7 +44,7 @@ cmake --build build -j6
 ./build/DuskStudio_artefacts/Release/DuskStudio
 ```
 
-JUCE and the DAF stack behind the native notepad are auto-discovered from sibling directories (`../JUCE` / `../JUCE-wayland`, `../DAF`); configure fetches the Dusk plugins repo itself at the commit in `DONOR_REV`. See Part 5 for what happens when discovery fails — it will, eventually, and the error messages are not always obvious.
+JUCE and the DAF stack behind the native notepad are auto-discovered from sibling directories (`../JUCE` / `../JUCE-wayland`, `../DAF`, kept at the commit in `DAF_REV`); configure fetches the Dusk plugins repo itself at the commit in `DONOR_REV`. See Part 5 for what happens when discovery fails. It will, eventually, and the error messages are not always obvious.
 
 **Checkpoint:** the app launches, you can create a track, arm it, and play a click.
 
@@ -322,23 +322,28 @@ CMake auto-detects three external repos at configure time, on top of three git s
   `../DAF`, then `external/DAF`. Without DAF and `widgets/imgui/DearImGui.hpp`,
   `DUSKSTUDIO_ENABLE_NATIVE_UI` defaults OFF and every native view is unavailable.
   Forcing it ON makes missing dependencies a configure error. DGL, pugl and the
-  widget kit move together as one checkout; builds track DAF `main`.
+  widget kit move together as one checkout, pinned by the `DAF_REV` file.
 
 ```bash
 cd /path/to/dusk-studio
 
 git clone https://github.com/dusk-audio/DAF.git ../DAF
-git -C ../DAF pull --ff-only
+git -C ../DAF checkout --detach "$(tr -d '[:space:]' < DAF_REV)"
 
 ```
 
-CI builds the tip of DAF `main`, so keep `../DAF` on `main` and pull it before
-building. A release resolves `main` once and builds every platform against that
-commit, then writes it into the shipped LICENSES.txt in place of `@DAF_REV@`
-([.github/actions/clone-daf-stack/action.yml](../.github/actions/clone-daf-stack/action.yml)).
-When DAF changes a vendored third-party component, update that component's
-LICENSES.txt entry here. Pugl and the widget kit are vendored inside DAF; no
-extra checkout is needed.
+Every CI and release workflow checks DAF out at the commit in `DAF_REV`
+through [.github/actions/clone-daf-stack/action.yml](../.github/actions/clone-daf-stack/action.yml),
+which fails when the checkout does not match and writes that commit into the
+shipped LICENSES.txt in place of `@DAF_REV@`. Configure warns, naming both
+commits, when `../DAF` (or `-DDAF_PATH`) is a git checkout at another commit;
+the build still goes ahead, so a DAF change can be tried locally first.
+
+To move DAF, merge the change in DAF first, then put the new DAF commit in
+`DAF_REV` in a reviewed Dusk Studio commit. When DAF changes a vendored
+third-party component, update that component's LICENSES.txt entry in the same
+commit. Pugl and the widget kit are vendored inside DAF; no extra checkout is
+needed.
 
 `DUSKSTUDIO_ENABLE_NATIVE_UI` is a cached `option()`, which makes the OFF sticky in a nasty way: configure a build dir before the checkouts exist, add them later, and re-running CMake in that same dir leaves the notepad off — and the STATUS line above no longer prints, because its guard also requires the deps to be missing. Use a fresh build dir after cloning, or pass `-DDUSKSTUDIO_ENABLE_NATIVE_UI=ON` to overwrite the cache entry.
 
@@ -507,7 +512,6 @@ The Mac source leg can use a dedicated validation tree:
 ```bash
 DUSK_REGRESS_MAC_REPO=dusk-386-current \
 DUSK_REGRESS_MAC_DAF=dusk-016-validation-deps/DAF \
-DUSK_REGRESS_MAC_DAF_REV='<40-character-commit>' \
 DUSK_REGRESS_MAC_CONFIGURE=dusk-016-prepush-configure.sh \
 DUSK_REGRESS_MAC_BUILD_DIR=build-prepush \
 DUSK_REGRESS_MAC_TEST_BUILD_DIR=build-prepush-tests \
@@ -517,9 +521,9 @@ TMPDIR=/var/tmp scripts/regress.sh prepush
 Source, DAF and helper paths are absolute or relative to the remote home;
 build paths are absolute or relative to the selected source. Explicit source
 selection requires `git config dusk.validationWorktree true`, clean source and
-DAF trees, the exact DAF revision, and an explicit configure helper. These
-checks run before transferring HEAD. The dedicated DAF checkout is verified
-without pulling it. The helper receives the absolute build directory as its
+DAF trees, the DAF checkout at this checkout's `DAF_REV`, and an explicit
+configure helper. These checks run before transferring HEAD. The dedicated DAF
+checkout is verified without moving it. The helper receives the absolute build directory as its
 first argument, followed by CMake options including the selected DAF path and
 removal of `DUSK_PLUGINS_PATH`. It must configure the selected source with the
 node's toolchain flags; the runner also exports its absolute path as
@@ -955,7 +959,7 @@ deadlines are a poll loop over a completion marker.
 Prerequisites: an ssh key on the node, a clean `~/src/dusk-studio` working tree
 (submodule pointers may drift; tracked files may not), `~/mac-configure.sh`
 (takes the build dir as `$1` and passes `-DDAF_PATH`, no donor flag), and a
-`~/src/DAF` checkout on `main`. The donor needs no checkout of its own: configure
+`~/src/DAF` clone of DAF. The donor needs no checkout of its own: configure
 fetches `DONOR_REV` into each build tree's `_deps`.
 
 The commit under test never goes through GitHub: it is pushed straight over ssh
@@ -967,7 +971,7 @@ including when a leg fails.
 |---|---|
 | `mac-preflight` | node reachable; tracked checkout and submodule worktrees clean; previous branch and commits recorded. |
 | `push-head` / `mac-checkout` | the node builds this exact commit. `WARN` when a submodule cannot be synced to the recorded pin. |
-| `daf-main` | `~/src/DAF` fast-forwarded to the tip of `main`, which is what CI builds against. Best effort: a node that cannot reach GitHub is a `WARN`, not a failure. DAF is left where it lands, not put back. |
+| `daf-revision` | `~/src/DAF` checked out at `DAF_REV`, the commit CI builds against, fetching it from GitHub when the clone lacks it. A clone that cannot reach that commit fails the leg. DAF is left there, not put back. |
 | `configure-app` / `configure-tests` | both trees configure through `~/mac-configure.sh`. |
 | `donor-check` | both trees build the donor from `DONOR_REV`: no cached `DUSK_PLUGINS_PATH`, and `_deps/dusk-plugins` at that commit. |
 | `build-app` / `build-tests` / `ctest` | the same build and test surface as CI's macOS job. |
@@ -1293,8 +1297,8 @@ environment. Its legs, after `host-servers`, `guest-wake` and `console-probe`:
 builds this checkout's HEAD (detached is fine; uncommitted changes are not
 included) in the same `win11` guest over ssh, in a tree configured the way
 `windows-tests.yml` configures CI's: Ninja, MSVC x64 Release, the vcpkg
-`x64-windows-static` packages, the donor at `DONOR_REV`, DAF at the tip of
-main, the pinned Mesa. It takes no options, needs no UAC and installs nothing.
+`x64-windows-static` packages, the donor at `DONOR_REV`, DAF at `DAF_REV`,
+the pinned Mesa. It takes no options, needs no UAC and installs nothing.
 
 ```bash
 scripts/regress.sh windows-source
@@ -1315,7 +1319,7 @@ check the guest before the next run, since the preflight refuses a busy tree.
 | Leg | What it proves |
 |---|---|
 | `vm-preflight` | the guest answers over ssh, nothing is already running in the tree, and the scripts are copied. A failure ends the run. |
-| `update` | the tree is at HEAD: the merge base with `origin/main` (and any other commit the local ones stand on) fetched from GitHub by hash, the local commits sent as a git bundle, submodules synced, the donor at `DONOR_REV`, DAF at main. Mesa and Python are reinstalled when `scripts/fetch-windows-software-opengl.ps1` changed, the vcpkg packages when `vcpkg.json` did. |
+| `update` | the tree is at HEAD: the merge base with `origin/main` (and any other commit the local ones stand on) fetched from GitHub by hash, the local commits sent as a git bundle, submodules synced, the donor at `DONOR_REV`, DAF at `DAF_REV`. Mesa and Python are reinstalled when `scripts/fetch-windows-software-opengl.ps1` changed, the vcpkg packages when `vcpkg.json` did. |
 | `build` | `DuskStudio`, `dusk-studio-tests` and `dusk-windows-software-opengl-probe` at `-j4`, as CI builds them, reconfiguring first when the configure script changed. A failure's note counts the compile and link errors and names the first. |
 | `mesa` | CI's "Verify packaged Mesa selects llvmpipe" step, and the fixture plug-ins and app files CI's upload steps require. |
 | `ctest-inventory` | every test name the `windows-tests.yml` at HEAD requires is in the CTest inventory. The names are read from the workflow, so the two never drift; finding none fails. |

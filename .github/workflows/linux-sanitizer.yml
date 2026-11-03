@@ -123,7 +123,7 @@ jobs:
       - name: Clone Dusk plugins
         uses: ./.github/actions/clone-donor
 
-      - name: Clone DAF main
+      - name: Clone DAF
         uses: ./.github/actions/clone-daf-stack
 
       - name: Configure tests (TSan, RelWithDebInfo)
@@ -253,7 +253,7 @@ jobs:
       - name: Clone Dusk plugins
         uses: ./.github/actions/clone-donor
 
-      - name: Clone DAF main
+      - name: Clone DAF
         uses: ./.github/actions/clone-daf-stack
 
       - name: Configure tests (ASan + UBSan, RelWithDebInfo)

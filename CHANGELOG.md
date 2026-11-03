@@ -13,6 +13,10 @@ canonical source.
   stream disruption the audio backend reported. An engine overrun on its own,
   load above 85% or a realtime warning turns it amber, since device buffering
   can absorb a late block.
+- **DAF pinned.** CI and release builds take DAF from the commit in the new
+  `DAF_REV` file instead of the tip of DAF `main`, so a DAF merge no longer
+  changes what Dusk Studio builds. Configure warns when the local DAF
+  checkout is at another commit.
 
 ### Fixed
 

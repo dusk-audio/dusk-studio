@@ -3,7 +3,7 @@
 # De-JUCE — GUI tower (campaign plan)
 
 Phase 0 consolidation update: the active build now consumes a single DAF checkout,
-with pugl and `widgets/` vendored in-tree, tracking DAF `main`. Use `DAF_PATH`
+with pugl and `widgets/` vendored in-tree, pinned by the `DAF_REV` file. Use `DAF_PATH`
 only. References below to separate widget checkouts and pins describe the
 earlier gate history.
 
