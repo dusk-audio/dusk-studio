@@ -590,6 +590,7 @@ Prerequisites: `build/` and `build-tests/` already configured, `Xvfb`, GNU
 | `scenarios-headless` | `DUSKSTUDIO_RUN_SCENARIOS=all`: the in-app scenario suite. Passes only on exit 0, no `[FAIL]` line, and the terminal `=== scenarios: ` summary - a crash after the last case must not pass on a lucky exit code. Skipped cases go into the leg's note. |
 | `bb-handoff`, `bb-crash-relaunch`, `bb-no-runtime-dir`, `bb-damaged-recent`, `bb-clean-quit`, `bb-window-close`, `bb-quit-twice`, `bb-quit-during-mixdown`, `bb-quit-save-rate`, `bb-oop-child-kill`, `bb-oop-quit-during-load` | the black-box legs: real app processes spawned, killed and read back through their stderr. See "Scenario legs" below. |
 | `bb-gnome-file-drop` | real file drags from a GTK app onto the tape strip in a private headless GNOME session, through Mutter's XWayland relay as on a GNOME desktop: a WAV, a MIDI file and three WAVs at once, each imported through its picker and read back from the autosave. Linux only; `SKIP` without Mutter, XWayland, `dbus-run-session`, xdotool, ImageMagick's `import`, `fusermount3`, or python3 with GTK 4, NumPy and Pillow. See "Scenario legs" below. |
+| `bb-x11-drop-input` | XDND drags and a late pointer device against the app on a private bare Xvfb: a drop whose source sends XdndLeave before it answers for the data, a source that never answers, a uri-list holding a comment, a web link and two local WAVs, a link-only drag, and a click from a pointer added after launch, judged from the autosave. Linux only; `SKIP` without Xvfb, xdotool, ImageMagick's `import`, gcc with the libX11, libXi and libXtst headers, or python3 with NumPy and Pillow. See "Scenario legs" below. |
 | `scenarios-gui` | `DUSKSTUDIO_RUN_SCENARIOS=gui:<cases>`: the scenarios that need a window, split across several app instances that run at once, each in its own sandbox on its own Xvfb display (half the cores, at most four; `DUSK_REGRESS_GUI_SHARDS=N` overrides, `1` runs them in one instance). Cases are dealt longest first by the times the last run recorded in `~/.cache/dusk-regress/gui-case-ms.tsv`. The leg passes only if every instance reaches its summary line and every case dealt out reports. Off unless `--gui-scenarios`. |
 | `gui-plugin-picker`, `gui-settings-defaults` | `tests/gui_plugin_picker.sh` and `tests/gui_settings_defaults.sh` against the same binary: the GUI cases that need a seeded config (the picker filter, the native-row pick and the settings defaults), which the suite runs without (the picker cases skip there). With `--gui-scenarios` only. |
 | `release-metadata` | `scripts/release-metadata-check.sh`: `VERSION`, the top changelog heading, the AppStream entry and the release-notes summary agree, in the development or the release-ready state. Off unless `--release-checks`. |
@@ -609,6 +610,8 @@ Everything from `selftest-xvfb` down runs on a private Xvfb display with
 `WAYLAND_DISPLAY` unset - the binary aborts against a live Wayland session, so
 no leg may ever launch it on the desktop. `bb-gnome-file-drop` is the one
 exception to Xvfb: it brings its own private compositor instead.
+`bb-x11-drop-input` starts an Xvfb of its own rather than share the run's,
+because the pointer it adds would stay on that display for the legs after it.
 
 `DUSK_REGRESS_BUILD_LOCK=/path/to/lockfile` wraps the two compile legs in
 `flock` when something else may be building the same tree.
@@ -769,12 +772,36 @@ from a GTK 4 window offering a `GdkFileList`, the content GNOME Files offers, so
 Mutter relays the same XDND type list: text/plain before text/uri-list. The
 fixture tracks paint their label stripes in fixed colours and the picker
 buttons are found by colour in a grab of the app window, so a layout change
-does not move the targets. The pointer device is created before the app starts:
-the app lists its X input devices once at startup and ignores clicks from any
-added later. Everything carrying the session's runtime dir is killed at the
+does not move the targets. The pointer device is created before the app starts,
+because builds on a JUCE fork older than `dusk-wayland-v7` list the X input
+devices once at startup and ignore clicks from any device added later.
+Everything carrying the session's runtime dir is killed at the
 end, and FUSE mounts under it are unmounted. The leg needs a PipeWire socket,
 the private null graph or the machine's; without one the app would open the
 sound card through ALSA, so it skips instead.
+
+`bb-x11-drop-input` runs `scripts/regress/x11-drop-input.sh`, which builds the X
+client in `scripts/regress/x11_drop_input.c` with gcc, starts a private bare
+Xvfb (`-noreset`, no window manager) and runs `scripts/regress/x11_drop_input.py`
+from `env -i` with a private `HOME`, all four `XDG_*_HOME` and a 0700
+`XDG_RUNTIME_DIR`. The client is the XDND source: it offers
+text/plain;charset=utf-8 then text/uri-list, as GTK does, and can hold every
+conversion request until it has sent XdndDrop and then XdndLeave, the order
+Mutter's relay can produce, or send the same and never answer, which the app has
+to give up on within its three-second deadline and still answer with a refused
+XdndFinished. It also adds a master pointer with
+`XIChangeHierarchy` once the app is up and clicks the import picker's button
+through that pointer's XTEST slave. The picker buttons are found by colour, as
+in `bb-gnome-file-drop`, and both pointers are moved off the app window after
+every click: a pointer left where the next picker's button opens paints that
+button in its hover colour, and the search then lands on another block of the
+same green. The imports are renamed by the app, so each fixture WAV
+has a length of its own, and the verdict reads the lengths back from the
+autosave: the early-leave drop, the two local WAVs from the uri-list and the late
+pointer's import each land once, and nothing else does. The link-only drag
+passes when the window is unchanged three seconds after the drop, so neither a
+picker nor the "Unsupported or unreadable audio file" alert opened. The leg
+takes 25 to 45 seconds and needs a PipeWire socket, as `bb-gnome-file-drop` does.
 
 Legs whose app-side seam is not in the binary report `SKIP` with the name of
 what is missing (`DUSKSTUDIO_QUIT_AFTER_MS`, the `[Dusk Studio/startup]`

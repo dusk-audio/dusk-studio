@@ -38,6 +38,7 @@ SCENARIO_FIXTURE_ROOTS="${REPO_ROOT}/build-tests:${REPO_ROOT}/tests/fixtures"
 SCENARIO_BB_LEG_NAMES=(
     bb-no-display
     bb-gnome-file-drop
+    bb-x11-drop-input
     bb-handoff
     bb-crash-relaunch
     bb-no-runtime-dir
@@ -394,7 +395,9 @@ leg_bb_gnome_file_drop() {
     for tool in mutter Xwayland dbus-run-session xdotool import fusermount3; do
         command -v "$tool" >/dev/null 2>&1 || needs+=("$tool")
     done
-    python3 -c 'import gi, numpy, PIL; gi.require_version("Gtk", "4.0"); from gi.repository import Gtk' \
+    # The same interpreter the leg runs: an empty environment, no user site.
+    env -i PATH=/usr/local/bin:/usr/bin:/bin python3 -I \
+        -c 'import gi, numpy, PIL; gi.require_version("Gtk", "4.0"); from gi.repository import Gtk' \
         2>/dev/null || needs+=("python3 with GTK 4, NumPy and Pillow")
     if ((${#needs[@]})); then
         REGRESS_SKIP_REASON="needs ${needs[*]}"
@@ -409,6 +412,38 @@ leg_bb_gnome_file_drop() {
     local rc=0
     DUSK_DROP_PIPEWIRE_DIR="$pipewire_dir" bash "${SCENARIOS_DIR}/gnome-file-drop.sh" "$APP_BIN" || rc=$?
     # The script skips only when the socket has gone since the check above.
+    if ((rc == REGRESS_SKIP_RC)); then
+        REGRESS_SKIP_REASON="$no_socket"
+    fi
+    return "$rc"
+}
+
+# XDND drops in orders a desktop seldom produces, link drags, and a pointer
+# device added after launch, against the app on a bare X server. The leg runs
+# its own Xvfb, because adding a pointer changes the display for every client.
+leg_bb_x11_drop_input() {
+    local -a needs=()
+    local tool
+    for tool in Xvfb xdotool import gcc; do
+        command -v "$tool" >/dev/null 2>&1 || needs+=("$tool")
+    done
+    printf '#include <X11/extensions/XInput2.h>\n#include <X11/extensions/XTest.h>\n' \
+        | gcc -E -x c - >/dev/null 2>&1 || needs+=("the libXi and libXtst headers")
+    # The same interpreter the leg runs: an empty environment, no user site.
+    env -i PATH=/usr/local/bin:/usr/bin:/bin python3 -I -c 'import numpy, PIL' 2>/dev/null \
+        || needs+=("python3 with NumPy and Pillow")
+    if ((${#needs[@]})); then
+        REGRESS_SKIP_REASON="needs ${needs[*]}"
+        return "$REGRESS_SKIP_RC"
+    fi
+    local pipewire_dir="${NULL_AUDIO_DIR:-${PIPEWIRE_RUNTIME_DIR:-${XDG_RUNTIME_DIR:-}}}"
+    local no_socket="no PipeWire socket; the app would open the sound card through ALSA"
+    if [[ ! -S "${pipewire_dir}/pipewire-0" ]]; then
+        REGRESS_SKIP_REASON="$no_socket"
+        return "$REGRESS_SKIP_RC"
+    fi
+    local rc=0
+    DUSK_DROP_PIPEWIRE_DIR="$pipewire_dir" bash "${SCENARIOS_DIR}/x11-drop-input.sh" "$APP_BIN" || rc=$?
     if ((rc == REGRESS_SKIP_RC)); then
         REGRESS_SKIP_REASON="$no_socket"
     fi
@@ -1179,6 +1214,11 @@ regress_scenarios_run() {
     else
         regress_skip "bb-gnome-file-drop" "GNOME on Linux"
     fi
+    if [[ "$(uname -s)" == Linux ]]; then
+        regress_leg "bb-x11-drop-input" leg_bb_x11_drop_input
+    else
+        regress_skip "bb-x11-drop-input" "X11 on Linux"
+    fi
 
     scenarios_fixture_leg
 
@@ -1195,7 +1235,7 @@ regress_scenarios_run() {
     if ! xvfb_session_start; then
         local leg
         for leg in "${SCENARIO_BB_LEG_NAMES[@]}"; do
-            [[ "$leg" == bb-no-display || "$leg" == bb-gnome-file-drop ]] && continue
+            [[ "$leg" == bb-no-display || "$leg" == bb-gnome-file-drop || "$leg" == bb-x11-drop-input ]] && continue
             regress_skip "$leg" "no Xvfb display"
         done
         if ((want_gui)); then

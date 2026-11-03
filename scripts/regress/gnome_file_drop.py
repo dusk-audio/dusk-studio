@@ -86,9 +86,10 @@ class Desktop:
         if self.session is None:
             raise Failure("no RemoteDesktop session on the private bus")
         self.call(self.session, "org.gnome.Mutter.RemoteDesktop.Session", "Start")
-        # The seat gains its pointer with the first motion. The app lists its
-        # pointer devices once at startup and ignores clicks from any added
-        # later, so the pointer has to exist before the app starts Xwayland.
+        # The seat gains its pointer with the first motion. Builds on a JUCE
+        # fork before dusk-wayland-v7 list their pointer devices once at startup
+        # and ignore clicks from any added later, so the pointer has to exist
+        # before the app starts Xwayland.
         self.move(1, 0)
         time.sleep(0.5)
 

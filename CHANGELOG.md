@@ -23,6 +23,12 @@ canonical source.
   is ignored, even when its address ends in `.wav`, instead of ending in an
   "Unsupported or unreadable audio file" alert. Only existing local files
   import.
+- **Pointers added after launch.** On X11 and XWayland, clicks from a mouse or
+  tablet plugged in after Dusk Studio started now work.
+- **File drops that lost their files.** A drop is no longer lost when the drag
+  source leaves before it sends the file list, and a source that leaves
+  without ever sending it hears back within three seconds instead of waiting
+  on its own timeout.
 
 ## [0.16.0] - 2026-11-01
 
