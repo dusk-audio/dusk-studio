@@ -112,7 +112,7 @@ private:
                    std::int64_t& sourceFrame, bool* pastEnd = nullptr) const noexcept;
     Claim claimNext();
     void finishClaim (Entry&, bool failed = false) noexcept;
-    void run();
+    void run (unsigned index);
 
     std::mutex controlMutex;
     mutable std::mutex mutex;

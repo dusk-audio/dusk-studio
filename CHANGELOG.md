@@ -38,6 +38,11 @@ canonical source.
   warnings, and its native LV2 scan loads a bundle that two search folders
   reach once. On Linux and macOS, a custom plug-in folder that is also a
   standard LV2 folder is searched once.
+- **Rolling seeks at 192 kHz.** After a seek or Play every track refilled its
+  playback window in the same audio block, and the read burst that started
+  could stall the CPU for 2 to 3 ms, past a 192 kHz callback's deadline. Each
+  track now starts its window at its own phase, so the refills spread over
+  about 125 ms.
 
 ## [0.16.0] - 2026-11-01
 

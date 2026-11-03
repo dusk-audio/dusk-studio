@@ -27,9 +27,15 @@ public:
     static constexpr std::int64_t kDefaultWindowFrames = 96000;
     static constexpr std::int64_t kFillChunkFrames = 8192;
 
+    // refillPhaseFrames (at most a quarter window) shortens the first window
+    // after any discontinuity: a cold fill, priming, or a seek. Refills then
+    // keep the usual half-window period, so readers given different phases stay
+    // out of step instead of all refilling, and starting kernel readahead, in
+    // the same block after every seek.
     explicit BufferedFileReader (std::unique_ptr<FileReader> source,
                                  std::int64_t windowFrames = kDefaultWindowFrames,
-                                 Fill fill = Fill::Background);
+                                 Fill fill = Fill::Background,
+                                 std::int64_t refillPhaseFrames = 0);
     ~BufferedFileReader();
 
     BufferedFileReader (const BufferedFileReader&)            = delete;
@@ -100,7 +106,7 @@ private:
     void retainSeekForPlayback (std::int64_t);
     bool fillAt (std::int64_t startFrame);
     bool fillSeekAt (std::int64_t target, std::int64_t currentFrame, std::int64_t numFrames);
-    std::unique_ptr<Window> makeWindow (std::int64_t);
+    std::unique_ptr<Window> makeWindow (std::int64_t startFrame, std::int64_t shortenBy = 0);
     bool readChunk (Window&);
     void publish (std::unique_ptr<Window>& slot, std::atomic<const Window*>& published,
                   std::unique_ptr<Window> next);
@@ -111,6 +117,7 @@ private:
     FileInfo fileInfo;
     const int channels;
     const std::int64_t capacity;
+    const std::int64_t refillPhase;
     Fill fillMode;
 
     // A filling window lives in the slot it serves; staging holds a refill of a

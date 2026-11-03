@@ -1071,3 +1071,54 @@ TEST_CASE ("Fill pool stages rolling seeks without replacing current playback",
     CHECK (reader->allocatedBytes() == 0);
     CHECK_FALSE (pool.pumpOnce());
 }
+
+TEST_CASE ("Readers primed on one frame with different phases refill a phase apart, and stay apart",
+           "[audiofile][buffered][reader-pool]")
+{
+    SampleFile file;
+    const auto make = [&file] (std::int64_t phase)
+    {
+        auto raw = FileReader::open (file.path);
+        REQUIRE (raw != nullptr);
+        return std::make_unique<BufferedFileReader> (std::move (raw), 20001, BufferedFileReader::Fill::Manual, phase);
+    };
+    auto inStep = make (0);
+    auto phased = make (4000);
+    inStep->fillNow();
+    phased->fillNow();
+    // Only the first window is shorter; the half-window lead before a refill is unchanged.
+    CHECK (inStep->holds (0, 20000));
+    CHECK (phased->holds (0, 16000));
+    CHECK_FALSE (phased->holds (0, 16001));
+    const auto refillsFrom = [] (BufferedFileReader& reader, std::int64_t frame)
+    {
+        reader.hintRt (frame - 1);
+        const bool early = reader.needsFill();
+        reader.hintRt (frame);
+        return ! early && reader.needsFill();
+    };
+    CHECK (refillsFrom (*inStep, 10000));
+    CHECK (refillsFrom (*phased, 6000));
+    inStep->fillNow();
+    phased->fillNow();
+    CHECK (inStep->holds (10000, 20000));
+    CHECK (phased->holds (6000, 20000));
+    CHECK (refillsFrom (*inStep, 20000));
+    CHECK (refillsFrom (*phased, 16000));
+}
+
+TEST_CASE ("A phased seek window still reaches the warm span the seek asks for",
+           "[audiofile][buffered][reader-pool]")
+{
+    SampleFile file;
+    auto raw = FileReader::open (file.path);
+    REQUIRE (raw != nullptr);
+    BufferedFileReader reader (std::move (raw), 20001, BufferedFileReader::Fill::Manual, 5000);
+    while (reader.fillSeekOnce (30000, -1, 18000)) {}
+    CHECK (reader.holdsSeek (30000, 18000));
+    CHECK_FALSE (reader.holdsSeek (30000, 18001));
+    // A later seek to the same frame that asks for more than that window holds
+    // gets a window long enough, not the shorter one counted as complete.
+    while (reader.fillSeekOnce (30000, -1, 20000)) {}
+    CHECK (reader.holdsSeek (30000, 20000));
+}
