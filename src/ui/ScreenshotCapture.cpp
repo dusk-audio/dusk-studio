@@ -607,6 +607,9 @@ void MainComponent::captureNativePanels (std::string outDir)
             capture.file.deleteFile();
             awaitFrame (*awaited, "np-08-mastering-view", capture.file.getFullPathName().toStdString());
         }
+    }, [] (MainComponent& self)
+    {
+        return self.masteringView == nullptr || self.masteringView->nativePanelsOpenForCapture();
     } });
     steps->push_back ({ 1500, [masteringCaptures, dir] (MainComponent& self)
     {

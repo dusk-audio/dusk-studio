@@ -124,6 +124,8 @@ public:
         juce::File file;
     };
     std::vector<NativePanelCapture> captureNativePanels (const juce::File& dir);
+    // False while a panel the layout shows has no window open yet.
+    bool nativePanelsOpenForCapture() const;
 
 private:
     void timerCallback() override;
