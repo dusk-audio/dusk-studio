@@ -411,7 +411,7 @@ TEST_CASE ("SFZ provider browse queries preserve bounded API requests", "[sfz][p
             "  - name: Swirly Drums\n  # page: swirly_drums\n    license: CC0-1.0\n"
             "    url: https://karoryfer-samples.myshopify.com/pages/free-swirly-drums\n";
         std::string text = "    short_description:\n      \"" + description + "\"\n";
-        std::string suffix, expectedDescription = description, query = "BrUsHeS";
+        std::string suffix, expectedDescription = description, expectedHint = description, query = "BrUsHeS";
         bool matches = true;
         auto swirly = repository (42, "karoryfer.swirly-drums", "NOASSERTION");
         swirly["description"] = nullptr;
@@ -427,10 +427,14 @@ TEST_CASE ("SFZ provider browse queries preserve bounded API requests", "[sfz][p
         SECTION ("Single-quoted continuation preserves escaped apostrophes")
         {
             text = "    short_description: 'Drummer''s kit played with\n      brushes.'\n";
-            expectedDescription = "Drummer's kit played with brushes."; query = "with brushes";
+            expectedDescription = expectedHint = "Drummer's kit played with brushes."; query = "with brushes";
         }
         SECTION ("GitHub descriptions are retained alongside catalog text")
-        { swirly["description"] = "Original description"; expectedDescription = "Original description " + description; }
+        {
+            swirly["description"] = "Original description";
+            expectedDescription = "Original description. " + description;
+            expectedHint = "Original description " + description;
+        }
         SECTION ("Explicit repository URLs are matched")
         { suffix = "    downloads:\n    - label: Instrument\n      url: https://github.com/sfzinstruments/karoryfer.swirly-drums/releases/download/v1/pack.zip\n"; }
         SECTION ("Download descriptions do not replace the instrument description")
@@ -462,7 +466,7 @@ TEST_CASE ("SFZ provider browse queries preserve bounded API requests", "[sfz][p
         {
             CHECK (result.items.front().locator == "karoryfer.swirly-drums");
             CHECK (result.items.front().description == expectedDescription);
-            CHECK (result.items.front().presentation.categoryHint == expectedDescription);
+            CHECK (result.items.front().presentation.categoryHint == expectedHint);
             CHECK (result.items.front().licenseHint == "NOASSERTION");
         }
         CHECK (result.nextPage == 2);
@@ -497,6 +501,90 @@ TEST_CASE ("SFZ provider browse queries preserve bounded API requests", "[sfz][p
         REQUIRE (transport.requests.size() == 2);
         CHECK (transport.requests.front().url.find ("per_page=50&page=200") != std::string::npos);
     }
+}
+
+TEST_CASE ("SFZ Instruments descriptions join catalog text as a separate sentence once", "[sfz][provider]")
+{
+    const std::string ellipsis = "\xE2\x80\xA6", ideographicStop = "\xE3\x80\x82", piano = "\xE9\x92\xA2\xE7\x90\xB4";
+    const std::string fluegel = "Fl\xC3\xBC" "gel aus K\xC3\xB6" "ln";
+    struct Example
+    {
+        const char* label;
+        std::string github, catalog, expected;
+    };
+    const Example examples[] {
+        { "Matching text with a full stop is shown once",
+          "Yamaha C3 Grand Piano", "Yamaha C3 Grand Piano.", "Yamaha C3 Grand Piano" },
+        { "Case differences are the same text",
+          "yamaha c3 GRAND piano", "Yamaha C3 Grand Piano.", "yamaha c3 GRAND piano" },
+        { "Whitespace differences are the same text",
+          "Yamaha  C3\tGrand\n Piano", "Yamaha C3 Grand Piano.", "Yamaha  C3\tGrand\n Piano" },
+        { "Different texts become two sentences",
+          "Yamaha C3 Grand Piano", "Recorded at Headroom.", "Yamaha C3 Grand Piano. Recorded at Headroom." },
+        { "A trailing colon becomes the full stop",
+          "Yamaha C3 Grand Piano:", "Recorded at Headroom.", "Yamaha C3 Grand Piano. Recorded at Headroom." },
+        { "An exclamation mark already ends the sentence",
+          "Bright grand piano!", "Recorded at Headroom.", "Bright grand piano! Recorded at Headroom." },
+        { "An ellipsis already ends the sentence",
+          "Bright grand piano" + ellipsis, "Recorded at Headroom.", "Bright grand piano" + ellipsis + " Recorded at Headroom." },
+        { "A closed parenthesis after a full stop already ends the sentence",
+          "Grand piano (Yamaha C3.)", "Recorded at Headroom.", "Grand piano (Yamaha C3.) Recorded at Headroom." },
+        { "A text inside the other is shown once",
+          "Yamaha C3 Grand Piano, recorded at Headroom", "Yamaha C3 Grand Piano.", "Yamaha C3 Grand Piano, recorded at Headroom" },
+        { "A catalog text that extends the GitHub text replaces it",
+          "Yamaha C3", "Yamaha C3 Grand Piano, recorded at Headroom.", "Yamaha C3 Grand Piano, recorded at Headroom." },
+        { "Containment respects word boundaries",
+          "Headroom Organ", "Headroom Organic pads.", "Headroom Organ. Headroom Organic pads." },
+        { "A missing GitHub description shows the catalog text",
+          "", "Yamaha C3 Grand Piano.", "Yamaha C3 Grand Piano." },
+        { "A blank GitHub description shows the catalog text",
+          " \n ", "Yamaha C3 Grand Piano.", "Yamaha C3 Grand Piano." },
+        { "An empty catalog description adds nothing",
+          "Yamaha C3 Grand Piano", "", "Yamaha C3 Grand Piano" },
+        { "Multi-byte text is compared without change",
+          fluegel, fluegel + ".", fluegel },
+        { "Multi-byte text keeps its bytes when joined",
+          fluegel, "Recorded at Headroom.", fluegel + ". Recorded at Headroom." },
+        { "An ideographic full stop is trailing punctuation",
+          piano, piano + ideographicStop, piano },
+        { "An ideographic full stop already ends the sentence",
+          piano + ideographicStop, "Recorded at Headroom.", piano + ideographicStop + " Recorded at Headroom." },
+    };
+    for (const auto& example : examples)
+    {
+        CAPTURE (example.label);
+        auto headroom = repository (42, "bnilsson.headroom-piano", "NOASSERTION");
+        headroom["description"] = example.github.empty() ? Json() : Json (example.github);
+        FakeTransport transport;
+        transport.replies = { { Json::array ({ headroom }) },
+            { {}, 200, {}, "- name: Pianos\n  page: pianos\n  instruments:\n  - name: Headroom Piano\n"
+                "    short_description: \"" + example.catalog + "\"\n" } };
+        const auto result = browseProvider (transport, "sfzinstruments", 1, "headroom");
+        REQUIRE (result);
+        REQUIRE (result.items.size() == 1);
+        CHECK (result.items.front().description == example.expected);
+    }
+}
+
+TEST_CASE ("Versilian descriptions add their pack summary as a separate sentence", "[sfz][provider]")
+{
+    std::string github = "An open-source orchestral library", expected;
+    SECTION ("A GitHub description without a full stop gets one")
+    { expected = "An open-source orchestral library. "; }
+    SECTION ("A GitHub description with a full stop keeps it")
+    { github += "."; expected = "An open-source orchestral library. "; }
+    SECTION ("A missing GitHub description leaves only the summary")
+    { github.clear(); }
+    auto vsco = repository (42, "VSCO-2-CE", "CC0-1.0");
+    vsco["owner"]["login"] = "sgossner";
+    vsco["description"] = github.empty() ? Json() : Json (github);
+    FakeTransport transport;
+    transport.replies = { { Json::array ({ vsco }) } };
+    const auto result = browseProvider (transport, "versilian", 1, "orchestra");
+    REQUIRE (result);
+    REQUIRE (result.items.size() == 1);
+    CHECK (result.items.front().description == expected
+        + "Official SFZ orchestra: strings, brass, woodwinds, piano and percussion, with round-robin short articulations.");
 }
 
 TEST_CASE ("SFZ Instruments resolves pinned archives with actual LICENSE bytes", "[sfz][provider]")

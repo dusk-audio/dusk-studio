@@ -43,6 +43,10 @@ canonical source.
   could stall the CPU for 2 to 3 ms, past a 192 kHz callback's deadline. Each
   track now starts its window at its own phase, so the refills spread over
   about 125 ms.
+- **SFZ pack descriptions.** The SFZ Manager joined a pack's two
+  descriptions with a space, so they ran together or repeated a sentence.
+  The second now starts its own sentence, and a description the other one
+  already contains is left out.
 
 ## [0.16.0] - 2026-11-01
 
