@@ -924,18 +924,29 @@ std::optional<ScenarioResult> offlineMidiIsolation (ScenarioContext& ctx)
         };
         run->bounce->onFinished = [raw = run.get()] (bool ok, std::string error)
         { raw->ok = ok; raw->error = std::move (error); raw->finished.store (true, std::memory_order_release); };
+        const auto missesBefore = engine.getTestMidiInjectionMisses();
         if (inject) engine.stageTestMidiInjection (input, traffic());
         const bool started = kind == 2 ? run->bounce->startFreeze (0, sessionFile (out), length, kRate, 1024)
             : run->bounce->start (sessionFile (out), kRate, 1024, 0.0, mode);
         if (! ctx.expect (started, label + ": render did not start")) { ctx.complete (ctx.verdict()); return; }
         auto self = weakNext.lock();
-        const auto waitForFinish = [&ctx, &transport, observed, run, reference, self, outputs, kind, inject, pass, label]
+        const auto waitForFinish = [&ctx, &engine, &transport, observed, run, reference, self, outputs, kind, inject, pass, label, missesBefore]
         {
             ctx.waitUntil ([run] { return run->finished.load (std::memory_order_acquire) && ! run->bounce->isRendering(); },
-                kRenderTimeoutMs, [&ctx, &transport, observed, run, reference, self, outputs, kind, inject, pass, label]
+                kRenderTimeoutMs, [&ctx, &engine, &transport, observed, run, reference, self, outputs, kind, inject, pass, label, missesBefore]
                 {
                     ctx.expect (run->ok, label + ": render failed: " + run->error);
                     ctx.expect (! observed->changed, label + ": live MIDI changed the render controls");
+                    // Traffic that never reached an input leaves the render equal to
+                    // the reference without testing anything.
+                    if (inject)
+                    {
+                        const auto misses = engine.getTestMidiInjectionMisses();
+                        ctx.expect (misses.dropped == missesBefore.dropped,
+                                    label + ": live MIDI was dropped before a render block took it");
+                        ctx.expect (misses.unrouted == missesBefore.unrouted,
+                                    label + ": live MIDI reached no input, so the render never saw it");
+                    }
                     ctx.expect (transport.getPlayhead() == 777 && transport.isStopped(), label + ": transport was not restored");
                     for (std::size_t file = 0; file < outputs.size(); ++file)
                     {
