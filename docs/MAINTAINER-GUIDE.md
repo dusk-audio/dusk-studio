@@ -1190,9 +1190,11 @@ ones stay unresolved on Windows in any case, since Windows builds no LV2 host.
 | `isolation-audit` | nothing in the real user's Documents, Music, Desktop, `%APPDATA%\Dusk Studio` or `%LOCALAPPDATA%\Dusk Studio`, no entry at the top of the real home folder (by name; the `NTUSER*` hive files are left out), and no `dusk-studio-*` entry in the real temp folder appeared, changed or went away since `msi-install`; the user environment (`HKCU\Environment`) names no `DUSKSTUDIO_*` variable, so a value phase 4 lent Explorer and failed to clear fails the run; and every folder a launch resolves (home, AppData, Documents, Music, temp, config, the Music folder) sits inside its private profile. Either an escape or a folder that does not resolve is a `FAIL`. The Profile known folder is logged, never judged (see Isolation). |
 | `package-uninstall` | `SKIP`: the package is left installed. |
 
-Every phase opens its own console from the Start menu: a phase that calls
-`SetForegroundWindow` steals focus, so the next `send-key` would land in the
-wrong window. `scripts/regress/windows/lib.ps1` is served in front of every
+Every phase opens its own console from the Run dialog (Win+R, `powershell`):
+a phase that calls `SetForegroundWindow` steals focus, so the next `send-key`
+would land in the wrong window. A Start-menu search is not used, because while
+the search index is not ready, as after a reboot, it sends the typed text to a
+web search. `scripts/regress/windows/lib.ps1` is served in front of every
 phase script and holds what they share: the report POST, the private profile,
 the redirected launch with its bounded reads, and the snapshot. Constraints the
 guest-side scripts have to respect, all of them things that have already gone

@@ -334,12 +334,14 @@ leg_wake() {
 }
 
 # Focus is unreliable after a phase that called SetForegroundWindow, so every
-# phase gets its own console opened from the Start menu.
+# phase gets its own console, started from the Run dialog. A Start-menu search
+# is not used: while the search index is not ready, Enter sends the typed text
+# to a web search instead, and the phase command after it lands in the browser.
 open_console() {
-    vkey --raw KEY_LEFTMETA
+    vkey --raw KEY_LEFTMETA KEY_R
     sleep 3
     vkey powershell
-    sleep 3
+    sleep 1
     vkey --raw KEY_ENTER
     sleep 8
 }
