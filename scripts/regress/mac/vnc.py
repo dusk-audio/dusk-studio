@@ -1,13 +1,19 @@
 """Drive the macOS node's console session over Screen Sharing (VNC).
 
 ssh cannot see or touch the logged-in desktop, and the package leg needs it
-for three things: unlocking a locked screen, answering the privacy prompts the
-installed app raises, and keeping a picture of what the screen showed.
+for unlocking a locked screen, answering the privacy prompts the installed app
+raises, typing into the app the way a user does, and keeping a picture of what
+the screen showed.
 
     vnc.py --host macbook-air.local --user marc cap out.png
     vnc.py --host macbook-air.local --user marc click 1019 408 --expect allow \
         --pre-cap before.png [--cap out.png]
     vnc.py --host macbook-air.local --user marc unlock [--cap out.png]
+    vnc.py --host macbook-air.local --user marc keys super-o esc [--cap out.png]
+    vnc.py --host macbook-air.local --user marc type ../b/session.json
+
+keys takes vncdotool key names, "-" joining a chord; Screen Sharing reads
+super as Command. type sends each character as its own key.
 
 The password is read from a file and never printed. It is the account's login
 password as well, which is what unlock types.
@@ -123,6 +129,12 @@ def main():
     click.add_argument("--pre-cap")
     unlock = sub.add_parser("unlock")
     unlock.add_argument("--cap")
+    keys = sub.add_parser("keys")
+    keys.add_argument("key", nargs="+")
+    keys.add_argument("--cap")
+    typing = sub.add_parser("type")
+    typing.add_argument("text")
+    typing.add_argument("--cap")
     args = parser.parse_args()
     if args.cmd == "click" and args.expect and not args.pre_cap:
         parser.error("click --expect needs --pre-cap")
@@ -163,6 +175,15 @@ def main():
             time.sleep(0.3)
             client.keyPress("enter")
             time.sleep(4)
+        elif args.cmd == "keys":
+            for key in args.key:
+                client.keyPress(key)
+                time.sleep(0.3)
+        elif args.cmd == "type":
+            for ch in args.text:
+                client.keyPress(ch)
+                time.sleep(0.05)
+            time.sleep(0.3)
         out = args.out if args.cmd == "cap" else args.cap
         if out:
             client.captureScreen(out)

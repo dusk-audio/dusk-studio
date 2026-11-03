@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # macOS leg of the regression runner: drives the M3 Air build node over ssh.
 # With --dmg or --release-run it hands over to mac-package.sh, which tests a
-# release disk image instead of a source build.
+# release disk image instead of a source build; --window-activation-only goes
+# there too, for those cases alone against the app already installed.
 #
 # The node is key-auth only and never uses sudo. Its toolchain lives in ~/bin
 # and ~/tools. The configure helper supplies its build flags. There is no
@@ -13,7 +14,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 for arg in "$@"; do
-    if [[ "$arg" == --dmg || "$arg" == --release-run ]]; then
+    if [[ "$arg" == --dmg || "$arg" == --release-run || "$arg" == --window-activation-only ]]; then
         exec bash "${REPO_ROOT}/scripts/regress/mac-package.sh" "$@"
     fi
 done

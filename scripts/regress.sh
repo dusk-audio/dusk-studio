@@ -58,6 +58,9 @@ usage: scripts/regress.sh [linux|mac|windows|windows-source|all|prepush] [option
              --release-run <id>  package mode with the release-macos disk
                                  image of that release.yml run, and fixtures
                                  from the commit the run built
+             --window-activation-only
+                                 only the window-activation cases of package
+                                 mode, against the app already installed
   windows  drive the libvirt win11 guest from this box: install the MSI into
            Program Files (the runner accepts the test guest's UAC prompt),
            then the self-test, handoff, session-close, scenario and isolation
