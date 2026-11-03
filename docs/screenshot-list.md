@@ -17,6 +17,12 @@ The harness drives the real app via `DUSKSTUDIO_CAPTURE_DIR` (see
 the notepad is manual — it is a native window the harness cannot reach — with
 notes below.
 
+The script reads the **Auto** column, so every row is ✅ or ❌. After a run it
+names each ✅ figure the run did not write and exits non-zero. Set
+`DUSK_CAPTURE_OUT=<dir>` to write the figures somewhere other than
+`docs/images/`, and run `docs/capture-screenshots.sh --check <dir>` to check a
+folder without capturing.
+
 SFZ Manager's Installed and Online figures come from a separate
 `gui.sfz_repository_workflow` run with fixture responses and
 `DUSKSTUDIO_SCENARIO_CAPTURE_DIR` set. Its native PPM exports survive scenario
@@ -78,14 +84,14 @@ the other sections are reached through the tabs along the top.
 | ------------------------------- | ------ | ---- | --------------------------------------------------------- |
 | `rec-01-arm-multiple.png`       | L1138  | ✅   | Eight tracks armed simultaneously, RECORDING stage.       |
 | `ed-04-region-editor-modal.png` | L1413  | ✅   | Region editor modal over a region with fade-in/out. Same frame as `np-10-region-editor.png`. |
-| `ed-05-piano-roll-full.png`     | L1508  | ✅   | Piano roll with notes, a CC ramp, scale highlight.        |
+| `ed-05-piano-roll-full.png`     | L1508  | ✅   | Piano roll with MIDI notes and the velocity lane.        |
 | `ed-06-take-lanes.png`          | L1476  | ✅   | Audio editor with three take lanes under a comp drawn from all three. The harness stages three takes over the same four seconds of the Vox track, comps them (take 1, then take 3, then take 2) and opens the editor on the lanes; the takes exist only for this figure. Native panel, same route as `np-10-region-editor.png`. |
 | `fx-01-eq.png`                  | L786   | ✅   | Channel EQ editor — HPF/LPF + 4 bands, curve-shaped.      |
 | `fx-02-comp.png`                | L812   | ✅   | Channel compressor editor (VCA mode). Native panel: the app reads its own frame back and the script converts it. |
 | `vkb-01-virtual-keyboard.png`   | L595   | ✅   | Virtual MIDI keyboard. Native panel, same route as `fx-02-comp.png`. |
 | `fx-03-tape.png`                | L976   | ✅   | Master tape editor: Tape Machine 2's own editor, read back from its window once painted, same route as the built-in units' plug-in editors. |
 | `mm-01-automation-modes.png`    | L1598  | ✅   | A fader's automation-mode label (READ / WRITE / TOUCH).   |
-| `mm-02-mastering-chain.png`     | L1059  | Yes  | Mastering chain with EQ, comp, limiter and Phase panels. |
+| `mm-02-mastering-chain.png`     | L1059  | ✅   | Mastering chain with EQ, comp, limiter and Phase panels. |
 | `pl-01-plugin-picker.png`       | L1672  | ✅   | Plugin picker panel populated.                            |
 | `bi-01-utility.png`             | L1745  | ✅   | The Utility unit's editor. One figure per built-in unit: the harness loads each onto track 1's insert and shoots it through the panel window the user opens. |
 | `bi-02-reverb.png`              | L1770  | ✅   | The DuskVerb 2 unit's editor. Same route as `bi-01-utility.png`. |

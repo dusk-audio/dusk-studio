@@ -46,8 +46,9 @@ public:
 
     // Screenshot-harness only: open / close the native compressor panel, whose
     // framework child createComponentSnapshot cannot reach. `capturePath` asks the
-    // panel to read its own steady frame back into that file.
-    void openCompEditorForCapture (const std::string& capturePath);
+    // panel to read its own steady frame back into that file. False when the panel did
+    // not open to take the request.
+    bool openCompEditorForCapture (const std::string& capturePath);
     void closeCompEditorForCapture();
 
     // Screenshot-harness only: force the track into the given mode (0=mono,
@@ -571,7 +572,11 @@ public:
     // Before a track move: every editor and panel over this strip holds its
     // slot's insert or parameters, which are about to belong to another track.
     void closeEditorsForTrackMove();
-    void openBuiltinEditorForCapture (const std::string& capturePath);
+    // False when no panel took the request: the unit opened its own plug-in editor,
+    // which captureBuiltinPluginEditor reads back, or nothing opened.
+    bool openBuiltinEditorForCapture (const std::string& capturePath);
+    // False while the unit's own plug-in editor is open and has not drawn a frame yet.
+    bool builtinPluginEditorReadyForCapture() const noexcept;
     void captureBuiltinPluginEditor (const std::string& capturePath);
 
 private:

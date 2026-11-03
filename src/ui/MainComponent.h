@@ -138,8 +138,8 @@ private:
     void handOffAudioSettings (std::function<void()> showModal);
    #endif
     // Screenshot-harness only: open the panel and ask it to read its own steady frame
-    // back into `capturePath`.
-    void openAudioSettingsForCapture (const std::string& capturePath);
+    // back into `capturePath`. False when the panel did not open to take the request.
+    bool openAudioSettingsForCapture (const std::string& capturePath);
     void openBounceDialog();
     void openBounceStemsDialog();
     bool toggleFullScreen();
@@ -443,8 +443,8 @@ private:
    #endif
     void closeVirtualKeyboard();
     // Screenshot-harness only: open the virtual keyboard and ask it to read its own
-    // steady frame back into `capturePath`.
-    void openVirtualKeyboardForCapture (const std::string& capturePath);
+    // steady frame back into `capturePath`. False when it did not open to take the request.
+    bool openVirtualKeyboardForCapture (const std::string& capturePath);
     EmbeddedModal importTargetModal;
     EmbeddedModal scanModal;
     EmbeddedModal shortcutsModal;
@@ -571,8 +571,8 @@ private:
     // choice instead of running it, so a scenario can press Quit without ending the run.
     std::function<bool()> startupChoiceForScenario;
     // Screenshot-harness only: open the startup panel and read its own steady frame
-    // back into `capturePath`.
-    void openStartupForCapture (const std::string& capturePath);
+    // back into `capturePath`. False when the panel did not open to take the request.
+    bool openStartupForCapture (const std::string& capturePath);
 
     // Cross-OS cursor overlay - paints Grab / Cut / Draw glyphs at the
     // mouse position via a 60 Hz JUCE timer, bypassing the platform
@@ -640,8 +640,8 @@ private:
     // True from open until the child has finished coming down.
     bool audioEditorOpen() const noexcept;
     // Screenshot-harness only: ask the open editor to read its own steady frame back
-    // into `capturePath`.
-    void captureAudioEditorTo (const std::string& capturePath);
+    // into `capturePath`. False when no editor is showing to take the request.
+    bool captureAudioEditorTo (const std::string& capturePath);
 
     // The edit tool (session.editMode) is global, but a modal editor changing
     // it (e.g. picking scissors in the audio editor) should not leak back to

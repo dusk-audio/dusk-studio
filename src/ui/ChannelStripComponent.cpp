@@ -4169,14 +4169,17 @@ void ChannelStripComponent::openEqEditorPopup()
                         /*dismissOnEscape*/ true, kEditorDimAlpha);
 }
 
-void ChannelStripComponent::openCompEditorForCapture (const std::string& capturePath)
+bool ChannelStripComponent::openCompEditorForCapture (const std::string& capturePath)
 {
     openCompEditorPopup();
    #if DUSKSTUDIO_HAS_NATIVE_UI
-    if (compEditorWindow != nullptr && compEditorWindow->isOpen())
-        compEditorWindow->captureNextFrameTo (capturePath);
+    if (compEditorWindow == nullptr || ! compEditorWindow->isOpen())
+        return false;
+    compEditorWindow->captureNextFrameTo (capturePath);
+    return true;
    #else
     (void) capturePath;
+    return false;
    #endif
 }
 
@@ -4604,14 +4607,27 @@ void ChannelStripComponent::finishBuiltinPluginEditorClose()
 }
 #endif
 
-void ChannelStripComponent::openBuiltinEditorForCapture (const std::string& capturePath)
+bool ChannelStripComponent::openBuiltinEditorForCapture (const std::string& capturePath)
 {
     openBuiltinEditorPopup();
    #if DUSKSTUDIO_HAS_NATIVE_UI
-    if (builtinEditorWindow != nullptr && builtinEditorWindow->isOpen())
-        builtinEditorWindow->captureNextFrameTo (capturePath);
+    if (builtinEditorWindow == nullptr || ! builtinEditorWindow->isOpen())
+        return false;
+    builtinEditorWindow->captureNextFrameTo (capturePath);
+    return true;
    #else
     (void) capturePath;
+    return false;
+   #endif
+}
+
+bool ChannelStripComponent::builtinPluginEditorReadyForCapture() const noexcept
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    return builtinPluginEditor == nullptr || ! builtinPluginEditor->isOpen()
+        || builtinPluginEditor->hasRenderedFrame();
+   #else
+    return true;
    #endif
 }
 

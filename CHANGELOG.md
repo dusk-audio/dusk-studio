@@ -53,6 +53,11 @@ canonical source.
   their plain forms, so that name reads `Model(sfz)`. Any other character
   the font lacks, such as Chinese or Japanese text, shows the Unicode
   replacement mark instead of "?".
+- **Manual figures.** `docs/capture-screenshots.sh` waits for each native
+  panel's frame instead of closing the panel after a fixed delay, so the
+  piano roll and audio editor figures are written again on a slow or loaded
+  machine. A run that leaves a figure out now fails and names it. The
+  figures whose UI changed since their last capture are refreshed.
 
 ## [0.16.0] - 2026-11-01
 

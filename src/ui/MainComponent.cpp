@@ -2798,17 +2798,20 @@ void MainComponent::handOffAudioSettings (std::function<void()> showModal)
 }
 #endif
 
-void MainComponent::openAudioSettingsForCapture (const std::string& capturePath)
+bool MainComponent::openAudioSettingsForCapture (const std::string& capturePath)
 {
    #if DUSKSTUDIO_HAS_NATIVE_UI
     audioSettingsTab = 1;
    #endif
     openAudioSettings();
    #if DUSKSTUDIO_HAS_NATIVE_UI
-    if (audioSettingsWindow != nullptr && audioSettingsWindow->isOpen())
-        audioSettingsWindow->captureNextFrameTo (capturePath);
+    if (audioSettingsWindow == nullptr || ! audioSettingsWindow->isOpen())
+        return false;
+    audioSettingsWindow->captureNextFrameTo (capturePath);
+    return true;
    #else
     (void) capturePath;
+    return false;
    #endif
 }
 
@@ -3106,13 +3109,16 @@ void MainComponent::focusGained (FocusChangeType cause)
         focusCanvasOrTopModal();
 }
 
-void MainComponent::openStartupForCapture (const std::string& capturePath)
+bool MainComponent::openStartupForCapture (const std::string& capturePath)
 {
    #if DUSKSTUDIO_HAS_NATIVE_UI
-    if (openStartupPanel (demoStartupRecents()))
-        startupWindow->captureNextFrameTo (capturePath);
+    if (! openStartupPanel (demoStartupRecents()))
+        return false;
+    startupWindow->captureNextFrameTo (capturePath);
+    return true;
    #else
     (void) capturePath;
+    return false;
    #endif
 }
 
@@ -6919,13 +6925,16 @@ bool MainComponent::audioEditorShowing() const noexcept
    #endif
 }
 
-void MainComponent::captureAudioEditorTo (const std::string& capturePath)
+bool MainComponent::captureAudioEditorTo (const std::string& capturePath)
 {
    #if DUSKSTUDIO_HAS_NATIVE_UI
-    if (audioEditorShowing())
-        audioEditorWindow->captureNextFrameTo (capturePath);
+    if (! audioEditorShowing())
+        return false;
+    audioEditorWindow->captureNextFrameTo (capturePath);
+    return true;
    #else
     (void) capturePath;
+    return false;
    #endif
 }
 
@@ -7152,14 +7161,17 @@ void MainComponent::closeVirtualKeyboard()
    #endif
 }
 
-void MainComponent::openVirtualKeyboardForCapture (const std::string& capturePath)
+bool MainComponent::openVirtualKeyboardForCapture (const std::string& capturePath)
 {
     toggleVirtualKeyboard();
    #if DUSKSTUDIO_HAS_NATIVE_UI
-    if (virtualKeyboardWindow != nullptr && virtualKeyboardWindow->isOpen())
-        virtualKeyboardWindow->captureNextFrameTo (capturePath);
+    if (virtualKeyboardWindow == nullptr || ! virtualKeyboardWindow->isOpen())
+        return false;
+    virtualKeyboardWindow->captureNextFrameTo (capturePath);
+    return true;
    #else
     (void) capturePath;
+    return false;
    #endif
 }
 
