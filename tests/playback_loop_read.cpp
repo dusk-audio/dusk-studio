@@ -372,3 +372,55 @@ TEST_CASE ("readForTrack takes the channel count from the file, not the region",
         pe.stopPlayback();
     }
 }
+
+// A region its reader's window holds whole never refills, so the first window
+// has to hold all of it, whatever refill phase the track's readers get.
+TEST_CASE ("A region shorter than its reader's window plays whole from the first read",
+           "[playback]")
+{
+    constexpr int kFrames = 8000;
+    constexpr int kBlock  = 4096;
+    constexpr int kTrack  = Session::kNumTracks - 1;
+
+    const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                        .getChildFile ("dusk-short-region-"
+                                         + juce::String (juce::Random::getSystemRandom().nextInt()));
+    dir.createDirectory();
+    const struct ScopedDir { juce::File d; ~ScopedDir() { d.deleteRecursively(); } } scopedDir { dir };
+
+    const auto level = [] (int frame) { return (float) (frame + 1) * 1.0e-4f; };
+    const auto wav = dir.getChildFile ("audio/ramp.wav");
+    wav.getParentDirectory().createDirectory();
+    {
+        juce::WavAudioFormat fmt;
+        std::unique_ptr<juce::AudioFormatWriter> writer (
+            fmt.createWriterFor (wav.createOutputStream().release(), 48000.0, 1, 24, {}, 0));
+        REQUIRE (writer != nullptr);
+        juce::AudioBuffer<float> buf (1, kFrames);
+        for (int n = 0; n < kFrames; ++n)
+            buf.setSample (0, n, level (n));
+        REQUIRE (writer->writeFromAudioSampleBuffer (buf, 0, kFrames));
+    }
+
+    Session session;
+    session.setSessionDirectory (dir);
+    AudioRegion r;
+    r.file            = wav;
+    r.timelineStart   = 0;
+    r.lengthInSamples = kFrames;
+    session.track (kTrack).regions.push_back (r);
+
+    Transport transport;
+    transport.setPlayhead (0);
+    PlaybackEngine pe (session, false);
+    pe.bindTransport (transport);
+    pe.setSynchronousReadersForTest (true);
+    pe.prepare (kBlock);
+    pe.preparePlayback();
+
+    std::vector<float> outL ((size_t) kBlock, -1.0f), outR ((size_t) kBlock, -1.0f);
+    pe.readForTrack (kTrack, kBlock, outL.data(), outR.data(), kBlock);
+    for (int i = 0; i < kFrames - kBlock; ++i)
+        REQUIRE_THAT (outL[(size_t) i], WithinAbs (level (kBlock + i), 1.0e-5f));
+    pe.stopPlayback();
+}

@@ -301,9 +301,17 @@ PlaybackEngine::buildTrackStream (int t, Audition audition, std::int64_t warmAt,
         const std::int64_t windowFrames =
             std::clamp (region.lengthInSamples, warmFrames,
                          std::max (warmFrames, dusk::audio::BufferedFileReader::kDefaultWindowFrames)) + 1;
+        // After a seek or Play every track's window starts on the same frame. Left
+        // in step, all 24 refill in one block, and the kernel readahead they start
+        // together is a burst large enough to push a 192 kHz callback past its
+        // deadline. The tracks' phases spread over the quarter window allowed.
+        // A region its window holds whole never refills, and a phase would cut
+        // its tail off the only window it gets, so it keeps the whole window.
+        const std::int64_t refillPhase = region.lengthInSamples > windowFrames - 1
+            ? (windowFrames - 1) / 4 * t / Session::kNumTracks : 0;
         auto buffered = std::make_unique<dusk::audio::BufferedFileReader> (
             std::move (rawReader), windowFrames,
-            dusk::audio::BufferedFileReader::Fill::Manual);
+            dusk::audio::BufferedFileReader::Fill::Manual, refillPhase);
         // Warm where playback will begin, not at the region head - every
         // caller sets the playhead before rebuilding, so Play from mid-song
         // starts warm instead of dropping blocks while the window re-seeks.

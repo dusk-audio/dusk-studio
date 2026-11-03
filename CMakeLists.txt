@@ -569,6 +569,34 @@ duskstudio_resolve_framework_dir(DUSKSTUDIO_DAF_SOURCE_DIR
     SEARCH   ../DAF external/DAF)
 set(DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR "${DUSKSTUDIO_DAF_SOURCE_DIR}/widgets")
 
+# CI and release builds clone DAF at the commit in DAF_REV. A local checkout
+# elsewhere still builds, since moving DAF is normally tried locally first.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/DAF_REV" DUSKSTUDIO_DAF_REV)
+string(STRIP "${DUSKSTUDIO_DAF_REV}" DUSKSTUDIO_DAF_REV)
+string(LENGTH "${DUSKSTUDIO_DAF_REV}" _duskstudio_daf_rev_length)
+if(NOT _duskstudio_daf_rev_length EQUAL 40
+   OR NOT DUSKSTUDIO_DAF_REV MATCHES "^[0-9a-f]+$")
+    message(FATAL_ERROR "DAF_REV must hold one full 40-character commit hash")
+endif()
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/DAF_REV")
+if(DUSKSTUDIO_DAF_SOURCE_DIR AND EXISTS "${DUSKSTUDIO_DAF_SOURCE_DIR}/.git")
+    find_package(Git QUIET)
+    set(_duskstudio_daf_head "")
+    if(GIT_FOUND)
+        execute_process(
+            COMMAND "${GIT_EXECUTABLE}" -C "${DUSKSTUDIO_DAF_SOURCE_DIR}" rev-parse HEAD
+            OUTPUT_VARIABLE _duskstudio_daf_head
+            OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+    endif()
+    if(_duskstudio_daf_head AND NOT _duskstudio_daf_head STREQUAL DUSKSTUDIO_DAF_REV)
+        message(WARNING
+            "DAF at ${DUSKSTUDIO_DAF_SOURCE_DIR} is at ${_duskstudio_daf_head}, "
+            "but DAF_REV names ${DUSKSTUDIO_DAF_REV}, the commit CI and release "
+            "builds use. Check out DAF_REV there to build what they build.")
+    endif()
+endif()
+
 # OFF drops every native view - the notepad and the GUI tower's ported dialogs and
 # panels (DUSKSTUDIO_HAS_NATIVE_UI guards their call sites) - so a configure without
 # the framework checkouts - a test-only tree, say - is still possible. The default follows the checkouts, same as the native LV2
@@ -635,6 +663,7 @@ if(DUSKSTUDIO_ENABLE_NATIVE_UI)
         src/ui/imgui/DuskImGuiHost.cpp
         src/ui/imgui/DuskTheme.cpp
         src/ui/imgui/DuskPanelWindow.cpp
+        src/ui/imgui/PanelText.cpp
         src/ui/NotepadDocument.cpp
         src/ui/NotepadChords.cpp
         src/ui/NotepadEditorCore.cpp
@@ -905,6 +934,7 @@ target_sources(DuskStudio PRIVATE
     src/ui/scenario/cases/gui_sfz_live.cpp
     src/ui/scenario/cases/gui_sfz_repository.cpp
     src/ui/scenario/cases/gui_startup_quit.cpp
+    src/ui/scenario/cases/gui_status_bar.cpp
     src/ui/scenario/cases/gui_tracks.cpp
     src/ui/MainComponent.cpp
     src/ui/ScreenshotCapture.cpp

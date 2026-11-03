@@ -23,14 +23,12 @@ void SystemStatusBar::timerCallback()
     // More predictive of xruns than AudioDeviceManager::getCpuUsage which
     // averages over a longer window and includes time spent in JUCE/driver
     // glue we don't control.
-    const double cpu = (double) engine.getCpuUsage();
-    const int    engineXruns  = engine.getXRunCount();
-    const int    backendXruns = engine.getBackendXRunCount();
-    lastCpuUsage     = cpu;
-    lastEngineXruns  = engineXruns;
-    lastBackendXruns = backendXruns;
-    lastRealtimeDemotions = engine.getRealtimeDemotionCount();
-    lastAudioWarn    = ! engine.hasUsableOutputs() && sr > 0.0;
+    lastReadings = pinnedReadings.value_or (DspReadings { (double) engine.getCpuUsage(),
+                                                          engine.getXRunCount(),
+                                                          engine.getBackendXRunCount(),
+                                                          engine.getRealtimeDemotionCount() });
+    lastDspSeverity = dspSeverity (lastReadings);
+    lastAudioWarn   = ! engine.hasUsableOutputs() && sr > 0.0;
 
     if (sr > 0.0 && bs > 0)
     {
@@ -57,16 +55,16 @@ void SystemStatusBar::timerCallback()
     // Two xrun counts: engine-self-detected (callback overrun) / backend
     // (driver EPIPE on ALSA, JACK xrun callback). They have different fixes
     // - surfacing both lets a glitchy session be diagnosed at a glance.
-    dspInfo = "DSP: " + juce::String ((int) std::round (cpu * 100.0)) + "%"
-            + " (" + juce::String (engineXruns) + "/" + juce::String (backendXruns) + ")";
+    dspInfo = "DSP: " + juce::String ((int) std::round (lastReadings.cpuUsage * 100.0)) + "%"
+            + " (" + juce::String (lastReadings.engineOverruns) + "/" + juce::String (lastReadings.backendXruns) + ")";
     // Oversampling badge, only above 1x: a session saved at 2x/4x
     // multiplies the whole mixer's DSP cost, and without the badge that
     // cost reads as an inexplicable load spike.
     if (const int ox = engine.getSession().oversamplingFactor.load (std::memory_order_relaxed); ox > 1)
         dspInfo += " @" + juce::String (ox) + "x";
     // Audio threads a stalled plug-in pushed off realtime priority.
-    if (lastRealtimeDemotions > 0)
-        dspInfo += (" RT " + std::to_string (lastRealtimeDemotions)).c_str();
+    if (lastReadings.realtimeDemotions > 0)
+        dspInfo += (" RT " + std::to_string (lastReadings.realtimeDemotions)).c_str();
 
     // Chord readout. Audio thread maintains heldMidiNotes; we snapshot
     // here, fingerprint to skip re-analysis when nothing changed, and
@@ -102,23 +100,20 @@ void SystemStatusBar::timerCallback()
         }
     }
 
-    // DSP warn colour (same formula paint() uses). Track it separately so the
-    // colour repaints when warn flips even if the dspInfo string is unchanged -
-    // e.g. cpu crossing 0.85 within the same rounded "85%".
-    const bool dspWarn = lastCpuUsage > 0.85
-                      || (lastEngineXruns + lastBackendXruns + lastRealtimeDemotions) > 0;
-
+    // The severity is compared separately so the colour repaints when it
+    // changes under an unchanged string, e.g. load crossing 0.85 within the
+    // same rounded "85%".
     if (audioInfo     != paintedAudioInfo
         || dspInfo    != paintedDspInfo
         || chordInfo  != paintedChordInfo
         || lastAudioWarn != paintedAudioWarn
-        || dspWarn    != paintedDspWarn)
+        || lastDspSeverity != paintedDspSeverity)
     {
         paintedAudioInfo = audioInfo;
         paintedDspInfo   = dspInfo;
         paintedChordInfo = chordInfo;
         paintedAudioWarn = lastAudioWarn;
-        paintedDspWarn   = dspWarn;
+        paintedDspSeverity = lastDspSeverity;
         repaint();
     }
 }
@@ -132,20 +127,12 @@ void SystemStatusBar::paint (juce::Graphics& g)
     static const juce::Font chordFont (juce::FontOptions (
         juce::Font::getDefaultMonospacedFontName(), 18.0f, juce::Font::bold));
 
-    g.fillAll (juce::Colour (0xff141418));
+    g.fillAll (juce::Colour (kStatusBarBackground));
     g.setColour (juce::Colour (0xff2a2a32));
     g.drawRect (getLocalBounds(), 1);
 
     auto bounds = getLocalBounds().reduced (8, 0);
     g.setFont (telemetryFont);
-
-    // Color the DSP segment red when CPU is high or either xrun counter
-    // moved off zero (engine-side OR backend-side). Read from the cached
-    // tick snapshot so paint colour and dspInfo text always agree - re-
-    // querying the engine here can race a fresh timer tick mid-frame.
-    const double cpu   = lastCpuUsage;
-    const int    xruns = lastEngineXruns + lastBackendXruns + lastRealtimeDemotions;
-    const bool   warn  = cpu > 0.85 || xruns > 0;
 
     // DSP info now reads "DSP: 12% (3/0)" at worst - engine/backend xrun
     // pair widens the right column slightly.
@@ -175,7 +162,9 @@ void SystemStatusBar::paint (juce::Graphics& g)
     g.setColour (lastAudioWarn ? juce::Colour (0xffe05050) : juce::Colour (0xffb0b0b8));
     g.drawText (audioInfo, bounds, juce::Justification::centredLeft, false);
 
-    g.setColour (warn ? juce::Colour (0xffe05050) : juce::Colour (0xffb0b0b8));
+    // The severity comes from the same tick as dspInfo; re-querying the engine
+    // here could pair a fresh colour with stale text.
+    g.setColour (juce::Colour (dspSeverityColour (lastDspSeverity)));
     g.drawText (dspInfo, dspBounds, juce::Justification::centredRight, false);
 }
 
@@ -189,5 +178,33 @@ void SystemStatusBar::mouseDoubleClick (const juce::MouseEvent& e)
         engine.resetXRunCounts();
         timerCallback();   // refresh the readout now, not next tick
     }
+}
+
+void SystemStatusBar::pinReadingsForScenario (std::optional<DspReadings> readings)
+{
+    pinnedReadings = readings;
+    timerCallback();
+}
+
+std::uint32_t SystemStatusBar::dspPaintForScenario()
+{
+    const auto image = createComponentSnapshot (dspSegmentBounds());
+    const auto channel = [] (std::uint32_t argb, int shift) { return (int) ((argb >> shift) & 0xff); };
+    std::uint32_t strongest = kStatusBarBackground;
+    int strongestDistance = 0;
+    for (int y = 0; y < image.getHeight(); ++y)
+        for (int x = 0; x < image.getWidth(); ++x)
+        {
+            const auto argb = image.getPixelAt (x, y).getARGB();
+            int distance = 0;
+            for (const int shift : { 16, 8, 0 })
+                distance += std::abs (channel (argb, shift) - channel (kStatusBarBackground, shift));
+            if (distance > strongestDistance)
+            {
+                strongestDistance = distance;
+                strongest = argb;
+            }
+        }
+    return strongest;
 }
 } // namespace duskstudio

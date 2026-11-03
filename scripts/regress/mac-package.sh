@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # macOS package leg: installs a release DMG on the M3 Air the way a user does,
-# into /Applications, and runs the scenario suites against the installed app.
-# Reached through scripts/regress.sh mac --dmg <path> | --release-run <id>.
+# into /Applications, and runs the scenario suites and the window-activation
+# cases (mac-window-activation.sh) against the installed app. Reached through
+# scripts/regress.sh mac --dmg <path> | --release-run <id>, or with
+# --window-activation-only for those cases alone against whatever is installed.
 #
 # The engine suite runs over ssh. The GUI suite cannot (a GUI launched over
 # plain ssh aborts in the main window constructor), so it goes through `open`,
@@ -38,6 +40,7 @@ MIC_ALLOW="${DUSK_REGRESS_MAC_MIC_ALLOW:-1019,408}"
 
 DMG=""
 RELEASE_RUN=""
+WA_ONLY=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -56,18 +59,29 @@ while [[ $# -gt 0 ]]; do
             MAC_HOST="$2"
             shift 2
             ;;
+        --window-activation-only)
+            WA_ONLY=1
+            shift
+            ;;
         *) regress_die "unknown option '$1' for the mac package leg" ;;
     esac
 done
 
-[[ -n "$DMG" || -n "$RELEASE_RUN" ]] || regress_die "the mac package leg needs --dmg <path> or --release-run <run id>"
-[[ -z "$DMG" || -z "$RELEASE_RUN" ]] || regress_die "--dmg and --release-run both name the package; pass one"
+if ((WA_ONLY)); then
+    [[ -z "$DMG" && -z "$RELEASE_RUN" ]] || regress_die "--window-activation-only tests the app already installed; it takes no package"
+else
+    [[ -n "$DMG" || -n "$RELEASE_RUN" ]] || regress_die "the mac package leg needs --dmg <path> or --release-run <run id>"
+    [[ -z "$DMG" || -z "$RELEASE_RUN" ]] || regress_die "--dmg and --release-run both name the package; pass one"
+fi
 if [[ -n "$DMG" ]]; then
     [[ -f "$DMG" ]] || regress_die "no such disk image: $DMG"
     DMG="$(cd "$(dirname "$DMG")" && pwd)/$(basename "$DMG")"
 fi
 regress_require ssh scp git timeout
-if [[ -n "$RELEASE_RUN" ]]; then regress_require gh; fi
+if [[ -n "$RELEASE_RUN" ]]; then
+    regress_require gh
+    regress_require_release_run "$REPO_SLUG" "$RELEASE_RUN"
+fi
 
 MAC_VNC_HOST="${DUSK_REGRESS_MAC_VNC_HOST:-${MAC_HOST#*@}}"
 MAC_VNC_USER="$USER"
@@ -80,6 +94,7 @@ cd "$REPO_ROOT"
 
 STAMP="$(date +%Y%m%d-%H%M%S)"
 RUN_DIR="${TMPDIR:-/tmp}/dusk-regress-mac-${STAMP}"
+((WA_ONLY)) && RUN_DIR="${TMPDIR:-/tmp}/dusk-wa-mac-${STAMP}"
 REMOTE_RUN="dusk-regress-pkg/${STAMP}"
 mkdir -p "$RUN_DIR"
 
@@ -162,6 +177,15 @@ remote_cleanup() {
 while read -r pid; do
     [[ -n "$pid" && "$(ps -p "$pid" -o command= 2>/dev/null)" == "$BIN"* ]] && kill -9 "$pid" 2>/dev/null
 done <"$HOME/$RUN/pids"
+for pid in $(sort -u "$HOME/$RUN/other-pids" 2>/dev/null); do
+    [[ "$(ps -p "$pid" -o comm= 2>/dev/null)" == *Calculator ]] && kill "$pid" 2>/dev/null
+done
+# A killed instance leaves its single-instance socket behind; drop it when the
+# window-activation leg found none there.
+if [[ -f "$HOME/$RUN/wa/slot-was-free" ]]; then
+    sleep 1
+    pgrep -f "$BIN" >/dev/null || rm -f "$(getconf DARWIN_USER_TEMP_DIR)dusk-studio/instance.sock"
+fi
 [[ -f "$HOME/$RUN/caffeinate.pid" ]] && kill "$(cat "$HOME/$RUN/caffeinate.pid")" 2>/dev/null
 [[ -d "$HOME/$RUN/mnt" ]] && hdiutil detach -force -quiet "$HOME/$RUN/mnt" 2>/dev/null
 rm -rf "$HOME/$RUN"
@@ -706,6 +730,9 @@ echo "no DuskStudio crash reports since the leg started"
 REMOTE
 }
 
+# shellcheck source=scripts/regress/mac-window-activation.sh
+source "${REPO_ROOT}/scripts/regress/mac-window-activation.sh"
+
 # ---------------------------------------------------------------- the run
 
 regress_last_passed() {
@@ -714,7 +741,9 @@ regress_last_passed() {
 
 echo "Dusk Studio regression - mac package"
 echo "node     ${MAC_HOST} (screen sharing ${MAC_VNC_HOST})"
-if [[ -n "$RELEASE_RUN" ]]; then
+if ((WA_ONLY)); then
+    echo "package  the app installed in /Applications, window-activation cases only"
+elif [[ -n "$RELEASE_RUN" ]]; then
     echo "package  release.yml run ${RELEASE_RUN}"
 else
     echo "package  ${DMG}"
@@ -722,7 +751,7 @@ fi
 echo "run dir  ${RUN_DIR}"
 echo "node dir ~/${REMOTE_RUN} (removed on exit)"
 
-SUITE_ROWS=(mic-permission scenarios-headless scenarios-gui privacy-prompts crash-reports)
+SUITE_ROWS=(mic-permission scenarios-headless scenarios-gui window-activation:setup "${WA_ROWS[@]}" privacy-prompts crash-reports)
 
 # Registered before preflight, which creates the node directory and starts
 # caffeinate and can still fail after that.
@@ -734,6 +763,18 @@ if ! regress_last_passed; then
     exit 1
 fi
 regress_leg "screen-unlocked" leg_screen
+
+if ((WA_ONLY)); then
+    start_watcher
+    leg_window_activation
+    stop_watcher
+    prompts_leg
+    regress_leg "crash-reports" leg_crash_reports
+    echo
+    echo "logs:        ${RUN_DIR}/"
+    regress_summary "regress mac window-activation"
+    exit $?
+fi
 
 if [[ -n "$RELEASE_RUN" ]]; then
     regress_leg "package-fetch" leg_package_fetch
@@ -775,6 +816,7 @@ if ((installed)); then
     regress_leg "mic-permission" leg_mic_permission
     leg_scenarios_headless
     leg_scenarios_gui
+    leg_window_activation
     stop_watcher
     prompts_leg
     regress_leg "crash-reports" leg_crash_reports

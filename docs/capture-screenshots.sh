@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Drive Dusk Studio's built-in capture harness to (re)generate manual figures.
 #
-# Produces the ✅ rows in docs/screenshot-list.md into docs/images/. The one
-# remaining row, the notepad, is a native window this cannot reach and is
-# captured by hand — see that file.
+# Produces the ✅ rows in docs/screenshot-list.md into docs/images/, or into
+# DUSK_CAPTURE_OUT when that is set. The one remaining row, the notepad, is a
+# native window this cannot reach and is captured by hand; see that file. The
+# run fails, naming each figure, when a ✅ row was not written.
+# `capture-screenshots.sh --check DIR` only checks that DIR holds every ✅ figure.
 #
 # Runs the app on an ISOLATED Xvfb display (X11 backend), NOT your live
 # session — the harness drives heavy stage switches + modal teardown that can
@@ -18,12 +20,59 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BIN="${REPO_ROOT}/build/DuskStudio_artefacts/Release/DuskStudio"
-OUT="${REPO_ROOT}/docs/images"
+OUT="${DUSK_CAPTURE_OUT:-${REPO_ROOT}/docs/images}"
+LIST="${REPO_ROOT}/docs/screenshot-list.md"
 JOBS="${DUSK_JOBS:-6}"
 
 source "${REPO_ROOT}/scripts/regress/common.sh"
 source "${REPO_ROOT}/scripts/regress/xvfb.sh"
 source "${REPO_ROOT}/scripts/regress/scenarios.sh"
+
+# The figures the list marks ✅, one per line. Any mark other than ✅ or ❌ fails
+# the list, so a new spelling cannot quietly take a figure out of the check.
+listed_auto_figures() {
+  awk -F'|' '
+    $2 ~ /^ *`[^`]+[.]png` *$/ {
+      name = $2; gsub(/^ *`|` *$/, "", name)
+      mark = $4; gsub(/^ +| +$/, "", mark)
+      if (mark == "✅") print name
+      else if (mark != "❌") {
+        printf "error: %s has Auto mark \"%s\" in %s; use ✅ or ❌\n", name, mark, FILENAME > "/dev/stderr"
+        bad = 1
+      }
+    }
+    END { exit bad }' "${LIST}"
+}
+
+# check_figures DIR [SINCE]: names every ✅ figure DIR lacks. Given SINCE, a figure
+# older than that file counts as missing too, so a stale one from an earlier run
+# cannot pass for a new one.
+check_figures() {
+  local dir="$1" since="${2:-}" figures name count=0 missing=0
+  figures="$(listed_auto_figures)" || return 1
+  while IFS= read -r name; do
+    [[ -n "${name}" ]] || continue
+    count=$((count + 1))
+    if [[ ! -s "${dir}/${name}" ]] || [[ -n "${since}" && ! "${dir}/${name}" -nt "${since}" ]]; then
+      echo "error: missing figure: ${name}" >&2
+      missing=$((missing + 1))
+    fi
+  done <<<"${figures}"
+  if ((count == 0)); then
+    echo "error: ${LIST} lists no ✅ figures" >&2
+    return 1
+  fi
+  if ((missing > 0)); then
+    echo "error: ${missing} of the ${count} ✅ figures in docs/screenshot-list.md are missing from ${dir}" >&2
+    return 1
+  fi
+  echo "All ${count} ✅ figures are in ${dir}." >&2
+}
+
+if [[ "${1:-}" == "--check" ]]; then
+  check_figures "${2:-${OUT}}"
+  exit
+fi
 
 if [[ ! "${JOBS}" =~ ^[1-9][0-9]*$ ]]; then
   echo "error: DUSK_JOBS must be a positive integer" >&2
@@ -47,7 +96,12 @@ if [[ ! -x "${BIN}" ]]; then
 fi
 
 mkdir -p "${OUT}"
+# A frame left by an interrupted run would be converted below as if this run
+# had written it.
+rm -f "${OUT}"/*.ppm
 CAPTURE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/dusk-manual-capture.XXXXXX")"
+STARTED="${CAPTURE_ROOT}/started"
+touch "${STARTED}"
 LOG="${CAPTURE_ROOT}/capture.log"
 SFZ_LOG="${CAPTURE_ROOT}/sfz.log"
 cleanup() {
@@ -82,7 +136,7 @@ env "${LAUNCH_UNSET[@]}" \
     "${SANDBOX_ENV[@]}" DISPLAY="${XVFB_DISPLAY}" \
     DUSKSTUDIO_SKIP_STARTUP_DIALOG=1 \
     DUSKSTUDIO_CAPTURE_DIR="${OUT}" \
-    timeout --kill-after=10 180 "${BIN}" 2>&1 | tee "${LOG}" >&2 || true
+    timeout --kill-after=10 600 "${BIN}" 2>&1 | tee "${LOG}" >&2 || true
 
 if ! grep -q '\[Dusk Studio/capture\] done' "${LOG}"; then
   echo "error: the capture harness did not finish; some figures may be stale." >&2
@@ -116,5 +170,6 @@ for ppm in "${OUT}"/*.ppm; do
 done
 shopt -u nullglob
 
-echo "Done. PNGs in ${OUT}:" >&2
+echo "PNGs in ${OUT}:" >&2
 ls -1 "${OUT}"/*.png 2>/dev/null | sed "s#${OUT}/#  #" >&2 || echo "  (none — check stderr above)" >&2
+check_figures "${OUT}" "${STARTED}"

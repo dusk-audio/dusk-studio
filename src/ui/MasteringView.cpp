@@ -688,10 +688,13 @@ MasteringView::captureNativePanels (const juce::File& dir)
     const auto ask = [&] (std::unique_ptr<imgui::DuskPanelWindow>& window,
                           const NativePanelProxy& proxy, const char* name)
     {
-        if (window == nullptr || ! window->isOpen())
+        if (! proxy.isShowing())
             return;
+        // A shown panel without a window keeps its entry, so the figure is reported
+        // incomplete rather than written without it.
         const auto file = dir.getChildFile (name);
-        window->captureNextFrameTo (file.getFullPathName().toStdString());
+        if (window != nullptr && window->isOpen())
+            window->captureNextFrameTo (file.getFullPathName().toStdString());
         captures.push_back ({ proxy.getBounds(), file });
     };
     ask (eqWindow, eqProxy, "_mastering-eq.ppm");
@@ -701,6 +704,19 @@ MasteringView::captureNativePanels (const juce::File& dir)
     juce::ignoreUnused (dir);
    #endif
     return captures;
+}
+
+bool MasteringView::nativePanelsOpenForCapture() const
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    const auto open = [] (const std::unique_ptr<imgui::DuskPanelWindow>& window, const NativePanelProxy& proxy)
+    {
+        return ! proxy.isShowing() || (window != nullptr && window->isOpen());
+    };
+    return open (eqWindow, eqProxy) && open (limiterWindow, limiterProxy) && open (phaseWindow, phaseProxy);
+   #else
+    return true;
+   #endif
 }
 
 void MasteringView::applyMultibandPreset ([[maybe_unused]] int presetIndex)

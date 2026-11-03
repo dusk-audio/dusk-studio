@@ -2,9 +2,9 @@
 rem usage: update.cmd <commit> <base>[+<base>...] [<bundle>]
 rem Brings the tree to <commit>: each base fetched from GitHub by hash, then
 rem the bundle of the local commits on top of them when there are any.
-rem Submodules follow, then the donor at DONOR_REV, DAF at the tip of main as
-rem CI clones it, and Mesa, Python and the vcpkg packages whenever the file
-rem that pins them changed since they were last installed.
+rem Submodules follow, then the donor at DONOR_REV, DAF at DAF_REV, and Mesa,
+rem Python and the vcpkg packages whenever the file that pins them changed
+rem since they were last installed.
 setlocal
 call "%~dp0env.cmd" || exit /b 1
 call "%~dp0setup.cmd" || exit /b 1
@@ -36,9 +36,16 @@ for /f %%h in ('git -C "%ROOT%\deps\plugins" rev-parse HEAD') do set "DONOR_AT=%
 if /i not "%DONOR_AT%"=="%DONOR_REV%" (echo error: donor is at %DONOR_AT%, DONOR_REV is %DONOR_REV% & exit /b 1)
 echo donor %DONOR_AT%
 
-git -C "%ROOT%\deps\DAF" fetch -q --depth 1 origin main || exit /b 1
-git -C "%ROOT%\deps\DAF" checkout -q FETCH_HEAD || exit /b 1
-for /f %%h in ('git -C "%ROOT%\deps\DAF" rev-parse HEAD') do echo DAF %%h
+set /p DAF_REV=<DAF_REV
+set "DAF_AT="
+for /f %%h in ('git -C "%ROOT%\deps\DAF" rev-parse HEAD 2^>nul') do set "DAF_AT=%%h"
+if /i not "%DAF_AT%"=="%DAF_REV%" (
+  git -C "%ROOT%\deps\DAF" fetch -q --depth 1 origin %DAF_REV% || exit /b 1
+  git -C "%ROOT%\deps\DAF" checkout -q FETCH_HEAD || exit /b 1
+)
+for /f %%h in ('git -C "%ROOT%\deps\DAF" rev-parse HEAD') do set "DAF_AT=%%h"
+if /i not "%DAF_AT%"=="%DAF_REV%" (echo error: DAF is at %DAF_AT%, DAF_REV is %DAF_REV% & exit /b 1)
+echo DAF %DAF_AT%
 
 fc /b "%ROOT%\src\scripts\fetch-windows-software-opengl.ps1" "%ROOT%\stamps\fetch-windows-software-opengl.ps1" >nul 2>&1
 if errorlevel 1 (

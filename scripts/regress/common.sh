@@ -6,6 +6,9 @@
 # Legs never abort the run themselves - a FAIL is recorded and the remaining
 # legs still run, so one invocation reports everything that is broken.
 
+# A gh call that opens a pager waits for a key nobody presses.
+export GH_PAGER=cat
+
 REGRESS_LEG_NAME=()
 REGRESS_LEG_STATUS=()
 REGRESS_LEG_SECONDS=()
@@ -202,4 +205,18 @@ regress_require() {
         command -v "$tool" >/dev/null 2>&1 \
             || regress_die "$tool is required but not on PATH"
     done
+}
+
+# regress_require_release_run <repo> <run id>: dies unless that workflow run
+# has completed with success. A run still going, failed or cancelled can carry
+# a partial or stale artifact, and a package mode run against it proves nothing.
+regress_require_release_run() {
+    local repo="$1" id="$2" state workflow status conclusion
+    [[ "$id" =~ ^[0-9]+$ ]] || regress_die "--release-run takes a workflow run id, not '$id'"
+    state="$(gh run view "$id" -R "$repo" --json workflowName,status,conclusion \
+        --jq '[.workflowName, .status, .conclusion] | join("\t")')" \
+        || regress_die "could not read workflow run $id of $repo"
+    IFS=$'\t' read -r workflow status conclusion <<<"$state"
+    [[ "$status" == completed && "$conclusion" == success ]] \
+        || regress_die "workflow run $id (${workflow:-unknown workflow}) has not finished successfully: status ${status:-unknown}, conclusion ${conclusion:-none}"
 }

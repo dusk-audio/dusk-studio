@@ -192,6 +192,7 @@ add_executable(dusk-studio-tests
     timeline_follow.cpp
     timeline_sample_rate.cpp
     aux_send_text.cpp
+    dsp_readout_severity.cpp
     loop_timeline.cpp
     generated_midi_budget.cpp
     midi_bindings_preset.cpp
@@ -263,6 +264,7 @@ add_executable(dusk-studio-tests
     filebrowser_choice.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/FileBrowserChoice.cpp
     save_target_checks.cpp
+    dropped_files_filter.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/AppConfig.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/NotepadDocument.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/NotepadEditorCore.cpp
@@ -432,19 +434,23 @@ if(EXISTS "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui/DearImGui/imgui.h")
     target_sources(dusk-studio-tests PRIVATE
         imgui_widget_kit.cpp
         imgui_panel_controls.cpp
+        imgui_panel_text.cpp
         startup_recent_dates.cpp
         ${CMAKE_SOURCE_DIR}/src/ui/imgui/DuskTheme.cpp
         ${CMAKE_SOURCE_DIR}/src/ui/imgui/PanelControls.cpp
+        ${CMAKE_SOURCE_DIR}/src/ui/imgui/PanelText.cpp
         ${CMAKE_SOURCE_DIR}/src/ui/imgui/StartupView.cpp
         ${CMAKE_SOURCE_DIR}/tools/gui-spike/ChannelStripView.cpp
         ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/dusk/DuskWidgets.cpp
         ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui/DearImGui/imgui.cpp
         ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui/DearImGui/imgui_draw.cpp
         ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui/DearImGui/imgui_tables.cpp
-        ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui/DearImGui/imgui_widgets.cpp)
+        ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui/DearImGui/imgui_widgets.cpp
+        ${DUSKSTUDIO_DAF_SOURCE_DIR}/dgl/src/Resources.cpp)
     target_include_directories(dusk-studio-tests SYSTEM PRIVATE
         ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui
-        ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/dusk)
+        ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/dusk
+        ${DUSKSTUDIO_DAF_SOURCE_DIR}/dgl)
     # Dear ImGui is vendored third-party code and does not build clean under this
     # target's warning set. The app silences it the same way for dgl-opengl3.
     set_source_files_properties(

@@ -13,7 +13,7 @@ the host side is the only place that names it.
 | Script | Used for |
 |---|---|
 | `preflight.ps1` | sent inline before the copy: fails when anything is already running in the tree, then empties `regress\` |
-| `update.cmd` | `<commit> <base>[+<base>...] [<bundle>]`: runs `setup.cmd`, fetches the bases by hash, applies the bundle of local commits, checks the commit out with its submodules, moves the donor to `DONOR_REV` and DAF to the tip of main, and reinstalls Mesa and Python (`deps.ps1`) or the vcpkg packages (`vcpkg.cmd`) when the file pinning them changed |
+| `update.cmd` | `<commit> <base>[+<base>...] [<bundle>]`: runs `setup.cmd`, fetches the bases by hash, applies the bundle of local commits, checks the commit out with its submodules, moves the donor to `DONOR_REV` and DAF to `DAF_REV`, and reinstalls Mesa and Python (`deps.ps1`) or the vcpkg packages (`vcpkg.cmd`) when the file pinning them changed |
 | `build.cmd` | CI's three targets at `-j4`; runs `configure.cmd` first when the tree has no cache or `configure.cmd` changed since it last ran |
 | `mesa.cmd`, `verify-mesa.ps1` | CI's "Verify packaged Mesa selects llvmpipe" step and the files its upload steps require |
 | `ctest.cmd` | `list` prints the inventory the host checks CI's required test names against; otherwise the whole suite, serially, as CI runs it |

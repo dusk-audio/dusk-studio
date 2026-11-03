@@ -1,8 +1,11 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
+#include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
+#include "DspReadout.h"
 #include "../engine/AudioEngine.h"
 #include "../foundation/MessageThread.h"
 
@@ -34,6 +37,13 @@ public:
     // The DSP segment exactly as the last tick built it.
     std::string dspReadoutForScenario() const { return dspInfo.toStdString(); }
 
+    // Stands in for the engine's readings until cleared with nullopt, and
+    // rebuilds the readout from them at once.
+    void pinReadingsForScenario (std::optional<DspReadings> readings);
+
+    // The DSP segment's text pixel furthest from the background, as ARGB.
+    std::uint32_t dspPaintForScenario();
+
 private:
     void timerCallback() override;
 
@@ -53,11 +63,10 @@ private:
     // text and warning colour always reflect the same snapshot of engine
     // state - querying the engine separately from paint() can race a fresh
     // tick mid-frame and show "12%" in green next to a 90% warn colour.
-    double lastCpuUsage      = 0.0;
-    int    lastEngineXruns   = 0;
-    int    lastBackendXruns  = 0;
-    int    lastRealtimeDemotions = 0;
-    bool   lastAudioWarn     = false;
+    DspReadings lastReadings;
+    DspSeverity lastDspSeverity = DspSeverity::normal;
+    bool        lastAudioWarn   = false;
+    std::optional<DspReadings> pinnedReadings;
 
     // Last-painted snapshot. The tick fires at 10 Hz but the readout is
     // static most of the time; only repaint when something the paint()
@@ -66,7 +75,7 @@ private:
     juce::String paintedAudioInfo;
     juce::String paintedDspInfo;
     juce::String paintedChordInfo;
-    bool         paintedAudioWarn = false;
-    bool         paintedDspWarn   = false;
+    bool         paintedAudioWarn   = false;
+    DspSeverity  paintedDspSeverity = DspSeverity::normal;
 };
 } // namespace duskstudio

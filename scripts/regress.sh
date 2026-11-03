@@ -7,9 +7,11 @@
 #   scripts/regress.sh mac
 #   scripts/regress.sh mac --dmg <dusk-studio-X.Y.Z-macOS-arm64.dmg>
 #   scripts/regress.sh mac --release-run <id>
+#   scripts/regress.sh mac --window-activation-only
 #   scripts/regress.sh linux --tarball <dusk-studio-X.Y.Z-Linux-x86_64.tar.xz>
 #   scripts/regress.sh windows --msi <path>
 #   scripts/regress.sh windows --release-run <id> --fixtures-run <id>
+#   scripts/regress.sh windows --installed X.Y.Z
 #   scripts/regress.sh all --msi <path>
 #   scripts/regress.sh all --release-run <id>
 #   scripts/regress.sh windows-source        build + ctest HEAD in the win11 guest
@@ -52,16 +54,20 @@ usage: scripts/regress.sh [linux|mac|windows|windows-source|all|prepush] [option
              --dmg <path>        package mode: install this disk image into
                                  /Applications on the Air, build the fixture
                                  plug-ins there from this checkout's HEAD, run
-                                 the engine suite over ssh and the GUI suite in
-                                 the desktop session, answering the macOS
-                                 privacy prompts over Screen Sharing
+                                 the engine suite over ssh, then the GUI suite
+                                 and the window-activation cases in the desktop
+                                 session, answering the macOS privacy prompts
+                                 over Screen Sharing
              --release-run <id>  package mode with the release-macos disk
                                  image of that release.yml run, and fixtures
                                  from the commit the run built
+             --window-activation-only
+                                 only the window-activation cases of package
+                                 mode, against the app already installed
   windows  drive the libvirt win11 guest from this box: install the MSI into
            Program Files (the runner accepts the test guest's UAC prompt),
-           then the self-test, handoff, session-close, scenario and isolation
-           legs against the installed app
+           then the self-test, handoff, session-close, window-activation,
+           scenario and isolation legs against the installed app
              --msi <path>          installer to test
              --release-run <id>    download the release-windows artifact instead
              --fixtures <dir>      Windows builds of the fixture plug-ins, laid
@@ -73,6 +79,10 @@ usage: scripts/regress.sh [linux|mac|windows|windows-source|all|prepush] [option
              --extract-only        unpack with msiexec /a instead of installing:
                                    no UAC, for runner development only
              --no-scenarios        leave the scenario legs out
+             --installed X.Y.Z     only the window-activation phase and the
+                                   isolation audit, against the package the
+                                   guest already has installed, which must be
+                                   X.Y.Z; installs nothing
   windows-source
            drive the libvirt win11 guest over ssh: bring its CI-equivalent
            tree to HEAD, build CI's targets, run the Mesa check and ctest.
@@ -82,8 +92,9 @@ usage: scripts/regress.sh [linux|mac|windows|windows-source|all|prepush] [option
            then one table of every platform's legs. Options are routed to the
            platform that owns them, so `all --perf --msi <path>` is one run
            with both. --release-run goes to all three, so `all --release-run
-           <id>` tests that release run's tarball, disk image and installer;
-           a platform given a local package (--tarball, --dmg, --msi) tests
+           <id>` tests that release run's tarball, disk image and installer,
+           and refuses a run that has not completed successfully; a
+           platform given a local package (--tarball, --dmg, --msi) tests
            that one instead. DUSK_REGRESS_DRY_RUN=1 prints the routing and
            stops.
 

@@ -70,7 +70,7 @@ private releases repo, with a signed `SHA256SUMS` beside them. What is left
 before 1.0 is release engineering, low-spec and Raspberry Pi performance, and
 deeper accessibility.
 
-The C++ suite declares 1981 Catch2 test cases across 289 test source files.
+The C++ suite declares 1995 Catch2 test cases across 292 test source files.
 Linux amd64, Linux arm64 and macOS build and run it on every push; Windows runs
 it on every push and PR; ThreadSanitizer and ASan plus UBSan run it on every
 push and PR. All of those, plus the framework-coupling ratchet, are required
@@ -183,7 +183,7 @@ src/
   ui/          # MainComponent, ConsoleView, channel/aux/master strips, mastering view
     imgui/     # native surfaces: startup, audio settings, audio editor, unit editors, keyboard
   util/        # native log storage + CrashHandler signal reports
-tests/         # 1981 Catch2 test cases declared in C++ (session, recording, MIDI, IPC, DSP)
+tests/         # 1995 Catch2 test cases declared in C++ (session, recording, MIDI, IPC, DSP)
 packaging/     # .desktop, AppStream, MIME, macOS bundle, for tarball + DMG builds
 docs/          # maintainer guide, the 1.0 plan, migration plans
   DuskStudio.md  # authoritative product spec
@@ -206,7 +206,7 @@ guides list the exact packages and manifest setup.
 |----------|-----|
 | Linux | [BUILDING-LINUX.md](docs/BUILDING-LINUX.md) |
 | Windows | [BUILDING-WINDOWS.md](docs/BUILDING-WINDOWS.md) |
-| macOS | Upstream JUCE 8.0.4, the pinned donor plugins and DAF `main`. libsndfile, LAME, lilv, suil and their codec and RDF dependencies come from `scripts/build-macos-runtime-deps.sh <prefix>`, which builds pinned sources for macOS 11 into a private prefix on an Apple Silicon Mac (it needs CMake, Ninja, Meson and pkg-config, for example `brew install ninja meson pkgconf`); pass the prefix in `CMAKE_PREFIX_PATH` and its `lib/pkgconfig` and `share/pkgconfig` in `PKG_CONFIG_LIBDIR`. Homebrew copies target a newer macOS and fail packaging. The build also uses static libsodium through `DUSKSTUDIO_SODIUM_ROOT`, the SDK's libcurl, zlib and iconv, static libarchive through `CMAKE_PREFIX_PATH`, and pinned static utf8proc built by CMake. CI builds libarchive 3.8.7 for macOS 11. See [.github/workflows/macos-build.yml](.github/workflows/macos-build.yml). |
+| macOS | Upstream JUCE 8.0.4, the pinned donor plugins and DAF at `DAF_REV`. libsndfile, LAME, lilv, suil and their codec and RDF dependencies come from `scripts/build-macos-runtime-deps.sh <prefix>`, which builds pinned sources for macOS 11 into a private prefix on an Apple Silicon Mac (it needs CMake, Ninja, Meson and pkg-config, for example `brew install ninja meson pkgconf`); pass the prefix in `CMAKE_PREFIX_PATH` and its `lib/pkgconfig` and `share/pkgconfig` in `PKG_CONFIG_LIBDIR`. Homebrew copies target a newer macOS and fail packaging. The build also uses static libsodium through `DUSKSTUDIO_SODIUM_ROOT`, the SDK's libcurl, zlib and iconv, static libarchive through `CMAKE_PREFIX_PATH`, and pinned static utf8proc built by CMake. CI builds libarchive 3.8.7 for macOS 11. See [.github/workflows/macos-build.yml](.github/workflows/macos-build.yml). |
 | Linux tarball packaging | [packaging/README.md](packaging/README.md) |
 | End-user manual and troubleshooting | [MANUAL.md](MANUAL.md) |
 

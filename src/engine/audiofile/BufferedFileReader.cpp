@@ -21,11 +21,13 @@ std::int64_t spanEnd (std::int64_t start, std::int64_t count) noexcept
 } // namespace
 
 BufferedFileReader::BufferedFileReader (std::unique_ptr<FileReader> src,
-                                        std::int64_t windowFrames, Fill fill)
+                                        std::int64_t windowFrames, Fill fill,
+                                        std::int64_t refillPhaseFrames)
     : source (std::move (src)),
       fileInfo (source != nullptr ? source->info() : FileInfo {}),
       channels (fileInfo.numChannels),
       capacity (std::max<std::int64_t> (2, windowFrames)),
+      refillPhase (std::clamp<std::int64_t> (refillPhaseFrames, 0, (capacity - 1) / 4)),
       fillMode (fill)
 {
     if (fillMode == Fill::Background && channels > 0 && fileInfo.numFrames > 0)
@@ -198,11 +200,12 @@ void BufferedFileReader::updateAllocatedBytes() noexcept
     allocated.store (bytes, std::memory_order_relaxed);
 }
 
-std::unique_ptr<BufferedFileReader::Window> BufferedFileReader::makeWindow (std::int64_t startFrame)
+std::unique_ptr<BufferedFileReader::Window> BufferedFileReader::makeWindow (std::int64_t startFrame,
+                                                                          std::int64_t shortenBy)
 {
     auto next = std::make_unique<Window>();
     next->startFrame = startFrame;
-    next->planned = std::min (capacity - 1, fileInfo.numFrames - startFrame);
+    next->planned = std::min (capacity - 1 - shortenBy, fileInfo.numFrames - startFrame);
     next->stride = next->planned;
     if ((std::uint64_t) next->stride > std::numeric_limits<std::size_t>::max()
                                                / sizeof (float) / (std::size_t) channels)
@@ -291,11 +294,15 @@ bool BufferedFileReader::fillSeekAt (std::int64_t target, std::int64_t currentFr
             updateAllocatedBytes();
             return full;
         }
-        // A complete window from the target already holds all a window can.
+        // A complete window from the target that reaches the span asked for needs
+        // nothing more. One a phase cut short for an earlier, smaller ask is
+        // replaced by one that reaches it.
         if (seekWindow != nullptr && seekWindow->startFrame == h
-            && filledFrames (seekWindow.get()) == seekWindow->planned)
+            && filledFrames (seekWindow.get()) == seekWindow->planned
+            && seekWindow->planned >= end - h)
             return false;
-        auto next = makeWindow (h);
+        // Shortened by the reader's phase, but never below the warm span the seek needs.
+        auto next = makeWindow (h, std::max<std::int64_t> (0, std::min (refillPhase, capacity - 1 - numFrames)));
         const bool full = readChunk (*next);
         if (filledFrames (next.get()) == 0)
         {
@@ -348,7 +355,7 @@ bool BufferedFileReader::fillAt (std::int64_t startFrame)
             // Nothing published plays h, so whatever is read for it is heard at once.
             auto next = stagingWindow != nullptr
                         && h <= stagingWindow->startFrame + filledFrames (stagingWindow.get())
-                      ? std::move (stagingWindow) : makeWindow (h);
+                      ? std::move (stagingWindow) : makeWindow (h, refillPhase);
             stagingWindow.reset();
             const bool full = readChunk (*next);
             if (filledFrames (next.get()) > 0)

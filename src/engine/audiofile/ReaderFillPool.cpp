@@ -3,9 +3,14 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <limits>
 #include <stdexcept>
 #include <tuple>
+
+#if defined(__linux__)
+ #include <pthread.h>
+#endif
 
 namespace dusk::audio
 {
@@ -35,7 +40,7 @@ ReaderFillPool::ReaderFillPool (unsigned count, bool startWorkers)
     try
     {
         for (unsigned i = 0; i < count; ++i)
-            workers.emplace_back ([this] { run(); });
+            workers.emplace_back ([this, i] { run (i); });
     }
     catch (...)
     {
@@ -452,8 +457,17 @@ ReaderFillPool::Stats ReaderFillPool::stats() const
     return result;
 }
 
-void ReaderFillPool::run()
+void ReaderFillPool::run (unsigned index)
 {
+    // Named like the DSP lanes, so top -H, ps -L and /proc can tell the threads
+    // that issue playback reads from the rest of the process.
+#if defined(__linux__)
+    char name[16];
+    std::snprintf (name, sizeof name, "DuskFill %u", index);
+    pthread_setname_np (pthread_self(), name);
+#else
+    (void) index;
+#endif
     while (! stop.load (std::memory_order_acquire))
     {
         if (pumpOnce()) continue;

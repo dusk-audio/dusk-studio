@@ -80,7 +80,7 @@ Stock JUCE on Linux uses X11 for top-level windows, which under GNOME / Wayland 
 
 Cross-platform Dusk Studio source compiles against either upstream JUCE or the fork; the wayland fork is required at runtime on Linux desktops. Mac dev uses upstream JUCE.
 
-`wayland-juce8` is a third-party branch head that moves under you, so the clone below is a dev convenience, not a reproducible input. CI and every release build the Dusk-owned mirror at an immutable tag instead - `dusk-audio/JUCE-wayland`, tag `dusk-wayland-v6`, rev `ade1e12df2f1b2453e32d1d252dc1757c6957d8d` ([release.yml](../.github/workflows/release.yml)). Match a release exactly by cloning that tag rather than the branch.
+`wayland-juce8` is a third-party branch head that moves under you, so the clone below is a dev convenience, not a reproducible input. CI and every release build the Dusk-owned mirror at an immutable tag instead - `dusk-audio/JUCE-wayland`, tag `dusk-wayland-v7`, rev `05a6dfe609ec71c279624a103c02fa19dd68f287` ([release.yml](../.github/workflows/release.yml)). Match a release exactly by cloning that tag rather than the branch.
 
 ### Clone everything
 
@@ -105,9 +105,10 @@ The session notepad is Dusk Studio's first native UI window: DAF/DGL for the Ope
 ```bash
 cd ~/projects
 git clone https://github.com/dusk-audio/DAF.git
+git -C DAF checkout --detach "$(tr -d '[:space:]' < dusk-studio/DAF_REV)"
 ```
 
-Build against DAF `main`, the same branch CI builds; `git -C DAF pull` before building picks up its latest changes. Pugl and the widget kit are vendored in the DAF checkout.
+Build against the DAF commit named in [DAF_REV](../DAF_REV), the one CI and release builds use; the checkout above assumes Dusk Studio is cloned as `dusk-studio/` next to it. When `DAF_REV` moves, check the new commit out the same way (`git -C DAF fetch` first). Configure warns, naming both commits, when the DAF checkout is at a different commit, and builds anyway. Pugl and the widget kit are vendored in the DAF checkout.
 
 Without DAF and its in-tree widgets, `DUSKSTUDIO_ENABLE_NATIVE_UI` defaults to **OFF** and configure says so once, quietly:
 

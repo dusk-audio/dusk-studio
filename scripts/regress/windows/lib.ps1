@@ -24,6 +24,22 @@ function Get-RegressFile($name, $dest) {
     Invoke-WebRequest -UseBasicParsing "http://${rgIp}:8000/$name" -OutFile $dest
 }
 
+# Asks the host for a screenshot of the guest as it is now, and holds the phase
+# until the host has taken it: the host serves shot-<label>.done once it has.
+function Save-RegressShot($label) {
+    Invoke-RegressPost "REGRESS-SHOT $label`n"
+    $until = (Get-Date).AddSeconds(30)
+    while ((Get-Date) -lt $until) {
+        try {
+            Invoke-WebRequest -UseBasicParsing "http://${rgIp}:8000/shot-$label.done" | Out-Null
+            return $true
+        } catch {
+            Start-Sleep -Milliseconds 500
+        }
+    }
+    return $false
+}
+
 # The msi-install phase records the executable it installed or unpacked; every
 # later phase starts that one and no other.
 function Get-RegressExe {
@@ -32,6 +48,15 @@ function Get-RegressExe {
     $exe = (Get-Content $record -TotalCount 1).Trim()
     if (-not (Test-Path $exe)) { throw "recorded executable is missing: $exe" }
     return $exe
+}
+
+# Phase 4 lends Explorer DUSKSTUDIO_* variables in the user environment for one
+# launch. Any still there afterwards would point the user's own next launch
+# from Explorer at the run folder.
+function Get-RegressUserEnvLeftovers {
+    $key = Get-Item 'HKCU:\Environment'
+    return @($key.GetValueNames() | Where-Object { $_ -like 'DUSKSTUDIO_*' } |
+        ForEach-Object { "user environment still sets $_" })
 }
 
 # Everything that could still hold the single-instance slot, which is keyed on

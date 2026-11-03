@@ -44,7 +44,7 @@ cmake --build build -j6
 ./build/DuskStudio_artefacts/Release/DuskStudio
 ```
 
-JUCE and the DAF stack behind the native notepad are auto-discovered from sibling directories (`../JUCE` / `../JUCE-wayland`, `../DAF`); configure fetches the Dusk plugins repo itself at the commit in `DONOR_REV`. See Part 5 for what happens when discovery fails — it will, eventually, and the error messages are not always obvious.
+JUCE and the DAF stack behind the native notepad are auto-discovered from sibling directories (`../JUCE` / `../JUCE-wayland`, `../DAF`, kept at the commit in `DAF_REV`); configure fetches the Dusk plugins repo itself at the commit in `DONOR_REV`. See Part 5 for what happens when discovery fails. It will, eventually, and the error messages are not always obvious.
 
 **Checkpoint:** the app launches, you can create a track, arm it, and play a click.
 
@@ -322,23 +322,28 @@ CMake auto-detects three external repos at configure time, on top of three git s
   `../DAF`, then `external/DAF`. Without DAF and `widgets/imgui/DearImGui.hpp`,
   `DUSKSTUDIO_ENABLE_NATIVE_UI` defaults OFF and every native view is unavailable.
   Forcing it ON makes missing dependencies a configure error. DGL, pugl and the
-  widget kit move together as one checkout; builds track DAF `main`.
+  widget kit move together as one checkout, pinned by the `DAF_REV` file.
 
 ```bash
 cd /path/to/dusk-studio
 
 git clone https://github.com/dusk-audio/DAF.git ../DAF
-git -C ../DAF pull --ff-only
+git -C ../DAF checkout --detach "$(tr -d '[:space:]' < DAF_REV)"
 
 ```
 
-CI builds the tip of DAF `main`, so keep `../DAF` on `main` and pull it before
-building. A release resolves `main` once and builds every platform against that
-commit, then writes it into the shipped LICENSES.txt in place of `@DAF_REV@`
-([.github/actions/clone-daf-stack/action.yml](../.github/actions/clone-daf-stack/action.yml)).
-When DAF changes a vendored third-party component, update that component's
-LICENSES.txt entry here. Pugl and the widget kit are vendored inside DAF; no
-extra checkout is needed.
+Every CI and release workflow checks DAF out at the commit in `DAF_REV`
+through [.github/actions/clone-daf-stack/action.yml](../.github/actions/clone-daf-stack/action.yml),
+which fails when the checkout does not match and writes that commit into the
+shipped LICENSES.txt in place of `@DAF_REV@`. Configure warns, naming both
+commits, when `../DAF` (or `-DDAF_PATH`) is a git checkout at another commit;
+the build still goes ahead, so a DAF change can be tried locally first.
+
+To move DAF, merge the change in DAF first, then put the new DAF commit in
+`DAF_REV` in a reviewed Dusk Studio commit. When DAF changes a vendored
+third-party component, update that component's LICENSES.txt entry in the same
+commit. Pugl and the widget kit are vendored inside DAF; no extra checkout is
+needed.
 
 `DUSKSTUDIO_ENABLE_NATIVE_UI` is a cached `option()`, which makes the OFF sticky in a nasty way: configure a build dir before the checkouts exist, add them later, and re-running CMake in that same dir leaves the notepad off — and the STATUS line above no longer prints, because its guard also requires the deps to be missing. Use a fresh build dir after cloning, or pass `-DDUSKSTUDIO_ENABLE_NATIVE_UI=ON` to overwrite the cache entry.
 
@@ -474,9 +479,11 @@ scripts/regress.sh linux --release-run 1234567890
 scripts/regress.sh mac
 scripts/regress.sh mac --dmg /path/to/dusk-studio-X.Y.Z-macOS-arm64.dmg
 scripts/regress.sh mac --release-run 1234567890
+scripts/regress.sh mac --window-activation-only
 scripts/regress.sh windows --msi /path/to/dusk-studio-X.Y.Z-Windows-x64.msi
 scripts/regress.sh windows --release-run 1234567890
 scripts/regress.sh windows --release-run 1234567890 --fixtures-run 2345678901
+scripts/regress.sh windows --installed X.Y.Z
 scripts/regress.sh all --perf --msi /path/to/installer.msi
 scripts/regress.sh all --release-run 1234567890 --fixtures-run 2345678901
 scripts/regress.sh windows-source        # build + ctest HEAD in the win11 guest
@@ -505,7 +512,6 @@ The Mac source leg can use a dedicated validation tree:
 ```bash
 DUSK_REGRESS_MAC_REPO=dusk-386-current \
 DUSK_REGRESS_MAC_DAF=dusk-016-validation-deps/DAF \
-DUSK_REGRESS_MAC_DAF_REV='<40-character-commit>' \
 DUSK_REGRESS_MAC_CONFIGURE=dusk-016-prepush-configure.sh \
 DUSK_REGRESS_MAC_BUILD_DIR=build-prepush \
 DUSK_REGRESS_MAC_TEST_BUILD_DIR=build-prepush-tests \
@@ -515,9 +521,9 @@ TMPDIR=/var/tmp scripts/regress.sh prepush
 Source, DAF and helper paths are absolute or relative to the remote home;
 build paths are absolute or relative to the selected source. Explicit source
 selection requires `git config dusk.validationWorktree true`, clean source and
-DAF trees, the exact DAF revision, and an explicit configure helper. These
-checks run before transferring HEAD. The dedicated DAF checkout is verified
-without pulling it. The helper receives the absolute build directory as its
+DAF trees, the DAF checkout at this checkout's `DAF_REV`, and an explicit
+configure helper. These checks run before transferring HEAD. The dedicated DAF
+checkout is verified without moving it. The helper receives the absolute build directory as its
 first argument, followed by CMake options including the selected DAF path and
 removal of `DUSK_PLUGINS_PATH`. It must configure the selected source with the
 node's toolchain flags; the runner also exports its absolute path as
@@ -547,6 +553,12 @@ gate. A platform given a local package on the same line (`--tarball`, `--dmg`,
 `all` runs the Windows package leg, never the source one.
 `DUSK_REGRESS_DRY_RUN=1` prints what each platform would get and stops.
 
+Every `--release-run <id>` first asks GitHub for that run's status and
+conclusion and stops, before anything is downloaded, unless the run has
+completed with `success`: a run still going, failed or cancelled can hold a
+partial or stale artifact. Every runner exports `GH_PAGER=cat`
+(`scripts/regress/common.sh`), so no `gh` call can open a pager and stall a run.
+
 Each platform prints its own table as it finishes, and `all` ends with one
 table of every platform's legs, named `<platform>/<leg>`. A platform whose
 runner exits non-zero without a failed leg (a usage error, a missing tool) gets
@@ -554,7 +566,8 @@ a `<platform>/runner` row, so it cannot drop out of the table unseen.
 
 Layout: `scripts/regress.sh` only dispatches and routes options. The work is in
 `scripts/regress/{linux,mac,windows,windows-source}.sh` (and `mac-package.sh`,
-which `mac.sh` hands a package run to) over the shared leg bookkeeping in
+which `mac.sh` hands a package run to, with the window-activation cases in
+`mac-window-activation.sh`) over the shared leg bookkeeping in
 `scripts/regress/common.sh`, the private-display plumbing in
 `scripts/regress/xvfb.sh` and the scenario legs in
 `scripts/regress/scenarios.sh`, plus the guest-side helpers in
@@ -581,6 +594,7 @@ Prerequisites: `build/` and `build-tests/` already configured, `Xvfb`, GNU
 | `scenarios-headless` | `DUSKSTUDIO_RUN_SCENARIOS=all`: the in-app scenario suite. Passes only on exit 0, no `[FAIL]` line, and the terminal `=== scenarios: ` summary - a crash after the last case must not pass on a lucky exit code. Skipped cases go into the leg's note. |
 | `bb-handoff`, `bb-crash-relaunch`, `bb-no-runtime-dir`, `bb-damaged-recent`, `bb-clean-quit`, `bb-window-close`, `bb-quit-twice`, `bb-quit-during-mixdown`, `bb-quit-save-rate`, `bb-oop-child-kill`, `bb-oop-quit-during-load` | the black-box legs: real app processes spawned, killed and read back through their stderr. See "Scenario legs" below. |
 | `bb-gnome-file-drop` | real file drags from a GTK app onto the tape strip in a private headless GNOME session, through Mutter's XWayland relay as on a GNOME desktop: a WAV, a MIDI file and three WAVs at once, each imported through its picker and read back from the autosave. Linux only; `SKIP` without Mutter, XWayland, `dbus-run-session`, xdotool, ImageMagick's `import`, `fusermount3`, or python3 with GTK 4, NumPy and Pillow. See "Scenario legs" below. |
+| `bb-x11-drop-input` | XDND drags and a late pointer device against the app on a private bare Xvfb: a drop whose source sends XdndLeave before it answers for the data, a source that never answers, a uri-list holding a comment, a web link and two local WAVs, a link-only drag, and a click from a pointer added after launch, judged from the autosave. Linux only; `SKIP` without Xvfb, xdotool, ImageMagick's `import`, gcc with the libX11, libXi and libXtst headers, or python3 with NumPy and Pillow. See "Scenario legs" below. |
 | `scenarios-gui` | `DUSKSTUDIO_RUN_SCENARIOS=gui:<cases>`: the scenarios that need a window, split across several app instances that run at once, each in its own sandbox on its own Xvfb display (half the cores, at most four; `DUSK_REGRESS_GUI_SHARDS=N` overrides, `1` runs them in one instance). Cases are dealt longest first by the times the last run recorded in `~/.cache/dusk-regress/gui-case-ms.tsv`. The leg passes only if every instance reaches its summary line and every case dealt out reports. Off unless `--gui-scenarios`. |
 | `gui-plugin-picker`, `gui-settings-defaults` | `tests/gui_plugin_picker.sh` and `tests/gui_settings_defaults.sh` against the same binary: the GUI cases that need a seeded config (the picker filter, the native-row pick and the settings defaults), which the suite runs without (the picker cases skip there). With `--gui-scenarios` only. |
 | `release-metadata` | `scripts/release-metadata-check.sh`: `VERSION`, the top changelog heading, the AppStream entry and the release-notes summary agree, in the development or the release-ready state. Off unless `--release-checks`. |
@@ -600,6 +614,8 @@ Everything from `selftest-xvfb` down runs on a private Xvfb display with
 `WAYLAND_DISPLAY` unset - the binary aborts against a live Wayland session, so
 no leg may ever launch it on the desktop. `bb-gnome-file-drop` is the one
 exception to Xvfb: it brings its own private compositor instead.
+`bb-x11-drop-input` starts an Xvfb of its own rather than share the run's,
+because the pointer it adds would stay on that display for the legs after it.
 
 `DUSK_REGRESS_BUILD_LOCK=/path/to/lockfile` wraps the two compile legs in
 `flock` when something else may be building the same tree.
@@ -760,12 +776,36 @@ from a GTK 4 window offering a `GdkFileList`, the content GNOME Files offers, so
 Mutter relays the same XDND type list: text/plain before text/uri-list. The
 fixture tracks paint their label stripes in fixed colours and the picker
 buttons are found by colour in a grab of the app window, so a layout change
-does not move the targets. The pointer device is created before the app starts:
-the app lists its X input devices once at startup and ignores clicks from any
-added later. Everything carrying the session's runtime dir is killed at the
+does not move the targets. The pointer device is created before the app starts,
+because builds on a JUCE fork older than `dusk-wayland-v7` list the X input
+devices once at startup and ignore clicks from any device added later.
+Everything carrying the session's runtime dir is killed at the
 end, and FUSE mounts under it are unmounted. The leg needs a PipeWire socket,
 the private null graph or the machine's; without one the app would open the
 sound card through ALSA, so it skips instead.
+
+`bb-x11-drop-input` runs `scripts/regress/x11-drop-input.sh`, which builds the X
+client in `scripts/regress/x11_drop_input.c` with gcc, starts a private bare
+Xvfb (`-noreset`, no window manager) and runs `scripts/regress/x11_drop_input.py`
+from `env -i` with a private `HOME`, all four `XDG_*_HOME` and a 0700
+`XDG_RUNTIME_DIR`. The client is the XDND source: it offers
+text/plain;charset=utf-8 then text/uri-list, as GTK does, and can hold every
+conversion request until it has sent XdndDrop and then XdndLeave, the order
+Mutter's relay can produce, or send the same and never answer, which the app has
+to give up on within its three-second deadline and still answer with a refused
+XdndFinished. It also adds a master pointer with
+`XIChangeHierarchy` once the app is up and clicks the import picker's button
+through that pointer's XTEST slave. The picker buttons are found by colour, as
+in `bb-gnome-file-drop`, and both pointers are moved off the app window after
+every click: a pointer left where the next picker's button opens paints that
+button in its hover colour, and the search then lands on another block of the
+same green. The imports are renamed by the app, so each fixture WAV
+has a length of its own, and the verdict reads the lengths back from the
+autosave: the early-leave drop, the two local WAVs from the uri-list and the late
+pointer's import each land once, and nothing else does. The link-only drag
+passes when the window is unchanged three seconds after the drop, so neither a
+picker nor the "Unsupported or unreadable audio file" alert opened. The leg
+takes 25 to 45 seconds and needs a PipeWire socket, as `bb-gnome-file-drop` does.
 
 Legs whose app-side seam is not in the binary report `SKIP` with the name of
 what is missing (`DUSKSTUDIO_QUIT_AFTER_MS`, the `[Dusk Studio/startup]`
@@ -919,7 +959,7 @@ deadlines are a poll loop over a completion marker.
 Prerequisites: an ssh key on the node, a clean `~/src/dusk-studio` working tree
 (submodule pointers may drift; tracked files may not), `~/mac-configure.sh`
 (takes the build dir as `$1` and passes `-DDAF_PATH`, no donor flag), and a
-`~/src/DAF` checkout on `main`. The donor needs no checkout of its own: configure
+`~/src/DAF` clone of DAF. The donor needs no checkout of its own: configure
 fetches `DONOR_REV` into each build tree's `_deps`.
 
 The commit under test never goes through GitHub: it is pushed straight over ssh
@@ -931,7 +971,7 @@ including when a leg fails.
 |---|---|
 | `mac-preflight` | node reachable; tracked checkout and submodule worktrees clean; previous branch and commits recorded. |
 | `push-head` / `mac-checkout` | the node builds this exact commit. `WARN` when a submodule cannot be synced to the recorded pin. |
-| `daf-main` | `~/src/DAF` fast-forwarded to the tip of `main`, which is what CI builds against. Best effort: a node that cannot reach GitHub is a `WARN`, not a failure. DAF is left where it lands, not put back. |
+| `daf-revision` | `~/src/DAF` checked out at `DAF_REV`, the commit CI builds against, fetching it from GitHub when the clone lacks it. A clone that cannot reach that commit fails the leg. DAF is left there, not put back. |
 | `configure-app` / `configure-tests` | both trees configure through `~/mac-configure.sh`. |
 | `donor-check` | both trees build the donor from `DONOR_REV`: no cached `DUSK_PLUGINS_PATH`, and `_deps/dusk-plugins` at that commit. |
 | `build-app` / `build-tests` / `ctest` | the same build and test surface as CI's macOS job. |
@@ -993,6 +1033,8 @@ next build is incremental.
 | `mic-permission` | every new build is a new ad-hoc identity, so its first launch asks for the microphone, and an app started while that prompt is up comes up with no audio device. One throwaway launch through `open` gets the prompt answered Allow before any suite runs, confirmed from tccd's log. A build already denied fails with the `tccutil reset Microphone audio.dusk.studio` to run. |
 | `scenarios-headless` | `DUSKSTUDIO_RUN_SCENARIOS=all` against the installed binary over ssh, in a private `HOME`, XDG directories, `DUSKSTUDIO_CONFIG_DIR` and `DUSKSTUDIO_MUSIC_DIR`, with `DUSKSTUDIO_FIXTURE_DIR` pointed at the worktree and `DUSKSTUDIO_EXPECT_MP3=1`. Judged as on Linux; a `BAILING` teardown line anywhere in the log adds a failed `scenarios-headless:bailing` row. |
 | `scenarios-gui` | `DUSKSTUDIO_RUN_SCENARIOS=gui` in the desktop session, started with `open -n --env ...` (a GUI launched over plain ssh aborts), with the same environment. `open` hands back no exit status, so a crash shows as a missing terminal line or in `crash-reports`. `[DIRTY]` lines are printed; `BAILING` fails as above. |
+| `window-activation:setup` | the app in `/Applications` reports a version and is not running, Calculator is not running, and the window-server probe (`scripts/regress/mac/window-probe.m`) builds on the node with `clang`. |
+| `window-activation:launch`, `:session-open`, `:minimized`, `:handoff` | the four cases of [tests/window_activation_smoke_test.md](../tests/window_activation_smoke_test.md), against the installed app in a private `HOME`: each time Dusk Studio is the frontmost application, its one main window is the topmost normal window with its title-bar buttons in colour in a capture, and one process runs. The cases open sessions through Cmd+O and through LaunchServices (`open -a`), with Calculator in front, and check the load alert and the save prompt in captures. Evidence (captures, probe snapshots) in `window-activation/` under the run directory. |
 | `privacy-prompts` | a watcher reads tccd's log over ssh from the first launch to the last, and answers the microphone prompt Allow over Screen Sharing. It never clicks any other prompt. Fails on a microphone prompt left unanswered while the process that asked still ran, or answered the other way, and on any folder prompt or prompt of another kind, however it was answered: the suites run in a private `HOME` and should raise none. |
 | `crash-reports` | no `DuskStudio*` report in `~/Library/Logs/DiagnosticReports` since the leg started. |
 
@@ -1015,7 +1057,35 @@ stay in `$TMPDIR/dusk-regress-mac-<timestamp>/`; everything on the node lives
 under `~/dusk-regress-pkg/<timestamp>/` and is removed on exit, Ctrl-C
 included, along with any app the leg started and its `caffeinate`. Other
 overrides: `DUSK_REGRESS_MAC_HOST`, `DUSK_REGRESS_MAC_VNC_HOST` (default: the
-ssh host), `DUSK_REGRESS_MAC_VNC_LOGIN`, `DUSK_JOBS`.
+ssh host), `DUSK_REGRESS_MAC_VNC_LOGIN`, `DUSK_JOBS`,
+`DUSK_REGRESS_MAC_TITLE_BAR` (the title-bar height the window-activation cases
+centre the in-window panels below, default 28).
+
+#### Window activation only
+
+```bash
+TMPDIR=/var/tmp scripts/regress.sh mac --window-activation-only
+```
+
+runs only the window-activation cases, against whatever is installed in
+`/Applications`, and installs nothing: `mac-preflight`, `screen-unlocked`,
+`window-activation:setup`, the four cases, `privacy-prompts` and
+`crash-reports`. It takes about 4.5 minutes. It needs what package mode needs
+for Screen Sharing (the password file and the `vncdotool` Python, whose Pillow
+also reads the captures), plus:
+
+- Screen Sharing free: disconnect any other viewer of the Air (Remmina) first.
+  The cases type and click through Screen Sharing, and judge the screen from
+  captures taken over it.
+- Dusk Studio not running on the Air and Calculator not running; the leg
+  starts and quits its own of each.
+- `clang` on the node, to build the window-server probe.
+- The Air's 1920x1080 desktop at 1x, where window-server points are capture
+  pixels.
+
+The leg quits the app with Cmd+Q, so it gives up its single-instance socket,
+and removes a socket it left only when there was none before it started. The
+evidence stays in `$TMPDIR/dusk-wa-mac-<timestamp>/window-activation/`.
 
 ### Windows
 
@@ -1033,6 +1103,7 @@ scripts/regress.sh windows --msi /path/to/dusk-studio-X.Y.Z-Windows-x64.msi
 scripts/regress.sh windows --release-run 1234567890
 scripts/regress.sh windows --release-run 1234567890 --fixtures-run 2345678901
 scripts/regress.sh windows --msi /path/to/installer.msi --extract-only
+scripts/regress.sh windows --installed X.Y.Z
 ```
 
 | Option | Effect |
@@ -1043,12 +1114,16 @@ scripts/regress.sh windows --msi /path/to/installer.msi --extract-only
 | `--reinstall` | uninstall this very package first when it is already installed, and any per-user install of Dusk Studio (0.13 and earlier, and the early 0.14.0 candidates), then install it again: one UAC prompt per uninstall plus one for the install. |
 | `--extract-only` | no install and no UAC: `msiexec /a` unpacks the package into the run folder and the legs run that. For development of the runner, never for the gate. |
 | `--no-scenarios` | leave out the scenario rows. |
+| `--installed X.Y.Z` | install nothing: test the package the guest already has, which must be X.Y.Z. See "Window activation against the installed package" below. Takes no installer, fixtures, `--reinstall` or `--extract-only`. |
 
 Prerequisites: libvirt access to `win11` without sudo (`qemu:///system`), the
 guest running and unlocked, `7z`, `zip`, `sha256sum`, `python3` (Pillow for
 the PNG screenshots), `gh` authenticated for `--release-run` and
 `--fixtures-run`. Nothing has to be set up inside the guest: the phases bring
-their own session and fixtures, and none of them clicks anything.
+their own session and fixtures. Only `phase4-window-activation` clicks and
+types, so nobody may use the guest's desktop while it runs (about 4 minutes).
+Notepad already running there keeps that phase from backing up and restoring
+Notepad's saved session, which it notes.
 
 **The install and UAC.** The package goes into `C:\Program Files\Dusk Studio`
 through `msiexec /i ... /passive`, as a user installs it. That needs
@@ -1136,18 +1211,21 @@ ones stay unresolved on Windows in any case, since Windows builds no LV2 host.
 | `phase1-selftest` | headless `DUSKSTUDIO_RUN_SELFTEST=1` with stdout and stderr captured through `ProcessStartInfo` redirection: exit code 0, at least one `[PASS]`, no `[FAIL]`. |
 | `phase2-handoff` | the first instance opens the shipped session through `DUSKSTUDIO_LOAD_SESSION` and the phase waits for its `[Dusk Studio/Load] session.json` line, then a second launch carrying `handoff.json` hands over and exits 0 within 30 s while the first instance stays alive, `GetForegroundWindow()` is its window afterwards, and its stderr shows `[Dusk Studio/Load] handoff.json` after the first load - the handoff is supposed to raise the window and load the path, which the exit code alone cannot see. Both launches share one private profile. |
 | `phase3-session-close` | the session the payload ships is loaded through `DUSKSTUDIO_LOAD_SESSION` (waited for by its `[Dusk Studio/Load]` line), then two `WM_CLOSE` messages are posted back to back to the process's visible window titled Dusk Studio. Exit 0 within 50 s, at least eight `[Dusk Studio/shutdown] phase` markers, and `re-entry ignored: shutdown already in progress` from the second close landing on the latch. |
+| `phase4-window-activation` | the four cases of [tests/window_activation_smoke_test.md](../tests/window_activation_smoke_test.md) against the installed app: an initial launch from Explorer, File > Open from inside, an Explorer handoff into a minimized window and one over an unsaved edit, each with Notepad in front. Each case passes on the foreground or on a taskbar flash (recorded through the shell hook); needs exactly one main window, and for the handoffs one `DuskStudio.exe` and a second process, a child of `explorer.exe`, that exited 0; and checks the load alert and the save prompt through UI Automation. For the Explorer launch, `DUSKSTUDIO_CONFIG_DIR` and `DUSKSTUDIO_MUSIC_DIR` are lent to Explorer through `HKCU\Environment`, with a `DUSKSTUDIO_REGRESS_ENV_OWNER` marker, and cleared after the launch and again in a `finally` block. The note says whether each case got the foreground or a flash; `shot-phase4-<case>.png` and `posts/phase4-window-activation-events.log` are the evidence. Notepad's saved session is backed up and put back when Notepad was not already running. |
 | `ipc-selftest` | `SKIP`. `DUSKSTUDIO_RUN_IPC_SELFTEST` never returns on Windows (issue #504), so the out-of-process transport is only compile- and contract-verified there. Remove the skip when #504 closes. |
 | `scenario-fixtures` | as on Linux, against the two staged roots. |
 | `scenarios-headless` | `DUSKSTUDIO_RUN_SCENARIOS=all` against the installed app, 900 s budget in the guest. The whole output comes back and is judged by the same rules as the Linux leg: exit 0, no `[FAIL]`, the terminal `=== scenarios: ` line; skips in the note, missing fixtures in a `:fixtures` row. A run that hits its budget is announced before it is killed, screenshotted as `<leg>-stall.png`, and reported as `timed out in <case>`, the last case the suite started without finishing. |
 | `scenarios-gui` | `DUSKSTUDIO_RUN_SCENARIOS=gui` on the guest desktop, 1800 s budget, judged the same way. `[DIRTY]` lines are listed. |
 | `gui-settings-defaults` | `tests/gui_settings_defaults.sh` for the guest: `gui.settings_defaults` with a seeded `app-config.properties`, both values, three launches each. |
 | `gui-plugin-picker` | `SKIP`: its seeded cache names the LV2 fixture, and Windows builds no LV2 host. It runs on Linux. |
-| `isolation-audit` | nothing in the real user's Documents, Music, Desktop, `%APPDATA%\Dusk Studio` or `%LOCALAPPDATA%\Dusk Studio`, no entry at the top of the real home folder (by name; the `NTUSER*` hive files are left out), and no `dusk-studio-*` entry in the real temp folder appeared, changed or went away since `msi-install`; and every folder a launch resolves (home, AppData, Documents, Music, temp, config, the Music folder) sits inside its private profile. Either an escape or a folder that does not resolve is a `FAIL`. The Profile known folder is logged, never judged (see Isolation). |
+| `isolation-audit` | nothing in the real user's Documents, Music, Desktop, `%APPDATA%\Dusk Studio` or `%LOCALAPPDATA%\Dusk Studio`, no entry at the top of the real home folder (by name; the `NTUSER*` hive files are left out), and no `dusk-studio-*` entry in the real temp folder appeared, changed or went away since `msi-install`; the user environment (`HKCU\Environment`) names no `DUSKSTUDIO_*` variable, so a value phase 4 lent Explorer and failed to clear fails the run; and every folder a launch resolves (home, AppData, Documents, Music, temp, config, the Music folder) sits inside its private profile. Either an escape or a folder that does not resolve is a `FAIL`. The Profile known folder is logged, never judged (see Isolation). |
 | `package-uninstall` | `SKIP`: the package is left installed. |
 
-Every phase opens its own console from the Start menu: a phase that calls
-`SetForegroundWindow` steals focus, so the next `send-key` would land in the
-wrong window. `scripts/regress/windows/lib.ps1` is served in front of every
+Every phase opens its own console from the Run dialog (Win+R, `powershell`):
+a phase that calls `SetForegroundWindow` steals focus, so the next `send-key`
+would land in the wrong window. A Start-menu search is not used, because while
+the search index is not ready, as after a reboot, it sends the typed text to a
+web search. `scripts/regress/windows/lib.ps1` is served in front of every
 phase script and holds what they share: the report POST, the private profile,
 the redirected launch with its bounded reads, and the snapshot. Constraints the
 guest-side scripts have to respect, all of them things that have already gone
@@ -1172,8 +1250,10 @@ wrong here:
 - The app writes `\r\n` on Windows; the runner strips the `\r` before judging.
 - `WM_CLOSE` on a fresh launch is swallowed while the startup picker is open:
   `requestQuit` returns with a modal up. That is why phase 3 passes the session
-  in through `DUSKSTUDIO_LOAD_SESSION`, which skips the picker entirely. No
-  phase depends on a screen coordinate or on synthesized mouse input.
+  in through `DUSKSTUDIO_LOAD_SESSION`, which skips the picker entirely.
+  Phases 1 to 3 depend on no screen coordinate and no synthesized input.
+  Phase 4 clicks through `SendInput`, and checks first that the pixel it is
+  about to click belongs to the window it means.
 - Redirected stderr cannot be read with `ReadToEndAsync` while the app is still
   running: that task only completes when the pipe closes. The phases drain it
   one bounded `ReadLineAsync` at a time, which is how they wait for a marker
@@ -1191,14 +1271,38 @@ something else driving the VM has been the cause before.
 Overrides: `DUSK_REGRESS_VM`, `DUSK_REGRESS_LIBVIRT_URI`, `DUSK_REGRESS_HOST_IP`,
 `DUSK_REGRESS_UAC_WAIT`, `DUSK_REGRESS_UAC_ACCEPT`.
 
+#### Window activation against the installed package
+
+```bash
+TMPDIR=/var/tmp scripts/regress.sh windows --installed X.Y.Z
+```
+
+runs `phase4-window-activation` and `isolation-audit` against the MSI already
+installed in the guest, with no payload, no install and no UAC prompt. It takes
+about 4 minutes, and needs the guest and host set up as for package mode
+(including the host tools package mode checks for), the guest's desktop left
+alone while it runs, and no `DUSKSTUDIO_*` variable in the guest user's
+environment. Close Dusk Studio in the guest first: the run stops any instance
+it finds and does not start it again. Its legs, after `host-servers`, `guest-wake` and `console-probe`:
+
+| Leg | What it proves |
+|---|---|
+| `installed-check` | stands in for `msi-install`: exactly one Dusk Studio is installed for all users, at X.Y.Z, under `Program Files`; its `DuskStudio.exe` FileVersion and `--version` report X.Y.Z. Records the executable and the real-profile snapshot for the audit in a run folder of its own. |
+| `phase4-window-activation` | as in package mode. |
+| `isolation-audit` | as in package mode, against the snapshot `installed-check` took. |
+| `run-cleanup` | leaves the guest clean: no `DuskStudio.exe` or plug-in host running, no `DUSKSTUDIO_*` variable in the user environment, and the run folder removed (only with its `.dusk-regress-run` marker). It first waits up to 90 s for a phase 4 the host stopped waiting for to finish putting Notepad's saved session back, and leaves the run folder, backup included, when it has not. Variables phase 4 lent and left behind still fail the leg, and are cleared when phase 4's owner marker is with them. |
+
 ### Windows source
 
 `scripts/regress.sh windows-source`, and the Windows third of `prepush`,
 builds this checkout's HEAD (detached is fine; uncommitted changes are not
 included) in the same `win11` guest over ssh, in a tree configured the way
 `windows-tests.yml` configures CI's: Ninja, MSVC x64 Release, the vcpkg
-`x64-windows-static` packages, the donor at `DONOR_REV`, DAF at the tip of
-main, the pinned Mesa. It takes no options, needs no UAC and installs nothing.
+`x64-windows-static` packages, the donor at `DONOR_REV`, DAF at `DAF_REV`,
+the pinned Mesa. It takes no options and needs no UAC. It does not install
+Dusk Studio, but its update step reinstalls Mesa, Python and the vcpkg
+packages when the file that pins them changes, and the first run creates the
+guest tree and clones its dependencies.
 
 ```bash
 scripts/regress.sh windows-source
@@ -1219,7 +1323,7 @@ check the guest before the next run, since the preflight refuses a busy tree.
 | Leg | What it proves |
 |---|---|
 | `vm-preflight` | the guest answers over ssh, nothing is already running in the tree, and the scripts are copied. A failure ends the run. |
-| `update` | the tree is at HEAD: the merge base with `origin/main` (and any other commit the local ones stand on) fetched from GitHub by hash, the local commits sent as a git bundle, submodules synced, the donor at `DONOR_REV`, DAF at main. Mesa and Python are reinstalled when `scripts/fetch-windows-software-opengl.ps1` changed, the vcpkg packages when `vcpkg.json` did. |
+| `update` | the tree is at HEAD: the merge base with `origin/main` (and any other commit the local ones stand on) fetched from GitHub by hash, the local commits sent as a git bundle, submodules synced, the donor at `DONOR_REV`, DAF at `DAF_REV`. Mesa and Python are reinstalled when `scripts/fetch-windows-software-opengl.ps1` changed, the vcpkg packages when `vcpkg.json` did. |
 | `build` | `DuskStudio`, `dusk-studio-tests` and `dusk-windows-software-opengl-probe` at `-j4`, as CI builds them, reconfiguring first when the configure script changed. A failure's note counts the compile and link errors and names the first. |
 | `mesa` | CI's "Verify packaged Mesa selects llvmpipe" step, and the fixture plug-ins and app files CI's upload steps require. |
 | `ctest-inventory` | every test name the `windows-tests.yml` at HEAD requires is in the CTest inventory. The names are read from the workflow, so the two never drift; finding none fails. |
@@ -1671,8 +1775,11 @@ manual checks that the script cannot cover:
   verifier rejects an empty slot but cannot judge editorial accuracy.
 - Confirm all seven filenames exactly match the list above. Inspect the
   executable inside the DMG and MSI and confirm arm64 and x64 respectively;
-  do not infer architecture from the filename. The DMG must carry the `.app`,
-  `LICENSE` and `LICENSES.txt` and nothing else; a `share/` tree of XDG desktop
+  do not infer architecture from the filename. The DMG's top level must hold
+  what the `macos` records of `packaging/contents.txt` name and nothing else:
+  `DuskStudio.app`, the `Applications` link to `/Applications`, `LICENSE`,
+  `LICENSES.txt` and `QUICKSTART.md`. `verify-package-contents.sh` proves
+  those are there, not that nothing else is; a `share/` tree of XDG desktop
   files in it is a Linux install rule leaking into the macOS package.
 - Run `sha256sum --check SHA256SUMS` against the downloaded payloads and
   require every one of the five to pass. A payload rebuilt after the checksums
@@ -1687,8 +1794,11 @@ manual checks that the script cannot cover:
   `JUCE-*` paths, and each must contain the complete
   [LICENSES.txt](../LICENSES.txt), not merely a file by that name.
 - On macOS and Windows, run the
-  [window-activation smoke test](../tests/window_activation_smoke_test.md) for
-  initial launch, session open, minimized restore, and second-process handoff.
+  [window-activation smoke test](../tests/window_activation_smoke_test.md)
+  against the installed release: its four cases through
+  `TMPDIR=/var/tmp scripts/regress.sh mac --window-activation-only` and
+  `TMPDIR=/var/tmp scripts/regress.sh windows --installed X.Y.Z` (package mode
+  runs them too), and its "What still needs a person" checks by hand.
 - In every bundled `LICENSES.txt`, confirm the full-text section is present and
   the JUCE-bundled entries cover HarfBuzz, SheenBidi, libjpeg, libpng, zlib,
   FLAC, and Ogg/Vorbis. If a future SheenBidi source adds a NOTICE file, ship

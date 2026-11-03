@@ -4856,6 +4856,7 @@ void AudioEngine::stageTestMidiInjection (int inputIdx, dusk::MidiBuffer events)
     // a release-build data race.
     if (testInjectReady.load (std::memory_order_acquire))
     {
+        testInjectDropped.fetch_add (1, std::memory_order_relaxed);
         jassertfalse;
         return;
     }
@@ -5726,10 +5727,16 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     {
         const int idx = testInjectInputIdx.load (std::memory_order_relaxed);
         if (idx >= 0 && (size_t) idx < perInputMidi.size())
+        {
             for (const auto meta : testInjectMidi)
                 if (meta.samplePosition >= 0 && meta.samplePosition < numSamples)
                     perInputMidi[(size_t) idx].addEvent (meta.data, meta.numBytes,
                                                          meta.samplePosition);
+        }
+        else if (! testInjectMidi.isEmpty())
+        {
+            testInjectUnrouted.fetch_add (1, std::memory_order_relaxed);
+        }
         testInjectMidi.clear();
         testInjectReady.store (false, std::memory_order_release);
     }

@@ -852,6 +852,79 @@ assert donor_workflows == expected_donor_workflows, (
     f"clone it through .github/actions/clone-donor: {sorted(donor_workflows)}"
 )
 
+# DAF is pinned like the donor: one commit in DAF_REV, read by the shared
+# clone action, which every workflow uses without overriding it.
+daf_rev = (source_root / "DAF_REV").read_text(encoding="utf-8").strip()
+assert re.fullmatch(r"[0-9a-f]{40}", daf_rev), (
+    "DAF_REV must hold one full DAF commit hash"
+)
+daf_action = (
+    source_root / ".github" / "actions" / "clone-daf-stack" / "action.yml"
+).read_text(encoding="utf-8")
+for required in (
+    "\"${GITHUB_WORKSPACE}/DAF_REV\"",
+    "^[0-9a-f]{40}$",
+    'git fetch --depth 1 origin "${rev}"',
+    '[[ "$(git rev-parse HEAD)" == "${rev}" ]]',
+    's/@DAF_REV@/${rev}/g',
+):
+    assert required in daf_action, f"clone-daf-stack lost its DAF_REV pin: {required}"
+assert "inputs:" not in daf_action and not re.search(r"\bmain\b", daf_action), (
+    "clone-daf-stack must take DAF from DAF_REV alone"
+)
+daf_use = "uses: ./.github/actions/clone-daf-stack"
+daf_workflows = set()
+for workflow_path in (source_root / ".github" / "workflows").glob("*.yml"):
+    workflow_text = workflow_path.read_text(encoding="utf-8")
+    assert "DAF_REV" not in workflow_text and daf_rev not in workflow_text, (
+        f"{workflow_path.name} must take the DAF revision from DAF_REV"
+    )
+    assert "dusk-audio/DAF" not in workflow_text, (
+        f"{workflow_path.name} must reach DAF only through clone-daf-stack"
+    )
+    assert not re.search(re.escape(daf_use) + r"\n\s*with:", workflow_text), (
+        f"{workflow_path.name} must not pass clone-daf-stack a revision"
+    )
+    if daf_use in workflow_text:
+        daf_workflows.add(workflow_path.name)
+assert daf_workflows == expected_donor_workflows, (
+    "exactly the release and test workflows that build the native UI must "
+    f"clone DAF through .github/actions/clone-daf-stack: {sorted(daf_workflows)}"
+)
+licenses_text = (source_root / "LICENSES.txt").read_text(encoding="utf-8")
+# CI runs this after clone-daf-stack has stamped the checked-out commit in.
+assert re.search(
+    r"Version  : dusk-audio/DAF rev (?:@DAF_REV@|" + daf_rev + r")(?![0-9a-f])", licenses_text
+), "LICENSES.txt must name the DAF commit the clone action stamps in"
+assert "DAF main" not in licenses_text, "LICENSES.txt must not say DAF comes from main"
+cmake_text = (source_root / "CMakeLists.txt").read_text(encoding="utf-8")
+assert 'file(READ "${CMAKE_CURRENT_SOURCE_DIR}/DAF_REV"' in cmake_text, (
+    "configure must read DAF_REV"
+)
+assert "DAF_REV must hold one full 40-character commit hash" in cmake_text, (
+    "configure must validate DAF_REV the way it validates DONOR_REV"
+)
+mac_runner = (source_root / "scripts" / "regress" / "mac.sh").read_text(encoding="utf-8")
+assert "MAC_DAF_REV=\"$(tr -d '[:space:]' < DAF_REV)\"" in mac_runner, (
+    "the Mac regression leg must build DAF at DAF_REV"
+)
+assert "pull" not in mac_runner.split("leg_daf() {", 1)[1].split("\n}\n", 1)[0], (
+    "the Mac regression leg must not follow DAF main"
+)
+windows_update = (
+    source_root / "scripts" / "regress" / "windows" / "source" / "update.cmd"
+).read_text(encoding="utf-8")
+assert "set /p DAF_REV=<DAF_REV" in windows_update and "origin main" not in windows_update, (
+    "the Windows regression tree must check DAF out at DAF_REV"
+)
+for guide_name in ("BUILDING-LINUX.md", "BUILDING-WINDOWS.md", "MAINTAINER-GUIDE.md"):
+    guide = (source_root / "docs" / guide_name).read_text(encoding="utf-8")
+    assert daf_rev not in guide, f"{guide_name} must leave the DAF revision to DAF_REV"
+    assert "DAF_REV" in guide, f"{guide_name} must check DAF out at DAF_REV"
+    assert not re.search(r"git -C (\.\./)?DAF pull|DAF `main`", guide), (
+        f"{guide_name} must not tell builders to follow DAF main"
+    )
+
 # The Linux and Raspberry Pi legs build against the Dusk-owned JUCE mirror by
 # immutable tag; macOS and Windows clone upstream JUCE by branch and carry no
 # pin. A partial bump would ship a Linux tarball built against a JUCE that

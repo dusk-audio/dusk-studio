@@ -1388,6 +1388,18 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         return clickAt (point.x, point.y, 2);
     }
 
+    bool pinDspReadings (std::optional<DspReadings> readings) override
+    {
+        if (owner.systemStatusBar == nullptr) return false;
+        owner.systemStatusBar->pinReadingsForScenario (readings);
+        return true;
+    }
+
+    std::uint32_t dspReadoutPaint() override
+    {
+        return owner.systemStatusBar != nullptr ? owner.systemStatusBar->dspPaintForScenario() : 0;
+    }
+
     int consolePageCount() const override { return owner.consoleView->numBanks(); }
     bool consolePageMatches (int index) const override
     {

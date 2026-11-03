@@ -5,6 +5,60 @@ All notable changes to Dusk Studio. Format loosely follows
 back-filled from `git log`; once tags exist this file is the
 canonical source.
 
+## [0.16.1] - Unreleased
+
+### Changed
+
+- **DSP readout colours.** The readout turns red only for a backend xrun, a
+  stream disruption the audio backend reported. An engine overrun on its own,
+  load above 85% or a realtime warning turns it amber, since device buffering
+  can absorb a late block.
+- **DAF pinned.** CI and release builds take DAF from the commit in the new
+  `DAF_REV` file instead of the tip of DAF `main`, so a DAF merge no longer
+  changes what Dusk Studio builds. Configure warns when the local DAF
+  checkout is at another commit.
+
+### Fixed
+
+- **Rate-limit notice.** When an online SFZ repository is rate limited, a
+  reset time that has already passed, or lies more than a day away, reads
+  "Try again later." instead of a clock time.
+- **Web links dropped on the tape strip.** A link dragged from a web browser
+  is ignored, even when its address ends in `.wav`, instead of ending in an
+  "Unsupported or unreadable audio file" alert. Only existing local files
+  import.
+- **Pointers added after launch.** On X11 and XWayland, clicks from a mouse or
+  tablet plugged in after Dusk Studio started now work.
+- **File drops that lost their files.** A drop is no longer lost when the drag
+  source leaves before it sends the file list, and a source that leaves
+  without ever sending it hears back within three seconds instead of waiting
+  on its own timeout.
+- **LV2 bundles loaded twice.** Dusk Studio no longer loads every LV2 bundle a
+  second time at startup, which filled the log with "Reloading plugin"
+  warnings, and its native LV2 scan loads a bundle that two search folders
+  reach once. On Linux and macOS, a custom plug-in folder that is also a
+  standard LV2 folder is searched once.
+- **Rolling seeks at 192 kHz.** After a seek or Play every track refilled its
+  playback window in the same audio block, and the read burst that started
+  could stall the CPU for 2 to 3 ms, past a 192 kHz callback's deadline. Each
+  track now starts its window at its own phase, so the refills spread over
+  about 125 ms.
+- **SFZ pack descriptions.** The SFZ Manager joined a pack's two
+  descriptions with a space, so they ran together or repeated a sentence.
+  The second now starts its own sentence, and a description the other one
+  already contains is left out.
+- **Full-width characters in SFZ pack names.** The SFZ Manager drew "?" for
+  characters its font lacks, such as the full-width brackets in
+  `Model（sfz）`. Full-width letters, digits and punctuation now show as
+  their plain forms, so that name reads `Model(sfz)`. Any other character
+  the font lacks, such as Chinese or Japanese text, shows the Unicode
+  replacement mark instead of "?".
+- **Manual figures.** `docs/capture-screenshots.sh` waits for each native
+  panel's frame instead of closing the panel after a fixed delay, so the
+  piano roll and audio editor figures are written again on a slow or loaded
+  machine. A run that leaves a figure out now fails and names it. The
+  figures whose UI changed since their last capture are refreshed.
+
 ## [0.16.0] - 2026-11-01
 
 ### Added

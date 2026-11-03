@@ -34,7 +34,12 @@
 #include "../engine/AudioEngine.h"
 
 #include <algorithm>
+#include <chrono>
+#include <cstdio>
+#include <filesystem>
+#include <functional>
 #include <iterator>
+#include <system_error>
 
 namespace duskstudio
 {
@@ -467,32 +472,75 @@ namespace
 {
 constexpr int kTakeLanesTrack = 6;
 
+// A panel writes the frame it was asked for on the thirtieth it draws after the
+// request. A software renderer under load draws the large editors at well under
+// 20 frames a second, so a fixed step delay closes them first. The step after a
+// request waits for the file instead, up to this long.
+constexpr auto kFrameTimeout = std::chrono::seconds (20);
+constexpr int kFramePollMs = 50;
+
+struct AwaitedFrame
+{
+    std::string figure;
+    std::string path;
+    std::chrono::steady_clock::time_point deadline;
+};
+
+using AwaitedFrames = std::vector<AwaitedFrame>;
+
+bool frameWritten (const std::string& path)
+{
+    std::error_code error;
+    return std::filesystem::exists (path, error);
+}
+
+void awaitFrame (AwaitedFrames& awaited, std::string figure, std::string path)
+{
+    awaited.push_back ({ std::move (figure), std::move (path),
+                         std::chrono::steady_clock::now() + kFrameTimeout });
+}
+
+// `ask` asks `panel` for its next steady frame and reports whether it was showing to
+// take the request. The file goes first, so one left by an earlier run cannot stand in
+// for the frame.
+void requestFrame (AwaitedFrames& awaited, const std::string& outDir, const std::string& figure,
+                   const char* panel, const std::function<bool (const std::string&)>& ask)
+{
+    const auto path = outDir + "/" + figure + ".ppm";
+    std::remove (path.c_str());
+    if (ask (path))
+        awaitFrame (awaited, figure, path);
+    else
+        std::fprintf (stderr, "[Dusk Studio/capture] %s: %s is not showing, so no frame was asked for\n",
+                      figure.c_str(), panel);
+}
+
 // One PPM a framework child read its own frame back into, pasted into a JUCE snapshot
 // at the rectangle the child covers. Under the harness the window is unscaled, so the
 // two are the same pixels; a scaled run is letterboxed rather than skewed.
-void pastePpm (juce::Image& into, const juce::File& ppm, juce::Rectangle<int> at)
+bool pastePpm (juce::Image& into, const juce::File& ppm, juce::Rectangle<int> at)
 {
     juce::FileInputStream stream (ppm);
     if (! stream.openedOk())
-        return;
+        return false;
 
     if (stream.readNextLine().trim() != "P6")
-        return;
+        return false;
     const auto dimensions = juce::StringArray::fromTokens (stream.readNextLine().trim(),
                                                            true);
     if (dimensions.size() < 2 || stream.readNextLine().trim() != "255")
-        return;
+        return false;
 
     const int width = dimensions[0].getIntValue();
     const int height = dimensions[1].getIntValue();
     if (width < 1 || height < 1)
-        return;
+        return false;
 
     std::vector<unsigned char> rgb (static_cast<std::size_t> (width)
                                     * static_cast<std::size_t> (height) * 3u);
     if (stream.read (rgb.data(), static_cast<int> (rgb.size()))
         != static_cast<int> (rgb.size()))
-        return;
+        return false;
 
     juce::Image frame (juce::Image::RGB, width, height, false);
     {
@@ -510,6 +558,7 @@ void pastePpm (juce::Image& into, const juce::File& ppm, juce::Rectangle<int> at
     juce::Graphics g (into);
     g.drawImage (frame, at.toFloat(), juce::RectanglePlacement::centred);
     ppm.deleteFile();
+    return true;
 }
 } // namespace
 
@@ -523,10 +572,14 @@ void MainComponent::captureNativePanels (std::string outDir)
     {
         int delayMs;   // how long the loop runs before this step
         std::function<void (MainComponent&)> run;
+        // Polled once the delay is up, until true or kFrameTimeout passes: a readback
+        // of a window that has to have drawn first.
+        std::function<bool (MainComponent&)> ready {};
     };
 
     auto masteringCaptures =
         std::make_shared<std::vector<MasteringView::NativePanelCapture>>();
+    auto awaited = std::make_shared<AwaitedFrames>();
     const juce::File dir { juce::String (outDir) };
 
     auto steps = std::make_shared<std::vector<Step>>();
@@ -540,10 +593,23 @@ void MainComponent::captureNativePanels (std::string outDir)
         if (self.masteringView != nullptr)
             self.masteringView->loadFile (dir.getChildFile ("_demo").getChildFile ("demo-take.wav"));
     } });
-    steps->push_back ({ 900, [masteringCaptures, dir] (MainComponent& self)
+    steps->push_back ({ 900, [masteringCaptures, awaited, dir] (MainComponent& self)
     {
         if (self.masteringView != nullptr)
             *masteringCaptures = self.masteringView->captureNativePanels (dir);
+        if (masteringCaptures->empty())
+            std::fprintf (stderr, "[Dusk Studio/capture] np-08-mastering-view: the mastering panels "
+                                  "are not showing, so no frame was asked for\n");
+        // The frames are written from a later pass of the message loop, so a file there
+        // now is left from an earlier run.
+        for (const auto& capture : *masteringCaptures)
+        {
+            capture.file.deleteFile();
+            awaitFrame (*awaited, "np-08-mastering-view", capture.file.getFullPathName().toStdString());
+        }
+    }, [] (MainComponent& self)
+    {
+        return self.masteringView == nullptr || self.masteringView->nativePanelsOpenForCapture();
     } });
     steps->push_back ({ 1500, [masteringCaptures, dir] (MainComponent& self)
     {
@@ -551,16 +617,26 @@ void MainComponent::captureNativePanels (std::string outDir)
         if (view != nullptr && view->getWidth() > 0 && view->getHeight() > 0)
         {
             auto image = view->createComponentSnapshot (view->getLocalBounds(), true);
+            // A figure with a panel missing would pass for a complete one.
+            bool complete = ! masteringCaptures->empty();
             for (const auto& capture : *masteringCaptures)
-                pastePpm (image, capture.file, capture.bounds);
-            writePng (image, dir.getChildFile ("np-08-mastering-view.png"));
-            writePng (image, dir.getChildFile ("mm-02-mastering-chain.png"));
+                complete = pastePpm (image, capture.file, capture.bounds) && complete;
+            if (complete)
+            {
+                writePng (image, dir.getChildFile ("np-08-mastering-view.png"));
+                writePng (image, dir.getChildFile ("mm-02-mastering-chain.png"));
+            }
+            else
+            {
+                std::fprintf (stderr, "[Dusk Studio/capture] np-08-mastering-view, mm-02-mastering-chain: "
+                                      "a mastering panel's frame is missing, so neither figure was written\n");
+            }
         }
         self.switchToStage (AudioEngine::Stage::Mixing);
         self.resized();
     } });
 
-    steps->push_back ({ 600, [outDir] (MainComponent& self)
+    steps->push_back ({ 600, [outDir, awaited] (MainComponent& self)
     {
         auto* const strip0 = self.consoleView != nullptr
                            ? self.consoleView->getStripComponent (0) : nullptr;
@@ -573,7 +649,8 @@ void MainComponent::captureNativePanels (std::string outDir)
         // the panel rather than of a signal. Park the meters at rest.
         self.session.track (0).meterInputDb.store (-100.0f, std::memory_order_relaxed);
         self.session.track (0).meterGrDb.store (0.0f, std::memory_order_relaxed);
-        strip0->openCompEditorForCapture (outDir + "/fx-02-comp.ppm");
+        requestFrame (*awaited, outDir, "fx-02-comp", "the compressor panel",
+                      [strip0] (const std::string& path) { return strip0->openCompEditorForCapture (path); });
     } });
     // One panel at a time: each is a modal surface, and two open at once would put one
     // child over the other.
@@ -600,6 +677,10 @@ void MainComponent::captureNativePanels (std::string outDir)
         if (self.consoleView != nullptr)
             if (auto* master = self.consoleView->getMasterStripComponent())
                 master->captureTapeEditor (outDir + "/fx-03-tape.ppm");
+    }, [] (MainComponent& self)
+    {
+        auto* const master = self.consoleView != nullptr ? self.consoleView->getMasterStripComponent() : nullptr;
+        return master == nullptr || ! master->isTapeEditorOpen() || master->tapeEditorDrawnForScenario();
     } });
     steps->push_back ({ 300, [tapeWasEnabled] (MainComponent& self)
     {
@@ -633,11 +714,14 @@ void MainComponent::captureNativePanels (std::string outDir)
                     std::fprintf (stderr, "[capture] built-in %s: %s\n",
                                   id.c_str(), err.c_str());
             } });
-            steps->push_back ({ 400, [outDir, name] (MainComponent& self)
+            steps->push_back ({ 400, [outDir, name, awaited] (MainComponent& self)
             {
+                const auto path = outDir + "/" + name + ".ppm";
+                std::remove (path.c_str());
                 if (auto* strip0 = self.consoleView != nullptr
                                  ? self.consoleView->getStripComponent (0) : nullptr)
-                    strip0->openBuiltinEditorForCapture (outDir + "/" + name + ".ppm");
+                    if (strip0->openBuiltinEditorForCapture (path))
+                        awaitFrame (*awaited, name, path);
             } });
             // A unit with its own plug-in editor draws through a window the
             // panel capture cannot reach, so that one is read back once painted.
@@ -646,6 +730,10 @@ void MainComponent::captureNativePanels (std::string outDir)
                 if (auto* strip0 = self.consoleView != nullptr
                                  ? self.consoleView->getStripComponent (0) : nullptr)
                     strip0->captureBuiltinPluginEditor (outDir + "/" + name + ".ppm");
+            }, [] (MainComponent& self)
+            {
+                auto* const strip0 = self.consoleView != nullptr ? self.consoleView->getStripComponent (0) : nullptr;
+                return strip0 == nullptr || strip0->builtinPluginEditorReadyForCapture();
             } });
             steps->push_back ({ 300, [] (MainComponent& self)
             {
@@ -664,31 +752,42 @@ void MainComponent::captureNativePanels (std::string outDir)
 
    #if DUSKSTUDIO_HAS_NATIVE_UI
     steps->push_back ({ 400, [] (MainComponent& self) { self.openPianoRoll (8, 0); } });
-    steps->push_back ({ 1000, [outDir] (MainComponent& self)
+    steps->push_back ({ 1000, [outDir, awaited] (MainComponent& self)
     {
-        if (self.pianoRollShowing())
-            self.pianoRollWindow->captureNextFrameTo (outDir + "/np-11-piano-roll.ppm");
+        requestFrame (*awaited, outDir, "np-11-piano-roll", "the piano roll",
+                      [&self] (const std::string& path)
+                      {
+                          if (! self.pianoRollShowing())
+                              return false;
+                          self.pianoRollWindow->captureNextFrameTo (path);
+                          return true;
+                      });
     } });
     steps->push_back ({ 1500, [dir] (MainComponent& self)
     {
         self.closePianoRoll();
-        dir.getChildFile ("np-11-piano-roll.ppm")
-           .copyFileTo (dir.getChildFile ("ed-05-piano-roll-full.ppm"));
+        // The copy leaves the target alone when the source is missing, so an older
+        // target would stand in for a capture that failed.
+        const auto figure = dir.getChildFile ("ed-05-piano-roll-full.ppm");
+        figure.deleteFile();
+        dir.getChildFile ("np-11-piano-roll.ppm").copyFileTo (figure);
     } });
    #endif
 
     // The audio editor on the first region, whose fades the figure shows. The
     // capture is asked for once the waveform peaks have had time to load.
     steps->push_back ({ 400, [] (MainComponent& self) { self.openAudioEditor (0, 0); } });
-    steps->push_back ({ 1000, [outDir] (MainComponent& self)
+    steps->push_back ({ 1000, [outDir, awaited] (MainComponent& self)
     {
-        self.captureAudioEditorTo (outDir + "/np-10-region-editor.ppm");
+        requestFrame (*awaited, outDir, "np-10-region-editor", "the audio editor",
+                      [&self] (const std::string& path) { return self.captureAudioEditorTo (path); });
     } });
     steps->push_back ({ 1500, [dir] (MainComponent& self)
     {
         self.closeAudioEditor();
-        dir.getChildFile ("np-10-region-editor.ppm")
-           .copyFileTo (dir.getChildFile ("ed-04-region-editor-modal.ppm"));
+        const auto figure = dir.getChildFile ("ed-04-region-editor-modal.ppm");
+        figure.deleteFile();
+        dir.getChildFile ("np-10-region-editor.ppm").copyFileTo (figure);
     } });
     // Take lanes: three passes over the same four seconds of the Vox track, comped
     // from all three. Staged only here, so the earlier figures show the demo
@@ -726,9 +825,10 @@ void MainComponent::captureNativePanels (std::string outDir)
         promoteTakeRange (self.session, track, track.takes[1], (std::int64_t) (sr * 2.6), length);
         self.openAudioEditorOnTakes (kTakeLanesTrack);
     } });
-    steps->push_back ({ 1000, [outDir] (MainComponent& self)
+    steps->push_back ({ 1000, [outDir, awaited] (MainComponent& self)
     {
-        self.captureAudioEditorTo (outDir + "/ed-06-take-lanes.ppm");
+        requestFrame (*awaited, outDir, "ed-06-take-lanes", "the audio editor",
+                      [&self] (const std::string& path) { return self.captureAudioEditorTo (path); });
     } });
     steps->push_back ({ 1500, [] (MainComponent& self) { self.closeAudioEditor(); } });
     steps->push_back ({ 400, [] (MainComponent& self)
@@ -738,21 +838,24 @@ void MainComponent::captureNativePanels (std::string outDir)
         track.takes.clear();
     } });
 
-    steps->push_back ({ 400, [outDir] (MainComponent& self)
+    steps->push_back ({ 400, [outDir, awaited] (MainComponent& self)
     {
-        self.openVirtualKeyboardForCapture (outDir + "/vkb-01-virtual-keyboard.ppm");
+        requestFrame (*awaited, outDir, "vkb-01-virtual-keyboard", "the virtual keyboard",
+                      [&self] (const std::string& path) { return self.openVirtualKeyboardForCapture (path); });
     } });
     steps->push_back ({ 1500, [] (MainComponent& self) { self.closeVirtualKeyboard(); } });
-    steps->push_back ({ 400, [outDir] (MainComponent& self)
+    steps->push_back ({ 400, [outDir, awaited] (MainComponent& self)
     {
-        self.openAudioSettingsForCapture (outDir + "/qg-02-audio-settings.ppm");
+        requestFrame (*awaited, outDir, "qg-02-audio-settings", "the audio settings panel",
+                      [&self] (const std::string& path) { return self.openAudioSettingsForCapture (path); });
     } });
     steps->push_back ({ 1500, [] (MainComponent& self) { self.closeAudioSettings(); } });
     // Quitting with the startup panel still up is the point: dismissing it would run the
     // launch follow-ups the harness has already been past for a whole session.
-    steps->push_back ({ 400, [outDir] (MainComponent& self)
+    steps->push_back ({ 400, [outDir, awaited] (MainComponent& self)
     {
-        self.openStartupForCapture (outDir + "/qg-01-startup.ppm");
+        requestFrame (*awaited, outDir, "qg-01-startup", "the startup panel",
+                      [&self] (const std::string& path) { return self.openStartupForCapture (path); });
     } });
     steps->push_back ({ 1500, [] (MainComponent&) {} });
 
@@ -762,7 +865,8 @@ void MainComponent::captureNativePanels (std::string outDir)
     // lives exactly as long as it has a step left. Capturing it strongly inside itself
     // would be a cycle that never frees.
     std::weak_ptr<std::function<void (std::size_t)>> weakRunner = runFrom;
-    *runFrom = [safeThis, steps, weakRunner] (std::size_t index)
+    auto readyDeadline = std::make_shared<std::chrono::steady_clock::time_point>();
+    *runFrom = [safeThis, steps, awaited, readyDeadline, weakRunner] (std::size_t index)
     {
         auto* const self = safeThis.getComponent();
         if (self == nullptr || index >= steps->size())
@@ -771,7 +875,40 @@ void MainComponent::captureNativePanels (std::string outDir)
             juce::JUCEApplication::getInstance()->quit();
             return;
         }
-        (*steps)[index].run (*self);
+        if (! awaited->empty())
+        {
+            const auto now = std::chrono::steady_clock::now();
+            const bool waiting = std::any_of (awaited->begin(), awaited->end(), [now] (const AwaitedFrame& frame)
+            {
+                return now < frame.deadline && ! frameWritten (frame.path);
+            });
+            if (waiting)
+            {
+                if (auto runner = weakRunner.lock())
+                    dusk::Timer::callAfterDelay (kFramePollMs, [runner, index] { (*runner) (index); });
+                return;
+            }
+            for (const auto& frame : *awaited)
+                if (! frameWritten (frame.path))
+                    std::fprintf (stderr, "[Dusk Studio/capture] %s: no frame within %d seconds\n",
+                                  frame.figure.c_str(), static_cast<int> (kFrameTimeout.count()));
+            awaited->clear();
+        }
+        const auto& step = (*steps)[index];
+        if (step.ready && ! step.ready (*self))
+        {
+            const auto now = std::chrono::steady_clock::now();
+            if (*readyDeadline == std::chrono::steady_clock::time_point {})
+                *readyDeadline = now + kFrameTimeout;
+            if (now < *readyDeadline)
+            {
+                if (auto runner = weakRunner.lock())
+                    dusk::Timer::callAfterDelay (kFramePollMs, [runner, index] { (*runner) (index); });
+                return;
+            }
+        }
+        *readyDeadline = {};
+        step.run (*self);
         const auto next = index + 1;
         const int delay = next < steps->size() ? (*steps)[next].delayMs : 0;
         if (auto runner = weakRunner.lock())

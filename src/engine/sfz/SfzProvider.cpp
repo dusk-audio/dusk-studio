@@ -221,6 +221,73 @@ void appendMetadataText (std::string& text, const std::string& extra)
     text += extra;
 }
 
+constexpr std::string_view kSentenceEnds[] { ".", "!", "?", "\xE2\x80\xA6", "\xE3\x80\x82", "\xEF\xBC\x81", "\xEF\xBC\x9F" };
+constexpr std::string_view kClauseEnds[] { ",", ";", ":" };
+constexpr std::string_view kClosers[] { ")", "]", "\"", "'", "\xE2\x80\x9D", "\xE2\x80\x99", "\xC2\xBB" };
+
+template <std::size_t N>
+std::size_t trailingMark (std::string_view text, const std::string_view (&marks)[N])
+{
+    for (const auto mark : marks)
+        if (text.size() >= mark.size() && text.substr (text.size() - mark.size()) == mark) return mark.size();
+    return 0;
+}
+
+bool asciiSpace (char c) { return c == ' ' || (c >= '\t' && c <= '\r'); }
+
+bool wordByte (char c)
+{
+    const auto byte = static_cast<unsigned char> (c);
+    return byte >= 0x80 || (byte >= '0' && byte <= '9') || (byte >= 'a' && byte <= 'z') || (byte >= 'A' && byte <= 'Z');
+}
+
+std::string comparableText (std::string_view text)
+{
+    std::string result;
+    for (const auto c : text)
+    {
+        if (! asciiSpace (c)) result += c >= 'A' && c <= 'Z' ? static_cast<char> (c + 'a' - 'A') : c;
+        else if (! result.empty() && result.back() != ' ') result += ' ';
+    }
+    while (! result.empty())
+    {
+        const auto mark = result.back() == ' '
+            ? 1 : std::max (trailingMark (result, kSentenceEnds), trailingMark (result, kClauseEnds));
+        if (mark == 0) break;
+        result.resize (result.size() - mark);
+    }
+    return result;
+}
+
+bool containsWords (std::string_view text, std::string_view words)
+{
+    for (auto at = text.find (words); at != std::string_view::npos; at = text.find (words, at + 1))
+    {
+        const auto end = at + words.size();
+        if ((at == 0 || ! wordByte (text[at - 1]) || ! wordByte (words.front()))
+            && (end == text.size() || ! wordByte (text[end]) || ! wordByte (words.back()))) return true;
+    }
+    return false;
+}
+
+// Shown descriptions join as sentences and drop a text the other already says in full; category hints
+// keep appendMetadataText because they are only matched, never shown.
+void appendDescription (std::string& text, std::string_view extra)
+{
+    const auto first = extra.find_first_not_of (" \t\n\v\f\r");
+    if (first == std::string_view::npos || text.size() + extra.size() + 2 > 8192) return;
+    extra = extra.substr (first, extra.find_last_not_of (" \t\n\v\f\r") + 1 - first);
+    const auto shown = comparableText (text), added = comparableText (extra);
+    if (added.empty() || containsWords (shown, added)) return;
+    if (shown.empty() || containsWords (added, shown)) { text = extra; return; }
+    while (! text.empty() && (asciiSpace (text.back()) || trailingMark (text, kClauseEnds) != 0)) text.pop_back();
+    std::string_view sentence = text;
+    while (const auto closer = trailingMark (sentence, kClosers)) sentence.remove_suffix (closer);
+    if (trailingMark (sentence, kSentenceEnds) == 0) text += '.';
+    text += ' ';
+    text += extra;
+}
+
 CatalogLookup catalogLookup (std::string_view text, const std::string& repository)
 {
     // Project explicit repository URLs and simple page slugs, without interpreting general YAML.
@@ -1295,16 +1362,16 @@ ProviderPageResult browseProvider (HttpTransport& transport, const std::string& 
                 const auto metadata = catalogLookup (catalog, summary.locator).described;
                 if (metadata)
                 {
-                    appendMetadataText (summary.description, metadata->description);
+                    appendDescription (summary.description, metadata->description);
                     appendMetadataText (summary.presentation.categoryHint, metadata->description);
                 }
             }
             if (sourceId == "versilian")
             {
                 summary.name = summary.locator == "VCSL" ? "Versilian Community Sample Library" : "VSCO 2 Community Edition";
-                summary.description += summary.locator == "VCSL"
-                    ? " SFZ keyboards, piano, organ, woodwinds, strings and percussion. Round-robin sampling varies by instrument."
-                    : " Official SFZ orchestra: strings, brass, woodwinds, piano and percussion, with round-robin short articulations.";
+                appendDescription (summary.description, summary.locator == "VCSL"
+                    ? "SFZ keyboards, piano, organ, woodwinds, strings and percussion. Round-robin sampling varies by instrument."
+                    : "Official SFZ orchestra: strings, brass, woodwinds, piano and percussion, with round-robin short articulations.");
             }
             if (! query.empty() && lower (summary.name + " " + summary.description).find (lower (query)) == std::string::npos) continue;
         }

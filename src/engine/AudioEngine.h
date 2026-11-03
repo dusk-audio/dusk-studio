@@ -722,6 +722,20 @@ public:
     // AFTER collector drain. Cleared after one block.
     void stageTestMidiInjection (int inputIdx, dusk::MidiBuffer events);
 
+    // Test-only. Staged injections that reached no input: dropped because the
+    // previous one was still pending, or consumed against an index the input
+    // bank no longer has, as after a hot-plug rebuild renumbers it.
+    struct TestMidiInjectionMisses
+    {
+        std::uint64_t dropped = 0;
+        std::uint64_t unrouted = 0;
+    };
+    TestMidiInjectionMisses getTestMidiInjectionMisses() const noexcept
+    {
+        return { testInjectDropped.load (std::memory_order_relaxed),
+                 testInjectUnrouted.load (std::memory_order_relaxed) };
+    }
+
     // Scenario-only, stopped transport. Changes this engine's subscriptions
     // while retaining input indices, virtual keyboard and staged MIDI input.
     bool setHardwareMidiInputsEnabledForScenario (bool enabled)
@@ -1284,6 +1298,8 @@ private:
     dusk::MidiBuffer  testInjectMidi;
     std::atomic<int>  testInjectInputIdx { -1 };
     std::atomic<bool> testInjectReady    { false };
+    std::atomic<std::uint64_t> testInjectDropped  { 0 };
+    std::atomic<std::uint64_t> testInjectUnrouted { 0 };
 
     // The live MIDI each track took last block. A block whose route narrows
     // (midi::liveRouteNarrows) resets the track's instrument, since the

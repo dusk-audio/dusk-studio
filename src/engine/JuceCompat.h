@@ -36,7 +36,10 @@ inline void addDefaultFormats (juce::AudioPluginFormatManager& fm)
         if (format != nullptr && format->getName() == "LV2")
         {
             // JUCE loads embedded LV2 specifications after its initial class table.
-            format->searchPathsForPlugins (format->getDefaultLocationsToSearch(), true, false);
+            // Its constructor already loaded the default folders, and searching
+            // them again reloads every bundle; an empty search only rebuilds
+            // the table.
+            format->searchPathsForPlugins ({}, true, false);
         }
 }
 
@@ -65,7 +68,18 @@ inline auto pluginSearchLocations (juce::AudioPluginFormat& format,
 {
     auto locations = format.getDefaultLocationsToSearch();
     if (format.getName() == "AudioUnit" || format.getName() == "VST3") return locations;
-    const auto add = [&] (const auto& path) { locations.add (juce::File (path.u8string())); };
+    // A custom folder a default already names, a tilde spelling included, would
+    // reload every bundle in it. getChildFile resolves an absolute default to
+    // its folder; a Windows default, spelled with environment variables, stays
+    // relative and never matches, and no File is built from it.
+    const auto add = [&] (const auto& path)
+    {
+        const juce::File folder (path.u8string());
+        for (int i = 0; i < locations.getNumPaths(); ++i)
+            if (folder.getChildFile (locations.getRawString (i)) == folder)
+                return;
+        locations.add (folder);
+    };
     for (const auto& path : custom) add (path);
     locations.removeRedundantPaths();
     return locations;

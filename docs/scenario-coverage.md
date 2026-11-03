@@ -93,4 +93,5 @@ What the pre-tag audit checks by hand, and what runs it now.
 | Patreon freshness before a tag | `patreon-freshness` leg, opt-in through `--release-checks` |
 | the seven release assets | `scripts/verify-release-assets.sh` inside the tag workflow |
 | configure examples leave the donor to `DONOR_REV` | `release_mechanics` over the maintainer guide |
+| every CI and release build, the regression trees and the build guides take DAF from `DAF_REV` | `release_mechanics` over the clone action, workflows, regression scripts and guides |
 | deferred issues stay visible | #508 is the `gui.oop_editor_closes_before_child` SKIP and #504 the Windows `ipc-selftest` SKIP on every run; #507 needs a Known Issues line by hand |
