@@ -96,6 +96,9 @@ if [[ ! -x "${BIN}" ]]; then
 fi
 
 mkdir -p "${OUT}"
+# A frame left by an interrupted run would be converted below as if this run
+# had written it.
+rm -f "${OUT}"/*.ppm
 CAPTURE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/dusk-manual-capture.XXXXXX")"
 STARTED="${CAPTURE_ROOT}/started"
 touch "${STARTED}"

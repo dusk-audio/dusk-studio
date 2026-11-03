@@ -766,8 +766,11 @@ void MainComponent::captureNativePanels (std::string outDir)
     steps->push_back ({ 1500, [dir] (MainComponent& self)
     {
         self.closePianoRoll();
-        dir.getChildFile ("np-11-piano-roll.ppm")
-           .copyFileTo (dir.getChildFile ("ed-05-piano-roll-full.ppm"));
+        // The copy leaves the target alone when the source is missing, so an older
+        // target would stand in for a capture that failed.
+        const auto figure = dir.getChildFile ("ed-05-piano-roll-full.ppm");
+        figure.deleteFile();
+        dir.getChildFile ("np-11-piano-roll.ppm").copyFileTo (figure);
     } });
    #endif
 
@@ -782,8 +785,9 @@ void MainComponent::captureNativePanels (std::string outDir)
     steps->push_back ({ 1500, [dir] (MainComponent& self)
     {
         self.closeAudioEditor();
-        dir.getChildFile ("np-10-region-editor.ppm")
-           .copyFileTo (dir.getChildFile ("ed-04-region-editor-modal.ppm"));
+        const auto figure = dir.getChildFile ("ed-04-region-editor-modal.ppm");
+        figure.deleteFile();
+        dir.getChildFile ("np-10-region-editor.ppm").copyFileTo (figure);
     } });
     // Take lanes: three passes over the same four seconds of the Vox track, comped
     // from all three. Staged only here, so the earlier figures show the demo
