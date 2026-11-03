@@ -187,8 +187,12 @@ REMOTE
         wa_verdict window-activation:launch "$start" "the app did not come up with session-a loaded" ""
         return 1
     fi
-    # The window is brought forward on the tick after it is shown.
-    sleep 2
+    # The window is brought forward on the tick after it is shown, and its title
+    # bar repaints after that.
+    wa_run 30 <<'REMOTE' || true
+poll 10 front_is audio.dusk.studio
+REMOTE
+    sleep 1
     wa_snapshot launch || problems="no snapshot"
     wa_capture launch || true
     problems="${problems:-$(wa_front_problems)}"
@@ -256,8 +260,12 @@ REMOTE
     wa_run 60 N="$((loads + 1))" <<'REMOTE' || true
 poll 15 loads_reach "$N"
 REMOTE
-    # The alert goes up on the tick after the load.
-    sleep 1.5
+    # The alert goes up on the tick after the load, and the window comes forward
+    # with it.
+    wa_run 30 <<'REMOTE' || true
+poll 10 front_is audio.dusk.studio
+REMOTE
+    sleep 1
     wa_snapshot session-open || true
     wa_capture session-open || true
     local front
