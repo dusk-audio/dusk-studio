@@ -4,7 +4,7 @@
 # on its own: bash scripts/regress/scenarios.sh [--gui] [--app <binary>]
 #
 # The black-box legs run several app processes at once, so each leg gets a
-# throwaway HOME, XDG base directories and runtime dir (sandbox_env), as does
+# throwaway HOME, TMPDIR, XDG base directories and runtime dir (sandbox_env), as does
 # every other launch of the app in this file. The runtime dir is what
 # keeps the single-instance slot private: makeSocketPath in
 # src/util/SingleInstance.cpp keys the socket on $XDG_RUNTIME_DIR plus a hash of
@@ -71,7 +71,7 @@ SCENARIO_LEG_NAMES=(scenario-fixtures scenarios-headless "${SCENARIO_BB_LEG_NAME
 SANDBOX_ENV=()
 
 # sandbox_env <dir>: SANDBOX_ENV becomes the env assignments for a private
-# HOME, XDG base directories and runtime dir under <dir>, which must exist.
+# HOME, TMPDIR, XDG base directories and runtime dir under <dir>, which must exist.
 #
 # PipeWire finds its socket through the runtime dir, and without it the engine
 # falls back to ALSA and opens the first sound card directly. So PipeWire keeps
@@ -81,9 +81,10 @@ SANDBOX_ENV=()
 sandbox_env() {
     local dir="$1"
     local pipewire_dir="${NULL_AUDIO_DIR:-${PIPEWIRE_RUNTIME_DIR:-${XDG_RUNTIME_DIR:-}}}"
-    mkdir -p "$dir/home" "$dir/config" && mkdir -p -m 700 "$dir/runtime" || return 1
+    mkdir -p "$dir/home" "$dir/config" && mkdir -p -m 700 "$dir/runtime" "$dir/tmp" || return 1
     SANDBOX_ENV=(
         "HOME=$dir/home"
+        "TMPDIR=$dir/tmp"
         "XDG_CONFIG_HOME=$dir/config"
         "XDG_DATA_HOME=$dir/home/.local/share"
         "XDG_CACHE_HOME=$dir/home/.cache"

@@ -36,6 +36,25 @@ with tempfile.TemporaryDirectory(prefix="dusk-regress-contract-") as scratch:
     runner_tmp.mkdir()
     child_environment = dict(os.environ, DUSK_REGRESS_RECORD_FILE=str(root / "results.tsv"),
                              TMPDIR=str(runner_tmp))
+    sandbox_harness = r'''
+set -euo pipefail
+source "$DUSK_REGRESS_TEST_ROOT/scripts/regress/common.sh"
+source "$DUSK_REGRESS_TEST_ROOT/scripts/regress/scenarios.sh"
+bb_begin interrupted-scratch
+env "${SANDBOX_ENV[@]}" python3 -c '
+import os, pathlib, tempfile
+scratch = pathlib.Path(tempfile.mkdtemp(prefix="duskstudio-scenario-"))
+(scratch / "restore.json").write_text("{}")
+os._exit(0)
+'
+bb_end 0
+'''
+    result = subprocess.run(["bash", "-c", sandbox_harness],
+                            env=dict(child_environment, DUSK_REGRESS_TEST_ROOT=str(repo)),
+                            capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert not any(runner_tmp.iterdir()), "interrupted scenario scratch escaped its sandbox"
+
     scripts = root / "scripts"
     runners = scripts / "regress"
     runners.mkdir(parents=True)

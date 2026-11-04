@@ -1,21 +1,11 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include "TestTempDirectory.h"
+
 #include "session/Session.h"
 #include "session/SessionSerializer.h"
 
 #include <juce_core/juce_core.h>
-
-namespace
-{
-juce::File makeTempSessionDir()
-{
-    auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
-                  .getChildFile ("dusk-studio-mcu-roundtrip-"
-                                    + juce::String (juce::Random::getSystemRandom().nextInt()));
-    dir.createDirectory();
-    return dir;
-}
-} // namespace
 
 // MCU surface identifiers + the user's last assign-mode choice persist
 // in session.json. Bank + selected channel are deliberately ephemeral
@@ -28,7 +18,8 @@ TEST_CASE ("SessionSerializer round-trips MCU input/output identifiers + assign 
     using duskstudio::Session;
     using duskstudio::SessionSerializer;
 
-    const auto dir = makeTempSessionDir();
+    const duskstudio::test::TempDirectory scratch ("dusk-studio-mcu-roundtrip-");
+    const juce::File dir (scratch.path().u8string());
     const auto target = dir.getChildFile ("session.json");
 
     Session a;
@@ -70,7 +61,8 @@ TEST_CASE ("SessionSerializer clamps out-of-range MCU assign mode",
     using duskstudio::Session;
     using duskstudio::SessionSerializer;
 
-    const auto dir = makeTempSessionDir();
+    const duskstudio::test::TempDirectory scratch ("dusk-studio-mcu-roundtrip-");
+    const juce::File dir (scratch.path().u8string());
     const auto target = dir.getChildFile ("session.json");
 
     // Hand-write a session.json with an out-of-range assign mode.

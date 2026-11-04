@@ -1,6 +1,8 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include "TestTempDirectory.h"
+
 #include "session/Session.h"
 #include "session/SessionSerializer.h"
 
@@ -12,24 +14,12 @@
 
 using Catch::Matchers::WithinAbs;
 
-namespace
-{
-juce::File makeTempSessionDir()
-{
-    auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
-                  .getChildFile ("dusk-studio-midi-tempolock-"
-                                    + juce::String (juce::Random::getSystemRandom().nextInt()));
-    dir.createDirectory();
-    return dir;
-}
-} // namespace
-
 TEST_CASE ("MIDI Merge is session state and older transport blocks reset it off",
            "[session][serializer][midi][merge]")
 {
     using namespace duskstudio;
-    const auto dir = makeTempSessionDir();
-    const struct Cleanup { juce::File directory; ~Cleanup() { directory.deleteRecursively(); } } cleanup { dir };
+    const duskstudio::test::TempDirectory scratch ("dusk-studio-midi-tempolock-");
+    const juce::File dir (scratch.path().u8string());
     const auto file = dir.getChildFile ("session.json");
     Session saved;
     REQUIRE_FALSE (saved.midiMergeEnabled.load());
@@ -52,8 +42,8 @@ TEST_CASE ("Tagged MIDI channel controls round trip in current and previous take
            "[session][serializer][midi][controllers]")
 {
     using namespace duskstudio;
-    const auto dir = makeTempSessionDir();
-    const struct Cleanup { juce::File directory; ~Cleanup() { directory.deleteRecursively(); } } cleanup { dir };
+    const duskstudio::test::TempDirectory scratch ("dusk-studio-midi-tempolock-");
+    const juce::File dir (scratch.path().u8string());
     const auto file = dir.getChildFile ("session.json");
     const std::vector<MidiCc> controls {
         { 1, 64, 127, 0 },
@@ -83,8 +73,8 @@ TEST_CASE ("Managed SFZ identities survive session save and missing local packs"
            "[session][serializer][sfz]")
 {
     using namespace duskstudio;
-    const auto dir = makeTempSessionDir();
-    const struct Cleanup { juce::File directory; ~Cleanup() { directory.deleteRecursively(); } } cleanup { dir };
+    const duskstudio::test::TempDirectory scratch ("dusk-studio-midi-tempolock-");
+    const juce::File dir (scratch.path().u8string());
     const auto file = dir.getChildFile ("session.json");
     Session saved;
     saved.track (0).nativeMultisampleLocator = sfz::ManagedSfzLocator {
@@ -115,7 +105,8 @@ TEST_CASE ("SessionSerializer round-trips MidiRegion tempoLock + recordedAtBPM",
     using duskstudio::MidiRegion;
     using duskstudio::SessionSerializer;
 
-    const auto dir = makeTempSessionDir();
+    const duskstudio::test::TempDirectory scratch ("dusk-studio-midi-tempolock-");
+    const juce::File dir (scratch.path().u8string());
     const auto target = dir.getChildFile ("session.json");
 
     Session a;
@@ -173,7 +164,8 @@ TEST_CASE ("SessionSerializer legacy MidiRegion (no tempo_lock key) anchors to s
     using duskstudio::Session;
     using duskstudio::SessionSerializer;
 
-    const auto dir = makeTempSessionDir();
+    const duskstudio::test::TempDirectory scratch ("dusk-studio-midi-tempolock-");
+    const juce::File dir (scratch.path().u8string());
     const auto target = dir.getChildFile ("session.json");
 
     // Hand-rolled legacy session JSON. Only the minimum fields the parser
@@ -220,7 +212,8 @@ TEST_CASE ("SessionSerializer embeds a MIDI region's notes and CCs in session.js
     using duskstudio::Session;
     using duskstudio::SessionSerializer;
 
-    const auto dir = makeTempSessionDir();
+    const duskstudio::test::TempDirectory scratch ("dusk-studio-midi-tempolock-");
+    const juce::File dir (scratch.path().u8string());
     const auto target = dir.getChildFile ("session.json");
 
     const std::vector<MidiNote> notes { { 1, 60, 100, 0, 240 }, { 10, 36, 90, 480, 120 } };
@@ -271,5 +264,4 @@ TEST_CASE ("SessionSerializer embeds a MIDI region's notes and CCs in session.js
     REQUIRE (reloaded.size() == 1);
     CHECK (reloaded[0].notes == notes);
     CHECK (reloaded[0].ccs == ccs);
-    dir.deleteRecursively();
 }
