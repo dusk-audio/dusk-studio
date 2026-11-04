@@ -160,7 +160,7 @@ Sf2File readSf2(const std::filesystem::path& file)
     FileCursor in;
     if (! in.open (file))
     {
-        out.error = "Could not open " + file.filename().string();
+        out.error = "Could not open " + file.filename().u8string();
         return out;
     }
 

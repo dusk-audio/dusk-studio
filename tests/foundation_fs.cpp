@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include "TestTempDirectory.h"
 #include "foundation/Fs.h"
 
 #include <juce_core/juce_core.h>
@@ -9,6 +10,7 @@
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 using namespace dusk;
 namespace stdfs = std::filesystem;
@@ -122,6 +124,20 @@ TEST_CASE ("dusk::fs::matchesWildcard", "[foundation][fs]")
     REQUIRE_FALSE (fs::matchesWildcard ("xx.txt", "?.txt"));
     REQUIRE (fs::matchesWildcard ("anything", "*"));
     REQUIRE_FALSE (fs::matchesWildcard ("a.wav", "*.flac"));
+}
+
+TEST_CASE ("findChildFiles returns a name the ANSI code page cannot hold", "[foundation][fs]")
+{
+    const duskstudio::test::TempDirectory root ("dusk-fs-unicode-");
+    const auto clap = root.path() / stdfs::u8path (u8"Ж日本.clap");
+    REQUIRE (fs::writeStringToFile (clap, "clap"));
+    REQUIRE (fs::writeStringToFile (root.path() / "x.wav", "wav"));
+
+    std::vector<stdfs::path> found;
+    REQUIRE_NOTHROW (found = fs::findChildFiles (root.path(), "*.clap", true));
+    REQUIRE (found.size() == 1);
+    CHECK (found.front().filename() == clap.filename());
+    CHECK (fs::findChildFiles (root.path(), "*", false).size() == 2);
 }
 
 TEST_CASE ("native IO paths support long files without changing portable paths", "[foundation][fs]")

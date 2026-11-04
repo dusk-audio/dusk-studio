@@ -170,7 +170,7 @@ inline std::vector<std::filesystem::path> findChildFiles (const std::filesystem:
 
     auto take = [&] (const stdfs::directory_entry& e)
     {
-        if (e.is_regular_file (ec) && matchesWildcard (e.path().filename().string(), wildcard))
+        if (e.is_regular_file (ec) && matchesWildcard (e.path().filename().u8string(), wildcard))
             out.push_back (e.path());
     };
 

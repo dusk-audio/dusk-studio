@@ -151,7 +151,7 @@ void inferAudioFormat (const std::filesystem::path& sessionDir, std::string& sam
         std::error_code inspectionError;
         if (! entry.is_regular_file (inspectionError) || inspectionError)
             return true;
-        auto extension = entry.path().extension().string();
+        auto extension = entry.path().extension().u8string();
         std::transform (extension.begin(), extension.end(), extension.begin(),
                         [] (unsigned char c) { return static_cast<char> (std::tolower (c)); });
         if (extension == ".wav")
