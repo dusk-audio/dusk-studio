@@ -147,8 +147,8 @@ jobs:
         # already ships the alias — double-defining it would fail to compile.
         env:
           JUCE_MIRROR: https://github.com/dusk-audio/JUCE-wayland.git
-          JUCE_TAG: dusk-wayland-v7
-          JUCE_REV: 05a6dfe609ec71c279624a103c02fa19dd68f287
+          JUCE_TAG: dusk-wayland-v8
+          JUCE_REV: 15dda3fe778380b75ab78bc02493b62ae3b06225
         run: |
           set -euo pipefail
           git init -q "${RUNNER_TEMP}/JUCE-wayland"
