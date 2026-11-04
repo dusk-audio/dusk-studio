@@ -127,17 +127,26 @@ inline std::int64_t fileSize (const std::filesystem::path& path) noexcept
     catch (...) { return 0; }
 }
 
-// glob with '*' (any run) and '?' (one char), case-insensitive, matching JUCE.
+// glob with '*' (any run) and '?' (one character), case-insensitive, matching
+// JUCE. Names are UTF-8, so '?', and a '*' giving a character back, step over a
+// whole sequence.
 inline bool matchesWildcard (std::string_view name, std::string_view pattern)
 {
     const std::string n = text::toLowerCase (std::string (name));
     const std::string p = text::toLowerCase (std::string (pattern));
+    const auto characterAt = [&n] (size_t i)
+    {
+        const auto lead = static_cast<unsigned char> (n[i]);
+        const size_t length = lead < 0xC0 ? 1 : lead < 0xE0 ? 2 : lead < 0xF0 ? 3 : 4;
+        return length < n.size() - i ? length : n.size() - i;
+    };
     size_t ni = 0, pi = 0, star = std::string::npos, mark = 0;
     while (ni < n.size())
     {
-        if (pi < p.size() && (p[pi] == '?' || p[pi] == n[ni])) { ++ni; ++pi; }
-        else if (pi < p.size() && p[pi] == '*')                { star = pi++; mark = ni; }
-        else if (star != std::string::npos)                    { pi = star + 1; ni = ++mark; }
+        if (pi < p.size() && p[pi] == '?')        { ni += characterAt (ni); ++pi; }
+        else if (pi < p.size() && p[pi] == n[ni]) { ++ni; ++pi; }
+        else if (pi < p.size() && p[pi] == '*')   { star = pi++; mark = ni; }
+        else if (star != std::string::npos)       { pi = star + 1; mark += characterAt (mark); ni = mark; }
         else return false;
     }
     while (pi < p.size() && p[pi] == '*') ++pi;

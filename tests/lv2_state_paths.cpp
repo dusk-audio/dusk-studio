@@ -77,6 +77,9 @@ TEST_CASE ("LV2 state paths: absolute under cur/ becomes relative", "[lv2][state
 
     const auto under = (dir / "cur" / "samples" / "kick.wav").u8string();
     REQUIRE (toAbstract (dir, under) == "samples/kick.wav");
+    const auto unicode = (dir / "cur" / stdfs::u8path (u8"сэмплы")
+                          / stdfs::u8path (u8"キック.wav")).u8string();
+    REQUIRE (toAbstract (dir, unicode) == u8"сэмплы/キック.wav");
 
     // Files outside cur/ (and cur/ itself) pass through unchanged.
     REQUIRE (toAbstract (dir, "/etc/passwd") == "/etc/passwd");

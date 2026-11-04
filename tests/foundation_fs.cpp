@@ -122,6 +122,10 @@ TEST_CASE ("dusk::fs::matchesWildcard", "[foundation][fs]")
     REQUIRE (fs::matchesWildcard ("A.WAV", "*.wav"));      // case-insensitive
     REQUIRE (fs::matchesWildcard ("x.txt", "?.txt"));
     REQUIRE_FALSE (fs::matchesWildcard ("xx.txt", "?.txt"));
+    REQUIRE (fs::matchesWildcard (u8"é.clap", "?.clap"));             // one character, two bytes
+    REQUIRE_FALSE (fs::matchesWildcard (u8"é.clap", "??.clap"));
+    REQUIRE (fs::matchesWildcard (u8"日本.vst3", "??.vst3"));
+    REQUIRE (fs::matchesWildcard (u8"Ж日本.clap", "*?.clap"));
     REQUIRE (fs::matchesWildcard ("anything", "*"));
     REQUIRE_FALSE (fs::matchesWildcard ("a.wav", "*.flac"));
 }

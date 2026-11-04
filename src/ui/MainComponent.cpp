@@ -1991,7 +1991,8 @@ void MainComponent::setStatusForPath (const juce::String& prefix,
 
 void MainComponent::setStatusText (const char* text)
 {
-    statusLabel.setText (text, juce::dontSendNotification);
+    // JUCE reads a char pointer as ASCII and a std::string as UTF-8.
+    statusLabel.setText (std::string (text), juce::dontSendNotification);
     statusLabel.setTooltip ({});
 }
 
