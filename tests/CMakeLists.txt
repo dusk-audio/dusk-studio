@@ -440,6 +440,7 @@ if(EXISTS "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui/DearImGui/imgui.h")
         ${CMAKE_SOURCE_DIR}/src/ui/imgui/DuskTheme.cpp
         ${CMAKE_SOURCE_DIR}/src/ui/imgui/PanelControls.cpp
         ${CMAKE_SOURCE_DIR}/src/ui/imgui/PanelText.cpp
+        ${CMAKE_SOURCE_DIR}/src/ui/imgui/PanelFontFallback.cpp
         ${CMAKE_SOURCE_DIR}/src/ui/imgui/PanelTextItems.cpp
         ${CMAKE_SOURCE_DIR}/src/ui/imgui/StartupView.cpp
         ${CMAKE_SOURCE_DIR}/tools/gui-spike/ChannelStripView.cpp
@@ -453,6 +454,7 @@ if(EXISTS "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui/DearImGui/imgui.h")
         ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui
         ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/dusk
         ${DUSKSTUDIO_DAF_SOURCE_DIR}/dgl)
+    target_link_libraries(dusk-studio-tests PRIVATE dusk_cjk_font)
     # Dear ImGui is vendored third-party code and does not build clean under this
     # target's warning set. The app silences it the same way for dgl-opengl3.
     set_source_files_properties(

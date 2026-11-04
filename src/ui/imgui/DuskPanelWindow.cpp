@@ -2,6 +2,7 @@
 #include "DuskImGuiHost.h"
 #include "DuskTheme.h"
 #include "PanelText.h"
+#include "PanelFontFallback.h"
 #include "../../foundation/AppConfigDir.h"
 #include "../../foundation/MessageThread.h"
 
@@ -607,6 +608,18 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
         // the step's delay, so it is time no step asked to wait.
         void onImGuiPrepareFrame() override
         {
+            if (owner.view != nullptr && owner.view->marksMissingGlyphs())
+            {
+                if (auto* input = ImGui::GetInputTextState (GImGui->ActiveId))
+                    if (input->TextA.Data != nullptr && input->TextLen > 0)
+                        owner.fontFallback.request ({ input->TextA.Data, static_cast<std::size_t> (input->TextLen) });
+                const auto scale = static_cast<float> (getWindow().getScaleFactor());
+                if (owner.fontFallback.update (dw::FontSizes {}.textEntry * scale))
+                {
+                    owner.buildFonts (scale);
+                    rebuildFontTexture();
+                }
+            }
             if (quietFrames >= kSettledFrames && ! std::exchange (holdNextFrame, false))
                 return;
             const auto now = std::chrono::steady_clock::now();
@@ -789,6 +802,7 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
         fonts = buildPanelFonts (*io.Fonts, daf_resources::dejavusans_ttf,
                                  static_cast<int> (daf_resources::dejavusans_ttf_size), scale,
                                  view != nullptr && view->marksMissingGlyphs());
+        fontFallback.reserve (*io.Fonts);
         // Reserved before the pack and filled in after, so a knob costs three quads
         // rather than the thousand vertices a drawn dome does.
         knobAtlas.reserve (*io.Fonts, static_cast<int> (128.0f * std::max (1.0f, scale)));
@@ -796,6 +810,7 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
             view->reserveAtlasImages (*io.Fonts);
         io.FontDefault = fonts.band;
         io.Fonts->Build();
+        if (fonts.textEntry != nullptr) fontFallback.rasterise (*io.Fonts, *fonts.textEntry);
         knobAtlas.rasterise (*io.Fonts);
         if (view != nullptr)
             view->rasteriseAtlasImages (*io.Fonts);
@@ -845,6 +860,7 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
         const ImVec2 body (std::max (1.0f, width - margin * 2.0f),
                            std::max (1.0f, height - margin * 2.0f));
 
+        const ScopedPanelFontFallback fallback (view->marksMissingGlyphs() ? &fontFallback : nullptr);
         view->draw (ctx, bodyTl, body);
         dw::drawDragBubble (ctx);
 
@@ -917,6 +933,7 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
     bool wasCapturing = false;
     int keyboardRequests = 0;
     dw::Fonts fonts;
+    PanelFontFallback fontFallback;
     dw::KnobAtlas knobAtlas;
     dw::DragState drag;
     Geometry lastGeometry;
@@ -963,6 +980,7 @@ DuskPanelWindow::DuskPanelWindow (std::string className, std::string logTag,
         impl->wasCapturing = false;
         // The fonts and the baked dome live in the atlas the widget owned.
         impl->fonts = {};
+        impl->fontFallback = PanelFontFallback {};
         impl->knobAtlas = {};
         impl->drag = {};
     };

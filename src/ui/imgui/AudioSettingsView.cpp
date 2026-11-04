@@ -1,6 +1,7 @@
 #include "AudioSettingsView.h"
 #include "AudioDeviceSelector.h"
 #include "PanelControls.h"
+#include "PanelFontFallback.h"
 #include "DuskTheme.h"
 #include "../AppConfig.h"
 #include "../../dsp/OutputPairRouting.h"
@@ -755,7 +756,9 @@ private:
                 ImGui::TableSetupColumn ("Folder", ImGuiTableColumnFlags_WidthStretch);
                 ImGui::TableSetupColumn ("Action", ImGuiTableColumnFlags_WidthFixed, ctx.s (100));
                 ImGui::TableNextColumn();
-                ImGui::TextWrapped ("%s", roots[i].u8string().c_str());
+                const auto path = roots[i].u8string();
+                requestPanelGlyphs (path);
+                ImGui::TextWrapped ("%s", path.c_str());
                 ImGui::TableNextColumn();
                 if (ImGui::Button ("Remove", { ctx.s (96), ctx.s (34) }))
                 {
@@ -790,6 +793,7 @@ private:
         ImGui::Spacing();
         const auto path = librarySnapshot.locations.active.root.u8string();
         ImGui::PushTextWrapPos (0.0f);
+        requestPanelGlyphs (path);
         ImGui::TextWrapped ("%s", path.empty() ? "No library folder is configured." : path.c_str());
         ImGui::Spacing();
         ImGui::TextWrapped ("Choose a folder on this computer or an external drive for downloaded SFZ packs.");
@@ -823,13 +827,21 @@ private:
             if (librarySnapshot.state == sfz::LibraryState::Paused) ImGui::SameLine();
             if (ImGui::Button ("Cancel")) engine.getSfzLibrary().cancel();
         }
-        if (! librarySnapshot.error.empty()) ImGui::TextWrapped ("%s", librarySnapshot.error.c_str());
+        if (! librarySnapshot.error.empty())
+        {
+            requestPanelGlyphs (librarySnapshot.error);
+            ImGui::TextWrapped ("%s", librarySnapshot.error.c_str());
+        }
         if (! librarySnapshot.locations.previous.empty())
         {
             ImGui::Separator();
             ImGui::TextUnformatted ("Previous library folders");
             for (const auto& location : librarySnapshot.locations.previous)
-                ImGui::TextWrapped ("%s", location.root.u8string().c_str());
+            {
+                const auto previousPath = location.root.u8string();
+                requestPanelGlyphs (previousPath);
+                ImGui::TextWrapped ("%s", previousPath.c_str());
+            }
         }
         ImGui::PopTextWrapPos();
         ImGui::PopFont();

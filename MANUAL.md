@@ -552,6 +552,8 @@ A control surface's bank is a separate, fixed axis: eight strips at a time, trac
 
 Modal dialogs (audio settings, plugin picker, region editor, piano roll, import target picker) appear centered with a dimmed backdrop behind them. Press **Esc** or click outside the modal to dismiss.
 
+The Startup dialog, audio editor, piano roll, compressor editor, Settings and SFZ Manager can display Chinese, Japanese and Korean names using fonts installed on your computer. If a character has no available font, it appears as a replacement mark. Arabic shaping and right-to-left layout are not supported yet.
+
 The readout in the menu bar's right corner shows the device state (`Audio: 48 kHz 5.3 ms`) and the engine load (`DSP: 12% (0/0)`). The parenthesised pair shows engine-side overruns / backend (driver) xruns. The first counts blocks whose processing took longer than one buffer's audio duration. Device buffering can absorb a late block, so an engine overrun alone does not establish an audible dropout. The second counts stream underrun, overrun or recovery events reported by the audio backend.
 
 The segment turns red when the backend counter is non-zero, whatever the other readings show: the audio backend reported a stream disruption. It turns amber when the engine counter is non-zero and the backend counter is zero, when load passes 85%, or when the `RT` count described below appears. Amber marks a risk, not a reported disruption. Neither counter measures whether a dropout was audible. **Double-click the DSP readout to reset the counters** so you can watch for fresh events; the segment returns to its normal colour unless load is still above 85%.

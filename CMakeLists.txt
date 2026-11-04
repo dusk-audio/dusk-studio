@@ -619,6 +619,21 @@ if(NOT DUSKSTUDIO_ENABLE_NATIVE_UI AND NOT DUSKSTUDIO_NATIVE_UI_DEPS_FOUND)
     message(STATUS "Native UI: DAF / DAF widgets not found - disabled")
 endif()
 
+if(DUSKSTUDIO_NATIVE_UI_DEPS_FOUND)
+    add_library(dusk_cjk_font STATIC src/ui/imgui/CjkFont.cpp)
+    target_compile_features(dusk_cjk_font PUBLIC cxx_std_17)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        find_package(Freetype REQUIRED)
+        find_package(PkgConfig REQUIRED)
+        pkg_check_modules(DUSK_FONTCONFIG REQUIRED IMPORTED_TARGET fontconfig)
+        target_link_libraries(dusk_cjk_font PRIVATE Freetype::Freetype PkgConfig::DUSK_FONTCONFIG)
+    elseif(APPLE)
+        target_link_libraries(dusk_cjk_font PRIVATE "-framework CoreText" "-framework CoreGraphics" "-framework CoreFoundation")
+    elseif(WIN32)
+        target_link_libraries(dusk_cjk_font PRIVATE dwrite)
+    endif()
+endif()
+
 if(WIN32)
     set(DUSKSTUDIO_WINDOWS_SOFTWARE_OPENGL_DIR "" CACHE PATH
         "Directory containing the pinned x64 Mesa opengl32.dll and libgallium_wgl.dll")
@@ -669,6 +684,7 @@ if(DUSKSTUDIO_ENABLE_NATIVE_UI)
         src/ui/imgui/DuskTheme.cpp
         src/ui/imgui/DuskPanelWindow.cpp
         src/ui/imgui/PanelText.cpp
+        src/ui/imgui/PanelFontFallback.cpp
         src/ui/NotepadDocument.cpp
         src/ui/NotepadChords.cpp
         src/ui/NotepadEditorCore.cpp
@@ -679,6 +695,7 @@ if(DUSKSTUDIO_ENABLE_NATIVE_UI)
         "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/dusk")
 
     target_link_libraries(dusk_native_ui PRIVATE
+        dusk_cjk_font
         dgl-opengl3
         dgl-opengl3-definitions
         dgl-system-libs-definitions

@@ -60,9 +60,8 @@ canonical source.
 - **Full-width characters in SFZ pack names.** The SFZ Manager drew "?" for
   characters its font lacks, such as the full-width brackets in
   `Model（sfz）`. Full-width letters, digits and punctuation now show as
-  their plain forms, so that name reads `Model(sfz)`. Any other character
-  the font lacks, such as Chinese or Japanese text, shows the Unicode
-  replacement mark instead of "?".
+  their plain forms, so that name reads `Model(sfz)`. Characters with no
+  available font show the Unicode replacement mark instead of "?".
 - **SFZ program names with "##".** The SFZ Manager's **Program** list and
   its closed preview cut a program name or file path at "##", so
   `Piano ## Soft` read `Piano`. Names now show in full.
@@ -76,9 +75,12 @@ canonical source.
 - **Names in other scripts.** The audio editor, piano roll, compressor
   editor and Startup dialog drew "?" for characters outside Western European
   Latin, such as Greek or Cyrillic, in track, region, take and session
-  names. Those names now use the font of the fields they are typed in, and a
-  character that font lacks, such as Chinese text, shows the Unicode
-  replacement mark.
+  names. Those names now use the font of the fields they are typed in.
+- **Chinese, Japanese and Korean text.** Native panels use installed system
+  fonts for Han, kana and Hangul in names, paths and SFZ descriptions. Glyphs
+  load as they appear, with a bounded cache per panel; Latin text keeps its
+  existing appearance. Characters with no installed font still show the
+  replacement mark. Arabic shaping and right-to-left layout remain unsupported.
 - **Manual figures.** `docs/capture-screenshots.sh` waits for each native
   panel's frame instead of closing the panel after a fixed delay, so the
   piano roll and audio editor figures are written again on a slow or loaded

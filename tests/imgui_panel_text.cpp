@@ -1,10 +1,16 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "ui/imgui/PanelText.h"
+#include "ui/imgui/PanelFontFallback.h"
 
 #include <src/Resources.hpp>
 
 #include <string>
+#include <algorithm>
+#include <cmath>
+
+using duskstudio::imgui::PanelFontFallback;
 
 using duskstudio::imgui::buildPanelFonts;
 using duskstudio::imgui::displayText;
@@ -20,6 +26,31 @@ DuskWidgets::Fonts bakePanelFonts (ImFontAtlas& atlas, float scale, bool replace
                                         scale, replacementMark);
     REQUIRE (atlas.Build());
     return fonts;
+}
+
+std::vector<unsigned char> glyphPixels (const ImFontAtlas& atlas, ImFont& font, ImWchar character)
+{
+    const auto* glyph = font.FindGlyphNoFallback (character);
+    REQUIRE (glyph != nullptr);
+    std::vector<unsigned char> pixels;
+    for (int y = static_cast<int> (std::round (glyph->V0 * atlas.TexHeight));
+         y < static_cast<int> (std::round (glyph->V1 * atlas.TexHeight)); ++y)
+        for (int x = static_cast<int> (std::round (glyph->U0 * atlas.TexWidth));
+             x < static_cast<int> (std::round (glyph->U1 * atlas.TexWidth)); ++x)
+            pixels.push_back (atlas.TexPixelsAlpha8[y * atlas.TexWidth + x]);
+    return pixels;
+}
+
+std::string hanRange (unsigned int first, unsigned int last)
+{
+    std::string text;
+    for (auto c = first; c <= last; ++c)
+    {
+        text += static_cast<char> (0xe0 | (c >> 12));
+        text += static_cast<char> (0x80 | ((c >> 6) & 0x3f));
+        text += static_cast<char> (0x80 | (c & 0x3f));
+    }
+    return text;
 }
 } // namespace
 
@@ -126,4 +157,147 @@ TEST_CASE ("A glyph tally counts the characters a face has no glyph for", "[imgu
     han.add (nameFace (fonts), "\xe4\xb8\xad");
     CHECK (han.drawn == 1);
     CHECK (han.missing == 1);
+}
+
+TEST_CASE ("CJK fallback rasterizes static and variable system font formats", "[imgui][cjk]")
+{
+    for (const char* file : { "DuskCjkTest.otf"
+                             #if defined (__linux__)
+                             , "DuskCjkVariableTest.otf"
+                             #endif
+                           })
+    {
+        duskstudio::imgui::CjkFont source (std::filesystem::path (DUSKSTUDIO_SOURCE_DIR) / "tests/fixtures/fonts" / file);
+        for (const float size : { 13.0f, 26.0f })
+            for (const auto c : { 0x65e5u, 0x4e2du, 0x3042u, 0x30a2u, 0xd55cu })
+            {
+                duskstudio::imgui::CjkGlyph glyph;
+                CAPTURE (file, size, c);
+                REQUIRE (source.rasterize (c, size, glyph));
+                CHECK (glyph.width > 0);
+                CHECK (glyph.height > 0);
+                CHECK (glyph.advance > 0);
+                CHECK (std::any_of (glyph.alpha.begin(), glyph.alpha.end(), [] (auto alpha) { return alpha != 0; }));
+            }
+        duskstudio::imgui::CjkGlyph absent;
+        CHECK_FALSE (source.rasterize (0x65e6, 13, absent));
+    }
+}
+
+TEST_CASE ("Panel CJK glyphs appear between frames without changing the Latin face", "[imgui][cjk]")
+{
+    PanelFontFallback fallback (std::filesystem::path (DUSKSTUDIO_SOURCE_DIR) / "tests/fixtures/fonts/DuskCjkTest.otf");
+    for (const float scale : { 1.0f, 2.0f })
+    {
+        fallback.request ("日本語 中 あア 한");
+        REQUIRE (fallback.update (13 * scale));
+        ImFontAtlas atlas, baseline;
+        const auto plain = bakePanelFonts (baseline, scale, true);
+        const auto fonts = buildPanelFonts (atlas, daf_resources::dejavusans_ttf,
+                                            static_cast<int> (daf_resources::dejavusans_ttf_size), scale, true);
+        fallback.reserve (atlas);
+        REQUIRE (atlas.Build());
+        fallback.rasterise (atlas, *fonts.textEntry);
+        for (auto c : { 0x65e5, 0x4e2d, 0x3042, 0x30a2, 0xd55c })
+            REQUIRE (fonts.textEntry->FindGlyphNoFallback (static_cast<ImWchar> (c)) != nullptr);
+        CHECK (fonts.textEntry->FallbackChar == 0xfffd);
+        CHECK (fonts.textEntry->FindGlyph (0x8a9e) == fonts.textEntry->FindGlyphNoFallback (0xfffd));
+        CHECK_THAT (fonts.textEntry->GetCharAdvance ('A'),
+                    Catch::Matchers::WithinAbs (plain.textEntry->GetCharAdvance ('A'), 1.0e-6f));
+        CHECK (glyphPixels (atlas, *fonts.textEntry, 'A') == glyphPixels (baseline, *plain.textEntry, 'A'));
+        CHECK (fonts.title->Glyphs.Size == plain.title->Glyphs.Size);
+        CHECK (atlas.TexWidth * atlas.TexHeight <= baseline.TexWidth * baseline.TexHeight * 2);
+        fallback.request ("日本語 中 あア 한");
+        CHECK_FALSE (fallback.update (13 * scale));
+    }
+}
+
+TEST_CASE ("Missing CJK fonts preserve replacement marks without repeated rebuilds", "[imgui][cjk]")
+{
+    PanelFontFallback fallback (std::filesystem::path (DUSKSTUDIO_SOURCE_DIR) / "tests/fixtures/fonts/absent.otf");
+    fallback.request ("日本 한");
+    REQUIRE_FALSE (fallback.update (13));
+    fallback.request ("日本 한");
+    REQUIRE_FALSE (fallback.update (13));
+    ImFontAtlas atlas;
+    auto fonts = buildPanelFonts (atlas, daf_resources::dejavusans_ttf,
+                                  static_cast<int> (daf_resources::dejavusans_ttf_size), 1, true);
+    fallback.reserve (atlas);
+    REQUIRE (atlas.Build());
+    fallback.rasterise (atlas, *fonts.textEntry);
+    CHECK (fonts.textEntry->FindGlyph (0x65e5) == fonts.textEntry->FindGlyphNoFallback (0xfffd));
+}
+
+TEST_CASE ("Panel CJK cache stays bounded and replaces old browsing glyphs", "[imgui][cjk]")
+{
+    PanelFontFallback fallback (std::filesystem::path (DUSKSTUDIO_SOURCE_DIR) / "tests/fixtures/fonts/DuskCjkTest.otf");
+    fallback.request (hanRange (0x4e00, 0x5e00));
+    SECTION ("Character capacity retains the latest requested names")
+    {
+        REQUIRE (fallback.update (13));
+        ImFontAtlas first;
+        fallback.reserve (first);
+        REQUIRE (first.CustomRects.Size == 4096);
+
+        fallback.request (hanRange (0x5dff, 0x5e00));
+        REQUIRE (fallback.update (13));
+        ImFontAtlas next;
+        const auto fonts = buildPanelFonts (next, daf_resources::dejavusans_ttf,
+                                            static_cast<int> (daf_resources::dejavusans_ttf_size), 1, true);
+        fallback.reserve (next);
+        REQUIRE (next.Build());
+        fallback.rasterise (next, *fonts.textEntry);
+        CHECK (fonts.textEntry->FindGlyphNoFallback (0x4e00) == nullptr);
+        CHECK (fonts.textEntry->FindGlyphNoFallback (0x5dff) != nullptr);
+        CHECK (fonts.textEntry->FindGlyphNoFallback (0x5e00) != nullptr);
+        fallback.request (hanRange (0x5dff, 0x5e00));
+        CHECK_FALSE (fallback.update (13));
+    }
+    SECTION ("Large glyphs also obey the bitmap memory limit")
+    {
+        REQUIRE (fallback.update (128));
+        ImFontAtlas atlas;
+        fallback.reserve (atlas);
+        REQUIRE (atlas.CustomRects.Size > 0);
+        CHECK (atlas.CustomRects.Size < 4096);
+        std::size_t bytes = 0;
+        for (const auto& rectangle : atlas.CustomRects)
+            bytes += static_cast<std::size_t> (rectangle.Width) * rectangle.Height;
+        CHECK (bytes <= 4 * 1024 * 1024);
+        fallback.request (hanRange (0x4e00, 0x5dff));
+        CHECK_FALSE (fallback.update (128));
+    }
+}
+
+TEST_CASE ("Panel CJK requests stay with the drawing panel and leave search text pure", "[imgui][cjk]")
+{
+    const auto file = std::filesystem::path (DUSKSTUDIO_SOURCE_DIR) / "tests/fixtures/fonts/DuskCjkTest.otf";
+    PanelFontFallback outer (file), inner (file);
+    using duskstudio::imgui::panelText;
+    using duskstudio::imgui::ScopedPanelFontFallback;
+    {
+        const ScopedPanelFontFallback scope (&outer);
+        CHECK (displayText ("日本（ｖ２）") == "日本(v2)");
+        CHECK_FALSE (outer.update (13));
+        {
+            const ScopedPanelFontFallback nested (&inner);
+            CHECK (panelText ("あ") == "あ");
+        }
+        CHECK (panelText ("日（ｖ２）") == "日(v2)");
+    }
+    CHECK (panelText ("한") == "한");
+    REQUIRE (outer.update (13));
+    REQUIRE (inner.update (13));
+    for (auto* fallback : { &outer, &inner })
+    {
+        ImFontAtlas atlas;
+        const auto fonts = buildPanelFonts (atlas, daf_resources::dejavusans_ttf,
+                                            static_cast<int> (daf_resources::dejavusans_ttf_size), 1, true);
+        fallback->reserve (atlas);
+        REQUIRE (atlas.Build());
+        fallback->rasterise (atlas, *fonts.textEntry);
+        CHECK ((fonts.textEntry->FindGlyphNoFallback (0x65e5) != nullptr) == (fallback == &outer));
+        CHECK ((fonts.textEntry->FindGlyphNoFallback (0x3042) != nullptr) == (fallback == &inner));
+        CHECK (fonts.textEntry->FindGlyphNoFallback (0xd55c) == nullptr);
+    }
 }

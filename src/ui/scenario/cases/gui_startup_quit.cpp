@@ -3,6 +3,9 @@
 #include "../../../foundation/Fs.h"
 #include "../../../session/SessionSerializer.h"
 #include "../../../session/SessionTemplates.h"
+#if DUSKSTUDIO_HAS_NATIVE_UI
+ #include "../../imgui/CjkFont.h"
+#endif
 
 #include <atomic>
 #include <cmath>
@@ -1247,18 +1250,28 @@ const ScenarioRegistrar startupNewCreates { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runStartupNewCreates (host, ctx); }
 } };
 
-// A recent session named in Cyrillic and Hebrew is listed as itself, not as the
-// face's fallback.
-std::optional<ScenarioResult> runStartupNameGlyphs (GuiHost& host, ScenarioContext& ctx)
+std::optional<ScenarioResult> runStartupNameGlyphs (GuiHost& host, ScenarioContext& ctx, bool cjk)
 {
    #if ! DUSKSTUDIO_HAS_NATIVE_UI
     (void) host;
     (void) ctx;
+    (void) cjk;
     return ScenarioResult::skip ("requires the native UI");
    #else
     if (! ctx.engine().getTransport().isStopped() || ! host.modalStackEmpty() || host.startupDialogOpen())
         return ScenarioResult::skip ("requires a stopped transport and no dialog");
-    const auto recent = ctx.tempDir() / std::filesystem::u8path ("\xd0\xa1\xd0\xb5\xd1\x81\xd1\x81\xd0\xb8\xd1\x8f \xd7\xa9\xd7\x9c\xd7\x95\xd7\x9d");
+    if (cjk)
+    {
+        imgui::CjkFont font;
+        for (const auto codepoint : { 0x65e5u, 0x3042u, 0xd55cu })
+        {
+            imgui::CjkGlyph glyph;
+            if (! font.rasterize (codepoint, 13, glyph))
+                return ScenarioResult::skip ("requires installed Han, kana and Hangul fonts");
+        }
+    }
+    const auto recent = ctx.tempDir() / std::filesystem::u8path (cjk ? "\xe6\x97\xa5\xe3\x81\x82\xed\x95\x9c"
+        : "\xd0\xa1\xd0\xb5\xd1\x81\xd1\x81\xd0\xb8\xd1\x8f \xd7\xa9\xd7\x9c\xd7\x95\xd7\x9d");
     std::error_code error;
     std::filesystem::create_directories (recent, error);
     if (error) return ScenarioResult::fail ("could not make the recent session folder");
@@ -1270,8 +1283,9 @@ std::optional<ScenarioResult> runStartupNameGlyphs (GuiHost& host, ScenarioConte
     if (! host.openStartupDialog ({ recent }, false)) return ScenarioResult::fail ("the startup dialog did not open");
 
     auto steps = std::make_shared<std::vector<Step>>();
-    steps->push_back ({ 400, [&host, &ctx]
-    { expectNamesReadable (host, ctx, "startup", 6 + 1 + 4, "startup-names.ppm"); } });
+    steps->push_back ({ 400, [&host, &ctx, cjk]
+    { expectNamesReadable (host, ctx, "startup", cjk ? 3 : 6 + 1 + 4,
+                            cjk ? "startup-cjk-names.ppm" : "startup-names.ppm"); } });
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
    #endif
@@ -1280,7 +1294,13 @@ std::optional<ScenarioResult> runStartupNameGlyphs (GuiHost& host, ScenarioConte
 const ScenarioRegistrar startupNameGlyphs { Scenario {
     "gui.startup_name_glyphs", { "gui", "startup" }, Needs::Engine | Needs::Gui,
     {}, {}, 10000,
-    [] (GuiHost& host, ScenarioContext& ctx) { return runStartupNameGlyphs (host, ctx); }
+    [] (GuiHost& host, ScenarioContext& ctx) { return runStartupNameGlyphs (host, ctx, false); }
+} };
+
+const ScenarioRegistrar startupCjkGlyphs { Scenario {
+    "gui.startup_cjk_glyphs", { "gui", "startup", "cjk" }, Needs::Engine | Needs::Gui,
+    {}, {}, 10000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runStartupNameGlyphs (host, ctx, true); }
 } };
 } // namespace
 } // namespace duskstudio::scenario::gui

@@ -708,11 +708,11 @@ System shared libraries (Linux builds — linked dynamically, never bundled)
              and a plain link by name for asound / X11. PipeWire is the primary
              audio backend, ALSA the fallback backend and the MIDI transport,
              X11 the plugin-editor embedding host, and GL the renderer the
-             native notepad UI draws through. Three more arrive indirectly:
-             DAF's dgl-system-libs adds libdbus-1 when pkg-config finds it, and
-             JUCE's juce_graphics module declares freetype2 and fontconfig as
-             Linux packages, so both land on the link line without either name
-             appearing in this repo's CMakeLists.txt.
+             native notepad UI draws through. Native panel CJK fallback uses
+             find_package(Freetype) and pkg-config fontconfig to rasterize
+             installed system fonts. DAF's dgl-system-libs adds libdbus-1 when
+             pkg-config finds it. JUCE's juce_graphics also links FreeType and
+             fontconfig on Linux.
   Notes    : Dusk Studio redistributes none of these — they come from the
              user's distribution, and the whole set is dynamically linked.
              Listed so the non-toolchain link surface is complete; the
@@ -731,6 +731,14 @@ System shared libraries (Linux builds — linked dynamically, never bundled)
              https://www.freedesktop.org/wiki/Software/dbus/ ,
              https://freetype.org/ ,
              https://www.freedesktop.org/wiki/Software/fontconfig/
+
+Noto CJK test fonts (test fixtures only — not shipped with the application)
+  License  : SIL Open Font License 1.1
+  Path     : tests/fixtures/fonts/DuskCjkTest.otf and DuskCjkVariableTest.otf
+  Notes    : Renamed subsets of NotoSansCJKkr-VF, containing five real glyphs
+             and repeated cmap aliases for cache tests. Full license and
+             provenance are in tests/fixtures/fonts/LICENSE.txt and README.txt.
+  Upstream : https://github.com/notofonts/noto-cjk
 
 Toolchain runtimes (the compiler's own libraries — linked dynamically)
   License  : libstdc++, libgcc_s and libatomic are GPL-3.0-or-later WITH
