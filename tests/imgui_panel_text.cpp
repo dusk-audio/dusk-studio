@@ -212,6 +212,41 @@ TEST_CASE ("Panel CJK glyphs appear between frames without changing the Latin fa
     }
 }
 
+TEST_CASE ("CJK fallback supplies all notepad font faces from one atlas", "[imgui][cjk][notepad]")
+{
+    PanelFontFallback fallback (std::filesystem::path (DUSKSTUDIO_SOURCE_DIR) / "tests/fixtures/fonts/DuskCjkTest.otf");
+    fallback.request ("日本 中 あア 한");
+    REQUIRE (fallback.update (16));
+    ImFontAtlas atlas;
+    ImFontConfig config;
+    config.FontDataOwnedByAtlas = false;
+    std::vector<ImFont*> faces;
+    for (int i = 0; i < 5; ++i)
+        faces.push_back (atlas.AddFontFromMemoryTTF ((void*) daf_resources::dejavusans_ttf,
+            static_cast<int> (daf_resources::dejavusans_ttf_size), 16, &config));
+    fallback.reserve (atlas);
+    REQUIRE (atlas.Build());
+    const auto pixels = glyphPixels (atlas, *faces.front(), 'A');
+    const auto advance = faces.front()->GetCharAdvance ('A');
+    const auto rectangles = atlas.CustomRects.Size;
+    for (auto* face : faces)
+    {
+        fallback.rasterise (atlas, *face);
+        for (auto c : { 0x65e5, 0x4e2d, 0x3042, 0x30a2, 0xd55c })
+        {
+            REQUIRE (face->FindGlyphNoFallback (static_cast<ImWchar> (c)) != nullptr);
+            CHECK (glyphPixels (atlas, *face, static_cast<ImWchar> (c))
+                   == glyphPixels (atlas, *faces.front(), static_cast<ImWchar> (c)));
+        }
+        CHECK (glyphPixels (atlas, *face, 'A') == pixels);
+        CHECK_THAT (face->GetCharAdvance ('A'), Catch::Matchers::WithinAbs (advance, 1.0e-6f));
+        const auto count = face->Glyphs.Size;
+        fallback.rasterise (atlas, *face);
+        CHECK (face->Glyphs.Size == count);
+    }
+    CHECK (atlas.CustomRects.Size == rectangles);
+}
+
 TEST_CASE ("Missing CJK fonts preserve replacement marks without repeated rebuilds", "[imgui][cjk]")
 {
     PanelFontFallback fallback (std::filesystem::path (DUSKSTUDIO_SOURCE_DIR) / "tests/fixtures/fonts/absent.otf");

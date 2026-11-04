@@ -552,7 +552,7 @@ A control surface's bank is a separate, fixed axis: eight strips at a time, trac
 
 Modal dialogs (audio settings, plugin picker, region editor, piano roll, import target picker) appear centered with a dimmed backdrop behind them. Press **Esc** or click outside the modal to dismiss.
 
-The Startup dialog, audio editor, piano roll, compressor editor, Settings and SFZ Manager can display Chinese, Japanese and Korean names using fonts installed on your computer. If a character has no available font, it appears as a replacement mark. Arabic shaping and right-to-left layout are not supported yet.
+The Startup dialog, audio editor, piano roll, compressor editor, Settings, SFZ Manager and Notepad can display Chinese, Japanese and Korean text using fonts installed on your computer. If a character has no available font, it appears as a replacement mark. Arabic shaping and right-to-left layout are not supported yet.
 
 The readout in the menu bar's right corner shows the device state (`Audio: 48 kHz 5.3 ms`) and the engine load (`DSP: 12% (0/0)`). The parenthesised pair shows engine-side overruns / backend (driver) xruns. The first counts blocks whose processing took longer than one buffer's audio duration. Device buffering can absorb a late block, so an engine overrun alone does not establish an audible dropout. The second counts stream underrun, overrun or recovery events reported by the audio backend.
 
