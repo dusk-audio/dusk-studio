@@ -179,6 +179,20 @@ TEST_CASE ("ClapScanner collects this platform's CLAP bundle shape once", "[clap
     REQUIRE (found.front() == bundle);
 }
 
+#if defined(__linux__)
+// A Linux file name is bytes: one that is not UTF-8 still names a CLAP file.
+TEST_CASE ("ClapScanner finds a CLAP file whose name is not UTF-8", "[clap][scan][regression]")
+{
+    TempDirectory temp ("dusk_clap_scan_bytes_");
+    const auto file = temp.path() / std::string ("Plugin \xC3" ".clap");
+    REQUIRE (writeText (file, "not a loadable plugin"));
+
+    const auto found = ClapScanner::findClapFiles ({ temp.path() });
+    REQUIRE (found.size() == 1);
+    CHECK (found.front() == file);
+}
+#endif
+
 TEST_CASE ("ClapScanner discovers and describes a real CLAP bundle", "[clap][scan]")
 {
     const char* path = std::getenv ("DUSKSTUDIO_TEST_CLAP");

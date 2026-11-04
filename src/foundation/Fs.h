@@ -129,7 +129,8 @@ inline std::int64_t fileSize (const std::filesystem::path& path) noexcept
 
 // glob with '*' (any run) and '?' (one character), case-insensitive, matching
 // JUCE. Names are UTF-8, so '?', and a '*' giving a character back, step over a
-// whole sequence.
+// whole sequence. A POSIX name may hold bytes that are not UTF-8; each of those
+// is a character of its own.
 inline bool matchesWildcard (std::string_view name, std::string_view pattern)
 {
     const std::string n = text::toLowerCase (std::string (name));
@@ -137,8 +138,12 @@ inline bool matchesWildcard (std::string_view name, std::string_view pattern)
     const auto characterAt = [&n] (size_t i)
     {
         const auto lead = static_cast<unsigned char> (n[i]);
-        const size_t length = lead < 0xC0 ? 1 : lead < 0xE0 ? 2 : lead < 0xF0 ? 3 : 4;
-        return length < n.size() - i ? length : n.size() - i;
+        const size_t length = lead >= 0xC2 && lead <= 0xDF ? 2 : lead >= 0xE0 && lead <= 0xEF ? 3
+                            : lead >= 0xF0 && lead <= 0xF4 ? 4 : 1;
+        if (length > n.size() - i) return size_t { 1 };
+        for (size_t k = 1; k < length; ++k)
+            if ((static_cast<unsigned char> (n[i + k]) & 0xC0) != 0x80) return size_t { 1 };
+        return length;
     };
     size_t ni = 0, pi = 0, star = std::string::npos, mark = 0;
     while (ni < n.size())

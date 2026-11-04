@@ -126,6 +126,10 @@ TEST_CASE ("dusk::fs::matchesWildcard", "[foundation][fs]")
     REQUIRE_FALSE (fs::matchesWildcard (u8"é.clap", "??.clap"));
     REQUIRE (fs::matchesWildcard (u8"日本.vst3", "??.vst3"));
     REQUIRE (fs::matchesWildcard (u8"Ж日本.clap", "*?.clap"));
+    REQUIRE (fs::matchesWildcard ("\xC3" ".clap", "*.clap"));                // a lead byte with no continuation
+    REQUIRE (fs::matchesWildcard ("\xC3" ".clap", "?.clap"));
+    REQUIRE (fs::matchesWildcard ("\xE6\x97" ".clap", "??.clap"));          // a sequence cut short
+    REQUIRE (fs::matchesWildcard ("\xFF" ".clap", "?.clap"));
     REQUIRE (fs::matchesWildcard ("anything", "*"));
     REQUIRE_FALSE (fs::matchesWildcard ("a.wav", "*.flac"));
 }
