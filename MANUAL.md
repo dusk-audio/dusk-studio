@@ -1203,6 +1203,8 @@ For a MIDI track, you select a MIDI input port and a channel filter. The activit
 
 On Linux, plugging in a MIDI controller while Dusk Studio is running is enough — the new port appears in the input dropdowns by itself, and tracks whose saved port just came back re-attach to it.
 
+The MIDI port lists on Linux leave out Dusk Studio's own ports, so its MIDI output cannot loop back into its own input. Another copy of Dusk Studio running at the same time is listed like any other program.
+
 The one rule: the port list is only rebuilt while the transport is **stopped**. Plug something in mid-take and nothing happens until you hit stop, at which point it appears. That is deliberate. Rebuilding the port list briefly interrupts audio, so a controller waking up — or a USB hub blinking — can never put a hole in a take you are recording.
 
 On macOS and Windows, use **Rescan devices** in Audio Settings after plugging a controller in.

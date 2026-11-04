@@ -61,6 +61,11 @@ canonical source.
   their plain forms, so that name reads `Model(sfz)`. Any other character
   the font lacks, such as Chinese or Japanese text, shows the Unicode
   replacement mark instead of "?".
+- **Dusk Studio's own MIDI ports.** On Linux the MIDI input and output lists
+  offered Dusk Studio's own ports, so its MIDI output could be routed back
+  into its own input. The lists now leave them out, and Dusk Studio opening or
+  closing its own ports no longer rebuilds them. Another copy of Dusk Studio
+  running at the same time is still listed.
 - **Manual figures.** `docs/capture-screenshots.sh` waits for each native
   panel's frame instead of closing the panel after a fixed delay, so the
   piano roll and audio editor figures are written again on a slow or loaded

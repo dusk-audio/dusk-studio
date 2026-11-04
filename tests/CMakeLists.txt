@@ -1179,12 +1179,12 @@ endif()
 # while a real failure still returns its assertion count. Scope it to the [alsa]
 # tag so an unmatched/stale filter on any other test still fails.
 #
-# They also run serially. Each case registers a sequencer client called "Dusk
-# Studio", and the identifiers the seam hands out are built from those names,
+# They also run serially. Each loopback case opens a bridge client under the
+# same name, and the identifiers the seam hands out are built from those names,
 # with an enumeration-order ordinal to tell duplicates apart. Two cases at once
-# are therefore two clients a case cannot tell apart: one resolves a port
-# belonging to the other process, and the hot-plug case counts the other's
-# client arriving as a change.
+# are therefore two bridges a case cannot tell apart: one resolves a port
+# belonging to the other process, and the hot-plug cases count the other's
+# clients arriving as a change.
 catch_discover_tests(dusk-studio-tests
     TEST_SPEC "[alsa]"
     EXTRA_ARGS --allow-running-no-tests

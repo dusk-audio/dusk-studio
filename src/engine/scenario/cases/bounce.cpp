@@ -726,8 +726,7 @@ std::optional<ScenarioResult> offlineMidiIsolation (ScenarioContext& ctx)
     ctx.keep (session.track (1).midiOutputIndex);
     ctx.keep (session.heldMidiNotes[60]);
     // Wired by identifier, as a session is: each hot-plug rebuild resolves the
-    // sync and control-surface indices again from these, and on Linux the
-    // recorder swap below arms one by closing this process's own output client.
+    // sync and control-surface indices again from these.
     const auto syncSource = session.syncSourceInputIdentifier, syncOutput = session.syncOutputIdentifier;
     const auto surfaceIn = session.mcu.inputIdentifier, surfaceOut = session.mcu.outputIdentifier;
     ctx.cleanup ([&session, syncSource, syncOutput, surfaceIn, surfaceOut]
@@ -820,9 +819,9 @@ std::optional<ScenarioResult> offlineMidiIsolation (ScenarioContext& ctx)
                 session.tempoBpm.store (120.0f); strip.faderDb.store (0.0f); strip.pan.store (0.0f);
                 session.pendingTransportAction.store ((int) PendingTransportAction::None);
                 session.pendingTransportPlayhead.store (-1);
-                // The rebuild the recorder swap arms runs only if its timer meets
-                // a gap between renders. Forced here, the live step always runs
-                // behind one.
+                // A hot-plug rebuild armed during the renders runs only if its
+                // timer meets a gap between them. Forced here, the live step
+                // always runs behind one.
                 engine.refreshMidiInputs();
                 ctx.pump (1);
                 transport.setPlayhead (0);

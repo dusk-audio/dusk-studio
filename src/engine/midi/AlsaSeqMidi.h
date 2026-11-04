@@ -22,8 +22,12 @@
 //
 // Hot-plug: the input's port also subscribes to the sequencer's System Announce
 // port, so the poll thread that already waits on this handle sees clients and
-// ports come and go and reports them through the device-change handler. No
-// extra thread, no polling.
+// ports come and go, and reports through the device-change handler when that
+// moved the listed ports. No extra thread, no polling.
+//
+// The input and the output are two sequencer clients. Neither enumeration lists
+// either of them, so Dusk Studio's output never loops into its own input;
+// another running copy of Dusk Studio is listed like any other program.
 //
 // Threading contract (matches the seam's detach/rebuild/attach fence):
 // enumerate / enable / disableAll / open /
