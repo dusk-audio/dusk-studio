@@ -148,9 +148,13 @@ inline bool primeCustomLv2 (FormatManager& manager, const pluginpaths::Roots& cu
                 && primed->second.roots == state.roots && primed->second.available == state.available) continue;
             manager.primedLv2Roots.erase (format);
             if (! bundles) bundles = pluginpaths::findBundles (state.roots, ".lv2", abort, &walkError);
-            describeLv2 (*format, bundleIdentifiers (*bundles), abort);
+            auto& loaded = manager.loadedLv2Bundles[format];
+            pluginpaths::Roots unseen;
+            for (const auto& bundle : *bundles)
+                if (loaded.count (bundle) == 0) unseen.push_back (bundle);
+            describeLv2 (*format, bundleIdentifiers (unseen), abort);
             if (cancelled()) return false;
-            manager.loadedLv2Bundles[format].insert (bundles->begin(), bundles->end());
+            loaded.insert (unseen.begin(), unseen.end());
             if (! walkError) manager.primedLv2Roots.emplace (format, state);
         }
     if (bundles && ! walkError) manager.walkedLv2Bundles = std::move (*bundles);

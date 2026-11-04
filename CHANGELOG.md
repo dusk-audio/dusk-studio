@@ -37,7 +37,9 @@ canonical source.
   second time at startup, which filled the log with "Reloading plugin"
   warnings, and its native LV2 scan loads a bundle that two search folders
   reach once. On Linux and macOS, a custom plug-in folder that is also a
-  standard LV2 folder is searched once.
+  standard LV2 folder is searched once, and **Scan plugins** no longer loads
+  every LV2 bundle again. On every platform, scanning again in the same
+  session loads only the bundles a custom folder has gained.
 - **LV2 plug-ins installed by the distribution.** On openSUSE and Fedora, LV2
   plug-ins installed in the system's `lib64` LV2 folder, such as the
   distribution's sfizz, were missing from the plug-in picker. Dusk Studio's

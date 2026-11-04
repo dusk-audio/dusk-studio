@@ -725,6 +725,7 @@ if(DUSKSTUDIO_NATIVE_LV2)
 
     target_sources(dusk-studio-tests PRIVATE
         lv2_bundle_load.cpp
+        plugin_scan_lv2.cpp
         lv2_file_state.cpp
         lv2_patch_feedback.cpp
         lv2_instance_process.cpp

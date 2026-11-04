@@ -248,12 +248,12 @@ TEST_CASE ("Custom LV2 priming caches roots for each format lifetime", "[plugins
         duskstudio::juce_compat::primeCustomLv2 (manager, paths::load());
         REQUIRE (paths::save (roots, error));
         duskstudio::juce_compat::primeCustomLv2 (manager, paths::load());
-        CHECK (format.visits == 2);
+        CHECK (format.visits == 1);
         const paths::Roots other { tree.directory ("other") };
         tree.directory ("other/Second.lv2");
         REQUIRE (paths::save (other, error));
         duskstudio::juce_compat::primeCustomLv2 (manager, paths::load());
-        CHECK (format.visits == 3);
+        CHECK (format.visits == 2);
     }
     SECTION ("explicit refresh discovers new bundles under unchanged roots")
     {
@@ -261,9 +261,11 @@ TEST_CASE ("Custom LV2 priming caches roots for each format lifetime", "[plugins
         duskstudio::juce_compat::primeCustomLv2 (manager, paths::load());
         CHECK (format.visits == 1);
         duskstudio::juce_compat::primeCustomLv2 (manager, roots, true);
-        CHECK (format.visits == 3);
+        CHECK (format.visits == 2);
         duskstudio::juce_compat::primeCustomLv2 (manager, paths::load());
-        CHECK (format.visits == 3);
+        CHECK (format.visits == 2);
+        duskstudio::juce_compat::primeCustomLv2 (manager, roots, true);
+        CHECK (format.visits == 2);
     }
     SECTION ("reconnected roots retry discovery")
     {
@@ -272,6 +274,7 @@ TEST_CASE ("Custom LV2 priming caches roots for each format lifetime", "[plugins
         duskstudio::juce_compat::primeCustomLv2 (manager, paths::load());
         CHECK (format.visits == 1);
         fs::rename (unplugged, roots.front());
+        tree.directory ("custom/new/Second.lv2");
         duskstudio::juce_compat::primeCustomLv2 (manager, paths::load());
         CHECK (format.visits == 2);
     }
@@ -288,10 +291,11 @@ TEST_CASE ("Custom LV2 priming caches roots for each format lifetime", "[plugins
         format.onPrime = {};
         abort.store (false);
         duskstudio::juce_compat::primeCustomLv2 (manager, roots, false, &abort);
-        CHECK (format.visits == 4);
+        CHECK (format.visits == 3);
     }
     SECTION ("exceptions leave priming retryable")
     {
+        tree.directory ("custom/new/Second.lv2");
         format.onPrime = [] { throw std::runtime_error ("metadata failure"); };
         CHECK_THROWS_AS (duskstudio::juce_compat::primeCustomLv2 (manager, roots, true), std::runtime_error);
         CHECK (format.visits == 2);
@@ -410,7 +414,7 @@ TEST_CASE ("A folder that cannot be walked reports an error and keeps its siblin
     CHECK_FALSE (duskstudio::juce_compat::primeCustomLv2 (manager, { custom }, true));
     CHECK (duskstudio::juce_compat::customLv2Bundles (manager) == paths::Roots { before, after });
     fs::rename (tree.root / "custom" / "m", tree.root / "parked");
-    CHECK (format.calls.size() == 3);
+    CHECK (format.calls.size() == 2);
 }
 #endif
 
