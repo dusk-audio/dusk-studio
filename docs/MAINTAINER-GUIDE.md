@@ -492,10 +492,12 @@ scripts/regress.sh prepush               # linux, mac and windows source legs, b
 
 `prepush` is the check before a branch goes to GitHub: the Linux and macOS
 source legs (build, tests, `ctest-runner-limits`, JUCE gate, self-test,
-headless scenarios, and on Linux the manual figure capture) and the Windows
-source leg (MSVC build of CI's targets, the Mesa check, ctest; see "Windows
+headless scenarios, and on Linux the GUI scenarios, seeded GUI checks and manual
+figure capture) and the Windows source leg (MSVC build of CI's targets, the Mesa
+check, ctest; see "Windows
 source" below) run at the same time, one here, one on the Air and one in the
-`win11` guest, and one table ends the run.
+`win11` guest, and one table ends the run. GUI scenarios are enabled by default
+for `prepush`; a standalone Linux run needs `--gui-scenarios`.
 Each platform's output goes to `linux.log`, `mac.log` and `windows.log` in a
 `dusk-prepush.*` directory under `$TMPDIR`, each log opening and closing with a
 timestamped `started` / `finished` line. The directory is removed when the run
@@ -604,9 +606,9 @@ PipeWire.
 | `bb-gnome-file-drop` | real file drags from a GTK app onto the tape strip in a private headless GNOME session, through Mutter's XWayland relay as on a GNOME desktop: a WAV, a MIDI file and three WAVs at once, each imported through its picker and read back from the autosave. Linux only; `SKIP` without Mutter, XWayland, `dbus-run-session`, xdotool, ImageMagick's `import`, `fusermount3`, or python3 with GTK 4, NumPy and Pillow. See "Scenario legs" below. |
 | `window-activation:launch`, `:covered`, `:minimized`, `:handoff` | the Linux cases of [tests/window_activation_smoke_test.md](../tests/window_activation_smoke_test.md), in a private headless GNOME session as `bb-gnome-file-drop` runs: the app started, then three second launches handing it a session, with a GTK window maximized in front of it, with its window minimized, and over an unsaved edit, where the save prompt must hold the session back until Don't Save. Each passes when Mutter's active window and the X input focus are the app's one window, shown, and the GTK window lost the keyboard and no longer gets the pointer at the app window's centre. Linux only; `SKIP` without Mutter, XWayland, `dbus-run-session`, xdotool, xprop, ImageMagick's `import`, `fusermount3`, or python3 with GTK 4, NumPy and Pillow. A case with no result line fails with the reason the run gave, and a run whose cases all pass but whose session does not end cleanly adds a failed `window-activation:session` row. See "Scenario legs" below. |
 | `bb-x11-drop-input` | XDND drags and a late pointer device against the app on a private bare Xvfb: a drop whose source sends XdndLeave before it answers for the data, a source that never answers, a uri-list holding a comment, a web link and two local WAVs, a link-only drag, and a click from a pointer added after launch, judged from the autosave. Linux only; `SKIP` without Xvfb, xdotool, ImageMagick's `import`, gcc with the libX11, libXi and libXtst headers, or python3 with NumPy and Pillow. See "Scenario legs" below. |
-| `scenarios-gui` | `DUSKSTUDIO_RUN_SCENARIOS=gui:<cases>`: the scenarios that need a window, split across several app instances that run at once, each in its own sandbox on its own Xvfb display (half the cores, at most four; `DUSK_REGRESS_GUI_SHARDS=N` overrides, `1` runs them in one instance). Cases are dealt longest first by the times the last run recorded in `~/.cache/dusk-regress/gui-case-ms.tsv`. The leg passes only if every instance reaches its summary line and every case dealt out reports. Off unless `--gui-scenarios`. |
+| `scenarios-gui` | `DUSKSTUDIO_RUN_SCENARIOS=gui:<cases>`: the scenarios that need a window, split across several app instances that run at once, each in its own sandbox on its own Xvfb display (half the cores, at most four; `DUSK_REGRESS_GUI_SHARDS=N` overrides, `1` runs them in one instance). Cases are dealt longest first by the times the last run recorded in `~/.cache/dusk-regress/gui-case-ms.tsv`. The leg passes only if every instance reaches its summary line and every case dealt out reports. Enabled by default for `prepush` and package runs; standalone Linux runs need `--gui-scenarios`. |
 | `capture-screenshots` | `docs/capture-screenshots.sh` against the binary in `build/` (`DUSK_CAPTURE_BIN`), writing into a scratch `dusk-capture.*` folder under `$TMPDIR` (`DUSK_CAPTURE_OUT`), never `docs/images/`. Passes when the script exits 0 after confirming every figure `docs/screenshot-list.md` marks ✅ was written; `FAIL` names the missing figures and keeps the folder, with the script's output in `capture.log`, and a pass removes it. About 60 to 90 seconds. `SKIP` without ImageMagick or PipeWire, or with `DUSK_REGRESS_REAL_AUDIO=1`, since the captures need the private null graph. On by default; `--no-capture` leaves it out. |
-| `gui-plugin-picker`, `gui-settings-defaults` | `tests/gui_plugin_picker.sh` and `tests/gui_settings_defaults.sh` against the same binary: the GUI cases that need a seeded config (the picker filter, the native-row pick and the settings defaults), which the suite runs without (the picker cases skip there). With `--gui-scenarios` only. |
+| `gui-plugin-picker`, `gui-settings-defaults` | `tests/gui_plugin_picker.sh` and `tests/gui_settings_defaults.sh` against the same binary: the GUI cases that need a seeded config (the picker filter, the native-row pick and the settings defaults), which the suite runs without (the picker cases skip there). Enabled with GUI scenarios, including by default for `prepush`. |
 | `release-metadata` | `scripts/release-metadata-check.sh`: `VERSION`, the top changelog heading, the AppStream entry and the release-notes summary agree, in the development or the release-ready state. Off unless `--release-checks`. |
 | `github-ruleset` | the `main` ruleset requires the six CI checks a merge has to pass (Linux amd64 and arm64, macOS, Windows, TSan, ASan+UBSan); `WARN` names the missing ones. Needs an authenticated `gh`. Off unless `--release-checks`. |
 | `patreon-freshness` | Part 10 step 2: no local name overrides, the supporter header at the donor pin, the Patreon dry run. `WARN` when the dry run refreshed tokens, which means the Actions secrets need updating before the tag. Off unless `--release-checks`. |
@@ -882,7 +884,8 @@ xvfb_run 900 env DUSKSTUDIO_RUN_SCENARIOS=gui DUSKSTUDIO_FIXTURE_DIR="$FIX" "$AP
 `all` runs every headless scenario except the ones tagged `helper` (set-up
 steps for the black-box legs, run by name or `tag:helper`);
 `gui` runs the window-driven cases and `gui:<terms>` a subset of them (the
-runner runs them only with `--gui-scenarios`). A name
+runner enables them for `prepush` and package runs; standalone Linux runs need
+`--gui-scenarios`). A name
 that does not exist exits 2 before anything runs. The report is one line per
 scenario, `[PASS] name (ms)` / `[FAIL] name: reason (ms)` / `[SKIP] name:
 reason`, with the notes a failing scenario recorded indented underneath, then

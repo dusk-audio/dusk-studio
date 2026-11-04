@@ -104,6 +104,7 @@ usage: scripts/regress.sh [linux|mac|windows|windows-source|all|prepush] [option
 
   prepush  before asking for a push: the linux, mac and windows-source legs
            at the same time (they run on three machines), then one table.
+           GUI scenarios are enabled by default on Linux.
            The linux options above go to linux and --host to mac; package
            options, the windows package options among them, are refused,
            since a push is about this checkout. Each platform's full output
@@ -247,14 +248,17 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ "$TARGET" == prepush ]]; then
+    prepush_has_gui=0
     for arg in ${LINUX_ARGS[@]+"${LINUX_ARGS[@]}"} ${MAC_ARGS[@]+"${MAC_ARGS[@]}"}; do
         case "$arg" in
+            --gui-scenarios) prepush_has_gui=1 ;;
             --tarball | --dmg | --release-run | --scenarios-only)
                 echo "error: prepush builds and tests this checkout; $arg does not belong in it" >&2
                 exit 2
                 ;;
         esac
     done
+    ((prepush_has_gui)) || LINUX_ARGS+=(--gui-scenarios)
 fi
 
 if [[ "${DUSK_REGRESS_DRY_RUN:-0}" == 1 ]]; then

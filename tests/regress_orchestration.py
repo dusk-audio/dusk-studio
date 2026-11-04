@@ -65,6 +65,7 @@ bb_end 0
             "#!/usr/bin/env bash\n"
             "set -eu\n"
             f"echo $$ > '{root}/{platform}.pid'\n"
+            f"printf '%s\\n' \"$@\" > '{root}/{platform}.args'\n"
             "timeout --kill-after=2 60 bash -c '\n"
             f'echo $$ > "{root}/{platform}.managed"\n'
             "sleep 60 &\n"
@@ -91,6 +92,8 @@ bb_end 0
             group = os.getpgid(pid)
             groups.add(group)
             assert group != process.pid, "runner shares the caller's process group"
+        assert (root / "linux.args").read_text().splitlines() == ["--gui-scenarios"], \
+            "prepush did not enable GUI scenarios by default"
         process.send_signal(signal.SIGINT)
         stdout, stderr = process.communicate(timeout=5)
         assert process.returncode == 130, (process.returncode, stdout, stderr)
@@ -528,12 +531,15 @@ for arg in sys.argv[1:-1]:
                                 env=dict(win_environment, DUSK_REGRESS_DRY_RUN="1"),
                                 capture_output=True, text=True, timeout=5)
         assert result.returncode == 2, (arguments, result.stdout, result.stderr)
-    result = subprocess.run(["/bin/bash", str(win_root / "scripts/regress.sh"), "prepush", "--no-scenarios"],
-                            env=dict(win_environment, DUSK_REGRESS_DRY_RUN="1"),
-                            capture_output=True, text=True, timeout=5)
-    assert result.returncode == 0, result.stderr
-    assert "linux:   --no-scenarios\n" in result.stdout, result.stdout
-    assert "windows: source leg" in result.stdout, result.stdout
+    for arguments, expected in (([], "--gui-scenarios"),
+                                (["--gui-scenarios"], "--gui-scenarios"),
+                                (["--no-scenarios"], "--no-scenarios --gui-scenarios")):
+        result = subprocess.run(["/bin/bash", str(win_root / "scripts/regress.sh"), "prepush", *arguments],
+                                env=dict(win_environment, DUSK_REGRESS_DRY_RUN="1"),
+                                capture_output=True, text=True, timeout=5)
+        assert result.returncode == 0, result.stderr
+        assert f"linux:   {expected}\n" in result.stdout, result.stdout
+        assert "windows: source leg" in result.stdout, result.stdout
 
     win_trace.write_text("")
     process = subprocess.Popen(
