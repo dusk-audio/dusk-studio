@@ -188,6 +188,8 @@ std::optional<ScenarioResult> runMiniTimelineMarkers (GuiHost& host, ScenarioCon
     const bool shown = host.setTimelineShown (false);
     ctx.cleanup ([&host, &session, &transport, markers, playhead, shown]
     {
+        host.closeAudioSettings();
+        drainModals (host);
         host.captureMiniMarkers (false);
         session.getMarkers() = markers;
         transport.locate (playhead);
@@ -195,11 +197,11 @@ std::optional<ScenarioResult> runMiniTimelineMarkers (GuiHost& host, ScenarioCon
     });
     const double rate = engine.getCurrentSampleRate();
     session.getMarkers().clear();
-    const std::array<const char*, 3> names { "Verse", "Chorus", "Outro" };
+    const std::array<const char*, 3> names { "Verse##1", "Chorus 日本語", "Outro" };
     for (int index = 0; index < 3; ++index)
     {
         Marker marker;
-        marker.name = names[(size_t) index];
+        marker.name = decltype (marker.name)::fromUTF8 (names[(size_t) index]);
         marker.timelineSamples = (std::int64_t) ((10 + index * 15) * rate);
         marker.colour = decltype (marker.colour) (0xff906030);
         session.getMarkers().push_back (std::move (marker));
@@ -217,7 +219,8 @@ std::optional<ScenarioResult> runMiniTimelineMarkers (GuiHost& host, ScenarioCon
         {
             const auto& row = rows[(size_t) index];
             const auto& dim = (*baseline)[(size_t) index];
-            ctx.expect (row.name == names[(size_t) index] && row.labelWidth > 0, "marker label was not painted");
+            ctx.expect (row.name == names[(size_t) index] && row.labelWidth > 0,
+                        "marker label was not painted: " + row.name + " (width " + std::to_string (row.labelWidth) + ")");
             if (index == active)
             {
                 ctx.expect (brightness (row.tickColour) > brightness (dim.tickColour)
@@ -254,6 +257,38 @@ std::optional<ScenarioResult> runMiniTimelineMarkers (GuiHost& host, ScenarioCon
         ctx.expect (transport.getPlayhead() == session.getMarkers()[0].timelineSamples, "marker label did not seek exactly to the marker");
         check (0);
     } });
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (host.openAudioSettings(), "could not cover the mini timeline with a modal"); } });
+    steps->push_back ({ 350, [&host, &ctx]
+    {
+        ctx.expect (! host.clickMiniMarker (0), "covered mini timeline still accepts native input");
+        ctx.expect (host.inputAudioSettings ("escape"), "could not dismiss audio settings");
+    } });
+    steps->push_back ({ 350, [&host, &ctx]
+    { ctx.expect (host.clickMiniMarker (1), "mini timeline did not reopen after the modal closed"); } });
+    steps->push_back ({ 200, [&ctx, &session, &transport]
+    { ctx.expect (transport.getPlayhead() == session.getMarkers()[1].timelineSamples, "reopened marker did not seek"); } });
+    steps->push_back ({ 150, [&host] { host.setTimelineShown (true); } });
+    steps->push_back ({ 200, [&host, &ctx]
+    {
+        ctx.expect (! host.clickMiniMarker (1), "expanded timeline left its native mini window open");
+        host.setTimelineShown (false);
+    } });
+    steps->push_back ({ 350, [&host, &session, rate]
+    {
+        session.getMarkers()[0].timelineSamples = static_cast<std::int64_t> (12 * rate);
+        session.getMarkers()[0].name = decltype (Marker::name)::fromUTF8 ("Moved##日本語");
+        session.getMarkers()[0].colour = decltype (session.getMarkers()[0].colour) (0xff308090);
+        host.captureMiniMarkers (true);
+    } });
+    steps->push_back ({ 200, [&host, &ctx]
+    {
+        const auto rows = host.miniMarkerPaint();
+        ctx.expect (rows.size() == 3 && rows[0].name == "Moved##日本語", "direct marker edit did not refresh the native view");
+        ctx.expect (host.clickMiniMarker (0), "moved marker label did not accept native input");
+    } });
+    steps->push_back ({ 200, [&ctx, &session, &transport]
+    { ctx.expect (transport.getPlayhead() == session.getMarkers()[0].timelineSamples, "moved marker hit geometry was stale"); } });
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
 }
