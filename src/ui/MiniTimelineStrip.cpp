@@ -120,12 +120,13 @@ void MiniTimelineStrip::syncWindow()
     view = content.get();
     view->shellKey = [safe] (std::string description)
     {
-        dusk::callAsync ([safe, description = std::move (description)]
+        const auto key = juce::KeyPress::createFromDescription (description);
+        dusk::callAsync ([safe, key]
         {
             auto* self = safe.getComponent();
             if (self == nullptr || ! self->isShowing() || PluginEditorHider::hasActiveSurface()) return;
             if (auto* shell = self->getParentComponent())
-                shell->keyPressed (juce::KeyPress::createFromDescription (description));
+                shell->keyPressed (key);
         });
     };
     view->seek = [this, safe] (std::int64_t sample)

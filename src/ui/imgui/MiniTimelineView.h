@@ -58,7 +58,7 @@ public:
                 const auto index = std::stoul (control.substr (7));
                 if (index >= markerPaint.size() || markerPaint[index].labelWidth <= 0) return false;
                 const auto& row = markerPaint[index];
-                point = { static_cast<float> (row.labelX) + row.labelWidth * 0.5f,
+                point = { static_cast<float> (row.labelX) + static_cast<float> (row.labelWidth) * 0.5f,
                           static_cast<float> (row.labelY) };
                 return true;
             }
@@ -205,21 +205,23 @@ private:
     static ImU32 rgba (std::uint32_t c) { return IM_COL32 ((c >> 16) & 255, (c >> 8) & 255, c & 255, c >> 24); }
     float xForSample (std::int64_t sample) const
     {
-        const double fraction = state.end > 0 ? std::clamp (static_cast<double> (sample) / state.end, 0.0, 1.0) : 0.0;
+        const double fraction = state.end > 0
+            ? std::clamp (static_cast<double> (sample) / static_cast<double> (state.end), 0.0, 1.0) : 0.0;
         return origin.x + scale * 6.0f + static_cast<float> (std::lround (fraction * std::max (1.0f, size.x - scale * 12.0f)));
     }
     std::int64_t sampleForX (float x) const
     {
         const double fraction = std::clamp (static_cast<double> (x - origin.x - scale * 6.0f)
                                            / std::max (1.0f, size.x - scale * 12.0f), 0.0, 1.0);
-        return static_cast<std::int64_t> (fraction * state.end);
+        return static_cast<std::int64_t> (fraction * static_cast<double> (state.end));
     }
     int markerAtX (float x) const
     {
         for (size_t i = 0; i < markerPaint.size(); ++i)
         {
             const auto& row = markerPaint[i];
-            if (row.labelWidth > 0 && x >= row.labelX - scale * 2.0f && x <= row.labelX + row.labelWidth + scale * 2.0f)
+            if (row.labelWidth > 0 && x >= static_cast<float> (row.labelX) - scale * 2.0f
+                && x <= static_cast<float> (row.labelX + row.labelWidth) + scale * 2.0f)
                 return static_cast<int> (i);
         }
         int best = -1;
