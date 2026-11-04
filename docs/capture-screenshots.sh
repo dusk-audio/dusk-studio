@@ -6,6 +6,8 @@
 # native window this cannot reach and is captured by hand; see that file. The
 # run fails, naming each figure, when a ✅ row was not written.
 # `capture-screenshots.sh --check DIR` only checks that DIR holds every ✅ figure.
+# DUSK_CAPTURE_BIN runs that binary instead of build/'s Release one, and never
+# builds.
 #
 # Runs the app on an ISOLATED Xvfb display (X11 backend), NOT your live
 # session — the harness drives heavy stage switches + modal teardown that can
@@ -19,7 +21,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BIN="${REPO_ROOT}/build/DuskStudio_artefacts/Release/DuskStudio"
+BIN="${DUSK_CAPTURE_BIN:-${REPO_ROOT}/build/DuskStudio_artefacts/Release/DuskStudio}"
 OUT="${DUSK_CAPTURE_OUT:-${REPO_ROOT}/docs/images}"
 LIST="${REPO_ROOT}/docs/screenshot-list.md"
 JOBS="${DUSK_JOBS:-6}"
@@ -89,6 +91,10 @@ if ! command -v magick >/dev/null 2>&1; then
   exit 1
 fi
 
+if [[ -n "${DUSK_CAPTURE_BIN:-}" && ! -x "${BIN}" ]]; then
+  echo "error: DUSK_CAPTURE_BIN is not an executable: ${BIN}" >&2
+  exit 1
+fi
 if [[ ! -x "${BIN}" ]]; then
   echo "Building Dusk Studio (binary not found)..." >&2
   cmake -S "${REPO_ROOT}" -B "${REPO_ROOT}/build" -DCMAKE_BUILD_TYPE=Release >/dev/null

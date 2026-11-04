@@ -29,8 +29,8 @@ usage() {
     cat <<'EOF'
 usage: scripts/regress.sh [linux|mac|windows|windows-source|all|prepush] [options]
 
-  linux    (default) build, tests, ctest, JUCE gate, self-test, IPC and
-           scenario legs
+  linux    (default) build, tests, ctest, JUCE gate, self-test, IPC,
+           scenario and manual figure legs
              --perf              also run the headless engine perf suite
              --vst3 <path>       plugin for the out-of-process host test
                                  (default: the first ~/.vst3/*.vst3)
@@ -41,6 +41,10 @@ usage: scripts/regress.sh [linux|mac|windows|windows-source|all|prepush] [option
                                  already in build/
              --release-checks    also the pre-tag legs: release metadata,
                                  the main ruleset, Patreon freshness
+             --no-capture        leave out capture-screenshots, which runs
+                                 docs/capture-screenshots.sh against build/
+                                 into a scratch folder and fails naming any
+                                 figure the run did not write
              --tarball <path>    package mode: extract, smoke-test and
                                  install this release tarball in a scratch
                                  HOME, then run the self-test, IPC and
@@ -149,6 +153,7 @@ declare -A OPTION_OWNER=(
     [--gui-scenarios]=linux
     [--scenarios-only]=linux
     [--release-checks]=linux
+    [--no-capture]=linux
     [--tarball]=linux
     [--host]=mac
     [--dmg]=mac

@@ -18,6 +18,8 @@ REGRESS_PLATFORM=linux
 source "${REPO_ROOT}/scripts/regress/xvfb.sh"
 # shellcheck source=scripts/regress/scenarios.sh
 source "${REPO_ROOT}/scripts/regress/scenarios.sh"
+# shellcheck source=scripts/regress/capture.sh
+source "${REPO_ROOT}/scripts/regress/capture.sh"
 
 JOBS="${DUSK_JOBS:-6}"
 SELFTEST_TIMEOUT="${DUSK_REGRESS_SELFTEST_TIMEOUT:-180}"
@@ -27,6 +29,7 @@ RUN_SCENARIOS=1
 GUI_SCENARIOS=0
 SCENARIOS_ONLY=0
 RELEASE_CHECKS=0
+RUN_CAPTURE=1
 TARBALL=""
 RELEASE_RUN=""
 
@@ -59,6 +62,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --release-checks)
             RELEASE_CHECKS=1
+            shift
+            ;;
+        --no-capture)
+            RUN_CAPTURE=0
             shift
             ;;
         --tarball)
@@ -621,6 +628,16 @@ if [[ -x "$APP_BIN" ]]; then
             regress_scenarios_run "$APP_BIN"
         fi
     fi
+
+    if ((PACKAGE_MODE)); then
+        regress_skip "capture-screenshots" "not run (package mode)"
+    elif ((SCENARIOS_ONLY)); then
+        regress_skip "capture-screenshots" "not run (--scenarios-only)"
+    elif ((RUN_CAPTURE)); then
+        regress_capture_leg "$APP_BIN"
+    else
+        regress_skip "capture-screenshots" "not run (--no-capture)"
+    fi
 else
     regress_record "app-binary" FAIL 0 "app binary missing: ${APP_BIN:-no package}"
     missing_legs=(selftest-xvfb ipc-selftest ipc-host-test perf-suite)
@@ -629,6 +646,9 @@ else
         if ((GUI_SCENARIOS)); then
             missing_legs+=(scenarios-gui gui-plugin-picker gui-settings-defaults)
         fi
+    fi
+    if ((RUN_CAPTURE && !PACKAGE_MODE && !SCENARIOS_ONLY)); then
+        missing_legs+=(capture-screenshots)
     fi
     for leg in "${missing_legs[@]}"; do
         regress_skip "$leg" "app binary missing: ${APP_BIN:-no package}"

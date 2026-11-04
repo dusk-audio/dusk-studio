@@ -358,7 +358,7 @@ else:
     linux_root = root / "linux-missing-app"
     linux_runners = linux_root / "scripts/regress"
     linux_runners.mkdir(parents=True)
-    for name in ("linux.sh", "common.sh", "xvfb.sh", "scenarios.sh", "null-audio.sh"):
+    for name in ("linux.sh", "common.sh", "xvfb.sh", "scenarios.sh", "null-audio.sh", "capture.sh"):
         shutil.copyfile(repo / "scripts/regress" / name, linux_runners / name)
     required_tools = linux_root / "bin"
     required_tools.mkdir()
@@ -543,4 +543,71 @@ for arg in sys.argv[1:-1]:
                     pass
         process.wait()
 
-print("regression runner: interrupt cleanup, prepush log folders, timing cache, Mac paths, missing app and Windows source leg pass")
+    capture_root = root / "capture-leg"
+    (capture_root / "docs/images").mkdir(parents=True)
+    capture_tmp = capture_root / "tmp"
+    capture_tmp.mkdir()
+    capture_trace = capture_root / "trace"
+    (capture_root / "docs/capture-screenshots.sh").write_text(
+        "#!/usr/bin/env bash\n"
+        f"printf '%s\\n%s\\n' \"$DUSK_CAPTURE_OUT\" \"$DUSK_CAPTURE_BIN\" >'{capture_trace}'\n"
+        'mkdir -p "$DUSK_CAPTURE_OUT" && : >"$DUSK_CAPTURE_OUT/a.png"\n'
+        'case "$CAPTURE_TEST_MODE" in\n'
+        '  pass) echo "All 3 \u2705 figures are in $DUSK_CAPTURE_OUT." >&2 ;;\n'
+        '  missing) printf "error: missing figure: %s\\n" b.png c.png >&2\n'
+        '           echo "error: 2 of the 3 \u2705 figures are missing" >&2; exit 1 ;;\n'
+        'esac\n'
+    )
+    capture_tools = capture_root / "bin"
+    capture_tools.mkdir()
+    for name in ("magick", "pipewire"):
+        tool = capture_tools / name
+        tool.write_text("#!/bin/sh\nexit 0\n")
+        tool.chmod(0o755)
+    capture_records = capture_root / "records.tsv"
+    capture_harness = r'''
+set -euo pipefail
+source "$DUSK_REGRESS_TEST_ROOT/scripts/regress/common.sh"
+source "$DUSK_REGRESS_TEST_ROOT/scripts/regress/capture.sh"
+REPO_ROOT="$CAPTURE_TEST_ROOT"
+REGRESS_PLATFORM=linux
+trap regress_run_exit_hooks EXIT
+regress_capture_leg /opt/under-test/DuskStudio
+'''
+
+    def capture_leg(mode, **extra):
+        capture_records.write_text("")
+        capture_trace.unlink(missing_ok=True)
+        result = subprocess.run(
+            ["bash", "-c", capture_harness],
+            env=dict(child_environment, DUSK_REGRESS_TEST_ROOT=str(repo),
+                     DUSK_REGRESS_RECORD_FILE=str(capture_records),
+                     CAPTURE_TEST_ROOT=str(capture_root), CAPTURE_TEST_MODE=mode,
+                     TMPDIR=str(capture_tmp), PATH=f"{capture_tools}:{os.environ['PATH']}",
+                     **extra),
+            capture_output=True, text=True, timeout=10)
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        rows = [line.split("\t") for line in capture_records.read_text().splitlines()]
+        assert len(rows) == 1 and rows[0][2] == "capture-screenshots", rows
+        out = Path(capture_trace.read_text().splitlines()[0]) if capture_trace.exists() else None
+        return rows[0][1], rows[0][4], out
+
+    status, note, out = capture_leg("pass")
+    assert status == "PASS" and note == "3 figures", (status, note)
+    assert out.parent.parent == capture_tmp, out
+    assert capture_trace.read_text().splitlines()[1] == "/opt/under-test/DuskStudio"
+    assert not out.parent.exists(), "a passing capture leg kept its scratch folder"
+
+    status, note, out = capture_leg("missing")
+    assert status == "FAIL" and "missing b.png, c.png" in note, (status, note)
+    assert out.parent.is_dir() and f"output in {out.parent}" in note, note
+    assert (out.parent / "capture.log").is_file()
+
+    status, note, out = capture_leg("silent")
+    assert status == "FAIL" and "summary line" in note, (status, note)
+
+    status, note, out = capture_leg("pass", DUSK_REGRESS_REAL_AUDIO="1")
+    assert status == "SKIP" and out is None, (status, note)
+    assert not any((capture_root / "docs/images").iterdir()), "the capture leg wrote to docs/images"
+
+print("regression runner: interrupt cleanup, prepush log folders, capture leg, timing cache, Mac paths, missing app and Windows source leg pass")

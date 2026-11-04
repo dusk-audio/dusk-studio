@@ -21,7 +21,10 @@ The script reads the **Auto** column, so every row is ✅ or ❌. After a run it
 names each ✅ figure the run did not write and exits non-zero. Set
 `DUSK_CAPTURE_OUT=<dir>` to write the figures somewhere other than
 `docs/images/`, and run `docs/capture-screenshots.sh --check <dir>` to check a
-folder without capturing.
+folder without capturing. `DUSK_CAPTURE_BIN=<binary>` runs that binary instead
+of `build/`'s Release one, and never builds. `scripts/regress.sh linux` and
+`prepush` run the script this way into a scratch folder, as the
+`capture-screenshots` leg (docs/MAINTAINER-GUIDE.md, Part 9b).
 
 SFZ Manager's Installed and Online figures come from a separate
 `gui.sfz_repository_workflow` run with fixture responses and
