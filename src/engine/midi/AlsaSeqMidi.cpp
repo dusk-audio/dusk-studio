@@ -72,15 +72,54 @@ struct PortRef
     std::string identifier;   // name-based (see AlsaSeqMidi.h); :dup ordinal is enumeration-order dependent
 };
 
+bool operator== (const PortRef& a, const PortRef& b)
+{
+    return a.client == b.client && a.port == b.port && a.name == b.name && a.identifier == b.identifier;
+}
+
+// The input and the output are two sequencer clients, both named "Dusk Studio",
+// so a name cannot tell them from another running copy. Each registers its
+// client id here before creating its port and drops it after closing, and an
+// enumeration holds the lock throughout, so it never meets one of our ports
+// unregistered.
+struct OwnClients
+{
+    std::mutex       mutex;
+    std::vector<int> ids;
+};
+
+OwnClients& ownClients()
+{
+    static OwnClients registry;
+    return registry;
+}
+
+void addOwnClient (int id)
+{
+    auto& own = ownClients();
+    const std::lock_guard<std::mutex> lock (own.mutex);
+    own.ids.push_back (id);
+}
+
+void removeOwnClient (int id)
+{
+    auto& own = ownClients();
+    const std::lock_guard<std::mutex> lock (own.mutex);
+    const auto it = std::find (own.ids.begin(), own.ids.end(), id);
+    if (it != own.ids.end()) own.ids.erase (it);
+}
+
 // Enumerate MIDI sources (wantRead) or destinations across every client except
-// ourselves and the System client (client 0: Timer/Announce, not real MIDI).
-// dup-index disambiguates identically-named ports in enumeration order.
+// this process's own and the System client (client 0: Timer/Announce, not real
+// MIDI). dup-index disambiguates identically-named ports in enumeration order.
 std::vector<PortRef> queryPorts (snd_seq_t* seq, bool wantRead)
 {
     std::vector<PortRef> out;
     if (seq == nullptr) return out;
 
     const int self = snd_seq_client_id (seq);
+    auto& own = ownClients();
+    const std::lock_guard<std::mutex> ownLock (own.mutex);
     const unsigned needCaps = wantRead
         ? (unsigned) (SND_SEQ_PORT_CAP_READ  | SND_SEQ_PORT_CAP_SUBS_READ)
         : (unsigned) (SND_SEQ_PORT_CAP_WRITE | SND_SEQ_PORT_CAP_SUBS_WRITE);
@@ -96,7 +135,8 @@ std::vector<PortRef> queryPorts (snd_seq_t* seq, bool wantRead)
     while (snd_seq_query_next_client (seq, cinfo) >= 0)
     {
         const int client = snd_seq_client_info_get_client (cinfo);
-        if (client == self || client == 0) continue;
+        if (client == self || client == 0 || std::find (own.ids.begin(), own.ids.end(), client) != own.ids.end())
+            continue;
         const std::string clientName = snd_seq_client_info_get_name (cinfo);
 
         snd_seq_port_info_set_client (pinfo, client);
@@ -201,6 +241,14 @@ struct AlsaSeqMidiInput::Impl
 
     std::vector<std::uint8_t> decodeScratch;   // decode target, grown to each event's size
 
+    // The ports as last listed, to the consumer or after an announce. An
+    // announce that leaves them as they were (this process's own clients coming
+    // and going, a client with no MIDI ports) is not reported. Until the first
+    // listing every announce counts.
+    std::vector<PortRef> listedSources;
+    std::vector<PortRef> listedDestinations;
+    bool                 haveListed = false;
+
     std::thread       pollThread;
     std::atomic<bool> running { false };
     int               wakePipe[2] { -1, -1 };   // self-pipe to break poll() on stop
@@ -216,6 +264,7 @@ struct AlsaSeqMidiInput::Impl
     Impl()
     {
         if (snd_seq_open (&seq, "default", SND_SEQ_OPEN_INPUT, 0) < 0) { seq = nullptr; return; }
+        addOwnClient (snd_seq_client_id (seq));
         snd_seq_set_client_name (seq, "Dusk Studio");
         inPort = snd_seq_create_simple_port (seq, "MIDI In",
                      SND_SEQ_PORT_CAP_WRITE | SND_SEQ_PORT_CAP_SUBS_WRITE,
@@ -241,7 +290,12 @@ struct AlsaSeqMidiInput::Impl
     {
         stopThread();
         if (coder) snd_midi_event_free (coder);
-        if (seq)   snd_seq_close (seq);
+        if (seq)
+        {
+            const int client = snd_seq_client_id (seq);
+            snd_seq_close (seq);
+            removeOwnClient (client);
+        }
         if (wakePipe[0] >= 0) close (wakePipe[0]);
         if (wakePipe[1] >= 0) close (wakePipe[1]);
     }
@@ -299,8 +353,21 @@ struct AlsaSeqMidiInput::Impl
         sx.discarding = ! terminated;
     }
 
-    // Returns true when this batch carried an announce meaning the port set
-    // moved. The caller fires the handler once the batch is drained and the
+    // Destinations count too: the rebuild a report arms refreshes the output
+    // list as well. Caller holds seqMutex.
+    bool relist()
+    {
+        auto sources      = queryPorts (seq, /*wantRead*/ true);
+        auto destinations = queryPorts (seq, /*wantRead*/ false);
+        const bool moved = ! haveListed || sources != listedSources || destinations != listedDestinations;
+        listedSources      = std::move (sources);
+        listedDestinations = std::move (destinations);
+        haveListed = true;
+        return moved;
+    }
+
+    // Returns true when this batch carried an announce that moved the listed
+    // ports. The caller fires the handler once the batch is drained and the
     // sequencer lock is released - it is consumer code, and holding seqMutex
     // across it would block enumerate() on the message thread.
     bool pumpEvents()
@@ -347,7 +414,7 @@ struct AlsaSeqMidiInput::Impl
             // no_status makes each decode self-contained: no cross-event running
             // status, so no reset between events is needed.
         }
-        return portSetChanged;
+        return portSetChanged && relist();
     }
 
     void run()
@@ -410,7 +477,8 @@ std::vector<BackendDeviceInfo> AlsaSeqMidiInput::enumerate()
     std::vector<BackendDeviceInfo> out;
     if (! impl->ready()) return out;
     const std::lock_guard<std::mutex> lock (impl->seqMutex);
-    for (auto& p : queryPorts (impl->seq, /*wantRead*/ true))
+    impl->relist();
+    for (auto& p : impl->listedSources)
         out.push_back ({ p.name, p.identifier });
     return out;
 }
@@ -464,6 +532,7 @@ void AlsaSeqMidiInput::stop()  { impl->stopThread(); }
 struct AlsaSeqMidiOutput::Impl
 {
     snd_seq_t*        seq     = nullptr;
+    int               client  = -1;
     int               outPort = -1;
     int               queue   = -1;
     bool              queueRunning = false;
@@ -502,6 +571,8 @@ struct AlsaSeqMidiOutput::Impl
         releaseClient();
         if (snd_seq_open (&seq, "default", SND_SEQ_OPEN_OUTPUT, SND_SEQ_NONBLOCK) < 0)
         { seq = nullptr; return false; }
+        client = snd_seq_client_id (seq);
+        addOwnClient (client);
         struct CloseOnFailure
         {
             Impl& owner;
@@ -566,11 +637,12 @@ struct AlsaSeqMidiOutput::Impl
         {
             if (queue >= 0) snd_seq_free_queue (seq, queue);
             snd_seq_close (seq);
+            removeOwnClient (client);
         }
         if (coder != nullptr) snd_midi_event_free (coder);
         seq = nullptr;
         coder = nullptr;
-        outPort = queue = -1;
+        client = outPort = queue = -1;
         queueRunning = false;
         pollDescriptors.clear();
         latestQueuedTimeMs = 0.0;

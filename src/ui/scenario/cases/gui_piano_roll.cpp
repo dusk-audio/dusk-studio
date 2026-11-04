@@ -2193,6 +2193,32 @@ const ScenarioRegistrar pianoNativeShortcuts { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runPianoNativeShortcuts (host, ctx); }
 } };
 
+// The toolbar's track and region titles draw a Cyrillic track name and a Cyrillic and
+// Hebrew region label as themselves, not as the face's fallback.
+std::optional<ScenarioResult> runPianoNameGlyphs (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& track = ctx.session().track (0);
+    ctx.cleanup ([&track, name = track.name] { track.name = name; });
+    track.name = std::string ("\xd0\x91\xd0\xb0\xd1\x81");
+    if (auto early = beginNativePianoCase (host, ctx)) return early;
+    auto regions = track.midiRegions.current();
+    if (regions.empty()) return ScenarioResult::fail ("the MIDI fixture has no region");
+    regions[0].label = std::string ("\xd0\x9a\xd1\x83\xd0\xbf\xd0\xbb\xd0\xb5\xd1\x82 \xd7\xa9\xd7\x9c\xd7\x95\xd7\x9d");
+    track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (regions));
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 400, [&host, &ctx]
+    { expectNamesReadable (host, ctx, "piano-roll", 3 + 11, "piano-roll-names.ppm"); } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar pianoNameGlyphs { Scenario {
+    "gui.piano_name_glyphs", { "gui", "piano", "midi" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runPianoNameGlyphs (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runPianoNativeEscapeStack (GuiHost& host, ScenarioContext& ctx)
 {
     if (auto initial = beginNativePianoCase (host, ctx)) return initial;

@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <vector>
 
 using duskstudio::imgui::scanRecentSessions;
 using duskstudio::test::TempDirectory;
@@ -94,4 +95,19 @@ TEST_CASE ("a recent session is dated by its saved session file rather than its 
         stamp (session, when);
         CHECK (lastModified (session) == shown (when));
     }
+}
+
+TEST_CASE ("a recent session's audio folder may hold a name the ANSI code page cannot hold")
+{
+    TempDirectory root ("dusk-recent-unicode");
+    const auto session = root.path() / "Song";
+    stdfs::create_directories (session / "audio");
+    write (session / "session.json");
+    write (session / "audio" / stdfs::u8path (u8"notes.Ж日本"));
+
+    std::vector<duskstudio::imgui::RecentSession> rows;
+    REQUIRE_NOTHROW (rows = scanRecentSessions ({ session }));
+    REQUIRE (rows.size() == 1);
+    CHECK (rows.front().name == "Song");
+    CHECK (rows.front().sampleRate.empty());
 }

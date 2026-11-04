@@ -1,5 +1,6 @@
 #include "PianoRollView.h"
 #include "PanelControls.h"
+#include "PanelText.h"
 #include "RulerDensity.h"
 #include "../AppConfig.h"
 #include "../PianoRollEdit.h"
@@ -91,6 +92,7 @@ public:
     ImVec2 preferredSize() const override { return available; }
     float dimAlpha() const override { return 0.80f; }
     bool escapeDismisses() const override { return false; }
+    bool marksMissingGlyphs() const override { return true; }
     bool capturesKeyboard() const override { return ! covered() && (popupOpen || popupRequested != Popup::none); }
     bool takeDismissRequest() override { return std::exchange (dismissRequested, false); }
     bool claimsShortcut (ShellShortcut key) const override
@@ -123,6 +125,7 @@ public:
     void stepRecordNoteOff (int noteNumber, int channel) override;
     void stepRecordKeyboardClosed() noexcept override;
 
+    GlyphTally nameGlyphsForScenario() const override { return drawnNameGlyphs; }
     std::array<double, 4> viewportForScenario() const override
     { return { pixelsPerTick, static_cast<double> (scrollX), static_cast<double> (scrollY), grid.w }; }
     std::array<int, 4> optionsForScenario() const override
@@ -201,6 +204,7 @@ public:
 
     void draw (dw::Context& ctx, ImVec2 at, ImVec2 size) override
     {
+        nameGlyphs = {};
         const bool isCovered = covered();
         if (isCovered && ! wasCovered)
         {
@@ -268,6 +272,7 @@ public:
                 host.dismissCover();
         }
         else drawCursor (ctx);
+        drawnNameGlyphs = nameGlyphs;
     }
 
 private:
@@ -286,6 +291,7 @@ private:
     struct WheelInput { ImVec2 point; float vertical, horizontal; bool command, shift, smooth; };
     std::vector<WheelInput> wheelInputs;
     bool wasCovered = false;
+    GlyphTally nameGlyphs, drawnNameGlyphs;
     std::array<int, 2> drawnMerge { -1, -1 };
     std::vector<std::string> menuLabels;
     bool covered() const { return host.covered && host.covered(); }
@@ -1377,10 +1383,12 @@ private:
         {
             const auto title = [&] (Box b, const std::string& value, ImU32 colour)
             {
+                const auto label = displayText (value);
                 ctx.dl->PushClipRect (screen ({ b.x, b.y }), screen ({ b.right(), b.bottom() }), true);
-                dw::text (ctx, ctx.fonts->title, ctx.s (12.5f), screen ({ b.x, b.y + (b.h - 12.5f) * 0.5f }),
-                          ctx.s (b.w), colour, value.c_str(), dw::Align::left);
+                dw::text (ctx, nameFace (*ctx.fonts), ctx.s (12.5f), screen ({ b.x, b.y + (b.h - 12.5f) * 0.5f }),
+                          ctx.s (b.w), colour, label.c_str(), dw::Align::left);
                 ctx.dl->PopClipRect();
+                nameGlyphs.add (nameFace (*ctx.fonts), label);
             };
             const auto& track = session.track (trackIdx);
             const float x = boxes[11].right() + 16, room = boxes[12].x - x - 16;

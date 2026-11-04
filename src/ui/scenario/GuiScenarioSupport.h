@@ -120,6 +120,13 @@ char controlCharacter (char letter);
 
 StripHandle* readyStrip (GuiHost& host, ScenarioContext& ctx);
 
+// The panel's last frame drew at least `characters` characters of names, each with a
+// glyph of its own rather than the face's fallback. With DUSKSTUDIO_SCENARIO_CAPTURE_DIR
+// set on Linux, the one platform that reads a panel's window back, the panel is also
+// written there as `capture`, for a reviewer to look at.
+void expectNamesReadable (GuiHost& host, ScenarioContext& ctx, const std::string& panel,
+                          int characters, const std::string& capture);
+
 enum class Format { Clap, Lv2, Vst3 };
 
 constexpr std::int64_t kTakeCaseLength = 96000;

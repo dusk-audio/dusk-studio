@@ -1835,6 +1835,39 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
        #endif
     }
     std::string startupChoice() const override { return startupChoiceMade; }
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    imgui::DuskPanelWindow* openPanel (const std::string& panel) const
+    {
+        if (panel == "audio-editor" && owner.audioEditorShowing()) return owner.audioEditorWindow.get();
+        if (panel == "piano-roll" && owner.pianoRollShowing()) return owner.pianoRollWindow.get();
+        if (panel == "startup" && owner.startupWindow != nullptr && owner.startupWindow->isOpen())
+            return owner.startupWindow.get();
+        return nullptr;
+    }
+   #endif
+    std::array<int, 2> panelNameGlyphs (const std::string& panel) const override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        if (const auto* window = openPanel (panel))
+            if (const auto names = window->nameGlyphsForScenario())
+                return { names->drawn, names->missing };
+       #else
+        (void) panel;
+       #endif
+        return { -1, -1 };
+    }
+    bool capturePanel (const std::string& panel, const std::filesystem::path& path) override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        const auto* window = openPanel (panel);
+        return window != nullptr
+            && platform::captureNativeWindowToPpm (window->nativeWindowHandleForScenario(), path.u8string());
+       #else
+        (void) panel;
+        (void) path;
+        return false;
+       #endif
+    }
     double uiScale() const override { return embedscale::globalScale(); }
     void restoreUiScale (float scale) override { owner.restoreUiScaleForScenario (scale); }
     std::vector<int> mainWindowBounds() const override

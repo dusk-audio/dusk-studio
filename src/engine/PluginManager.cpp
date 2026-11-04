@@ -41,6 +41,20 @@ namespace
     std::fflush (stderr);
 }
 
+// The native LV2 host lists LV2 plug-ins, and JUCE's LV2 rows are never shown
+// beside it. JUCE's format stays registered for files picked by hand and for
+// sessions that saved a plug-in it hosted, but scanning it would only reload
+// every bundle its world already holds.
+bool juceScansFormat (const std::string& formatName)
+{
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+    return formatName != "LV2";
+#else
+    (void) formatName;
+    return true;
+#endif
+}
+
 PluginDescriptor fromJuceDescription (const juce::PluginDescription& source)
 {
     PluginDescriptor descriptor;
@@ -483,7 +497,7 @@ int PluginManager::scanInstalledPlugins (
     for (int fi = 0; fi < numFormats && ! aborted; ++fi)
     {
         auto* format = formats[fi];
-        if (format == nullptr) continue;
+        if (format == nullptr || ! juceScansFormat (format->getName().toStdString())) continue;
 
         if (abort != nullptr && abort->load (std::memory_order_relaxed)) { aborted = true; break; }
         const auto searchPaths = juce_compat::pluginSearchLocations (*format, customFolders);
@@ -555,6 +569,7 @@ int PluginManager::scanInstalledPlugins (
         std::map<juce::String, juce::StringArray> liveIdsByFormat;
         for (const auto& desc : knownPluginList.getTypes())
             if (! juce::File::isAbsolutePath (desc.fileOrIdentifier)
+                && juceScansFormat (desc.pluginFormatName.toStdString())
                 && (customLv2Complete || desc.pluginFormatName != "LV2"))
                 liveIdsByFormat.emplace (desc.pluginFormatName, juce::StringArray{});
 
@@ -575,7 +590,8 @@ int PluginManager::scanInstalledPlugins (
         // mutating the live list inside this loop can't invalidate the iteration.
         for (const auto& desc : knownPluginList.getTypes())
         {
-            bool dead = pluginBackingLooksDead (desc.fileOrIdentifier.toStdString());
+            bool dead = ! juceScansFormat (desc.pluginFormatName.toStdString())
+                     || pluginBackingLooksDead (desc.fileOrIdentifier.toStdString());
 
             if (! dead && ! juce::File::isAbsolutePath (desc.fileOrIdentifier))
             {
@@ -824,7 +840,6 @@ void PluginManager::scanLv2Plugins (const std::atomic<bool>* abort)
 
         // Audio effects (audio in + out) and instruments (atom/MIDI in,
         // audio out, no audio in - classified by Lv2Bundle::describePlugin).
-        // MIDI-only utilities stay with the JUCE LV2 format.
         const bool effect = s.desc.audioInputs > 0 && s.desc.audioOutputs > 0;
         if (! effect && ! s.desc.isInstrument)
             continue;

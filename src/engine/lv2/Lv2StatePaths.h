@@ -921,7 +921,7 @@ inline std::string toAbstract (const std::filesystem::path& stateDir,
     // and a "../"-leading path for siblings - none of which are children.
     if (! rel.empty() && rel != std::filesystem::path (".")
         && *rel.begin() != std::filesystem::path (".."))
-        return rel.generic_string();
+        return rel.generic_u8string();
     return absolutePath;
 }
 } // namespace duskstudio::lv2::statepaths

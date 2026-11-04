@@ -105,8 +105,8 @@ jobs:
         # Linux workflows.
         env:
           JUCE_MIRROR: https://github.com/dusk-audio/JUCE-wayland.git
-          JUCE_TAG: dusk-wayland-v7
-          JUCE_REV: 05a6dfe609ec71c279624a103c02fa19dd68f287
+          JUCE_TAG: dusk-wayland-v9
+          JUCE_REV: 108fab92a4b748b2cec1252b3ceb76fa40c699e0
         run: |
           set -euo pipefail
           git init -q "${RUNNER_TEMP}/JUCE-wayland"
@@ -188,9 +188,8 @@ jobs:
 
     env:
       # Leak detection stays on except for the two intentional shutdown-safety
-      # leaks and the JUCE-internal ones in tools/lsan_suppressions.txt.
+      # leaks.
       ASAN_OPTIONS: "halt_on_error=1:abort_on_error=1:detect_leaks=1:symbolize=1"
-      LSAN_OPTIONS: "suppressions=${{ github.workspace }}/tools/lsan_suppressions.txt"
       UBSAN_OPTIONS: "halt_on_error=1:abort_on_error=1:print_stacktrace=1"
       ASAN_SYMBOLIZER_PATH: /usr/bin/llvm-symbolizer
 
@@ -235,8 +234,8 @@ jobs:
       - name: Clone JUCE (Dusk-owned Wayland mirror, pinned)
         env:
           JUCE_MIRROR: https://github.com/dusk-audio/JUCE-wayland.git
-          JUCE_TAG: dusk-wayland-v7
-          JUCE_REV: 05a6dfe609ec71c279624a103c02fa19dd68f287
+          JUCE_TAG: dusk-wayland-v9
+          JUCE_REV: 108fab92a4b748b2cec1252b3ceb76fa40c699e0
         run: |
           set -euo pipefail
           git init -q "${RUNNER_TEMP}/JUCE-wayland"
@@ -275,17 +274,20 @@ jobs:
 
       - name: Run suite with LeakSanitizer enabled
         # NativeInsertSlot parks instances with untrusted shutdown; ALSA retains
-        # devices still referenced by detached, formerly wedged I/O threads.
+        # devices still referenced by detached, formerly wedged I/O threads. The
+        # two custom-folder cases drive JUCE's own LV2 scanner, and every search
+        # after the first leaks its plug-in class table inside this runner's
+        # lilv 0.24.12. Linux builds scan LV2 natively and never take that path.
         run: |
           ctest --test-dir build-asan --output-on-failure --parallel 4 \
-            -E '^(NativeInsertSlot bumps its generation on every identity change|AlsaAudioIODevice: wedged I/O thread leaks the device, never frees it)$'
+            -E '^(NativeInsertSlot bumps its generation on every identity change|AlsaAudioIODevice: wedged I/O thread leaks the device, never frees it|A custom folder whose links loop finishes discovery in every format that sees it|Nested custom LV2 bundles prime the parent scanner and fresh scan child)$'
 
-      - name: Run leak-for-safety tests under ASan + UBSan
+      - name: Run the tests that leak by design or in lilv under ASan + UBSan
         env:
           ASAN_OPTIONS: "halt_on_error=1:abort_on_error=1:detect_leaks=0:symbolize=1"
         run: |
           ctest --test-dir build-asan --output-on-failure \
-            -R '^(NativeInsertSlot bumps its generation on every identity change|AlsaAudioIODevice: wedged I/O thread leaks the device, never frees it)$'
+            -R '^(NativeInsertSlot bumps its generation on every identity change|AlsaAudioIODevice: wedged I/O thread leaks the device, never frees it|A custom folder whose links loop finishes discovery in every format that sees it|Nested custom LV2 bundles prime the parent scanner and fresh scan child)$'
 
       - name: ccache stats
         if: always()

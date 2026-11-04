@@ -106,7 +106,7 @@ struct DuskImGuiHost::Impl final : private dusk::Timer
        #endif
         if (const auto failed = probe.previousFailure(); ! failed.empty())
         {
-            const auto marker = probe.path().string();
+            const auto marker = probe.path().u8string();
             owner.log ("a previous run ended while the window was drawing its "
                        "first frame on %s; unavailable. Delete %s to try again",
                        failed.c_str(), marker.c_str());

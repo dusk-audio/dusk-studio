@@ -3,11 +3,14 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "PluginSearchPaths.h"
 
+#include <algorithm>
+#include <filesystem>
 #include <map>
 #include <mutex>
 #include <optional>
 #include <set>
 #include <string>
+#include <vector>
 
 namespace duskstudio::juce_compat
 {
@@ -28,10 +31,12 @@ namespace duskstudio::juce_compat
 inline void addDefaultFormats (juce::AudioPluginFormatManager& fm)
 {
    #if DUSKSTUDIO_JUCE_HAS_FREE_ADD_FORMATS
+    // The fork's LV2 format rebuilds its class table itself, and only when its
+    // first search found no specifications: a rebuild re-creates every class the
+    // table holds, and the system lilv 0.24.12 its format runs leaks each duplicate.
     juce::addDefaultFormatsToManager (fm);
    #else
     fm.addDefaultFormats();
-   #endif
     for (auto* format : fm.getFormats())
         if (format != nullptr && format->getName() == "LV2")
         {
@@ -41,6 +46,7 @@ inline void addDefaultFormats (juce::AudioPluginFormatManager& fm)
             // the table.
             format->searchPathsForPlugins ({}, true, false);
         }
+   #endif
 }
 
 // JUCE's VST3 and LV2 hosts cache a host-side parameter change and write it into
@@ -148,9 +154,32 @@ inline bool primeCustomLv2 (FormatManager& manager, const pluginpaths::Roots& cu
                 && primed->second.roots == state.roots && primed->second.available == state.available) continue;
             manager.primedLv2Roots.erase (format);
             if (! bundles) bundles = pluginpaths::findBundles (state.roots, ".lv2", abort, &walkError);
-            describeLv2 (*format, bundleIdentifiers (*bundles), abort);
+            auto& loaded = manager.loadedLv2Bundles[format];
+            // When it was built, the format loaded every bundle directly inside its
+            // default locations, so a custom folder that is or reaches one leaves
+            // those bundles alone. A Windows default is spelled with environment
+            // variables and matches nothing.
+            std::vector<std::filesystem::path> defaults;
+            const auto locations = format->getDefaultLocationsToSearch();
+            for (int i = 0; i < locations.getNumPaths(); ++i)
+            {
+                const auto raw = locations.getRawString (i);
+                if (! raw.startsWithChar ('~') && ! std::filesystem::u8path (raw.toStdString()).is_absolute()) continue;
+                std::error_code error;
+                auto folder = std::filesystem::canonical (std::filesystem::u8path (locations[i].getFullPathName().toStdString()), error);
+                if (! error) defaults.push_back (std::move (folder));
+            }
+            pluginpaths::Roots unseen;
+            for (const auto& bundle : *bundles)
+            {
+                std::error_code error;
+                const auto parent = std::filesystem::canonical (bundle, error).parent_path();
+                const bool loadedBuilt = ! error && std::find (defaults.begin(), defaults.end(), parent) != defaults.end();
+                if (loaded.count (bundle) == 0 && ! loadedBuilt) unseen.push_back (bundle);
+            }
+            describeLv2 (*format, bundleIdentifiers (unseen), abort);
             if (cancelled()) return false;
-            manager.loadedLv2Bundles[format].insert (bundles->begin(), bundles->end());
+            loaded.insert (unseen.begin(), unseen.end());
             if (! walkError) manager.primedLv2Roots.emplace (format, state);
         }
     if (bundles && ! walkError) manager.walkedLv2Bundles = std::move (*bundles);

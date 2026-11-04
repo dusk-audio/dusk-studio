@@ -435,10 +435,12 @@ if(EXISTS "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui/DearImGui/imgui.h")
         imgui_widget_kit.cpp
         imgui_panel_controls.cpp
         imgui_panel_text.cpp
+        imgui_panel_text_items.cpp
         startup_recent_dates.cpp
         ${CMAKE_SOURCE_DIR}/src/ui/imgui/DuskTheme.cpp
         ${CMAKE_SOURCE_DIR}/src/ui/imgui/PanelControls.cpp
         ${CMAKE_SOURCE_DIR}/src/ui/imgui/PanelText.cpp
+        ${CMAKE_SOURCE_DIR}/src/ui/imgui/PanelTextItems.cpp
         ${CMAKE_SOURCE_DIR}/src/ui/imgui/StartupView.cpp
         ${CMAKE_SOURCE_DIR}/tools/gui-spike/ChannelStripView.cpp
         ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/dusk/DuskWidgets.cpp
@@ -725,6 +727,7 @@ if(DUSKSTUDIO_NATIVE_LV2)
 
     target_sources(dusk-studio-tests PRIVATE
         lv2_bundle_load.cpp
+        plugin_scan_lv2.cpp
         lv2_file_state.cpp
         lv2_patch_feedback.cpp
         lv2_instance_process.cpp
@@ -750,6 +753,18 @@ if(DUSKSTUDIO_NATIVE_LV2)
         dusk-studio-worker-lv2-fixture
         dusk-studio-midi-probe-lv2-fixture
         dusk-studio-state-probe-lv2-fixture)
+
+    # The app itself is checked by the Linux CI build, which builds it; this tree
+    # builds only the test binary and the plug-in host, which link the same mix.
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        set(_duskstudio_lv2_isolated_binaries $<TARGET_FILE:dusk-studio-tests>)
+        if(TARGET dusk-studio-plugin-host)
+            list(APPEND _duskstudio_lv2_isolated_binaries $<TARGET_FILE:dusk-studio-plugin-host>)
+        endif()
+        add_test(NAME lv2-symbol-isolation
+            COMMAND ${CMAKE_SOURCE_DIR}/tools/lv2-symbol-isolation.sh ${_duskstudio_lv2_isolated_binaries})
+        unset(_duskstudio_lv2_isolated_binaries)
+    endif()
 endif()
 
 if(DUSKSTUDIO_NATIVE_CLAP OR DUSKSTUDIO_NATIVE_LV2 OR DUSKSTUDIO_NATIVE_VST3)
@@ -1166,12 +1181,12 @@ endif()
 # while a real failure still returns its assertion count. Scope it to the [alsa]
 # tag so an unmatched/stale filter on any other test still fails.
 #
-# They also run serially. Each case registers a sequencer client called "Dusk
-# Studio", and the identifiers the seam hands out are built from those names,
+# They also run serially. Each loopback case opens a bridge client under the
+# same name, and the identifiers the seam hands out are built from those names,
 # with an enumeration-order ordinal to tell duplicates apart. Two cases at once
-# are therefore two clients a case cannot tell apart: one resolves a port
-# belonging to the other process, and the hot-plug case counts the other's
-# client arriving as a change.
+# are therefore two bridges a case cannot tell apart: one resolves a port
+# belonging to the other process, and the hot-plug cases count the other's
+# clients arriving as a change.
 catch_discover_tests(dusk-studio-tests
     TEST_SPEC "[alsa]"
     EXTRA_ARGS --allow-running-no-tests

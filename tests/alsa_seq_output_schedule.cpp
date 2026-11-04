@@ -78,6 +78,8 @@ struct Fixture
     int poolResult = 0;
     int descriptorStatusResult = 0;
     short descriptorEvents = POLLOUT;
+    // Clients the sequencer lists besides the fixture destination, by id.
+    std::map<int, std::string> otherClients;
 
     Fixture() { REQUIRE (current == nullptr); current = this; }
     ~Fixture() { current = nullptr; }
@@ -179,9 +181,12 @@ int __wrap_snd_seq_set_client_pool_output (snd_seq_t* handle, std::size_t size)
 
 int __wrap_snd_seq_query_next_client (snd_seq_t*, snd_seq_client_info_t* info)
 {
-    if (snd_seq_client_info_get_client (info) >= kDestination) return -ENOENT;
-    snd_seq_client_info_set_client (info, kDestination);
-    snd_seq_client_info_set_name (info, "Fixture");
+    auto clients = Fixture::current->otherClients;
+    clients[kDestination] = "Fixture";
+    const auto next = clients.upper_bound (snd_seq_client_info_get_client (info));
+    if (next == clients.end()) return -ENOENT;
+    snd_seq_client_info_set_client (info, next->first);
+    snd_seq_client_info_set_name (info, next->second.c_str());
     return 0;
 }
 
@@ -750,4 +755,37 @@ TEST_CASE ("ALSA output runs its queue only while an output is open", "[alsa-out
     REQUIRE (client.accepted.size() == 1);
     CHECK_THAT (static_cast<double> (timestampNs (client.accepted.front().event) - queueNowNs (client)),
                 WithinAbs ((base - client.statusClockMs) * 1000000.0, (after - before) * 1000000.0 + 2.0));
+}
+
+TEST_CASE ("ALSA output lists no client of this process but lists another copy's", "[alsa-output-schedule]")
+{
+    Fixture fixture;
+    auto first = std::make_unique<AlsaSeqMidiOutput>();
+    auto second = std::make_unique<AlsaSeqMidiOutput>();
+    REQUIRE (fixture.clients.size() == 2);
+    const int firstClient = fixture.clients[0]->id;
+    const int secondClient = fixture.clients[1]->id;
+    constexpr int otherCopy = 77;
+    fixture.otherClients = { { otherCopy, "Dusk Studio" },
+                             { firstClient, "Dusk Studio" },
+                             { secondClient, "Dusk Studio" } };
+
+    const auto identifiers = [] (AlsaSeqMidiOutput& output)
+    {
+        std::vector<std::string> listed;
+        for (const auto& device : output.enumerate())
+            listed.push_back (device.identifier);
+        return listed;
+    };
+    const std::vector<std::string> foreign { kFirstId, kSecondId,
+                                             "alsa-seq:Dusk Studio:First", "alsa-seq:Dusk Studio:Second" };
+    CHECK (identifiers (*first) == foreign);
+    CHECK (identifiers (*second) == foreign);
+
+    // A closed client's number can go to another program, which is then listed.
+    second.reset();
+    const std::vector<std::string> reused { kFirstId, kSecondId,
+                                            "alsa-seq:Dusk Studio:First", "alsa-seq:Dusk Studio:Second",
+                                            "alsa-seq:Dusk Studio:First:1", "alsa-seq:Dusk Studio:Second:1" };
+    CHECK (identifiers (*first) == reused);
 }

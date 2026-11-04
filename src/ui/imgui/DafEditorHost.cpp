@@ -78,7 +78,7 @@ struct DafEditorHost::Impl final : private dusk::Timer
 
         if (const auto failed = probe.previousFailure(); ! failed.empty())
         {
-            const auto marker = probe.path().string();
+            const auto marker = probe.path().u8string();
             log ("a previous run ended while the editor drew its first frame on %s; "
                  "unavailable. Delete %s to try again", failed.c_str(), marker.c_str());
             lastFailure = displayName + " is off: a previous run ended while it drew its "

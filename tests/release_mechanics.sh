@@ -1049,6 +1049,9 @@ asan_job = asan_job_match.group("body")
 intentional_leak_tests = (
     "NativeInsertSlot bumps its generation on every identity change",
     "AlsaAudioIODevice: wedged I/O thread leaks the device, never frees it",
+    # JUCE's LV2 scanner: each search after the first leaks inside lilv 0.24.12.
+    "A custom folder whose links loop finishes discovery in every format that sees it",
+    "Nested custom LV2 bundles prime the parent scanner and fresh scan child",
 )
 for required in (
     "DUSKSTUDIO_ENABLE_ASAN=ON",
@@ -1080,7 +1083,7 @@ assert "detect_leaks=0" not in leak_enabled_step, (
 )
 
 intentional_leak_step = workflow_step(
-    asan_job, "Run leak-for-safety tests under ASan + UBSan"
+    asan_job, "Run the tests that leak by design or in lilv under ASan + UBSan"
 )
 assert "detect_leaks=0" in intentional_leak_step, (
     "the intentional-leak rerun must disable LeakSanitizer"

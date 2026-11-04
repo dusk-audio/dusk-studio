@@ -19,8 +19,9 @@ At very small audio buffers, other busy programs can make occasional blocks run 
   icon, PATH launcher and session-file association. On Wayland the dock icon
   only appears after `install.sh`. The aarch64 build targets 64-bit Raspberry Pi
   OS (Pi 3/4/5). The binary needs `libpipewire-0.3-0` (linked in even to run
-  the ALSA backend), `libsuil-0-0`, `libmp3lame0`, `libsndfile1`, `libcurl4` and
-  `libarchive13` present on the system; the first three are not on a stock desktop install. `README-linux.txt`
+  the ALSA backend), `libsuil-0-0`, `liblilv-0-0`, `libserd-0-0`, `libmp3lame0`,
+  `libsndfile1`, `libcurl4` and `libarchive13` present on the system; the first
+  five are not on a stock desktop install. `README-linux.txt`
   in the tarball lists every linked library with its Debian/Ubuntu package name
   and an `apt install` line. libsodium is compiled in and needs nothing.
   System utf8proc builds also need `libutf8proc3`; the pinned static fallback

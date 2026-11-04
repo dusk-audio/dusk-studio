@@ -1593,7 +1593,7 @@ std::string AudioPipelineSelfTest::testLoopRecordTakeStacking()
                            / ("dusk-loop-record-selftest-" + std::to_string (nonce));
     std::error_code fsError;
     const bool madeDir = std::filesystem::create_directory (testDirPath, fsError);
-    const decltype (savedDir) testDir (testDirPath.string());
+    const decltype (savedDir) testDir (testDirPath.u8string());
 
     bool alignedStart = false;
     bool wrappedPlayhead = false;

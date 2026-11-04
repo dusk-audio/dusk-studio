@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include "TestTempDirectory.h"
 #include "engine/multisample/Sf2Reader.h"
 
 #include <juce_core/juce_core.h>
@@ -8,6 +9,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <string>
 #include <vector>
 
 namespace
@@ -102,6 +104,16 @@ TEST_CASE("Sf2Reader: missing file errors cleanly", "[sf2]")
     auto sf = duskstudio::readSf2("/no/such/file.sf2");
     REQUIRE_FALSE(sf.ok);
     REQUIRE_FALSE(sf.error.empty());
+}
+
+TEST_CASE("Sf2Reader: a file it cannot open is named in UTF-8", "[sf2]")
+{
+    const duskstudio::test::TempDirectory root("dusk-sf2-unicode-");
+    const std::string name = u8"\u0416\u65E5\u672C.sf2";
+    duskstudio::Sf2File sf;
+    REQUIRE_NOTHROW(sf = duskstudio::readSf2(root.path() / std::filesystem::u8path(name)));
+    REQUIRE_FALSE(sf.ok);
+    CHECK(sf.error == "Could not open " + name);
 }
 
 TEST_CASE("Sf2Reader: parses a hand-built minimal SF2", "[sf2]")

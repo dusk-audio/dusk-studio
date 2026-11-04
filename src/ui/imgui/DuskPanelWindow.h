@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AtlasImage.h"
+#include "PanelText.h"
 #include "ShellShortcut.h"
 
 #include <DuskWidgets.hpp>
@@ -103,10 +104,14 @@ public:
     virtual void reserveAtlasImages (ImFontAtlas&) {}
     virtual void rasteriseAtlasImages (ImFontAtlas&) {}
 
-    // True for a view that draws text from outside the app, such as a repository's pack
-    // names, in the text entry face. That face then draws a character it lacks as the
-    // replacement mark rather than as '?'. Read when the atlas is built.
+    // True for a view that draws names in nameFace, or other text from outside the app
+    // such as a repository's pack names in the text entry face. That face then draws a
+    // character it lacks as the replacement mark rather than as '?'. Read when the
+    // atlas is built.
     virtual bool marksMissingGlyphs() const { return false; }
+
+    // The names the last whole frame drew: track, region, take and session names.
+    virtual GlyphTally nameGlyphsForScenario() const { return {}; }
 };
 
 // A native modal panel over the JUCE shell.
@@ -236,6 +241,8 @@ public:
     // How often a field or menu opening has asked the system to focus the child.
     int keyboardRequestsForScenario() const noexcept;
     std::uintptr_t nativeWindowHandleForScenario() const noexcept;
+    // Empty while no view is set.
+    std::optional<GlyphTally> nameGlyphsForScenario() const;
     // False while no window is up.
     bool ignoresKeyRepeatForScenario() const noexcept;
     // Counts input that reached the panel by another road, a key the shell passed

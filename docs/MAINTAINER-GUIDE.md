@@ -492,12 +492,19 @@ scripts/regress.sh prepush               # linux, mac and windows source legs, b
 
 `prepush` is the check before a branch goes to GitHub: the Linux and macOS
 source legs (build, tests, `ctest-runner-limits`, JUCE gate, self-test,
-headless scenarios) and the Windows source leg (MSVC build of CI's targets,
-the Mesa check, ctest; see "Windows source" below) run at the same time, one
-here, one on the Air and one in the `win11` guest, and one table ends the run.
+headless scenarios, and on Linux the manual figure capture) and the Windows
+source leg (MSVC build of CI's targets, the Mesa check, ctest; see "Windows
+source" below) run at the same time, one here, one on the Air and one in the
+`win11` guest, and one table ends the run.
 Each platform's output goes to `linux.log`, `mac.log` and `windows.log` in a
-directory under `$TMPDIR` named above the table, each log opening and closing
-with a timestamped `started` / `finished` line. Linux options and `--host` pass
+`dusk-prepush.*` directory under `$TMPDIR`, each log opening and closing with a
+timestamped `started` / `finished` line. The directory is removed when the run
+ends `regress prepush: OK`. When a leg fails, it is kept and named under the
+table; an interrupted run keeps it too. Each run first removes the
+`dusk-prepush.*` directories under `$TMPDIR` that are over a week old, skipping
+any that belong to a prepush still running, and the week-old `dusk-capture.*`
+and `duskstudio-gnome-activation.*` scratch directories that failed capture and
+window-activation legs keep. Linux options and `--host` pass
 through; package, release-run and Windows package options are refused, and
 `--no-scenarios` goes to Linux only. Ctrl-C stops all three, the guest's build
 or test processes included. A fresh checkout needs its submodules and both
@@ -577,7 +584,8 @@ and the Screen Sharing helper in `scripts/regress/mac/`.
 ### Linux
 
 Prerequisites: `build/` and `build-tests/` already configured, `Xvfb`, GNU
-`timeout` and `flock`.
+`timeout` and `flock`. `capture-screenshots` also needs ImageMagick and
+PipeWire.
 
 | Leg | What it proves |
 |---|---|
@@ -594,14 +602,20 @@ Prerequisites: `build/` and `build-tests/` already configured, `Xvfb`, GNU
 | `scenarios-headless` | `DUSKSTUDIO_RUN_SCENARIOS=all`: the in-app scenario suite. Passes only on exit 0, no `[FAIL]` line, and the terminal `=== scenarios: ` summary - a crash after the last case must not pass on a lucky exit code. Skipped cases go into the leg's note. |
 | `bb-handoff`, `bb-crash-relaunch`, `bb-no-runtime-dir`, `bb-damaged-recent`, `bb-clean-quit`, `bb-window-close`, `bb-quit-twice`, `bb-quit-during-mixdown`, `bb-quit-save-rate`, `bb-oop-child-kill`, `bb-oop-quit-during-load` | the black-box legs: real app processes spawned, killed and read back through their stderr. See "Scenario legs" below. |
 | `bb-gnome-file-drop` | real file drags from a GTK app onto the tape strip in a private headless GNOME session, through Mutter's XWayland relay as on a GNOME desktop: a WAV, a MIDI file and three WAVs at once, each imported through its picker and read back from the autosave. Linux only; `SKIP` without Mutter, XWayland, `dbus-run-session`, xdotool, ImageMagick's `import`, `fusermount3`, or python3 with GTK 4, NumPy and Pillow. See "Scenario legs" below. |
+| `window-activation:launch`, `:covered`, `:minimized`, `:handoff` | the Linux cases of [tests/window_activation_smoke_test.md](../tests/window_activation_smoke_test.md), in a private headless GNOME session as `bb-gnome-file-drop` runs: the app started, then three second launches handing it a session, with a GTK window maximized in front of it, with its window minimized, and over an unsaved edit, where the save prompt must hold the session back until Don't Save. Each passes when Mutter's active window and the X input focus are the app's one window, shown, and the GTK window lost the keyboard and no longer gets the pointer at the app window's centre. Linux only; `SKIP` without Mutter, XWayland, `dbus-run-session`, xdotool, xprop, ImageMagick's `import`, `fusermount3`, or python3 with GTK 4, NumPy and Pillow. A case with no result line fails with the reason the run gave, and a run whose cases all pass but whose session does not end cleanly adds a failed `window-activation:session` row. See "Scenario legs" below. |
 | `bb-x11-drop-input` | XDND drags and a late pointer device against the app on a private bare Xvfb: a drop whose source sends XdndLeave before it answers for the data, a source that never answers, a uri-list holding a comment, a web link and two local WAVs, a link-only drag, and a click from a pointer added after launch, judged from the autosave. Linux only; `SKIP` without Xvfb, xdotool, ImageMagick's `import`, gcc with the libX11, libXi and libXtst headers, or python3 with NumPy and Pillow. See "Scenario legs" below. |
 | `scenarios-gui` | `DUSKSTUDIO_RUN_SCENARIOS=gui:<cases>`: the scenarios that need a window, split across several app instances that run at once, each in its own sandbox on its own Xvfb display (half the cores, at most four; `DUSK_REGRESS_GUI_SHARDS=N` overrides, `1` runs them in one instance). Cases are dealt longest first by the times the last run recorded in `~/.cache/dusk-regress/gui-case-ms.tsv`. The leg passes only if every instance reaches its summary line and every case dealt out reports. Off unless `--gui-scenarios`. |
+| `capture-screenshots` | `docs/capture-screenshots.sh` against the binary in `build/` (`DUSK_CAPTURE_BIN`), writing into a scratch `dusk-capture.*` folder under `$TMPDIR` (`DUSK_CAPTURE_OUT`), never `docs/images/`. Passes when the script exits 0 after confirming every figure `docs/screenshot-list.md` marks ✅ was written; `FAIL` names the missing figures and keeps the folder, with the script's output in `capture.log`, and a pass removes it. About 60 to 90 seconds. `SKIP` without ImageMagick or PipeWire, or with `DUSK_REGRESS_REAL_AUDIO=1`, since the captures need the private null graph. On by default; `--no-capture` leaves it out. |
 | `gui-plugin-picker`, `gui-settings-defaults` | `tests/gui_plugin_picker.sh` and `tests/gui_settings_defaults.sh` against the same binary: the GUI cases that need a seeded config (the picker filter, the native-row pick and the settings defaults), which the suite runs without (the picker cases skip there). With `--gui-scenarios` only. |
 | `release-metadata` | `scripts/release-metadata-check.sh`: `VERSION`, the top changelog heading, the AppStream entry and the release-notes summary agree, in the development or the release-ready state. Off unless `--release-checks`. |
 | `github-ruleset` | the `main` ruleset requires the six CI checks a merge has to pass (Linux amd64 and arm64, macOS, Windows, TSan, ASan+UBSan); `WARN` names the missing ones. Needs an authenticated `gh`. Off unless `--release-checks`. |
 | `patreon-freshness` | Part 10 step 2: no local name overrides, the supporter header at the donor pin, the Patreon dry run. `WARN` when the dry run refreshed tokens, which means the Actions secrets need updating before the tag. Off unless `--release-checks`. |
 
 `--no-scenarios` leaves the scenario legs out of the run entirely.
+`capture-screenshots` runs by default, so `prepush` runs it too: a change that
+stops a figure being written is caught before the push, not at the next figure
+refresh. `--no-capture` leaves it out; it is `SKIP` with `--scenarios-only` and in
+package mode, where the checkout's figure list says nothing about the package.
 `--release-checks` adds the three pre-tag legs; they touch the network and, in
 the Patreon case, the local token pair, so they are not part of a default run.
 `--scenarios-only` runs nothing but them, against whatever binary is already in
@@ -612,8 +626,9 @@ fixtures.
 
 Everything from `selftest-xvfb` down runs on a private Xvfb display with
 `WAYLAND_DISPLAY` unset - the binary aborts against a live Wayland session, so
-no leg may ever launch it on the desktop. `bb-gnome-file-drop` is the one
-exception to Xvfb: it brings its own private compositor instead.
+no leg may ever launch it on the desktop. `bb-gnome-file-drop` and the
+`window-activation:*` cases are the exceptions to Xvfb: they bring their own
+private compositor instead.
 `bb-x11-drop-input` starts an Xvfb of its own rather than share the run's,
 because the pointer it adds would stay on that display for the legs after it.
 
@@ -765,9 +780,10 @@ this display` - what it will not accept is neither. Set
 `DUSK_REGRESS_REQUIRE_PICKER=1` on a host where GLX does work to demand the
 first.
 
-`bb-gnome-file-drop` runs `scripts/regress/gnome-file-drop.sh`, which starts a
-headless Mutter (`--wayland --headless --virtual-monitor 1920x1080`, XWayland
-on) under its own `dbus-run-session`, from `env -i` with a private `HOME`, all
+`bb-gnome-file-drop` runs `scripts/regress/gnome-file-drop.sh`, which starts,
+through `scripts/regress/gnome-session.sh`, a headless Mutter
+(`--wayland --headless --virtual-monitor 1920x1080`, XWayland on) under its
+own `dbus-run-session`, from `env -i` with a private `HOME`, all
 four `XDG_*_HOME`, a 0700 `XDG_RUNTIME_DIR` and `GSETTINGS_BACKEND=memory`. The
 app gets both `WAYLAND_DISPLAY` and `DISPLAY`, so it takes the production
 XWayland path. `scripts/regress/gnome_file_drop.py` drives the pointer through
@@ -783,6 +799,23 @@ Everything carrying the session's runtime dir is killed at the
 end, and FUSE mounts under it are unmounted. The leg needs a PipeWire socket,
 the private null graph or the machine's; without one the app would open the
 sound card through ALSA, so it skips instead.
+
+The `window-activation:*` rows come from one run of
+`scripts/regress/gnome-window-activation.sh`, which starts the same private
+session and runs `scripts/regress/gnome_window_activation.py` in it. One app
+instance takes the four cases in turn, and every second launch is a
+`DuskStudio <session.json>` process in the same session, the route a GNOME
+Files double-click takes. The window put in front is a GTK 4 window on Wayland,
+maximized, which logs its keyboard focus and every pointer event it gets;
+before each handoff the checks must show it in front, so none of them passes
+by default. The save prompt is found by its flat panel colour in a grab of the
+app window and answered with a click on Don't Save, and the M key's marker is
+read back from the autosave before the handoff, so a key the app missed
+cannot pass for a missing prompt. The run takes about a minute. A failed run
+keeps its scratch directory under `$TMPDIR` and names it in the output: a grab
+of the app window for every case, the app's output and the GTK window's event
+logs. `bash scripts/regress/gnome-window-activation.sh <DuskStudio binary>`
+runs the cases on their own and prints their `PASS` / `FAIL` lines.
 
 `bb-x11-drop-input` runs `scripts/regress/x11-drop-input.sh`, which builds the X
 client in `scripts/regress/x11_drop_input.c` with gcc, starts a private bare
@@ -1793,20 +1826,21 @@ manual checks that the script cannot cover:
 - Inspect the tarball, DMG, and MSI payloads. Each must be Dusk-only, with no
   `JUCE-*` paths, and each must contain the complete
   [LICENSES.txt](../LICENSES.txt), not merely a file by that name.
-- On macOS and Windows, run the
+- Run the
   [window-activation smoke test](../tests/window_activation_smoke_test.md)
-  against the installed release: its four cases through
+  against the release: its four cases through
   `TMPDIR=/var/tmp scripts/regress.sh mac --window-activation-only` and
   `TMPDIR=/var/tmp scripts/regress.sh windows --installed X.Y.Z` (package mode
-  runs them too), and its "What still needs a person" checks by hand.
+  runs them too), the Linux ones in `scripts/regress.sh linux --release-run`,
+  and its "What still needs a person" checks by hand.
 - In every bundled `LICENSES.txt`, confirm the full-text section is present and
   the JUCE-bundled entries cover HarfBuzz, SheenBidi, libjpeg, libpng, zlib,
   FLAC, and Ogg/Vorbis. If a future SheenBidi source adds a NOTICE file, ship
   that file alongside its license text.
 
 The release is accepted only when the asset/body check, checksum verification,
-PDF inspection, private-Xvfb smoke tests, payload inspection, macOS and Windows
-window-activation smoke tests, and license checks all pass.
+PDF inspection, private-Xvfb smoke tests, payload inspection, window-activation
+smoke tests, and license checks all pass.
 
 ---
 

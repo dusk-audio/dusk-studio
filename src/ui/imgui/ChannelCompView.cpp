@@ -1,5 +1,6 @@
 #include "ChannelCompView.h"
 #include "DuskTheme.h"
+#include "PanelText.h"
 #include "../../engine/CompModeMap.h"
 #include "../../session/Session.h"
 
@@ -116,6 +117,7 @@ public:
     // A processing editor: the DAW behind stays readable so the strip meters can be
     // watched while auditioning.
     float dimAlpha() const override { return 0.28f; }
+    bool marksMissingGlyphs() const override { return true; }
 
     void draw (dw::Context& ctx, ImVec2 origin, ImVec2 size) override
     {
@@ -208,11 +210,12 @@ private:
         {
             char scratch[96];
             const float titleSize = scale * kTitleSize;
-            dw::text (ctx, ctx.fonts->band, titleSize,
+            ImFont* const face = nameFace (*ctx.fonts);
+            const auto name = displayText (track.nameUtf8());
+            dw::text (ctx, face, titleSize,
                       ImVec2 (at.x + titleInset, at.y + scale * (kHeaderH - kTitleSize) * 0.5f),
                       titleW, rgba (kTitleColour),
-                      fitted (ctx.fonts->band, titleSize, titleW,
-                              track.nameUtf8().c_str(), scratch, sizeof (scratch)));
+                      fitted (face, titleSize, titleW, name.c_str(), scratch, sizeof (scratch)));
         }
 
         dw::ButtonStyle style;

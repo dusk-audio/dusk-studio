@@ -37,7 +37,15 @@ canonical source.
   second time at startup, which filled the log with "Reloading plugin"
   warnings, and its native LV2 scan loads a bundle that two search folders
   reach once. On Linux and macOS, a custom plug-in folder that is also a
-  standard LV2 folder is searched once.
+  standard LV2 folder is searched once, and **Scan plugins** no longer loads
+  every LV2 bundle again. On every platform, scanning again in the same
+  session loads only the bundles a custom folder has gained.
+- **LV2 plug-ins installed by the distribution.** On openSUSE and Fedora, LV2
+  plug-ins installed in the system's `lib64` LV2 folder, such as the
+  distribution's sfizz, were missing from the plug-in picker. Dusk Studio's
+  LV2 host now uses the system's LV2 library and its standard folders, so a
+  scan finds them. The Linux download needs the `liblilv-0-0` and
+  `libserd-0-0` packages.
 - **Rolling seeks at 192 kHz.** After a seek or Play every track refilled its
   playback window in the same audio block, and the read burst that started
   could stall the CPU for 2 to 3 ms, past a 192 kHz callback's deadline. Each
@@ -46,13 +54,29 @@ canonical source.
 - **SFZ pack descriptions.** The SFZ Manager joined a pack's two
   descriptions with a space, so they ran together or repeated a sentence.
   The second now starts its own sentence, and a description the other one
-  already contains is left out.
+  already contains is left out, even when its letter case differs. Both
+  rules hold for Greek, Cyrillic, Chinese and Japanese text as well as
+  English.
 - **Full-width characters in SFZ pack names.** The SFZ Manager drew "?" for
   characters its font lacks, such as the full-width brackets in
   `Model（sfz）`. Full-width letters, digits and punctuation now show as
   their plain forms, so that name reads `Model(sfz)`. Any other character
   the font lacks, such as Chinese or Japanese text, shows the Unicode
   replacement mark instead of "?".
+- **SFZ program names with "##".** The SFZ Manager's **Program** list and
+  its closed preview cut a program name or file path at "##", so
+  `Piano ## Soft` read `Piano`. Names now show in full.
+- **Dusk Studio's own MIDI ports.** On Linux the MIDI input and output lists
+  offered Dusk Studio's own ports, so its MIDI output could be routed back
+  into its own input. The lists now leave them out, and Dusk Studio opening or
+  closing its own ports no longer rebuilds them. Another copy of Dusk Studio
+  running at the same time is still listed.
+- **Names in other scripts.** The audio editor, piano roll, compressor
+  editor and Startup dialog drew "?" for characters outside Western European
+  Latin, such as Greek or Cyrillic, in track, region, take and session
+  names. Those names now use the font of the fields they are typed in, and a
+  character that font lacks, such as Chinese text, shows the Unicode
+  replacement mark.
 - **Manual figures.** `docs/capture-screenshots.sh` waits for each native
   panel's frame instead of closing the panel after a fixed delay, so the
   piano roll and audio editor figures are written again on a slow or loaded

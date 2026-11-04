@@ -1991,7 +1991,8 @@ void MainComponent::setStatusForPath (const juce::String& prefix,
 
 void MainComponent::setStatusText (const char* text)
 {
-    statusLabel.setText (text, juce::dontSendNotification);
+    // JUCE reads a char pointer as ASCII and a std::string as UTF-8.
+    statusLabel.setText (std::string (text), juce::dontSendNotification);
     statusLabel.setTooltip ({});
 }
 
@@ -6284,9 +6285,9 @@ void MainComponent::menuItemSelected (int menuItemID, int /*topLevelMenuIndex*/)
                 // Nothing was launched, so say where the file is rather than
                 // leaving a menu click that silently did nothing.
                 const auto message = "Dusk Studio could not hand this file to a "
-                                     "default application: " + quickstart.string()
+                                     "default application: " + quickstart.u8string()
                                    + ". Open it from there by hand.";
-                showDuskAlert (*this, "Could not open the quickstart", message.c_str());
+                showDuskAlert (*this, "Could not open the quickstart", message);
             }
             break;
         }

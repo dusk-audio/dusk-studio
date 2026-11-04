@@ -1,5 +1,7 @@
 #include "PanelText.h"
 
+#include <DearImGui/imgui_internal.h>
+
 namespace duskstudio::imgui
 {
 DuskWidgets::Fonts buildPanelFonts (ImFontAtlas& atlas, const void* ttfData, int ttfDataSize,
@@ -27,6 +29,11 @@ DuskWidgets::Fonts buildPanelFonts (ImFontAtlas& atlas, const void* ttfData, int
     mark.RasterizerDensity = face.RasterizerDensity;
     atlas.AddFontFromMemoryTTF (const_cast<void*> (ttfData), ttfDataSize, size, &mark, kReplacementMark);
     return fonts;
+}
+
+ImFont* nameFace (const DuskWidgets::Fonts& fonts)
+{
+    return fonts.textEntry != nullptr ? fonts.textEntry : fonts.band;
 }
 
 std::string displayText (std::string_view utf8)
@@ -60,5 +67,19 @@ std::string displayText (std::string_view utf8)
         shown += utf8[i];
     }
     return shown;
+}
+
+void GlyphTally::add (ImFont* font, std::string_view utf8)
+{
+    const char* at = utf8.data();
+    const char* const end = at + utf8.size();
+    while (at < end)
+    {
+        unsigned int codepoint = 0;
+        at += ImTextCharFromUtf8 (&codepoint, at, end);
+        ++drawn;
+        if (font == nullptr || font->FindGlyphNoFallback (static_cast<ImWchar> (codepoint)) == nullptr)
+            ++missing;
+    }
 }
 } // namespace duskstudio::imgui

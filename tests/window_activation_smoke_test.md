@@ -1,4 +1,4 @@
-# macOS and Windows window-activation smoke test
+# Window-activation smoke test
 
 Four cases decide whether Dusk Studio comes to the front when it should on
 macOS and Windows: the initial launch, a session opened from inside the app,
@@ -6,7 +6,9 @@ a session opened from outside while the window is minimized, and a session
 opened from outside over an unsaved edit. CI can compile and source-check this
 code but cannot own a foreground desktop session, so the cases run as legs of
 the regression runner against an installed package, and a person covers what
-the legs cannot.
+the legs cannot. Linux runs the same idea under GNOME's window manager in a
+private headless session, as part of every `scripts/regress.sh linux` run, with
+a second launch over another window in place of the open from inside.
 
 ## How a session reaches a running instance
 
@@ -19,6 +21,10 @@ different route on each platform:
 - **macOS**: LaunchServices. **Open With**, a drop on the Dock icon and
   `open -a DuskStudio <session.json>` all hand the document to the running
   instance as an Apple event. No second process starts.
+- **Linux**: opening a `session.json` from the file manager runs
+  `DuskStudio <session.json>`. That second process finds the running instance
+  through the single-instance handoff, passes the path over and exits 0, and
+  the existing window must come forward.
 - **Windows**: Explorer's **Open with** runs `DuskStudio.exe "<session.json>"`.
   That second process finds the running instance through the single-instance
   handoff, passes the path over and exits 0, and the existing window must come
@@ -39,7 +45,9 @@ the MSI installed in the `win11` guest, which must be version X.Y.Z. Package
 mode (`mac --dmg` / `mac --release-run`, `windows --msi` /
 `windows --release-run`) runs the same cases against the package it installs.
 Prerequisites, durations and the evidence each run leaves are in
-docs/MAINTAINER-GUIDE.md, Part 9b.
+docs/MAINTAINER-GUIDE.md, Part 9b. The Linux cases are scenario legs, so
+`TMPDIR=/var/tmp scripts/regress.sh linux` runs them against `build/`, and
+`--tarball` / `--release-run` against the package it unpacks.
 
 ### macOS (`scripts/regress/mac-window-activation.sh`)
 
@@ -83,16 +91,60 @@ Each case leaves a screenshot, `shot-phase4-<case>.png`, in the run
 directory, and the probe's record goes to `posts/phase4-window-activation-events.log`
 there.
 
+### Linux (`scripts/regress/gnome-window-activation.sh`)
+
+The leg starts a headless Mutter with Xwayland on a private session bus, from
+an empty environment with its own `HOME`, XDG directories and runtime dir, and
+runs `scripts/regress/gnome_window_activation.py` inside it. The app takes the
+production path, an Xwayland client whose window Mutter manages. The other
+window is a GTK 4 window on Wayland, as most GNOME applications are, maximized
+over the whole monitor; it reports its keyboard focus and every pointer event
+it gets. Input goes through `org.gnome.Mutter.RemoteDesktop` on the private
+bus. One app instance runs the four cases in turn.
+
+The app is in front when all of these hold: Mutter's `_NET_ACTIVE_WINDOW` and
+the X input focus are its window, the only window of the app Mutter manages;
+the window is not hidden and its `WM_STATE` is Normal; the GTK window says it
+lost the keyboard; and the pointer held at the centre of the app's window
+reaches the app and not the GTK window. Before each handoff the same checks
+must show the GTK window in front, so a check that cannot fail does not pass a
+case. Every case also requires a single Dusk Studio process and the second
+launch to exit 0.
+
+| Case | Action | Pass |
+|---|---|---|
+| `window-activation:launch` | The GTK window in front, then the app started with session A named in its environment. | In front as above; session A loaded. |
+| `window-activation:covered` | The GTK window opened over the whole monitor, then `DuskStudio wa-b.json` run as a second process. | The second process exited 0; session B loaded; in front. |
+| `window-activation:minimized` | The main window minimized (`WM_CHANGE_STATE` Iconic), the GTK window in front, then `DuskStudio wa-c.json`. | The same window back from minimized; session C loaded; in front. |
+| `window-activation:handoff` | M drops a marker (an unsaved edit, read back from the autosave), the GTK window in front, then `DuskStudio wa-d.json`. | In front with the save prompt in a grab of the window and session D held back; Don't Save, clicked where the prompt draws it, opens session D, and the prompt is gone. |
+
+Each case leaves a grab of the app window, `<case>.png`. A failed run keeps its
+scratch directory under `$TMPDIR` and names it; the grabs, the app's output and
+the GTK window's event log are there.
+
+What each case can catch: Mutter honours an activation request without a
+timestamp, which JUCE's own `toFront` sends, as well as the pager-sourced
+request the app adds, so either one brings the window forward. Every session
+load ends with a raise of its own, so `covered` and `minimized` pass even when
+the handoff skips its raise; `handoff`, where the load waits behind the save
+prompt, is the case that fails then. With the handoff's raise gone the X input
+focus still reached the app, through a focus call made after the handoff,
+while the window stayed under the GTK window, and only the pointer check saw
+it. A new window gets the keyboard under Mutter's own policy, so `launch`
+passes whatever the app does. The leg covers the default Xwayland path; the
+native Wayland backend (`DUSKSTUDIO_NATIVE_WAYLAND=1`) is not tested.
+
 ## What still needs a person
 
-Run these by hand on both platforms before a release, with two disposable
-sessions and a harmless unsaved edit in the first one for the last row.
+Run these by hand on all three platforms before a release, with two
+disposable sessions and a harmless unsaved edit in the first one for the last
+row.
 
-| Check | macOS | Windows |
-|---|---|---|
-| The literal gestures | Finder's **Open With > Dusk Studio** on a `session.json`, and a `session.json` dropped on the Dock icon, each with Dusk Studio running and minimized: the window comes out of the Dock, frontmost, and an unsaved edit raises the save prompt above it. | Explorer's **Open with** on a `session.json`, choosing `DuskStudio.exe`, with Dusk Studio running and minimized: the window is restored and comes forward or its taskbar button flashes, no second window remains, and an unsaved edit raises the save prompt. |
-| A launch from the desktop | Dusk Studio started from Finder or Launchpad with another application in front comes up frontmost and takes typing at once. | Dusk Studio started from the Start menu shortcut with another application in front comes up in front or flashes its taskbar button. |
-| Another machine | A Retina display: the leg reads captures on the Air's 1x desktop only. | A physical machine with a person's real foreground history; the guest only ever has Notepad and File Explorer in front. |
+| Check | macOS | Windows | Linux |
+|---|---|---|---|
+| The literal gestures | Finder's **Open With > Dusk Studio** on a `session.json`, and a `session.json` dropped on the Dock icon, each with Dusk Studio running and minimized: the window comes out of the Dock, frontmost, and an unsaved edit raises the save prompt above it. | Explorer's **Open with** on a `session.json`, choosing `DuskStudio.exe`, with Dusk Studio running and minimized: the window is restored and comes forward or its taskbar button flashes, no second window remains, and an unsaved edit raises the save prompt. | A double-click on a `session.json` in GNOME Files, with Dusk Studio running and minimized: the window comes forward with the keyboard, no second window remains, and an unsaved edit raises the save prompt. |
+| A launch from the desktop | Dusk Studio started from Finder or Launchpad with another application in front comes up frontmost and takes typing at once. | Dusk Studio started from the Start menu shortcut with another application in front comes up in front or flashes its taskbar button. | Dusk Studio started from the GNOME application grid with another application in front comes up in front and takes typing at once. |
+| Another machine | A Retina display: the leg reads captures on the Air's 1x desktop only. | A physical machine with a person's real foreground history; the guest only ever has Notepad and File Explorer in front. | A full GNOME Shell desktop and a KDE Plasma one: the leg runs bare Mutter, with no shell and no other window manager. |
 
 A command-line second launch on macOS (`DuskStudio.app/Contents/MacOS/DuskStudio
 <session.json>` while the app runs) goes through the single-instance handoff
