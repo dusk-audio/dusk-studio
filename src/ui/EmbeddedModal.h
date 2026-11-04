@@ -1036,7 +1036,11 @@ inline void dispatchShellShortcut (imgui::ShellShortcut shortcut)
         { 'Z', 'z', command | shift },
         { 'S', 's', command },
         { 'S', 's', command | shift },
-        { 'Q', 'q', command }
+        { 'Q', 'q', command },
+        { '1', '1', command },
+        { '2', '2', command },
+        { '3', '3', command },
+        { '4', '4', command }
     };
     static_assert (std::size (bindings)
                        == static_cast<std::size_t> (imgui::ShellShortcut::count),

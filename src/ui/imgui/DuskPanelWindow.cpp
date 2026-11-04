@@ -917,6 +917,19 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
             forward (binding.key);
         for (const auto key : kSessionKeys)
             forward (key);
+
+        if (view == nullptr || view->wantsPlate() || shellKeys != PanelShellKeys::all
+            || ! io.KeyCtrl || io.KeySuper || io.KeyShift || io.KeyAlt)
+            return;
+        static constexpr std::array<ShortcutBinding, 4> stages { {
+            { ImGuiKey_1, ShellShortcut::recordingStage },
+            { ImGuiKey_2, ShellShortcut::mixingStage },
+            { ImGuiKey_3, ShellShortcut::masteringStage },
+            { ImGuiKey_4, ShellShortcut::auxStage }
+        } };
+        for (const auto& binding : stages)
+            if (ImGui::IsKeyPressed (binding.key, false) && ! view->claimsShortcut (binding.shortcut))
+                callbacks.shortcut (binding.shortcut);
     }
 
     void requestDismiss()
