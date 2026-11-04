@@ -112,6 +112,16 @@ void MiniTimelineStrip::syncWindow()
             self->failed = ! std::exchange (self->closing, false);
             self->hideTooltip();
             self->repaint();
+            // Closing a focused native child can clear the covering modal's OS focus.
+            const auto& modals = EmbeddedModal::activeModalStack();
+            if (! modals.empty())
+                if (auto* body = modals.back()->getBody())
+                {
+                    if (auto* peer = body->getPeer(); peer != nullptr && ! peer->isFocused())
+                        peer->grabFocus();
+                    if (! body->hasKeyboardFocus (true))
+                        body->grabKeyboardFocus();
+                }
         }
     };
     const auto geometry = callbacks.geometry();

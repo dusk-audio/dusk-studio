@@ -289,6 +289,22 @@ std::optional<ScenarioResult> runMiniTimelineMarkers (GuiHost& host, ScenarioCon
     } });
     steps->push_back ({ 200, [&ctx, &session, &transport]
     { ctx.expect (transport.getPlayhead() == session.getMarkers()[0].timelineSamples, "moved marker hit geometry was stale"); } });
+    steps->push_back ({ 200, [&host]
+    { host.raiseAlert ("Marker navigation", "Return to the mini timeline after closing this message."); } });
+    steps->push_back ({ 200, [&host, &ctx]
+    {
+        ctx.expect (host.modalHasKeyboardFocus(), "closing the mini timeline took focus from the modal");
+        ctx.expect (host.modalBodyOnTop(), "closing the mini timeline covered the modal");
+        ctx.expect (! host.clickMiniMarker (0), "mini timeline accepts native input behind the alert");
+        ctx.expect (host.pressPeerKey ("escape"), "the covering alert did not accept Escape");
+    } });
+    steps->push_back ({ 350, [&host, &ctx]
+    {
+        ctx.expect (host.modalStackEmpty(), "Escape left the covering alert open");
+        ctx.expect (host.clickMiniMarker (1), "mini timeline did not reopen after the alert");
+    } });
+    steps->push_back ({ 200, [&ctx, &session, &transport]
+    { ctx.expect (transport.getPlayhead() == session.getMarkers()[1].timelineSamples, "reopened marker did not seek after the alert"); } });
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
 }
