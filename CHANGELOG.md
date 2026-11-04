@@ -66,6 +66,8 @@ canonical source.
 - **SFZ program names with "##".** The SFZ Manager's **Program** list and
   its closed preview cut a program name or file path at "##", so
   `Piano ## Soft` read `Piano`. Names now show in full.
+- **Audio device names with "##".** Audio Settings now shows the complete
+  device name in the Output and Input lists and their closed previews.
 - **Dusk Studio's own MIDI ports.** On Linux the MIDI input and output lists
   offered Dusk Studio's own ports, so its MIDI output could be routed back
   into its own input. The lists now leave them out, and Dusk Studio opening or
