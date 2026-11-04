@@ -502,7 +502,9 @@ timestamped `started` / `finished` line. The directory is removed when the run
 ends `regress prepush: OK`. When a leg fails, it is kept and named under the
 table; an interrupted run keeps it too. Each run first removes the
 `dusk-prepush.*` directories under `$TMPDIR` that are over a week old, skipping
-any that belong to a prepush still running. Linux options and `--host` pass
+any that belong to a prepush still running, and the week-old `dusk-capture.*`
+and `duskstudio-gnome-activation.*` scratch directories that failed capture and
+window-activation legs keep. Linux options and `--host` pass
 through; package, release-run and Windows package options are refused, and
 `--no-scenarios` goes to Linux only. Ctrl-C stops all three, the guest's build
 or test processes included. A fresh checkout needs its submodules and both

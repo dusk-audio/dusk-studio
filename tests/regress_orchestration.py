@@ -116,9 +116,12 @@ with tempfile.TemporaryDirectory(prefix="dusk-regress-contract-") as scratch:
     fresh = log_folder("dusk-prepush.fresh")
     owned = log_folder("dusk-prepush.owned")
     other = log_folder("dusk-regress-all.stale")
+    capture = log_folder("dusk-capture.stale")
+    activation = log_folder("duskstudio-gnome-activation.stale")
+    asked_to_keep = log_folder("duskstudio-gnome-drop.stale")
     owner_lock = open(owned / ".lock", "w")
     fcntl.flock(owner_lock, fcntl.LOCK_EX)
-    for folder in (stale, owned, other):
+    for folder in (stale, owned, other, capture, activation, asked_to_keep):
         age(folder, week + 3600)
     age(fresh, week - 3600)
 
@@ -136,7 +139,9 @@ with tempfile.TemporaryDirectory(prefix="dusk-regress-contract-") as scratch:
         assert not log_dir.exists(), "a passing prepush kept its logs"
         assert str(log_dir) not in result.stdout.split("RESULT", 1)[1], result.stdout
         assert not stale.exists(), "a week-old prepush folder was not pruned"
-        for folder in (fresh, owned, other):
+        for folder in (capture, activation):
+            assert not folder.exists(), f"a week-old {folder.name} kept by a failed leg was not pruned"
+        for folder in (fresh, owned, other, asked_to_keep):
             assert folder.is_dir(), f"pruning removed {folder.name}"
 
         result, log_dir = prepush_logs(REGRESS_TEST_MAC="FAIL")
