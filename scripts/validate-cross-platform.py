@@ -433,7 +433,7 @@ if ($generator.StartsWith('Visual Studio ', [StringComparison]::Ordinal)) {{
     if ($definitions.Count -ne 1) {{ throw 'DuskStudio compile definitions are missing or duplicated' }}
     $tokens = @($definitions[0].InnerText -split ';' | ForEach-Object {{ $_.Trim() }})
 }} elseif ($generator -ceq 'Ninja') {{
-    $ninja = Get-Content -LiteralPath (Join-Path $build 'build.ninja') -Raw
+    $ninja = (Get-Content -LiteralPath (Join-Path $build 'build.ninja') -Raw).Replace('\\', '/')
     $edges = [regex]::Matches($ninja, '(?m)^build CMakeFiles/DuskStudio\\.dir/src/Main\\.cpp\\.obj: CXX_COMPILER__DuskStudio[^ \\r\\n]*Release[^\\r\\n]*\\r?\\n((?:[ \\t]+[^\\r\\n]*\\r?\\n|\\r?\\n)*)')
     if ($edges.Count -ne 1) {{ throw 'DuskStudio Release Main.cpp compile edge is missing or duplicated' }}
     $definitions = [regex]::Matches($edges[0].Groups[1].Value, '(?m)^  DEFINES = ([^\\r\\n]+)\\r?$')

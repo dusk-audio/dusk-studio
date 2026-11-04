@@ -117,6 +117,11 @@ class ValidatorContract(unittest.TestCase):
                 run(generator=generator, extra=f'DUSKSTUDIO_RESOLVED_ASIO_SDK_PATH:INTERNAL={sdk}\n', expect=False)
                 for macro in ['JUCE_ASIO=10', 'JUCE_ASIO=0', 'JUCE_ASIO=1;JUCE_ASIO=0', 'JUCE_ASIO=1;JUCE_ASIO=1', 'NOT_JUCE_ASIO=1']:
                     run(generator=generator, xml_text=xml.replace('JUCE_ASIO=1', macro), ninja_text=edge.replace('-DJUCE_ASIO=1', ' '.join('-D' + m for m in macro.split(';'))), expect=False)
+            for separator in ['/', '\\']:
+                for newline in ['\n', '\r\n']:
+                    native_edge = edge.replace('/', separator)
+                    run(ninja_text=native_edge, newline=newline)
+                    run(ninja_text=native_edge.replace('-DJUCE_ASIO=1', '-DJUCE_ASIO=0'), newline=newline, expect=False)
             run(generator='Unix Makefiles', expect=False)
             run(extra='CMAKE_GENERATOR:INTERNAL=Ninja\n', expect=False)
             for broken in [xml.replace('Release|x64', 'Debug|x64'), xml.replace('JUCE_ASIO=1', 'OTHER=1') + '<!-- JUCE_ASIO=1 -->', xml.replace('</Project>', xml[xml.index('<ItemDefinitionGroup'):xml.index('</Project>')] + '</Project>')]:
