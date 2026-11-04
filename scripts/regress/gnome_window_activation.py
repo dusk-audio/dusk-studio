@@ -336,8 +336,10 @@ class Test:
         processes = self.app.processes()
         if processes != [self.app.process.pid]:
             problems.append("Dusk Studio processes %s, not just %d" % (processes, self.app.process.pid))
-        _, shot = self.app.grab(self.window, name)
-        if problems:
+        image, shot = self.app.grab(self.window, name)
+        if image is None:
+            problems.append("no grab of the window (%s)" % shot)
+        elif problems:
             problems.append("grab %s" % shot)
         return problems
 
