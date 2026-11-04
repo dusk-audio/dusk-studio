@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -31,7 +32,10 @@ def running(pid):
 
 with tempfile.TemporaryDirectory(prefix="dusk-regress-contract-") as scratch:
     root = Path(scratch)
-    child_environment = dict(os.environ, DUSK_REGRESS_RECORD_FILE=str(root / "results.tsv"))
+    runner_tmp = root / "tmp"
+    runner_tmp.mkdir()
+    child_environment = dict(os.environ, DUSK_REGRESS_RECORD_FILE=str(root / "results.tsv"),
+                             TMPDIR=str(runner_tmp))
     scripts = root / "scripts"
     runners = scripts / "regress"
     runners.mkdir(parents=True)
@@ -72,6 +76,8 @@ with tempfile.TemporaryDirectory(prefix="dusk-regress-contract-") as scratch:
         stdout, stderr = process.communicate(timeout=5)
         assert process.returncode == 130, (process.returncode, stdout, stderr)
         wait_for(lambda: not any(running(pid) for pid in children))
+        log_dir = Path(stdout.split("logs in ", 1)[1].splitlines()[0])
+        assert log_dir.is_dir(), "an interrupted prepush removed its logs"
     finally:
         for group in groups:
             try:
@@ -79,6 +85,68 @@ with tempfile.TemporaryDirectory(prefix="dusk-regress-contract-") as scratch:
             except ProcessLookupError:
                 pass
         process.wait()
+
+    logs_root = root / "prepush-logs"
+    logs_runners = logs_root / "scripts/regress"
+    logs_runners.mkdir(parents=True)
+    shutil.copyfile(repo / "scripts/regress.sh", logs_root / "scripts/regress.sh")
+    for runner, platform in (("linux", "linux"), ("mac", "mac"), ("windows-source", "windows")):
+        (logs_runners / f"{runner}.sh").write_text(
+            "#!/usr/bin/env bash\n"
+            f'status="${{REGRESS_TEST_{platform.upper()}:-PASS}}"\n'
+            f'printf "{platform}\\t%s\\tstub\\t0\\t\\n" "$status" >>"$DUSK_REGRESS_RECORD_FILE"\n'
+            '[[ "$status" == PASS ]]\n'
+        )
+    logs_tmp = logs_root / "tmp"
+    logs_tmp.mkdir()
+    week = 7 * 24 * 3600
+
+    def log_folder(name):
+        folder = logs_tmp / name
+        folder.mkdir()
+        (folder / "linux.log").write_text("old\n")
+        return folder
+
+    def age(path, seconds):
+        stamp = time.time() - seconds
+        for item in [*path.iterdir(), path]:
+            os.utime(item, (stamp, stamp))
+
+    stale = log_folder("dusk-prepush.stale")
+    fresh = log_folder("dusk-prepush.fresh")
+    owned = log_folder("dusk-prepush.owned")
+    other = log_folder("dusk-regress-all.stale")
+    owner_lock = open(owned / ".lock", "w")
+    fcntl.flock(owner_lock, fcntl.LOCK_EX)
+    for folder in (stale, owned, other):
+        age(folder, week + 3600)
+    age(fresh, week - 3600)
+
+    def prepush_logs(**statuses):
+        result = subprocess.run(["/bin/bash", str(logs_root / "scripts/regress.sh"), "prepush"],
+                                env=dict(child_environment, TMPDIR=str(logs_tmp), **statuses),
+                                capture_output=True, text=True, timeout=20)
+        return result, Path(result.stdout.split("logs in ", 1)[1].splitlines()[0])
+
+    try:
+        result, log_dir = prepush_logs()
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        assert "regress prepush: OK" in result.stdout, result.stdout
+        assert log_dir.parent == logs_tmp, log_dir
+        assert not log_dir.exists(), "a passing prepush kept its logs"
+        assert str(log_dir) not in result.stdout.split("RESULT", 1)[1], result.stdout
+        assert not stale.exists(), "a week-old prepush folder was not pruned"
+        for folder in (fresh, owned, other):
+            assert folder.is_dir(), f"pruning removed {folder.name}"
+
+        result, log_dir = prepush_logs(REGRESS_TEST_MAC="FAIL")
+        assert result.returncode == 1, (result.stdout, result.stderr)
+        verdict = result.stdout.split("regress prepush: FAILED", 1)[1]
+        assert log_dir.is_dir() and (log_dir / "mac.log").is_file(), "a failing prepush lost its logs"
+        assert str(log_dir) in verdict, result.stdout
+    finally:
+        owner_lock.close()
+    assert owned.is_dir()
 
     shutil.copyfile(repo / "scripts/regress/mac.sh", runners / "mac.sh")
     shutil.copyfile(repo / "scripts/regress/common.sh", runners / "common.sh")
@@ -475,4 +543,4 @@ for arg in sys.argv[1:-1]:
                     pass
         process.wait()
 
-print("regression runner: interrupt cleanup, timing cache, Mac paths, missing app and Windows source leg pass")
+print("regression runner: interrupt cleanup, prepush log folders, timing cache, Mac paths, missing app and Windows source leg pass")

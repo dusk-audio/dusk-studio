@@ -496,8 +496,12 @@ headless scenarios) and the Windows source leg (MSVC build of CI's targets,
 the Mesa check, ctest; see "Windows source" below) run at the same time, one
 here, one on the Air and one in the `win11` guest, and one table ends the run.
 Each platform's output goes to `linux.log`, `mac.log` and `windows.log` in a
-directory under `$TMPDIR` named above the table, each log opening and closing
-with a timestamped `started` / `finished` line. Linux options and `--host` pass
+`dusk-prepush.*` directory under `$TMPDIR`, each log opening and closing with a
+timestamped `started` / `finished` line. The directory is removed when the run
+ends `regress prepush: OK`. When a leg fails, it is kept and named under the
+table; an interrupted run keeps it too. Each run first removes the
+`dusk-prepush.*` directories under `$TMPDIR` that are over a week old, skipping
+any that belong to a prepush still running. Linux options and `--host` pass
 through; package, release-run and Windows package options are refused, and
 `--no-scenarios` goes to Linux only. Ctrl-C stops all three, the guest's build
 or test processes included. A fresh checkout needs its submodules and both

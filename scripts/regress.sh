@@ -103,7 +103,9 @@ usage: scripts/regress.sh [linux|mac|windows|windows-source|all|prepush] [option
            The linux options above go to linux and --host to mac; package
            options, the windows package options among them, are refused,
            since a push is about this checkout. Each platform's full output
-           goes to a log named in the table's header.
+           goes to a log in $TMPDIR/dusk-prepush.*, removed when the run ends
+           OK and named under the table when it does not. A run removes the
+           folders of earlier runs that are over a week old.
 
   -h, --help   this text
 EOF
@@ -290,10 +292,20 @@ run_platform() {
     return 0
 }
 if [[ "$TARGET" == prepush ]]; then
+    # A run holds the lock in its log folder until its last runner exits, so a
+    # folder whose lock is free belongs to no live run.
+    find "${TMPDIR:-/tmp}" -mindepth 1 -maxdepth 1 -type d -name 'dusk-prepush.*' \
+        -user "$(id -u)" -mmin +$((7 * 24 * 60)) -print0 \
+        | while IFS= read -r -d '' stale; do
+            flock -n "${stale}/.lock" rm -rf -- "$stale" || true
+        done || true
     # In parallel the three outputs would interleave, so each goes to a log that
-    # outlives the run; run_platform's rc is lost in the background, but a
-    # failing runner always leaves a FAIL row, which the check below reads.
+    # outlives the run unless it ends OK; run_platform's rc is lost in the
+    # background, but a failing runner always leaves a FAIL row, which the check
+    # below reads.
     LOG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dusk-prepush.XXXXXX")"
+    exec {LOG_LOCK_FD}>"${LOG_DIR}/.lock"
+    flock "$LOG_LOCK_FD"
     stop_runners() {
         trap '' INT TERM
         local -a runner_pids=($(jobs -pr)) targets=()
@@ -336,14 +348,15 @@ else
 fi
 
 printf '\n===== regress %s =====\n' "$TARGET"
-[[ -z "${LOG_DIR:-}" ]] || printf 'logs: %s/{linux,mac,windows}.log\n' "$LOG_DIR"
 printf '%-6s %-40s %8s  %s\n' "RESULT" "LEG" "SECONDS" "NOTE"
 while IFS=$'\t' read -r platform status name secs note; do
     printf '%-6s %-40s %8s  %s\n' "$status" "${platform}/${name}" "$secs" "$note"
 done <"$RECORD_FILE"
 if ((rc != 0)) || grep -q $'^[a-z]*\tFAIL\t' "$RECORD_FILE"; then
     printf '\nregress %s: FAILED\n' "$TARGET"
+    [[ -z "${LOG_DIR:-}" ]] || printf 'logs kept: %s/{linux,mac,windows}.log\n' "$LOG_DIR"
     exit 1
 fi
 printf '\nregress %s: OK\n' "$TARGET"
+[[ -z "${LOG_DIR:-}" ]] || rm -rf -- "$LOG_DIR"
 exit 0
