@@ -507,6 +507,9 @@ TEST_CASE ("SFZ Instruments descriptions join catalog text as a separate sentenc
 {
     const std::string ellipsis = "\xE2\x80\xA6", ideographicStop = "\xE3\x80\x82", piano = "\xE9\x92\xA2\xE7\x90\xB4";
     const std::string fluegel = "Fl\xC3\xBC" "gel aus K\xC3\xB6" "ln";
+    const std::string timbre = "\xE9\x9F\xB3\xE8\x89\xB2", library = "\xE5\xBA\x93";
+    const std::string kanaPiano = "\xE3\x83\x94\xE3\x82\xA2\xE3\x83\x8E", soundSource = "\xE9\x9F\xB3\xE6\xBA\x90";
+    const std::string hangulPiano = "\xED\x94\xBC\xEC\x95\x84\xEB\x85\xB8", hangulGrand = "\xEA\xB7\xB8\xEB\x9E\x9C\xEB\x93\x9C";
     struct Example
     {
         const char* label;
@@ -549,6 +552,46 @@ TEST_CASE ("SFZ Instruments descriptions join catalog text as a separate sentenc
           piano, piano + ideographicStop, piano },
         { "An ideographic full stop already ends the sentence",
           piano + ideographicStop, "Recorded at Headroom.", piano + ideographicStop + " Recorded at Headroom." },
+        { "Case beyond ASCII is the same text",
+          "FL\xC3\x9C" "GEL AUS K\xC3\x96" "LN", fluegel + ".", "FL\xC3\x9C" "GEL AUS K\xC3\x96" "LN" },
+        { "Latin Extended-A case is the same text",
+          "\xC5\x81\xC3\x93" "D\xC5\xB9 Organ", "\xC5\x81\xC3\xB3" "d\xC5\xBA organ.", "\xC5\x81\xC3\x93" "D\xC5\xB9 Organ" },
+        { "Greek case, final sigma included, is the same text",
+          "\xCE\xA0\xCE\x99\xCE\x91\xCE\x9D\xCE\x9F\xCE\xA3", "\xCF\x80\xCE\xB9\xCE\xB1\xCE\xBD\xCE\xBF\xCF\x82.",
+          "\xCE\xA0\xCE\x99\xCE\x91\xCE\x9D\xCE\x9F\xCE\xA3" },
+        { "Cyrillic case is the same text",
+          "\xD0\xA0\xD0\x9E\xD0\xAF\xD0\x9B\xD0\xAC", "\xD0\xA0\xD0\xBE\xD1\x8F\xD0\xBB\xD1\x8C.",
+          "\xD0\xA0\xD0\x9E\xD0\xAF\xD0\x9B\xD0\xAC" },
+        { "A full-width comma becomes the full stop",
+          piano + "\xEF\xBC\x8C", "Recorded at Headroom.", piano + ". Recorded at Headroom." },
+        { "An ideographic comma becomes the full stop",
+          piano + "\xE3\x80\x81  ", "Recorded at Headroom.", piano + ". Recorded at Headroom." },
+        { "A full-width semicolon becomes the full stop",
+          piano + "\xEF\xBC\x9B", "Recorded at Headroom.", piano + ". Recorded at Headroom." },
+        { "A full-width colon is trailing punctuation",
+          piano + "\xEF\xBC\x9A", piano + ideographicStop, piano + "\xEF\xBC\x9A" },
+        { "A full-width full stop already ends the sentence",
+          piano + "\xEF\xBC\x8E", "Recorded at Headroom.", piano + "\xEF\xBC\x8E Recorded at Headroom." },
+        { "A corner bracket after a full stop already ends the sentence",
+          "\xE3\x80\x8C" + piano + ideographicStop + "\xE3\x80\x8D", "Recorded at Headroom.",
+          "\xE3\x80\x8C" + piano + ideographicStop + "\xE3\x80\x8D Recorded at Headroom." },
+        { "Each CJK ideograph is a word for containment",
+          piano + timbre + library, piano + timbre + ideographicStop, piano + timbre + library },
+        { "A catalog text that extends unspaced CJK text replaces it",
+          piano + timbre, piano + timbre + library + ideographicStop, piano + timbre + library + ideographicStop },
+        { "Each kana is a word for containment",
+          kanaPiano + soundSource, kanaPiano + ideographicStop, kanaPiano + soundSource },
+        { "Hangul keeps word boundaries",
+          hangulGrand + hangulPiano, hangulPiano + ".", hangulGrand + hangulPiano + ". " + hangulPiano + "." },
+        { "Typographic quotes are not part of a word",
+          "\xE2\x80\x9E" + fluegel + "\xE2\x80\x9C recorded in 2019", fluegel + ".",
+          "\xE2\x80\x9E" + fluegel + "\xE2\x80\x9C recorded in 2019" },
+        { "Invalid UTF-8 in an added text keeps its bytes",
+          "Headroom Organ", "Room \xFF\xC3( tone.", "Headroom Organ. Room \xFF\xC3( tone." },
+        { "Invalid UTF-8 beside a match counts as part of a word",
+          "Organ", "\xFF" "Organ.", "Organ. \xFF" "Organ." },
+        { "A cut-short clause mark is kept as bytes",
+          piano, piano + "\xEF\xBC", piano + "\xEF\xBC" },
     };
     for (const auto& example : examples)
     {

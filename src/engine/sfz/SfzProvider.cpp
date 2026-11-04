@@ -221,9 +221,10 @@ void appendMetadataText (std::string& text, const std::string& extra)
     text += extra;
 }
 
-constexpr std::string_view kSentenceEnds[] { ".", "!", "?", "\xE2\x80\xA6", "\xE3\x80\x82", "\xEF\xBC\x81", "\xEF\xBC\x9F" };
-constexpr std::string_view kClauseEnds[] { ",", ";", ":" };
-constexpr std::string_view kClosers[] { ")", "]", "\"", "'", "\xE2\x80\x9D", "\xE2\x80\x99", "\xC2\xBB" };
+constexpr std::string_view kSentenceEnds[] { ".", "!", "?", "\xE2\x80\xA6", "\xE3\x80\x82", "\xEF\xBC\x81", "\xEF\xBC\x9F", "\xEF\xBC\x8E" };
+constexpr std::string_view kClauseEnds[] { ",", ";", ":", "\xEF\xBC\x8C", "\xEF\xBC\x9B", "\xEF\xBC\x9A", "\xE3\x80\x81" };
+constexpr std::string_view kClosers[] { ")", "]", "\"", "'", "\xE2\x80\x9D", "\xE2\x80\x99", "\xC2\xBB",
+                                        "\xEF\xBC\x89", "\xE3\x80\x8D", "\xE3\x80\x8F" };
 
 template <std::size_t N>
 std::size_t trailingMark (std::string_view text, const std::string_view (&marks)[N])
@@ -235,19 +236,91 @@ std::size_t trailingMark (std::string_view text, const std::string_view (&marks)
 
 bool asciiSpace (char c) { return c == ' ' || (c >= '\t' && c <= '\r'); }
 
-bool wordByte (char c)
+constexpr char32_t kInvalidUtf8 = 0xFFFFFFFF;
+
+struct CodePoint
 {
-    const auto byte = static_cast<unsigned char> (c);
-    return byte >= 0x80 || (byte >= '0' && byte <= '9') || (byte >= 'a' && byte <= 'z') || (byte >= 'A' && byte <= 'Z');
+    char32_t value;
+    std::size_t size;
+};
+
+CodePoint codePointAt (std::string_view text, std::size_t at)
+{
+    const auto byte = [text] (std::size_t i) { return static_cast<unsigned char> (text[i]); };
+    const auto lead = byte (at);
+    if (lead < 0x80) return { lead, 1 };
+    const std::size_t size = lead >= 0xC2 && lead <= 0xDF ? 2 : lead >= 0xE0 && lead <= 0xEF ? 3
+                           : lead >= 0xF0 && lead <= 0xF4 ? 4 : 0;
+    if (size == 0 || at + size > text.size()) return { kInvalidUtf8, 1 };
+    char32_t value = lead & (0x7F >> size);
+    for (std::size_t i = 1; i < size; ++i)
+    {
+        if ((byte (at + i) & 0xC0) != 0x80) return { kInvalidUtf8, 1 };
+        value = (value << 6) | (byte (at + i) & 0x3F);
+    }
+    constexpr char32_t shortest[] { 0, 0, 0x80, 0x800, 0x10000 };
+    if (value < shortest[size] || value > 0x10FFFF || (value >= 0xD800 && value <= 0xDFFF)) return { kInvalidUtf8, 1 };
+    return { value, size };
 }
+
+char32_t codePointBefore (std::string_view text, std::size_t end)
+{
+    for (std::size_t back = 1; back <= 4 && back <= end; ++back)
+    {
+        const auto found = codePointAt (text, end - back);
+        if (found.value != kInvalidUtf8 && found.size == back) return found.value;
+        if ((static_cast<unsigned char> (text[end - back]) & 0xC0) != 0x80) break;
+    }
+    return kInvalidUtf8;
+}
+
+// Simple case folding for Latin-1, Latin Extended-A, Greek and Cyrillic. Every result is below U+0800.
+char32_t foldCase (char32_t c)
+{
+    if ((c >= 'A' && c <= 'Z') || (c >= 0xC0 && c <= 0xDE && c != 0xD7)
+        || (c >= 0x391 && c <= 0x3AB && c != 0x3A2) || (c >= 0x410 && c <= 0x42F)) return c + 0x20;
+    if (c >= 0x400 && c <= 0x40F) return c + 0x50;
+    if ((c >= 0x100 && c <= 0x12F) || (c >= 0x132 && c <= 0x137) || (c >= 0x14A && c <= 0x177)) return c | 1;
+    if ((c >= 0x139 && c <= 0x148) || (c >= 0x179 && c <= 0x17E)) return c + (c & 1);
+    if (c == 0x178) return 0xFF;
+    if (c == 0x17F) return 's';
+    if (c == 0x3C2) return 0x3C3;
+    return c;
+}
+
+enum class Letter { none, word, standalone };
+
+// Unspaced scripts make every ideograph and kana a word of its own; invalid UTF-8 stays part of a word.
+Letter letter (char32_t c)
+{
+    if (c < 0x80) return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ? Letter::word : Letter::none;
+    if ((c >= 0x3005 && c <= 0x3007) || (c >= 0x3040 && c <= 0x30FF) || (c >= 0x3400 && c <= 0x4DBF)
+        || (c >= 0x4E00 && c <= 0x9FFF) || (c >= 0xF900 && c <= 0xFAFF) || (c >= 0x20000 && c <= 0x3FFFF))
+        return Letter::standalone;
+    if (c <= 0xBF || c == 0xD7 || c == 0xF7 || (c >= 0x2000 && c <= 0x206F) || (c >= 0x3000 && c <= 0x303F)
+        || (c >= 0xFF01 && c <= 0xFF0F) || (c >= 0xFF1A && c <= 0xFF20) || (c >= 0xFF3B && c <= 0xFF40)
+        || (c >= 0xFF5B && c <= 0xFF65)) return Letter::none;
+    return Letter::word;
+}
+
+bool sameWord (char32_t left, char32_t right) { return letter (left) == Letter::word && letter (right) == Letter::word; }
 
 std::string comparableText (std::string_view text)
 {
     std::string result;
-    for (const auto c : text)
+    for (std::size_t at = 0; at < text.size();)
     {
-        if (! asciiSpace (c)) result += c >= 'A' && c <= 'Z' ? static_cast<char> (c + 'a' - 'A') : c;
-        else if (! result.empty() && result.back() != ' ') result += ' ';
+        const auto found = codePointAt (text, at);
+        const auto folded = foldCase (found.value);
+        if (found.size == 1 && asciiSpace (text[at])) { if (! result.empty() && result.back() != ' ') result += ' '; }
+        else if (folded == found.value) result.append (text, at, found.size);
+        else if (folded < 0x80) result += static_cast<char> (folded);
+        else
+        {
+            result += static_cast<char> (0xC0 | (folded >> 6));
+            result += static_cast<char> (0x80 | (folded & 0x3F));
+        }
+        at += found.size;
     }
     while (! result.empty())
     {
@@ -264,8 +337,9 @@ bool containsWords (std::string_view text, std::string_view words)
     for (auto at = text.find (words); at != std::string_view::npos; at = text.find (words, at + 1))
     {
         const auto end = at + words.size();
-        if ((at == 0 || ! wordByte (text[at - 1]) || ! wordByte (words.front()))
-            && (end == text.size() || ! wordByte (text[end]) || ! wordByte (words.back()))) return true;
+        if ((at == 0 || ! sameWord (codePointBefore (text, at), codePointAt (words, 0).value))
+            && (end == text.size() || ! sameWord (codePointBefore (words, words.size()), codePointAt (text, end).value)))
+            return true;
     }
     return false;
 }
@@ -280,7 +354,12 @@ void appendDescription (std::string& text, std::string_view extra)
     const auto shown = comparableText (text), added = comparableText (extra);
     if (added.empty() || containsWords (shown, added)) return;
     if (shown.empty() || containsWords (added, shown)) { text = extra; return; }
-    while (! text.empty() && (asciiSpace (text.back()) || trailingMark (text, kClauseEnds) != 0)) text.pop_back();
+    while (! text.empty())
+    {
+        const auto mark = asciiSpace (text.back()) ? 1 : trailingMark (text, kClauseEnds);
+        if (mark == 0) break;
+        text.resize (text.size() - mark);
+    }
     std::string_view sentence = text;
     while (const auto closer = trailingMark (sentence, kClosers)) sentence.remove_suffix (closer);
     if (trailingMark (sentence, kSentenceEnds) == 0) text += '.';

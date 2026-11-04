@@ -54,7 +54,9 @@ canonical source.
 - **SFZ pack descriptions.** The SFZ Manager joined a pack's two
   descriptions with a space, so they ran together or repeated a sentence.
   The second now starts its own sentence, and a description the other one
-  already contains is left out.
+  already contains is left out, even when its letter case differs. Both
+  rules hold for Greek, Cyrillic, Chinese and Japanese text as well as
+  English.
 - **Full-width characters in SFZ pack names.** The SFZ Manager drew "?" for
   characters its font lacks, such as the full-width brackets in
   `Model（sfz）`. Full-width letters, digits and punctuation now show as
