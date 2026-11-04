@@ -35,12 +35,14 @@ A normal desktop Linux (X11 or Wayland). Audio runs over PipeWire/JACK
 (preferred) or ALSA.
 
 The binary links these libraries and will not start without them. The PipeWire
-client is linked in even if you only use ALSA, and libsuil and libmp3lame are
-not on a stock desktop install, so check them first if the binary exits with
-"error while loading shared libraries":
+client is linked in even if you only use ALSA, and libsuil, liblilv, libserd
+and libmp3lame are not on a stock desktop install, so check them first if the
+binary exits with "error while loading shared libraries":
 
     libpipewire-0.3.so.0   libpipewire-0.3-0
     libsuil-0.so.0         libsuil-0-0
+    liblilv-0.so.0         liblilv-0-0
+    libserd-0.so.0         libserd-0-0
     libmp3lame.so.0        libmp3lame0
     libsndfile.so.1        libsndfile1
     libcurl.so.4           libcurl4
@@ -57,7 +59,8 @@ not on a stock desktop install, so check them first if the binary exits with
 
 The right-hand column is the Debian/Ubuntu package name. On those:
 
-    sudo apt install libpipewire-0.3-0 libsuil-0-0 libmp3lame0 libsndfile1 \
+    sudo apt install libpipewire-0.3-0 libsuil-0-0 liblilv-0-0 libserd-0-0 \
+        libmp3lame0 libsndfile1 \
         libcurl4 libarchive13 \
         libasound2 libfreetype6 libfontconfig1 libgl1 libx11-6 libxcursor1 \
         libxext6 libxrandr2 libdbus-1-3

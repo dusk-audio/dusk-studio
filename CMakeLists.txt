@@ -300,8 +300,13 @@ endif()
 # are INTERFACE libraries and juceaide is an imported executable, so nothing
 # in that directory was in the default build to lose.
 add_subdirectory(${DUSKSTUDIO_JUCE_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/JUCE EXCLUDE_FROM_ALL)
-include(cmake/JuceLv2EmptyStateGuard.cmake)
-duskstudio_guard_juce_lv2_empty_state()
+if(DUSKSTUDIO_NATIVE_LV2)
+    include(cmake/JuceLv2SystemLibs.cmake)
+    duskstudio_link_juce_lv2_to_system_lilv()
+else()
+    include(cmake/JuceLv2EmptyStateGuard.cmake)
+    duskstudio_guard_juce_lv2_empty_state()
+endif()
 
 # Dependencies inherit directory options when their subdirectories are added.
 # Set these after JUCE builds its configure-time helper, but before compiling

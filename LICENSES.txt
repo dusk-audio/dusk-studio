@@ -124,6 +124,12 @@ JUCE (audio framework)
                                src/zix file). Versions are the ones JUCE records
                                in format_types/LV2_SDK/juce_lv2_config.h; lv2
                                and sratom carry no version macro there.
+                               Only builds without the native LV2 host
+                               compile these: Windows, and Linux or macOS
+                               builds that lack the lilv development files.
+                               Where the native host is built, JUCE's LV2
+                               format links the same system lilv and serd
+                               instead (cmake/JuceLv2SystemLibs.cmake).
                                Dusk Studio guards Lilv's empty-property sort
                                and routes Windows filesystem calls through
                                UTF-8-aware helpers in build-tree copies. The
@@ -612,10 +618,10 @@ lilv / suil / lv2 (native LV2 host — Linux and macOS builds)
              Sratom 0.6.22 and Zix 0.8.2; archive URLs and SHA-256 values
              live in the build script. ISC is GPL-compatible; no additional obligations beyond
              the license text.
-             This entry is only about the SYSTEM lilv/suil/lv2 the native host
-             uses. JUCE bundles its own static copies of lv2, lilv, serd, sord
-             and sratom, and those compile into every platform's binary — see
-             the LV2 SDK line under JUCE above.
+             JUCE's LV2 format links these system lilv and serd libraries
+             too wherever the native host is built. JUCE's own static copies
+             of lv2, lilv, serd, sord and sratom compile only into builds
+             without the native host; see the LV2 SDK line under JUCE above.
   Upstream : https://gitlab.com/lv2 (lilv, suil), https://lv2plug.in (lv2)
 
 LAME / libmp3lame (MP3 bounce export — optional)

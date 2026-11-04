@@ -132,6 +132,12 @@ jobs:
       - name: Build (Release)
         run: cmake --build build-linux -j6
 
+      - name: LV2 library symbols stay in the system libraries
+        run: |
+          tools/lv2-symbol-isolation.sh \
+            build-linux/DuskStudio_artefacts/Release/DuskStudio \
+            build-linux/DuskStudio_artefacts/Release/dusk-studio-plugin-host
+
       - name: Smoke launch (xvfb, --version)
         # Verifies the binary actually links + starts. --version exits
         # cleanly without bringing up the GUI; xvfb covers the headless

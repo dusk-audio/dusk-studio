@@ -9,6 +9,7 @@
 #if defined(_WIN32)
 #include "../cmake/JuceLv2WindowsPaths.h"
 #else
+#include "TestFileOpens.h"
 #include "TestProcessEnvironment.h"
 
 #include <fcntl.h>
@@ -699,10 +700,18 @@ TEST_CASE ("Registering the LV2 format loads each default bundle once", "[plugin
           [ a lv2:OutputPort, lv2:AudioPort ; lv2:index 1 ; lv2:symbol "out" ; lv2:name "Output" ] .
 )ttl"));
     const duskstudio::test::ScopedEnvironmentVariable home ("HOME", tree.root.u8string());
+    const auto manifest = bundle / "manifest.ttl";
+    std::optional<juce::LV2PluginFormat> alone;
+    const auto constructing = duskstudio::test::countFileOpens (manifest, [&] { alone.emplace(); });
+    const auto reloading = duskstudio::test::countFileOpens (manifest, [&]
+    { alone->searchPathsForPlugins (alone->getDefaultLocationsToSearch(), true, false); });
     std::optional<RegisteredLv2Format> registered;
-    const auto output = duskstudio::test::captureStderr (tree.root, [&] { registered.emplace(); });
-    INFO (output);
-    CHECK (output.find ("Reloading plugin") == std::string::npos);
+    const auto registering = duskstudio::test::countFileOpens (manifest, [&] { registered.emplace(); });
+    if (constructing && reloading && registering)
+    {
+        if (*reloading == 0) WARN ("this lilv does not read a loaded bundle again, so a second load is invisible");
+        CHECK (*registering == *constructing);
+    }
 
     juce::OwnedArray<juce::PluginDescription> descriptions;
     registered->format->findAllTypesForFile (descriptions, uri);

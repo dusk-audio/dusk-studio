@@ -38,6 +38,12 @@ canonical source.
   warnings, and its native LV2 scan loads a bundle that two search folders
   reach once. On Linux and macOS, a custom plug-in folder that is also a
   standard LV2 folder is searched once.
+- **LV2 plug-ins installed by the distribution.** On openSUSE and Fedora, LV2
+  plug-ins installed in the system's `lib64` LV2 folder, such as the
+  distribution's sfizz, were missing from the plug-in picker. Dusk Studio's
+  LV2 host now uses the system's LV2 library and its standard folders, so a
+  scan finds them. The Linux download needs the `liblilv-0-0` and
+  `libserd-0-0` packages.
 - **Rolling seeks at 192 kHz.** After a seek or Play every track refilled its
   playback window in the same audio block, and the read burst that started
   could stall the CPU for 2 to 3 ms, past a 192 kHz callback's deadline. Each

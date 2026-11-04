@@ -7,13 +7,20 @@
 #include "engine/PluginSearchPaths.h"
 #include "engine/lv2/Lv2Bundle.h"
 #include "engine/lv2/Lv2Scanner.h"
+#include "TestFileOpens.h"
 #include "TestProcessEnvironment.h"
 #include "TestTempDirectory.h"
 
 #include <lilv/lilv.h>
+#include <lv2/urid/urid.h>
+
+#if ! defined(_WIN32)
+ #include <dlfcn.h>
+#endif
 
 #include <algorithm>
 #include <atomic>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -80,6 +87,62 @@ TEST_CASE ("Lv2Bundle classifies an instrument bundle", "[lv2][bundle]")
                           [] (const auto& p) { return p.isInstrument; }));
 }
 
+#if ! defined(_WIN32)
+namespace
+{
+const void* lilvCallSite = nullptr;
+
+// The return address lands inside whichever lilv ran the call. Taking
+// lilv_world_new's address would not tell: in a non-PIE binary it is the
+// binary's own PLT stub.
+__attribute__ ((noinline)) void recordLilvCallSite (const char*, void*, const void*, uint32_t, uint32_t)
+{
+    lilvCallSite = __builtin_return_address (0);
+}
+
+LV2_URID mapUri (LV2_URID_Map_Handle handle, const char* uri)
+{
+    auto& uris = *static_cast<std::vector<std::string>*> (handle);
+    const auto found = std::find (uris.begin(), uris.end(), uri);
+    if (found != uris.end()) return static_cast<LV2_URID> (found - uris.begin() + 1);
+    uris.emplace_back (uri);
+    return static_cast<LV2_URID> (uris.size());
+}
+} // namespace
+
+// lilv's default search path is compiled into the library. A copy of lilv
+// inside the binary brings its own, which on Fedora and openSUSE leaves out
+// /usr/lib64/lv2, so the scan has to run the system library.
+TEST_CASE ("The native LV2 host calls the system lilv", "[lv2][scanner][regression][issue-948]")
+{
+    std::vector<std::string> uris;
+    LV2_URID_Map map { &uris, &mapUri };
+    LilvWorld* world = lilv_world_new();
+    REQUIRE (world != nullptr);
+    LilvState* state = lilv_state_new_from_string (world, &map,
+        "@prefix lv2: <http://lv2plug.in/ns/lv2core#> .\n"
+        "@prefix pset: <http://lv2plug.in/ns/ext/presets#> .\n"
+        "<urn:duskstudio:test:call-site> a pset:Preset ;\n"
+        " lv2:appliesTo <urn:duskstudio:test:plugin> ;\n"
+        " lv2:port [ lv2:symbol \"gain\" ; pset:value 0.5 ] .\n");
+    REQUIRE (state != nullptr);
+    lilvCallSite = nullptr;
+    lilv_state_emit_port_values (state, &recordLilvCallSite, nullptr);
+    lilv_state_free (state);
+    lilv_world_free (world);
+    REQUIRE (lilvCallSite != nullptr);
+
+    Dl_info lilv {};
+    REQUIRE (::dladdr (lilvCallSite, &lilv) != 0);
+    Dl_info self {};
+    REQUIRE (::dladdr (reinterpret_cast<const void*> (&recordLilvCallSite), &self) != 0);
+    const std::string library (lilv.dli_fname != nullptr ? lilv.dli_fname : "");
+    INFO ("lilv ran from " << library);
+    CHECK (library != std::string (self.dli_fname != nullptr ? self.dli_fname : ""));
+    CHECK (std::filesystem::path (library).filename().string().find ("lilv") != std::string::npos);
+}
+#endif
+
 namespace
 {
 void writeLv2Bundle (const std::filesystem::path& bundle, const std::string& uri)
@@ -113,33 +176,42 @@ TEST_CASE ("LV2 discovery loads a bundle on LV2_PATH once when a search folder r
     const duskstudio::test::ScopedEnvironmentVariable home ("HOME", root.u8string());
     const duskstudio::test::ScopedEnvironmentVariable lv2Path ("LV2_PATH", "~/installed/");
     const duskstudio::test::ScopedEnvironmentVariable config ("DUSKSTUDIO_CONFIG_DIR", (root / "config").u8string());
-    std::string error;
-    REQUIRE (duskstudio::pluginpaths::save ({ custom }, error));
 
-    // Without a reload warning from this lilv there is nothing to observe.
-    const auto probe = duskstudio::test::captureStderr (root, [&]
+    const auto manifest = installed / "Shared.lv2" / "manifest.ttl";
+    const auto loads = [&] (const std::vector<fs::path>& bundles)
     {
-        LilvWorld* world = lilv_world_new();
-        LilvNode* uri = lilv_new_file_uri (world, nullptr, (installed / "Shared.lv2/").c_str());
-        lilv_world_load_bundle (world, uri);
-        lilv_world_load_bundle (world, uri);
-        lilv_node_free (uri);
-        lilv_world_free (world);
-    });
-    const bool reportsReloads = probe.find ("Reloading plugin") != std::string::npos;
-    if (! reportsReloads) WARN ("this lilv does not report reloads, so a second load is invisible");
+        return duskstudio::test::countFileOpens (manifest, [&]
+        {
+            LilvWorld* world = lilv_world_new();
+            for (const auto& bundle : bundles)
+            {
+                LilvNode* uri = lilv_new_file_uri (world, nullptr, (bundle.u8string() + "/").c_str());
+                lilv_world_load_bundle (world, uri);
+                lilv_node_free (uri);
+            }
+            lilv_world_free (world);
+        });
+    };
+    const auto once = loads ({ installed / "Shared.lv2" });
+    const auto twice = loads ({ installed / "Shared.lv2", custom / "Linked" / "Shared.lv2" });
+    if (! once || ! twice || *twice <= *once)
+        WARN ("a second load of a bundle is invisible here, so only the rows are checked");
 
     std::vector<duskstudio::lv2::ScannedLv2> scanned;
     bool walkError = true;
-    const auto output = duskstudio::test::captureStderr (root, [&]
-    { scanned = duskstudio::lv2::Lv2Scanner::scan (nullptr, &walkError); });
-    INFO (output);
-    CHECK_FALSE (walkError);
-    if (reportsReloads)
+    const auto scanOpens = [&]
     {
-        CHECK (output.find ("Reloading plugin") == std::string::npos);
-        CHECK (output.find ("Duplicate plugin") == std::string::npos);
-    }
+        return duskstudio::test::countFileOpens (manifest, [&]
+        { scanned = duskstudio::lv2::Lv2Scanner::scan (nullptr, &walkError); });
+    };
+    std::string error;
+    REQUIRE (duskstudio::pluginpaths::save ({}, error));
+    const auto alone = scanOpens();
+    REQUIRE (duskstudio::pluginpaths::save ({ custom }, error));
+    const auto reached = scanOpens();
+    CHECK_FALSE (walkError);
+    if (once && twice && *twice > *once)
+        CHECK (*reached == *alone);
 
     const auto rows = [&] (const std::string& uri)
     {

@@ -750,6 +750,18 @@ if(DUSKSTUDIO_NATIVE_LV2)
         dusk-studio-worker-lv2-fixture
         dusk-studio-midi-probe-lv2-fixture
         dusk-studio-state-probe-lv2-fixture)
+
+    # The app itself is checked by the Linux CI build, which builds it; this tree
+    # builds only the test binary and the plug-in host, which link the same mix.
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        set(_duskstudio_lv2_isolated_binaries $<TARGET_FILE:dusk-studio-tests>)
+        if(TARGET dusk-studio-plugin-host)
+            list(APPEND _duskstudio_lv2_isolated_binaries $<TARGET_FILE:dusk-studio-plugin-host>)
+        endif()
+        add_test(NAME lv2-symbol-isolation
+            COMMAND ${CMAKE_SOURCE_DIR}/tools/lv2-symbol-isolation.sh ${_duskstudio_lv2_isolated_binaries})
+        unset(_duskstudio_lv2_isolated_binaries)
+    endif()
 endif()
 
 if(DUSKSTUDIO_NATIVE_CLAP OR DUSKSTUDIO_NATIVE_LV2 OR DUSKSTUDIO_NATIVE_VST3)
