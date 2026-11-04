@@ -435,10 +435,12 @@ if(EXISTS "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui/DearImGui/imgui.h")
         imgui_widget_kit.cpp
         imgui_panel_controls.cpp
         imgui_panel_text.cpp
+        imgui_panel_text_items.cpp
         startup_recent_dates.cpp
         ${CMAKE_SOURCE_DIR}/src/ui/imgui/DuskTheme.cpp
         ${CMAKE_SOURCE_DIR}/src/ui/imgui/PanelControls.cpp
         ${CMAKE_SOURCE_DIR}/src/ui/imgui/PanelText.cpp
+        ${CMAKE_SOURCE_DIR}/src/ui/imgui/PanelTextItems.cpp
         ${CMAKE_SOURCE_DIR}/src/ui/imgui/StartupView.cpp
         ${CMAKE_SOURCE_DIR}/tools/gui-spike/ChannelStripView.cpp
         ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/dusk/DuskWidgets.cpp

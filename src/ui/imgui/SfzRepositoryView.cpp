@@ -2,6 +2,7 @@
 #include "DuskTheme.h"
 #include "PanelControls.h"
 #include "PanelText.h"
+#include "PanelTextItems.h"
 #include "SfzArtwork.h"
 #include "../../foundation/MessageThread.h"
 
@@ -937,15 +938,15 @@ private:
                 const float comboWidth = ImGui::GetContentRegionAvail().x;
                 const ImVec2 comboEnd { comboAt.x + comboWidth, comboAt.y + ImGui::GetFrameHeight() };
                 if (ImGui::IsRectVisible (comboAt, comboEnd)) controls["instrument"] = { comboAt, comboEnd };
-                const auto preview = instrument ? (showAllFiles ? instrument->relativePath : instrument->name) : "Select a program";
-                if (ImGui::BeginCombo ("##sfz-instrument", displayText (preview).c_str()))
+                const auto previewText = instrument ? (showAllFiles ? instrument->relativePath : instrument->name) : "Select a program";
+                if (beginTextCombo ("##sfz-instrument"))
                 {
                     for (std::size_t i = 0; i < choices.size(); ++i)
                     {
                         const auto& candidate = choices[i];
                         ImGui::PushID (static_cast<int> (i));
-                        const auto label = displayText (showAllFiles ? candidate.relativePath : candidate.name);
-                        if (ImGui::Selectable (label.c_str(), candidate.id == selectedInstrument))
+                        const auto shown = displayText (showAllFiles ? candidate.relativePath : candidate.name);
+                        if (textSelectable ("##choice", shown, candidate.id == selectedInstrument))
                         { selectedInstrument = candidate.id; instrument = &candidate; }
                         const auto original = std::find_if (selected->instruments.begin(), selected->instruments.end(),
                             [&] (const auto& entry) { return entry.id == candidate.id; });
@@ -956,6 +957,7 @@ private:
                     }
                     ImGui::EndCombo();
                 }
+                comboPreviewText (displayText (previewText));
                 ImGui::EndDisabled();
                 if (offlineLocator && selected->provider.sourceId == offlineLocator->sourceId
                     && selected->provider.packId == offlineLocator->packId)

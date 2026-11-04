@@ -706,6 +706,7 @@ if(DUSKSTUDIO_ENABLE_NATIVE_UI)
         src/ui/imgui/MasteringLimiterView.cpp
         src/ui/imgui/MasteringPhaseView.cpp
         src/ui/imgui/PanelControls.cpp
+        src/ui/imgui/PanelTextItems.cpp
         src/ui/imgui/SfzRepositoryView.cpp
         src/ui/imgui/SfzArtwork.cpp
         src/ui/imgui/StartupView.cpp

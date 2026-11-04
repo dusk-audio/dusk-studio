@@ -63,6 +63,9 @@ canonical source.
   their plain forms, so that name reads `Model(sfz)`. Any other character
   the font lacks, such as Chinese or Japanese text, shows the Unicode
   replacement mark instead of "?".
+- **SFZ program names with "##".** The SFZ Manager's **Program** list and
+  its closed preview cut a program name or file path at "##", so
+  `Piano ## Soft` read `Piano`. Names now show in full.
 - **Dusk Studio's own MIDI ports.** On Linux the MIDI input and output lists
   offered Dusk Studio's own ports, so its MIDI output could be routed back
   into its own input. The lists now leave them out, and Dusk Studio opening or
