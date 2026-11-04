@@ -3,11 +3,14 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "PluginSearchPaths.h"
 
+#include <algorithm>
+#include <filesystem>
 #include <map>
 #include <mutex>
 #include <optional>
 #include <set>
 #include <string>
+#include <vector>
 
 namespace duskstudio::juce_compat
 {
@@ -152,9 +155,28 @@ inline bool primeCustomLv2 (FormatManager& manager, const pluginpaths::Roots& cu
             manager.primedLv2Roots.erase (format);
             if (! bundles) bundles = pluginpaths::findBundles (state.roots, ".lv2", abort, &walkError);
             auto& loaded = manager.loadedLv2Bundles[format];
+            // When it was built, the format loaded every bundle directly inside its
+            // default locations, so a custom folder that is or reaches one leaves
+            // those bundles alone. A Windows default is spelled with environment
+            // variables and matches nothing.
+            std::vector<std::filesystem::path> defaults;
+            const auto locations = format->getDefaultLocationsToSearch();
+            for (int i = 0; i < locations.getNumPaths(); ++i)
+            {
+                const auto raw = locations.getRawString (i);
+                if (! raw.startsWithChar ('~') && ! std::filesystem::u8path (raw.toStdString()).is_absolute()) continue;
+                std::error_code error;
+                auto folder = std::filesystem::canonical (std::filesystem::u8path (locations[i].getFullPathName().toStdString()), error);
+                if (! error) defaults.push_back (std::move (folder));
+            }
             pluginpaths::Roots unseen;
             for (const auto& bundle : *bundles)
-                if (loaded.count (bundle) == 0) unseen.push_back (bundle);
+            {
+                std::error_code error;
+                const auto parent = std::filesystem::canonical (bundle, error).parent_path();
+                const bool loadedBuilt = ! error && std::find (defaults.begin(), defaults.end(), parent) != defaults.end();
+                if (loaded.count (bundle) == 0 && ! loadedBuilt) unseen.push_back (bundle);
+            }
             describeLv2 (*format, bundleIdentifiers (unseen), abort);
             if (cancelled()) return false;
             loaded.insert (unseen.begin(), unseen.end());

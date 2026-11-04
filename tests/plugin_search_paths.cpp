@@ -55,6 +55,14 @@ struct CountingLv2Format : juce::LV2PluginFormat
     std::function<void()> onPrime;
 };
 
+struct DefaultsCountingLv2Format : CountingLv2Format
+{
+    juce::FileSearchPath getDefaultLocationsToSearch() override { return defaults; }
+    // Static: GCC devirtualizes this file's calls on a plain LV2PluginFormat to
+    // this override and warns that a member read would run past the object.
+    static inline juce::FileSearchPath defaults;
+};
+
 // Searches the way JUCE's VST3 format does: every directory link is followed
 // and nothing records what was visited. The depth cap turns a runaway walk into
 // a failed check instead of a hung test.
@@ -302,6 +310,30 @@ TEST_CASE ("Custom LV2 priming caches roots for each format lifetime", "[plugins
         format.onPrime = {};
         duskstudio::juce_compat::primeCustomLv2 (manager, paths::load());
         CHECK (format.visits == 3);
+    }
+}
+
+TEST_CASE ("Custom LV2 priming leaves the bundles of a default location to the format",
+           "[plugins][paths][lv2][regression][issue-947]")
+{
+    Tree tree;
+    const auto defaults = tree.directory ("lib/lv2");
+    tree.directory ("lib/lv2/Built.lv2");
+    const auto custom = tree.directory ("custom");
+    tree.directory ("custom/Added.lv2");
+    duskstudio::juce_compat::FormatManager manager;
+    auto& format = addLv2<DefaultsCountingLv2Format> (manager);
+    DefaultsCountingLv2Format::defaults = juce::FileSearchPath (juce::String (defaults.u8string()));
+
+    SECTION ("a custom folder that is a default location")
+    {
+        duskstudio::juce_compat::primeCustomLv2 (manager, { defaults, custom });
+        CHECK (format.visits == 1);
+    }
+    SECTION ("a custom folder that reaches a default location")
+    {
+        duskstudio::juce_compat::primeCustomLv2 (manager, { tree.root / "lib" });
+        CHECK (format.visits == 0);
     }
 }
 
