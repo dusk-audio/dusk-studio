@@ -28,10 +28,12 @@ namespace duskstudio::juce_compat
 inline void addDefaultFormats (juce::AudioPluginFormatManager& fm)
 {
    #if DUSKSTUDIO_JUCE_HAS_FREE_ADD_FORMATS
+    // The fork's LV2 format rebuilds its class table itself, and only when its
+    // first search found no specifications: a rebuild re-creates every class the
+    // table holds, and the system lilv 0.24.12 its format runs leaks each duplicate.
     juce::addDefaultFormatsToManager (fm);
    #else
     fm.addDefaultFormats();
-   #endif
     for (auto* format : fm.getFormats())
         if (format != nullptr && format->getName() == "LV2")
         {
@@ -41,6 +43,7 @@ inline void addDefaultFormats (juce::AudioPluginFormatManager& fm)
             // the table.
             format->searchPathsForPlugins ({}, true, false);
         }
+   #endif
 }
 
 // JUCE's VST3 and LV2 hosts cache a host-side parameter change and write it into
