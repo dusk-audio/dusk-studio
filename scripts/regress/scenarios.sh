@@ -57,8 +57,16 @@ SCENARIO_BB_LEG_NAMES=(
     bb-oop-child-kill
     bb-oop-quit-during-load
 )
+# One row per case of gnome-window-activation.sh, named as the macOS leg names
+# its rows.
+SCENARIO_WA_ROWS=(
+    window-activation:launch
+    window-activation:covered
+    window-activation:minimized
+    window-activation:handoff
+)
 # shellcheck disable=SC2034  # read by linux.sh
-SCENARIO_LEG_NAMES=(scenario-fixtures scenarios-headless "${SCENARIO_BB_LEG_NAMES[@]}")
+SCENARIO_LEG_NAMES=(scenario-fixtures scenarios-headless "${SCENARIO_BB_LEG_NAMES[@]}" "${SCENARIO_WA_ROWS[@]}")
 
 SANDBOX_ENV=()
 
@@ -410,12 +418,67 @@ leg_bb_gnome_file_drop() {
         return "$REGRESS_SKIP_RC"
     fi
     local rc=0
-    DUSK_DROP_PIPEWIRE_DIR="$pipewire_dir" bash "${SCENARIOS_DIR}/gnome-file-drop.sh" "$APP_BIN" || rc=$?
+    DUSK_REGRESS_PIPEWIRE_DIR="$pipewire_dir" bash "${SCENARIOS_DIR}/gnome-file-drop.sh" "$APP_BIN" || rc=$?
     # The script skips only when the socket has gone since the check above.
     if ((rc == REGRESS_SKIP_RC)); then
         REGRESS_SKIP_REASON="$no_socket"
     fi
     return "$rc"
+}
+
+# Whether the main window comes forward under GNOME on launch and on a
+# handoff, in a private headless GNOME session as bb-gnome-file-drop runs.
+# Records one row per case from the PASS/FAIL lines the script prints.
+scenarios_window_activation_leg() {
+    local -a needs=()
+    local tool row
+    for tool in mutter Xwayland dbus-run-session xdotool xprop import fusermount3; do
+        command -v "$tool" >/dev/null 2>&1 || needs+=("$tool")
+    done
+    env -i PATH=/usr/local/bin:/usr/bin:/bin python3 -I \
+        -c 'import gi, numpy, PIL; gi.require_version("Gtk", "4.0"); from gi.repository import Gtk' \
+        2>/dev/null || needs+=("python3 with GTK 4, NumPy and Pillow")
+    local pipewire_dir="${NULL_AUDIO_DIR:-${PIPEWIRE_RUNTIME_DIR:-${XDG_RUNTIME_DIR:-}}}"
+    local skip=""
+    if ((${#needs[@]})); then
+        skip="needs ${needs[*]}"
+    elif [[ ! -S "${pipewire_dir}/pipewire-0" ]]; then
+        skip="no PipeWire socket; the app would open the sound card through ALSA"
+    fi
+    if [[ -n "$skip" ]]; then
+        for row in "${SCENARIO_WA_ROWS[@]}"; do regress_skip "$row" "$skip"; done
+        return 0
+    fi
+
+    printf '\n--- window-activation ---\n'
+    local start=$SECONDS out rc=0
+    out="$(DUSK_REGRESS_PIPEWIRE_DIR="$pipewire_dir" \
+        bash "${SCENARIOS_DIR}/gnome-window-activation.sh" "$APP_BIN" 2>&1)" || rc=$?
+    printf '%s\n' "$out"
+    if ((rc == REGRESS_SKIP_RC)); then
+        for row in "${SCENARIO_WA_ROWS[@]}"; do
+            regress_skip "$row" "no PipeWire socket; the app would open the sound card through ALSA"
+        done
+        return 0
+    fi
+    local line verdict secs note whole passed=0
+    whole="$(grep -m1 -E '^FAIL (setup|driver) ' <<<"$out" | sed -E 's/^FAIL [a-z]+ \[[0-9]+s\]: //')" || true
+    for row in "${SCENARIO_WA_ROWS[@]}"; do
+        line="$(grep -m1 -E "^(PASS|FAIL) ${row#window-activation:} \[[0-9]+s\]: " <<<"$out")" || true
+        if [[ -z "$line" ]]; then
+            regress_record "$row" FAIL "$((SECONDS - start))" "no result: ${whole:-exit ${rc}}"
+            continue
+        fi
+        verdict="${line%% *}"
+        secs="$(sed -E 's/^[A-Z]+ [a-z]+ \[([0-9]+)s\].*/\1/' <<<"$line")"
+        note="${line#*]: }"
+        if [[ "$verdict" == PASS ]]; then passed=$((passed + 1)); fi
+        regress_record "$row" "$verdict" "$secs" "$note"
+    done
+    # Every case passed but the session around them did not end cleanly.
+    if ((rc != 0 && passed == ${#SCENARIO_WA_ROWS[@]})); then
+        regress_record window-activation:session FAIL "$((SECONDS - start))" "exit ${rc}"
+    fi
 }
 
 # XDND drops in orders a desktop seldom produces, link drags, and a pointer
@@ -443,7 +506,7 @@ leg_bb_x11_drop_input() {
         return "$REGRESS_SKIP_RC"
     fi
     local rc=0
-    DUSK_DROP_PIPEWIRE_DIR="$pipewire_dir" bash "${SCENARIOS_DIR}/x11-drop-input.sh" "$APP_BIN" || rc=$?
+    DUSK_REGRESS_PIPEWIRE_DIR="$pipewire_dir" bash "${SCENARIOS_DIR}/x11-drop-input.sh" "$APP_BIN" || rc=$?
     if ((rc == REGRESS_SKIP_RC)); then
         REGRESS_SKIP_REASON="$no_socket"
     fi
@@ -1218,6 +1281,12 @@ regress_scenarios_run() {
         regress_leg "bb-x11-drop-input" leg_bb_x11_drop_input
     else
         regress_skip "bb-x11-drop-input" "X11 on Linux"
+    fi
+    if [[ "$(uname -s)" == Linux ]]; then
+        scenarios_window_activation_leg
+    else
+        local row
+        for row in "${SCENARIO_WA_ROWS[@]}"; do regress_skip "$row" "GNOME on Linux"; done
     fi
 
     scenarios_fixture_leg

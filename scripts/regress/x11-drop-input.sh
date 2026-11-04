@@ -7,7 +7,7 @@
 #
 #   x11-drop-input.sh <DuskStudio binary>
 #
-# DUSK_DROP_PIPEWIRE_DIR names the PipeWire runtime dir the app should play
+# DUSK_REGRESS_PIPEWIRE_DIR names the PipeWire runtime dir the app should play
 # through. Without it the script brings up the private null graph itself, and
 # falls back to the machine's graph if that fails, as the other legs do.
 # Set DUSK_REGRESS_SCENARIO_KEEP=1 to keep the scratch directory.
@@ -52,7 +52,7 @@ if ! gcc -O1 -o "$WORK/x11_drop_input" "$HERE/x11_drop_input.c" -lX11 -lXi -lXts
     exit 1
 fi
 
-pipewire_dir="${DUSK_DROP_PIPEWIRE_DIR:-}"
+pipewire_dir="${DUSK_REGRESS_PIPEWIRE_DIR:-}"
 if [[ -z "$pipewire_dir" ]]; then
     # shellcheck source=scripts/regress/null-audio.sh
     source "$HERE/null-audio.sh"
