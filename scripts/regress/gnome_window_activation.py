@@ -40,6 +40,8 @@ KEY_M, KEY_SHIFT = 0x006D, 0xFFE1
 # the window's content, with Don't Save this far from its centre.
 PROMPT_FILL = (0x1A, 0x1A, 0x20)
 DONT_SAVE = (23, 58)
+# Seconds an X tool gets to answer.
+TOOL_TIMEOUT = 20
 
 
 def run_cover():
@@ -69,7 +71,11 @@ def run_cover():
 
 
 def run(*args):
-    return subprocess.run(list(args), capture_output=True, text=True).stdout
+    """A tool's output. One that hangs fails the case that called it, not the whole leg."""
+    try:
+        return subprocess.run(list(args), capture_output=True, text=True, timeout=TOOL_TIMEOUT).stdout
+    except subprocess.TimeoutExpired:
+        raise Failure("%s did not answer within %d s" % (args[0], TOOL_TIMEOUT))
 
 
 def xprop_root(name):
@@ -172,7 +178,10 @@ class App:
     def grab(self, window, name):
         from PIL import Image
         path = os.path.join(self.work, name + ".png")
-        subprocess.run(["import", "-window", hex(window), path], capture_output=True)
+        try:
+            subprocess.run(["import", "-window", hex(window), path], capture_output=True, timeout=TOOL_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            return None, "%s: import did not answer within %d s" % (path, TOOL_TIMEOUT)
         try:
             return Image.open(path).convert("RGB"), path
         except OSError:
