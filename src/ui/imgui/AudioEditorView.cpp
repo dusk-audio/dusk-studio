@@ -1,5 +1,6 @@
 #include "AudioEditorView.h"
 #include "PanelControls.h"
+#include "PanelText.h"
 #include "RegionTrim.h"
 #include "RulerDensity.h"
 #include "TakeLaneLayout.h"
@@ -452,6 +453,7 @@ public:
 
     // Escape is the view's, so an open dropdown takes it before the editor closes.
     bool escapeDismisses() const override { return false; }
+    bool marksMissingGlyphs() const override { return true; }
 
     bool capturesKeyboard() const override { return editing != Field::none || popupOpen; }
 
@@ -635,6 +637,8 @@ public:
         return laidOut && takeCount() > 0 ? takeCaption().first : std::string();
     }
 
+    GlyphTally nameGlyphsForScenario() const override { return drawnNameGlyphs; }
+
     // Toolbar and status controls by name, plus "waveform" (a point low in the middle of
     // the body), "sample:<n>" for a timeline sample, "at:<x>,<y>" for a body-relative
     // design-pixel point and "menu:<item>" for an item of the menu that is open.
@@ -676,6 +680,7 @@ public:
     {
         popupWasOpen = popupOpen;
         ++frame;
+        nameGlyphs = {};
         refindSelection();
         controls.clear();
         layout = layoutFor (origin, size, ctx.scale, takeCount(), laneShare);
@@ -888,6 +893,7 @@ private:
     std::uint64_t confirmingDelete = 0;
     std::string notice;
     std::chrono::steady_clock::time_point noticeUntil;
+    GlyphTally nameGlyphs, drawnNameGlyphs;
     std::vector<TakeSlice> takeSlices;
     std::size_t detailColumns = 0;
 
@@ -3372,11 +3378,12 @@ private:
         if (inner.width() > 0.0f && trackIdx >= 0 && trackIdx < Session::kNumTracks)
         {
             const auto& track = session.track (trackIdx);
-            const auto name = track.nameUtf8();
+            const auto name = displayText (track.nameUtf8());
             const auto nameBox = inner.takeLeft (std::min (ctx.s (130.0f), inner.width() * 0.5f))
                                      .reduced (ctx.s (8.0f), ctx.s (2.0f));
-            clippedText (ctx, nameBox, ctx.fonts->title, 12.5f,
+            clippedText (ctx, nameBox, nameFace (*ctx.fonts), 12.5f,
                          dw::brighter (argb (track.colourArgb()), 0.3f), name.c_str(), dw::Align::left);
+            nameGlyphs.add (nameFace (*ctx.fonts), name);
 
             // Read again: the buttons above may have split or undone the region.
             const auto titleBox = inner.reduced (ctx.s (8.0f), ctx.s (2.0f));
@@ -3385,8 +3392,10 @@ private:
                 {
                     const auto label = r->labelUtf8();
                     const auto title = label.empty() ? defaultTitle (*r) : label;
-                    clippedText (ctx, titleBox, ctx.fonts->title, 12.5f, argb (kReadoutText), title.c_str(),
+                    const auto shown = displayText (title);
+                    clippedText (ctx, titleBox, nameFace (*ctx.fonts), 12.5f, argb (kReadoutText), shown.c_str(),
                                  dw::Align::left);
+                    nameGlyphs.add (nameFace (*ctx.fonts), shown);
                     addControl ("Title", titleBox, true);
                     if (doubleClicked (ctx, "##title", titleBox))
                         beginEdit (Field::title, title);
@@ -3824,9 +3833,13 @@ private:
             dl->AddRectFilled (band.tl(), ImVec2 (band.x1, band.y0 + ctx.s (3.0f)), argb (takeColour (take->id), 0.95f));
             // Clear of the fade discs in the region's top corners.
             if (band.width() >= ctx.s (80.0f))
+            {
+                const auto name = displayText (take->name);
                 clippedText (ctx, Box { band.x0 + ctx.s (20.0f), band.y0 + ctx.s (4.0f), band.x1 - ctx.s (20.0f), band.y1 },
-                             ctx.fonts->value, 10.0f, argb (takeColour (take->id)), take->name.c_str(),
+                             nameFace (*ctx.fonts), 10.0f, argb (takeColour (take->id)), name.c_str(),
                              dw::Align::left);
+                nameGlyphs.add (nameFace (*ctx.fonts), name);
+            }
         }
 
         if (const auto x = shownSeamX())
@@ -4700,7 +4713,8 @@ private:
                      dw::Align::left);
 
         const auto [status, statusColour] = takeCaption();
-        clippedText (ctx, line, ctx.fonts->value, 11.0f, statusColour, status.c_str(), dw::Align::left);
+        clippedText (ctx, line, nameFace (*ctx.fonts), 11.0f, statusColour, displayText (status).c_str(),
+                     dw::Align::left);
 
         const auto& viewport = layout.takeLanes;
         if (viewport.height() <= 0.0f)
@@ -4848,7 +4862,9 @@ private:
                     if (xb > xa)
                         dl->AddRect (ImVec2 (xa, band.y0), ImVec2 (xb, band.y1), argb (colour, 0.9f), 0.0f, 0,
                                      ctx.s (1.5f));
-                    ImGui::SetTooltip ("Use %s here", take.name.c_str());
+                    ImGui::PushFont (nameFace (*ctx.fonts));
+                    ImGui::SetTooltip ("Use %s here", displayText (take.name).c_str());
+                    ImGui::PopFont();
                 }
         }
 
@@ -4928,9 +4944,11 @@ private:
         }
         else
         {
-            clippedText (ctx, nameBox.reduced (ctx.s (2.0f), 0.0f), ctx.fonts->band, 11.5f,
-                         argb (used ? kReadoutText : kHeaderText, used ? 1.0f : 0.8f), take.name.c_str(),
+            const auto shownName = displayText (take.name);
+            clippedText (ctx, nameBox.reduced (ctx.s (2.0f), 0.0f), nameFace (*ctx.fonts), 11.5f,
+                         argb (used ? kReadoutText : kHeaderText, used ? 1.0f : 0.8f), shownName.c_str(),
                          dw::Align::left);
+            nameGlyphs.add (nameFace (*ctx.fonts), shownName);
             if (live)
             {
                 const auto name = takeControlName ("name", take.id);
@@ -5307,6 +5325,7 @@ private:
         if (rangeActive && drag == Drag::none && ! coveredRange())
             rangeActive = false;
         noteSelection();
+        drawnNameGlyphs = nameGlyphs;
     }
 };
 } // namespace

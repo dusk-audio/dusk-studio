@@ -1172,6 +1172,45 @@ const ScenarioRegistrar audioEditorFields { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorFields (host, ctx); }
 } };
 
+// A Cyrillic track name, a Hebrew take name and a region title typed in Cyrillic all
+// draw as themselves once committed, not as the face's fallback.
+std::optional<ScenarioResult> runAudioEditorNameGlyphs (GuiHost& host, ScenarioContext& ctx)
+{
+    if (auto early = beginTakeCase (host, ctx)) return early;
+    auto& track = ctx.session().track (0);
+    track.name = std::string ("\xd0\x91\xd0\xb0\xd1\x81");
+    if (! addLevelTake (ctx, track, "\xd7\xa9\xd7\x9c\xd7\x95\xd7\x9d", 0, kTakeCaseLength, 0.5f))
+        return ScenarioResult::fail ("could not write the take fixture");
+    auto region = regionFromTake (track.takes.front(), 0, kTakeCaseLength);
+    if (! region) return ScenarioResult::fail ("could not cut the region fixture");
+    track.regions.push_back (*region);
+    ctx.session().audioEditorSnap = false;
+    if (! host.openAudioEditor (0, 0)) return ScenarioResult::fail ("audio editor unavailable");
+
+    static constexpr const char* kTitle = "\xd0\x9a\xd1\x83\xd0\xbf\xd0\xbb\xd0\xb5\xd1\x82";
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 100, [] {}, [&host] { return host.audioEditorPoint ("wave", 48000).size() == 2; },
+                        "the editor never laid out" });
+    steps->push_back ({ 100, [&host, &ctx]
+    { ctx.expect (host.doubleClickAudioEditorButton ("Title"), "no Title to double-click"); } });
+    steps->push_back ({ 150, [&host, &ctx] { ctx.expect (host.typeInAudioEditor (kTitle), "typing into the title failed"); } });
+    steps->push_back ({ 100, [&host, &ctx] { ctx.expect (host.pressAudioEditorKey ("return"), "Enter was not delivered"); } });
+    steps->push_back ({ 300, [&host, &ctx, &track]
+    {
+        ctx.expect (! track.regions.empty() && track.regions[0].labelUtf8() == kTitle,
+                    "the typed title did not become the region's label");
+        expectNamesReadable (host, ctx, "audio-editor", 3 + 6 + 4, "audio-editor-names.ppm");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar audioEditorNameGlyphs { Scenario {
+    "gui.audio_editor_name_glyphs", { "gui", "editor" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runAudioEditorNameGlyphs (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runAudioEditorNumericFields (GuiHost& host, ScenarioContext& ctx)
 {
     if (auto early = beginEditorRegionCase (host, ctx)) return early;

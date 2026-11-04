@@ -8,6 +8,8 @@
 
 using duskstudio::imgui::buildPanelFonts;
 using duskstudio::imgui::displayText;
+using duskstudio::imgui::GlyphTally;
+using duskstudio::imgui::nameFace;
 
 namespace
 {
@@ -85,4 +87,43 @@ TEST_CASE ("A panel that marks missing glyphs draws them as the replacement mark
         CHECK (markedFonts.valueLarge->Glyphs.Size == plainFonts.valueLarge->Glyphs.Size);
         CHECK (marked.Fonts.Size == plain.Fonts.Size);
     }
+}
+
+TEST_CASE ("Panels draw names in a face that has the scripts names use", "[imgui]")
+{
+    for (const float scale : { 1.0f, 2.0f })
+    {
+        ImFontAtlas atlas;
+        const auto fonts = bakePanelFonts (atlas, scale, true);
+        auto* const face = nameFace (fonts);
+        REQUIRE (face != nullptr);
+
+        CHECK (face->FindGlyphNoFallback (0x0416) != nullptr);
+        CHECK (face->FindGlyphNoFallback (0x05d0) != nullptr);
+        CHECK (face->FindGlyphNoFallback (0x03a9) != nullptr);
+        CHECK (face->FallbackChar == 0xfffd);
+        CHECK (face->FindGlyph (0x4e2d) == face->FindGlyphNoFallback (0xfffd));
+    }
+}
+
+TEST_CASE ("A glyph tally counts the characters a face has no glyph for", "[imgui]")
+{
+    ImFontAtlas atlas;
+    const auto fonts = bakePanelFonts (atlas, 1.0f, true);
+
+    GlyphTally console;
+    console.add (fonts.title, "Bass \xd0\x96\xd1\x83\xd0\xba");
+    CHECK (console.drawn == 8);
+    CHECK (console.missing == 3);
+
+    GlyphTally names;
+    names.add (nameFace (fonts), "Bass \xd0\x96\xd1\x83\xd0\xba \xd7\x90\xd7\x91");
+    names.add (nameFace (fonts), "");
+    CHECK (names.drawn == 11);
+    CHECK (names.missing == 0);
+
+    GlyphTally han;
+    han.add (nameFace (fonts), "\xe4\xb8\xad");
+    CHECK (han.drawn == 1);
+    CHECK (han.missing == 1);
 }

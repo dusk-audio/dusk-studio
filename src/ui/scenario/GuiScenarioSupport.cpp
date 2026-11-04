@@ -245,6 +245,29 @@ StripHandle* readyStrip (GuiHost& host, ScenarioContext& ctx)
     return strip;
 }
 
+void expectNamesReadable (GuiHost& host, ScenarioContext& ctx, const std::string& panel,
+                          int characters, const std::string& capture)
+{
+    const auto names = host.panelNameGlyphs (panel);
+    if (! ctx.expect (names[0] >= 0, "the " + panel + " panel is not open")) return;
+    ctx.expect (names[0] >= characters, "the " + panel + " panel drew " + std::to_string (names[0])
+                                            + " characters of names, not the " + std::to_string (characters) + " it shows");
+    ctx.expect (names[1] == 0, "the " + panel + " panel drew " + std::to_string (names[1]) + " of "
+                                   + std::to_string (names[0]) + " name characters without a glyph");
+
+   #if defined (__linux__)
+    const auto* destination = std::getenv ("DUSKSTUDIO_SCENARIO_CAPTURE_DIR");
+    if (destination == nullptr || *destination == '\0') return;
+    const auto directory = std::filesystem::u8path (destination);
+    std::error_code error;
+    std::filesystem::create_directories (directory, error);
+    if (! ctx.expect (! error, "could not create the scenario capture directory: " + error.message())) return;
+    ctx.expect (host.capturePanel (panel, directory / capture), "could not capture the " + panel + " panel");
+   #else
+    (void) capture;
+   #endif
+}
+
 std::optional<ScenarioResult> beginTakeCase (GuiHost& host, ScenarioContext& ctx)
 {
     auto& engine = ctx.engine();

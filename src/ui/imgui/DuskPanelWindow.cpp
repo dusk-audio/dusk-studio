@@ -1174,6 +1174,11 @@ std::uintptr_t DuskPanelWindow::nativeWindowHandleForScenario() const noexcept
     const auto* window = impl->host.window();
     return window != nullptr ? window->getNativeWindowHandle() : 0;
 }
+std::optional<GlyphTally> DuskPanelWindow::nameGlyphsForScenario() const
+{
+    if (impl->view == nullptr) return std::nullopt;
+    return impl->view->nameGlyphsForScenario();
+}
 void DuskPanelWindow::expectInputForScenario()
 {
     if (isOpen() && impl->panelWidget != nullptr)

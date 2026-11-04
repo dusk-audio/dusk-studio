@@ -1246,5 +1246,41 @@ const ScenarioRegistrar startupNewCreates { Scenario {
     {}, {}, 15000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runStartupNewCreates (host, ctx); }
 } };
+
+// A recent session named in Cyrillic and Hebrew is listed as itself, not as the
+// face's fallback.
+std::optional<ScenarioResult> runStartupNameGlyphs (GuiHost& host, ScenarioContext& ctx)
+{
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("requires the native UI");
+   #else
+    if (! ctx.engine().getTransport().isStopped() || ! host.modalStackEmpty() || host.startupDialogOpen())
+        return ScenarioResult::skip ("requires a stopped transport and no dialog");
+    const auto recent = ctx.tempDir() / std::filesystem::u8path ("\xd0\xa1\xd0\xb5\xd1\x81\xd1\x81\xd0\xb8\xd1\x8f \xd7\xa9\xd7\x9c\xd7\x95\xd7\x9d");
+    std::error_code error;
+    std::filesystem::create_directories (recent, error);
+    if (error) return ScenarioResult::fail ("could not make the recent session folder");
+    ctx.cleanup ([&host]
+    {
+        host.closeStartupDialog();
+        drainModals (host);
+    });
+    if (! host.openStartupDialog ({ recent }, false)) return ScenarioResult::fail ("the startup dialog did not open");
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 400, [&host, &ctx]
+    { expectNamesReadable (host, ctx, "startup", 6 + 1 + 4, "startup-names.ppm"); } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+   #endif
+}
+
+const ScenarioRegistrar startupNameGlyphs { Scenario {
+    "gui.startup_name_glyphs", { "gui", "startup" }, Needs::Engine | Needs::Gui,
+    {}, {}, 10000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runStartupNameGlyphs (host, ctx); }
+} };
 } // namespace
 } // namespace duskstudio::scenario::gui

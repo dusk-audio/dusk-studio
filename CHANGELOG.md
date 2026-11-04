@@ -66,6 +66,12 @@ canonical source.
   into its own input. The lists now leave them out, and Dusk Studio opening or
   closing its own ports no longer rebuilds them. Another copy of Dusk Studio
   running at the same time is still listed.
+- **Names in other scripts.** The audio editor, piano roll, compressor
+  editor and Startup dialog drew "?" for characters outside Western European
+  Latin, such as Greek or Cyrillic, in track, region, take and session
+  names. Those names now use the font of the fields they are typed in, and a
+  character that font lacks, such as Chinese text, shows the Unicode
+  replacement mark.
 - **Manual figures.** `docs/capture-screenshots.sh` waits for each native
   panel's frame instead of closing the panel after a fixed delay, so the
   piano roll and audio editor figures are written again on a slow or loaded

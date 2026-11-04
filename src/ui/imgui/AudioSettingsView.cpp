@@ -221,6 +221,7 @@ public:
     // Input processing closes popups and cancels text edits before draw observes them.
     bool capturesKeyboard() const override { return keyboardActive; }
     bool escapeDismisses() const override { return ! popupWasOpen && ! keyboardWasActive; }
+    bool marksMissingGlyphs() const override { return true; }
 
     void draw (dw::Context& ctx, ImVec2 origin, ImVec2 size) override
     {

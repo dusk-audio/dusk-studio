@@ -1,5 +1,6 @@
 #include "StartupView.h"
 #include "DuskTheme.h"
+#include "PanelText.h"
 #include "../../engine/audiofile/FileReader.h"
 #include "../../foundation/Fs.h"
 
@@ -212,6 +213,8 @@ public:
     // Escape skips the dialog rather than only closing it: the bootstrap default
     // session is what the DAW opens with, which is what skipping means.
     bool escapeDismisses() const override { return false; }
+    bool marksMissingGlyphs() const override { return true; }
+    GlyphTally nameGlyphsForScenario() const override { return drawnNameGlyphs; }
 
     // Reported once. The choice itself has to survive for the host to read it from
     // the dismissed callback, and the teardown it starts takes a couple of event-pump
@@ -260,6 +263,7 @@ public:
         const ImVec2 br (origin.x + size.x, origin.y + size.y);
         ctx.dl->AddRectFilled (origin, br, rgba (kBg));
         scenarioRows.assign (recents.size(), ImVec2());
+        nameGlyphs = {};
         scenarioTemplates.assign (templateNames.size(), ImVec2());
 
         const float sidebarRight = origin.x + scale * kSidebarW;
@@ -277,6 +281,7 @@ public:
         drawMain (ctx, ImVec2 (sidebarRight, origin.y), ImVec2 (br.x, footerTop));
 
         handleKeys (ctx);
+        drawnNameGlyphs = nameGlyphs;
     }
 
 private:
@@ -533,17 +538,21 @@ private:
                 }
             }
 
-            const char* const cells[] = { row.name.c_str(), row.sampleRate.c_str(),
+            const auto name = displayText (row.name);
+            const char* const cells[] = { name.c_str(), row.sampleRate.c_str(),
                                           row.bitDepth.c_str(), row.lastModified.c_str() };
             float cellX = rowTl.x;
             for (std::size_t c = 0; c < 4; ++c)
             {
                 const float w = kColumns[c].width > 0.0f ? kColumns[c].width * scale : nameW;
                 const char* const text = cells[c][0] != 0 ? cells[c] : "\xe2\x80\x94";
-                dw::text (ctx, ctx.fonts->band, scale * 13.0f,
+                ImFont* const font = c == 0 ? nameFace (*ctx.fonts) : ctx.fonts->band;
+                dw::text (ctx, font, scale * 13.0f,
                           ImVec2 (cellX + scale * 8.0f, rowTl.y + scale * 5.0f),
                           w - scale * 16.0f, selected ? rgba (kTextHi) : rgba (kTextMid),
                           text, dw::Align::left);
+                if (c == 0)
+                    nameGlyphs.add (font, text);
                 cellX += w;
             }
         }
@@ -623,6 +632,7 @@ private:
     std::array<ImVec2, 3> scenarioTabs {};
     ImVec2 scenarioOpen {}, scenarioQuit {};
     std::vector<ImVec2> scenarioRows, scenarioTemplates;
+    GlyphTally nameGlyphs, drawnNameGlyphs;
 };
 } // namespace
 

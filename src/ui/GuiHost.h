@@ -376,6 +376,13 @@ public:
     // "recent:<path>", "new:<template>", "open-file", "quit" or "skip"; empty
     // until the dialog has been dismissed.
     virtual std::string startupChoice() const = 0;
+    // For "audio-editor", "piano-roll" or "startup": { characters, without a glyph }
+    // over the names the panel drew in its last frame, or { -1, -1 } while it is not
+    // open.
+    virtual std::array<int, 2> panelNameGlyphs (const std::string& panel) const = 0;
+    // Reads the same panel's window back into a PPM at `path`, now. False while it is
+    // not open or where the platform cannot read a window back.
+    virtual bool capturePanel (const std::string& panel, const std::filesystem::path& path) = 0;
     virtual double uiScale() const = 0;
     virtual void restoreUiScale (float scale) = 0;
     // Peer x, y, width, height and fullscreen state.
