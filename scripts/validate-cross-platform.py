@@ -407,6 +407,34 @@ def windows_cache_result(text: str) -> dict[str, str]:
     return metadata
 
 
+def windows_ninja_environment_script(build: str) -> str:
+    return f"""$ErrorActionPreference = 'Stop'
+$build = {ps_quote(build)}
+$cacheText = Get-Content -LiteralPath (Join-Path $build 'CMakeCache.txt') -Raw
+$version = foreach ($part in @('MAJOR', 'MINOR', 'PATCH')) {{
+    $entry = [regex]::Matches($cacheText, ('(?m)^CMAKE_CACHE_' + $part + '_VERSION:INTERNAL=([0-9]+)\\r?$'))
+    if ($entry.Count -ne 1) {{ throw 'CMake cache version is missing or duplicated' }}
+    $entry[0].Groups[1].Value
+}}
+$record = Join-Path $build ('CMakeFiles/' + ($version -join '.') + '/CMakeCXXCompiler.cmake')
+$resolved = [regex]::Matches((Get-Content -LiteralPath $record -Raw), '(?m)^set\\(CMAKE_CXX_COMPILER "([^"]+)"\\)\\r?$')
+if ($resolved.Count -ne 1) {{ throw 'Resolved C++ compiler is missing or duplicated' }}
+$compiler = Get-Item -LiteralPath $resolved[0].Groups[1].Value
+if ($compiler.Name -ne 'cl.exe' -or $compiler.Directory.Name -ne 'x64') {{ throw 'Ninja validation requires the configured x64 MSVC compiler' }}
+$toolset = $compiler.Directory.Parent.Parent.Parent
+$vcvars = Join-Path $toolset.Parent.Parent.Parent.FullName 'Auxiliary/Build/vcvars64.bat'
+if (-not (Test-Path -LiteralPath $vcvars -PathType Leaf)) {{ throw ('MSVC environment setup not found: ' + $vcvars) }}
+$setup = 'call "' + $vcvars + '" -vcvars_ver=' + $toolset.Name + ' >nul && set'
+$compilerEnvironment = & $env:ComSpec /d /s /c $setup
+if ($LASTEXITCODE -ne 0) {{ throw ('MSVC environment setup failed with exit code ' + $LASTEXITCODE) }}
+foreach ($line in $compilerEnvironment) {{
+    if ($line -match '^([^=]+)=(.*)$') {{
+        [Environment]::SetEnvironmentVariable($matches[1], $matches[2], 'Process')
+    }}
+}}
+"""
+
+
 def windows_asio_preflight_script(build: str, expected_sdk: str) -> str:
     return f"""$ErrorActionPreference = 'Stop'
 $build = {ps_quote(build)}
@@ -621,6 +649,7 @@ def run_windows(driver: Driver, commit: str) -> None:
         script = "\n".join(
             [
                 "$ErrorActionPreference = 'Stop'",
+                windows_ninja_environment_script(build) if metadata["generator"] == "Ninja" else "",
                 f"$arguments = @('--build', {ps_quote(build)}, '--config', 'Release', '--target', {target_args}, '-j{args.jobs}')",
                 f"$cacheText = Get-Content -Raw -LiteralPath {ps_quote(ps_join(build, 'CMakeCache.txt'))}",
                 "if ($cacheText -match '(?m)^CMAKE_GENERATOR:INTERNAL=Visual Studio ') { $arguments += @('--', '-p:CL_MPCount=1') }",
