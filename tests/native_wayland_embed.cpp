@@ -1,10 +1,11 @@
 #define JUCE_GUI_BASICS_INCLUDE_XHEADERS 1
-#include <juce_gui_basics/juce_gui_basics.h>
+#include <juce_gui_extra/juce_gui_extra.h>
 #include "../src/ui/imgui/DuskImGuiHost.h"
 #include "../src/ui/imgui/DafEditorHost.h"
 #include "../src/ui/imgui/DuskPanelWindow.h"
 #include "../src/ui/imgui/SharedWaylandApplication.h"
 #include "../src/ui/PlatformWindowing.h"
+#include "../src/ui/EmbeddedModal.h"
 #include "TestTempDirectory.h"
 
 #include <OpenGL.hpp>
@@ -32,6 +33,144 @@ void require (bool ok, const char* message)
 {
     if (! ok) throw std::runtime_error (message);
 }
+
+class ForeignEditorProbe
+{
+public:
+    explicit ForeignEditorProbe (juce::Component& parent) : shell (parent), shellBounds (parent.getBounds())
+    {
+        if (std::getenv ("DUSK_NATIVE_PROBE_X11") == nullptr)
+        {
+            juce::Component refused;
+            require (! modal.showBorrowed (shell, refused, {}, {}, presentation), "foreign editor opened without X11");
+            require (! modal.isOpen() && refused.getParentComponent() == nullptr, "refused foreign editor changed the layout");
+            std::puts ("PASS foreign editor refusal: native-only session remains usable");
+            return;
+        }
+        client = std::make_unique<ForeignClient>();
+        platform::withX11PeerCreation ([&]
+        {
+            body = std::make_unique<juce::XEmbedComponent> (client->window, true, false);
+        });
+        body->setSize (240, 160);
+        try
+        {
+            show();
+            window = body->getTopLevelComponent();
+            peer = window->getPeer();
+            require (peer != nullptr && peer != shell.getPeer(), "foreign editor reused the Wayland peer");
+            const auto native = platform::describeEmbeddedParent (reinterpret_cast<std::uintptr_t> (peer->getNativeHandle()));
+            require (native.backend == platform::NativeEmbeddedParent::Backend::platform, "foreign editor parent is not X11");
+        }
+        catch (...)
+        {
+            modal.closeAndDeleteBodyNow();
+            throw;
+        }
+    }
+
+    ~ForeignEditorProbe()
+    {
+        cover.closeAndDeleteBodyNow();
+        modal.closeAndDeleteBodyNow();
+    }
+
+    bool advance()
+    {
+        if (client == nullptr) return true;
+        switch (stage)
+        {
+            case 0:
+            {
+                if (! client->isViewable()) return false;
+                const auto bounds = window->getBounds();
+                shell.setSize (shell.getWidth() + 10, shell.getHeight() + 10);
+                require (window->getBounds() == bounds && body->getPeer() == peer, "main resize moved the separate editor");
+                for (auto* child : shell.getChildren())
+                    if (dynamic_cast<duskstudio::DimOverlay*> (child) != nullptr)
+                        require (child->getBounds() == shell.getLocalBounds(), "foreign editor dim missed the main resize");
+                body->setSize (320, 200);
+                require (window->getWidth() == 332 && window->getHeight() == 212, "foreign editor resize missed its shell");
+                auto coverBody = std::make_unique<juce::Component>();
+                coverBody->setSize (300, 180);
+                cover.show (shell, std::move (coverBody));
+                require (! window->isVisible(), "foreign editor covered a main-window dialog");
+                break;
+            }
+            case 1:
+                if (client->isViewable()) return false;
+                cover.close();
+                require (window->isVisible(), "foreign editor did not return after the dialog");
+                break;
+            case 2:
+                if (! client->isViewable()) return false;
+                modal.close();
+                require (! window->isVisible() && body->getPeer() == peer && dismissals == 0,
+                         "closing the foreign editor lost its peer or dispatched dismissal");
+                break;
+            case 3:
+                if (client->isViewable()) return false;
+                show();
+                require (body->getPeer() == peer, "reopening replaced the foreign editor parent");
+                break;
+            case 4:
+                if (! client->isViewable()) return false;
+                window->userTriedToCloseWindow();
+                require (! modal.isOpen() && dismissals == 1, "native close did not dismiss the foreign editor");
+                break;
+            case 5:
+                if (client->isViewable()) return false;
+                shell.setBounds (shellBounds);
+                std::puts ("PASS foreign X11 editors: separate parent, resize, dialog cover, retained peer, reopen, native close");
+                return true;
+        }
+        ++stage;
+        return false;
+    }
+
+private:
+    struct ForeignClient
+    {
+        ::Display* display = ::XOpenDisplay (nullptr);
+        ::Window window = 0;
+        ForeignClient()
+        {
+            require (display != nullptr, "Xwayland test connection failed");
+            window = ::XCreateSimpleWindow (display, DefaultRootWindow (display), 0, 0, 240, 160, 0, 0, 0x4080a0);
+            ::XMapWindow (display, window);
+            ::XSync (display, False);
+        }
+        ~ForeignClient()
+        {
+            ::XDestroyWindow (display, window);
+            ::XCloseDisplay (display);
+        }
+        bool isViewable()
+        {
+            platform::flushWindowOperations();
+            ::XWindowAttributes attributes {};
+            require (::XGetWindowAttributes (display, window, &attributes) != 0, "foreign X11 child was destroyed");
+            return attributes.map_state == IsViewable;
+        }
+    };
+
+    void show()
+    {
+        require (modal.showBorrowed (shell, *body, [this] { ++dismissals; modal.close(); }, {}, presentation),
+                 "foreign editor presentation failed");
+    }
+
+    static constexpr auto presentation = duskstudio::EmbeddedModal::BorrowedPresentation::foreignPlugin;
+    juce::Component& shell;
+    juce::Rectangle<int> shellBounds;
+    duskstudio::EmbeddedModal modal;
+    std::unique_ptr<ForeignClient> client;
+    std::unique_ptr<juce::XEmbedComponent> body;
+    duskstudio::EmbeddedModal cover;
+    juce::Component* window = nullptr;
+    juce::ComponentPeer* peer = nullptr;
+    int dismissals = 0, stage = 0;
+};
 
 struct Painter final : DGL::TopLevelWidget, DGL::IdleCallback
 {
@@ -439,6 +578,9 @@ private:
                #endif
                 case Stage::clipboardMapping:
                     if (shell.getWidth() < 1900 || shell.getHeight() < 1000) return;
+                    if (foreignEditors == nullptr) foreignEditors = std::make_unique<ForeignEditorProbe> (shell);
+                    if (! foreignEditors->advance()) return;
+                    foreignEditors.reset();
                     require (a.open (parent(), { 0, 0, 960, 1080, 1.0 }), "clipboard panel A open failed");
                     require (b.open (parent(), { 960, 0, 960, 1080, 1.0 }), "clipboard panel B open failed");
                     stage = Stage::clipboardReady;
@@ -594,6 +736,7 @@ private:
     duskstudio::test::TempDirectory root { "dusk-native-embed-" };
     Shell shell;
     Shell otherShell;
+    std::unique_ptr<ForeignEditorProbe> foreignEditors;
     DuskImGuiHost a { { "probe-a", "probe-a", "Probe A" }, root.path() / "a-frame" };
     DuskImGuiHost b { { "probe-b", "probe-b", "Probe B" }, root.path() / "b-frame" };
     DuskImGuiHost c { { "probe-c", "probe-c", "Probe C" }, root.path() / "c-frame" };

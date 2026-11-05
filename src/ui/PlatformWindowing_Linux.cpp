@@ -488,6 +488,11 @@ juce::ComponentPeer* pickSiblingFocusTargetPeer (juce::Component& departing)
 
 bool hasUsableDisplay()
 {
+    return hasUsableX11Display();
+}
+
+bool hasUsableX11Display()
+{
     // JUCE's XWindowSystem is lazy and not yet created at preflight time,
     // so we can't reuse its ::Display*; open a throwaway connection.
     // XOpenDisplay(nullptr) reads $DISPLAY itself and returns null when no

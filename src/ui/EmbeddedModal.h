@@ -2,6 +2,8 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "DimOverlay.h"
+#include "NativeEmbeddedParent.h"
+#include "PlatformWindowing.h"
 #include "imgui/ShellShortcut.h"
 #include "../foundation/MessageThread.h"
 #include <functional>
@@ -195,9 +197,7 @@ private:
 // A JUCE stand-in for a native panel embedded in a JUCE layout. Its bounds are where
 // the framework child goes, and its visibility is the one thing the covering-surface
 // machinery already toggles: the tag is what makes an EmbeddedModal take a native
-// surface down and put it back, and a framework child is exactly that. DGL refuses to
-// hide a window while it is embedded, so "hidden" here means the owner closes the
-// child and reopens it.
+// surface down and put it back. The owner follows the proxy's visibility.
 class NativePanelProxy final : public juce::Component
 {
 public:
@@ -428,16 +428,28 @@ public:
         activeModalStack().push_back (this);
     }
 
-    // Body NOT owned - caller keeps alive across show/close cycles.
-    // Used for plugin editors: tearing down a plugin's editor window on
-    // every close races the WM and on XWayland with GL-heavy GUIs can
-    // crash the compositor. Keeping the editor alive and add/removing
-    // it as a child is significantly more stable.
-    void showBorrowed (juce::Component& parent,
+    enum class BorrowedPresentation { embedded, foreignPlugin };
+
+    // The caller owns the body across show/close cycles. Separate X11 parents
+    // survive close too: cached plug-in editors can retain their native parent.
+    // False when a foreign editor needs an X11 display that is unavailable.
+    bool showBorrowed (juce::Component& parent,
                        juce::Component& body,
                        std::function<void()> onDismiss = {},
-                       std::function<void (unsigned long long, bool)> onHostResized = {})
+                       std::function<void (unsigned long long, bool)> onHostResized = {},
+                       BorrowedPresentation presentation = BorrowedPresentation::embedded)
     {
+        bool separate = false;
+       #if defined (__linux__)
+        if (presentation == BorrowedPresentation::foreignPlugin)
+            if (auto* peer = parent.getPeer())
+                separate = platform::describeEmbeddedParent (
+                    reinterpret_cast<std::uintptr_t> (peer->getNativeHandle())).backend
+                    == platform::NativeEmbeddedParent::Backend::wayland;
+        if (separate && ! platform::hasUsableX11Display()) return false;
+       #else
+        (void) presentation;
+       #endif
         if (auto hook = beforeModalShown()) hook();
         close();
         showGeneration_ = ++modalGeneration();
@@ -476,19 +488,58 @@ public:
             std::min (w, bounds.getWidth()  - 16),
             std::min (h, bounds.getHeight() - 16));
 
-        backdrop_ = std::make_unique<Backdrop>();
-        backdrop_->setBounds (bodyBounds.expanded (kBackdropMargin));
-        parent.addAndMakeVisible (backdrop_.get());
-
-        body.setBounds (bodyBounds);
         // Install before attachment: native/custom editors can synchronously
         // announce their real size while addAndMakeVisible creates the peer.
         // Missing that first resize leaves the new extent anchored at the old
         // centred top-left until the editor is closed and shown again.
         body.addComponentListener (this);
-        parent.addAndMakeVisible (&body);
+        if (separate)
+        {
+            if (foreignWindow_ == nullptr)
+            {
+                foreignWindow_ = std::make_unique<Backdrop>();
+                foreignWindow_->setName ("Plug-in editor");
+                foreignWindow_->setOpaque (true);
+                foreignWindow_->setInterceptsMouseClicks (true, true);
+                platform::withX11PeerCreation ([this]
+                {
+                    foreignWindow_->addToDesktop (juce::ComponentPeer::windowHasTitleBar
+                                                  | juce::ComponentPeer::windowHasCloseButton);
+                });
+                foreignWindow_->onClose = [this]
+                {
+                    if (auto callback = userOnDismiss) callback();
+                    else close();
+                };
+                foreignProxy_.onVisibilityChanged = [this]
+                {
+                    foreignWindow_->setVisible (foreignProxy_.isShowing());
+                };
+            }
+            for (int i = foreignWindow_->getNumChildComponents(); --i >= 0;)
+                if (auto* child = foreignWindow_->getChildComponent (i); child != &body)
+                {
+                    child->setVisible (false);
+                    foreignWindow_->removeChildComponent (child);
+                }
+            foreignWindow_->centreWithSize (w + 2 * kBackdropMargin, h + 2 * kBackdropMargin);
+            body.setTopLeftPosition (kBackdropMargin, kBackdropMargin);
+            foreignWindow_->addAndMakeVisible (&body);
+            foreignProxy_.setBounds (parent.getLocalBounds());
+            parent.addAndMakeVisible (&foreignProxy_);
+            foreignWindow_->setVisible (true);
+            if (auto* peer = foreignWindow_->getPeer()) platform::bringWindowToFront (*peer);
+        }
+        else
+        {
+            backdrop_ = std::make_unique<Backdrop>();
+            backdrop_->setBounds (bodyBounds.expanded (kBackdropMargin));
+            parent.addAndMakeVisible (backdrop_.get());
+            body.setBounds (bodyBounds);
+            parent.addAndMakeVisible (&body);
+        }
         dim_     ->toFront (false);
-        backdrop_->toFront (false);
+        if (backdrop_ != nullptr) backdrop_->toFront (false);
         body.toFront (true);
         body.setWantsKeyboardFocus (true);
         body.grabKeyboardFocus();
@@ -504,16 +555,16 @@ public:
         parent.addComponentListener (this);
 
         editorHider_.hideUnder (parent, { dim_.get(), backdrop_.get(),
-                                          body_.get(), borrowedBody_ });
+                                          body_.get(), borrowedBody_, &foreignProxy_ });
 
         activeModalStack().push_back (this);
+        return true;
     }
 
-    // Idempotent. For owning show, destructs body; for showBorrowed,
-    // just removes from parent.
+    // Idempotent. Owned bodies are destroyed; borrowed bodies remain alive.
     //
-    // CONTRACT: close() does NOT invoke userOnDismiss. Only Esc and
-    // dim-click do. Helpers (DuskAlerts' OK button) rely on this -
+    // CONTRACT: close() does NOT invoke userOnDismiss. Dismissal gestures
+    // do. Helpers (DuskAlerts' OK button) rely on this -
     // they wire their action button to close() AND their follow-up,
     // trusting close() won't double-fire. Audit every caller before
     // changing this contract.
@@ -533,6 +584,7 @@ public:
     // message-thread state and crash compositors on next X11 round.
     void close (bool restoreFocus = true)
     {
+        hideForeignWindow();
         // Registry / listener / editor cleanup runs even when the host died
         // with the modal open (host is a SafePointer that nulls): bailing
         // out first left a dangling entry in activeModalStack() - which the
@@ -666,6 +718,7 @@ public:
     // ~MainComponent / beginSafeShutdown.
     void closeAndDeleteBodyNow()
     {
+        hideForeignWindow();
         removeFromModalStack();
         stopListeningForOutsideClicks();
         editorHider_.restore();
@@ -940,12 +993,21 @@ private:
         const bool bodyResized = &c == borrowedBody_ && wasResized;
         const bool hostChanged = &c == host.getComponent() && (wasMoved || wasResized);
         if (! bodyResized && ! hostChanged) return;
+        if (dim_ != nullptr && host != nullptr)
+            dim_->setBounds (host->getLocalBounds());
+
+        if (foreignWindow_ != nullptr && borrowedBody_->getParentComponent() == foreignWindow_.get())
+        {
+            if (bodyResized)
+                foreignWindow_->setSize (borrowedBody_->getWidth() + 2 * kBackdropMargin,
+                                         borrowedBody_->getHeight() + 2 * kBackdropMargin);
+            if (hostChanged) foreignProxy_.setBounds (host->getLocalBounds());
+            return;
+        }
 
         recenterBody();
         if (hostChanged && wasMoved)
             borrowedBody_->resized();
-        if (dim_ != nullptr && host != nullptr)
-            dim_->setBounds (host->getLocalBounds());
         if (hostChanged && wasResized)
             if (auto callback = borrowedHostResized)
                 callback (showGeneration_, ! activeModalStack().empty()
@@ -956,19 +1018,29 @@ private:
     {
     public:
         Backdrop() { setOpaque (false); setInterceptsMouseClicks (false, false); }
+        void userTriedToCloseWindow() override { if (auto callback = onClose) callback(); }
+        std::function<void()> onClose;
         void paint (juce::Graphics& g) override
         {
             const auto r = getLocalBounds().toFloat();
             g.setColour (juce::Colour (0xff141418).withAlpha (0.55f));
             g.fillRoundedRectangle (r.translated (0.0f, 4.0f), 8.0f);
             g.setColour (juce::Colour (0xff202024));
-            g.fillRoundedRectangle (r, 8.0f);
+            if (isOnDesktop()) g.fillAll();
+            else g.fillRoundedRectangle (r, 8.0f);
             g.setColour (juce::Colour (0xff3a3a42));
             g.drawRoundedRectangle (r.reduced (0.5f), 8.0f, 1.0f);
         }
     };
 
     static constexpr int kBackdropMargin = 6;
+
+    void hideForeignWindow()
+    {
+        if (foreignWindow_ != nullptr) foreignWindow_->setVisible (false);
+        if (auto* parent = foreignProxy_.getParentComponent())
+            parent->removeChildComponent (&foreignProxy_);
+    }
 
     // SafePointer, not raw: the function-local-static shared modals
     // (DuskAlerts, DuskContextMenu, DuskComboBox, file browser, plugin
@@ -978,6 +1050,9 @@ private:
     juce::Component::SafePointer<juce::Component> host;
     std::unique_ptr<DimOverlay> dim_;
     std::unique_ptr<Backdrop> backdrop_;
+    // The X11 parent outlives cached foreign editors, including while closed.
+    std::unique_ptr<Backdrop> foreignWindow_;
+    NativePanelProxy foreignProxy_;
     std::unique_ptr<juce::Component> body_;
     juce::Component* borrowedBody_ = nullptr;
     std::function<void()> userOnDismiss;

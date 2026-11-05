@@ -722,6 +722,7 @@ if(DUSKSTUDIO_ENABLE_NATIVE_UI)
         add_executable(dusk-native-wayland-probe EXCLUDE_FROM_ALL
             tests/native_wayland_embed.cpp
             src/foundation/MessageThread.cpp
+            src/ui/DimOverlay.cpp
             src/ui/imgui/DafEditorHost.cpp
             src/ui/PlatformWindowing_Linux.cpp)
         target_compile_definitions(dusk-native-wayland-probe PRIVATE

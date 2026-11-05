@@ -239,6 +239,8 @@ void clearPreferX11ForNativeWindow();
 void withX11PeerCreation (const std::function<void()>& create);
 
 #if JUCE_LINUX
+bool hasUsableX11Display();
+
 // Run an OOP editor's XEmbed teardown under a local X error trap. The child may
 // already have freed editorWindowId, so the exact BadWindow responses made by
 // the detach sequence are swallowed. Pending errors are drained before the

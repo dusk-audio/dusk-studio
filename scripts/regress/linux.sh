@@ -140,7 +140,8 @@ leg_native_wayland_embedding() {
     if ((!SCENARIOS_ONLY)); then
         run_build cmake --build build --target dusk-native-wayland-probe -j"${JOBS}" || return $?
     fi
-    python3 scripts/regress/native-wayland-embedding.py build/native-tests/dusk-native-wayland-probe
+    python3 scripts/regress/native-wayland-embedding.py build/native-tests/dusk-native-wayland-probe || return $?
+    python3 scripts/regress/native-wayland-embedding.py build/native-tests/dusk-native-wayland-probe --with-x11
 }
 
 # Both build dirs must point at the pinned donor checkout. Building against a

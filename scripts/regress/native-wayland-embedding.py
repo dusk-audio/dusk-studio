@@ -16,7 +16,8 @@ def drive(binary, work):
     from gnome_file_drop import Desktop, Failure, wait_for
 
     env = dict(os.environ)
-    env.pop("DISPLAY", None)
+    if "DUSK_NATIVE_PROBE_X11" not in env:
+        env.pop("DISPLAY", None)
     exchange = work / "clipboard"
     exchange.mkdir()
     env["DUSK_NATIVE_PROBE_WORK"] = str(exchange)
@@ -133,7 +134,7 @@ def interrupted(signum, frame):
     raise KeyboardInterrupt
 
 
-def run(binary):
+def run(binary, with_x11=False):
     binary = str(Path(binary).resolve())
     if not os.access(binary, os.X_OK):
         print("native panel probe is missing: " + binary)
@@ -156,6 +157,9 @@ def run(binary):
     command = ["dbus-run-session", "--", "mutter", "--wayland", "--no-x11", "--headless",
                "--virtual-monitor", "1920x1080", "--wayland-display", "dusk-native-embed", "--",
                sys.executable, "-I", str(Path(__file__).resolve()), "drive", binary, str(work)]
+    if with_x11:
+        command.remove("--no-x11")
+        env["DUSK_NATIVE_PROBE_X11"] = "1"
     code = 1
     old_term = signal.signal(signal.SIGTERM, interrupted)
     try:
@@ -177,6 +181,9 @@ def run(binary):
     print(probe, end="")
     if "PASS native shared panels:" not in probe or "PASS native clipboard:" not in probe:
         code = 1
+    foreign_result = "PASS foreign X11 editors:" if with_x11 else "PASS foreign editor refusal:"
+    if foreign_result not in probe:
+        code = 1
     for warning in ("committed initial non-empty content without acknowledging configuration",
                     "Client provided invalid window geometry"):
         if warning in compositor:
@@ -193,6 +200,6 @@ def run(binary):
 if __name__ == "__main__":
     if len(sys.argv) == 4 and sys.argv[1] == "drive":
         raise SystemExit(drive(sys.argv[2], Path(sys.argv[3])))
-    if len(sys.argv) != 2:
-        raise SystemExit("usage: native-wayland-embedding.py <dusk-native-wayland-probe>")
-    raise SystemExit(run(sys.argv[1]))
+    if len(sys.argv) not in (2, 3) or (len(sys.argv) == 3 and sys.argv[2] != "--with-x11"):
+        raise SystemExit("usage: native-wayland-embedding.py <dusk-native-wayland-probe> [--with-x11]")
+    raise SystemExit(run(sys.argv[1], len(sys.argv) == 3))
