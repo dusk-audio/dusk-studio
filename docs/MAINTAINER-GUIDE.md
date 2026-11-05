@@ -851,10 +851,9 @@ assertion that never ran.
 `bash scripts/regress/scenarios.sh` runs just these legs and prints the same
 table; `--app <binary>` points it at a build other than `build/`.
 
-CI runs only the headless half: `.github/workflows/linux-build.yml` has a
-`Scenario suite (xvfb)` step carrying `continue-on-error: true`, so a scenario
-failure there is reported without failing the job. It becomes a required check
-once it has run clean for a week. The `bb-*` legs stay local - they need
+CI runs only the headless half: the `Scenario suite (xvfb)` step in
+`.github/workflows/linux-build.yml` runs every scenario under Xvfb, and a
+scenario failure there fails the job. The `bb-*` legs stay local - they need
 `pgrep -P`, `kill -9` and several app processes running at once.
 
 #### Writing a scenario
