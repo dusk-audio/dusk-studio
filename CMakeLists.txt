@@ -670,8 +670,10 @@ if(DUSKSTUDIO_ENABLE_NATIVE_UI)
     include(cmake/NativeWaylandCapabilities.cmake)
     duskstudio_check_shared_wayland(DUSKSTUDIO_HAS_SHARED_WAYLAND)
     if(DUSKSTUDIO_HAS_SHARED_WAYLAND)
-        if(NOT DEFINED DGL_BACKEND OR DGL_BACKEND STREQUAL "auto")
-            set(DGL_BACKEND both CACHE STRING "DGL windowing backend" FORCE)
+        # A normal variable rather than the cache, so a tree reconfigured
+        # against frameworks without the shared APIs is back on DAF's default.
+        if(NOT DGL_BACKEND OR DGL_BACKEND STREQUAL "auto")
+            set(DGL_BACKEND both)
         endif()
         message(STATUS "Native Wayland embedding: shared host connection supported")
     endif()
