@@ -874,12 +874,26 @@ void clearXInputFocus()
     }
 }
 
-// All three helpers below touch the plugdata-team JUCE-wayland fork's
+// These helpers touch the plugdata-team JUCE-wayland fork's
 // WaylandWindowSystem / WaylandSymbols. Upstream JUCE has no such
 // types. DUSKSTUDIO_JUCE_HAS_WAYLAND is set by CMake when the fork is in
 // use; absent that, these are stubs (CI builds + non-Wayland deploys
 // don't need the X11/Wayland peer-creation latch or the focus
 // roundtrip).
+void withX11PeerCreation (const std::function<void()>& create)
+{
+   #if DUSKSTUDIO_JUCE_HAS_WAYLAND
+    struct Restore
+    {
+        bool previous;
+        ~Restore() { WaylandWindowSystem::setSkipForPeerCreation (previous); }
+    };
+    const Restore restore { WaylandWindowSystem::shouldSkipForPeerCreation() };
+    WaylandWindowSystem::setSkipForPeerCreation (true);
+   #endif
+    create();
+}
+
 void preferX11ForNextNativeWindow()
 {
    #if DUSKSTUDIO_JUCE_HAS_WAYLAND

@@ -130,6 +130,19 @@ public:
     Probe()
     {
         juce::WaylandWindowSystem::setSkipForPeerCreation (false);
+        platform::withX11PeerCreation ([]
+        {
+            require (juce::WaylandWindowSystem::shouldSkipForPeerCreation(), "X11 scope did not set the backend");
+            platform::withX11PeerCreation ([] {});
+            require (juce::WaylandWindowSystem::shouldSkipForPeerCreation(), "nested X11 scope lost the backend");
+        });
+        require (! juce::WaylandWindowSystem::shouldSkipForPeerCreation(), "X11 scope did not restore the backend");
+        try
+        {
+            platform::withX11PeerCreation ([] { throw 1; });
+        }
+        catch (int) {}
+        require (! juce::WaylandWindowSystem::shouldSkipForPeerCreation(), "failed X11 construction changed the backend");
         shell.setBounds (50, 50, 800, 600);
         shell.setOpaque (true);
         shell.addToDesktop (0);

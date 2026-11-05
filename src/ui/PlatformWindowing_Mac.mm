@@ -173,6 +173,7 @@ void prepareForTopLevelDestruction (juce::Component& topLevel)
 void clearXInputFocus() {}                 // X-only; no-op on macOS
 void requestFocusOnMainWaylandSurface() {} // Wayland-only; no-op on macOS
 void preferX11ForNextNativeWindow() {}     // Wayland-only; no-op on macOS
+void withX11PeerCreation (const std::function<void()>& create) { create(); }
 void clearPreferX11ForNativeWindow() {}    // Wayland-only; no-op on macOS
 std::unique_ptr<juce::Component> createForeignNativeWindowEmbed (std::uint64_t)
 {

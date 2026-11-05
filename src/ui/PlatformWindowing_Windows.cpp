@@ -265,6 +265,7 @@ double nativeViewBackingScale (void*) { return 1.0; }
 void clearXInputFocus() {}                 // X-only; no-op on Windows
 void requestFocusOnMainWaylandSurface() {} // Wayland-only; no-op on Windows
 void preferX11ForNextNativeWindow() {}     // Linux-only; no-op on Windows
+void withX11PeerCreation (const std::function<void()>& create) { create(); }
 void clearPreferX11ForNativeWindow() {}    // Linux-only; no-op on Windows
 std::unique_ptr<juce::Component> createForeignNativeWindowEmbed (std::uint64_t nativeHandle)
 {

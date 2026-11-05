@@ -234,6 +234,10 @@ void requestFocusOnMainWaylandSurface();
 void preferX11ForNextNativeWindow();
 void clearPreferX11ForNativeWindow();
 
+// Foreign plug-in editor constructors may create peers before attachment.
+// Restore the caller's backend preference even when construction throws.
+void withX11PeerCreation (const std::function<void()>& create);
+
 #if JUCE_LINUX
 // Run an OOP editor's XEmbed teardown under a local X error trap. The child may
 // already have freed editorWindowId, so the exact BadWindow responses made by

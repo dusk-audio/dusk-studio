@@ -3006,12 +3006,6 @@ void ChannelStripComponent::openPluginEditor()
 
     if (pluginEditor == nullptr)
     {
-        // LV2 plugin editors eager-create an embedded X11 sub-window
-        // inside their Editor constructor. X11 latch routes the nested
-        // peer creation to LinuxComponentPeer (X11) so the reparent
-        // target is a valid X11 host. clearPreferX11ForNativeWindow is
-        // a no-op on Linux (sticky-on) but kept for cross-platform
-        // symmetry.
         std::unique_ptr<juce::AudioProcessorEditor> fresh;
         if (instance->hasEditor())
         {
@@ -3020,9 +3014,10 @@ void ChannelStripComponent::openPluginEditor()
             // for seconds, which would stall the whole audio callback.
             const juce::SpinLock::ScopedLockType processExclusion (
                 pluginSlot.getProcessLock());
-            duskstudio::platform::preferX11ForNextNativeWindow();
-            fresh.reset (instance->createEditorIfNeeded());
-            duskstudio::platform::clearPreferX11ForNativeWindow();
+            duskstudio::platform::withX11PeerCreation ([&]
+            {
+                fresh.reset (instance->createEditorIfNeeded());
+            });
         }
         const bool isCustomEditor = fresh != nullptr;
         if (fresh == nullptr)
