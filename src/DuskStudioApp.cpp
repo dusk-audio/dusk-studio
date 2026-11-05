@@ -3109,7 +3109,7 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
     // directory rather than the launching shell's, so `cd ~/Sessions &&
     // DuskStudio mysong/session.json` would quietly open nothing.
     const auto handoffPath = sessionPathFromCommandLine (commandLine).getFullPathName();
-    const auto handoff = LaunchRequest { handoffPath.toStdString(), activationToken }.encode();
+    const auto handoff = LaunchRequest { handoffPath.toStdString(), activationToken }.encodeForHandoff();
     if (! handoff)
     {
         std::fputs ("Dusk Studio: the launch request is invalid or too large.\n", stderr);
@@ -3120,10 +3120,10 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
     if (! guiScenarioRun
         && ! single_instance::acquire (*handoff, [this] (std::string payload)
         {
-            if (auto request = LaunchRequest::decode (payload))
-                handleLaunchRequest (std::move (*request));
-            else
-                std::fputs ("Dusk Studio: ignored an invalid launch request.\n", stderr);
+            handleLaunchRequest (LaunchRequest::receive (payload, [] (std::string_view legacy)
+            {
+                return sessionPathFromCommandLine (std::string (legacy)).getFullPathName().toStdString();
+            }));
         }))
     {
         quit();

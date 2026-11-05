@@ -7,6 +7,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace duskstudio
 {
@@ -31,6 +32,25 @@ struct LaunchRequest
         }
         catch (const dusk::json::Json::exception&) {}
         return {};
+    }
+
+    // The launcher's token only lets the running window take focus; one that cannot
+    // travel is dropped rather than failing a launch that has a session to hand over.
+    std::optional<std::string> encodeForHandoff() const
+    {
+        if (auto payload = encode())
+            return payload;
+        return LaunchRequest { sessionPath, {} }.encode();
+    }
+
+    // A version before this request sent the resolved path, quoted, or nothing,
+    // which `legacySessionPath` parses the way a command line is parsed.
+    template <typename LegacySessionPath>
+    static LaunchRequest receive (std::string_view payload, LegacySessionPath&& legacySessionPath)
+    {
+        if (auto request = decode (payload))
+            return std::move (*request);
+        return { legacySessionPath (payload), {} };
     }
 
     static std::optional<LaunchRequest> decode (std::string_view payload)
