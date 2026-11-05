@@ -88,7 +88,15 @@ bool ClapPluginEditorComponent::openEditorOn (clap::ClapInstance& inst, juce::St
 void* ClapPluginEditorComponent::peerNativeHandle() const
 {
     if (auto* peer = getPeer())
+    {
+       #if defined (__linux__)
+        if (platform::describeEmbeddedParent (
+                reinterpret_cast<std::uintptr_t> (peer->getNativeHandle())).backend
+                    != platform::NativeEmbeddedParent::Backend::platform)
+            return nullptr;
+       #endif
         return peer->getNativeHandle();
+    }
     return nullptr;
 }
 

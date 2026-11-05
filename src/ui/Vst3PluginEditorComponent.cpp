@@ -64,7 +64,15 @@ bool Vst3PluginEditorComponent::attach (vst3::Vst3Instance& shared, juce::String
 std::uintptr_t Vst3PluginEditorComponent::peerNativeHandle() const
 {
     if (auto* peer = getPeer())
+    {
+       #if defined (__linux__)
+        if (platform::describeEmbeddedParent (
+                reinterpret_cast<std::uintptr_t> (peer->getNativeHandle())).backend
+                    != platform::NativeEmbeddedParent::Backend::platform)
+            return 0;
+       #endif
         return reinterpret_cast<std::uintptr_t> (peer->getNativeHandle());
+    }
     return 0;
 }
 
