@@ -6,6 +6,7 @@
 
 #include "engine/PluginManager.h"
 #include "engine/PluginSearchPaths.h"
+#include "TestLv2Core.h"
 #include "TestProcessEnvironment.h"
 #include "TestTempDirectory.h"
 
@@ -61,6 +62,7 @@ TEST_CASE ("A plug-in scan leaves LV2 discovery to the native host",
     const auto pickedBundle = home / ".lv2" / "StateProbe.lv2";
     copyBundle (DUSKSTUDIO_STATE_PROBE_LV2_FIXTURE_PATH, pickedBundle);
     copyBundle (DUSKSTUDIO_FILE_STATE_LV2_FIXTURE_PATH, customRoot / "Vendor" / "FileState.lv2");
+    REQUIRE (duskstudio::test::writeLv2CoreLabel (home / ".lv2"));
 
     const duskstudio::test::ScopedEnvironmentVariable homeVariable ("HOME", home.u8string());
     const duskstudio::test::ScopedEnvironmentVariable lv2Path ("LV2_PATH", (home / ".lv2").u8string());
