@@ -379,9 +379,11 @@ TEST_CASE ("launch requests preserve paths and activation tokens",
             REQUIRE_FALSE (LaunchRequest::decode (payload));
         REQUIRE_FALSE ((LaunchRequest { std::string ("a\0b", 3), {} }.encode()));
         REQUIRE_FALSE ((LaunchRequest { {}, std::string ("a\0b", 3) }.encode()));
-        REQUIRE_FALSE ((LaunchRequest { {}, std::string (1, char (0xff)) }.encode()));
-        REQUIRE_FALSE (LaunchRequest::decode (
-            std::string (R"({"version":1,"sessionPath":"","activationToken":")") + char (0xff) + "\"}"));
+        const std::string invalidUtf8 (1, '\xff');
+        REQUIRE_FALSE ((LaunchRequest { {}, invalidUtf8 }.encode()));
+        const auto invalidRequest = std::string (R"({"version":1,"sessionPath":"","activationToken":")")
+                                  + invalidUtf8 + "\"}";
+        REQUIRE_FALSE (LaunchRequest::decode (invalidRequest));
     }
 }
 
