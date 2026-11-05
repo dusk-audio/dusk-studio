@@ -130,6 +130,19 @@ run_build() {
     fi
 }
 
+leg_native_wayland_embedding() {
+    local targets
+    targets="$(cmake --build build --target help)" || return $?
+    if [[ "$targets" != *dusk-native-wayland-probe* ]]; then
+        echo "frameworks lack shared Wayland embedding APIs"
+        return 77
+    fi
+    if ((!SCENARIOS_ONLY)); then
+        run_build cmake --build build --target dusk-native-wayland-probe -j"${JOBS}" || return $?
+    fi
+    python3 scripts/regress/native-wayland-embedding.py build/native-tests/dusk-native-wayland-probe
+}
+
 # Both build dirs must point at the pinned donor checkout. Building against a
 # drifted ../plugins silently changes the DSP under test, and the failure then
 # looks like a Dusk Studio regression.
@@ -619,6 +632,11 @@ if [[ -x "$APP_BIN" ]]; then
 
     if ((RUN_SCENARIOS)); then
         if ((GUI_SCENARIOS)); then
+            if ((PACKAGE_MODE)); then
+                regress_skip "native-wayland-embedding" "source-only lifecycle probe"
+            else
+                regress_leg "native-wayland-embedding" leg_native_wayland_embedding
+            fi
             regress_scenarios_run "$APP_BIN" --gui
             # These cases need a seeded config the suite runs without: the
             # picker skips outright, and the defaults only see the empty one.
@@ -644,7 +662,7 @@ else
     if ((RUN_SCENARIOS)); then
         missing_legs+=("${SCENARIO_LEG_NAMES[@]}")
         if ((GUI_SCENARIOS)); then
-            missing_legs+=(scenarios-gui gui-plugin-picker gui-settings-defaults)
+            missing_legs+=(native-wayland-embedding scenarios-gui gui-plugin-picker gui-settings-defaults)
         fi
     fi
     if ((RUN_CAPTURE && !PACKAGE_MODE && !SCENARIOS_ONLY)); then
