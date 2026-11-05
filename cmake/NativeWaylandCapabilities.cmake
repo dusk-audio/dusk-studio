@@ -47,6 +47,7 @@ function(duskstudio_check_shared_wayland result)
             auto* surface = host.getSurfaceForWindow(host.getWaylandWindowForPeer(peer));
             host.forgetInputSurface(surface);
             host.commitEmbeddedChildren(surface);
+            host.isSurfaceMapped(surface);
             juce::WaylandSymbols::getInstance()->displayFlush(display);
             (void)seat;
         }

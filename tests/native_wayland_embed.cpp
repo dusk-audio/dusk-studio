@@ -93,6 +93,12 @@ struct Shell final : juce::Component
 
     void paint (juce::Graphics& graphics) override { graphics.fillAll (juce::Colours::darkgrey); }
 
+    bool mapped() const
+    {
+        return juce::WaylandWindowSystem::getInstance()->isSurfaceMapped (
+            static_cast<wl_surface*> (getPeer()->getNativeHandle()));
+    }
+
     void watchFrame()
     {
         require (frame == nullptr, "shell frame callback is already pending");
@@ -128,6 +134,9 @@ public:
         shell.addToDesktop (0);
         shell.setVisible (true);
         shell.setVisible (false);
+        require (! shell.mapped(), "hidden shell is reported as mapped");
+        require (! juce::WaylandWindowSystem::getInstance()->isSurfaceMapped (nullptr),
+                 "unknown surface is reported as mapped");
         shell.setVisible (true);
         shell.watchFrame();
         DuskImGuiHost::Callbacks callbacks;
@@ -199,6 +208,7 @@ private:
                 }
                 case Stage::rendered:
                     if (! bothRendered() || shell.frames == 0) return;
+                    require (shell.mapped(), "presented shell is not reported as mapped");
                     require (! std::filesystem::exists (root.path() / "a-frame")
                                  && ! std::filesystem::exists (root.path() / "b-frame"),
                              "rendered panel retained its crash marker");
