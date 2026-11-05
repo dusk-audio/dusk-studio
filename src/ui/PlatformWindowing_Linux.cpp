@@ -186,12 +186,12 @@ void forgetWaylandInputSurface (const NativeWaylandConnection& connection, std::
 
 bool commitWaylandParent (const NativeWaylandConnection& connection, const NativeEmbeddedParent& parent)
 {
-    if (! (waylandConnectionForParent (parent) == connection) || waylandHost (connection) == nullptr)
+    auto* const host = waylandHost (connection);
+    if (! (waylandConnectionForParent (parent) == connection) || host == nullptr)
         return false;
     auto* const symbols = WaylandSymbols::getInstance();
-    // Child position and visibility latch on the parent commit. Reattaching the
-    // shell's buffer here would also replace its pending frame callback.
-    symbols->surfaceCommit (reinterpret_cast<wl_surface*> (parent.handle));
+    if (! host->commitEmbeddedChildren (reinterpret_cast<wl_surface*> (parent.handle)))
+        return false;
     int result;
     do { result = symbols->displayFlush (static_cast<wl_display*> (connection.display)); }
     while (result < 0 && errno == EINTR);

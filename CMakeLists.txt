@@ -718,6 +718,31 @@ if(DUSKSTUDIO_ENABLE_NATIVE_UI)
     target_link_libraries(DuskStudio PRIVATE dusk_native_ui)
     target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_NATIVE_UI=1)
 
+    if(DUSKSTUDIO_HAS_SHARED_WAYLAND)
+        add_executable(dusk-native-wayland-probe EXCLUDE_FROM_ALL
+            tests/native_wayland_embed.cpp
+            src/foundation/MessageThread.cpp
+            src/ui/PlatformWindowing_Linux.cpp)
+        target_compile_definitions(dusk-native-wayland-probe PRIVATE
+            DUSKSTUDIO_JUCE_HAS_WAYLAND=1
+            JUCE_GLOBAL_MODULE_SETTINGS_INCLUDED=1
+            JUCE_STANDALONE_APPLICATION=1
+            JUCE_WAYLAND=1
+            JUCE_USE_CURL=0
+            JUCE_WEB_BROWSER=0)
+        target_compile_features(dusk-native-wayland-probe PRIVATE cxx_std_17)
+        target_include_directories(dusk-native-wayland-probe PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+        target_link_libraries(dusk-native-wayland-probe PRIVATE
+            dusk_native_ui
+            dgl-opengl3
+            dgl-opengl3-definitions
+            dgl-system-libs-definitions
+            juce::juce_gui_extra
+            juce::pkgconfig_JUCE_WAYLAND_LINUX_DEPS)
+        set_target_properties(dusk-native-wayland-probe PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/native-tests")
+    endif()
+
     # The panel views read the session's atomics directly, so they compile in the
     # app target where those headers already resolve rather than in the framework
     # library. They need Dear ImGui and the widget kit's headers only; the DGL half
