@@ -504,12 +504,13 @@ timestamped `started` / `finished` line. The directory is removed when the run
 ends `regress prepush: OK`. When a leg fails, it is kept and named under the
 table; an interrupted run keeps it too. Each run first removes the
 `dusk-prepush.*` directories under `$TMPDIR` that are over a week old, skipping
-any that belong to a prepush still running, and the week-old `dusk-capture.*`
-and `duskstudio-gnome-activation.*` scratch directories that failed capture and
-window-activation legs keep. Linux options and `--host` pass
-through; package, release-run and Windows package options are refused, and
-`--no-scenarios` goes to Linux only. Ctrl-C stops all three, the guest's build
-or test processes included. A fresh checkout needs its submodules and both
+any that belong to a prepush still running, and the week-old `dusk-capture.*`,
+`duskstudio-gnome-activation.*`, `duskstudio-gnome-drop.*`,
+`duskstudio-native-activation.*` and `duskstudio-native-gui.*` scratch
+directories that failed capture and GNOME session legs keep. Linux options and
+`--host` pass through; package, release-run and Windows package options are
+refused, and `--no-scenarios` goes to Linux only. Ctrl-C stops all three, the
+guest's build or test processes included. A fresh checkout needs its submodules and both
 `build/` and `build-tests/` configured before the Linux leg can run (its
 `configure-check` fails without the two caches). Green here means CI should
 find nothing new, so a branch needs one CI round rather than several, and

@@ -111,7 +111,7 @@ usage: scripts/regress.sh [linux|mac|windows|windows-source|all|prepush] [option
            goes to a log in $TMPDIR/dusk-prepush.*, removed when the run ends
            OK and named under the table when it does not. A run removes the
            folders of earlier runs, and the scratch folders failed capture
-           and window-activation legs kept, once they are over a week old.
+           and GNOME session legs kept, once they are over a week old.
 
   -h, --help   this text
 EOF
@@ -303,10 +303,12 @@ run_platform() {
 }
 if [[ "$TARGET" == prepush ]]; then
     # A run holds the lock in its log folder until its last runner exits, so a
-    # folder whose lock is free belongs to no live run. The capture and
-    # window-activation legs keep their scratch folders when they fail.
+    # folder whose lock is free belongs to no live run. The capture leg and the
+    # legs on a private GNOME session keep their scratch folders when they fail.
     find "${TMPDIR:-/tmp}" -mindepth 1 -maxdepth 1 -type d \
-        \( -name 'dusk-prepush.*' -o -name 'dusk-capture.*' -o -name 'duskstudio-gnome-activation.*' \) \
+        \( -name 'dusk-prepush.*' -o -name 'dusk-capture.*' -o -name 'duskstudio-gnome-activation.*' \
+        -o -name 'duskstudio-gnome-drop.*' -o -name 'duskstudio-native-activation.*' \
+        -o -name 'duskstudio-native-gui.*' \) \
         -user "$(id -u)" -mmin +$((7 * 24 * 60)) -print0 \
         | while IFS= read -r -d '' stale; do
             flock -n "${stale}/.lock" rm -rf -- "$stale" || true

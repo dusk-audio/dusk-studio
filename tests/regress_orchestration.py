@@ -140,10 +140,14 @@ bb_end 0
     other = log_folder("dusk-regress-all.stale")
     capture = log_folder("dusk-capture.stale")
     activation = log_folder("duskstudio-gnome-activation.stale")
-    asked_to_keep = log_folder("duskstudio-gnome-drop.stale")
+    file_drop = log_folder("duskstudio-gnome-drop.stale")
+    native_activation = log_folder("duskstudio-native-activation.stale")
+    native_gui = log_folder("duskstudio-native-gui.stale")
+    asked_to_keep = log_folder("duskstudio-x11-drop.stale")
     owner_lock = open(owned / ".lock", "w")
     fcntl.flock(owner_lock, fcntl.LOCK_EX)
-    for folder in (stale, owned, other, capture, activation, asked_to_keep):
+    for folder in (stale, owned, other, capture, activation, file_drop, native_activation, native_gui,
+                   asked_to_keep):
         age(folder, week + 3600)
     age(fresh, week - 3600)
 
@@ -161,7 +165,7 @@ bb_end 0
         assert not log_dir.exists(), "a passing prepush kept its logs"
         assert str(log_dir) not in result.stdout.split("RESULT", 1)[1], result.stdout
         assert not stale.exists(), "a week-old prepush folder was not pruned"
-        for folder in (capture, activation):
+        for folder in (capture, activation, file_drop, native_activation, native_gui):
             assert not folder.exists(), f"a week-old {folder.name} kept by a failed leg was not pruned"
         for folder in (fresh, owned, other, asked_to_keep):
             assert folder.is_dir(), f"pruning removed {folder.name}"
