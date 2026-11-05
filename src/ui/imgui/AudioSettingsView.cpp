@@ -223,9 +223,11 @@ public:
     bool capturesKeyboard() const override { return keyboardActive; }
     bool escapeDismisses() const override { return ! popupWasOpen && ! keyboardWasActive; }
     bool marksMissingGlyphs() const override { return true; }
+    GlyphTally nameGlyphsForScenario() const override { return drawnNameGlyphs; }
 
     void draw (dw::Context& ctx, ImVec2 origin, ImVec2 size) override
     {
+        nameGlyphs = {};
         popupWasOpen = popupOpen;
         keyboardWasActive = keyboardActive;
         scenarioTabs.fill ({});
@@ -307,6 +309,7 @@ public:
         popupOpen = ImGui::IsPopupOpen (nullptr, ImGuiPopupFlags_AnyPopupId
                                                  | ImGuiPopupFlags_AnyPopupLevel);
         keyboardActive = popupOpen || ImGui::IsAnyItemActive();
+        drawnNameGlyphs = nameGlyphs;
     }
 
 private:
@@ -758,6 +761,7 @@ private:
                 ImGui::TableNextColumn();
                 const auto path = roots[i].u8string();
                 requestPanelGlyphs (path);
+                nameGlyphs.add (ImGui::GetFont(), path);
                 ImGui::TextWrapped ("%s", path.c_str());
                 ImGui::TableNextColumn();
                 if (ImGui::Button ("Remove", { ctx.s (96), ctx.s (34) }))
@@ -1180,6 +1184,7 @@ private:
     Session& session;
     AudioSettingsHost host;
     pluginpaths::Roots pluginFolders;
+    GlyphTally nameGlyphs, drawnNameGlyphs;
     std::unique_ptr<AudioDeviceSelector> selector;
 
     // Handed to every deferred action so one queued behind a panel that closes first

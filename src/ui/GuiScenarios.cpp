@@ -1836,6 +1836,8 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         if (panel == "piano-roll" && owner.pianoRollShowing()) return owner.pianoRollWindow.get();
         if (panel == "startup" && owner.startupWindow != nullptr && owner.startupWindow->isOpen())
             return owner.startupWindow.get();
+        if (panel == "settings" && owner.audioSettingsWindow != nullptr && owner.audioSettingsWindow->isOpen())
+            return owner.audioSettingsWindow.get();
         return nullptr;
     }
    #endif
