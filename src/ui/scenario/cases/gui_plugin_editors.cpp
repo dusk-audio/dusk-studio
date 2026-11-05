@@ -2201,6 +2201,11 @@ const ScenarioRegistrar nativeForeignEditors { Scenario {
         };
         const auto fixture = ctx.fixture ("no_window.clap");
         if (! fixture) return ScenarioResult::fail ("missing CLAP fixture");
+        auto& engine = ctx.engine();
+        auto& aux = engine.getAuxLaneStrip (kAuxLane);
+        if (aux.isNativeClapLoaded (kAuxSlot) || aux.isBuiltinLoaded (kAuxSlot)
+            || aux.getPluginSlot (kAuxSlot).isLoaded() || aux.nativeInsertRestoreFailed (kAuxSlot))
+            return ScenarioResult::skip ("requires an empty first aux insert");
         auto* strip = readyStrip (host, ctx);
         if (strip == nullptr) return ScenarioResult::fail ("no channel strip");
         std::string error;
@@ -2212,6 +2217,24 @@ const ScenarioRegistrar nativeForeignEditors { Scenario {
             strip->closeEditor();
             strip->unloadNativePlugins();
             strip->refreshInsertButton();
+        });
+        ctx.keep (aux.insertMode[(std::size_t) kAuxSlot]);
+        auto& laneParams = ctx.session().auxLane (kAuxLane);
+        // The case ends on Mixing, where no lane component exists to unload through.
+        ctx.cleanup ([&host, &engine, &aux, &laneParams]
+        {
+            drainModals (host);
+            engine.suspendProcessing();
+            aux.unloadNativeClap (kAuxSlot);
+            engine.resumeProcessing();
+            laneParams.nativeClapPath[(std::size_t) kAuxSlot].clear();
+            laneParams.nativeClapPluginId[(std::size_t) kAuxSlot].clear();
+            laneParams.nativeClapStateBase64[(std::size_t) kAuxSlot].clear();
+            if (auto* lane = host.auxLane (kAuxLane))
+            {
+                lane->refreshSlot (kAuxSlot);
+                lane->rebuildSlots();
+            }
         });
         auto steps = std::make_shared<std::vector<Step>>();
         for (int cycle = 0; cycle != 3; ++cycle)
@@ -2238,7 +2261,6 @@ const ScenarioRegistrar nativeForeignEditors { Scenario {
         {
             auto* lane = host.auxLane (kAuxLane);
             if (! ctx.expect (lane != nullptr, "no aux lane")) return;
-            ctx.cleanup ([lane] { lane->unloadSlot (kAuxSlot); });
             ctx.expect (lane->loadNativeClap (kAuxSlot, *fixture, "studio.dusk.test.no-window"),
                         "aux fixture did not load");
             lane->rebuildSlots();
