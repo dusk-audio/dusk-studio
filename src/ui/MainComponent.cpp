@@ -165,27 +165,8 @@ juce::Rectangle<int> notepadChildBounds (const juce::Component& topLevel)
 
 NativeNotepadWindow::EmbeddedGeometry notepadGeometryFor (const juce::Component& topLevel)
 {
-    auto* const peer = topLevel.getPeer();
-    const double peerScale = peer != nullptr ? peer->getPlatformScaleFactor() : 1.0;
-    const double backingScale = peer != nullptr
-                              ? platform::nativeViewBackingScale (peer->getNativeHandle())
-                              : 1.0;
-   #if JUCE_MAC
-    constexpr bool useNativeViewScale = true;
-   #else
-    constexpr bool useNativeViewScale = false;
-   #endif
-    const double scale = embedscale::factorFromSources (
-        embedscale::globalScale(), peerScale, backingScale, useNativeViewScale);
-    const auto logical = notepadChildBounds (topLevel);
-    const auto bounds = embedscale::toPhysicalBounds (
-        logical.getX(), logical.getY(), logical.getWidth(), logical.getHeight(), scale);
-    return {
-        bounds.x, bounds.y,
-        static_cast<std::uint32_t> (std::max (2, bounds.width)),
-        static_cast<std::uint32_t> (std::max (2, bounds.height)),
-        scale
-    };
+    const auto geometry = embedscale::childGeometryFor (topLevel, notepadChildBounds (topLevel));
+    return { geometry.x, geometry.y, geometry.width, geometry.height, geometry.scale };
 }
 #endif
 
