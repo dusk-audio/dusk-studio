@@ -50,7 +50,8 @@ os._exit(0)
 bb_end 0
 '''
     result = subprocess.run(["bash", "-c", sandbox_harness],
-                            env=dict(child_environment, DUSK_REGRESS_TEST_ROOT=str(repo)),
+                            env=dict(child_environment, DUSK_REGRESS_TEST_ROOT=str(repo),
+                                     DUSK_REGRESS_SCENARIO_KEEP="0"),
                             capture_output=True, text=True, timeout=10)
     assert result.returncode == 0, (result.stdout, result.stderr)
     assert not any(runner_tmp.iterdir()), "interrupted scenario scratch escaped its sandbox"
