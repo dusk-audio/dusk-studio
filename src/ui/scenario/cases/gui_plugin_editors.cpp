@@ -2179,6 +2179,11 @@ const ScenarioRegistrar nativeForeignEditors { Scenario {
     { "no_window.clap" }, {}, 20000,
     [] (GuiHost& host, ScenarioContext& ctx) -> std::optional<ScenarioResult>
     {
+       #if ! defined (__linux__)
+        (void) host;
+        (void) ctx;
+        return ScenarioResult::skip ("requires a native Wayland main window");
+       #else
         if (! host.nativeWaylandWindow())
             return ScenarioResult::skip ("requires a native Wayland main window");
         const auto* display = std::getenv ("DISPLAY");
@@ -2270,6 +2275,7 @@ const ScenarioRegistrar nativeForeignEditors { Scenario {
         } });
         runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
         return std::nullopt;
+       #endif
     }
 } };
 } // namespace
