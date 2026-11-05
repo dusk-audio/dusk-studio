@@ -28,7 +28,7 @@ MiniTimelineStrip::MiniTimelineStrip (Session& s, AudioEngine& e) : session (s),
 {
     getProperties().set (kPluginEditorTag, true);
    #if ! DUSKSTUDIO_HAS_NATIVE_UI
-    failed = true;
+    latch.openFailed();
    #endif
     startTimerHz (30);
 }
@@ -79,20 +79,22 @@ void MiniTimelineStrip::syncWindow()
    #if DUSKSTUDIO_HAS_NATIVE_UI
     auto* top = getTopLevelComponent();
     const auto parent = top != nullptr ? embedscale::nativeParentHandle (*top) : 0;
+    const auto live = platform::describeEmbeddedParent (parent);
+    if (latch.isLatched() && ! latch.blocks (live)) repaint();
     const bool wanted = isShowing() && ! getLocalBounds().isEmpty() && parent != 0
                      && (int) getProperties().getWithDefault ("dusk_modalHideCount", 0) == 0
                      && ! PluginEditorHider::hasActiveSurface();
     if (! wanted) hideTooltip();
     if (window != nullptr && window->isOpen())
     {
-        if (! wanted || parent != parentHandle)
+        if (! wanted || live != latch.parent())
         {
             closing = true;
             window->close();
         }
         return;
     }
-    if (! wanted || closing || failed) return;
+    if (! wanted || closing || latch.isLatched()) return;
     window = std::make_unique<imgui::DuskPanelWindow> ("dusk-studio-mini-timeline", "mini-timeline", "Mini timeline");
     juce::Component::SafePointer<MiniTimelineStrip> safe (this);
     imgui::DuskPanelWindow::Callbacks callbacks;
@@ -109,7 +111,8 @@ void MiniTimelineStrip::syncWindow()
         if (auto* self = safe.getComponent())
         {
             self->view = nullptr;
-            self->failed = ! std::exchange (self->closing, false);
+            self->latch.closed (std::exchange (self->closing, false),
+                                platform::isEmbeddedParentAlive (self->latch.parent()));
             self->hideTooltip();
             self->repaint();
             // Closing a focused native child can clear the covering modal's OS focus.
@@ -192,11 +195,11 @@ void MiniTimelineStrip::syncWindow()
     };
     updateState();
     window->setView (std::move (content));
-    parentHandle = parent;
+    latch.opening (live);
     if (! window->open (parent, geometry))
     {
         view = nullptr;
-        failed = true;
+        latch.openFailed();
         repaint();
     }
    #endif
@@ -215,7 +218,7 @@ void MiniTimelineStrip::parentHierarchyChanged() { syncWindow(); }
 void MiniTimelineStrip::paint (juce::Graphics& g)
 {
     g.fillAll (juce::Colour (0xff15151a));
-    if (failed)
+    if (latch.isLatched())
     {
         g.setColour (juce::Colour (0xffe0e0e6));
         g.drawText ("Mini timeline unavailable", getLocalBounds(), juce::Justification::centred, false);

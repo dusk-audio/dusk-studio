@@ -4,6 +4,7 @@
 
 #include "../foundation/MessageThread.h"
 #include "GuiHost.h"
+#include "NativeEmbeddedParent.h"
 
 #include <functional>
 #include <memory>
@@ -50,8 +51,8 @@ private:
     std::unique_ptr<imgui::DuskPanelWindow> window;
     imgui::MiniTimelineView* view = nullptr;
    #endif
-    std::uintptr_t parentHandle = 0;
-    bool closing = false, failed = false, capturePaint = false;
+    platform::EmbeddedChildLatch latch;
+    bool closing = false, capturePaint = false;
     std::string shownTooltip;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MiniTimelineStrip)
