@@ -690,6 +690,7 @@ if(DUSKSTUDIO_ENABLE_NATIVE_UI)
     add_library(dusk_native_ui STATIC
         src/ui/imgui/AtlasImage.cpp
         src/ui/imgui/DuskImGuiHost.cpp
+        src/ui/imgui/SharedWaylandApplication.cpp
         src/ui/imgui/DuskTheme.cpp
         src/ui/imgui/DuskPanelWindow.cpp
         src/ui/imgui/PanelText.cpp

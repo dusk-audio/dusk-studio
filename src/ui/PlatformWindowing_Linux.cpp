@@ -8,6 +8,11 @@
 #include "NativeEmbeddedParent.h"
 #include "PlatformWindowing.h"
 #include "X11EditorTeardownError.h"
+#include "imgui/SharedWaylandApplication.h"
+
+#if DUSKSTUDIO_HAS_SHARED_WAYLAND
+ #include <WaylandInput.hpp>
+#endif
 
 #include <X11/Xproto.h>
 #include <X11/Xutil.h>
@@ -134,6 +139,84 @@ bool isEmbeddedParentAlive (const NativeEmbeddedParent& parent)
     return current.backend != NativeEmbeddedParent::Backend::unavailable
         && current.backend == parent.backend && current.peerId == parent.peerId;
 }
+
+#if DUSKSTUDIO_HAS_SHARED_WAYLAND
+namespace
+{
+WaylandWindowSystem* waylandHost (const NativeWaylandConnection& connection)
+{
+    auto* const host = WaylandWindowSystem::getInstanceWithoutCreating();
+    return host != nullptr && host == connection.host && host->isWaylandAvailable()
+        && host->getDisplay() == connection.display && host->getSeat() == connection.seat ? host : nullptr;
+}
+}
+
+NativeWaylandConnection waylandConnectionForParent (const NativeEmbeddedParent& parent)
+{
+    if (parent.backend != NativeEmbeddedParent::Backend::wayland || ! isEmbeddedParentAlive (parent))
+        return {};
+    auto* const host = WaylandWindowSystem::getInstanceWithoutCreating();
+    if (host == nullptr || ! host->isWaylandAvailable())
+        return {};
+    return { host, host->getDisplay(), host->getSeat() };
+}
+
+std::uint64_t attachWaylandInput (const NativeWaylandConnection& connection, const DGL::WaylandInput& input,
+                                  std::shared_ptr<void> lifetime)
+{
+    if (auto* const host = waylandHost (connection))
+        return host->attachInputForwarder ({ input.keyboard, input.pointer, input.data, input.consumed,
+                                            input.hasKeyboardFocus, input.releaseFocus, input.reset,
+                                            std::move (lifetime) });
+    return 0;
+}
+
+void detachWaylandInput (const NativeWaylandConnection& connection, std::uint64_t registration)
+{
+    if (registration != 0)
+        if (auto* const host = waylandHost (connection))
+            host->detachInputForwarder (registration);
+}
+
+void forgetWaylandInputSurface (const NativeWaylandConnection& connection, std::uintptr_t surface)
+{
+    if (auto* const host = waylandHost (connection))
+        host->forgetInputSurface (reinterpret_cast<wl_surface*> (surface));
+}
+
+bool commitWaylandParent (const NativeWaylandConnection& connection, const NativeEmbeddedParent& parent)
+{
+    if (! (waylandConnectionForParent (parent) == connection) || waylandHost (connection) == nullptr)
+        return false;
+    auto* const symbols = WaylandSymbols::getInstance();
+    // Child position and visibility latch on the parent commit. Reattaching the
+    // shell's buffer here would also replace its pending frame callback.
+    symbols->surfaceCommit (reinterpret_cast<wl_surface*> (parent.handle));
+    int result;
+    do { result = symbols->displayFlush (static_cast<wl_display*> (connection.display)); }
+    while (result < 0 && errno == EINTR);
+    return result >= 0 || errno == EAGAIN;
+}
+
+std::string readWaylandClipboard (const NativeWaylandConnection& connection)
+{
+    if (auto* const host = waylandHost (connection))
+        return host->getTextFromClipboard().toStdString();
+    return {};
+}
+
+bool writeWaylandClipboard (const NativeWaylandConnection& connection, const std::string& text)
+{
+    if (auto* const host = waylandHost (connection))
+    {
+        if (text.empty())
+            return false;
+        host->copyTextToClipboard (text.c_str());
+        return true;
+    }
+    return false;
+}
+#endif
 
 namespace
 {

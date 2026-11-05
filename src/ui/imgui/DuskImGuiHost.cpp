@@ -4,6 +4,7 @@
 #include "../../foundation/MessageThread.h"
 #include "PumpPacing.h"
 #include "../NativeEmbeddedParent.h"
+#include "SharedWaylandApplication.h"
 
 #if defined (_WIN32)
 # ifndef WIN32_LEAN_AND_MEAN
@@ -20,6 +21,7 @@
 #include <chrono>
 #include <cstdarg>
 #include <cstdio>
+#include <stdexcept>
 #include <utility>
 
 namespace duskstudio::imgui
@@ -66,7 +68,7 @@ struct DuskImGuiHost::Impl final : private dusk::Timer
     };
 
     Impl (DuskImGuiHost& ownerRef, Identity id, std::filesystem::path marker)
-        : owner (ownerRef), app (id.className), identity (std::move (id)),
+        : owner (ownerRef), identity (std::move (id)),
           probe (std::move (marker))
     {
     }
@@ -94,19 +96,23 @@ struct DuskImGuiHost::Impl final : private dusk::Timer
 
     bool open (platform::NativeEmbeddedParent parent, Geometry geometry)
     {
-        // Cleared before the first return so neither outlives the attempt it
-        // describes.
         lastFailure.clear();
-        armedMarker = false;
         stopTimer();
         destroyEmbeddedWindow();
-        if (! platform::isEmbeddedParentAlive (parent)
-            || parent.backend == platform::NativeEmbeddedParent::Backend::wayland
-            || geometry.width < 2 || geometry.height < 2)
-            return false;
-
+        if (armedMarker && (firstFrameConfirmed || ! graphicsFailed))
+            probe.disarm();
+        armedMarker = false;
+       #if DUSKSTUDIO_HAS_SHARED_WAYLAND
+        sharedApplication.reset();
+       #endif
         closeRequested = false;
         closeWasPumped = false;
+        if (! platform::isEmbeddedParentAlive (parent)
+           #if ! DUSKSTUDIO_HAS_SHARED_WAYLAND
+            || parent.backend == platform::NativeEmbeddedParent::Backend::wayland
+           #endif
+            || geometry.width < 2 || geometry.height < 2)
+            return false;
 
        #if defined (DUSKSTUDIO_USE_WINDOWS_SOFTWARE_OPENGL)
         if (probe.clearLegacyPreviousFailure())
@@ -128,23 +134,47 @@ struct DuskImGuiHost::Impl final : private dusk::Timer
 
         try
         {
+            DGL::Application* windowApplication = nullptr;
+           #if DUSKSTUDIO_HAS_SHARED_WAYLAND
+            if (parent.backend == platform::NativeEmbeddedParent::Backend::wayland)
+            {
+                app.reset();
+                sharedApplication = SharedWaylandApplication::acquire (parent);
+                if (sharedApplication == nullptr)
+                    throw std::runtime_error ("the native parent connection is unavailable");
+                windowApplication = &sharedApplication->application();
+            }
+            else
+           #endif
+            {
+                if (app == nullptr)
+                    app = std::make_unique<EmbeddedApplication> (identity.className);
+                windowApplication = app.get();
+            }
+            embeddedParent = parent;
             window = std::make_unique<DGL::Window> (
-                app, parent.handle, geometry.width, geometry.height, geometry.scaleFactor, false);
+                *windowApplication, parent.handle, geometry.width, geometry.height, geometry.scaleFactor, false);
             // A display without a usable GL configuration leaves Pugl with an
             // unrealised view: no native handle, and a size hint that never took.
             if (window->getNativeWindowHandle() == 0
                 || window->getWidth() < 2 || window->getHeight() < 2)
             {
-                window.reset();
+                destroyEmbeddedWindow();
                 return false;
             }
 
-            // Dusk Studio owns both native windows, so it also owns the child's
-            // in-parent placement. The explicit framework embed API leaves normal
-            // plugin windows under host control.
-            if (! window->setEmbeddedOffset (geometry.x, geometry.y))
+            bool placed = false;
+           #if DUSKSTUDIO_HAS_SHARED_WAYLAND
+            if (sharedApplication != nullptr)
+                placed = window->setEmbeddedSurfaceGeometry (geometry.x, geometry.y, geometry.width,
+                                                             geometry.height, geometry.scaleFactor)
+                      && sharedApplication->commitParent (parent);
+            else
+           #endif
+                placed = window->setEmbeddedOffset (geometry.x, geometry.y);
+            if (! placed)
             {
-                window.reset();
+                destroyEmbeddedWindow();
                 return false;
             }
 
@@ -192,9 +222,27 @@ struct DuskImGuiHost::Impl final : private dusk::Timer
             raiseAboveSiblings (window->getNativeWindowHandle());
             window->focus();
             appliedScaleFactor = window->getScaleFactor();
-            embeddedParent = parent;
             probe.arm (renderer);
             armedMarker = true;
+           #if DUSKSTUDIO_HAS_SHARED_WAYLAND
+            if (sharedApplication != nullptr)
+                sharedRegistration = sharedApplication->registerClient (parent, {
+                    {},
+                    [this] (bool success) {
+                        if (success && window != nullptr && window->getCompletedDisplayCount() != 0
+                            && ! firstFrameConfirmed)
+                        {
+                            firstFrameConfirmed = true;
+                            probe.disarm();
+                        }
+                    },
+                    [this] { parentLost(); },
+                    [this] (const char* message) {
+                        owner.log ("graphics driver failed during the shared event pump: %s", message);
+                        failPump();
+                    }
+                });
+           #endif
         }
         catch (const std::exception& error)
         {
@@ -221,6 +269,13 @@ struct DuskImGuiHost::Impl final : private dusk::Timer
             return;
         closeRequested = true;
         closeWasPumped = false;
+       #if DUSKSTUDIO_HAS_SHARED_WAYLAND
+        if (sharedApplication != nullptr)
+        {
+            window->setEmbeddedVisible (false);
+            sharedApplication->commitParent (embeddedParent);
+        }
+       #endif
        #if defined (_WIN32)
         // The parent can paint an alert before deferred teardown reaches this child.
         ::ShowWindow (reinterpret_cast<HWND> (window->getNativeWindowHandle()), SW_HIDE);
@@ -240,6 +295,17 @@ struct DuskImGuiHost::Impl final : private dusk::Timer
             close();
             return;
         }
+
+       #if DUSKSTUDIO_HAS_SHARED_WAYLAND
+        if (sharedApplication != nullptr)
+        {
+            if (! window->setEmbeddedSurfaceGeometry (geometry.x, geometry.y, geometry.width,
+                                                      geometry.height, geometry.scaleFactor)
+                || ! sharedApplication->commitParent (embeddedParent))
+                close();
+            return;
+        }
+       #endif
 
         if (requiresScaleRecreation (appliedScaleFactor, geometry.scaleFactor))
         {
@@ -272,6 +338,11 @@ struct DuskImGuiHost::Impl final : private dusk::Timer
         if (closeRequested && window != nullptr)
         {
             destroyEmbeddedWindow();
+            if (armedMarker)
+            {
+                probe.disarm();
+                armedMarker = false;
+            }
             closeWasPumped = true;
             return;
         }
@@ -284,6 +355,9 @@ struct DuskImGuiHost::Impl final : private dusk::Timer
             closeRequested = false;
             closeWasPumped = false;
             stopTimer();
+           #if DUSKSTUDIO_HAS_SHARED_WAYLAND
+            sharedApplication.reset();
+           #endif
             if (callbacks.closed)
                 callbacks.closed();
         }
@@ -297,20 +371,24 @@ struct DuskImGuiHost::Impl final : private dusk::Timer
     {
         if (window != nullptr && ! platform::isEmbeddedParentAlive (embeddedParent))
         {
-            stopTimer();
-            destroyEmbeddedWindowSafely();
-            probe.disarm();
-            armedMarker = false;
-            closeRequested = false;
-            closeWasPumped = false;
-            if (callbacks.closed)
-                callbacks.closed();
+            parentLost();
             return false;
         }
+       #if DUSKSTUDIO_HAS_SHARED_WAYLAND
+        if (sharedApplication != nullptr)
+        {
+            if (window == nullptr)
+                return true;
+            const auto registrationLife = sharedRegistration->lifetime();
+            const auto shared = sharedApplication;
+            const bool success = shared->pump();
+            return success && ! registrationLife.expired();
+        }
+       #endif
         try
         {
             const auto started = std::chrono::steady_clock::now();
-            app.idle();
+            app->idle();
             const auto finished = std::chrono::steady_clock::now();
             nextPumpAt = nextPumpAfter (started, finished, kPumpIntervalMs);
             if (! firstFrameConfirmed)
@@ -329,6 +407,24 @@ struct DuskImGuiHost::Impl final : private dusk::Timer
             owner.log ("graphics driver failed during the event pump");
         }
 
+        failPump();
+        return false;
+    }
+
+    void parentLost()
+    {
+        stopTimer();
+        destroyEmbeddedWindowSafely();
+        probe.disarm();
+        armedMarker = false;
+        closeRequested = false;
+        closeWasPumped = false;
+        if (callbacks.closed)
+            callbacks.closed();
+    }
+
+    void failPump()
+    {
         graphicsFailed = true;
         stopTimer();
         destroyEmbeddedWindowSafely();
@@ -336,7 +432,6 @@ struct DuskImGuiHost::Impl final : private dusk::Timer
         closeWasPumped = false;
         if (callbacks.closed)
             callbacks.closed();
-        return false;
     }
 
     // Both failure paths run because the driver already failed once, and the
@@ -360,8 +455,15 @@ struct DuskImGuiHost::Impl final : private dusk::Timer
 
     void destroyEmbeddedWindow()
     {
+       #if DUSKSTUDIO_HAS_SHARED_WAYLAND
+        sharedRegistration.reset();
+       #endif
         if (window == nullptr)
             return;
+       #if DUSKSTUDIO_HAS_SHARED_WAYLAND
+        if (sharedApplication != nullptr)
+            sharedApplication->forgetSurface (window->getNativeWindowHandle());
+       #endif
 
         if (widget != nullptr)
         {
@@ -371,6 +473,10 @@ struct DuskImGuiHost::Impl final : private dusk::Timer
                 callbacks.widgetReleased();
         }
         window.reset();
+       #if DUSKSTUDIO_HAS_SHARED_WAYLAND
+        if (sharedApplication != nullptr)
+            sharedApplication->commitParent (embeddedParent);
+       #endif
     }
 
     void logGraphicsIdentity() const
@@ -383,7 +489,11 @@ struct DuskImGuiHost::Impl final : private dusk::Timer
     }
 
     DuskImGuiHost& owner;
-    EmbeddedApplication app;
+    std::unique_ptr<EmbeddedApplication> app;
+   #if DUSKSTUDIO_HAS_SHARED_WAYLAND
+    std::shared_ptr<SharedWaylandApplication> sharedApplication;
+    std::unique_ptr<SharedWaylandApplication::Registration> sharedRegistration;
+   #endif
     Identity identity;
     FirstFrameProbe probe;
     Callbacks callbacks;
