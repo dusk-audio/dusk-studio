@@ -89,19 +89,7 @@ public:
                           /*addToDesktop*/ false),
           pendingActivationToken (std::move (activationToken))
     {
-        // Defer addToDesktop until ALL style flags are set. Reason:
-        // setUsingNativeTitleBar + setResizable destroy + recreate the
-        // peer; if we add to desktop first, those calls each spawn a
-        // fresh peer (= 3 peers across MainWindow ctor). Doing style
-        // setup with no peer means flags are stashed and applied by
-        // the single addToDesktop call at the end of this ctor.
-        //
-        // Linux: route the main peer to X11 (XWayland) instead of
-        // wl_surface. Required for inline-embedded plugin editors -
-        // VST3/LV2/CLAP SDKs hand back X11 Window IDs that can only
-        // reparent into an X11 host. XWayland is transparent and ships
-        // on every mainstream Wayland session.
-
+        // Set styles before creating the peer; changing them later recreates it.
         setUsingNativeTitleBar (true);
         setContentOwned (new MainComponent(), true);
         // Native title bar already provides edge resize handles on every OS
@@ -150,17 +138,15 @@ public:
             centreWithSize (getWidth(), getHeight());
         }
 
-        // Single addToDesktop call with all style flags already set.
-        // X11-latched on Linux so the peer factory in
-        // Component::createNewPeer picks LinuxComponentPeer (XWayland)
-        // instead of WaylandComponentPeer.
        #if defined(__linux__)
-        duskstudio::platform::preferX11ForNextNativeWindow();
+        if (duskstudio::platform::hasUsableWaylandDisplay())
+            // The compositor owns the shadow; JUCE's four shadow peers would
+            // otherwise become independent Wayland top-level windows.
+            setDropShadowEnabled (false);
+        else
+            duskstudio::platform::preferX11ForNextNativeWindow();
        #endif
         addToDesktop (getDesktopWindowStyleFlags());
-       #if defined(__linux__)
-        duskstudio::platform::clearPreferX11ForNativeWindow();
-       #endif
         refreshResizeLimits();
 
         // Brand icon on the live peer. macOS / Windows already pick this
@@ -329,15 +315,26 @@ private:
 DuskStudioApp::DuskStudioApp() = default;
 DuskStudioApp::~DuskStudioApp() = default;
 
-// True when a native window can be created; on failure prints the XWayland
-// guidance. Called before the main window AND at the top of each *_EDITOR_TEST
-// gate (those open real X11 windows too) - but never on the headless paths,
-// which must keep running without any display.
-static bool displayUsableOrExplain()
+// Standalone foreign-editor probes require X11 even in a native session.
+static bool displayUsableOrExplain (bool foreignEditor = false)
 {
+   #if defined (__linux__)
+    if (! foreignEditor && duskstudio::platform::hasUsableWaylandDisplay())
+    {
+        std::fprintf (stderr, "Dusk Studio: using the native Wayland display.\n");
+        return true;
+    }
+   #else
+    (void) foreignEditor;
+   #endif
     const char* waylandDisplay = std::getenv ("WAYLAND_DISPLAY");
     const bool onWayland = waylandDisplay != nullptr && waylandDisplay[0] != '\0';
-    if (duskstudio::platform::hasUsableDisplay())
+   #if defined (__linux__)
+    const bool displayAvailable = duskstudio::platform::hasUsableX11Display();
+   #else
+    const bool displayAvailable = duskstudio::platform::hasUsableDisplay();
+   #endif
+    if (displayAvailable)
     {
         // One self-describing line so support reports name their session type.
         if (onWayland)
@@ -2699,7 +2696,7 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
     if (const char* path = std::getenv ("DUSKSTUDIO_CLAP_EDITOR_TEST"); path != nullptr && *path)
     {
-        if (! displayUsableOrExplain()) { setApplicationReturnValue (1); quit(); return; }
+        if (! displayUsableOrExplain (true)) { setApplicationReturnValue (1); quit(); return; }
         duskstudio::platform::preferX11ForNextNativeWindow();   // editor host needs an X11 peer
         auto comp = std::make_unique<duskstudio::ClapPluginEditorComponent>();
         juce::String err;
@@ -2726,8 +2723,6 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
         clapEditorTestWindow->setContentOwned (comp.release(), true);
         clapEditorTestWindow->centreWithSize (w, h);
         clapEditorTestWindow->setVisible (true);   // creates the peer -> consumes the X11 latch
-        // Match MainWindow's native-window setup: release the X11 latch now the peer
-        // exists.
         duskstudio::platform::clearPreferX11ForNativeWindow();
         return;   // standalone - skip the normal engine + main-window startup
     }
@@ -2738,7 +2733,7 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
 #if DUSKSTUDIO_HAS_NATIVE_LV2
     if (const char* path = std::getenv ("DUSKSTUDIO_LV2_EDITOR_TEST"); path != nullptr && *path)
     {
-        if (! displayUsableOrExplain()) { setApplicationReturnValue (1); quit(); return; }
+        if (! displayUsableOrExplain (true)) { setApplicationReturnValue (1); quit(); return; }
         duskstudio::platform::preferX11ForNextNativeWindow();   // editor host needs an X11 peer
         lv2EditorTest = std::make_unique<Lv2EditorTest>();
         std::string err;
@@ -2783,7 +2778,7 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
 #if DUSKSTUDIO_HAS_NATIVE_VST3
     if (const char* path = std::getenv ("DUSKSTUDIO_VST3_EDITOR_TEST"); path != nullptr && *path)
     {
-        if (! displayUsableOrExplain()) { setApplicationReturnValue (1); quit(); return; }
+        if (! displayUsableOrExplain (true)) { setApplicationReturnValue (1); quit(); return; }
         duskstudio::platform::preferX11ForNextNativeWindow();   // editor host needs an X11 peer
         vst3EditorTest = std::make_unique<Vst3EditorTest>();
         std::string err;

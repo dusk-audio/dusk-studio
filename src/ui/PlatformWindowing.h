@@ -46,16 +46,8 @@ bool openPathInDefaultApp (const std::filesystem::path& path);
 // Linux, so the platform asymmetry of past bug reports does NOT mean
 // the other platforms are bug-free.
 
-// Preflight, before any window is created: true when a native display
-// connection can actually be opened. Dusk Studio's Linux UI is X11-only
-// (the main window and every plugin-editor peer are X11 surfaces, via
-// XWayland on a Wayland session), so this reports whether an X server /
-// XWayland is reachable. A pure-Wayland session with XWayland disabled
-// returns false; the caller prints guidance and exits cleanly instead of
-// letting JUCE null-deref deep inside window creation and core-dump.
-//
-// macOS / Windows: always true - their native windowing is present once
-// the process has a GUI session.
+// Preflight before peer creation. Linux accepts a supported native Wayland
+// connection or X11; macOS and Windows use their existing GUI session.
 bool hasUsableDisplay();
 
 // Backing scale of the native view behind a peer's native handle, for a child
@@ -214,23 +206,9 @@ void clearXInputFocus();
 // Mac/Windows: no-op.
 void requestFocusOnMainWaylandSurface();
 
-// Latch a "use X11 for top-level peer creation" flag. While set, every
-// Component::createNewPeer routes to LinuxComponentPeer (X11) instead
-// of WaylandComponentPeer, even on a Wayland session. Used so the
-// main window, popup menus, plugin editor peers, and dialog windows
-// all share the X11 backend - required because the Linux plugin
-// protocols (VST3 X11EmbedWindowID, LV2 LV2_UI__X11UI, JUCE-plugin
-// X11-windowed renderer) need an X11 parent to attach to, AND because
-// wl_surface popups can't parent to an X11 main window.
-//
-// Sticky on Linux: once preferX11ForNextNativeWindow() runs (during
-// MainWindow ctor), the latch stays on for the process lifetime.
-// clearPreferX11ForNativeWindow() is a no-op on Linux - clearing the
-// latch would let the next popup menu pick wl_surface and silently
-// fail to map under an X11 parent.
-//
-// Linux: sets JUCE-wayland's latched skip flag; clear is a no-op.
-// Mac/Windows: no-op.
+// Select X11 for the process's main window or standalone editor probe.
+// Linux keeps this fallback sticky so later peers use the same backend;
+// clear is a no-op. Both calls are no-ops on macOS and Windows.
 void preferX11ForNextNativeWindow();
 void clearPreferX11ForNativeWindow();
 
@@ -240,6 +218,7 @@ void withX11PeerCreation (const std::function<void()>& create);
 
 #if JUCE_LINUX
 bool hasUsableX11Display();
+bool hasUsableWaylandDisplay();
 
 // Run an OOP editor's XEmbed teardown under a local X error trap. The child may
 // already have freed editorWindowId, so the exact BadWindow responses made by

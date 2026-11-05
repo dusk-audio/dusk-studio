@@ -488,6 +488,8 @@ public:
     virtual bool groupChipView (int index, std::string& text, int& master, bool& filled) = 0;
 
     virtual bool canEmbedPluginEditors() const = 0;
+    virtual bool nativeWaylandWindow() const = 0;
+    virtual bool modalHasSeparateX11Peer() const = 0;
     virtual bool modalStackEmpty() const = 0;
     virtual int modalCount() const = 0;
     virtual std::string modalText() const = 0;

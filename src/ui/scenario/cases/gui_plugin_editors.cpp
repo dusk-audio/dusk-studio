@@ -2173,5 +2173,104 @@ const ScenarioRegistrar pluginEditorTabLeftAlone { Scenario {
     { "no_window.clap" }, {}, 10000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runPluginEditorTabLeftAlone (host, ctx); }
 } };
+
+const ScenarioRegistrar nativeForeignEditors { Scenario {
+    "gui.native_wayland_foreign_editors", { "gui", "plugin", "wayland" }, Needs::Engine | Needs::Gui,
+    { "no_window.clap" }, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) -> std::optional<ScenarioResult>
+    {
+        if (! host.nativeWaylandWindow())
+            return ScenarioResult::skip ("requires a native Wayland main window");
+        const auto* display = std::getenv ("DISPLAY");
+        const bool hasX11 = display != nullptr && *display != '\0';
+        const auto checkEditor = [&ctx, &host, hasX11]
+        {
+            if (hasX11)
+                ctx.expect (host.modalHasSeparateX11Peer(), "editor did not get a separate X11 parent");
+            else
+            {
+                ctx.expect (! host.modalHasSeparateX11Peer(), "editor opened without Xwayland");
+                ctx.expect (host.modalText().find ("Plug-in editor needs Xwayland") != std::string::npos,
+                            "missing Xwayland did not show its explanation");
+            }
+        };
+        const auto fixture = ctx.fixture ("no_window.clap");
+        if (! fixture) return ScenarioResult::fail ("missing CLAP fixture");
+        auto* strip = readyStrip (host, ctx);
+        if (strip == nullptr) return ScenarioResult::fail ("no channel strip");
+        std::string error;
+        if (! strip->loadNativeClap (*fixture, "studio.dusk.test.no-window", error))
+            return ScenarioResult::fail (error);
+        strip->refreshInsertButton();
+        ctx.cleanup ([strip]
+        {
+            strip->closeEditor();
+            strip->unloadNativePlugins();
+            strip->refreshInsertButton();
+        });
+        auto steps = std::make_shared<std::vector<Step>>();
+        for (int cycle = 0; cycle != 3; ++cycle)
+        {
+            steps->push_back ({ 200, [&ctx, strip, hasX11, checkEditor]
+            {
+                ctx.expect (strip->openEditor() == hasX11, "channel editor availability disagrees with Xwayland");
+                checkEditor();
+            } });
+            steps->push_back ({ 200, [&ctx, &host, strip]
+            {
+                strip->closeEditor();
+                dismissAlert (host);
+                ctx.expect (host.modalStackEmpty(), "channel close left a modal");
+                ctx.expect (host.nativeWaylandWindow(), "foreign editor changed the main window backend");
+            } });
+        }
+        steps->push_back ({ 200, [&host, strip]
+        {
+            strip->unloadNativePlugins();
+            host.switchToStage (GuiHost::Stage::Aux);
+        } });
+        steps->push_back ({ 300, [&ctx, &host, fixture]
+        {
+            auto* lane = host.auxLane (kAuxLane);
+            if (! ctx.expect (lane != nullptr, "no aux lane")) return;
+            ctx.cleanup ([lane] { lane->unloadSlot (kAuxSlot); });
+            ctx.expect (lane->loadNativeClap (kAuxSlot, *fixture, "studio.dusk.test.no-window"),
+                        "aux fixture did not load");
+            lane->rebuildSlots();
+            ctx.expect (host.modalStackEmpty(), "aux load opened an editor without a click");
+        } });
+        for (int cycle = 0; cycle != 3; ++cycle)
+        {
+            steps->push_back ({ 200, [&ctx, &host]
+            {
+                ctx.expect (host.clickStripControl (GuiHost::StripKind::Aux, kAuxLane, "insert", 1, false),
+                            "aux insert click did not reach the slot");
+            } });
+            steps->push_back ({ 300, [&host, checkEditor]
+            {
+                checkEditor();
+                host.closeTopModal();
+            } });
+            steps->push_back ({ 200, [&ctx, &host]
+            {
+                ctx.expect (host.modalStackEmpty(), "aux close left a modal");
+            } });
+        }
+        steps->push_back ({ 200, [&ctx, &host]
+        {
+            ctx.expect (host.clickStripControl (GuiHost::StripKind::Aux, kAuxLane, "insert", 1, false),
+                        "aux insert did not reopen before stage switch");
+        } });
+        steps->push_back ({ 300, [&ctx, &host, hasX11, checkEditor]
+        {
+            checkEditor();
+            if (! hasX11) dismissAlert (host);
+            host.switchToStage (GuiHost::Stage::Mixing);
+            ctx.expect (host.modalStackEmpty(), "stage switch left an aux editor open");
+        } });
+        runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+        return std::nullopt;
+    }
+} };
 } // namespace
 } // namespace duskstudio::scenario::gui

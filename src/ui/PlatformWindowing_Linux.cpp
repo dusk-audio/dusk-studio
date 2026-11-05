@@ -488,7 +488,16 @@ juce::ComponentPeer* pickSiblingFocusTargetPeer (juce::Component& departing)
 
 bool hasUsableDisplay()
 {
-    return hasUsableX11Display();
+    return hasUsableWaylandDisplay() || hasUsableX11Display();
+}
+
+bool hasUsableWaylandDisplay()
+{
+   #if DUSKSTUDIO_HAS_SHARED_WAYLAND
+    return WaylandWindowSystem::getInstance()->isWaylandAvailable();
+   #else
+    return false;
+   #endif
 }
 
 bool hasUsableX11Display()
@@ -681,6 +690,9 @@ void runX11EditorTeardown (std::uint64_t editorWindowId,
 
 void setNativeCursorVisibleOnPeer (juce::ComponentPeer& peer, bool visible)
 {
+    if (describeEmbeddedParent (reinterpret_cast<std::uintptr_t> (peer.getNativeHandle())).backend
+            != NativeEmbeddedParent::Backend::platform)
+        return;
     auto* d = juceDisplay();
     if (d == nullptr) return;
     const auto win = (::Window) (uintptr_t) peer.getNativeHandle();
@@ -908,13 +920,8 @@ void preferX11ForNextNativeWindow()
 
 void clearPreferX11ForNativeWindow()
 {
-    // No-op on Linux. Dusk Studio routes ALL native peers to X11
-    // (XWayland) so the main window, popup menus, plugin editors,
-    // and dialog windows share one peer backend. Clearing the latch
-    // would let the next PopupMenu create a wl_surface peer that can't
-    // parent to the X11 main window - symptom: picker menu never opens.
-    // Once preferX11ForNextNativeWindow() is called (during MainWindow
-    // ctor), the latch stays on for the process lifetime.
+    // X11 fallback and standalone editor tests keep their process backend.
+    // Foreign editors in a Wayland session use withX11PeerCreation instead.
 }
 
 void requestFocusOnMainWaylandSurface()

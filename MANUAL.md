@@ -328,7 +328,8 @@ chapter. Everything below is the long form.
 
 ## System requirements
 
-- **Linux**: PipeWire (recommended) or ALSA. Dusk Studio talks to the PipeWire graph directly through its own backend, so the client shows up as "Dusk Studio" and reports its node latency to the graph; ALSA reaches the raw hardware for exclusive low-latency use. An X11 display is required: on a Wayland desktop this means XWayland (present and enabled by default on GNOME and KDE; compositors like sway, niri and labwc can run without it — enable it there, or Dusk Studio will refuse to start with a message pointing here).
+- **Linux**: PipeWire (recommended) or ALSA. Dusk Studio talks to the PipeWire graph directly through its own backend, so the client shows up as "Dusk Studio" and reports its node latency to the graph; ALSA reaches the raw hardware for exclusive low-latency use. By default, an X11 display is required: on a Wayland desktop this means XWayland (present and enabled by default on GNOME and KDE; compositors like sway, niri and labwc can run without it - enable it there, or Dusk Studio will refuse to start with a message pointing here).
+- **Experimental native Wayland**: source builds with shared Wayland embedding support can opt in with `DUSKSTUDIO_NATIVE_WAYLAND=1 DuskStudio`. The main window can run without Xwayland. Desktop launchers must supply an activation token to bring an existing window forward; terminal launches without one remain subject to the compositor's focus policy. X11 plug-in editors still need Xwayland and open in separate windows. Without it, opening one shows **Plug-in editor needs Xwayland**: "Enable Xwayland to open this plug-in's editor. Audio processing can continue without it." The released configuration continues to use Xwayland.
 - **macOS**: 11 (Big Sur) or later, Apple Silicon. The released DMG includes the out-of-process plugin sandbox while retaining this deployment target.
 - **Windows**: Windows 10 or later, ASIO driver recommended.
 - **The notepad** needs OpenGL 3. The Windows installer includes a CPU-based
@@ -1065,6 +1066,8 @@ Each lane is divided into three columns:
 Each aux lane has one insert slot. Click **Click to add an insert** and choose **Plugin (VST3 / CLAP / LV2 / AU)** to open the picker. Right-click for **Add / Replace / Remove / Edit / Configure as hardware insert**. The slot can hold a plugin or a hardware insert, mutually exclusive, with a 20 ms crossfade between modes.
 
 A plugin's own editor sits under the slot header. A built-in unit's controls fill that whole area instead; see *Editing a unit* under *Built-in insert units*.
+
+In the experimental native Wayland mode, click the slot header to open an X11 plugin editor in a separate window. Leaving the AUX stage closes that window; click the slot header to reopen it. An automatic inline editor attach failure is logged without a dialog; an explicit editor open reports a failure on screen.
 
 Common uses:
 

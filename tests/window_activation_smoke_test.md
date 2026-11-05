@@ -131,8 +131,22 @@ prompt, is the case that fails then. With the handoff's raise gone the X input
 focus still reached the app, through a focus call made after the handoff,
 while the window stayed under the GTK window, and only the pointer check saw
 it. A new window gets the keyboard under Mutter's own policy, so `launch`
-passes whatever the app does. The leg covers the default Xwayland path; the
-native Wayland backend (`DUSKSTUDIO_NATIVE_WAYLAND=1`) is not tested.
+passes whatever the app does. This leg covers the default Xwayland path.
+
+Source builds with shared Wayland embedding support also run
+`scripts/regress/native-window-activation.sh` through
+`TMPDIR=/var/tmp scripts/regress.sh linux --gui-scenarios`. It starts Mutter
+without Xwayland and opts the actual app into native Wayland. A GTK launcher
+obtains a fresh activation token from a real click for each of the same four
+cases. The driver checks keyboard focus, edit/save keyboard delivery, the
+unsaved-changes prompt, one retained native top-level window and one activation
+request per launch. Failed runs retain their private logs under `$TMPDIR`.
+
+The same runner invokes `scripts/regress/native-gui-scenarios.sh` with and
+without Xwayland. It exercises channel and aux editor open/close cycles,
+separate X11 parents, aux stage-switch cleanup and refusal without Xwayland.
+With native LV2 enabled, it also verifies the fixture editor receives live
+parameter updates across reopening.
 
 ## What still needs a person
 

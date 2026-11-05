@@ -144,6 +144,27 @@ leg_native_wayland_embedding() {
     python3 scripts/regress/native-wayland-embedding.py build/native-tests/dusk-native-wayland-probe --with-x11
 }
 
+leg_native_window_activation() {
+    local targets
+    targets="$(cmake --build build --target help)" || return $?
+    if [[ "$targets" != *dusk-native-wayland-probe* ]]; then
+        REGRESS_SKIP_REASON="frameworks lack shared Wayland embedding APIs"
+        return 77
+    fi
+    bash scripts/regress/native-window-activation.sh "$APP_BIN"
+}
+
+leg_native_gui_scenarios() {
+    local targets
+    targets="$(cmake --build build --target help)" || return $?
+    if [[ "$targets" != *dusk-native-wayland-probe* ]] || ! grep -qx 'DUSKSTUDIO_NATIVE_CLAP:BOOL=ON' build/CMakeCache.txt; then
+        REGRESS_SKIP_REASON="needs shared Wayland embedding and native CLAP"
+        return 77
+    fi
+    bash scripts/regress/native-gui-scenarios.sh "$APP_BIN" || return $?
+    bash scripts/regress/native-gui-scenarios.sh "$APP_BIN" --without-x11
+}
+
 # Both build dirs must point at the pinned donor checkout. Building against a
 # drifted ../plugins silently changes the DSP under test, and the failure then
 # looks like a Dusk Studio regression.
@@ -635,8 +656,12 @@ if [[ -x "$APP_BIN" ]]; then
         if ((GUI_SCENARIOS)); then
             if ((PACKAGE_MODE)); then
                 regress_skip "native-wayland-embedding" "source-only lifecycle probe"
+                regress_skip "native-window-activation" "source-only native Wayland opt-in"
+                regress_skip "native-gui-scenarios" "source-only native Wayland opt-in"
             else
                 regress_leg "native-wayland-embedding" leg_native_wayland_embedding
+                regress_leg "native-window-activation" leg_native_window_activation
+                regress_leg "native-gui-scenarios" leg_native_gui_scenarios
             fi
             regress_scenarios_run "$APP_BIN" --gui
             # These cases need a seeded config the suite runs without: the
@@ -663,7 +688,7 @@ else
     if ((RUN_SCENARIOS)); then
         missing_legs+=("${SCENARIO_LEG_NAMES[@]}")
         if ((GUI_SCENARIOS)); then
-            missing_legs+=(native-wayland-embedding scenarios-gui gui-plugin-picker gui-settings-defaults)
+            missing_legs+=(native-wayland-embedding native-window-activation native-gui-scenarios scenarios-gui gui-plugin-picker gui-settings-defaults)
         fi
     fi
     if ((RUN_CAPTURE && !PACKAGE_MODE && !SCENARIOS_ONLY)); then

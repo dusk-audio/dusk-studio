@@ -1,9 +1,8 @@
 # shellcheck shell=bash
 # A private headless GNOME session for the legs that need a real compositor:
-# Mutter with Xwayland, its own session bus, HOME, XDG directories and runtime
+# Mutter, its own session bus, HOME, XDG directories and runtime
 # dir, all started from an empty environment, so nothing reaches the desktop
-# the runner sits in. Sourced by gnome-file-drop.sh and
-# gnome-window-activation.sh, never run.
+# the runner sits in. GNOME_NATIVE_ONLY=1 disables Xwayland.
 #
 # DUSK_REGRESS_PIPEWIRE_DIR names the PipeWire runtime dir the app should play
 # through. Without it gnome_session_setup brings up the private null graph
@@ -49,7 +48,7 @@ gnome_session_setup() {
     GNOME_HOME="$GNOME_WORK/home"
     trap gnome_session_cleanup EXIT
     mkdir -m 700 "$GNOME_RT" && mkdir -p "$GNOME_HOME/.config" "$GNOME_HOME/.local/share" \
-        "$GNOME_HOME/.local/state" "$GNOME_HOME/.cache" "$GNOME_WORK/app" || exit 1
+        "$GNOME_HOME/.local/state" "$GNOME_HOME/.cache" "$GNOME_WORK/app" "$GNOME_WORK/tmp" || exit 1
 
     GNOME_PIPEWIRE_DIR="${DUSK_REGRESS_PIPEWIRE_DIR:-}"
     if [[ -z "$GNOME_PIPEWIRE_DIR" ]]; then
@@ -77,14 +76,16 @@ gnome_session_setup() {
 gnome_session_run() {
     local seconds="$1"
     shift
+    local -a backend_args=()
+    if [[ "${GNOME_NATIVE_ONLY:-0}" == 1 ]]; then backend_args+=(--no-x11); fi
     # shellcheck disable=SC2016  # the session command expands its own arguments
-    env -i PATH="/usr/local/bin:/usr/bin:/bin" HOME="$GNOME_HOME" USER="$(id -un)" LANG=C.UTF-8 \
+    env -i PATH="/usr/local/bin:/usr/bin:/bin" HOME="$GNOME_HOME" USER="$(id -un)" LANG=C.UTF-8 TMPDIR="$GNOME_WORK/tmp" \
         XDG_RUNTIME_DIR="$GNOME_RT" XDG_CONFIG_HOME="$GNOME_HOME/.config" XDG_DATA_HOME="$GNOME_HOME/.local/share" \
         XDG_CACHE_HOME="$GNOME_HOME/.cache" XDG_STATE_HOME="$GNOME_HOME/.local/state" \
         XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=GNOME GSETTINGS_BACKEND=memory LIBGL_ALWAYS_SOFTWARE=1 \
         ${GNOME_PIPEWIRE_DIR:+PIPEWIRE_RUNTIME_DIR="$GNOME_PIPEWIRE_DIR"} \
         timeout "$seconds" dbus-run-session -- \
-        mutter --wayland --headless --virtual-monitor 1920x1080 --wayland-display "dusk-regress-$$" -- \
+        mutter --wayland "${backend_args[@]}" --headless --virtual-monitor 1920x1080 --wayland-display "dusk-regress-$$" -- \
         bash -c 'w="$1"; shift; python3 -I "$@" > "$w/driver.log" 2>&1; echo $? > "$w/driver.rc"' \
         drive "$GNOME_WORK" "$1" drive "${@:2}" \
         >"$GNOME_WORK/mutter.log" 2>&1

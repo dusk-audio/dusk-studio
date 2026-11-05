@@ -2190,6 +2190,30 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
             && platform::hasUsableDisplay();
     }
 
+    bool nativeWaylandWindow() const override
+    {
+        auto* peer = owner.getPeer();
+        return peer != nullptr && platform::describeEmbeddedParent (
+            reinterpret_cast<std::uintptr_t> (peer->getNativeHandle())).backend
+                == platform::NativeEmbeddedParent::Backend::wayland;
+    }
+
+    bool modalHasSeparateX11Peer() const override
+    {
+       #if defined (__linux__)
+        const auto& stack = EmbeddedModal::activeModalStack();
+        if (stack.empty() || ! nativeWaylandWindow()) return false;
+        auto* body = stack.back()->getBody();
+        auto* peer = body != nullptr ? body->getPeer() : nullptr;
+        return peer != nullptr && peer != owner.getPeer() && stack.back()->hasSeparatePeer()
+            && platform::describeEmbeddedParent (
+                reinterpret_cast<std::uintptr_t> (peer->getNativeHandle())).backend
+                    == platform::NativeEmbeddedParent::Backend::platform;
+       #else
+        return false;
+       #endif
+    }
+
     bool modalStackEmpty() const override
     {
        #if DUSKSTUDIO_HAS_NATIVE_UI
