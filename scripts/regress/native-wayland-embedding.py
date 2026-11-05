@@ -38,12 +38,10 @@ def drive(binary, work):
                 if not wait_for(ready, seconds, 0.05):
                     raise Failure("probe did not report " + name + "=" + value)
 
-            def selection(required=True):
+            def selection():
                 result = subprocess.run(["wl-paste", "--no-newline", "--type", "text/plain"], env=env,
                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
                 if result.returncode != 0:
-                    if not required:
-                        return None
                     raise Failure("external Wayland clipboard read failed: " + result.stderr.decode(errors="replace"))
                 return result.stdout
 
@@ -57,10 +55,9 @@ def drive(binary, work):
             external = ("x" * 4095 + "\u65e5\u672c\u8a9e\U0001f642\n").encode() * 64
             (exchange / "external").write_bytes(external)
             with (exchange / "external").open("rb") as source:
-                publisher = subprocess.Popen(["wl-copy", "--foreground", "--type", "text/plain"], env=env,
-                                             stdin=source, stdout=log, stderr=subprocess.STDOUT)
-            processes.append(publisher)
-            if not wait_for(lambda: selection(False) == external, 10):
+                publisher = subprocess.run(["wl-copy", "--type", "text/plain"], env=env,
+                                           stdin=source, stdout=log, stderr=subprocess.STDOUT, timeout=10)
+            if publisher.returncode != 0 or selection() != external:
                 raise Failure("external clipboard publisher did not become owner")
             desktop.click(480, 540)
             paste(external, 1)
@@ -95,11 +92,10 @@ def drive(binary, work):
             desktop.click(1440, 540)
             paste(sibling, 4)
             with (exchange / "external").open("rb") as source:
-                replacement = subprocess.Popen(["wl-copy", "--foreground", "--type", "text/plain"], env=env,
-                                               stdin=source, stdout=log, stderr=subprocess.STDOUT)
-            processes.append(replacement)
-            if not wait_for(lambda: selection(False) == external, 10):
-                raise Failure("external clipboard replacement did not become owner")
+                publisher = subprocess.run(["wl-copy", "--type", "text/plain"], env=env,
+                                           stdin=source, stdout=log, stderr=subprocess.STDOUT, timeout=10)
+            if publisher.returncode != 0 or selection() != external:
+                raise Failure("external clipboard publisher did not become owner")
             desktop.click(1440, 540)
             paste(external, 5)
             (exchange / "done").write_text("done")
