@@ -41,6 +41,7 @@ function(duskstudio_check_shared_wayland result)
                 input.keyboard, input.pointer, input.data, input.consumed,
                 input.hasKeyboardFocus, input.releaseFocus, input.reset
             };
+            forwarding.lifetime = std::make_shared<int>(0);
             auto token = host.attachInputForwarder(forwarding);
             host.detachInputForwarder(token);
             auto* surface = host.getSurfaceForWindow(host.getWaylandWindowForPeer(peer));
