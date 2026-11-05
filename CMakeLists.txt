@@ -722,6 +722,7 @@ if(DUSKSTUDIO_ENABLE_NATIVE_UI)
         add_executable(dusk-native-wayland-probe EXCLUDE_FROM_ALL
             tests/native_wayland_embed.cpp
             src/foundation/MessageThread.cpp
+            src/ui/imgui/DafEditorHost.cpp
             src/ui/PlatformWindowing_Linux.cpp)
         target_compile_definitions(dusk-native-wayland-probe PRIVATE
             DUSKSTUDIO_JUCE_HAS_WAYLAND=1
@@ -1979,6 +1980,12 @@ static const unsigned int ${symbol}_len = ${_fontSize}u;
                 dusk_daf_duskverb_2_ui
                 dusk_daf_tape_machine_2_ui
                 dusk_daf_sunset_ui)
+            if(TARGET dusk-native-wayland-probe)
+                target_compile_definitions(dusk-native-wayland-probe PRIVATE DUSK_NATIVE_PROBE_DAF=1)
+                target_link_libraries(dusk-native-wayland-probe PRIVATE
+                    dusk_daf_tape_echo_2_ui dusk_daf_duskverb_2_ui
+                    dusk_daf_tape_machine_2_ui dusk_daf_sunset_ui)
+            endif()
         else()
             target_link_libraries(DuskStudio PRIVATE
                 dusk_daf_tape_echo_2

@@ -3,11 +3,13 @@
 #include "../../foundation/AppConfigDir.h"
 #include "../../foundation/MessageThread.h"
 #include "PumpPacing.h"
+#include "SharedWaylandApplication.h"
 
 #include <chrono>
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
+#include <exception>
 #include <utility>
 #include <vector>
 
@@ -46,35 +48,69 @@ struct DafEditorHost::Impl final : private dusk::Timer
         shutdown();
     }
 
-    void shutdown()
+    void destroyEditor()
     {
-        stopTimer();
-        closeRequested = false;
-        closeWasPumped = false;
+        tearingDown = true;
+        handedCallbacks = {};
+       #if DUSKSTUDIO_HAS_SHARED_WAYLAND
+        sharedRegistration.reset();
+        if (editor != nullptr && sharedApplication != nullptr)
+            sharedApplication->forgetSurface (editor->nativeWindow());
+       #endif
         editor.reset();
-        // The marker means "armed a frame and never came back". Getting here is
-        // coming back, whether a frame was drawn or the editor went before one
-        // was, so a run that armed one clears it rather than leaving the next
-        // launch to refuse an editor nothing went wrong with.
-        if (armedMarker)
+       #if DUSKSTUDIO_HAS_SHARED_WAYLAND
+        if (sharedApplication != nullptr)
+            sharedApplication->commitParent (parentDescriptor);
+       #endif
+        turn = {};
+        turnDepth = 0;
+        turnFailed = false;
+        tearingDown = false;
+    }
+
+    void clearSettledMarker()
+    {
+        if (armedMarker && (firstFrameConfirmed || ! graphicsFailed))
         {
             probe.disarm();
             armedMarker = false;
         }
     }
 
+    void shutdown()
+    {
+        stopTimer();
+        closeRequested = false;
+        closeWasPumped = false;
+        destroyEditor();
+        clearSettledMarker();
+       #if DUSKSTUDIO_HAS_SHARED_WAYLAND
+        sharedApplication.reset();
+       #endif
+    }
+
+    void finishClose (bool failed)
+    {
+        graphicsFailed = graphicsFailed || failed;
+        shutdown();
+        const auto closed = callbacks.closed;
+        if (closed) closed();
+    }
+
     bool open (std::uintptr_t nativeParent, Geometry geometry)
     {
         lastFailure.clear();
+        shutdown();
         armedMarker = false;
-        stopTimer();
-        editor.reset();
-        closeRequested = false;
-        closeWasPumped = false;
 
         if (unit.createEditor == nullptr || nativeParent == 0
             || geometry.width < 2 || geometry.height < 2)
             return false;
+
+       #if DUSKSTUDIO_HAS_SHARED_WAYLAND
+        parentDescriptor = platform::describeEmbeddedParent (nativeParent);
+        if (! platform::isEmbeddedParentAlive (parentDescriptor)) return false;
+       #endif
 
         if (const auto failed = probe.previousFailure(); ! failed.empty())
         {
@@ -87,10 +123,12 @@ struct DafEditorHost::Impl final : private dusk::Timer
             return false;
         }
         firstFrameConfirmed = false;
+        graphicsFailed = false;
 
         builtin::DafEditorCallbacks editorCallbacks;
         editorCallbacks.gesture = [this] (std::uint32_t index, bool started)
         {
+            if (tearingDown) return;
             if (! turn.open)
             {
                 deliver ({ false, started ? (int) index : -1, false, ! started });
@@ -108,29 +146,64 @@ struct DafEditorHost::Impl final : private dusk::Timer
         };
         editorCallbacks.parameterEdited = [this] (std::uint32_t index, float value)
         {
-            applyEdit ((int) index, value);
+            if (! tearingDown) applyEdit ((int) index, value);
         };
 
-        handedCallbacks = editorCallbacks;
         std::string error;
-        editor = unit.createEditor (nativeParent, geometry.width, geometry.height,
-                                    geometry.scaleFactor, std::move (editorCallbacks), error);
-        if (editor == nullptr)
+        bool placed = false;
+        try
         {
-            lastFailure = displayName + " cannot open: "
-                        + (error.empty() ? std::string ("the editor could not be built.")
-                                         : error);
-            log ("%s", lastFailure.c_str());
-            return false;
+           #if DUSKSTUDIO_HAS_SHARED_WAYLAND
+            if (parentDescriptor.backend == platform::NativeEmbeddedParent::Backend::wayland)
+            {
+                sharedApplication = SharedWaylandApplication::acquire (parentDescriptor);
+                if (sharedApplication == nullptr)
+                    error = "the native parent connection is unavailable.";
+                else
+                    editorCallbacks.hostApplication = std::shared_ptr<void> (
+                        sharedApplication, &sharedApplication->application());
+            }
+           #endif
+            handedCallbacks = editorCallbacks;
+            handedCallbacks.hostApplication.reset();
+            if (error.empty())
+                editor = unit.createEditor (nativeParent, geometry.width, geometry.height,
+                                            geometry.scaleFactor, std::move (editorCallbacks), error);
+            if (editor != nullptr)
+            {
+               #if DUSKSTUDIO_HAS_SHARED_WAYLAND
+                if (sharedApplication != nullptr)
+                {
+                    placed = editor->setEmbeddedGeometry (geometry.x, geometry.y, geometry.width,
+                                                           geometry.height, geometry.scaleFactor)
+                          && editor->setEmbeddedVisible (true)
+                          && sharedApplication->commitParent (parentDescriptor);
+                    if (placed)
+                        sharedRegistration = sharedApplication->registerClient (parentDescriptor, {
+                            [this] { beginTurn(); },
+                            [this] (bool success) { confirmFrame (success); endTurn (success); },
+                            [this] { finishClose (false); },
+                            [this] (const char* message) {
+                                log ("the shared editor event pump failed: %s", message);
+                                finishClose (true);
+                            }
+                        });
+                }
+                else
+               #endif
+                    placed = editor->setOffset (geometry.x, geometry.y);
+            }
         }
+        catch (const std::exception& failure) { error = failure.what(); }
+        catch (...) { error = "the editor could not be built."; }
 
-        // Dusk Studio owns both windows, so it places the child. A backend that
-        // cannot place an embedded child at all - native Wayland - is refused here
-        // rather than left to open a window of its own beside the mixer.
-        if (! editor->setOffset (geometry.x, geometry.y))
+        if (editor == nullptr || ! placed || ! error.empty())
         {
-            editor.reset();
-            lastFailure = displayName + " cannot open on this display backend.";
+            lastFailure = editor != nullptr && error.empty()
+                ? displayName + " cannot open on this display backend."
+                : displayName + " cannot open: "
+                  + (error.empty() ? std::string ("the editor could not be built.") : error);
+            shutdown();
             log ("%s", lastFailure.c_str());
             return false;
         }
@@ -152,6 +225,11 @@ struct DafEditorHost::Impl final : private dusk::Timer
             return;
         closeRequested = true;
         closeWasPumped = false;
+        editor->setEmbeddedVisible (false);
+       #if DUSKSTUDIO_HAS_SHARED_WAYLAND
+        if (sharedApplication != nullptr)
+            sharedApplication->commitParent (parentDescriptor);
+       #endif
     }
 
     bool isOpen() const noexcept { return editor != nullptr || closeRequested; }
@@ -161,6 +239,24 @@ struct DafEditorHost::Impl final : private dusk::Timer
         if (editor == nullptr || closeRequested
             || geometry.width < 2 || geometry.height < 2)
             return;
+
+       #if DUSKSTUDIO_HAS_SHARED_WAYLAND
+        if (! platform::isEmbeddedParentAlive (parentDescriptor))
+        {
+            close();
+            return;
+        }
+        if (sharedApplication != nullptr)
+        {
+            if (! editor->setEmbeddedGeometry (geometry.x, geometry.y, geometry.width,
+                                               geometry.height, geometry.scaleFactor)
+                || ! sharedApplication->commitParent (parentDescriptor))
+                close();
+            else
+                lastGeometry = geometry;
+            return;
+        }
+       #endif
 
         if (requiresScaleRecreation (appliedScaleFactor, geometry.scaleFactor))
         {
@@ -180,59 +276,62 @@ struct DafEditorHost::Impl final : private dusk::Timer
         lastGeometry = geometry;
     }
 
+    void confirmFrame (bool success)
+    {
+        if (! success || editor == nullptr || firstFrameConfirmed) return;
+       #if DUSKSTUDIO_HAS_SHARED_WAYLAND
+        if (sharedApplication != nullptr && editor->completedDisplayCount() == 0) return;
+       #endif
+        firstFrameConfirmed = true;
+        clearSettledMarker();
+    }
+
     void tick()
     {
-        if (editor != nullptr)
-        {
-            turn = Turn { true };
-            const auto started = std::chrono::steady_clock::now();
-            const bool alive = editor->idle();
-            const auto finished = std::chrono::steady_clock::now();
-            nextTickAt = nextPumpAfter (started, finished, pumpIntervalMs);
-            const auto worked = std::exchange (turn, Turn {});
-            if (! alive)
-            {
-                // The editor quit, or its graphics stack failed inside its own
-                // pump. Either way it goes, and the unit keeps every value.
-                log ("the editor closed itself");
-                stopTimer();
-                editor.reset();
-                closeRequested = false;
-                closeWasPumped = false;
-                if (callbacks.closed)
-                    callbacks.closed();
-                return;
-            }
-
-            if (! firstFrameConfirmed)
-            {
-                firstFrameConfirmed = true;
-                probe.disarm();
-            }
-
-            deliver (worked);
-        }
-
-        // A close is asked for from the host boundary; the editor goes only after
-        // its own loop has returned, and the caller hears about it one tick later,
-        // which is what the platform needs to finish unmapping the child.
         if (closeRequested && editor != nullptr)
         {
-            editor.reset();
+            destroyEditor();
+            clearSettledMarker();
             closeWasPumped = true;
             return;
         }
         if (closeRequested && closeWasPumped)
         {
-            closeRequested = false;
-            closeWasPumped = false;
-            stopTimer();
-            if (callbacks.closed)
-                callbacks.closed();
+            finishClose (false);
             return;
         }
-        if (editor == nullptr)
+        if (editor == nullptr) return;
+
+       #if DUSKSTUDIO_HAS_SHARED_WAYLAND
+        if (! platform::isEmbeddedParentAlive (parentDescriptor))
+        {
+            finishClose (false);
             return;
+        }
+        if (sharedApplication != nullptr)
+        {
+            const auto lifetime = sharedRegistration->lifetime();
+            const auto shared = sharedApplication;
+            const auto alive = shared->pump();
+            if (lifetime.expired() || ! alive) return;
+            if (closeRequested) return;
+        }
+       #endif
+
+        beginTurn();
+        const auto started = std::chrono::steady_clock::now();
+        const bool alive = editor->idle();
+        const auto finished = std::chrono::steady_clock::now();
+        nextTickAt = nextPumpAfter (started, finished, pumpIntervalMs);
+        confirmFrame (alive);
+        endTurn (alive);
+        if (! alive)
+        {
+            log ("the editor closed itself");
+            finishClose (true);
+            return;
+        }
+        if (editor == nullptr || closeRequested) return;
 
         pushChangedValues();
         followGeometry();
@@ -263,6 +362,25 @@ struct DafEditorHost::Impl final : private dusk::Timer
         bool several = false;
         bool ended = false;
     };
+
+    void beginTurn()
+    {
+        if (turnDepth++ == 0)
+        {
+            turn = Turn { true };
+            turnFailed = false;
+        }
+    }
+
+    void endTurn (bool success)
+    {
+        if (turnDepth == 0) return;
+        turnFailed = turnFailed || ! success;
+        if (--turnDepth != 0) return;
+        const auto worked = std::exchange (turn, Turn {});
+        const auto failed = std::exchange (turnFailed, false);
+        if (! failed) deliver (worked);
+    }
 
     void deliver (const Turn& worked)
     {
@@ -344,6 +462,14 @@ struct DafEditorHost::Impl final : private dusk::Timer
     // control through the same callbacks a drag in the editor calls.
     builtin::DafEditorCallbacks handedCallbacks;
     Turn turn;
+    int turnDepth = 0;
+    bool turnFailed = false;
+    bool tearingDown = false;
+   #if DUSKSTUDIO_HAS_SHARED_WAYLAND
+    std::shared_ptr<SharedWaylandApplication> sharedApplication;
+    std::unique_ptr<SharedWaylandApplication::Registration> sharedRegistration;
+    platform::NativeEmbeddedParent parentDescriptor;
+   #endif
     std::vector<float> pushedValues;
     Geometry lastGeometry;
     std::uintptr_t embeddedParent = 0;
@@ -351,6 +477,7 @@ struct DafEditorHost::Impl final : private dusk::Timer
     bool pushAllValues = true;
     bool firstFrameConfirmed = false;
     bool armedMarker = false;
+    bool graphicsFailed = false;
     bool closeRequested = false;
     bool closeWasPumped = false;
 };

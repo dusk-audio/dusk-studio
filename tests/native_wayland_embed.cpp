@@ -1,11 +1,13 @@
 #define JUCE_GUI_BASICS_INCLUDE_XHEADERS 1
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "../src/ui/imgui/DuskImGuiHost.h"
+#include "../src/ui/imgui/DafEditorHost.h"
 #include "../src/ui/imgui/SharedWaylandApplication.h"
 #include "TestTempDirectory.h"
 
 #include <OpenGL.hpp>
 
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -19,6 +21,8 @@
 namespace
 {
 using duskstudio::imgui::DuskImGuiHost;
+using duskstudio::imgui::DafEditorHost;
+namespace builtin = duskstudio::builtin;
 using duskstudio::imgui::SharedWaylandApplication;
 namespace platform = duskstudio::platform;
 
@@ -116,10 +120,23 @@ public:
         startTimer (20);
     }
 
-    ~Probe() override { stopTimer(); }
+    ~Probe() override
+    {
+        stopTimer();
+       #if DUSK_NATIVE_PROBE_DAF
+        clearDonors();
+       #endif
+    }
 
 private:
-    enum class Stage { open, rendered, firstClosed, resized, remapped, secondWindow, parentGone, failureReady, failed, clipboardMapping, clipboardReady };
+    enum class Stage
+    {
+        open, rendered, firstClosed, resized, remapped, secondWindow, parentGone, failureReady, failed,
+       #if DUSK_NATIVE_PROBE_DAF
+        donorMapping, donorRendered, donorClosed, donorReopened, donorParentGone,
+       #endif
+        clipboardMapping, clipboardReady
+    };
 
     std::uintptr_t parent() const
     {
@@ -137,6 +154,9 @@ private:
         try
         {
             require (std::chrono::steady_clock::now() < deadline, "native probe timed out");
+           #if DUSK_NATIVE_PROBE_DAF
+            for (auto& host : donorHosts) if (host) host->tick();
+           #endif
             switch (stage)
             {
                 case Stage::open:
@@ -271,9 +291,62 @@ private:
                     shell.addToDesktop (juce::ComponentPeer::windowIsResizable);
                     shell.setVisible (true);
                     shell.getPeer()->setFullScreen (true);
+                   #if DUSK_NATIVE_PROBE_DAF
+                    stage = Stage::donorMapping;
+                   #else
                     stage = Stage::clipboardMapping;
+                   #endif
                     break;
                 }
+               #if DUSK_NATIVE_PROBE_DAF
+                case Stage::donorMapping:
+                    if (shell.getWidth() < 1900 || shell.getHeight() < 1000) return;
+                    startDonors();
+                    stage = Stage::donorRendered;
+                    break;
+                case Stage::donorRendered:
+                    for (const auto& host : donorHosts) if (! host->hasRenderedFrame()) return;
+                    for (std::size_t i = 0; i < donorHosts.size(); ++i)
+                        require (! std::filesystem::exists (donorMarker (i)), "rendered donor retained its crash marker");
+                    donorHandle = donorHosts[1]->nativeWindow();
+                    donorHosts[1]->setGeometry ({ 50, 60, 700, 420, 1.25 });
+                    require (donorHosts[1]->nativeWindow() == donorHandle, "native donor scale change recreated its window");
+                    donorHosts[0]->close();
+                    donorHosts[2]->shutdown();
+                    require (donorHosts[2]->open (parent(), { 80, 90, 640, 360, 1.0 }), "donor cancellation open failed");
+                    require (! donorHosts[2]->hasRenderedFrame(), "donor claimed a frame before pumping");
+                    donorHosts[2]->close();
+                    stage = Stage::donorClosed;
+                    break;
+                case Stage::donorClosed:
+                    if (donorHosts[0]->isOpen() || donorHosts[2]->isOpen()) return;
+                    require (donorCloses[0] == 1 && donorCloses[2] == 1, "donor close was not reported exactly once");
+                    require (! std::filesystem::exists (donorMarker (2)), "cancelled donor retained its crash marker");
+                    require (donorHosts[1]->isOpen() && donorHosts[3]->isOpen(), "closing a donor lost a sibling");
+                    require (donorHosts[0]->open (parent(), { 20, 20, 640, 360, 1.0 }), "donor reopen failed");
+                    stage = Stage::donorReopened;
+                    break;
+                case Stage::donorReopened:
+                    if (! donorHosts[0]->hasRenderedFrame()) return;
+                    donorSiblingFrame = donorViews[3]->completedDisplayCount();
+                    shell.setVisible (false);
+                    shell.removeFromDesktop();
+                    shell.addToDesktop (juce::ComponentPeer::windowIsResizable);
+                    stage = Stage::donorParentGone;
+                    break;
+                case Stage::donorParentGone:
+                    if (donorHosts[0]->isOpen() || donorHosts[1]->isOpen() || a.isOpen()) return;
+                    require (donorHosts[3]->isOpen(), "replacing the parent closed a donor on another shell");
+                    if (donorViews[3]->completedDisplayCount() <= donorSiblingFrame) return;
+                    require (donorCloses[0] == 2 && donorCloses[1] == 1, "parent loss duplicated donor close notifications");
+                    clearDonors();
+                    otherShell.setVisible (false);
+                    shell.setVisible (true);
+                    shell.getPeer()->setFullScreen (true);
+                    std::puts ("PASS native donor editors: four plug-ins, shared panels, resize, cancellation, reopen, parent lifetime");
+                    stage = Stage::clipboardMapping;
+                    break;
+               #endif
                 case Stage::clipboardMapping:
                     if (shell.getWidth() < 1900 || shell.getHeight() < 1000) return;
                     require (a.open (parent(), { 0, 0, 960, 1080, 1.0 }), "clipboard panel A open failed");
@@ -314,6 +387,59 @@ private:
         }
     }
 
+   #if DUSK_NATIVE_PROBE_DAF
+    std::filesystem::path donorMarker (std::size_t index) const
+    {
+        return root.path() / ("donor-" + std::to_string (index));
+    }
+
+    void clearDonors()
+    {
+        for (auto& host : donorHosts) host.reset();
+        for (auto& plugin : donorPlugins)
+        {
+            if (plugin) plugin->deactivate();
+            plugin.reset();
+        }
+    }
+
+    void startDonors()
+    {
+        donorPlugins = { builtin::createTapeEcho2(), builtin::createDuskVerb2(),
+                         builtin::createTapeMachine2(), builtin::createSunset() };
+        otherShell.setVisible (true);
+        require (a.open (parent(), { 10, 800, 300, 160, 1.0 }), "donor sibling panel open failed");
+        const auto shared = SharedWaylandApplication::acquire (platform::describeEmbeddedParent (parent()));
+        for (std::size_t i = 0; i < donorHosts.size(); ++i)
+        {
+            auto* plugin = donorPlugins[i].get();
+            require (plugin != nullptr && plugin->hasEditor(), "donor plug-in editor is unavailable");
+            plugin->activate (48000.0, 64);
+            donorHosts[i] = std::make_unique<DafEditorHost> ("donor-" + std::to_string (i), "Donor", donorMarker (i), 0);
+            DafEditorHost::Unit unit;
+            unit.createEditor = [this, plugin, i, expected = &shared->application()] (
+                std::uintptr_t nativeParent, std::uint32_t width, std::uint32_t height, double scale,
+                builtin::DafEditorCallbacks callbacks, std::string& error)
+            {
+                require (callbacks.hostApplication.get() == expected, "donor did not borrow the shared application");
+                auto editor = plugin->createEditor (nativeParent, width, height, scale, std::move (callbacks), error);
+                donorViews[i] = editor.get();
+                return editor;
+            };
+            unit.paramCount = [plugin] { return static_cast<int> (plugin->params().size()); };
+            unit.paramValue = [plugin] (int index) { return plugin->getParameterValue (static_cast<std::uint32_t> (index)); };
+            unit.setParam = [plugin] (int index, float value) { plugin->setParameterValue (static_cast<std::uint32_t> (index), value); };
+            donorHosts[i]->setUnit (std::move (unit));
+            DafEditorHost::Callbacks callbacks;
+            callbacks.closed = [this, i] { ++donorCloses[i]; donorViews[i] = nullptr; };
+            donorHosts[i]->setCallbacks (std::move (callbacks));
+            const auto nativeParent = i == 3 ? reinterpret_cast<std::uintptr_t> (otherShell.getPeer()->getNativeHandle()) : parent();
+            require (donorHosts[i]->open (nativeParent, { 20, 20, 640, 360, 1.0 }), "native donor editor open failed");
+            require (! donorHosts[i]->hasRenderedFrame(), "donor frame was confirmed at construction");
+        }
+    }
+   #endif
+
     void writeExchange (const char* name, const std::string& value)
     {
         std::ofstream stream (exchange / name, std::ios::binary);
@@ -346,8 +472,13 @@ private:
                 const auto* bytes = static_cast<const char*> (target.getClipboard (size));
                 require (bytes != nullptr, "native clipboard read returned no text");
                 if (size > 0 && bytes[size - 1] == '\0') --size;
-                require (std::string (bytes, size) == readExchange ("expected"),
-                         "native clipboard text was truncated, stale, or corrupted");
+                const auto expected = readExchange ("expected");
+                if (std::string (bytes, size) != expected)
+                {
+                    writeExchange ("actual", std::string (bytes, size));
+                    throw std::runtime_error ("native clipboard read returned " + std::to_string (size)
+                        + " bytes instead of the expected " + std::to_string (expected.size()) + " bytes");
+                }
                 writeExchange ("pasted", std::to_string (++pastes));
             }
         }
@@ -377,6 +508,14 @@ private:
     DuskImGuiHost b { { "probe-b", "probe-b", "Probe B" }, root.path() / "b-frame" };
     DuskImGuiHost c { { "probe-c", "probe-c", "Probe C" }, root.path() / "c-frame" };
     DuskImGuiHost d { { "probe-d", "probe-d", "Probe D" }, root.path() / "d-frame" };
+   #if DUSK_NATIVE_PROBE_DAF
+    std::array<std::unique_ptr<builtin::DafPlugin>, 4> donorPlugins;
+    std::array<std::unique_ptr<DafEditorHost>, 4> donorHosts;
+    std::array<builtin::DafEditor*, 4> donorViews {};
+    std::array<int, 4> donorCloses {};
+    std::uintptr_t donorHandle = 0;
+    std::uint64_t donorSiblingFrame = 0;
+   #endif
     std::shared_ptr<SharedWaylandApplication> failedApplication;
     std::unique_ptr<SharedWaylandApplication::Registration> fault;
     const std::chrono::steady_clock::time_point deadline = std::chrono::steady_clock::now() + std::chrono::seconds (60);
