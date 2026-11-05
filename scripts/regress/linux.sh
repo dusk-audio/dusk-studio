@@ -130,13 +130,46 @@ run_build() {
     fi
 }
 
-leg_native_wayland_embedding() {
-    local targets
+# The native legs SKIP with a reason where the frameworks, the private GNOME
+# session's tools or (python module given) its Python bindings are missing.
+# Usage: native_leg_preflight <python module check or ""> <tool>...
+native_leg_preflight() {
+    local targets tool python_check="$1"
+    local -a needs=()
+    shift
     targets="$(cmake --build build --target help)" || return $?
     if [[ "$targets" != *dusk-native-wayland-probe* ]]; then
-        echo "frameworks lack shared Wayland embedding APIs"
+        REGRESS_SKIP_REASON="frameworks lack shared Wayland embedding APIs"
         return 77
     fi
+    for tool in "$@"; do
+        command -v "$tool" >/dev/null 2>&1 || needs+=("$tool")
+    done
+    if [[ -n "$python_check" ]] \
+        && ! env -i PATH=/usr/local/bin:/usr/bin:/bin python3 -I -c "$python_check" 2>/dev/null; then
+        needs+=("python3 with GObject introspection (Gio, GTK 4)")
+    fi
+    if ((${#needs[@]})); then
+        REGRESS_SKIP_REASON="needs ${needs[*]}"
+        return 77
+    fi
+}
+
+# gnome-session.sh exits 77 when it has no PipeWire socket to play through.
+native_session_run() {
+    local rc=0
+    bash "$@" || rc=$?
+    if ((rc == REGRESS_SKIP_RC)); then
+        REGRESS_SKIP_REASON="no PipeWire socket; the app would open the sound card through ALSA"
+    fi
+    return "$rc"
+}
+
+NATIVE_GIO_CHECK='import gi; from gi.repository import Gio, GLib'
+NATIVE_GTK_CHECK='import gi; gi.require_version("Gtk", "4.0"); from gi.repository import Gio, GLib, Gtk'
+
+leg_native_wayland_embedding() {
+    native_leg_preflight "" mutter dbus-run-session Xwayland wl-copy wl-paste || return $?
     if ((!SCENARIOS_ONLY)); then
         run_build cmake --build build --target dusk-native-wayland-probe -j"${JOBS}" || return $?
     fi
@@ -145,24 +178,18 @@ leg_native_wayland_embedding() {
 }
 
 leg_native_window_activation() {
-    local targets
-    targets="$(cmake --build build --target help)" || return $?
-    if [[ "$targets" != *dusk-native-wayland-probe* ]]; then
-        REGRESS_SKIP_REASON="frameworks lack shared Wayland embedding APIs"
-        return 77
-    fi
-    bash scripts/regress/native-window-activation.sh "$APP_BIN"
+    native_leg_preflight "$NATIVE_GTK_CHECK" mutter dbus-run-session || return $?
+    native_session_run scripts/regress/native-window-activation.sh "$APP_BIN"
 }
 
 leg_native_gui_scenarios() {
-    local targets
-    targets="$(cmake --build build --target help)" || return $?
-    if [[ "$targets" != *dusk-native-wayland-probe* ]] || ! grep -qx 'DUSKSTUDIO_NATIVE_CLAP:BOOL=ON' build/CMakeCache.txt; then
-        REGRESS_SKIP_REASON="needs shared Wayland embedding and native CLAP"
+    native_leg_preflight "$NATIVE_GIO_CHECK" mutter dbus-run-session Xwayland || return $?
+    if ! grep -qx 'DUSKSTUDIO_NATIVE_CLAP:BOOL=ON' build/CMakeCache.txt; then
+        REGRESS_SKIP_REASON="needs native CLAP"
         return 77
     fi
-    bash scripts/regress/native-gui-scenarios.sh "$APP_BIN" || return $?
-    bash scripts/regress/native-gui-scenarios.sh "$APP_BIN" --without-x11
+    native_session_run scripts/regress/native-gui-scenarios.sh "$APP_BIN" || return $?
+    native_session_run scripts/regress/native-gui-scenarios.sh "$APP_BIN" --without-x11
 }
 
 # Both build dirs must point at the pinned donor checkout. Building against a
