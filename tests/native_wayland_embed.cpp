@@ -9,7 +9,12 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
+#include <fstream>
+#include <functional>
+#include <iterator>
 #include <stdexcept>
+#include <utility>
 
 namespace
 {
@@ -24,17 +29,31 @@ void require (bool ok, const char* message)
 
 struct Painter final : DGL::TopLevelWidget, DGL::IdleCallback
 {
-    explicit Painter (DGL::Window& window) : TopLevelWidget (window)
+    Painter (DGL::Window& window, std::function<void (DGL::Window&, unsigned)> key,
+             std::function<void()> mouse)
+        : TopLevelWidget (window), keyPressed (std::move (key)), mousePressed (std::move (mouse))
     {
         getWindow().addIdleCallback (this);
     }
     ~Painter() override { getWindow().removeIdleCallback (this); }
     void idleCallback() override { repaint(); }
+    bool onKeyboard (const KeyboardEvent& event) override
+    {
+        if (event.press) keyPressed (getWindow(), event.key);
+        return true;
+    }
+    bool onMouse (const MouseEvent& event) override
+    {
+        if (event.press) mousePressed();
+        return true;
+    }
     void onDisplay() override
     {
         glClearColor (0.2f, 0.4f, 0.6f, 1.0f);
         glClear (GL_COLOR_BUFFER_BIT);
     }
+    std::function<void (DGL::Window&, unsigned)> keyPressed;
+    std::function<void()> mousePressed;
 };
 
 struct Shell final : juce::Component
@@ -84,7 +103,11 @@ public:
         shell.setVisible (true);
         shell.watchFrame();
         DuskImGuiHost::Callbacks callbacks;
-        callbacks.createWidget = [] (DGL::Window& window) { return std::make_unique<Painter> (window); };
+        callbacks.createWidget = [this] (DGL::Window& window) {
+            return std::make_unique<Painter> (window,
+                [this] (DGL::Window& target, unsigned key) { clipboardKey (target, key); },
+                [this] { ++mousePresses; });
+        };
         callbacks.closed = [this] { ++closed; };
         a.setCallbacks (callbacks);
         b.setCallbacks (callbacks);
@@ -96,7 +119,7 @@ public:
     ~Probe() override { stopTimer(); }
 
 private:
-    enum class Stage { open, rendered, firstClosed, resized, remapped, secondWindow, parentGone, failureReady, failed };
+    enum class Stage { open, rendered, firstClosed, resized, remapped, secondWindow, parentGone, failureReady, failed, clipboardMapping, clipboardReady };
 
     std::uintptr_t parent() const
     {
@@ -238,14 +261,99 @@ private:
                     fault.reset();
                     failedApplication.reset();
                     std::puts ("PASS native shared panels: render, hide/show, hidden resize, two shells, sibling lifetime, cancellation, parent recreation, pump failure");
-                    finish (0);
+                    if (exchange.empty())
+                    {
+                        finish (0);
+                        break;
+                    }
+                    otherShell.setVisible (false);
+                    shell.removeFromDesktop();
+                    shell.addToDesktop (juce::ComponentPeer::windowIsResizable);
+                    shell.setVisible (true);
+                    shell.getPeer()->setFullScreen (true);
+                    stage = Stage::clipboardMapping;
                     break;
                 }
+                case Stage::clipboardMapping:
+                    if (shell.getWidth() < 1900 || shell.getHeight() < 1000) return;
+                    require (a.open (parent(), { 0, 0, 960, 1080, 1.0 }), "clipboard panel A open failed");
+                    require (b.open (parent(), { 960, 0, 960, 1080, 1.0 }), "clipboard panel B open failed");
+                    stage = Stage::clipboardReady;
+                    break;
+                case Stage::clipboardReady:
+                    if (! clipboardAnnounced)
+                    {
+                        if (! bothRendered()) return;
+                        writeExchange ("ready", "ready");
+                        clipboardAnnounced = true;
+                    }
+                    if (std::filesystem::exists (exchange / "close-first"))
+                    {
+                        std::filesystem::remove (exchange / "close-first");
+                        a.close();
+                        closingFirst = true;
+                    }
+                    if (closingFirst && ! a.isOpen())
+                    {
+                        writeExchange ("first-closed", "closed");
+                        closingFirst = false;
+                    }
+                    if (std::filesystem::exists (exchange / "done"))
+                    {
+                        require (mousePresses >= 2, "native child pointer input was not delivered");
+                        std::puts ("PASS native clipboard: external Unicode, large self-copy, empty publication, sibling replacement");
+                        finish (0);
+                    }
+                    break;
             }
         }
         catch (const std::exception& error)
         {
             std::fprintf (stderr, "FAIL native panel stage %d: %s\n", static_cast<int> (stage), error.what());
+            finish (1);
+        }
+    }
+
+    void writeExchange (const char* name, const std::string& value)
+    {
+        std::ofstream stream (exchange / name, std::ios::binary);
+        stream << value;
+        require (stream.good(), "could not write clipboard probe response");
+    }
+
+    std::string readExchange (const char* name)
+    {
+        std::ifstream stream (exchange / name, std::ios::binary);
+        require (stream.good(), "could not read clipboard probe request");
+        return { std::istreambuf_iterator<char> (stream), std::istreambuf_iterator<char>() };
+    }
+
+    void clipboardKey (DGL::Window& target, unsigned key)
+    {
+        if (stage != Stage::clipboardReady) return;
+        try
+        {
+            if (key == 'c' || key == 'e')
+            {
+                const auto value = key == 'c' ? readExchange ("payload") : std::string();
+                require (target.setClipboard ("text/plain", value.c_str(), value.size() + 1),
+                         "native clipboard publication was refused");
+                writeExchange ("published", std::to_string (++publications));
+            }
+            else if (key == 'p')
+            {
+                std::size_t size = 0;
+                const auto* bytes = static_cast<const char*> (target.getClipboard (size));
+                require (bytes != nullptr, "native clipboard read returned no text");
+                if (size > 0 && bytes[size - 1] == '\0') --size;
+                require (std::string (bytes, size) == readExchange ("expected"),
+                         "native clipboard text was truncated, stale, or corrupted");
+                writeExchange ("pasted", std::to_string (++pastes));
+            }
+        }
+        catch (const std::exception& error)
+        {
+            std::fprintf (stderr, "FAIL native clipboard: %s\n", error.what());
             finish (1);
         }
     }
@@ -257,6 +365,11 @@ private:
         juce::JUCEApplication::quit();
     }
 
+    const std::filesystem::path exchange = std::getenv ("DUSK_NATIVE_PROBE_WORK") != nullptr
+        ? std::getenv ("DUSK_NATIVE_PROBE_WORK") : "";
+    bool clipboardAnnounced = false;
+    bool closingFirst = false;
+    int publications = 0, pastes = 0, mousePresses = 0;
     duskstudio::test::TempDirectory root { "dusk-native-embed-" };
     Shell shell;
     Shell otherShell;
@@ -266,7 +379,7 @@ private:
     DuskImGuiHost d { { "probe-d", "probe-d", "Probe D" }, root.path() / "d-frame" };
     std::shared_ptr<SharedWaylandApplication> failedApplication;
     std::unique_ptr<SharedWaylandApplication::Registration> fault;
-    const std::chrono::steady_clock::time_point deadline = std::chrono::steady_clock::now() + std::chrono::seconds (20);
+    const std::chrono::steady_clock::time_point deadline = std::chrono::steady_clock::now() + std::chrono::seconds (60);
     Stage stage = Stage::open;
     int closed = 0;
     int visibilityCycles = 0;

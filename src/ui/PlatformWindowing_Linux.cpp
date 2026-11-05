@@ -209,9 +209,7 @@ bool writeWaylandClipboard (const NativeWaylandConnection& connection, const std
 {
     if (auto* const host = waylandHost (connection))
     {
-        if (text.empty())
-            return false;
-        host->copyTextToClipboard (text.c_str());
+        host->copyTextToClipboard (text);
         return true;
     }
     return false;
