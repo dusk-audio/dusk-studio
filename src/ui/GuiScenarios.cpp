@@ -1067,6 +1067,10 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     {
         return owner.miniTimeline != nullptr && owner.miniTimeline->clickMarkerForScenario (index);
     }
+    bool pressMiniKey (const std::string& description) override
+    {
+        return owner.miniTimeline != nullptr && owner.miniTimeline->pressKeyForScenario (description);
+    }
     void refreshMasteringSource() override
     {
         if (owner.masteringView != nullptr) owner.masteringView->followSource();

@@ -26,6 +26,7 @@ public:
     std::vector<scenario::MiniMarkerPaint> markerPaintForScenario() const;
     bool clickSampleForScenario (std::int64_t);
     bool clickMarkerForScenario (int);
+    bool pressKeyForScenario (const std::string& description);
 
     void paint (juce::Graphics&) override;
     void resized() override;

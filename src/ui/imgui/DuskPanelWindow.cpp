@@ -20,6 +20,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <string_view>
 #include <system_error>
 #include <thread>
 #include <utility>
@@ -302,6 +303,24 @@ std::string shellKeyName (ImGuiKey key)
         if (named.key == key && named.forwardToShell)
             return named.name;
     return {};
+}
+
+std::uint32_t shellKeyText (const KeyChord& chord)
+{
+    if (chord.ctrl || chord.super || chord.alt)
+        return 0;
+    if (chord.key == ImGuiKey_Space)
+        return ' ';
+    if (chord.key >= ImGuiKey_A && chord.key <= ImGuiKey_Z)
+        return static_cast<std::uint32_t> ((chord.shift ? 'A' : 'a') + (chord.key - ImGuiKey_A));
+    static constexpr std::string_view unshifted = "0123456789[]=-.,/;'\\`";
+    static constexpr std::string_view shifted   = ")!@#$%^&*({}+_><?:\"|~";
+    static_assert (unshifted.size() == shifted.size());
+    const auto name = shellKeyName (chord.key);
+    const auto at = name.size() == 1 ? unshifted.find (name.front()) : std::string_view::npos;
+    if (at == std::string_view::npos)
+        return 0;
+    return static_cast<unsigned char> ((chord.shift ? shifted : unshifted)[at]);
 }
 
 std::optional<KeyChord> parseKeyDescription (const std::string& description)

@@ -315,6 +315,46 @@ const ScenarioRegistrar miniTimelineMarkers { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runMiniTimelineMarkers (host, ctx); }
 } };
 
+// The strip takes the keyboard whenever its child opens, so a shortcut matched on
+// the character it types has to keep working from there.
+std::optional<ScenarioResult> runMiniTimelineKeys (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+    if (! transport.isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires stopped transport and no modal");
+    if (engine.getStage() != AudioEngine::Stage::Recording && engine.getStage() != AudioEngine::Stage::Mixing)
+        return ScenarioResult::skip ("requires a stage with the mini timeline");
+    const auto playhead = transport.getPlayhead();
+    const bool shown = host.setTimelineShown (false);
+    ctx.cleanup ([&host, &transport, playhead, shown]
+    {
+        drainModals (host);
+        transport.locate (playhead);
+        host.setTimelineShown (shown);
+    });
+    const auto rate = engine.getCurrentSampleRate();
+    transport.locate ((std::int64_t) (5 * rate));
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 350, [&host, &ctx]
+    { ctx.expect (host.pressMiniKey ("."), "the mini timeline did not take '.'"); } });
+    steps->push_back ({ 200, [&host, &ctx, &transport]
+    {
+        ctx.expect (transport.getPlayhead() == 0, "'.' at the mini timeline did not rewind");
+        ctx.expect (host.pressMiniKey ("shift + /"), "the mini timeline did not take '?'");
+    } });
+    steps->push_back ({ 300, [&host, &ctx]
+    { ctx.expect (host.shortcutsOpen(), "'?' at the mini timeline did not open Keyboard Shortcuts"); } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar miniTimelineKeys { Scenario {
+    "gui.mini_timeline_keys", { "gui", "tape" }, Needs::Engine | Needs::Gui,
+    {}, {}, 8000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runMiniTimelineKeys (host, ctx); }
+} };
+
 std::optional<ScenarioResult> runTapeRuler (GuiHost& host, ScenarioContext& ctx)
 {
     auto& engine = ctx.engine();

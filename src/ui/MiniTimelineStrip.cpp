@@ -130,7 +130,12 @@ void MiniTimelineStrip::syncWindow()
     view = content.get();
     view->shellKey = [safe] (std::string description)
     {
-        const auto key = juce::KeyPress::createFromDescription (description);
+        // The shell matches '?', '.' and the zoom keys on the character they type,
+        // which a description does not carry.
+        auto key = juce::KeyPress::createFromDescription (description);
+        if (const auto chord = imgui::parseKeyDescription (description))
+            key = { key.getKeyCode(), key.getModifiers(),
+                    static_cast<decltype (key.getTextCharacter())> (imgui::shellKeyText (*chord)) };
         dusk::callAsync ([safe, key]
         {
             auto* self = safe.getComponent();
@@ -241,6 +246,16 @@ bool MiniTimelineStrip::clickMarkerForScenario (int index)
     return window != nullptr && ! closing && window->clickControlForScenario ("marker:" + std::to_string (index));
    #else
     (void) index;
+    return false;
+   #endif
+}
+
+bool MiniTimelineStrip::pressKeyForScenario (const std::string& description)
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    return window != nullptr && ! closing && window->inputForScenario (description);
+   #else
+    (void) description;
     return false;
    #endif
 }
