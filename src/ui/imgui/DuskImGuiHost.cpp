@@ -3,6 +3,7 @@
 #include "DuskImGuiScale.h"
 #include "../../foundation/MessageThread.h"
 #include "PumpPacing.h"
+#include "../NativeEmbeddedParent.h"
 
 #if defined (_WIN32)
 # ifndef WIN32_LEAN_AND_MEAN
@@ -53,7 +54,12 @@ struct DuskImGuiHost::Impl final : private dusk::Timer
     {
     public:
         explicit EmbeddedApplication (const std::string& className)
-            : DGL::Application (false)
+            : DGL::Application (false, kTypeAuto,
+               #if defined (__linux__)
+                                kWindowSystemX11)
+               #else
+                                kWindowSystemAuto)
+               #endif
         {
             setClassName (className.c_str());
         }
@@ -86,7 +92,7 @@ struct DuskImGuiHost::Impl final : private dusk::Timer
             probe.disarm();
     }
 
-    bool open (std::uintptr_t nativeParent, Geometry geometry)
+    bool open (platform::NativeEmbeddedParent parent, Geometry geometry)
     {
         // Cleared before the first return so neither outlives the attempt it
         // describes.
@@ -94,7 +100,9 @@ struct DuskImGuiHost::Impl final : private dusk::Timer
         armedMarker = false;
         stopTimer();
         destroyEmbeddedWindow();
-        if (nativeParent == 0 || geometry.width < 2 || geometry.height < 2)
+        if (! platform::isEmbeddedParentAlive (parent)
+            || parent.backend == platform::NativeEmbeddedParent::Backend::wayland
+            || geometry.width < 2 || geometry.height < 2)
             return false;
 
         closeRequested = false;
@@ -121,7 +129,7 @@ struct DuskImGuiHost::Impl final : private dusk::Timer
         try
         {
             window = std::make_unique<DGL::Window> (
-                app, nativeParent, geometry.width, geometry.height, geometry.scaleFactor, false);
+                app, parent.handle, geometry.width, geometry.height, geometry.scaleFactor, false);
             // A display without a usable GL configuration leaves Pugl with an
             // unrealised view: no native handle, and a size hint that never took.
             if (window->getNativeWindowHandle() == 0
@@ -134,10 +142,6 @@ struct DuskImGuiHost::Impl final : private dusk::Timer
             // Dusk Studio owns both native windows, so it also owns the child's
             // in-parent placement. The explicit framework embed API leaves normal
             // plugin windows under host control.
-            // Native Wayland cannot embed a surface owned by the framework's display
-            // connection into the legacy shell's surface. Refuse that backend
-            // instead of silently falling back to the separate top-level window
-            // that Pugl otherwise creates for an unsupported parent.
             if (! window->setEmbeddedOffset (geometry.x, geometry.y))
             {
                 window.reset();
@@ -188,7 +192,7 @@ struct DuskImGuiHost::Impl final : private dusk::Timer
             raiseAboveSiblings (window->getNativeWindowHandle());
             window->focus();
             appliedScaleFactor = window->getScaleFactor();
-            embeddedParent = nativeParent;
+            embeddedParent = parent;
             probe.arm (renderer);
             armedMarker = true;
         }
@@ -230,6 +234,12 @@ struct DuskImGuiHost::Impl final : private dusk::Timer
         if (window == nullptr || closeRequested
             || geometry.width < 2 || geometry.height < 2)
             return;
+
+        if (! platform::isEmbeddedParentAlive (embeddedParent))
+        {
+            close();
+            return;
+        }
 
         if (requiresScaleRecreation (appliedScaleFactor, geometry.scaleFactor))
         {
@@ -285,6 +295,18 @@ struct DuskImGuiHost::Impl final : private dusk::Timer
     // keeps whatever state it mirrored out as it changed.
     bool pumpEvents()
     {
+        if (window != nullptr && ! platform::isEmbeddedParentAlive (embeddedParent))
+        {
+            stopTimer();
+            destroyEmbeddedWindowSafely();
+            probe.disarm();
+            armedMarker = false;
+            closeRequested = false;
+            closeWasPumped = false;
+            if (callbacks.closed)
+                callbacks.closed();
+            return false;
+        }
         try
         {
             const auto started = std::chrono::steady_clock::now();
@@ -368,7 +390,7 @@ struct DuskImGuiHost::Impl final : private dusk::Timer
     std::string lastFailure;
     std::unique_ptr<DGL::Window> window;
     std::unique_ptr<DGL::TopLevelWidget> widget;
-    std::uintptr_t embeddedParent = 0;
+    platform::NativeEmbeddedParent embeddedParent;
     double appliedScaleFactor = 1.0;
     bool firstFrameConfirmed = false;
     bool graphicsFailed = false;
@@ -392,7 +414,7 @@ void DuskImGuiHost::setCallbacks (Callbacks callbacks)
 
 bool DuskImGuiHost::open (std::uintptr_t nativeParent, Geometry geometry)
 {
-    return impl->open (nativeParent, geometry);
+    return impl->open (platform::describeEmbeddedParent (nativeParent), geometry);
 }
 
 const std::string& DuskImGuiHost::lastOpenFailure() const noexcept

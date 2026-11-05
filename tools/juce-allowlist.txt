@@ -119,7 +119,7 @@ src/ui/MultiImportTargetPicker.cpp	78
 src/ui/MultiImportTargetPicker.h	11
 src/ui/NativeEditorEmbedScale.h	14
 src/ui/PlatformWindowing.h	14
-src/ui/PlatformWindowing_Linux.cpp	15
+src/ui/PlatformWindowing_Linux.cpp	17
 src/ui/PlatformWindowing_Mac.mm	19
 src/ui/PlatformWindowing_Windows.cpp	7
 src/ui/PluginPickerHelpers.cpp	130

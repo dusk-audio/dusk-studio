@@ -5,6 +5,7 @@
 #define JUCE_GUI_BASICS_INCLUDE_XHEADERS 1
 
 #include "LinuxPeerTeardown.h"
+#include "NativeEmbeddedParent.h"
 #include "PlatformWindowing.h"
 #include "X11EditorTeardownError.h"
 
@@ -102,6 +103,37 @@ bool openPathInDefaultApp (const std::filesystem::path& path)
 using juce::WaylandSymbols;
 using juce::WaylandWindowSystem;
 #endif
+
+NativeEmbeddedParent describeEmbeddedParent (std::uintptr_t handle)
+{
+    if (handle == 0) return {};
+    for (int i = 0; i < juce::ComponentPeer::getNumPeers(); ++i)
+    {
+        auto* const peer = juce::ComponentPeer::getPeer (i);
+        if (reinterpret_cast<std::uintptr_t> (peer->getNativeHandle()) != handle)
+            continue;
+        NativeEmbeddedParent parent { NativeEmbeddedParent::Backend::platform,
+                                      handle, peer->getUniqueID() };
+       #if DUSKSTUDIO_JUCE_HAS_WAYLAND
+        if (auto* const system = WaylandWindowSystem::getInstanceWithoutCreating())
+            if (auto* const window = system->getWaylandWindowForPeer (peer))
+            {
+                if (reinterpret_cast<std::uintptr_t> (system->getSurfaceForWindow (window)) != handle)
+                    return {};
+                parent.backend = NativeEmbeddedParent::Backend::wayland;
+            }
+       #endif
+        return parent;
+    }
+    return {};
+}
+
+bool isEmbeddedParentAlive (const NativeEmbeddedParent& parent)
+{
+    const auto current = describeEmbeddedParent (parent.handle);
+    return current.backend != NativeEmbeddedParent::Backend::unavailable
+        && current.backend == parent.backend && current.peerId == parent.peerId;
+}
 
 namespace
 {
