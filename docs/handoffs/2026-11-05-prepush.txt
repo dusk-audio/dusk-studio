@@ -1,0 +1,75 @@
+prepush: linux, mac and windows running; logs in /var/tmp/dusk-prepush.A4V48y
+
+===== regress prepush =====
+RESULT LEG                                       SECONDS  NOTE
+PASS   linux/configure-check                           0
+PASS   mac/mac-preflight                               1  was on HEAD
+PASS   linux/build-app                                 2
+PASS   mac/push-head                                   1
+PASS   mac/mac-checkout                                0
+PASS   windows/vm-preflight                            3
+PASS   mac/daf-revision                                1
+PASS   linux/build-tests                               1
+PASS   mac/configure-app                               2
+PASS   mac/configure-tests                             3
+PASS   mac/donor-check                                 0
+PASS   windows/update                                  6
+PASS   mac/build-app                                   3
+PASS   mac/build-tests                                 1
+PASS   windows/build                                   5
+PASS   windows/mesa                                    3
+PASS   windows/ctest-inventory                         6
+PASS   mac/ctest                                      83
+PASS   mac/selftest                                    5
+PASS   linux/ctest                                   100
+PASS   mac/scenarios                                  69  13 skipped: bounce.native_finalization_failures: requires the native PipeWire fault harness; device.pipewire_server_loss_commits: built without the native PipeWire backend; engine.dsp_lane_back_on_realtime_after_stop: the realtime CPU-time guard is Linux-only; lv2.file_state_inside_session: missing fixture: file_state.lv2; lv2.large_store_timing_bound: missing fixture: file_state.lv2; lv2.latency_follows_reported_port: built without the native LV2 host; lv2.params_numbering_stable: missing fixture: many_patch.lv2; lv2.worker_processes_and_bounces: missing fixture: worker.lv2; oop.killed_child_bypasses: the sandbox stub children are not exercised on macOS; oop.rapid_switching_safe: the sandbox stub children are not exercised on macOS; oop.unload_reaps_child: the sandbox stub children are not exercised on macOS; region.renders_refuse_a_file_that_fails_to_sync: requires the native audio-file fault fixture; scan.cancel_lv2: built without the native LV2 host
+SKIP   mac/scenarios:fixtures                          0  missing fixture: lv2.file_state_inside_session (file_state.lv2); lv2.large_store_timing_bound (file_state.lv2); lv2.params_numbering_stable (many_patch.lv2); lv2.worker_processes_and_bounces (worker.lv2)
+SKIP   mac/gui-launch                                  0  foreground desktop session required for native GUI input
+SKIP   mac/scenarios-gui                               0  foreground desktop session required for native GUI input
+SKIP   mac/ipc-selftest                                0  Linux-only code path
+PASS   linux/ctest-runner-limits                     106
+PASS   linux/juce-gate                                 1
+PASS   linux/selftest-xvfb                             7
+PASS   linux/ipc-selftest                              0
+PASS   linux/ipc-host-test                             0
+SKIP   linux/perf-suite                                0  not requested (--perf)
+PASS   linux/native-wayland-embedding                 27
+PASS   linux/native-window-activation                 23
+PASS   linux/native-gui-scenarios                     22
+PASS   linux/bb-no-display                             1
+PASS   linux/bb-gnome-file-drop                       44
+PASS   windows/ctest                                 332  100% tests passed, 0 tests failed out of 1897
+PASS   linux/bb-x11-drop-input                        22
+PASS   linux/window-activation:launch                  6  session A loaded; active, focused and shown; the cover lost the keyboard and the pointer
+PASS   linux/window-activation:covered                 6  session B handed over and loaded; active, focused and shown; the cover lost the keyboard and the pointer
+PASS   linux/window-activation:minimized               6  the same window came back from minimized with session C; active, focused and shown; the cover lost the keyboard and the pointer
+PASS   linux/window-activation:handoff                15  the save prompt held session D back in front, Don't Save opened it; active, focused and shown; the cover lost the keyboard and the pointer
+PASS   linux/scenario-fixtures                         0  all 16 resolve
+PASS   linux/scenarios-headless                      119  4 skipped: bounce.native_finalization_failures: requires the owned null graph and native fault fixture; device.pipewire_server_loss_commits: requires an owned private PipeWire loss harness; region.renders_refuse_a_file_that_fails_to_sync: requires the native audio-file fault fixture; scan.cancel_au: AU scanning is macOS only
+PASS   linux/bb-handoff                                1
+PASS   linux/bb-crash-relaunch                         1
+PASS   linux/bb-no-runtime-dir                         8
+PASS   linux/bb-damaged-recent                         9
+PASS   linux/bb-keyboard-quit                          1
+PASS   linux/bb-native-stage-shortcuts                 5
+PASS   linux/bb-window-close                           1
+PASS   linux/bb-clean-quit                             9
+PASS   linux/bb-quit-twice                             8
+PASS   linux/bb-interrupted-gui-suite                  3
+PASS   linux/bb-interrupted-gui-save                   2
+PASS   linux/bb-display-loss                           6
+PASS   linux/bb-quit-during-mixdown                    2
+PASS   linux/bb-quit-save-rate                         3
+PASS   linux/bb-startup-scan                          10
+PASS   linux/bb-explicit-scan-shutdown                 2
+PASS   linux/bb-oop-child-kill                        26
+PASS   linux/bb-oop-quit-during-load                   3
+PASS   linux/scenarios-gui                           271  5 skipped: gui.settings_plugin_scan: requires an isolated profile with DUSKSTUDIO_SETTINGS_SCAN_TEST set; gui.native_wayland_foreign_editors: requires a native Wayland main window; gui.dp_stereo_finalization_failure: requires an owned TMPDIR and native finalization fault fixture; gui.pick_opens_native_editor: requires the seeded plugin-picker cache; gui.plugin_picker_filter_and_load: requires the seeded plugin-picker cache
+PASS   linux/gui-plugin-picker                        13
+PASS   linux/gui-settings-defaults                    30
+PASS   linux/capture-screenshots                      56  48 figures
+SKIP   linux/release-metadata                          0  not requested (--release-checks)
+SKIP   linux/github-ruleset                            0  not requested (--release-checks)
+SKIP   linux/patreon-freshness                         0  not requested (--release-checks)
+
+regress prepush: OK

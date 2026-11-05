@@ -1,0 +1,95 @@
+{
+  "date": "2026-11-05",
+  "worktrees": [
+    {
+      "local_worktree": "/home/marc/projects/DuskStudio",
+      "repository": "dusk-audio/dusk-studio",
+      "branch": "fix/after-016-followups",
+      "commit": "c2e5aecbe89ef5841cb717e6cdeaee7e5acd41e1"
+    },
+    {
+      "local_worktree": "/home/marc/projects/DAF",
+      "repository": "dusk-audio/DAF",
+      "branch": "main",
+      "commit": "7708d81ffdbc352f016c50425b4d4078b59f791e"
+    },
+    {
+      "local_worktree": "/home/marc/projects/DuskStudio/build-daf-activation",
+      "repository": "dusk-audio/DAF",
+      "branch": "fix/wayland-activation",
+      "commit": "5832954c4f46d580f04f8ffb783a3552060ccbbe"
+    },
+    {
+      "local_worktree": "/home/marc/projects/DuskStudio/build-daf-pr105",
+      "repository": "dusk-audio/DAF",
+      "branch": "dusk/macos-objc-namespace",
+      "commit": "c7d5ec3c84e98eb2117ac2c60791a0b68e35e2f1"
+    },
+    {
+      "local_worktree": "/home/marc/projects/JUCE-wayland",
+      "repository": "dusk-audio/JUCE-wayland",
+      "branch": null,
+      "commit": "108fab92a4b748b2cec1252b3ceb76fa40c699e0"
+    },
+    {
+      "local_worktree": "/home/marc/projects/DuskStudio/build-juce-wayland-native",
+      "repository": "dusk-audio/JUCE-wayland",
+      "branch": "fix/native-wayland-input",
+      "commit": "440a77979840831e19432e74890265ab8c84556f"
+    },
+    {
+      "local_worktree": "/home/marc/projects/JUCE",
+      "repository": "dusk-audio/JUCE-wayland",
+      "branch": "handoff/2026-11-05-local-juce",
+      "commit": "c4dafa0c84528e0b6d96bbf8b0c6192bd9d257c9"
+    },
+    {
+      "local_worktree": "/home/marc/projects/plugins",
+      "repository": "dusk-audio/dusk-audio-plugins",
+      "branch": "fix/crashlog-open-folder",
+      "commit": "cfcef39e1e29e5aed6280a7fc784b710d65707fb"
+    },
+    {
+      "local_worktree": "/home/marc/.cache/mc2-ci/plugins",
+      "repository": "dusk-audio/dusk-audio-plugins",
+      "branch": null,
+      "commit": "80c201b0a97e793436f9b3c28b1648e40d68f9b6"
+    },
+    {
+      "local_worktree": "/home/marc/projects/plugins-current",
+      "repository": "dusk-audio/dusk-audio-plugins",
+      "branch": null,
+      "commit": "6db01493b4633850888e5a861d08758d662adadb"
+    },
+    {
+      "local_worktree": "/home/marc/projects/plugins-dv2",
+      "repository": "dusk-audio/dusk-audio-plugins",
+      "branch": "feat/duskverb2-parity",
+      "commit": "bb3160fe4c68670724a506d892c90acccfd6edac"
+    },
+    {
+      "local_worktree": "/home/marc/projects/dusk-audio-tools",
+      "repository": "dusk-audio/dusk-audio-tools",
+      "branch": "m35/capture-rig",
+      "commit": "766b8803ff8d0318f3927e1f536f970b4722201d"
+    },
+    {
+      "local_worktree": "/home/marc/projects/dusk-audio-tools-current",
+      "repository": "dusk-audio/dusk-audio-tools",
+      "branch": null,
+      "commit": "4bfd8667d9283ef357d59a0dee9aeb52459f6fbc"
+    },
+    {
+      "local_worktree": "/home/marc/projects/dusk-audio-tools-dv2",
+      "repository": "dusk-audio/dusk-audio-tools",
+      "branch": "duskverb2/parity-tools",
+      "commit": "5b51fdb5607b2c815590d1746e1e8319016ebe5d"
+    },
+    {
+      "local_worktree": "/home/marc/projects/dusk-audio.github.io",
+      "repository": "dusk-audio/dusk-audio.github.io",
+      "branch": "main",
+      "commit": "e01b4aa0902b984a4e8947aaa96f8c8d6cf988aa"
+    }
+  ]
+}
