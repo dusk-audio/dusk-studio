@@ -38,6 +38,10 @@ public:
 
     ~FakeEditor() override { ++destroyed(); }
 
+    bool setEmbeddedGeometry (int, int, std::uint32_t, std::uint32_t, double) noexcept override { return false; }
+    bool setEmbeddedVisible (bool) noexcept override { return false; }
+    std::uint64_t completedDisplayCount() const noexcept override { return 0; }
+
     bool setOffset (int x, int y) noexcept override
     {
         offsetX = x;

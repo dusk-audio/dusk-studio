@@ -37,7 +37,11 @@ public:
           ui (this, nativeParent, sampleRate, editParamCallback, setParamCallback,
               setStateCallback, sendNoteCallback, setSizeCallback, nullptr, nullptr, dsp,
               scaleFactor,
-              DGL_NAMESPACE::Application::kTypeAuto, 0, 0xffffffff, "dusk-studio-daf-unit")
+              DGL_NAMESPACE::Application::kTypeAuto, 0, 0xffffffff, "dusk-studio-daf-unit"
+             #if DUSKSTUDIO_HAS_SHARED_WAYLAND
+              , DAF_UI_WINDOW_SYSTEM, static_cast<DGL_NAMESPACE::Application*> (callbacks.hostApplication.get())
+             #endif
+              )
     {
         ui.setWindowSizeFromHost (width, height);
     }
@@ -53,6 +57,27 @@ public:
     {
         ui.setWindowSizeFromHost (width, height);
     }
+
+   #if DUSKSTUDIO_HAS_SHARED_WAYLAND
+    bool setEmbeddedGeometry (int x, int y, uint32_t width, uint32_t height,
+                              double userScale) noexcept override
+    {
+        try { return ui.setWindowEmbeddedSurfaceGeometry (x, y, width, height, userScale); }
+        catch (...) { return false; }
+    }
+
+    bool setEmbeddedVisible (bool visible) noexcept override
+    {
+        try { return ui.setWindowEmbeddedVisible (visible); }
+        catch (...) { return false; }
+    }
+
+    uint64_t completedDisplayCount() const noexcept override { return ui.getCompletedDisplayCount(); }
+   #else
+    bool setEmbeddedGeometry (int, int, uint32_t, uint32_t, double) noexcept override { return false; }
+    bool setEmbeddedVisible (bool) noexcept override { return false; }
+    uint64_t completedDisplayCount() const noexcept override { return 0; }
+   #endif
 
     // A graphics driver that fails inside the editor's own event loop throws out
     // of it. The host closes the editor instead of losing the application.

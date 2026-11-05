@@ -65,6 +65,8 @@ struct DafEditorCallbacks
     std::function<void (std::uint32_t width, std::uint32_t height)> sizeRequested;
     // A note played on the editor's own keyboard; velocity zero releases it.
     std::function<void (std::uint8_t channel, std::uint8_t note, std::uint8_t velocity)> noteSent;
+    // Aliases the host application and retains its display owner through editor teardown.
+    std::shared_ptr<void> hostApplication;
 };
 
 // A plug-in's own editor, embedded in a native parent the host owns. Every call is
@@ -74,10 +76,14 @@ class DafEditor
 public:
     virtual ~DafEditor() = default;
 
-    // Place the editor inside its parent. False when the display backend cannot
-    // carry an embedded child at all, which is how native Wayland is refused.
+    // Place the editor inside its parent. False when the backend cannot embed it.
     virtual bool setOffset (int x, int y) noexcept = 0;
     virtual void setSize (std::uint32_t width, std::uint32_t height) = 0;
+    // Wayland geometry is in surface coordinates; user scale excludes output scale.
+    virtual bool setEmbeddedGeometry (int x, int y, std::uint32_t width,
+                                      std::uint32_t height, double userScale) noexcept = 0;
+    virtual bool setEmbeddedVisible (bool visible) noexcept = 0;
+    virtual std::uint64_t completedDisplayCount() const noexcept = 0;
 
     // One turn of the editor's own event loop. False once it has quit or its
     // graphics stack failed, and the host closes it.

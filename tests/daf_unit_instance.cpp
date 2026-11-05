@@ -35,6 +35,9 @@ public:
     explicit FakeEditor (DafEditorCallbacks cb) : callbacks (std::move (cb)) {}
 
     bool setOffset (int, int) noexcept override { return true; }
+    bool setEmbeddedGeometry (int, int, std::uint32_t, std::uint32_t, double) noexcept override { return false; }
+    bool setEmbeddedVisible (bool) noexcept override { return false; }
+    std::uint64_t completedDisplayCount() const noexcept override { return 0; }
     void setSize (std::uint32_t, std::uint32_t) override {}
     bool idle() noexcept override { return true; }
     void parameterChanged (std::uint32_t, float) override {}
