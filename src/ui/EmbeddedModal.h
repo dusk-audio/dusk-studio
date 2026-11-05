@@ -752,6 +752,12 @@ public:
     }
 
     bool isOpen() const noexcept { return body_ != nullptr || borrowedBody_ != nullptr; }
+
+    bool hasSeparatePeer() const noexcept
+    {
+        return foreignWindow_ != nullptr && foreignWindow_->getPeer() != nullptr
+            && foreignWindow_->getNumChildComponents() != 0;
+    }
     bool dimmedForScenario() const noexcept { return dim_ != nullptr && dim_->isVisible(); }
 
     // Escape for the topmost open modal, by the rule its own key handler

@@ -43,7 +43,8 @@ public:
         {
             juce::Component refused;
             require (! modal.showBorrowed (shell, refused, {}, {}, presentation), "foreign editor opened without X11");
-            require (! modal.isOpen() && refused.getParentComponent() == nullptr, "refused foreign editor changed the layout");
+            require (! modal.isOpen() && ! modal.hasSeparatePeer() && refused.getParentComponent() == nullptr,
+                     "refused foreign editor changed the layout");
             std::puts ("PASS foreign editor refusal: native-only session remains usable");
             return;
         }
@@ -59,6 +60,7 @@ public:
             window = body->getTopLevelComponent();
             peer = window->getPeer();
             require (peer != nullptr && peer != shell.getPeer(), "foreign editor reused the Wayland peer");
+            require (modal.hasSeparatePeer(), "foreign editor did not record its separate parent");
             const auto native = platform::describeEmbeddedParent (reinterpret_cast<std::uintptr_t> (peer->getNativeHandle()));
             require (native.backend == platform::NativeEmbeddedParent::Backend::platform, "foreign editor parent is not X11");
         }
@@ -105,7 +107,7 @@ public:
             case 2:
                 if (! client->isViewable()) return false;
                 modal.close();
-                require (! window->isVisible() && body->getPeer() == peer && dismissals == 0,
+                require (! window->isVisible() && body->getPeer() == peer && modal.hasSeparatePeer() && dismissals == 0,
                          "closing the foreign editor lost its peer or dispatched dismissal");
                 break;
             case 3:
@@ -120,6 +122,8 @@ public:
                 break;
             case 5:
                 if (client->isViewable()) return false;
+                body.reset();
+                require (! modal.hasSeparatePeer(), "destroyed editor retained a separate-parent binding");
                 shell.setBounds (shellBounds);
                 std::puts ("PASS foreign X11 editors: separate parent, resize, dialog cover, retained peer, reopen, native close");
                 return true;
