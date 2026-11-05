@@ -2,6 +2,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "../src/ui/imgui/DuskImGuiHost.h"
 #include "../src/ui/imgui/DafEditorHost.h"
+#include "../src/ui/imgui/DuskPanelWindow.h"
 #include "../src/ui/imgui/SharedWaylandApplication.h"
 #include "TestTempDirectory.h"
 
@@ -58,6 +59,29 @@ struct Painter final : DGL::TopLevelWidget, DGL::IdleCallback
     }
     std::function<void (DGL::Window&, unsigned)> keyPressed;
     std::function<void()> mousePressed;
+};
+
+struct FontSnapshot
+{
+    float scale = 0.0f, pixels = 0.0f;
+    unsigned frames = 0;
+};
+
+struct FontView final : duskstudio::imgui::DuskPanelView
+{
+    explicit FontView (FontSnapshot& result) : snapshot (result) {}
+    ImVec2 preferredSize() const override { return { 300, 200 }; }
+    bool wantsPlate() const override { return false; }
+    void draw (DuskWidgets::Context& context, ImVec2 origin, ImVec2) override
+    {
+        auto* const font = context.fonts->textEntry;
+        snapshot.scale = context.scale;
+        snapshot.pixels = font != nullptr ? font->FontSize : 0.0f;
+        ++snapshot.frames;
+        if (font != nullptr)
+            context.dl->AddText (font, font->FontSize, origin, IM_COL32_WHITE, "Native font scaling");
+    }
+    FontSnapshot& snapshot;
 };
 
 struct Shell final : juce::Component
@@ -132,6 +156,7 @@ private:
     enum class Stage
     {
         open, rendered, firstClosed, resized, remapped, secondWindow, parentGone, failureReady, failed,
+        fontMapping, fontRendered, fontScaled, fontRestored, fontClosed,
        #if DUSK_NATIVE_PROBE_DAF
         donorMapping, donorRendered, donorClosed, donorReopened, donorParentGone,
        #endif
@@ -291,13 +316,48 @@ private:
                     shell.addToDesktop (juce::ComponentPeer::windowIsResizable);
                     shell.setVisible (true);
                     shell.getPeer()->setFullScreen (true);
+                    stage = Stage::fontMapping;
+                    break;
+                }
+                case Stage::fontMapping:
+                    if (shell.getWidth() < 1900 || shell.getHeight() < 1000) return;
+                    fontPanel.setView (std::make_unique<FontView> (fontSnapshot));
+                    require (fontPanel.open (parent(), { 50, 50, 300, 200, 1.0 }), "font panel open failed");
+                    stage = Stage::fontRendered;
+                    break;
+                case Stage::fontRendered:
+                    if (fontSnapshot.frames == 0) return;
+                    require (std::abs (fontSnapshot.pixels - DuskWidgets::FontSizes {}.textEntry) < 0.01f,
+                             "initial panel font size is incorrect");
+                    fontHandle = fontPanel.nativeWindowHandleForScenario();
+                    fontPanel.setGeometry ({ 50, 50, 400, 250, 1.25 });
+                    stage = Stage::fontScaled;
+                    break;
+                case Stage::fontScaled:
+                    if (std::abs (fontSnapshot.scale - 1.25f) > 0.001f) return;
+                    require (fontPanel.nativeWindowHandleForScenario() == fontHandle, "font scale recreated the native panel");
+                    require (std::abs (fontSnapshot.pixels - std::floor (DuskWidgets::FontSizes {}.textEntry * 1.25f)) < 0.01f,
+                             "panel fonts did not follow the native scale change");
+                    fontPanel.setGeometry ({ 50, 50, 300, 200, 1.0 });
+                    stage = Stage::fontRestored;
+                    break;
+                case Stage::fontRestored:
+                    if (std::abs (fontSnapshot.scale - 1.0f) > 0.001f) return;
+                    require (fontPanel.nativeWindowHandleForScenario() == fontHandle, "font scale restoration recreated the panel");
+                    require (std::abs (fontSnapshot.pixels - DuskWidgets::FontSizes {}.textEntry) < 0.01f,
+                             "panel fonts did not restore their original size");
+                    fontPanel.close();
+                    stage = Stage::fontClosed;
+                    break;
+                case Stage::fontClosed:
+                    if (fontPanel.isOpen()) return;
+                    std::puts ("PASS native panel fonts: scale up, scale down, same native window");
                    #if DUSK_NATIVE_PROBE_DAF
                     stage = Stage::donorMapping;
                    #else
                     stage = Stage::clipboardMapping;
                    #endif
                     break;
-                }
                #if DUSK_NATIVE_PROBE_DAF
                 case Stage::donorMapping:
                     if (shell.getWidth() < 1900 || shell.getHeight() < 1000) return;
@@ -516,6 +576,9 @@ private:
     std::uintptr_t donorHandle = 0;
     std::uint64_t donorSiblingFrame = 0;
    #endif
+    FontSnapshot fontSnapshot;
+    std::uintptr_t fontHandle = 0;
+    duskstudio::imgui::DuskPanelWindow fontPanel { "probe-fonts", "probe-fonts", "Font Probe" };
     std::shared_ptr<SharedWaylandApplication> failedApplication;
     std::unique_ptr<SharedWaylandApplication::Registration> fault;
     const std::chrono::steady_clock::time_point deadline = std::chrono::steady_clock::now() + std::chrono::seconds (60);

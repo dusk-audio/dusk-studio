@@ -608,17 +608,19 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
         // the step's delay, so it is time no step asked to wait.
         void onImGuiPrepareFrame() override
         {
+            const auto scale = static_cast<float> (getWindow().getScaleFactor());
+            bool glyphsChanged = false;
             if (owner.view != nullptr && owner.view->marksMissingGlyphs())
             {
                 if (auto* input = ImGui::GetInputTextState (GImGui->ActiveId))
                     if (input->TextA.Data != nullptr && input->TextLen > 0)
                         owner.fontFallback.request ({ input->TextA.Data, static_cast<std::size_t> (input->TextLen) });
-                const auto scale = static_cast<float> (getWindow().getScaleFactor());
-                if (owner.fontFallback.update (dw::FontSizes {}.textEntry * scale))
-                {
-                    owner.buildFonts (scale);
-                    rebuildFontTexture();
-                }
+                glyphsChanged = owner.fontFallback.update (dw::FontSizes {}.textEntry * scale);
+            }
+            if (glyphsChanged || std::abs (owner.fontScale - scale) > 0.0001f)
+            {
+                owner.buildFonts (scale);
+                rebuildFontTexture();
             }
             if (quietFrames >= kSettledFrames && ! std::exchange (holdNextFrame, false))
                 return;
@@ -815,6 +817,7 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
         if (view != nullptr)
             view->rasteriseAtlasImages (*io.Fonts);
        #endif
+        fontScale = scale;
     }
 
     void draw (float width, float height, float scale)
@@ -946,6 +949,7 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
     bool wasCapturing = false;
     int keyboardRequests = 0;
     dw::Fonts fonts;
+    float fontScale = 0.0f;
     PanelFontFallback fontFallback;
     dw::KnobAtlas knobAtlas;
     dw::DragState drag;
@@ -993,6 +997,7 @@ DuskPanelWindow::DuskPanelWindow (std::string className, std::string logTag,
         impl->wasCapturing = false;
         // The fonts and the baked dome live in the atlas the widget owned.
         impl->fonts = {};
+        impl->fontScale = 0.0f;
         impl->fontFallback = PanelFontFallback {};
         impl->knobAtlas = {};
         impl->drag = {};

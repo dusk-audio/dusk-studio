@@ -735,6 +735,7 @@ if(DUSKSTUDIO_ENABLE_NATIVE_UI)
         target_include_directories(dusk-native-wayland-probe PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
         target_link_libraries(dusk-native-wayland-probe PRIVATE
             dusk_native_ui
+            daf-widgets-dusk
             dgl-opengl3
             dgl-opengl3-definitions
             dgl-system-libs-definitions
