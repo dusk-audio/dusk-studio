@@ -1,10 +1,13 @@
 #pragma once
 
+#include <cstddef>
 #include <functional>
 #include <string>
 
 namespace duskstudio::single_instance
 {
+inline constexpr std::size_t kMaxPayloadBytes = 64 * 1024;
+
 // Claim the single-instance slot for this user + desktop session.
 //
 // Returns true if this process is the primary; onCommandLine then fires on the

@@ -56,7 +56,6 @@ bool dispatch (std::function<void()> fn)
 #if defined (__linux__) || defined (__APPLE__)
 namespace
 {
-constexpr std::size_t kMaxPayloadBytes = 64 * 1024;
 constexpr int kReadBudgetMs = 2000;
 constexpr int kDeliveryBudgetMs = 2000;
 constexpr int kRefusalRetryMs = 250;
@@ -854,7 +853,6 @@ void release()
 
 namespace
 {
-constexpr std::size_t kMaxPayloadBytes = 64 * 1024;
 constexpr DWORD kDeliveryBudgetMs = 2000;
 using Deadline = std::chrono::steady_clock::time_point;
 

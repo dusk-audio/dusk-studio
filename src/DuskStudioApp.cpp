@@ -33,7 +33,7 @@
 #include "foundation/Json.h"
 #include "session/SessionSerializer.h"
 #include "util/CrashHandler.h"
-#include "util/SingleInstance.h"
+#include "util/LaunchRequest.h"
 #if DUSKSTUDIO_HAS_OOP_PLUGINS
  #include "engine/ipc/IpcSelfTest.h"
 #endif
@@ -78,15 +78,16 @@ namespace duskstudio
 {
 using dusk::audio::findSignedMinMax;
 
-class DuskStudioApp::MainWindow final : public juce::DocumentWindow
+class DuskStudioApp::MainWindow final : public juce::DocumentWindow, private dusk::Timer
 {
 public:
-    MainWindow (juce::String name)
+    MainWindow (juce::String name, std::string activationToken)
         : DocumentWindow (std::move (name),
                           juce::Desktop::getInstance().getDefaultLookAndFeel()
                               .findColour (juce::ResizableWindow::backgroundColourId),
                           DocumentWindow::allButtons,
-                          /*addToDesktop*/ false)
+                          /*addToDesktop*/ false),
+          pendingActivationToken (std::move (activationToken))
     {
         // Defer addToDesktop until ALL style flags are set. Reason:
         // setUsingNativeTitleBar + setResizable destroy + recreate the
@@ -178,9 +179,6 @@ public:
         // and addToDesktop just made the peer visible.
         setVisible (false);
 
-        // Combined async tick: setVisible(true) creates the peer at the
-        // already-finalised bounds, then bringWindowToFront promotes
-        // focus once the peer exists.
         juce::Component::SafePointer<MainWindow> safeThis (this);
         dusk::callAsync ([safeThis]
         {
@@ -188,14 +186,20 @@ public:
             if (self == nullptr) return;
             self->setVisible (true);
             self->refreshResizeLimits();
-            if (auto* peer = self->getPeer())
-                duskstudio::platform::bringWindowToFront (*peer);
+            self->tryActivation();
             dusk::Timer::callAfterDelay (250, [safeThis]
             {
                 if (auto* window = safeThis.getComponent())
                     window->refreshResizeLimits();
             });
         });
+    }
+
+    void activateFromLaunch (std::string token)
+    {
+        pendingActivationToken = std::move (token);
+        toFront (true);
+        tryActivation();
     }
 
     void refreshResizeLimits()
@@ -300,6 +304,21 @@ public:
     }
 
 private:
+    void timerCallback() override { tryActivation(); }
+
+    void tryActivation()
+    {
+        if (auto* peer = getPeer())
+            if (duskstudio::platform::bringWindowToFront (*peer, pendingActivationToken))
+            {
+                pendingActivationToken.clear();
+                stopTimer();
+                return;
+            }
+        startTimerHz (60);
+    }
+
+    std::string pendingActivationToken;
     int configuredMinimumWidth = 0;
     int configuredMinimumHeight = 0;
    #if defined(__APPLE__)
@@ -2576,6 +2595,7 @@ struct DuskStudioApp::Vst3EditorTest
 
 void DuskStudioApp::initialise (const juce::String& commandLine)
 {
+    auto activationToken = takeLaunchActivationToken();
     // --version: print app + JUCE versions + platform string and exit
     // cleanly. Used by Patreon support flows (paste the output of
     // `Dusk Studio --version` into the support DM) and by the Linux CI smoke
@@ -3084,21 +3104,32 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
     // launches the binary again; without this it would be a second engine
     // contending for the device and a second autosave loop writing the same
     // session directory. A launch that finds an instance already running
-    // hands the session over (-> anotherInstanceStarted) and exits. Placed
+    // hands the session over and exits. Placed
     // after every headless env-gate above so self-test / bounce / perf runs
     // never take part in the handshake, and a GUI scenario run skips it: handed
     // to an instance already running, it would exit 0 having run nothing.
     //
-    // What travels is the resolved path, quoted, not the raw tokens: the
+    // What travels is the resolved path, not the raw tokens: the
     // running instance would resolve a relative one against its own working
     // directory rather than the launching shell's, so `cd ~/Sessions &&
     // DuskStudio mysong/session.json` would quietly open nothing.
     const auto handoffPath = sessionPathFromCommandLine (commandLine).getFullPathName();
-    const auto handoff = handoffPath.isNotEmpty() ? handoffPath.quoted().toStdString()
-                                                  : std::string();
+    const auto handoff = LaunchRequest { handoffPath.toStdString(), activationToken }.encode();
+    if (! handoff)
+    {
+        std::fputs ("Dusk Studio: the launch request is invalid or too large.\n", stderr);
+        setApplicationReturnValue (1);
+        quit();
+        return;
+    }
     if (! guiScenarioRun
-        && ! single_instance::acquire (handoff,
-                                       [this] (std::string cl) { anotherInstanceStarted (cl); }))
+        && ! single_instance::acquire (*handoff, [this] (std::string payload)
+        {
+            if (auto request = LaunchRequest::decode (payload))
+                handleLaunchRequest (std::move (*request));
+            else
+                std::fputs ("Dusk Studio: ignored an invalid launch request.\n", stderr);
+        }))
     {
         quit();
         return;
@@ -3123,7 +3154,7 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
     juce::Desktop::getInstance().setGlobalScaleFactor (
         capturingScreenshots ? 1.0f : appconfig::getUiScaleOverride());
 
-    mainWindow = std::make_unique<MainWindow> (getApplicationName());
+    mainWindow = std::make_unique<MainWindow> (getApplicationName(), std::move (activationToken));
 
     // A desktop logout, a `systemctl --user stop`, or any supervisor asks for
     // an exit with SIGTERM. Without a handler the process dies where it stands:
@@ -3244,18 +3275,15 @@ void DuskStudioApp::systemRequestedQuit()
 
 void DuskStudioApp::anotherInstanceStarted (const juce::String& commandLine)
 {
-    // Single-instance app: a second launch (e.g. opening a session from the
-    // file manager) routes here. Bring the window forward and open the path.
-    // toFront alone loses to the window manager's focus-stealing prevention
-    // when the click came from another application, and the open can raise an
-    // unsaved-changes prompt the user has to see to answer.
+    handleLaunchRequest ({ sessionPathFromCommandLine (commandLine).getFullPathName().toStdString(), {} });
+}
+
+void DuskStudioApp::handleLaunchRequest (LaunchRequest request)
+{
     if (mainWindow == nullptr) return;
-    mainWindow->toFront (true);
-    if (auto* peer = mainWindow->getPeer())
-        duskstudio::platform::bringWindowToFront (*peer);
-    if (const auto sessionPath = sessionPathFromCommandLine (commandLine);
-        sessionPath != juce::File())
+    mainWindow->activateFromLaunch (std::move (request.activationToken));
+    if (! request.sessionPath.empty())
         if (auto* main = dynamic_cast<MainComponent*> (mainWindow->getContentComponent()))
-            main->openSessionPath (sessionPath);
+            main->openSessionPath (juce::File (request.sessionPath));
 }
 } // namespace duskstudio
