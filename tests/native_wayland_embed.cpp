@@ -4,6 +4,7 @@
 #include "../src/ui/imgui/DafEditorHost.h"
 #include "../src/ui/imgui/DuskPanelWindow.h"
 #include "../src/ui/imgui/SharedWaylandApplication.h"
+#include "../src/ui/PlatformWindowing.h"
 #include "TestTempDirectory.h"
 
 #include <OpenGL.hpp>
@@ -135,6 +136,10 @@ public:
         shell.setVisible (true);
         shell.setVisible (false);
         require (! shell.mapped(), "hidden shell is reported as mapped");
+        require (! platform::bringWindowToFront (*shell.getPeer(), "probe-token"),
+                 "activation consumed a token before mapping");
+        require (platform::bringWindowToFront (*shell.getPeer()),
+                 "activation without a token waits for mapping");
         require (! juce::WaylandWindowSystem::getInstance()->isSurfaceMapped (nullptr),
                  "unknown surface is reported as mapped");
         shell.setVisible (true);
@@ -209,6 +214,8 @@ private:
                 case Stage::rendered:
                     if (! bothRendered() || shell.frames == 0) return;
                     require (shell.mapped(), "presented shell is not reported as mapped");
+                    require (platform::bringWindowToFront (*shell.getPeer(), "probe-token"),
+                             "activation retained a token after mapping");
                     require (! std::filesystem::exists (root.path() / "a-frame")
                                  && ! std::filesystem::exists (root.path() / "b-frame"),
                              "rendered panel retained its crash marker");

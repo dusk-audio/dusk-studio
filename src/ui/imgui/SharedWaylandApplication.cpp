@@ -236,6 +236,13 @@ bool SharedWaylandApplication::commitParent (const platform::NativeEmbeddedParen
     return ! impl->failed && platform::commitWaylandParent (impl->connection, parent);
 }
 
+bool SharedWaylandApplication::activateParent (const platform::NativeEmbeddedParent& parent,
+                                               const std::string& token)
+{
+    return ! impl->failed && platform::waylandConnectionForParent (parent) == impl->connection
+        && impl->app->activateWaylandSurface (reinterpret_cast<void*> (parent.handle), token.c_str());
+}
+
 void SharedWaylandApplication::forgetSurface (std::uintptr_t surface)
 {
     platform::forgetWaylandInputSurface (impl->connection, surface);

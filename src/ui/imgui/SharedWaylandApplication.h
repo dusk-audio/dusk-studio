@@ -71,6 +71,7 @@ public:
     std::unique_ptr<Registration> registerClient (platform::NativeEmbeddedParent, Callbacks);
     bool pump();
     bool commitParent (const platform::NativeEmbeddedParent&);
+    bool activateParent (const platform::NativeEmbeddedParent&, const std::string& token);
     void forgetSurface (std::uintptr_t);
 
 private:

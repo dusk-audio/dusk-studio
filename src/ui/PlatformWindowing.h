@@ -103,16 +103,19 @@ bool sendEscapeThroughDisplayServer (std::uintptr_t nativeWindow);
 // plugin editor) so the WM doesn't bury it under existing windows or
 // open it iconified.
 //
-// Linux: _NET_WM_USER_TIME = max-int + WM_CHANGE_STATE NormalState +
+// X11:   _NET_WM_USER_TIME = max-int + WM_CHANGE_STATE NormalState +
 //        _NET_ACTIVE_WINDOW (source = pager) - the ICCCM/EWMH dance
 //        that defeats Mutter's focus-stealing-prevention policy.
+// Wayland: xdg-activation with a launcher token, after the surface maps.
 // macOS: activate NSApp, restore if minimized, then makeKeyAndOrderFront.
 // Win:   restore if minimized, request foreground focus, and flash the
 //        taskbar if Windows' focus policy denies activation.
 //
 // Must be called on the message thread, AFTER the peer exists (i.e.
-// after addToDesktop / setVisible(true)). No-op if peer is null.
-void bringWindowToFront (juce::ComponentPeer& peer);
+// after addToDesktop / setVisible(true)). On Wayland, activation requires a
+// fresh launcher token. False means the surface is not mapped yet; retry with
+// the same token after mapping. True means the caller must discard the token.
+bool bringWindowToFront (juce::ComponentPeer& peer, const std::string& activationToken = {});
 
 // Hide / restore the native mouse cursor for the supplied peer's
 // window. Used by CursorOverlay to suppress the platform cursor while

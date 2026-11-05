@@ -196,10 +196,10 @@ private:
 };
 } // namespace
 
-void bringWindowToFront (juce::ComponentPeer& peer)
+bool bringWindowToFront (juce::ComponentPeer& peer, const std::string&)
 {
     auto* const hwnd = static_cast<HWND> (peer.getNativeHandle());
-    if (hwnd == nullptr || ! ::IsWindow (hwnd)) return;
+    if (hwnd == nullptr || ! ::IsWindow (hwnd)) return true;
 
     if (::IsIconic (hwnd))
         ::ShowWindow (hwnd, SW_RESTORE);
@@ -220,6 +220,7 @@ void bringWindowToFront (juce::ComponentPeer& peer)
         };
         ::FlashWindowEx (&info);
     }
+    return true;
 }
 // No-op by contract: see flushWindowOperations in PlatformWindowing.h.
 void flushWindowOperations() {}

@@ -709,10 +709,34 @@ void setNativeCursorVisibleOnPeer (juce::ComponentPeer& peer, bool visible)
     ::XFlush (d);
 }
 
-void bringWindowToFront (juce::ComponentPeer& peer)
+bool bringWindowToFront (juce::ComponentPeer& peer, const std::string& activationToken)
 {
+    const auto parent = describeEmbeddedParent (reinterpret_cast<std::uintptr_t> (peer.getNativeHandle()));
+    if (parent.backend == NativeEmbeddedParent::Backend::wayland)
+    {
+       #if DUSKSTUDIO_HAS_SHARED_WAYLAND
+        if (activationToken.empty()) return true;
+        auto* const host = WaylandWindowSystem::getInstanceWithoutCreating();
+        auto* const surface = reinterpret_cast<wl_surface*> (parent.handle);
+        if (! host->isSurfaceMapped (surface)) return false;
+        try
+        {
+            if (auto app = imgui::SharedWaylandApplication::acquire (parent))
+                if (app->activateParent (parent, activationToken))
+                    return true;
+        }
+        catch (const std::exception& error)
+        {
+            std::fprintf (stderr, "Dusk Studio: Wayland activation failed: %s\n", error.what());
+            return true;
+        }
+        std::fputs ("Dusk Studio: Wayland activation is unavailable.\n", stderr);
+       #endif
+        return true;
+    }
+
     auto* d = juceDisplay();
-    if (d == nullptr) return;
+    if (d == nullptr || parent.backend == NativeEmbeddedParent::Backend::unavailable) return true;
 
     const auto win = (::Window) (uintptr_t) peer.getNativeHandle();
     const auto userTimeAtom    = ::XInternAtom (d, "_NET_WM_USER_TIME",   False);
@@ -764,6 +788,7 @@ void bringWindowToFront (juce::ComponentPeer& peer)
         ::XSetInputFocus (d, win, RevertToParent, CurrentTime);
 
     ::XFlush (d);
+    return true;
 }
 
 void flushWindowOperations()
