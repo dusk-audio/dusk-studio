@@ -251,7 +251,7 @@ RULESET_REQUIRED=(
     "Build + tests (clang Release, macOS arm64)"
     "Catch2 tests (MSVC x64 Release, Windows)"
     "Catch2 tests (TSan, Ubuntu 22.04)"
-    "Catch2 tests (ASan + UBSan, Ubuntu 22.04)"
+    "Catch2 tests (ASan + UBSan, Ubuntu 26.04)"
 )
 
 leg_github_ruleset() {
