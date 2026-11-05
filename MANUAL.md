@@ -2895,6 +2895,13 @@ Two variants:
 - **Buttons**: OK.
 - **Action**: Reinstall the plugin or pick a different one. Check the session log for the underlying error.
 
+### Plug-in editor needs Xwayland
+
+- **When**: In experimental native Wayland mode (see System requirements), you open an X11 plug-in editor from a channel insert or an aux lane slot and no Xwayland display is reachable. No editor opens.
+- **Text**: "Enable Xwayland to open this plug-in's editor. Audio processing can continue without it."
+- **Buttons**: OK (or click outside / Esc).
+- **Action**: The plug-in keeps processing; only its editor is unavailable. Enable Xwayland in the compositor and start Dusk Studio again from that session, or launch it without `DUSKSTUDIO_NATIVE_WAYLAND=1`.
+
 ### Plugin scan complete
 
 - **When**: The scanner finishes (startup-auto or manual).
