@@ -667,6 +667,15 @@ if(DUSKSTUDIO_ENABLE_NATIVE_UI)
     message(STATUS "Using DAF from: ${DUSKSTUDIO_DAF_SOURCE_DIR}")
     message(STATUS "Using DAF widgets from: ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}")
 
+    include(cmake/NativeWaylandCapabilities.cmake)
+    duskstudio_check_shared_wayland(DUSKSTUDIO_HAS_SHARED_WAYLAND)
+    if(DUSKSTUDIO_HAS_SHARED_WAYLAND)
+        if(NOT DEFINED DGL_BACKEND OR DGL_BACKEND STREQUAL "auto")
+            set(DGL_BACKEND both CACHE STRING "DGL windowing backend" FORCE)
+        endif()
+        message(STATUS "Native Wayland embedding: shared host connection supported")
+    endif()
+
     set(DAF_LIBRARIES OFF CACHE BOOL "Build DAF's complete library set" FORCE)
     set(DAF_EXAMPLES OFF CACHE BOOL "Build DAF examples" FORCE)
     add_subdirectory("${DUSKSTUDIO_DAF_SOURCE_DIR}"
@@ -702,6 +711,8 @@ if(DUSKSTUDIO_ENABLE_NATIVE_UI)
         daf-widgets-imgui
         daf-widgets-dusk)
     target_compile_features(dusk_native_ui PUBLIC cxx_std_17)
+    target_compile_definitions(dusk_native_ui PUBLIC
+        $<$<BOOL:${DUSKSTUDIO_HAS_SHARED_WAYLAND}>:DUSKSTUDIO_HAS_SHARED_WAYLAND=1>)
 
     target_link_libraries(DuskStudio PRIVATE dusk_native_ui)
     target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_NATIVE_UI=1)
