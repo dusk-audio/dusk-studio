@@ -109,28 +109,17 @@ public:
         for (size_t i = 0; i < state.markers.size(); ++i)
         {
             const auto& marker = state.markers[i];
-            const auto text = panelText (marker.name);
             const float x = xForSample (marker.sample) + ctx.s (5.0f);
             const float next = i + 1 < state.markers.size() ? xForSample (state.markers[i + 1].sample) : bottom.x;
             const float available = std::min (bottom.x - x - ctx.s (3.0f), next - x - ctx.s (2.0f));
             if (available < ctx.s (12.0f)) continue;
             const bool current = static_cast<int> (i) == active;
-            const float width = std::min (available, font->CalcTextSizeA (fontSize, 1.0e10f, 0.0f, text.c_str()).x + ctx.s (6.0f));
+            const auto shown = panelText (marker.name, font, fontSize, available - ctx.s (6.0f), "...");
+            const float width = std::min (available, font->CalcTextSizeA (fontSize, 1.0e10f, 0.0f, shown.c_str()).x + ctx.s (6.0f));
             const auto colour = markerColour (marker.colour);
             const auto label = current ? brighter (colour, 0.35f) : alpha (colour, 230);
             dl->AddRectFilled ({ x, at.y + ctx.s (2.0f) }, { x + width, bottom.y - ctx.s (2.0f) },
                                rgba (alpha (0xff15151a, current ? 230 : 184)), ctx.s (2.0f));
-            auto shown = text;
-            const float textWidth = width - ctx.s (6.0f);
-            if (font->CalcTextSizeA (fontSize, 1.0e10f, 0.0f, text.c_str()).x > textWidth)
-            {
-                const char* remaining = text.c_str();
-                const float dots = font->CalcTextSizeA (fontSize, 1.0e10f, 0.0f, "...").x;
-                font->CalcTextSizeA (fontSize, std::max (0.0f, textWidth - dots), 0.0f,
-                                    text.c_str(), nullptr, &remaining);
-                shown.assign (text.c_str(), remaining);
-                shown += "...";
-            }
             const ImVec4 clip (x + ctx.s (3.0f), at.y, x + width - ctx.s (3.0f), bottom.y);
             dl->AddText (font, fontSize, { clip.x, mid - fontSize * 0.5f }, rgba (label),
                          shown.c_str(), nullptr, 0.0f, &clip);

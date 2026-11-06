@@ -382,6 +382,9 @@ public:
     // over the names the panel drew in its last frame, or { -1, -1 } while it is not
     // open.
     virtual std::array<int, 2> panelNameGlyphs (const std::string& panel) const = 0;
+    // The names the same panel drew in its last frame, as drawn, one per line. Empty
+    // while it is not open.
+    virtual std::string panelNameText (const std::string& panel) const = 0;
     // Reads the same panel's window back into a PPM at `path`, now. False while it is
     // not open or where the platform cannot read a window back.
     virtual bool capturePanel (const std::string& panel, const std::filesystem::path& path) = 0;

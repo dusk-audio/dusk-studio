@@ -1173,7 +1173,8 @@ const ScenarioRegistrar audioEditorFields { Scenario {
 } };
 
 // A Cyrillic track name, a Hebrew take name and a region title typed in Cyrillic all
-// draw as themselves once committed, not as the face's fallback.
+// draw as themselves once committed, not as the face's fallback, the Hebrew right to
+// left.
 std::optional<ScenarioResult> runAudioEditorNameGlyphs (GuiHost& host, ScenarioContext& ctx)
 {
     if (auto early = beginTakeCase (host, ctx)) return early;
@@ -1200,6 +1201,10 @@ std::optional<ScenarioResult> runAudioEditorNameGlyphs (GuiHost& host, ScenarioC
         ctx.expect (! track.regions.empty() && track.regions[0].labelUtf8() == kTitle,
                     "the typed title did not become the region's label");
         expectNamesReadable (host, ctx, "audio-editor", 3 + 6 + 4, "audio-editor-names.ppm");
+        const auto drawn = host.panelNameText ("audio-editor");
+        ctx.expect (drawn.find ("\xd7\x9d\xd7\x95\xd7\x9c\xd7\xa9") != std::string::npos
+                        && drawn.find ("\xd7\xa9\xd7\x9c\xd7\x95\xd7\x9d") == std::string::npos,
+                    "the Hebrew take name was not drawn right to left: " + drawn);
     } });
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;

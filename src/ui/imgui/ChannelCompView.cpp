@@ -6,7 +6,6 @@
 
 #include <algorithm>
 #include <cstdio>
-#include <cstring>
 
 namespace duskstudio::imgui
 {
@@ -76,35 +75,6 @@ float fetRatioDisplayFor (int index)
 {
     static const float display[] = { 4.0f, 8.0f, 12.0f, 20.0f, 20.0f };
     return display[std::clamp (index, 0, comp::kFetRatioMaxIndex)];
-}
-
-// str, or as much of it as fits width with an ellipsis, so a long strip name
-// shortens instead of running under the ON button. The return either aliases
-// str or points into buffer.
-const char* fitted (ImFont* font, float size, float width, const char* str,
-                    char* buffer, std::size_t bufferSize)
-{
-    if (font == nullptr || str == nullptr || *str == 0)
-        return "";
-    const auto widthOf = [&] (const char* t) {
-        return font->CalcTextSizeA (size, FLT_MAX, 0.0f, t).x;
-    };
-    if (widthOf (str) <= width)
-        return str;
-
-    std::size_t len = std::min (bufferSize - 4, std::strlen (str));
-    while (len > 0)
-    {
-        // Never cut a UTF-8 sequence in half - the tail bytes would draw as
-        // replacement glyphs.
-        while (len > 0 && (str[len] & 0xc0) == 0x80)
-            --len;
-        std::snprintf (buffer, bufferSize, "%.*s...", (int) len, str);
-        if (widthOf (buffer) <= width)
-            return buffer;
-        --len;
-    }
-    return "";
 }
 
 class ChannelCompView final : public DuskPanelView
@@ -208,14 +178,12 @@ private:
         const float titleW = width - titleInset * 2.0f;
         if (titleW > scale * 24.0f)
         {
-            char scratch[96];
             const float titleSize = scale * kTitleSize;
             ImFont* const face = nameFace (*ctx.fonts);
-            const auto name = panelText (track.nameUtf8());
+            const auto name = panelText (track.nameUtf8(), face, titleSize, titleW, "...");
             dw::text (ctx, face, titleSize,
                       ImVec2 (at.x + titleInset, at.y + scale * (kHeaderH - kTitleSize) * 0.5f),
-                      titleW, rgba (kTitleColour),
-                      fitted (face, titleSize, titleW, name.c_str(), scratch, sizeof (scratch)));
+                      titleW, rgba (kTitleColour), name.c_str());
         }
 
         dw::ButtonStyle style;

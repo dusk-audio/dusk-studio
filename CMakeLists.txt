@@ -617,6 +617,10 @@ if(NOT DUSKSTUDIO_ENABLE_NATIVE_UI AND NOT DUSKSTUDIO_NATIVE_UI_DEPS_FOUND)
     message(STATUS "Native UI: DAF / DAF widgets not found - disabled")
 endif()
 
+if(DUSKSTUDIO_ENABLE_NATIVE_UI OR DUSKSTUDIO_BUILD_TESTS)
+    include(cmake/BidiText.cmake)
+endif()
+
 if(DUSKSTUDIO_NATIVE_UI_DEPS_FOUND)
     add_library(dusk_cjk_font STATIC src/ui/imgui/CjkFont.cpp)
     target_compile_features(dusk_cjk_font PUBLIC cxx_std_17)
@@ -705,6 +709,7 @@ if(DUSKSTUDIO_ENABLE_NATIVE_UI)
         "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/dusk")
 
     target_link_libraries(dusk_native_ui PRIVATE
+        dusk_bidi_text
         dusk_cjk_font
         dgl-opengl3
         dgl-opengl3-definitions

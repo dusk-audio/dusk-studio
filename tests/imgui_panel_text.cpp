@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include "foundation/BidiText.h"
 #include "ui/imgui/PanelText.h"
 #include "ui/imgui/PanelFontFallback.h"
 
@@ -8,6 +9,7 @@
 
 #include <string>
 #include <algorithm>
+#include <cfloat>
 #include <cmath>
 
 using duskstudio::imgui::PanelFontFallback;
@@ -16,6 +18,8 @@ using duskstudio::imgui::buildPanelFonts;
 using duskstudio::imgui::displayText;
 using duskstudio::imgui::GlyphTally;
 using duskstudio::imgui::nameFace;
+using duskstudio::imgui::panelText;
+using duskstudio::imgui::panelTextWrapped;
 
 namespace
 {
@@ -135,6 +139,107 @@ TEST_CASE ("Panels draw names in a face that has the scripts names use", "[imgui
         CHECK (face->FallbackChar == 0xfffd);
         CHECK (face->FindGlyph (0x4e2d) == face->FindGlyphNoFallback (0xfffd));
     }
+}
+
+TEST_CASE ("The name face bakes every Arabic form names are joined with", "[imgui][bidi]")
+{
+    for (const float scale : { 1.0f, 2.0f })
+        for (const bool replacementMark : { false, true })
+        {
+            ImFontAtlas atlas, unjoined;
+            const auto fonts = bakePanelFonts (atlas, scale, replacementMark);
+            DuskWidgets::buildFonts (unjoined, daf_resources::dejavusans_ttf,
+                                     static_cast<int> (daf_resources::dejavusans_ttf_size), scale);
+            REQUIRE (unjoined.Build());
+            for (const auto c : dusk::text::arabicPresentationForms())
+            {
+                CAPTURE (scale, replacementMark, static_cast<unsigned> (c));
+                CHECK (nameFace (fonts)->FindGlyphNoFallback (static_cast<ImWchar> (c)) != nullptr);
+            }
+            CHECK (fonts.title->FindGlyphNoFallback (0xfefb) == nullptr);
+            CHECK ((nameFace (fonts)->FindGlyphNoFallback (0xfffd) != nullptr) == replacementMark);
+            CHECK (atlas.TexWidth * atlas.TexHeight <= unjoined.TexWidth * unjoined.TexHeight * 2);
+        }
+}
+
+TEST_CASE ("Search text keeps typing order while panels draw it reordered", "[imgui][bidi]")
+{
+    const std::string title = "Piano \xd7\xa9\xd7\x9c\xd7\x95\xd7\x9d \xd8\xb3\xd9\x84\xd8\xa7\xd9\x85";
+    const std::string typed = "\xd7\xa9\xd7\x9c\xd7\x95";
+    CHECK (displayText (title) == title);
+    CHECK (displayText (title).find (typed) != std::string::npos);
+    CHECK (displayText (title).find ("\xd8\xb3\xd9\x84") != std::string::npos);
+    CHECK (panelText (title) != title);
+    CHECK (panelText (title).find (typed) == std::string::npos);
+}
+
+TEST_CASE ("A right-to-left name cut to fit keeps its beginning", "[imgui][bidi]")
+{
+    ImFontAtlas atlas;
+    const auto fonts = bakePanelFonts (atlas, 1.0f, false);
+    auto* const font = nameFace (fonts);
+    const auto widthOf = [&] (const std::string& text) { return font->CalcTextSizeA (13.0f, FLT_MAX, 0.0f, text.c_str()).x; };
+
+    const std::string hebrew = "\xd7\x90\xd7\x91\xd7\x92\xd7\x93\xd7\x94\xd7\x95\xd7\x96\xd7\x97";
+    const std::string firstFour = "\xd7\x90\xd7\x91\xd7\x92\xd7\x93";
+    CHECK (panelText (hebrew, font, 13.0f, widthOf (firstFour + "...") + 0.5f, "...") == dusk::text::displayOrder (firstFour + "..."));
+    CHECK (panelText (hebrew, font, 13.0f, widthOf (firstFour + "...") + 0.5f, "...").substr (0, 3) == "...");
+    CHECK (panelText (hebrew, font, 13.0f, widthOf (firstFour) + 0.5f) == dusk::text::displayOrder (firstFour));
+    CHECK (panelText (hebrew, font, 13.0f, 1000.0f) == dusk::text::displayOrder (hebrew));
+
+    const std::string mixed = "Piano \xd7\xa9\xd7\x9c\xd7\x95\xd7\x9d";
+    CHECK (panelText (mixed, font, 13.0f, widthOf ("Piano \xd7\xa9") + 0.5f) == "Piano \xd7\xa9");
+
+    const std::string arabic = "\xd8\xb3\xd9\x84\xd8\xa7\xd9\x85 \xd8\xb9\xd9\x84\xd9\x8a\xd9\x83\xd9\x85";
+    const auto shapedWord = dusk::text::shapeArabic ("\xd8\xb3\xd9\x84\xd8\xa7\xd9\x85");
+    CHECK (panelText (arabic, font, 13.0f, widthOf (shapedWord) + 0.5f) == dusk::text::visualOrder (shapedWord));
+
+    // Left-to-right names keep what they did: cut with an ellipsis, or left to the clip.
+    CHECK (panelText ("Kick drum room", font, 13.0f, widthOf ("Kick...") + 0.5f, "...") == "Kick...");
+    CHECK (panelText ("Kick drum room", font, 13.0f, 10.0f) == "Kick drum room");
+}
+
+TEST_CASE ("A name is not cut at the width its drawn text measures", "[imgui][bidi]")
+{
+    // Marker names for a song's sections in Hebrew (chorus, verse, bridge, last
+    // chorus, guitar solo), an Arabic greeting, then a mixed and a Latin name.
+    const std::string names[] = {
+        "\xd7\xa4\xd7\x96\xd7\x9e\xd7\x95\xd7\x9f",
+        "\xd7\x91\xd7\x99\xd7\xaa",
+        "\xd7\x92\xd7\xa9\xd7\xa8",
+        "\xd7\xa4\xd7\x96\xd7\x9e\xd7\x95\xd7\x9f \xd7\x90\xd7\x97\xd7\xa8\xd7\x95\xd7\x9f",
+        "\xd7\xa1\xd7\x95\xd7\x9c\xd7\x95 \xd7\x92\xd7\x99\xd7\x98\xd7\xa8\xd7\x94",
+        "\xd8\xb3\xd9\x84\xd8\xa7\xd9\x85 \xd8\xb9\xd9\x84\xd9\x8a\xd9\x83\xd9\x85",
+        "Piano \xd7\xa9\xd7\x9c\xd7\x95\xd7\x9d",
+        "Kick drum room",
+    };
+    for (const float scale : { 1.0f, 1.25f, 1.5f })
+    {
+        ImFontAtlas atlas;
+        auto* const font = nameFace (bakePanelFonts (atlas, scale, false));
+        for (const float size : { 11.0f * scale, 13.0f * scale })
+            for (const auto& name : names)
+            {
+                const auto drawn = panelText (name);
+                const float width = font->CalcTextSizeA (size, FLT_MAX, 0.0f, drawn.c_str()).x;
+                CAPTURE (scale, size, name);
+                CHECK (panelText (name, font, size, width, "...") == drawn);
+                CHECK (panelText (name, font, size, width) == drawn);
+            }
+    }
+}
+
+TEST_CASE ("Wrapped right-to-left text breaks in reading order", "[imgui][bidi]")
+{
+    ImFontAtlas atlas;
+    const auto fonts = bakePanelFonts (atlas, 1.0f, false);
+    auto* const font = nameFace (fonts);
+    const std::string first = "\xd7\x90\xd7\x91\xd7\x92 \xd7\x93\xd7\x94\xd7\x95";
+    const std::string text = first + " \xd7\x96\xd7\x97\xd7\x98\n\xd7\x99";
+    const float width = font->CalcTextSizeA (13.0f, FLT_MAX, 0.0f, first.c_str()).x + 0.5f;
+    CHECK (panelTextWrapped (text, font, 13.0f, width)
+           == dusk::text::displayOrder (first) + "\n" + dusk::text::displayOrder ("\xd7\x96\xd7\x97\xd7\x98") + "\n\xd7\x99");
+    CHECK (panelTextWrapped ("plain words that wrap", font, 13.0f, 10.0f) == "plain words that wrap");
 }
 
 TEST_CASE ("A glyph tally counts the characters a face has no glyph for", "[imgui]")

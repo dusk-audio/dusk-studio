@@ -8,3 +8,6 @@
 [submodule "external/vst3sdk"]
 	path = external/vst3sdk
 	url = https://github.com/dusk-audio/vst3sdk.git
+[submodule "external/sheenbidi"]
+	path = external/sheenbidi
+	url = https://github.com/Tehreer/SheenBidi.git

@@ -2194,7 +2194,8 @@ const ScenarioRegistrar pianoNativeShortcuts { Scenario {
 } };
 
 // The toolbar's track and region titles draw a Cyrillic track name and a Cyrillic and
-// Hebrew region label as themselves, not as the face's fallback.
+// Hebrew region label as themselves, not as the face's fallback, the Hebrew word right
+// to left after the Cyrillic one.
 std::optional<ScenarioResult> runPianoNameGlyphs (GuiHost& host, ScenarioContext& ctx)
 {
     auto& track = ctx.session().track (0);
@@ -2208,7 +2209,12 @@ std::optional<ScenarioResult> runPianoNameGlyphs (GuiHost& host, ScenarioContext
 
     auto steps = std::make_shared<std::vector<Step>>();
     steps->push_back ({ 400, [&host, &ctx]
-    { expectNamesReadable (host, ctx, "piano-roll", 3 + 11, "piano-roll-names.ppm"); } });
+    {
+        expectNamesReadable (host, ctx, "piano-roll", 3 + 11, "piano-roll-names.ppm");
+        const auto drawn = host.panelNameText ("piano-roll");
+        ctx.expect (drawn.find ("\xd0\x9a\xd1\x83\xd0\xbf\xd0\xbb\xd0\xb5\xd1\x82 \xd7\x9d\xd7\x95\xd7\x9c\xd7\xa9") != std::string::npos,
+                    "the region label was not drawn in display order: " + drawn);
+    } });
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
 }

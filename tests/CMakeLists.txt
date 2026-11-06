@@ -312,6 +312,10 @@ target_sources(dusk-studio-tests PRIVATE
     ${CMAKE_SOURCE_DIR}/src/foundation/Fft.cpp)
 target_link_libraries(dusk-studio-tests PRIVATE dusk-pffft)
 
+# Display order for right-to-left names (dusk::text over SheenBidi).
+target_sources(dusk-studio-tests PRIVATE foundation_bidi_text.cpp)
+target_link_libraries(dusk-studio-tests PRIVATE dusk_bidi_text dusk_sheenbidi)
+
 # JUCE-free foundation helpers (dusk::text / dusk::fs / dusk::json) — no external deps.
 target_sources(dusk-studio-tests PRIVATE
     foundation_text.cpp

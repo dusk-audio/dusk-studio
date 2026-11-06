@@ -3378,12 +3378,11 @@ private:
         if (inner.width() > 0.0f && trackIdx >= 0 && trackIdx < Session::kNumTracks)
         {
             const auto& track = session.track (trackIdx);
-            const auto name = panelText (track.nameUtf8());
             const auto nameBox = inner.takeLeft (std::min (ctx.s (130.0f), inner.width() * 0.5f))
                                      .reduced (ctx.s (8.0f), ctx.s (2.0f));
-            clippedText (ctx, nameBox, nameFace (*ctx.fonts), 12.5f,
-                         dw::brighter (argb (track.colourArgb()), 0.3f), name.c_str(), dw::Align::left);
-            nameGlyphs.add (nameFace (*ctx.fonts), name);
+            nameGlyphs.add (nameFace (*ctx.fonts), clippedName (ctx, nameBox, nameFace (*ctx.fonts), 12.5f,
+                                                                dw::brighter (argb (track.colourArgb()), 0.3f),
+                                                                track.nameUtf8()));
 
             // Read again: the buttons above may have split or undone the region.
             const auto titleBox = inner.reduced (ctx.s (8.0f), ctx.s (2.0f));
@@ -3392,10 +3391,8 @@ private:
                 {
                     const auto label = r->labelUtf8();
                     const auto title = label.empty() ? defaultTitle (*r) : label;
-                    const auto shown = panelText (title);
-                    clippedText (ctx, titleBox, nameFace (*ctx.fonts), 12.5f, argb (kReadoutText), shown.c_str(),
-                                 dw::Align::left);
-                    nameGlyphs.add (nameFace (*ctx.fonts), shown);
+                    nameGlyphs.add (nameFace (*ctx.fonts),
+                                    clippedName (ctx, titleBox, nameFace (*ctx.fonts), 12.5f, argb (kReadoutText), title));
                     addControl ("Title", titleBox, true);
                     if (doubleClicked (ctx, "##title", titleBox))
                         beginEdit (Field::title, title);
@@ -3561,6 +3558,14 @@ private:
         dw::text (ctx, font, ctx.s (size), ImVec2 (box.x0, box.at (0.0f, 0.5f).y - ctx.s (size) * 0.5f),
                   box.width(), colour, str, align);
         ctx.dl->PopClipRect();
+    }
+
+    std::string clippedName (const dw::Context& ctx, const Box& box, ImFont* font, float size, ImU32 colour,
+                             std::string_view utf8) const
+    {
+        auto shown = panelText (utf8, font, ctx.s (size), box.width());
+        clippedText (ctx, box, font, size, colour, shown.c_str(), dw::Align::left);
+        return shown;
     }
 
     void readout (dw::Context& ctx, const Box& box, const char* str, dw::Align align)
@@ -3834,11 +3839,9 @@ private:
             // Clear of the fade discs in the region's top corners.
             if (band.width() >= ctx.s (80.0f))
             {
-                const auto name = panelText (take->name);
-                clippedText (ctx, Box { band.x0 + ctx.s (20.0f), band.y0 + ctx.s (4.0f), band.x1 - ctx.s (20.0f), band.y1 },
-                             nameFace (*ctx.fonts), 10.0f, argb (takeColour (take->id)), name.c_str(),
-                             dw::Align::left);
-                nameGlyphs.add (nameFace (*ctx.fonts), name);
+                nameGlyphs.add (nameFace (*ctx.fonts),
+                                clippedName (ctx, Box { band.x0 + ctx.s (20.0f), band.y0 + ctx.s (4.0f), band.x1 - ctx.s (20.0f), band.y1 },
+                                             nameFace (*ctx.fonts), 10.0f, argb (takeColour (take->id)), take->name));
             }
         }
 
@@ -4713,8 +4716,7 @@ private:
                      dw::Align::left);
 
         const auto [status, statusColour] = takeCaption();
-        clippedText (ctx, line, nameFace (*ctx.fonts), 11.0f, statusColour, panelText (status).c_str(),
-                     dw::Align::left);
+        clippedName (ctx, line, nameFace (*ctx.fonts), 11.0f, statusColour, status);
 
         const auto& viewport = layout.takeLanes;
         if (viewport.height() <= 0.0f)
@@ -4944,11 +4946,9 @@ private:
         }
         else
         {
-            const auto shownName = panelText (take.name);
-            clippedText (ctx, nameBox.reduced (ctx.s (2.0f), 0.0f), nameFace (*ctx.fonts), 11.5f,
-                         argb (used ? kReadoutText : kHeaderText, used ? 1.0f : 0.8f), shownName.c_str(),
-                         dw::Align::left);
-            nameGlyphs.add (nameFace (*ctx.fonts), shownName);
+            nameGlyphs.add (nameFace (*ctx.fonts),
+                            clippedName (ctx, nameBox.reduced (ctx.s (2.0f), 0.0f), nameFace (*ctx.fonts), 11.5f,
+                                         argb (used ? kReadoutText : kHeaderText, used ? 1.0f : 0.8f), take.name));
             if (live)
             {
                 const auto name = takeControlName ("name", take.id);
