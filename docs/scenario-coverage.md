@@ -94,4 +94,4 @@ What the pre-tag audit checks by hand, and what runs it now.
 | the seven release assets | `scripts/verify-release-assets.sh` inside the tag workflow |
 | configure examples leave the donor to `DONOR_REV` | `release_mechanics` over the maintainer guide |
 | every CI and release build, the regression trees and the build guides take DAF from `DAF_REV` | `release_mechanics` over the clone action, workflows, regression scripts and guides |
-| deferred issues stay visible | a leg held back by an open issue names it in its SKIP note, and an issue with no leg gets a Known Issues line by hand; #968 tracks the Windows `ipc-selftest` SKIP, which still names #504 although #570 fixed it |
+| deferred issues stay visible | a leg held back by an open issue names it in its SKIP note, and an issue with no leg gets a Known Issues line by hand |

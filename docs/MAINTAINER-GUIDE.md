@@ -1250,7 +1250,7 @@ ones stay unresolved on Windows in any case, since Windows builds no LV2 host.
 | `phase2-handoff` | the first instance opens the shipped session through `DUSKSTUDIO_LOAD_SESSION` and the phase waits for its `[Dusk Studio/Load] session.json` line, then a second launch carrying `handoff.json` hands over and exits 0 within 30 s while the first instance stays alive, `GetForegroundWindow()` is its window afterwards, and its stderr shows `[Dusk Studio/Load] handoff.json` after the first load - the handoff is supposed to raise the window and load the path, which the exit code alone cannot see. Both launches share one private profile. |
 | `phase3-session-close` | the session the payload ships is loaded through `DUSKSTUDIO_LOAD_SESSION` (waited for by its `[Dusk Studio/Load]` line), then two `WM_CLOSE` messages are posted back to back to the process's visible window titled Dusk Studio. Exit 0 within 50 s, at least eight `[Dusk Studio/shutdown] phase` markers, and `re-entry ignored: shutdown already in progress` from the second close landing on the latch. |
 | `phase4-window-activation` | the four cases of [tests/window_activation_smoke_test.md](../tests/window_activation_smoke_test.md) against the installed app: an initial launch from Explorer, File > Open from inside, an Explorer handoff into a minimized window and one over an unsaved edit, each with Notepad in front. Each case passes on the foreground or on a taskbar flash (recorded through the shell hook); needs exactly one main window, and for the handoffs one `DuskStudio.exe` and a second process, a child of `explorer.exe`, that exited 0; and checks the load alert and the save prompt through UI Automation. For the Explorer launch, `DUSKSTUDIO_CONFIG_DIR` and `DUSKSTUDIO_MUSIC_DIR` are lent to Explorer through `HKCU\Environment`, with a `DUSKSTUDIO_REGRESS_ENV_OWNER` marker, and cleared after the launch and again in a `finally` block. The note says whether each case got the foreground or a flash; `shot-phase4-<case>.png` and `posts/phase4-window-activation-events.log` are the evidence. Notepad's saved session is backed up and put back when Notepad was not already running. |
-| `ipc-selftest` | `SKIP`. `DUSKSTUDIO_RUN_IPC_SELFTEST` never returns on Windows (issue #504), so the out-of-process transport is only compile- and contract-verified there. Remove the skip when #504 closes. |
+| `ipc-selftest` | headless `DUSKSTUDIO_RUN_IPC_SELFTEST=1` against the installed app and the `dusk-studio-plugin-host.exe` beside it, output captured the same way: exit code 0, a `PASS` line, no `FAIL` line. The note lists the round-trip count and latencies it reported. |
 | `scenario-fixtures` | as on Linux, against the two staged roots. |
 | `scenarios-headless` | `DUSKSTUDIO_RUN_SCENARIOS=all` against the installed app, 900 s budget in the guest. The whole output comes back and is judged by the same rules as the Linux leg: exit 0, no `[FAIL]`, the terminal `=== scenarios: ` line; skips in the note, missing fixtures in a `:fixtures` row. A run that hits its budget is announced before it is killed, screenshotted as `<leg>-stall.png`, and reported as `timed out in <case>`, the last case the suite started without finishing. |
 | `scenarios-gui` | `DUSKSTUDIO_RUN_SCENARIOS=gui` on the guest desktop, 1800 s budget, judged the same way. `[DIRTY]` lines are listed. |
@@ -1775,8 +1775,11 @@ Nothing is installed and no system location is touched. On Linux the app is
 launched under a private Xvfb display; never run this against a live session.
 
 Windows coverage is narrower: the MSI is extracted rather than installed, since
-installing needs elevation, and the self-test leg is omitted while
-`DUSKSTUDIO_RUN_IPC_SELFTEST` hangs there (#504).
+installing needs elevation, and the `DUSKSTUDIO_RUN_SELFTEST` leg the Unix
+script runs is omitted. The Windows leg of the regression runner runs both
+self-tests against an installed package: `phase1-selftest` runs
+`DUSKSTUDIO_RUN_SELFTEST`, and `ipc-selftest` runs
+`DUSKSTUDIO_RUN_IPC_SELFTEST`.
 
 ### Package contents
 

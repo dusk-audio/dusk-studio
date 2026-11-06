@@ -13,8 +13,9 @@
     matches by file name on this platform.
 
     Coverage is narrower than the Unix script by design. The headless self-test
-    leg is not run here: #504 fixed the DUSKSTUDIO_RUN_IPC_SELFTEST hang, but no
-    Windows runner has shown that harness completing, so it stays manual.
+    leg the Unix script runs (DUSKSTUDIO_RUN_SELFTEST) is not run here. The
+    Windows leg of the regression runner runs it against an installed package,
+    and the IPC self-test (DUSKSTUDIO_RUN_IPC_SELFTEST) beside it.
 
 .PARAMETER Artifact
     Path to dusk-studio-X.Y.Z-Windows-x64.msi.
