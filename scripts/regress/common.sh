@@ -220,3 +220,22 @@ regress_require_release_run() {
     [[ "$status" == completed && "$conclusion" == success ]] \
         || regress_die "workflow run $id (${workflow:-unknown workflow}) has not finished successfully: status ${status:-unknown}, conclusion ${conclusion:-none}"
 }
+
+# regress_drop_added_submodules <commit>: in the repository at the current
+# directory, removes the checkout of every submodule <commit> has and HEAD does
+# not. Switching back from a commit that added a submodule leaves its checkout
+# behind as an untracked folder, which the next clean-tree check refuses. The
+# clone stays in .git/modules for the next commit that needs it. The Mac runs
+# this too, under its bash 3.2 and set -euo pipefail.
+regress_drop_added_submodules() {
+    local commit="$1" entry path
+    { git ls-tree -r -z "$commit" 2>/dev/null || true; } \
+        | while IFS= read -r -d '' entry; do
+            [[ "$entry" == "160000 "* ]] || continue
+            path=${entry#*$'\t'}
+            if [[ -z "$(git --literal-pathspecs ls-tree HEAD -- "$path")" && -f "$path/.git" ]]; then
+                rm -rf -- "$path"
+                echo "removed $path, a submodule only the tested commit has"
+            fi
+        done
+}

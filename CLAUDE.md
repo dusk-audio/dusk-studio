@@ -46,6 +46,7 @@ Two things the gate still can't catch — you must:
 | `juce::Timer`, `MessageManager::callAsync` | `dusk::Timer`, `dusk::callAsync` | [MessageThread.h](src/foundation/MessageThread.h) |
 | `juce::WaitableEvent` | `dusk::AutoResetEvent` | [AutoResetEvent.h](src/foundation/AutoResetEvent.h) |
 | `juce::AudioPlayHead::PositionInfo` | `dusk::TransportPosition` | [TransportPosition.h](src/foundation/TransportPosition.h) |
+| `juce::UndoManager` / `UndoableAction` | `dusk::UndoManager` / `dusk::UndoableAction` | [UndoManager.h](src/foundation/UndoManager.h) |
 | `juce::AudioFormatReader/Writer` | libsndfile wrappers | [src/engine/audiofile/](src/engine/audiofile/) |
 | `juce::AudioIODevice(Type)`, `AudioDeviceManager`, `BigInteger` masks | `dusk::audio` device interfaces | [src/engine/device/](src/engine/device/) (seam; native backend in progress) |
 

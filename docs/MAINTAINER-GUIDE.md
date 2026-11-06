@@ -82,7 +82,6 @@ You do not need all of JUCE. You need these pieces, in roughly this order:
 | `AudioFormatWriter::ThreadedWriter` + `TimeSliceThread` | Lock-free disk recording. | [src/engine/RecordManager.cpp](../src/engine/RecordManager.cpp) |
 | `AudioPluginFormatManager`, `AudioPluginInstance` | Hosting VST3/LV2/AU. | [src/engine/PluginManager.cpp](../src/engine/PluginManager.cpp), [src/engine/PluginSlot.cpp](../src/engine/PluginSlot.cpp) |
 | `var` / `JSON` | Session save/load. | [src/session/SessionSerializer.cpp](../src/session/SessionSerializer.cpp) |
-| `UndoableAction` / `UndoManager` | Region & marker edits. | [src/session/RegionEditActions.cpp](../src/session/RegionEditActions.cpp) |
 
 Resources: the official JUCE tutorials (audio + GUI tracks), the JUCE class reference, and "The Audio Programmer" YouTube channel for the DSP modules. Build one toy JUCE app (a sine generator with a gain slider) so the `Component`/audio-callback split clicks before you stare at this codebase's 3000-line files.
 
@@ -424,7 +423,7 @@ flag defaults off when an older transport block omits it.
 
 ### Edits are undoable actions
 
-Region and marker edits are `juce::UndoableAction` subclasses ([src/session/RegionEditActions.cpp](../src/session/RegionEditActions.cpp), [MarkerEditActions.cpp](../src/session/MarkerEditActions.cpp)): each captures before/after state so `undo()` restores exactly. Split/paste/trim/move/marker ops all go through the `UndoManager`.
+Region and marker edits are `dusk::UndoableAction` subclasses ([src/session/RegionEditActions.cpp](../src/session/RegionEditActions.cpp), [MarkerEditActions.cpp](../src/session/MarkerEditActions.cpp)): each captures before/after state so `undo()` restores exactly. Split/paste/trim/move/marker ops all go through `AudioEngine::getUndoManager()`, a `SessionUndoManager` ([src/engine/AudioEngine.h](../src/engine/AudioEngine.h)) built on `dusk::UndoManager` ([src/foundation/UndoManager.h](../src/foundation/UndoManager.h)), which keeps the parts of JUCE's undo behaviour the app relies on.
 
 ---
 
@@ -1002,7 +1001,9 @@ fetches `DONOR_REV` into each build tree's `_deps`.
 The commit under test never goes through GitHub: it is pushed straight over ssh
 to `refs/heads/regress-<short sha>` in the node's checkout. The node's previous
 branch and submodule commits are recorded at the start and restored on exit,
-including when a leg fails.
+including when a leg fails. A submodule only the commit under test has loses its
+checkout on the way back, so the next preflight finds a clean tree; its clone
+stays in `.git/modules`.
 
 | Leg | What it proves |
 |---|---|
