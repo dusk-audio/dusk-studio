@@ -130,15 +130,17 @@ void checkInheritedWriter (bool cancel, bool parentExits, std::size_t outputLimi
     CHECK (completed == parentExits);
     CHECK (cancelled == cancel);
     CHECK (timedOut == (! parentExits && ! cancel));
-    // A killed process can still be exiting for a while on a loaded runner; the
-    // ASan job has seen the leaf outlive a quarter second. The wait ends as soon
-    // as both are gone, so a descendant that survives still fails below.
+    // A killed process can take a while to finish exiting on a loaded runner,
+    // hence the long wait. The fixtures also exit by themselves well inside it,
+    // so each writes a marker when it does: a marker means nothing killed it.
     const auto cleanupDeadline = std::chrono::steady_clock::now() + std::chrono::seconds (5);
     while ((processLive (parentPid) || processLive (leafPid))
            && std::chrono::steady_clock::now() < cleanupDeadline)
         std::this_thread::sleep_for (std::chrono::milliseconds (1));
     CHECK_FALSE (processLive (parentPid));
     CHECK_FALSE (processLive (leafPid));
+    CHECK_FALSE (std::filesystem::exists (directory.path() / "parent.exited"));
+    CHECK_FALSE (std::filesystem::exists (directory.path() / "leaf.exited"));
     duskstudio::sfz::DirectoryLease released;
     std::string error;
     CHECK (released.acquire (canonicalDirectory, duskstudio::sfz::DirectoryLease::Access::Exclusive, error));
@@ -253,6 +255,7 @@ TEST_CASE (kInheritedWriterTest, "[.][scan-grandchild-fixture][ipc]")
         std::fflush (stdout);
         REQUIRE (dusk::fs::writeStringToFile (directory / "ready", "ready"));
         std::this_thread::sleep_for (std::chrono::milliseconds (1500));
+        dusk::fs::writeStringToFile (directory / "leaf.exited", "exited");
         return;
     }
     REQUIRE (dusk::fs::writeStringToFile (directory / "parent.pid", std::to_string (currentPid())));
@@ -299,6 +302,7 @@ TEST_CASE (kInheritedWriterTest, "[.][scan-grandchild-fixture][ipc]")
         return;
     }
     std::this_thread::sleep_for (std::chrono::seconds (2));
+    dusk::fs::writeStringToFile (directory / "parent.exited", "exited");
 }
 
 TEST_CASE ("Plugin scan timeout terminates inherited stdout descendants", "[plugin-scan][ipc]")
