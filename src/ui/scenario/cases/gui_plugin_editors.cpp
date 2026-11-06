@@ -2203,7 +2203,8 @@ const ScenarioRegistrar nativeForeignEditors { Scenario {
         if (! fixture) return ScenarioResult::fail ("missing CLAP fixture");
         auto& engine = ctx.engine();
         auto& aux = engine.getAuxLaneStrip (kAuxLane);
-        if (aux.isNativeClapLoaded (kAuxSlot) || aux.isBuiltinLoaded (kAuxSlot)
+        if (aux.isNativeClapLoaded (kAuxSlot) || aux.isNativeLv2Loaded (kAuxSlot)
+            || aux.isNativeVst3Loaded (kAuxSlot) || aux.isBuiltinLoaded (kAuxSlot)
             || aux.getPluginSlot (kAuxSlot).isLoaded() || aux.nativeInsertRestoreFailed (kAuxSlot))
             return ScenarioResult::skip ("requires an empty first aux insert");
         keepStage (host, ctx);
