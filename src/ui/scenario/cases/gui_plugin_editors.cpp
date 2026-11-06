@@ -2206,6 +2206,7 @@ const ScenarioRegistrar nativeForeignEditors { Scenario {
         if (aux.isNativeClapLoaded (kAuxSlot) || aux.isBuiltinLoaded (kAuxSlot)
             || aux.getPluginSlot (kAuxSlot).isLoaded() || aux.nativeInsertRestoreFailed (kAuxSlot))
             return ScenarioResult::skip ("requires an empty first aux insert");
+        keepStage (host, ctx);
         auto* strip = readyStrip (host, ctx);
         if (strip == nullptr) return ScenarioResult::fail ("no channel strip");
         std::string error;
