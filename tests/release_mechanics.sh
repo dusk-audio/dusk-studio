@@ -1656,3 +1656,211 @@ assert configure_commands, "maintainer guide must show its configure commands"
 overridden = [c for c in configure_commands if "DUSK_PLUGINS_PATH" in c]
 assert not overridden, f"maintainer guide configure examples bypass DONOR_REV: {overridden}"
 PY
+
+# --- macOS install-stage signing identity -------------------------------------
+# CPack's install stage re-signs every Mach-O it stages, and that is the
+# signature the DMG ships. Run the real finalizer the way the release job's
+# cpack step would, on both routes, with codesign stubbed, and require each
+# staged dylib, helper and app to carry the identity the job imported.
+"$PYTHON" - "$SOURCE_ROOT" "$SCRATCH/macos-signing" "$BASH" <<'PY'
+import os
+import re
+import shutil
+import stat
+import subprocess
+import sys
+from pathlib import Path
+
+source_root = Path(sys.argv[1])
+scratch = Path(sys.argv[2])
+bash = sys.argv[3]
+IMPORTED = "0123456789ABCDEF0123456789ABCDEF01234567"
+ENV_NAME = "DUSKSTUDIO_CODESIGN_IDENTITY"
+
+
+class SigningMismatch(AssertionError):
+    pass
+
+
+def macos_steps(workflow):
+    lines = workflow.split("\n")
+    job_at = next(i for i, line in enumerate(lines) if re.fullmatch(r"  macos:\s*", line))
+    job_end = next((i for i in range(job_at + 1, len(lines))
+                    if re.fullmatch(r"  [a-z][a-z0-9-]*:\s*", lines[i])), len(lines))
+    steps_at = next(i for i in range(job_at, job_end)
+                    if re.fullmatch(r"\s+steps:\s*", lines[i]))
+    first = next(i for i in range(steps_at + 1, job_end)
+                 if re.match(r"\s*- ", lines[i]))
+    dash = len(lines[first]) - len(lines[first].lstrip())
+    starts = [i for i in range(first, job_end)
+              if re.match(r" {%d}- " % dash, lines[i])]
+    steps = []
+    for at, start in enumerate(starts):
+        end = starts[at + 1] if at + 1 < len(starts) else job_end
+        body = [" " * (dash + 2) + lines[start][dash + 2:]] + lines[start + 1:end]
+        step = {"keys": {}, "env": {}, "env_lines": {}, "run": ""}
+        key_indent = dash + 2
+        current = None
+        for offset, line in enumerate(body):
+            indent = len(line) - len(line.lstrip())
+            data = line.strip() and not line.lstrip().startswith("#")
+            if data and indent == key_indent:
+                key, _, value = line.strip().partition(":")
+                current = key
+                step["keys"][key] = value.strip()
+            elif data and indent > key_indent and current == "env":
+                key, _, value = line.strip().partition(":")
+                step["env"][key] = value.strip()
+                step["env_lines"][key] = start + offset
+            elif current == "run":
+                step["run"] += line + "\n"
+        steps.append(step)
+    return steps
+
+
+def evaluate(value, outputs):
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+        value = value[1:-1]
+
+    def expression(match):
+        ref = re.fullmatch(r"steps\.([A-Za-z_][\w-]*)\.outputs\.([A-Za-z_][\w-]*)",
+                           match.group(1).strip())
+        return outputs.get(ref.groups(), "") if ref else ""
+
+    return re.sub(r"\$\{\{(.*?)\}\}", expression, value)
+
+
+def write_exe(path, text):
+    path.write_text(text, encoding="utf-8")
+    path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+
+def staged_signatures(route, configured, env):
+    root = scratch / route
+    shutil.rmtree(root, ignore_errors=True)
+    scripts = root / "scripts"
+    stubs = root / "bin"
+    app = root / "stage" / "DuskStudio.app"
+    for directory in (scripts, stubs, app / "Contents" / "MacOS", app / "Contents" / "Frameworks"):
+        directory.mkdir(parents=True)
+    shutil.copy2(source_root / "scripts" / "finalize-macos-bundle.sh", scripts)
+    write_exe(scripts / "bundle-macos-dylibs.sh", "#!/bin/sh\nexit 0\n")
+    (scripts / "verify-macos-bundle.py").write_text("", encoding="utf-8")
+    log = root / "codesign.log"
+    write_exe(stubs / "codesign",
+              "#!/bin/sh\nfor arg in \"$@\"; do printf '%s\\t' \"$arg\"; done >> '"
+              + str(log) + "'\nprintf '\\n' >> '" + str(log) + "'\n")
+    write_exe(stubs / "python3", "#!/bin/sh\nexit 0\n")
+    (app / "Contents" / "Info.plist").write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
+        '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+        '<plist version="1.0"><dict><key>CFBundleExecutable</key>'
+        '<string>DuskStudio</string></dict></plist>\n', encoding="utf-8")
+    write_exe(app / "Contents" / "MacOS" / "DuskStudio", "#!/bin/sh\nexit 0\n")
+    write_exe(app / "Contents" / "MacOS" / "dusk-studio-plugin-host", "#!/bin/sh\nexit 0\n")
+    for name in ("libsndfile.1.dylib", "libmp3lame.0.dylib"):
+        (app / "Contents" / "Frameworks" / name).write_bytes(b"")
+    entitlements = root / "DuskStudio.entitlements"
+    entitlements.write_text("<plist/>\n", encoding="utf-8")
+
+    child_env = {k: v for k, v in os.environ.items() if k != ENV_NAME}
+    child_env.update(env)
+    child_env["PATH"] = str(stubs) + os.pathsep + os.environ.get("PATH", "")
+    result = subprocess.run(
+        [bash, str(scripts / "finalize-macos-bundle.sh"), str(app), configured, str(entitlements)],
+        env=child_env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        universal_newlines=True)
+    assert result.returncode == 0, f"finalize-macos-bundle.sh failed:\n{result.stdout}"
+
+    signed = {}
+    for line in log.read_text(encoding="utf-8").splitlines():
+        args = line.split("\t")[:-1]
+        if "--sign" not in args:
+            continue
+        target = Path(args[-1]).relative_to(app).as_posix()
+        signed[target] = args
+    expected = {
+        "Contents/Frameworks/libsndfile.1.dylib",
+        "Contents/Frameworks/libmp3lame.0.dylib",
+        "Contents/MacOS/dusk-studio-plugin-host",
+        ".",
+    }
+    assert set(signed) == expected, f"finalizer signed {sorted(signed)}, not {sorted(expected)}"
+    return signed, entitlements
+
+
+def check_route(workflow, route, outputs, expected_identity):
+    steps = macos_steps(workflow)
+    importers = [s for s in steps
+                 if re.search(r'identity=.*>>\s*"?\$\{?GITHUB_OUTPUT\b', s["run"])]
+    assert len(importers) == 1, "the macOS job must import exactly one signing identity"
+    importer = steps.index(importers[0])
+    step_id = importers[0]["keys"].get("id", "")
+    assert step_id, "the identity import step needs an id its outputs can be read through"
+    known = {(step_id, k): v for k, v in outputs.items()}
+
+    configures = [s for s in steps
+                  if re.search(r"cmake\s+-S\s+\.\s+-B\s+build(?![\w-])", s["run"])]
+    assert len(configures) == 1, "the macOS job must configure the app once"
+    configured = re.findall(r"-D%s=(?:\"([^\"]*)\"|'([^']*)'|(\S+))" % ENV_NAME, configures[0]["run"])
+    assert len(configured) == 1, f"the app configure must set {ENV_NAME} once"
+    configured = "".join(configured[0])
+
+    packagers = [s for s in steps if re.search(r"\bcpack\b", s["run"])]
+    assert len(packagers) == 1, "the macOS job must package the DMG in exactly one step"
+    packager = steps.index(packagers[0])
+    visible = known if packager > importer else {}
+    env = {k: evaluate(v, visible) for k, v in packagers[0]["env"].items()}
+
+    signed, entitlements = staged_signatures(route, configured, env)
+    for target, args in signed.items():
+        identity = args[args.index("--sign") + 1]
+        if identity != expected_identity:
+            raise SigningMismatch(
+                f"{route} route: CPack's install stage signs {target} with {identity!r}, "
+                f"not the imported {expected_identity!r}")
+        assert args[args.index("--options") + 1] == "runtime", f"{target} lost hardened runtime"
+        assert ("--timestamp" in args) == (expected_identity != "-"), (
+            f"{route} route: {target} must carry a secure timestamp exactly when not ad hoc")
+        if not target.endswith(".dylib"):
+            assert args[args.index("--entitlements") + 1] == str(entitlements), (
+                f"{target} lost the app entitlements")
+
+    if "identity" in outputs:
+        for step in steps[importer + 1:]:
+            for value in re.findall(r"--sign\s+(\S+)", step["run"]):
+                name = re.fullmatch(r"\"?\$\{?([A-Za-z_]\w*)\}?\"?", value)
+                assert name, f"{step['keys'].get('name')} signs with a literal identity {value}"
+                resolved = evaluate(step["env"].get(name.group(1), ""), known)
+                if resolved != expected_identity:
+                    raise SigningMismatch(
+                        f"{step['keys'].get('name')} signs with {resolved!r}, "
+                        f"not the imported identity")
+    return steps, packagers[0]
+
+
+workflow = (source_root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+signed_outputs = {"signed": "true", "identity": IMPORTED, "keychain": "/signing.keychain-db"}
+steps, packager = check_route(workflow, "signed", signed_outputs, IMPORTED)
+check_route(workflow, "unsigned", {"signed": "false"}, "-")
+
+# The bug this guards: the cpack step without the imported identity, so the
+# install stage signed the shipped code with the configure-time "-".
+assert ENV_NAME in packager["env_lines"], f"the cpack step must pass {ENV_NAME}"
+lines = workflow.split("\n")
+del lines[packager["env_lines"][ENV_NAME]]
+try:
+    check_route("\n".join(lines), "old-bug", signed_outputs, IMPORTED)
+except SigningMismatch:
+    pass
+else:
+    raise AssertionError("the signing contract accepted a cpack step without the imported identity")
+
+cmake_lists = (source_root / "CMakeLists.txt").read_text(encoding="utf-8")
+assert cmake_lists.count("scripts/finalize-macos-bundle.sh") == 1, (
+    "CPack's install stage must run the one bundle finalizer")
+assert not re.search(r"ENV\s*\{\s*%s\s*\}" % ENV_NAME, cmake_lists), (
+    f"the install stage must leave {ENV_NAME} from cpack's environment alone")
+PY

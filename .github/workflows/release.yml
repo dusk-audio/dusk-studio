@@ -960,9 +960,9 @@ jobs:
       - name: Configure (Release)
         run: |
           set -euo pipefail
-          # Ad-hoc codesign identity "-" — free, and required for the .app
-          # (plus the bundled dusk-studio-plugin-host helper) to launch on
-          # Apple Silicon. No Developer ID, no Hardened Runtime, no notary.
+          # Ad-hoc codesign identity "-" for the build tree. The Developer ID,
+          # when the secrets exist, is imported after the build and reaches
+          # CPack's install stage through the Package DMG step.
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_PREFIX_PATH="${RUNNER_TEMP}/libarchive;${RUNNER_TEMP}/dusk-runtime" \
@@ -1050,9 +1050,9 @@ jobs:
           ctest --test-dir build-tests --output-on-failure
 
       - name: Import the Developer ID certificate
-        # Without Developer ID credentials the DMG keeps the ad-hoc signature
-        # CMake already applied and ships with the documented first-open steps;
-        # the signing and notarization path below waits for the secrets.
+        # Without Developer ID credentials CPack's install stage signs ad hoc
+        # and the DMG ships with the documented first-open steps; the
+        # notarization path below waits for the secrets.
         id: signing
         env:
           MACOS_CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
@@ -1105,33 +1105,14 @@ jobs:
           echo "::add-mask::$identity"
           echo "imported a Developer ID Application identity"
 
-      - name: Sign the app bundle
-        if: ${{ steps.signing.outputs.signed == 'true' }}
-        env:
-          IDENTITY: ${{ steps.signing.outputs.identity }}
-          KEYCHAIN: ${{ steps.signing.outputs.keychain }}
-        run: |
-          set -euo pipefail
-          APP="build/DuskStudio_artefacts/Release/DuskStudio.app"
-          [[ -d "$APP" ]] || { echo "::error::no app bundle at $APP" >&2; exit 1; }
-          ENTITLEMENTS="build/DuskStudio_artefacts/JuceLibraryCode/DuskStudio.entitlements"
-
-          # Inside out: the helper carries its own signature, and signing the
-          # bundle afterwards would not cover a nested binary signed later.
-          HELPER="$APP/Contents/MacOS/dusk-studio-plugin-host"
-          if [[ -f "$HELPER" ]]; then
-            codesign --force --timestamp --options runtime \
-                     --keychain "$KEYCHAIN" --sign "$IDENTITY" "$HELPER"
-          fi
-
-          codesign --force --deep --timestamp --options runtime \
-                   ${ENTITLEMENTS:+--entitlements "$ENTITLEMENTS"} \
-                   --keychain "$KEYCHAIN" --sign "$IDENTITY" "$APP"
-          codesign --verify --deep --strict --verbose=2 "$APP"
-
       - name: Package DMG
-        # CMake ad-hoc-signs the .app via identity "-" for a dispatch run; a tag
-        # has replaced that with a Developer ID signature by now.
+        # CPack's install stage rewrites the staged Mach-O load commands, so
+        # scripts/finalize-macos-bundle.sh re-signs the staged dylibs, helper
+        # and app, and that is the signature the DMG ships. Without this
+        # identity they are signed ad hoc, which is right for the unsigned
+        # route and is what notarization would reject on the signed one.
+        env:
+          DUSKSTUDIO_CODESIGN_IDENTITY: ${{ steps.signing.outputs.identity }}
         run: |
           set -euo pipefail
           ( cd build && cpack -G DragNDrop -C Release )

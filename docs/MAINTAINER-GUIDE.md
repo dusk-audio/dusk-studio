@@ -1671,13 +1671,27 @@ Keep the `.p12` and the `.p8` somewhere safe offline. The `.p8` in particular
 cannot be re-downloaded.
 
 What the macOS job then does on a `v*` tag: imports the certificate into a
-keychain of its own, signs the plugin host and then the bundle with
-`--options runtime` and a secure timestamp, packages the DMG, signs that,
-submits it to the notary service and waits, staples the ticket, and requires
-`spctl --assess` to report `accepted` with `source=Notarized Developer ID`
-before anything is published. With any secret missing the job keeps the
-ad-hoc signature, says so, and carries on, on a tag as on a `workflow_dispatch`
-run.
+keychain of its own and runs `cpack` with the identity in
+`DUSKSTUDIO_CODESIGN_IDENTITY`. CPack's install stage runs
+`scripts/finalize-macos-bundle.sh`, which signs the bundled dylibs, the plugin
+host and then the bundle with that identity, `--options runtime`, a secure
+timestamp and, for the plugin host and the bundle, the app's entitlements.
+The job then signs the DMG, submits it to the notary service and waits,
+staples the ticket, and requires `spctl --assess` to report `accepted` with
+`source=Notarized Developer ID` before anything is published. With any secret
+missing the variable is empty, the install stage signs ad hoc with the
+configured `-`, and the job says so and carries on, on a tag as on a
+`workflow_dispatch` run.
+
+The install-stage signature is the one the DMG ships, because installing the
+bundle rewrites its load commands and invalidates the build-tree signature. To
+sign a local package with your own identity, set the variable for `cpack`:
+`DUSKSTUDIO_CODESIGN_IDENTITY="Developer ID Application: <name> (TEAMID)" cpack -G DragNDrop -C Release`
+from the build directory. A configure-time
+`-DDUSKSTUDIO_CODESIGN_IDENTITY` is the fallback when the variable is unset.
+`release-mechanics-contract` runs the finalizer the way the release job's
+`cpack` step does, on both routes, and fails if the staged code would carry
+any identity other than the imported one.
 
 ### Release signing key
 

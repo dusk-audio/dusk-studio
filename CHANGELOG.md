@@ -86,6 +86,12 @@ canonical source.
   piano roll and audio editor figures are written again on a slow or loaded
   machine. A run that leaves a figure out now fails and names it. The
   figures whose UI changed since their last capture are refreshed.
+- **Developer ID through macOS packaging.** With the macOS signing secrets
+  set, CPack's install stage re-signed the staged app, plug-in host and
+  bundled libraries ad hoc, so the DMG sent for notarization had lost its
+  Developer ID. The release job now hands its imported identity to that
+  stage, which signs them with hardened runtime and a secure timestamp. The
+  unsigned route still signs ad hoc.
 
 ## [0.16.0] - 2026-11-01
 
