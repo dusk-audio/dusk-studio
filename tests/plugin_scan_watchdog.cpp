@@ -130,10 +130,13 @@ void checkInheritedWriter (bool cancel, bool parentExits, std::size_t outputLimi
     CHECK (completed == parentExits);
     CHECK (cancelled == cancel);
     CHECK (timedOut == (! parentExits && ! cancel));
-    const auto cleanupDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds (250);
+    // A killed process can still be exiting for a while on a loaded runner; the
+    // ASan job has seen the leaf outlive a quarter second. The wait ends as soon
+    // as both are gone, so a descendant that survives still fails below.
+    const auto cleanupDeadline = std::chrono::steady_clock::now() + std::chrono::seconds (5);
     while ((processLive (parentPid) || processLive (leafPid))
            && std::chrono::steady_clock::now() < cleanupDeadline)
-        std::this_thread::yield();
+        std::this_thread::sleep_for (std::chrono::milliseconds (1));
     CHECK_FALSE (processLive (parentPid));
     CHECK_FALSE (processLive (leafPid));
     duskstudio::sfz::DirectoryLease released;
