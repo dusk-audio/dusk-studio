@@ -228,11 +228,12 @@ regress_require_release_run() {
 # clone stays in .git/modules for the next commit that needs it. The Mac runs
 # this too, under its bash 3.2 and set -euo pipefail.
 regress_drop_added_submodules() {
-    local commit="$1" path
-    { git ls-tree -r "$commit" 2>/dev/null || true; } \
-        | awk -F'\t' '$1 ~ /^160000 / { print $2 }' \
-        | while IFS= read -r path; do
-            if [[ -z "$(git ls-tree HEAD -- "$path")" && -f "$path/.git" ]]; then
+    local commit="$1" entry path
+    { git ls-tree -r -z "$commit" 2>/dev/null || true; } \
+        | while IFS= read -r -d '' entry; do
+            [[ "$entry" == "160000 "* ]] || continue
+            path=${entry#*$'\t'}
+            if [[ -z "$(git --literal-pathspecs ls-tree HEAD -- "$path")" && -f "$path/.git" ]]; then
                 rm -rf -- "$path"
                 echo "removed $path, a submodule only the tested commit has"
             fi

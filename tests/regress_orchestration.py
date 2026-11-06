@@ -670,20 +670,22 @@ regress_capture_leg /opt/under-test/DuskStudio
     git(host, "submodule", "add", "-q", str(root / "submodule-kept"), "external/kept")
     git(host, "commit", "-q", "-m", "previous")
     previous = git(host, "rev-parse", "HEAD")
-    git(host, "submodule", "add", "-q", str(root / "submodule-added"), "external/added")
+    # git quotes this path in its default ls-tree output.
+    added = "external/added n\u00e4me"
+    git(host, "submodule", "add", "-q", str(root / "submodule-added"), added)
     git(host, "commit", "-q", "-m", "tested")
     tested = git(host, "rev-parse", "HEAD")
     git(host, "checkout", "-q", previous)
-    assert (host / "external/added/.git").is_file(), "switching back left no checkout to clean up"
+    assert (host / added / ".git").is_file(), "switching back left no checkout to clean up"
     assert git(host, "status", "--porcelain", "--ignore-submodules=all"), "the leftover is not untracked"
     drop = 'set -euo pipefail; source "$1/scripts/regress/common.sh"; regress_drop_added_submodules "$2"'
     for _ in range(2):
         result = subprocess.run(["bash", "-c", drop, "drop", str(repo), tested], cwd=host, env=git_env,
                                 capture_output=True, text=True, timeout=10)
         assert result.returncode == 0, (result.stdout, result.stderr)
-    assert not (host / "external/added").exists(), "the added submodule's checkout stayed"
+    assert not (host / added).exists(), "the added submodule's checkout stayed"
     assert (host / "external/kept/file").is_file(), "a submodule the previous commit has was removed"
-    assert (host / ".git/modules/external/added").is_dir(), "the added submodule's clone was removed"
+    assert (host / ".git/modules" / added).is_dir(), "the added submodule's clone was removed"
     assert git(host, "status", "--porcelain", "--ignore-submodules=all") == "", "the tree is not clean"
 
 print("regression runner: interrupt cleanup, prepush log folders, capture leg, timing cache, Mac paths, "
