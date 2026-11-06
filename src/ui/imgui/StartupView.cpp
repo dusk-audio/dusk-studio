@@ -538,7 +538,7 @@ private:
                 }
             }
 
-            const auto name = panelText (row.name);
+            const auto name = panelText (row.name, nameFace (*ctx.fonts), scale * 13.0f, nameW - scale * 16.0f);
             const char* const cells[] = { name.c_str(), row.sampleRate.c_str(),
                                           row.bitDepth.c_str(), row.lastModified.c_str() };
             float cellX = rowTl.x;

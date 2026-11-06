@@ -203,7 +203,7 @@ bool anyPassOpen (const Track& track)
 struct LiveTrackMove
 {
     TrackMovePlan plan;
-    const UndoableAction* action = nullptr;
+    const dusk::UndoableAction* action = nullptr;
     // By slot before the move: the inputs it pinned, which follow again on undo.
     TrackSlotMask pinnedInputs {};
     bool moved = false;
@@ -301,13 +301,12 @@ bool commitTrackMove (AudioEngine& engine, const TrackMovePlan& requested)
 
 TrackMoveRefusal trackMoveUndoRefusal (AudioEngine& engine, bool redo)
 {
-    auto& um = engine.getUndoManager();
-    const auto* actions = um.actionsForReplay (redo);
-    if (actions == nullptr) return {};
+    const auto actions = engine.getUndoManager().actionsForReplay (redo);
+    if (actions.empty()) return {};
     const auto& moves = liveTrackMoves();
     const auto it = moves.find (&engine);
     const auto live = it != moves.end() ? it->second.lock() : nullptr;
-    if (live == nullptr || ! actions->contains (live->action))
+    if (live == nullptr || std::find (actions.begin(), actions.end(), live->action) == actions.end())
         return {};
     return trackMoveRefusalFor (engine.getSession(), engine,
                                 redo ? live->plan : invertTrackMove (live->plan));
@@ -315,7 +314,7 @@ TrackMoveRefusal trackMoveUndoRefusal (AudioEngine& engine, bool redo)
 
 struct TransactionPreflight
 {
-    static bool allows (AudioEngine& engine, Session& session, const UndoableAction& action, bool redo,
+    static bool allows (AudioEngine& engine, Session& session, const dusk::UndoableAction& action, bool redo,
                          const std::array<int, Session::kNumTracks>& slots)
     {
         const auto unlocked = [&session, &slots] (int track)
@@ -348,7 +347,7 @@ struct TransactionPreflight
     }
 };
 
-bool canReplayTransaction (AudioEngine& engine, const UndoableAction* const* actions,
+bool canReplayTransaction (AudioEngine& engine, const dusk::UndoableAction* const* actions,
                             std::size_t count, bool redo)
 {
     auto& session = engine.getSession();

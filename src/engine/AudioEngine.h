@@ -1,6 +1,5 @@
 #pragma once
 
-#include <juce_data_structures/juce_data_structures.h>
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -24,6 +23,7 @@
 #include "../foundation/MessageThread.h"
 #include "../foundation/SmoothedValue.h"
 #include "../foundation/TransportPosition.h"
+#include "../foundation/UndoManager.h"
 #include "MidiButtonEdges.h"
 #include "MidiSyncReceiver.h"
 #include "MidiTimeCodeReceiver.h"
@@ -55,11 +55,10 @@ namespace duskstudio
 {
 class DuskStudioPlayHead;
 
-class SessionUndoManager final : private juce::UndoManager
+class SessionUndoManager final : private dusk::UndoManager
 {
 public:
-    using Actions = juce::Array<const UndoableAction*>;
-    using Name = decltype (std::declval<const UndoManager&>().getUndoDescription());
+    using Actions = UndoManager::Actions;
 
     explicit SessionUndoManager (std::function<bool (const Actions&, bool)> guard = {})
         : canReplay (std::move (guard)) {}
@@ -68,6 +67,8 @@ public:
     using UndoManager::removeChangeListener;
     using UndoManager::dispatchPendingMessages;
     using UndoManager::beginNewTransaction;
+    using UndoManager::perform;
+    using UndoManager::clearUndoHistory;
     using UndoManager::canUndo;
     using UndoManager::canRedo;
     using UndoManager::getUndoDescription;
@@ -77,91 +78,23 @@ public:
     using UndoManager::getNumberOfUnitsTakenUpByStoredCommands;
     using UndoManager::setMaxNumberOfStoredUnits;
 
-    void clearUndoHistory()
-    {
-        UndoManager::clearUndoHistory();
-        past.clear();
-        future.clear();
-        synchronized = true;
-    }
+    Actions actionsForReplay (bool redo) const { return redo ? getRedoActions() : getUndoActions(); }
 
-    bool perform (UndoableAction* action)
-    {
-        if (! matchesHistory())
-        {
-            delete action;
-            return false;
-        }
-        const bool append = getNumActionsInCurrentTransaction() > 0;
-        if (! UndoManager::perform (action)) return false;
-        future.clear();
-        Actions actions;
-        getActionsInCurrentTransaction (actions);
-        if (append) past.back() = std::move (actions);
-        else        past.push_back (std::move (actions));
-        const auto retained = (std::size_t) getUndoDescriptions().size();
-        if (past.size() > retained)
-            past.erase (past.begin(), past.begin() + (std::ptrdiff_t) (past.size() - retained));
-        synchronized = matchesHistory();
-        return true;
-    }
-
-    bool perform (UndoableAction* action, const Name& name)
-    {
-        if (! perform (action)) return false;
-        if (name.isNotEmpty()) setCurrentTransactionName (name);
-        return true;
-    }
-
-    const Actions* actionsForReplay (bool redo) const
-    {
-        if (! matchesHistory()) return nullptr;
-        const auto& replayStack = redo ? future : past;
-        return replayStack.empty() ? nullptr : &replayStack.back();
-    }
-
+    // False when the guard refuses, and also when an action refuses its replay:
+    // the history is gone then, though the underlying manager reports a replay.
     bool undo() { return replay (false); }
     bool redo() { return replay (true); }
 
 private:
-    bool matchesHistory() const
-    {
-        return synchronized
-            && past.size() == (std::size_t) getUndoDescriptions().size()
-            && future.size() == (std::size_t) getRedoDescriptions().size();
-    }
-
-    bool allowed (bool redo) const
-    {
-        const auto* actions = actionsForReplay (redo);
-        return actions != nullptr && (! canReplay || canReplay (*actions, redo));
-    }
-
     bool replay (bool redo)
     {
-        if (! allowed (redo)) return false;
-        const bool result = redo ? UndoManager::redo() : UndoManager::undo();
-        if (! result) return false;
-        // A refused action makes the underlying manager return true after
-        // deleting the history. Its action pointers must not survive here.
-        if (! UndoManager::canUndo() && ! UndoManager::canRedo())
-        {
-            past.clear();
-            future.clear();
-            synchronized = true;
-            return false;
-        }
-        auto& from = redo ? future : past;
-        auto& to = redo ? past : future;
-        to.push_back (std::move (from.back()));
-        from.pop_back();
-        synchronized = matchesHistory();
-        return true;
+        const auto actions = actionsForReplay (redo);
+        if (actions.empty() || (canReplay && ! canReplay (actions, redo))) return false;
+        if (! (redo ? UndoManager::redo() : UndoManager::undo())) return false;
+        return canUndo() || canRedo();
     }
 
     std::function<bool (const Actions&, bool)> canReplay;
-    std::vector<Actions> past, future;
-    bool synchronized = true;
 };
 
 // input -> channel strip (live or playback source) -> aux/master.
@@ -1021,7 +954,7 @@ private:
     PluginManager   pluginManager;
     SessionUndoManager undoManager { [this] (const SessionUndoManager::Actions& actions, bool redo)
     {
-        return canReplayTransaction (*this, actions.begin(), (std::size_t) actions.size(), redo);
+        return canReplayTransaction (*this, actions.data(), actions.size(), redo);
     } };
     RegionClipboard   regionClipboard;
 

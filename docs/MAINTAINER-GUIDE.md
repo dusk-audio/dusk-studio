@@ -295,9 +295,9 @@ ctest --test-dir build-tests --output-on-failure
 
 ### Dependency discovery (the thing most likely to bite you)
 
-CMake auto-detects three external repos at configure time, on top of three git submodules. **Read the configure output** — it prints which paths it picked.
+CMake auto-detects three external repos at configure time, on top of four git submodules. **Read the configure output**: it prints which paths it picked.
 
-- **Submodules** (`external/clap`, `external/dusk-fizz`, `external/vst3sdk`): clone with `--recurse-submodules`, or run `git submodule update --init --recursive`. They fail in three different ways, which is worth knowing before you debug the wrong one. Missing `external/clap` is fatal — the native CLAP host defaults ON on Linux, macOS, and Windows, and the configure stops with a "CLAP headers missing" error. Missing `external/vst3sdk` is loud but survivable: a STATUS line, native VST3 disabled, unless you explicitly asked for `-DDUSKSTUDIO_NATIVE_VST3=ON`, which turns it fatal. Missing `external/dusk-fizz` says **nothing at all** — the block is wrapped in a bare `EXISTS` test, so SF2 / multisample support simply isn't in the binary.
+- **Submodules** (`external/clap`, `external/dusk-fizz`, `external/sheenbidi`, `external/vst3sdk`): clone with `--recurse-submodules`, or run `git submodule update --init --recursive`. They fail in different ways, which is worth knowing before you debug the wrong one. Missing `external/sheenbidi` is fatal whenever the native UI or the tests are built: configure stops with "SheenBidi is missing at external/sheenbidi". Missing `external/clap` is fatal: the native CLAP host defaults ON on Linux, macOS, and Windows, and the configure stops with a "CLAP headers missing" error. Missing `external/vst3sdk` is loud but survivable: a STATUS line, native VST3 disabled, unless you explicitly asked for `-DDUSKSTUDIO_NATIVE_VST3=ON`, which turns it fatal. Missing `external/dusk-fizz` says **nothing at all**: the block is wrapped in a bare `EXISTS` test, so SF2 / multisample support simply isn't in the binary.
 
 - **JUCE:** `-DJUCE_PATH=…` wins; else on Linux it prefers `../JUCE-wayland` (a plugdata-team fork with ~5 local commits Dusk Studio depends on — XEmbed, X11-on-Wayland fix, peer-creation latch), falling back to `../JUCE`; on macOS it uses `../JUCE` (upstream). The upstream-vs-fork API difference (`addDefaultFormatsToManager`) is hidden behind [src/engine/JuceCompat.h](../src/engine/JuceCompat.h) — call `duskstudio::juce_compat::addDefaultFormats(fm)` and never sprinkle `#ifdef __linux__` at call sites.
 - **Dusk plugins:** `-DDUSK_PLUGINS_PATH=…` wins; otherwise configure fetches the commit named in the `DONOR_REV` file into `build/_deps/dusk-plugins`, the same commit every CI and release workflow clones. Point `-DDUSK_PLUGINS_PATH` at your `../plugins` checkout only to try donor edits against Dusk Studio. If the fetch fails (no network, no git), configure stops with an error; reconfigure with network access or pass `-DDUSK_PLUGINS_PATH`. To move the donor, change `DONOR_REV` and the donor revisions in LICENSES.txt together.
@@ -1671,13 +1671,27 @@ Keep the `.p12` and the `.p8` somewhere safe offline. The `.p8` in particular
 cannot be re-downloaded.
 
 What the macOS job then does on a `v*` tag: imports the certificate into a
-keychain of its own, signs the plugin host and then the bundle with
-`--options runtime` and a secure timestamp, packages the DMG, signs that,
-submits it to the notary service and waits, staples the ticket, and requires
-`spctl --assess` to report `accepted` with `source=Notarized Developer ID`
-before anything is published. With any secret missing the job keeps the
-ad-hoc signature, says so, and carries on, on a tag as on a `workflow_dispatch`
-run.
+keychain of its own and runs `cpack` with the identity in
+`DUSKSTUDIO_CODESIGN_IDENTITY`. CPack's install stage runs
+`scripts/finalize-macos-bundle.sh`, which signs the bundled dylibs, the plugin
+host and then the bundle with that identity, `--options runtime`, a secure
+timestamp and, for the plugin host and the bundle, the app's entitlements.
+The job then signs the DMG, submits it to the notary service and waits,
+staples the ticket, and requires `spctl --assess` to report `accepted` with
+`source=Notarized Developer ID` before anything is published. With any secret
+missing the variable is empty, the install stage signs ad hoc with the
+configured `-`, and the job says so and carries on, on a tag as on a
+`workflow_dispatch` run.
+
+The install-stage signature is the one the DMG ships, because installing the
+bundle rewrites its load commands and invalidates the build-tree signature. To
+sign a local package with your own identity, set the variable for `cpack`:
+`DUSKSTUDIO_CODESIGN_IDENTITY="Developer ID Application: <name> (TEAMID)" cpack -G DragNDrop -C Release`
+from the build directory. A configure-time
+`-DDUSKSTUDIO_CODESIGN_IDENTITY` is the fallback when the variable is unset.
+`release-mechanics-contract` runs the finalizer the way the release job's
+`cpack` step does, on both routes, and fails if the staged code would carry
+any identity other than the imported one.
 
 ### Release signing key
 

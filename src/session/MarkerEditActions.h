@@ -1,6 +1,6 @@
 #pragma once
 
-#include <juce_data_structures/juce_data_structures.h>
+#include "../foundation/UndoManager.h"
 #include "Session.h"
 
 #include <string>
@@ -12,7 +12,7 @@ namespace duskstudio
 // perform()-time so undo() can restore the prior state. Markers are kept
 // sorted by timelineSamples; the actions re-sort after each mutation.
 
-class AddMarkerAction final : public juce::UndoableAction
+class AddMarkerAction final : public dusk::UndoableAction
 {
 public:
     AddMarkerAction (Session& session, std::int64_t timelineSamples,
@@ -33,7 +33,7 @@ private:
     int          insertedIdx = -1;
 };
 
-class RemoveMarkerAction final : public juce::UndoableAction
+class RemoveMarkerAction final : public dusk::UndoableAction
 {
 public:
     RemoveMarkerAction (Session& session, int markerIdx);
@@ -56,7 +56,7 @@ private:
 // finds the marker at whichever of from/to it currently sits at, which
 // stays unambiguous across perform/undo cycles (the marker is always at
 // one of those two times).
-class MoveMarkerAction final : public juce::UndoableAction
+class MoveMarkerAction final : public dusk::UndoableAction
 {
 public:
     MoveMarkerAction (Session& session, std::string markerName,

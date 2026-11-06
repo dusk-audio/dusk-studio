@@ -148,7 +148,7 @@ void editWhileSounding (ScenarioContext& ctx, const std::string& what, const std
     ctx.pump (kSettleBlocks);
 }
 
-bool performEdit (ScenarioContext& ctx, UndoableAction* action)
+bool performEdit (ScenarioContext& ctx, dusk::UndoableAction* action)
 {
     auto& undo = ctx.engine().getUndoManager();
     undo.beginNewTransaction();

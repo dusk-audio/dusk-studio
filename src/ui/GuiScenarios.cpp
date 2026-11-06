@@ -1852,6 +1852,17 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
        #endif
         return { -1, -1 };
     }
+    std::string panelNameText (const std::string& panel) const override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        if (const auto* window = openPanel (panel))
+            if (const auto names = window->nameGlyphsForScenario())
+                return names->text;
+       #else
+        (void) panel;
+       #endif
+        return {};
+    }
     bool capturePanel (const std::string& panel, const std::filesystem::path& path) override
     {
        #if DUSKSTUDIO_HAS_NATIVE_UI

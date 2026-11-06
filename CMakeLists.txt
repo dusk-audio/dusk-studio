@@ -385,12 +385,10 @@ endif()
 
 # macOS code signing. Ad-hoc by default (works for local dev launch +
 # satisfies the runtime-loadable plugin requirement that the host be
-# at least ad-hoc signed). For distribution: set
+# at least ad-hoc signed). Setting
 #   -DDUSKSTUDIO_CODESIGN_IDENTITY="Developer ID Application: <name> (TEAMID)"
-# at configure time and the post-build step uses that identity instead.
-# Notarization is still a manual step (xcrun notarytool submit + staple)
-# because it needs an Apple ID + app-specific password the build can't
-# safely embed.
+# at configure time signs the build tree with that identity instead. What a
+# DMG ships is the install-stage signature further down, not this one.
 if(APPLE)
     set(DUSKSTUDIO_CODESIGN_IDENTITY "-" CACHE STRING "macOS codesign identity. '-' = ad-hoc (default). Override for distribution builds.")
     # Inject LSMinimumSystemVersion into the bundled Info.plist. JUCE 8
@@ -619,6 +617,10 @@ if(NOT DUSKSTUDIO_ENABLE_NATIVE_UI AND NOT DUSKSTUDIO_NATIVE_UI_DEPS_FOUND)
     message(STATUS "Native UI: DAF / DAF widgets not found - disabled")
 endif()
 
+if(DUSKSTUDIO_ENABLE_NATIVE_UI OR DUSKSTUDIO_BUILD_TESTS)
+    include(cmake/BidiText.cmake)
+endif()
+
 if(DUSKSTUDIO_NATIVE_UI_DEPS_FOUND)
     add_library(dusk_cjk_font STATIC src/ui/imgui/CjkFont.cpp)
     target_compile_features(dusk_cjk_font PUBLIC cxx_std_17)
@@ -707,6 +709,7 @@ if(DUSKSTUDIO_ENABLE_NATIVE_UI)
         "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/dusk")
 
     target_link_libraries(dusk_native_ui PRIVATE
+        dusk_bidi_text
         dusk_cjk_font
         dgl-opengl3
         dgl-opengl3-definitions
@@ -845,6 +848,7 @@ target_sources(DuskStudio PRIVATE
     src/DuskStudioApp.cpp
     src/foundation/Fft.cpp
     src/foundation/MessageThread.cpp
+    src/foundation/UndoManager.cpp
     # Native CLAP sources are added below, gated by DUSKSTUDIO_HAS_NATIVE_CLAP.
     src/engine/AudioEngine.cpp
     src/engine/AudioWorkerPool.cpp
@@ -2267,7 +2271,10 @@ if(APPLE)
     # signature above is invalid by the time CPack stages the .app, and the
     # staged copy is still missing the dylibs it links from the private prefix
     # that scripts/build-macos-runtime-deps.sh builds. Repair both on
-    # the installed tree, where nothing runs after us.
+    # the installed tree, where nothing runs after us. This signature is the
+    # one that ships, so DUSKSTUDIO_CODESIGN_IDENTITY in the environment of
+    # cpack overrides the configured identity: the release job only has its
+    # Developer ID after configuring.
     install(CODE "
         execute_process(
             COMMAND \"${CMAKE_CURRENT_SOURCE_DIR}/scripts/finalize-macos-bundle.sh\"

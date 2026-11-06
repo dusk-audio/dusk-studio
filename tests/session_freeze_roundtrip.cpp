@@ -8,7 +8,7 @@
 #include <set>
 #include <type_traits>
 
-static_assert (! std::is_convertible_v<duskstudio::SessionUndoManager*, juce::UndoManager*>);
+static_assert (! std::is_convertible_v<duskstudio::SessionUndoManager*, dusk::UndoManager*>);
 static_assert (std::is_same_v<decltype (std::declval<duskstudio::AudioEngine&>().getUndoManager()),
                               duskstudio::SessionUndoManager&>);
 
@@ -28,9 +28,9 @@ juce::File makeTempSessionDir()
 
 namespace
 {
-struct HistoryAction final : duskstudio::UndoableAction
+struct HistoryAction final : dusk::UndoableAction
 {
-    HistoryAction (int& v, int b, int a, std::set<const duskstudio::UndoableAction*>& live,
+    HistoryAction (int& v, int b, int a, std::set<const dusk::UndoableAction*>& live,
                     bool* locked = nullptr, bool merge = false, bool succeeds = true)
         : value (v), before (b), after (a), alive (live), frozen (locked),
           coalesce (merge), success (succeeds) { alive.insert (this); }
@@ -38,7 +38,7 @@ struct HistoryAction final : duskstudio::UndoableAction
     bool perform() override { if (success) value = after; return success; }
     bool undo() override { if (undoSuccess) value = before; return undoSuccess; }
     int getSizeInUnits() override { return 1; }
-    duskstudio::UndoableAction* createCoalescedAction (duskstudio::UndoableAction* next) override
+    dusk::UndoableAction* createCoalescedAction (dusk::UndoableAction* next) override
     {
         const auto* edit = dynamic_cast<HistoryAction*> (next);
         return coalesce && edit != nullptr && edit->coalesce
@@ -46,7 +46,7 @@ struct HistoryAction final : duskstudio::UndoableAction
     }
     int& value;
     int before, after;
-    std::set<const duskstudio::UndoableAction*>& alive;
+    std::set<const dusk::UndoableAction*>& alive;
     bool* frozen;
     bool coalesce, success;
     bool undoSuccess = true;
@@ -56,7 +56,7 @@ struct HistoryAction final : duskstudio::UndoableAction
 TEST_CASE ("Session undo preflights complete transactions and keeps unrelated history usable",
            "[session][undo][freeze]")
 {
-    std::set<const duskstudio::UndoableAction*> alive;
+    std::set<const dusk::UndoableAction*> alive;
     bool frozen = false;
     int first = 0, second = 0;
     duskstudio::SessionUndoManager undo ([&alive] (const auto& actions, bool)
@@ -120,7 +120,7 @@ TEST_CASE ("Session undo preflights complete transactions and keeps unrelated hi
 TEST_CASE ("Session undo snapshots follow pruning coalescing and redo branches",
            "[session][undo][freeze]")
 {
-    std::set<const duskstudio::UndoableAction*> alive;
+    std::set<const dusk::UndoableAction*> alive;
     bool frozen = false;
     int value = 0;
     duskstudio::SessionUndoManager undo ([&alive] (const auto& actions, bool)

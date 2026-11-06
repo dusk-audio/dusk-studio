@@ -80,12 +80,24 @@ canonical source.
   fonts for Han, kana and Hangul in names, paths and SFZ descriptions. Glyphs
   load as they appear, with a bounded cache per panel; Latin text keeps its
   existing appearance. Characters with no installed font still show the
-  replacement mark. Arabic shaping and right-to-left layout remain unsupported.
+  replacement mark.
+- **Hebrew and Arabic names.** Native panels drew Hebrew and Arabic left to
+  right, with Arabic letters unjoined. Names in the Startup dialog, audio
+  editor, piano roll, compressor editor, mini timeline strip and SFZ Manager
+  now read right to left, with Arabic letters joined, and a name cut to fit
+  keeps its first letters. Text fields and the Notepad keep the order you
+  typed.
 - **Manual figures.** `docs/capture-screenshots.sh` waits for each native
   panel's frame instead of closing the panel after a fixed delay, so the
   piano roll and audio editor figures are written again on a slow or loaded
   machine. A run that leaves a figure out now fails and names it. The
   figures whose UI changed since their last capture are refreshed.
+- **Developer ID through macOS packaging.** With the macOS signing secrets
+  set, CPack's install stage re-signed the staged app, plug-in host and
+  bundled libraries ad hoc, so the DMG sent for notarization had lost its
+  Developer ID. The release job now hands its imported identity to that
+  stage, which signs them with hardened runtime and a secure timestamp. The
+  unsigned route still signs ad hoc.
 
 ## [0.16.0] - 2026-11-01
 

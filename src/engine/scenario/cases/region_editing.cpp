@@ -95,7 +95,7 @@ ScenarioResult frozenTrackRefusesEdits (ScenarioContext& ctx)
     {
         auto& session = ctx.session();
         auto& engine = ctx.engine();
-        std::vector<std::unique_ptr<UndoableAction>> actions;
+        std::vector<std::unique_ptr<dusk::UndoableAction>> actions;
         const MidiRegion midi;
         actions.push_back (std::make_unique<RegionEditAction> (session, engine, kTrack, 0, regs[0], regs[0]));
         actions.push_back (std::make_unique<SplitRegionAction> (session, engine, kTrack, 0, 24000));
@@ -120,7 +120,7 @@ ScenarioResult frozenTrackRefusesEdits (ScenarioContext& ctx)
             session, engine, std::vector<RecordCommitAction::TrackDiff> { record }));
         for (std::size_t i = 0; i < actions.size(); ++i)
         {
-            const UndoableAction* action = actions[i].get();
+            const dusk::UndoableAction* action = actions[i].get();
             for (const bool redo : { false, true })
             {
                 ctx.expect (! canReplayTransaction (engine, &action, 1, redo),
@@ -132,7 +132,7 @@ ScenarioResult frozenTrackRefusesEdits (ScenarioContext& ctx)
             }
         }
         const CloneTrackAction sourceFrozen (session, engine, kTrack, kTrack + 1);
-        const UndoableAction* clone = &sourceFrozen;
+        const dusk::UndoableAction* clone = &sourceFrozen;
         ctx.expect (canReplayTransaction (engine, &clone, 1, false)
                         && ! canReplayTransaction (engine, &clone, 1, true),
                     "clone preflight did not distinguish its undo destination from its redo source");

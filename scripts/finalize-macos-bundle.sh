@@ -13,6 +13,16 @@ set -euo pipefail
 APP="${1:?usage: finalize-macos-bundle.sh <app> <identity> [entitlements]}"
 IDENTITY="${2:?missing codesign identity}"
 ENTITLEMENTS="${3:-}"
+# CPack passes the identity cached at configure time. The release job imports
+# its Developer ID after configuring, so it hands that over in the environment.
+IDENTITY="${DUSKSTUDIO_CODESIGN_IDENTITY:-$IDENTITY}"
+
+SIGN=(codesign --force --options runtime --sign "$IDENTITY")
+# Notarization refuses code without a secure timestamp, and an ad-hoc
+# signature cannot carry one.
+if [[ "$IDENTITY" != "-" ]]; then
+    SIGN+=(--timestamp)
+fi
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -26,7 +36,7 @@ if [[ -d "$APP/Contents/Frameworks" ]]; then
     # nullglob the unmatched pattern reaches codesign as a literal path.
     shopt -s nullglob
     for lib in "$APP/Contents/Frameworks"/*.dylib; do
-        codesign --force --options runtime --sign "$IDENTITY" "$lib"
+        "${SIGN[@]}" "$lib"
     done
 fi
 
@@ -47,10 +57,9 @@ MAIN_EXE_PATH="$APP/Contents/MacOS/$MAIN_EXE"
 while IFS= read -r helper; do
     [[ "$helper" == "$MAIN_EXE_PATH" ]] && continue
     if [[ -n "$ENTITLEMENTS" && -f "$ENTITLEMENTS" ]]; then
-        codesign --force --options runtime --entitlements "$ENTITLEMENTS" \
-                 --sign "$IDENTITY" "$helper"
+        "${SIGN[@]}" --entitlements "$ENTITLEMENTS" "$helper"
     else
-        codesign --force --options runtime --sign "$IDENTITY" "$helper"
+        "${SIGN[@]}" "$helper"
     fi
 done < <(find "$APP/Contents/MacOS" -type f -perm -u+x)
 
@@ -58,10 +67,9 @@ done < <(find "$APP/Contents/MacOS" -type f -perm -u+x)
 # disable-library-validation. Re-signing without them strips them, and
 # hardened runtime then refuses every third-party plugin the host loads.
 if [[ -n "$ENTITLEMENTS" && -f "$ENTITLEMENTS" ]]; then
-    codesign --force --options runtime --entitlements "$ENTITLEMENTS" \
-             --sign "$IDENTITY" "$APP"
+    "${SIGN[@]}" --entitlements "$ENTITLEMENTS" "$APP"
 else
-    codesign --force --options runtime --sign "$IDENTITY" "$APP"
+    "${SIGN[@]}" "$APP"
 fi
 
 codesign --verify --strict --deep --verbose=2 "$APP"

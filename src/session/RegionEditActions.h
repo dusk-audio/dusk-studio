@@ -1,7 +1,7 @@
 #pragma once
 
-#include <juce_data_structures/juce_data_structures.h>
 #include "Session.h"
+#include "../foundation/UndoManager.h"
 #include "TrackMove.h"
 #include <algorithm>
 #include <string>
@@ -10,7 +10,6 @@
 namespace duskstudio
 {
 class AudioEngine;
-using UndoableAction = juce::UndoableAction;
 struct TransactionPreflight;
 
 // The plugin portion of a clone snapshot is one indivisible replay unit.
@@ -47,7 +46,7 @@ struct ClonePluginSnapshot
 // Replaces a single AudioRegion's fields with new values. Used for the move
 // and trim drags, all of which collapse to "region X is now Y". perform()
 // applies the new state; undo() restores the original.
-class RegionEditAction final : public UndoableAction
+class RegionEditAction final : public dusk::UndoableAction
 {
     friend struct TransactionPreflight;
 public:
@@ -72,7 +71,7 @@ private:
 // original shrinks to [start, splitAt); a new region is inserted at idx+1
 // covering [splitAt, originalEnd) with sourceOffset adjusted so the audio
 // is continuous across the split.
-class SplitRegionAction final : public UndoableAction
+class SplitRegionAction final : public dusk::UndoableAction
 {
     friend struct TransactionPreflight;
 public:
@@ -97,7 +96,7 @@ private:
 // records the index it was inserted at so undo() can erase the same slot. The
 // copy keeps its takeId only while that take is on the track and the copy
 // reads the take's file.
-class PasteRegionAction final : public UndoableAction
+class PasteRegionAction final : public dusk::UndoableAction
 {
     friend struct TransactionPreflight;
 public:
@@ -121,7 +120,7 @@ private:
 // double-click-to-create gesture, so a user can hand-author MIDI without first
 // having to record; the second adds a region as given, as an import does. Undo
 // removes the region; redo re-inserts the same one.
-class CreateMidiRegionAction final : public UndoableAction
+class CreateMidiRegionAction final : public dusk::UndoableAction
 {
     friend struct TransactionPreflight;
 public:
@@ -159,7 +158,7 @@ private:
 // Several regions on one track go in one action: each perform and undo
 // publishes the track's regions once, however many it changes, so the audio
 // thread hears the edit whole and its timeline is rebuilt once.
-class MidiRegionEditAction final : public UndoableAction
+class MidiRegionEditAction final : public dusk::UndoableAction
 {
     friend struct TransactionPreflight;
 public:
@@ -190,7 +189,7 @@ private:
 };
 
 // Removes a region; undo re-inserts it at its original index.
-class DeleteRegionAction final : public UndoableAction
+class DeleteRegionAction final : public dusk::UndoableAction
 {
     friend struct TransactionPreflight;
 public:
@@ -217,7 +216,7 @@ private:
 // take the track gained since outside the undo history; redo puts it back.
 // Refused when a locked region lies in the range, since carving would split or
 // trim it.
-class PromoteTakeRangeAction final : public UndoableAction
+class PromoteTakeRangeAction final : public dusk::UndoableAction
 {
     friend struct TransactionPreflight;
 public:
@@ -243,7 +242,7 @@ private:
 // Undo puts the take and regions back with the same ids, the take at its place
 // in recording order; the audition stays off. Refused while a region cut from
 // the take is locked.
-class DeleteTakeAction final : public UndoableAction
+class DeleteTakeAction final : public dusk::UndoableAction
 {
     friend struct TransactionPreflight;
 public:
@@ -263,7 +262,7 @@ private:
     bool firstPerformDone = false;
 };
 
-class RenameTakeAction final : public UndoableAction
+class RenameTakeAction final : public dusk::UndoableAction
 {
     friend struct TransactionPreflight;
 public:
@@ -300,7 +299,7 @@ private:
 // joined; ctor sorts a copy by timelineStart so the action records a
 // stable order. perform() captures the before-state of every involved
 // region so undo() can restore the full pre-join layout.
-class JoinRegionsAction final : public UndoableAction
+class JoinRegionsAction final : public dusk::UndoableAction
 {
     friend struct TransactionPreflight;
 public:
@@ -328,7 +327,7 @@ private:
 // take's, so the region names none. The original file is untouched; undo
 // restores the pre-reverse region. Frozen tracks are edit-locked (perform
 // bails). Single region.
-class ReverseRegionAction final : public UndoableAction
+class ReverseRegionAction final : public dusk::UndoableAction
 {
     friend struct TransactionPreflight;
 public:
@@ -354,7 +353,7 @@ private:
 // cannot add or remove a region the audio thread plays. Several
 // regions on one track are one action for the reason MidiRegionEditAction
 // gives: one publish per perform and per undo.
-class DeleteMidiRegionAction final : public UndoableAction
+class DeleteMidiRegionAction final : public dusk::UndoableAction
 {
     friend struct TransactionPreflight;
 public:
@@ -389,7 +388,7 @@ private:
 // asks the destination slot to restoreFromSavedState. Undo replays the
 // captured before-state through the same path so the dest slot returns
 // to whatever plugin (if any) was loaded before.
-class CloneTrackAction final : public UndoableAction
+class CloneTrackAction final : public dusk::UndoableAction
 {
     friend struct TransactionPreflight;
 public:
@@ -430,7 +429,7 @@ private:
     std::unique_ptr<Impl> afterState;
 };
 
-class MidiMergePassAction final : public UndoableAction
+class MidiMergePassAction final : public dusk::UndoableAction
 {
     friend struct TransactionPreflight;
 public:
@@ -462,7 +461,7 @@ private:
 // change, so one added outside the undo history stays. WAV files on disk
 // are NOT deleted on undo - the user can redo to re-attach the take, and
 // orphaned files are reclaimed via the existing "Clean Out" menu action.
-class RecordCommitAction final : public UndoableAction
+class RecordCommitAction final : public dusk::UndoableAction
 {
     friend struct TransactionPreflight;
 public:
@@ -495,7 +494,7 @@ private:
 // starting tempo) collapses to "the points were X, now Y", so one action type
 // covers them all. perform()/undo() publish the after/before set through the
 // engine's lock-free tempo snapshot.
-class SetTempoMapAction final : public UndoableAction
+class SetTempoMapAction final : public dusk::UndoableAction
 {
 public:
     SetTempoMapAction (AudioEngine& engine,
@@ -516,7 +515,7 @@ private:
 // the point vector and republish it to the audio thread via a release-store
 // on the track's automationMode (the Session.h lane-sync contract). Lane
 // editing is gated on transport=Stopped, same as the live edit path.
-class AutomationLaneEditAction final : public UndoableAction
+class AutomationLaneEditAction final : public dusk::UndoableAction
 {
 public:
     AutomationLaneEditAction (Session& session, int trackIdx, int paramIdx,
@@ -556,7 +555,7 @@ private:
 // and its history untouched.
 bool undoTransaction (AudioEngine& engine);
 bool redoTransaction (AudioEngine& engine);
-bool canReplayTransaction (AudioEngine& engine, const UndoableAction* const* actions,
+bool canReplayTransaction (AudioEngine& engine, const dusk::UndoableAction* const* actions,
                             std::size_t count, bool redo);
 
 // The name of the one undo step a track move makes.

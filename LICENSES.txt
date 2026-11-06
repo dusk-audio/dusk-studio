@@ -293,6 +293,21 @@ pffft (FFT backend behind dusk::audio::Fft — spectrum analyser, DP alignment)
              FFTPACKv5 license text applies and is reproduced in full at the
              top of external/pffft/pffft.h.
 
+SheenBidi (right-to-left display order for names in the native panels)
+  Version  : 3.0.0, submodule rev cfe430e7375a7845b679adae9d51dac6deaa8858
+  License  : Apache-2.0 - Copyright (C) 2014-2026 Muhammad Tayyab Akram
+             (external/sheenbidi/LICENSE)
+  Path     : external/sheenbidi/ (git submodule of Tehreer/SheenBidi), its
+             unity source built as a static library and linked into Dusk
+             Studio.
+  Notes    : Separate from the SheenBidi 2.9.0 that JUCE vendors. Every
+             public function is renamed at build time so the two copies do not
+             collide in one binary. The license text is identical to the copy
+             reproduced in the Apache License 2.0 section below. Upstream ships
+             no NOTICE file, so Apache-2.0 section 4(d) adds nothing beyond
+             that copy.
+  Upstream : https://github.com/Tehreer/SheenBidi
+
 DAF / DGL and widgets (Dusk Audio Framework graphics layer — backs the native notepad UI)
   Version  : dusk-audio/DAF rev @DAF_REV@
              (the DAF_REV file at the top of the Dusk Studio source; release
@@ -1496,6 +1511,7 @@ For more information on this, and how to apply and follow the GNU AGPL, see
 --------------------------------------------------------------------------------
 Apache License 2.0 — covers the Apache-2.0 components in the binary:
   SheenBidi 2.9.0, Copyright (C) 2014-2025 Muhammad Tayyab Akram
+  SheenBidi 3.0.0, Copyright (C) 2014-2026 Muhammad Tayyab Akram
   abseil-cpp LTS 20230125.3, Copyright The Abseil Authors (Google Inc.
   per external/dusk-fizz/external/abseil-cpp/AUTHORS)
   LLVM 22.1.8 and SPIR-V Tools in the Windows Mesa fallback

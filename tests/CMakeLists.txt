@@ -206,9 +206,12 @@ add_executable(dusk-studio-tests
     mcu_fader_taper.cpp
     comp_mode_fanout.cpp
     foundation_message_thread.cpp
+    foundation_undo_manager.cpp
+    foundation_undo_manager_parity.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/McuReceiver.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/McuController.cpp
     ${CMAKE_SOURCE_DIR}/src/foundation/MessageThread.cpp
+    ${CMAKE_SOURCE_DIR}/src/foundation/UndoManager.cpp
     multisample_state_roundtrip.cpp
     multisample_hdcc_coalescing.cpp
     bounce_stem_filename.cpp
@@ -308,6 +311,10 @@ target_sources(dusk-studio-tests PRIVATE
     ${CMAKE_SOURCE_DIR}/src/dsp/PhaseAnalyzer.cpp
     ${CMAKE_SOURCE_DIR}/src/foundation/Fft.cpp)
 target_link_libraries(dusk-studio-tests PRIVATE dusk-pffft)
+
+# Display order for right-to-left names (dusk::text over SheenBidi).
+target_sources(dusk-studio-tests PRIVATE foundation_bidi_text.cpp)
+target_link_libraries(dusk-studio-tests PRIVATE dusk_bidi_text dusk_sheenbidi)
 
 # JUCE-free foundation helpers (dusk::text / dusk::fs / dusk::json) — no external deps.
 target_sources(dusk-studio-tests PRIVATE

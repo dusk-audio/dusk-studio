@@ -1291,6 +1291,50 @@ std::optional<ScenarioResult> runStartupNameGlyphs (GuiHost& host, ScenarioConte
    #endif
 }
 
+std::optional<ScenarioResult> runStartupRtlNames (GuiHost& host, ScenarioContext& ctx)
+{
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("requires the native UI");
+   #else
+    if (! ctx.engine().getTransport().isStopped() || ! host.modalStackEmpty() || host.startupDialogOpen())
+        return ScenarioResult::skip ("requires a stopped transport and no dialog");
+    // Typed as "shalom olam" and "salam alaykum"; drawn right to left, the Arabic in
+    // joined presentation forms with the lam-alef ligature.
+    const std::vector<std::filesystem::path> recents {
+        ctx.tempDir() / std::filesystem::u8path ("\xd7\xa9\xd7\x9c\xd7\x95\xd7\x9d \xd7\xa2\xd7\x95\xd7\x9c\xd7\x9d"),
+        ctx.tempDir() / std::filesystem::u8path ("\xd8\xb3\xd9\x84\xd8\xa7\xd9\x85 \xd8\xb9\xd9\x84\xd9\x8a\xd9\x83\xd9\x85"),
+    };
+    for (const auto& recent : recents)
+    {
+        std::error_code error;
+        std::filesystem::create_directories (recent, error);
+        if (error) return ScenarioResult::fail ("could not make the recent session folder");
+    }
+    ctx.cleanup ([&host]
+    {
+        host.closeStartupDialog();
+        drainModals (host);
+    });
+    if (! host.openStartupDialog (recents, false)) return ScenarioResult::fail ("the startup dialog did not open");
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 400, [&host, &ctx]
+    {
+        expectNamesReadable (host, ctx, "startup", 9 + 9, "startup-rtl-names.ppm");
+        const auto drawn = "\n" + host.panelNameText ("startup") + "\n";
+        ctx.expect (drawn.find ("\n\xd7\x9d\xd7\x9c\xd7\x95\xd7\xa2 \xd7\x9d\xd7\x95\xd7\x9c\xd7\xa9\n") != std::string::npos,
+                    "the Hebrew name was not drawn right to left: " + drawn);
+        ctx.expect (drawn.find ("\n\xef\xbb\xa2\xef\xbb\x9c\xef\xbb\xb4\xef\xbb\xa0\xef\xbb\x8b "
+                                "\xef\xbb\xa1\xef\xbb\xbc\xef\xba\xb3\n") != std::string::npos,
+                    "the Arabic name was not drawn joined and right to left: " + drawn);
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+   #endif
+}
+
 const ScenarioRegistrar startupNameGlyphs { Scenario {
     "gui.startup_name_glyphs", { "gui", "startup" }, Needs::Engine | Needs::Gui,
     {}, {}, 10000,
@@ -1301,6 +1345,11 @@ const ScenarioRegistrar startupCjkGlyphs { Scenario {
     "gui.startup_cjk_glyphs", { "gui", "startup", "cjk" }, Needs::Engine | Needs::Gui,
     {}, {}, 10000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runStartupNameGlyphs (host, ctx, true); }
+} };
+
+const ScenarioRegistrar startupRtlNames { Scenario {
+    "gui.startup_rtl_names", { "gui", "startup", "bidi" }, Needs::Engine | Needs::Gui,
+    {}, {}, 10000, runStartupRtlNames
 } };
 } // namespace
 } // namespace duskstudio::scenario::gui
