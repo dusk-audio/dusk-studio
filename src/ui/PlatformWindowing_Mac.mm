@@ -131,11 +131,11 @@ double nativeViewBackingScale (void* nativeViewHandle)
                                        : [[NSScreen mainScreen] backingScaleFactor];
     return scale > 0.0 ? scale : 1.0;
 }
-void bringWindowToFront (juce::ComponentPeer& peer)
+bool bringWindowToFront (juce::ComponentPeer& peer, const std::string&)
 {
     auto* const view = static_cast<NSView*> (peer.getNativeHandle());
     auto* const window = view != nil ? [view window] : nil;
-    if (window == nil) return;
+    if (window == nil) return true;
 
     // NSApplication::activate is the supported API on macOS 14+, while the
     // deployment target remains macOS 11. Keep the older API only as the
@@ -148,6 +148,7 @@ void bringWindowToFront (juce::ComponentPeer& peer)
     if ([window isMiniaturized])
         [window deminiaturize:nil];
     [window makeKeyAndOrderFront:nil];
+    return true;
 }
 // No-op by contract: see flushWindowOperations in PlatformWindowing.h.
 void flushWindowOperations() {}
@@ -172,6 +173,7 @@ void prepareForTopLevelDestruction (juce::Component& topLevel)
 void clearXInputFocus() {}                 // X-only; no-op on macOS
 void requestFocusOnMainWaylandSurface() {} // Wayland-only; no-op on macOS
 void preferX11ForNextNativeWindow() {}     // Wayland-only; no-op on macOS
+void withX11PeerCreation (const std::function<void()>& create) { create(); }
 void clearPreferX11ForNativeWindow() {}    // Wayland-only; no-op on macOS
 std::unique_ptr<juce::Component> createForeignNativeWindowEmbed (std::uint64_t)
 {

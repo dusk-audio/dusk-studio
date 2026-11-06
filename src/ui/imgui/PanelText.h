@@ -28,6 +28,10 @@ ImFont* nameFace (const DuskWidgets::Fonts& fonts);
 // other byte, invalid UTF-8 included, passes through unchanged.
 std::string displayText (std::string_view utf8);
 
+// Display normalization plus glyph requests for the panel currently drawing.
+// Search and persisted data use displayText or the original text instead.
+std::string panelText (std::string_view utf8);
+
 // The characters a view drew in its names over one frame, and how many of them the
 // face had no glyph for, for a scenario to read.
 struct GlyphTally

@@ -188,6 +188,8 @@ std::optional<ScenarioResult> runMiniTimelineMarkers (GuiHost& host, ScenarioCon
     const bool shown = host.setTimelineShown (false);
     ctx.cleanup ([&host, &session, &transport, markers, playhead, shown]
     {
+        host.closeAudioSettings();
+        drainModals (host);
         host.captureMiniMarkers (false);
         session.getMarkers() = markers;
         transport.locate (playhead);
@@ -195,11 +197,11 @@ std::optional<ScenarioResult> runMiniTimelineMarkers (GuiHost& host, ScenarioCon
     });
     const double rate = engine.getCurrentSampleRate();
     session.getMarkers().clear();
-    const std::array<const char*, 3> names { "Verse", "Chorus", "Outro" };
+    const std::array<const char*, 3> names { "Verse##1", "Chorus 日本語", "Outro" };
     for (int index = 0; index < 3; ++index)
     {
         Marker marker;
-        marker.name = names[(size_t) index];
+        marker.name = decltype (marker.name)::fromUTF8 (names[(size_t) index]);
         marker.timelineSamples = (std::int64_t) ((10 + index * 15) * rate);
         marker.colour = decltype (marker.colour) (0xff906030);
         session.getMarkers().push_back (std::move (marker));
@@ -217,7 +219,8 @@ std::optional<ScenarioResult> runMiniTimelineMarkers (GuiHost& host, ScenarioCon
         {
             const auto& row = rows[(size_t) index];
             const auto& dim = (*baseline)[(size_t) index];
-            ctx.expect (row.name == names[(size_t) index] && row.labelWidth > 0, "marker label was not painted");
+            ctx.expect (row.name == names[(size_t) index] && row.labelWidth > 0,
+                        "marker label was not painted: " + row.name + " (width " + std::to_string (row.labelWidth) + ")");
             if (index == active)
             {
                 ctx.expect (brightness (row.tickColour) > brightness (dim.tickColour)
@@ -254,6 +257,54 @@ std::optional<ScenarioResult> runMiniTimelineMarkers (GuiHost& host, ScenarioCon
         ctx.expect (transport.getPlayhead() == session.getMarkers()[0].timelineSamples, "marker label did not seek exactly to the marker");
         check (0);
     } });
+    steps->push_back ({ 150, [&host, &ctx]
+    { ctx.expect (host.openAudioSettings(), "could not cover the mini timeline with a modal"); } });
+    steps->push_back ({ 350, [&host, &ctx]
+    {
+        ctx.expect (! host.clickMiniMarker (0), "covered mini timeline still accepts native input");
+        ctx.expect (host.inputAudioSettings ("escape"), "could not dismiss audio settings");
+    } });
+    steps->push_back ({ 350, [&host, &ctx]
+    { ctx.expect (host.clickMiniMarker (1), "mini timeline did not reopen after the modal closed"); } });
+    steps->push_back ({ 200, [&ctx, &session, &transport]
+    { ctx.expect (transport.getPlayhead() == session.getMarkers()[1].timelineSamples, "reopened marker did not seek"); } });
+    steps->push_back ({ 150, [&host] { host.setTimelineShown (true); } });
+    steps->push_back ({ 200, [&host, &ctx]
+    {
+        ctx.expect (! host.clickMiniMarker (1), "expanded timeline left its native mini window open");
+        host.setTimelineShown (false);
+    } });
+    steps->push_back ({ 350, [&host, &session, rate]
+    {
+        session.getMarkers()[0].timelineSamples = static_cast<std::int64_t> (12 * rate);
+        session.getMarkers()[0].name = decltype (Marker::name)::fromUTF8 ("Moved##日本語");
+        session.getMarkers()[0].colour = decltype (session.getMarkers()[0].colour) (0xff308090);
+        host.captureMiniMarkers (true);
+    } });
+    steps->push_back ({ 200, [&host, &ctx]
+    {
+        const auto rows = host.miniMarkerPaint();
+        ctx.expect (rows.size() == 3 && rows[0].name == "Moved##日本語", "direct marker edit did not refresh the native view");
+        ctx.expect (host.clickMiniMarker (0), "moved marker label did not accept native input");
+    } });
+    steps->push_back ({ 200, [&ctx, &session, &transport]
+    { ctx.expect (transport.getPlayhead() == session.getMarkers()[0].timelineSamples, "moved marker hit geometry was stale"); } });
+    steps->push_back ({ 200, [&host]
+    { host.raiseAlert ("Marker navigation", "Return to the mini timeline after closing this message."); } });
+    steps->push_back ({ 200, [&host, &ctx]
+    {
+        ctx.expect (host.modalHasKeyboardFocus(), "closing the mini timeline took focus from the modal");
+        ctx.expect (host.modalBodyOnTop(), "closing the mini timeline covered the modal");
+        ctx.expect (! host.clickMiniMarker (0), "mini timeline accepts native input behind the alert");
+        ctx.expect (host.pressPeerKey ("escape"), "the covering alert did not accept Escape");
+    } });
+    steps->push_back ({ 350, [&host, &ctx]
+    {
+        ctx.expect (host.modalStackEmpty(), "Escape left the covering alert open");
+        ctx.expect (host.clickMiniMarker (1), "mini timeline did not reopen after the alert");
+    } });
+    steps->push_back ({ 200, [&ctx, &session, &transport]
+    { ctx.expect (transport.getPlayhead() == session.getMarkers()[1].timelineSamples, "reopened marker did not seek after the alert"); } });
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
 }
@@ -262,6 +313,46 @@ const ScenarioRegistrar miniTimelineMarkers { Scenario {
     "gui.mini_timeline_markers", { "gui", "tape" }, Needs::Engine | Needs::Gui,
     {}, {}, 15000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runMiniTimelineMarkers (host, ctx); }
+} };
+
+// The strip takes the keyboard whenever its child opens, so a shortcut matched on
+// the character it types has to keep working from there.
+std::optional<ScenarioResult> runMiniTimelineKeys (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+    if (! transport.isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires stopped transport and no modal");
+    if (engine.getStage() != AudioEngine::Stage::Recording && engine.getStage() != AudioEngine::Stage::Mixing)
+        return ScenarioResult::skip ("requires a stage with the mini timeline");
+    const auto playhead = transport.getPlayhead();
+    const bool shown = host.setTimelineShown (false);
+    ctx.cleanup ([&host, &transport, playhead, shown]
+    {
+        drainModals (host);
+        transport.locate (playhead);
+        host.setTimelineShown (shown);
+    });
+    const auto rate = engine.getCurrentSampleRate();
+    transport.locate ((std::int64_t) (5 * rate));
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 350, [&host, &ctx]
+    { ctx.expect (host.pressMiniKey ("."), "the mini timeline did not take '.'"); } });
+    steps->push_back ({ 200, [&host, &ctx, &transport]
+    {
+        ctx.expect (transport.getPlayhead() == 0, "'.' at the mini timeline did not rewind");
+        ctx.expect (host.pressMiniKey ("shift + /"), "the mini timeline did not take '?'");
+    } });
+    steps->push_back ({ 300, [&host, &ctx]
+    { ctx.expect (host.shortcutsOpen(), "'?' at the mini timeline did not open Keyboard Shortcuts"); } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar miniTimelineKeys { Scenario {
+    "gui.mini_timeline_keys", { "gui", "tape" }, Needs::Engine | Needs::Gui,
+    {}, {}, 8000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runMiniTimelineKeys (host, ctx); }
 } };
 
 std::optional<ScenarioResult> runTapeRuler (GuiHost& host, ScenarioContext& ctx)

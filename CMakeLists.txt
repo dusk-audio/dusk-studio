@@ -619,6 +619,21 @@ if(NOT DUSKSTUDIO_ENABLE_NATIVE_UI AND NOT DUSKSTUDIO_NATIVE_UI_DEPS_FOUND)
     message(STATUS "Native UI: DAF / DAF widgets not found - disabled")
 endif()
 
+if(DUSKSTUDIO_NATIVE_UI_DEPS_FOUND)
+    add_library(dusk_cjk_font STATIC src/ui/imgui/CjkFont.cpp)
+    target_compile_features(dusk_cjk_font PUBLIC cxx_std_17)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        find_package(Freetype REQUIRED)
+        find_package(PkgConfig REQUIRED)
+        pkg_check_modules(DUSK_FONTCONFIG REQUIRED IMPORTED_TARGET fontconfig)
+        target_link_libraries(dusk_cjk_font PRIVATE Freetype::Freetype PkgConfig::DUSK_FONTCONFIG)
+    elseif(APPLE)
+        target_link_libraries(dusk_cjk_font PRIVATE "-framework CoreText" "-framework CoreGraphics" "-framework CoreFoundation")
+    elseif(WIN32)
+        target_link_libraries(dusk_cjk_font PRIVATE dwrite)
+    endif()
+endif()
+
 if(WIN32)
     set(DUSKSTUDIO_WINDOWS_SOFTWARE_OPENGL_DIR "" CACHE PATH
         "Directory containing the pinned x64 Mesa opengl32.dll and libgallium_wgl.dll")
@@ -652,6 +667,17 @@ if(DUSKSTUDIO_ENABLE_NATIVE_UI)
     message(STATUS "Using DAF from: ${DUSKSTUDIO_DAF_SOURCE_DIR}")
     message(STATUS "Using DAF widgets from: ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}")
 
+    include(cmake/NativeWaylandCapabilities.cmake)
+    duskstudio_check_shared_wayland(DUSKSTUDIO_HAS_SHARED_WAYLAND)
+    if(DUSKSTUDIO_HAS_SHARED_WAYLAND)
+        # A normal variable rather than the cache, so a tree reconfigured
+        # against frameworks without the shared APIs is back on DAF's default.
+        if(NOT DGL_BACKEND OR DGL_BACKEND STREQUAL "auto")
+            set(DGL_BACKEND both)
+        endif()
+        message(STATUS "Native Wayland embedding: shared host connection supported")
+    endif()
+
     set(DAF_LIBRARIES OFF CACHE BOOL "Build DAF's complete library set" FORCE)
     set(DAF_EXAMPLES OFF CACHE BOOL "Build DAF examples" FORCE)
     add_subdirectory("${DUSKSTUDIO_DAF_SOURCE_DIR}"
@@ -666,9 +692,11 @@ if(DUSKSTUDIO_ENABLE_NATIVE_UI)
     add_library(dusk_native_ui STATIC
         src/ui/imgui/AtlasImage.cpp
         src/ui/imgui/DuskImGuiHost.cpp
+        src/ui/imgui/SharedWaylandApplication.cpp
         src/ui/imgui/DuskTheme.cpp
         src/ui/imgui/DuskPanelWindow.cpp
         src/ui/imgui/PanelText.cpp
+        src/ui/imgui/PanelFontFallback.cpp
         src/ui/NotepadDocument.cpp
         src/ui/NotepadChords.cpp
         src/ui/NotepadEditorCore.cpp
@@ -679,15 +707,46 @@ if(DUSKSTUDIO_ENABLE_NATIVE_UI)
         "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/dusk")
 
     target_link_libraries(dusk_native_ui PRIVATE
+        dusk_cjk_font
         dgl-opengl3
         dgl-opengl3-definitions
         dgl-system-libs-definitions
         daf-widgets-imgui
         daf-widgets-dusk)
     target_compile_features(dusk_native_ui PUBLIC cxx_std_17)
+    target_compile_definitions(dusk_native_ui PUBLIC
+        $<$<BOOL:${DUSKSTUDIO_HAS_SHARED_WAYLAND}>:DUSKSTUDIO_HAS_SHARED_WAYLAND=1>)
 
     target_link_libraries(DuskStudio PRIVATE dusk_native_ui)
     target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_NATIVE_UI=1)
+
+    if(DUSKSTUDIO_HAS_SHARED_WAYLAND)
+        add_executable(dusk-native-wayland-probe EXCLUDE_FROM_ALL
+            tests/native_wayland_embed.cpp
+            src/foundation/MessageThread.cpp
+            src/ui/DimOverlay.cpp
+            src/ui/imgui/DafEditorHost.cpp
+            src/ui/PlatformWindowing_Linux.cpp)
+        target_compile_definitions(dusk-native-wayland-probe PRIVATE
+            DUSKSTUDIO_JUCE_HAS_WAYLAND=1
+            JUCE_GLOBAL_MODULE_SETTINGS_INCLUDED=1
+            JUCE_STANDALONE_APPLICATION=1
+            JUCE_WAYLAND=1
+            JUCE_USE_CURL=0
+            JUCE_WEB_BROWSER=0)
+        target_compile_features(dusk-native-wayland-probe PRIVATE cxx_std_17)
+        target_include_directories(dusk-native-wayland-probe PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+        target_link_libraries(dusk-native-wayland-probe PRIVATE
+            dusk_native_ui
+            daf-widgets-dusk
+            dgl-opengl3
+            dgl-opengl3-definitions
+            dgl-system-libs-definitions
+            juce::juce_gui_extra
+            juce::pkgconfig_JUCE_WAYLAND_LINUX_DEPS)
+        set_target_properties(dusk-native-wayland-probe PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/native-tests")
+    endif()
 
     # The panel views read the session's atomics directly, so they compile in the
     # app target where those headers already resolve rather than in the framework
@@ -1925,6 +1984,12 @@ static const unsigned int ${symbol}_len = ${_fontSize}u;
                 dusk_daf_duskverb_2_ui
                 dusk_daf_tape_machine_2_ui
                 dusk_daf_sunset_ui)
+            if(TARGET dusk-native-wayland-probe)
+                target_compile_definitions(dusk-native-wayland-probe PRIVATE DUSK_NATIVE_PROBE_DAF=1)
+                target_link_libraries(dusk-native-wayland-probe PRIVATE
+                    dusk_daf_tape_echo_2_ui dusk_daf_duskverb_2_ui
+                    dusk_daf_tape_machine_2_ui dusk_daf_sunset_ui)
+            endif()
         else()
             target_link_libraries(DuskStudio PRIVATE
                 dusk_daf_tape_echo_2

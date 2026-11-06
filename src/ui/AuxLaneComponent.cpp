@@ -43,15 +43,14 @@ namespace duskstudio
 {
 namespace
 {
-// Aux lanes attach from rebuildSlots, which runs from the constructor for the
-// hidden lanes too, so a failure here has no user-initiated open to answer and
-// no on-screen parent: log only. Alerting would push an invisible entry onto
-// the modal stack, which gates native-editor reopen everywhere else.
+// Automatic inline attachment has no user-initiated open to answer. Only an
+// explicit editor request supplies an alert callback.
 template <typename Editor, typename Instance>
 bool attachNativePluginEditor (Editor& editor,
                                Instance& instance,
                                hosting::NativeEditorFormat format,
-                               const std::string& pluginName)
+                               const std::string& pluginName,
+                               std::function<void (const std::string&, const std::string&)> alert = {})
 {
     juce::String error;
     const bool attached = editor.attach (instance, error);
@@ -62,7 +61,10 @@ bool attachNativePluginEditor (Editor& editor,
             std::fputs (line.c_str(), stderr);
             std::fputc ('\n', stderr);
         },
-        [] (const std::string&, const std::string&) {});
+        [alert = std::move (alert)] (const std::string& title, const std::string& message)
+        {
+            if (alert) alert (title, message);
+        });
 }
 
 constexpr float kMeterMinDb = -60.0f;
@@ -406,7 +408,7 @@ AuxLaneComponent::AuxLaneComponent (AuxLane& l, AuxLaneStrip& s, int idx,
                 || strip.isNativeVst3Loaded (i) || strip.isNativeAuLoaded (i)
                 || strip.isBuiltinLoaded (i))
             {
-                // Keep the picker closed for loaded slots; their editors are inline.
+                if (usesForeignEditorWindow()) rebuildSlots (i);
                 return;
             }
             openPickerForSlot (i);
@@ -501,6 +503,7 @@ AuxLaneComponent::~AuxLaneComponent()
         recordAutomation ((AutomationParam) p, false, 0.0f);
     for (auto& s : slots)
     {
+        s.editorModal.closeAndDeleteBodyNow();
        #if DUSKSTUDIO_HAS_NATIVE_UI
         // The framework child reaches back into this lane through its callbacks, so
         // it goes down while the lane is still whole.
@@ -696,13 +699,15 @@ void AuxLaneComponent::refreshSlotControls (int i)
             ? juce::String (std::string ("\xe2\x9a\xa0 ") + name.toStdString() + " (offline)")
             : name;
     };
-    auto setNativeTooltip = [&ui] (bool offline)
+    auto setNativeTooltip = [this, &ui, i] (bool offline)
     {
         ui.openOrAddButton.setTooltip (offline
             ? "This plug-in is offline after a restore or reactivation failure. "
               "Its saved reference and state will be preserved; replace or remove "
               "it to recover this slot."
-            : "Use X to remove this plug-in.");
+            : usesForeignEditorWindow() && ! strip.isBuiltinLoaded (i)
+                ? "Click to open the plug-in editor. Use X to remove it."
+                : "Use X to remove this plug-in.");
     };
 
     const int mode = strip.insertMode[(size_t) i].load (std::memory_order_relaxed);
@@ -889,6 +894,7 @@ void AuxLaneComponent::refreshSlotControls (int i)
 
     if (slotRef.isLoaded())
     {
+        setNativeTooltip (false);
         const auto name = slotRef.getLoadedName();
         // The health labels go through displayedName rather than over the top
         // of it, so Re-enable puts the plain name back instead of leaving the
@@ -1265,10 +1271,11 @@ void AuxLaneComponent::detachEditorForSlot (int slotIdx)
 {
     auto& ui = slots[(size_t) slotIdx];
     if (ui.editor == nullptr) return;
+    ui.editorModal.closeAndDeleteBodyNow();
     // editor destructor auto-removes from parent, but be explicit so
     // bounds-changed callbacks during teardown can't fire against a
     // half-destructed editor.
-    removeChildComponent (ui.editor.get());
+    if (auto* parent = ui.editor->getParentComponent()) parent->removeChildComponent (ui.editor.get());
     ui.editor.reset();
 }
 
@@ -1846,7 +1853,8 @@ void AuxLaneComponent::detachClapEditorForSlot (int slotIdx)
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
     auto& ui = slots[(size_t) slotIdx];
     if (ui.clapEditor == nullptr) return;
-    removeChildComponent (ui.clapEditor.get());
+    ui.editorModal.closeAndDeleteBodyNow();
+    if (auto* parent = ui.clapEditor->getParentComponent()) parent->removeChildComponent (ui.clapEditor.get());
     ui.clapEditor.reset();
 #else
     (void) slotIdx;
@@ -1858,7 +1866,8 @@ void AuxLaneComponent::detachLv2EditorForSlot (int slotIdx)
 #if DUSKSTUDIO_HAS_NATIVE_LV2
     auto& ui = slots[(size_t) slotIdx];
     if (ui.lv2Editor == nullptr) return;
-    removeChildComponent (ui.lv2Editor.get());
+    ui.editorModal.closeAndDeleteBodyNow();
+    if (auto* parent = ui.lv2Editor->getParentComponent()) parent->removeChildComponent (ui.lv2Editor.get());
     ui.lv2Editor.reset();
 #else
     (void) slotIdx;
@@ -1870,7 +1879,8 @@ void AuxLaneComponent::detachVst3EditorForSlot (int slotIdx)
 #if DUSKSTUDIO_HAS_NATIVE_VST3
     auto& ui = slots[(size_t) slotIdx];
     if (ui.vst3Editor == nullptr) return;
-    removeChildComponent (ui.vst3Editor.get());
+    ui.editorModal.closeAndDeleteBodyNow();
+    if (auto* parent = ui.vst3Editor->getParentComponent()) parent->removeChildComponent (ui.vst3Editor.get());
     ui.vst3Editor.reset();
 #else
     (void) slotIdx;
@@ -1892,7 +1902,11 @@ void AuxLaneComponent::detachAuEditorForSlot (int slotIdx)
 void AuxLaneComponent::syncNativeEditorOwnersForSlot (int slotIdx)
 {
     [[maybe_unused]] auto& ui = slots[(size_t) slotIdx];
-    [[maybe_unused]] auto detach = [this] (auto& body) { removeChildComponent (&body); };
+    [[maybe_unused]] auto detach = [&ui] (auto& body)
+    {
+        if (ui.editorModal.getBody() == &body) ui.editorModal.closeAndDeleteBodyNow();
+        if (auto* parent = body.getParentComponent()) parent->removeChildComponent (&body);
+    };
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
     syncNativeEditorOwner (ui.clapEditor, detach);
 #endif
@@ -1964,6 +1978,7 @@ void AuxLaneComponent::hideEditorsKeepingAlive()
     for (int i = 0; i < AuxLaneParams::kMaxLanePlugins; ++i)
     {
         auto& ui = slots[(size_t) i];
+        ui.editorModal.close();
         if (ui.editor == nullptr) continue;
         // If the slot's live instance no longer matches this editor (the plugin
         // was unloaded or swapped while the lane was hidden - e.g. a session
@@ -2100,8 +2115,20 @@ juce::Rectangle<int> AuxLaneComponent::getCenterArea() const noexcept
     return area;
 }
 
-void AuxLaneComponent::rebuildSlots()
+bool AuxLaneComponent::usesForeignEditorWindow() const
 {
+   #if JUCE_LINUX
+    if (auto* peer = getPeer())
+        return platform::describeEmbeddedParent (
+            reinterpret_cast<std::uintptr_t> (peer->getNativeHandle())).backend
+                == platform::NativeEmbeddedParent::Backend::wayland;
+   #endif
+    return false;
+}
+
+void AuxLaneComponent::rebuildSlots (int requestedEditor)
+{
+    const bool floating = usesForeignEditorWindow();
     for (int i = 0; i < AuxLaneParams::kMaxLanePlugins; ++i)
     {
         // Reap editors that abandoned their instance on their own pump tick, so
@@ -2110,6 +2137,41 @@ void AuxLaneComponent::rebuildSlots()
 
         auto& ui = slots[(size_t) i];
         const int mode = strip.insertMode[(size_t) i].load (std::memory_order_relaxed);
+        const bool showForeign = floating && requestedEditor == i;
+        auto presentEditor = [this, &ui, i, floating, showForeign] (auto& editor)
+        {
+            if (floating)
+            {
+                if (showForeign)
+                    ui.editorModal.showBorrowed (*getTopLevelComponent(), editor,
+                        [&ui] { ui.editorModal.close(); }, {},
+                        EmbeddedModal::BorrowedPresentation::foreignPlugin);
+            }
+            else
+            {
+                if (editor.getParentComponent() != this) addAndMakeVisible (editor);
+                layoutEditorForSlot (i);
+            }
+        };
+        auto requireForeignDisplay = [parent = getTopLevelComponent(), showForeign]
+        {
+           #if JUCE_LINUX
+            if (showForeign && ! platform::hasUsableX11Display())
+            {
+                showDuskAlert (*parent, "Plug-in editor needs Xwayland",
+                               "Enable Xwayland to open this plug-in's editor. Audio processing can continue without it.");
+                return false;
+            }
+           #else
+            (void) parent;
+            (void) showForeign;
+           #endif
+            return true;
+        };
+        [[maybe_unused]] auto reportEditorFailure = [this, showForeign] (const std::string& title, const std::string& message)
+        {
+            if (showForeign) showDuskAlert (*getTopLevelComponent(), title.c_str(), message.c_str());
+        };
 
         if (mode == AuxLaneStrip::kInsertHardware)
         {
@@ -2132,22 +2194,23 @@ void AuxLaneComponent::rebuildSlots()
                 if (ui.editor != nullptr) detachEditorForSlot (i);   // can't coexist
                 auto& slot = strip.getNativeClapSlot (i);
                 auto* clapInst = slot.getInstance();
+                if (getPeer() == nullptr || (floating && ! showForeign)) continue;
+                if (! requireForeignDisplay()) return;
                 if (ui.clapEditor == nullptr && clapInst != nullptr)
                 {
                     auto ed = std::make_unique<ClapPluginEditorComponent>();
                     if (attachNativePluginEditor (
                             *ed, *clapInst, hosting::NativeEditorFormat::Clap,
-                            hosting::nativePluginName (slot.getPath(), slot.getPluginId())))
+                            hosting::nativePluginName (slot.getPath(), slot.getPluginId()), reportEditorFailure))
                     {
                         ui.clapEditor = std::move (ed);
                         ui.clapEditor->bindOwner (slot);
-                        addAndMakeVisible (*ui.clapEditor);
-                        layoutEditorForSlot (i);
+                        presentEditor (*ui.clapEditor);
                     }
                 }
                 else if (ui.clapEditor != nullptr)
                 {
-                    layoutEditorForSlot (i);
+                    presentEditor (*ui.clapEditor);
                 }
                 continue;
             }
@@ -2159,22 +2222,23 @@ void AuxLaneComponent::rebuildSlots()
                 if (ui.editor != nullptr) detachEditorForSlot (i);   // can't coexist
                 auto& slot = strip.getNativeLv2Slot (i);
                 auto* lv2Inst = slot.getInstance();
+                if (getPeer() == nullptr || (floating && ! showForeign)) continue;
+                if (! requireForeignDisplay()) return;
                 if (ui.lv2Editor == nullptr && lv2Inst != nullptr)
                 {
                     auto ed = std::make_unique<Lv2PluginEditorComponent>();
                     if (attachNativePluginEditor (
                             *ed, *lv2Inst, hosting::NativeEditorFormat::Lv2,
-                            hosting::nativePluginName (slot.getPath(), slot.getPluginId())))
+                            hosting::nativePluginName (slot.getPath(), slot.getPluginId()), reportEditorFailure))
                     {
                         ui.lv2Editor = std::move (ed);
                         ui.lv2Editor->bindOwner (slot);
-                        addAndMakeVisible (*ui.lv2Editor);
-                        layoutEditorForSlot (i);
+                        presentEditor (*ui.lv2Editor);
                     }
                 }
                 else if (ui.lv2Editor != nullptr)
                 {
-                    layoutEditorForSlot (i);
+                    presentEditor (*ui.lv2Editor);
                 }
                 continue;
             }
@@ -2186,22 +2250,23 @@ void AuxLaneComponent::rebuildSlots()
                 if (ui.editor != nullptr) detachEditorForSlot (i);   // can't coexist
                 auto& slot = strip.getNativeVst3Slot (i);
                 auto* vst3Inst = slot.getInstance();
+                if (getPeer() == nullptr || (floating && ! showForeign)) continue;
+                if (! requireForeignDisplay()) return;
                 if (ui.vst3Editor == nullptr && vst3Inst != nullptr)
                 {
                     auto ed = std::make_unique<Vst3PluginEditorComponent>();
                     if (attachNativePluginEditor (
                             *ed, *vst3Inst, hosting::NativeEditorFormat::Vst3,
-                            hosting::nativePluginName (slot.getPath(), slot.getPluginId())))
+                            hosting::nativePluginName (slot.getPath(), slot.getPluginId()), reportEditorFailure))
                     {
                         ui.vst3Editor = std::move (ed);
                         ui.vst3Editor->bindOwner (slot);
-                        addAndMakeVisible (*ui.vst3Editor);
-                        layoutEditorForSlot (i);
+                        presentEditor (*ui.vst3Editor);
                     }
                 }
                 else if (ui.vst3Editor != nullptr)
                 {
-                    layoutEditorForSlot (i);
+                    presentEditor (*ui.vst3Editor);
                 }
                 continue;
             }
@@ -2257,24 +2322,30 @@ void AuxLaneComponent::rebuildSlots()
             {
                 if (instance->hasEditor())
                 {
-                    // X11 latch is a no-op when main is already X11, but
-                    // keep it for safety on platforms that don't force the
-                    // main peer to X11 (and to keep the call sites uniform
-                    // with ChannelStripComponent). Process exclusion: see
-                    // the matching block there - dry-pass this lane while
-                    // the editor constructs.
+                    if (floating && ! showForeign) continue;
+                    if (! requireForeignDisplay()) return;
+                    // Dry-pass this lane while the editor constructs.
                     const juce::SpinLock::ScopedLockType processExclusion (
                         strip.getPluginSlot (i).getProcessLock());
-                    duskstudio::platform::preferX11ForNextNativeWindow();
-                    ui.editor.reset (instance->createEditorIfNeeded());
-                    duskstudio::platform::clearPreferX11ForNativeWindow();
+                    platform::withX11PeerCreation ([&]
+                    {
+                        ui.editor.reset (instance->createEditorIfNeeded());
+                    });
                 }
+                ui.editorIsCustom = ui.editor != nullptr;
                 if (ui.editor == nullptr)
                     ui.editor = std::make_unique<juce::GenericAudioProcessorEditor> (*instance);
-                attachEditorForSlot (i);
+                if (floating && ui.editorIsCustom) presentEditor (*ui.editor);
+                else                             attachEditorForSlot (i);
             }
             else if (instance != nullptr && ui.editor != nullptr && isShowing())
             {
+                if (floating && ui.editorIsCustom)
+                {
+                    if (! requireForeignDisplay()) return;
+                    presentEditor (*ui.editor);
+                    continue;
+                }
                 // Kept-alive editor returning on a tab switch: re-show and
                 // re-center only. No createEditorIfNeeded, no XWayland reparent,
                 // no stale-size refit cycle - this is what makes clicking back
@@ -2332,6 +2403,7 @@ void AuxLaneComponent::parentHierarchyChanged()
     {
         for (int i = 0; i < AuxLaneParams::kMaxLanePlugins; ++i)
         {
+            if (slots[(size_t) i].editorModal.hasSeparatePeer()) continue;
             detachEditorForSlot (i);
             // The native editors' embedded windows (X11 child on Linux, NSView
             // container on macOS) are also parented to the destroyed peer; tear

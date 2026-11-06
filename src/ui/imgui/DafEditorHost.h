@@ -16,13 +16,10 @@ namespace duskstudio::imgui
 std::filesystem::path firstFrameMarkerPath (const std::string& logTag);
 
 // A built-in unit's own plug-in editor, hosted inside a native parent Dusk Studio
-// owns. The editor brings its own window and its own event loop, so this gives it
-// what DuskImGuiHost gives Dusk Studio's own views: a display that cannot carry an
-// embedded child is refused, the loop is pumped on a message-thread timer paced
-// so an editor that draws slower than the timer still leaves the shell time, a
-// graphics failure inside that pump closes the editor rather than the application,
-// teardown takes the two ticks the platform needs, and a display-scale change
-// rebuilds the window.
+// owns. Wayland editors share the shell's display connection and event pump.
+// Other backends keep the editor's private event loop. Both are paced so a slow
+// renderer leaves the shell time, and a graphics failure closes the editor.
+// Wayland geometry changes retain the window; other backends rebuild for scale.
 //
 // It also carries the traffic between editor and unit: an edit reaches the unit's
 // parameter, a gesture marks that parameter as the last touched and hands keyboard
@@ -90,7 +87,7 @@ public:
 
     void setGeometry (Geometry geometry);
 
-    // Teardown is deferred over two pump ticks; close() only asks for it.
+    // Native Wayland children hide immediately; destruction takes two pump ticks.
     void close();
 
     // Destroys the editor before returning, rather than asking a later tick to.

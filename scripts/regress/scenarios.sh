@@ -4,7 +4,7 @@
 # on its own: bash scripts/regress/scenarios.sh [--gui] [--app <binary>]
 #
 # The black-box legs run several app processes at once, so each leg gets a
-# throwaway HOME, XDG base directories and runtime dir (sandbox_env), as does
+# throwaway HOME, TMPDIR, XDG base directories and runtime dir (sandbox_env), as does
 # every other launch of the app in this file. The runtime dir is what
 # keeps the single-instance slot private: makeSocketPath in
 # src/util/SingleInstance.cpp keys the socket on $XDG_RUNTIME_DIR plus a hash of
@@ -48,6 +48,7 @@ SCENARIO_BB_LEG_NAMES=(
     bb-interrupted-gui-save
     bb-display-loss
     bb-keyboard-quit
+    bb-native-stage-shortcuts
     bb-window-close
     bb-quit-twice
     bb-quit-during-mixdown
@@ -71,7 +72,7 @@ SCENARIO_LEG_NAMES=(scenario-fixtures scenarios-headless "${SCENARIO_BB_LEG_NAME
 SANDBOX_ENV=()
 
 # sandbox_env <dir>: SANDBOX_ENV becomes the env assignments for a private
-# HOME, XDG base directories and runtime dir under <dir>, which must exist.
+# HOME, TMPDIR, XDG base directories and runtime dir under <dir>, which must exist.
 #
 # PipeWire finds its socket through the runtime dir, and without it the engine
 # falls back to ALSA and opens the first sound card directly. So PipeWire keeps
@@ -81,9 +82,10 @@ SANDBOX_ENV=()
 sandbox_env() {
     local dir="$1"
     local pipewire_dir="${NULL_AUDIO_DIR:-${PIPEWIRE_RUNTIME_DIR:-${XDG_RUNTIME_DIR:-}}}"
-    mkdir -p "$dir/home" "$dir/config" && mkdir -p -m 700 "$dir/runtime" || return 1
+    mkdir -p "$dir/home" "$dir/config" && mkdir -p -m 700 "$dir/runtime" "$dir/tmp" || return 1
     SANDBOX_ENV=(
         "HOME=$dir/home"
+        "TMPDIR=$dir/tmp"
         "XDG_CONFIG_HOME=$dir/config"
         "XDG_DATA_HOME=$dir/home/.local/share"
         "XDG_CACHE_HOME=$dir/home/.cache"
@@ -653,6 +655,30 @@ bb_damaged_recent_body() {
     kill "${BB_PID[A]}" 2>/dev/null || true
     bb_wait_exit A 30 || true
     return 0
+}
+
+leg_bb_native_stage_shortcuts() {
+    [[ -n "$NULL_AUDIO_DIR" && -S "$NULL_AUDIO_DIR/pipewire-0" ]] || {
+        REGRESS_SKIP_REASON="needs private null audio"
+        return "$REGRESS_SKIP_RC"
+    }
+    bb_begin bb-native-stage-shortcuts 180 || return 1
+    local rc=0
+    bb_native_stage_shortcuts_body || rc=$?
+    bb_end "$rc"
+}
+
+bb_native_stage_shortcuts_body() {
+    local session
+    session="$(bb_session native-stage-shortcuts)" || return 1
+    printf '%s\n' '{"version":6,"aux_lanes":[{"plugin_slots":[{"builtin_id":"dusk.builtin.utility"}]}]}' >"$session"
+    : >"$BB_SDIR/alsa.conf"
+    bb_spawn A "DUSKSTUDIO_LOAD_SESSION=$session" "ALSA_CONFIG_PATH=$BB_SDIR/alsa.conf" \
+        "PIPEWIRE_REMOTE=pipewire-0" "DUSKSTUDIO_QUIT_AFTER_MS=" \
+        "DUSKSTUDIO_RUN_SCENARIOS=" "DUSKSTUDIO_RUN_SELFTEST=" -- || return 1
+    bb_wait_marker A "[Dusk Studio/Load] session.json" 60 || return 1
+    DISPLAY="$XVFB_DISPLAY" timeout "$(bb_budget 100)" python3 \
+        "$SCENARIOS_DIR/native_stage_shortcuts.py" "${BB_PID[A]}" "$BB_SDIR" || return 1
 }
 
 leg_bb_keyboard_quit() {
@@ -1327,8 +1353,10 @@ regress_scenarios_run() {
 
     if command -v xdotool >/dev/null 2>&1; then
         regress_leg "bb-keyboard-quit" leg_bb_keyboard_quit
+        regress_leg "bb-native-stage-shortcuts" leg_bb_native_stage_shortcuts
     else
         regress_skip "bb-keyboard-quit" "needs xdotool"
+        regress_skip "bb-native-stage-shortcuts" "needs xdotool"
     fi
 
     if command -v xdotool >/dev/null 2>&1 && python3 -c "import ctypes; ctypes.CDLL(\"libX11.so.6\")" 2>/dev/null; then

@@ -36,7 +36,15 @@ public:
     FakeEditor (duskstudio::builtin::DafEditorCallbacks cb, const int* unitDsp)
         : callbacks (std::move (cb)), dsp (unitDsp) {}
 
-    ~FakeEditor() override { ++destroyed(); }
+    ~FakeEditor() override
+    {
+        if (duringDestroy) duringDestroy();
+        ++destroyed();
+    }
+
+    bool setEmbeddedGeometry (int, int, std::uint32_t, std::uint32_t, double) noexcept override { return false; }
+    bool setEmbeddedVisible (bool) noexcept override { return false; }
+    std::uint64_t completedDisplayCount() const noexcept override { return 0; }
 
     bool setOffset (int x, int y) noexcept override
     {
@@ -84,6 +92,7 @@ public:
     duskstudio::builtin::DafEditorCallbacks callbacks;
     // What the editor's own loop does on its next turn.
     std::function<void()> duringIdle;
+    std::function<void()> duringDestroy;
     const int* dsp = nullptr;
     int observed = 0;
     std::vector<Push> pushed;
@@ -403,6 +412,16 @@ TEST_CASE ("a plug-in editor host hands its editor back before the unit's DSP go
         REQUIRE (rig.closes == 0);
         REQUIRE_FALSE (rig.host.isOpen());
     }
+
+    SECTION ("an editor ends its open gesture during destruction")
+    {
+        Rig rig;
+        REQUIRE (rig.host.open (kParent, rig.wanted));
+        rig.unit.live->duringDestroy = [&] { rig.unit.live->gesture (0, false); };
+        rig.host.shutdown();
+        REQUIRE (rig.focusHandbacks == 0);
+        REQUIRE (rig.unit.touched.empty());
+    }
 }
 
 TEST_CASE ("a synchronous teardown is idempotent and leaves the host reusable",
@@ -530,6 +549,19 @@ TEST_CASE ("a first-frame marker refuses the editor until it is deleted",
         REQUIRE (std::filesystem::exists (marker));
         rig.host.shutdown();
         REQUIRE_FALSE (std::filesystem::exists (marker));
+    }
+
+    {
+        Rig rig (marker);
+        REQUIRE (rig.host.open (kParent, rig.wanted));
+        rig.unit.live->alive = false;
+        rig.host.tick();
+        REQUIRE_FALSE (rig.host.isOpen());
+        REQUIRE (rig.closes == 1);
+        REQUIRE (std::filesystem::exists (marker));
+        rig.host.shutdown();
+        REQUIRE (std::filesystem::exists (marker));
+        REQUIRE_FALSE (rig.host.open (kParent, rig.wanted));
     }
 
     std::filesystem::remove_all (dir, ec);

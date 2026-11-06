@@ -7,6 +7,7 @@
 namespace duskstudio
 {
 namespace scenario { class SuiteRunner; }
+struct LaunchRequest;
 
 class DuskStudioApp final : public juce::JUCEApplication
 {
@@ -22,8 +23,7 @@ public:
     // instance happens to be open - and its platform broadcast is not the
     // authenticated, bounded handoff Dusk needs. Cross-platform single-
     // instance behaviour is handled by single_instance::acquire in
-    // initialise(), after those env gates, and dispatches into
-    // anotherInstanceStarted.
+    // initialise(), after those env gates.
     bool moreThanOneInstanceAllowed() override             { return true; }
 
     void initialise (const juce::String& commandLine) override;
@@ -32,6 +32,7 @@ public:
     void anotherInstanceStarted (const juce::String& commandLine) override;
 
 private:
+    void handleLaunchRequest (LaunchRequest);
     class MainWindow;
     std::unique_ptr<MainWindow> mainWindow;
     std::unique_ptr<dusk::QuitSignalHandler> quitSignalHandler;

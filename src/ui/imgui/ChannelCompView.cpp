@@ -211,7 +211,7 @@ private:
             char scratch[96];
             const float titleSize = scale * kTitleSize;
             ImFont* const face = nameFace (*ctx.fonts);
-            const auto name = displayText (track.nameUtf8());
+            const auto name = panelText (track.nameUtf8());
             dw::text (ctx, face, titleSize,
                       ImVec2 (at.x + titleInset, at.y + scale * (kHeaderH - kTitleSize) * 0.5f),
                       titleW, rgba (kTitleColour),

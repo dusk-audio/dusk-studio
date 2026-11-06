@@ -130,6 +130,74 @@ run_build() {
     fi
 }
 
+# gnome-session.sh runs its drivers with python3 from this PATH.
+NATIVE_SESSION_PATH=/usr/local/bin:/usr/bin:/bin
+
+# The native legs SKIP with a reason where the frameworks, the private GNOME
+# session's tools or (python module given) the Python bindings of the python3
+# that <python PATH> finds are missing.
+# Usage: native_leg_preflight <python PATH> <python module check or ""> <tool>...
+native_leg_preflight() {
+    local targets tool python_path="$1" python_check="$2"
+    local -a needs=()
+    shift 2
+    targets="$(cmake --build build --target help)" || return $?
+    if [[ "$targets" != *dusk-native-wayland-probe* ]]; then
+        REGRESS_SKIP_REASON="frameworks lack shared Wayland embedding APIs"
+        return 77
+    fi
+    for tool in "$@"; do
+        command -v "$tool" >/dev/null 2>&1 || needs+=("$tool")
+    done
+    if [[ -n "$python_check" ]] \
+        && ! env -i PATH="$python_path" python3 -I -c "$python_check" 2>/dev/null; then
+        needs+=("python3 with GObject introspection (Gio, GTK 4)")
+    fi
+    if ((${#needs[@]})); then
+        REGRESS_SKIP_REASON="needs ${needs[*]}"
+        return 77
+    fi
+}
+
+# gnome-session.sh exits 77 when it has no PipeWire socket to play through.
+native_session_run() {
+    local rc=0
+    bash "$@" || rc=$?
+    if ((rc == REGRESS_SKIP_RC)); then
+        REGRESS_SKIP_REASON="no PipeWire socket; the app would open the sound card through ALSA"
+    fi
+    return "$rc"
+}
+
+NATIVE_GIO_CHECK='import gi; from gi.repository import Gio, GLib'
+NATIVE_GTK_CHECK='import gi; gi.require_version("Gtk", "4.0"); from gi.repository import Gio, GLib, Gtk'
+
+# The embedding driver starts its private session with its own interpreter.
+leg_native_wayland_embedding() {
+    native_leg_preflight "$PATH" "$NATIVE_GIO_CHECK" mutter dbus-run-session Xwayland wl-copy wl-paste \
+        || return $?
+    if ((!SCENARIOS_ONLY)); then
+        run_build cmake --build build --target dusk-native-wayland-probe -j"${JOBS}" || return $?
+    fi
+    python3 scripts/regress/native-wayland-embedding.py build/native-tests/dusk-native-wayland-probe || return $?
+    python3 scripts/regress/native-wayland-embedding.py build/native-tests/dusk-native-wayland-probe --with-x11
+}
+
+leg_native_window_activation() {
+    native_leg_preflight "$NATIVE_SESSION_PATH" "$NATIVE_GTK_CHECK" mutter dbus-run-session || return $?
+    native_session_run scripts/regress/native-window-activation.sh "$APP_BIN"
+}
+
+leg_native_gui_scenarios() {
+    native_leg_preflight "$NATIVE_SESSION_PATH" "$NATIVE_GIO_CHECK" mutter dbus-run-session Xwayland || return $?
+    if ! grep -qx 'DUSKSTUDIO_NATIVE_CLAP:BOOL=ON' build/CMakeCache.txt; then
+        REGRESS_SKIP_REASON="needs native CLAP"
+        return 77
+    fi
+    native_session_run scripts/regress/native-gui-scenarios.sh "$APP_BIN" || return $?
+    native_session_run scripts/regress/native-gui-scenarios.sh "$APP_BIN" --without-x11
+}
+
 # Both build dirs must point at the pinned donor checkout. Building against a
 # drifted ../plugins silently changes the DSP under test, and the failure then
 # looks like a Dusk Studio regression.
@@ -189,7 +257,7 @@ RULESET_REQUIRED=(
     "Build + tests (clang Release, macOS arm64)"
     "Catch2 tests (MSVC x64 Release, Windows)"
     "Catch2 tests (TSan, Ubuntu 22.04)"
-    "Catch2 tests (ASan + UBSan, Ubuntu 22.04)"
+    "Catch2 tests (ASan + UBSan, Ubuntu 26.04)"
 )
 
 leg_github_ruleset() {
@@ -619,6 +687,15 @@ if [[ -x "$APP_BIN" ]]; then
 
     if ((RUN_SCENARIOS)); then
         if ((GUI_SCENARIOS)); then
+            if ((PACKAGE_MODE)); then
+                regress_skip "native-wayland-embedding" "source-only lifecycle probe"
+                regress_skip "native-window-activation" "source-only native Wayland opt-in"
+                regress_skip "native-gui-scenarios" "source-only native Wayland opt-in"
+            else
+                regress_leg "native-wayland-embedding" leg_native_wayland_embedding
+                regress_leg "native-window-activation" leg_native_window_activation
+                regress_leg "native-gui-scenarios" leg_native_gui_scenarios
+            fi
             regress_scenarios_run "$APP_BIN" --gui
             # These cases need a seeded config the suite runs without: the
             # picker skips outright, and the defaults only see the empty one.
@@ -644,7 +721,7 @@ else
     if ((RUN_SCENARIOS)); then
         missing_legs+=("${SCENARIO_LEG_NAMES[@]}")
         if ((GUI_SCENARIOS)); then
-            missing_legs+=(scenarios-gui gui-plugin-picker gui-settings-defaults)
+            missing_legs+=(native-wayland-embedding native-window-activation native-gui-scenarios scenarios-gui gui-plugin-picker gui-settings-defaults)
         fi
     fi
     if ((RUN_CAPTURE && !PACKAGE_MODE && !SCENARIOS_ONLY)); then

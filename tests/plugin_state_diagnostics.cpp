@@ -27,8 +27,9 @@ std::string functionBody (const std::string& source, const std::string& signatur
 {
     const auto start = source.find (signature);
     REQUIRE (start != std::string::npos);
-    const auto openBrace = source.find ('{', start + signature.size());
-    REQUIRE (openBrace != std::string::npos);
+    const auto bodyLine = source.find ("\n{", start + signature.size());
+    REQUIRE (bodyLine != std::string::npos);
+    const auto openBrace = bodyLine + 1;
 
     int depth = 1;
     for (auto cursor = openBrace + 1; cursor < source.size(); ++cursor)
@@ -138,7 +139,7 @@ TEST_CASE ("native editor attach failures always log and alert with format ident
     REQUIRE (callbacks == 0);
 }
 
-TEST_CASE ("aux lane editor attach never raises a modal",
+TEST_CASE ("automatic aux editor attachment logs without a modal",
            "[ui][native][regression][issue-459][issue-491]")
 {
     const auto body = functionBody (readSource ("src/ui/AuxLaneComponent.cpp"),

@@ -1,4 +1,5 @@
 #include "PanelControls.h"
+#include "PanelTextItems.h"
 
 #include <algorithm>
 
@@ -141,13 +142,13 @@ bool formCombo (dw::Context& ctx, const char* id, ImVec2 tl, ImVec2 br,
 
     const char* const preview = selected >= 0 && selected < count ? items[selected] : "";
     bool picked = false;
-    if (ImGui::BeginCombo (id, preview))
+    if (beginTextCombo (id))
     {
         for (int i = 0; i < count; ++i)
         {
             const bool isSelected = i == selected;
             ImGui::PushID (i);
-            if (ImGui::Selectable (items[i], isSelected) && i != selected)
+            if (textSelectable ("##choice", items[i], isSelected) && i != selected)
             {
                 selected = i;
                 picked = true;
@@ -158,6 +159,7 @@ bool formCombo (dw::Context& ctx, const char* id, ImVec2 tl, ImVec2 br,
         }
         ImGui::EndCombo();
     }
+    comboPreviewText (preview);
     ImGui::EndDisabled();
     return picked;
 }

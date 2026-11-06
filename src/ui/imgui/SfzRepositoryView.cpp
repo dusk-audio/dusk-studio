@@ -331,7 +331,7 @@ private:
             remember (std::string ("preview-category-") + sfz::kInstrumentCategories[static_cast<std::size_t> (category)].id);
         }
         formTooltip (ready && artwork.sourceImage ? url.c_str() : instrumentArtworkCredit (category, title, instrumentContext));
-        const auto caption = displayText (title.empty() ? std::string (sfz::kInstrumentCategories[static_cast<std::size_t> (category)].name) : title);
+        const auto caption = panelText (title.empty() ? std::string (sfz::kInstrumentCategories[static_cast<std::size_t> (category)].name) : title);
         const auto captionAt = ImGui::GetCursorScreenPos();
         const float captionWidth = ImGui::GetContentRegionAvail().x;
         ImGui::GetWindowDrawList()->PushClipRect (captionAt, { captionAt.x + captionWidth, captionAt.y + ImGui::GetTextLineHeight() }, true);
@@ -399,7 +399,7 @@ private:
     {
         auto* font = ctx.fonts->textEntry != nullptr ? ctx.fonts->textEntry : ImGui::GetFont();
         const float width = ImGui::GetContentRegionAvail().x;
-        const auto shown = displayText (text);
+        const auto shown = panelText (text);
         const auto extent = font->CalcTextSizeA (ctx.s (fontSize), width, width, shown.c_str());
         ImGui::GetWindowDrawList()->AddText (font, ctx.s (fontSize), ImGui::GetCursorScreenPos(),
                                            ctx.theme->textBright, shown.c_str(), nullptr, width);
@@ -409,7 +409,7 @@ private:
     void muted (const std::string& text)
     {
         ImGui::PushStyleColor (ImGuiCol_Text, ImGui::GetStyleColorVec4 (ImGuiCol_TextDisabled));
-        ImGui::TextWrapped ("%s", displayText (text).c_str());
+        ImGui::TextWrapped ("%s", panelText (text).c_str());
         ImGui::PopStyleColor();
     }
 
@@ -522,11 +522,11 @@ private:
         auto* list = ImGui::GetWindowDrawList();
         list->PushClipRect (first, last, true);
         const auto colour = ImGui::GetColorU32 (enabled ? ImGuiCol_Text : ImGuiCol_TextDisabled);
-        list->AddText ({ first.x + ctx.s (10), first.y + ctx.s (9) }, colour, displayText (title).c_str());
+        list->AddText ({ first.x + ctx.s (10), first.y + ctx.s (9) }, colour, panelText (title).c_str());
         const float line = ImGui::GetTextLineHeight();
         const ImVec2 subtitleAt { first.x + ctx.s (10), first.y + line + ctx.s (16) };
         list->PushClipRect (subtitleAt, { last.x, subtitleAt.y + line }, true);
-        list->AddText (subtitleAt, ImGui::GetColorU32 (ImGuiCol_TextDisabled), displayText (subtitle).c_str());
+        list->AddText (subtitleAt, ImGui::GetColorU32 (ImGuiCol_TextDisabled), panelText (subtitle).c_str());
         list->PopClipRect();
         list->PopClipRect();
         ImGui::EndDisabled();
@@ -563,7 +563,7 @@ private:
             label = "Declared license: " + (declared.empty() ? std::string ("not recognized") : declared);
         }
         ImGui::PushStyleColor (ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4 (consolePalette().eqAccent));
-        ImGui::TextWrapped ("%s", displayText (label).c_str());
+        ImGui::TextWrapped ("%s", panelText (label).c_str());
         ImGui::PopStyleColor();
     }
 
@@ -572,14 +572,14 @@ private:
         const bool caution = license.id == "Unknown" || license.id == "Other"
             || license.id.find ("-NC") != std::string::npos || license.id.find ("-ND") != std::string::npos;
         if (caution) ImGui::PushStyleColor (ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4 (consolePalette().compGold));
-        ImGui::TextWrapped ("%s", displayText (license.constraints).c_str());
+        ImGui::TextWrapped ("%s", panelText (license.constraints).c_str());
         if (caution) ImGui::PopStyleColor();
     }
 
     void licenseText (const sfz::ProviderPack& pack)
     {
         if (ImGui::CollapsingHeader (pack.license.path.empty() ? "License declaration" : "License text"))
-            ImGui::TextWrapped ("%s", displayText (pack.license.text).c_str());
+            ImGui::TextWrapped ("%s", panelText (pack.license.text).c_str());
     }
 
     std::string popularity (const sfz::ProviderPresentation& presentation, bool compact = false) const
@@ -612,13 +612,13 @@ private:
                 const auto url = demo.url;
                 deferred = [callback, url] { callback (url); };
             }
-            formTooltip ((displayText (demo.label) + "\n" + demo.url).c_str());
+            formTooltip ((panelText (demo.label) + "\n" + demo.url).c_str());
         };
         demoButton (0, "Listen to demo");
         muted ("Opens in your browser without downloading the instrument pack.");
         if (presentation.demos.size() > 1 && ImGui::CollapsingHeader ("More demos"))
             for (std::size_t i = 1; i < presentation.demos.size(); ++i)
-                demoButton (i, displayText (presentation.demos[i].label).c_str());
+                demoButton (i, panelText (presentation.demos[i].label).c_str());
     }
 
     void drawOnline (dw::Context& ctx, const sfz::LibrarySnapshot& snapshot, float height,
@@ -728,8 +728,8 @@ private:
                         resolvingSelection = summaryKey (summary);
                         start (Intent::Resolve, [&] { return service.resolve (summary, pageCached); });
                     }
-                    const auto tooltip = displayText (summary.author + "\n" + hint) + "\n" + summary.sourceUrl
-                        + "\n" + displayText (summary.description);
+                    const auto tooltip = panelText (summary.author + "\n" + hint) + "\n" + summary.sourceUrl
+                        + "\n" + panelText (summary.description);
                     formTooltip (tooltip.c_str());
                 }
             }
@@ -769,7 +769,7 @@ private:
                 sourceButton (resolved->sourceUrl, deferred);
                 licenseButton (*resolved, deferred);
                 if (selectedSummary && ! selectedSummary->description.empty())
-                    ImGui::TextWrapped ("%s", displayText (selectedSummary->description).c_str());
+                    ImGui::TextWrapped ("%s", panelText (selectedSummary->description).c_str());
                 if (ImGui::CollapsingHeader ("Version and download details")) drawPackDetails (*resolved);
                 licenseText (*resolved);
             }
@@ -780,7 +780,7 @@ private:
                 muted (pendingIntent == Intent::Resolve ? "Checking this version's license..."
                     : "Download is available once this version is checked.");
                 sourceButton (selectedSummary->sourceUrl, deferred);
-                if (! selectedSummary->description.empty()) ImGui::TextWrapped ("%s", displayText (selectedSummary->description).c_str());
+                if (! selectedSummary->description.empty()) ImGui::TextWrapped ("%s", panelText (selectedSummary->description).c_str());
             }
             else
             {
@@ -807,8 +807,8 @@ private:
     void drawPackDetails (const sfz::ProviderPack& pack)
     {
         ImGui::TextWrapped ("%s", sizeLabel (pack.advertisedBytes).c_str());
-        if (pack.sourceId != "musical-artifacts") ImGui::TextWrapped ("Git commit: %s", displayText (pack.releaseId).c_str());
-        else ImGui::TextWrapped ("Version: %s", displayText (pack.releaseId).c_str());
+        if (pack.sourceId != "musical-artifacts") ImGui::TextWrapped ("Git commit: %s", panelText (pack.releaseId).c_str());
+        else ImGui::TextWrapped ("Version: %s", panelText (pack.releaseId).c_str());
         ImGui::TextWrapped ("Source: %s", pack.sourceUrl.c_str());
         ImGui::TextWrapped ("Downloads use HTTPS.");
         ImGui::TextWrapped ("%s", pack.expectedSha256.empty()
@@ -905,7 +905,7 @@ private:
                             { selectedInstrument = program.id; break; }
                         }
                     }
-                    const auto tooltip = displayText (pack.provider.releaseId) + "\n" + pack.archiveSha256 + "\n" + pack.provider.sourceUrl;
+                    const auto tooltip = panelText (pack.provider.releaseId) + "\n" + pack.archiveSha256 + "\n" + pack.provider.sourceUrl;
                     formTooltip (tooltip.c_str());
                 }
             }
@@ -945,7 +945,7 @@ private:
                     {
                         const auto& candidate = choices[i];
                         ImGui::PushID (static_cast<int> (i));
-                        const auto shown = displayText (showAllFiles ? candidate.relativePath : candidate.name);
+                        const auto shown = panelText (showAllFiles ? candidate.relativePath : candidate.name);
                         if (textSelectable ("##choice", shown, candidate.id == selectedInstrument))
                         { selectedInstrument = candidate.id; instrument = &candidate; }
                         const auto original = std::find_if (selected->instruments.begin(), selected->instruments.end(),
@@ -957,7 +957,7 @@ private:
                     }
                     ImGui::EndCombo();
                 }
-                comboPreviewText (displayText (previewText));
+                comboPreviewText (panelText (previewText));
                 ImGui::EndDisabled();
                 if (offlineLocator && selected->provider.sourceId == offlineLocator->sourceId
                     && selected->provider.packId == offlineLocator->packId)
@@ -1053,10 +1053,10 @@ private:
             }
             if (! snapshot.error.empty() && snapshot.state != LibraryState::Paused
                 && snapshot.state != LibraryState::Cancelled && snapshot.state != LibraryState::Complete)
-                ImGui::TextWrapped ("%s", displayText (snapshot.error).c_str());
+                ImGui::TextWrapped ("%s", panelText (snapshot.error).c_str());
             const auto* guidance = failureGuidance (snapshot);
             if (*guidance != '\0') ImGui::TextWrapped ("%s", guidance);
-            if (! notice.empty()) ImGui::TextWrapped ("%s", displayText (notice).c_str());
+            if (! notice.empty()) ImGui::TextWrapped ("%s", panelText (notice).c_str());
         }
         ImGui::EndChild();
     }

@@ -33,7 +33,7 @@
 #include "foundation/Json.h"
 #include "session/SessionSerializer.h"
 #include "util/CrashHandler.h"
-#include "util/SingleInstance.h"
+#include "util/LaunchRequest.h"
 #if DUSKSTUDIO_HAS_OOP_PLUGINS
  #include "engine/ipc/IpcSelfTest.h"
 #endif
@@ -78,29 +78,18 @@ namespace duskstudio
 {
 using dusk::audio::findSignedMinMax;
 
-class DuskStudioApp::MainWindow final : public juce::DocumentWindow
+class DuskStudioApp::MainWindow final : public juce::DocumentWindow, private dusk::Timer
 {
 public:
-    MainWindow (juce::String name)
+    MainWindow (juce::String name, std::string activationToken)
         : DocumentWindow (std::move (name),
                           juce::Desktop::getInstance().getDefaultLookAndFeel()
                               .findColour (juce::ResizableWindow::backgroundColourId),
                           DocumentWindow::allButtons,
-                          /*addToDesktop*/ false)
+                          /*addToDesktop*/ false),
+          pendingActivationToken (std::move (activationToken))
     {
-        // Defer addToDesktop until ALL style flags are set. Reason:
-        // setUsingNativeTitleBar + setResizable destroy + recreate the
-        // peer; if we add to desktop first, those calls each spawn a
-        // fresh peer (= 3 peers across MainWindow ctor). Doing style
-        // setup with no peer means flags are stashed and applied by
-        // the single addToDesktop call at the end of this ctor.
-        //
-        // Linux: route the main peer to X11 (XWayland) instead of
-        // wl_surface. Required for inline-embedded plugin editors -
-        // VST3/LV2/CLAP SDKs hand back X11 Window IDs that can only
-        // reparent into an X11 host. XWayland is transparent and ships
-        // on every mainstream Wayland session.
-
+        // Set styles before creating the peer; changing them later recreates it.
         setUsingNativeTitleBar (true);
         setContentOwned (new MainComponent(), true);
         // Native title bar already provides edge resize handles on every OS
@@ -149,17 +138,15 @@ public:
             centreWithSize (getWidth(), getHeight());
         }
 
-        // Single addToDesktop call with all style flags already set.
-        // X11-latched on Linux so the peer factory in
-        // Component::createNewPeer picks LinuxComponentPeer (XWayland)
-        // instead of WaylandComponentPeer.
        #if defined(__linux__)
-        duskstudio::platform::preferX11ForNextNativeWindow();
+        if (duskstudio::platform::hasUsableWaylandDisplay())
+            // The compositor owns the shadow; JUCE's four shadow peers would
+            // otherwise become independent Wayland top-level windows.
+            setDropShadowEnabled (false);
+        else
+            duskstudio::platform::preferX11ForNextNativeWindow();
        #endif
         addToDesktop (getDesktopWindowStyleFlags());
-       #if defined(__linux__)
-        duskstudio::platform::clearPreferX11ForNativeWindow();
-       #endif
         refreshResizeLimits();
 
         // Brand icon on the live peer. macOS / Windows already pick this
@@ -178,9 +165,6 @@ public:
         // and addToDesktop just made the peer visible.
         setVisible (false);
 
-        // Combined async tick: setVisible(true) creates the peer at the
-        // already-finalised bounds, then bringWindowToFront promotes
-        // focus once the peer exists.
         juce::Component::SafePointer<MainWindow> safeThis (this);
         dusk::callAsync ([safeThis]
         {
@@ -188,14 +172,20 @@ public:
             if (self == nullptr) return;
             self->setVisible (true);
             self->refreshResizeLimits();
-            if (auto* peer = self->getPeer())
-                duskstudio::platform::bringWindowToFront (*peer);
+            self->tryActivation();
             dusk::Timer::callAfterDelay (250, [safeThis]
             {
                 if (auto* window = safeThis.getComponent())
                     window->refreshResizeLimits();
             });
         });
+    }
+
+    void activateFromLaunch (std::string token)
+    {
+        pendingActivationToken = std::move (token);
+        toFront (true);
+        tryActivation();
     }
 
     void refreshResizeLimits()
@@ -300,6 +290,21 @@ public:
     }
 
 private:
+    void timerCallback() override { tryActivation(); }
+
+    void tryActivation()
+    {
+        if (auto* peer = getPeer())
+            if (duskstudio::platform::bringWindowToFront (*peer, pendingActivationToken))
+            {
+                pendingActivationToken.clear();
+                stopTimer();
+                return;
+            }
+        startTimerHz (60);
+    }
+
+    std::string pendingActivationToken;
     int configuredMinimumWidth = 0;
     int configuredMinimumHeight = 0;
    #if defined(__APPLE__)
@@ -310,15 +315,26 @@ private:
 DuskStudioApp::DuskStudioApp() = default;
 DuskStudioApp::~DuskStudioApp() = default;
 
-// True when a native window can be created; on failure prints the XWayland
-// guidance. Called before the main window AND at the top of each *_EDITOR_TEST
-// gate (those open real X11 windows too) - but never on the headless paths,
-// which must keep running without any display.
-static bool displayUsableOrExplain()
+// Standalone foreign-editor probes require X11 even in a native session.
+static bool displayUsableOrExplain (bool foreignEditor = false)
 {
+   #if defined (__linux__)
+    if (! foreignEditor && duskstudio::platform::hasUsableWaylandDisplay())
+    {
+        std::fprintf (stderr, "Dusk Studio: using the native Wayland display.\n");
+        return true;
+    }
+   #else
+    (void) foreignEditor;
+   #endif
     const char* waylandDisplay = std::getenv ("WAYLAND_DISPLAY");
     const bool onWayland = waylandDisplay != nullptr && waylandDisplay[0] != '\0';
-    if (duskstudio::platform::hasUsableDisplay())
+   #if defined (__linux__)
+    const bool displayAvailable = duskstudio::platform::hasUsableX11Display();
+   #else
+    const bool displayAvailable = duskstudio::platform::hasUsableDisplay();
+   #endif
+    if (displayAvailable)
     {
         // One self-describing line so support reports name their session type.
         if (onWayland)
@@ -2576,6 +2592,7 @@ struct DuskStudioApp::Vst3EditorTest
 
 void DuskStudioApp::initialise (const juce::String& commandLine)
 {
+    auto activationToken = takeLaunchActivationToken();
     // --version: print app + JUCE versions + platform string and exit
     // cleanly. Used by Patreon support flows (paste the output of
     // `Dusk Studio --version` into the support DM) and by the Linux CI smoke
@@ -2679,7 +2696,7 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
     if (const char* path = std::getenv ("DUSKSTUDIO_CLAP_EDITOR_TEST"); path != nullptr && *path)
     {
-        if (! displayUsableOrExplain()) { setApplicationReturnValue (1); quit(); return; }
+        if (! displayUsableOrExplain (true)) { setApplicationReturnValue (1); quit(); return; }
         duskstudio::platform::preferX11ForNextNativeWindow();   // editor host needs an X11 peer
         auto comp = std::make_unique<duskstudio::ClapPluginEditorComponent>();
         juce::String err;
@@ -2706,8 +2723,6 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
         clapEditorTestWindow->setContentOwned (comp.release(), true);
         clapEditorTestWindow->centreWithSize (w, h);
         clapEditorTestWindow->setVisible (true);   // creates the peer -> consumes the X11 latch
-        // Match MainWindow's native-window setup: release the X11 latch now the peer
-        // exists.
         duskstudio::platform::clearPreferX11ForNativeWindow();
         return;   // standalone - skip the normal engine + main-window startup
     }
@@ -2718,7 +2733,7 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
 #if DUSKSTUDIO_HAS_NATIVE_LV2
     if (const char* path = std::getenv ("DUSKSTUDIO_LV2_EDITOR_TEST"); path != nullptr && *path)
     {
-        if (! displayUsableOrExplain()) { setApplicationReturnValue (1); quit(); return; }
+        if (! displayUsableOrExplain (true)) { setApplicationReturnValue (1); quit(); return; }
         duskstudio::platform::preferX11ForNextNativeWindow();   // editor host needs an X11 peer
         lv2EditorTest = std::make_unique<Lv2EditorTest>();
         std::string err;
@@ -2763,7 +2778,7 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
 #if DUSKSTUDIO_HAS_NATIVE_VST3
     if (const char* path = std::getenv ("DUSKSTUDIO_VST3_EDITOR_TEST"); path != nullptr && *path)
     {
-        if (! displayUsableOrExplain()) { setApplicationReturnValue (1); quit(); return; }
+        if (! displayUsableOrExplain (true)) { setApplicationReturnValue (1); quit(); return; }
         duskstudio::platform::preferX11ForNextNativeWindow();   // editor host needs an X11 peer
         vst3EditorTest = std::make_unique<Vst3EditorTest>();
         std::string err;
@@ -3084,21 +3099,32 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
     // launches the binary again; without this it would be a second engine
     // contending for the device and a second autosave loop writing the same
     // session directory. A launch that finds an instance already running
-    // hands the session over (-> anotherInstanceStarted) and exits. Placed
+    // hands the session over and exits. Placed
     // after every headless env-gate above so self-test / bounce / perf runs
     // never take part in the handshake, and a GUI scenario run skips it: handed
     // to an instance already running, it would exit 0 having run nothing.
     //
-    // What travels is the resolved path, quoted, not the raw tokens: the
+    // What travels is the resolved path, not the raw tokens: the
     // running instance would resolve a relative one against its own working
     // directory rather than the launching shell's, so `cd ~/Sessions &&
     // DuskStudio mysong/session.json` would quietly open nothing.
     const auto handoffPath = sessionPathFromCommandLine (commandLine).getFullPathName();
-    const auto handoff = handoffPath.isNotEmpty() ? handoffPath.quoted().toStdString()
-                                                  : std::string();
+    const auto handoff = LaunchRequest { handoffPath.toStdString(), activationToken }.encodeForHandoff();
+    if (! handoff)
+    {
+        std::fputs ("Dusk Studio: the launch request is invalid or too large.\n", stderr);
+        setApplicationReturnValue (1);
+        quit();
+        return;
+    }
     if (! guiScenarioRun
-        && ! single_instance::acquire (handoff,
-                                       [this] (std::string cl) { anotherInstanceStarted (cl); }))
+        && ! single_instance::acquire (*handoff, [this] (std::string payload)
+        {
+            handleLaunchRequest (LaunchRequest::receive (payload, [] (std::string_view legacy)
+            {
+                return sessionPathFromCommandLine (std::string (legacy)).getFullPathName().toStdString();
+            }));
+        }))
     {
         quit();
         return;
@@ -3123,7 +3149,7 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
     juce::Desktop::getInstance().setGlobalScaleFactor (
         capturingScreenshots ? 1.0f : appconfig::getUiScaleOverride());
 
-    mainWindow = std::make_unique<MainWindow> (getApplicationName());
+    mainWindow = std::make_unique<MainWindow> (getApplicationName(), std::move (activationToken));
 
     // A desktop logout, a `systemctl --user stop`, or any supervisor asks for
     // an exit with SIGTERM. Without a handler the process dies where it stands:
@@ -3244,18 +3270,15 @@ void DuskStudioApp::systemRequestedQuit()
 
 void DuskStudioApp::anotherInstanceStarted (const juce::String& commandLine)
 {
-    // Single-instance app: a second launch (e.g. opening a session from the
-    // file manager) routes here. Bring the window forward and open the path.
-    // toFront alone loses to the window manager's focus-stealing prevention
-    // when the click came from another application, and the open can raise an
-    // unsaved-changes prompt the user has to see to answer.
+    handleLaunchRequest ({ sessionPathFromCommandLine (commandLine).getFullPathName().toStdString(), {} });
+}
+
+void DuskStudioApp::handleLaunchRequest (LaunchRequest request)
+{
     if (mainWindow == nullptr) return;
-    mainWindow->toFront (true);
-    if (auto* peer = mainWindow->getPeer())
-        duskstudio::platform::bringWindowToFront (*peer);
-    if (const auto sessionPath = sessionPathFromCommandLine (commandLine);
-        sessionPath != juce::File())
+    mainWindow->activateFromLaunch (std::move (request.activationToken));
+    if (! request.sessionPath.empty())
         if (auto* main = dynamic_cast<MainComponent*> (mainWindow->getContentComponent()))
-            main->openSessionPath (sessionPath);
+            main->openSessionPath (juce::File (request.sessionPath));
 }
 } // namespace duskstudio

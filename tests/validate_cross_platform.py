@@ -85,8 +85,48 @@ class ValidatorContract(unittest.TestCase):
                 self.assertIn(validator.ps_quote(layout['fixtures']), scripts['Windows: full-engine CLAP state'])
                 self.assertEqual('Windows: packaged llvmpipe WGL' in scripts, bool(mesa))
                 self.assertEqual('dusk-windows-software-opengl-probe' in scripts['Windows: build'], bool(mesa))
+                self.assertEqual('vcvars64.bat' in scripts['Windows: build'], generator == 'Ninja')
                 if mesa:
                     self.assertIn(validator.ps_quote(layout['probe']), scripts['Windows: packaged llvmpipe WGL'])
+
+    @unittest.skipUnless(powershell, 'PowerShell is required for generated Windows scripts')
+    def test_ninja_compiler_environment(self):
+        with tempfile.TemporaryDirectory(prefix="dusk compiler's ") as temp:
+            root = Path(temp)
+            build = root / 'build'; build.mkdir()
+            vc = root / "VS's installation" / 'VC'
+            compiler = vc / 'Tools/MSVC/14.44.35207/bin/Hostx64/x64/cl.exe'
+            compiler.parent.mkdir(parents=True); compiler.touch()
+            vcvars = vc / 'Auxiliary/Build/vcvars64.bat'
+            vcvars.parent.mkdir(parents=True); vcvars.touch()
+            (build / 'CMakeCache.txt').write_text('CMAKE_CXX_COMPILER:UNINITIALIZED=cl\n'
+                'CMAKE_CACHE_MAJOR_VERSION:INTERNAL=3\nCMAKE_CACHE_MINOR_VERSION:INTERNAL=31\nCMAKE_CACHE_PATCH_VERSION:INTERNAL=8\n')
+            compiler_record = build / 'CMakeFiles/3.31.8/CMakeCXXCompiler.cmake'
+            compiler_record.parent.mkdir(parents=True)
+            compiler_record.write_text(f'set(CMAKE_CXX_COMPILER "{compiler.as_posix()}")\n')
+            script = root / 'environment.ps1'
+            mock = '''$ErrorActionPreference = 'Stop'
+$env:ComSpec = 'CompilerSetup'
+$env:INCLUDE = 'stale include path'
+function CompilerSetup {
+    if ($args[0] -ne '/d' -or $args[1] -ne '/s' -or $args[2] -ne '/c') { throw 'incorrect cmd invocation' }
+    if ($args[3] -notlike '*vcvars64.bat" -vcvars_ver=14.44.35207 >nul && set') { throw 'wrong compiler setup' }
+    $global:LASTEXITCODE = __CODE__
+    'INCLUDE=SDK include path'
+    'LIB=path with=equals'
+    '=C:=ignored drive state'
+}
+'''
+            for code in (0, 7):
+                script.write_text(mock.replace('__CODE__', str(code))
+                                  + validator.windows_ninja_environment_script(str(build))
+                                  + "\nif ($env:INCLUDE -ne 'SDK include path' -or $env:LIB -ne 'path with=equals') { throw 'compiler environment not imported' }\n")
+                result = subprocess.run([powershell, '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', str(script)], capture_output=True, text=True)
+                self.assertEqual(result.returncode == 0, code == 0, result.stdout + result.stderr)
+            vcvars.unlink()
+            script.write_text(mock.replace('__CODE__', '0') + validator.windows_ninja_environment_script(str(build)))
+            result = subprocess.run([powershell, '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', str(script)], capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
 
     @unittest.skipUnless(powershell, 'PowerShell is required for generated Windows scripts')
     def test_generated_preflight(self):
@@ -117,6 +157,11 @@ class ValidatorContract(unittest.TestCase):
                 run(generator=generator, extra=f'DUSKSTUDIO_RESOLVED_ASIO_SDK_PATH:INTERNAL={sdk}\n', expect=False)
                 for macro in ['JUCE_ASIO=10', 'JUCE_ASIO=0', 'JUCE_ASIO=1;JUCE_ASIO=0', 'JUCE_ASIO=1;JUCE_ASIO=1', 'NOT_JUCE_ASIO=1']:
                     run(generator=generator, xml_text=xml.replace('JUCE_ASIO=1', macro), ninja_text=edge.replace('-DJUCE_ASIO=1', ' '.join('-D' + m for m in macro.split(';'))), expect=False)
+            for separator in ['/', '\\']:
+                for newline in ['\n', '\r\n']:
+                    native_edge = edge.replace('/', separator)
+                    run(ninja_text=native_edge, newline=newline)
+                    run(ninja_text=native_edge.replace('-DJUCE_ASIO=1', '-DJUCE_ASIO=0'), newline=newline, expect=False)
             run(generator='Unix Makefiles', expect=False)
             run(extra='CMAKE_GENERATOR:INTERNAL=Ninja\n', expect=False)
             for broken in [xml.replace('Release|x64', 'Debug|x64'), xml.replace('JUCE_ASIO=1', 'OTHER=1') + '<!-- JUCE_ASIO=1 -->', xml.replace('</Project>', xml[xml.index('<ItemDefinitionGroup'):xml.index('</Project>')] + '</Project>')]:

@@ -11,22 +11,23 @@
 
 using duskstudio::notepad::GraphicsCompatibility;
 using Catch::Matchers::WithinRel;
+using Backend = duskstudio::platform::NativeEmbeddedParent::Backend;
 
 TEST_CASE ("Notepad Cocoa embedding uses the display backing scale",
            "[notepad][scale]")
 {
-    CHECK_THAT (duskstudio::embedscale::factorFromSources (1.0, 1.0, 2.0, true),
+    CHECK_THAT (duskstudio::embedscale::factorFromSources (1.0, 1.0, 2.0, true, Backend::platform),
                 WithinRel (2.0, 1e-12));
-    CHECK_THAT (duskstudio::embedscale::factorFromSources (1.25, 1.0, 2.0, true),
+    CHECK_THAT (duskstudio::embedscale::factorFromSources (1.25, 1.0, 2.0, true, Backend::platform),
                 WithinRel (2.5, 1e-12));
 }
 
-TEST_CASE ("Native embeds retain the peer platform scale outside Cocoa",
+TEST_CASE ("Native X11 and Windows embeds retain the peer platform scale",
            "[notepad][scale][windows][issue-367]")
 {
-    CHECK_THAT (duskstudio::embedscale::factorFromSources (1.0, 1.5, 2.0, false),
+    CHECK_THAT (duskstudio::embedscale::factorFromSources (1.0, 1.5, 2.0, false, Backend::platform),
                 WithinRel (1.5, 1e-12));
-    CHECK_THAT (duskstudio::embedscale::factorFromSources (1.25, 1.5, 2.0, false),
+    CHECK_THAT (duskstudio::embedscale::factorFromSources (1.25, 1.5, 2.0, false, Backend::platform),
                 WithinRel (1.875, 1e-12));
 
     constexpr int hostX = 91;
@@ -54,6 +55,26 @@ TEST_CASE ("Open notepad geometry responds to display scale changes",
     CHECK_FALSE (duskstudio::imgui::requiresScaleRecreation (2.0, 2.0));
     CHECK (duskstudio::imgui::requiresScaleRecreation (1.0, 2.0));
     CHECK (duskstudio::imgui::requiresScaleRecreation (2.0, 1.0));
+
+    for (const double outputScale : { 1.0, 1.5, 2.0 })
+    {
+        const auto plainScale = duskstudio::embedscale::factorFromSources (
+            1.0, outputScale, outputScale, false, Backend::wayland);
+        const auto zoomScale = duskstudio::embedscale::factorFromSources (
+            1.25, outputScale, outputScale, false, Backend::wayland);
+        CHECK_THAT (plainScale, WithinRel (1.0, 1e-12));
+        CHECK_THAT (zoomScale, WithinRel (1.25, 1e-12));
+        const auto plain = duskstudio::embedscale::toPhysicalBounds (1, 3, 641, 359, plainScale);
+        const auto zoom = duskstudio::embedscale::toPhysicalBounds (1, 3, 641, 359, zoomScale);
+        CHECK (plain.x == 1);
+        CHECK (plain.y == 3);
+        CHECK (plain.width == 641);
+        CHECK (plain.height == 359);
+        CHECK (zoom.x == 1);
+        CHECK (zoom.y == 4);
+        CHECK (zoom.width == 802);
+        CHECK (zoom.height == 449);
+    }
 }
 using duskstudio::notepad::assessGraphicsCompatibility;
 

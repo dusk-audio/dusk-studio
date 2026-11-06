@@ -4,68 +4,56 @@
 
 #include "../foundation/MessageThread.h"
 #include "GuiHost.h"
+#include "NativeEmbeddedParent.h"
 
 #include <functional>
-#include <utility>
+#include <memory>
+#include <string>
 #include <vector>
 
 namespace duskstudio
 {
 class Session;
 class AudioEngine;
+namespace imgui { class DuskPanelWindow; class MiniTimelineView; }
 
-// Thin "song map" shown when the tape strip is collapsed: song start, marker
-// ticks, song end, and the playhead, drawn full-song-fit (no horizontal scroll).
-// Click to seek; click a marker tick or name to jump to it. Names appear where
-// space permits, with the active section brightened.
-class MiniTimelineStrip final : public juce::Component,
-                                public juce::SettableTooltipClient,
-                                private dusk::Timer,
-                                private juce::ChangeListener
+class MiniTimelineStrip final : public juce::Component, private dusk::Timer
 {
 public:
-    MiniTimelineStrip (Session& sessionRef, AudioEngine& engineRef);
+    MiniTimelineStrip (Session&, AudioEngine&);
     ~MiniTimelineStrip() override;
 
-    void captureMarkerPaintForScenario (bool enabled) { capturePaint = enabled; markerPaint.clear(); repaint(); }
-    const auto& markerPaintForScenario() const { return markerPaint; }
-    auto samplePointForScenario (std::int64_t sample) const
-    { return getLocalBounds().getTopLeft().translated (xForSample (sample, songEndSamples()), getHeight() / 2); }
+    void captureMarkerPaintForScenario (bool enabled) { capturePaint = enabled; }
+    std::vector<scenario::MiniMarkerPaint> markerPaintForScenario() const;
+    bool clickSampleForScenario (std::int64_t);
+    bool clickMarkerForScenario (int);
+    bool pressKeyForScenario (const std::string& description);
 
     void paint (juce::Graphics&) override;
-    void mouseDown (const juce::MouseEvent&) override;
-    void mouseDoubleClick (const juce::MouseEvent&) override;
-    void mouseMove (const juce::MouseEvent&) override;
+    void resized() override;
+    void visibilityChanged() override;
+    void parentHierarchyChanged() override;
 
-    // Set by MainComponent: double-clicking a marker (tick or name) edits it.
-    std::function<void (int markerIdx)> onMarkerEdit;
+    std::function<void (int)> onMarkerEdit;
 
 private:
     void timerCallback() override;
-    void changeListenerCallback (juce::ChangeBroadcaster*) override;
-
-    // Song extent: 0 .. max(rightmost region end, playhead, 60 s floor).
+    void syncWindow();
+    void updateState();
+    void hideTooltip();
     std::int64_t songEndSamples() const noexcept;
-    int         xForSample (std::int64_t s, std::int64_t end) const noexcept;
-    std::int64_t sampleForX (int x, std::int64_t end) const noexcept;
-    int         markerIndexAtX (int x, std::int64_t end) const noexcept;
-    // Marker hit: tick proximity OR a name-flag rect recorded by the last paint.
-    int         markerAtX (int x) const noexcept;
 
-    bool capturePaint = false;
-    std::vector<scenario::MiniMarkerPaint> markerPaint;
-    Session&     session;
+    Session& session;
     AudioEngine& engine;
-    std::int64_t  lastPlayhead = -1;
-    size_t       lastContentSig = 0;   // region/marker counts + extent, for refresh polling
-
-    // Per-marker name-flag rects from the last paint, for mouse hit-testing
-    // (so clicking the visible label, not just the tick, hits the marker).
-    std::vector<std::pair<int, juce::Rectangle<int>>> markerFlags;
-
-    static constexpr int kPadL = 6;
-    static constexpr int kPadR = 6;
-    static constexpr int kMarkerHitPx = 4;
+    struct Tooltip;
+    std::unique_ptr<Tooltip> tooltip;
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    std::unique_ptr<imgui::DuskPanelWindow> window;
+    imgui::MiniTimelineView* view = nullptr;
+   #endif
+    platform::EmbeddedChildLatch latch;
+    bool closing = false, capturePaint = false;
+    std::string shownTooltip;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MiniTimelineStrip)
 };

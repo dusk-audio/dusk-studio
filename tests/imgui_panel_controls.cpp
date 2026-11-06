@@ -323,24 +323,32 @@ TEST_CASE ("formSlider clamps a value dragged past the end of its range")
 TEST_CASE ("formCombo opens on a click and reports the item picked")
 {
     HeadlessPanel panel;
-    const char* const items[] = { "(none)", "UMC1820", "Built-in Audio" };
+    const char* const items[] = { "USB ## Output", "USB ## Input", "## Monitor" };
     int selected = 0;
     bool picked = false;
+    std::string drawn;
 
     const auto submit = [&] (dw::Context& ctx)
     {
+        ImGui::LogToBuffer();
         picked = formCombo (ctx, "##device", kRowTl, kRowBr, items, 3, selected);
+        drawn = GImGui->LogBuffer.c_str();
+        ImGui::LogFinish();
     };
 
     panel.movePointer (kRowCentre);
     panel.frame (submit);
     panel.frame (submit);
     REQUIRE_FALSE (picked);
+    REQUIRE (drawn.find (items[0]) != std::string::npos);
 
     panel.pressPointer (true);
     panel.frame (submit);
     panel.pressPointer (false);
     panel.frame (submit);
+    panel.frame (submit);
+    for (const auto* item : items)
+        REQUIRE (drawn.find (item) != std::string::npos);
 
     // The popup is laid out under the closed combo, so its second row is one item
     // height below the first.
@@ -354,6 +362,8 @@ TEST_CASE ("formCombo opens on a click and reports the item picked")
 
     REQUIRE (picked);
     REQUIRE (selected == 1);
+    panel.frame (submit);
+    REQUIRE (drawn.find (items[1]) != std::string::npos);
 }
 
 TEST_CASE ("formTooltip wraps the prose a settings row explains itself with")

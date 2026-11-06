@@ -7,6 +7,7 @@
 #include "NotepadTheme.h"
 #include "../foundation/AppConfigDir.h"
 #include "imgui/DuskImGuiHost.h"
+#include "imgui/PanelFontFallback.h"
 
 #include <DearImGui.hpp>
 #include <DearImGui/imgui_internal.h>
@@ -15,6 +16,7 @@
 #endif
 
 #include <algorithm>
+#include <cmath>
 #include <ctime>
 #include <filesystem>
 #include <optional>
@@ -125,6 +127,19 @@ struct NativeNotepadWindow::Impl final
               owner (ownerRef) {}
 
     protected:
+        void onImGuiPrepareFrame() override
+        {
+            if (auto* input = ImGui::GetInputTextState (GImGui->ActiveId))
+                if (input->TextA.Data != nullptr && input->TextLen > 0)
+                    owner.fontFallback.request ({ input->TextA.Data, static_cast<std::size_t> (input->TextLen) });
+            const float pixels = notepad::kTypeScale.lyric * static_cast<float> (getWindow().getScaleFactor());
+            if (owner.fontFallback.update (pixels) || std::abs (owner.fontPixels - pixels) > 0.01f)
+            {
+                owner.buildFontAtlas (pixels);
+                rebuildFontTexture();
+            }
+        }
+
         void onImGuiDisplay() override
         {
             owner.draw (static_cast<float> (getWidth()), static_cast<float> (getHeight()));
@@ -156,8 +171,9 @@ struct NativeNotepadWindow::Impl final
         callbacks.createWidget = [this] (DGL::Window& window)
         {
             auto widget = std::make_unique<EditorWidget> (window, *this);
-            buildFontAtlas (static_cast<float> (notepad::kTypeScale.lyric
-                                                * window.getScaleFactor()));
+            const auto pixels = static_cast<float> (notepad::kTypeScale.lyric * window.getScaleFactor());
+            fontFallback.update (pixels);
+            buildFontAtlas (pixels);
             return std::unique_ptr<DGL::TopLevelWidget> (widget.release());
         };
         callbacks.checkGraphics = [this] (const char* version, const char* renderer)
@@ -202,6 +218,8 @@ struct NativeNotepadWindow::Impl final
     void buildFontAtlas (float size)
     {
         auto& io = ImGui::GetIO();
+        io.Fonts->Clear();
+        bodyFont = boldFont = italicFont = boldItalicFont = monoFont = nullptr;
        #ifndef DGL_NO_SHARED_RESOURCES
         ImFontConfig embeddedConfig;
         embeddedConfig.FontDataOwnedByAtlas = false;
@@ -209,7 +227,6 @@ struct NativeNotepadWindow::Impl final
         embeddedConfig.OversampleV = 2;
         embeddedConfig.PixelSnapH = false;
 
-        io.Fonts->Clear();
         bodyFont = io.Fonts->AddFontFromMemoryTTF (
             (void*) daf_resources::dejavusans_ttf,
             daf_resources::dejavusans_ttf_size,
@@ -236,17 +253,21 @@ struct NativeNotepadWindow::Impl final
             "/System/Library/Fonts/Menlo.ttc",
             "C:/Windows/Fonts/consola.ttf" }, size);
 
+       #else
+        ImFontConfig defaultConfig;
+        defaultConfig.SizePixels = size;
+        bodyFont = io.Fonts->AddFontDefault (&defaultConfig);
+       #endif
+        fontFallback.reserve (*io.Fonts);
         io.Fonts->Build();
         io.FontDefault = bodyFont;
-       #else
-        bodyFont = io.FontDefault != nullptr ? io.FontDefault
-                                             : (io.Fonts->Fonts.empty() ? nullptr
-                                                                       : io.Fonts->Fonts.front());
-       #endif
         if (boldFont == nullptr) boldFont = bodyFont;
         if (italicFont == nullptr) italicFont = bodyFont;
         if (boldItalicFont == nullptr) boldItalicFont = boldFont;
         if (monoFont == nullptr) monoFont = bodyFont;
+        for (auto* font : { bodyFont, boldFont, italicFont, boldItalicFont, monoFont })
+            if (font != nullptr) fontFallback.rasterise (*io.Fonts, *font);
+        fontPixels = size;
         editor.setFonts ({ bodyFont, boldFont, italicFont, boldItalicFont, monoFont });
     }
 
@@ -262,6 +283,8 @@ struct NativeNotepadWindow::Impl final
                const std::string& markdown, bool sessionExists, bool unsavedChanges)
     {
         document.setMarkdown (markdown);
+        fontFallback = imgui::PanelFontFallback {};
+        fontFallback.request (markdown);
         editor.reset ({ 0, 0 });
         editor.requestFocus();
         markdownView = false;
@@ -370,6 +393,7 @@ private:
 
     void notifyTextChanged()
     {
+        fontFallback.request (document.markdown());
         documentDirty = ! savedMarkdown.has_value()
                      || document.markdown() != *savedMarkdown;
         saveFailed = false;
@@ -830,6 +854,8 @@ private:
     ImFont* italicFont = nullptr;
     ImFont* boldItalicFont = nullptr;
     ImFont* monoFont = nullptr;
+    imgui::PanelFontFallback fontFallback;
+    float fontPixels = 0;
     std::optional<std::string> savedMarkdown;
     notepad::SourceViewSession sourceView;
     std::string markdownBuffer;

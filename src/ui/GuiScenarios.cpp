@@ -1061,21 +1061,15 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     }
     bool clickMiniSample (std::int64_t sample) override
     {
-        auto* mini = owner.miniTimeline.get();
-        if (mini == nullptr || ! mini->isShowing()) return false;
-        const auto point = owner.getTopLevelComponent()->getLocalPoint (mini, mini->samplePointForScenario (sample)).toFloat();
-        return pointerAt (point.x, point.y, true) && pointerAt (point.x, point.y, false);
+        return owner.miniTimeline != nullptr && owner.miniTimeline->clickSampleForScenario (sample);
     }
     bool clickMiniMarker (int index) override
     {
-        auto* mini = owner.miniTimeline.get();
-        if (mini == nullptr || ! mini->isShowing()) return false;
-        const auto& rows = mini->markerPaintForScenario();
-        if (index < 0 || index >= (int) rows.size() || rows[(size_t) index].labelWidth <= 0) return false;
-        const auto& row = rows[(size_t) index];
-        const auto point = owner.getTopLevelComponent()->getLocalPoint (mini,
-            mini->getLocalBounds().getTopLeft().translated (row.labelX + row.labelWidth / 2, row.labelY)).toFloat();
-        return pointerAt (point.x, point.y, true) && pointerAt (point.x, point.y, false);
+        return owner.miniTimeline != nullptr && owner.miniTimeline->clickMarkerForScenario (index);
+    }
+    bool pressMiniKey (const std::string& description) override
+    {
+        return owner.miniTimeline != nullptr && owner.miniTimeline->pressKeyForScenario (description);
     }
     void refreshMasteringSource() override
     {
@@ -1842,6 +1836,8 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         if (panel == "piano-roll" && owner.pianoRollShowing()) return owner.pianoRollWindow.get();
         if (panel == "startup" && owner.startupWindow != nullptr && owner.startupWindow->isOpen())
             return owner.startupWindow.get();
+        if (panel == "settings" && owner.audioSettingsWindow != nullptr && owner.audioSettingsWindow->isOpen())
+            return owner.audioSettingsWindow.get();
         return nullptr;
     }
    #endif
@@ -2198,6 +2194,30 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         auto* peer = owner.getPeer();
         return peer != nullptr && peer->getNativeHandle() != nullptr
             && platform::hasUsableDisplay();
+    }
+
+    bool nativeWaylandWindow() const override
+    {
+        auto* peer = owner.getPeer();
+        return peer != nullptr && platform::describeEmbeddedParent (
+            reinterpret_cast<std::uintptr_t> (peer->getNativeHandle())).backend
+                == platform::NativeEmbeddedParent::Backend::wayland;
+    }
+
+    bool modalHasSeparateX11Peer() const override
+    {
+       #if defined (__linux__)
+        const auto& stack = EmbeddedModal::activeModalStack();
+        if (stack.empty() || ! nativeWaylandWindow()) return false;
+        auto* body = stack.back()->getBody();
+        auto* peer = body != nullptr ? body->getPeer() : nullptr;
+        return peer != nullptr && peer != owner.getPeer() && stack.back()->hasSeparatePeer()
+            && platform::describeEmbeddedParent (
+                reinterpret_cast<std::uintptr_t> (peer->getNativeHandle())).backend
+                    == platform::NativeEmbeddedParent::Backend::platform;
+       #else
+        return false;
+       #endif
     }
 
     bool modalStackEmpty() const override

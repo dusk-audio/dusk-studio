@@ -41,4 +41,7 @@ with open(os.path.join(root, "midi", "melody.mid"), "wb") as f:
     f.write(b"MThd" + struct.pack(">IHHH", 6, 0, 1, 480) + b"MTrk" + struct.pack(">I", len(events)) + events)
 EOF
 
-gnome_session_run 300 "$HERE/gnome_file_drop.py" "$APP" "$GNOME_WORK/app" "$GNOME_WORK/files"
+rc=0
+gnome_session_run 300 "$HERE/gnome_file_drop.py" "$APP" "$GNOME_WORK/app" "$GNOME_WORK/files" || rc=$?
+((rc == 0)) || GNOME_KEEP=1
+exit "$rc"

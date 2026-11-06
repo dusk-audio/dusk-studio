@@ -1,4 +1,5 @@
 #include "PanelText.h"
+#include "PanelFontFallback.h"
 
 #include <DearImGui/imgui_internal.h>
 
@@ -34,6 +35,13 @@ DuskWidgets::Fonts buildPanelFonts (ImFontAtlas& atlas, const void* ttfData, int
 ImFont* nameFace (const DuskWidgets::Fonts& fonts)
 {
     return fonts.textEntry != nullptr ? fonts.textEntry : fonts.band;
+}
+
+std::string panelText (std::string_view utf8)
+{
+    auto text = displayText (utf8);
+    requestPanelGlyphs (text);
+    return text;
 }
 
 std::string displayText (std::string_view utf8)

@@ -8,6 +8,7 @@
 #include "engine/lv2/Lv2Bundle.h"
 #include "engine/lv2/Lv2Scanner.h"
 #include "TestFileOpens.h"
+#include "TestLv2Core.h"
 #include "TestProcessEnvironment.h"
 #include "TestTempDirectory.h"
 
@@ -172,9 +173,10 @@ TEST_CASE ("LV2 discovery loads a bundle on LV2_PATH once when a search folder r
     writeLv2Bundle (installed / "Shared.lv2", shared);
     writeLv2Bundle (custom / "Vendor" / "Extra.lv2", extra);
     fs::create_directory_symlink (installed, custom / "Linked");
+    REQUIRE (duskstudio::test::writeLv2CoreLabel (root / "spec"));
 
     const duskstudio::test::ScopedEnvironmentVariable home ("HOME", root.u8string());
-    const duskstudio::test::ScopedEnvironmentVariable lv2Path ("LV2_PATH", "~/installed/");
+    const duskstudio::test::ScopedEnvironmentVariable lv2Path ("LV2_PATH", "~/installed/:~/spec/");
     const duskstudio::test::ScopedEnvironmentVariable config ("DUSKSTUDIO_CONFIG_DIR", (root / "config").u8string());
 
     const auto manifest = installed / "Shared.lv2" / "manifest.ttl";

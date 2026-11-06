@@ -196,10 +196,10 @@ private:
 };
 } // namespace
 
-void bringWindowToFront (juce::ComponentPeer& peer)
+bool bringWindowToFront (juce::ComponentPeer& peer, const std::string&)
 {
     auto* const hwnd = static_cast<HWND> (peer.getNativeHandle());
-    if (hwnd == nullptr || ! ::IsWindow (hwnd)) return;
+    if (hwnd == nullptr || ! ::IsWindow (hwnd)) return true;
 
     if (::IsIconic (hwnd))
         ::ShowWindow (hwnd, SW_RESTORE);
@@ -220,6 +220,7 @@ void bringWindowToFront (juce::ComponentPeer& peer)
         };
         ::FlashWindowEx (&info);
     }
+    return true;
 }
 // No-op by contract: see flushWindowOperations in PlatformWindowing.h.
 void flushWindowOperations() {}
@@ -264,6 +265,7 @@ double nativeViewBackingScale (void*) { return 1.0; }
 void clearXInputFocus() {}                 // X-only; no-op on Windows
 void requestFocusOnMainWaylandSurface() {} // Wayland-only; no-op on Windows
 void preferX11ForNextNativeWindow() {}     // Linux-only; no-op on Windows
+void withX11PeerCreation (const std::function<void()>& create) { create(); }
 void clearPreferX11ForNativeWindow() {}    // Linux-only; no-op on Windows
 std::unique_ptr<juce::Component> createForeignNativeWindowEmbed (std::uint64_t nativeHandle)
 {

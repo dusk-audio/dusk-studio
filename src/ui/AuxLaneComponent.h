@@ -105,7 +105,8 @@ private:
     class SendSourcePanel;
 
     void timerCallback() override;
-    void rebuildSlots();
+    void rebuildSlots (int requestedEditor = -1);
+    bool usesForeignEditorWindow() const;
     void openPickerForSlot (int slotIdx);
     void openHardwareInsertEditor (int slotIdx);
     void unloadSlot (int slotIdx);
@@ -226,6 +227,9 @@ private:
         juce::TextButton openOrAddButton;
         juce::TextButton bypassButton;
         juce::TextButton removeButton;
+
+        EmbeddedModal editorModal;
+        bool editorIsCustom = false;
 
         // Exactly one of these is attached at a time, gated by
         // strip.insertMode[i]:

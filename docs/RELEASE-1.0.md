@@ -216,7 +216,7 @@ roughly 110 to 160 hours.
 | Linux x86_64 | `linux-build.yml` | Build + tests (GCC Release, Ubuntu 22.04, amd64) |
 | Linux arm64 | `raspberry-pi-build.yml` | Build + tests (GCC Release, Ubuntu 22.04, arm64) |
 | Linux TSan | `linux-sanitizer.yml` | Catch2 tests (TSan, Ubuntu 22.04) |
-| Linux ASan + UBSan | `linux-sanitizer.yml` | Catch2 tests (ASan + UBSan, Ubuntu 22.04) |
+| Linux ASan + UBSan | `linux-sanitizer.yml` | Catch2 tests (ASan + UBSan, Ubuntu 26.04) |
 | macOS arm64 | `macos-build.yml` | Build + tests (clang Release, macOS arm64) |
 | Windows x64 | `windows-tests.yml` | Catch2 tests (MSVC x64 Release, Windows) |
 | Coupling gate | `linux-build.yml` | De-JUCE ratchet |

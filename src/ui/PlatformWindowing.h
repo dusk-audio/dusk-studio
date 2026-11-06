@@ -46,16 +46,8 @@ bool openPathInDefaultApp (const std::filesystem::path& path);
 // Linux, so the platform asymmetry of past bug reports does NOT mean
 // the other platforms are bug-free.
 
-// Preflight, before any window is created: true when a native display
-// connection can actually be opened. Dusk Studio's Linux UI is X11-only
-// (the main window and every plugin-editor peer are X11 surfaces, via
-// XWayland on a Wayland session), so this reports whether an X server /
-// XWayland is reachable. A pure-Wayland session with XWayland disabled
-// returns false; the caller prints guidance and exits cleanly instead of
-// letting JUCE null-deref deep inside window creation and core-dump.
-//
-// macOS / Windows: always true - their native windowing is present once
-// the process has a GUI session.
+// Preflight before peer creation. Linux accepts a supported native Wayland
+// connection or X11; macOS and Windows use their existing GUI session.
 bool hasUsableDisplay();
 
 // Backing scale of the native view behind a peer's native handle, for a child
@@ -103,16 +95,19 @@ bool sendEscapeThroughDisplayServer (std::uintptr_t nativeWindow);
 // plugin editor) so the WM doesn't bury it under existing windows or
 // open it iconified.
 //
-// Linux: _NET_WM_USER_TIME = max-int + WM_CHANGE_STATE NormalState +
+// X11:   _NET_WM_USER_TIME = max-int + WM_CHANGE_STATE NormalState +
 //        _NET_ACTIVE_WINDOW (source = pager) - the ICCCM/EWMH dance
 //        that defeats Mutter's focus-stealing-prevention policy.
+// Wayland: xdg-activation with a launcher token, after the surface maps.
 // macOS: activate NSApp, restore if minimized, then makeKeyAndOrderFront.
 // Win:   restore if minimized, request foreground focus, and flash the
 //        taskbar if Windows' focus policy denies activation.
 //
 // Must be called on the message thread, AFTER the peer exists (i.e.
-// after addToDesktop / setVisible(true)). No-op if peer is null.
-void bringWindowToFront (juce::ComponentPeer& peer);
+// after addToDesktop / setVisible(true)). On Wayland, activation requires a
+// fresh launcher token. False means the surface is not mapped yet; retry with
+// the same token after mapping. True means the caller must discard the token.
+bool bringWindowToFront (juce::ComponentPeer& peer, const std::string& activationToken = {});
 
 // Hide / restore the native mouse cursor for the supplied peer's
 // window. Used by CursorOverlay to suppress the platform cursor while
@@ -211,27 +206,20 @@ void clearXInputFocus();
 // Mac/Windows: no-op.
 void requestFocusOnMainWaylandSurface();
 
-// Latch a "use X11 for top-level peer creation" flag. While set, every
-// Component::createNewPeer routes to LinuxComponentPeer (X11) instead
-// of WaylandComponentPeer, even on a Wayland session. Used so the
-// main window, popup menus, plugin editor peers, and dialog windows
-// all share the X11 backend - required because the Linux plugin
-// protocols (VST3 X11EmbedWindowID, LV2 LV2_UI__X11UI, JUCE-plugin
-// X11-windowed renderer) need an X11 parent to attach to, AND because
-// wl_surface popups can't parent to an X11 main window.
-//
-// Sticky on Linux: once preferX11ForNextNativeWindow() runs (during
-// MainWindow ctor), the latch stays on for the process lifetime.
-// clearPreferX11ForNativeWindow() is a no-op on Linux - clearing the
-// latch would let the next popup menu pick wl_surface and silently
-// fail to map under an X11 parent.
-//
-// Linux: sets JUCE-wayland's latched skip flag; clear is a no-op.
-// Mac/Windows: no-op.
+// Select X11 for the process's main window or standalone editor probe.
+// Linux keeps this fallback sticky so later peers use the same backend;
+// clear is a no-op. Both calls are no-ops on macOS and Windows.
 void preferX11ForNextNativeWindow();
 void clearPreferX11ForNativeWindow();
 
+// Foreign plug-in editor constructors may create peers before attachment.
+// Restore the caller's backend preference even when construction throws.
+void withX11PeerCreation (const std::function<void()>& create);
+
 #if JUCE_LINUX
+bool hasUsableX11Display();
+bool hasUsableWaylandDisplay();
+
 // Run an OOP editor's XEmbed teardown under a local X error trap. The child may
 // already have freed editorWindowId, so the exact BadWindow responses made by
 // the detach sequence are swallowed. Pending errors are drained before the

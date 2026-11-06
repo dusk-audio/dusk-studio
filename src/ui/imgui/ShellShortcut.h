@@ -4,10 +4,11 @@ namespace duskstudio::imgui
 {
 // The keys a native panel keeps live for the DAW behind it. The shell binds them; a
 // panel has no way to name a JUCE key press, so it reports which of these the user
-// asked for and the shell turns that back into its own shortcut. The set is the one
-// any dialog lets through: transport, loop and punch, playhead home, fullscreen, and
+// asked for and the shell turns that back into its own shortcut. Dialogs allow
+// transport, loop and punch, playhead home, fullscreen, and
 // the session's Undo, Redo, Save, Save As and Quit. Nothing that edits a region or a
 // marker the panel hides, which is why Delete and the clipboard keys are absent.
+// Inline panels also allow stage switching.
 //
 // Its own header so the JUCE side can name a shortcut without pulling in Dear ImGui.
 enum class ShellShortcut
@@ -28,6 +29,10 @@ enum class ShellShortcut
     save,
     saveAs,
     quit,
+    recordingStage,
+    mixingStage,
+    masteringStage,
+    auxStage,
 
     // Sentinel: the shell's binding table is checked against this, so adding a
     // shortcut without the key press it maps to fails the build rather than

@@ -2591,6 +2591,11 @@ bool ChannelStripComponent::isPluginEditorOpen() const noexcept
 
 void ChannelStripComponent::parentHierarchyChanged()
 {
+    if (pluginEditorModal.hasSeparatePeer())
+    {
+        if (auto* peer = getPeer()) lastSeenPeerId = peer->getUniqueID();
+        return;
+    }
     // A fullscreen transition can briefly remove the top-level peer before the
     // replacement arrives. Keep cached editors alive across that null interval,
     // and rebuild only when there is a genuinely different realised peer.
@@ -2706,11 +2711,27 @@ void ChannelStripComponent::openPluginEditor()
             self->closePluginEditor();
     };
 
+    auto requireForeignDisplay = [parent]
+    {
+       #if JUCE_LINUX
+        if (! platform::hasUsableX11Display())
+        {
+            showDuskAlert (*parent, "Plug-in editor needs Xwayland",
+                           "Enable Xwayland to open this plug-in's editor. Audio processing can continue without it.");
+            return false;
+        }
+       #else
+        (void) parent;
+       #endif
+        return true;
+    };
+
     // Native CLAP insert - show our editor (shared instance) borrowed in the modal,
     // so closing hides (not destroys) it. Takes precedence over the JUCE editor. Linux-only.
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
     if (engine.getChannelStrip (trackIndex).isNativeClapLoaded())
     {
+        if (! requireForeignDisplay()) return;
         auto& slot = engine.getChannelStrip (trackIndex).getNativeClapSlot();
         auto* inst = slot.getInstance();
         if (inst == nullptr) return;
@@ -2726,13 +2747,15 @@ void ChannelStripComponent::openPluginEditor()
             }
             clapEditor->bindOwner (slot);
         }
-        pluginEditorModal.showBorrowed (*parent, *clapEditor, onClose);
+        pluginEditorModal.showBorrowed (*parent, *clapEditor, onClose, {},
+                                        EmbeddedModal::BorrowedPresentation::foreignPlugin);
         return;
     }
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_LV2
     if (engine.getChannelStrip (trackIndex).isNativeLv2Loaded())
     {
+        if (! requireForeignDisplay()) return;
         auto& slot = engine.getChannelStrip (trackIndex).getNativeLv2Slot();
         auto* inst = slot.getInstance();
         if (inst == nullptr) return;
@@ -2748,13 +2771,15 @@ void ChannelStripComponent::openPluginEditor()
             }
             lv2Editor->bindOwner (slot);
         }
-        pluginEditorModal.showBorrowed (*parent, *lv2Editor, onClose);
+        pluginEditorModal.showBorrowed (*parent, *lv2Editor, onClose, {},
+                                        EmbeddedModal::BorrowedPresentation::foreignPlugin);
         return;
     }
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_VST3
     if (engine.getChannelStrip (trackIndex).isNativeVst3Loaded())
     {
+        if (! requireForeignDisplay()) return;
         auto& slot = engine.getChannelStrip (trackIndex).getNativeVst3Slot();
         auto* inst = slot.getInstance();
         if (inst == nullptr) return;
@@ -2770,7 +2795,8 @@ void ChannelStripComponent::openPluginEditor()
             }
             vst3Editor->bindOwner (slot);
         }
-        pluginEditorModal.showBorrowed (*parent, *vst3Editor, onClose);
+        pluginEditorModal.showBorrowed (*parent, *vst3Editor, onClose, {},
+                                        EmbeddedModal::BorrowedPresentation::foreignPlugin);
         return;
     }
 #endif
@@ -2843,6 +2869,7 @@ void ChannelStripComponent::openPluginEditor()
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
     if (pluginSlot.isRemote())
     {
+        if (! requireForeignDisplay()) return;
         // Linux and Windows ask the child to show its editor and then
         // embed the reported native handle. macOS first tries the
         // parent-process shell editor below; only its fallback presents
@@ -2860,10 +2887,13 @@ void ChannelStripComponent::openPluginEditor()
             // XEmbedComponent ctor: takes a Window (unsigned long) and
             // adopts it as the foreign client.
             // wantsKeyboardFocus = true so plugin GUIs receive key events.
-            remoteEditorEmbed = std::make_unique<juce::XEmbedComponent> (
-                (unsigned long) windowId,
-                /*wantsKeyboardFocus*/ true,
-                /*allowForeignWidgetToResizeComponent*/ false);
+            platform::withX11PeerCreation ([&]
+            {
+                remoteEditorEmbed = std::make_unique<juce::XEmbedComponent> (
+                    (unsigned long) windowId,
+                    /*wantsKeyboardFocus*/ true,
+                    /*allowForeignWidgetToResizeComponent*/ false);
+            });
             remoteEditorWindowId = windowId;
             remoteEditorEmbed->setSize (std::max (200, w),
                                           std::max (200, h));
@@ -2873,7 +2903,8 @@ void ChannelStripComponent::openPluginEditor()
             // JUCE-rendered modal.
             remoteEditorEmbed->getProperties().set (kPluginEditorTag, true);
         }
-        pluginEditorModal.showBorrowed (*parent, *remoteEditorEmbed, onClose);
+        pluginEditorModal.showBorrowed (*parent, *remoteEditorEmbed, onClose, {},
+                                        EmbeddedModal::BorrowedPresentation::foreignPlugin);
        #elif JUCE_MAC
         // Mac OOP: dual-load shell pattern (3c-2). DSP stays in the
         // child; the editor lives in this process via PluginSlot's
@@ -3004,27 +3035,26 @@ void ChannelStripComponent::openPluginEditor()
     if (pluginEditor != nullptr && pluginEditorOwner != instance)
         dropPluginEditor (NativeEditorTeardown::Destroy);
 
+    if (pluginEditor != nullptr && pluginEditorIsCustom && ! requireForeignDisplay()) return;
+
     if (pluginEditor == nullptr)
     {
-        // LV2 plugin editors eager-create an embedded X11 sub-window
-        // inside their Editor constructor. X11 latch routes the nested
-        // peer creation to LinuxComponentPeer (X11) so the reparent
-        // target is a valid X11 host. clearPreferX11ForNativeWindow is
-        // a no-op on Linux (sticky-on) but kept for cross-platform
-        // symmetry.
         std::unique_ptr<juce::AudioProcessorEditor> fresh;
         if (instance->hasEditor())
         {
+            if (! requireForeignDisplay()) return;
             // Dry-pass this strip while the editor constructs - sampler
             // editors can block processBlock on their internal loader lock
             // for seconds, which would stall the whole audio callback.
             const juce::SpinLock::ScopedLockType processExclusion (
                 pluginSlot.getProcessLock());
-            duskstudio::platform::preferX11ForNextNativeWindow();
-            fresh.reset (instance->createEditorIfNeeded());
-            duskstudio::platform::clearPreferX11ForNativeWindow();
+            duskstudio::platform::withX11PeerCreation ([&]
+            {
+                fresh.reset (instance->createEditorIfNeeded());
+            });
         }
         const bool isCustomEditor = fresh != nullptr;
+        pluginEditorIsCustom = isCustomEditor;
         if (fresh == nullptr)
             fresh = std::make_unique<juce::GenericAudioProcessorEditor> (*instance);
         pluginEditor      = std::move (fresh);
@@ -3079,7 +3109,9 @@ void ChannelStripComponent::openPluginEditor()
         });
     };
     pluginEditorModal.showBorrowed (*parent, *pluginEditor, onClose,
-                                    std::move (onEditorHostResized));
+                                    std::move (onEditorHostResized),
+                                    pluginEditorIsCustom ? EmbeddedModal::BorrowedPresentation::foreignPlugin
+                                                         : EmbeddedModal::BorrowedPresentation::embedded);
 }
 
 void ChannelStripComponent::closePluginEditor()

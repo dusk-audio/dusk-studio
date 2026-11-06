@@ -1383,7 +1383,7 @@ private:
         {
             const auto title = [&] (Box b, const std::string& value, ImU32 colour)
             {
-                const auto label = displayText (value);
+                const auto label = panelText (value);
                 ctx.dl->PushClipRect (screen ({ b.x, b.y }), screen ({ b.right(), b.bottom() }), true);
                 dw::text (ctx, nameFace (*ctx.fonts), ctx.s (12.5f), screen ({ b.x, b.y + (b.h - 12.5f) * 0.5f }),
                           ctx.s (b.w), colour, label.c_str(), dw::Align::left);

@@ -14,7 +14,7 @@ src/engine/DpAligner.cpp	3
 src/engine/DpAligner.h	3
 src/engine/DpImporter.cpp	41
 src/engine/DpImporter.h	6
-src/engine/DuskStudioPlayHead.h	4
+src/engine/DuskStudioPlayHead.h	3
 src/engine/FileImporter.cpp	2
 src/engine/FileImporter.h	4
 src/engine/JuceCompat.h	9
@@ -23,7 +23,7 @@ src/engine/MasteringPlayer.h	4
 src/engine/PluginManager.cpp	97
 src/engine/PluginManager.h	27
 src/engine/PluginSlot.cpp	68
-src/engine/PluginSlot.h	40
+src/engine/PluginSlot.h	39
 src/engine/RecordManager.cpp	3
 src/engine/RecordManager.h	2
 src/engine/device/DeviceManager.h	3
@@ -95,7 +95,7 @@ src/ui/EditCursors.cpp	38
 src/ui/EditCursors.h	6
 src/ui/EditModeToolbar.cpp	48
 src/ui/EditModeToolbar.h	10
-src/ui/EmbeddedModal.h	62
+src/ui/EmbeddedModal.h	64
 src/ui/FadeCurve.h	10
 src/ui/FreezeDialog.cpp	36
 src/ui/FreezeDialog.h	9
@@ -113,13 +113,13 @@ src/ui/MasteringView.cpp	143
 src/ui/MasteringView.h	26
 src/ui/MidiBindingsPanel.cpp	46
 src/ui/MidiBindingsPanel.h	15
-src/ui/MiniTimelineStrip.cpp	19
-src/ui/MiniTimelineStrip.h	10
+src/ui/MiniTimelineStrip.cpp	9
+src/ui/MiniTimelineStrip.h	3
 src/ui/MultiImportTargetPicker.cpp	78
 src/ui/MultiImportTargetPicker.h	11
 src/ui/NativeEditorEmbedScale.h	14
 src/ui/PlatformWindowing.h	14
-src/ui/PlatformWindowing_Linux.cpp	15
+src/ui/PlatformWindowing_Linux.cpp	17
 src/ui/PlatformWindowing_Mac.mm	19
 src/ui/PlatformWindowing_Windows.cpp	7
 src/ui/PluginPickerHelpers.cpp	130

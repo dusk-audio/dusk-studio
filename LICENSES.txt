@@ -21,8 +21,8 @@ VENDORED DEPENDENCIES (compiled into the Dusk Studio binary)
 ------------------------------------------------------
 
 JUCE (audio framework)
-  Version  : 8.0.12 on Linux (dusk-audio/JUCE-wayland tag dusk-wayland-v9, rev
-             108fab92a4b748b2cec1252b3ceb76fa40c699e0 - the JUCE_TAG / JUCE_REV
+  Version  : 8.0.12 on Linux (dusk-audio/JUCE-wayland tag dusk-wayland-v10, rev
+             09fa6b1b9ed131dbf7ff3f62a4b5671a4396f29f - the JUCE_TAG / JUCE_REV
              pin in .github/workflows/linux-build.yml); 8.0.4 from upstream
              juce-framework/JUCE on the macOS and Windows runners
   License  : Dual-licensed — AGPLv3 (used here) OR JUCE Commercial. JUCE's
@@ -708,11 +708,11 @@ System shared libraries (Linux builds — linked dynamically, never bundled)
              and a plain link by name for asound / X11. PipeWire is the primary
              audio backend, ALSA the fallback backend and the MIDI transport,
              X11 the plugin-editor embedding host, and GL the renderer the
-             native notepad UI draws through. Three more arrive indirectly:
-             DAF's dgl-system-libs adds libdbus-1 when pkg-config finds it, and
-             JUCE's juce_graphics module declares freetype2 and fontconfig as
-             Linux packages, so both land on the link line without either name
-             appearing in this repo's CMakeLists.txt.
+             native notepad UI draws through. Native panel CJK fallback uses
+             find_package(Freetype) and pkg-config fontconfig to rasterize
+             installed system fonts. DAF's dgl-system-libs adds libdbus-1 when
+             pkg-config finds it. JUCE's juce_graphics also links FreeType and
+             fontconfig on Linux.
   Notes    : Dusk Studio redistributes none of these — they come from the
              user's distribution, and the whole set is dynamically linked.
              Listed so the non-toolchain link surface is complete; the
@@ -731,6 +731,14 @@ System shared libraries (Linux builds — linked dynamically, never bundled)
              https://www.freedesktop.org/wiki/Software/dbus/ ,
              https://freetype.org/ ,
              https://www.freedesktop.org/wiki/Software/fontconfig/
+
+Noto CJK test fonts (test fixtures only — not shipped with the application)
+  License  : SIL Open Font License 1.1
+  Path     : tests/fixtures/fonts/DuskCjkTest.otf and DuskCjkVariableTest.otf
+  Notes    : Renamed subsets of NotoSansCJKkr-VF, containing five real glyphs
+             and repeated cmap aliases for cache tests. Full license and
+             provenance are in tests/fixtures/fonts/LICENSE.txt and README.txt.
+  Upstream : https://github.com/notofonts/noto-cjk
 
 Toolchain runtimes (the compiler's own libraries — linked dynamically)
   License  : libstdc++, libgcc_s and libatomic are GPL-3.0-or-later WITH
@@ -807,8 +815,8 @@ of trailing whitespace required by repository hygiene; where a header says
 "notice", only that complete notice is reproduced. Paths starting `modules/`
 are inside the JUCE tree
 Dusk Studio builds against on Linux — the
-dusk-audio/JUCE-wayland tag dusk-wayland-v9, rev
-108fab92a4b748b2cec1252b3ceb76fa40c699e0, JUCE 8.0.12. The per-platform version
+dusk-audio/JUCE-wayland tag dusk-wayland-v10, rev
+09fa6b1b9ed131dbf7ff3f62a4b5671a4396f29f, JUCE 8.0.12. The per-platform version
 inventory for those is in the JUCE entry above; upstream 8.0.4 on macOS and
 Windows carries the same licenses apart from the VST3 SDK, which is noted
 there.
@@ -2948,7 +2956,7 @@ That's all there is to it!
 --------------------------------------------------------------------------------
 JUCE-bundled VST3 SDK 3.8.0 — MIT
 modules/juce_audio_processors_headless/format_types/VST3_SDK/LICENSE.txt
-dusk-audio/JUCE-wayland rev 108fab92a4b748b2cec1252b3ceb76fa40c699e0
+dusk-audio/JUCE-wayland rev 09fa6b1b9ed131dbf7ff3f62a4b5671a4396f29f
 (Linux build only; JUCE 8.0.4 on macOS and Windows carries the older dual
 license described in the inventory)
 --------------------------------------------------------------------------------
@@ -2981,7 +2989,7 @@ SOFTWARE.
 --------------------------------------------------------------------------------
 JUCE-bundled LV2 SDK — ISC notices
 modules/juce_audio_processors_headless/format_types/LV2_SDK/<name>/COPYING
-dusk-audio/JUCE-wayland rev 108fab92a4b748b2cec1252b3ceb76fa40c699e0
+dusk-audio/JUCE-wayland rev 09fa6b1b9ed131dbf7ff3f62a4b5671a4396f29f
 The five COPYING files are byte-identical in upstream JUCE 8.0.4 rev
 51d11a2be6d5c97ccf12b4e5e827006e19f0555a. The identical lilv, serd and sord
 files are reproduced once.

@@ -1,6 +1,11 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "ui/LinuxPeerTeardown.h"
+#include "util/LaunchRequest.h"
+
+#if defined (__linux__)
+ #include "TestProcessEnvironment.h"
+#endif
 
 #include <fstream>
 #include <iterator>
@@ -303,15 +308,169 @@ TEST_CASE ("launch session load and instance handoff retain native activation",
 {
     const auto app = readSource ("src/DuskStudioApp.cpp");
     const auto initialLaunch = definitionBody (app, "MainWindow");
-    requireInOrder (initialLaunch, "self->setVisible (true)", "bringWindowToFront");
+    requireInOrder (initialLaunch, "self->setVisible (true)", "tryActivation");
 
-    const auto handoff = definitionBody (app, "anotherInstanceStarted");
-    requireInOrder (handoff, "mainWindow->toFront (true)", "bringWindowToFront");
-    requireInOrder (handoff, "bringWindowToFront", "openSessionPath");
+    const auto initialise = definitionBody (app, "DuskStudioApp::initialise");
+    requireInOrder (initialise, "takeLaunchActivationToken", "primeRealtimeAudio");
+    requireInOrder (initialise, "if (! handoff)", "single_instance::acquire");
+    const auto activate = definitionBody (app, "activateFromLaunch");
+    requireInOrder (activate, "toFront (true)", "tryActivation");
+    const auto retry = definitionBody (app, "tryActivation");
+    requireInOrder (retry, "bringWindowToFront", "pendingActivationToken.clear");
+    requireInOrder (retry, "pendingActivationToken.clear", "stopTimer");
+
+    const auto frameworkOpen = definitionBody (app, "anotherInstanceStarted");
+    REQUIRE (frameworkOpen.find ("sessionPathFromCommandLine") != std::string::npos);
+    REQUIRE (frameworkOpen.find ("handleLaunchRequest") != std::string::npos);
+    requireInOrder (initialise, "LaunchRequest::receive", "sessionPathFromCommandLine");
+    const auto handoff = definitionBody (app, "handleLaunchRequest");
+    requireInOrder (handoff, "activateFromLaunch", "openSessionPath");
 
     const auto sessionLoad = definitionBody (
         readSource ("src/ui/MainComponent.cpp"), "finishLoadingSessionFrom");
     REQUIRE (sessionLoad.find ("bringWindowToFront") != std::string::npos);
+}
+
+TEST_CASE ("launch requests preserve paths and activation tokens",
+           "[single-instance][wayland][issue-961]")
+{
+    using duskstudio::LaunchRequest;
+    const LaunchRequest requests[] {
+        { {}, {} }, { {}, "launcher-only" },
+        { u8"/sessions/\u65e5\u672c\u8a9e/\"quoted\" mix/session.json", "token:1/2+3=" },
+        { "C:\\Sessions\\take 2\\session.json", {} },
+        { "/sessions/line\nbreak/session.json", "opaque\\token\"bytes" }
+    };
+    for (const auto& request : requests)
+    {
+        const auto encoded = request.encode();
+        REQUIRE (encoded);
+        const auto decoded = LaunchRequest::decode (*encoded);
+        REQUIRE (decoded);
+        REQUIRE (decoded->sessionPath == request.sessionPath);
+        REQUIRE (decoded->activationToken == request.activationToken);
+    }
+
+    SECTION ("payload limit includes JSON escaping and framing")
+    {
+        const auto overhead = LaunchRequest {}.encode()->size();
+        LaunchRequest request { {}, std::string (duskstudio::single_instance::kMaxPayloadBytes - overhead, 'x') };
+        const auto encoded = request.encode();
+        REQUIRE (encoded);
+        REQUIRE (encoded->size() == duskstudio::single_instance::kMaxPayloadBytes);
+        REQUIRE (LaunchRequest::decode (*encoded));
+        REQUIRE_FALSE (LaunchRequest::decode (*encoded + " "));
+        request.activationToken += 'x';
+        REQUIRE_FALSE (request.encode());
+        request.activationToken.assign (duskstudio::single_instance::kMaxPayloadBytes / 2, '\n');
+        REQUIRE_FALSE (request.encode());
+    }
+
+    SECTION ("malformed requests are rejected")
+    {
+        const char* invalid[] { "", "{}", "[]", "null", "\"/sessions/song\"",
+            R"({"version":2,"sessionPath":"","activationToken":""})",
+            R"({"version":1.0,"sessionPath":"","activationToken":""})",
+            R"({"version":1,"sessionPath":false,"activationToken":""})",
+            R"({"version":1,"sessionPath":"","activationToken":null})",
+            R"({"version":1,"sessionPath":"a\u0000b","activationToken":""})",
+            R"({"version":1,"sessionPath":"","activationToken":"a\u0000b"})" };
+        for (const auto* payload : invalid)
+            REQUIRE_FALSE (LaunchRequest::decode (payload));
+        REQUIRE_FALSE ((LaunchRequest { std::string ("a\0b", 3), {} }.encode()));
+        REQUIRE_FALSE ((LaunchRequest { {}, std::string ("a\0b", 3) }.encode()));
+        const std::string invalidUtf8 (1, '\xff');
+        REQUIRE_FALSE ((LaunchRequest { {}, invalidUtf8 }.encode()));
+        const auto invalidRequest = std::string (R"({"version":1,"sessionPath":"","activationToken":")")
+                                  + invalidUtf8 + "\"}";
+        REQUIRE_FALSE (LaunchRequest::decode (invalidRequest));
+    }
+}
+
+TEST_CASE ("an activation token that cannot travel is dropped, not the launch",
+           "[single-instance][wayland][issue-961]")
+{
+    using duskstudio::LaunchRequest;
+    const auto handsOver = [] (const LaunchRequest& request)
+    {
+        const auto encoded = request.encodeForHandoff();
+        REQUIRE (encoded);
+        const auto decoded = LaunchRequest::decode (*encoded);
+        REQUIRE (decoded);
+        REQUIRE (decoded->sessionPath == request.sessionPath);
+        REQUIRE (decoded->activationToken.empty());
+    };
+
+    SECTION ("a token that is not UTF-8")
+    {
+        handsOver ({ "/sessions/song/session.json", std::string (1, '\xff') });
+        handsOver ({ {}, std::string (1, '\xff') });
+    }
+
+    SECTION ("a token over the payload limit")
+    {
+        handsOver ({ "/sessions/song/session.json",
+                     std::string (duskstudio::single_instance::kMaxPayloadBytes + 1, 'x') });
+    }
+
+    SECTION ("a token that fits travels")
+    {
+        const auto decoded = LaunchRequest::decode (*LaunchRequest { "/s", "token" }.encodeForHandoff());
+        REQUIRE (decoded);
+        REQUIRE (decoded->activationToken == "token");
+    }
+
+    SECTION ("a path that cannot travel still fails")
+    {
+        REQUIRE_FALSE ((LaunchRequest { std::string ("a\0b", 3), "token" }.encodeForHandoff()));
+    }
+}
+
+TEST_CASE ("a launch handed over by a version that sent the bare path still opens it",
+           "[single-instance][issue-961]")
+{
+    using duskstudio::LaunchRequest;
+    std::string seen;
+    const auto legacyPath = [&seen] (std::string_view payload)
+    {
+        seen = std::string (payload);
+        return std::string ("/resolved/session.json");
+    };
+
+    SECTION ("a quoted path goes through the command-line parse")
+    {
+        const auto request = LaunchRequest::receive ("\"/sessions/my song/session.json\"", legacyPath);
+        REQUIRE (seen == "\"/sessions/my song/session.json\"");
+        REQUIRE (request.sessionPath == "/resolved/session.json");
+        REQUIRE (request.activationToken.empty());
+    }
+
+    SECTION ("an empty payload still raises the window")
+    {
+        const auto request = LaunchRequest::receive ("", [] (std::string_view) { return std::string(); });
+        REQUIRE (request.sessionPath.empty());
+        REQUIRE (request.activationToken.empty());
+    }
+
+    SECTION ("a current request skips the parse")
+    {
+        const auto payload = *LaunchRequest { "/sessions/song/session.json", "token" }.encode();
+        const auto request = LaunchRequest::receive (payload, legacyPath);
+        REQUIRE (seen.empty());
+        REQUIRE (request.sessionPath == "/sessions/song/session.json");
+        REQUIRE (request.activationToken == "token");
+    }
+}
+
+TEST_CASE ("launcher activation tokens are removed before child processes start",
+           "[single-instance][wayland][issue-961]")
+{
+   #if defined (__linux__)
+    const duskstudio::test::ScopedEnvironmentVariable env ("XDG_ACTIVATION_TOKEN", "launch-once");
+    REQUIRE (duskstudio::takeLaunchActivationToken() == "launch-once");
+    REQUIRE (std::getenv ("XDG_ACTIVATION_TOKEN") == nullptr);
+   #endif
+    REQUIRE (duskstudio::takeLaunchActivationToken().empty());
 }
 
 TEST_CASE ("OOP editor window RPCs dispatch through the child message thread",

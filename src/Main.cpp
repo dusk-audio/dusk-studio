@@ -48,17 +48,10 @@ const UseUtf8ForNarrowPaths useUtf8ForNarrowPaths;
 #include <cerrno>
 #include <strings.h>
 
-// Dusk Studio is an X11/XWayland client on Linux: every window (main UI and
-// plugin-editor peers) is forced to an X11 peer, so the JUCE fork's hybrid
-// Wayland connection is never used for windowing. Leaving it open is not
-// harmless: its startup handshake (registry binds at the compositor's
-// advertised versions, libdecor init) aborts on some compositors
-// (wlroots/smithay families - GitHub issue #56) before any window exists.
-// JUCE_XWAYLAND makes the fork skip the Wayland connection entirely - the
-// behavior every 0.9.x release had. DUSKSTUDIO_NATIVE_WAYLAND=1 re-enables
-// the hybrid backend for development. Static initializer so it runs before
-// the app framework touches the window system, without replacing the
-// framework's entry-point macro.
+// The default X11 path must skip the Wayland handshake: older framework
+// revisions abort on some wlroots/smithay compositors before creating a
+// window. The opt-in runs before framework startup; native embedding also
+// requires the shared-connection APIs checked by CMake.
 namespace
 {
 bool nativeWaylandRequested (const char* value) noexcept

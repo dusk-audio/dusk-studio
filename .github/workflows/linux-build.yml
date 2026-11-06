@@ -96,8 +96,8 @@ jobs:
         # detects which surface is present at configure time).
         env:
           JUCE_MIRROR: https://github.com/dusk-audio/JUCE-wayland.git
-          JUCE_TAG: dusk-wayland-v9
-          JUCE_REV: 108fab92a4b748b2cec1252b3ceb76fa40c699e0
+          JUCE_TAG: dusk-wayland-v10
+          JUCE_REV: 09fa6b1b9ed131dbf7ff3f62a4b5671a4396f29f
         run: |
           set -euo pipefail
           git init -q "${RUNNER_TEMP}/JUCE-wayland"
@@ -187,10 +187,6 @@ jobs:
             build-linux/DuskStudio_artefacts/Release/DuskStudio
 
       - name: Scenario suite (xvfb)
-        # Advisory while the suite settles: a failure is reported but does not
-        # fail the job. Drop continue-on-error and make it a required check
-        # once it has run clean for a week.
-        continue-on-error: true
         run: |
           timeout 300 xvfb-run --auto-servernum \
             env DUSKSTUDIO_RUN_SCENARIOS=all \

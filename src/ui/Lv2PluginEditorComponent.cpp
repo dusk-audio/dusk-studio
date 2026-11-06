@@ -66,7 +66,15 @@ bool Lv2PluginEditorComponent::attach (lv2::Lv2Instance& shared, juce::String& e
 std::uintptr_t Lv2PluginEditorComponent::peerNativeHandle() const
 {
     if (auto* peer = getPeer())
+    {
+       #if defined (__linux__)
+        if (platform::describeEmbeddedParent (
+                reinterpret_cast<std::uintptr_t> (peer->getNativeHandle())).backend
+                    != platform::NativeEmbeddedParent::Backend::platform)
+            return 0;
+       #endif
         return reinterpret_cast<std::uintptr_t> (peer->getNativeHandle());
+    }
     return 0;
 }
 

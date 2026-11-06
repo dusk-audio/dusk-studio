@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "util/SingleInstance.h"
+#include "util/LaunchRequest.h"
 
 #include <algorithm>
 #include <atomic>
@@ -320,6 +321,18 @@ TEST_CASE ("single-instance handoff preserves quoted Unicode and empty payloads"
     duskstudio::single_instance::release();
     REQUIRE (delivered.copy() == std::vector<std::string> { session, "", "lost-ack" });
 #endif
+
+    const auto expectedCount = delivered.copy().size() + 1;
+    const auto request = duskstudio::LaunchRequest { session, "fresh-launch-token" }.encode();
+    REQUIRE (request);
+    REQUIRE (duskstudio::single_instance::acquire ("", receive));
+    REQUIRE_FALSE (duskstudio::single_instance::acquire (*request, noPayload));
+    REQUIRE (delivered.waitFor (expectedCount));
+    duskstudio::single_instance::release();
+    const auto received = duskstudio::LaunchRequest::decode (delivered.copy().back());
+    REQUIRE (received);
+    REQUIRE (received->sessionPath == session);
+    REQUIRE (received->activationToken == "fresh-launch-token");
 }
 
 TEST_CASE ("simultaneous single-instance launches elect exactly one owner",

@@ -2,6 +2,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "PlatformWindowing.h"
+#include "NativeEmbeddedParent.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -11,8 +12,10 @@ namespace duskstudio::embedscale
 constexpr double factorFromSources (double globalScale,
                                     double peerPlatformScale,
                                     double nativeViewScale,
-                                    bool useNativeViewScale) noexcept
+                                    bool useNativeViewScale,
+                                    platform::NativeEmbeddedParent::Backend backend) noexcept
 {
+    if (backend == platform::NativeEmbeddedParent::Backend::wayland) return globalScale;
     return globalScale * (useNativeViewScale ? nativeViewScale
                                              : peerPlatformScale);
 }
@@ -69,9 +72,8 @@ inline int fromPhysical (const juce::Component& c, int physical)
     return std::max (1, static_cast<int> (std::floor (physical / factor (c) + 0.5)));
 }
 
-// Where an embedded native child sits, and the scale the framework should draw it
-// at. macOS reports the backing scale off the view rather than the peer, which is
-// why the factor is assembled from three sources rather than read from factor().
+// Wayland uses parent-surface coordinates and user zoom; DAF applies output scale.
+// Other backends use backing pixels, with macOS reading scale from the native view.
 struct NativeChildGeometry
 {
     int x = 0;
@@ -106,8 +108,10 @@ inline NativeChildGeometry childGeometryFor (const juce::Component& topLevel,
    #else
     constexpr bool useNativeViewScale = false;
    #endif
+    const auto parent = platform::describeEmbeddedParent (peer != nullptr
+        ? reinterpret_cast<std::uintptr_t> (peer->getNativeHandle()) : 0);
     const double scale = factorFromSources (globalScale(), peerScale, backingScale,
-                                            useNativeViewScale);
+                                            useNativeViewScale, parent.backend);
     const auto bounds = toPhysicalBounds (logical.getX(), logical.getY(),
                                           logical.getWidth(), logical.getHeight(), scale);
     return { bounds.x, bounds.y,
@@ -116,14 +120,9 @@ inline NativeChildGeometry childGeometryFor (const juce::Component& topLevel,
              scale };
 }
 
-// A child pinned to the physical size it had when it opened, so an app-wide UI-scale
-// change rescales the DAW behind it and leaves the panel alone. The audio settings
-// panel is the control surface for that change: a panel that rescaled with everything
-// else would move the slider out from under the pointer mid-drag.
-//
-// The logical rectangle grows as the app zooms out and shrinks as it zooms in, so the
-// physical one it converts to stays put; the draw scale is taken back to the reference
-// for the same reason.
+// Keep the panel size fixed in its parent coordinate space during app zoom so the
+// Audio Settings scale slider stays under the pointer. Wayland output scale remains
+// independent and may change the backing buffer without changing this rectangle.
 struct PinnedChild
 {
     juce::Rectangle<int> logical;     // for the dim overlay's click-through region

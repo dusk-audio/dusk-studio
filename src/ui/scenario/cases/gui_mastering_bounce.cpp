@@ -789,6 +789,8 @@ std::optional<ScenarioResult> runMasteringCompactCover (GuiHost& host, ScenarioC
     }, "compact Phase mode control never became ready" });
     steps->push_back ({ 100, [&host, &ctx]
     { ctx.expect (host.masteringPhasePointer ("mode", 0.5f, false), "Phase mode release is unavailable"); } });
+    steps->push_back ({ 100, [] {}, [&host] { return host.masteringPhaseCapturesKeyboard(); },
+                       "Phase mode press did not open its menu" });
     steps->push_back ({ 100, [&host, &ctx]
     { ctx.expect (host.pressPeerKey ("escape"), "Phase menu did not accept Escape"); },
                        [&host] { return host.masteringPhaseCapturesKeyboard() && host.masteringPhaseHasKeyboard(); },

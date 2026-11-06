@@ -5,8 +5,14 @@
 #define JUCE_GUI_BASICS_INCLUDE_XHEADERS 1
 
 #include "LinuxPeerTeardown.h"
+#include "NativeEmbeddedParent.h"
 #include "PlatformWindowing.h"
 #include "X11EditorTeardownError.h"
+#include "imgui/SharedWaylandApplication.h"
+
+#if DUSKSTUDIO_HAS_SHARED_WAYLAND
+ #include <WaylandInput.hpp>
+#endif
 
 #include <X11/Xproto.h>
 #include <X11/Xutil.h>
@@ -101,6 +107,113 @@ bool openPathInDefaultApp (const std::filesystem::path& path)
 #if DUSKSTUDIO_JUCE_HAS_WAYLAND
 using juce::WaylandSymbols;
 using juce::WaylandWindowSystem;
+#endif
+
+NativeEmbeddedParent describeEmbeddedParent (std::uintptr_t handle)
+{
+    if (handle == 0) return {};
+    for (int i = 0; i < juce::ComponentPeer::getNumPeers(); ++i)
+    {
+        auto* const peer = juce::ComponentPeer::getPeer (i);
+        if (reinterpret_cast<std::uintptr_t> (peer->getNativeHandle()) != handle)
+            continue;
+        NativeEmbeddedParent parent { NativeEmbeddedParent::Backend::platform,
+                                      handle, peer->getUniqueID() };
+       #if DUSKSTUDIO_JUCE_HAS_WAYLAND
+        if (auto* const system = WaylandWindowSystem::getInstanceWithoutCreating())
+            if (auto* const window = system->getWaylandWindowForPeer (peer))
+            {
+                if (reinterpret_cast<std::uintptr_t> (system->getSurfaceForWindow (window)) != handle)
+                    return {};
+                parent.backend = NativeEmbeddedParent::Backend::wayland;
+            }
+       #endif
+        return parent;
+    }
+    return {};
+}
+
+bool isEmbeddedParentAlive (const NativeEmbeddedParent& parent)
+{
+    const auto current = describeEmbeddedParent (parent.handle);
+    return current.backend != NativeEmbeddedParent::Backend::unavailable
+        && current.backend == parent.backend && current.peerId == parent.peerId;
+}
+
+#if DUSKSTUDIO_HAS_SHARED_WAYLAND
+namespace
+{
+WaylandWindowSystem* waylandHost (const NativeWaylandConnection& connection)
+{
+    auto* const host = WaylandWindowSystem::getInstanceWithoutCreating();
+    return host != nullptr && host == connection.host && host->isWaylandAvailable()
+        && host->getDisplay() == connection.display && host->getSeat() == connection.seat ? host : nullptr;
+}
+}
+
+NativeWaylandConnection waylandConnectionForParent (const NativeEmbeddedParent& parent)
+{
+    if (parent.backend != NativeEmbeddedParent::Backend::wayland || ! isEmbeddedParentAlive (parent))
+        return {};
+    auto* const host = WaylandWindowSystem::getInstanceWithoutCreating();
+    if (host == nullptr || ! host->isWaylandAvailable())
+        return {};
+    return { host, host->getDisplay(), host->getSeat() };
+}
+
+std::uint64_t attachWaylandInput (const NativeWaylandConnection& connection, const DGL::WaylandInput& input,
+                                  std::shared_ptr<void> lifetime)
+{
+    if (auto* const host = waylandHost (connection))
+        return host->attachInputForwarder ({ input.keyboard, input.pointer, input.data, input.consumed,
+                                            input.hasKeyboardFocus, input.releaseFocus, input.reset,
+                                            std::move (lifetime) });
+    return 0;
+}
+
+void detachWaylandInput (const NativeWaylandConnection& connection, std::uint64_t registration)
+{
+    if (registration != 0)
+        if (auto* const host = waylandHost (connection))
+            host->detachInputForwarder (registration);
+}
+
+void forgetWaylandInputSurface (const NativeWaylandConnection& connection, std::uintptr_t surface)
+{
+    if (auto* const host = waylandHost (connection))
+        host->forgetInputSurface (reinterpret_cast<wl_surface*> (surface));
+}
+
+bool commitWaylandParent (const NativeWaylandConnection& connection, const NativeEmbeddedParent& parent)
+{
+    auto* const host = waylandHost (connection);
+    if (! (waylandConnectionForParent (parent) == connection) || host == nullptr)
+        return false;
+    auto* const symbols = WaylandSymbols::getInstance();
+    if (! host->commitEmbeddedChildren (reinterpret_cast<wl_surface*> (parent.handle)))
+        return false;
+    int result;
+    do { result = symbols->displayFlush (static_cast<wl_display*> (connection.display)); }
+    while (result < 0 && errno == EINTR);
+    return result >= 0 || errno == EAGAIN;
+}
+
+std::string readWaylandClipboard (const NativeWaylandConnection& connection)
+{
+    if (auto* const host = waylandHost (connection))
+        return host->getTextFromClipboard().toStdString();
+    return {};
+}
+
+bool writeWaylandClipboard (const NativeWaylandConnection& connection, const std::string& text)
+{
+    if (auto* const host = waylandHost (connection))
+    {
+        host->copyTextToClipboard (text);
+        return true;
+    }
+    return false;
+}
 #endif
 
 namespace
@@ -375,6 +488,20 @@ juce::ComponentPeer* pickSiblingFocusTargetPeer (juce::Component& departing)
 
 bool hasUsableDisplay()
 {
+    return hasUsableWaylandDisplay() || hasUsableX11Display();
+}
+
+bool hasUsableWaylandDisplay()
+{
+   #if DUSKSTUDIO_HAS_SHARED_WAYLAND
+    return WaylandWindowSystem::getInstance()->isWaylandAvailable();
+   #else
+    return false;
+   #endif
+}
+
+bool hasUsableX11Display()
+{
     // JUCE's XWindowSystem is lazy and not yet created at preflight time,
     // so we can't reuse its ::Display*; open a throwaway connection.
     // XOpenDisplay(nullptr) reads $DISPLAY itself and returns null when no
@@ -563,6 +690,9 @@ void runX11EditorTeardown (std::uint64_t editorWindowId,
 
 void setNativeCursorVisibleOnPeer (juce::ComponentPeer& peer, bool visible)
 {
+    if (describeEmbeddedParent (reinterpret_cast<std::uintptr_t> (peer.getNativeHandle())).backend
+            != NativeEmbeddedParent::Backend::platform)
+        return;
     auto* d = juceDisplay();
     if (d == nullptr) return;
     const auto win = (::Window) (uintptr_t) peer.getNativeHandle();
@@ -596,10 +726,34 @@ void setNativeCursorVisibleOnPeer (juce::ComponentPeer& peer, bool visible)
     ::XFlush (d);
 }
 
-void bringWindowToFront (juce::ComponentPeer& peer)
+bool bringWindowToFront (juce::ComponentPeer& peer, const std::string& activationToken)
 {
+    const auto parent = describeEmbeddedParent (reinterpret_cast<std::uintptr_t> (peer.getNativeHandle()));
+    if (parent.backend == NativeEmbeddedParent::Backend::wayland)
+    {
+       #if DUSKSTUDIO_HAS_SHARED_WAYLAND
+        if (activationToken.empty()) return true;
+        auto* const host = WaylandWindowSystem::getInstanceWithoutCreating();
+        auto* const surface = reinterpret_cast<wl_surface*> (parent.handle);
+        if (! host->isSurfaceMapped (surface)) return false;
+        try
+        {
+            if (auto app = imgui::SharedWaylandApplication::acquire (parent))
+                if (app->activateParent (parent, activationToken))
+                    return true;
+        }
+        catch (const std::exception& error)
+        {
+            std::fprintf (stderr, "Dusk Studio: Wayland activation failed: %s\n", error.what());
+            return true;
+        }
+        std::fputs ("Dusk Studio: Wayland activation is unavailable.\n", stderr);
+       #endif
+        return true;
+    }
+
     auto* d = juceDisplay();
-    if (d == nullptr) return;
+    if (d == nullptr || parent.backend == NativeEmbeddedParent::Backend::unavailable) return true;
 
     const auto win = (::Window) (uintptr_t) peer.getNativeHandle();
     const auto userTimeAtom    = ::XInternAtom (d, "_NET_WM_USER_TIME",   False);
@@ -651,6 +805,7 @@ void bringWindowToFront (juce::ComponentPeer& peer)
         ::XSetInputFocus (d, win, RevertToParent, CurrentTime);
 
     ::XFlush (d);
+    return true;
 }
 
 void flushWindowOperations()
@@ -736,12 +891,26 @@ void clearXInputFocus()
     }
 }
 
-// All three helpers below touch the plugdata-team JUCE-wayland fork's
+// These helpers touch the plugdata-team JUCE-wayland fork's
 // WaylandWindowSystem / WaylandSymbols. Upstream JUCE has no such
 // types. DUSKSTUDIO_JUCE_HAS_WAYLAND is set by CMake when the fork is in
 // use; absent that, these are stubs (CI builds + non-Wayland deploys
 // don't need the X11/Wayland peer-creation latch or the focus
 // roundtrip).
+void withX11PeerCreation (const std::function<void()>& create)
+{
+   #if DUSKSTUDIO_JUCE_HAS_WAYLAND
+    struct Restore
+    {
+        bool previous;
+        ~Restore() { WaylandWindowSystem::setSkipForPeerCreation (previous); }
+    };
+    const Restore restore { WaylandWindowSystem::shouldSkipForPeerCreation() };
+    WaylandWindowSystem::setSkipForPeerCreation (true);
+   #endif
+    create();
+}
+
 void preferX11ForNextNativeWindow()
 {
    #if DUSKSTUDIO_JUCE_HAS_WAYLAND
@@ -751,13 +920,8 @@ void preferX11ForNextNativeWindow()
 
 void clearPreferX11ForNativeWindow()
 {
-    // No-op on Linux. Dusk Studio routes ALL native peers to X11
-    // (XWayland) so the main window, popup menus, plugin editors,
-    // and dialog windows share one peer backend. Clearing the latch
-    // would let the next PopupMenu create a wl_surface peer that can't
-    // parent to the X11 main window - symptom: picker menu never opens.
-    // Once preferX11ForNextNativeWindow() is called (during MainWindow
-    // ctor), the latch stays on for the process lifetime.
+    // X11 fallback and standalone editor tests keep their process backend.
+    // Foreign editors in a Wayland session use withX11PeerCreation instead.
 }
 
 void requestFocusOnMainWaylandSurface()

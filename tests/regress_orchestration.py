@@ -36,6 +36,26 @@ with tempfile.TemporaryDirectory(prefix="dusk-regress-contract-") as scratch:
     runner_tmp.mkdir()
     child_environment = dict(os.environ, DUSK_REGRESS_RECORD_FILE=str(root / "results.tsv"),
                              TMPDIR=str(runner_tmp))
+    sandbox_harness = r'''
+set -euo pipefail
+source "$DUSK_REGRESS_TEST_ROOT/scripts/regress/common.sh"
+source "$DUSK_REGRESS_TEST_ROOT/scripts/regress/scenarios.sh"
+bb_begin interrupted-scratch
+env "${SANDBOX_ENV[@]}" python3 -c '
+import os, pathlib, tempfile
+scratch = pathlib.Path(tempfile.mkdtemp(prefix="duskstudio-scenario-"))
+(scratch / "restore.json").write_text("{}")
+os._exit(0)
+'
+bb_end 0
+'''
+    result = subprocess.run(["bash", "-c", sandbox_harness],
+                            env=dict(child_environment, DUSK_REGRESS_TEST_ROOT=str(repo),
+                                     DUSK_REGRESS_SCENARIO_KEEP="0"),
+                            capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert not any(runner_tmp.iterdir()), "interrupted scenario scratch escaped its sandbox"
+
     scripts = root / "scripts"
     runners = scripts / "regress"
     runners.mkdir(parents=True)
@@ -46,6 +66,7 @@ with tempfile.TemporaryDirectory(prefix="dusk-regress-contract-") as scratch:
             "#!/usr/bin/env bash\n"
             "set -eu\n"
             f"echo $$ > '{root}/{platform}.pid'\n"
+            f"printf '%s\\n' \"$@\" > '{root}/{platform}.args'\n"
             "timeout --kill-after=2 60 bash -c '\n"
             f'echo $$ > "{root}/{platform}.managed"\n'
             "sleep 60 &\n"
@@ -72,6 +93,8 @@ with tempfile.TemporaryDirectory(prefix="dusk-regress-contract-") as scratch:
             group = os.getpgid(pid)
             groups.add(group)
             assert group != process.pid, "runner shares the caller's process group"
+        assert (root / "linux.args").read_text().splitlines() == ["--gui-scenarios"], \
+            "prepush did not enable GUI scenarios by default"
         process.send_signal(signal.SIGINT)
         stdout, stderr = process.communicate(timeout=5)
         assert process.returncode == 130, (process.returncode, stdout, stderr)
@@ -118,10 +141,15 @@ with tempfile.TemporaryDirectory(prefix="dusk-regress-contract-") as scratch:
     other = log_folder("dusk-regress-all.stale")
     capture = log_folder("dusk-capture.stale")
     activation = log_folder("duskstudio-gnome-activation.stale")
-    asked_to_keep = log_folder("duskstudio-gnome-drop.stale")
+    file_drop = log_folder("duskstudio-gnome-drop.stale")
+    native_activation = log_folder("duskstudio-native-activation.stale")
+    native_gui = log_folder("duskstudio-native-gui.stale")
+    native_embed = log_folder("duskstudio-gnome-native-embed.stale")
+    asked_to_keep = log_folder("duskstudio-x11-drop.stale")
     owner_lock = open(owned / ".lock", "w")
     fcntl.flock(owner_lock, fcntl.LOCK_EX)
-    for folder in (stale, owned, other, capture, activation, asked_to_keep):
+    for folder in (stale, owned, other, capture, activation, file_drop, native_activation, native_gui,
+                   native_embed, asked_to_keep):
         age(folder, week + 3600)
     age(fresh, week - 3600)
 
@@ -139,7 +167,7 @@ with tempfile.TemporaryDirectory(prefix="dusk-regress-contract-") as scratch:
         assert not log_dir.exists(), "a passing prepush kept its logs"
         assert str(log_dir) not in result.stdout.split("RESULT", 1)[1], result.stdout
         assert not stale.exists(), "a week-old prepush folder was not pruned"
-        for folder in (capture, activation):
+        for folder in (capture, activation, file_drop, native_activation, native_gui, native_embed):
             assert not folder.exists(), f"a week-old {folder.name} kept by a failed leg was not pruned"
         for folder in (fresh, owned, other, asked_to_keep):
             assert folder.is_dir(), f"pruning removed {folder.name}"
@@ -509,12 +537,15 @@ for arg in sys.argv[1:-1]:
                                 env=dict(win_environment, DUSK_REGRESS_DRY_RUN="1"),
                                 capture_output=True, text=True, timeout=5)
         assert result.returncode == 2, (arguments, result.stdout, result.stderr)
-    result = subprocess.run(["/bin/bash", str(win_root / "scripts/regress.sh"), "prepush", "--no-scenarios"],
-                            env=dict(win_environment, DUSK_REGRESS_DRY_RUN="1"),
-                            capture_output=True, text=True, timeout=5)
-    assert result.returncode == 0, result.stderr
-    assert "linux:   --no-scenarios\n" in result.stdout, result.stdout
-    assert "windows: source leg" in result.stdout, result.stdout
+    for arguments, expected in (([], "--gui-scenarios"),
+                                (["--gui-scenarios"], "--gui-scenarios"),
+                                (["--no-scenarios"], "--no-scenarios --gui-scenarios")):
+        result = subprocess.run(["/bin/bash", str(win_root / "scripts/regress.sh"), "prepush", *arguments],
+                                env=dict(win_environment, DUSK_REGRESS_DRY_RUN="1"),
+                                capture_output=True, text=True, timeout=5)
+        assert result.returncode == 0, result.stderr
+        assert f"linux:   {expected}\n" in result.stdout, result.stdout
+        assert "windows: source leg" in result.stdout, result.stdout
 
     win_trace.write_text("")
     process = subprocess.Popen(

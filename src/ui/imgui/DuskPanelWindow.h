@@ -35,6 +35,10 @@ std::optional<KeyChord> parseKeyDescription (const std::string& description);
 // Shell names differ from ImGui's debug names. Empty for modifiers and unmapped keys.
 std::string shellKeyName (ImGuiKey key);
 
+// The character a chord types on a US layout, which a platform key event carries
+// beside its key code. Zero with Ctrl, Cmd or Alt held and for a key that types nothing.
+std::uint32_t shellKeyText (const KeyChord& chord);
+
 // The shell shortcut a panel passes on for a key: a bare transport key, Shift with a
 // bracket for the punch pair, or the command key with Z, Y, S or Q for Undo, Redo,
 // Save, Save As and Quit. Empty for every other key, which the panel keeps.

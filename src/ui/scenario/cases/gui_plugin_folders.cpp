@@ -2,6 +2,10 @@
 #include "../../../engine/PluginSearchPaths.h"
 #include "../../../engine/PluginManager.h"
 
+#if DUSKSTUDIO_HAS_NATIVE_UI
+ #include "../../imgui/CjkFont.h"
+#endif
+
 #include <cstdio>
 #include <cstdlib>
 
@@ -225,6 +229,62 @@ std::optional<ScenarioResult> runPluginFolderUnicodeStart (GuiHost& host, Scenar
    #endif
 }
 
+// Folder paths and dropdowns come from outside the app; Settings draws them in the
+// face that takes installed fonts for CJK.
+std::optional<ScenarioResult> runSettingsCjkGlyphs (GuiHost& host, ScenarioContext& ctx)
+{
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("requires native settings");
+   #else
+    if (! ctx.engine().getTransport().isStopped() || ! host.modalStackEmpty() || host.audioSettingsOpen())
+        return ScenarioResult::skip ("requires stopped transport and no open dialog");
+    {
+        imgui::CjkFont font;
+        for (const auto codepoint : { 0x65e5u, 0x3042u, 0xd55cu })
+        {
+            imgui::CjkGlyph glyph;
+            if (! font.rasterize (codepoint, 13, glyph))
+                return ScenarioResult::skip ("requires installed Han, kana and Hangul fonts");
+        }
+    }
+    namespace fs = std::filesystem;
+    const auto settings = pluginpaths::settingsFile();
+    const bool existed = fs::exists (settings);
+    const auto saved = dusk::fs::loadFileAsString (settings);
+    ctx.cleanup ([&host, settings, existed, saved]
+    {
+        drainModals (host);
+        host.closeAudioSettings();
+        if (existed) dusk::fs::writeStringToFile (settings, saved);
+        else { std::error_code error; fs::remove (settings, error); }
+    });
+    const auto folder = fs::canonical (ctx.tempDir()) / fs::u8path ("\xe6\x97\xa5\xe3\x81\x82\xed\x95\x9c");
+    if (! fs::create_directory (folder)) return ScenarioResult::fail ("could not create the CJK folder fixture");
+    std::string settingsError;
+    if (! pluginpaths::save ({ folder }, settingsError)) return ScenarioResult::fail (settingsError);
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 0, [&host, &ctx] { ctx.expect (host.openAudioSettings(), "Settings did not open"); } });
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.clickAudioSettingsControl ("tab-plugins"), "Settings control could not be clicked: tab-plugins"); },
+    [&host] { return host.pointerAudioSettings ("tab-plugins", 0.5f, false); },
+    "Settings control did not appear: tab-plugins", {}, kSettleBoundMs });
+    steps->push_back ({ 400, [&host, &ctx]
+    { expectNamesReadable (host, ctx, "settings", 3, "settings-cjk-names.ppm"); }, [&host] { return host.pointerAudioSettings ("plugin-folder-remove", 0.5f, false); },
+    "Settings did not list the CJK folder", {}, kSettleBoundMs });
+    steps->push_back ({ 0, [&host] { host.closeAudioSettings(); } });
+    steps->push_back ({ 0, [] {}, [&host] { return ! host.audioSettingsOpen(); },
+    "Settings did not close at the end of the CJK check", {}, kSettleBoundMs });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+   #endif
+}
+
+const ScenarioRegistrar settingsCjkGlyphs { Scenario {
+    "gui.settings_cjk_glyphs", { "gui", "settings", "cjk" }, Needs::Engine | Needs::Gui,
+    {}, {}, 30000, [] (GuiHost& host, ScenarioContext& ctx) { return runSettingsCjkGlyphs (host, ctx); }
+} };
 const ScenarioRegistrar pluginFolderUnicodeStart { Scenario {
     "gui.settings_plugin_folder_unicode_start", { "gui", "settings", "plugins" }, Needs::Engine | Needs::Gui,
     {}, {}, 60000, [] (GuiHost& host, ScenarioContext& ctx) { return runPluginFolderUnicodeStart (host, ctx); }

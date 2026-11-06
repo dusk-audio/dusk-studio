@@ -1,6 +1,8 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include "TestTempDirectory.h"
+
 #include "session/Session.h"
 #include "session/SessionSerializer.h"
 
@@ -14,15 +16,6 @@ using Catch::Matchers::WithinAbs;
 
 namespace
 {
-juce::File makeTempSessionDir()
-{
-    auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
-                  .getChildFile ("dusk-studio-tape-migration-"
-                                    + juce::String (juce::Random::getSystemRandom().nextInt()));
-    dir.createDirectory();
-    return dir;
-}
-
 // Rebuild the container JUCE's AudioProcessor::copyXmlToBinary produces:
 // uint32 LE magic, uint32 LE text length, single-line XML text, NUL.
 juce::String makeLegacyTapeStateBlob (const juce::String& xml)
@@ -57,7 +50,8 @@ TEST_CASE ("SessionSerializer migrates the legacy tape_state blob", "[session][s
     using duskstudio::Session;
     using duskstudio::SessionSerializer;
 
-    const auto dir    = makeTempSessionDir();
+    const duskstudio::test::TempDirectory scratch ("dusk-studio-tape-migration-");
+    const juce::File dir (scratch.path().u8string());
     const auto target = dir.getChildFile ("session.json");
 
     const juce::String xml =
@@ -169,8 +163,6 @@ TEST_CASE ("SessionSerializer migrates the legacy tape_state blob", "[session][s
         REQUIRE (c.master().tape.autoComp.load());
         REQUIRE_THAT (c.master().tape.wow.load(), WithinAbs (7.0f, 1.0e-5f));
     }
-
-    dir.deleteRecursively();
 }
 
 TEST_CASE ("SessionSerializer round-trips every Tape Machine 2 control", "[session][serializer][tape]")
@@ -178,7 +170,8 @@ TEST_CASE ("SessionSerializer round-trips every Tape Machine 2 control", "[sessi
     using duskstudio::Session;
     using duskstudio::SessionSerializer;
 
-    const auto dir    = makeTempSessionDir();
+    const duskstudio::test::TempDirectory scratch ("dusk-studio-tape-migration-");
+    const juce::File dir (scratch.path().u8string());
     const auto target = dir.getChildFile ("session.json");
 
     Session s;

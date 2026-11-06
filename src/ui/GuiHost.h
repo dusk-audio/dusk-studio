@@ -272,6 +272,8 @@ public:
     virtual std::vector<MiniMarkerPaint> miniMarkerPaint() const = 0;
     virtual bool clickMiniSample (std::int64_t sample) = 0;
     virtual bool clickMiniMarker (int index) = 0;
+    // A key at the mini timeline's native child, as a focused child receives it.
+    virtual bool pressMiniKey (const std::string& description) = 0;
     virtual bool clickTimeFormat() = 0;
     // The menu bar's DSP segment, and a double-click on it.
     virtual std::string dspReadout() const = 0;
@@ -488,6 +490,8 @@ public:
     virtual bool groupChipView (int index, std::string& text, int& master, bool& filled) = 0;
 
     virtual bool canEmbedPluginEditors() const = 0;
+    virtual bool nativeWaylandWindow() const = 0;
+    virtual bool modalHasSeparateX11Peer() const = 0;
     virtual bool modalStackEmpty() const = 0;
     virtual int modalCount() const = 0;
     virtual std::string modalText() const = 0;

@@ -2,43 +2,48 @@
 
 #include "../session/Session.h"
 #include "../engine/AudioEngine.h"
+#include "EmbeddedModal.h"
+#include "NativeEditorEmbedScale.h"
+#if DUSKSTUDIO_HAS_NATIVE_UI
+ #include "imgui/MiniTimelineView.h"
+#endif
 
-#include <cmath>
 #include <algorithm>
+#include <utility>
 
 namespace duskstudio
 {
-namespace
+struct MiniTimelineStrip::Tooltip final : juce::Component
 {
-const juce::Colour kBg        { 0xff15151a };
-const juce::Colour kBorder    { 0xff32323a };
-const juce::Colour kTrackLine { 0xff3a3a44 };
-const juce::Colour kCap       { 0xff90a0b0 };
-const juce::Colour kPlayhead  { 0xffe04040 };   // tape-ruler red
-const juce::Colour kMarkerDim { 0xffe0a050 };   // default marker amber
-} // namespace
+    std::string text;
 
-MiniTimelineStrip::MiniTimelineStrip (Session& s, AudioEngine& e)
-    : session (s), engine (e)
+    Tooltip() { setInterceptsMouseClicks (false, false); }
+    void paint (juce::Graphics& g) override
+    {
+        getLookAndFeel().drawTooltip (g, text, getWidth(), getHeight());
+    }
+};
+
+MiniTimelineStrip::MiniTimelineStrip (Session& s, AudioEngine& e) : session (s), engine (e)
 {
-    setInterceptsMouseClicks (true, false);
-    // Base help (mouseMove refines it to the marker under the cursor). Set here
-    // too so hovering empty timeline / between markers still surfaces help.
-    setTooltip ("Mini timeline - click to seek; click a marker to jump, "
-                "double-click a marker to rename.");
+    getProperties().set (kPluginEditorTag, true);
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    latch.openFailed();
+   #endif
     startTimerHz (30);
-    engine.getUndoManager().addChangeListener (this);
 }
 
 MiniTimelineStrip::~MiniTimelineStrip()
 {
     stopTimer();
-    engine.getUndoManager().removeChangeListener (this);
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    window.reset();
+   #endif
 }
 
 std::int64_t MiniTimelineStrip::songEndSamples() const noexcept
 {
-    std::int64_t end = engine.getTransport().getPlayhead();
+    auto end = engine.getTransport().getPlayhead();
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
         for (const auto& r : session.track (t).regions)
@@ -46,221 +51,215 @@ std::int64_t MiniTimelineStrip::songEndSamples() const noexcept
         for (const auto& m : session.track (t).midiRegions.current())
             end = std::max (end, m.timelineStart + m.lengthInSamples);
     }
-    // Markers can sit past the last region (e.g. an "End" marker placed beyond
-    // the audio). Extend the extent to cover them so they don't get clamped to
-    // the right edge and mis-hit-test in the collapsed timeline.
-    for (const auto& mk : session.getMarkers())
-        end = std::max (end, mk.timelineSamples);
-    const auto floorLen = (std::int64_t) (engine.getTimelineSampleRate() * 60.0);
-    return std::max (end, floorLen);
+    for (const auto& marker : session.getMarkers()) end = std::max (end, marker.timelineSamples);
+    return std::max (end, static_cast<std::int64_t> (engine.getTimelineSampleRate() * 60.0));
 }
 
-int MiniTimelineStrip::xForSample (std::int64_t s, std::int64_t end) const noexcept
+void MiniTimelineStrip::updateState()
 {
-    const int usable = std::max (1, getWidth() - kPadL - kPadR);
-    const double frac = end > 0 ? std::clamp ((double) s / (double) end, 0.0, 1.0) : 0.0;
-    return kPadL + (int) std::lround (frac * (double) usable);
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    if (view == nullptr || closing) return;
+    view->state.end = songEndSamples();
+    view->state.playhead = engine.getTransport().getPlayhead();
+    view->state.markers.clear();
+    for (const auto& marker : session.getMarkers())
+        view->state.markers.push_back ({ marker.name.toStdString(), marker.timelineSamples, marker.colour.getARGB() });
+   #endif
 }
 
-std::int64_t MiniTimelineStrip::sampleForX (int x, std::int64_t end) const noexcept
+void MiniTimelineStrip::hideTooltip()
 {
-    const int usable = std::max (1, getWidth() - kPadL - kPadR);
-    const double frac = std::clamp ((double) (x - kPadL) / (double) usable, 0.0, 1.0);
-    return (std::int64_t) (frac * (double) end);
+    if (shownTooltip.empty()) return;
+    shownTooltip.clear();
+    if (tooltip != nullptr) tooltip->setVisible (false);
 }
 
-int MiniTimelineStrip::markerIndexAtX (int x, std::int64_t end) const noexcept
+void MiniTimelineStrip::syncWindow()
 {
-    // Nearest marker within the hit radius, not the first - when two ticks fall
-    // inside kMarkerHitPx, the closer one should win.
-    const auto& markers = session.getMarkers();
-    int best = -1, bestDist = kMarkerHitPx + 1;
-    for (int i = 0; i < (int) markers.size(); ++i)
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    auto* top = getTopLevelComponent();
+    const auto parent = top != nullptr ? embedscale::nativeParentHandle (*top) : 0;
+    const auto live = platform::describeEmbeddedParent (parent);
+    if (latch.isLatched() && ! latch.blocks (live)) repaint();
+    const bool wanted = isShowing() && ! getLocalBounds().isEmpty() && parent != 0
+                     && (int) getProperties().getWithDefault ("dusk_modalHideCount", 0) == 0
+                     && ! PluginEditorHider::hasActiveSurface();
+    if (! wanted) hideTooltip();
+    if (window != nullptr && window->isOpen())
     {
-        const int d = std::abs (xForSample (markers[(size_t) i].timelineSamples, end) - x);
-        if (d <= kMarkerHitPx && d < bestDist) { bestDist = d; best = i; }
-    }
-    return best;
-}
-
-void MiniTimelineStrip::paint (juce::Graphics& g)
-{
-    if (capturePaint) markerPaint.clear();
-    auto b = getLocalBounds().toFloat();
-    g.setColour (kBg);
-    g.fillRoundedRectangle (b, 3.0f);
-    g.setColour (kBorder);
-    g.drawRoundedRectangle (b.reduced (0.5f), 3.0f, 0.8f);
-
-    const std::int64_t end = songEndSamples();
-    const std::int64_t ph  = engine.getTransport().getPlayhead();
-    const float midY = b.getCentreY();
-    const int   x0 = xForSample (0,   end);
-    const int   x1 = xForSample (end, end);
-
-    // Centre track line between the start/end caps.
-    g.setColour (kTrackLine);
-    g.drawLine ((float) x0, midY, (float) x1, midY, 1.5f);
-
-    // Start + end caps (short vertical brackets).
-    g.setColour (kCap);
-    const float capH = b.getHeight() * 0.5f;
-    g.drawLine ((float) x0, midY - capH * 0.5f, (float) x0, midY + capH * 0.5f, 1.6f);
-    g.drawLine ((float) x1, midY - capH * 0.5f, (float) x1, midY + capH * 0.5f, 1.6f);
-
-    // Active marker = last one at or before the playhead (markers are sorted).
-    const auto& markers = session.getMarkers();
-    int activeIdx = -1;
-    for (int i = 0; i < (int) markers.size(); ++i)
-    {
-        if (markers[(size_t) i].timelineSamples <= ph) activeIdx = i;
-        else break;
-    }
-
-    for (int i = 0; i < (int) markers.size(); ++i)
-    {
-        const auto& mk = markers[(size_t) i];
-        const int   mx = xForSample (mk.timelineSamples, end);
-        const bool  active = (i == activeIdx);
-        const auto  col = mk.colour.isTransparent() ? kMarkerDim : mk.colour;
-        const float tickH = b.getHeight() * (active ? 0.80f : 0.52f);
-        const auto tickColour = active ? col.brighter (0.30f) : col.withAlpha (0.85f);
-        const float tickWidth = active ? 2.0f : 1.4f;
-        g.setColour (tickColour);
-        g.drawLine ((float) mx, midY - tickH * 0.5f, (float) mx, midY + tickH * 0.5f, tickWidth);
-        if (capturePaint)
-            markerPaint.push_back ({ mk.name.toStdString(), tickColour.getARGB(), 0, tickH, tickWidth });
-    }
-
-    // Marker names: a small flag right of each tick, clipped to the gap before
-    // the next marker so adjacent labels never overlap (ellipsised if cramped).
-    // The active marker's flag is brightened. Rects are recorded so a click on
-    // the visible label - not just the tick - hits the marker.
-    markerFlags.clear();
-    const juce::Font nameFont { juce::FontOptions (11.0f, juce::Font::bold) };
-    g.setFont (nameFont);
-    for (int i = 0; i < (int) markers.size(); ++i)
-    {
-        const auto& mk    = markers[(size_t) i];
-        const int   mx    = xForSample (mk.timelineSamples, end);
-        const int   nextX = (i + 1 < (int) markers.size())
-                              ? xForSample (markers[(size_t) (i + 1)].timelineSamples, end)
-                              : (int) b.getRight();
-        const int   textX = mx + 5;
-        const int   avail = std::min ((int) b.getRight() - textX - 3, nextX - textX - 2);
-        if (avail < 12) continue;
-
-        const bool  active = (i == activeIdx);
-        const auto  col = mk.colour.isTransparent() ? kMarkerDim : mk.colour;
-        const int   tw  = std::min (avail, nameFont.getStringWidth (mk.name) + 6);
-        const juce::Rectangle<int> ri (textX, (int) b.getY() + 2, tw, (int) b.getHeight() - 4);
-        g.setColour (kBg.withAlpha (active ? 0.9f : 0.72f));
-        g.fillRoundedRectangle (ri.toFloat(), 2.0f);
-        const auto labelColour = active ? col.brighter (0.35f) : col.withAlpha (0.9f);
-        g.setColour (labelColour);
-        g.drawText (mk.name, ri.reduced (3, 0), juce::Justification::centredLeft, true);
-        markerFlags.push_back ({ i, ri });
-        if (capturePaint)
+        if (! wanted || live != latch.parent())
         {
-            auto& row = markerPaint[(size_t) i];
-            row.labelColour = labelColour.getARGB();
-            row.labelX = ri.getX();
-            row.labelY = ri.getCentreY();
-            row.labelWidth = ri.getWidth();
+            closing = true;
+            window->close();
         }
+        return;
     }
-
-    // Playhead: full-height line + small triangle head.
-    const int phX = xForSample (ph, end);
-    g.setColour (kPlayhead);
-    g.drawLine ((float) phX, b.getY() + 1.0f, (float) phX, b.getBottom() - 1.0f, 1.4f);
-    juce::Path tri;
-    tri.addTriangle ((float) phX - 3.0f, b.getY() + 1.0f,
-                     (float) phX + 3.0f, b.getY() + 1.0f,
-                     (float) phX,        b.getY() + 4.0f);
-    g.fillPath (tri);
-}
-
-int MiniTimelineStrip::markerAtX (int x) const noexcept
-{
-    const int n = (int) session.getMarkers().size();
-    for (const auto& f : markerFlags)
-        if (f.first < n && x >= f.second.getX() - 2 && x <= f.second.getRight() + 2)
-            return f.first;
-    return markerIndexAtX (x, songEndSamples());
-}
-
-void MiniTimelineStrip::mouseDown (const juce::MouseEvent& ev)
-{
-    const std::int64_t end = songEndSamples();
-    const int mi = markerAtX (ev.x);
-    if (mi >= 0)
-        engine.getTransport().locate (session.getMarkers()[(size_t) mi].timelineSamples);
-    else
-        engine.getTransport().locate (sampleForX (ev.x, end));
-    repaint();
-}
-
-void MiniTimelineStrip::mouseDoubleClick (const juce::MouseEvent& ev)
-{
-    const int mi = markerAtX (ev.x);
-    if (mi >= 0 && onMarkerEdit)
-        onMarkerEdit (mi);
-}
-
-void MiniTimelineStrip::mouseMove (const juce::MouseEvent& ev)
-{
-    const int mi = markerAtX (ev.x);
-    const auto& mk = session.getMarkers();
-    if (mi >= 0 && mi < (int) mk.size())
-        setTooltip (mk[(size_t) mi].name + " - click to jump, double-click to rename");
-    else
-        setTooltip ("Mini timeline - click to seek; double-click a marker to rename.");
-    setMouseCursor (mi >= 0 ? juce::MouseCursor::PointingHandCursor
-                            : juce::MouseCursor::NormalCursor);
+    if (! wanted || closing || latch.isLatched()) return;
+    window = std::make_unique<imgui::DuskPanelWindow> ("dusk-studio-mini-timeline", "mini-timeline", "Mini timeline");
+    juce::Component::SafePointer<MiniTimelineStrip> safe (this);
+    imgui::DuskPanelWindow::Callbacks callbacks;
+    callbacks.geometry = [safe]
+    {
+        auto* self = safe.getComponent();
+        if (self == nullptr) return imgui::DuskPanelWindow::Geometry {};
+        auto* topLevel = self->getTopLevelComponent();
+        const auto g = embedscale::childGeometryFor (*topLevel, topLevel->getLocalArea (self, self->getLocalBounds()));
+        return imgui::DuskPanelWindow::Geometry { g.x, g.y, g.width, g.height, g.scale };
+    };
+    callbacks.closed = [safe]
+    {
+        if (auto* self = safe.getComponent())
+        {
+            self->view = nullptr;
+            self->latch.closed (std::exchange (self->closing, false),
+                                platform::isEmbeddedParentAlive (self->latch.parent()));
+            self->hideTooltip();
+            self->repaint();
+            // Closing a focused native child can clear the covering modal's OS focus.
+            const auto& modals = EmbeddedModal::activeModalStack();
+            if (! modals.empty())
+                if (auto* body = modals.back()->getBody())
+                {
+                    if (auto* peer = body->getPeer(); peer != nullptr && ! peer->isFocused())
+                        peer->grabFocus();
+                    if (! body->hasKeyboardFocus (true))
+                        body->grabKeyboardFocus();
+                }
+        }
+    };
+    const auto geometry = callbacks.geometry();
+    window->setCallbacks (std::move (callbacks));
+    auto content = std::make_unique<imgui::MiniTimelineView>();
+    view = content.get();
+    view->shellKey = [safe] (std::string description)
+    {
+        // The shell matches '?', '.' and the zoom keys on the character they type,
+        // which a description does not carry.
+        auto key = juce::KeyPress::createFromDescription (description);
+        if (const auto chord = imgui::parseKeyDescription (description))
+            key = { key.getKeyCode(), key.getModifiers(),
+                    static_cast<decltype (key.getTextCharacter())> (imgui::shellKeyText (*chord)) };
+        dusk::callAsync ([safe, key]
+        {
+            auto* self = safe.getComponent();
+            if (self == nullptr || ! self->isShowing() || PluginEditorHider::hasActiveSurface()) return;
+            if (auto* shell = self->getParentComponent())
+                shell->keyPressed (key);
+        });
+    };
+    view->seek = [this, safe] (std::int64_t sample)
+    {
+        engine.getTransport().locate (sample);
+        // The strip has no keyboard controls; keep the shell's full shortcut set after a click.
+        dusk::callAsync ([safe]
+        {
+            auto* self = safe.getComponent();
+            if (self == nullptr || ! self->isShowing() || PluginEditorHider::hasActiveSurface()) return;
+            if (auto* peer = self->getPeer()) peer->grabFocus();
+            if (auto* shell = self->getParentComponent()) shell->grabKeyboardFocus();
+        });
+    };
+    view->editMarker = [safe] (int index)
+    {
+        dusk::callAsync ([safe, index]
+        {
+            if (auto* self = safe.getComponent(); self != nullptr && self->onMarkerEdit)
+                self->onMarkerEdit (index);
+        });
+    };
+    view->tooltip = [this] (const std::string& text, float x, float y)
+    {
+        if (text == shownTooltip) return;
+        if (text.empty()) { hideTooltip(); return; }
+        auto* shell = getParentComponent();
+        if (shell == nullptr) return;
+        shownTooltip = text;
+        if (tooltip == nullptr) tooltip = std::make_unique<Tooltip>();
+        shell->addAndMakeVisible (*tooltip);
+        tooltip->text = text;
+        const auto point = shell->getLocalPoint (this,
+            juce::Point<int> (static_cast<int> (x), static_cast<int> (y)));
+        auto bounds = getLookAndFeel().getTooltipBounds (text, point, shell->getLocalBounds());
+        const auto strip = shell->getLocalArea (this, getLocalBounds());
+        if (bounds.intersects (strip))
+        {
+            const int below = std::max (0, shell->getHeight() - strip.getBottom() - 2);
+            const int above = std::max (0, strip.getY() - 2);
+            const bool useBelow = below >= bounds.getHeight() || below >= above;
+            bounds.setHeight (std::min (bounds.getHeight(), useBelow ? below : above));
+            bounds.setY (useBelow ? strip.getBottom() + 2 : strip.getY() - bounds.getHeight() - 2);
+        }
+        tooltip->setBounds (bounds);
+        tooltip->toFront (false);
+        tooltip->repaint();
+    };
+    updateState();
+    window->setView (std::move (content));
+    latch.opening (live);
+    if (! window->open (parent, geometry))
+    {
+        view = nullptr;
+        latch.openFailed();
+        repaint();
+    }
+   #endif
 }
 
 void MiniTimelineStrip::timerCallback()
 {
-    // Collapsed timeline: the strip is hidden but the timer keeps firing. The content
-    // signature below scans every track's regions + markers, so skip it entirely when
-    // off-screen - nothing to repaint, and it re-syncs on the next visible tick.
-    if (! isShowing()) return;
-
-    bool dirty = false;
-
-    // Repaint on playhead motion.
-    const auto ph = engine.getTransport().getPlayhead();
-    if (ph != lastPlayhead) { lastPlayhead = ph; dirty = true; }
-
-    // The UndoManager broadcast (changeListenerCallback) covers undoable edits,
-    // but direct session mutations - import / load, programmatic region or
-    // marker changes - don't go through it. Poll a cheap content signature
-    // (region + marker counts and the song extent) so those still refresh.
-    size_t sig = session.getMarkers().size();
-    // Hash each marker's content that affects rendering / hit-testing - position,
-    // name, colour - not just the count, so a rename / recolour / move that
-    // doesn't change the count or song extent still invalidates (the undo
-    // change-listener covers undoable edits; this is the direct-mutation backstop).
-    for (const auto& mk : session.getMarkers())
-    {
-        sig = sig * 131 + (size_t) mk.timelineSamples;
-        sig = sig * 131 + (size_t) (std::uint32_t) mk.name.hashCode();
-        sig = sig * 131 + (size_t) mk.colour.getARGB();
-    }
-    for (int t = 0; t < Session::kNumTracks; ++t)
-    {
-        sig = sig * 131 + session.track (t).regions.size();
-        sig = sig * 131 + (size_t) session.track (t).midiRegions.current().size();
-    }
-    sig = sig * 131 + (size_t) songEndSamples();
-    if (sig != lastContentSig) { lastContentSig = sig; dirty = true; }
-
-    if (dirty) repaint();
+    syncWindow();
+    if (isShowing()) updateState();
 }
 
-void MiniTimelineStrip::changeListenerCallback (juce::ChangeBroadcaster*)
+void MiniTimelineStrip::resized() { hideTooltip(); syncWindow(); }
+void MiniTimelineStrip::visibilityChanged() { syncWindow(); }
+void MiniTimelineStrip::parentHierarchyChanged() { syncWindow(); }
+
+void MiniTimelineStrip::paint (juce::Graphics& g)
 {
-    repaint();
+    g.fillAll (juce::Colour (0xff15151a));
+    if (latch.isLatched())
+    {
+        g.setColour (juce::Colour (0xffe0e0e6));
+        g.drawText ("Mini timeline unavailable", getLocalBounds(), juce::Justification::centred, false);
+    }
+}
+
+std::vector<scenario::MiniMarkerPaint> MiniTimelineStrip::markerPaintForScenario() const
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    if (capturePaint && view != nullptr && ! closing) return view->markerPaint;
+   #endif
+    return {};
+}
+
+bool MiniTimelineStrip::clickSampleForScenario (std::int64_t sample)
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    return window != nullptr && ! closing && window->clickControlForScenario ("sample:" + std::to_string (sample));
+   #else
+    (void) sample;
+    return false;
+   #endif
+}
+
+bool MiniTimelineStrip::clickMarkerForScenario (int index)
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    return window != nullptr && ! closing && window->clickControlForScenario ("marker:" + std::to_string (index));
+   #else
+    (void) index;
+    return false;
+   #endif
+}
+
+bool MiniTimelineStrip::pressKeyForScenario (const std::string& description)
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    return window != nullptr && ! closing && window->inputForScenario (description);
+   #else
+    (void) description;
+    return false;
+   #endif
 }
 } // namespace duskstudio
