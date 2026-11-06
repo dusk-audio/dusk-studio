@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include "engine/ipc/PluginHostXErrors.h"
 #include "ui/X11EditorTeardownError.h"
 
 #include <fstream>
@@ -113,4 +114,25 @@ TEST_CASE ("X11 editor teardown suppression is request and resource scoped",
         2, kUnmapWindow, editorWindow, editorWindow)); // BadValue
     REQUIRE_FALSE (shouldSuppressEditorTeardownError (
         8, kUnmapWindow, editorWindow, editorWindow)); // BadMatch
+}
+
+TEST_CASE ("The plug-in host forgives only stale windows it does not own while an editor lives",
+           "[x11][issue-966]")
+{
+    using namespace duskstudio::ipc::x11;
+    constexpr std::uint64_t ownBase = 0x00700000;
+    constexpr std::uint64_t ownMask = 0x000fffff;
+    constexpr std::uint64_t hostWindow = 0x00100052;
+    constexpr std::uint64_t ownWindow = 0x00700009;
+
+    REQUIRE (isStaleForeignWindowError (kBadWindow, hostWindow, ownBase, ownMask, true));
+    REQUIRE (isStaleForeignWindowError (kBadDrawable, hostWindow, ownBase, ownMask, true));
+
+    REQUIRE_FALSE (isStaleForeignWindowError (kBadWindow, hostWindow, ownBase, ownMask, false));
+    REQUIRE_FALSE (isStaleForeignWindowError (kBadWindow, ownWindow, ownBase, ownMask, true));
+    REQUIRE_FALSE (isStaleForeignWindowError (kBadDrawable, ownWindow, ownBase, ownMask, true));
+    REQUIRE_FALSE (isStaleForeignWindowError (kBadWindow, 0, ownBase, ownMask, true));
+    REQUIRE_FALSE (isStaleForeignWindowError (2, hostWindow, ownBase, ownMask, true)); // BadValue
+    REQUIRE_FALSE (isStaleForeignWindowError (8, hostWindow, ownBase, ownMask, true)); // BadMatch
+    REQUIRE_FALSE (isStaleForeignWindowError (4, hostWindow, ownBase, ownMask, true)); // BadPixmap
 }

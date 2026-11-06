@@ -15,7 +15,7 @@ fi
 # macOS has no Wayland session to isolate and does not ship Xvfb or GNU
 # timeout. Keep the same canonical entry point for cross-platform dev.sh use.
 if [[ "$(uname -s)" == "Darwin" ]]; then
-    exec env DUSKSTUDIO_RUN_SELFTEST=1 "$BIN"
+    exec env DUSKSTUDIO_RUN_SELFTEST=1 "$BIN" "${@:2}"
 fi
 
 if ! command -v Xvfb >/dev/null 2>&1; then
@@ -97,4 +97,4 @@ DISPLAY_NUM=":$DISPLAY_NUMBER"
 env -u WAYLAND_DISPLAY \
     DISPLAY="$DISPLAY_NUM" \
     DUSKSTUDIO_RUN_SELFTEST=1 \
-    timeout --kill-after="$SELFTEST_KILL_AFTER" "$SELFTEST_TIMEOUT" "$BIN"
+    timeout --kill-after="$SELFTEST_KILL_AFTER" "$SELFTEST_TIMEOUT" "$BIN" "${@:2}"

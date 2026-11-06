@@ -92,6 +92,11 @@ canonical source.
   piano roll and audio editor figures are written again on a slow or loaded
   machine. A run that leaves a figure out now fails and names it. The
   figures whose UI changed since their last capture are refreshed.
+- **Sandboxed plug-in editors closing on Linux.** The sandboxed plug-in host
+  ended when its editor asked the X server about a Dusk Studio window that had
+  just gone, which could happen when the editor closed on a busy machine. The
+  slot was then bypassed until the plug-in was reloaded. The host now logs
+  that error and keeps running. Any other X error still ends it.
 - **Developer ID through macOS packaging.** With the macOS signing secrets
   set, CPack's install stage re-signed the staged app, plug-in host and
   bundled libraries ad hoc, so the DMG sent for notarization had lost its

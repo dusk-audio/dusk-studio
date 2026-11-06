@@ -1567,6 +1567,7 @@ if(_duskstudio_oop_enabled)
         BUNDLE_ID    "audio.dusk.studio.pluginhost")
     target_sources(dusk-studio-plugin-host PRIVATE
         src/engine/ipc/PluginHostMain.cpp
+        src/engine/ipc/PluginHostXErrors.cpp
         src/engine/PluginDescriptor.cpp
         src/foundation/MessageThread.cpp
         ${_duskstudio_ipc_child_platform_sources})
@@ -1601,6 +1602,10 @@ if(_duskstudio_oop_enabled)
         # arguments as UTF-16 instead of trusting the ANSI-converted argv.
         # bcrypt: BCryptGenRandom, referenced by the shared IPC channel source.
         target_link_libraries(dusk-studio-plugin-host PRIVATE shell32 bcrypt)
+    elseif(UNIX AND NOT APPLE)
+        # Xlib for the child's own X error handler; the framework loads the
+        # same libX11 at runtime, so the handler covers its connection too.
+        target_link_libraries(dusk-studio-plugin-host PRIVATE X11)
     elseif(APPLE)
         find_library(DUSKSTUDIO_OOP_AUDIOUNIT_FRAMEWORK AudioUnit REQUIRED)
         find_library(DUSKSTUDIO_OOP_COREAUDIOKIT_FRAMEWORK CoreAudioKit REQUIRED)
