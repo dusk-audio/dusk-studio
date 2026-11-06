@@ -59,7 +59,7 @@ platform's runner), **manual** (with the reason). Run everything with
 | 31 | Quit during a load exits fast | scenario + bb | `oop.quit_during_load_bounded`; `bb-oop-quit-during-load` |
 | 32 | A killed child drops out fast | scenario + bb | `oop.killed_child_bypasses`; `bb-oop-child-kill` |
 | 33 | Rapid plug-in switching is safe | scenario | `oop.rapid_switching_safe` (tag `slow`) |
-| 34 | The editor closes before the plug-in | manual | `gui.oop_editor_closes_before_child` skips until #508 is understood (the child exits on its own when sandboxing is enabled at runtime) |
+| 34 | The editor closes before the plug-in | scenario (gui) | `gui.oop_editor_closes_before_child` on Linux and macOS; it skips on Windows, which tracks the child by handle, not by pid |
 | 35 | Windows: editor responsiveness and alignment | manual | visual only |
 | 36 | macOS: editor responsiveness and alignment | manual | visual only, and no console session on the node |
 | 37 | Editor failures do not strand the window | scenario (gui) | `gui.oop_editor_failure_no_strand` |
@@ -94,4 +94,4 @@ What the pre-tag audit checks by hand, and what runs it now.
 | the seven release assets | `scripts/verify-release-assets.sh` inside the tag workflow |
 | configure examples leave the donor to `DONOR_REV` | `release_mechanics` over the maintainer guide |
 | every CI and release build, the regression trees and the build guides take DAF from `DAF_REV` | `release_mechanics` over the clone action, workflows, regression scripts and guides |
-| deferred issues stay visible | #508 is the `gui.oop_editor_closes_before_child` SKIP and #504 the Windows `ipc-selftest` SKIP on every run; #507 needs a Known Issues line by hand |
+| deferred issues stay visible | #504 is the Windows `ipc-selftest` SKIP on every run; #507 needs a Known Issues line by hand |

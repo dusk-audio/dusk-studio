@@ -906,6 +906,37 @@ if(DUSKSTUDIO_NATIVE_VST3)
     get_target_property(DUSKSTUDIO_MANY_PARAMS_VST3_BUNDLE
         dusk-studio-many-params-vst3-fixture SMTG_PLUGIN_PACKAGE_PATH)
 
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        smtg_add_vst3plugin(dusk-studio-stale-window-vst3-fixture
+            fixtures/stale_window_vst3.cpp
+            ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/common/pluginview.cpp
+            ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/main/moduleinit.cpp
+            ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/main/pluginfactory.cpp
+            ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/vstbus.cpp
+            ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/vstcomponentbase.cpp
+            ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/vsteditcontroller.cpp
+            ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/vstparameters.cpp
+            ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/vstsinglecomponenteffect.cpp)
+        target_link_libraries(dusk-studio-stale-window-vst3-fixture PRIVATE dusk-vst3-hosting X11)
+        target_compile_definitions(dusk-studio-stale-window-vst3-fixture
+            PRIVATE PROJECT_INCLUDES_VSTEDITCONTROLLER=1)
+        get_target_property(DUSKSTUDIO_STALE_WINDOW_VST3_BUNDLE
+            dusk-studio-stale-window-vst3-fixture SMTG_PLUGIN_PACKAGE_PATH)
+        # Opens windows, so it runs on a private Xvfb from its own ctest entry
+        # below and nowhere else.
+        target_sources(dusk-studio-tests PRIVATE plugin_host_x_errors.cpp)
+        target_link_libraries(dusk-studio-tests PRIVATE X11)
+        set_property(SOURCE plugin_host_x_errors.cpp APPEND PROPERTY COMPILE_DEFINITIONS
+            DUSKSTUDIO_STALE_WINDOW_VST3_FIXTURE_PATH="${DUSKSTUDIO_STALE_WINDOW_VST3_BUNDLE}")
+        add_dependencies(dusk-studio-tests dusk-studio-stale-window-vst3-fixture)
+        add_test(NAME plugin-host-x-errors
+            COMMAND ${CMAKE_COMMAND} -E env DUSKSTUDIO_TEST_PRIVATE_DISPLAY=1
+                DUSKSTUDIO_SELFTEST_TIMEOUT=120s
+                ${CMAKE_SOURCE_DIR}/scripts/run-selftest-xvfb.sh
+                $<TARGET_FILE:dusk-studio-tests> "[xvfb]")
+        set_tests_properties(plugin-host-x-errors PROPERTIES RUN_SERIAL TRUE TIMEOUT 150)
+    endif()
+
     if(MSVC)
         # The SDK compiles its plug-in targets with /Zi in Release. Under Ninja
         # a fixture's translation units then race for one vc140.pdb (C1041),
@@ -1224,7 +1255,7 @@ catch_discover_tests(dusk-studio-tests
 # [ipc] cases start plug-in hosts and assert on bounded response times. Run
 # them serially so other cases cannot starve their control threads.
 catch_discover_tests(dusk-studio-tests
-    TEST_SPEC "[ipc]~[scan-grandchild-fixture]~[sfz-shutdown]~[sfz-service-disk-full]"
+    TEST_SPEC "[ipc]~[scan-grandchild-fixture]~[sfz-shutdown]~[sfz-service-disk-full]~[xvfb]"
     PROPERTIES RUN_SERIAL TRUE)
 catch_discover_tests(dusk-studio-tests
     TEST_SPEC "[sfz-shutdown]"

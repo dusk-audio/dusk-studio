@@ -52,6 +52,7 @@
 
 #include "MidiWire.h"
 #include "ParamPushQueue.h"
+#include "PluginHostXErrors.h"
 #include "PluginIpc.h"
 #include "PluginScanProtocol.h"
 #include "WorkerPark.h"
@@ -1023,6 +1024,7 @@ void destroyEditorOnMessageThread (HostState& host)
         host.editorWindow.reset();
     }
     host.editor.reset();
+    duskstudio::ipc::x11::setEditorAlive (false);
 }
 
 // Message thread only: releaseResources, then the destructor at scope exit.
@@ -1559,6 +1561,7 @@ std::uint32_t handleShowEditor (HostState& host,
                 return;
             }
         }
+        duskstudio::ipc::x11::setEditorAlive (true);
 
         if (host.editorWindow == nullptr)
         {
@@ -1846,6 +1849,9 @@ int runIpcHost (int argc, const char* const* argv) noexcept
    #if JUCE_MAC
     ipcp::prepareChildAppKit();
    #endif
+    // The framework installs no X error handler in a console app, so without
+    // this one Xlib's default ends the child on the first error.
+    duskstudio::ipc::x11::installStaleWindowErrorHandler();
     juce::ScopedJuceInitialiser_GUI juceInit;
 
     hostMessageThreadId = std::this_thread::get_id();
