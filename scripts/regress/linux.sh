@@ -130,13 +130,17 @@ run_build() {
     fi
 }
 
+# gnome-session.sh runs its drivers with python3 from this PATH.
+NATIVE_SESSION_PATH=/usr/local/bin:/usr/bin:/bin
+
 # The native legs SKIP with a reason where the frameworks, the private GNOME
-# session's tools or (python module given) its Python bindings are missing.
-# Usage: native_leg_preflight <python module check or ""> <tool>...
+# session's tools or (python module given) the Python bindings of the python3
+# that <python PATH> finds are missing.
+# Usage: native_leg_preflight <python PATH> <python module check or ""> <tool>...
 native_leg_preflight() {
-    local targets tool python_check="$1"
+    local targets tool python_path="$1" python_check="$2"
     local -a needs=()
-    shift
+    shift 2
     targets="$(cmake --build build --target help)" || return $?
     if [[ "$targets" != *dusk-native-wayland-probe* ]]; then
         REGRESS_SKIP_REASON="frameworks lack shared Wayland embedding APIs"
@@ -146,7 +150,7 @@ native_leg_preflight() {
         command -v "$tool" >/dev/null 2>&1 || needs+=("$tool")
     done
     if [[ -n "$python_check" ]] \
-        && ! env -i PATH=/usr/local/bin:/usr/bin:/bin python3 -I -c "$python_check" 2>/dev/null; then
+        && ! env -i PATH="$python_path" python3 -I -c "$python_check" 2>/dev/null; then
         needs+=("python3 with GObject introspection (Gio, GTK 4)")
     fi
     if ((${#needs[@]})); then
@@ -168,8 +172,10 @@ native_session_run() {
 NATIVE_GIO_CHECK='import gi; from gi.repository import Gio, GLib'
 NATIVE_GTK_CHECK='import gi; gi.require_version("Gtk", "4.0"); from gi.repository import Gio, GLib, Gtk'
 
+# The embedding driver starts its private session with its own interpreter.
 leg_native_wayland_embedding() {
-    native_leg_preflight "" mutter dbus-run-session Xwayland wl-copy wl-paste || return $?
+    native_leg_preflight "$PATH" "$NATIVE_GIO_CHECK" mutter dbus-run-session Xwayland wl-copy wl-paste \
+        || return $?
     if ((!SCENARIOS_ONLY)); then
         run_build cmake --build build --target dusk-native-wayland-probe -j"${JOBS}" || return $?
     fi
@@ -178,12 +184,12 @@ leg_native_wayland_embedding() {
 }
 
 leg_native_window_activation() {
-    native_leg_preflight "$NATIVE_GTK_CHECK" mutter dbus-run-session || return $?
+    native_leg_preflight "$NATIVE_SESSION_PATH" "$NATIVE_GTK_CHECK" mutter dbus-run-session || return $?
     native_session_run scripts/regress/native-window-activation.sh "$APP_BIN"
 }
 
 leg_native_gui_scenarios() {
-    native_leg_preflight "$NATIVE_GIO_CHECK" mutter dbus-run-session Xwayland || return $?
+    native_leg_preflight "$NATIVE_SESSION_PATH" "$NATIVE_GIO_CHECK" mutter dbus-run-session Xwayland || return $?
     if ! grep -qx 'DUSKSTUDIO_NATIVE_CLAP:BOOL=ON' build/CMakeCache.txt; then
         REGRESS_SKIP_REASON="needs native CLAP"
         return 77
