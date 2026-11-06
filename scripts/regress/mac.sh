@@ -198,6 +198,8 @@ set -euo pipefail
 cd "\$REGRESS_SOURCE"
 git checkout -q ${checkout_args}
 git branch -q -D "${REMOTE_BRANCH}" 2>/dev/null || true
+$(declare -f regress_drop_added_submodules)
+regress_drop_added_submodules "\$REGRESS_COMMIT"
 while read -r path sha; do
     [[ -n "\$path" ]] || continue
     git -C "\$path" checkout -q --detach "\$sha" \

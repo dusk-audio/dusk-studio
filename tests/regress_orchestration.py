@@ -646,4 +646,45 @@ regress_capture_leg /opt/under-test/DuskStudio
     assert status == "SKIP" and out is None, (status, note)
     assert not any((capture_root / "docs/images").iterdir()), "the capture leg wrote to docs/images"
 
-print("regression runner: interrupt cleanup, prepush log folders, capture leg, timing cache, Mac paths, missing app and Windows source leg pass")
+    # The Mac goes back to its previous commit after a run. A submodule only the
+    # tested commit has must not stay behind as an untracked checkout.
+    host = root / "submodule-host"
+    git_env = dict(child_environment, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1",
+                   GIT_AUTHOR_NAME="regress", GIT_AUTHOR_EMAIL="regress@example.invalid",
+                   GIT_COMMITTER_NAME="regress", GIT_COMMITTER_EMAIL="regress@example.invalid")
+
+    def git(cwd, *args):
+        return subprocess.run(["git", "-c", "protocol.file.allow=always", "-c", "init.defaultBranch=main",
+                               *args], cwd=cwd, env=git_env, capture_output=True, text=True,
+                              check=True).stdout.strip()
+
+    for name in ("kept", "added"):
+        origin = root / f"submodule-{name}"
+        origin.mkdir()
+        git(origin, "init", "-q")
+        (origin / "file").write_text(name)
+        git(origin, "add", "file")
+        git(origin, "commit", "-q", "-m", name)
+    host.mkdir()
+    git(host, "init", "-q")
+    git(host, "submodule", "add", "-q", str(root / "submodule-kept"), "external/kept")
+    git(host, "commit", "-q", "-m", "previous")
+    previous = git(host, "rev-parse", "HEAD")
+    git(host, "submodule", "add", "-q", str(root / "submodule-added"), "external/added")
+    git(host, "commit", "-q", "-m", "tested")
+    tested = git(host, "rev-parse", "HEAD")
+    git(host, "checkout", "-q", previous)
+    assert (host / "external/added/.git").is_file(), "switching back left no checkout to clean up"
+    assert git(host, "status", "--porcelain", "--ignore-submodules=all"), "the leftover is not untracked"
+    drop = 'set -euo pipefail; source "$1/scripts/regress/common.sh"; regress_drop_added_submodules "$2"'
+    for _ in range(2):
+        result = subprocess.run(["bash", "-c", drop, "drop", str(repo), tested], cwd=host, env=git_env,
+                                capture_output=True, text=True, timeout=10)
+        assert result.returncode == 0, (result.stdout, result.stderr)
+    assert not (host / "external/added").exists(), "the added submodule's checkout stayed"
+    assert (host / "external/kept/file").is_file(), "a submodule the previous commit has was removed"
+    assert (host / ".git/modules/external/added").is_dir(), "the added submodule's clone was removed"
+    assert git(host, "status", "--porcelain", "--ignore-submodules=all") == "", "the tree is not clean"
+
+print("regression runner: interrupt cleanup, prepush log folders, capture leg, timing cache, Mac paths, "
+      "missing app, Windows source leg and added submodule checkouts pass")

@@ -1001,7 +1001,9 @@ fetches `DONOR_REV` into each build tree's `_deps`.
 The commit under test never goes through GitHub: it is pushed straight over ssh
 to `refs/heads/regress-<short sha>` in the node's checkout. The node's previous
 branch and submodule commits are recorded at the start and restored on exit,
-including when a leg fails.
+including when a leg fails. A submodule only the commit under test has loses its
+checkout on the way back, so the next preflight finds a clean tree; its clone
+stays in `.git/modules`.
 
 | Leg | What it proves |
 |---|---|
