@@ -144,11 +144,12 @@ bb_end 0
     file_drop = log_folder("duskstudio-gnome-drop.stale")
     native_activation = log_folder("duskstudio-native-activation.stale")
     native_gui = log_folder("duskstudio-native-gui.stale")
+    native_embed = log_folder("duskstudio-gnome-native-embed.stale")
     asked_to_keep = log_folder("duskstudio-x11-drop.stale")
     owner_lock = open(owned / ".lock", "w")
     fcntl.flock(owner_lock, fcntl.LOCK_EX)
     for folder in (stale, owned, other, capture, activation, file_drop, native_activation, native_gui,
-                   asked_to_keep):
+                   native_embed, asked_to_keep):
         age(folder, week + 3600)
     age(fresh, week - 3600)
 
@@ -166,7 +167,7 @@ bb_end 0
         assert not log_dir.exists(), "a passing prepush kept its logs"
         assert str(log_dir) not in result.stdout.split("RESULT", 1)[1], result.stdout
         assert not stale.exists(), "a week-old prepush folder was not pruned"
-        for folder in (capture, activation, file_drop, native_activation, native_gui):
+        for folder in (capture, activation, file_drop, native_activation, native_gui, native_embed):
             assert not folder.exists(), f"a week-old {folder.name} kept by a failed leg was not pruned"
         for folder in (fresh, owned, other, asked_to_keep):
             assert folder.is_dir(), f"pruning removed {folder.name}"

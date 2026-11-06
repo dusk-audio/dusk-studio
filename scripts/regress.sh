@@ -308,7 +308,7 @@ if [[ "$TARGET" == prepush ]]; then
     find "${TMPDIR:-/tmp}" -mindepth 1 -maxdepth 1 -type d \
         \( -name 'dusk-prepush.*' -o -name 'dusk-capture.*' -o -name 'duskstudio-gnome-activation.*' \
         -o -name 'duskstudio-gnome-drop.*' -o -name 'duskstudio-native-activation.*' \
-        -o -name 'duskstudio-native-gui.*' \) \
+        -o -name 'duskstudio-native-gui.*' -o -name 'duskstudio-gnome-native-embed.*' \) \
         -user "$(id -u)" -mmin +$((7 * 24 * 60)) -print0 \
         | while IFS= read -r -d '' stale; do
             flock -n "${stale}/.lock" rm -rf -- "$stale" || true
