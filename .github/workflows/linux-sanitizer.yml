@@ -105,8 +105,8 @@ jobs:
         # Linux workflows.
         env:
           JUCE_MIRROR: https://github.com/dusk-audio/JUCE-wayland.git
-          JUCE_TAG: dusk-wayland-v9
-          JUCE_REV: 108fab92a4b748b2cec1252b3ceb76fa40c699e0
+          JUCE_TAG: dusk-wayland-v10
+          JUCE_REV: 09fa6b1b9ed131dbf7ff3f62a4b5671a4396f29f
         run: |
           set -euo pipefail
           git init -q "${RUNNER_TEMP}/JUCE-wayland"
@@ -238,8 +238,8 @@ jobs:
       - name: Clone JUCE (Dusk-owned Wayland mirror, pinned)
         env:
           JUCE_MIRROR: https://github.com/dusk-audio/JUCE-wayland.git
-          JUCE_TAG: dusk-wayland-v9
-          JUCE_REV: 108fab92a4b748b2cec1252b3ceb76fa40c699e0
+          JUCE_TAG: dusk-wayland-v10
+          JUCE_REV: 09fa6b1b9ed131dbf7ff3f62a4b5671a4396f29f
         run: |
           set -euo pipefail
           git init -q "${RUNNER_TEMP}/JUCE-wayland"
