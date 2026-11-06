@@ -423,7 +423,7 @@ flag defaults off when an older transport block omits it.
 
 ### Edits are undoable actions
 
-Region and marker edits are `dusk::UndoableAction` subclasses ([src/session/RegionEditActions.cpp](../src/session/RegionEditActions.cpp), [MarkerEditActions.cpp](../src/session/MarkerEditActions.cpp)): each captures before/after state so `undo()` restores exactly. Split/paste/trim/move/marker ops all go through the engine's `dusk::UndoManager` ([src/foundation/UndoManager.h](../src/foundation/UndoManager.h)), which keeps the parts of JUCE's undo behaviour the app relies on.
+Region and marker edits are `dusk::UndoableAction` subclasses ([src/session/RegionEditActions.cpp](../src/session/RegionEditActions.cpp), [MarkerEditActions.cpp](../src/session/MarkerEditActions.cpp)): each captures before/after state so `undo()` restores exactly. Split/paste/trim/move/marker ops all go through `AudioEngine::getUndoManager()`, a `SessionUndoManager` ([src/engine/AudioEngine.h](../src/engine/AudioEngine.h)) built on `dusk::UndoManager` ([src/foundation/UndoManager.h](../src/foundation/UndoManager.h)), which keeps the parts of JUCE's undo behaviour the app relies on.
 
 ---
 
