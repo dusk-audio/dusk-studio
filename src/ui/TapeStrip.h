@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <optional>
+#include <string>
 #include <utility>
 
 namespace duskstudio
@@ -17,8 +18,7 @@ namespace duskstudio
 // rounded blocks, playhead vertical line, time ruler at top.
 class TapeStrip final : public juce::Component,
                          public juce::FileDragAndDropTarget,
-                         private dusk::Timer,
-                         private juce::ChangeListener
+                         private dusk::Timer
 {
 public:
     TapeStrip (Session& sessionRef, AudioEngine& engineRef);
@@ -261,7 +261,7 @@ public:
 
 private:
     void timerCallback() override;
-    void changeListenerCallback (juce::ChangeBroadcaster*) override;
+    void undoHistoryChanged();
 
     // A plain press on a name arms a track move; this much vertical travel
     // starts it. gap counts the shown rows whose centre is above the pointer.
@@ -393,7 +393,7 @@ private:
     // Tempo edits, all driven from the ruler's right-click menu. Every edit
     // routes through commitTempoPoints so it's a single undoable transaction.
     void commitTempoPoints (std::vector<duskstudio::TempoPoint> after,
-                             const juce::String& name);
+                             const std::string& name);
     void promptAddTempoPoint (std::int64_t sample);   // prompt, add on accept
     void editTempoPointBpm (std::int64_t atSample);
     // Edit the song's starting tempo when no tempo map exists yet (the bar-1

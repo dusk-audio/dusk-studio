@@ -243,7 +243,7 @@ TapeStrip::TapeStrip (Session& s, AudioEngine& e)
 {
     setOpaque (true);
     startTimerHz (30);
-    engine.getUndoManager().addChangeListener (this);
+    engine.getUndoManager().addChangeListener (this, [this] { undoHistoryChanged(); });
     observedHistory = undoHistory();
     refreshModeCursor();
 
@@ -335,7 +335,7 @@ TapeStrip::~TapeStrip()
     engine.getUndoManager().removeChangeListener (this);
 }
 
-void TapeStrip::changeListenerCallback (juce::ChangeBroadcaster*)
+void TapeStrip::undoHistoryChanged()
 {
     // An edit, undo or redo just mutated the regions - repaint to reflect it.
     // The action itself called preparePlayback if stopped, so audio is
@@ -1146,10 +1146,10 @@ std::uint32_t TapeStrip::regionAccentForScenario (int track, int region) const
 std::vector<std::string> TapeStrip::undoHistory() const
 {
     auto& um = engine.getUndoManager();
-    std::vector<std::string> history;
-    for (const auto& description : um.getUndoDescriptions()) history.push_back (description.toStdString());
+    auto history = um.getUndoDescriptions();
     history.emplace_back();
-    for (const auto& description : um.getRedoDescriptions()) history.push_back (description.toStdString());
+    const auto redo = um.getRedoDescriptions();
+    history.insert (history.end(), redo.begin(), redo.end());
     return history;
 }
 
@@ -3089,9 +3089,7 @@ void TapeStrip::showRegionContextMenu (const RegionHit& hit, juce::Point<int> sc
                 {
                     if (safeThis == nullptr || ! joinable (*safeThis)) return;
                     auto& um = safeThis->engine.getUndoManager();
-                    um.beginNewTransaction (
-                        juce::String ("Join ") + juce::String ((int) joinIdxs.size())
-                        + " regions");
+                    um.beginNewTransaction ("Join " + std::to_string (joinIdxs.size()) + " regions");
                     um.perform (new JoinRegionsAction (
                         safeThis->session, safeThis->engine, track, joinIdxs));
                     safeThis->clearAllSelections();
@@ -3356,8 +3354,7 @@ void TapeStrip::showMidiRegionContextMenu (int trackIdx, int regionIdx,
                     }
 
                     auto& um = safeThis->engine.getUndoManager();
-                    um.beginNewTransaction (
-                        juce::String::formatted ("Swap to take %d", takeIdx + 2));
+                    um.beginNewTransaction ("Swap to take " + std::to_string (takeIdx + 2));
                     safeThis->performInPlace (new MidiRegionEditAction (
                         safeThis->session, safeThis->engine,
                         trackIdx, regionIdx, before, after));
@@ -4504,7 +4501,7 @@ int TapeStrip::hitTestTempoPoint (int x, int y) const noexcept
 }
 
 void TapeStrip::commitTempoPoints (std::vector<duskstudio::TempoPoint> after,
-                                    const juce::String& name)
+                                    const std::string& name)
 {
     auto& um = engine.getUndoManager();
     um.beginNewTransaction (name);

@@ -1262,7 +1262,7 @@ std::optional<ScenarioResult> runAudioEditorNumericFields (GuiHost& host, Scenar
                         label + " changed the gain or fades");
             auto& undo = engine.getUndoManager();
             ctx.expect (! undo.canUndo(), label + " added an undo step");
-            ctx.expect (undo.canRedo() && undo.getRedoDescription().toStdString() == "Rename region",
+            ctx.expect (undo.canRedo() && undo.getRedoDescription() == "Rename region",
                         label + " changed the redo history");
         } });
     }

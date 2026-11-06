@@ -5200,7 +5200,7 @@ void MainComponent::openBounceStemsDialog()
 // and a track the picker switched to the file's kind goes back with the same undo.
 static void commitImport (Session& session, AudioEngine& engine, int trackIndex,
                           std::optional<Track::Mode> switchTo,
-                          UndoableAction* addRegion, const juce::File& source)
+                          dusk::UndoableAction* addRegion, const juce::File& source)
 {
     // The import was made at the timeline's rate; a session with no rate yet
     // would otherwise take one from whatever device opens next.

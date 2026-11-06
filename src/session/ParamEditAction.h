@@ -1,6 +1,6 @@
 #pragma once
 
-#include <juce_data_structures/juce_data_structures.h>
+#include "../foundation/UndoManager.h"
 #include <functional>
 
 namespace duskstudio
@@ -16,7 +16,7 @@ namespace duskstudio
 // The closures capture the target atomic by pointer - valid for the life of
 // the session (the undo history is cleared on session load), and they run on
 // the message thread exactly like the normal UI write, so no new RT race.
-class ParamEditAction final : public juce::UndoableAction
+class ParamEditAction final : public dusk::UndoableAction
 {
 public:
     ParamEditAction (std::function<void()> applyAfter,

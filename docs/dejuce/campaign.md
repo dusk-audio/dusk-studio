@@ -81,6 +81,10 @@ reimplemented.
 - **Events seam**: `dusk::Timer` + `dusk::callAsync`
   (`src/foundation/MessageThread.h`); McuController flipped.
 - **Transport seam**: `dusk::TransportPosition` in hosting.
+- **Undo seam**: `dusk::UndoableAction` + `dusk::UndoManager`
+  (`src/foundation/UndoManager.h`), A/B parity vs JUCE's UndoManager with a
+  JUCE-free coalesced change notification; every edit action and the engine's
+  `SessionUndoManager` run on it.
 - **PipeWire backend**: native `src/engine/pipewire/` device (streams on real
   hardware; JUCE-JACK shim deleted). Native ALSA backend already existed.
 - **Device tower P1–2c**: `dusk::audio` device interfaces + `DeviceManager`

@@ -345,7 +345,7 @@ bool sameRegions (const std::vector<AudioRegion>& a, const std::vector<AudioRegi
 std::string undoDescription (AudioEngine& engine)
 {
     auto& undo = engine.getUndoManager();
-    return undo.canUndo() ? undo.getUndoDescription().toStdString() : std::string();
+    return undo.getUndoDescription();
 }
 
 std::optional<TakeId> landTake (ScenarioContext& ctx, Track& track, std::int64_t start, std::int64_t length,
