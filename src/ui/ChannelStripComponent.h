@@ -64,6 +64,10 @@ public:
     bool hasOpenPluginEditorForScenario() const noexcept;
     // The open CLAP editor is a container the plug-in never put a window in.
     bool pluginWindowMissingForScenario() const noexcept;
+    // Linux sandboxed editors: the window the child reported for the latest
+    // open, and whether the X server holds it inside the open editor's window.
+    std::uint64_t remoteEditorReportedWindowForScenario() const noexcept;
+    bool remoteEditorWindowEmbeddedForScenario() const;
     // Click MUTE / SOLO as the mouse would; the click lands on a later tick.
     void clickMuteForScenario();
     void clickSoloForScenario();
@@ -524,10 +528,12 @@ private:
     void adoptInstrumentTrackDefaults();
 
    #if JUCE_LINUX && DUSKSTUDIO_HAS_OOP_PLUGINS
-    // OOP: child plugin's X11 Window wrapped in XEmbedComponent fed
-    // to PluginEditorWindow as the body. Lifetime matches pluginEditor.
+    // OOP: child plugin's X11 Window wrapped in XEmbedComponent fed to the
+    // editor modal as its body. Kept across closes; an open that reports a
+    // different window rebuilds it.
     std::unique_ptr<juce::XEmbedComponent> remoteEditorEmbed;
     std::uint64_t remoteEditorWindowId = 0;
+    std::uint64_t remoteEditorReportedWindowId = 0;
     void resetRemoteEditorEmbed();
    #endif
    #if DUSKSTUDIO_HAS_OOP_PLUGINS && ! JUCE_LINUX

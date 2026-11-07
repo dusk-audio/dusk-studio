@@ -101,6 +101,10 @@ canonical source.
   just gone, which could happen when the editor closed on a busy machine. The
   slot was then bypassed until the plug-in was reloaded. The host now logs
   that error and keeps running. Any other X error still ends it.
+- **Sandboxed plug-in editors reopening on Linux.** A sandboxed plug-in's
+  editor opened a second time showed an empty frame, because Dusk Studio kept
+  showing the window the plug-in had closed. It now shows the plug-in's new
+  window every time.
 - **Developer ID through macOS packaging.** With the macOS signing secrets
   set, CPack's install stage re-signed the staged app, plug-in host and
   bundled libraries ad hoc, so the DMG sent for notarization had lost its

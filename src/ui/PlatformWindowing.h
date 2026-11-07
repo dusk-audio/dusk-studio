@@ -227,6 +227,12 @@ bool hasUsableWaylandDisplay();
 // chains to the previously installed handler.
 void runX11EditorTeardown (std::uint64_t editorWindowId,
                            const std::function<void()>& teardown);
+
+// Whether the X server holds window anywhere below ancestor, read on a
+// connection of its own after the framework's requests have been processed.
+// False when either window is gone or the query failed. GUI scenarios use it to
+// tell an embedded editor window from one left on the root.
+bool x11WindowIsInside (std::uint64_t window, std::uint64_t ancestor);
 #endif
 
 // Factory for a Component that adopts a foreign native window handle
