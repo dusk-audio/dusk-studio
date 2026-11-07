@@ -277,6 +277,11 @@ function Get-RegressGuiCatalog([string]$text, $exitCode) {
     return $names.ToArray()
 }
 
+# The ordinary GUI scenarios every build registers. Only a package run reaches
+# the phase that checks it, so the Linux windows-gui-catalog leg compares it
+# with the registry on every source run with GUI scenarios.
+function Get-RegressWindowsGuiCatalogCount { return 315 }
+
 function Get-RegressWindowsGuiSkips {
     return [ordered]@{
         'gui.clap_no_window_message' = 'only the Linux host looks for a plug-in window in the container'

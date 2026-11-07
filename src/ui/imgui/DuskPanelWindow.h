@@ -176,6 +176,11 @@ public:
     // What the shell's own shortcuts may do while this window is open; all until set.
     void setShellKeys (PanelShellKeys keys) noexcept;
 
+    // See DuskImGuiHost::setTakesKeyboardOnOpen. An inline panel, which its layout
+    // opens and reopens by itself, sets false; a control in it that captures the
+    // keyboard still takes it.
+    void setTakesKeyboardOnOpen (bool takes) noexcept;
+
     // The strictest rule of every window open now.
     static PanelShellKeys openShellKeys() noexcept;
 

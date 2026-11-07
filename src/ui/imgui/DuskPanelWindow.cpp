@@ -1047,6 +1047,11 @@ void DuskPanelWindow::setShellKeys (PanelShellKeys keys) noexcept
     impl->shellKeys = keys;
 }
 
+void DuskPanelWindow::setTakesKeyboardOnOpen (bool takes) noexcept
+{
+    impl->host.setTakesKeyboardOnOpen (takes);
+}
+
 PanelShellKeys DuskPanelWindow::openShellKeys() noexcept
 {
     auto strictest = PanelShellKeys::all;

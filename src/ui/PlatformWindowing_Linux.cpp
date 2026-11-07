@@ -517,6 +517,10 @@ bool hasUsableX11Display()
 
 double nativeViewBackingScale (void*) { return 1.0; }
 
+KeyboardFocusKeeper::KeyboardFocusKeeper (std::uintptr_t) {}
+KeyboardFocusKeeper::~KeyboardFocusKeeper() = default;
+void releaseKeyboardFromChild (std::uintptr_t, std::uintptr_t) {}
+
 bool sendEscapeThroughDisplayServer (std::uintptr_t nativeWindow)
 {
     if (nativeWindow == 0)
