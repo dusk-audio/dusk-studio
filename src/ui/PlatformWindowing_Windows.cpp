@@ -1,5 +1,6 @@
 #include "PlatformWindowing.h"
 #include "NativeEditorEmbedScale.h"
+#include "NativeEmbeddedParent.h"
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -262,6 +263,26 @@ std::optional<std::uintptr_t> topmostSiblingAtCentre (std::uintptr_t nativeChild
 }
 
 double nativeViewBackingScale (void*) { return 1.0; }
+
+KeyboardFocusKeeper::KeyboardFocusKeeper (std::uintptr_t) : holder (::GetFocus()) {}
+
+KeyboardFocusKeeper::~KeyboardFocusKeeper()
+{
+    auto* const previous = static_cast<HWND> (holder);
+    if (previous != nullptr && ::IsWindow (previous) && ::GetFocus() != previous)
+        ::SetFocus (previous);
+}
+
+void releaseKeyboardFromChild (std::uintptr_t nativeChild, std::uintptr_t nativeParent)
+{
+    auto* const child = reinterpret_cast<HWND> (nativeChild);
+    auto* const parent = reinterpret_cast<HWND> (nativeParent);
+    auto* const focus = ::GetFocus();
+    if (child != nullptr && parent != nullptr && focus != nullptr
+        && (focus == child || ::IsChild (child, focus)))
+        ::SetFocus (parent);
+}
+
 void clearXInputFocus() {}                 // X-only; no-op on Windows
 void requestFocusOnMainWaylandSurface() {} // Wayland-only; no-op on Windows
 void preferX11ForNextNativeWindow() {}     // Linux-only; no-op on Windows

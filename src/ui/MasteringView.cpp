@@ -547,6 +547,7 @@ void MasteringView::applyNativePanelSync()
 
         panel.window = std::make_unique<imgui::DuskPanelWindow> (
             panel.className, panel.logTag, panel.displayName);
+        panel.window->setTakesKeyboardOnOpen (false);
 
         imgui::DuskPanelWindow::Callbacks callbacks;
         callbacks.shortcut = [] (imgui::ShellShortcut shortcut)

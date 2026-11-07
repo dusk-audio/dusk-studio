@@ -49,6 +49,30 @@ private:
     bool latched = false;
 };
 
+// The host focuses every child it opens, which on macOS also makes the parent
+// window key, and Pugl makes a macOS child its window's first responder as it
+// realises it. A child its layout opens by itself opens inside one of these,
+// which on macOS and Windows hands the keyboard back to the view that held it.
+// Linux is left as it was, so the keeper does nothing there. Message thread only.
+class KeyboardFocusKeeper final
+{
+public:
+    explicit KeyboardFocusKeeper (std::uintptr_t nativeParent);
+    ~KeyboardFocusKeeper();
+    KeyboardFocusKeeper (const KeyboardFocusKeeper&) = delete;
+    KeyboardFocusKeeper& operator= (const KeyboardFocusKeeper&) = delete;
+
+private:
+    void* parentWindow = nullptr;
+    void* holder = nullptr;
+};
+
+// A child asked to close hands the keyboard it holds to its parent view first, so
+// its teardown does not leave the window with no view to take the keys, and a
+// keeper opening a sibling meanwhile does not hand the keyboard back to it. Linux
+// is left as it was, so this does nothing there. Message thread only.
+void releaseKeyboardFromChild (std::uintptr_t nativeChild, std::uintptr_t nativeParent);
+
 #if defined (__linux__)
 // Message-thread only. A Linux handle must belong to a live shell peer; its ID
 // prevents a recycled surface address from becoming a different embed parent.

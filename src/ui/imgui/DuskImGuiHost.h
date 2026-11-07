@@ -68,6 +68,11 @@ public:
 
     void setCallbacks (Callbacks callbacks);
 
+    // Whether opening the child leaves it the keyboard; true until set. A child its
+    // layout opens and reopens by itself sets false, and on macOS and Windows
+    // whatever held the keyboard gets it back.
+    void setTakesKeyboardOnOpen (bool takes) noexcept;
+
     // False when the embedded native child could not be created - no usable GL context,
     // a display backend that cannot embed a foreign surface, or a previous run that
     // never came back from its first frame. The host owns nothing afterwards.

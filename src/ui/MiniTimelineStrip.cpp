@@ -96,6 +96,7 @@ void MiniTimelineStrip::syncWindow()
     }
     if (! wanted || closing || latch.isLatched()) return;
     window = std::make_unique<imgui::DuskPanelWindow> ("dusk-studio-mini-timeline", "mini-timeline", "Mini timeline");
+    window->setTakesKeyboardOnOpen (false);
     juce::Component::SafePointer<MiniTimelineStrip> safe (this);
     imgui::DuskPanelWindow::Callbacks callbacks;
     callbacks.geometry = [safe]

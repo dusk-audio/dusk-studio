@@ -57,7 +57,9 @@ def cover(binary, token_file):
         window.add_controller(click)
         window.maximize()
         window.present()
-        print("MAPPED", flush=True)
+        # present() returns before Mutter shows the window, so MAPPED waits for
+        # the surface to enter the monitor.
+        window.get_surface().connect("enter-monitor", lambda *_args: print("MAPPED", flush=True))
 
     app = Gtk.Application(application_id="audio.dusk.studio.NativeLauncher",
                           flags=Gio.ApplicationFlags.NON_UNIQUE)
@@ -133,7 +135,9 @@ def drive(binary, work):
                 stderr=resources.enter_context((work / (case + ".cover.err")).open("w")))
             resources.callback(stop, launcher)
             require_event(lambda: "MAPPED" in text(cover_log), "launcher did not map")
-            desktop.click(50, 50)
+            # Mutter scales a new window up from its centre, so for its first frames
+            # a corner can still be the app's. Only the centre is sure to be the cover.
+            desktop.click(960, 540)
             require_event(lambda: last_active(cover_log) == "1" and not focused(), "cover did not take app focus")
             token_file.unlink(missing_ok=True)
             desktop.click(960, 540)

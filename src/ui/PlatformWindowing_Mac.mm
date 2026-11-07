@@ -1,4 +1,5 @@
 #include "PlatformWindowing.h"
+#include "NativeEmbeddedParent.h"
 #include <juce_audio_processors/juce_audio_processors.h>
 #import <AppKit/AppKit.h>   // NSCursor (hide/unhide) - not pulled in transitively
 
@@ -131,6 +132,45 @@ double nativeViewBackingScale (void* nativeViewHandle)
                                        : [[NSScreen mainScreen] backingScaleFactor];
     return scale > 0.0 ? scale : 1.0;
 }
+
+KeyboardFocusKeeper::KeyboardFocusKeeper (std::uintptr_t nativeParent)
+{
+    auto* const view = reinterpret_cast<NSView*> (nativeParent);
+    NSWindow* const window = view != nil ? [view window] : nil;
+    if (window == nil) return;
+    parentWindow = [window retain];
+    holder = [[window firstResponder] retain];
+}
+
+KeyboardFocusKeeper::~KeyboardFocusKeeper()
+{
+    auto* const window = static_cast<NSWindow*> (parentWindow);
+    auto* const responder = static_cast<NSResponder*> (holder);
+    // A responder handed back in a window that is not key takes the framework's
+    // keyboard focus from the window that is.
+    NSWindow* const key = [NSApp keyWindow];
+    // Only a view still in the window gets the keys back. A window that was its
+    // own first responder had no view taking them, so the new child keeps them.
+    const bool heldByView = [responder isKindOfClass:[NSView class]]
+                         && [(NSView*) responder window] == window;
+    if (window != nil && heldByView && (key == nil || key == window)
+        && [window firstResponder] != responder)
+        [window makeFirstResponder:responder];
+    [responder release];
+    [window release];
+}
+
+void releaseKeyboardFromChild (std::uintptr_t nativeChild, std::uintptr_t nativeParent)
+{
+    auto* const child = reinterpret_cast<NSView*> (nativeChild);
+    auto* const parent = reinterpret_cast<NSView*> (nativeParent);
+    NSWindow* const window = child != nil ? [child window] : nil;
+    if (window == nil || parent == nil || [parent window] != window) return;
+    NSResponder* const responder = [window firstResponder];
+    if ([responder isKindOfClass:[NSView class]] && [(NSView*) responder isDescendantOf:child])
+        [window makeFirstResponder:parent];
+}
+
 bool bringWindowToFront (juce::ComponentPeer& peer, const std::string&)
 {
     auto* const view = static_cast<NSView*> (peer.getNativeHandle());

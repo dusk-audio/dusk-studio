@@ -198,6 +198,26 @@ leg_native_gui_scenarios() {
     native_session_run scripts/regress/native-gui-scenarios.sh "$APP_BIN" --without-x11
 }
 
+# The Windows runner refuses a GUI catalog of any size but the one lib.ps1
+# names, and only a package run reaches that phase, so a source run holds the
+# number to the registry this build lists.
+windows_gui_catalog_leg() {
+    printf '\n--- %s ---\n' windows-gui-catalog
+    local listed expected
+    listed="$(scenarios_list | awk '$1 ~ /^gui\./ && $0 !~ /[[,]helper[],]/' | wc -l)"
+    listed=$((listed))
+    expected="$(sed -nE 's/^function Get-RegressWindowsGuiCatalogCount \{ return ([0-9]+) \}$/\1/p' \
+        "${REPO_ROOT}/scripts/regress/windows/lib.ps1")"
+    if ((listed == 0)); then
+        regress_skip windows-gui-catalog "gui scenarios not in this binary"
+    elif [[ "$expected" == "$listed" ]]; then
+        regress_record windows-gui-catalog PASS 0 "${listed} GUI scenarios, the count the Windows runner expects"
+    else
+        regress_record windows-gui-catalog FAIL 0 \
+            "this build lists ${listed} GUI scenarios; Get-RegressWindowsGuiCatalogCount in scripts/regress/windows/lib.ps1 returns ${expected:-nothing}"
+    fi
+}
+
 # Both build dirs must point at the pinned donor checkout. Building against a
 # drifted ../plugins silently changes the DSP under test, and the failure then
 # looks like a Dusk Studio regression.
@@ -697,6 +717,9 @@ if [[ -x "$APP_BIN" ]]; then
                 regress_leg "native-gui-scenarios" leg_native_gui_scenarios
             fi
             regress_scenarios_run "$APP_BIN" --gui
+            if ((!PACKAGE_MODE)); then
+                windows_gui_catalog_leg
+            fi
             # These cases need a seeded config the suite runs without: the
             # picker skips outright, and the defaults only see the empty one.
             regress_leg "gui-plugin-picker" bash tests/gui_plugin_picker.sh "$APP_BIN"
@@ -722,6 +745,7 @@ else
         missing_legs+=("${SCENARIO_LEG_NAMES[@]}")
         if ((GUI_SCENARIOS)); then
             missing_legs+=(native-wayland-embedding native-window-activation native-gui-scenarios scenarios-gui gui-plugin-picker gui-settings-defaults)
+            ((PACKAGE_MODE)) || missing_legs+=(windows-gui-catalog)
         fi
     fi
     if ((RUN_CAPTURE && !PACKAGE_MODE && !SCENARIOS_ONLY)); then
