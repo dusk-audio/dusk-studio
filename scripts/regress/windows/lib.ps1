@@ -288,6 +288,7 @@ function Get-RegressWindowsGuiSkips {
         'gui.midi_io_selectors' = 'virtual MIDI destination fixture requires ALSA sequencer'
         'gui.oop_editor_closes_before_child' = 'Windows tracks the child by handle, not by pid'
         'gui.oop_editor_failure_no_strand' = 'the sandbox stub children are driven on POSIX only'
+        'gui.oop_editor_reopen_embeds_new_window' = 'reads the embedded editor window back through the X server'
         'gui.piano_live_recording_preview' = 'requires the native virtual keyboard and X server readback'
         'gui.piano_roll_follows_take' = 'reads the window back through the X server'
         'gui.piano_roll_keeps_its_region' = 'reads the window back through the X server'

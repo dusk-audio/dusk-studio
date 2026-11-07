@@ -434,8 +434,8 @@ std::optional<ScenarioResult> runLv2EditorReflectsState (GuiHost& host, Scenario
 // ------------------------------------------------------ sandboxed editors
 
 #if DUSKSTUDIO_HAS_OOP_PLUGINS && ! defined (_WIN32)
-// Both sandboxed cases put the app's own plug-in manager into sandbox mode for
-// the length of one scenario, so both hand it back exactly as it was on every
+// The sandboxed cases put the app's own plug-in manager into sandbox mode for
+// the length of one scenario, so each hands it back exactly as it was on every
 // way out, the watchdog's included: the context runs this when the case ends.
 void restoreInProcessHosting (ScenarioContext& ctx, PluginSlot& slot, bool oopWasEnabled)
 {
@@ -453,10 +453,12 @@ struct SandboxState
     int childPid = -1;
 };
 
-std::optional<ScenarioResult> runOopEditorClosesBeforeChild (GuiHost& host, ScenarioContext& ctx)
+// Loads the relayout fixture into the strip's slot out of process and hands the
+// case over once the child holds it. Empty when the case is under way.
+std::optional<ScenarioResult> startSandboxedRelayout (
+    GuiHost& host, ScenarioContext& ctx,
+    std::function<void (StripHandle&, PluginSlot&, std::shared_ptr<SandboxState>)> ready)
 {
-    static constexpr int kChildExitTimeoutMs = 15000;
-
     const auto childBinary = oopstub::hostBinary();
     if (! childBinary)
         return ScenarioResult::skip ("the sandbox host binary is not beside the app");
@@ -511,7 +513,7 @@ std::optional<ScenarioResult> runOopEditorClosesBeforeChild (GuiHost& host, Scen
     });
 
     ctx.waitUntil ([state] { return state->loadDone; }, 30000,
-    [&ctx, &host, strip, &slot, state]
+    [&ctx, strip, &slot, state, ready = std::move (ready)]
     {
         if (! state->loadOk || ! slot.isRemote())
         {
@@ -529,7 +531,20 @@ std::optional<ScenarioResult> runOopEditorClosesBeforeChild (GuiHost& host, Scen
         }
 
         strip->refreshInsertButton();
+        ready (*strip, slot, state);
+    },
+    "the sandboxed load never completed");
+    return std::nullopt;
+}
 
+std::optional<ScenarioResult> runOopEditorClosesBeforeChild (GuiHost& host, ScenarioContext& ctx)
+{
+    static constexpr int kChildExitTimeoutMs = 15000;
+
+    return startSandboxedRelayout (host, ctx,
+    [&ctx, &host] (StripHandle& stripRef, PluginSlot& slot, std::shared_ptr<SandboxState> state)
+    {
+        auto* strip = &stripRef;
         auto steps = std::make_shared<std::vector<Step>>();
         steps->push_back ({ 200, [&ctx, strip]
         {
@@ -565,10 +580,61 @@ std::optional<ScenarioResult> runOopEditorClosesBeforeChild (GuiHost& host, Scen
             },
             "the sandbox child outlived the slot that owned it");
         });
-    },
-    "the sandboxed load never completed");
-    return std::nullopt;
+    });
 }
+
+#if defined (__linux__)
+std::optional<ScenarioResult> runOopEditorReopenEmbedsNewWindow (GuiHost& host, ScenarioContext& ctx)
+{
+    return startSandboxedRelayout (host, ctx,
+    [&ctx, &host] (StripHandle& stripRef, PluginSlot& slot, std::shared_ptr<SandboxState>)
+    {
+        auto* strip = &stripRef;
+        auto firstWindow = std::make_shared<std::uint64_t> (0);
+        const auto checkEmbedded = [&ctx, strip] (const std::string& which)
+        {
+            const auto reported = strip->remoteEditorReportedWindow();
+            ctx.note (which + " open: the child reported window " + std::to_string (reported));
+            ctx.expect (reported != 0, "the child reported no window for the " + which + " open");
+            ctx.expect (strip->remoteEditorWindowEmbedded(),
+                        "the " + which + " open did not embed the window the child reported");
+            return reported;
+        };
+
+        auto steps = std::make_shared<std::vector<Step>>();
+        steps->push_back ({ 200, [&ctx, strip]
+        {
+            ctx.expect (strip->openEditor(), "the sandboxed editor did not open");
+        } });
+        steps->push_back ({ 600, [&host, strip, checkEmbedded, firstWindow]
+        {
+            *firstWindow = checkEmbedded ("first");
+            strip->closeEditor();
+            dismissAlert (host);
+        }, [strip] { return strip->hasOpenEditor(); }, "the sandboxed editor never stayed open" });
+        steps->push_back ({ 300, [&ctx, &slot, strip]
+        {
+            ctx.expect (! slot.wasCrashed(), "the sandbox child crashed when its editor closed");
+            ctx.expect (strip->openEditor(), "the sandboxed editor did not reopen");
+        }, [strip] { return ! strip->hasOpenEditor(); }, "the sandboxed editor never closed" });
+        steps->push_back ({ 600, [&ctx, &host, &slot, strip, checkEmbedded, firstWindow]
+        {
+            const auto second = checkEmbedded ("second");
+            if (second != *firstWindow)
+                ctx.note ("the child made a new window for the second open");
+            ctx.expect (! slot.wasCrashed(), "the sandbox child crashed when its editor reopened");
+            strip->closeEditor();
+            dismissAlert (host);
+        }, [strip] { return strip->hasOpenEditor(); }, "the reopened editor never stayed open" });
+        steps->push_back ({ 300, [&ctx, &host]
+        {
+            ctx.expect (host.modalStackEmpty(), "the run left a modal up");
+        }, [strip] { return ! strip->hasOpenEditor(); }, "the reopened editor never closed" });
+
+        runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    });
+}
+#endif
 
 std::optional<ScenarioResult> runOopEditorFailureNoStrand (GuiHost& host, ScenarioContext& ctx)
 {
@@ -1552,6 +1618,27 @@ const ScenarioRegistrar oopEditorChild { Scenario {
         return ScenarioResult::skip ("Windows tracks the child by handle, not by pid");
        #else
         return runOopEditorClosesBeforeChild (host, ctx);
+       #endif
+    }
+} };
+
+const ScenarioRegistrar oopEditorReopen { Scenario {
+    "gui.oop_editor_reopen_embeds_new_window",
+    { "gui", "oop", "editor" },
+    Needs::Engine | Needs::Gui | Needs::Oop,
+    { "relayout.vst3" },
+    {},
+    120000,
+    [] (GuiHost& host, ScenarioContext& ctx) -> std::optional<ScenarioResult>
+    {
+       #if ! DUSKSTUDIO_HAS_OOP_PLUGINS
+        (void) host; (void) ctx;
+        return ScenarioResult::skip ("built without sandboxed plugin hosting");
+       #elif ! defined (__linux__)
+        (void) host; (void) ctx;
+        return ScenarioResult::skip ("reads the embedded editor window back through the X server");
+       #else
+        return runOopEditorReopenEmbedsNewWindow (host, ctx);
        #endif
     }
 } };

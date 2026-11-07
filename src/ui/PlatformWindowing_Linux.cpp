@@ -688,6 +688,44 @@ void runX11EditorTeardown (std::uint64_t editorWindowId,
     teardown();
 }
 
+bool x11WindowIsInside (std::uint64_t window, std::uint64_t ancestor)
+{
+    if (window == 0 || ancestor == 0 || window == ancestor)
+        return false;
+    if (auto* framework = juceDisplay())
+        ::XSync (framework, False);
+    auto* display = ::XOpenDisplay (nullptr);
+    if (display == nullptr)
+        return false;
+
+    bool inside = false;
+    {
+        const std::lock_guard<std::mutex> lock (editorTeardownTrapMutex);
+        ScopedCaptureErrorTrap errors (display);
+        auto current = (::Window) window;
+        for (int depth = 0; depth < 64 && ! inside; ++depth)
+        {
+            ::Window root = 0, parent = 0;
+            ::Window* children = nullptr;
+            unsigned int count = 0;
+            if (::XQueryTree (display, current, &root, &parent, &children, &count) == 0)
+                break;
+            if (children != nullptr)
+                ::XFree (children);
+            if (parent == 0)
+                break;
+            inside = parent == (::Window) ancestor;
+            if (parent == root)
+                break;
+            current = parent;
+        }
+        if (! errors.ok())
+            inside = false;
+    }
+    ::XCloseDisplay (display);
+    return inside;
+}
+
 void setNativeCursorVisibleOnPeer (juce::ComponentPeer& peer, bool visible)
 {
     if (describeEmbeddedParent (reinterpret_cast<std::uintptr_t> (peer.getNativeHandle())).backend

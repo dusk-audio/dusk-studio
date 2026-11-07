@@ -302,6 +302,18 @@ struct MainComponent::ScenarioStripHandle final : scenario::StripHandle
         return component != nullptr && component->pluginWindowMissingForScenario();
     }
 
+    std::uint64_t remoteEditorReportedWindow() const override
+    {
+        auto* component = strip();
+        return component != nullptr ? component->remoteEditorReportedWindowForScenario() : 0;
+    }
+
+    bool remoteEditorWindowEmbedded() const override
+    {
+        auto* component = strip();
+        return component != nullptr && component->remoteEditorWindowEmbeddedForScenario();
+    }
+
     bool readEditorControl (const std::string& name, double& valueOut) const override
     {
         // The native LV2 editor drives the very instance the slot owns, so what

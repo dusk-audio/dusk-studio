@@ -5,7 +5,15 @@ All notable changes to Dusk Studio. Format loosely follows
 back-filled from `git log`; once tags exist this file is the
 canonical source.
 
-## [0.16.1] - Unreleased
+## [0.16.1] - 2026-11-07
+
+### Added
+
+- **Experimental native Wayland for source builds.** A source build with
+  shared Wayland embedding support can run its main window without Xwayland
+  when started with `DUSKSTUDIO_NATIVE_WAYLAND=1`. X11 plug-in editors still
+  need Xwayland and open in separate windows. The release downloads keep
+  using Xwayland.
 
 ### Changed
 
@@ -101,6 +109,10 @@ canonical source.
   just gone, which could happen when the editor closed on a busy machine. The
   slot was then bypassed until the plug-in was reloaded. The host now logs
   that error and keeps running. Any other X error still ends it.
+- **Sandboxed plug-in editors reopening on Linux.** A sandboxed plug-in's
+  editor opened a second time showed an empty frame, because Dusk Studio kept
+  showing the window the plug-in had closed. It now shows the plug-in's new
+  window every time.
 - **Developer ID through macOS packaging.** With the macOS signing secrets
   set, CPack's install stage re-signed the staged app, plug-in host and
   bundled libraries ad hoc, so the DMG sent for notarization had lost its

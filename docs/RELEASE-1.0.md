@@ -42,10 +42,9 @@ Each line below is a check somebody can run and get a yes or a no.
 - `tools/juce-gate.sh` passes. Counts may fall. They may not rise.
 - `scripts/run-selftest-xvfb.sh` passes on a private display, and CI runs the
   headless self-test on the Linux, arm64 and macOS build jobs and in the Linux
-  and macOS release jobs. The Windows jobs do not run it: the smoke test still
-  skips that leg after #504, and no CI run has shown the harness completing on
-  a Windows runner, so Windows self-test coverage stays a manual step on a real
-  desktop session until a run proves otherwise.
+  and macOS release jobs. The Windows jobs do not run it. The Windows leg of
+  the regression runner runs it against an installed package
+  (`phase1-selftest`), with the IPC self-test beside it (`ipc-selftest`).
 - The post-download smoke test passes against the published artifact on each
   of the three platforms.
 
@@ -124,7 +123,7 @@ tracks the release blockers and final validation that must finish before its tag
 | 534 | Define the 1.0 package contents and verify all three packagers | done | Implemented and closed: shared contents contract and verification for all three packagers. |
 | 535 | Local instrument browser for soundfonts on disk | done | Local browsing shipped in 0.14; #804 adds repository browsing alongside it in 0.16. |
 | 536 | Walk the demo path on packaged builds and file what it snags on | 1.0 | Individual demo-path bugs have been fixed one at a time. Nobody has walked the whole path on a shipped build. |
-| 605 | Self-test coverage across CI platforms | 1.0 | macOS CI and the Linux and macOS release jobs now run it; the Windows leg stays manual (see the checklist). |
+| 605 | Self-test coverage across CI platforms | 1.0 | macOS CI and the Linux and macOS release jobs now run it; Windows CI does not, and the regression runner's Windows leg covers it (see the checklist). |
 | 804 | SFZ library: online catalog, downloads and portable locators | 0.16 (validation pending) | Four external SFZ sources, staged installation, portable references and asynchronous loading; follow-up fixes and final validation remain on milestone 0.16. |
 | 606 | Built-in suite placeholder in package contract | 1.0 | The contract listed plugin files the in-binary suite never produces. |
 | 607 | Signing wording in release docs | 1.0 | README, QUICKSTART and MANUAL described all builds as unsigned after the workflow gained signing. |
@@ -138,13 +137,15 @@ Not a blocker. `windows-tests.yml` builds the app and the Catch2 binary and
 runs the suite through `ctest`, with explicit greps that require the four
 `ipc-stub` regressions and the eight `FileImporter` regressions to be present
 in the inventory. `DUSKSTUDIO_RUN_IPC_SELFTEST` and `DUSKSTUDIO_IPC_HOST_TEST`
-are app-level environment-gated paths in `src/DuskStudioApp.cpp`. They appear
-in no workflow, no test target and no script. The Windows release gate is
-therefore unaffected by the hang.
+are app-level environment-gated paths in `src/DuskStudioApp.cpp`. No workflow
+or test target sets them, so the Windows release gate is unaffected by the
+hang. The regression runner does: `scripts/regress/linux.sh` sets both, and
+its Windows leg sets `DUSKSTUDIO_RUN_IPC_SELFTEST` against an installed
+package.
 
 It was fixed for 1.0 by #570, which resolves the child under its real `.exe`
-name. No CI run has shown the harness completing on a Windows runner, so the
-Windows self-test stays a manual step (see Quality above).
+name. No CI job runs the harness on Windows; the regression runner's Windows
+leg does (see Quality above).
 
 ## Work plan
 

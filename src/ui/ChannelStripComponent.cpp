@@ -2694,6 +2694,29 @@ bool ChannelStripComponent::pluginWindowMissingForScenario() const noexcept
 #endif
 }
 
+std::uint64_t ChannelStripComponent::remoteEditorReportedWindowForScenario() const noexcept
+{
+   #if JUCE_LINUX && DUSKSTUDIO_HAS_OOP_PLUGINS
+    return remoteEditorReportedWindowId;
+   #else
+    return 0;
+   #endif
+}
+
+bool ChannelStripComponent::remoteEditorWindowEmbeddedForScenario() const
+{
+   #if JUCE_LINUX && DUSKSTUDIO_HAS_OOP_PLUGINS
+    if (remoteEditorEmbed == nullptr || ! isPluginEditorOpen()) return false;
+    auto* peer = remoteEditorEmbed->getPeer();
+    return peer != nullptr
+        && platform::x11WindowIsInside (
+               remoteEditorReportedWindowId,
+               (std::uint64_t) reinterpret_cast<std::uintptr_t> (peer->getNativeHandle()));
+   #else
+    return false;
+   #endif
+}
+
 void ChannelStripComponent::clickMuteForScenario() { muteButton.triggerClick(); }
 void ChannelStripComponent::clickSoloForScenario() { soloButton.triggerClick(); }
 
@@ -2882,6 +2905,11 @@ void ChannelStripComponent::openPluginEditor()
        #endif
 
        #if JUCE_LINUX
+        remoteEditorReportedWindowId = windowId;
+        // HideEditor destroys the child's window, so a reopen reports a new
+        // one and the kept embed would hold the dead window.
+        if (remoteEditorEmbed != nullptr && remoteEditorWindowId != windowId)
+            resetRemoteEditorEmbed();
         if (remoteEditorEmbed == nullptr)
         {
             // XEmbedComponent ctor: takes a Window (unsigned long) and

@@ -62,6 +62,11 @@ public:
     // Linux CLAP only: the plug-in took the container and put no window in it.
     virtual bool pluginWindowMissing() const = 0;
 
+    // Linux sandboxed editors: the window the child reported for the latest
+    // open, and whether the X server holds it inside the open editor's window.
+    virtual std::uint64_t remoteEditorReportedWindow() const = 0;
+    virtual bool remoteEditorWindowEmbedded() const = 0;
+
     // The value behind the open editor, by control name. False when no editor
     // is up, or the plug-in has no such control.
     virtual bool readEditorControl (const std::string& name, double& valueOut) const = 0;

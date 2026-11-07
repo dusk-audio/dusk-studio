@@ -275,6 +275,7 @@ install_scripts() {
         serve_script phase2-handoff.ps1 p2.ps1 &&
         serve_script phase3-session-close.ps1 p3.ps1 &&
         serve_script phase4-window-activation.ps1 p4.ps1 &&
+        serve_script ipc-selftest.ps1 pq.ps1 &&
         serve_script installed.ps1 pc.ps1 &&
         serve_script cleanup.ps1 px.ps1 &&
         serve_script scenarios.ps1 pe.ps1 PHASE=scenarios-headless SPEC=all TIMEOUT="$ENGINE_TIMEOUT" &&
@@ -628,7 +629,7 @@ if ((installed)); then
     guest_leg "phase2-handoff" p2.ps1 300
     guest_leg "phase3-session-close" p3.ps1 300
     guest_leg "phase4-window-activation" p4.ps1 600
-    regress_skip "ipc-selftest" "hangs on Windows (issue #504)"
+    guest_leg "ipc-selftest" pq.ps1 600
     if ((RUN_SCENARIOS)); then
         SCENARIO_FIXTURE_ROOTS="${RUN_DIR}/fixtures/build-tests:${RUN_DIR}/fixtures/tests-fixtures"
         scenarios_fixture_leg
