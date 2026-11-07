@@ -151,8 +151,7 @@ public:
         std::swap (adapter, primed.adapter);
         loadedPath.swap (primed.path);
         loadedPluginId.clear();
-        processingOnline.store (true, std::memory_order_release);
-        ready.store (true, std::memory_order_release);
+        bringOnline (maxBlock);
         return true;
     }
 
