@@ -214,6 +214,7 @@ add_executable(dusk-studio-tests
     ${CMAKE_SOURCE_DIR}/src/foundation/UndoManager.cpp
     multisample_state_roundtrip.cpp
     multisample_hdcc_coalescing.cpp
+    multisample_native_slot.cpp
     bounce_stem_filename.cpp
     bounce_stem_targets.cpp
     dp_importer_parse.cpp

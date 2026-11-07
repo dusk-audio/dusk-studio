@@ -20,6 +20,10 @@ canonical source.
 
 ### Fixed
 
+- **Soundfonts that made no sound.** An SFZ or SF2 instrument loaded through
+  SFZ Manager, **Browse...** or an opened session plays again. In 0.16.0 it
+  stayed silent until the audio device restarted, for example after a buffer
+  size change.
 - **Rate-limit notice.** When an online SFZ repository is rate limited, a
   reset time that has already passed, or lies more than a day away, reads
   "Try again later." instead of a clock time.

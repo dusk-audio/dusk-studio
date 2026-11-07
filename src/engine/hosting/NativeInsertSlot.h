@@ -78,13 +78,10 @@ public:
         bundle     = std::move (b);
         instance   = std::move (inst);
         adapter.prepare (instance->portLayout(), maxBlock);   // size the fold scratch
-        maxProcessFrames.store (maxBlock, std::memory_order_release);
-        historyResetPending.store (true, std::memory_order_release);
         loadedPath     = path.u8string();
         loadedPluginId = pickedId;
         gen.fetch_add (1, std::memory_order_relaxed);
-        processingOnline.store (true, std::memory_order_release);
-        ready.store (true, std::memory_order_release);
+        bringOnline (maxBlock);
         return true;
     }
 
@@ -344,6 +341,17 @@ public:
     virtual ~NativeInsertSlot() = default;
 
 protected:
+    // The last step of every path that installs a new instance, so none can
+    // forget a part: processStereo drops every block longer than the published
+    // limit, and a slot that never published one drops them all.
+    void bringOnline (int maxBlock) noexcept
+    {
+        maxProcessFrames.store (maxBlock, std::memory_order_release);
+        historyResetPending.store (true, std::memory_order_release);
+        processingOnline.store (true, std::memory_order_release);
+        ready.store (true, std::memory_order_release);
+    }
+
     // The block's MIDI, behind the hanging reset when one is owed. The reset
     // always goes; the block's own events go with it when they fit whole.
     const dusk::MidiBuffer* settleOwedReset (const dusk::MidiBuffer* midiIn) noexcept

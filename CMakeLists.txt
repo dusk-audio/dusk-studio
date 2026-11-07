@@ -926,6 +926,7 @@ target_sources(DuskStudio PRIVATE
     src/engine/scenario/cases/region_editing.cpp
     src/engine/scenario/cases/scan_cancel_au.cpp
     src/engine/scenario/cases/scan_cancel_lv2.cpp
+    src/engine/scenario/cases/sfz_loaded_instrument_sounds.cpp
     src/engine/scenario/cases/strip_dsp.cpp
     src/engine/scenario/cases/takes.cpp
     src/engine/scenario/cases/transport.cpp
