@@ -620,8 +620,7 @@ std::optional<ScenarioResult> runOopEditorReopenEmbedsNewWindow (GuiHost& host, 
         steps->push_back ({ 600, [&ctx, &host, &slot, strip, checkEmbedded, firstWindow]
         {
             const auto second = checkEmbedded ("second");
-            if (second != *firstWindow)
-                ctx.note ("the child made a new window for the second open");
+            ctx.expect (second != *firstWindow, "the child reported the same window for both opens");
             ctx.expect (! slot.wasCrashed(), "the sandbox child crashed when its editor reopened");
             strip->closeEditor();
             dismissAlert (host);
