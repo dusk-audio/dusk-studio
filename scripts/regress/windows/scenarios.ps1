@@ -15,7 +15,8 @@ try {
         $rgListEnv['DUSKSTUDIO_RUN_SCENARIOS'] = 'list'
         $rgListCode = Invoke-RegressApp $rgListPhase $rgListEnv '' 60
         $rgCatalog = @(Get-RegressGuiCatalog (Get-Content -Raw -Encoding UTF8 (Join-Path $rgRoot ($rgListPhase + '.log'))) $rgListCode)
-        if ($rgCatalog.Count -ne 307) { throw "Expected 307 ordinary GUI scenarios, found $($rgCatalog.Count)" }
+        $rgExpected = Get-RegressWindowsGuiCatalogCount
+        if ($rgCatalog.Count -ne $rgExpected) { throw "Expected $rgExpected ordinary GUI scenarios, found $($rgCatalog.Count)" }
         $rgAllowed = Get-RegressWindowsGuiSkips
         foreach ($rgName in $rgAllowed.Keys) {
             if ($rgCatalog -cnotcontains $rgName) { throw "Unsupported scenario is absent from registry: $rgName" }
