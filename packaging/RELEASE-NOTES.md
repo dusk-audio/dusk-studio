@@ -1,11 +1,7 @@
 <!-- summary-start -->
-MIDI Merge layers performances into a region, with one undo step per loop pass while recording continues. The piano roll shows incoming notes live. Browse SFZ instruments from SFZ Instruments, Musical Artifacts, FreePats and Versilian Studios, see each pack's license, then download them to your installed library. Sessions keep the exact installed pack reference across computers. Playback readers share three fill workers and keep sample buffers near the playhead.
+Dusk Studio 0.16.1 fixes SFZ and SF2 instruments that stayed silent after loading until the audio device restarted. LV2 plug-ins a Linux distribution installs in its lib64 folder, such as openSUSE's and Fedora's sfizz, now appear in the plug-in picker. The Linux download now needs the liblilv-0-0 and libserd-0-0 packages.
 
-The mastering stage adds multiband phase analysis with held warnings, coherence and mono-loss readings. Its Mono monitor checks the fold-down while exports stay stereo.
-
-Offline render quality can follow playback settings for faster bounces and freezes. Edits a plug-in reports trigger save prompts, failed state captures keep their last saved copy, and new unsaved sessions preserve earlier crash recovery and notes. Recording, export finalization and plug-in shutdown fixes protect sessions and generated audio.
-
-Sessions save in format 11, which Dusk Studio 0.15.1 and earlier cannot open. Keep a copy before saving if you need to use an older version.
+Native panels show Greek, Cyrillic, Chinese, Japanese and Korean names, and Hebrew and Arabic names read right to left. Seeks during playback at 192 kHz no longer cause a dropout, mice and tablets plugged in after launch work on X11, and sandboxed plug-in editors on Linux close and reopen reliably. Sessions still save in format 11, so 0.16.0 opens them.
 <!-- summary-end -->
 
 ### Known limitations
@@ -54,7 +50,7 @@ key is `packaging/release-signing.pub` in the source repository; download it
 from this release's tag, compare its fingerprint with the one on the project
 site, import it, then check the signature before the hashes:
 
-    VERSION=0.16.0   # this release
+    VERSION=0.16.1   # this release
     curl -fsSLO "https://raw.githubusercontent.com/dusk-audio/dusk-studio/v$VERSION/packaging/release-signing.pub"
     gpg --show-keys --with-fingerprint release-signing.pub
     gpg --import release-signing.pub

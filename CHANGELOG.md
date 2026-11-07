@@ -5,7 +5,15 @@ All notable changes to Dusk Studio. Format loosely follows
 back-filled from `git log`; once tags exist this file is the
 canonical source.
 
-## [0.16.1] - Unreleased
+## [0.16.1] - 2026-11-07
+
+### Added
+
+- **Experimental native Wayland for source builds.** A source build with
+  shared Wayland embedding support can run its main window without Xwayland
+  when started with `DUSKSTUDIO_NATIVE_WAYLAND=1`. X11 plug-in editors still
+  need Xwayland and open in separate windows. The release downloads keep
+  using Xwayland.
 
 ### Changed
 
