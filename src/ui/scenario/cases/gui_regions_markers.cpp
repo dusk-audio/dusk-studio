@@ -315,7 +315,7 @@ const ScenarioRegistrar miniTimelineMarkers { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runMiniTimelineMarkers (host, ctx); }
 } };
 
-// The strip takes the keyboard whenever its child opens, so a shortcut matched on
+// The strip holds the keyboard on Linux after it opens, so a shortcut matched on
 // the character it types has to keep working from there.
 std::optional<ScenarioResult> runMiniTimelineKeys (GuiHost& host, ScenarioContext& ctx)
 {

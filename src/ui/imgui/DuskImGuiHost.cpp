@@ -21,6 +21,7 @@
 #include <chrono>
 #include <cstdarg>
 #include <cstdio>
+#include <optional>
 #include <stdexcept>
 #include <utility>
 
@@ -134,6 +135,9 @@ struct DuskImGuiHost::Impl final : private dusk::Timer
 
         try
         {
+            std::optional<platform::KeyboardFocusKeeper> keepKeyboard;
+            if (! takesKeyboardOnOpen)
+                keepKeyboard.emplace (parent.handle);
             DGL::Application* windowApplication = nullptr;
            #if DUSKSTUDIO_HAS_SHARED_WAYLAND
             if (parent.backend == platform::NativeEmbeddedParent::Backend::wayland)
@@ -269,6 +273,7 @@ struct DuskImGuiHost::Impl final : private dusk::Timer
             return;
         closeRequested = true;
         closeWasPumped = false;
+        platform::releaseKeyboardFromChild (window->getNativeWindowHandle(), embeddedParent.handle);
        #if DUSKSTUDIO_HAS_SHARED_WAYLAND
         if (sharedApplication != nullptr)
         {
@@ -507,6 +512,7 @@ struct DuskImGuiHost::Impl final : private dusk::Timer
     bool armedMarker = false;
     bool closeRequested = false;
     bool closeWasPumped = false;
+    bool takesKeyboardOnOpen = true;
     std::chrono::steady_clock::time_point nextPumpAt {};
 };
 
@@ -520,6 +526,11 @@ DuskImGuiHost::~DuskImGuiHost() = default;
 void DuskImGuiHost::setCallbacks (Callbacks callbacks)
 {
     impl->callbacks = std::move (callbacks);
+}
+
+void DuskImGuiHost::setTakesKeyboardOnOpen (bool takes) noexcept
+{
+    impl->takesKeyboardOnOpen = takes;
 }
 
 bool DuskImGuiHost::open (std::uintptr_t nativeParent, Geometry geometry)

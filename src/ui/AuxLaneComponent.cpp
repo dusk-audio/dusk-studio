@@ -1799,6 +1799,7 @@ void AuxLaneComponent::applyBuiltinViewSync()
         ui.builtinEditorHost.reset();
         window = std::make_unique<imgui::DuskPanelWindow> (
             "dusk-studio-aux-builtin", "aux-builtin", "Built-in unit controls");
+        window->setTakesKeyboardOnOpen (false);
 
         imgui::DuskPanelWindow::Callbacks callbacks;
         callbacks.shortcut = [] (imgui::ShellShortcut shortcut)
