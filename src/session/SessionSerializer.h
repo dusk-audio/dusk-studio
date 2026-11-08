@@ -67,19 +67,34 @@ public:
 
         std::vector<std::filesystem::path> pathsBefore;
         std::vector<std::filesystem::path> copiedFiles;
-        // Absent before consolidation: the new folder, its audio/ and state/,
-        // the notepad and the temporaries the rest of the save writes there.
+        // Absent before consolidation: the new folder, its audio/, state/ and
+        // midi/ with each folder below it, the notepad and the temporaries the
+        // rest of the save writes there.
         std::vector<std::filesystem::path> createdPaths;
+        // The old folder's MIDI recovery files that were copied, each where it
+        // was in the old folder.
+        std::vector<std::filesystem::path> copiedMidiSources;
     };
-    // withPluginState false leaves the old folder's state/ tree behind, for a
-    // session that never owned that folder.
+    // ownsOldFolder says the session is the old folder's own. Only then do the
+    // old folder's state/ and midi/ trees go along: each file of midi/ is
+    // copied to the same place under the new folder unless a file is already
+    // there, which is skipped. A session that never owned that folder leaves
+    // both behind.
     static ConsolidationResult consolidateInto (Session& session,
                                                 const juce::File& newSessionDir,
-                                                bool withPluginState = true);
+                                                bool ownsOldFolder = true);
 
     // For a Save As that fails after a successful consolidateInto: every
     // repointed path goes back to its old value, and the copies and anything
     // else created in the new folder since are removed.
     static void revertConsolidation (Session& session, const ConsolidationResult& done);
+
+    // For the first save of a session never saved or opened, once it has
+    // succeeded, so its MIDI recovery files move with it rather than stay
+    // behind: removes each of copiedMidiSources, then midi/takes, midi/tracks
+    // and midi/ in oldSessionDir, each only when that leaves it an empty
+    // folder. Nothing else in the old folder is touched.
+    static void removeCopiedMidiSources (const ConsolidationResult& done,
+                                         const std::filesystem::path& oldSessionDir);
 };
 } // namespace duskstudio

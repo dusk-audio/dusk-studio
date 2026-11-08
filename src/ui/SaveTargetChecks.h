@@ -119,7 +119,8 @@ inline bool makeReadyForSession (const std::filesystem::path& dir)
 
 // The folder a never-saved session starts in, made with its audio folder:
 // parent/Untitled, or the first "Untitled N" beside it without saved state,
-// recovery or notes. One whose contents cannot be checked counts as holding
+// recovery, notes or MIDI recovery files, so no session finds another one's
+// files in its folder. One whose contents cannot be checked counts as holding
 // them. One is passed over when it cannot take an audio folder, or when it or
 // its audio folder cannot be written in. Creates parent if needed; empty when
 // it cannot, or when parent cannot be searched or written in.
@@ -140,7 +141,7 @@ inline std::filesystem::path unsavedSessionFolder (const std::filesystem::path& 
         if (! std::filesystem::is_directory (status)) continue;
 
         bool occupied = false;
-        for (const auto* name : { "session.json", "session.json.autosave", "notepad.md" })
+        for (const auto* name : { "session.json", "session.json.autosave", "notepad.md", "midi" })
         {
             const auto fileStatus = std::filesystem::symlink_status (dir / name, ec);
             if (fileStatus.type() == std::filesystem::file_type::not_found) continue;

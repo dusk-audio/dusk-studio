@@ -552,6 +552,7 @@ ScenarioResult midiRecordingLivesInJson (ScenarioContext& ctx)
         const std::string with = merge ? " with MIDI Merge on" : " with MIDI Merge off";
         session.midiMergeEnabled.store (merge);
         track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>>());
+        engine.flushMidiRecoveryFiles();
         std::error_code ignored;
         std::filesystem::remove_all (ctx.sessionDir() / "midi", ignored);
         engine.record();
@@ -600,6 +601,7 @@ ScenarioResult midiRecordingLivesInJson (ScenarioContext& ctx)
                     "saving and reloading changed the recorded MIDI data" + with);
 
         // Stop also kept the take as a Standard MIDI File, and nothing else.
+        engine.flushMidiRecoveryFiles();
         std::vector<std::filesystem::path> midiFiles;
         for (const auto& entry : std::filesystem::recursive_directory_iterator (ctx.sessionDir()))
         {

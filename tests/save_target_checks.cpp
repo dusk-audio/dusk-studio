@@ -186,6 +186,20 @@ TEST_CASE ("a never-saved session starts in the first Untitled folder that holds
         CHECK (unsavedSessionFolder (s.root) == s.root / "Untitled 3");
     }
 
+    SECTION ("MIDI recovery files reserve their folders")
+    {
+        stdfs::create_directories (s.root / "Untitled" / "midi" / "takes");
+        std::ofstream (s.root / "Untitled" / "midi" / "takes" / "20261108-143005Z_track01_Keys.mid") << "MThd";
+        CHECK (unsavedSessionFolder (s.root) == s.root / "Untitled 2");
+
+        stdfs::create_directories (s.root / "Untitled 2" / "midi");
+        CHECK (unsavedSessionFolder (s.root) == s.root / "Untitled 3");
+
+        stdfs::create_directories (s.root / "Untitled 3");
+        std::ofstream (s.root / "Untitled 3" / "midi") << "not a folder";
+        CHECK (unsavedSessionFolder (s.root) == s.root / "Untitled 4");
+    }
+
     SECTION ("saved sessions reserve their folders")
     {
         std::ofstream (s.root / "Untitled" / "session.json") << "{}";

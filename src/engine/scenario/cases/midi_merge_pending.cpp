@@ -276,11 +276,12 @@ ScenarioResult runLoopPassUndo (ScenarioContext& ctx)
         }
     };
 
-    // How many take files midi/takes holds, and the note-ons and controllers of
-    // the newest, sorted.
+    // How many take files midi/takes holds once the queued ones are written,
+    // and the note-ons and controllers of the newest, sorted.
     const auto takesDir = ctx.sessionDir() / "midi" / "takes";
-    const auto newestTake = [&takesDir] (std::size_t& count)
+    const auto newestTake = [&engine, &takesDir] (std::size_t& count)
     {
+        engine.flushMidiRecoveryFiles();
         std::vector<std::filesystem::path> files;
         std::error_code error;
         for (std::filesystem::directory_iterator it (takesDir, error), end; ! error && it != end; it.increment (error))
@@ -301,6 +302,7 @@ ScenarioResult runLoopPassUndo (ScenarioContext& ctx)
     {
         engine.stop();
         engine.getUndoManager().clearUndoHistory();
+        engine.flushMidiRecoveryFiles();
         std::error_code ignored;
         std::filesystem::remove_all (ctx.sessionDir() / "midi", ignored);
         session.midiMergeEnabled.store (merge);

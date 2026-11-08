@@ -280,7 +280,7 @@ function Get-RegressGuiCatalog([string]$text, $exitCode) {
 # The ordinary GUI scenarios every build registers. Only a package run reaches
 # the phase that checks it, so the Linux windows-gui-catalog leg compares it
 # with the registry on every source run with GUI scenarios.
-function Get-RegressWindowsGuiCatalogCount { return 315 }
+function Get-RegressWindowsGuiCatalogCount { return 316 }
 
 function Get-RegressWindowsGuiSkips {
     return [ordered]@{

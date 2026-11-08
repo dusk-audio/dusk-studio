@@ -194,6 +194,29 @@ std::vector<std::string> namesIn (const stdfs::path& folder)
     return names;
 }
 
+// A take file built and written in one go, as the writer thread would.
+recovery::WriteResult writeTake (const stdfs::path& sessionDir, std::chrono::system_clock::time_point now,
+                                 const Session& session, int trackIndex, const MidiRegion& pass)
+{
+    const auto file = recovery::pendingTakeFile (sessionDir, now, session, kRate, trackIndex, pass);
+    REQUIRE (file.has_value());
+    return recovery::writeFile (*file);
+}
+
+// Every track file the session has to hold, built and then written in turn.
+recovery::WriteResult writeTrackFiles (const stdfs::path& sessionDir, std::chrono::system_clock::time_point now,
+                                       const Session& session)
+{
+    recovery::WriteResult all;
+    for (const auto& file : recovery::pendingTrackFiles (sessionDir, now, session, kRate))
+    {
+        const auto result = recovery::writeFile (file);
+        all.written.insert (all.written.end(), result.written.begin(), result.written.end());
+        all.failures.insert (all.failures.end(), result.failures.begin(), result.failures.end());
+    }
+    return all;
+}
+
 // 120 bpm, then 90 from two seconds in, where the map reaches tick 1920.
 recovery::Timing twoTempoTiming()
 {
@@ -540,7 +563,7 @@ TEST_CASE ("A MIDI recovery file name gives the UTC second, the track number and
     const auto now = utc (kNovember8th143005);
     CHECK (recovery::fileName (now, 7, "Keys") == "20261108-143005Z_track07_Keys.mid");
     CHECK (recovery::fileName (now + std::chrono::milliseconds (999), 7, "Keys") == "20261108-143005Z_track07_Keys.mid");
-    CHECK (recovery::fileName (now, 7, "Keys", recovery::TrackFile::Playing, 2) == "20261108-143005Z_track07_Keys_2.mid");
+    CHECK (recovery::fileName (now, 7, "Keys", recovery::TrackFile::Playing, 2) == "20261108-143005Z_track07_Keys_002.mid");
     CHECK (recovery::fileName (now, 12, "AC/DC") == "20261108-143005Z_track12_AC_DC.mid");
     CHECK (recovery::fileName (now, 1, "") == "20261108-143005Z_track01_untitled.mid");
     CHECK (recovery::fileName (utc (946684799), 24, "Keys") == "19991231-235959Z_track24_Keys.mid");
@@ -553,10 +576,34 @@ TEST_CASE ("A MIDI takes file name ends .takes.mid, after the copy number", "[mi
     const auto now = utc (kNovember8th143005);
     const auto takes = recovery::TrackFile::Takes;
     CHECK (recovery::fileName (now, 7, "Keys", takes) == "20261108-143005Z_track07_Keys.takes.mid");
-    CHECK (recovery::fileName (now, 7, "Keys", takes, 2) == "20261108-143005Z_track07_Keys_2.takes.mid");
-    CHECK (recovery::fileName (now, 7, "Keys", takes, 1000) == "20261108-143005Z_track07_Keys_1000.takes.mid");
+    CHECK (recovery::fileName (now, 7, "Keys", takes, 2) == "20261108-143005Z_track07_Keys_002.takes.mid");
+    CHECK (recovery::fileName (now, 7, "Keys", takes, 999) == "20261108-143005Z_track07_Keys_999.takes.mid");
     CHECK (recovery::fileName (now, 12, "AC/DC", takes) == "20261108-143005Z_track12_AC_DC.takes.mid");
     CHECK (recovery::fileName (now, 1, "", takes) == "20261108-143005Z_track01_untitled.takes.mid");
+}
+
+TEST_CASE ("MIDI recovery file names of one second sort in the order the copies were made",
+           "[midi][recovery]")
+{
+    const auto now = utc (kNovember8th143005);
+    for (const auto kind : { recovery::TrackFile::Playing, recovery::TrackFile::Takes })
+    {
+        CAPTURE ((int) kind);
+        std::vector<std::string> names;
+        for (const int copy : { 1, 2, 9, 10, 100 })
+            names.push_back (recovery::fileName (now, 7, "Keys", kind, copy));
+        const std::string ending = kind == recovery::TrackFile::Takes ? ".takes.mid" : ".mid";
+        CHECK (names == std::vector<std::string> {
+            "20261108-143005Z_track07_Keys" + ending,
+            "20261108-143005Z_track07_Keys_002" + ending,
+            "20261108-143005Z_track07_Keys_009" + ending,
+            "20261108-143005Z_track07_Keys_010" + ending,
+            "20261108-143005Z_track07_Keys_100" + ending,
+        });
+        auto sorted = names;
+        std::sort (sorted.begin(), sorted.end());
+        CHECK (sorted == names);
+    }
 }
 
 TEST_CASE ("A MIDI take file made in the same second as another takes the next copy number",
@@ -573,8 +620,7 @@ TEST_CASE ("A MIDI take file made in the same second as another takes the next c
     for (int k = 0; k < 4; ++k)
     {
         pass.notes.assign (1, note (1, 60 + k, 100, 0, 480));
-        const auto result = recovery::writeTakeFile (temp.path(), now + std::chrono::seconds (k / 3),
-                                                     *session, kRate, 6, pass);
+        const auto result = writeTake (temp.path(), now + std::chrono::seconds (k / 3), *session, 6, pass);
         REQUIRE (result.failures.empty());
         REQUIRE (result.written.size() == 1);
         CHECK (result.written.front().parent_path() == temp.path() / "midi" / "takes");
@@ -584,8 +630,8 @@ TEST_CASE ("A MIDI take file made in the same second as another takes the next c
 
     CHECK (names == std::vector<std::string> {
         "20261108-143005Z_track07_Keys.mid",
-        "20261108-143005Z_track07_Keys_2.mid",
-        "20261108-143005Z_track07_Keys_3.mid",
+        "20261108-143005Z_track07_Keys_002.mid",
+        "20261108-143005Z_track07_Keys_003.mid",
         "20261108-143006Z_track07_Keys.mid",
     });
     CHECK (namesIn (temp.path() / "midi" / "takes") == names);
@@ -605,12 +651,37 @@ TEST_CASE ("A MIDI take file is not written outside a session folder that does n
     pass.notes.push_back (note (1, 60, 100, 0, 480));
 
     const auto missing = temp.path() / "gone";
-    const auto result = recovery::writeTakeFile (missing, utc (kNovember8th143005), *session, kRate, 0, pass);
+    const auto result = writeTake (missing, utc (kNovember8th143005), *session, 0, pass);
     CHECK (result.written.empty());
     REQUIRE (result.failures.size() == 1);
     CHECK (result.failures.front().path == missing);
     CHECK (result.failures.front().error);
     CHECK_FALSE (stdfs::exists (missing));
+}
+
+TEST_CASE ("A MIDI take file is built with all its write needs, for a pass that holds events on a track there is",
+           "[midi][recovery]")
+{
+    auto session = std::make_unique<Session>();
+    session->track (6).name = "Keys/Lead";
+    const auto now = utc (kNovember8th143005);
+    const auto dir = stdfs::u8path ("Sessions/Song");
+    MidiRegion pass;
+    CHECK_FALSE (recovery::pendingTakeFile (dir, now, *session, kRate, 6, pass).has_value());
+
+    pass.ccs.push_back (control (MidiCc::Kind::ControlChange, 1, 1, 64, 30));
+    const auto file = recovery::pendingTakeFile (dir, now, *session, kRate, 6, pass);
+    REQUIRE (file.has_value());
+    CHECK (file->sessionDir == dir);
+    CHECK (file->made == now);
+    CHECK (file->trackNumber == 7);
+    CHECK (file->name == "Keys_Lead");
+    CHECK (file->kind == recovery::TrackFile::Playing);
+    CHECK (file->folder == recovery::Folder::Takes);
+    CHECK (file->bytes == recovery::buildTakeFile (recovery::timingOf (*session, kRate), pass, "Keys/Lead"));
+
+    CHECK_FALSE (recovery::pendingTakeFile (dir, now, *session, kRate, -1, pass).has_value());
+    CHECK_FALSE (recovery::pendingTakeFile (dir, now, *session, kRate, Session::kNumTracks, pass).has_value());
 }
 
 TEST_CASE ("A MIDI track's playing file needs a region that plays, and its takes file a muted region or a previous take",
@@ -627,7 +698,19 @@ TEST_CASE ("A MIDI track's playing file needs a region that plays, and its takes
     session->track (4).name = "Pads";
     session->track (4).midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (2, region));
 
-    const auto result = recovery::writeChangedTrackFiles (temp.path(), utc (kNovember8th143005), *session, kRate);
+    const auto now = utc (kNovember8th143005);
+    const auto pending = recovery::pendingTrackFiles (temp.path(), now, *session, kRate);
+    REQUIRE (pending.size() == 2);
+    for (const auto& file : pending)
+    {
+        CHECK (file.sessionDir == temp.path());
+        CHECK (file.made == now);
+        CHECK (file.folder == recovery::Folder::Tracks);
+    }
+    CHECK ((pending[0].trackNumber == 3 && pending[0].name == "Bass" && pending[0].kind == recovery::TrackFile::Playing));
+    CHECK ((pending[1].trackNumber == 5 && pending[1].name == "Pads" && pending[1].kind == recovery::TrackFile::Takes));
+
+    const auto result = writeTrackFiles (temp.path(), now, *session);
     REQUIRE (result.failures.empty());
     REQUIRE (result.written == std::vector<stdfs::path> {
         folder / "20261108-143005Z_track03_Bass.mid",
@@ -669,8 +752,8 @@ TEST_CASE ("MIDI playing and takes files are each written only when they change"
     std::vector<std::pair<stdfs::path, Bytes>> files;
     const auto writeAt = [&] (int minute)
     {
-        const auto result = recovery::writeChangedTrackFiles (
-            temp.path(), utc (kNovember8th143005) + std::chrono::minutes (minute), *session, kRate);
+        const auto result = writeTrackFiles (temp.path(), utc (kNovember8th143005) + std::chrono::minutes (minute),
+                                             *session);
         REQUIRE (result.failures.empty());
         Names names;
         for (const auto& path : result.written)
@@ -739,14 +822,12 @@ TEST_CASE ("A MIDI takes file that changes again within a second takes the next 
     {
         snapshot.mutate ([k] (std::vector<MidiRegion>& regions)
                          { regions.front().previousTakes.front().notes.assign (1, note (1, 62 + k, 100, 0, 480)); });
-        const auto result = recovery::writeChangedTrackFiles (temp.path(), now + std::chrono::milliseconds (300 * k),
-                                                              *session, kRate);
+        const auto result = writeTrackFiles (temp.path(), now + std::chrono::milliseconds (300 * k), *session);
         REQUIRE (result.failures.empty());
         for (const auto& path : result.written)
             names.push_back (path.filename().u8string());
     }
-    const auto unchanged = recovery::writeChangedTrackFiles (temp.path(), now + std::chrono::milliseconds (900),
-                                                             *session, kRate);
+    const auto unchanged = writeTrackFiles (temp.path(), now + std::chrono::milliseconds (900), *session);
     CHECK (unchanged.failures.empty());
     CHECK (unchanged.written.empty());
 
@@ -754,8 +835,8 @@ TEST_CASE ("A MIDI takes file that changes again within a second takes the next 
     CHECK (names == std::vector<std::string> {
         "20261108-143005Z_track07_Keys.mid",
         "20261108-143005Z_track07_Keys.takes.mid",
-        "20261108-143005Z_track07_Keys_2.takes.mid",
-        "20261108-143005Z_track07_Keys_3.takes.mid",
+        "20261108-143005Z_track07_Keys_002.takes.mid",
+        "20261108-143005Z_track07_Keys_003.takes.mid",
     });
     CHECK (namesIn (temp.path() / "midi" / "tracks") == names);
 }

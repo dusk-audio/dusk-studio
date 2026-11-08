@@ -6,6 +6,7 @@
 #include "engine/RecordManager.h"
 #include "engine/midi/MidiFileReader.h"
 #include "session/MidiRecovery.h"
+#include "session/MidiRecoveryWriter.h"
 #include "session/Session.h"
 
 #include <algorithm>
@@ -105,14 +106,25 @@ std::vector<std::string> namesIn (const stdfs::path& folder)
     return names;
 }
 
-// What the engine does with the passes a stop hands over.
+// What the engine does with the passes a stop hands over: a take file for
+// each, queued for the writer, which is flushed before the disk is read.
 void writeTakeFiles (Recording& recording, const std::vector<RecordManager::RecordedMidiPass>& recorded)
 {
     const auto now = std::chrono::system_clock::time_point (std::chrono::seconds (kNovember8th143005));
+    std::vector<midirecovery::WriteResult> results;
+    midirecovery::Writer writer ([&results] (const midirecovery::PendingFile&, const midirecovery::WriteResult& result)
+                                 { results.push_back (result); });
     for (const auto& r : recorded)
     {
-        const auto result = midirecovery::writeTakeFile (recording.folder.path(), now, recording.session,
-                                                         kRate, r.trackIndex, r.pass);
+        auto file = midirecovery::pendingTakeFile (recording.folder.path(), now, recording.session, kRate,
+                                                   r.trackIndex, r.pass);
+        REQUIRE (file.has_value());
+        writer.queue (std::move (*file));
+    }
+    writer.flush();
+    REQUIRE (results.size() == recorded.size());
+    for (const auto& result : results)
+    {
         REQUIRE (result.failures.empty());
         REQUIRE (result.written.size() == 1);
     }
@@ -302,17 +314,18 @@ TEST_CASE ("Recorded MIDI passes become take files in midi/takes with their even
         recording.manager.stopRecording (200);
         writeTakeFiles (recording, recording.manager.takeRecordedMidiPasses());
 
-        std::vector<std::string> names { "20261108-143005Z_track01_Keys.mid" };
-        for (int copy = 2; copy <= 10; ++copy)
-            names.push_back ("20261108-143005Z_track01_Keys_" + std::to_string (copy) + ".mid");
-        std::sort (names.begin(), names.end());
+        // One second's files sort in the order they were written, pass 1 first.
+        std::vector<std::string> names;
+        for (int copy = 1; copy <= 10; ++copy)
+            names.push_back (midirecovery::fileName (std::chrono::system_clock::time_point (
+                                                         std::chrono::seconds (kNovember8th143005)),
+                                                     1, "Keys", midirecovery::TrackFile::Playing, copy));
         REQUIRE (namesIn (takes) == names);
+        CHECK (names[9] == "20261108-143005Z_track01_Keys_010.mid");
         for (int ordinal = 1; ordinal <= 10; ++ordinal)
         {
             CAPTURE (ordinal);
-            const auto name = ordinal == 1 ? std::string ("20261108-143005Z_track01_Keys.mid")
-                                           : "20261108-143005Z_track01_Keys_" + std::to_string (ordinal) + ".mid";
-            CHECK (eventsIn (takes / name) == std::vector<std::array<std::int64_t, 4>> {
+            CHECK (eventsIn (takes / names[(std::size_t) ordinal - 1]) == std::vector<std::array<std::int64_t, 4>> {
                 { 100 + ordinal, 0x90, 59 + ordinal, 100 }, { 150 + ordinal, 0x80, 59 + ordinal, 0 } });
         }
     }

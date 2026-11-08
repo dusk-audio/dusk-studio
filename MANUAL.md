@@ -58,7 +58,7 @@ This chapter walks an empty session all the way to a finished bounce. If you hav
 
 ## Install and first launch
 
-Install per your platform. On first launch, Dusk Studio opens a blank session called `Untitled` (`Untitled 2` when the first folder contains a saved session, recovery file or notes) and the **Startup** dialog asks whether you want to create a new session in a chosen folder or open a recent one. Pick **New** and it offers the starting points (**Blank**, **Band**, **Beats**, **Singer-Songwriter**), then name your session and click through. If you back out of the file browser, the unsaved-changes prompt or the autosave recovery prompt after picking **New**, the **Open** tab or a recent session, the Startup dialog comes back so you can pick again. It also comes back when **Save** in the unsaved-changes prompt does not complete, and when the session cannot be created or opened. In that last case the status bar says why. To open a recent session, click it and press **Open** (or Enter), or double-click it; the scroll wheel moves through a long list. The same templates are on **File > New from template** once a session is open.
+Install per your platform. On first launch, Dusk Studio opens a blank session called `Untitled` (`Untitled 2` when the first folder contains a saved session, recovery file, notes or MIDI recovery files) and the **Startup** dialog asks whether you want to create a new session in a chosen folder or open a recent one. Pick **New** and it offers the starting points (**Blank**, **Band**, **Beats**, **Singer-Songwriter**), then name your session and click through. If you back out of the file browser, the unsaved-changes prompt or the autosave recovery prompt after picking **New**, the **Open** tab or a recent session, the Startup dialog comes back so you can pick again. It also comes back when **Save** in the unsaved-changes prompt does not complete, and when the session cannot be created or opened. In that last case the status bar says why. To open a recent session, click it and press **Open** (or Enter), or double-click it; the scroll wheel moves through a long list. The same templates are on **File > New from template** once a session is open.
 
 You can also open an existing session directly: pass its `session.json` (or the session folder) on the command line — `DuskStudio path/to/session.json` — or double-click a `session.json` in your file manager (Linux file-type association is installed with the app). On Linux, macOS, and Windows, if Dusk Studio is already running, the session opens in the existing window rather than in a second copy of the app. The window comes forward on Linux and macOS; on Windows it comes forward when the operating system's focus policy permits, and otherwise the existing window is restored and its taskbar button flashes for you to click. Either way playback stops and any take in progress is committed to the session you were working on, and if that session then has unsaved changes you get the same **Save / Don't Save / Cancel** prompt as **File > Open**. **Cancel** leaves the other session unopened and keeps you in the one you were in — with the transport stopped and the finished take in place, so save it if you want to keep it. A switch is refused outright while a bounce, mixdown, stem bounce, master export or freeze is running, or while another prompt is open; the status bar says which, for example "Session not switched: finish or cancel the mixdown first".
 
@@ -447,7 +447,7 @@ Verification protects against a bit-flipped download or a man-in-the-middle atta
 
 ## First launch
 
-On first launch Dusk Studio opens a blank session named `Untitled`, or `Untitled 2` when the first folder contains a saved session, recovery file or notes. The window is divided, top to bottom, into:
+On first launch Dusk Studio opens a blank session named `Untitled`, or `Untitled 2` when the first folder contains a saved session, recovery file, notes or MIDI recovery files. The window is divided, top to bottom, into:
 
 - A thin menu bar (File, View, and Settings).
 - A row of large coloured buttons for the four stages: **RECORDING**, **MIXING**, **MASTERING**, **AUX** (keys **Cmd/Ctrl+1–4**).
@@ -1282,11 +1282,11 @@ MySession/
     └── ...
 ```
 
-A session you have not saved yet records into the `audio/` folder of `~/Music/Dusk Studio/Untitled` (or the first `Untitled N` without a saved session, recovery file or notes), and **Save As** copies its takes into the folder you choose.
+A session you have not saved yet records into the `audio/` folder of `~/Music/Dusk Studio/Untitled` (or the first `Untitled N` without a saved session, recovery file, notes or MIDI recovery files), and **Save As** copies its takes into the folder you choose.
 
 Every recorded audio file is a **24-bit WAV** at the session's sample rate. Filenames include the track number and a timestamp so re-recording the same track on the same day still produces distinct files.
 
-MIDI tracks keep their notes and channel controls embedded in `session.json`. Each recorded MIDI pass is also written to the session's `midi/takes/` folder as a Standard MIDI File of its own, at **Stop** with **MIDI Merge** off and as each pass is merged with it on. That includes every pass of a loop take, even the ones older than the 8 previous takes its region keeps.
+MIDI tracks keep their notes and channel controls embedded in `session.json`. The session's `midi/` folder also keeps them as Standard MIDI Files, called MIDI recovery files, so a damaged `session.json` does not take the MIDI with it. Each recorded MIDI pass is written to `midi/takes/` as a file of its own, at **Stop** with **MIDI Merge** off and as each pass is merged with it on. That includes every pass of a loop take, even the ones older than the 8 previous takes its region keeps. Opening a session, every save and every autosave write two files for each MIDI track to `midi/tracks/`: a playing file with the regions that play, as they play now, and a takes file with the muted regions and every region's previous takes. Each is written only when it differs from the newest one of its kind there, so opening a session again unchanged writes nothing, and Dusk Studio never replaces a file in `midi/`. Files written in the same second are numbered `_002`, `_003` and on, so sorting by name keeps them in the order they were made. **Save As** takes `midi/` along to the new folder. The first save of a session you had never saved moves its MIDI recovery files out of its `Untitled` folder, so that folder can hold the next new session.
 
 ## Takes
 
@@ -2299,7 +2299,7 @@ Because the session is a folder, you can copy or back up a session by copying th
 
 Every 2 minutes by default, if anything has changed since the last save, Dusk Studio writes a recovery file, `session.json.autosave`, next to the canonical `session.json` (it does **not** overwrite `session.json` — a manual Save is still what updates the real session file). The autosave is atomic (same temp-file-and-rename pattern) and silent — it never interrupts playback or recording. Idle sessions are skipped via a content hash, so the file isn't rewritten when nothing meaningful changed. Choose another interval with **Autosave every** in the **General** tab under **Settings → Settings...**. A saved interval, including 30 seconds, keeps its value.
 
-A session that has never been saved or opened, such as the `Untitled` session Dusk Studio starts with, keeps its autosave, notes and takes in its own folder. A new launch chooses `Untitled` or the first `Untitled N` without a saved session, recovery file or notes. Existing recovery and notes stay in their original folder, even after more than 99 unsaved sessions. A folder containing only an `audio/` directory can still be reused when Dusk Studio can write in both. If the usual session location is unavailable, Dusk Studio looks for a free folder under `unsaved-session` in its configuration folder. If neither can hold the session, it starts in a new private folder in the system's temporary folder. The system may clear that folder, so save the session to keep it.
+A session that has never been saved or opened, such as the `Untitled` session Dusk Studio starts with, keeps its autosave, notes, takes and MIDI recovery files in its own folder. A new launch chooses `Untitled` or the first `Untitled N` without a saved session, recovery file, notes or MIDI recovery files. Existing recovery, notes and MIDI recovery files stay in their original folder, even after more than 99 unsaved sessions. After **Don't Save** on a session that recorded MIDI, its MIDI recovery files stay in its folder, so the next new session starts in the next `Untitled N`. The first save of a never-saved session moves its MIDI recovery files to the folder it is saved in, so its `Untitled` folder can be used again. A folder containing only an `audio/` directory can still be reused when Dusk Studio can write in both. If the usual session location is unavailable, Dusk Studio looks for a free folder under `unsaved-session` in its configuration folder. If neither can hold the session, it starts in a new private folder in the system's temporary folder. The system may clear that folder, so save the session to keep it.
 
 If a `session.json` appears in the new session's folder anyway, its autosave and notes go to the `unsaved-session` folder in Dusk Studio's configuration folder instead. **Don't Save** and **Save As** leave the other session's autosave where it is, Save As does not take its plug-in state along, and Save As into that folder is refused like any folder that holds another session.
 
@@ -3101,15 +3101,15 @@ The multiband compressor has four bands: Low, Low-Mid, High-Mid and High. These 
 
 # Appendix B — File formats
 
-| Artifact             | Format                                                                                  |
-| -------------------- | --------------------------------------------------------------------------------------- |
-| Session              | JSON, atomic write                                                                      |
-| Recorded audio       | 24-bit PCM WAV, session sample rate                                                     |
-| Imported audio       | copied as-is into session/audio/ when rate and channels match, otherwise 24-bit WAV     |
-| Recorded MIDI        | embedded in session.json, and each pass as a Standard MIDI File in session/midi/takes/  |
-| Plugin scan cache    | XML, plus a JSON sidecar per native format, per-user config directory                   |
-| MIDI bindings export | JSON                                                                                    |
-| Bounce               | 24-bit PCM WAV, session sample rate                                                     |
+| Artifact             | Format                                                                                                                     |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Session              | JSON, atomic write                                                                                                         |
+| Recorded audio       | 24-bit PCM WAV, session sample rate                                                                                        |
+| Imported audio       | copied as-is into session/audio/ when rate and channels match, otherwise 24-bit WAV                                        |
+| Recorded MIDI        | embedded in session.json, and as Standard MIDI Files: each pass in session/midi/takes/, each track in session/midi/tracks/ |
+| Plugin scan cache    | XML, plus a JSON sidecar per native format, per-user config directory                                                      |
+| MIDI bindings export | JSON                                                                                                                       |
+| Bounce               | 24-bit PCM WAV, session sample rate                                                                                        |
 
 \newpage
 

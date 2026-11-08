@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -26,15 +27,17 @@
 // over the notes that play. The playing file re-imports as the performance
 // heard.
 //
-// No file in either folder is ever replaced or removed. A file's events sit at
-// the ticks (kMidiTicksPerQuarter to the quarter) where playback puts them,
-// counted on the session tempo map from the timeline's start, and its conductor
-// carries that map up to the file's last event and no further, so a re-import
-// neither moves nor stretches anything. A file holds what playback reads from
-// a region: events the MIDI wire cannot carry are left out, as playback leaves
-// them out, but nothing is cut at the region's end.
+// Writing never replaces or removes a file in either folder. A file's events
+// sit at the ticks (kMidiTicksPerQuarter to the quarter) where playback puts
+// them, counted on the session tempo map from the timeline's start, and its
+// conductor carries that map up to the file's last event and no further, so a
+// re-import neither moves nor stretches anything. A file holds what playback
+// reads from a region: events the MIDI wire cannot carry are left out, as
+// playback leaves them out, but nothing is cut at the region's end.
 //
-// Message thread only: the regions read are the ones the message thread owns.
+// Building a file is split from writing it, so the disk never holds up the
+// message thread. The builders run on the message thread, which owns the
+// regions they read; writeFile runs on any thread.
 namespace duskstudio::midirecovery
 {
 // What places an event on the timeline, as playback reads it.
@@ -88,10 +91,10 @@ enum class TrackFile
 };
 
 // "20261108-143005Z_track07_Keys.mid": the UTC second, the 1-based track number
-// and the sanitized name; a takes file ends ".takes.mid" instead. Copy 2 and
-// on, for further files of a kind in the same second, put "_2", "_3", ...
-// before that ending; '_' sorts after '.', so a plain sort keeps them in the
-// order they were made through copy 9.
+// and the sanitized name; a takes file ends ".takes.mid" instead. Copies 2 to
+// 999, for further files of a kind in the same second, put "_002" to "_999"
+// before that ending. '_' sorts after '.' and every copy number has three
+// digits, so a plain sort keeps a second's files in the order they were made.
 std::string fileName (std::chrono::system_clock::time_point now, int trackNumber,
                       std::string_view trackName, TrackFile kind = TrackFile::Playing, int copy = 1);
 
@@ -107,19 +110,48 @@ struct WriteResult
     std::vector<Failure>               failures;
 };
 
-// Writes the pass recorded on track trackIndex (0-based) to takes/ under a name
-// no file there has yet. A pass with no notes and no controllers writes nothing.
-// The session folder must exist; the midi folders are made when needed.
-WriteResult writeTakeFile (const std::filesystem::path& sessionDir, std::chrono::system_clock::time_point now,
-                           const Session& session, double sampleRate, int trackIndex,
-                           const MidiRegion& pass) noexcept;
+// Which folder under midi/ a file goes to: takes/ always under a new name,
+// tracks/ only when it differs from the newest file there of its kind for the
+// same track number and sanitized name.
+enum class Folder
+{
+    Takes,
+    Tracks,
+};
+
+// One file built and waiting to be written, with everything its write
+// needs. `made` stamps its name: when the take committed or the save ran,
+// not when the disk got to it.
+struct PendingFile
+{
+    std::filesystem::path                 sessionDir;
+    std::chrono::system_clock::time_point made;
+    int                                   trackNumber = 0;   // 1-based
+    std::string                           name;              // as sanitizeName gives it
+    TrackFile                             kind   = TrackFile::Playing;
+    Folder                                folder = Folder::Takes;
+    std::vector<std::uint8_t>             bytes;             // empty when the file writer refused the events
+};
+
+// The take file for the pass recorded on track trackIndex (0-based), or
+// nothing for a pass with no notes and no controllers or a track out of range.
+std::optional<PendingFile> pendingTakeFile (const std::filesystem::path& sessionDir,
+                                            std::chrono::system_clock::time_point made,
+                                            const Session& session, double sampleRate, int trackIndex,
+                                            const MidiRegion& pass);
 
 // For each track that has MIDI regions, in any track mode as session.json keeps
-// them, writes each of its two files to tracks/ that has something to hold and
-// would differ from the newest file of its kind there: the playing file when a
-// region plays, the takes file when a region is muted or has a previous take.
-// A failure on one file does not stop the others.
-WriteResult writeChangedTrackFiles (const std::filesystem::path& sessionDir,
-                                    std::chrono::system_clock::time_point now,
-                                    const Session& session, double sampleRate) noexcept;
+// them, each of its two files for tracks/ that has something to hold: the
+// playing file when a region plays, the takes file when a region is muted or
+// has a previous take. Track order, the playing file first.
+std::vector<PendingFile> pendingTrackFiles (const std::filesystem::path& sessionDir,
+                                            std::chrono::system_clock::time_point made,
+                                            const Session& session, double sampleRate);
+
+// Writes one file under a name no file in its folder has yet, or, for tracks/,
+// nothing when the newest file of its kind there already holds these bytes;
+// tracks/ is listed for each file, so the second of two identical files
+// written in turn writes nothing. The session folder must exist; the midi
+// folders are made when needed.
+WriteResult writeFile (const PendingFile& file) noexcept;
 } // namespace duskstudio::midirecovery

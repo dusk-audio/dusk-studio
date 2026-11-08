@@ -3708,6 +3708,7 @@ bool MainComponent::writeSessionTo (const juce::File& requestedDir,
     captureError.clear();
     if (requestedDir == juce::File() || saveRefusedWhileBusy()) return false;
 
+    const bool firstSave = ! sessionOnDisk;
     const auto oldDir = session.getSessionDirectory();
     // Another spelling of the session's own folder (a link, a bind mount) is a
     // plain Save: consolidating a folder onto itself deletes each source file
@@ -3754,12 +3755,15 @@ bool MainComponent::writeSessionTo (const juce::File& requestedDir,
     SessionSerializer::ConsolidationResult consolidated;
     if (isSaveAs)
     {
+        // The take files still queued for the old folder have to be in its
+        // midi/ before that is copied.
+        engine.flushMidiRecoveryFiles();
         consolidated = SessionSerializer::consolidateInto (session, dir, ownsOldDir);
         if (! consolidated.ok)
         {
             setStatusForPath ("Save failed", dir);
             showDuskAlert (*this, "Save failed",
-                              "Dusk Studio could not copy the session's audio "
+                              "Dusk Studio could not copy the session's files "
                               "into the new folder:\n\n    "
                               + consolidated.errorMessage + "\n\n"
                               "Common causes: disk full or missing write "
@@ -3863,7 +3867,13 @@ bool MainComponent::writeSessionTo (const juce::File& requestedDir,
             // without this, re-opening the old session pops a stale recovery
             // prompt.
             deleteAutosaveFor (oldSidecar);
+            // A first save takes the MIDI files along rather than copying
+            // them, so the Untitled folder they were in is free for the next
+            // new session.
+            if (firstSave && ownsOldDir)
+                SessionSerializer::removeCopiedMidiSources (consolidated, toPath (oldDir));
         }
+        engine.queueMidiTrackFiles();
         RecentSessions::add (toPath (dir));
         // A successful manual save makes the autosave stale - drop it so the
         // recovery prompt doesn't fire on the next clean load.
@@ -3877,6 +3887,10 @@ bool MainComponent::writeSessionTo (const juce::File& requestedDir,
         return true;
     }
     undoSaveAs();
+    // MIDI recovery does not wait on session.json's health. A failed Save As
+    // has just taken its new folder back, as the alert promises, so nothing
+    // goes there.
+    if (! isSaveAs) engine.queueMidiTrackFiles();
     setStatusForPath ("Save failed", target);
     // Status-label-only feedback is too easy to miss on a critical
     // operation. Pop a modal so the user knows the session WASN'T
@@ -4028,6 +4042,8 @@ void MainComponent::writeAutosave()
     if (strippedHash == lastWrittenAutosaveStrippedHash
         && stripped == stripVolatileStateForDirtyCompare (lastWrittenAutosaveComparisonJson)) return;
 
+    // The MIDI track files go whether or not the autosave itself lands.
+    engine.queueMidiTrackFiles();
     if (! SessionSerializer::writeAtomic (target, json))
     {
         DBG ("MainComponent: autosave write failed at " << target.getFullPathName());
@@ -4373,6 +4389,11 @@ void MainComponent::beginSafeShutdown()
     auto& transport = engine.getTransport();
     if (transport.isRecording() || transport.isPlaying())
         engine.stop();
+
+    // Before any plug-in is torn down: plug-in destructors have aborted at
+    // shutdown before, and the engine's destructor is the only other drain.
+    shutdown::emitPhase ("phase 2b: write MIDI recovery files");
+    engine.flushMidiRecoveryFiles();
 
     if (! engineDetached)
     {
@@ -4927,6 +4948,12 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     setLastSavedSessionJson    (SessionSerializer::serialize (session));
     setLastWrittenAutosaveJson ({}, {});
     sessionOnDisk = true;
+
+    // A session whose MIDI has no recovery files yet gets them at open, not
+    // at its first edit. The device was switched to the session's rate above
+    // where it could be, so the files are built at the rate playback reads
+    // the session's positions at.
+    engine.queueMidiTrackFiles();
 
     // Recovery must end with the recovered state on disk. Without this,
     // the snapshot seeded above makes the session look clean: the quit

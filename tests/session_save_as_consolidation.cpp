@@ -252,14 +252,19 @@ TEST_CASE ("consolidateInto edge cases", "[session][serializer][consolidate]")
         REQUIRE (s.track (0).regions[0].file == take);
     }
 
-    SECTION ("a plugin state folder the session does not own stays behind")
+    SECTION ("a plugin state folder and MIDI files the session does not own stay behind")
     {
         makeFakeWav (dirA.getChildFile ("state/lv2/slot/blob.ttl"));
 
-        const auto res = SessionSerializer::consolidateInto (s, dirB, /*withPluginState*/ false);
+        makeFakeWav (dirA.getChildFile ("midi/takes/20261108-143005Z_track01_Keys.mid"));
+
+        const auto res = SessionSerializer::consolidateInto (s, dirB, /*ownsOldFolder*/ false);
         REQUIRE (res.ok);
         REQUIRE_FALSE (dirB.getChildFile ("state").exists());
         REQUIRE (dirA.getChildFile ("state/lv2/slot/blob.ttl").existsAsFile());
+        REQUIRE_FALSE (dirB.getChildFile ("midi").exists());
+        REQUIRE (res.copiedMidiSources.empty());
+        REQUIRE (dirA.getChildFile ("midi/takes/20261108-143005Z_track01_Keys.mid").existsAsFile());
         REQUIRE (s.track (0).regions[0].file == dirB.getChildFile ("audio/take.wav"));
     }
 
@@ -454,4 +459,146 @@ TEST_CASE ("consolidateInto carries what a reversed region reversed",
     SessionSerializer::revertConsolidation (s, res);
     CHECK (s.track (0).regions[0].reversedFrom->file == source);
     CHECK (s.track (0).regions[0].reversedFrom->render == render);
+}
+
+namespace
+{
+std::filesystem::path pathOf (const juce::File& file)
+{
+    return std::filesystem::u8path (file.getFullPathName().toStdString());
+}
+} // namespace
+
+// A session's MIDI recovery files are its own, like its plug-in state, so Save
+// As takes midi/ along when the session owns the folder it leaves.
+TEST_CASE ("consolidateInto carries the midi folder of a session that owns its old folder",
+           "[session][serializer][consolidate][midi]")
+{
+    namespace fs = std::filesystem;
+    const auto dirA   = makeTempDir ("dusk-consolidate-midi-a-");
+    const auto parent = makeTempDir ("dusk-consolidate-midi-b-");
+    const struct Cleanup
+    {
+        juce::File a, b;
+        ~Cleanup() { a.deleteRecursively(); b.deleteRecursively(); }
+    } cleanup { dirA, parent };
+
+    Session s;
+    s.setSessionDirectory (dirA);
+    const auto take = makeFakeWav (dirA.getChildFile ("audio/take.wav"));
+    {
+        AudioRegion r;
+        r.file = take;
+        r.lengthInSamples = 100;
+        s.track (0).regions.push_back (r);
+    }
+    const std::vector<std::string> midiFiles {
+        "midi/takes/20261108-143005Z_track01_Keys.mid",
+        "midi/takes/20261108-143005Z_track01_Keys_002.mid",
+        "midi/tracks/20261108-143010Z_track01_Keys.mid",
+        "midi/tracks/20261108-143010Z_track01_Keys.takes.mid",
+        "midi/kept by hand/riff.mid",
+    };
+    for (const auto& name : midiFiles)
+    {
+        const auto file = dirA.getChildFile (name);
+        file.getParentDirectory().createDirectory();
+        file.replaceWithText (name);
+    }
+    const auto listingA = listing (dirA);
+
+    SECTION ("every regular file is copied to the same place, and the copies and their sources are reported")
+    {
+        const auto dirB = parent.getChildFile ("New Session");
+        const auto res = SessionSerializer::consolidateInto (s, dirB);
+        REQUIRE (res.ok);
+        CHECK (res.filesCopied == 6);
+        std::vector<fs::path> sources, copies;
+        for (const auto& name : midiFiles)
+        {
+            CAPTURE (name);
+            CHECK (dirB.getChildFile (name).loadFileAsString() == juce::String (name));
+            sources.push_back (pathOf (dirA.getChildFile (name)));
+            copies.push_back (pathOf (dirB.getChildFile (name)));
+        }
+        auto reported = res.copiedMidiSources;
+        std::sort (reported.begin(), reported.end());
+        std::sort (sources.begin(), sources.end());
+        CHECK (reported == sources);
+        for (const auto& copy : copies)
+            CHECK (std::find (res.copiedFiles.begin(), res.copiedFiles.end(), copy) != res.copiedFiles.end());
+        CHECK (listing (dirA) == listingA);
+
+        SECTION ("and a failed save takes them all back")
+        {
+            SessionSerializer::revertConsolidation (s, res);
+            CHECK_FALSE (dirB.exists());
+            CHECK (listing (dirA) == listingA);
+        }
+
+        SECTION ("and a first save then removes exactly those sources and the folders they leave empty")
+        {
+            dirA.getChildFile ("midi/tracks/notes.txt").replaceWithText ("not a copy");
+            SessionSerializer::removeCopiedMidiSources (res, pathOf (dirA));
+            CHECK (listing (dirA) == std::vector<std::string> {
+                "audio", "audio/take.wav", "midi", "midi/kept by hand", "midi/tracks", "midi/tracks/notes.txt" });
+
+            dirA.getChildFile ("midi/tracks/notes.txt").deleteFile();
+            dirA.getChildFile ("midi/kept by hand").deleteRecursively();
+            SessionSerializer::removeCopiedMidiSources (res, pathOf (dirA));
+            CHECK (listing (dirA) == std::vector<std::string> { "audio", "audio/take.wav" });
+        }
+    }
+
+    SECTION ("a link in it is not a regular file and stays behind")
+    {
+        std::error_code ec;
+        fs::create_symlink (pathOf (dirA.getChildFile (midiFiles[0])), pathOf (dirA.getChildFile ("midi/takes/link.mid")),
+                            ec);
+        if (ec) SKIP ("this filesystem cannot make a link");
+        const auto dirB = parent.getChildFile ("Linked");
+        const auto res = SessionSerializer::consolidateInto (s, dirB);
+        REQUIRE (res.ok);
+        CHECK (dirB.getChildFile (midiFiles[0]).existsAsFile());
+        CHECK (fs::symlink_status (pathOf (dirB.getChildFile ("midi/takes/link.mid")), ec).type()
+               == fs::file_type::not_found);
+        CHECK (res.copiedMidiSources.size() == midiFiles.size());
+    }
+
+    SECTION ("a file already in the destination is never written over, and a failed save leaves it")
+    {
+        const auto dirB = parent.getChildFile ("Shared");
+        const auto theirs = dirB.getChildFile (midiFiles[2]);
+        theirs.getParentDirectory().createDirectory();
+        theirs.replaceWithText ("theirs");
+        const auto listingB = listing (dirB);
+
+        const auto res = SessionSerializer::consolidateInto (s, dirB);
+        REQUIRE (res.ok);
+        CHECK (theirs.loadFileAsString() == "theirs");
+        CHECK (std::find (res.copiedMidiSources.begin(), res.copiedMidiSources.end(),
+                          pathOf (dirA.getChildFile (midiFiles[2]))) == res.copiedMidiSources.end());
+        CHECK (res.copiedMidiSources.size() == midiFiles.size() - 1);
+        CHECK (dirB.getChildFile (midiFiles[3]).existsAsFile());
+
+        SessionSerializer::revertConsolidation (s, res);
+        CHECK (listing (dirB) == listingB);
+        CHECK (theirs.loadFileAsString() == "theirs");
+    }
+
+    SECTION ("a copy that fails fails the Save As and takes back what it copied")
+    {
+        const auto dirB = parent.getChildFile ("Blocked");
+        dirB.createDirectory();
+        dirB.getChildFile ("midi").replaceWithText ("not a folder");
+        const auto listingB = listing (dirB);
+
+        const auto res = SessionSerializer::consolidateInto (s, dirB);
+        REQUIRE_FALSE (res.ok);
+        CHECK (res.errorMessage.startsWith ("Could not copy \""));
+        CHECK (res.errorMessage.contains (dirB.getChildFile ("midi").getFullPathName()));
+        CHECK (s.track (0).regions[0].file == take);
+        CHECK (listing (dirB) == listingB);
+        CHECK (listing (dirA) == listingA);
+    }
 }

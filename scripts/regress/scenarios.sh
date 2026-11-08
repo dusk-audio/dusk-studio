@@ -847,6 +847,7 @@ leg_bb_clean_quit() {
 BB_SHUTDOWN_ORDER=(
     "phase 1: stop autosave timer"
     "phase 2: stop transport (commits in-flight recording)"
+    "phase 2b: write MIDI recovery files"
     "phase 3: detach audio callback"
     "phase 3b: release plugin resources (setActive(false) on each)"
     "phase 4: drop plugin editor windows"

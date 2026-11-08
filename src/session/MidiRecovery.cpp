@@ -25,7 +25,7 @@ using midi::MidiFileTrack;
 constexpr std::int64_t kLastPlacedTick = 0x0ffffffe;
 constexpr std::size_t  kMaxNameBytes   = 64;
 constexpr std::size_t  kStampLength    = 16;
-constexpr int          kMaxCopies      = 1000;
+constexpr int          kMaxCopies      = 999;
 constexpr char         kUnnamed[]      = "untitled";
 
 // Where a region starts, rounded to a tick on the session tempo map, as
@@ -224,7 +224,12 @@ std::string fileNameFor (const std::string& stamp, int trackNumber, const std::s
                          TrackFile kind, int copy)
 {
     auto name = stamp + trackTag (trackNumber) + sanitized;
-    if (copy > 1) name += "_" + std::to_string (copy);
+    if (copy > 1)
+    {
+        char suffix[16] {};
+        std::snprintf (suffix, sizeof (suffix), "_%03d", copy);
+        name += suffix;
+    }
     name += extensionOf (kind);
     return name;
 }
@@ -257,7 +262,7 @@ int copyOf (std::string_view name, std::string_view tagAndName, TrackFile kind) 
     const auto rest = name.substr (kStampLength + tagAndName.size(),
                                    name.size() - kStampLength - tagAndName.size() - extension.size());
     if (rest.empty()) return 1;
-    if (rest.size() < 2 || rest.size() > 5 || rest[0] != '_' || rest[1] == '0') return 0;
+    if (rest.size() != 4 || rest[0] != '_') return 0;
     int copy = 0;
     for (const char c : rest.substr (1))
     {
@@ -319,10 +324,16 @@ bool makeFolder (const stdfs::path& sessionDir, const stdfs::path& folder, Write
         result.failures.push_back ({ sessionDir, error ? error : std::make_error_code (std::errc::not_a_directory) });
         return false;
     }
-    stdfs::create_directories (dusk::fs::nativeIOPath (folder), error);
-    if (! error) return true;
-    result.failures.push_back ({ folder, error });
-    return false;
+    // One level at a time: a session folder removed while a file waited to be
+    // written must not come back as the parent of its midi folder.
+    for (const auto& level : { folder.parent_path(), folder })
+    {
+        stdfs::create_directory (dusk::fs::nativeIOPath (level), error);
+        if (! error) continue;
+        result.failures.push_back ({ level, error });
+        return false;
+    }
+    return true;
 }
 
 // Writes `bytes` under the first name for this second that nothing in `folder`
@@ -451,54 +462,53 @@ std::string fileName (std::chrono::system_clock::time_point now, int trackNumber
     return fileNameFor (utcStamp (now), trackNumber, sanitizeName (trackName), kind, copy);
 }
 
-WriteResult writeTakeFile (const std::filesystem::path& sessionDir, std::chrono::system_clock::time_point now,
-                           const Session& session, double sampleRate, int trackIndex,
-                           const MidiRegion& pass) noexcept
+std::optional<PendingFile> pendingTakeFile (const std::filesystem::path& sessionDir,
+                                            std::chrono::system_clock::time_point made,
+                                            const Session& session, double sampleRate, int trackIndex,
+                                            const MidiRegion& pass)
 {
-    return guarded (sessionDir, [&] (WriteResult& result)
-    {
-        const auto folder = sessionDir / "midi" / "takes";
-        if (trackIndex < 0 || trackIndex >= Session::kNumTracks)
-        {
-            result.failures.push_back ({ folder, std::make_error_code (std::errc::invalid_argument) });
-            return;
-        }
-        if (pass.notes.empty() && pass.ccs.empty()) return;
-
-        const auto name = session.track (trackIndex).nameUtf8();
-        writeNew (result, sessionDir, folder, now, trackIndex + 1, sanitizeName (name), TrackFile::Playing,
-                  buildTakeFile (timingOf (session, sampleRate), pass, name));
-    });
+    if (trackIndex < 0 || trackIndex >= Session::kNumTracks || (pass.notes.empty() && pass.ccs.empty()))
+        return std::nullopt;
+    const auto name = session.track (trackIndex).nameUtf8();
+    return PendingFile { sessionDir, made, trackIndex + 1, sanitizeName (name), TrackFile::Playing, Folder::Takes,
+                         buildTakeFile (timingOf (session, sampleRate), pass, name) };
 }
 
-WriteResult writeChangedTrackFiles (const std::filesystem::path& sessionDir,
-                                    std::chrono::system_clock::time_point now,
-                                    const Session& session, double sampleRate) noexcept
+std::vector<PendingFile> pendingTrackFiles (const std::filesystem::path& sessionDir,
+                                            std::chrono::system_clock::time_point made,
+                                            const Session& session, double sampleRate)
 {
-    return guarded (sessionDir, [&] (WriteResult& result)
+    std::vector<PendingFile> files;
+    const auto timing = timingOf (session, sampleRate);
+    for (int t = 0; t < Session::kNumTracks; ++t)
     {
-        const auto folder = sessionDir / "midi" / "tracks";
-        const auto timing = timingOf (session, sampleRate);
-        std::optional<std::vector<std::string>> existing;
-        for (int t = 0; t < Session::kNumTracks; ++t)
-        {
-            const auto& track = session.track (t);
-            const auto& regions = track.midiRegions.current();
-            if (regions.empty()) continue;
-            if (! existing) existing = fileNamesIn (folder, result);
+        const auto& track = session.track (t);
+        const auto& regions = track.midiRegions.current();
+        if (regions.empty()) continue;
 
-            const auto name = track.nameUtf8();
-            const auto sanitized = sanitizeName (name);
-            for (const auto kind : { TrackFile::Playing, TrackFile::Takes })
-            {
-                const auto tracks = tracksFor (timing, regions, kind);
-                if (tracks.empty()) continue;
-                const auto bytes = encode (timing, name, tracks);
-                const auto newest = newestOf (*existing, t + 1, sanitized, kind);
-                if (newest && ! bytes.empty() && holds (folder / stdfs::u8path (*newest), bytes)) continue;
-                writeNew (result, sessionDir, folder, now, t + 1, sanitized, kind, bytes);
-            }
+        const auto name = track.nameUtf8();
+        for (const auto kind : { TrackFile::Playing, TrackFile::Takes })
+        {
+            const auto tracks = tracksFor (timing, regions, kind);
+            if (tracks.empty()) continue;
+            files.push_back ({ sessionDir, made, t + 1, sanitizeName (name), kind, Folder::Tracks,
+                               encode (timing, name, tracks) });
         }
+    }
+    return files;
+}
+
+WriteResult writeFile (const PendingFile& file) noexcept
+{
+    return guarded (file.sessionDir, [&] (WriteResult& result)
+    {
+        const auto folder = file.sessionDir / "midi" / (file.folder == Folder::Takes ? "takes" : "tracks");
+        if (file.folder == Folder::Tracks && ! file.bytes.empty())
+        {
+            const auto newest = newestOf (fileNamesIn (folder, result), file.trackNumber, file.name, file.kind);
+            if (newest && holds (folder / stdfs::u8path (*newest), file.bytes)) return;
+        }
+        writeNew (result, file.sessionDir, folder, file.made, file.trackNumber, file.name, file.kind, file.bytes);
     });
 }
 } // namespace duskstudio::midirecovery
