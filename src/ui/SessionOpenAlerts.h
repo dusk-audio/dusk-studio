@@ -28,7 +28,7 @@ struct WontOpen
     std::string autosaveTime;               // empty when its time is unknown
     bool        backup = false;             // a backup is offered
     std::string backupTime;                 // empty when its time is unknown
-    bool        backupIsOlder = false;      // the file is a backup, and the one offered is older than it
+    bool        backupIsOlder = false;      // a backup has failed, and the one offered is older than it
     bool        discardsAutosave = false;   // opening the backup removes the session's autosave
     bool        keepsFile = false;          // opening an offer keeps the file in backups/
     std::string midiFolder;                 // empty: the session has no midi folder

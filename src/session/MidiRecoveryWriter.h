@@ -12,10 +12,12 @@
 namespace duskstudio::midirecovery
 {
 // Writes MIDI recovery files on a thread of its own, one at a time and in the
-// order they were queued, so a commit or a save never waits for the disk. Each
-// atomic write syncs the disk, which can take milliseconds a file, and a long
-// loop take queues one file a pass. The thread starts with the first file
-// queued, so a writer that is never given one costs no thread.
+// order they were queued, so a commit, a save or an autosave does not wait for
+// the disk. Only flush() waits: Save As calls it before copying midi/, and
+// quitting before plug-ins are torn down. Each atomic write syncs the disk,
+// which can take milliseconds a file, and a long loop take queues one file a
+// pass. The thread starts with the first file queued, so a writer that is
+// never given one costs no thread.
 class Writer
 {
 public:

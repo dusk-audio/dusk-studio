@@ -209,13 +209,25 @@ private:
     bool finishLoadingSessionFrom (const juce::File& sessionJson,
                                     const juce::File& sessionDir,
                                     SessionLoadError* failure = nullptr);
+    // What has failed to open since the user asked for a session, carried
+    // from each failure alert to the next: the oldest backup that failed, and
+    // whether the autosave did.
+    struct FailedOpens
+    {
+        std::filesystem::path oldestBackup;
+        bool autosave = false;
+    };
     // finishLoadingSessionFrom, then for a file that did not open the alert
     // that says why and offers what could open instead. onComplete runs once,
     // when a load succeeds or the user has answered the last alert.
     bool finishOpening (const std::filesystem::path& sessionJson, const std::filesystem::path& sessionDir,
-                        std::function<void (bool loaded)> onComplete);
+                        std::function<void (bool loaded)> onComplete, FailedOpens failedBefore);
     void showOpenFailure (const std::filesystem::path& failedJson, const std::filesystem::path& sessionDir,
-                          const SessionLoadError& error, std::function<void (bool loaded)> onComplete);
+                          const SessionLoadError& error, std::function<void (bool loaded)> onComplete,
+                          FailedOpens failedBefore);
+    // A failure alert is up, or one of its offers is about to load.
+    bool openFailurePending() const { return openFailureModal.isOpen() || offerLoadsPending > 0; }
+    int offerLoadsPending = 0;
     // onResolved runs once with whether a session opened: false when the user
     // backs out of the unsaved-changes prompt, the browser or the recovery prompt,
     // or the chosen session fails to load.

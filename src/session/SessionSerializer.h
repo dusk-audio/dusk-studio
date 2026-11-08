@@ -84,7 +84,8 @@ public:
     // old folder's state/, midi/ and backups/ trees go along: each file of
     // midi/ and backups/ is copied to the same place under the new folder
     // unless a file is already there, which is skipped. A session that never
-    // owned that folder leaves all three behind.
+    // owned that folder leaves all three behind. Both trees are read as they
+    // were before anything was written, since the new folder can be in them.
     static ConsolidationResult consolidateInto (Session& session,
                                                 const juce::File& newSessionDir,
                                                 bool ownsOldFolder = true);

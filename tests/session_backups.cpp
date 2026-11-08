@@ -289,6 +289,36 @@ TEST_CASE ("Keeping a session backup applies retention to the backups folder", "
     CHECK (read (folder / "notes.txt") == "mine");
 }
 
+TEST_CASE ("Retention keeps a pinned backup until its pin goes", "[session][backups]")
+{
+    const duskstudio::test::TempDirectory temp ("dusk-session-backups-pin-");
+    const auto dir = temp.path();
+    const auto folder = dir / "backups";
+    stdfs::create_directory (folder);
+    const auto old = namesFrom (Clock::now() - Days (100), 25, std::chrono::seconds (1));
+    for (const auto& name : old)
+        write (folder / name, name);
+    const auto opening = folder / old[2];
+
+    {
+        const backups::Pin pin (dir / "." / "backups" / old[2]);
+        const auto result = backups::keepSaved (dir, Clock::now(), "{\"first\":true}");
+        CHECK (result.failures.empty());
+        REQUIRE (result.written.size() == 1);
+        std::vector<stdfs::path> expected;
+        for (const int i : { 0, 1, 3, 4, 5 })
+            expected.push_back (folder / old[(std::size_t) i]);
+        CHECK (result.removed == expected);
+        CHECK (read (opening) == old[2]);
+    }
+
+    const auto result = backups::keepSaved (dir, Clock::now(), "{\"second\":true}");
+    CHECK (result.failures.empty());
+    REQUIRE (result.written.size() == 1);
+    CHECK (result.removed == std::vector<stdfs::path> { opening, folder / old[6] });
+    CHECK_FALSE (stdfs::exists (opening));
+}
+
 TEST_CASE ("The newest session backup, and the newest before another one", "[session][backups]")
 {
     const duskstudio::test::TempDirectory temp ("dusk-session-backups-newest-");

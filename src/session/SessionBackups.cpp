@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <fstream>
 #include <iterator>
+#include <mutex>
 #include <new>
 #include <set>
 
@@ -106,11 +107,39 @@ bool makeFolder (const stdfs::path& sessionDir, const stdfs::path& folder, Resul
     return false;
 }
 
+struct Pins
+{
+    std::mutex lock;
+    std::multiset<stdfs::path> backups;
+};
+
+Pins& pins()
+{
+    static Pins all;
+    return all;
+}
+
+bool pinned (const stdfs::path& file)
+{
+    auto& all = pins();
+    const std::lock_guard<std::mutex> hold (all.lock);
+    for (const auto& backup : all.backups)
+    {
+        if (backup.filename() != file.filename()) continue;
+        std::error_code error;
+        if (backup.lexically_normal() == file.lexically_normal()
+            || stdfs::equivalent (dusk::fs::nativeIOPath (backup), dusk::fs::nativeIOPath (file), error))
+            return true;
+    }
+    return false;
+}
+
 void retain (const stdfs::path& folder, Result& result)
 {
     for (const auto& name : namesToRemove (backupsIn (folder, &result), std::chrono::system_clock::now()))
     {
         const auto file = folder / stdfs::u8path (name);
+        if (pinned (file)) continue;
         std::error_code error;
         if (stdfs::remove (dusk::fs::nativeIOPath (file), error))
             result.removed.push_back (file);
@@ -182,6 +211,29 @@ bool isBackupFolderOf (const stdfs::path& folder, const stdfs::path& sessionDir)
     return stdfs::equivalent (dusk::fs::nativeIOPath (folder), dusk::fs::nativeIOPath (expected), error);
 }
 } // namespace
+
+Pin::Pin (std::filesystem::path pinnedBackup) noexcept
+{
+    try
+    {
+        backup = std::move (pinnedBackup);
+        auto& all = pins();
+        const std::lock_guard<std::mutex> hold (all.lock);
+        all.backups.insert (backup);
+        held = true;
+    }
+    catch (...)
+    {
+    }
+}
+
+Pin::~Pin()
+{
+    if (! held) return;
+    auto& all = pins();
+    const std::lock_guard<std::mutex> hold (all.lock);
+    if (const auto it = all.backups.find (backup); it != all.backups.end()) all.backups.erase (it);
+}
 
 std::string fileName (std::chrono::system_clock::time_point savedAt, int copy)
 {

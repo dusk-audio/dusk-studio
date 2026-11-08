@@ -20,7 +20,8 @@
 //
 // A backup is never replaced. Retention, after each write, is the only thing
 // that removes files there, and only files with backup names: it keeps the 20
-// newest and the newest of each of the last 30 days (UTC), today included.
+// newest and the newest of each of the last 30 days (UTC), today included, and
+// any backup a Pin holds.
 //
 // Nothing here throws. The session folder must exist; backups/ is made in it
 // when needed, and a session folder that has gone is never made again.
@@ -28,6 +29,22 @@ namespace duskstudio::sessionbackups
 {
 inline constexpr int kKeepNewest = 20;
 inline constexpr int kKeepDays   = 30;
+
+// Keeps a backup out of retention for as long as it lives, so one that is
+// about to be opened is still there when its open reads it.
+class Pin
+{
+public:
+    explicit Pin (std::filesystem::path backup) noexcept;
+    ~Pin();
+
+    Pin (const Pin&)            = delete;
+    Pin& operator= (const Pin&) = delete;
+
+private:
+    std::filesystem::path backup;
+    bool held = false;
+};
 
 struct Failure
 {

@@ -2052,7 +2052,7 @@ void MainComponent::maybeStartStartupPluginScan()
     // Defer past an open crash-recovery, unsaved-changes or session-won't-open
     // prompt so the scan's progress modal doesn't stack over the user's
     // decision. Each prompt's exit paths re-invoke us once that choice is made.
-    if (recoveryModal.isOpen() || quitModal.isOpen() || openFailureModal.isOpen()) return;
+    if (recoveryModal.isOpen() || quitModal.isOpen() || openFailurePending()) return;
     startupScanTriggered = true;   // fire exactly once, whatever the toggle says
 
     const bool enabled = appconfig::getScanPluginsOnStartup();
@@ -3543,7 +3543,7 @@ void MainComponent::guardSessionSwitchThen (const char* title,
     // guardUnsavedThen would drop the request on a busy modal, and the recovery
     // prompt would be replaced mid-decision - either way silently, and after
     // the stop below had already taken the transport down for nothing.
-    if (quitModal.isOpen() || recoveryModal.isOpen() || openFailureModal.isOpen())
+    if (quitModal.isOpen() || recoveryModal.isOpen() || openFailurePending())
     {
         setStatusText ("Session not switched: close the open prompt first");
         if (onCancelled) onCancelled();
@@ -4613,7 +4613,10 @@ void MainComponent::openSessionPath (const juce::File& path)
         // load into its completion callback - otherwise the recovery prompt
         // would open on top of the still-present startup dialog.
         juce::Component::SafePointer<MainComponent> safeThis (this);
-        dismissStartupDialog ([safeThis, sessionJson]
+        // A Save in the prompt below runs retention, which could otherwise
+        // remove the very backup handed over before it is read.
+        auto pin = std::make_shared<sessionbackups::Pin> (toPath (sessionJson));
+        dismissStartupDialog ([safeThis, sessionJson, pin]
         {
             auto* self = safeThis.getComponent();
             if (self == nullptr) return;
@@ -4626,10 +4629,10 @@ void MainComponent::openSessionPath (const juce::File& path)
                 "Another session was opened from outside Dusk Studio, and your "
                 "current session has unsaved changes. If you don't save, those "
                 "changes are discarded when the other session opens.",
-                [safeThis, sessionJson]
+                [safeThis, sessionJson, pin]
             {
                 if (auto* s = safeThis.getComponent())
-                    s->loadSessionFromJson (sessionJson);
+                    s->loadSessionFromJson (sessionJson, [pin] (bool) {});
             });
         });
     }
@@ -4655,7 +4658,7 @@ bool MainComponent::loadSessionFromJson (const juce::File& sessionJson,
     {
         setStatusForPath ("No session at", sessionJson);
         showOpenFailure (toPath (sessionJson), folder, { SessionLoadFailure::FileUnavailable, 0, 0 },
-                         std::move (onComplete));
+                         std::move (onComplete), {});
         return false;
     }
 
@@ -4688,7 +4691,7 @@ bool MainComponent::loadSessionFromJson (const juce::File& sessionJson,
             if (auto* self = safe.getComponent())
             {
                 self->recoveryModal.close();
-                self->finishOpening (toPath (autosave), folder, afterwards);
+                self->finishOpening (toPath (autosave), folder, afterwards, {});
             }
         };
         raw->onLoad = [safe, sessionJson, folder, afterwards]
@@ -4696,7 +4699,7 @@ bool MainComponent::loadSessionFromJson (const juce::File& sessionJson,
             if (auto* self = safe.getComponent())
             {
                 self->recoveryModal.close();
-                self->finishOpening (toPath (sessionJson), folder, afterwards);
+                self->finishOpening (toPath (sessionJson), folder, afterwards, {});
             }
         };
         raw->onCancel = [safe, onComplete]
@@ -4727,11 +4730,11 @@ bool MainComponent::loadSessionFromJson (const juce::File& sessionJson,
         return true;
     }
 
-    return finishOpening (toPath (sessionJson), folder, std::move (onComplete));
+    return finishOpening (toPath (sessionJson), folder, std::move (onComplete), {});
 }
 
 bool MainComponent::finishOpening (const std::filesystem::path& sessionJson, const std::filesystem::path& sessionDir,
-                                   std::function<void (bool loaded)> onComplete)
+                                   std::function<void (bool loaded)> onComplete, FailedOpens failedBefore)
 {
     SessionLoadError failure;
     const bool loaded = finishLoadingSessionFrom (toFile (sessionJson), toFile (sessionDir), &failure);
@@ -4740,12 +4743,13 @@ bool MainComponent::finishOpening (const std::filesystem::path& sessionJson, con
         if (onComplete) onComplete (loaded);
         return loaded;
     }
-    showOpenFailure (sessionJson, sessionDir, failure, std::move (onComplete));
+    showOpenFailure (sessionJson, sessionDir, failure, std::move (onComplete), std::move (failedBefore));
     return false;
 }
 
 void MainComponent::showOpenFailure (const std::filesystem::path& failed, const std::filesystem::path& dir,
-                                     const SessionLoadError& error, std::function<void (bool loaded)> onComplete)
+                                     const SessionLoadError& error, std::function<void (bool loaded)> onComplete,
+                                     FailedOpens failedBefore)
 {
     namespace stdfs = std::filesystem;
     SafePointer<MainComponent> safe (this);
@@ -4781,15 +4785,24 @@ void MainComponent::showOpenFailure (const std::filesystem::path& failed, const 
                    : failedType == stdfs::file_type::not_found            ? openalert::Problem::Missing
                                                                           : openalert::Problem::Unreadable;
 
+    // Nothing that has failed since the user asked for this session is
+    // offered again, and no backup newer than one that failed.
+    auto failedNow = std::move (failedBefore);
     const auto autosave = dir / "session.json.autosave";
+    if (savecheck::isSameLocation (autosave, failed)) failedNow.autosave = true;
+    if (isBackupOf (failed, dir)
+        && (failedNow.oldestBackup.empty()
+            || failed.filename().u8string() < failedNow.oldestBackup.filename().u8string()))
+        failedNow.oldestBackup = failed;
+
     const bool hasAutosave = stdfs::is_regular_file (dusk::fs::nativeIOPath (autosave), ec);
-    const bool offersAutosave = hasAutosave && ! savecheck::isSameLocation (autosave, failed);
+    const bool offersAutosave = hasAutosave && ! failedNow.autosave;
     report.autosave = offersAutosave;
     if (const auto written = dusk::fs::lastModificationTimeSecs (autosave); offersAutosave && written > 0)
         report.autosaveTime = localMinuteText ((std::time_t) written);
 
     // One that holds the same bytes as the file that failed would fail the same way.
-    auto backup = sessionbackups::newest (dir, failed);
+    auto backup = sessionbackups::newest (dir, failedNow.oldestBackup);
     while (backup && sessionbackups::sameBytes (failed, *backup))
         backup = sessionbackups::newest (dir, *backup);
     if (backup)
@@ -4797,7 +4810,7 @@ void MainComponent::showOpenFailure (const std::filesystem::path& failed, const 
         report.backup = true;
         if (const auto savedAt = sessionbackups::savedAtOf (*backup))
             report.backupTime = localMinuteText (std::chrono::system_clock::to_time_t (*savedAt));
-        report.backupIsOlder = isBackupOf (failed, dir);
+        report.backupIsOlder = ! failedNow.oldestBackup.empty();
         // Any load but the autosave's own removes it.
         report.discardsAutosave = hasAutosave;
     }
@@ -4814,14 +4827,21 @@ void MainComponent::showOpenFailure (const std::filesystem::path& failed, const 
         return;
     }
 
-    const auto open = [safe, dir, answer] (const stdfs::path& file)
+    // The load waits a tick, so it does not replace the alert's body while that
+    // body's own button runs. Counted as an open prompt until it runs, so
+    // nothing opens in that tick for the load to land on without asking.
+    const auto open = [safe, dir, answer, failedNow] (const stdfs::path& file)
     {
-        return [safe, dir, answer, file]
+        return [safe, dir, answer, failedNow, file]
         {
-            dusk::callAsync ([safe, dir, answer, file]
+            if (auto* self = safe.getComponent()) ++self->offerLoadsPending;
+            dusk::callAsync ([safe, dir, answer, failedNow, file]
             {
                 if (auto* self = safe.getComponent())
-                    self->finishOpening (file, dir, answer);
+                {
+                    --self->offerLoadsPending;
+                    self->finishOpening (file, dir, answer, failedNow);
+                }
                 else
                     answer (false);
             });
