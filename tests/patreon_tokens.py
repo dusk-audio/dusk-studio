@@ -46,10 +46,10 @@ def token_endpoint(request, timeout=None):
     return io.BytesIO(json.dumps(NEW).encode())
 
 
-def run_main(config_path, argv, gh_run, environ=None):
+def run_main(config_path, argv, gh_run, environ=None, endpoint=token_endpoint):
     environ = dict(environ or {})
     with mock.patch.object(patrons, "CONFIG_PATH", config_path), \
-         mock.patch.object(patrons.urllib.request, "urlopen", token_endpoint), \
+         mock.patch.object(patrons.urllib.request, "urlopen", endpoint), \
          mock.patch.object(patrons.shutil, "which", lambda name: "/usr/bin/gh"), \
          mock.patch.object(patrons.subprocess, "run", gh_run), \
          mock.patch.object(sys, "argv", ["update-patrons.py"] + argv), \
@@ -115,6 +115,34 @@ def failed_write_keeps_the_new_pair():
     assert failing_repo in message and "--push-secrets" in message, message
 
 
+def failed_refresh_saves_nothing():
+    def gh_run(*_args, **_kwargs):
+        raise AssertionError("a failed refresh must not write any secret")
+
+    def answering(status=200, body=b""):
+        def endpoint(request, timeout=None):
+            token_endpoint(request, timeout)
+            if status != 200:
+                raise urllib.error.HTTPError(request.full_url, status, "", {}, None)
+            return io.BytesIO(body)
+        return endpoint
+
+    # Patreon's answer, and whether the pair may still be good so the run
+    # says to retry the refresh before replacing it.
+    answers = ((answering(400), False), (answering(401), False),
+               (answering(429), True), (answering(503), True),
+               (answering(body=b"<html>"), True), (answering(body=b"{}"), True))
+    for endpoint, may_retry in answers:
+        with tempfile.TemporaryDirectory() as directory:
+            path = config_file(directory)
+            message = stop_message(lambda: run_main(path, ["--refresh-tokens"], gh_run,
+                                                    endpoint=endpoint))
+            saved = json.loads(path.read_text(encoding="utf-8"))
+        assert saved == OLD, (message, saved)
+        assert "--push-secrets" in message, message
+        assert ("--refresh-tokens" in message) == may_retry, message
+
+
 def maintenance_refused_in_a_workflow():
     def gh_run(*_args, **_kwargs):
         raise AssertionError("a workflow must not write secrets")
@@ -128,7 +156,8 @@ def maintenance_refused_in_a_workflow():
 
 
 CASES = (rejected_token_never_refreshes, refresh_updates_every_copy,
-         failed_write_keeps_the_new_pair, maintenance_refused_in_a_workflow)
+         failed_write_keeps_the_new_pair, failed_refresh_saves_nothing,
+         maintenance_refused_in_a_workflow)
 
 if __name__ == "__main__":
     for case in CASES:

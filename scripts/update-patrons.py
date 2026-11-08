@@ -142,16 +142,31 @@ def refresh_tokens(config):
     }).encode()
     req = urllib.request.Request(TOKEN_URL, data=body, method="POST")
     req.add_header("Content-Type", "application/x-www-form-urlencoded")
+    replace = (f"the four values from {CLIENTS_URL} into {CONFIG_PATH}, as in setup "
+               "step 2 at the top of this script, then run "
+               "scripts/update-patrons.py --push-secrets.")
+    retry = ("Retry scripts/update-patrons.py --refresh-tokens later. If Patreon then "
+             f"refuses the refresh, copy {replace}")
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
             fresh = json.load(resp)
     except urllib.error.HTTPError as e:
-        sys.exit(f"Patreon refused the refresh token (HTTP {e.code}), so nothing "
-                 f"changed. Copy new Creator's tokens from {CLIENTS_URL} into "
-                 f"{CONFIG_PATH}, then run scripts/update-patrons.py --push-secrets.")
+        # A token endpoint refuses a grant or a client with 400 or 401
+        # (RFC 6749 5.2). Anything else may pass on a retry, so the pair is
+        # not to be replaced yet.
+        if e.code in (400, 401):
+            sys.exit(f"Patreon refused the refresh (HTTP {e.code}), so nothing "
+                     f"changed. Copy {replace}")
+        sys.exit(f"Patreon answered the refresh with HTTP {e.code}, so nothing "
+                 f"was saved. {retry}")
     except urllib.error.URLError as e:
         sys.exit(f"Network error contacting Patreon ({e.reason}), so nothing "
                  "changed. Check your connection and retry.")
+    except ValueError:
+        sys.exit(f"Patreon's answer to the refresh was not JSON, so nothing was saved. {retry}")
+    if not isinstance(fresh, dict) or not fresh.get("access_token"):
+        sys.exit(f"Patreon's answer to the refresh held no access token, so nothing "
+                 f"was saved. {retry}")
     config["access_token"] = fresh["access_token"]
     config["refresh_token"] = fresh.get("refresh_token", config["refresh_token"])
     write_config_secure(config)
