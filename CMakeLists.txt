@@ -872,6 +872,8 @@ target_sources(DuskStudio PRIVATE
     # fallback off Linux (DeviceManagerJuce.cpp). Gated below the target_sources().
     src/engine/midi/MidiDevices.cpp
     src/engine/midi/MidiFileReader.cpp
+    src/engine/midi/MidiFileWriter.cpp
+    src/session/MidiRecovery.cpp
     src/engine/NativePluginCache.cpp
     src/engine/PlaybackEngine.cpp
     src/engine/PluginDescriptor.cpp

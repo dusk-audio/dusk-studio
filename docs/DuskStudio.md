@@ -399,7 +399,7 @@ MySong/
     └── MySong_mix2.wav
 ```
 
-Note: MIDI event data is stored inline in `session.json` (not as separate .mid files), because MIDI regions are small and this keeps everything atomic. Audio regions reference external WAV files because those are large. Plugin states are saved as separate files so they can be large without bloating the session JSON.
+Note: MIDI event data is stored inline in `session.json`, because MIDI regions are small and this keeps everything atomic. Each recorded MIDI pass is also written to `midi/takes/` as a Standard MIDI File, a copy that survives a damaged `session.json`; `session.json` stays the only file a load reads. Audio regions reference external WAV files because those are large. Plugin states are saved as separate files so they can be large without bloating the session JSON.
 
 **Atomic save pattern (`SessionSerializer::save`)**: to prevent corruption from crashes or power loss during write, `SessionSerializer` must use an atomic-write pattern: (1) write the JSON to a temporary file (`session.json.tmp` in the same directory), (2) call `fsync()` on the file descriptor to flush data to disk, (3) atomically rename the temp file to `session.json` (POSIX `rename()` is atomic on the same filesystem), (4) on error, clean up the temp file. `SessionSerializer::load` reads `session.json` normally — the atomic rename guarantees it is always complete. This pattern ensures that `session.json` is never partially written.
 

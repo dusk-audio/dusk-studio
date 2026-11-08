@@ -1286,7 +1286,7 @@ A session you have not saved yet records into the `audio/` folder of `~/Music/Du
 
 Every recorded audio file is a **24-bit WAV** at the session's sample rate. Filenames include the track number and a timestamp so re-recording the same track on the same day still produces distinct files.
 
-MIDI tracks do not produce separate files; their notes and channel controls are embedded in `session.json`.
+MIDI tracks keep their notes and channel controls embedded in `session.json`. Each recorded MIDI pass is also written to the session's `midi/takes/` folder as a Standard MIDI File of its own, at **Stop** with **MIDI Merge** off and as each pass is merged with it on. That includes every pass of a loop take, even the ones older than the 8 previous takes its region keeps.
 
 ## Takes
 
@@ -3106,7 +3106,7 @@ The multiband compressor has four bands: Low, Low-Mid, High-Mid and High. These 
 | Session              | JSON, atomic write                                                                      |
 | Recorded audio       | 24-bit PCM WAV, session sample rate                                                     |
 | Imported audio       | copied as-is into session/audio/ when rate and channels match, otherwise 24-bit WAV     |
-| Recorded MIDI        | embedded in session.json (note + CC arrays per region)                                  |
+| Recorded MIDI        | embedded in session.json, and each pass as a Standard MIDI File in session/midi/takes/  |
 | Plugin scan cache    | XML, plus a JSON sidecar per native format, per-user config directory                   |
 | MIDI bindings export | JSON                                                                                    |
 | Bounce               | 24-bit PCM WAV, session sample rate                                                     |

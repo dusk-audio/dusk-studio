@@ -247,6 +247,7 @@ add_executable(dusk-studio-tests
     record_loop_take_stacking.cpp
     record_midi_merge_capture.cpp
     record_midi_overdub_diff.cpp
+    record_midi_take_files.cpp
     record_offset_placement.cpp
     record_stop_waits_for_audio.cpp
     playback_loop_read.cpp

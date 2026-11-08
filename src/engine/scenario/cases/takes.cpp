@@ -5,6 +5,7 @@
 #include "../../PlaybackEngine.h"
 #include "../../audiofile/FileReader.h"
 #include "../../audiofile/FileWriter.h"
+#include "../../midi/MidiFileReader.h"
 #include "../../../session/RegionEditActions.h"
 #include "../../../session/Session.h"
 #include "../../../session/SessionSerializer.h"
@@ -536,56 +537,99 @@ ScenarioResult midiRecordingLivesInJson (ScenarioContext& ctx)
     const int input = engine.getVirtualKeyboardInputIndex();
     if (! ctx.expect (input >= 0, "the virtual MIDI input is missing")) return ctx.verdict();
     ctx.keep (session.countInEnabled);
+    ctx.keep (session.midiMergeEnabled);
     session.countInEnabled.store (false);
     track.mode.store ((int) Track::Mode::Midi);
     track.midiInputIndex.store (input);
     track.midiChannel.store (0);
     track.inputMonitor.store (true);
     session.setTrackArmed (0, true);
-    engine.record();
-    if (! ctx.expect (engine.getTransport().isRecording(), "MIDI recording did not start")) return ctx.verdict();
-    ctx.pump (4);
-    dusk::MidiBuffer start;
-    const std::uint8_t noteOn[] { 0x92, 60, 101 };
-    const std::uint8_t controller[] { 0xb2, 74, 87 };
-    start.addEvent (noteOn, 3, 0);
-    start.addEvent (controller, 3, 64);
-    ctx.pumpWithMidi (input, std::move (start));
-    ctx.pump (16);
-    dusk::MidiBuffer finish;
-    const std::uint8_t noteOff[] { 0x82, 60, 0 };
-    finish.addEvent (noteOff, 3, 0);
-    ctx.pumpWithMidi (input, std::move (finish));
-    ctx.pump (4);
-    engine.stop();
-    const auto& regions = track.midiRegions.current();
-    if (! ctx.expect (regions.size() == 1 && regions[0].notes.size() == 1 && regions[0].ccs.size() == 1,
-                      "MIDI recording did not commit the note and controller")) return ctx.verdict();
-    const auto recorded = regions[0];
-    ctx.expect (recorded.notes[0].channel == 3 && recorded.notes[0].noteNumber == 60
-                && recorded.notes[0].velocity == 101 && recorded.notes[0].lengthInTicks > 0,
-                "the recorded note changed channel, pitch, velocity or duration");
-    ctx.expect (recorded.ccs[0].channel == 3 && recorded.ccs[0].controller == 74 && recorded.ccs[0].value == 87,
-                "the recorded controller changed its identity or value");
-    const auto path = ctx.sessionDir() / "session.json";
-    if (! ctx.expect (SessionSerializer::save (session, path), "could not save the MIDI take")) return ctx.verdict();
-    std::ifstream stream (path);
-    const auto json = dusk::json::Json::parse (stream, nullptr, false);
-    if (! ctx.expect (! json.is_discarded(), "the saved session is not valid JSON")) return ctx.verdict();
-    const auto& embedded = json.at ("tracks").at (0).at ("midi_regions").at (0);
-    ctx.expect (embedded.at ("notes").at (0).at ("note") == 60
-                && embedded.at ("ccs").at (0).at ("ctrl") == 74,
-                "the MIDI events were not embedded in session.json");
-    Session loaded;
-    if (! ctx.expect (SessionSerializer::load (loaded, path), "could not reload the MIDI session")) return ctx.verdict();
-    const auto& restored = loaded.track (0).midiRegions.current();
-    ctx.expect (restored.size() == 1 && restored[0].notes == recorded.notes && restored[0].ccs == recorded.ccs
-                && restored[0].timelineStart == recorded.timelineStart
-                && restored[0].lengthInTicks == recorded.lengthInTicks,
-                "saving and reloading changed the recorded MIDI data");
-    for (const auto& entry : std::filesystem::recursive_directory_iterator (ctx.sessionDir()))
-        ctx.expect (entry.path().extension() != ".mid" && entry.path().extension() != ".wav",
-                    "MIDI recording created an external media file");
+    // With Merge off and then on, both committing inside Stop while the
+    // callback is held silent. The second take starts where the first
+    // stopped, so its file places it off the timeline's start.
+    for (const bool merge : { false, true })
+    {
+        const std::string with = merge ? " with MIDI Merge on" : " with MIDI Merge off";
+        session.midiMergeEnabled.store (merge);
+        track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>>());
+        std::error_code ignored;
+        std::filesystem::remove_all (ctx.sessionDir() / "midi", ignored);
+        engine.record();
+        if (! ctx.expect (engine.getTransport().isRecording(), "MIDI recording did not start" + with))
+            return ctx.verdict();
+        ctx.pump (4);
+        dusk::MidiBuffer start;
+        const std::uint8_t noteOn[] { 0x92, 60, 101 };
+        const std::uint8_t controller[] { 0xb2, 74, 87 };
+        start.addEvent (noteOn, 3, 0);
+        start.addEvent (controller, 3, 64);
+        ctx.pumpWithMidi (input, std::move (start));
+        ctx.pump (16);
+        dusk::MidiBuffer finish;
+        const std::uint8_t noteOff[] { 0x82, 60, 0 };
+        finish.addEvent (noteOff, 3, 0);
+        ctx.pumpWithMidi (input, std::move (finish));
+        ctx.pump (4);
+        engine.stop();
+        const auto& regions = track.midiRegions.current();
+        if (! ctx.expect (regions.size() == 1 && regions[0].notes.size() == 1 && regions[0].ccs.size() == 1,
+                          "MIDI recording did not commit the note and controller" + with)) return ctx.verdict();
+        const auto recorded = regions[0];
+        ctx.expect (recorded.notes[0].channel == 3 && recorded.notes[0].noteNumber == 60
+                    && recorded.notes[0].velocity == 101 && recorded.notes[0].lengthInTicks > 0,
+                    "the recorded note changed channel, pitch, velocity or duration" + with);
+        ctx.expect (recorded.ccs[0].channel == 3 && recorded.ccs[0].controller == 74 && recorded.ccs[0].value == 87,
+                    "the recorded controller changed its identity or value" + with);
+        const auto path = ctx.sessionDir() / "session.json";
+        if (! ctx.expect (SessionSerializer::save (session, path), "could not save the MIDI take" + with))
+            return ctx.verdict();
+        std::ifstream stream (path);
+        const auto json = dusk::json::Json::parse (stream, nullptr, false);
+        if (! ctx.expect (! json.is_discarded(), "the saved session is not valid JSON" + with)) return ctx.verdict();
+        const auto& embedded = json.at ("tracks").at (0).at ("midi_regions").at (0);
+        ctx.expect (embedded.at ("notes").at (0).at ("note") == 60
+                    && embedded.at ("ccs").at (0).at ("ctrl") == 74,
+                    "the MIDI events were not embedded in session.json" + with);
+        Session loaded;
+        if (! ctx.expect (SessionSerializer::load (loaded, path), "could not reload the MIDI session" + with))
+            return ctx.verdict();
+        const auto& restored = loaded.track (0).midiRegions.current();
+        ctx.expect (restored.size() == 1 && restored[0].notes == recorded.notes && restored[0].ccs == recorded.ccs
+                    && restored[0].timelineStart == recorded.timelineStart
+                    && restored[0].lengthInTicks == recorded.lengthInTicks,
+                    "saving and reloading changed the recorded MIDI data" + with);
+
+        // Stop also kept the take as a Standard MIDI File, and nothing else.
+        std::vector<std::filesystem::path> midiFiles;
+        for (const auto& entry : std::filesystem::recursive_directory_iterator (ctx.sessionDir()))
+        {
+            ctx.expect (entry.path().extension() != ".wav", "MIDI recording created an audio file" + with);
+            if (entry.path().extension() == ".mid") midiFiles.push_back (entry.path());
+        }
+        if (! ctx.expect (midiFiles.size() == 1 && midiFiles[0].parent_path() == ctx.sessionDir() / "midi" / "takes",
+                          "Stop did not keep the MIDI take as one file in midi/takes" + with)) return ctx.verdict();
+        midi::MidiFileReader reader;
+        if (! ctx.expect (reader.readFile (midiFiles[0]) && reader.timeFormat() == kMidiTicksPerQuarter,
+                          "the MIDI take file does not read back" + with)) return ctx.verdict();
+        std::vector<std::array<std::int64_t, 4>> played;
+        for (const auto& events : reader.tracks())
+            for (const auto& event : events)
+                if (event.isChannelMessage())
+                    played.push_back ({ event.tick, event.status, event.data1, event.data2 });
+        const double rate = engine.getTimelineSampleRate();
+        const auto first = session.tempoMap.empty()
+            ? samplesToTicks (recorded.timelineStart, rate, session.tempoBpm.load())
+            : session.tempoMap.samplesToTicks (recorded.timelineStart, rate);
+        const auto& note = recorded.notes[0];
+        std::vector<std::array<std::int64_t, 4>> expected {
+            { first + recorded.ccs[0].atTick, 0xb2, 74, 87 },
+            { first + note.startTick, 0x92, 60, 101 },
+            { first + note.startTick + note.lengthInTicks, 0x82, 60, 0 },
+        };
+        std::sort (played.begin(), played.end());
+        std::sort (expected.begin(), expected.end());
+        ctx.expect (played == expected, "the MIDI take file does not hold the take at its ticks" + with);
+    }
     return ctx.verdict();
 }
 

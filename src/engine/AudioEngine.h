@@ -1311,6 +1311,12 @@ private:
     int playbackIdleTicks = 0;
     bool playbackServicePosted = false;
 
+    // Passes a record commit took, each written to the session's midi/takes as
+    // soon as processing runs: Stop commits with the callback held silent, and
+    // the disk does not get to stretch that silence. Message thread.
+    std::vector<RecordManager::RecordedMidiPass> pendingMidiTakeFiles;
+    void writePendingMidiTakeFiles();
+
     // Outlives the engine so a hop still queued when it dies is a no-op instead
     // of a use-after-free: the poll thread posts those, and joining it in the
     // destructor cannot un-queue what it already posted. The timer above needs

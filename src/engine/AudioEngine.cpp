@@ -21,6 +21,7 @@
 #include "CompModeMap.h"
 #include "../session/RegionEditActions.h"
 #include "../session/MidiMerge.h"
+#include "../session/MidiRecovery.h"
 #include "../session/TakeComp.h"
 #include "../session/TrackMove.h"
 #include "DeviceFallbackMessage.h"
@@ -2392,6 +2393,7 @@ void AudioEngine::serviceMidiRecording()
         if (onBeforeRecordCommit) onBeforeRecordCommit (changedMask);
         std::vector<MidiMergePassAction::TrackDiff> diffs;
         std::vector<std::pair<int, int>> committed;
+        std::vector<RecordManager::RecordedMidiPass> played;
         for (const auto& captured : group.tracks)
         {
             if (captured.pass.notes.empty() && captured.pass.ccs.empty()) continue;
@@ -2410,10 +2412,7 @@ void AudioEngine::serviceMidiRecording()
                 after.push_back (std::move (fresh));
             }
             auto& target = after[(std::size_t) targetIndex];
-            MidiRegion pass;
-            pass.notes = captured.pass.notes;
-            pass.ccs = captured.pass.ccs;
-            pass.lengthInTicks = captured.pass.lengthInTicks;
+            auto pass = group.regionOf (captured);
             const midischedule::RegionClock clock (session.tempoMap.empty() ? nullptr : &session.tempoMap,
                                                    sr, bpm, target.timelineStart);
             const auto merged = mergeMidiPassAt (target, pass, group.timelineStart, clock);
@@ -2421,13 +2420,39 @@ void AudioEngine::serviceMidiRecording()
             diffs.push_back ({ captured.trackIndex, std::move (before), std::move (after),
                               { group.gestureId, group.passOrdinal } });
             committed.emplace_back (captured.trackIndex, targetIndex);
+            played.push_back ({ captured.trackIndex, std::move (pass) });
         }
         if (diffs.empty()) continue;
         undoManager.beginNewTransaction ("MIDI Merge pass");
         if (undoManager.perform (new MidiMergePassAction (session, *this, std::move (diffs))))
+        {
             for (const auto& target : committed)
                 if (onMidiPassCommitted) onMidiPassCommitted (target.first, target.second);
+            for (auto& recorded : played)
+                pendingMidiTakeFiles.push_back (std::move (recorded));
+        }
         undoManager.beginNewTransaction();
+    }
+    writePendingMidiTakeFiles();
+}
+
+// A take file is a copy kept beside session.json, so a write that fails is
+// reported and changes nothing about the take.
+void AudioEngine::writePendingMidiTakeFiles()
+{
+    if (pendingMidiTakeFiles.empty() || isProcessingSuspended()) return;
+    const auto sessionDir = std::filesystem::u8path (session.getSessionDirectory().getFullPathName().toStdString());
+    const double sampleRate = getTimelineSampleRate();
+    for (const auto& recorded : std::exchange (pendingMidiTakeFiles, {}))
+    {
+        const auto result = midirecovery::writeTakeFile (sessionDir, std::chrono::system_clock::now(), session,
+                                                         sampleRate, recorded.trackIndex, recorded.pass);
+        for (const auto& failure : result.failures)
+            std::fprintf (stderr,
+                          "[Dusk Studio/AudioEngine] track %d: a MIDI take file was not written "
+                          "(\"%s\": %s).\n",
+                          recorded.trackIndex + 1, failure.path.u8string().c_str(),
+                          failure.error.message().c_str());
     }
 }
 
@@ -2490,6 +2515,8 @@ void AudioEngine::stop()
             if (onBeforeRecordCommit)
                 onBeforeRecordCommit (recordManager.getActiveCaptureTrackMask());
             recordManager.stopRecording (endSample);
+            for (auto& recorded : recordManager.takeRecordedMidiPasses())
+                pendingMidiTakeFiles.push_back (std::move (recorded));
             updateAssetWorkPause();
             serviceMidiRecording();
             activeRecordStart.store (std::numeric_limits<std::int64_t>::min(),
@@ -2517,6 +2544,7 @@ void AudioEngine::stop()
         playbackEngine.stopPlayback();
     }
 
+    writePendingMidiTakeFiles();
     performPendingDspRestartIfIdle();
 }
 

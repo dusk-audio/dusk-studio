@@ -1,8 +1,11 @@
 #include "../Scenario.h"
 #include "MidiProbeHarness.h"
 #include "../../Transport.h"
+#include "../../midi/MidiFileReader.h"
 
 #include <algorithm>
+#include <array>
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <string>
@@ -273,10 +276,33 @@ ScenarioResult runLoopPassUndo (ScenarioContext& ctx)
         }
     };
 
+    // How many take files midi/takes holds, and the note-ons and controllers of
+    // the newest, sorted.
+    const auto takesDir = ctx.sessionDir() / "midi" / "takes";
+    const auto newestTake = [&takesDir] (std::size_t& count)
+    {
+        std::vector<std::filesystem::path> files;
+        std::error_code error;
+        for (std::filesystem::directory_iterator it (takesDir, error), end; ! error && it != end; it.increment (error))
+            files.push_back (it->path());
+        count = files.size();
+        std::vector<std::array<int, 3>> events;
+        midi::MidiFileReader reader;
+        if (files.empty() || ! reader.readFile (*std::max_element (files.begin(), files.end()))) return events;
+        for (const auto& part : reader.tracks())
+            for (const auto& event : part)
+                if (event.isNoteOn() || event.isController())
+                    events.push_back ({ event.status, event.data1, event.data2 });
+        std::sort (events.begin(), events.end());
+        return events;
+    };
+
     for (bool merge : { true, false })
     {
         engine.stop();
         engine.getUndoManager().clearUndoHistory();
+        std::error_code ignored;
+        std::filesystem::remove_all (ctx.sessionDir() / "midi", ignored);
         session.midiMergeEnabled.store (merge);
         track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (
             merge ? std::vector<MidiRegion> { seed } : std::vector<MidiRegion> {}));
@@ -300,7 +326,14 @@ ScenarioResult runLoopPassUndo (ScenarioContext& ctx)
             }
             if (! ctx.expect (completed && transport.isRecording(), "a loop pass did not finish while recording"))
                 return ctx.verdict();
-            if (merge) checkMerged (pass + 1);
+            if (! merge) continue;
+            checkMerged (pass + 1);
+            // The pass as played, without the region it merged into.
+            std::size_t files = 0;
+            ctx.expect (newestTake (files) == std::vector<std::array<int, 3>> {
+                            { 0x90, 64 + pass, 100 }, { 0xb0, 11, 90 + pass } }
+                        && files == (std::size_t) pass + 1,
+                        "a merged loop pass did not leave a take file of its own while recording");
         }
 
         if (merge)
@@ -321,6 +354,11 @@ ScenarioResult runLoopPassUndo (ScenarioContext& ctx)
         else
         {
             engine.stop();
+            std::size_t files = 0;
+            ctx.expect (newestTake (files) == std::vector<std::array<int, 3>> {
+                            { 0x90, 66, 100 }, { 0xb0, 11, 91 }, { 0xb0, 11, 92 } }
+                        && files == 3,
+                        "Merge-off loop recording did not leave a take file for each pass at Stop");
             const auto& regions = track.midiRegions.current();
             if (! ctx.expect (regions.size() == 1, "Merge-off loop recording made extra regions")) return ctx.verdict();
             const auto& region = regions.front();
