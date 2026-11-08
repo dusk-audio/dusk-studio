@@ -237,6 +237,8 @@ add_executable(dusk-studio-tests
     ${CMAKE_SOURCE_DIR}/src/engine/FileImporter.cpp
     midi_file_reader.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/midi/MidiFileReader.cpp
+    midi_file_writer.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/midi/MidiFileWriter.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/DpImporter.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/DpAligner.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/RecordManager.cpp
