@@ -15,6 +15,7 @@
 #include "../engine/AudioEngine.h"
 #include "../foundation/MessageThread.h"
 #include "../session/Session.h"
+#include "../session/SessionSerializer.h"
 #include "../session/SessionTemplates.h"
 
 namespace duskstudio
@@ -194,15 +195,27 @@ private:
     // name, so a session.json there does not make it this session's file.
     bool sessionOnDisk = false;
     bool saveGoesInPlace() const;
-    // onComplete runs once, after the load attempt or any recovery-prompt choice,
-    // with whether a session loaded. The return value only says the attempt was
-    // accepted when the recovery prompt is up.
+    // onComplete runs once, after the load attempt and the user's answer to any
+    // recovery prompt or failure alert, with whether a session loaded. The
+    // return value only says the attempt was accepted when the recovery prompt
+    // is up, and is false for a file that did not open even when the alert
+    // then opens something in its place.
     bool loadSessionFromJson (const juce::File& sessionJson,
                               std::function<void (bool loaded)> onComplete = {});
     // Tail-half called either directly (no autosave) or from the
-    // recovery prompt callback.
+    // recovery prompt callback. failure, when given, says what was wrong with
+    // a file that did not load; it stays None when the load stopped before
+    // reading it, after raising an alert of its own.
     bool finishLoadingSessionFrom (const juce::File& sessionJson,
-                                    const juce::File& sessionDir);
+                                    const juce::File& sessionDir,
+                                    SessionLoadError* failure = nullptr);
+    // finishLoadingSessionFrom, then for a file that did not open the alert
+    // that says why and offers what could open instead. onComplete runs once,
+    // when a load succeeds or the user has answered the last alert.
+    bool finishOpening (const std::filesystem::path& sessionJson, const std::filesystem::path& sessionDir,
+                        std::function<void (bool loaded)> onComplete);
+    void showOpenFailure (const std::filesystem::path& failedJson, const std::filesystem::path& sessionDir,
+                          const SessionLoadError& error, std::function<void (bool loaded)> onComplete);
     // onResolved runs once with whether a session opened: false when the user
     // backs out of the unsaved-changes prompt, the browser or the recovery prompt,
     // or the chosen session fails to load.
@@ -320,7 +333,7 @@ private:
     void writeAutosave();
     void discardWrittenAutosave();
     juce::File getAutosaveFileFor (const juce::File& sessionDir) const;
-    bool autosaveIsNewerThan (const juce::File& sessionJson) const;
+    bool autosaveIsNewerThan (const juce::File& sessionJson, const std::filesystem::path& sessionDir) const;
     void deleteAutosaveFor   (const juce::File& sessionDir) const;
     // The folder writeAutosave and saveNotepadNow write into (see
     // savecheck::sidecarFolder). Empty when there is nowhere safe.

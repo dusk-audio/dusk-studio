@@ -200,6 +200,20 @@ TEST_CASE ("a never-saved session starts in the first Untitled folder that holds
         CHECK (unsavedSessionFolder (s.root) == s.root / "Untitled 4");
     }
 
+    SECTION ("session backups reserve their folders")
+    {
+        stdfs::create_directories (s.root / "Untitled" / "backups");
+        std::ofstream (s.root / "Untitled" / "backups" / "20261108-143005Z_session.json") << "{}";
+        CHECK (unsavedSessionFolder (s.root) == s.root / "Untitled 2");
+
+        stdfs::create_directories (s.root / "Untitled 2" / "backups");
+        CHECK (unsavedSessionFolder (s.root) == s.root / "Untitled 3");
+
+        stdfs::create_directories (s.root / "Untitled 3");
+        std::ofstream (s.root / "Untitled 3" / "backups") << "not a folder";
+        CHECK (unsavedSessionFolder (s.root) == s.root / "Untitled 4");
+    }
+
     SECTION ("saved sessions reserve their folders")
     {
         std::ofstream (s.root / "Untitled" / "session.json") << "{}";

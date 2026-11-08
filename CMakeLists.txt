@@ -875,6 +875,7 @@ target_sources(DuskStudio PRIVATE
     src/engine/midi/MidiFileWriter.cpp
     src/session/MidiRecovery.cpp
     src/session/MidiRecoveryWriter.cpp
+    src/session/SessionBackups.cpp
     src/engine/NativePluginCache.cpp
     src/engine/PlaybackEngine.cpp
     src/engine/PluginDescriptor.cpp
@@ -1003,6 +1004,7 @@ target_sources(DuskStudio PRIVATE
     src/ui/scenario/cases/gui_plugin_editors.cpp
     src/ui/scenario/cases/gui_plugin_folders.cpp
     src/ui/scenario/cases/gui_regions_markers.cpp
+    src/ui/scenario/cases/gui_session_backups.cpp
     src/ui/scenario/cases/gui_session_dirty.cpp
     src/ui/scenario/cases/gui_session_file.cpp
     src/ui/scenario/cases/gui_sfz_live.cpp

@@ -206,11 +206,17 @@ public:
             auto cb = act.onClick;
             btn->onClick = [cb] { if (cb) cb(); };
             addAndMakeVisible (*btn);
+            buttonWidths.push_back (std::max (110, btn->getBestWidthForHeight (kButtonStripH)));
             buttons.push_back (std::move (btn));
         }
         setWantsKeyboardFocus (true);
-        const int w = std::max (480, 60 + 120 * (int) actions.size());
-        setSize (w, 220);
+        setTitle (titleStr);
+        setDescription (messageStr);
+        int buttonRow = 0;
+        for (const int width : buttonWidths)
+            buttonRow += width + 8;
+        const int w = std::max ({ 480, 60 + 120 * (int) actions.size(), 40 + buttonRow });
+        setSize (w, panelHeightForMessage (messageStr, w));
     }
 
     void paint (juce::Graphics& g) override
@@ -224,7 +230,7 @@ public:
         // Right-to-left: last action in vector lands at far right.
         for (int i = (int) buttons.size() - 1; i >= 0; --i)
         {
-            buttons[(size_t) i]->setBounds (row.removeFromRight (110));
+            buttons[(size_t) i]->setBounds (row.removeFromRight (buttonWidths[(size_t) i]));
             if (i > 0) row.removeFromRight (8);
         }
     }
@@ -236,6 +242,7 @@ private:
     juce::String titleStr, messageStr;
     std::vector<DuskDecisionAction> actions;
     std::vector<std::unique_ptr<juce::TextButton>> buttons;
+    std::vector<int> buttonWidths;
 };
 
 // -----------------------------------------------------------------------------

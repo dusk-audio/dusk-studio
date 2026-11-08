@@ -1,6 +1,7 @@
 #include "StartupView.h"
 #include "DuskTheme.h"
 #include "PanelText.h"
+#include "../LocalTimeText.h"
 #include "../../engine/audiofile/FileReader.h"
 #include "../../foundation/Fs.h"
 
@@ -122,18 +123,7 @@ std::string formatLastModified (const std::filesystem::path& sessionDir)
     // difference is measured rather than assumed.
     const auto now = std::filesystem::file_time_type::clock::now();
     const auto age = std::chrono::duration_cast<std::chrono::seconds> (now - written);
-    const auto stamp = std::chrono::system_clock::to_time_t (
-        std::chrono::system_clock::now() - age);
-
-    std::tm local {};
-   #if defined (_WIN32)
-    localtime_s (&local, &stamp);
-   #else
-    localtime_r (&stamp, &local);
-   #endif
-    char buffer[32] {};
-    std::strftime (buffer, sizeof buffer, "%Y-%m-%d %H:%M", &local);
-    return buffer;
+    return localMinuteText (std::chrono::system_clock::to_time_t (std::chrono::system_clock::now() - age));
 }
 
 void inferAudioFormat (const std::filesystem::path& sessionDir, std::string& sampleRate,

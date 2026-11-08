@@ -67,19 +67,19 @@ public:
 
         std::vector<std::filesystem::path> pathsBefore;
         std::vector<std::filesystem::path> copiedFiles;
-        // Absent before consolidation: the new folder, its audio/, state/ and
-        // midi/ with each folder below it, the notepad and the temporaries the
-        // rest of the save writes there.
+        // Absent before consolidation: the new folder, its audio/, state/,
+        // midi/ and backups/ with each folder below them, the notepad and the
+        // temporaries the rest of the save writes there.
         std::vector<std::filesystem::path> createdPaths;
         // The old folder's MIDI recovery files that were copied, each where it
-        // was in the old folder.
+        // was in the old folder. Its backups are not among them.
         std::vector<std::filesystem::path> copiedMidiSources;
     };
     // ownsOldFolder says the session is the old folder's own. Only then do the
-    // old folder's state/ and midi/ trees go along: each file of midi/ is
-    // copied to the same place under the new folder unless a file is already
-    // there, which is skipped. A session that never owned that folder leaves
-    // both behind.
+    // old folder's state/, midi/ and backups/ trees go along: each file of
+    // midi/ and backups/ is copied to the same place under the new folder
+    // unless a file is already there, which is skipped. A session that never
+    // owned that folder leaves all three behind.
     static ConsolidationResult consolidateInto (Session& session,
                                                 const juce::File& newSessionDir,
                                                 bool ownsOldFolder = true);

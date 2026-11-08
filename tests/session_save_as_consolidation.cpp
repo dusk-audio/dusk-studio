@@ -602,3 +602,89 @@ TEST_CASE ("consolidateInto carries the midi folder of a session that owns its o
         CHECK (listing (dirA) == listingA);
     }
 }
+
+// A session's backups are its own too, so Save As takes backups/ along when the
+// session owns the folder it leaves. They are not MIDI recovery files, so a
+// first save never moves them out of the old folder.
+TEST_CASE ("consolidateInto carries the backups folder of a session that owns its old folder",
+           "[session][serializer][consolidate][backups]")
+{
+    const auto dirA   = makeTempDir ("dusk-consolidate-backups-a-");
+    const auto parent = makeTempDir ("dusk-consolidate-backups-b-");
+    const struct Cleanup
+    {
+        juce::File a, b;
+        ~Cleanup() { a.deleteRecursively(); b.deleteRecursively(); }
+    } cleanup { dirA, parent };
+
+    Session s;
+    s.setSessionDirectory (dirA);
+    const std::vector<std::string> backups {
+        "backups/20261107-091500Z_session.json",
+        "backups/20261108-143005Z_session.json",
+        "backups/20261108-143005Z_session_002.json",
+    };
+    for (const auto& name : backups)
+    {
+        const auto file = dirA.getChildFile (name);
+        file.getParentDirectory().createDirectory();
+        file.replaceWithText (name);
+    }
+    const auto listingA = listing (dirA);
+
+    SECTION ("each backup is copied to the same place and is not reported as a MIDI source")
+    {
+        const auto dirB = parent.getChildFile ("New Session");
+        const auto res = SessionSerializer::consolidateInto (s, dirB);
+        REQUIRE (res.ok);
+        CHECK (res.filesCopied == (int) backups.size());
+        for (const auto& name : backups)
+        {
+            CAPTURE (name);
+            CHECK (dirB.getChildFile (name).loadFileAsString() == juce::String (name));
+        }
+        CHECK (res.copiedMidiSources.empty());
+        CHECK (listing (dirA) == listingA);
+
+        SECTION ("and a failed save removes the backups folder it made")
+        {
+            SessionSerializer::revertConsolidation (s, res);
+            CHECK_FALSE (dirB.exists());
+            CHECK (listing (dirA) == listingA);
+        }
+
+        SECTION ("and a first save leaves the old folder's backups where they are")
+        {
+            SessionSerializer::removeCopiedMidiSources (res, pathOf (dirA));
+            CHECK (listing (dirA) == listingA);
+        }
+    }
+
+    SECTION ("a session that does not own its old folder leaves its backups behind")
+    {
+        const auto dirB = parent.getChildFile ("Not Owned");
+        const auto res = SessionSerializer::consolidateInto (s, dirB, /*ownsOldFolder*/ false);
+        REQUIRE (res.ok);
+        CHECK_FALSE (dirB.getChildFile ("backups").exists());
+        CHECK (listing (dirA) == listingA);
+    }
+
+    SECTION ("a backup already in the destination is never written over, and a failed save leaves it")
+    {
+        const auto dirB = parent.getChildFile ("Shared");
+        const auto theirs = dirB.getChildFile (backups[1]);
+        theirs.getParentDirectory().createDirectory();
+        theirs.replaceWithText ("theirs");
+        const auto listingB = listing (dirB);
+
+        const auto res = SessionSerializer::consolidateInto (s, dirB);
+        REQUIRE (res.ok);
+        CHECK (theirs.loadFileAsString() == "theirs");
+        CHECK (dirB.getChildFile (backups[0]).loadFileAsString() == juce::String (backups[0]));
+        CHECK (dirB.getChildFile (backups[2]).loadFileAsString() == juce::String (backups[2]));
+
+        SessionSerializer::revertConsolidation (s, res);
+        CHECK (listing (dirB) == listingB);
+        CHECK (theirs.loadFileAsString() == "theirs");
+    }
+}

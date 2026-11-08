@@ -243,6 +243,9 @@ add_executable(dusk-studio-tests
     ${CMAKE_SOURCE_DIR}/src/session/MidiRecovery.cpp
     midi_recovery_writer.cpp
     ${CMAKE_SOURCE_DIR}/src/session/MidiRecoveryWriter.cpp
+    session_backups.cpp
+    ${CMAKE_SOURCE_DIR}/src/session/SessionBackups.cpp
+    session_open_alerts.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/DpImporter.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/DpAligner.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/RecordManager.cpp

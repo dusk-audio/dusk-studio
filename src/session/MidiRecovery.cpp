@@ -1,5 +1,6 @@
 #include "MidiRecovery.h"
 
+#include "RecoveryStamp.h"
 #include "../engine/midi/MidiFileWriter.h"
 #include "../foundation/AtomicFile.h"
 #include "../foundation/Fs.h"
@@ -19,12 +20,14 @@ namespace
 namespace stdfs = std::filesystem;
 using midi::MidiFileEvent;
 using midi::MidiFileTrack;
+using recoverystamp::isStamp;
+using recoverystamp::kStampLength;
+using recoverystamp::utcStamp;
 
 // The writer refuses a gap of more than 0x0FFFFFFF ticks, and a note can end one
 // tick after the last place a note-on can take.
 constexpr std::int64_t kLastPlacedTick = 0x0ffffffe;
 constexpr std::size_t  kMaxNameBytes   = 64;
-constexpr std::size_t  kStampLength    = 16;
 constexpr int          kMaxCopies      = 999;
 constexpr char         kUnnamed[]      = "untitled";
 
@@ -185,29 +188,6 @@ std::size_t sequenceLength (std::string_view text, std::size_t at) noexcept
     return length;
 }
 
-std::string utcStamp (std::chrono::system_clock::time_point now)
-{
-    const auto seconds = (long long) std::chrono::floor<std::chrono::seconds> (now.time_since_epoch()).count();
-    const auto days = (seconds >= 0 ? seconds : seconds - 86399) / 86400;
-    const auto ofDay = seconds - days * 86400;
-
-    // Howard Hinnant's civil_from_days.
-    const auto shifted = days + 719468;
-    const auto era = (shifted >= 0 ? shifted : shifted - 146096) / 146097;
-    const auto dayOfEra = shifted - era * 146097;
-    const auto yearOfEra = (dayOfEra - dayOfEra / 1460 + dayOfEra / 36524 - dayOfEra / 146096) / 365;
-    const auto dayOfYear = dayOfEra - (365 * yearOfEra + yearOfEra / 4 - yearOfEra / 100);
-    const auto monthIndex = (5 * dayOfYear + 2) / 153;
-    const auto day = dayOfYear - (153 * monthIndex + 2) / 5 + 1;
-    const auto month = monthIndex < 10 ? monthIndex + 3 : monthIndex - 9;
-    const auto year = yearOfEra + era * 400 + (month <= 2 ? 1 : 0);
-
-    char stamp[128] {};
-    std::snprintf (stamp, sizeof (stamp), "%04lld%02lld%02lld-%02lld%02lld%02lldZ",
-                   year, month, day, ofDay / 3600, ofDay / 60 % 60, ofDay % 60);
-    return stamp;
-}
-
 std::string trackTag (int trackNumber)
 {
     char tag[32] {};
@@ -232,17 +212,6 @@ std::string fileNameFor (const std::string& stamp, int trackNumber, const std::s
     }
     name += extensionOf (kind);
     return name;
-}
-
-bool isStamp (std::string_view name) noexcept
-{
-    if (name.size() < kStampLength) return false;
-    for (std::size_t i = 0; i < kStampLength; ++i)
-    {
-        const char c = name[i];
-        if (i == 8 ? c != '-' : i == kStampLength - 1 ? c != 'Z' : (c < '0' || c > '9')) return false;
-    }
-    return true;
 }
 
 // The copy number fileNameFor gave `name` for a stamp, this track tag, this

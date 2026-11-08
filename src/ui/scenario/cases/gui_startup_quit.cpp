@@ -786,6 +786,14 @@ std::optional<ScenarioResult> runStartupCancel (GuiHost& host, ScenarioContext& 
         ctx.expect (host.statusMessage().rfind (status, 0) == 0,
                     what + " left the status '" + host.statusMessage() + "' rather than " + status);
     };
+    // A session that does not open raises its alert in the dialog's place, and
+    // the dialog comes back only once it is answered.
+    const auto answer = [&host, &ctx, shown] (const std::string& title, const std::string& button,
+                                              const std::string& what)
+    {
+        shown (title, what);
+        ctx.expect (host.clickModalButton (button), title + " did not offer " + button);
+    };
     const auto taken = ctx.tempDir() / "taken";
     std::filesystem::create_directories (taken);
     std::ofstream (taken / "session.json") << "{}";
@@ -795,10 +803,12 @@ std::optional<ScenarioResult> runStartupCancel (GuiHost& host, ScenarioContext& 
     const auto future = ctx.tempDir() / "future" / "session.json";
     std::filesystem::create_directories (future.parent_path());
     std::ofstream (future) << R"({"version":9999,"tracks":[{"name":"From the future"}]})";
-    // Recent rows: a folder with no session.json, and a session whose autosave
-    // differs from it, which raises the recovery prompt.
+    // Recent rows: a folder with a backup but no session.json, and a session
+    // whose autosave differs from it, which raises the recovery prompt.
     const auto noSession = ctx.tempDir() / "no-session";
-    std::filesystem::create_directories (noSession);
+    std::filesystem::create_directories (noSession / "backups");
+    if (! SessionSerializer::save (session, noSession / "backups" / "20261101-090000Z_session.json"))
+        return ScenarioResult::fail ("could not write the backup fixture");
     const auto recovering = ctx.tempDir() / "recovering";
     std::filesystem::create_directories (recovering);
     auto& fader = session.track (0).strip.faderDb;
@@ -875,6 +885,8 @@ std::optional<ScenarioResult> runStartupCancel (GuiHost& host, ScenarioContext& 
         shown ("Open session.json", "OPEN of an unreadable session");
         browse (corrupt, "Open");
     } });
+    steps->push_back ({ 700, [answer]
+    { answer ("Session won't open", "OK", "an OPEN of an unreadable session"); } });
     steps->push_back ({ 700, [failed, click]
     {
         failed ("Load failed", "an OPEN of an unreadable session");
@@ -885,6 +897,8 @@ std::optional<ScenarioResult> runStartupCancel (GuiHost& host, ScenarioContext& 
         shown ("Open session.json", "OPEN of a newer session format");
         browse (future, "Open");
     } });
+    steps->push_back ({ 700, [answer]
+    { answer ("Session needs a newer Dusk Studio", "OK", "an OPEN of a newer session format"); } });
     steps->push_back ({ 700, [&host, &ctx, failed]
     {
         failed ("Session format 9999 is newer than supported format 11. Upgrade Dusk Studio to open",
@@ -906,11 +920,17 @@ std::optional<ScenarioResult> runStartupCancel (GuiHost& host, ScenarioContext& 
         steps->push_back ({ 100, [click, row] { click (row); } });
     };
     openRow ("row:0");
-    steps->push_back ({ 700, [&host, &ctx, failed, reopen, noSession]
+    steps->push_back ({ 700, [&host, &ctx, cancel, noSession]
     {
         ctx.expect (host.startupChoice() == "recent:" + noSession.u8string(),
                     "the first recent row chose '" + host.startupChoice() + "'");
-        failed ("No session at", "a recent session with no session.json");
+        ctx.expect (host.modalText().find ("The newest backup, from ") != std::string::npos,
+                    "the alert for a recent session with no session.json did not offer its backup");
+        cancel ("Session won't open", "a recent session with no session.json");
+    } });
+    steps->push_back ({ 700, [failed, reopen]
+    {
+        failed ("No session at", "Cancel in the alert for a recent session with no session.json");
         reopen();
     } });
     openRow ("row:1");
