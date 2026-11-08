@@ -54,7 +54,8 @@ void setVelocity (Track& track, int velocity)
 
 // Opening, saving and autosaving keep each MIDI track in midi/tracks as a
 // Standard MIDI File, a new one only when the track has changed since the
-// newest one there. Save As takes midi/ along to the new folder. A session
+// newest one there, and again when an edit an autosave caught is undone. Save
+// As takes midi/ along to the new folder. A session
 // never saved keeps its files in its Untitled folder, which then does not take
 // another new session, and its first save moves them out, so the folder is
 // free again.
@@ -144,6 +145,23 @@ std::optional<ScenarioResult> runSavesKeepMidiTrackFiles (GuiHost& host, Scenari
                                                     + std::to_string (autosaved->size()) + " files in midi/tracks, not 3"))
             ctx.expect (noteOnsIn (tracks / autosaved->back()) == std::vector<std::array<int, 2>> { { 60, 70 } },
                         "the track file the autosave wrote does not hold the edit");
+    } });
+    // Back to the saved state: the next autosave removes the one it wrote, and
+    // the track files go again so the newest holds the saved MIDI.
+    steps->push_back ({ 100, [&host, &ctx, &engine, &track, folder, tracks, autosaved]
+    {
+        setVelocity (track, 64);
+        host.autosaveTick();
+        engine.flushMidiRecoveryFiles();
+        ctx.expect (absent (folder / "session.json.autosave"), "back at the saved state, the autosave is still there");
+        *autosaved = namesIn (tracks);
+        if (ctx.expect (autosaved->size() == 4, "going back to the saved state left "
+                                                    + std::to_string (autosaved->size()) + " files in midi/tracks, not 4"))
+            ctx.expect (noteOnsIn (tracks / autosaved->back()) == std::vector<std::array<int, 2>> { { 60, 64 } },
+                        "the newest track file does not hold the saved state");
+        host.autosaveTick();
+        engine.flushMidiRecoveryFiles();
+        ctx.expect (namesIn (tracks) == *autosaved, "a second tick at the saved state wrote another track file");
     } });
 
     const auto copy = ctx.tempDir() / "MIDI copy";

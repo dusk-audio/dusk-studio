@@ -36,7 +36,7 @@ struct ScratchSessions
 };
 } // namespace
 
-TEST_CASE ("Save As counts only a different folder holding session.json as another session")
+TEST_CASE ("Save As counts a different folder holding a session's files as another session")
 {
     const ScratchSessions s;
     REQUIRE_FALSE (s.root.empty());
@@ -55,15 +55,54 @@ TEST_CASE ("Save As counts only a different folder holding session.json as anoth
     stdfs::create_directory_symlink (s.mine, s.root / "Link", ec);
     if (! ec)
         CHECK_FALSE (holdsAnotherSession (s.root / "Link", s.mine));
+
+    SECTION ("a folder with no session.json but another session's backups, MIDI, autosave or notes")
+    {
+        for (const auto* name : { "backups", "midi" })
+        {
+            CAPTURE (name);
+            const auto dir = s.root / (std::string ("Holds ") + name);
+            stdfs::create_directories (dir / name);
+            CHECK (holdsAnotherSession (dir, s.mine));
+            CHECK (duskstudio::savecheck::holdsSessionFiles (dir));
+        }
+        for (const auto* name : { "session.json.autosave", "notepad.md" })
+        {
+            CAPTURE (name);
+            const auto dir = s.root / (std::string ("Holds ") + name);
+            stdfs::create_directories (dir);
+            std::ofstream (dir / name) << "theirs";
+            CHECK (holdsAnotherSession (dir, s.mine));
+        }
+        stdfs::create_directories (s.mine / "backups");
+        CHECK_FALSE (holdsAnotherSession (s.mine, s.mine));
+    }
+
+    SECTION ("a folder holding only audio is free")
+    {
+        stdfs::create_directories (s.empty / "audio");
+        CHECK_FALSE (duskstudio::savecheck::holdsSessionFiles (s.empty));
+        CHECK_FALSE (holdsAnotherSession (s.empty, s.mine));
+    }
+
+    SECTION ("a folder whose contents cannot be checked counts as holding one")
+    {
+        const auto locked = s.root / "Locked";
+        stdfs::create_directories (locked);
+        stdfs::permissions (locked, stdfs::perms::none, ec);
+        if (! ec && stdfs::symlink_status (locked / "notepad.md", ec).type() != stdfs::file_type::not_found)
+            CHECK (holdsAnotherSession (locked, s.mine));
+        stdfs::permissions (locked, stdfs::perms::owner_all, ec);
+    }
 }
 
-TEST_CASE ("Save As does not count a folder named session.json as a session")
+TEST_CASE ("Save As counts anything named session.json, even a folder, as another session")
 {
     const ScratchSessions s;
     REQUIRE_FALSE (s.root.empty());
     stdfs::create_directories (s.empty / "session.json");
 
-    CHECK_FALSE (holdsAnotherSession (s.empty, s.mine));
+    CHECK (holdsAnotherSession (s.empty, s.mine));
 }
 
 TEST_CASE ("the replace prompt names the file and adds a note only when given one")

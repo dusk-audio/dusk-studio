@@ -52,12 +52,26 @@ inline bool isSameLocation (const std::filesystem::path& a, const std::filesyste
     return std::filesystem::equivalent (a, b, ec);
 }
 
+// Whether dir holds a session's files: its session.json, autosave, notes, MIDI
+// files or backups, of any type. One that cannot be checked counts as there.
+inline bool holdsSessionFiles (const std::filesystem::path& dir)
+{
+    for (const auto* name : { "session.json", "session.json.autosave", "notepad.md", "midi", "backups" })
+    {
+        std::error_code ec;
+        if (std::filesystem::symlink_status (dir / name, ec).type() != std::filesystem::file_type::not_found)
+            return true;
+    }
+    return false;
+}
+
+// A folder another session's files are in, so saving there would mix this
+// session's backups and MIDI files with that one's. The session's own folder,
+// however it is spelled, is not another.
 inline bool holdsAnotherSession (const std::filesystem::path& targetDir,
                                  const std::filesystem::path& currentDir)
 {
-    std::error_code ec;
-    if (! std::filesystem::is_regular_file (targetDir / "session.json", ec)) return false;
-    return ! isSameLocation (targetDir, currentDir);
+    return holdsSessionFiles (targetDir) && ! isSameLocation (targetDir, currentDir);
 }
 
 // Anything short of a clear "no session.json there" counts as holding one.
@@ -118,10 +132,9 @@ inline bool makeReadyForSession (const std::filesystem::path& dir)
 }
 
 // The folder a never-saved session starts in, made with its audio folder:
-// parent/Untitled, or the first "Untitled N" beside it without saved state,
-// recovery, notes, MIDI recovery files or backups, so no session finds another one's
-// files in its folder. One whose contents cannot be checked counts as holding
-// them. One is passed over when it cannot take an audio folder, or when it or
+// parent/Untitled, or the first "Untitled N" beside it that holds no session
+// files, so no session finds another one's files in its folder. One is passed
+// over when it cannot take an audio folder, or when it or
 // its audio folder cannot be written in. Creates parent if needed; empty when
 // it cannot, or when parent cannot be searched or written in.
 inline std::filesystem::path unsavedSessionFolder (const std::filesystem::path& parent)
@@ -140,15 +153,7 @@ inline std::filesystem::path unsavedSessionFolder (const std::filesystem::path& 
         if (ec) return {};
         if (! std::filesystem::is_directory (status)) continue;
 
-        bool occupied = false;
-        for (const auto* name : { "session.json", "session.json.autosave", "notepad.md", "midi", "backups" })
-        {
-            const auto fileStatus = std::filesystem::symlink_status (dir / name, ec);
-            if (fileStatus.type() == std::filesystem::file_type::not_found) continue;
-            occupied = true;
-            break;
-        }
-        if (occupied) continue;
+        if (holdsSessionFiles (dir)) continue;
         if (makeReadyForSession (dir)) return dir;
     }
     return {};

@@ -878,6 +878,22 @@ std::optional<ScenarioResult> runStartupCancel (GuiHost& host, ScenarioContext& 
     steps->push_back ({ 700, [failed, click]
     {
         failed ("A session already exists at", "a NEW over an existing session");
+        click ("tab-new");
+    } });
+    // Another session's backups are its files too, with no session.json beside them.
+    steps->push_back ({ 400, [click] { click ("template:1"); } });
+    steps->push_back ({ 600, [shown, browse, noSession]
+    {
+        shown ("Name your new session", "a NEW template over a folder holding a session's backups");
+        browse (noSession, "Save");
+    } });
+    steps->push_back ({ 700, [&ctx, failed, click, noSession]
+    {
+        failed ("A session already exists at", "a NEW over a folder holding a session's backups");
+        std::error_code error;
+        ctx.expect (std::filesystem::symlink_status (noSession / "session.json", error).type()
+                        == std::filesystem::file_type::not_found,
+                    "a NEW over a folder holding a session's backups wrote a session.json there");
         click ("tab-open");
     } });
     steps->push_back ({ 600, [shown, browse, corrupt]

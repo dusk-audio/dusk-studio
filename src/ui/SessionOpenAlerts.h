@@ -9,6 +9,7 @@ namespace duskstudio::openalert
 inline constexpr const char* kWontOpenTitle     = "Session won't open";
 inline constexpr const char* kOpenAutosave      = "Open Autosave";
 inline constexpr const char* kOpenNewestBackup  = "Open Newest Backup";
+inline constexpr const char* kOpenOlderBackup   = "Open Older Backup";
 inline constexpr const char* kNewerVersionTitle = "Session needs a newer Dusk Studio";
 
 enum class Problem
@@ -63,6 +64,11 @@ inline std::string wontOpenMessage (const WontOpen& report)
     if (! report.midiFolder.empty())
         text += "\n\nThe session's MIDI is also kept as Standard MIDI Files in:\n\n    " + report.midiFolder;
     return text;
+}
+
+inline const char* backupButton (const WontOpen& report)
+{
+    return report.backupIsOlder ? kOpenOlderBackup : kOpenNewestBackup;
 }
 
 inline std::string newerVersionMessage (const std::string& file, int fileVersion, int supportedVersion)

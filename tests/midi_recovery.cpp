@@ -691,6 +691,42 @@ TEST_CASE ("A MIDI take file made in the same second as another takes the next c
     }
 }
 
+TEST_CASE ("MIDI take files of one second go on in the next second once its 999 copies are taken",
+           "[midi][recovery]")
+{
+    const duskstudio::test::TempDirectory temp ("dusk-midi-recovery-overflow-");
+    auto session = std::make_unique<Session>();
+    session->track (6).name = "Keys";
+    const auto now = utc (kNovember8th143005);
+    const auto takes = temp.path() / "midi" / "takes";
+    stdfs::create_directories (takes);
+    std::vector<std::string> made;
+    for (int copy = 1; copy <= 999; ++copy)
+    {
+        made.push_back (recovery::fileName (now, 7, "Keys", recovery::TrackFile::Playing, copy));
+        std::ofstream (takes / made.back()) << "made earlier";
+    }
+
+    MidiRegion pass;
+    for (int k = 0; k < 3; ++k)
+    {
+        pass.notes.assign (1, note (1, 60 + k, 100, 0, 480));
+        const auto result = writeTake (temp.path(), now + std::chrono::seconds (k / 2), *session, 6, pass);
+        REQUIRE (result.failures.empty());
+        REQUIRE (result.written.size() == 1);
+        made.push_back (result.written.front().filename().u8string());
+        CHECK (contentOf (result.written.front())
+               == recovery::buildTakeFile (recovery::timingOf (*session, kRate), pass, "Keys"));
+    }
+
+    CHECK (std::vector<std::string> (made.end() - 3, made.end()) == std::vector<std::string> {
+        "20261108-143006Z_track07_Keys.mid",
+        "20261108-143006Z_track07_Keys_002.mid",
+        "20261108-143006Z_track07_Keys_003.mid",
+    });
+    CHECK (namesIn (takes) == made);
+}
+
 TEST_CASE ("A MIDI take file is not written outside a session folder that does not exist",
            "[midi][recovery]")
 {

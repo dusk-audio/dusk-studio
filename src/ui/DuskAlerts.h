@@ -7,6 +7,7 @@
 
 namespace duskstudio
 {
+class EmbeddedModal;
 // Shared Dusk-styled in-window modal helpers. All four route through
 // EmbeddedModal so the app never spawns a top-level popup peer that
 // fights for focus on XWayland and stacks badly on small displays.
@@ -25,10 +26,21 @@ namespace duskstudio
 // so the modal covers the whole window. Each helper owns a separate
 // static EmbeddedModal so multiple modal kinds can stack.
 
+// Where showDuskAlert and showDuskDecision put their panel. By default each
+// uses its own shared modal, which the next alert of its kind replaces, and app
+// shortcuts reach the window under it. A prompt deciding what happens to the
+// session passes a modal of its own and withholds the shortcuts.
+struct DuskModalPlacement
+{
+    EmbeddedModal* modal = nullptr;
+    bool forwardShortcuts = true;
+};
+
 void showDuskAlert (juce::Component& parent,
                      juce::String title,
                      juce::String message,
-                     std::function<void()> onDismiss = {});
+                     std::function<void()> onDismiss = {},
+                     DuskModalPlacement placement = {});
 
 // Two-button confirm. primaryLabel = action (e.g. "Save", "Delete"),
 // secondaryLabel = cancel-equivalent. If `destructive` is true the
@@ -58,7 +70,8 @@ struct DuskDecisionAction
 void showDuskDecision (juce::Component& parent,
                         juce::String title,
                         juce::String message,
-                        std::vector<DuskDecisionAction> actions);
+                        std::vector<DuskDecisionAction> actions,
+                        DuskModalPlacement placement = {});
 
 // Single text-input modal: prompt label + text editor + OK/Cancel.
 // Replaces juce::AlertWindow::addTextEditor for rename / numeric

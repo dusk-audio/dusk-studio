@@ -211,6 +211,9 @@ TEST_CASE ("SessionSerializer explains rejected loads and clears stale errors", 
     dir.deleteRecursively();
 }
 
+// Windows' permissions() only sets the read-only attribute, which never stops a
+// read, and a skipped case fails this ctest group.
+#if ! defined(_WIN32)
 TEST_CASE ("SessionSerializer reports a session.json it cannot read as unavailable, not damaged",
            "[session][serializer][version]")
 {
@@ -231,6 +234,7 @@ TEST_CASE ("SessionSerializer reports a session.json it cannot read as unavailab
     CHECK_FALSE (loaded);
     CHECK (error.failure == SessionLoadFailure::FileUnavailable);
 }
+#endif
 
 TEST_CASE ("SessionSerializer loads an unchanged format-10 file written by released 0.15.1", "[session][serializer][version]")
 {

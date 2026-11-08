@@ -72,8 +72,13 @@ public:
         // temporaries the rest of the save writes there.
         std::vector<std::filesystem::path> createdPaths;
         // The old folder's MIDI recovery files that were copied, each where it
-        // was in the old folder. Its backups are not among them.
-        std::vector<std::filesystem::path> copiedMidiSources;
+        // was in the old folder and where its copy is. Its backups are not
+        // among them.
+        struct CopiedFile
+        {
+            std::filesystem::path source, copy;
+        };
+        std::vector<CopiedFile> copiedMidiFiles;
     };
     // ownsOldFolder says the session is the old folder's own. Only then do the
     // old folder's state/, midi/ and backups/ trees go along: each file of
@@ -91,9 +96,12 @@ public:
 
     // For the first save of a session never saved or opened, once it has
     // succeeded, so its MIDI recovery files move with it rather than stay
-    // behind: removes each of copiedMidiSources, then midi/takes, midi/tracks
-    // and midi/ in oldSessionDir, each only when that leaves it an empty
-    // folder. Nothing else in the old folder is touched.
+    // behind: removes the source of each of copiedMidiFiles once its copy,
+    // and each folder between the copy and the new session folder, has
+    // reached the disk, keeping any source whose copy could not be synced;
+    // then removes midi/takes, midi/tracks and midi/ in oldSessionDir, each
+    // only when that leaves it an empty folder. Nothing else in the old folder
+    // is touched.
     static void removeCopiedMidiSources (const ConsolidationResult& done,
                                          const std::filesystem::path& oldSessionDir);
 };

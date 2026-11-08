@@ -1292,6 +1292,7 @@ MainComponent::~MainComponent()
     scanModal            .closeAndDeleteBodyNow();
     quitModal            .closeAndDeleteBodyNow();
     recoveryModal        .closeAndDeleteBodyNow();
+    openFailureModal     .closeAndDeleteBodyNow();
    #if DUSKSTUDIO_HAS_NATIVE_UI
     // The settings view listens to the engine and the device manager, so its window
     // goes down here rather than waiting for a deferred teardown that would run after
@@ -2048,10 +2049,10 @@ void MainComponent::maybeStartStartupPluginScan()
     // yet, or that later call would no-op. (resized() may call us repeatedly
     // meanwhile; each just returns here until the dialog closes.)
     if (startupDialogPending) return;
-    // Defer past an open crash-recovery or unsaved-changes prompt so the scan's
-    // progress modal doesn't stack over the user's decision. Both prompts'
-    // exit paths re-invoke us once that choice is made.
-    if (recoveryModal.isOpen() || quitModal.isOpen()) return;
+    // Defer past an open crash-recovery, unsaved-changes or session-won't-open
+    // prompt so the scan's progress modal doesn't stack over the user's
+    // decision. Each prompt's exit paths re-invoke us once that choice is made.
+    if (recoveryModal.isOpen() || quitModal.isOpen() || openFailureModal.isOpen()) return;
     startupScanTriggered = true;   // fire exactly once, whatever the toggle says
 
     const bool enabled = appconfig::getScanPluginsOnStartup();
@@ -3542,7 +3543,7 @@ void MainComponent::guardSessionSwitchThen (const char* title,
     // guardUnsavedThen would drop the request on a busy modal, and the recovery
     // prompt would be replaced mid-decision - either way silently, and after
     // the stop below had already taken the transport down for nothing.
-    if (quitModal.isOpen() || recoveryModal.isOpen())
+    if (quitModal.isOpen() || recoveryModal.isOpen() || openFailureModal.isOpen())
     {
         setStatusText ("Session not switched: close the open prompt first");
         if (onCancelled) onCancelled();
@@ -3608,9 +3609,10 @@ bool MainComponent::createNewSessionAt (const juce::File& dir, SessionTemplate t
     // re-resolves MIDI, and rebuilds the console / aux / mastering UI - so
     // nothing from the previous session carries over.
     const auto target = dir.getChildFile ("session.json");
-    // Refuse to clobber an existing session - "New" must never blank someone
-    // else's work. The user picks a fresh name (or opens the existing one).
-    if (target.existsAsFile())
+    // Refuse a folder holding a session's files - "New" must never blank someone
+    // else's work, and the new session's backups would prune theirs. The user
+    // picks a fresh name (or opens the existing one).
+    if (savecheck::holdsSessionFiles (toPath (dir)))
     {
         setStatusForPath ("A session already exists at", target);
         return false;
@@ -3656,11 +3658,12 @@ bool MainComponent::saveRefusedWhileBusy()
 }
 
 // A prompt closed without an answer, by anything but its buttons, still owes
-// the caller a reply: a quit's Save has detached the audio.
-struct MainComponent::SaveReply
+// the caller a reply: a quit's Save has detached the audio, and an open's caller
+// waits on it to bring the Startup dialog back or to arm a scripted quit.
+struct MainComponent::PromptReply
 {
     std::function<void (bool)> onComplete;
-    ~SaveReply()
+    ~PromptReply()
     {
         if (onComplete) dusk::callAsync ([done = std::move (onComplete)] { done (false); });
     }
@@ -3680,14 +3683,14 @@ void MainComponent::saveSessionTo (const std::filesystem::path& sessionDir, std:
         if (onComplete) onComplete (saved);
         return;
     }
-    auto reply = std::make_shared<SaveReply>();
+    auto reply = std::make_shared<PromptReply>();
     reply->onComplete = std::move (onComplete);
     askToSaveAnyway (sessionDir, std::move (attempt), captureError, std::move (reply));
 }
 
 void MainComponent::askToSaveAnyway (const std::filesystem::path& sessionDir,
                                      std::shared_ptr<AudioEngine::PreparedPluginState> failed,
-                                     const std::string& captureError, std::shared_ptr<SaveReply> reply)
+                                     const std::string& captureError, std::shared_ptr<PromptReply> reply)
 {
     std::string slots;
     for (std::size_t start = 0; start < captureError.size();)
@@ -4041,6 +4044,9 @@ void MainComponent::discardWrittenAutosave()
         && dusk::fs::loadFileAsString (toPath (target)) == lastWrittenAutosaveJson.toStdString()
         && ! target.deleteFile()) return;
     setLastWrittenAutosaveJson ({}, {});
+    // That autosave queued track files of a state since undone; the writer
+    // skips any that already hold the saved one.
+    engine.queueMidiTrackFiles();
 }
 
 void MainComponent::writeAutosave()
@@ -4593,8 +4599,9 @@ void MainComponent::openSessionPath (const juce::File& path)
     const auto sessionJson = isFolder ? path.getChildFile ("session.json") : path;
 
     // A folder whose session.json has gone still opens, into the alert that
-    // offers its autosave and backups.
-    if (isFolder || path.hasFileExtension ("json"))
+    // offers its autosave and backups. One with no session's files in it is
+    // not a session, and is ignored.
+    if (isFolder ? savecheck::holdsSessionFiles (toPath (path)) : path.hasFileExtension ("json"))
     {
         // A handed-over session ends a startup pick still in flight. Its browser
         // may be replaced by the switch's own Save As, which would never answer,
@@ -4741,11 +4748,19 @@ void MainComponent::showOpenFailure (const std::filesystem::path& failed, const 
                                      const SessionLoadError& error, std::function<void (bool loaded)> onComplete)
 {
     namespace stdfs = std::filesystem;
-    auto finish = std::make_shared<std::function<void (bool)>> (std::move (onComplete));
-    const auto answer = [finish] (bool loaded)
+    SafePointer<MainComponent> safe (this);
+    auto reply = std::make_shared<PromptReply>();
+    // The startup scan waits past the alert.
+    reply->onComplete = [safe, done = std::move (onComplete)] (bool loaded)
     {
-        if (auto done = std::exchange (*finish, {})) done (loaded);
+        if (auto* self = safe.getComponent())
+            self->maybeStartStartupPluginScan();
+        if (done) done (loaded);
     };
+    const auto answer = [reply] (bool loaded) { reply->answer (loaded); };
+    // Shortcuts stay off: a take recorded under the alert would be committed to
+    // the session an offer then loads over, without asking.
+    const DuskModalPlacement placement { &openFailureModal, /*forwardShortcuts*/ false };
 
     // Rolling back to a backup or the autosave would lose what the newer
     // version saved, and the next save would replace it.
@@ -4753,7 +4768,7 @@ void MainComponent::showOpenFailure (const std::filesystem::path& failed, const 
     {
         showDuskAlert (*this, openalert::kNewerVersionTitle,
                        openalert::newerVersionMessage (failed.u8string(), error.fileVersion, error.supportedVersion),
-                       [answer] { answer (false); });
+                       [answer] { answer (false); }, placement);
         return;
     }
 
@@ -4795,11 +4810,10 @@ void MainComponent::showOpenFailure (const std::filesystem::path& failed, const 
     const auto message = openalert::wontOpenMessage (report);
     if (! offersAutosave && ! backup)
     {
-        showDuskAlert (*this, openalert::kWontOpenTitle, message, [answer] { answer (false); });
+        showDuskAlert (*this, openalert::kWontOpenTitle, message, [answer] { answer (false); }, placement);
         return;
     }
 
-    SafePointer<MainComponent> safe (this);
     const auto open = [safe, dir, answer] (const stdfs::path& file)
     {
         return [safe, dir, answer, file]
@@ -4816,9 +4830,9 @@ void MainComponent::showOpenFailure (const std::filesystem::path& failed, const 
     // Left to right as Recover from autosave? has them: Cancel, then the saved
     // state, then the autosave's newer one.
     std::vector<DuskDecisionAction> actions { { "Cancel", [answer] { answer (false); } } };
-    if (backup) actions.push_back ({ openalert::kOpenNewestBackup, open (*backup) });
+    if (backup) actions.push_back ({ openalert::backupButton (report), open (*backup) });
     if (offersAutosave) actions.push_back ({ openalert::kOpenAutosave, open (autosave) });
-    showDuskDecision (*this, openalert::kWontOpenTitle, message, std::move (actions));
+    showDuskDecision (*this, openalert::kWontOpenTitle, message, std::move (actions), placement);
 }
 
 bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,

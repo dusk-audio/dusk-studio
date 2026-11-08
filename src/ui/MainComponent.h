@@ -180,12 +180,12 @@ private:
     // slots that stopped the Save, and is empty when something else did.
     bool writeSessionTo (const juce::File& sessionDir, const AudioEngine::PreparedPluginState* keepFrom,
                          AudioEngine::PreparedPluginState& attempt, std::string& captureError);
-    struct SaveReply;
+    struct PromptReply;
     // The Save failed prompt for the slots a capture could not read; Save
     // anyway saves with exactly those slots kept, and asks again if another fails.
     void askToSaveAnyway (const std::filesystem::path& sessionDir,
                           std::shared_ptr<AudioEngine::PreparedPluginState> failed,
-                          const std::string& captureError, std::shared_ptr<SaveReply> reply);
+                          const std::string& captureError, std::shared_ptr<PromptReply> reply);
     // True, with a status line, while a render from any modal or a DP import is
     // unfinished.
     bool saveRefusedWhileBusy();
@@ -446,6 +446,8 @@ private:
     EmbeddedModal quitModal;
     // Replaces juce::AlertWindow so styling matches the rest of the app.
     EmbeddedModal recoveryModal;
+    // Session won't open, and Session needs a newer Dusk Studio.
+    EmbeddedModal openFailureModal;
    #if DUSKSTUDIO_HAS_NATIVE_UI
     // The virtual keyboard is native: a framework child over the window with a dim
     // sibling behind it, the shape every ported panel takes. Built on first open.

@@ -29,6 +29,9 @@ using recoverystamp::utcStamp;
 constexpr std::int64_t kLastPlacedTick = 0x0ffffffe;
 constexpr std::size_t  kMaxNameBytes   = 64;
 constexpr int          kMaxCopies      = 999;
+// Every pass of a loop take handed over at one Stop shares its second, and a
+// loop take keeps up to 1,024 of them.
+constexpr int          kMaxSeconds     = 8;
 constexpr char         kUnnamed[]      = "untitled";
 
 // Where a region starts, rounded to a tick on the session tempo map, as
@@ -306,7 +309,9 @@ bool makeFolder (const stdfs::path& sessionDir, const stdfs::path& folder, Write
 }
 
 // Writes `bytes` under the first name for this second that nothing in `folder`
-// holds yet, so no file there is ever replaced.
+// holds yet, so no file there is ever replaced. When the second's copies run
+// out, the names go on in the seconds after it, which still sort after every
+// file made before.
 void writeNew (WriteResult& result, const stdfs::path& sessionDir, const stdfs::path& folder,
                std::chrono::system_clock::time_point now, int trackNumber, const std::string& sanitized,
                TrackFile kind, const std::vector<std::uint8_t>& bytes)
@@ -318,23 +323,26 @@ void writeNew (WriteResult& result, const stdfs::path& sessionDir, const stdfs::
     }
     if (! makeFolder (sessionDir, folder, result)) return;
 
-    const auto stamp = utcStamp (now);
-    for (int copy = 1; copy <= kMaxCopies; ++copy)
+    for (int second = 0; second < kMaxSeconds; ++second)
     {
-        const auto target = folder / stdfs::u8path (fileNameFor (stamp, trackNumber, sanitized, kind, copy));
-        std::error_code error;
-        const auto status = stdfs::symlink_status (dusk::fs::nativeIOPath (target), error);
-        if (status.type() != stdfs::file_type::not_found)
+        const auto stamp = utcStamp (now + std::chrono::seconds (second));
+        for (int copy = 1; copy <= kMaxCopies; ++copy)
         {
-            if (! error) continue;
-            result.failures.push_back ({ target, error });
+            const auto target = folder / stdfs::u8path (fileNameFor (stamp, trackNumber, sanitized, kind, copy));
+            std::error_code error;
+            const auto status = stdfs::symlink_status (dusk::fs::nativeIOPath (target), error);
+            if (status.type() != stdfs::file_type::not_found)
+            {
+                if (! error) continue;
+                result.failures.push_back ({ target, error });
+                return;
+            }
+            if (dusk::fs::writeFileAtomically (target, bytes.data(), bytes.size(), error))
+                result.written.push_back (target);
+            else
+                result.failures.push_back ({ target, error });
             return;
         }
-        if (dusk::fs::writeFileAtomically (target, bytes.data(), bytes.size(), error))
-            result.written.push_back (target);
-        else
-            result.failures.push_back ({ target, error });
-        return;
     }
     result.failures.push_back ({ folder, std::make_error_code (std::errc::file_exists) });
 }

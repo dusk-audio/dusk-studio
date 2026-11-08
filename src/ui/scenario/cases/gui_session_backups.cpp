@@ -237,7 +237,9 @@ std::optional<ScenarioResult> runDamagedSessionOpensBackup (GuiHost& host, Scena
         older.backupIsOlder = true;
         ctx.expect (host.modalText() == alertText (openalert::kWontOpenTitle, openalert::wontOpenMessage (older)),
                     "the damaged backup's alert read '" + host.modalText() + "'");
-        ctx.expect (host.clickModalButton (openalert::kOpenNewestBackup), "the alert did not offer the older backup");
+        ctx.expect (! host.clickModalButton (openalert::kOpenNewestBackup),
+                    "the damaged backup's alert called the older backup the newest");
+        ctx.expect (host.clickModalButton (openalert::kOpenOlderBackup), "the alert did not offer the older backup");
     },
     [&host, broken] { return host.modalText().find (broken.u8string()) != std::string::npos; },
     "opening the damaged backup raised no alert naming it" });
@@ -296,6 +298,89 @@ const ScenarioRegistrar damagedSessionOpensBackup { Scenario {
     "gui.damaged_session_opens_backup", { "gui", "session" }, Needs::Engine | Needs::Gui,
     {}, {}, 20000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runDamagedSessionOpensBackup (host, ctx); }
+} };
+
+// A session.json this process may not read says so. The alert still offers the
+// backup, but promises to keep nothing in backups/, since a file that cannot be
+// read cannot be copied there.
+std::optional<ScenarioResult> runUnreadableSessionAlert (GuiHost& host, ScenarioContext& ctx)
+{
+   #if defined (_WIN32)
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("file permissions do not stop a read on Windows");
+   #else
+    if (auto early = beginBackupCase (host, ctx)) return early;
+    auto& session = ctx.session();
+    const auto before = currentSessionDirectory (session);
+    const auto folder = ctx.tempDir() / "Unreadable";
+    const auto sessionJson = folder / "session.json";
+    const auto backup = folder / "backups" / "20261101-090000Z_session.json";
+    if (! saveFixture (folder, sessionJson, -6.0f) || ! saveFixture (folder, backup, -9.0f))
+        return ScenarioResult::fail ("could not write the session and its backup");
+    std::error_code error;
+    fs::permissions (sessionJson, fs::perms::none, error);
+    ctx.cleanup ([sessionJson]
+    {
+        std::error_code restored;
+        fs::permissions (sessionJson, fs::perms::owner_read | fs::perms::owner_write, restored);
+    });
+    if (error || std::ifstream (sessionJson).is_open())
+        return ScenarioResult::skip ("file permissions do not stop this process reading");
+    const auto backupsBefore = backupsIn (folder);
+
+    openalert::WontOpen report;
+    report.file = sessionJson.u8string();
+    report.problem = openalert::Problem::Unreadable;
+    report.backup = true;
+    report.backupTime = savedTimeOf (backup);
+    ctx.expect (! host.openSession (sessionJson), "the unreadable session.json reported a load");
+    ctx.expect (currentSessionDirectory (session) == before, "the unreadable session.json switched the session");
+    const auto text = host.modalText();
+    ctx.expect (text == alertText (openalert::kWontOpenTitle, openalert::wontOpenMessage (report)),
+                "the alert read '" + text + "'");
+    ctx.expect (text.find ("The file could not be read.") != std::string::npos,
+                "the alert did not say the file could not be read");
+    ctx.expect (text.find ("kept in backups/") == std::string::npos,
+                "the alert promised to keep a file it cannot read");
+
+    // Handed over from outside, as the command line and a second launch do, a
+    // folder with no session's files in it is ignored, and one with them opens.
+    const auto plain = ctx.tempDir() / "Plain folder";
+    fs::create_directories (plain / "audio", error);
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 100, [&host, &ctx] { ctx.expect (host.clickModalButton ("Cancel"), "the alert did not offer Cancel"); } });
+    steps->push_back ({ 300, [&host, &ctx, &session, before, folder, backupsBefore, plain]
+    {
+        ctx.expect (host.modalStackEmpty(), "Cancel left '" + host.modalText() + "' up");
+        ctx.expect (currentSessionDirectory (session) == before, "Cancel switched the session");
+        ctx.expect (backupsIn (folder) == backupsBefore, "the unreadable session's backups changed");
+        host.requestSessionSwitch (plain);
+    } });
+    steps->push_back ({ 300, [&host, &ctx, &session, before, folder]
+    {
+        ctx.expect (host.modalStackEmpty(), "a folder holding no session raised '" + host.modalText() + "'");
+        ctx.expect (currentSessionDirectory (session) == before, "a folder holding no session switched the session");
+        host.requestSessionSwitch (folder);
+    } });
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.clickModalButton ("Cancel"), "the alert did not offer Cancel"); },
+    [&host] { return host.modalText().rfind (openalert::kWontOpenTitle, 0) == 0; },
+    "the unreadable session's folder, handed over, raised no alert" });
+    steps->push_back ({ 300, [&host, &ctx, &session, before]
+    {
+        ctx.expect (host.modalStackEmpty(), "Cancel left '" + host.modalText() + "' up");
+        ctx.expect (currentSessionDirectory (session) == before, "Cancel switched the session");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+   #endif
+}
+
+const ScenarioRegistrar unreadableSessionAlert { Scenario {
+    "gui.unreadable_session_alert", { "gui", "session" }, Needs::Engine | Needs::Gui,
+    {}, {}, 10000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runUnreadableSessionAlert (host, ctx); }
 } };
 
 // File > Open of a backup opens the session it belongs to, from its own

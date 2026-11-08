@@ -27,6 +27,7 @@ TEST_CASE ("The alert for a session that won't open names the file, the reason a
               "    The newest backup, from 2026-11-08 14:25\n\n"
               "Opening one saves it as session.json at once. The file that would not open is kept in backups/.\n\n"
               "The session's MIDI is also kept as Standard MIDI Files in:\n\n    /music/Song/midi");
+    CHECK (std::string (openalert::backupButton (report)) == "Open Newest Backup");
 
     SECTION ("a backup that would not open offers the next older one")
     {
@@ -43,6 +44,7 @@ TEST_CASE ("The alert for a session that won't open names the file, the reason a
                   "You can open one of these instead:\n\n"
                   "    The next older backup, from 2026-11-07 09:15\n\n"
                   "Opening one saves it as session.json at once. The file that would not open is kept in backups/.");
+        CHECK (std::string (openalert::backupButton (report)) == "Open Older Backup");
     }
 }
 

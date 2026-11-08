@@ -1,4 +1,5 @@
 #include "SessionSerializer.h"
+#include "../foundation/AtomicFile.h"
 #include "../foundation/Fs.h"
 #include "../foundation/Json.h"
 #include <nlohmann/json.hpp>
@@ -3362,16 +3363,18 @@ void forEachConsolidatedPath (Session& s, Visit&& visit)
 }
 
 // The old folder's tree of that name (midi/, backups/), its regular files
-// copied to the same place under the new folder, each source noted in sources
-// when that is given. A file the new folder already has is someone's and is
-// skipped, so a rollback only ever removes copies made here. The tree is read
-// whole before anything is copied, so a new folder inside it is not copied
-// into itself. False, with the reason in res, when the tree cannot be read or
-// a copy fails.
+// copied to the same place under the new folder, each source and its copy
+// noted in copied when that is given. A file the new folder already has is
+// someone's and is skipped, so a rollback only ever removes copies made here.
+// The tree is read whole before anything is copied, and a new folder inside it
+// is left out of the walk, so nothing the save has put there is taken for one
+// of the old folder's files. False, with the reason in res, when the tree
+// cannot be read or a copy fails.
 template <typename NoteIfAbsent>
 bool copyFolderTree (SessionSerializer::ConsolidationResult& res, const std::filesystem::path& oldDir,
                      const std::filesystem::path& newDir, const char* name,
-                     std::vector<std::filesystem::path>* sources, NoteIfAbsent&& noteIfAbsent)
+                     std::vector<SessionSerializer::ConsolidationResult::CopiedFile>* copied,
+                     NoteIfAbsent&& noteIfAbsent)
 {
     namespace stdfs = std::filesystem;
     const auto oldTree = oldDir / name;
@@ -3383,6 +3386,7 @@ bool copyFolderTree (SessionSerializer::ConsolidationResult& res, const std::fil
     };
 
     const auto root = dusk::fs::nativeIOPath (oldTree);
+    const auto newRoot = dusk::fs::nativeIOPath (newDir);
     std::error_code ec;
     if (stdfs::symlink_status (root, ec).type() != stdfs::file_type::directory) return true;
     std::vector<stdfs::path> folders, files;
@@ -3391,7 +3395,16 @@ bool copyFolderTree (SessionSerializer::ConsolidationResult& res, const std::fil
         std::error_code entryError;
         const auto type = it->symlink_status (entryError).type();
         if (entryError) return failed (it->path(), newTree);
-        if (type == stdfs::file_type::directory) folders.push_back (it->path().lexically_relative (root));
+        if (type == stdfs::file_type::directory)
+        {
+            std::error_code sameError;
+            if (stdfs::equivalent (it->path(), newRoot, sameError))
+            {
+                it.disable_recursion_pending();
+                continue;
+            }
+            folders.push_back (it->path().lexically_relative (root));
+        }
         else if (type == stdfs::file_type::regular) files.push_back (it->path().lexically_relative (root));
     }
     if (ec) return failed (oldTree, newDir);
@@ -3411,7 +3424,7 @@ bool copyFolderTree (SessionSerializer::ConsolidationResult& res, const std::fil
         if (ec || ! stdfs::copy_file (dusk::fs::nativeIOPath (source), dusk::fs::nativeIOPath (target), ec))
             return failed (source, target.parent_path());
         res.copiedFiles.push_back (target);
-        if (sources != nullptr) sources->push_back (source);
+        if (copied != nullptr) copied->push_back ({ source, target });
     }
     return true;
 }
@@ -3570,7 +3583,7 @@ SessionSerializer::consolidateInto (Session& s, const juce::File& newSessionDir,
         res.copiedFiles.push_back (fsPathOf (target));
     }
     if (ownsOldFolder && ! oldPath.empty()
-        && (! copyFolderTree (res, oldPath, newPath, "midi", &res.copiedMidiSources, noteIfAbsent)
+        && (! copyFolderTree (res, oldPath, newPath, "midi", &res.copiedMidiFiles, noteIfAbsent)
             || ! copyFolderTree (res, oldPath, newPath, "backups", nullptr, noteIfAbsent)))
     {
         discardConsolidatedFiles (res);
@@ -3606,8 +3619,30 @@ void SessionSerializer::removeCopiedMidiSources (const ConsolidationResult& done
 {
     namespace stdfs = std::filesystem;
     std::error_code ignored;
-    for (const auto& source : done.copiedMidiSources)
-        stdfs::remove (dusk::fs::nativeIOPath (source), ignored);
+    std::map<stdfs::path, bool> folderLasts;
+    const auto lasts = [&folderLasts] (const stdfs::path& folder)
+    {
+        const auto [entry, unsynced] = folderLasts.try_emplace (folder, false);
+        if (unsynced)
+        {
+            std::error_code error;
+            entry->second = dusk::fs::syncFolder (folder, error);
+        }
+        return entry->second;
+    };
+    for (const auto& [source, copy] : done.copiedMidiFiles)
+    {
+        // A source goes only once a power loss could no longer take its copy
+        // back: the copy's bytes, and its name in each folder below the new
+        // session folder, which the session.json write has synced.
+        std::error_code error;
+        bool lasting = dusk::fs::syncFile (copy, error);
+        auto folder = copy.parent_path();
+        for (auto rest = source.lexically_relative (oldSessionDir).parent_path(); lasting && ! rest.empty();
+             rest = rest.parent_path(), folder = folder.parent_path())
+            lasting = lasts (folder);
+        if (lasting) stdfs::remove (dusk::fs::nativeIOPath (source), ignored);
+    }
     const auto midi = oldSessionDir / "midi";
     for (const auto& folder : { midi / "takes", midi / "tracks", midi })
     {
