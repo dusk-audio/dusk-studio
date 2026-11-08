@@ -613,7 +613,7 @@ PipeWire.
 | `gui-plugin-picker`, `gui-settings-defaults` | `tests/gui_plugin_picker.sh` and `tests/gui_settings_defaults.sh` against the same binary: the GUI cases that need a seeded config (the picker filter, the native-row pick and the settings defaults), which the suite runs without (the picker cases skip there). Enabled with GUI scenarios, including by default for `prepush`. |
 | `release-metadata` | `scripts/release-metadata-check.sh`: `VERSION`, the top changelog heading, the AppStream entry and the release-notes summary agree, in the development or the release-ready state. Off unless `--release-checks`. |
 | `github-ruleset` | the `main` ruleset requires the six CI checks a merge has to pass (Linux amd64 and arm64, macOS, Windows, TSan, ASan+UBSan); `WARN` names the missing ones. Needs an authenticated `gh`. Off unless `--release-checks`. |
-| `patreon-freshness` | Part 10 step 2: no local name overrides, the supporter header at the donor pin, the Patreon dry run. `WARN` when the dry run refreshed tokens, which means the Actions secrets need updating before the tag. Off unless `--release-checks`. |
+| `patreon-freshness` | Part 10 step 2: no local name overrides, the supporter header at the donor pin, the Patreon dry run. `FAIL` when Patreon rejects the access token, which `scripts/update-patrons.py --refresh-tokens` fixes for every copy of the pair. Off unless `--release-checks`. |
 
 `--no-scenarios` leaves the scenario legs out of the run entirely.
 `capture-screenshots` runs by default, so `prepush` runs it too: a change that
@@ -1508,8 +1508,9 @@ current tag workflows publish, so nothing a tagged release produces uses it.
    four `PATREON_*` Actions secrets of both repositories through `gh`. When a
    secret write fails, the new pair is already saved, and `--push-secrets`
    retries the writes. If the live tiers differ from the committed header,
-   require all four Patreon Actions secrets so the binary workflows inject the
-   live list. Without those secrets, stop: the workflows warn and ship the
+   require all four Patreon Actions secrets: the release workflow's
+   `supporters` job fetches the live list once and every platform build
+   compiles it. Without those secrets, stop: the workflow warns and ships the
    committed list.
 3. Rebuild the app and tests, run the full test suite and JUCE gate, then run
    the integration self-test on a private Xvfb display. Never launch the

@@ -322,10 +322,6 @@ PY
         return 1
     }
     printf '%s\n' "$out"
-    if grep -qF 'Patreon tokens refreshed and saved.' <<<"$out"; then
-        echo "warn: Patreon tokens refreshed; update the PATREON_* Actions secrets before tagging"
-    fi
-    return 0
 }
 
 # sandboxed <command...>: runs the command, shell functions included, with a
