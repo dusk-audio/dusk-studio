@@ -239,6 +239,8 @@ add_executable(dusk-studio-tests
     ${CMAKE_SOURCE_DIR}/src/engine/midi/MidiFileReader.cpp
     midi_file_writer.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/midi/MidiFileWriter.cpp
+    midi_recovery.cpp
+    ${CMAKE_SOURCE_DIR}/src/session/MidiRecovery.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/DpImporter.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/DpAligner.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/RecordManager.cpp
@@ -325,6 +327,7 @@ target_sources(dusk-studio-tests PRIVATE
     foundation_text_format.cpp
     foundation_vector_ops.cpp
     foundation_fs.cpp
+    foundation_atomic_file.cpp
     log_file.cpp
     ${CMAKE_SOURCE_DIR}/src/util/LogFile.cpp
     host_info.cpp
