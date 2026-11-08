@@ -1482,10 +1482,11 @@ for required in (
     "if-no-files-found: error",
 ):
     assert required in supporters_job, f"supporters fetch lost: {required}"
+patreon_names = ("ACCESS_TOKEN", "REFRESH_TOKEN", "CLIENT_ID", "CLIENT_SECRET")
 patreon_secrets = re.findall(r"secrets\.PATREON_[A-Z_]+", release_workflow)
-assert len(patreon_secrets) == 4 and all(s in supporters_job for s in patreon_secrets), (
-    "only the supporters job may hold the Patreon secrets"
-)
+assert sorted(patreon_secrets) == sorted("secrets.PATREON_" + n for n in patreon_names) and all(
+    "PATREON_" + n + ": ${{ secrets.PATREON_" + n + " }}" in supporters_job for n in patreon_names
+), "only the supporters job may hold the Patreon secrets, each under its own name"
 for job_name in ("linux", "macos", "windows"):
     body = release_job(job_name)
     assert "PATREON_" not in body and "update-patrons.py" not in body, (
