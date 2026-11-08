@@ -131,7 +131,8 @@ def failed_refresh_saves_nothing():
     # says to retry the refresh before replacing it.
     answers = ((answering(400), False), (answering(401), False),
                (answering(429), True), (answering(503), True),
-               (answering(body=b"<html>"), True), (answering(body=b"{}"), True))
+               (answering(body=b"<html>"), True), (answering(body=b"{}"), True),
+               (answering(body=json.dumps({"access_token": NEW["access_token"]}).encode()), True))
     for endpoint, may_retry in answers:
         with tempfile.TemporaryDirectory() as directory:
             path = config_file(directory)

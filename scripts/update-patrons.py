@@ -164,11 +164,14 @@ def refresh_tokens(config):
                  "changed. Check your connection and retry.")
     except ValueError:
         sys.exit(f"Patreon's answer to the refresh was not JSON, so nothing was saved. {retry}")
-    if not isinstance(fresh, dict) or not fresh.get("access_token"):
-        sys.exit(f"Patreon's answer to the refresh held no access token, so nothing "
-                 f"was saved. {retry}")
+    # Patreon spends the refresh token on every refresh, so an answer without a
+    # new one leaves no pair worth saving or publishing.
+    if not isinstance(fresh, dict) or not fresh.get("access_token") \
+            or not fresh.get("refresh_token"):
+        sys.exit(f"Patreon's answer to the refresh did not hold both new tokens, so "
+                 f"nothing was saved. {retry}")
     config["access_token"] = fresh["access_token"]
-    config["refresh_token"] = fresh.get("refresh_token", config["refresh_token"])
+    config["refresh_token"] = fresh["refresh_token"]
     write_config_secure(config)
     print("Patreon tokens refreshed and saved.")
     return config
