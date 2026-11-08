@@ -37,7 +37,7 @@ Dusk Studio includes:
 - Mackie Control surface support (tested against Tascam DP-24SD).
 - A piano roll for MIDI editing and an audio region editor with non-destructive trim, fade, and gain.
 - Every recording pass kept whole as a take on its track, with take lanes in the audio region editor for building a comp from the best parts.
-- Session save/load with automatic autosave every two minutes by default and atomic-write protection.
+- Session save/load with automatic autosave every two minutes by default, atomic-write protection, a backup of every save, and every MIDI track and recorded pass kept as Standard MIDI Files.
 
 ## What it deliberately does not have
 
@@ -1286,7 +1286,7 @@ A session you have not saved yet records into the `audio/` folder of `~/Music/Du
 
 Every recorded audio file is a **24-bit WAV** at the session's sample rate. Filenames include the track number and a timestamp so re-recording the same track on the same day still produces distinct files.
 
-MIDI tracks keep their notes and channel controls embedded in `session.json`. The session's `midi/` folder also keeps them as Standard MIDI Files, called MIDI recovery files, so a damaged `session.json` does not take the MIDI with it. Each recorded MIDI pass is written to `midi/takes/` as a file of its own, at **Stop** with **MIDI Merge** off and as each pass is merged with it on. That includes every pass of a loop take, even the ones older than the 8 previous takes its region keeps. Opening a session, every save and every autosave write two files for each MIDI track to `midi/tracks/`: a playing file with the regions that play, as they play now, and a takes file with the muted regions and every region's previous takes. Each is written only when it differs from the newest one of its kind there, so opening a session again unchanged writes nothing, and Dusk Studio never replaces a file in `midi/`. Files written in the same second are numbered `_002`, `_003` and on, so sorting by name keeps them in the order they were made. **Save As** takes `midi/` along to the new folder. The first save of a session you had never saved moves its MIDI recovery files out of its `Untitled` folder, so that folder can hold the next new session.
+MIDI tracks keep their notes and channel controls embedded in `session.json`. The session's `midi/` folder also keeps them as Standard MIDI Files, called MIDI recovery files, so a damaged `session.json` does not take the MIDI with it. Each recorded MIDI pass is written to `midi/takes/` as a file of its own, at **Stop** with **MIDI Merge** off and as each pass is merged with it on. That includes every pass of a loop take, even the ones older than the 8 previous takes its region keeps. Opening a session, every save and every autosave write two files for each MIDI track to `midi/tracks/`: a playing file with the regions that play, as they play now, and a takes file with the muted regions and every region's previous takes. Each is written only when it differs from the newest one of its kind there, so opening a session again unchanged writes nothing, and Dusk Studio never replaces a file in `midi/`. Files written in the same second are numbered `_002`, `_003` and on, so sorting by name keeps them in the order they were made. **Save As** takes `midi/` along to the new folder. The first save of a session you had never saved moves its MIDI recovery files out of its `Untitled` folder, so that folder can hold the next new session. *Backups and recovery* under *Saving and loading sessions* says how to get MIDI back from these files.
 
 ## Takes
 
@@ -2279,12 +2279,18 @@ A Dusk Studio session is a folder, not a single file. The folder contains:
 ```
 MySession/
 ├── session.json
-└── audio/
-    ├── track01_20260526-143025.wav
-    └── …
+├── audio/
+│   ├── track01_20260526-143025.wav
+│   └── …
+├── backups/
+│   ├── 20260526-143512Z_session.json
+│   └── …
+└── midi/
+    ├── takes/
+    └── tracks/
 ```
 
-`session.json` holds every parameter, region, marker, plugin description, and plugin state in JSON form. `audio/` holds the recorded WAVs and any audio files you imported.
+`session.json` holds every parameter, region, marker, plugin description, and plugin state in JSON form. `audio/` holds the recorded WAVs and any audio files you imported. `backups/` holds a copy of `session.json` from each save, and `midi/` holds the session's MIDI as Standard MIDI Files; *Backups and recovery* describes both. Other files appear when the session needs them: `session.json.autosave` once an autosave catches changes the last save does not have (see *Autosave*), `notepad.md` once the session has notes, and a `state/` folder for LV2 plug-ins that keep files of their own.
 
 Because the session is a folder, you can copy or back up a session by copying the whole directory. Move it to another machine and the relative paths to the audio files remain valid.
 
@@ -2324,11 +2330,29 @@ A session captures everything user-visible:
 - MIDI sync source/output, MCU port identifiers.
 - The currently loaded mastering source file (if any), which loads on the **MASTERING** stage again when the session opens. A session without one opens with that stage empty. If the file has gone missing, the stage stays empty, reads "Failed to load: [path]", and the *Missing audio files* alert names the file.
 
-## Backing up
+## Backups and recovery
+
+A session keeps three kinds of copies of itself, so a crash, a damaged `session.json` or a save you regret does not cost you the session:
+
+- The autosave, `session.json.autosave`, holds the changes made since the last save; see *Autosave*.
+- `backups/` holds a copy of `session.json` from each save.
+- `midi/` holds the session's MIDI as Standard MIDI Files, which other MIDI software reads too.
+
+When `session.json` will not open, the **Session won't open** alert offers the autosave and the newest backup; see *Messages*.
+
+### Session backups
 
 Every save also keeps a copy of the `session.json` it wrote in the session's `backups/` folder, named by the time it was saved in UTC, such as `20261108-143005Z_session.json` (a second copy in the same second ends `_002`, and so on), so sorting by name puts them in the order they were saved, and the newest backup is your last save. A `session.json` that changed without a save, such as one edited by hand, one saved by an older Dusk Studio, or a damaged one, is kept there too, named by the time of the save that replaces it. **New Session** keeps a copy of the session it creates, and **Save As** takes `backups/` along to the new folder. An autosave keeps no backup. Dusk Studio never replaces a backup. It keeps the 20 newest and, of older ones, the newest of each of the last 30 days, and removes the rest; it never removes any other file in `backups/`.
 
-To go back to a backup, open it with **File > Open...** and choose the file in `backups/`, or choose **Open Newest Backup** when a session will not open (see **Session won't open** under *Messages*). Either way the backup opens as the session in its folder, is saved as `session.json` at once, and the `session.json` it replaces is kept in `backups/`.
+To go back to a backup, open it with **File → Open…** and choose the file in `backups/`, or choose **Open Newest Backup** when a session will not open (see **Session won't open** under *Messages*). Either way the backup opens as the session in its folder, is saved as `session.json` at once, and the `session.json` it replaces is kept in `backups/`.
+
+### MIDI recovery files
+
+`midi/takes/` holds each MIDI pass you record, and `midi/tracks/` gets a new pair of files for a MIDI track whenever opening the session, a save or an autosave finds its MIDI changed; see *Where files are saved* under *Recording*. A name starts with the UTC time the file was written, then the track number and name, as in `20261108-143005Z_track07_Keys.mid`. A track's playing file holds the regions that play, as they play. Its takes file, ending `.takes.mid`, holds the muted regions and every region's previous takes, each as a track of its own named after its region and take.
+
+To get a track's MIDI back, press **Home** to move the playhead to the start of the timeline, then import the track's newest playing file with **File → Import Audio or MIDI…** onto a MIDI track. Its notes and controllers land on the bars and beats where they played, and play at the same times when the session has the tempo it had then. The import reads no tempo from the file, so in a new session set the tempo first, and add any tempo changes the session had on the timeline ruler; the file carries its tempo map up to its last note, and other MIDI software can show it. The import also merges all of a file's tracks into one region, so a takes file would bring every take in on top of the others. To get one take back, import its pass from `midi/takes/`, or open the takes file in other MIDI software and pick the take there.
+
+### Copying a session
 
 Because sessions are self-contained folders, backup is just a copy:
 
@@ -2336,7 +2360,7 @@ Because sessions are self-contained folders, backup is just a copy:
 cp -r MySession ~/Backups/MySession-20260526
 ```
 
-For larger archives, `tar czf` the folder and store the tarball.
+The copy takes `backups/` and `midi/` along. For larger archives, `tar czf` the folder and store the tarball.
 
 \newpage
 
@@ -2685,9 +2709,10 @@ The hardware-insert latency ping could not find a correlation peak.
 
 When `session.json` is missing, cannot be read or does not read as a session, the **Session won't open** alert says why and offers the session's autosave and newest backup when it has them; see *Messages*. Opening either saves it as `session.json` at once. The alert also names the session's `midi/` folder when it has one, where its MIDI is kept as Standard MIDI Files.
 
-- Check that the session folder contains both `session.json` and an `audio/` subfolder.
-- If `session.json` is missing but an autosave file exists (look for `session.json.autosave` in the same folder), rename it to `session.json` and try again.
-- Open `session.json` in a text editor to confirm it parses as JSON — a power loss during a non-atomic save on an old filesystem could in theory corrupt it. The atomic-write strategy makes this extremely unlikely.
+- To go back further than the newest backup, open an older one from the session's `backups/` folder with **File → Open…**; see *Backups and recovery*.
+- When nothing opens, the session's material is still in its folder: the audio in `audio/` and the MIDI in `midi/tracks/` and `midi/takes/`. Start a new session and import them; *Backups and recovery* says how to put the MIDI back where it played.
+- A session that was never saved has no `session.json` and no backups. If it crashed, open its autosave as *Autosave* describes.
+- A session saved by a newer Dusk Studio raises **Session needs a newer Dusk Studio** instead. Open it with that version.
 
 ## Missing audio files
 
@@ -2782,10 +2807,10 @@ The format for each entry:
 
 ### Session won't open
 
-- **When**: A session you open, from **File > Open...**, **File > Recent Sessions**, the Startup dialog, the command line or your file manager, cannot be loaded: its `session.json` is not there, cannot be read, does not read as a session, or is from an older Dusk Studio and could not be brought up to date. It also comes up when an autosave or backup you chose, in this alert or in **Recover from autosave?**, does not open.
+- **When**: A session you open, from **File → Open…**, **File → Recent Sessions**, the Startup dialog, the command line or your file manager, cannot be loaded: its `session.json` is not there, cannot be read, does not read as a session, or is from an older Dusk Studio and could not be brought up to date. It also comes up when an autosave or backup you chose, in this alert or in **Recover from autosave?**, does not open.
 - **Text**: "Dusk Studio could not open this session file: [path]. [reason]" where the reason is "The file is not there.", "The file could not be read. Check that you have permission to read it.", "The file is damaged and does not read as a session." or "The file is from an older Dusk Studio and could not be brought up to date." When there is something to open instead it goes on "You can open one of these instead:" with "The autosave, from [time]" and "The newest backup, from [time]" ("The next older backup, from [time]" when the file that would not open is itself a backup; ", from [time]" is left out when the time cannot be read), then "Opening one saves it as session.json at once.", "Opening the backup discards the autosave." when the session folder has an autosave and a backup is offered, and, when the file that would not open can be copied, "The file that would not open is kept in backups/." With nothing to offer it says "There is no autosave or backup to open instead." When the session has a `midi/` folder it ends "The session's MIDI is also kept as Standard MIDI Files in: [folder]." Times are your local time.
 - **Buttons**: **Open Autosave** (when the session folder has an autosave that is not the file that failed) / **Open Newest Backup** (when it has a backup) / **Cancel**. **OK** when there is nothing to offer.
-- **Action**: **Open Newest Backup** goes back to your last save and discards the autosave, as **Load saved session** does in **Recover from autosave?**; **Open Autosave** goes back to the edits since your last save that the autosave caught. The one you choose opens and is saved as `session.json` at once, the way **Recover autosave** is. If it does not open either, this alert comes back for it, offering the next older backup. A backup holding the same bytes as the file that would not open is passed over. **Cancel** or **OK** leaves the session you had open as it was, and the Startup dialog comes back if you opened from it.
+- **Action**: **Open Newest Backup** goes back to your last save and discards the autosave, as **Load saved session** does in **Recover from autosave?**; **Open Autosave** goes back to the edits since your last save that the autosave caught. The one you choose opens and is saved as `session.json` at once, the way **Recover autosave** is. If it does not open either, this alert comes back for it, offering the next older backup. A backup holding the same bytes as the file that would not open is passed over. **Cancel** or **OK** leaves the session you had open as it was, and the Startup dialog comes back if you opened from it. When nothing opens, see *Session won't open* under *Troubleshooting*.
 
 ### Session needs a newer Dusk Studio
 

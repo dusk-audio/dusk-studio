@@ -3,6 +3,7 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 
 #include "TestTempDirectory.h"
+#include "engine/FileImporter.h"
 #include "engine/MidiTimelineSchedule.h"
 #include "engine/midi/MidiFileReader.h"
 #include "foundation/Fs.h"
@@ -14,6 +15,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <ostream>
 #include <string>
@@ -388,6 +390,53 @@ TEST_CASE ("A MIDI playing file holds only the regions that play, numbered acros
         for (const auto& event : channelEvents (track))
             merged.push_back (event);
     CHECK (inSamples (merged, nullptr, timing.bpm) == playbackOf (regions, nullptr, timing.bpm, 1000000));
+}
+
+// Through the importer itself, at the start of the timeline, as the manual
+// tells a user to get a track's MIDI back.
+TEST_CASE ("A MIDI playing file imported at the start of the timeline plays what its track played",
+           "[midi][recovery][import]")
+{
+    const duskstudio::test::TempDirectory temp ("dusk-midi-recovery-import-");
+    const auto importAtStart = [&temp] (const Bytes& file)
+    {
+        const auto path = temp.path() / "playing.mid";
+        {
+            std::ofstream out (path, std::ios::binary | std::ios::trunc);
+            out.write (reinterpret_cast<const char*> (file.data()), (std::streamsize) file.size());
+        }
+        fileimport::MidiImportRequest request;
+        request.source = juce::File (juce::String::fromUTF8 (path.u8string().c_str()));
+        request.sessionSampleRate = kRate;
+        request.sessionBpm = 120.0f;
+        const auto imported = fileimport::importMidi (request);
+        REQUIRE (imported.ok);
+        return std::vector<MidiRegion> (1, imported.region);
+    };
+
+    SECTION ("a track's regions at one tempo")
+    {
+        const recovery::Timing timing;
+        const auto regions = fourRegions();
+        const auto back = importAtStart (recovery::buildPlayingFile (timing, regions, "Keys"));
+        CHECK (playbackOf (back, nullptr, timing.bpm, 1000000) == playbackOf (regions, nullptr, timing.bpm, 1000000));
+    }
+
+    SECTION ("a region across a tempo change")
+    {
+        const auto timing = twoTempoTiming();
+        MidiRegion verse;
+        verse.timelineStart = 72000;
+        verse.lengthInTicks = 4800;
+        verse.notes.push_back (note (1, 60, 100, 0, 240));
+        verse.notes.push_back (note (2, 64, 90, 240, 720));
+        verse.notes.push_back (note (1, 67, 80, 960, 480));
+        verse.ccs.push_back (control (MidiCc::Kind::PitchBend, 1, 0, 8292, 120));
+        const std::vector<MidiRegion> regions (1, verse);
+        const auto back = importAtStart (recovery::buildPlayingFile (timing, regions, "Keys"));
+        CHECK (playbackOf (back, &timing.tempoMap, 120.0f, 1000000)
+               == playbackOf (regions, &timing.tempoMap, 120.0f, 1000000));
+    }
 }
 
 TEST_CASE ("A MIDI takes file holds the muted regions and every previous take, numbered as the take menu numbers them",
