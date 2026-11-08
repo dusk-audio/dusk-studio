@@ -1342,6 +1342,15 @@ if(Python3_Interpreter_FOUND)
         COMMAND "${Python3_EXECUTABLE}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/manual_coverage.py"
                 --self-test)
+    # update-patrons.py writes its credentials file with os.fchmod, which the
+    # maintainer machines have and Windows Python does not.
+    if(NOT WIN32)
+        add_test(NAME patreon-token-contract
+            COMMAND "${Python3_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/patreon_tokens.py"
+                    "${CMAKE_SOURCE_DIR}")
+        set_tests_properties(patreon-token-contract PROPERTIES TIMEOUT 30)
+    endif()
 else()
     message(WARNING "manual coverage contract skipped: python3 not found")
 endif()

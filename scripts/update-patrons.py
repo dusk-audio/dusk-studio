@@ -24,9 +24,17 @@ One-time setup:
           "name_overrides": { "API Full Name": "Preferred Display Name" }
         }
 
-The script refreshes expired tokens automatically and rewrites that file with
-the rotated pair, including during --dry-run. If this happens before a release,
-update the matching Actions secrets before tagging.
+  3. Run scripts/update-patrons.py --push-secrets to copy the four values into
+     the PATREON_* Actions secrets of every repository in SECRET_REPOS.
+
+Tokens:
+  The same pair lives in that file and in the Actions secrets of every
+  repository in SECRET_REPOS, and a refresh in one place can leave the others
+  holding dead tokens. So no run refreshes on its own: a rejected access token
+  stops it. Then run scripts/update-patrons.py --refresh-tokens on the
+  maintainer machine. It refreshes once, saves the new pair in that file and
+  writes it into every repository's secrets through the GitHub CLI. When a
+  secret write fails, the new pair is already saved; --push-secrets retries.
 
 Behaviour:
   - Active patrons are bucketed by their highest entitled tier amount:
@@ -46,6 +54,8 @@ import argparse
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 import tempfile
 import urllib.error
@@ -55,7 +65,15 @@ from pathlib import Path
 
 API = "https://www.patreon.com/api/oauth2/v2"
 TOKEN_URL = "https://www.patreon.com/api/oauth2/token"
+CLIENTS_URL = "https://www.patreon.com/portal/registration/register-clients"
 CONFIG_PATH = Path.home() / ".config" / "dusk-audio" / "patreon.json"
+SECRET_REPOS = ("dusk-audio/dusk-studio", "dusk-audio/dusk-audio-plugins")
+SECRET_KEYS = (  # (Actions secret, config key)
+    ("PATREON_ACCESS_TOKEN", "access_token"),
+    ("PATREON_REFRESH_TOKEN", "refresh_token"),
+    ("PATREON_CLIENT_ID", "client_id"),
+    ("PATREON_CLIENT_SECRET", "client_secret"),
+)
 
 # Array names keep the original tier names so a DuskStudio build pinned to an
 # older plugins commit (DONOR_REV) still compiles; the heading each array is
@@ -124,13 +142,63 @@ def refresh_tokens(config):
     }).encode()
     req = urllib.request.Request(TOKEN_URL, data=body, method="POST")
     req.add_header("Content-Type", "application/x-www-form-urlencoded")
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        fresh = json.load(resp)
+    replace = (f"the four values from {CLIENTS_URL} into {CONFIG_PATH}, as in setup "
+               "step 2 at the top of this script, then run "
+               "scripts/update-patrons.py --push-secrets.")
+    retry = ("Retry scripts/update-patrons.py --refresh-tokens later. If Patreon then "
+             f"refuses the refresh, copy {replace}")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            fresh = json.load(resp)
+    except urllib.error.HTTPError as e:
+        # A token endpoint refuses a grant or a client with 400 or 401
+        # (RFC 6749 5.2). Anything else may pass on a retry, so the pair is
+        # not to be replaced yet.
+        if e.code in (400, 401):
+            sys.exit(f"Patreon refused the refresh (HTTP {e.code}), so nothing "
+                     f"changed. Copy {replace}")
+        sys.exit(f"Patreon answered the refresh with HTTP {e.code}, so nothing "
+                 f"was saved. {retry}")
+    except urllib.error.URLError as e:
+        sys.exit(f"Network error contacting Patreon ({e.reason}), so nothing "
+                 "changed. Check your connection and retry.")
+    except ValueError:
+        sys.exit(f"Patreon's answer to the refresh was not JSON, so nothing was saved. {retry}")
+    # Patreon spends the refresh token on every refresh, so an answer without a
+    # new one leaves no pair worth saving or publishing.
+    if not isinstance(fresh, dict) or not fresh.get("access_token") \
+            or not fresh.get("refresh_token"):
+        sys.exit(f"Patreon's answer to the refresh did not hold both new tokens, so "
+                 f"nothing was saved. {retry}")
     config["access_token"] = fresh["access_token"]
-    config["refresh_token"] = fresh.get("refresh_token", config["refresh_token"])
+    config["refresh_token"] = fresh["refresh_token"]
     write_config_secure(config)
     print("Patreon tokens refreshed and saved.")
     return config
+
+
+def push_secrets(config):
+    """Writes the config's four values into the PATREON_* Actions secrets of
+    every repository in SECRET_REPOS. Values reach gh on stdin, never argv."""
+    gh = shutil.which("gh")
+    if gh is None:
+        sys.exit("The GitHub CLI (gh) is not on PATH, so no Actions secret was "
+                 f"written. {CONFIG_PATH} holds the current values; install gh "
+                 "and run scripts/update-patrons.py --push-secrets.")
+    failed = []
+    for repo in SECRET_REPOS:
+        for secret, key in SECRET_KEYS:
+            result = subprocess.run([gh, "secret", "set", secret, "--repo", repo],
+                                    input=config[key], text=True,
+                                    capture_output=True)
+            if result.returncode != 0:
+                reason = result.stderr.strip() or f"gh exited with {result.returncode}"
+                failed.append(f"{repo} {secret}: {reason}")
+    if failed:
+        sys.exit("These Actions secrets were not written:\n  " + "\n  ".join(failed)
+                 + f"\n{CONFIG_PATH} holds the current values; run "
+                 "scripts/update-patrons.py --push-secrets once gh can write them.")
+    print("Wrote the PATREON_* Actions secrets of " + " and ".join(SECRET_REPOS) + ".")
 
 
 def fetch_members(config):
@@ -188,8 +256,10 @@ def fetch_members(config):
     except urllib.error.HTTPError as e:
         if e.code != 401:
             raise
-        config = refresh_tokens(config)
-        return run(config["access_token"])
+        sys.exit("Patreon rejected the access token (HTTP 401). Run "
+                 "scripts/update-patrons.py --refresh-tokens from the Dusk Studio "
+                 "checkout on the maintainer machine; it updates every copy of "
+                 "the pair at once.")
     except urllib.error.URLError as e:
         # DNS failure / connection refused / unreachable network / timeout —
         # a clearer message than a raw traceback. HTTPError (a URLError
@@ -267,10 +337,19 @@ def replace_array(text, name, names):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--dry-run", action="store_true",
-                    help=("print the resulting tier lists without rewriting "
-                          "headers (token refresh may update local config)"))
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--dry-run", action="store_true",
+                      help="print the resulting tier lists without rewriting headers")
+    mode.add_argument("--refresh-tokens", action="store_true",
+                      help=("refresh the token pair once, save it and write it "
+                            "into every repository's Actions secrets"))
+    mode.add_argument("--push-secrets", action="store_true",
+                      help=("write the saved values into every repository's "
+                            "Actions secrets without refreshing"))
     args = ap.parse_args()
+    if (args.refresh_tokens or args.push_secrets) and os.environ.get("GITHUB_ACTIONS") == "true":
+        sys.exit("--refresh-tokens and --push-secrets run on the maintainer "
+                 "machine: a workflow cannot write the secrets back.")
 
     if not CONFIG_PATH.is_file():
         sys.exit(f"Missing {CONFIG_PATH} — see the setup notes at the top "
@@ -290,6 +369,11 @@ def main():
         sys.exit(f"{CONFIG_PATH} is missing required key(s): "
                  f"{', '.join(missing)} — see the setup notes at the top "
                  "of this script.")
+    if args.refresh_tokens or args.push_secrets:
+        if args.refresh_tokens:
+            config = refresh_tokens(config)
+        push_secrets(config)
+        return
     overrides = config.get("name_overrides", {})
 
     daw_root = Path(__file__).resolve().parent.parent

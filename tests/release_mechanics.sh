@@ -778,9 +778,9 @@ workflows = {
 notes_marker = "--notes-file packaging/RELEASE-NOTES.md"
 preflight_marker = "- name: Preflight - releases-repo token is valid (tag builds only)"
 action_pins = {
-    "actions/checkout": ("3d3c42e5aac5ba805825da76410c181273ba90b1", 6),
-    "actions/upload-artifact": ("043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", 4),
-    "actions/download-artifact": ("3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c", 1),
+    "actions/checkout": ("3d3c42e5aac5ba805825da76410c181273ba90b1", 7),
+    "actions/upload-artifact": ("043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", 5),
+    "actions/download-artifact": ("3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c", 4),
     "actions/cache": ("55cc8345863c7cc4c66a329aec7e433d2d1c52a9", 1),
 }
 
@@ -1435,7 +1435,7 @@ for required in (
 
 jobs_text = release_workflow.split("\njobs:\n", 1)[1]
 job_names = re.findall(r"^  ([a-z][a-z0-9-]*):$", jobs_text, re.MULTILINE)
-assert set(job_names) == {"preflight", "linux", "macos", "windows", "manual", "publish"}, (
+assert set(job_names) == {"preflight", "supporters", "linux", "macos", "windows", "manual", "publish"}, (
     f"release workflow job set drifted: {job_names}"
 )
 
@@ -1456,7 +1456,8 @@ artifact_contract = {
 upload_artifact_ref = f"actions/upload-artifact@{action_pins['actions/upload-artifact'][0]}"
 for job_name, (artifact_name, artifact_path) in artifact_contract.items():
     body = release_job(job_name)
-    assert "needs: preflight" in body, f"{job_name} must wait for token/tag preflight"
+    needs = "needs: preflight" if job_name == "manual" else "needs: [preflight, supporters]"
+    assert needs in body, f"{job_name} must wait for {needs.split(': ', 1)[1]}"
     assert body.count(upload_artifact_ref) == 1, (
         f"{job_name} must stage exactly one release artifact"
     )
@@ -1468,6 +1469,35 @@ for job_name, (artifact_name, artifact_path) in artifact_contract.items():
     ):
         assert required in body, f"{job_name} artifact contract lost: {required}"
     assert "gh release" not in body, f"{job_name} must never publish independently"
+
+# One job fetches the supporters list and alone holds the Patreon secrets, and
+# every platform build compiles its header, so all payloads credit the same list.
+supporters_job = release_job("supporters")
+for required in (
+    "needs: preflight",
+    "python3 scripts/update-patrons.py",
+    'echo "live=false" >> "$GITHUB_OUTPUT"',
+    'echo "live=true" >> "$GITHUB_OUTPUT"',
+    "name: patreon-supporters",
+    "if-no-files-found: error",
+):
+    assert required in supporters_job, f"supporters fetch lost: {required}"
+patreon_names = ("ACCESS_TOKEN", "REFRESH_TOKEN", "CLIENT_ID", "CLIENT_SECRET")
+patreon_secrets = re.findall(r"secrets\.PATREON_[A-Z_]+", release_workflow)
+assert sorted(patreon_secrets) == sorted("secrets.PATREON_" + n for n in patreon_names) and all(
+    "PATREON_" + n + ": ${{ secrets.PATREON_" + n + " }}" in supporters_job for n in patreon_names
+), "only the supporters job may hold the Patreon secrets, each under its own name"
+for job_name in ("linux", "macos", "windows"):
+    body = release_job(job_name)
+    assert "PATREON_" not in body and "update-patrons.py" not in body, (
+        f"{job_name} must take the supporters header, not fetch the list itself"
+    )
+    for required in (
+        "name: patreon-supporters",
+        "if: ${{ needs.supporters.outputs.live == 'true' }}",
+        'cp "${RUNNER_TEMP}/supporters/PatreonBackers.h" "${RUNNER_TEMP}/plugins/plugins/shared/PatreonBackers.h"',
+    ):
+        assert required in body, f"{job_name} lost the shared supporters header: {required}"
 
 for job_name in ("linux", "macos", "windows"):
     body = release_job(job_name)

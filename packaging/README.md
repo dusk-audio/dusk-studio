@@ -90,9 +90,11 @@ straight from the extracted tarball.
 2. Date the changelog, then complete the Patreon freshness procedure in
    [Maintainer Guide Part 10](../docs/MAINTAINER-GUIDE.md#part-10---release).
    Run `env -u DUSK_PLUGINS_PATH scripts/update-patrons.py --dry-run` from the
-   primary checkout, compare the active tiers with the workflow-pinned donor,
-   and update any rotated Actions secrets. Do not tag with missing Patreon
-   secrets if the pinned supporter list is stale.
+   primary checkout and compare the active tiers with the
+   workflow-pinned donor. If Patreon rejects the access token, run
+   `scripts/update-patrons.py --refresh-tokens`, which updates every copy of
+   the token pair. Do not tag with missing Patreon secrets if the pinned
+   supporter list is stale.
 3. Review the complete metadata diff and commit it. Land
    that commit on `origin/main` and confirm the remote branch contains it before
    creating the tag.

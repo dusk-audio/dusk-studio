@@ -71,8 +71,74 @@ jobs:
           scripts/release-metadata-check.sh --tag "${GITHUB_REF_NAME}" \
             --commit-date "$(git log -1 --format=%cs)"
 
-  linux:
+  supporters:
     needs: preflight
+    name: Fetch the Patreon supporters list
+    # One fetch per release, so every platform ships the same list and no build
+    # job holds the Patreon secrets. Missing secrets ship the committed list;
+    # with all four configured, a failed fetch stops the release before any
+    # platform builds. update-patrons.py never refreshes the tokens: a rejected
+    # access token needs scripts/update-patrons.py --refresh-tokens on the
+    # maintainer machine, which updates every copy of the pair.
+    runs-on: ubuntu-22.04
+    outputs:
+      live: ${{ steps.fetch.outputs.live }}
+    steps:
+      - name: Checkout Dusk Studio
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          submodules: false
+          persist-credentials: false
+
+      - name: Clone Dusk plugins
+        uses: ./.github/actions/clone-donor
+
+      - name: Fetch the live supporters list
+        id: fetch
+        shell: bash
+        env:
+          PATREON_ACCESS_TOKEN: ${{ secrets.PATREON_ACCESS_TOKEN }}
+          PATREON_REFRESH_TOKEN: ${{ secrets.PATREON_REFRESH_TOKEN }}
+          PATREON_CLIENT_ID: ${{ secrets.PATREON_CLIENT_ID }}
+          PATREON_CLIENT_SECRET: ${{ secrets.PATREON_CLIENT_SECRET }}
+          DUSK_PLUGINS_PATH: ${{ runner.temp }}/plugins
+        run: |
+          if [ -z "${PATREON_REFRESH_TOKEN}" ] || [ -z "${PATREON_ACCESS_TOKEN}" ] \
+             || [ -z "${PATREON_CLIENT_ID}" ] || [ -z "${PATREON_CLIENT_SECRET}" ]; then
+            echo "::warning::Patreon secrets not configured - shipping the committed supporters list (may be stale)."
+            echo "live=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          umask 077
+          mkdir -p "${HOME}/.config/dusk-audio"
+          cfg="${HOME}/.config/dusk-audio/patreon.json"
+          # Always remove the credential file on exit, even if a step below fails.
+          trap 'rm -f "${cfg}"' EXIT
+          # json.dump escapes any special characters in the secrets; a raw heredoc
+          # would corrupt the JSON on a quote/backslash in a token.
+          python3 -c 'import json, os, sys; json.dump({"access_token": os.environ["PATREON_ACCESS_TOKEN"], "refresh_token": os.environ["PATREON_REFRESH_TOKEN"], "client_id": os.environ["PATREON_CLIENT_ID"], "client_secret": os.environ["PATREON_CLIENT_SECRET"]}, open(sys.argv[1], "w"))' "${cfg}"
+          # Secrets are configured, so this release must ship the live list.
+          # Fail loud instead of falling back to the committed (possibly stale)
+          # list. A blocked release beats a silently wrong one.
+          if ! python3 scripts/update-patrons.py; then
+            echo "::error::Patreon fetch failed despite configured secrets - refusing to ship a stale supporters list. If Patreon rejected the access token, run scripts/update-patrons.py --refresh-tokens on the maintainer machine, then re-run."
+            exit 1
+          fi
+          mkdir -p "${RUNNER_TEMP}/supporters"
+          cp "${RUNNER_TEMP}/plugins/plugins/shared/PatreonBackers.h" "${RUNNER_TEMP}/supporters/"
+          echo "live=true" >> "$GITHUB_OUTPUT"
+
+      - name: Stage the supporters header
+        if: ${{ steps.fetch.outputs.live == 'true' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: patreon-supporters
+          path: ${{ runner.temp }}/supporters/PatreonBackers.h
+          if-no-files-found: error
+          retention-days: 1
+
+  linux:
+    needs: [preflight, supporters]
     name: Build + package tarball (${{ matrix.label }})
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -183,40 +249,18 @@ jobs:
       - name: Clone DAF
         uses: ./.github/actions/clone-daf-stack
 
-      - name: Refresh Patreon supporters
-        # Bakes the live supporters list into the release binary via
-        # PatreonBackers.h (rewritten in the freshly-cloned plugins checkout
-        # before configure). Missing secrets ship the committed list; with all
-        # secrets configured, a refresh failure blocks the build. The refresh
-        # token must be reusable; rotate the secret if invalidated.
+      - name: Download the supporters header
+        if: ${{ needs.supporters.outputs.live == 'true' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: patreon-supporters
+          path: ${{ runner.temp }}/supporters
+
+      - name: Use the live supporters list
+        # The build compiles the header in the fresh plugins checkout.
+        if: ${{ needs.supporters.outputs.live == 'true' }}
         shell: bash
-        env:
-          PATREON_ACCESS_TOKEN: ${{ secrets.PATREON_ACCESS_TOKEN }}
-          PATREON_REFRESH_TOKEN: ${{ secrets.PATREON_REFRESH_TOKEN }}
-          PATREON_CLIENT_ID: ${{ secrets.PATREON_CLIENT_ID }}
-          PATREON_CLIENT_SECRET: ${{ secrets.PATREON_CLIENT_SECRET }}
-          DUSK_PLUGINS_PATH: ${{ runner.temp }}/plugins
-        run: |
-          if [ -z "${PATREON_REFRESH_TOKEN}" ] || [ -z "${PATREON_ACCESS_TOKEN}" ] \
-             || [ -z "${PATREON_CLIENT_ID}" ] || [ -z "${PATREON_CLIENT_SECRET}" ]; then
-            echo "::warning::Patreon secrets not configured - shipping the committed supporters list (may be stale)."
-            exit 0
-          fi
-          umask 077
-          mkdir -p "${HOME}/.config/dusk-audio"
-          cfg="${HOME}/.config/dusk-audio/patreon.json"
-          # Always remove the credential file on exit, even if a step below fails.
-          trap 'rm -f "${cfg}"' EXIT
-          # json.dump escapes any special characters in the secrets; a raw heredoc
-          # would corrupt the JSON on a quote/backslash in a token.
-          python3 -c 'import json, os, sys; json.dump({"access_token": os.environ["PATREON_ACCESS_TOKEN"], "refresh_token": os.environ["PATREON_REFRESH_TOKEN"], "client_id": os.environ["PATREON_CLIENT_ID"], "client_secret": os.environ["PATREON_CLIENT_SECRET"]}, open(sys.argv[1], "w"))' "${cfg}"
-          # Secrets are configured, so this release must ship the live list.
-          # Fail loud instead of falling back to the committed (possibly stale)
-          # list. A blocked release beats a silently wrong one.
-          if ! python3 scripts/update-patrons.py; then
-            echo "::error::Patreon refresh failed despite configured secrets - refusing to ship a stale supporters list. Check the token/API and re-run."
-            exit 1
-          fi
+        run: cp "${RUNNER_TEMP}/supporters/PatreonBackers.h" "${RUNNER_TEMP}/plugins/plugins/shared/PatreonBackers.h"
 
       - name: Build static libsodium (pinned)
         # The distro package is the right dependency for a distro build, but
@@ -402,7 +446,7 @@ jobs:
           retention-days: 1
 
   windows:
-    needs: preflight
+    needs: [preflight, supporters]
     name: Build + package (MSVC x64 Release, ASIO enabled)
     # Pinned to windows-2022: windows-latest migrated to windows-2025, whose
     # image no longer resolves the "Visual Studio 17 2022" CMake generator.
@@ -433,38 +477,18 @@ jobs:
       - name: Clone DAF
         uses: ./.github/actions/clone-daf-stack
 
-      - name: Refresh Patreon supporters
-        # See the Linux job for the rationale. Bakes the live list into the
-        # MSI. Missing secrets ship the committed list; a configured refresh
-        # failure blocks the build.
+      - name: Download the supporters header
+        if: ${{ needs.supporters.outputs.live == 'true' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: patreon-supporters
+          path: ${{ runner.temp }}/supporters
+
+      - name: Use the live supporters list
+        # The build compiles the header in the fresh plugins checkout.
+        if: ${{ needs.supporters.outputs.live == 'true' }}
         shell: bash
-        env:
-          PATREON_ACCESS_TOKEN: ${{ secrets.PATREON_ACCESS_TOKEN }}
-          PATREON_REFRESH_TOKEN: ${{ secrets.PATREON_REFRESH_TOKEN }}
-          PATREON_CLIENT_ID: ${{ secrets.PATREON_CLIENT_ID }}
-          PATREON_CLIENT_SECRET: ${{ secrets.PATREON_CLIENT_SECRET }}
-          DUSK_PLUGINS_PATH: ${{ runner.temp }}/plugins
-        run: |
-          if [ -z "${PATREON_REFRESH_TOKEN}" ] || [ -z "${PATREON_ACCESS_TOKEN}" ] \
-             || [ -z "${PATREON_CLIENT_ID}" ] || [ -z "${PATREON_CLIENT_SECRET}" ]; then
-            echo "::warning::Patreon secrets not configured - shipping the committed supporters list (may be stale)."
-            exit 0
-          fi
-          umask 077
-          mkdir -p "${HOME}/.config/dusk-audio"
-          cfg="${HOME}/.config/dusk-audio/patreon.json"
-          # Always remove the credential file on exit, even if a step below fails.
-          trap 'rm -f "${cfg}"' EXIT
-          # json.dump escapes any special characters in the secrets; a raw heredoc
-          # would corrupt the JSON on a quote/backslash in a token.
-          python3 -c 'import json, os, sys; json.dump({"access_token": os.environ["PATREON_ACCESS_TOKEN"], "refresh_token": os.environ["PATREON_REFRESH_TOKEN"], "client_id": os.environ["PATREON_CLIENT_ID"], "client_secret": os.environ["PATREON_CLIENT_SECRET"]}, open(sys.argv[1], "w"))' "${cfg}"
-          # Secrets are configured, so this release must ship the live list.
-          # Fail loud instead of falling back to the committed (possibly stale)
-          # list. A blocked release beats a silently wrong one.
-          if ! python3 scripts/update-patrons.py; then
-            echo "::error::Patreon refresh failed despite configured secrets - refusing to ship a stale supporters list. Check the token/API and re-run."
-            exit 1
-          fi
+        run: cp "${RUNNER_TEMP}/supporters/PatreonBackers.h" "${RUNNER_TEMP}/plugins/plugins/shared/PatreonBackers.h"
 
       - name: Fetch Steinberg ASIO SDK
         shell: bash
@@ -818,7 +842,7 @@ jobs:
           retention-days: 1
 
   macos:
-    needs: preflight
+    needs: [preflight, supporters]
     name: Build + package DMG (macOS arm64 Release)
     runs-on: macos-15
     env:
@@ -924,38 +948,18 @@ jobs:
       - name: Clone DAF
         uses: ./.github/actions/clone-daf-stack
 
-      - name: Refresh Patreon supporters
-        # See the Linux job for the rationale. Bakes the live list into the
-        # DMG. Missing secrets ship the committed list; a configured refresh
-        # failure blocks the build.
+      - name: Download the supporters header
+        if: ${{ needs.supporters.outputs.live == 'true' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: patreon-supporters
+          path: ${{ runner.temp }}/supporters
+
+      - name: Use the live supporters list
+        # The build compiles the header in the fresh plugins checkout.
+        if: ${{ needs.supporters.outputs.live == 'true' }}
         shell: bash
-        env:
-          PATREON_ACCESS_TOKEN: ${{ secrets.PATREON_ACCESS_TOKEN }}
-          PATREON_REFRESH_TOKEN: ${{ secrets.PATREON_REFRESH_TOKEN }}
-          PATREON_CLIENT_ID: ${{ secrets.PATREON_CLIENT_ID }}
-          PATREON_CLIENT_SECRET: ${{ secrets.PATREON_CLIENT_SECRET }}
-          DUSK_PLUGINS_PATH: ${{ runner.temp }}/plugins
-        run: |
-          if [ -z "${PATREON_REFRESH_TOKEN}" ] || [ -z "${PATREON_ACCESS_TOKEN}" ] \
-             || [ -z "${PATREON_CLIENT_ID}" ] || [ -z "${PATREON_CLIENT_SECRET}" ]; then
-            echo "::warning::Patreon secrets not configured - shipping the committed supporters list (may be stale)."
-            exit 0
-          fi
-          umask 077
-          mkdir -p "${HOME}/.config/dusk-audio"
-          cfg="${HOME}/.config/dusk-audio/patreon.json"
-          # Always remove the credential file on exit, even if a step below fails.
-          trap 'rm -f "${cfg}"' EXIT
-          # json.dump escapes any special characters in the secrets; a raw heredoc
-          # would corrupt the JSON on a quote/backslash in a token.
-          python3 -c 'import json, os, sys; json.dump({"access_token": os.environ["PATREON_ACCESS_TOKEN"], "refresh_token": os.environ["PATREON_REFRESH_TOKEN"], "client_id": os.environ["PATREON_CLIENT_ID"], "client_secret": os.environ["PATREON_CLIENT_SECRET"]}, open(sys.argv[1], "w"))' "${cfg}"
-          # Secrets are configured, so this release must ship the live list.
-          # Fail loud instead of falling back to the committed (possibly stale)
-          # list. A blocked release beats a silently wrong one.
-          if ! python3 scripts/update-patrons.py; then
-            echo "::error::Patreon refresh failed despite configured secrets - refusing to ship a stale supporters list. Check the token/API and re-run."
-            exit 1
-          fi
+        run: cp "${RUNNER_TEMP}/supporters/PatreonBackers.h" "${RUNNER_TEMP}/plugins/plugins/shared/PatreonBackers.h"
 
       - name: Configure (Release)
         run: |
