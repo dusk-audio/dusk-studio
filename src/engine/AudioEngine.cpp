@@ -7911,11 +7911,10 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                         return;
                     }
 
-                    // Every reset at the head silences the timeline's notes as
-                    // well as the live ones, so the head chases the ones held
-                    // across it whatever caused the reset.
+                    // A first scheduling window can start inside held notes,
+                    // even when no previous callback established a discontinuity.
                     const bool chase = midiTrack && (seam
-                                    || (span.bufferOffset == 0 && perTrackFlush));
+                                    || (span.bufferOffset == 0 && (perTrackFlush || scheduledAhead < 0)));
 
                     // The timeline changed since the last block: the notes it
                     // started that it no longer ends end here. After a reset
