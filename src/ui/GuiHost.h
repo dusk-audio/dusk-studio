@@ -210,6 +210,8 @@ public:
     virtual bool pianoNotePointer (std::int64_t tick, int pitch, bool down, int modifiers = 0) = 0;
     // The pointer over a pitch's key on the open piano roll's keyboard.
     virtual bool pianoKeyPointer (int pitch, bool down) = 0;
+    virtual bool pausePianoFrames (bool paused) = 0;
+    virtual std::uint64_t pianoCompletedFrames() const = 0;
     virtual std::vector<int> pianoSelection() const = 0;
     // The open piano roll's edit cursor, in ticks from the region's start; -1 when none is open.
     virtual std::int64_t pianoEditCursor() const = 0;

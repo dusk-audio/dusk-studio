@@ -1299,6 +1299,24 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         (void) pitch; (void) down; return false;
        #endif
     }
+    bool pausePianoFrames (bool paused) override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        if (! owner.pianoRollShowing()) return false;
+        owner.pianoRollWindow->pauseFramesForScenario (paused);
+        return true;
+       #else
+        (void) paused; return false;
+       #endif
+    }
+    std::uint64_t pianoCompletedFrames() const override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        return owner.pianoRollShowing() ? owner.pianoRollWindow->completedFramesForScenario() : 0;
+       #else
+        return 0;
+       #endif
+    }
     std::vector<int> pianoSelection() const override
     {
        #if DUSKSTUDIO_HAS_NATIVE_UI
