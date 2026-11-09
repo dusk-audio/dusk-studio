@@ -18,6 +18,7 @@
  #include "engine/vst3/Vst3ParameterChanges.h"
  #include "fixtures/MappedVst3Probe.h"
  #include "support/AllocationObserver.h"
+ #include <pluginterfaces/vst/ivstmidicontrollers.h>
 #endif
 
 #include <array>
@@ -589,16 +590,18 @@ struct Vst3Probe
         return value;
     }
 
-    double noteOffsSeen()
+    double counter (const char* name)
     {
         for (int i = 0; i < slot.paramCount(); ++i)
-            if (const auto* info = slot.paramInfo (i); info != nullptr && info->name == "Note Offs Seen")
+            if (const auto* info = slot.paramInfo (i); info != nullptr && info->name == name)
             {
                 double value = -1.0;
                 if (slot.getParamValue (info->id, value)) return value * 65535.0;
             }
         return -1.0;
     }
+
+    double noteOffsSeen() { return counter ("Note Offs Seen"); }
 
     double normalized (std::uint32_t id)
     {
@@ -644,6 +647,48 @@ TEST_CASE ("the host's note-off fallback silences a VST3 synth with no CC mappin
     addMidi (panic, 0xB0, 123, 0);
     REQUIRE_THAT (probe.run (&panic), WithinAbs (0.0, 1.0e-6));
     REQUIRE_THAT (probe.heldNotes(), WithinAbs (0.0, 1.0e-6));
+}
+
+TEST_CASE ("a panic ends every held note on a VST3 synth that maps all notes off to a parameter",
+           "[vst3][fixture][panic][midi][regression]")
+{
+    namespace EveryCc = duskstudio::test::everyccvst3;
+    Vst3Probe probe;
+    REQUIRE (probe.load (EveryCc::kName));
+    REQUIRE (probe.slot.getInstance()->midiCcMappingCount() == 16 * Steinberg::Vst::kCountCtrlNumber);
+
+    // B4 over an E minor chord on channel 1, and a key held on channel 2.
+    dusk::MidiBuffer notes;
+    for (const std::uint8_t key : { 52, 55, 59, 71 })
+        addMidi (notes, 0x90, key, 90);
+    addMidi (notes, 0x91, 64, 90);
+    REQUIRE_THAT (probe.run (&notes), WithinAbs (0.5, 1.0e-6));
+
+    SECTION ("Stop's reset")
+    {
+        dusk::MidiBuffer stop;
+        REQUIRE (duskstudio::midi::emitTransportStopReset (stop, 0));
+        REQUIRE_THAT (probe.run (&stop), WithinAbs (0.0, 1.0e-6));
+        REQUIRE_THAT (probe.heldNotes(), WithinAbs (0.0, 1.0e-6));
+        REQUIRE_THAT (probe.noteOffsSeen(), WithinAbs (5.0, 1.0e-6));
+        // CC 120 and 123 on every channel still reach a synth that acts on them.
+        REQUIRE_THAT (probe.counter ("Panic Points Seen"), WithinAbs (32.0, 1.0e-6));
+
+        // A second Stop has nothing left to end.
+        probe.run (&stop);
+        REQUIRE_THAT (probe.noteOffsSeen(), WithinAbs (5.0, 1.0e-6));
+    }
+
+    SECTION ("a loop seam's reset and the chase behind it")
+    {
+        dusk::MidiBuffer seam;
+        REQUIRE (duskstudio::midi::emitHangingReset (seam, 0));
+        addMidi (seam, 0x90, 52, 90);
+        REQUIRE_THAT (probe.run (&seam), WithinAbs (0.1, 1.0e-6));
+        REQUIRE_THAT (probe.noteOffsSeen(), WithinAbs (5.0, 1.0e-6));
+        REQUIRE_THAT (probe.counter ("Panic Points Seen"), WithinAbs (32.0, 1.0e-6));
+        REQUIRE_THAT (probe.counter ("Retriggers"), WithinAbs (0.0, 1.0e-6));
+    }
 }
 
 TEST_CASE ("a hosted VST3 block bigger than the host's event list still ends its notes",

@@ -911,7 +911,6 @@ void Vst3Instance::processBlock (const hosting::PortBuffers& io) noexcept
 
     using Priority = detail::ParameterPointPriority;
     std::uint64_t parameterOrder = 0;
-    std::uint16_t failedPanicChannels = 0;
     const auto queueCcParam = [&] (int16 channel, int16 ctrl, double normalized, int32 offset, Priority priority) noexcept
     {
         if (ctrl < 0 || ctrl >= Vst::kCountCtrlNumber) return false;
@@ -920,9 +919,7 @@ void Vst3Instance::processBlock (const hosting::PortBuffers& io) noexcept
         const bool accepted = impl->inParams.append (id, offset, normalized, parameterOrder++, priority);
         if (! accepted && priority == Priority::Reset)
         {
-            const auto mask = (std::uint16_t) (1u << channel);
-            impl->pendingMidiParameterResetChannels |= mask;
-            if (ctrl == Vst::kCtrlAllSoundsOff || ctrl == Vst::kCtrlAllNotesOff) failedPanicChannels |= mask;
+            impl->pendingMidiParameterResetChannels |= (std::uint16_t) (1u << channel);
             recoveringMidi = true;
         }
         return accepted;
@@ -956,13 +953,6 @@ void Vst3Instance::processBlock (const hosting::PortBuffers& io) noexcept
     // IMidiMapping-assigned parameters (VST3 has no CC events by design).
     if (io.midiIn != nullptr)
     {
-        const auto ccMapped = [&] (int channel, int ctrl) noexcept
-        {
-            if ((ctrl == Vst::kCtrlAllSoundsOff || ctrl == Vst::kCtrlAllNotesOff)
-                && (failedPanicChannels & (1u << channel)) != 0) return false;
-            return impl->ccParamId[(size_t) (channel * Vst::kCountCtrlNumber + ctrl)]
-                       .load (std::memory_order_relaxed) != Impl::kNoCcParam;
-        };
         const auto isPanic = [] (const uint8_t* d) noexcept
         {
             return (d[0] & 0xF0u) == 0xB0
@@ -980,9 +970,9 @@ void Vst3Instance::processBlock (const hosting::PortBuffers& io) noexcept
             const auto channel = (int16_t) (d[0] & 0x0Fu);
             if (status == 0xB0 && meta.numBytes >= 3 && d[1] < 128)
             {
-                const bool accepted = queueCcParam (channel, (int16_t) d[1], (double) d[2] / 127.0,
-                                                    meta.samplePosition, ccPriority (d[1], d[2], meta.samplePosition));
-                anyPanic = anyPanic || (isPanic (d) && ! accepted);
+                queueCcParam (channel, (int16_t) d[1], (double) d[2] / 127.0,
+                              meta.samplePosition, ccPriority (d[1], d[2], meta.samplePosition));
+                anyPanic = anyPanic || isPanic (d);
             }
             else if (status == 0xE0 && meta.numBytes >= 3)
             {
@@ -1000,12 +990,14 @@ void Vst3Instance::processBlock (const hosting::PortBuffers& io) noexcept
         }
 
         // Notes go on the event list, which holds kMaxEventsPerBlock, and a
-        // block too dense for it keeps its note-offs (MidiFit.h). A panic no
-        // parameter takes becomes a note-off for each note the host saw start
-        // on its channel and not yet end, so it is charged the most that can
-        // be: the notes sounding there as the block starts, or started since
-        // the channel's last such panic. A second panic straight after the
-        // first, as in the hanging reset, costs nothing.
+        // block too dense for it keeps its note-offs (MidiFit.h). A panic
+        // becomes a note-off for each note the host saw start on its channel
+        // and not yet end, whether or not a parameter takes it too: a mapping
+        // for all notes off says nothing of whether the voices act on it, and
+        // JUCE's wrapper maps every controller. So a panic is charged the most
+        // that can be: the notes sounding there as the block starts, or
+        // started since the channel's last panic. A second panic straight
+        // after the first, as in the hanging reset, costs nothing.
         std::array<std::size_t, 16> releasable {};
         if (anyPanic)
             for (int channel = 0; channel < 16; ++channel)
@@ -1013,7 +1005,7 @@ void Vst3Instance::processBlock (const hosting::PortBuffers& io) noexcept
 
         if (impl->hasEventIn)
         {
-            const auto eventsFor = [&isPanic, &ccMapped, releasable, recoveringMidi]
+            const auto eventsFor = [&isPanic, releasable, recoveringMidi]
                                    (const uint8_t* d, int numBytes) mutable noexcept -> std::size_t
             {
                 if (numBytes < 3) return 0;
@@ -1025,7 +1017,7 @@ void Vst3Instance::processBlock (const hosting::PortBuffers& io) noexcept
                     ++onChannel;
                 }
                 if (status == 0x90 || status == 0x80) return 1;
-                if (isPanic (d) && ! ccMapped (d[0] & 0x0F, d[1])) return std::exchange (onChannel, 0);
+                if (isPanic (d)) return std::exchange (onChannel, 0);
                 return 0;
             };
             const auto addEvent = [&] (const uint8_t* d, int numBytes, int samplePosition) noexcept
@@ -1044,10 +1036,10 @@ void Vst3Instance::processBlock (const hosting::PortBuffers& io) noexcept
                     // The block's own controllers went to their parameters
                     // above; what comes here is a panic or, when the block
                     // gave way to the hanging reset, that reset.
+                    queueCcParam (channel, (int16_t) d[1], (double) d[2] / 127.0,
+                                  samplePosition, ccPriority (d[1], d[2], samplePosition));
+                    if (! isPanic (d)) return;
                     const auto mask = (std::uint16_t) (1u << channel);
-                    const bool accepted = queueCcParam (channel, (int16_t) d[1], (double) d[2] / 127.0,
-                                                        samplePosition, ccPriority (d[1], d[2], samplePosition));
-                    if (! isPanic (d) || (accepted && (failedPanicChannels & mask) == 0)) return;
                     impl->pendingMidiPanicChannels |= mask;
                     const bool complete = impl->midiNotes.releaseChannel (channel, [&] (int key)
                     {

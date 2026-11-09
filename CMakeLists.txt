@@ -936,6 +936,7 @@ target_sources(DuskStudio PRIVATE
     src/engine/scenario/cases/transport.cpp
     src/engine/scenario/cases/vst3_io_restart.cpp
     src/engine/scenario/cases/vst3_noteoff_fallback.cpp
+    src/engine/scenario/cases/vst3_stop_ends_mapped_synth_notes.cpp
     src/dsp/AuxLaneStrip.cpp
     src/dsp/BusStrip.cpp
     src/dsp/BusToneEq.cpp
