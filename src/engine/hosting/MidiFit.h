@@ -36,8 +36,8 @@ inline bool endsNotesOrExpression (const std::uint8_t* data, int numBytes) noexc
 // receives what goes, in order. Each pass over the block asks its own copy of
 // `cost`, once per message in block order, so a cost may depend on what came
 // before. Audio thread: two passes over the block, no allocation.
-template <typename Cost, typename Emit>
-void deliverWithinRoom (const dusk::MidiBuffer& midi, std::size_t room, const Cost& cost,
+template <typename Buffer, typename Cost, typename Emit>
+void deliverWithinRoom (const Buffer& midi, std::size_t room, const Cost& cost,
                         Emit&& emit) noexcept
 {
     std::size_t total = 0, releases = 0;

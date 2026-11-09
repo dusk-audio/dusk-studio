@@ -296,6 +296,8 @@ void PluginSlot::publishRemoteConnection (
         consecutiveOverruns = 0;
         autoBypassed .store (false, std::memory_order_relaxed);
         remoteCrashed.store (false, std::memory_order_relaxed);
+        standardVst3 = descriptor.formatName == "VST3";
+        standardMidi.reset();
         historyResetPending.store (true, std::memory_order_release);
         currentRemote.store (ownedRemote.get(), std::memory_order_release);
     }
@@ -692,6 +694,7 @@ void PluginSlot::prepareToPlay (double sampleRate, int blockSize)
     // Pre-size the stereo scratch so the audio thread never allocates when
     // a stereo-only plugin is in the slot.
     stereoScratch.setSize (2, preparedBlockSize, false, false, true);
+    standardMidi.prepare();
 
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
     // The wire format sets this one, not the routing ceiling - but it must not
@@ -1011,6 +1014,8 @@ bool PluginSlot::loadFromFile (const juce::File& pluginFile, juce::String& error
         attachInstanceListeners();
         cachedLatencySamples.store (ownedInstance->getLatencySamples(),
                                       std::memory_order_relaxed);
+        standardVst3 = descriptor.formatName == "VST3";
+        standardMidi.reset();
         historyResetPending.store (true, std::memory_order_release);
         currentInstance.store (ownedInstance.get(), std::memory_order_release);
     }
@@ -1192,6 +1197,8 @@ bool PluginSlot::installInProcessInstance (PluginInstancePtr fresh,
         attachInstanceListeners();
         cachedLatencySamples.store (ownedInstance->getLatencySamples(),
                                       std::memory_order_relaxed);
+        standardVst3 = descriptor.formatName == "VST3";
+        standardMidi.reset();
         historyResetPending.store (true, std::memory_order_release);
         currentInstance.store (ownedInstance.get(), std::memory_order_release);
     }
@@ -1740,6 +1747,8 @@ bool PluginSlot::restoreFromSavedState (
         attachInstanceListeners();
         cachedLatencySamples.store (ownedInstance->getLatencySamples(),
                                       std::memory_order_relaxed);
+        standardVst3 = loaded.formatName == "VST3";
+        standardMidi.reset();
         historyResetPending.store (true, std::memory_order_release);
         currentInstance.store (ownedInstance.get(), std::memory_order_release);
     }
@@ -1810,7 +1819,14 @@ std::optional<dusk::ProcessedBlock> PluginSlot::processMonoBlock (float* monoDat
             inPtrs[0] = nullptr;
         }
 
-        dusk::copyEventsWhole (midiMessages, oopMidiScratch);
+        if (standardVst3)
+        {
+            oopMidiScratch.clear();
+            standardMidi.deliver (midiMessages, [&] (const std::uint8_t* data, int bytes, int offset)
+            { return oopMidiScratch.addEvent (data, bytes, offset); });
+        }
+        else
+            dusk::copyEventsWhole (midiMessages, oopMidiScratch);
         if (! r->processBlockSync (inPtrs, std::max (rNumIn, 0),
                                        std::max (rNumOut, 0),
                                        numSamples, oopMidiScratch,
@@ -1871,6 +1887,7 @@ std::optional<dusk::ProcessedBlock> PluginSlot::processMonoBlock (float* monoDat
         // AudioBuffer wrapper around the existing buffer.
         float* channels[1] = { monoData };
         juce::AudioBuffer<float> buf (channels, 1, numSamples);
+        if (standardVst3) standardMidi.rewrite (midiMessages);
         p->processBlock (buf, midiMessages);
     }
     else if (numIn == 0 && numOut >= 1)
@@ -1890,6 +1907,7 @@ std::optional<dusk::ProcessedBlock> PluginSlot::processMonoBlock (float* monoDat
         float* procPtrs[2] = { stereoScratch.getWritePointer (0),
                                procCh > 1 ? stereoScratch.getWritePointer (1) : nullptr };
         juce::AudioBuffer<float> buf (procPtrs, procCh, numSamples);
+        if (standardVst3) standardMidi.rewrite (midiMessages);
         p->processBlock (buf, midiMessages);
 
         const float* outL = stereoScratch.getReadPointer (0);
@@ -1908,6 +1926,7 @@ std::optional<dusk::ProcessedBlock> PluginSlot::processMonoBlock (float* monoDat
 
         stereoScratch.copyFrom (0, 0, monoData, numSamples);
         stereoScratch.copyFrom (1, 0, monoData, numSamples);
+        if (standardVst3) standardMidi.rewrite (midiMessages);
         p->processBlock (stereoScratch, midiMessages);
 
         const float* l = stereoScratch.getReadPointer (0);
@@ -1999,7 +2018,14 @@ std::optional<dusk::ProcessedBlock> PluginSlot::processStereoBlock (float* L, fl
             return std::nullopt;
         }
 
-        dusk::copyEventsWhole (midiMessages, oopMidiScratch);
+        if (standardVst3)
+        {
+            oopMidiScratch.clear();
+            standardMidi.deliver (midiMessages, [&] (const std::uint8_t* data, int bytes, int offset)
+            { return oopMidiScratch.addEvent (data, bytes, offset); });
+        }
+        else
+            dusk::copyEventsWhole (midiMessages, oopMidiScratch);
         if (! r->processBlockSync (inPtrs, std::max (rNumIn, 0),
                                        std::max (rNumOut, 0),
                                        numSamples, oopMidiScratch,
@@ -2072,6 +2098,7 @@ std::optional<dusk::ProcessedBlock> PluginSlot::processStereoBlock (float* L, fl
         // place. Same shape as the per-aux EQ/comp pass above.
         float* channels[2] = { L, R };
         juce::AudioBuffer<float> buf (channels, 2, numSamples);
+        if (standardVst3) standardMidi.rewrite (midiMessages);
         p->processBlock (buf, midiMessages);
     }
     else if (numIn == 1 && numOut >= 1)
@@ -2098,6 +2125,7 @@ std::optional<dusk::ProcessedBlock> PluginSlot::processStereoBlock (float* L, fl
         float* procPtrs[2] = { stereoScratch.getWritePointer (0),
                                procCh > 1 ? stereoScratch.getWritePointer (1) : nullptr };
         juce::AudioBuffer<float> buf (procPtrs, procCh, numSamples);
+        if (standardVst3) standardMidi.rewrite (midiMessages);
         p->processBlock (buf, midiMessages);
 
         const float* outL = stereoScratch.getReadPointer (0);
@@ -2126,6 +2154,7 @@ std::optional<dusk::ProcessedBlock> PluginSlot::processStereoBlock (float* L, fl
         float* procPtrs[2] = { stereoScratch.getWritePointer (0),
                                procCh > 1 ? stereoScratch.getWritePointer (1) : nullptr };
         juce::AudioBuffer<float> buf (procPtrs, procCh, numSamples);
+        if (standardVst3) standardMidi.rewrite (midiMessages);
         p->processBlock (buf, midiMessages);
 
         const float* outL = stereoScratch.getReadPointer (0);
