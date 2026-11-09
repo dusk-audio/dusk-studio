@@ -30,6 +30,7 @@
 #include "MidiTimeCodeReceiver.h"
 #include "MidiClockEmitter.h"
 #include "MidiTimeCodeEmitter.h"
+#include "MidiAudition.h"
 #include "MidiPanic.h"
 #include "midi/MidiDevices.h"
 #include "midi/MidiSort.h"
@@ -345,6 +346,38 @@ public:
     // hasn't been built yet. Used by UI flows that auto-route the on-screen
     // keyboard to a freshly loaded instrument track.
     int getVirtualKeyboardInputIndex() const noexcept { return midiIn.getVirtualKeyboardIndex(); }
+
+    // Message thread. The piano roll's keyboard: a note straight into one MIDI
+    // track's MIDI at the start of the next processed block, whatever that
+    // track's input, arm and IN, and heard through its strip with the transport
+    // stopped as well as rolling. Never recorded. A block that is not processed
+    // (suspended, stopped device, offline render, the Mastering stage) leaves
+    // the queue as it is for the next one, so a note-on is refused in
+    // Mastering, and until the callback has taken the last one in: notes
+    // played meanwhile would otherwise all sound at once later. Also false
+    // when the note is already held or there is no room to end it. A taken
+    // note always ends, through auditionNoteOff or releaseAuditions, whose
+    // note-offs are always queued.
+    bool auditionNoteOn (int track, int channel, int note, int velocity) noexcept
+    {
+        const auto drains = auditionDrains.load (std::memory_order_relaxed);
+        if (track < 0 || track >= Session::kNumTracks || getStage() == Stage::Mastering
+            || drains == auditionOnAtDrain || ! auditionQueue.noteOn (track, channel, note, velocity))
+            return false;
+        auditionOnAtDrain = drains;
+        return true;
+    }
+    void auditionNoteOff (int track, int channel, int note) noexcept { auditionQueue.noteOff (track, channel, note); }
+    void releaseAuditions() noexcept { auditionQueue.releaseAll(); }
+    bool isAuditionHeld (int track, int channel, int note) const noexcept
+    {
+        return auditionQueue.isHeld (track, channel, note);
+    }
+    // Scenario-only: how many audition messages the callback has taken in.
+    std::uint64_t auditionMessagesDelivered() const noexcept
+    {
+        return auditionDelivered.load (std::memory_order_relaxed);
+    }
 
     // Lazy-open + start delivery thread. Opening every available output
     // at startup blocks the main thread (snd_seq_connect_to is sync).
@@ -1245,6 +1278,21 @@ private:
     std::atomic<bool> testInjectReady    { false };
     std::atomic<std::uint64_t> testInjectDropped  { 0 };
     std::atomic<std::uint64_t> testInjectUnrouted { 0 };
+
+    // The piano roll keyboard's notes. The queue's producer is the message
+    // thread and its consumer the callback, which drains it once per processed
+    // block into auditionBlock and merges each track's share at sample 0. The
+    // gates are the callback's, except that a track move renumbers them, and
+    // what is still queued, with the callback suspended.
+    midi::AuditionQueue auditionQueue;
+    std::array<midi::AuditionEvent, midi::AuditionQueue::kCapacity> auditionBlock {};
+    int auditionBlockCount = 0;
+    std::array<midi::AuditionGate, Session::kNumTracks> auditionGates {};
+    std::atomic<std::uint64_t> auditionDelivered { 0 };
+    // Blocks that drained the queue (the callback's alone to write), and how
+    // many had when the last note-on was taken (message thread).
+    std::atomic<std::uint64_t> auditionDrains { 0 };
+    std::uint64_t auditionOnAtDrain = std::numeric_limits<std::uint64_t>::max();
 
     // The live MIDI each track took last block. A block whose route narrows
     // (midi::liveRouteNarrows) resets the track's instrument, since the

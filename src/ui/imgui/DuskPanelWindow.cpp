@@ -601,6 +601,10 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
         {
             keyboardFocused = event.focus;
             DGL::ImGuiTopLevelWidget::onFocusChanged (event);
+            // A grab crossing lends the focus to a grab and gets it back; it does
+            // not mean the user has left the window.
+            if (! event.focus && event.mode == DGL::kCrossingNormal && owner.view != nullptr)
+                owner.view->focusLost();
         }
 
         // A key the widget reports as unused is handed to the host window, where the

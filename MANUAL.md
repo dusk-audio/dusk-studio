@@ -1613,6 +1613,18 @@ A locked region stays visible and selectable, and its notes can be copied. Editi
 
 Snap resolution sits beside **Snap** in the toolbar; **Chase** and the zoom controls sit at the right. The status bar holds the **Notes** and **Colour** dropdowns, **Key snap**, and the **Mute** and **Lock** checkboxes.
 
+## Playing the keyboard
+
+Click a key on the keyboard at the left of the grid to hear it. The note plays at velocity 100, the velocity a drawn note gets, on the channel shown after **ch** in the status bar. Hold the button to sustain the note, and let go anywhere to end it. As you drag, the key under the pointer plays, and the last one ends as the next one starts. Drag out over the grid and the note follows the pointer's height.
+
+The note goes to the region's track and no other, whatever the track's **MIDI port**, **Channel** and **ARM** are set to. It plays through the track's instrument and its strip as the region's own notes do, so the track's mute and solo apply. You hear it with the transport stopped, even with **IN** off, and during playback. Playing the keyboard does not make the track's live MIDI input heard with **IN** off. In the **MASTERING** stage the keyboard plays nothing.
+
+Nothing you play here is recorded, even while you record on the track: it never becomes a note in the region or in a take, and it adds no undo step.
+
+A note you are holding ends when you let go, when the piano roll closes, when you switch to another window and when you stop the transport. During playback a loop jumping back ends it too, as it ends a key held on a MIDI controller.
+
+A frozen track starts no note from the keyboard, so on a frozen track it plays nothing.
+
 ## Creating notes
 
 In **Draw** mode (**D**), click an empty grid cell to create a note at that pitch and tick. With snap on, the note starts at the nearest grid line; with snap off, it starts exactly where you click. Its length follows the current note-entry grid; with snap off, it defaults to a quarter note. The note's velocity defaults to 100.

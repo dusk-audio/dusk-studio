@@ -91,6 +91,8 @@ add_executable(dusk-studio-tests
     midi_channel_playback.cpp
     midi_capture_stream.cpp
     midi_merge_playback.cpp
+    midi_audition.cpp
+    support/AllocationObserver.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/MidiCaptureStream.cpp
     atomic_park.cpp
     audio_worker_pool.cpp
@@ -988,7 +990,6 @@ if(DUSKSTUDIO_NATIVE_VST3)
         vst3_bundle_load.cpp
         vst3_hostcontext_lifetime.cpp
         vst3_instance_process.cpp
-        support/AllocationObserver.cpp
         vst3_native_slot.cpp
         vst3_scanner.cpp
         vst3_state_revision.cpp
