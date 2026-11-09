@@ -4877,6 +4877,9 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     // Every session switch lands here, and none may move the directory with a
     // take still running - RecordManager resolves its writers against it.
     stopTransportForSessionSwitch();
+    // A key held on the piano roll's keyboard ends with the session it was
+    // played in: its note-off is queued now, not sent into the next session.
+    engine.releaseAuditions();
 
     const auto t0 = juce::Time::getMillisecondCounterHiRes();
 

@@ -1634,11 +1634,14 @@ bool AudioEngine::moveTracks (const TrackMovePlan& requested, const TrackSlotMas
     const auto midiUpToWas = midiScheduledUpTo;
     const auto timelineSeenWas = midiTimelineSeen;
     const auto timelineSoundingWas = std::make_unique<decltype (midiTimelineSounding)> (midiTimelineSounding);
+    const auto auditionGatesWere = auditionGates;
+    auditionQueue.renumberTracks ([&plan] (int was) { return plan.oldToNew[(size_t) was]; });
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
         const auto from = (size_t) plan.newToOld[(size_t) t];
         auto* strip = stripsWere[from];
         strips[(size_t) t] = strip;
+        auditionGates[(size_t) t] = auditionGatesWere[from];
         lastLiveMidiRoute[(size_t) t] = liveMidiWas[from];
         midiChaseAfterDrop[(size_t) t] = chaseAfterDropWas[from];
         midiScheduledAhead[(size_t) t] = midiAheadWas[from];
@@ -7043,6 +7046,21 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     const bool flushHangingMidi = transportJustStopped || playheadJumped;
     wasRolling = isRolling;
 
+    // The piano roll keyboard's notes for this block, merged into their tracks
+    // below. An offline render leaves them queued, as it must stay
+    // deterministic; they reach their tracks in the first block after it.
+    auditionBlockCount = 0;
+    if (! offlineRender)
+    {
+        auditionQueue.drain ([this] (const midi::AuditionEvent& event) noexcept
+        {
+            auditionBlock[(size_t) auditionBlockCount++] = event;
+            auditionGates[(size_t) event.track].hear (event.bytes);
+        });
+        if (auditionBlockCount > 0)
+            auditionDelivered.fetch_add ((std::uint64_t) auditionBlockCount, std::memory_order_relaxed);
+    }
+
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
         const auto& trackParams = session.track (t).strip;
@@ -7167,7 +7185,10 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         // (independent of IN).
         // A frozen track plays its baked WAV only - never live input. When stopped it
         // stays silent instead of monitoring the device through a frozen (bypassed) strip.
-        const bool monitorPasses = willReadFromDisk ? true : (monitorEnabled && ! isFrozen);
+        // A MIDI track the piano roll's keyboard is playing is heard as its timeline
+        // would be, IN or not (midi::AuditionGate).
+        const bool auditionHeard = midiTrack && auditionGates[(size_t) t].isOpen();
+        const bool monitorPasses = willReadFromDisk ? true : ((monitorEnabled || auditionHeard) && ! isFrozen);
 
         // SIP-style bus solo (matches Pro Tools / Logic / Cubase): when any
         // bus is soloed, a track is audible ONLY if it feeds a soloed bus.
@@ -7773,6 +7794,12 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         // Keep live onsets behind scheduled releases at equal timestamps.
         if (pullsLiveMidi) pullLiveMidi (false);
 
+        // The piano roll's keyboard plays a MIDI track past its input routing,
+        // and never into the recorder.
+        if (midiTrack && auditionBlockCount > 0 && ! midiEventsDropped
+            && ! midi::appendAuditions (auditionBlock.data(), auditionBlockCount, t, perTrackMidi[(size_t) t]))
+            midiEventsDropped = true;
+
         // A torn block can deliver a note-on without its note-off, and a
         // dropped one loses note-offs for notes it never started, so neither
         // goes out: the instrument gets the hanging reset in the block's place,
@@ -7904,6 +7931,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     perfLap (PerfSections::kStrips);
 
     // Post-DSP serial tail: metering + recording (audio thread).
+    const double auditionRate = currentSampleRate.load (std::memory_order_relaxed);
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
         const auto& job = trackJobs[(size_t) t];
@@ -7922,6 +7950,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         // the post-DSP peak (same buffer the recorder uses for printed-
         // FX captures) into the input-meter atom so the UI's existing
         // poll renders a real level for MIDI tracks.
+        float instrumentPeak = 0.0f;
         if (job.isMidi)
         {
             const int n = strips[(size_t) t]->getLastProcessedSamples();
@@ -7929,6 +7958,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             {
                 const auto rng = findSignedMinMax (lp, n);
                 const float pk = std::max (std::abs (rng.min), std::abs (rng.max));
+                instrumentPeak = pk;
                 session.track (t).meterInputDb.store (
                     pk > 1e-5f ? dusk::audio::gainToDecibels (pk, -100.0f) : -100.0f,
                     std::memory_order_relaxed);
@@ -7937,11 +7967,13 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             {
                 const auto rng = findSignedMinMax (rp, n);
                 const float pk = std::max (std::abs (rng.min), std::abs (rng.max));
+                instrumentPeak = std::max (instrumentPeak, pk);
                 session.track (t).meterInputRDb.store (
                     pk > 1e-5f ? dusk::audio::gainToDecibels (pk, -100.0f) : -100.0f,
                     std::memory_order_relaxed);
             }
         }
+        auditionGates[(size_t) t].afterBlock (numSamples, instrumentPeak, auditionRate);
 
         // Recording capture - armed tracks always commit their input to
         // disk while recording. By default the raw deviceInput is written;

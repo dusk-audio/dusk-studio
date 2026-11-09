@@ -1,6 +1,8 @@
 #include <clap/clap.h>
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -32,6 +34,10 @@ enum ParamId : clap_id
     kParamPressureZerosSeen,
     kParamBentChannels,
     kParamPressedChannels,
+    kParamLastNoteOnKey,
+    kParamLastNoteOnVelocity,
+    kParamLastNoteOnChannel,
+    kParamLastNoteOffKey,
     kParamCount
 };
 
@@ -61,6 +67,10 @@ struct PluginData
     std::uint32_t pressureZerosSeen = 0;
     std::uint32_t bentChannels = 0;
     std::uint32_t pressedChannels = 0;
+    std::uint32_t lastNoteOnKey = 0;
+    std::uint32_t lastNoteOnVelocity = 0;
+    std::uint32_t lastNoteOnChannel = 0;
+    std::uint32_t lastNoteOffKey = 0;
     std::uint32_t latencySamples = 0;
     bool midiPrimary = false;
 
@@ -92,6 +102,13 @@ struct PluginData
     }
 
     void clearVoices() noexcept { voiceCount = 0; }
+
+    void noteOn (int16_t key, std::uint32_t velocity, int16_t channel) noexcept
+    {
+        lastNoteOnKey = (std::uint32_t) std::max<int16_t> (0, key);
+        lastNoteOnVelocity = velocity;
+        lastNoteOnChannel = (std::uint32_t) std::max<int16_t> (0, channel);
+    }
 };
 
 const clap_plugin_descriptor_t kDescriptor {
@@ -185,7 +202,8 @@ bool CLAP_ABI paramGetInfo (const clap_plugin_t*, uint32_t index,
     static const char* const names[kParamCount] = {
         "voicesHeld", "chokesSeen", "cc120Seen", "cc123Seen", "noteOffsSeen",
         "noteOnsSeen", "lastNoteOnOffset", "lastNoteOffOffset", "cc121Seen",
-        "pitchCentersSeen", "pressureZerosSeen", "bentChannels", "pressedChannels"
+        "pitchCentersSeen", "pressureZerosSeen", "bentChannels", "pressedChannels",
+        "lastNoteOnKey", "lastNoteOnVelocity", "lastNoteOnChannel", "lastNoteOffKey"
     };
     *info = {};
     info->id = (clap_id) index;
@@ -217,6 +235,10 @@ bool CLAP_ABI paramGetValue (const clap_plugin_t* plugin, clap_id id, double* ou
         case kParamPressureZerosSeen: *out = (double) data->pressureZerosSeen; return true;
         case kParamBentChannels: *out = (double) data->bentChannels; return true;
         case kParamPressedChannels: *out = (double) data->pressedChannels; return true;
+        case kParamLastNoteOnKey: *out = (double) data->lastNoteOnKey; return true;
+        case kParamLastNoteOnVelocity: *out = (double) data->lastNoteOnVelocity; return true;
+        case kParamLastNoteOnChannel: *out = (double) data->lastNoteOnChannel; return true;
+        case kParamLastNoteOffKey: *out = (double) data->lastNoteOffKey; return true;
         default: return false;
     }
 }
@@ -255,10 +277,12 @@ void handleNoteEvent (PluginData& data, const clap_event_header_t* header)
         case CLAP_EVENT_NOTE_ON:
             ++data.noteOnsSeen;
             data.lastNoteOnOffset = header->time;
+            data.noteOn (note->key, (std::uint32_t) std::lround (note->velocity * 127.0), note->channel);
             data.addVoice (note->port_index, note->key, note->channel);
             break;
         case CLAP_EVENT_NOTE_OFF:
             data.lastNoteOffOffset = header->time;
+            data.lastNoteOffKey = (std::uint32_t) std::max<int16_t> (0, note->key);
             data.removeVoices (note->port_index, note->key, note->channel);
             ++data.noteOffsSeen;
             break;
@@ -316,11 +340,13 @@ void handleMidiEvent (PluginData& data, const clap_event_header_t* header)
     {
         ++data.noteOnsSeen;
         data.lastNoteOnOffset = header->time;
+        data.noteOn ((int16_t) d1, d2, channel);
         data.addVoice (port, (int16_t) d1, channel);
     }
     else if (status == 0x80 || (status == 0x90 && d2 == 0))
     {
         data.lastNoteOffOffset = header->time;
+        data.lastNoteOffKey = d1;
         data.removeVoices (port, (int16_t) d1, channel);
         ++data.noteOffsSeen;
     }

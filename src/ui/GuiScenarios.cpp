@@ -1271,6 +1271,16 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         (void) tick; (void) pitch; (void) down; (void) modifiers; return false;
        #endif
     }
+    bool pianoKeyPointer (int pitch, bool down) override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        ImVec2 point;
+        return owner.pianoRollShowing() && owner.pianoRoll->keyPointForScenario (pitch, point)
+            && pianoPointer (point.x, point.y, down);
+       #else
+        (void) pitch; (void) down; return false;
+       #endif
+    }
     std::vector<int> pianoSelection() const override
     {
        #if DUSKSTUDIO_HAS_NATIVE_UI

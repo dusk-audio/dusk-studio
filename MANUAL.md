@@ -1613,6 +1613,16 @@ A locked region stays visible and selectable, and its notes can be copied. Editi
 
 Snap resolution sits beside **Snap** in the toolbar; **Chase** and the zoom controls sit at the right. The status bar holds the **Notes** and **Colour** dropdowns, **Key snap**, and the **Mute** and **Lock** checkboxes.
 
+## Playing the keyboard
+
+Click a key on the keyboard at the left of the grid to hear it. The note plays at velocity 100, the velocity a drawn note gets, on the channel shown after **ch** in the status bar. Hold the button to sustain the note, and let go anywhere to end it. Drag up or down to play each key you pass over; each one ends as the next one starts. Drag out over the grid and the note follows the pointer's height.
+
+The note goes to the region's track and no other, whatever the track's **MIDI port**, **Channel** and **ARM** are set to. It plays through the track's instrument and its strip as the region's own notes do, so the track's mute and solo apply. You hear it with the transport stopped, even with **IN** off, and during playback.
+
+Nothing you play here is recorded: the region, its takes and the undo history stay as they were. Closing the piano roll ends a note you are holding.
+
+A frozen track's instrument is bypassed, so on a frozen track the keyboard plays nothing.
+
 ## Creating notes
 
 In **Draw** mode (**D**), click an empty grid cell to create a note at that pitch and tick. With snap on, the note starts at the nearest grid line; with snap off, it starts exactly where you click. Its length follows the current note-entry grid; with snap off, it defaults to a quarter note. The note's velocity defaults to 100.

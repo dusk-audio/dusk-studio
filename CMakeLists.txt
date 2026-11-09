@@ -915,6 +915,7 @@ target_sources(DuskStudio PRIVATE
     src/engine/scenario/cases/midi_out_dense_block.cpp
     src/engine/scenario/cases/midi_panic_all_paths.cpp
     src/engine/scenario/cases/midi_route_change_releases.cpp
+    src/engine/scenario/cases/midi_audition.cpp
     src/engine/scenario/cases/midi_timeline_edit_releases.cpp
     src/engine/scenario/cases/mint_oop_fixture.cpp
     src/engine/scenario/cases/move_tracks.cpp
@@ -1001,6 +1002,7 @@ target_sources(DuskStudio PRIVATE
     src/ui/scenario/cases/gui_midi_recovery.cpp
     src/ui/scenario/cases/gui_mixer.cpp
     src/ui/scenario/cases/gui_piano_roll.cpp
+    src/ui/scenario/cases/gui_piano_roll_audition.cpp
     src/ui/scenario/cases/gui_plugin_editors.cpp
     src/ui/scenario/cases/gui_plugin_folders.cpp
     src/ui/scenario/cases/gui_regions_markers.cpp
