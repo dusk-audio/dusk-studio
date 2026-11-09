@@ -72,8 +72,8 @@ TEST_CASE ("Generated MIDI structural reset releases its reserved capacity",
 TEST_CASE ("Generated MIDI a release smaller than its reservation hands the rest back",
            "[audio-engine][midi][budget]")
 {
-    constexpr int eventBytes = duskstudio::kGeneratedEventBytes;
-    constexpr int resetBytes = duskstudio::kHangingResetBytes;
+    static constexpr int eventBytes = duskstudio::kGeneratedEventBytes;
+    static constexpr int resetBytes = duskstudio::kHangingResetBytes;
     GeneratedMidiBudget budget (resetBytes + eventBytes);
     REQUIRE (budget.reserveStructural (resetBytes));
     CHECK (budget.discretionaryBytesAvailable() == eventBytes);

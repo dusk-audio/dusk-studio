@@ -29,6 +29,7 @@ constexpr int kTrack = 0;
 constexpr int kSettleBlocks = 3;
 constexpr float kBpm = 120.0f;
 constexpr const char* kProbeName = "Dusk Every-CC Probe Fixture";
+constexpr const char* kLatentProbeName = "Dusk Every-CC Latent Probe Fixture";
 constexpr double kCounterScale = 65535.0;
 constexpr double kMaxHeldNotes = 16.0;
 
@@ -309,14 +310,14 @@ void controllersLeg (ScenarioContext& ctx, vst3::NativeVst3Slot& slot, Track& tr
               + std::to_string (pressure) + " / after: mod " + std::to_string (wrappedModulation)
               + " expression " + std::to_string (wrappedExpression) + " bend " + std::to_string (wrappedBend)
               + " pressure " + std::to_string (wrappedPressure));
-    const auto near = [] (double a, double b) { return std::abs (a - b) < 1.0e-3; };
-    ctx.expect (near (modulation, 100.0 / 127.0) && near (expression, 50.0 / 127.0) && ! near (bend, 8192.0 / 16383.0)
-                    && near (pressure, 70.0 / 127.0),
+    const auto approx = [] (double a, double b) { return std::abs (a - b) < 1.0e-3; };
+    ctx.expect (approx (modulation, 100.0 / 127.0) && approx (expression, 50.0 / 127.0) && ! approx (bend, 8192.0 / 16383.0)
+                    && approx (pressure, 70.0 / 127.0),
                 "controllers: the region's controllers never reached the instrument");
-    ctx.expect (near (wrappedModulation, 0.0), "controllers: the mod wheel stayed where the region left it");
-    ctx.expect (near (wrappedExpression, 90.0 / 127.0), "controllers: expression did not take the loop start's value");
-    ctx.expect (near (wrappedBend, 8192.0 / 16383.0), "controllers: pitch bend did not come back to centre");
-    ctx.expect (near (wrappedPressure, 0.0), "controllers: pressure stayed where the region left it");
+    ctx.expect (approx (wrappedModulation, 0.0), "controllers: the mod wheel stayed where the region left it");
+    ctx.expect (approx (wrappedExpression, 90.0 / 127.0), "controllers: expression did not take the loop start's value");
+    ctx.expect (approx (wrappedBend, 8192.0 / 16383.0), "controllers: pitch bend did not come back to centre");
+    ctx.expect (approx (wrappedPressure, 0.0), "controllers: pressure stayed where the region left it");
     engine.pressStop();
     transport.setLoopEnabled (false);
     ctx.pump (kSettleBlocks);
@@ -346,52 +347,130 @@ void playLeg (ScenarioContext& ctx, vst3::NativeVst3Slot& slot, int input)
     stopLeg (ctx, slot, input, "Play");
 }
 
-ScenarioResult runSeamKeepsLiveKeys (ScenarioContext& ctx)
+// More of the region's notes sound across the loop end than one release has
+// room for, so the wrap resets the instrument outright, the player's key
+// with it.
+void overfullSeamLeg (ScenarioContext& ctx, vst3::NativeVst3Slot& slot, int input, Track& track)
 {
-    auto& session = ctx.session();
     auto& engine = ctx.engine();
     auto& transport = engine.getTransport();
+    auto regions = std::make_unique<std::vector<MidiRegion>>();
+    MidiRegion region;
+    region.lengthInTicks = 1000;
+    region.lengthInSamples = samplesAt (1000);
+    for (int key = 30; key < 80; ++key)
+        region.notes.push_back ({ 1, key, 100, 100, 800 });
+    regions->push_back (std::move (region));
+    track.midiRegions.publish (std::move (regions));
 
-    const int input = engine.getVirtualKeyboardInputIndex();
-    if (input < 0)
-        return ScenarioResult::skip ("the MIDI input bank has no injectable input");
+    transport.setLoopRange (0, samplesAt (kLoopEndTick));
+    transport.setLoopEnabled (true);
+    transport.setPlayhead (0);
+    engine.play();
+    ctx.pump (blockAt (samplesAt (kLiveTick)));
+    holdKeys (ctx, input);
+    const auto before = readCounters (slot);
+    for (int block = 0; transport.getPlayhead() >= samplesAt (kLiveTick) && block < 256; ++block)
+        ctx.pump (1);
+    ctx.pump (kSettleBlocks);
+    const auto after = readCounters (slot);
+    ctx.note ("over 48 at the seam: before " + describe (before) + " / after " + describe (after));
+    ctx.expect (after.panicPoints > before.panicPoints, "over 48 at the seam: the wrap did not reset the instrument");
+    ctx.expect (after.held == 0 && after.sustained == 0, "over 48 at the seam: a note survived the reset");
+    engine.pressStop();
+    transport.setLoopEnabled (false);
+    ctx.pump (kSettleBlocks);
+    releaseKeys (ctx, input);
+    publishRegion (track);
+    ctx.pump (kSettleBlocks);
+}
 
+// With IN off the track listens to its input only while stopped, so Play
+// ends a key held from before it, as IN going off does, and chases the
+// timeline in.
+void playWithMonitorOffLeg (ScenarioContext& ctx, vst3::NativeVst3Slot& slot, int input)
+{
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+    auto& track = ctx.session().track (kTrack);
+    transport.setLoopEnabled (false);
+    track.inputMonitor.store (false, std::memory_order_relaxed);
+    transport.setPlayhead (samplesAt (700));
+    ctx.pump (kSettleBlocks);
+    holdKeys (ctx, input);
+    const auto before = readCounters (slot);
+    engine.play();
+    ctx.pump (kSettleBlocks);
+    const auto after = readCounters (slot);
+    ctx.note ("Play with IN off: before " + describe (before) + " / after " + describe (after));
+    ctx.expect (before.held == 1 && before.sustained == 1, "Play with IN off: the key never reached the instrument");
+    ctx.expect (after.panicPoints > before.panicPoints, "Play with IN off: the instrument was not reset");
+    ctx.expect (after.held == 1, "Play with IN off: the key was left held or the region's note not chased in");
+    ctx.expect (after.sustained == 0, "Play with IN off: the key under the player's pedal rang on");
+    ctx.expect (after.pedalDown == kTimelinePedalChannels, "Play with IN off: the timeline's pedal did not come down");
+    stopLeg (ctx, slot, input, "Play with IN off");
+    track.inputMonitor.store (true, std::memory_order_relaxed);
+    ctx.pump (kSettleBlocks);
+}
+
+bool loadProbe (ScenarioContext& ctx, vst3::NativeVst3Slot& slot, const char* name)
+{
     const auto fixture = *ctx.fixture ("panic_probe.vst3");
     vst3::Vst3Bundle bundle;
     std::string error;
     if (! ctx.expect (bundle.load (fixture.string(), error), "the fixture module did not load"))
     {
         ctx.note ("module error: " + error);
-        return ctx.verdict();
+        return false;
     }
     std::string classId;
     for (const auto& plugin : bundle.plugins())
-        if (plugin.isInstrument && plugin.name == kProbeName) { classId = plugin.id; break; }
-    if (! ctx.expect (! classId.empty(), "the fixture advertises no every-CC instrument class"))
-        return ctx.verdict();
+        if (plugin.isInstrument && plugin.name == name) { classId = plugin.id; break; }
+    if (! ctx.expect (! classId.empty(), std::string ("the fixture does not advertise ") + name))
+        return false;
+    if (ctx.expect (slot.load (fixture, ScenarioContext::kSampleRate, ScenarioContext::kBlockSize, error, classId),
+                    "the track could not load the probe"))
+        return true;
+    ctx.note ("load error: " + error);
+    return false;
+}
 
+// The track set up to play live MIDI into the probe, cleared again when the
+// scenario ends.
+bool setUp (ScenarioContext& ctx, int input, const char* probeName)
+{
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
     auto& track = session.track (kTrack);
     midiprobe::makeLiveMidiTrack (ctx, kTrack, input);
     ctx.keep (session.tempoBpm);
     session.tempoBpm.store (kBpm, std::memory_order_release);
     session.recomputeRtCounters();
-
     auto& strip = engine.getChannelStrip (kTrack);
-    auto& slot = strip.getNativeVst3Slot();
-    if (! ctx.expect (slot.load (fixture, ScenarioContext::kSampleRate,
-                                 ScenarioContext::kBlockSize, error, classId),
-                      "the track could not load the probe"))
-    {
-        ctx.note ("load error: " + error);
-        return ctx.verdict();
-    }
+    if (! loadProbe (ctx, strip.getNativeVst3Slot(), probeName))
+        return false;
     ctx.cleanup ([&engine, &transport, &track, &strip]
     {
         engine.stop();
         transport.setLoopEnabled (false);
+        track.inputMonitor.store (true, std::memory_order_relaxed);
         track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>>());
         strip.unloadNativeVst3();
     });
+    return true;
+}
+
+ScenarioResult runSeamKeepsLiveKeys (ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    const int input = engine.getVirtualKeyboardInputIndex();
+    if (input < 0)
+        return ScenarioResult::skip ("the MIDI input bank has no injectable input");
+    if (! setUp (ctx, input, kProbeName))
+        return ctx.verdict();
+    auto& track = ctx.session().track (kTrack);
+    auto& slot = engine.getChannelStrip (kTrack).getNativeVst3Slot();
     publishRegion (track);
     ctx.pump (kSettleBlocks);
 
@@ -403,14 +482,96 @@ ScenarioResult runSeamKeepsLiveKeys (ScenarioContext& ctx)
              samplesAt (100), samplesAt (kLoopEndTick), { 1, kTimelinePedalChannels });
     wrapLeg (ctx, slot, input, "loop wrap with the region's pedal set on the loop start",
              samplesAt (kTimelinePedalTick), samplesAt (kLoopEndTick), { 0, kTimelinePedalChannels });
+    // Rolled from the loop start, the seam lands on a block's last sample.
+    wrapLeg (ctx, slot, input, "loop wrap on a block's last sample with the region's pedal held",
+             samplesAt (100), samplesAt (100) + 136 * ScenarioContext::kBlockSize + ScenarioContext::kBlockSize - 1,
+             { 1, kTimelinePedalChannels });
     seekLeg (ctx, slot, input);
     scrubLeg (ctx, slot, input);
     playLeg (ctx, slot, input);
+    playWithMonitorOffLeg (ctx, slot, input);
     monitorOffLeg (ctx, slot, input);
+    overfullSeamLeg (ctx, slot, input, track);
     controllersLeg (ctx, slot, track);
     return ctx.verdict();
 }
+
+// An instrument with latency is scheduled that far ahead, so its MIDI window
+// can start past the loop end while the transport has not yet wrapped. IN
+// going off in that block resets the instrument and the seam's release falls
+// on the same sample; the chase putting the region's pedal straight back down
+// must still land after both, or the reset's pedal-up merges away and the key
+// the reset ended rings on under the pedal.
+ScenarioResult runLatentSeamFlush (ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+    const int input = engine.getVirtualKeyboardInputIndex();
+    if (input < 0)
+        return ScenarioResult::skip ("the MIDI input bank has no injectable input");
+    if (! setUp (ctx, input, kLatentProbeName))
+        return ctx.verdict();
+    auto& track = ctx.session().track (kTrack);
+    auto& slot = engine.getChannelStrip (kTrack).getNativeVst3Slot();
+    const int latency = engine.getChannelStrip (kTrack).getInsertPluginLatencySamples();
+    ctx.note ("the probe reports " + std::to_string (latency) + " samples");
+    if (! ctx.expect (latency > 300, "the latent probe reports too little latency to reach the loop end early"))
+        return ctx.verdict();
+
+    auto regions = std::make_unique<std::vector<MidiRegion>>();
+    MidiRegion region;
+    region.lengthInTicks = 1000;
+    region.lengthInSamples = samplesAt (1000);
+    region.ccs.push_back ({ 1, 64, 127, 10 });
+    region.notes.push_back ({ 1, 64, 100, 300, 50 });
+    regions->push_back (std::move (region));
+    track.midiRegions.publish (std::move (regions));
+
+    // The block that starts 300 samples short of the loop end has its window
+    // past it.
+    static constexpr int kFlushBlock = 100;
+    const auto loopStart = samplesAt (100);
+    const auto loopEnd = loopStart + kFlushBlock * ScenarioContext::kBlockSize + 300;
+    transport.setLoopRange (loopStart, loopEnd);
+    transport.setLoopEnabled (true);
+    transport.setPlayhead (loopStart);
+    engine.play();
+    ctx.pump (20);
+    send (ctx, input, { { 0x90, kLiveKey, 90 } });
+    ctx.pump (kFlushBlock - 21);
+    const auto before = readCounters (slot);
+    ctx.note ("block about to roll starts at " + std::to_string ((long long) transport.getPlayhead())
+              + ", the loop ends at " + std::to_string ((long long) loopEnd));
+    track.inputMonitor.store (false, std::memory_order_relaxed);
+    ctx.pump (kSettleBlocks);
+    const auto after = readCounters (slot);
+    ctx.note ("IN off at a latent seam: before " + describe (before) + " / after " + describe (after));
+    ctx.expect (before.held == 1 && before.pedalDown == kTimelinePedalChannels,
+                "the key or the region's pedal never reached the instrument");
+    ctx.expect (after.held == 0, "the reset left the key held");
+    ctx.expect (after.sustained == 0, "the key the reset ended rang on under the region's pedal");
+    ctx.expect (after.pedalDown == kTimelinePedalChannels, "the region's pedal did not come back down");
+    engine.pressStop();
+    ctx.pump (kSettleBlocks);
+    return ctx.verdict();
+}
 #endif
+
+const ScenarioRegistrar latentRegistrar { Scenario {
+    "midi.latent_seam_flush_lifts_the_pedal",
+    { "vst3", "midi", "panic", "transport" },
+    Needs::Engine,
+    { "panic_probe.vst3" },
+    [] (ScenarioContext& ctx) -> std::optional<ScenarioResult>
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_VST3
+        return runLatentSeamFlush (ctx);
+       #else
+        (void) ctx;
+        return ScenarioResult::skip ("built without the native VST3 host");
+       #endif
+    }
+} };
 
 const ScenarioRegistrar registrar { Scenario {
     "midi.seam_keeps_live_keys",

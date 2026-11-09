@@ -284,6 +284,17 @@ public:
         return static_cast<IAudioProcessor*> (new EveryCcProbeInstrument);
     }
 
+    // The same probe reporting a fixed latency, so the host schedules its MIDI
+    // that far ahead of the block.
+    static FUnknown* createLatentInstance (void*)
+    {
+        auto* probe = new EveryCcProbeInstrument;
+        probe->latencySamples = EveryCc::kLatentSamples;
+        return static_cast<IAudioProcessor*> (probe);
+    }
+
+    uint32 PLUGIN_API getLatencySamples() override { return latencySamples; }
+
     tresult PLUGIN_API queryInterface (const TUID iid, void** object) override
     {
         if (FUnknownPrivate::iidEqual (iid, IMidiMapping::iid))
@@ -495,6 +506,7 @@ private:
     std::uint16_t pedalDown = 0;
     int32 noteOffsSeen = 0, panicPointsSeen = 0, retriggers = 0, pedalLifts = 0, tailsCut = 0;
     std::array<ParamValue, 4> lastValue { 0.0, 1.0, 8192.0 / 16383.0, 0.0 };
+    uint32 latencySamples = 0;
 };
 } // namespace
 } // namespace Steinberg::Vst
@@ -512,4 +524,8 @@ BEGIN_FACTORY_DEF ("Dusk Audio", "https://dusk.audio", "support@dusk.audio")
                 PClassInfo::kManyInstances, kVstAudioEffectClass,
                 duskstudio::test::everyccvst3::kName, 0, "Instrument", "1.0.0", kVstVersionString,
                 Steinberg::Vst::EveryCcProbeInstrument::createInstance)
+    DEF_CLASS2 (INLINE_UID (0x1F6A2D83, 0x9C4B47E2, 0x8A35D0C6, 0x2E71B95F),
+                PClassInfo::kManyInstances, kVstAudioEffectClass,
+                duskstudio::test::everyccvst3::kLatentName, 0, "Instrument", "1.0.0", kVstVersionString,
+                Steinberg::Vst::EveryCcProbeInstrument::createLatentInstance)
 END_FACTORY

@@ -29,6 +29,8 @@ constexpr double kCounterScale = 65535.0;
 namespace duskstudio::test::everyccvst3
 {
 constexpr const char* kName = "Dusk Every-CC Probe Fixture";
+constexpr const char* kLatentName = "Dusk Every-CC Latent Probe Fixture";
+constexpr std::uint32_t kLatentSamples = 400;
 constexpr int kMaxHeldNotes = 16;
 enum Diagnostic : std::uint32_t
 {

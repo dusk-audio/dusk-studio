@@ -15,8 +15,10 @@
 #include <vector>
 
 // The timeline's notes end when it stops playing them while the transport
-// rolls - a region muted under them, or Record pressed on the armed track -
-// and so does the hold its own sustain pedal has on them.
+// rolls - a region muted under them, a note shortened, or Record pressed on
+// the armed track. When what is left of the timeline still holds its sustain
+// pedal there, they ring on under it, as the notes it released before did;
+// when the edit took the pedal away, it comes up and lets them go.
 namespace duskstudio::scenario
 {
 namespace
@@ -62,27 +64,58 @@ std::string describe (const Sounding& s)
          + " pedalDown=" + std::to_string (s.pedalDown);
 }
 
-// The pedal goes down at tick 50 and stays; one note is held over the edit
-// and one already released under the pedal.
-MidiRegion pedalRegion()
+MidiRegion emptyRegion()
 {
     MidiRegion region;
     region.lengthInTicks = 2000;
     region.lengthInSamples = samplesAt (2000);
     region.recordedAtBPM = kBpm;
+    return region;
+}
+
+// The pedal goes down at tick 50 and stays, and one note is already released
+// under it by the time of the edit.
+MidiRegion pedalRegion()
+{
+    auto region = emptyRegion();
     region.ccs.push_back ({ 1, 64, 127, 50 });
-    region.notes.push_back ({ 1, 60, 100, 100, 1400 });
     region.notes.push_back ({ 1, 64, 100, 300, 100 });
     return region;
 }
 
-void publish (Track& track)
+// The note held over the edit.
+constexpr int kHeldKey = 60;
+MidiNote heldNote() { return { 1, kHeldKey, 100, 100, 1400 }; }
+
+void publish (Track& track, std::vector<MidiRegion> regions)
 {
-    track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (std::vector<MidiRegion> { pedalRegion() }));
+    track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (std::move (regions)));
 }
 
+std::vector<MidiRegion> oneRegion()
+{
+    auto region = pedalRegion();
+    region.notes.push_back (heldNote());
+    return { region };
+}
+
+bool editRegion (ScenarioContext& ctx, Track& track, int index, const std::function<void (MidiRegion&)>& change)
+{
+    const auto before = track.midiRegions.current()[(std::size_t) index];
+    auto after = before;
+    change (after);
+    auto& undo = ctx.engine().getUndoManager();
+    undo.beginNewTransaction();
+    return undo.perform (new MidiRegionEditAction (ctx.session(), ctx.engine(), kTrack, index, before, after));
+}
+
+// The pedal gone: nothing left sounding. The pedal kept: the note the edit
+// ends and the one released before both ring on under it.
+constexpr Sounding kAllLetGo { 0, 0, 0 };
+constexpr Sounding kRingingUnderThePedal { 0, 2, 1 };
+
 void leg (ScenarioContext& ctx, const vst3::NativeVst3Slot& slot, const std::string& what,
-          const std::function<bool()>& edit)
+          const std::function<bool()>& edit, Sounding expected = kAllLetGo)
 {
     auto& engine = ctx.engine();
     auto& transport = engine.getTransport();
@@ -99,9 +132,13 @@ void leg (ScenarioContext& ctx, const vst3::NativeVst3Slot& slot, const std::str
     ctx.pump (kSettleBlocks);
     const auto after = readSounding (slot);
     ctx.note (what + ": sounding " + describe (sounding) + " / after " + describe (after));
-    ctx.expect (after.held == 0, what + ": the region's note was left held");
-    ctx.expect (after.sustained == 0, what + ": the region's pedal left its notes sustained");
-    ctx.expect (after.pedalDown == 0, what + ": the region's pedal was left down");
+    ctx.expect (after.held == expected.held, what + ": the region's note was left held");
+    ctx.expect (after.sustained == expected.sustained,
+                what + (expected.pedalDown != 0 ? ": the notes ringing under the pedal were cut"
+                                                : ": the region's pedal left its notes sustained"));
+    ctx.expect (after.pedalDown == expected.pedalDown,
+                what + (expected.pedalDown != 0 ? ": the pedal the timeline still holds came up"
+                                                : ": the region's pedal was left down"));
     engine.stop();
     ctx.pump (kSettleBlocks);
 }
@@ -153,19 +190,35 @@ ScenarioResult runReleaseLiftsPedal (ScenarioContext& ctx)
     });
     engine.getUndoManager().clearUndoHistory();
 
-    publish (track);
+    publish (track, oneRegion());
     ctx.pump (kSettleBlocks);
-    leg (ctx, slot, "muting the region", [&ctx, &session, &engine, &track]
+    leg (ctx, slot, "muting the region that holds the pedal", [&ctx, &track]
     {
-        const auto before = track.midiRegions.current()[0];
-        auto after = before;
-        after.muted = true;
-        auto& undo = engine.getUndoManager();
-        undo.beginNewTransaction();
-        return undo.perform (new MidiRegionEditAction (session, engine, kTrack, 0, before, after));
+        return editRegion (ctx, track, 0, [] (MidiRegion& r) { r.muted = true; });
     });
 
-    publish (track);
+    // A second region plays the held note; the first keeps the pedal down.
+    auto notes = emptyRegion();
+    notes.notes.push_back (heldNote());
+    publish (track, { pedalRegion(), notes });
+    ctx.pump (kSettleBlocks);
+    leg (ctx, slot, "muting another region under the held pedal", [&ctx, &track]
+    {
+        return editRegion (ctx, track, 1, [] (MidiRegion& r) { r.muted = true; });
+    }, kRingingUnderThePedal);
+
+    publish (track, oneRegion());
+    ctx.pump (kSettleBlocks);
+    leg (ctx, slot, "shortening the held note under the held pedal", [&ctx, &track]
+    {
+        return editRegion (ctx, track, 0, [] (MidiRegion& r)
+        {
+            for (auto& note : r.notes)
+                if (note.noteNumber == kHeldKey) note.lengthInTicks = kInsideTick / 2;
+        });
+    }, kRingingUnderThePedal);
+
+    publish (track, oneRegion());
     track.recordArmed.store (true, std::memory_order_relaxed);
     session.recomputeRtCounters();
     ctx.pump (kSettleBlocks);

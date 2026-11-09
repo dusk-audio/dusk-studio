@@ -142,7 +142,7 @@ void runLeg (ScenarioContext& ctx, vst3::NativeVst3Slot& slot, int input,
         ctx.expect (wrapped.held == leg.heldAfterWrap,
                     name + ": the loop seam left the instrument holding a note the loop start does not play");
     }
-    constexpr int kLiveKeyLead = 8;
+    static constexpr int kLiveKeyLead = 8;
     int expectedHeld = kChordNotes;
     if (monitoring)
     {

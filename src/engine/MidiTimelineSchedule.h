@@ -133,6 +133,38 @@ struct HeldControls
         else if (controller == 120 || controller == 123) keysPressed[channel] = {};
     }
 
+    // Marks the lane a message sets, whatever its value: what a chase puts
+    // back, so the lanes it leaves alone can be told apart.
+    void touch (const std::uint8_t* data, int numBytes) noexcept
+    {
+        if (numBytes < 2) return;
+        const auto kind = data[0] & 0xF0;
+        const auto channel = (std::size_t) (data[0] & 0x0F);
+        const auto controller = data[1];
+        if (kind == 0xD0) mark (channel, Pressure, true);
+        else if (numBytes < 3) return;
+        else if (kind == 0xE0) mark (channel, PitchBend, true);
+        else if (kind == 0xA0)
+            keysPressed[channel][(controller & 0x7F) / 64] |= std::uint64_t { 1 } << ((controller & 0x7F) % 64);
+        else if (kind != 0xB0) return;
+        else if (controller >= 64 && controller <= 69) mark (channel, (Lane) (Pedal64 + controller - 64u), true);
+        else if (controller == 1) mark (channel, Modulation, true);
+        else if (controller == 11) mark (channel, Expression, true);
+    }
+
+    // These lanes less the ones `other` holds.
+    HeldControls without (const HeldControls& other) const noexcept
+    {
+        HeldControls rest = *this;
+        for (std::size_t channel = 0; channel < 16; ++channel)
+        {
+            rest.away[channel] = (std::uint16_t) (away[channel] & ~(unsigned) other.away[channel]);
+            for (std::size_t word = 0; word < 2; ++word)
+                rest.keysPressed[channel][word] &= ~other.keysPressed[channel][word];
+        }
+        return rest;
+    }
+
     void releaseKey (std::size_t channel, std::uint8_t key) noexcept
     {
         keysPressed[channel & 15][(key & 0x7F) / 64] &= ~(std::uint64_t { 1 } << ((key & 0x7F) % 64));
