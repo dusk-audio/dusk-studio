@@ -1264,13 +1264,18 @@ catch_discover_tests(dusk-studio-tests
     TEST_SPEC "[sfz-filesystem-fixture]"
     EXTRA_ARGS --allow-running-no-tests
     PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:")
+# Normalization-insensitive lookup is available on HFS+ and APFS, not every test filesystem.
+catch_discover_tests(dusk-studio-tests
+    TEST_SPEC "[normalization-fixture]"
+    EXTRA_ARGS --allow-running-no-tests
+    PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:")
 # File permissions stop no read by root, so a case that needs them skips there.
 catch_discover_tests(dusk-studio-tests
     TEST_SPEC "[permission-fixture]"
     EXTRA_ARGS --allow-running-no-tests
     PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:")
 catch_discover_tests(dusk-studio-tests
-    TEST_SPEC "~[alsa]~[ipc]~[host-limits]~[sfz-disk-full]~[sfz-location-disk-full]~[sfz-store-disk-full]~[sfz-filesystem-fixture]~[permission-fixture]")
+    TEST_SPEC "~[alsa]~[ipc]~[host-limits]~[sfz-disk-full]~[sfz-location-disk-full]~[sfz-store-disk-full]~[sfz-filesystem-fixture]~[normalization-fixture]~[permission-fixture]")
 # [ipc] cases start plug-in hosts and assert on bounded response times. Run
 # them serially so other cases cannot starve their control threads.
 catch_discover_tests(dusk-studio-tests

@@ -967,14 +967,19 @@ TEST_CASE ("MIDI recovery ordering and deduplication survive clock rollback", "[
 }
 
 TEST_CASE ("MIDI recovery finds normalized filenames without confusing copy and takes suffixes",
-           "[midi][recovery]")
+           "[midi][recovery][normalization-fixture]")
 {
     const duskstudio::test::TempDirectory temp ("dusk-midi-normalized-");
     const std::string composed = "Caf\xc3\xa9", decomposed = "Cafe\xcc\x81";
     const auto probe = temp.path() / stdfs::u8path (decomposed);
-    std::ofstream (dusk::fs::nativeIOPath (probe)) << "probe";
+    std::ofstream probeFile (dusk::fs::nativeIOPath (probe));
+    probeFile << "probe";
+    probeFile.close();
+    REQUIRE (! probeFile.fail());
     std::error_code error;
-    if (! stdfs::equivalent (probe, temp.path() / stdfs::u8path (composed), error))
+    const bool equivalent = stdfs::equivalent (probe, temp.path() / stdfs::u8path (composed), error);
+    REQUIRE ((! error || error == std::errc::no_such_file_or_directory));
+    if (! equivalent)
         SKIP ("the test filesystem distinguishes Unicode normalization forms");
     stdfs::remove (probe);
 
@@ -994,11 +999,12 @@ TEST_CASE ("MIDI recovery finds normalized filenames without confusing copy and 
             auto result = recovery::writeFile (file);
             REQUIRE (result.failures.empty());
             CHECK (result.written.empty());
+            const auto originalBytes = file.bytes;
             file.bytes[0] = 9;
             result = recovery::writeFile (file);
             REQUIRE (result.failures.empty());
             REQUIRE (result.written.size() == 1);
-            CHECK (contentOf (original).front() == 1);
+            CHECK (contentOf (original) == originalBytes);
             CHECK (contentOf (result.written.front()) == file.bytes);
             result = recovery::writeFile (file);
             CHECK (result.failures.empty());
