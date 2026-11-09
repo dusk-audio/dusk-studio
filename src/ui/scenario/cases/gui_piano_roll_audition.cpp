@@ -4,6 +4,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <initializer_list>
 #include <memory>
@@ -62,11 +63,13 @@ std::optional<ScenarioResult> runPianoKeyboardAudition (GuiHost& host, ScenarioC
     if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save initial session");
     ctx.keep (session.countInEnabled);
     ctx.cleanup ([&host, &engine, &session, rollStrip, keyboardStrip, originalDir, restore,
-                  loop = engine.getTransport().isLoopEnabled(), punch = engine.getTransport().isPunchEnabled()]
+                  loop = engine.getTransport().isLoopEnabled(), punch = engine.getTransport().isPunchEnabled(),
+                  editMode = session.editMode]
     {
         host.pianoKeyPointer (60, false);
         host.closePiano();
         engine.stop();
+        session.editMode = editMode;
         engine.getTransport().setLoopEnabled (loop);
         engine.getTransport().setPunchEnabled (punch);
         session.setTrackArmed (kRollTrack, false);
@@ -263,6 +266,115 @@ std::optional<ScenarioResult> runPianoKeyboardAudition (GuiHost& host, ScenarioC
     steps->push_back ({ 0, [check, untouched] { check (9, 9, 0, 67, 67, "closing the editor on G4"); untouched(); },
         delivered (20), "closing the editor left the held key sounding", {}, 4000 });
 
+    const auto beforeExtra = std::make_shared<Heard>();
+    steps->push_back ({ 200, [&ctx, &host, &engine, base, beforeExtra]
+    {
+        ctx.expect (host.openPiano (kRollTrack, 0), "the piano roll did not reopen for Escape");
+        *base = engine.auditionMessagesDelivered();
+        *beforeExtra = heardOn (ctx, kRollTrack);
+        host.pianoKeyPointer (60, true);
+    } });
+    steps->push_back ({ 0, [&host] { host.pianoKeyPointer (61, true); },
+        delivered (1), "the key before the Escape glide was not heard", {}, 4000 });
+    steps->push_back ({ 0, [&ctx, &host]
+    { ctx.expect (host.pressPianoRollKey ("Escape"), "Escape did not cancel the glide"); },
+        delivered (3), "the Escape glide was not heard", {}, 4000 });
+    steps->push_back ({ 0, [&host]
+    {
+        host.pianoNotePointer (kGridTick, 62, true);
+        host.pianoNotePointer (kGridTick, 62, false);
+    }, delivered (4), "Escape left the gliding key held", {}, 4000 });
+    steps->push_back ({ 200, [&ctx, beforeExtra, untouched]
+    {
+        const auto after = heardOn (ctx, kRollTrack);
+        ctx.expect (after.ons == beforeExtra->ons + 2 && after.offs == beforeExtra->offs + 2 && after.voices == 0,
+                    "movement or release after Escape restarted the audition");
+        untouched();
+    } });
+
+    for (const bool anotherTrack : { false, true })
+    {
+        const int destination = anotherTrack ? kKeyboardTrack : kRollTrack;
+        const int destinationChannel = anotherTrack ? 7 : 5;
+        const auto destinationBefore = std::make_shared<Heard>();
+        steps->push_back ({ 0, [&ctx, &host, &engine, &session, base, beforeExtra,
+                                destinationBefore, region, anotherTrack, destination, destinationChannel]
+        {
+            auto otherRegion = region;
+            otherRegion.notes.front().channel = destinationChannel;
+            auto regions = std::make_unique<std::vector<MidiRegion>>();
+            if (! anotherTrack) regions->push_back (region);
+            regions->push_back (std::move (otherRegion));
+            session.track (destination).midiRegions.publish (std::move (regions));
+            ctx.expect (host.openPiano (kRollTrack, 0), "the source piano roll did not open");
+            *base = engine.auditionMessagesDelivered();
+            *beforeExtra = heardOn (ctx, kRollTrack);
+            *destinationBefore = heardOn (ctx, destination);
+            host.pianoKeyPointer (64, true);
+        } });
+        steps->push_back ({ 0, [&ctx, &host, destination, anotherTrack]
+        { ctx.expect (host.openPiano (destination, anotherTrack ? 0 : 1), "the held audition could not change region"); },
+            delivered (1), "the key before changing region was not heard", {}, 4000 });
+        steps->push_back ({ 0, [&ctx, &host, beforeExtra]
+        {
+            const auto after = heardOn (ctx, kRollTrack);
+            ctx.expect (after.offs == beforeExtra->offs + 1 && after.voices == 0,
+                        "changing region left the old key held");
+            host.pianoKeyPointer (64, false);
+            host.pianoKeyPointer (65, true);
+        }, delivered (2), "changing region did not release its held key", {}, 4000 });
+        steps->push_back ({ 0, [&ctx, &host, destination, destinationChannel]
+        {
+            const auto after = heardOn (ctx, destination);
+            ctx.expect (after.onKey == 65 && after.onChannel == destinationChannel - 1 && after.onVelocity == 100,
+                        "the new region's audition used the old channel or velocity");
+            host.pianoKeyPointer (65, false);
+        }, delivered (3), "the new region's audition was not heard", {}, 4000 });
+        steps->push_back ({ 200, [&ctx, &host, &rollTrack, destinationBefore, destination, anotherTrack, region]
+        {
+            const auto after = heardOn (ctx, destination);
+            const int expected = anotherTrack ? 1 : 2;
+            ctx.expect (after.ons == destinationBefore->ons + expected
+                            && after.offs == destinationBefore->offs + expected && after.voices == 0,
+                        "a late pointer release duplicated a note-off after changing region");
+            rollTrack.midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (
+                std::initializer_list<MidiRegion> { region }));
+            ctx.expect (host.openPiano (kRollTrack, 0), "the original piano roll did not reopen");
+        }, delivered (4), "the new region's key did not end", {}, 4000 });
+    }
+
+    steps->push_back ({ 200, [&ctx, &host, &engine, base, beforeExtra]
+    {
+        *base = engine.auditionMessagesDelivered();
+        *beforeExtra = heardOn (ctx, kRollTrack);
+        ctx.expect (host.pressPianoRollKey ("D"), "Draw mode was unavailable");
+        host.pianoNotePointer (kGridTick, 60, true);
+        host.pianoNotePointer (kGridTick + 240, 60, false);
+    } });
+    steps->push_back ({ 200, [&ctx, &host, &rollTrack, beforeExtra]
+    {
+        ctx.expect (rollTrack.midiRegions.current().front().notes.size() == 2,
+                    "drawing did not add the stopped note");
+        ctx.expect (heardOn (ctx, kRollTrack).ons == beforeExtra->ons,
+                    "drawing a stopped note unexpectedly auditioned it");
+        host.pianoKeyPointer (62, true);
+    } });
+    steps->push_back ({ 0, [&host] { host.pianoKeyPointer (62, false); },
+        delivered (1), "the keyboard did not audition in Draw mode", {}, 4000 });
+    steps->push_back ({ 0, [&ctx, &host, &rollTrack, region]
+    {
+        ctx.expect (host.pressPianoRollKey ("command + Z"), "the drawn note could not be undone");
+        ctx.expect (rollTrack.midiRegions.current().front().notes == region.notes,
+                    "keyboard audition changed the drawn note's undo transaction");
+        host.pianoNotePointer (kGridTick, 60, true);
+        ctx.expect (host.pressPianoRollKey ("Escape"), "Escape did not cancel drawing");
+        host.pianoNotePointer (kGridTick, 60, false);
+        ctx.expect (rollTrack.midiRegions.current().front().notes == region.notes,
+                    "Escape kept a partially drawn note");
+        host.pressPianoRollKey ("G");
+    }, delivered (2), "Draw-mode keyboard audition did not end", {}, 4000 });
+    steps->push_back ({ 200, [&engine, base] { *base = engine.auditionMessagesDelivered() - 20; } });
+
     // Recording on the roll's own track, IN off: a key played on the
     // on-screen keyboard is the take, and the roll's keyboard is not in it.
     static constexpr int kRecordedKey = 50, kAuditionedKey = 70;
@@ -313,6 +425,50 @@ std::optional<ScenarioResult> runPianoKeyboardAudition (GuiHost& host, ScenarioC
         ctx.expect (takeNotes (kAuditionedKey) == 0, "the roll's keyboard was recorded into the take");
     }, [&engine, takeNotes] { return engine.getTransport().isStopped() && takeNotes (kRecordedKey) > 0; },
         "the take never held the on-screen keyboard's note", {}, 4000 });
+
+    const auto nextSession = ctx.tempDir() / "audition-switch" / "session.json";
+    steps->push_back ({ 200, [&ctx, &host, &engine, &session, base, nextSession]
+    {
+        session.setTrackArmed (kRollTrack, false);
+        std::filesystem::create_directories (nextSession.parent_path());
+        ctx.expect (engine.publishPluginStateForSave (true), "the audition probe state could not be saved");
+        ctx.expect (SessionSerializer::save (session, nextSession), "the next audition session could not be saved");
+        ctx.expect (host.openPiano (kRollTrack, 0), "the piano roll did not open before a failed session change");
+        *base = engine.auditionMessagesDelivered();
+        host.pianoKeyPointer (69, true);
+    } });
+    steps->push_back ({ 0, [&ctx, &host]
+    {
+        ctx.expect (! host.openSession (ctx.tempDir() / "missing" / "session.json"), "opening a missing session succeeded");
+        host.closeTopModal();
+        ctx.expect (host.openPiano (kRollTrack, 0), "a failed open made the old piano roll unusable");
+        host.pianoKeyPointer (69, false);
+    }, delivered (1), "the key before the failed open was not heard", {}, 4000 });
+    steps->push_back ({ 200, [&host, &engine, base]
+    {
+        *base = engine.auditionMessagesDelivered();
+        host.pianoKeyPointer (70, true);
+    }, [&ctx] { return heardOn (ctx, kRollTrack).voices == 0; },
+        "a failed session open left the audition held", {}, 4000 });
+    steps->push_back ({ 0, [&ctx, &host, nextSession]
+    { ctx.expect (host.openSession (nextSession), "the next audition session did not load"); },
+        delivered (1), "the key before the successful open was not heard", {}, 4000 });
+    steps->push_back ({ 250, [&ctx, &host, beforeExtra]
+    {
+        ctx.expect (heardOn (ctx, kRollTrack).voices == 0, "a held audition leaked into the new session");
+        ctx.expect (host.openPiano (kRollTrack, 0), "the new session's piano roll did not open");
+        host.pianoKeyPointer (70, false);
+        *beforeExtra = heardOn (ctx, kRollTrack);
+        host.pianoKeyPointer (60, true);
+    } });
+    steps->push_back ({ 0, [&host] { host.pianoKeyPointer (60, false); },
+        [&ctx] { return heardOn (ctx, kRollTrack).voices == 1; }, "the new session could not audition", {}, 4000 });
+    steps->push_back ({ 200, [&ctx, beforeExtra]
+    {
+        const auto after = heardOn (ctx, kRollTrack);
+        ctx.expect (after.ons == beforeExtra->ons + 1 && after.offs == beforeExtra->offs + 1 && after.voices == 0,
+                    "the old session's pointer release affected the new audition");
+    }, [&ctx] { return heardOn (ctx, kRollTrack).voices == 0; }, "the new session's audition never ended", {}, 4000 });
 
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;

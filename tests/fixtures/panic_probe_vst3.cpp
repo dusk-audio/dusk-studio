@@ -403,6 +403,18 @@ public:
                 if (voice.state == Voice::Tail && (voice.tailLeft -= data.numSamples) <= 0)
                     voice.state = Voice::Silent;
 
+        // Hosts that cache controller values need the processor's feedback.
+        if (data.outputParameterChanges != nullptr && data.numSamples > 0)
+            for (ParamID id = EveryCc::HeldNotes; id <= EveryCc::Pressure; ++id)
+            {
+                int32 queueIndex = 0;
+                if (auto* queue = data.outputParameterChanges->addParameterData (id, queueIndex))
+                {
+                    int32 pointIndex = 0;
+                    queue->addPoint (data.numSamples - 1, getParamNormalized (id), pointIndex);
+                }
+            }
+
         const auto sounding = (float) (count (Voice::Held) + count (Voice::Sustained));
         for (int32 channel = 0; channel < 2; ++channel)
             std::fill_n (out.channelBuffers32[channel], data.numSamples, sounding * 0.1f);
