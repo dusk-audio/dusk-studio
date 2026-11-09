@@ -350,17 +350,18 @@ void writeNew (WriteResult& result, const stdfs::path& sessionDir, const stdfs::
     }
     if (! makeFolder (sessionDir, folder, result)) return;
 
+    auto filenameTime = std::chrono::floor<std::chrono::seconds> (now);
     int firstCopy = 1;
     if (newest)
         if (const auto newestTime = recoverystamp::timeOfStamp (*newest);
-            newestTime && *newestTime >= std::chrono::floor<std::chrono::seconds> (now))
+            newestTime && *newestTime >= filenameTime)
         {
-            now = *newestTime;
+            filenameTime = *newestTime;
             firstCopy = copyOfFile (folder, *newest, trackNumber, sanitized, kind) + 1;
         }
     for (int second = 0; second < kMaxSeconds; ++second)
     {
-        const auto stamp = utcStamp (now + std::chrono::seconds (second));
+        const auto stamp = utcStamp (filenameTime + std::chrono::seconds (second));
         for (int copy = second == 0 ? firstCopy : 1; copy <= kMaxCopies; ++copy)
         {
             const auto target = folder / stdfs::u8path (fileNameFor (stamp, trackNumber, sanitized, kind, copy));

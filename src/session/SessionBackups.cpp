@@ -155,11 +155,12 @@ void writeNew (Result& result, const stdfs::path& sessionDir, std::chrono::syste
     const auto folder = sessionDir / kFolder;
     if (! makeFolder (sessionDir, folder, result)) return;
 
+    auto filenameTime = std::chrono::floor<std::chrono::seconds> (savedAt);
     int firstCopy = 1;
     if (const auto newestTime = recoverystamp::timeOfStamp (newest);
-        newestTime && *newestTime >= std::chrono::floor<std::chrono::seconds> (savedAt))
+        newestTime && *newestTime >= filenameTime)
     {
-        savedAt = *newestTime;
+        filenameTime = *newestTime;
         const auto suffix = newest.substr (kStampLength + kBase.size(),
                                            newest.size() - kStampLength - kBase.size() - kExtension.size());
         firstCopy = suffix.empty() ? 2 : 1 + (suffix[1] - '0') * 100 + (suffix[2] - '0') * 10 + (suffix[3] - '0');
@@ -167,7 +168,7 @@ void writeNew (Result& result, const stdfs::path& sessionDir, std::chrono::syste
     for (int attempt = 0; attempt < kMaxCopies; ++attempt)
     {
         const int position = firstCopy - 1 + attempt;
-        const auto stamp = utcStamp (savedAt + std::chrono::seconds (position / kMaxCopies));
+        const auto stamp = utcStamp (filenameTime + std::chrono::seconds (position / kMaxCopies));
         const auto target = folder / stdfs::u8path (nameFor (stamp, position % kMaxCopies + 1));
         std::error_code error;
         const auto status = stdfs::symlink_status (dusk::fs::nativeIOPath (target), error);
@@ -366,7 +367,12 @@ std::optional<std::chrono::system_clock::time_point> savedAtOf (const std::files
 {
     const auto name = backup.filename().u8string();
     if (! isBackupName (name)) return std::nullopt;
-    return recoverystamp::timeOfStamp (name);
+    const auto parsed = recoverystamp::timeOfStamp (name);
+    using Clock = std::chrono::system_clock;
+    if (! parsed || *parsed < std::chrono::ceil<std::chrono::seconds> (Clock::time_point::min())
+        || *parsed > std::chrono::floor<std::chrono::seconds> (Clock::time_point::max()))
+        return std::nullopt;
+    return Clock::time_point (std::chrono::duration_cast<Clock::duration> (parsed->time_since_epoch()));
 }
 
 bool sameBytes (const std::filesystem::path& a, const std::filesystem::path& b) noexcept

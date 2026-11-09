@@ -3913,6 +3913,7 @@ bool MainComponent::writeSessionTo (const juce::File& requestedDir,
             if (firstSave)
                 SessionSerializer::removeCopiedMidiSources (consolidated, toPath (oldSidecar));
         }
+        sessionOnDisk = true;
         engine.queueMidiTrackFiles();
         RecentSessions::add (toPath (dir));
         // A successful manual save makes the autosave stale - drop it so the
@@ -3922,7 +3923,6 @@ bool MainComponent::writeSessionTo (const juce::File& requestedDir,
         // idle (no further edits) state and skip the write.
         setLastSavedSessionJson    (json);
         setLastWrittenAutosaveJson ({}, {});
-        sessionOnDisk = true;
         setStatusForPath ("Saved", target);
         return true;
     }

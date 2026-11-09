@@ -934,9 +934,17 @@ TEST_CASE ("MIDI recovery ordering and deduplication survive clock rollback", "[
     SECTION ("playing snapshot") {}
     SECTION ("takes snapshot") { file.kind = recovery::TrackFile::Takes; }
     SECTION ("recorded pass") { file.folder = recovery::Folder::Takes; }
-    const auto first = recovery::writeFile (file);
+    auto first = recovery::writeFile (file);
     REQUIRE (first.failures.empty());
     REQUIRE (first.written.size() == 1);
+    SECTION ("imported stamp beyond a nanosecond clock")
+    {
+        auto name = first.written.front().filename().u8string();
+        name.replace (0, 16, "25000101-000000Z");
+        const auto imported = first.written.front().parent_path() / stdfs::u8path (name);
+        stdfs::rename (first.written.front(), imported);
+        first.written.front() = imported;
+    }
     file.made -= std::chrono::hours (24);
     file.bytes.back() = 4;
     auto changed = recovery::writeFile (file);
