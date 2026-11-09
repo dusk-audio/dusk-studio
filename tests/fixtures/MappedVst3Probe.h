@@ -22,3 +22,22 @@ enum Diagnostic : std::uint32_t
 };
 constexpr double kCounterScale = 65535.0;
 } // namespace duskstudio::test::mappedvst3
+
+// Maps every controller on every channel, as JUCE's VST3 wrapper does, and
+// ends a voice only on its note-off, or its sustain pedal coming up. The
+// counters accumulate over the instance's life.
+namespace duskstudio::test::everyccvst3
+{
+constexpr const char* kName = "Dusk Every-CC Probe Fixture";
+constexpr const char* kLatentName = "Dusk Every-CC Latent Probe Fixture";
+constexpr std::uint32_t kLatentSamples = 400;
+constexpr int kMaxHeldNotes = 16;
+enum Diagnostic : std::uint32_t
+{
+    HeldNotes = 300, NoteOffsSeen, PanicPointsSeen, Retriggers,
+    SustainedNotes, PedalDownChannels, PedalLiftsSeen, TailsRinging, TailsCut,
+    // The last value channel 1 set, normalised as the parameter carries it.
+    Modulation, Expression, PitchBend, Pressure
+};
+constexpr double kCounterScale = 65535.0;
+} // namespace duskstudio::test::everyccvst3

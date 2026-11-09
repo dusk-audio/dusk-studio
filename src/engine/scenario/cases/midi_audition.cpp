@@ -223,9 +223,9 @@ ScenarioResult runPacedNoteOns (ScenarioContext& ctx)
     return ctx.verdict();
 }
 
-// A held key ends at Stop and, during playback, at a loop seam, the way a key
-// held on the track's MIDI input does.
-ScenarioResult runEndsAtStopAndSeam (ScenarioContext& ctx)
+// A held key ends at Stop and rings on through a loop seam during playback,
+// the way a key held on the track's MIDI input does.
+ScenarioResult runEndsAtStopNotAtSeam (ScenarioContext& ctx)
 {
     auto& engine = ctx.engine();
     auto& transport = engine.getTransport();
@@ -265,7 +265,7 @@ ScenarioResult runEndsAtStopAndSeam (ScenarioContext& ctx)
     const auto wrapped = heardOn (ctx, 0);
     ctx.note ("rolling " + describe (rolling) + " / stopped " + describe (stopped)
               + " / looping " + describe (looping) + " / wrapped " + describe (wrapped));
-    ctx.expect (wrapped.voices == 0 && wrapped.chokes > looping.chokes, "the loop seam left the held key sounding");
+    ctx.expect (wrapped.voices == 1 && wrapped.chokes == looping.chokes, "the loop seam cut the held key");
     engine.auditionNoteOff (0, 1, 62);
     ctx.pump (1);
     return ctx.verdict();
@@ -276,7 +276,7 @@ ScenarioResult withoutClap (ScenarioContext&)
     return ScenarioResult::skip ("built without the native CLAP host");
 }
 constexpr Run runSuspended = withoutClap, runTrackMove = withoutClap, runLiveInputStaysShut = withoutClap,
-              runPacedNoteOns = withoutClap, runEndsAtStopAndSeam = withoutClap;
+              runPacedNoteOns = withoutClap, runEndsAtStopNotAtSeam = withoutClap;
 #endif
 
 const std::vector<std::string> kTags { "midi", "audition", "clap" };
@@ -296,6 +296,6 @@ const ScenarioRegistrar liveInputRegistrar { Scenario {
 const ScenarioRegistrar pacedRegistrar { Scenario {
     "midi.audition_note_ons_wait_for_the_callback", kTags, Needs::Engine, kFixtures, running (runPacedNoteOns) } };
 const ScenarioRegistrar stopSeamRegistrar { Scenario {
-    "midi.audition_ends_at_stop_and_loop_seam", kTags, Needs::Engine, kFixtures, running (runEndsAtStopAndSeam) } };
+    "midi.audition_ends_at_stop_not_at_loop_seam", kTags, Needs::Engine, kFixtures, running (runEndsAtStopNotAtSeam) } };
 } // namespace
 } // namespace duskstudio::scenario

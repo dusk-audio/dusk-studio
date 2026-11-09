@@ -2283,12 +2283,14 @@ void whenRecorderSettles (ScenarioContext& ctx, const RecordingMidiBackend* reco
 }
 
 // What one recorder port was handed: its resets, each counted by the All Sound
-// Off on channel 1 and listed at its block offset, and its note-ons by key.
+// Off on channel 1 and listed at its block offset, and its note-ons and
+// note-offs by key.
 struct PortTally
 {
     int resets = 0;
     std::string resetOffsets;
     std::array<int, 128> noteOns {};
+    std::array<int, 128> noteOffs {};
 };
 
 PortTally tallyPort (const std::vector<RecordingMidiBackend::Message>& messages, int port)
@@ -2300,6 +2302,8 @@ PortTally tallyPort (const std::vector<RecordingMidiBackend::Message>& messages,
             continue;
         if ((m.bytes[0] & 0xF0) == 0x90 && m.bytes[2] > 0)
             ++tally.noteOns[(std::size_t) (m.bytes[1] & 0x7F)];
+        else if ((m.bytes[0] & 0xF0) == 0x80 || (m.bytes[0] & 0xF0) == 0x90)
+            ++tally.noteOffs[(std::size_t) (m.bytes[1] & 0x7F)];
         else if (m.bytes[0] == 0xB0 && m.bytes[1] == 120)
         {
             ++tally.resets;
@@ -2317,14 +2321,18 @@ struct Attacks
     int expected;
 };
 
+// With `endsEachOnce`, every attack of a listed note has to end by exactly one
+// note-off of its own, a seam's release included, so a release the seam missed
+// or sent twice shows.
 void expectHanded (ScenarioContext& ctx, const std::string& track, const PortTally& tally,
-                   int expectedResets, std::initializer_list<Attacks> attacks)
+                   int expectedResets, std::initializer_list<Attacks> attacks, bool endsEachOnce = false)
 {
     std::string line = track + ": " + std::to_string (tally.resets) + " resets, at block offsets"
                      + tally.resetOffsets;
     for (const auto& a : attacks)
         line += "; " + std::string (a.note) + " attacked "
-              + std::to_string (tally.noteOns[(std::size_t) a.key]) + " times";
+              + std::to_string (tally.noteOns[(std::size_t) a.key]) + " times, ended "
+              + std::to_string (tally.noteOffs[(std::size_t) a.key]);
     ctx.note (line);
     ctx.expect (tally.resets == expectedResets,
                 track + ", Sunset was reset " + std::to_string (tally.resets) + " times, not "
@@ -2335,6 +2343,10 @@ void expectHanded (ScenarioContext& ctx, const std::string& track, const PortTal
         ctx.expect (attacked == a.expected,
                     track + ", " + a.note + " was attacked " + std::to_string (attacked) + " times, not "
                         + std::to_string (a.expected));
+        const int ended = tally.noteOffs[(std::size_t) a.key];
+        ctx.expect (! endsEachOnce || ended == attacked,
+                    track + ", " + a.note + " was attacked " + std::to_string (attacked) + " times and ended "
+                        + std::to_string (ended));
     }
 }
 
@@ -2729,16 +2741,18 @@ std::optional<ScenarioResult> latencyRiseDropsBridgedNote (ScenarioContext& ctx)
 // A MIDI track's window runs its instrument's latency ahead of the block, so
 // with Sunset at 2x it crosses the loop end a block before the transport does
 // whenever the end falls just past a block boundary. The next window starts
-// past the end but carries on from the last one, so the seam's reset, and the
+// past the end but carries on from the last one, so the seam's release, and the
 // chase that re-attacks what the loop start holds, must not go out again. Each
 // track's MIDI out carries exactly what its instrument is handed, into a
 // recorder port of its own; a second track at 1x, with no latency, is the
-// control. Every pass hands each instrument one reset and one note-on for each
-// of two notes, one held into the loop start and one on it. The loop coming
-// on, and its end moving in, while the 2x window is already past the end are
-// jumps that do need their reset; Sunset's latency also rises and falls across
-// a seam.
-std::optional<ScenarioResult> sunsetLoopSeamResetsOnce (ScenarioContext& ctx)
+// control. Every pass hands each instrument one note-on for each of two notes,
+// one held into the loop start and one on it, and no reset: only Stop resets
+// it. A third note runs over the loop end, so every seam has to end it once;
+// each attack of every note ends by exactly one note-off. The loop coming on,
+// and its end moving in, while the 2x window is already past the end are
+// jumps that do need their release; Sunset's latency also rises and falls
+// across a seam.
+std::optional<ScenarioResult> sunsetLoopSeamReleasesOnce (ScenarioContext& ctx)
 {
     static constexpr const char* kSunset = "dusk.builtin.synth";
     if (builtin::findUnit (kSunset) == nullptr)
@@ -2758,12 +2772,13 @@ std::optional<ScenarioResult> sunsetLoopSeamResetsOnce (ScenarioContext& ctx)
     // Mid-pass the loop end moves in to just past the block about to roll,
     // which keeps the loop whole blocks long.
     static constexpr std::int64_t kEditBlock = kLoopStart + (kBlock - kSeamIntoBlock) + 24 * kBlock;
-    static constexpr int kHeld = 60, kOnStart = 64;
+    static constexpr int kHeld = 60, kOnStart = 64, kOverEnd = 67;
 
     auto& engine = ctx.engine();
     auto& transport = engine.getTransport();
     auto* const recorder = sunsetsIntoRecorders (ctx, { 1.0f, 0.0f },
-                                                 { { kHeld, kLoopStart - 1000 }, { kOnStart, kLoopStart } });
+                                                 { { kHeld, kLoopStart - 1000 }, { kOnStart, kLoopStart },
+                                                   { kOverEnd, kLoopEnd - 2000 } });
     if (recorder == nullptr)
         return ctx.verdict();
     auto& latentSlot = engine.getChannelStrip (kLatentTrack).getBuiltinSlot();
@@ -2822,23 +2837,23 @@ std::optional<ScenarioResult> sunsetLoopSeamResetsOnce (ScenarioContext& ctx)
     ctx.expect (raised > latency, "the switch to 4x raised no latency");
     ctx.expect (onPlan, "a block did not start where the passes were planned");
 
-    // The roll's start and Stop reset Sunset too.
     whenRecorderSettles (ctx, recorder, [&ctx, wraps] (const std::vector<RecordingMidiBackend::Message>& messages)
     {
         for (int t = 0; t < kNumTracks; ++t)
-            expectHanded (ctx, t == kLatentTrack ? "at 2x" : "at 1x", tallyPort (messages, t), wraps + 2,
+            expectHanded (ctx, t == kLatentTrack ? "at 2x" : "at 1x", tallyPort (messages, t), 1,
                           { { "the note held into the loop start", kHeld, wraps + 1 },
-                            { "the note on the loop start", kOnStart, wraps + 1 } });
+                            { "the note on the loop start", kOnStart, wraps + 1 },
+                            { "the note over the loop end", kOverEnd, wraps } }, true);
     });
     return std::nullopt;
 }
 
 // At no latency a MIDI track's window is its block, so a loop end on a block
 // boundary never falls inside one: the block before the seam ends on it, and
-// the transport has wrapped before the next. The seam still resets the
-// instrument and chases what the loop start holds, once, at the head of the
-// block after it, so a note sounding into the loop end stops there instead of
-// hanging until Stop. Sunset at 2x, whose window crosses the same seam inside
+// the transport has wrapped before the next. The seam still ends what the
+// timeline holds and chases what the loop start holds, once, at the head of
+// the block after it, so a note sounding into the loop end stops there instead
+// of hanging until Stop. Sunset at 2x, whose window crosses the same seam inside
 // a block, is the control. On every pass, once the notes in the loop's first
 // half have died away and before the one over the loop end comes round again,
 // both tracks are silent.
@@ -2907,12 +2922,12 @@ std::optional<ScenarioResult> sunsetLoopSeamOnBlockBoundary (ScenarioContext& ct
     for (int t = 0; t < kNumTracks; ++t)
         ctx.expect (loudestDb[(std::size_t) t] > kQuietDb + 20.0f, name (t) + ", Sunset never sounded");
 
-    // The roll's start and Stop reset Sunset too, and the run stops short of
-    // the note over the loop end on the last pass.
+    // Only Stop resets Sunset, and the run stops short of the note over the
+    // loop end on the last pass.
     whenRecorderSettles (ctx, recorder, [&ctx, name, wraps] (const std::vector<RecordingMidiBackend::Message>& messages)
     {
         for (int t = 0; t < kNumTracks; ++t)
-            expectHanded (ctx, name (t), tallyPort (messages, t), wraps + 2,
+            expectHanded (ctx, name (t), tallyPort (messages, t), 1,
                           { { "the note held into the loop start", kHeld, wraps + 1 },
                             { "the note on the loop start", kOnStart, wraps + 1 },
                             { "the note over the loop end", kOverEnd, wraps } });
@@ -2922,12 +2937,12 @@ std::optional<ScenarioResult> sunsetLoopSeamOnBlockBoundary (ScenarioContext& ct
 
 // Sunset at 2x is scheduled its latency ahead, so with the loop end just past
 // a block boundary its window crosses the seam a block before the transport
-// does: it resets Sunset there and starts what the loop start holds. Switched
-// off before that next block, the loop never wraps the transport, which runs
-// straight on through the loop end. What Sunset was started from the loop
-// start must not hang there, and the note sounding over the loop end must come
-// back: the next block resets Sunset again and chases that note, which then
-// ends on its own. At 1x the window had not reached the seam, and Sunset plays
+// does: it ends what Sunset holds there and starts what the loop start holds.
+// Switched off before that next block, the loop never wraps the transport,
+// which runs straight on through the loop end. What Sunset was started from
+// the loop start must not hang there, and the note sounding over the loop end
+// must come back: the next block ends what the loop start started and chases
+// that note, which then ends on its own. At 1x the window had not reached the seam, and Sunset plays
 // straight through.
 std::optional<ScenarioResult> sunsetLoopOffPastTheSeam (ScenarioContext& ctx)
 {
@@ -2993,15 +3008,15 @@ std::optional<ScenarioResult> sunsetLoopOffPastTheSeam (ScenarioContext& ctx)
     ctx.pump (4);
     ctx.expect (onPlan, "a block did not start where the roll was planned");
 
-    // At 2x the roll's start, the seam, the return to the timeline past the
-    // loop end, and Stop each reset Sunset; at 1x only the start and Stop do.
+    // Only Stop resets Sunset; the seam and the return to the timeline past
+    // the loop end end what the timeline holds instead.
     whenRecorderSettles (ctx, recorder, [&ctx] (const std::vector<RecordingMidiBackend::Message>& messages)
     {
-        expectHanded (ctx, "at 2x", tallyPort (messages, kLatentTrack), 4,
+        expectHanded (ctx, "at 2x", tallyPort (messages, kLatentTrack), 1,
                       { { "the note held into the loop start", kHeld, 2 },
                         { "the note on the loop start", kOnStart, 2 },
                         { "the note over the loop end", kOverEnd, 2 } });
-        expectHanded (ctx, "at 1x", tallyPort (messages, kPlainTrack), 2,
+        expectHanded (ctx, "at 1x", tallyPort (messages, kPlainTrack), 1,
                       { { "the note held into the loop start", kHeld, 1 },
                         { "the note on the loop start", kOnStart, 1 },
                         { "the note over the loop end", kOverEnd, 1 } });
@@ -3592,8 +3607,8 @@ const ScenarioRegistrar latencyBridgeRegistrar { Scenario {
        #endif
     }, 120000 } };
 const ScenarioRegistrar sunsetLoopSeamRegistrar { Scenario {
-    "mix.sunset_loop_seam_resets_once", { "mix", "midi", "builtin" }, Needs::Engine, {},
-    [] (ScenarioContext& ctx) { return sunsetLoopSeamResetsOnce (ctx); }, 120000 } };
+    "mix.sunset_loop_seam_releases_once", { "mix", "midi", "builtin" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return sunsetLoopSeamReleasesOnce (ctx); }, 120000 } };
 const ScenarioRegistrar sunsetBlockBoundarySeamRegistrar { Scenario {
     "mix.sunset_loop_seam_on_block_boundary", { "mix", "midi", "builtin" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return sunsetLoopSeamOnBlockBoundary (ctx); }, 120000 } };

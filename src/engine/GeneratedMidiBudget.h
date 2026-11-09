@@ -50,6 +50,15 @@ public:
         return true;
     }
 
+    // Hands back reserved bytes a group turned out not to need.
+    constexpr bool releaseStructural (int bytes) noexcept
+    {
+        if (bytes < 0 || bytes > reservedStructuralBytes_)
+            return false;
+        reservedStructuralBytes_ -= bytes;
+        return true;
+    }
+
     constexpr int discretionaryBytesAvailable() const noexcept
     {
         return remainingBytes_ - reservedStructuralBytes_;

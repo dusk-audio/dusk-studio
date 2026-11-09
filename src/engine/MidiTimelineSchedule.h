@@ -93,6 +93,181 @@ struct NoteCount
     }
 };
 
+// The controllers a track's timeline has moved off their defaults on its
+// instrument, per channel: the pedals (CC 64-69), modulation and expression,
+// pitch bend and channel pressure, the ones Reset All Controllers returns,
+// and key pressure on the keys the timeline still holds (hearTimeline). Any
+// other controller has no default to go back to. Audio thread.
+struct HeldControls
+{
+    enum Lane : unsigned { Pedal64, Pedal65, Pedal66, Pedal67, Pedal68, Pedal69,
+                           Modulation, Expression, PitchBend, Pressure };
+    static constexpr std::uint16_t kPedals = 0x3F;
+    // The pedals that keep a released note sounding: sustain, sostenuto, hold 2.
+    static constexpr std::uint16_t kHoldingPedals = (1u << Pedal64) | (1u << Pedal66) | (1u << Pedal69);
+
+    std::array<std::uint16_t, 16> away {};
+    std::array<std::array<std::uint64_t, 2>, 16> keysPressed {};
+
+    void hear (const std::uint8_t* data, int numBytes) noexcept
+    {
+        if (numBytes < 2) return;
+        const auto kind = data[0] & 0xF0;
+        const auto channel = (std::size_t) (data[0] & 0x0F);
+        if (kind == 0xD0) { mark (channel, Pressure, data[1] != 0); return; }
+        if (numBytes < 3) return;
+        if (kind == 0xE0) { mark (channel, PitchBend, data[1] != 0 || data[2] != 64); return; }
+        if (kind == 0xA0)
+        {
+            auto& word = keysPressed[channel][(data[1] & 0x7F) / 64];
+            const auto bit = std::uint64_t { 1 } << ((data[1] & 0x7F) % 64);
+            word = data[2] != 0 ? (word | bit) : (word & ~bit);
+            return;
+        }
+        if (kind != 0xB0) return;
+        const auto controller = data[1];
+        if (controller >= 64 && controller <= 69) mark (channel, (Lane) (Pedal64 + controller - 64u), data[2] != 0);
+        else if (controller == 1) mark (channel, Modulation, data[2] != 0);
+        else if (controller == 11) mark (channel, Expression, data[2] != 127);
+        else if (controller == 121) { away[channel] = 0; keysPressed[channel] = {}; }
+        else if (controller == 120 || controller == 123) keysPressed[channel] = {};
+    }
+
+    // Marks the lane a message sets, whatever its value: what a chase puts
+    // back, so the lanes it leaves alone can be told apart.
+    void touch (const std::uint8_t* data, int numBytes) noexcept
+    {
+        if (numBytes < 2) return;
+        const auto kind = data[0] & 0xF0;
+        const auto channel = (std::size_t) (data[0] & 0x0F);
+        const auto controller = data[1];
+        if (kind == 0xD0) mark (channel, Pressure, true);
+        else if (numBytes < 3) return;
+        else if (kind == 0xE0) mark (channel, PitchBend, true);
+        else if (kind == 0xA0)
+            keysPressed[channel][(controller & 0x7F) / 64] |= std::uint64_t { 1 } << ((controller & 0x7F) % 64);
+        else if (kind != 0xB0) return;
+        else if (controller >= 64 && controller <= 69) mark (channel, (Lane) (Pedal64 + controller - 64u), true);
+        else if (controller == 1) mark (channel, Modulation, true);
+        else if (controller == 11) mark (channel, Expression, true);
+    }
+
+    // These lanes less the ones `other` holds.
+    HeldControls without (const HeldControls& other) const noexcept
+    {
+        HeldControls rest = *this;
+        for (std::size_t channel = 0; channel < 16; ++channel)
+        {
+            rest.away[channel] = (std::uint16_t) (away[channel] & ~(unsigned) other.away[channel]);
+            for (std::size_t word = 0; word < 2; ++word)
+                rest.keysPressed[channel][word] &= ~other.keysPressed[channel][word];
+        }
+        return rest;
+    }
+
+    void releaseKey (std::size_t channel, std::uint8_t key) noexcept
+    {
+        keysPressed[channel & 15][(key & 0x7F) / 64] &= ~(std::uint64_t { 1 } << ((key & 0x7F) % 64));
+    }
+
+    int pedalCount() const noexcept
+    {
+        int n = 0;
+        for (const auto lanes : away) n += bits ((unsigned) lanes & (unsigned) kPedals);
+        return n;
+    }
+
+    int otherCount() const noexcept
+    {
+        int n = 0;
+        for (std::size_t channel = 0; channel < 16; ++channel)
+            n += bits ((unsigned) away[channel] & ~(unsigned) kPedals)
+               + bits (keysPressed[channel][0]) + bits (keysPressed[channel][1]);
+        return n;
+    }
+
+    int count() const noexcept { return pedalCount() + otherCount(); }
+
+    // Each pedal back up through emit (data, numBytes); false when emit
+    // refused one.
+    template <typename Emit>
+    bool forEachPedalDefault (Emit&& emit) const noexcept
+    {
+        for (std::size_t channel = 0; channel < 16; ++channel)
+            for (unsigned lane = Pedal64; lane <= Pedal69; ++lane)
+                if ((away[channel] & (1u << lane)) != 0)
+                {
+                    const std::array<std::uint8_t, 3> message { (std::uint8_t) (0xB0 | channel), (std::uint8_t) (64 + lane), 0 };
+                    if (! emit (message.data(), 3)) return false;
+                }
+        return true;
+    }
+
+    // Up to `limit` of the other controllers back to their defaults; how many
+    // went, or -1 when emit refused one.
+    template <typename Emit>
+    int forEachOtherDefault (int limit, Emit&& emit) const noexcept
+    {
+        int sent = 0;
+        const auto send = [&] (const std::uint8_t* data, int numBytes) noexcept
+        {
+            if (sent == limit) return true;
+            if (! emit (data, numBytes)) return false;
+            ++sent;
+            return true;
+        };
+        for (std::size_t channel = 0; channel < 16; ++channel)
+        {
+            const auto status = [channel] (int kind) { return (std::uint8_t) (kind | (int) channel); };
+            const auto has = [this, channel] (Lane lane) { return (away[channel] & (1u << lane)) != 0; };
+            const std::array<std::uint8_t, 3> modulation { status (0xB0), 1, 0 };
+            const std::array<std::uint8_t, 3> expression { status (0xB0), 11, 127 };
+            const std::array<std::uint8_t, 3> bend { status (0xE0), 0, 64 };
+            const std::array<std::uint8_t, 2> pressure { status (0xD0), 0 };
+            if ((has (Modulation) && ! send (modulation.data(), 3))
+                || (has (Expression) && ! send (expression.data(), 3))
+                || (has (PitchBend) && ! send (bend.data(), 3))
+                || (has (Pressure) && ! send (pressure.data(), 2)))
+                return -1;
+            for (int key = 0; key < 128; ++key)
+                if ((keysPressed[channel][(std::size_t) key / 64] & (std::uint64_t { 1 } << (key % 64))) != 0)
+                {
+                    const std::array<std::uint8_t, 3> message { status (0xA0), (std::uint8_t) key, 0 };
+                    if (! send (message.data(), 3)) return -1;
+                }
+        }
+        return sent;
+    }
+
+private:
+    void mark (std::size_t channel, Lane lane, bool isAway) noexcept
+    {
+        const auto bit = (std::uint16_t) (1u << lane);
+        away[channel] = (std::uint16_t) (isAway ? (away[channel] | bit) : (away[channel] & ~bit));
+    }
+
+    static int bits (std::uint64_t value) noexcept
+    {
+        int n = 0;
+        for (; value != 0; value &= value - 1) ++n;
+        return n;
+    }
+};
+
+// One message the timeline sent, into what it holds: key pressure stays only
+// on a key it still holds.
+inline void hearTimeline (NoteCount& notes, HeldControls& controls,
+                          const std::uint8_t* data, int numBytes) noexcept
+{
+    controls.hear (data, numBytes);
+    if (numBytes != 3) return;
+    notes.hear (data[0], data[1], data[2]);
+    const int kind = data[0] & 0xF0;
+    if ((kind == 0x80 || kind == 0x90 || kind == 0xA0)
+        && notes.count[NoteCount::keyOf (data[0], data[1])] == 0)
+        controls.releaseKey ((std::size_t) (data[0] & 0x0F), data[1]);
+}
+
 enum class Outcome
 {
     complete,
@@ -115,6 +290,9 @@ struct Span
     std::int64_t end   = 0;
     bool         chase = false;
     std::int64_t collapseUntil = std::numeric_limits<std::int64_t>::min();
+    // A chase that puts the controllers back only: the held notes go on
+    // sounding and the programs stay as they are.
+    bool         controllersOnly = false;
 };
 
 // Tick to timeline sample for one region: through the tempo map when there is
@@ -687,7 +865,7 @@ Outcome scheduleSpan (const MidiTimeline& timeline,
     };
     const auto values = explicitControllers (capture.playback != nullptr ? 0 : -1);
     if (values != Outcome::complete) return values;
-    const auto chasedPrograms = chasedControllers (true);
+    const auto chasedPrograms = span.controllersOnly ? Outcome::complete : chasedControllers (true);
     if (chasedPrograms != Outcome::complete) return chasedPrograms;
     if (capture.playback != nullptr)
     {
@@ -740,7 +918,7 @@ Outcome scheduleSpan (const MidiTimeline& timeline,
     });
     if (capturedReleases != Outcome::complete) return capturedReleases;
 
-    if (span.chase)
+    if (span.chase && ! span.controllersOnly)
     {
         const auto held = eachRegion ([&] (std::size_t region) noexcept
         {

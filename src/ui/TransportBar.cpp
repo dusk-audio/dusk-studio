@@ -743,7 +743,7 @@ void TransportBar::timerCallback()
     // tickPeriod) samples per tick. Continues until the button releases.
     // Direct locate - scrub does NOT engage the transport so audio
     // stays silent and the audio thread sees a "playhead jumped" event
-    // (which fires the existing All Notes Off MIDI flush; safe).
+    // (which ends what the timeline was playing, as any jump does).
     const auto nowMs = juce::Time::currentTimeMillis();
     const double sr  = engine.getTimelineSampleRate();
     const auto handleScrub = [&] (bool isHeld,

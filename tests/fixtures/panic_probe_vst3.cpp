@@ -1,6 +1,7 @@
 #include "public.sdk/source/main/pluginfactory.h"
 #include "public.sdk/source/vst/vstsinglecomponenteffect.h"
 #include "pluginterfaces/vst/ivstevents.h"
+#include "pluginterfaces/vst/ivstmidicontrollers.h"
 #include "pluginterfaces/vst/ivstparameterchanges.h"
 #include "MappedVst3Probe.h"
 
@@ -12,6 +13,7 @@ namespace Steinberg::Vst
 namespace
 {
 namespace Probe = duskstudio::test::mappedvst3;
+namespace EveryCc = duskstudio::test::everyccvst3;
 constexpr ParamID kHeldNotes = 200;
 constexpr ParamID kNoteOffsSeen = 201;
 constexpr int32 kMaxHeldNotes = 16;
@@ -268,6 +270,244 @@ private:
     std::array<int32, 6> observations {};
     int32 held = 0, noteOffsSeen = 0, pointsSeen = 0, queueErrors = 0;
 };
+
+// A mapping that says nothing about whether the synth acts on all notes off:
+// every controller is assigned, and the voices only end on note-offs. Its
+// sustain pedal (CC 64) holds a released voice until the pedal comes up, a
+// voice that ends rings on as a tail, and only all sound off (CC 120) cuts a
+// tail short. Parameter points and events go in sample order, points first.
+class EveryCcProbeInstrument final : public SingleComponentEffect, public IMidiMapping
+{
+public:
+    static FUnknown* createInstance (void*)
+    {
+        return static_cast<IAudioProcessor*> (new EveryCcProbeInstrument);
+    }
+
+    // The same probe reporting a fixed latency, so the host schedules its MIDI
+    // that far ahead of the block.
+    static FUnknown* createLatentInstance (void*)
+    {
+        auto* probe = new EveryCcProbeInstrument;
+        probe->latencySamples = EveryCc::kLatentSamples;
+        return static_cast<IAudioProcessor*> (probe);
+    }
+
+    uint32 PLUGIN_API getLatencySamples() override { return latencySamples; }
+
+    tresult PLUGIN_API queryInterface (const TUID iid, void** object) override
+    {
+        if (FUnknownPrivate::iidEqual (iid, IMidiMapping::iid))
+        {
+            *object = static_cast<IMidiMapping*> (this);
+            addRef();
+            return kResultOk;
+        }
+        return SingleComponentEffect::queryInterface (iid, object);
+    }
+    uint32 PLUGIN_API addRef() override { return SingleComponentEffect::addRef(); }
+    uint32 PLUGIN_API release() override { return SingleComponentEffect::release(); }
+
+    tresult PLUGIN_API getMidiControllerAssignment (int32 bus, int16 channel, CtrlNumber controller, ParamID& id) override
+    {
+        if (bus != 0 || channel < 0 || channel >= kChannels || controller < 0 || controller >= kCountCtrlNumber)
+            return kResultFalse;
+        id = kParameterBase + (ParamID) (channel * kCountCtrlNumber + controller);
+        return kResultTrue;
+    }
+
+    tresult PLUGIN_API initialize (FUnknown* context) override
+    {
+        const auto result = SingleComponentEffect::initialize (context);
+        if (result != kResultOk) return result;
+        addEventInput (STR16 ("Event In"), kChannels);
+        addAudioOutput (STR16 ("Output"), SpeakerArr::kStereo);
+        const std::array<const TChar*, 13> names {
+            STR16 ("Held Notes"), STR16 ("Note Offs Seen"), STR16 ("Panic Points Seen"), STR16 ("Retriggers"),
+            STR16 ("Sustained Notes"), STR16 ("Pedal Down Channels"), STR16 ("Pedal Lifts Seen"),
+            STR16 ("Tails Ringing"), STR16 ("Tails Cut"),
+            STR16 ("Modulation"), STR16 ("Expression"), STR16 ("Pitch Bend"), STR16 ("Pressure")
+        };
+        for (std::size_t i = 0; i < names.size(); ++i)
+            parameters.addParameter (names[i], nullptr, i == 0 ? EveryCc::kMaxHeldNotes : kMaxNoteOffsSeen, 0.0,
+                                     ParameterInfo::kIsReadOnly, EveryCc::HeldNotes + (ParamID) i);
+        return kResultOk;
+    }
+
+    ParamValue PLUGIN_API getParamNormalized (ParamID id) override
+    {
+        const auto counter = [] (int32 value) { return (double) value / EveryCc::kCounterScale; };
+        switch (id)
+        {
+            case EveryCc::HeldNotes: return (double) std::min (count (Voice::Held), (int32) EveryCc::kMaxHeldNotes) / EveryCc::kMaxHeldNotes;
+            case EveryCc::NoteOffsSeen: return counter (noteOffsSeen);
+            case EveryCc::PanicPointsSeen: return counter (panicPointsSeen);
+            case EveryCc::Retriggers: return counter (retriggers);
+            case EveryCc::SustainedNotes: return counter (count (Voice::Sustained));
+            case EveryCc::PedalDownChannels: return counter ((int32) pedalDown);
+            case EveryCc::PedalLiftsSeen: return counter (pedalLifts);
+            case EveryCc::TailsRinging: return counter (count (Voice::Tail));
+            case EveryCc::TailsCut: return counter (tailsCut);
+            case EveryCc::Modulation: return lastValue[0];
+            case EveryCc::Expression: return lastValue[1];
+            case EveryCc::PitchBend: return lastValue[2];
+            case EveryCc::Pressure: return lastValue[3];
+            default: return SingleComponentEffect::getParamNormalized (id);
+        }
+    }
+
+    tresult PLUGIN_API setProcessing (TBool) override { return kResultOk; }
+
+    tresult PLUGIN_API process (ProcessData& data) override
+    {
+        if (data.symbolicSampleSize != kSample32 || data.numInputs != 0
+            || data.numOutputs != 1 || data.outputs == nullptr)
+            return kResultFalse;
+        auto& out = data.outputs[0];
+        if (out.numChannels != 2 || out.channelBuffers32 == nullptr
+            || out.channelBuffers32[0] == nullptr || out.channelBuffers32[1] == nullptr)
+            return kResultFalse;
+
+        std::size_t items = 0;
+        if (data.inputParameterChanges != nullptr)
+            for (int32 i = 0; i < data.inputParameterChanges->getParameterCount(); ++i)
+            {
+                auto* queue = data.inputParameterChanges->getParameterData (i);
+                if (queue == nullptr || queue->getParameterId() < kParameterBase) continue;
+                for (int32 p = 0; p < queue->getPointCount() && items < block.size(); ++p)
+                {
+                    Item item {};
+                    item.isPoint = true;
+                    item.id = queue->getParameterId();
+                    if (queue->getPoint (p, item.offset, item.value) == kResultOk)
+                        block[items++] = item;
+                }
+            }
+        if (data.inputEvents != nullptr)
+            for (int32 i = 0; i < data.inputEvents->getEventCount() && items < block.size(); ++i)
+            {
+                Item item {};
+                if (data.inputEvents->getEvent (i, item.event) != kResultOk) continue;
+                item.offset = item.event.sampleOffset;
+                block[items++] = item;
+            }
+        std::stable_sort (block.begin(), block.begin() + (std::ptrdiff_t) items, [] (const Item& a, const Item& b)
+        {
+            return a.offset < b.offset || (a.offset == b.offset && a.isPoint && ! b.isPoint);
+        });
+        for (std::size_t i = 0; i < items; ++i)
+            block[i].isPoint ? point (block[i].id, block[i].value) : event (block[i].event);
+
+        for (auto& channel : voices)
+            for (auto& voice : channel)
+                if (voice.state == Voice::Tail && (voice.tailLeft -= data.numSamples) <= 0)
+                    voice.state = Voice::Silent;
+
+        const auto sounding = (float) (count (Voice::Held) + count (Voice::Sustained));
+        for (int32 channel = 0; channel < 2; ++channel)
+            std::fill_n (out.channelBuffers32[channel], data.numSamples, sounding * 0.1f);
+        return kResultOk;
+    }
+
+private:
+    static constexpr int16 kChannels = 16;
+    static constexpr ParamID kParameterBase = 20000;
+    static constexpr int32 kTailSamples = 12000;
+
+    struct Voice
+    {
+        enum State : std::uint8_t { Silent, Held, Sustained, Tail };
+        State state = Silent;
+        int32 tailLeft = 0;
+    };
+    struct Item
+    {
+        int32 offset = 0;
+        bool isPoint = false;
+        ParamID id = 0;
+        ParamValue value = 0.0;
+        Event event {};
+    };
+
+    static bool validNote (int16 channel, int16 pitch) noexcept
+    {
+        return channel >= 0 && channel < kChannels && pitch >= 0 && pitch < 128;
+    }
+
+    int32 count (Voice::State state) const noexcept
+    {
+        int32 n = 0;
+        for (const auto& channel : voices)
+            for (const auto& voice : channel)
+                n += voice.state == state ? 1 : 0;
+        return n;
+    }
+
+    void ring (Voice& voice) noexcept
+    {
+        voice.state = Voice::Tail;
+        voice.tailLeft = kTailSamples;
+    }
+
+    void point (ParamID id, ParamValue value) noexcept
+    {
+        const auto index = id - kParameterBase;
+        const auto channel = (std::size_t) (index / kCountCtrlNumber);
+        const auto controller = (int32) (index % kCountCtrlNumber);
+        if (channel >= (std::size_t) kChannels) return;
+        if (channel == 0)
+        {
+            if (controller == kCtrlModWheel) lastValue[0] = value;
+            else if (controller == kCtrlExpression) lastValue[1] = value;
+            else if (controller == kPitchBend) lastValue[2] = value;
+            else if (controller == kAfterTouch) lastValue[3] = value;
+        }
+        if (controller == kCtrlAllSoundsOff || controller == kCtrlAllNotesOff)
+            panicPointsSeen = std::min (kMaxNoteOffsSeen, panicPointsSeen + 1);
+        if (controller == kCtrlAllSoundsOff)
+            for (auto& voice : voices[channel])
+                if (voice.state == Voice::Tail)
+                {
+                    voice.state = Voice::Silent;
+                    tailsCut = std::min (kMaxNoteOffsSeen, tailsCut + 1);
+                }
+        if (controller != kCtrlSustainOnOff) return;
+        const auto mask = (std::uint16_t) (1u << channel);
+        const bool down = value >= 0.5;
+        if (! down && (pedalDown & mask) != 0)
+        {
+            pedalLifts = std::min (kMaxNoteOffsSeen, pedalLifts + 1);
+            for (auto& voice : voices[channel])
+                if (voice.state == Voice::Sustained) ring (voice);
+        }
+        pedalDown = (std::uint16_t) (down ? (pedalDown | mask) : (pedalDown & ~mask));
+    }
+
+    void event (const Event& e) noexcept
+    {
+        if (e.type == Event::kNoteOnEvent && validNote (e.noteOn.channel, e.noteOn.pitch))
+        {
+            auto& voice = voices[(std::size_t) e.noteOn.channel][(std::size_t) e.noteOn.pitch];
+            if (voice.state == Voice::Held) retriggers = std::min (kMaxNoteOffsSeen, retriggers + 1);
+            voice.state = Voice::Held;
+        }
+        else if (e.type == Event::kNoteOffEvent && validNote (e.noteOff.channel, e.noteOff.pitch))
+        {
+            noteOffsSeen = std::min (kMaxNoteOffsSeen, noteOffsSeen + 1);
+            auto& voice = voices[(std::size_t) e.noteOff.channel][(std::size_t) e.noteOff.pitch];
+            if (voice.state != Voice::Held) return;
+            if ((pedalDown & (1u << e.noteOff.channel)) != 0) voice.state = Voice::Sustained;
+            else ring (voice);
+        }
+    }
+
+    std::array<std::array<Voice, 128>, kChannels> voices {};
+    std::array<Item, 4096> block {};
+    std::uint16_t pedalDown = 0;
+    int32 noteOffsSeen = 0, panicPointsSeen = 0, retriggers = 0, pedalLifts = 0, tailsCut = 0;
+    std::array<ParamValue, 4> lastValue { 0.0, 1.0, 8192.0 / 16383.0, 0.0 };
+    uint32 latencySamples = 0;
+};
 } // namespace
 } // namespace Steinberg::Vst
 
@@ -280,4 +520,12 @@ BEGIN_FACTORY_DEF ("Dusk Audio", "https://dusk.audio", "support@dusk.audio")
                 PClassInfo::kManyInstances, kVstAudioEffectClass,
                 duskstudio::test::mappedvst3::kName, 0, "Instrument", "1.0.0", kVstVersionString,
                 Steinberg::Vst::MappedPanicProbeInstrument::createInstance)
+    DEF_CLASS2 (INLINE_UID (0x4E1B9C27, 0x7A3F4C85, 0xB6D20E91, 0x5C8A13F4),
+                PClassInfo::kManyInstances, kVstAudioEffectClass,
+                duskstudio::test::everyccvst3::kName, 0, "Instrument", "1.0.0", kVstVersionString,
+                Steinberg::Vst::EveryCcProbeInstrument::createInstance)
+    DEF_CLASS2 (INLINE_UID (0x1F6A2D83, 0x9C4B47E2, 0x8A35D0C6, 0x2E71B95F),
+                PClassInfo::kManyInstances, kVstAudioEffectClass,
+                duskstudio::test::everyccvst3::kLatentName, 0, "Instrument", "1.0.0", kVstVersionString,
+                Steinberg::Vst::EveryCcProbeInstrument::createLatentInstance)
 END_FACTORY
