@@ -37,6 +37,7 @@ Counters counters (ScenarioContext& ctx, bool legacy)
                     if (parameter->getName (64).toStdString() == names[index])
                         values[index] = (int) std::lround (parameter->getValue() * (index == Held ? 16.0 : 65535.0));
     }
+   #if DUSKSTUDIO_HAS_NATIVE_LV2
     else
     {
         std::vector<std::uint8_t> state;
@@ -52,6 +53,7 @@ Counters counters (ScenarioContext& ctx, bool legacy)
             ctx.expect (! numbers.fail(), "the LV2 probe did not expose every diagnostic counter");
         }
     }
+   #endif
     for (const auto value : values) ctx.expect (value >= 0, "a host probe counter was unavailable");
     return values;
 }
@@ -126,6 +128,7 @@ ScenarioResult runOtherHostSeams (ScenarioContext& ctx, bool legacy)
             return ctx.verdict();
         ctx.expect (slot.isLoadedStandardVst3(), "the standard hosting path was not selected");
     }
+   #if DUSKSTUDIO_HAS_NATIVE_LV2
     else
     {
         std::string error;
@@ -134,6 +137,7 @@ ScenarioResult runOtherHostSeams (ScenarioContext& ctx, bool legacy)
         if (! ctx.expect (loaded, "LV2 load failed: " + error))
             return ctx.verdict();
     }
+   #endif
 
     const auto stop = [&]
     {
