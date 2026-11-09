@@ -183,10 +183,23 @@ struct MainComponent::ScenarioStripHandle final : scenario::StripHandle
     ScenarioStripHandle (MainComponent& ownerIn, int indexIn)
         : owner (ownerIn), index (indexIn) {}
 
+    // A native slot's load and unload free the instance a DSP worker can be
+    // inside on a live device, so they run behind the engine's process gate,
+    // as the strip's own controls do.
+    struct ProcessGate
+    {
+        explicit ProcessGate (AudioEngine& engineIn) : engine (engineIn) { engine.suspendProcessing(); }
+        ~ProcessGate() { engine.resumeProcessing(); }
+        ProcessGate (const ProcessGate&) = delete;
+        ProcessGate& operator= (const ProcessGate&) = delete;
+        AudioEngine& engine;
+    };
+
     bool loadNativeClap (const std::filesystem::path& file, const std::string& pluginId,
                          std::string& errorOut) override
     {
        #if DUSKSTUDIO_HAS_NATIVE_CLAP
+        const ProcessGate gate (owner.engine);
         return owner.engine.getChannelStrip (index)
             .loadNativeClap (hostFile (file), errorOut, HostString (pluginId.c_str()));
        #else
@@ -200,6 +213,7 @@ struct MainComponent::ScenarioStripHandle final : scenario::StripHandle
                         std::string& errorOut) override
     {
        #if DUSKSTUDIO_HAS_NATIVE_LV2
+        const ProcessGate gate (owner.engine);
         return owner.engine.getChannelStrip (index)
             .loadNativeLv2 (hostFile (file), errorOut, HostString (pluginId.c_str()));
        #else
@@ -213,6 +227,7 @@ struct MainComponent::ScenarioStripHandle final : scenario::StripHandle
                          std::string& errorOut) override
     {
        #if DUSKSTUDIO_HAS_NATIVE_VST3
+        const ProcessGate gate (owner.engine);
         return owner.engine.getChannelStrip (index)
             .loadNativeVst3 (hostFile (file), errorOut, HostString (pluginId.c_str()));
        #else
@@ -224,10 +239,13 @@ struct MainComponent::ScenarioStripHandle final : scenario::StripHandle
 
     void unloadNativePlugins() override
     {
-        auto& strip = owner.engine.getChannelStrip (index);
-        strip.unloadNativeClap();
-        strip.unloadNativeLv2();
-        strip.unloadNativeVst3();
+        {
+            const ProcessGate gate (owner.engine);
+            auto& strip = owner.engine.getChannelStrip (index);
+            strip.unloadNativeClap();
+            strip.unloadNativeLv2();
+            strip.unloadNativeVst3();
+        }
 
         auto& track = owner.session.track (index);
         track.nativeClapPath.clear();
