@@ -4,6 +4,7 @@
 
 #include <memory>
 #include <string>
+#include <utility>
 
 namespace duskstudio::scenario
 {
@@ -38,7 +39,14 @@ std::optional<ScenarioResult> runAuditionOutput (ScenarioContext& ctx)
     ctx.pump (1);
     engine.auditionNoteOff (0, 3, 60);
     ctx.pump (3);
-    ctx.waitUntil ([recorder] { return recorder->count() >= 2; }, 4000,
+    auto drain = std::make_shared<std::pair<std::size_t, int>> (0, 0);
+    ctx.waitUntil ([recorder, drain]
+        {
+            const auto count = recorder->count();
+            if (count == drain->first) ++drain->second;
+            else { drain->first = count; drain->second = 0; }
+            return count >= 2 && drain->second >= 3;
+        }, 4000,
         [&ctx, &engine, &track, recorder, before]
         {
             const auto messages = recorder->captured();

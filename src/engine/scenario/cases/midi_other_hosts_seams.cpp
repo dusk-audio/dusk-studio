@@ -174,6 +174,12 @@ ScenarioResult runOtherHostSeams (ScenarioContext& ctx, bool legacy)
         ctx.expect (after[Tails] > 0 && after[TailsCut] == before[TailsCut] && after[Panics] == before[Panics],
                     "the loop used a blanket panic or cut a live release tail");
         ctx.expect (after[Retriggers] == before[Retriggers], "the loop retriggered an already held note");
+        if (legacy && destination == 100)
+        {
+            engine.suspendProcessing();
+            strip.getPluginSlot().prepareToPlay (ScenarioContext::kSampleRate, ScenarioContext::kBlockSize);
+            engine.resumeProcessing();
+        }
         stop();
     }
 
