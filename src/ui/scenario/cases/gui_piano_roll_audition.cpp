@@ -270,7 +270,8 @@ std::optional<ScenarioResult> runPianoKeyboardAudition (GuiHost& host, ScenarioC
     const auto stalled = std::make_shared<Heard>();
     steps->push_back ({ 200, [&ctx, &host, &engine, base, stalled]
     {
-        ctx.expect (host.openPiano (kRollTrack, 0), "the piano roll did not reopen for paused drawing");
+        host.openPianoRoll (kRollTrack, 0);
+        ctx.expect (host.pianoRollOpen(), "the piano roll did not reopen for paused drawing");
         *base = engine.auditionMessagesDelivered();
         *stalled = heardOn (ctx, kRollTrack);
     } });
@@ -306,7 +307,8 @@ std::optional<ScenarioResult> runPianoKeyboardAudition (GuiHost& host, ScenarioC
     const auto beforeExtra = std::make_shared<Heard>();
     steps->push_back ({ 200, [&ctx, &host, &engine, base, beforeExtra]
     {
-        ctx.expect (host.openPiano (kRollTrack, 0), "the piano roll did not reopen for Escape");
+        host.openPianoRoll (kRollTrack, 0);
+        ctx.expect (host.pianoRollOpen(), "the piano roll did not reopen for Escape");
         *base = engine.auditionMessagesDelivered();
         *beforeExtra = heardOn (ctx, kRollTrack);
     } });
@@ -344,7 +346,8 @@ std::optional<ScenarioResult> runPianoKeyboardAudition (GuiHost& host, ScenarioC
             if (! anotherTrack) regions->push_back (region);
             regions->push_back (std::move (otherRegion));
             session.track (destination).midiRegions.publish (std::move (regions));
-            ctx.expect (host.openPiano (kRollTrack, 0), "the source piano roll did not open");
+            host.openPianoRoll (kRollTrack, 0);
+            ctx.expect (host.pianoRollOpen(), "the source piano roll did not open");
             *base = engine.auditionMessagesDelivered();
             *beforeExtra = heardOn (ctx, kRollTrack);
             *destinationBefore = heardOn (ctx, destination);
@@ -352,7 +355,11 @@ std::optional<ScenarioResult> runPianoKeyboardAudition (GuiHost& host, ScenarioC
         steps->push_back ({ 0, [] {}, [&host] { return host.pianoKeyPointer (64, true); },
             "the source region's keyboard did not become ready", {}, 4000 });
         steps->push_back ({ 0, [&ctx, &host, destination, anotherTrack]
-        { ctx.expect (host.openPiano (destination, anotherTrack ? 0 : 1), "the held audition could not change region"); },
+        {
+            host.openPianoRoll (destination, anotherTrack ? 0 : 1);
+            ctx.expect (host.pianoRollOpen() && host.pianoRollRegion() == (anotherTrack ? 0 : 1),
+                        "the held audition could not change region");
+        },
             delivered (1), "the key before changing region was not heard", {}, 4000 });
         steps->push_back ({ 0, [&ctx, beforeExtra]
         {
@@ -379,7 +386,8 @@ std::optional<ScenarioResult> runPianoKeyboardAudition (GuiHost& host, ScenarioC
                         "a late pointer release duplicated a note-off after changing region");
             rollTrack.midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (
                 std::initializer_list<MidiRegion> { region }));
-            ctx.expect (host.openPiano (kRollTrack, 0), "the original piano roll did not reopen");
+            host.openPianoRoll (kRollTrack, 0);
+            ctx.expect (host.pianoRollOpen(), "the original piano roll did not reopen");
         }, delivered (4), "the new region's key did not end", {}, 4000 });
     }
 
@@ -437,7 +445,8 @@ std::optional<ScenarioResult> runPianoKeyboardAudition (GuiHost& host, ScenarioC
     };
     steps->push_back ({ 200, [&ctx, &host, &engine, &session, &rollTrack, keyboardInput]
     {
-        ctx.expect (host.openPiano (kRollTrack, 0), "the piano roll did not reopen");
+        host.openPianoRoll (kRollTrack, 0);
+        ctx.expect (host.pianoRollOpen(), "the piano roll did not reopen");
         auto& transport = engine.getTransport();
         transport.setLoopEnabled (false);
         transport.setPunchEnabled (false);
@@ -473,7 +482,8 @@ std::optional<ScenarioResult> runPianoKeyboardAudition (GuiHost& host, ScenarioC
         std::filesystem::create_directories (nextSession.parent_path());
         ctx.expect (engine.publishPluginStateForSave (true), "the audition probe state could not be saved");
         ctx.expect (SessionSerializer::save (session, nextSession), "the next audition session could not be saved");
-        ctx.expect (host.openPiano (kRollTrack, 0), "the piano roll did not open before a failed session change");
+        host.openPianoRoll (kRollTrack, 0);
+        ctx.expect (host.pianoRollOpen(), "the piano roll did not open before a failed session change");
         *base = engine.auditionMessagesDelivered();
     } });
     steps->push_back ({ 0, [] {}, [&host] { return host.pianoKeyPointer (69, true); },
@@ -482,7 +492,8 @@ std::optional<ScenarioResult> runPianoKeyboardAudition (GuiHost& host, ScenarioC
     {
         ctx.expect (! host.openSession (ctx.tempDir() / "missing" / "session.json"), "opening a missing session succeeded");
         host.closeTopModal();
-        ctx.expect (host.openPiano (kRollTrack, 0), "a failed open made the old piano roll unusable");
+        host.openPianoRoll (kRollTrack, 0);
+        ctx.expect (host.pianoRollOpen(), "a failed open made the old piano roll unusable");
         host.pianoKeyPointer (69, false);
     }, delivered (1), "the key before the failed open was not heard", {}, 4000 });
     steps->push_back ({ 200, [&host, &engine, base]
@@ -497,7 +508,8 @@ std::optional<ScenarioResult> runPianoKeyboardAudition (GuiHost& host, ScenarioC
     steps->push_back ({ 250, [&ctx, &host, beforeExtra]
     {
         ctx.expect (heardOn (ctx, kRollTrack).voices == 0, "a held audition leaked into the new session");
-        ctx.expect (host.openPiano (kRollTrack, 0), "the new session's piano roll did not open");
+        host.openPianoRoll (kRollTrack, 0);
+        ctx.expect (host.pianoRollOpen(), "the new session's piano roll did not open");
         *beforeExtra = heardOn (ctx, kRollTrack);
     } });
     steps->push_back ({ 0, [] {}, [&host] { return host.pianoKeyPointer (70, false); },

@@ -152,6 +152,9 @@ ScenarioResult runOtherHostSeams (ScenarioContext& ctx, bool legacy)
         transport.setPlayhead (32500);
         engine.play();
         ctx.pump (1);
+        const auto started = counters (ctx, legacy);
+        ctx.expect (started[Held] == 2 && started[Pedals] == 1,
+                    "starting inside the region did not chase its held notes and pedal");
         send (ctx, input, { { 0x91, 72, 100 }, { 0xb1, 64, 127 }, { 0x91, 74, 100 } });
         send (ctx, input, { { 0x81, 74, 0 } });
         for (int block = 0; block < 32 && transport.getPlayhead() < 38976; ++block) ctx.pump (1);
@@ -162,7 +165,8 @@ ScenarioResult runOtherHostSeams (ScenarioContext& ctx, bool legacy)
         const auto after = counters (ctx, legacy);
         ctx.note ("loop target " + std::to_string (destination) + ": held " + std::to_string (after[Held])
                   + ", sustained " + std::to_string (after[Sustained]) + ", pedals " + std::to_string (after[Pedals]));
-        ctx.expect (before[Sustained] == 2 && before[Tails] > 0, "the loop test never held its sustained voices and tail");
+        ctx.expect (before[Sustained] == 2, "the loop test never held its sustained voices");
+        ctx.expect (before[Tails] > 0, "the loop test never had a live release tail");
         ctx.expect (transport.getPlayhead() < 20000, "the loop never wrapped");
         ctx.expect (after[Held] == (destination == 0 ? 1 : 2) && after[Sustained] == 1,
                     "the loop cut a live key or kept a timeline voice");
