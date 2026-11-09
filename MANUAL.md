@@ -1623,7 +1623,7 @@ The note goes to the region's track and no other, whatever the track's **MIDI po
 
 Nothing you play here is recorded, even while you record on the track: it never becomes a note in the region or in a take, and it adds no undo step.
 
-A note you are holding ends when you let go, when the piano roll closes, when you switch to another window and when you stop the transport. During playback a loop jumping back ends it too, as it ends a key held on a MIDI controller.
+A note you are holding ends when you let go, when the piano roll closes, when you switch to another window and when you stop the transport. During playback a loop jumping back leaves it sounding, as it leaves a key held on a MIDI controller.
 
 A frozen track starts no note from the keyboard, so on a frozen track it plays nothing.
 
