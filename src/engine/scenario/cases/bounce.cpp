@@ -2283,12 +2283,14 @@ void whenRecorderSettles (ScenarioContext& ctx, const RecordingMidiBackend* reco
 }
 
 // What one recorder port was handed: its resets, each counted by the All Sound
-// Off on channel 1 and listed at its block offset, and its note-ons by key.
+// Off on channel 1 and listed at its block offset, and its note-ons and
+// note-offs by key.
 struct PortTally
 {
     int resets = 0;
     std::string resetOffsets;
     std::array<int, 128> noteOns {};
+    std::array<int, 128> noteOffs {};
 };
 
 PortTally tallyPort (const std::vector<RecordingMidiBackend::Message>& messages, int port)
@@ -2300,6 +2302,8 @@ PortTally tallyPort (const std::vector<RecordingMidiBackend::Message>& messages,
             continue;
         if ((m.bytes[0] & 0xF0) == 0x90 && m.bytes[2] > 0)
             ++tally.noteOns[(std::size_t) (m.bytes[1] & 0x7F)];
+        else if ((m.bytes[0] & 0xF0) == 0x80 || (m.bytes[0] & 0xF0) == 0x90)
+            ++tally.noteOffs[(std::size_t) (m.bytes[1] & 0x7F)];
         else if (m.bytes[0] == 0xB0 && m.bytes[1] == 120)
         {
             ++tally.resets;
@@ -2317,14 +2321,18 @@ struct Attacks
     int expected;
 };
 
+// With `endsEachOnce`, every attack of a listed note has to end by exactly one
+// note-off of its own, a seam's release included, so a release the seam missed
+// or sent twice shows.
 void expectHanded (ScenarioContext& ctx, const std::string& track, const PortTally& tally,
-                   int expectedResets, std::initializer_list<Attacks> attacks)
+                   int expectedResets, std::initializer_list<Attacks> attacks, bool endsEachOnce = false)
 {
     std::string line = track + ": " + std::to_string (tally.resets) + " resets, at block offsets"
                      + tally.resetOffsets;
     for (const auto& a : attacks)
         line += "; " + std::string (a.note) + " attacked "
-              + std::to_string (tally.noteOns[(std::size_t) a.key]) + " times";
+              + std::to_string (tally.noteOns[(std::size_t) a.key]) + " times, ended "
+              + std::to_string (tally.noteOffs[(std::size_t) a.key]);
     ctx.note (line);
     ctx.expect (tally.resets == expectedResets,
                 track + ", Sunset was reset " + std::to_string (tally.resets) + " times, not "
@@ -2335,6 +2343,10 @@ void expectHanded (ScenarioContext& ctx, const std::string& track, const PortTal
         ctx.expect (attacked == a.expected,
                     track + ", " + a.note + " was attacked " + std::to_string (attacked) + " times, not "
                         + std::to_string (a.expected));
+        const int ended = tally.noteOffs[(std::size_t) a.key];
+        ctx.expect (! endsEachOnce || ended == attacked,
+                    track + ", " + a.note + " was attacked " + std::to_string (attacked) + " times and ended "
+                        + std::to_string (ended));
     }
 }
 
@@ -2735,9 +2747,11 @@ std::optional<ScenarioResult> latencyRiseDropsBridgedNote (ScenarioContext& ctx)
 // recorder port of its own; a second track at 1x, with no latency, is the
 // control. Every pass hands each instrument one note-on for each of two notes,
 // one held into the loop start and one on it, and no reset: only Stop resets
-// it. The loop coming on, and its end moving in, while the 2x window is
-// already past the end are jumps that do need their release; Sunset's latency
-// also rises and falls across a seam.
+// it. A third note runs over the loop end, so every seam has to end it once;
+// each attack of every note ends by exactly one note-off. The loop coming on,
+// and its end moving in, while the 2x window is already past the end are
+// jumps that do need their release; Sunset's latency also rises and falls
+// across a seam.
 std::optional<ScenarioResult> sunsetLoopSeamReleasesOnce (ScenarioContext& ctx)
 {
     static constexpr const char* kSunset = "dusk.builtin.synth";
@@ -2758,12 +2772,13 @@ std::optional<ScenarioResult> sunsetLoopSeamReleasesOnce (ScenarioContext& ctx)
     // Mid-pass the loop end moves in to just past the block about to roll,
     // which keeps the loop whole blocks long.
     static constexpr std::int64_t kEditBlock = kLoopStart + (kBlock - kSeamIntoBlock) + 24 * kBlock;
-    static constexpr int kHeld = 60, kOnStart = 64;
+    static constexpr int kHeld = 60, kOnStart = 64, kOverEnd = 67;
 
     auto& engine = ctx.engine();
     auto& transport = engine.getTransport();
     auto* const recorder = sunsetsIntoRecorders (ctx, { 1.0f, 0.0f },
-                                                 { { kHeld, kLoopStart - 1000 }, { kOnStart, kLoopStart } });
+                                                 { { kHeld, kLoopStart - 1000 }, { kOnStart, kLoopStart },
+                                                   { kOverEnd, kLoopEnd - 2000 } });
     if (recorder == nullptr)
         return ctx.verdict();
     auto& latentSlot = engine.getChannelStrip (kLatentTrack).getBuiltinSlot();
@@ -2827,7 +2842,8 @@ std::optional<ScenarioResult> sunsetLoopSeamReleasesOnce (ScenarioContext& ctx)
         for (int t = 0; t < kNumTracks; ++t)
             expectHanded (ctx, t == kLatentTrack ? "at 2x" : "at 1x", tallyPort (messages, t), 1,
                           { { "the note held into the loop start", kHeld, wraps + 1 },
-                            { "the note on the loop start", kOnStart, wraps + 1 } });
+                            { "the note on the loop start", kOnStart, wraps + 1 },
+                            { "the note over the loop end", kOverEnd, wraps } }, true);
     });
     return std::nullopt;
 }

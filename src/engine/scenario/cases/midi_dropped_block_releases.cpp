@@ -235,7 +235,7 @@ ScenarioResult runOverfullTimeline (ScenarioContext& ctx)
     track.midiRegions.publish (std::move (regions));
     ctx.pump (kSettleBlocks);
 
-    // Starting the transport sends its own reset; count the ones after it.
+    // Count the resets once the transport rolls.
     const auto chokes = [&ctx] { return (int) midiprobe::counter (ctx, kTrack, "chokesSeen"); };
     engine.getTransport().setPlayhead (0);
     engine.play();

@@ -62,8 +62,8 @@ namespace duskstudio
 constexpr std::int64_t kMinLoopRecordSamples = 128;
 // A MIDI track whose instrument's latency rises mid-roll schedules a window this
 // much longer than its block at most (see midiScheduledAhead); a bigger rise is
-// taken as a locate. The cap keeps the window's loop-seam resets inside the
-// generated-MIDI budget.
+// taken as a locate. The cap keeps the room the window's loop seams reserve
+// inside the generated-MIDI budget.
 constexpr int kMaxMidiLatencyBridge = 1024;
 // MIDI-out producer streams: each track queues as its own index, the sync
 // output after them.
@@ -7486,6 +7486,21 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         const auto timelineBeforeBlock = timelineSounding;
         auto& timelineControls = midiTimelineControls[(size_t) t];
         const auto controlsBeforeBlock = timelineControls;
+        // Where a release last lifted the pedals that keep released notes
+        // sounding, and on which channels. A chase putting one back down at
+        // that sample lands a sample later, so the pedal-up and the note-offs
+        // behind it survive: a VST3 host keeps the last point per parameter
+        // and sample, and JUCE's wrapper hands a plug-in its parameter points
+        // ahead of its events.
+        int liftedAt = -1;
+        std::array<std::uint16_t, 16> liftedPedals {};
+        auto pedalAt = [&] (std::uint8_t status, std::uint8_t data1, int sampleOffset) noexcept
+        {
+            if (sampleOffset != liftedAt || (status & 0xF0) != 0xB0 || data1 < 64 || data1 > 69
+                || (liftedPedals[status & 0x0F] & (1u << (data1 - 64))) == 0)
+                return sampleOffset;
+            return std::min (sampleOffset + 1, numSamples - 1);
+        };
         auto emitMidiReset = [&] (int sampleOffset, bool transportStop) noexcept
         {
             // Discretionary events cannot spend the reset's reserved capacity.
@@ -7496,6 +7511,8 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                 ? midi::emitTransportStopReset (perTrackMidi[(size_t) t], sampleOffset)
                 : midi::emitHangingReset (perTrackMidi[(size_t) t], sampleOffset);
             if (! emitted) return false;
+            liftedAt = sampleOffset;
+            liftedPedals.fill ((std::uint16_t) (1u << midischedule::HeldControls::Pedal64));
             timelineSounding.clear();
             return true;
         };
@@ -7509,45 +7526,90 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                     return perTrackMidi[(size_t) t].addEvent (bytes.data(), 3, sampleOffset);
                 }) == midischedule::Outcome::complete;
         };
-        // Ends what the timeline holds on the instrument at sampleOffset, as
-        // the block has left it there, and nothing the player does: its
-        // controllers back to their defaults, pedals first, then a note-off for
-        // each of its notes. When that takes more than the reset the jump
-        // reserved room for, or the block cannot be read back in order, the
-        // reset goes instead.
-        auto emitTimelineRelease = [&] (int sampleOffset) noexcept
+        // What the timeline holds on the instrument as this block has left it
+        // so far: the state it began with, read on through the block's own
+        // events from where the last read stopped. A release only adds events
+        // at or after what was read, so reading on keeps sample order.
+        auto& heldNotes = midiReleaseNotesScratch;
+        auto& heldControls = midiReleaseControlsScratch;
+        std::size_t heldReadUpTo = 0;
+        bool heldStarted = false;
+        auto readTimelineHeld = [&] () noexcept
         {
-            auto& notes = midiReleaseNotesScratch;
-            auto& controls = midiReleaseControlsScratch;
-            notes = timelineBeforeBlock;
-            controls = controlsBeforeBlock;
-            const bool read = midi::forEachMidiSorted (perTrackMidi[(size_t) t], midiOutSortScratch,
-                [&] (const midi::MidiSortScratch::EventRef& event) noexcept
+            if (! heldStarted)
+            {
+                heldNotes = timelineBeforeBlock;
+                heldControls = controlsBeforeBlock;
+                heldStarted = true;
+            }
+            return midi::forEachMidiSortedFrom (perTrackMidi[(size_t) t], heldReadUpTo, heldReadUpTo,
+                midiOutSortScratch, [&] (const midi::MidiSortScratch::EventRef& event) noexcept
                 {
-                    if (event.samplePosition > sampleOffset) return true;
-                    if (event.numBytes == 3) notes.hear (event.data[0], event.data[1], event.data[2]);
-                    controls.hear (event.data, event.numBytes);
+                    midischedule::hearTimeline (heldNotes, heldControls, event.data, event.numBytes);
                     return true;
                 });
-            const int bytes = (notes.total + controls.count()) * kGeneratedEventBytes;
-            if (! read || bytes > kHangingResetBytes) return emitMidiReset (sampleOffset, false);
+        };
+        auto noteLiftedPedals = [&] (int sampleOffset) noexcept
+        {
+            liftedAt = sampleOffset;
+            for (std::size_t channel = 0; channel < liftedPedals.size(); ++channel)
+                liftedPedals[channel] = (std::uint16_t) (heldControls.away[channel]
+                                                         & midischedule::HeldControls::kHoldingPedals);
+        };
+        // Ends what the timeline holds on the instrument at sampleOffset and
+        // nothing the player does: its pedals up, a note-off for each of its
+        // notes, then its other controllers back to their defaults as far as
+        // the reset the jump reserved room for goes; the rest stay for the next
+        // release. Only when the pedals and notes alone take more than that
+        // room, or the block cannot be read back in order, does the reset go
+        // instead. On a block's last sample it all goes a sample early, so a
+        // chase can still put a pedal back down after it.
+        auto emitTimelineRelease = [&] (int sampleOffset) noexcept
+        {
+            const int at = (sampleOffset + 1 < numSamples || sampleOffset == 0) ? sampleOffset : sampleOffset - 1;
+            constexpr int kRoom = kHangingResetBytes / kGeneratedEventBytes;
+            if (! readTimelineHeld()) return emitMidiReset (at, false);
+            const int needed = heldNotes.total + heldControls.pedalCount();
+            if (needed > kRoom) return emitMidiReset (at, false);
+            const int others = std::min (heldControls.otherCount(), kRoom - needed);
+            const int bytes = (needed + others) * kGeneratedEventBytes;
             if (! generatedMidiBudget.consumeStructural (bytes)
                 || ! generatedMidiBudget.releaseStructural (kHangingResetBytes - bytes))
                 return false;
-            const bool defaults = controls.forEachDefault ([&] (const std::uint8_t* data, int numBytes) noexcept
+            auto& out = perTrackMidi[(size_t) t];
+            const auto add = [&out, at] (const std::uint8_t* data, int numBytes) noexcept
             {
-                return perTrackMidi[(size_t) t].addEvent (data, numBytes, sampleOffset);
-            });
-            const bool released = defaults && addNoteOffsAt (notes, sampleOffset);
+                return out.addEvent (data, numBytes, at);
+            };
+            noteLiftedPedals (at);
+            const bool released = heldControls.forEachPedalDefault (add)
+                && addNoteOffsAt (heldNotes, at)
+                && heldControls.forEachOtherDefault (others, add) == others;
             timelineSounding.clear();
             return released;
+        };
+        // The same through the block's discretionary room, for the notes the
+        // timeline stops playing while it rolls on: all its controllers go back,
+        // pedals first, and the caller ends the notes. How many went back, or
+        // -1 when the block had no room for them.
+        auto liftTimelineControls = [&] (int sampleOffset) noexcept
+        {
+            if (! readTimelineHeld()) return -1;
+            const auto add = [&] (const std::uint8_t* data, int numBytes) noexcept
+            {
+                return addGeneratedMidi (data[0], data[1], numBytes == 3 ? data[2] : 0, sampleOffset);
+            };
+            noteLiftedPedals (sampleOffset);
+            const int pedals = heldControls.pedalCount();
+            if (! heldControls.forEachPedalDefault (add)) return -1;
+            const int others = heldControls.forEachOtherDefault (heldControls.otherCount(), add);
+            return others < 0 ? -1 : pedals + others;
         };
         auto emitStopRelease = [&] () noexcept
         {
             if (stopReleaseBytes == 0) return true;
-            if (! generatedMidiBudget.consumeStructural (stopReleaseBytes)) return false;
-            midiReleaseNotesScratch = timelineSounding;
-            return addNoteOffsAt (midiReleaseNotesScratch, 0);
+            if (! generatedMidiBudget.consumeStructural (stopReleaseBytes) || ! readTimelineHeld()) return false;
+            return addNoteOffsAt (heldNotes, 0);
         };
         if (midiTrack && perTrackFlush
             && ! (blanketFlush ? emitStopRelease() && emitMidiReset (0, transportJustStopped)
@@ -7556,16 +7618,19 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
 
         // The track stopped playing its timeline while the transport rolls
         // (Record pressed with it armed): nothing will end the notes the
-        // timeline left sounding but these note-offs.
-        if (midiTrack && ! schedulesTimelineMidi && timelineSounding.total > 0)
+        // timeline left sounding, or let its pedal up, but these.
+        if (midiTrack && ! schedulesTimelineMidi
+            && (timelineSounding.total > 0 || controlsBeforeBlock.count() > 0))
         {
             midiTimelineHeldScratch.clear();
-            midischedule::releaseBeyond (timelineSounding, midiTimelineHeldScratch,
-                                         [&] (std::uint8_t status, std::uint8_t data1,
-                                              std::uint8_t data2, int sampleOffset) noexcept
-                                         {
-                                             return addGeneratedMidi (status, data1, data2, sampleOffset);
-                                         });
+            const bool released = liftTimelineControls (0) >= 0
+                && midischedule::releaseBeyond (heldNotes, midiTimelineHeldScratch,
+                       [&] (std::uint8_t status, std::uint8_t data1, std::uint8_t data2, int sampleOffset) noexcept
+                       {
+                           return addGeneratedMidi (status, data1, data2, sampleOffset);
+                       }) == midischedule::Outcome::complete;
+            if (! released) midiEventsDropped = true;
+            timelineSounding.clear();
         }
 
         auto pullInput = [&] (int srcIdx, int chFilter, bool capture)
@@ -7690,23 +7755,24 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             // Loop recording already rejects ranges shorter than the shared
             // recording minimum.
             // Plain playback still permits them, so keep its pre-existing
-            // bounded linear MIDI window instead of enumerating more seam
-            // resets than the fixed generated-event budget can represent.
+            // bounded linear MIDI window instead of enumerating more seams
+            // than the fixed generated-event budget can reserve room for.
             const bool midiLoopActive = loopReadEnd > loopReadStart
                 && static_cast<std::uint64_t> (loopReadEnd)
                      - static_cast<std::uint64_t> (loopReadStart)
                    >= static_cast<std::uint64_t> (kMinLoopRecordSamples);
 
-            // Reserve every reset before discretionary notes/controllers can
-            // consume their bytes. At the supported 8192-frame maximum, plus a
-            // bridged latency rise of up to kMaxMidiLatencyBridge, and the
-            // 128-sample minimum loop this is at most 73 complete resets.
+            // Reserve a reset's room for every seam's release before
+            // discretionary notes/controllers can consume their bytes. At the
+            // supported 8192-frame maximum, plus a bridged latency rise of up to
+            // kMaxMidiLatencyBridge, and the 128-sample minimum loop this is at
+            // most 73 seams.
             //
             // A window that carries on from the last one has a seam at its head
             // exactly when it does not start where that one ended, on the
             // timeline the instrument hears. If it starts there past the loop
             // end, which the loop reports as a wrap at its head, the last
-            // window already crossed that seam and sent its reset and chase.
+            // window already crossed that seam and sent its release and chase.
             // If it starts anywhere else, the timeline jumped between them
             // without a span reporting it: the transport wrapped at a loop end
             // the last window ended on, as any loop end on a block boundary
@@ -7717,7 +7783,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             bool headSeam = false;
             if (midiTrack)
             {
-                int futureSeamResetCount = 0;
+                int futureSeamCount = 0;
                 auto& scheduledUpTo = midiScheduledUpTo[(size_t) t];
                 const auto lastWindowEnd = scheduledUpTo;
                 const bool headFollowsLastWindow = midiWindowContinues
@@ -7734,11 +7800,11 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                             headSeam = seam;
                         }
                         if (seam)
-                            ++futureSeamResetCount;
+                            ++futureSeamCount;
                         scheduledUpTo = span.timelineStart + span.length;
                     });
                 const bool reserved = generatedMidiBudget.reserveStructural (
-                    futureSeamResetCount * kHangingResetBytes);
+                    futureSeamCount * kHangingResetBytes);
                 jassert (reserved);
                 (void) reserved;
             }
@@ -7783,10 +7849,15 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
 
                     // The timeline changed since the last block: the notes it
                     // started that it no longer ends end here. After a reset
-                    // at the head there are none left to end.
+                    // at the head there are none left to end. Its pedal comes
+                    // up with them, and the controllers chase straight back to
+                    // what the timeline still holds there.
+                    bool strandedChecked = false;
+                    int liftedForStranded = 0;
                     if (span.bufferOffset == 0 && strandedCheckDue)
                     {
                         strandedCheckDue = false;
+                        const int at = bufferOffsetOf (span.bufferOffset);
                         const auto released = midischedule::releaseStranded (
                             midiTimeline, useMap ? tm : nullptr, sr, bpm,
                             span.timelineStart, midiScheduleScansRemaining, timelineSounding,
@@ -7794,8 +7865,13 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                             [&] (std::uint8_t status, std::uint8_t data1, std::uint8_t data2,
                                  std::int64_t) noexcept
                             {
-                                return addGeneratedMidi (status, data1, data2,
-                                                         bufferOffsetOf (span.bufferOffset));
+                                if (! strandedChecked)
+                                {
+                                    strandedChecked = true;
+                                    liftedForStranded = liftTimelineControls (at);
+                                    if (liftedForStranded < 0) return false;
+                                }
+                                return addGeneratedMidi (status, data1, data2, at);
                             }, &pending);
                         if (released != midischedule::Outcome::complete)
                         {
@@ -7806,14 +7882,14 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
 
                     const auto outcome = midischedule::scheduleSpan (
                         midiTimeline, useMap ? tm : nullptr, sr, bpm,
-                        { span.timelineStart, span.timelineStart + span.length, chase,
-                          span.timelineStart - windowToBuffer - span.bufferOffset },
+                        { span.timelineStart, span.timelineStart + span.length, chase || liftedForStranded > 0,
+                          span.timelineStart - windowToBuffer - span.bufferOffset, ! chase && liftedForStranded > 0 },
                         midiScheduleScansRemaining, midiControllerChase,
                         [&] (std::uint8_t status, std::uint8_t data1, std::uint8_t data2,
                              std::int64_t sampleInSpan) noexcept
                         {
-                            return addGeneratedMidi (status, data1, data2,
-                                                     bufferOffsetOf (span.bufferOffset + (int) sampleInSpan));
+                            const int at = bufferOffsetOf (span.bufferOffset + (int) sampleInSpan);
+                            return addGeneratedMidi (status, data1, data2, pedalAt (status, data1, at));
                         }, &pending);
                     if (outcome == midischedule::Outcome::scanBudgetSpent)
                         midiEventsDropped = true;
@@ -7833,9 +7909,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             const bool counted = midi::forEachMidiSorted (perTrackMidi[(size_t) t], midiOutSortScratch,
                 [&] (const midi::MidiSortScratch::EventRef& event) noexcept
                 {
-                    if (event.numBytes == 3)
-                        timelineSounding.hear (event.data[0], event.data[1], event.data[2]);
-                    timelineControls.hear (event.data, event.numBytes);
+                    midischedule::hearTimeline (timelineSounding, timelineControls, event.data, event.numBytes);
                     return true;
                 });
             if (! counted) midiEventsDropped = true;

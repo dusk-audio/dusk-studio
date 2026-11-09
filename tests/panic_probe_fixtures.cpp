@@ -679,7 +679,7 @@ TEST_CASE ("a panic ends every held note on a VST3 synth that maps all notes off
         REQUIRE_THAT (probe.noteOffsSeen(), WithinAbs (5.0, 1.0e-6));
     }
 
-    SECTION ("a loop seam's reset and the chase behind it")
+    SECTION ("a hanging reset and the chase behind it")
     {
         dusk::MidiBuffer seam;
         REQUIRE (duskstudio::midi::emitHangingReset (seam, 0));

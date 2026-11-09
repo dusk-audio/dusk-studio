@@ -914,6 +914,7 @@ target_sources(DuskStudio PRIVATE
     src/engine/scenario/cases/midi_merge_pending.cpp
     src/engine/scenario/cases/midi_out_dense_block.cpp
     src/engine/scenario/cases/midi_panic_all_paths.cpp
+    src/engine/scenario/cases/midi_release_lifts_timeline_pedal.cpp
     src/engine/scenario/cases/midi_route_change_releases.cpp
     src/engine/scenario/cases/midi_seam_keeps_live_keys.cpp
     src/engine/scenario/cases/midi_timeline_edit_releases.cpp

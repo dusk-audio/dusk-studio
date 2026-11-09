@@ -365,8 +365,8 @@ ScenarioResult runRecordStart (ScenarioContext& ctx)
     return ctx.verdict();
 }
 
-// Already reset at the seam: the note is cut at the loop end and plays again
-// from its start on the next pass.
+// Ended at the seam: the note is cut at the loop end and plays again from its
+// start on the next pass.
 ScenarioResult runLoopEnd (ScenarioContext& ctx)
 {
     constexpr std::int64_t kLoopTicks = 1000;

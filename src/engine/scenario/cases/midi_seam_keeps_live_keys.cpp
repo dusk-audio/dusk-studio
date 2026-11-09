@@ -14,10 +14,12 @@
 #include <string>
 #include <vector>
 
-// A loop wrap, a seek or Play ends what the timeline was playing and nothing
-// the player holds: a key held through the track's input, the player's own
-// sustain pedal and a tail still ringing all go on, and the timeline's pedal
-// comes up. Stop still silences everything.
+// A loop wrap, a seek, a scrub or Play ends what the timeline was playing and
+// nothing the player holds through IN: a held key, the player's own sustain
+// pedal and a tail still ringing all go on. The timeline's pedal comes up
+// before its notes end, even when the loop start puts it straight back down,
+// and the controllers it moved go back to their defaults unless the loop
+// start sets them. Stop still silences everything.
 namespace duskstudio::scenario
 {
 namespace
@@ -36,6 +38,7 @@ constexpr int kLiveTick = 300;
 constexpr int kLoopEndTick = 800;
 constexpr std::uint8_t kLiveKey = 72, kSustainedKey = 74, kTailKey = 76;
 constexpr int kPlayerPedalChannels = 1 << 1;
+constexpr int kTimelinePedalChannels = 1 << 0;
 
 std::int64_t samplesAt (int tick)
 {
@@ -116,12 +119,35 @@ void releaseKeys (ScenarioContext& ctx, int input)
     send (ctx, input, { { 0x81, kLiveKey, 0 }, { 0xB1, 64, 0 } });
 }
 
-void checkKept (ScenarioContext& ctx, const std::string& name, const Counters& before, const Counters& after)
+double valueOf (const vst3::NativeVst3Slot& slot, const char* name)
+{
+    for (int i = 0; i < slot.paramCount(); ++i)
+    {
+        const auto* info = slot.paramInfo (i);
+        if (info == nullptr || info->name != name) continue;
+        double value = 0.0;
+        if (slot.getParamValue (info->id, value)) return value;
+    }
+    return -1.0;
+}
+
+// What the instrument holds after the jump besides the player's key and the
+// key under the player's pedal: the region's notes the new position plays,
+// and its pedal when the new position holds it down.
+struct Kept
+{
+    int timelineHeld = 0;
+    int timelinePedal = 0;
+};
+
+void checkKept (ScenarioContext& ctx, const std::string& name, const Counters& before, const Counters& after,
+                Kept timeline = {})
 {
     ctx.note (name + ": before " + describe (before) + " / after " + describe (after));
-    ctx.expect (after.held == 1, name + ": the timeline's note was left held or the player's key was cut");
+    ctx.expect (after.held == 1 + timeline.timelineHeld,
+                name + ": the timeline's note was left held or the player's key was cut");
     ctx.expect (after.sustained == 1, name + ": the player's sustained key was cut or the timeline's was left sustained");
-    ctx.expect (after.pedalDown == kPlayerPedalChannels,
+    ctx.expect (after.pedalDown == (kPlayerPedalChannels | timeline.timelinePedal),
                 name + ": the player's sustain pedal was lifted or the timeline's was left down");
     ctx.expect (after.panicPoints == before.panicPoints, name + ": all notes off or all sound off reached the instrument");
     ctx.expect (after.tailsCut == before.tailsCut, name + ": a release tail was cut short");
@@ -147,18 +173,19 @@ void stopLeg (ScenarioContext& ctx, vst3::NativeVst3Slot& slot, int input, const
 }
 
 void wrapLeg (ScenarioContext& ctx, vst3::NativeVst3Slot& slot, int input,
-              const std::string& name, std::int64_t loopEnd)
+              const std::string& name, std::int64_t loopStart, std::int64_t loopEnd, Kept timeline = {})
 {
     auto& engine = ctx.engine();
     auto& transport = engine.getTransport();
-    transport.setLoopRange (0, loopEnd);
+    transport.setLoopRange (loopStart, loopEnd);
     transport.setLoopEnabled (true);
-    transport.setPlayhead (0);
+    transport.setPlayhead (loopStart);
     engine.play();
-    ctx.pump (blockAt (samplesAt (kLiveTick)));
+    const int liveBlocks = blockAt (samplesAt (kLiveTick) - loopStart);
+    ctx.pump (liveBlocks);
     holdKeys (ctx, input);
-    const int tailBlock = blockAt (loopEnd) - 3;
-    ctx.pump (tailBlock - blockAt (samplesAt (kLiveTick)) - 2);
+    const int tailBlocks = blockAt (loopEnd - loopStart) - 3;
+    ctx.pump (tailBlocks - liveBlocks - 2);
     send (ctx, input, { { 0x92, kTailKey, 90 } });
     send (ctx, input, { { 0x82, kTailKey, 0 } });
     const auto before = readCounters (slot);
@@ -166,7 +193,7 @@ void wrapLeg (ScenarioContext& ctx, vst3::NativeVst3Slot& slot, int input,
         ctx.pump (1);
     ctx.pump (kSettleBlocks);
     ctx.note (name + ": playhead " + std::to_string ((long long) transport.getPlayhead()) + " after the wrap");
-    checkKept (ctx, name, before, readCounters (slot));
+    checkKept (ctx, name, before, readCounters (slot), timeline);
     stopLeg (ctx, slot, input, name);
     transport.setLoopEnabled (false);
 }
@@ -188,6 +215,111 @@ void seekLeg (ScenarioContext& ctx, vst3::NativeVst3Slot& slot, int input)
     ctx.pump (kSettleBlocks);
     checkKept (ctx, "seek while rolling", before, readCounters (slot));
     stopLeg (ctx, slot, input, "seek while rolling");
+}
+
+// Holding Rewind moves the playhead a stretch at a time while the transport
+// rolls, each move a jump of its own.
+void scrubLeg (ScenarioContext& ctx, vst3::NativeVst3Slot& slot, int input)
+{
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+    transport.setLoopEnabled (false);
+    transport.setPlayhead (0);
+    engine.play();
+    ctx.pump (blockAt (samplesAt (kLiveTick)));
+    holdKeys (ctx, input);
+    ctx.pump (blockAt (samplesAt (kLoopEndTick - 20)) - blockAt (samplesAt (kLiveTick)) - 2);
+    send (ctx, input, { { 0x92, kTailKey, 90 } });
+    send (ctx, input, { { 0x82, kTailKey, 0 } });
+    const auto before = readCounters (slot);
+    for (int step = 1; step <= 6; ++step)
+    {
+        transport.locate (samplesAt (kLoopEndTick - 20 - step * 127));
+        ctx.pump (1);
+    }
+    ctx.pump (kSettleBlocks - 1);
+    ctx.note ("scrub while rolling: playhead " + std::to_string ((long long) transport.getPlayhead()));
+    checkKept (ctx, "scrub while rolling", before, readCounters (slot));
+    stopLeg (ctx, slot, input, "scrub while rolling");
+}
+
+// IN going off while the transport rolls stops the track listening to its
+// input, so the instrument is reset outright and the timeline chased back in.
+// The reset's pedal-up still lands ahead of the timeline's pedal coming back
+// down, so the note that pedal was holding ends.
+void monitorOffLeg (ScenarioContext& ctx, vst3::NativeVst3Slot& slot, int input)
+{
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+    auto& track = ctx.session().track (kTrack);
+    transport.setLoopEnabled (false);
+    transport.setPlayhead (0);
+    engine.play();
+    ctx.pump (blockAt (samplesAt (kLiveTick)));
+    holdKeys (ctx, input);
+    ctx.pump (blockAt (samplesAt (750)) - blockAt (samplesAt (kLiveTick)) - 2);
+    const auto before = readCounters (slot);
+    track.inputMonitor.store (false, std::memory_order_relaxed);
+    ctx.pump (kSettleBlocks);
+    const auto after = readCounters (slot);
+    ctx.note ("IN off: before " + describe (before) + " / after " + describe (after));
+    ctx.expect (after.sustained == 0, "IN off: the note the timeline's pedal held was left sustained");
+    ctx.expect (after.held == 1, "IN off: the timeline's note under the playhead was not chased back in");
+    ctx.expect (after.pedalDown == kTimelinePedalChannels, "IN off: the timeline's pedal did not come back down");
+    ctx.expect (after.retriggers == 0, "IN off: a note was started again while it still sounded");
+    stopLeg (ctx, slot, input, "IN off");
+    track.inputMonitor.store (true, std::memory_order_relaxed);
+    ctx.pump (kSettleBlocks);
+}
+
+// The region moves the mod wheel, expression, pitch bend and pressure inside
+// the loop; only expression has a value from before the loop start.
+void controllersLeg (ScenarioContext& ctx, vst3::NativeVst3Slot& slot, Track& track)
+{
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+    auto regions = std::make_unique<std::vector<MidiRegion>>();
+    MidiRegion region;
+    region.lengthInTicks = 1000;
+    region.lengthInSamples = samplesAt (1000);
+    region.ccs.push_back ({ 1, 11, 90, 50 });
+    region.ccs.push_back ({ 1, 11, 50, 300 });
+    region.ccs.push_back ({ 1, 1, 100, 300 });
+    region.ccs.push_back ({ 1, 0, 12000, 300, MidiCc::Kind::PitchBend });
+    region.ccs.push_back ({ 1, 0, 70, 300, MidiCc::Kind::ChannelPressure });
+    regions->push_back (std::move (region));
+    track.midiRegions.publish (std::move (regions));
+
+    const auto loopStart = samplesAt (100);
+    transport.setLoopRange (loopStart, samplesAt (kLoopEndTick));
+    transport.setLoopEnabled (true);
+    transport.setPlayhead (loopStart);
+    engine.play();
+    ctx.pump (blockAt (samplesAt (kLoopEndTick) - loopStart) - 2);
+    const auto inside = [&slot] (const char* name) { return valueOf (slot, name); };
+    const double modulation = inside ("Modulation"), expression = inside ("Expression"),
+                 bend = inside ("Pitch Bend"), pressure = inside ("Pressure");
+    for (int block = 0; transport.getPlayhead() >= samplesAt (300) && block < 64; ++block)
+        ctx.pump (1);
+    ctx.pump (kSettleBlocks);
+    const double wrappedModulation = inside ("Modulation"), wrappedExpression = inside ("Expression"),
+                 wrappedBend = inside ("Pitch Bend"), wrappedPressure = inside ("Pressure");
+    ctx.note ("controllers before the wrap: mod " + std::to_string (modulation) + " expression "
+              + std::to_string (expression) + " bend " + std::to_string (bend) + " pressure "
+              + std::to_string (pressure) + " / after: mod " + std::to_string (wrappedModulation)
+              + " expression " + std::to_string (wrappedExpression) + " bend " + std::to_string (wrappedBend)
+              + " pressure " + std::to_string (wrappedPressure));
+    const auto near = [] (double a, double b) { return std::abs (a - b) < 1.0e-3; };
+    ctx.expect (near (modulation, 100.0 / 127.0) && near (expression, 50.0 / 127.0) && ! near (bend, 8192.0 / 16383.0)
+                    && near (pressure, 70.0 / 127.0),
+                "controllers: the region's controllers never reached the instrument");
+    ctx.expect (near (wrappedModulation, 0.0), "controllers: the mod wheel stayed where the region left it");
+    ctx.expect (near (wrappedExpression, 90.0 / 127.0), "controllers: expression did not take the loop start's value");
+    ctx.expect (near (wrappedBend, 8192.0 / 16383.0), "controllers: pitch bend did not come back to centre");
+    ctx.expect (near (wrappedPressure, 0.0), "controllers: pressure stayed where the region left it");
+    engine.pressStop();
+    transport.setLoopEnabled (false);
+    ctx.pump (kSettleBlocks);
 }
 
 void playLeg (ScenarioContext& ctx, vst3::NativeVst3Slot& slot, int input)
@@ -263,11 +395,19 @@ ScenarioResult runSeamKeepsLiveKeys (ScenarioContext& ctx)
     publishRegion (track);
     ctx.pump (kSettleBlocks);
 
-    wrapLeg (ctx, slot, input, "loop wrap inside a block", samplesAt (kLoopEndTick));
-    wrapLeg (ctx, slot, input, "loop wrap on a block boundary",
+    wrapLeg (ctx, slot, input, "loop wrap inside a block", 0, samplesAt (kLoopEndTick));
+    wrapLeg (ctx, slot, input, "loop wrap on a block boundary", 0,
              (samplesAt (kLoopEndTick) / ScenarioContext::kBlockSize) * ScenarioContext::kBlockSize);
+    // The region's note on the loop start plays again at once.
+    wrapLeg (ctx, slot, input, "loop wrap with the region's pedal held across the loop start",
+             samplesAt (100), samplesAt (kLoopEndTick), { 1, kTimelinePedalChannels });
+    wrapLeg (ctx, slot, input, "loop wrap with the region's pedal set on the loop start",
+             samplesAt (kTimelinePedalTick), samplesAt (kLoopEndTick), { 0, kTimelinePedalChannels });
     seekLeg (ctx, slot, input);
+    scrubLeg (ctx, slot, input);
     playLeg (ctx, slot, input);
+    monitorOffLeg (ctx, slot, input);
+    controllersLeg (ctx, slot, track);
     return ctx.verdict();
 }
 #endif

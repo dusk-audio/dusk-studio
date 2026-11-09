@@ -6,6 +6,7 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 // dusk::MidiBuffer must iterate events in the same order and expose the same
@@ -325,4 +326,39 @@ TEST_CASE ("MIDI output sorted copy keeps a dense block whole and ordered",
         }
         REQUIRE (i == 3);
     }
+}
+
+TEST_CASE ("a sorted MIDI walk carries on from where the last one stopped", "[midi][foundation]")
+{
+    dusk::MidiBuffer buffer;
+    const auto add = [&buffer] (std::uint8_t key, int at)
+    {
+        const std::uint8_t bytes[3] { 0x90, key, 100 };
+        REQUIRE (buffer.addEvent (bytes, 3, at));
+    };
+    add (1, 5);
+    add (2, 1);
+    add (3, 1);
+    auto scratch = std::make_unique<duskstudio::midi::MidiSortScratch>();
+    std::vector<int> keys;
+    const auto visit = [&keys] (const duskstudio::midi::MidiSortScratch::EventRef& event)
+    {
+        keys.push_back (event.data[1]);
+        return true;
+    };
+    std::size_t readUpTo = 0;
+    REQUIRE (duskstudio::midi::forEachMidiSortedFrom (buffer, readUpTo, readUpTo, *scratch, visit));
+    CHECK (keys == std::vector<int> { 2, 3, 1 });
+    CHECK (readUpTo == 3);
+
+    add (4, 9);
+    add (5, 5);
+    keys.clear();
+    REQUIRE (duskstudio::midi::forEachMidiSortedFrom (buffer, readUpTo, readUpTo, *scratch, visit));
+    CHECK (keys == std::vector<int> { 5, 4 });
+    CHECK (readUpTo == 5);
+
+    keys.clear();
+    REQUIRE (duskstudio::midi::forEachMidiSortedFrom (buffer, readUpTo, readUpTo, *scratch, visit));
+    CHECK (keys.empty());
 }

@@ -311,10 +311,11 @@ public:
         if (result != kResultOk) return result;
         addEventInput (STR16 ("Event In"), kChannels);
         addAudioOutput (STR16 ("Output"), SpeakerArr::kStereo);
-        const std::array<const TChar*, 9> names {
+        const std::array<const TChar*, 13> names {
             STR16 ("Held Notes"), STR16 ("Note Offs Seen"), STR16 ("Panic Points Seen"), STR16 ("Retriggers"),
             STR16 ("Sustained Notes"), STR16 ("Pedal Down Channels"), STR16 ("Pedal Lifts Seen"),
-            STR16 ("Tails Ringing"), STR16 ("Tails Cut")
+            STR16 ("Tails Ringing"), STR16 ("Tails Cut"),
+            STR16 ("Modulation"), STR16 ("Expression"), STR16 ("Pitch Bend"), STR16 ("Pressure")
         };
         for (std::size_t i = 0; i < names.size(); ++i)
             parameters.addParameter (names[i], nullptr, i == 0 ? EveryCc::kMaxHeldNotes : kMaxNoteOffsSeen, 0.0,
@@ -336,6 +337,10 @@ public:
             case EveryCc::PedalLiftsSeen: return counter (pedalLifts);
             case EveryCc::TailsRinging: return counter (count (Voice::Tail));
             case EveryCc::TailsCut: return counter (tailsCut);
+            case EveryCc::Modulation: return lastValue[0];
+            case EveryCc::Expression: return lastValue[1];
+            case EveryCc::PitchBend: return lastValue[2];
+            case EveryCc::Pressure: return lastValue[3];
             default: return SingleComponentEffect::getParamNormalized (id);
         }
     }
@@ -439,6 +444,13 @@ private:
         const auto channel = (std::size_t) (index / kCountCtrlNumber);
         const auto controller = (int32) (index % kCountCtrlNumber);
         if (channel >= (std::size_t) kChannels) return;
+        if (channel == 0)
+        {
+            if (controller == kCtrlModWheel) lastValue[0] = value;
+            else if (controller == kCtrlExpression) lastValue[1] = value;
+            else if (controller == kPitchBend) lastValue[2] = value;
+            else if (controller == kAfterTouch) lastValue[3] = value;
+        }
         if (controller == kCtrlAllSoundsOff || controller == kCtrlAllNotesOff)
             panicPointsSeen = std::min (kMaxNoteOffsSeen, panicPointsSeen + 1);
         if (controller == kCtrlAllSoundsOff)
@@ -482,6 +494,7 @@ private:
     std::array<Item, 4096> block {};
     std::uint16_t pedalDown = 0;
     int32 noteOffsSeen = 0, panicPointsSeen = 0, retriggers = 0, pedalLifts = 0, tailsCut = 0;
+    std::array<ParamValue, 4> lastValue { 0.0, 1.0, 8192.0 / 16383.0, 0.0 };
 };
 } // namespace
 } // namespace Steinberg::Vst

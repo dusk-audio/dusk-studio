@@ -33,7 +33,9 @@ constexpr int kMaxHeldNotes = 16;
 enum Diagnostic : std::uint32_t
 {
     HeldNotes = 300, NoteOffsSeen, PanicPointsSeen, Retriggers,
-    SustainedNotes, PedalDownChannels, PedalLiftsSeen, TailsRinging, TailsCut
+    SustainedNotes, PedalDownChannels, PedalLiftsSeen, TailsRinging, TailsCut,
+    // The last value channel 1 set, normalised as the parameter carries it.
+    Modulation, Expression, PitchBend, Pressure
 };
 constexpr double kCounterScale = 65535.0;
 } // namespace duskstudio::test::everyccvst3
