@@ -453,6 +453,9 @@ struct Vst3Instance::Impl : public Vst3HostContext::Callbacks
         writableCount = 0;
         setupDone = false;
         audioBuses = {};
+        midiNotes.reset();
+        pendingMidiPanicChannels = 0;
+        pendingMidiParameterResetChannels = 0;
         ioChanged.store (false, std::memory_order_relaxed);
         resizeViewFn = nullptr;
         if (controller && ! controllerIsComponent)
@@ -771,9 +774,7 @@ bool Vst3Instance::activate (double sampleRate, int maxBlockFrames, std::string&
     { errorOut = "setActive(true) failed"; return false; }
 
     impl->latencySamples = (int) impl->processor->getLatencySamples();
-    impl->midiNotes.reset();
-    impl->pendingMidiPanicChannels = 0;
-    impl->pendingMidiParameterResetChannels = 0;
+    // The same instance can retain voices while inactive; its release ledger survives too.
 
     impl->processor->setProcessing (true);
     impl->processing = true;
