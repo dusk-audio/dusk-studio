@@ -2,6 +2,7 @@
 #include "../../../session/SessionSerializer.h"
 #include "../../../engine/scenario/cases/MidiProbeHarness.h"
 
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
@@ -10,7 +11,12 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
+
+#if DUSKSTUDIO_HAS_ALSA
+ #include <alsa/asoundlib.h>
+#endif
 
 namespace duskstudio::scenario::gui
 {
@@ -415,12 +421,18 @@ std::optional<ScenarioResult> runPianoKeyboardAudition (GuiHost& host, ScenarioC
         ctx.expect (rollTrack.midiRegions.current().front().notes == region.notes,
                     "keyboard audition changed the drawn note's undo transaction");
         host.pianoNotePointer (kGridTick, 60, true);
-        ctx.expect (host.pressPianoRollKey ("Escape"), "Escape did not cancel drawing");
-        host.pianoNotePointer (kGridTick, 60, false);
+    }, delivered (2), "Draw-mode keyboard audition did not end", {}, 4000 });
+    steps->push_back ({ 0, [&ctx, &host]
+    { ctx.expect (host.pressPianoRollKey ("Escape"), "Escape did not cancel drawing"); },
+        [&host] { return host.pianoSelection() == std::vector<int> { 1 }; },
+        "the partial draw never began", {}, 4000 });
+    steps->push_back ({ 0, [&host] { host.pianoNotePointer (kGridTick, 60, false); } });
+    steps->push_back ({ 100, [&ctx, &host, &rollTrack, region]
+    {
         ctx.expect (rollTrack.midiRegions.current().front().notes == region.notes,
                     "Escape kept a partially drawn note");
         host.pressPianoRollKey ("G");
-    }, delivered (2), "Draw-mode keyboard audition did not end", {}, 4000 });
+    } });
     steps->push_back ({ 200, [&engine, base] { *base = engine.auditionMessagesDelivered() - 20; } });
 
     // Recording on the roll's own track, IN off: a key played on the
@@ -508,7 +520,7 @@ std::optional<ScenarioResult> runPianoKeyboardAudition (GuiHost& host, ScenarioC
     steps->push_back ({ 250, [&ctx, &host, beforeExtra]
     {
         ctx.expect (heardOn (ctx, kRollTrack).voices == 0, "a held audition leaked into the new session");
-        host.openPianoRoll (kRollTrack, 0);
+        if (! host.pianoRollOpen()) host.openPianoRoll (kRollTrack, 0);
         ctx.expect (host.pianoRollOpen(), "the new session's piano roll did not open");
         *beforeExtra = heardOn (ctx, kRollTrack);
     } });
@@ -532,6 +544,113 @@ const ScenarioRegistrar pianoKeyboardAudition { Scenario {
     "gui.piano_keyboard_audition", { "gui", "piano", "midi" }, Needs::Engine | Needs::Gui,
     { "panic_probe.clap" }, {}, 90000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runPianoKeyboardAudition (host, ctx); }
+} };
+
+#if DUSKSTUDIO_HAS_ALSA
+std::optional<ScenarioResult> runPianoKeyboardOutput (GuiHost& host, ScenarioContext& ctx)
+{
+    snd_seq_t* raw = nullptr;
+    if (snd_seq_open (&raw, "default", SND_SEQ_OPEN_DUPLEX, SND_SEQ_NONBLOCK) < 0)
+        return ScenarioResult::skip ("ALSA sequencer is unavailable");
+    auto seq = std::shared_ptr<snd_seq_t> (raw, [] (snd_seq_t* value) { snd_seq_close (value); });
+    const auto name = "dusk-audition-" + std::to_string (snd_seq_client_id (raw));
+    snd_seq_set_client_name (raw, name.c_str());
+    const int port = snd_seq_create_simple_port (raw, "audition destination",
+        SND_SEQ_PORT_CAP_WRITE | SND_SEQ_PORT_CAP_SUBS_WRITE,
+        SND_SEQ_PORT_TYPE_MIDI_GENERIC | SND_SEQ_PORT_TYPE_APPLICATION);
+    if (port < 0) return ScenarioResult::fail ("could not create the audition destination");
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& track = session.track (kRollTrack);
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save initial session");
+    ctx.cleanup ([&host, &engine, &session, &track, seq, port, originalDir, restore]
+    {
+        host.pianoKeyPointer (60, false);
+        host.closePiano();
+        engine.releaseAuditions();
+        track.midiOutputIndex.store (-1);
+        track.midiOutputIdentifier.clear();
+        snd_seq_delete_simple_port (seq.get(), port);
+        engine.refreshMidiInputs();
+        host.openSession (restore);
+        applySessionDirectory (session, originalDir);
+    });
+    engine.stop();
+    host.closePiano();
+    MidiRegion region;
+    region.lengthInTicks = 3840;
+    region.lengthInSamples = session.ticksToSamples (3840, engine.getCurrentSampleRate());
+    region.notes = { { kRegionChannel, 48, 90, 1920, 480 } };
+    track.mode.store ((int) Track::Mode::Midi);
+    track.inputMonitor.store (false);
+    track.recordArmed.store (false);
+    track.midiInputIndex.store (-1);
+    track.midiInputIdentifier.clear();
+    track.midiOutputIndex.store (-1);
+    track.midiOutputIdentifier.clear();
+    track.midiChannel.store (5);
+    track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (std::initializer_list<MidiRegion> { region }));
+    session.recomputeRtCounters();
+    engine.refreshMidiInputs();
+    const auto destination = [&engine, name]
+    {
+        const auto& outputs = engine.getMidiOutputDevices();
+        for (int i = 0; i < (int) outputs.size(); ++i)
+            if (outputs[(std::size_t) i].name.find (name) != std::string::npos) return i;
+        return -1;
+    };
+    auto received = std::make_shared<std::vector<std::array<int, 4>>>();
+    auto drain = std::make_shared<std::pair<std::size_t, int>> (0, 0);
+    const auto collect = [seq, received, drain]
+    {
+        snd_seq_event_t* event = nullptr;
+        while (snd_seq_event_input (seq.get(), &event) >= 0)
+            if (event && (event->type == SND_SEQ_EVENT_NOTEON || event->type == SND_SEQ_EVENT_NOTEOFF))
+                received->push_back ({ event->type, event->data.note.channel, event->data.note.note, event->data.note.velocity });
+        const auto count = received->size();
+        if (count == drain->first) ++drain->second;
+        else { drain->first = count; drain->second = 0; }
+        return count >= 2 && drain->second >= 3;
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 0, [&ctx, &host, &engine, &track, destination]
+    {
+        const int output = destination();
+        ctx.expect (engine.ensureMidiOutputOpen (output), "the audition output did not open");
+        track.midiOutputIdentifier = engine.getMidiOutputDevices()[(std::size_t) output].identifier;
+        track.midiOutputIndex.store (output);
+        ctx.expect (host.openPiano (kRollTrack, 0), "the output audition piano roll did not open");
+    }, [&engine, destination] { return engine.midiHotplugSettledForScenario() && destination() >= 0; },
+        "the audition output was not enumerated", {}, 4000 });
+    steps->push_back ({ 0, [] {},
+        [&host] { return host.pianoKeyPointer (60, true); }, "the output audition keyboard was not ready", {}, 4000 });
+    steps->push_back ({ 0, [&host] { host.pianoKeyPointer (60, false); } });
+    steps->push_back ({ 100, [&ctx, received]
+    {
+        ctx.expect (*received == std::vector<std::array<int, 4>> {
+            { SND_SEQ_EVENT_NOTEON, kRegionChannel - 1, 60, 100 },
+            { SND_SEQ_EVENT_NOTEOFF, kRegionChannel - 1, 60, 0 } },
+            "the piano keyboard did not deliver exactly one onset and release on the region's MIDI channel");
+    }, collect, "the piano keyboard's note and release did not reach the MIDI output", {}, 4000 });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+#endif
+
+const ScenarioRegistrar pianoKeyboardOutput { Scenario {
+    "gui.piano_keyboard_midi_output", { "gui", "piano", "midi", "output" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) -> std::optional<ScenarioResult>
+    {
+       #if DUSKSTUDIO_HAS_ALSA
+        return runPianoKeyboardOutput (host, ctx);
+       #else
+        (void) host; (void) ctx;
+        return ScenarioResult::skip ("virtual MIDI destination fixture requires ALSA sequencer");
+       #endif
+    }
 } };
 #endif
 } // namespace
