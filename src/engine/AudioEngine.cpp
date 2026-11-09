@@ -7057,6 +7057,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             auditionBlock[(size_t) auditionBlockCount++] = event;
             auditionGates[(size_t) event.track].hear (event.bytes);
         });
+        auditionDrains.store (auditionDrains.load (std::memory_order_relaxed) + 1, std::memory_order_relaxed);
         if (auditionBlockCount > 0)
             auditionDelivered.fetch_add ((std::uint64_t) auditionBlockCount, std::memory_order_relaxed);
     }
@@ -7185,9 +7186,10 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         // (independent of IN).
         // A frozen track plays its baked WAV only - never live input. When stopped it
         // stays silent instead of monitoring the device through a frozen (bypassed) strip.
-        // A MIDI track the piano roll's keyboard is playing is heard as its timeline
-        // would be, IN or not (midi::AuditionGate).
-        const bool auditionHeard = midiTrack && auditionGates[(size_t) t].isOpen();
+        // While the piano roll's keyboard plays a MIDI track (midi::AuditionGate) its
+        // strip passes as it does for the timeline, IN or not. Only the keyboard's
+        // notes are heard that way: live input still needs IN (pullsLiveMidi below).
+        const bool auditionHeard = midiTrack && ! isFrozen && auditionGates[(size_t) t].isOpen();
         const bool monitorPasses = willReadFromDisk ? true : ((monitorEnabled || auditionHeard) && ! isFrozen);
 
         // SIP-style bus solo (matches Pro Tools / Logic / Cubase): when any
@@ -7384,8 +7386,12 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         // input. A record-armed track also auditions the on-screen keyboard,
         // so it plays from the keyboard however the instrument was loaded,
         // unless its input already is the keyboard and events would double.
+        // While the piano roll's keyboard is all that opens the strip, no live
+        // input is taken, so IN off keeps it silent; the route that narrows
+        // resets what the track held ahead of the keyboard's note.
         const bool capturesLiveMidi = isRecording && armed && midiTrack && ! offlineRender;
-        const bool pullsLiveMidi = midiTrack && ! offlineRender
+        const bool openedByAudition = auditionHeard && ! monitorEnabled && ! willReadFromDisk;
+        const bool pullsLiveMidi = midiTrack && ! offlineRender && ! openedByAudition
                                 && (capturesLiveMidi || monitorEnabled || ! (willReadFromDisk && ! isFrozen));
         midi::LiveMidiRoute inputRoute;
         if (pullsLiveMidi || capturesLiveMidi)
@@ -7795,9 +7801,11 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         if (pullsLiveMidi) pullLiveMidi (false);
 
         // The piano roll's keyboard plays a MIDI track past its input routing,
-        // and never into the recorder.
+        // and never into the recorder. A frozen track starts no note, its MIDI
+        // output port included, but still ends one it started.
         if (midiTrack && auditionBlockCount > 0 && ! midiEventsDropped
-            && ! midi::appendAuditions (auditionBlock.data(), auditionBlockCount, t, perTrackMidi[(size_t) t]))
+            && ! midi::appendAuditions (auditionBlock.data(), auditionBlockCount, t, ! isFrozen,
+                                        perTrackMidi[(size_t) t]))
             midiEventsDropped = true;
 
         // A torn block can deliver a note-on without its note-off, and a

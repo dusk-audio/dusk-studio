@@ -98,6 +98,7 @@ public:
     bool marksMissingGlyphs() const override { return true; }
     bool capturesKeyboard() const override { return ! covered() && (popupOpen || popupRequested != Popup::none); }
     bool takeDismissRequest() override { return std::exchange (dismissRequested, false); }
+    void focusLost() override { if (drag == Drag::audition) cancelGesture(); }
     bool claimsShortcut (ShellShortcut key) const override
     {
         if (covered() && host.keyboardClaimsShortcut && host.keyboardClaimsShortcut (key)) return true;

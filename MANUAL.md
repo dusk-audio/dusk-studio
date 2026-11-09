@@ -1615,13 +1615,15 @@ Snap resolution sits beside **Snap** in the toolbar; **Chase** and the zoom cont
 
 ## Playing the keyboard
 
-Click a key on the keyboard at the left of the grid to hear it. The note plays at velocity 100, the velocity a drawn note gets, on the channel shown after **ch** in the status bar. Hold the button to sustain the note, and let go anywhere to end it. Drag up or down to play each key you pass over; each one ends as the next one starts. Drag out over the grid and the note follows the pointer's height.
+Click a key on the keyboard at the left of the grid to hear it. The note plays at velocity 100, the velocity a drawn note gets, on the channel shown after **ch** in the status bar. Hold the button to sustain the note, and let go anywhere to end it. As you drag, the key under the pointer plays, and the last one ends as the next one starts. Drag out over the grid and the note follows the pointer's height.
 
-The note goes to the region's track and no other, whatever the track's **MIDI port**, **Channel** and **ARM** are set to. It plays through the track's instrument and its strip as the region's own notes do, so the track's mute and solo apply. You hear it with the transport stopped, even with **IN** off, and during playback.
+The note goes to the region's track and no other, whatever the track's **MIDI port**, **Channel** and **ARM** are set to. It plays through the track's instrument and its strip as the region's own notes do, so the track's mute and solo apply. You hear it with the transport stopped, even with **IN** off, and during playback. Playing the keyboard does not make the track's live MIDI input heard with **IN** off. In the **MASTERING** stage the keyboard plays nothing.
 
-Nothing you play here is recorded: the region, its takes and the undo history stay as they were. Closing the piano roll ends a note you are holding.
+Nothing you play here is recorded, even while you record on the track: it never becomes a note in the region or in a take, and it adds no undo step.
 
-A frozen track's instrument is bypassed, so on a frozen track the keyboard plays nothing.
+A note you are holding ends when you let go, when the piano roll closes, when you switch to another window and when you stop the transport. During playback a loop jumping back ends it too, as it ends a key held on a MIDI controller.
+
+A frozen track starts no note from the keyboard, so on a frozen track it plays nothing.
 
 ## Creating notes
 

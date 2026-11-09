@@ -60,11 +60,16 @@ std::optional<ScenarioResult> runPianoKeyboardAudition (GuiHost& host, ScenarioC
     const auto originalDir = currentSessionDirectory (session);
     const auto restore = ctx.tempDir() / "restore.json";
     if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save initial session");
-    ctx.cleanup ([&host, &engine, &session, rollStrip, keyboardStrip, originalDir, restore]
+    ctx.keep (session.countInEnabled);
+    ctx.cleanup ([&host, &engine, &session, rollStrip, keyboardStrip, originalDir, restore,
+                  loop = engine.getTransport().isLoopEnabled(), punch = engine.getTransport().isPunchEnabled()]
     {
         host.pianoKeyPointer (60, false);
         host.closePiano();
         engine.stop();
+        engine.getTransport().setLoopEnabled (loop);
+        engine.getTransport().setPunchEnabled (punch);
+        session.setTrackArmed (kRollTrack, false);
         session.track (kRollTrack).strip.mute.store (false);
         session.track (kRollTrack).frozen.store (false, std::memory_order_release);
         session.track (kKeyboardTrack).strip.solo.store (false);
@@ -231,16 +236,83 @@ std::optional<ScenarioResult> runPianoKeyboardAudition (GuiHost& host, ScenarioC
         untouched();
     }, delivered (16), "the key released during playback never ended", {}, 4000 });
 
+    // The window losing the keyboard focus ends a held key, since the button's
+    // release may never arrive; the release that does come later sends nothing.
+    steps->push_back ({ 200, [&ctx, &host]
+    { ctx.expect (host.pianoKeyPointer (66, true), "the keyboard's F#4 key was not under the pointer"); } });
+    steps->push_back ({ 0, [&ctx, &host, check]
+    {
+        check (8, 7, 1, 66, 65, "holding F#4");
+        ctx.expect (host.pianoKeyboardFocus (false), "the piano roll could not lose the keyboard focus");
+    }, delivered (17), "the key pressed before the focus went never reached the track", {}, 4000 });
+    steps->push_back ({ 0, [&ctx, &host, check]
+    {
+        check (8, 8, 0, 66, 66, "losing the focus on F#4");
+        ctx.expect (host.pianoKeyboardFocus (true), "the piano roll could not take the keyboard focus back");
+        host.pianoKeyPointer (66, false);
+    }, delivered (18), "losing the keyboard focus left the held key sounding", {}, 4000 });
+
     // Closing the editor while a key is held ends it.
     steps->push_back ({ 200, [&ctx, &host]
     { ctx.expect (host.pianoKeyPointer (67, true), "the keyboard's G4 key was not under the pointer"); } });
     steps->push_back ({ 0, [&host, check]
     {
-        check (8, 7, 1, 67, 65, "holding G4");
+        check (9, 8, 1, 67, 66, "holding G4");
         host.closePiano();
-    }, delivered (17), "the key pressed before closing never reached the track", {}, 4000 });
-    steps->push_back ({ 0, [check, untouched] { check (8, 8, 0, 67, 67, "closing the editor on G4"); untouched(); },
-        delivered (18), "closing the editor left the held key sounding", {}, 4000 });
+    }, delivered (19), "the key pressed before closing never reached the track", {}, 4000 });
+    steps->push_back ({ 0, [check, untouched] { check (9, 9, 0, 67, 67, "closing the editor on G4"); untouched(); },
+        delivered (20), "closing the editor left the held key sounding", {}, 4000 });
+
+    // Recording on the roll's own track, IN off: a key played on the
+    // on-screen keyboard is the take, and the roll's keyboard is not in it.
+    constexpr int kRecordedKey = 50, kAuditionedKey = 70;
+    const auto postKeyboard = [&engine] (bool on)
+    {
+        const std::uint8_t message[] { (std::uint8_t) (on ? 0x90 : 0x80), (std::uint8_t) kRecordedKey,
+                                       (std::uint8_t) (on ? 100 : 0) };
+        engine.postVirtualKeyboardMidi (message, 3);
+    };
+    const auto takeNotes = [&rollTrack] (int pitch)
+    {
+        int count = 0;
+        for (const auto& r : rollTrack.midiRegions.current())
+        {
+            for (const auto& n : r.notes) count += n.noteNumber == pitch ? 1 : 0;
+            for (const auto& take : r.previousTakes)
+                for (const auto& n : take.notes) count += n.noteNumber == pitch ? 1 : 0;
+        }
+        return count;
+    };
+    steps->push_back ({ 200, [&ctx, &host, &engine, &session, &rollTrack, keyboardInput]
+    {
+        ctx.expect (host.openPiano (kRollTrack, 0), "the piano roll did not reopen");
+        auto& transport = engine.getTransport();
+        transport.setLoopEnabled (false);
+        transport.setPunchEnabled (false);
+        transport.setPlayhead (0);
+        session.countInEnabled.store (false);
+        rollTrack.midiChannel.store (0);
+        rollTrack.midiInputIndex.store (keyboardInput);
+        session.setTrackArmed (kRollTrack, true);
+        session.recomputeRtCounters();
+    } });
+    steps->push_back ({ 300, [&ctx, &host] { ctx.expect (host.clickRecord(), "Record was unavailable"); } });
+    steps->push_back ({ 0, [postKeyboard] { postKeyboard (true); },
+        [&engine] { return engine.getTransport().isRecording(); }, "the armed track never started recording", {}, 4000 });
+    steps->push_back ({ 100, [&ctx, &host]
+    { ctx.expect (host.pianoKeyPointer (kAuditionedKey, true), "the keyboard's A#4 key was not under the pointer"); } });
+    steps->push_back ({ 150, [&host, postKeyboard]
+    {
+        host.pianoKeyPointer (kAuditionedKey, false);
+        postKeyboard (false);
+    }, delivered (21), "the key pressed while recording never reached the track", {}, 4000 });
+    steps->push_back ({ 100, [&engine] { engine.pressStop(); }, delivered (22),
+        "the key released while recording never ended", {}, 4000 });
+    steps->push_back ({ 0, [&ctx, takeNotes]
+    {
+        ctx.expect (takeNotes (kAuditionedKey) == 0, "the roll's keyboard was recorded into the take");
+    }, [&engine, takeNotes] { return engine.getTransport().isStopped() && takeNotes (kRecordedKey) > 0; },
+        "the take never held the on-screen keyboard's note", {}, 4000 });
 
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
@@ -248,7 +320,7 @@ std::optional<ScenarioResult> runPianoKeyboardAudition (GuiHost& host, ScenarioC
 
 const ScenarioRegistrar pianoKeyboardAudition { Scenario {
     "gui.piano_keyboard_audition", { "gui", "piano", "midi" }, Needs::Engine | Needs::Gui,
-    { "panic_probe.clap" }, {}, 60000,
+    { "panic_probe.clap" }, {}, 90000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runPianoKeyboardAudition (host, ctx); }
 } };
 #endif

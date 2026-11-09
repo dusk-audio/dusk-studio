@@ -169,7 +169,7 @@ TEST_CASE ("Audition messages merge into their own track at the block's first sa
     track.reserveBytes (dusk::kMidiRoutingBlockBytes);
     const std::uint8_t scheduled[] { 0x80, 59, 0 };
     REQUIRE (track.addEvent (scheduled, 3, 0));
-    REQUIRE (duskstudio::midi::appendAuditions (block.data(), (int) block.size(), 1, track));
+    REQUIRE (duskstudio::midi::appendAuditions (block.data(), (int) block.size(), 1, true, track));
 
     std::vector<std::array<int, 4>> seen;
     for (const auto message : track)
@@ -179,10 +179,21 @@ TEST_CASE ("Audition messages merge into their own track at the block's first sa
     CHECK (seen[1] == std::array<int, 4> { 0, 0x80, 60, 0 });
     CHECK (seen[2] == std::array<int, 4> { 0, 0x90, 61, 100 });
 
+    SECTION ("a track that may not start notes still ends them")
+    {
+        dusk::MidiBuffer frozen;
+        frozen.reserveBytes (dusk::kMidiRoutingBlockBytes);
+        REQUIRE (duskstudio::midi::appendAuditions (block.data(), (int) block.size(), 1, false, frozen));
+        std::vector<std::array<int, 3>> ended;
+        for (const auto message : frozen)
+            ended.push_back ({ message.data[0], message.data[1], message.data[2] });
+        CHECK (ended == std::vector<std::array<int, 3>> { { 0x80, 60, 0 } });
+    }
+
     dusk::MidiBuffer full;
     full.reserveBytes (dusk::MidiBuffer::recordBytes (3));
-    CHECK_FALSE (duskstudio::midi::appendAuditions (block.data(), (int) block.size(), 1, full));
-    CHECK (duskstudio::midi::appendAuditions (block.data(), (int) block.size(), 3, full));
+    CHECK_FALSE (duskstudio::midi::appendAuditions (block.data(), (int) block.size(), 1, true, full));
+    CHECK (duskstudio::midi::appendAuditions (block.data(), (int) block.size(), 3, true, full));
 }
 
 TEST_CASE ("Audition handoff allocates nothing on either side", "[midi][audition][allocation]")
@@ -217,7 +228,7 @@ TEST_CASE ("Audition handoff allocates nothing on either side", "[midi][audition
                 block[(std::size_t) count++] = event;
                 gate.hear (event.bytes);
             });
-            merged = duskstudio::midi::appendAuditions (block.data(), count, 0, track);
+            merged = duskstudio::midi::appendAuditions (block.data(), count, 0, true, track);
             gate.afterBlock (256, 0.0f, 48000.0);
             consumerAllocations += observer.count();
         }

@@ -3,14 +3,16 @@
 #include "../../../session/TrackMove.h"
 
 #include <array>
+#include <cstdint>
 #include <functional>
 #include <optional>
 #include <string>
 #include <vector>
 
 // The piano roll keyboard's notes through the real callback: they wait out a
-// suspended engine, and a note-off queued or held across a track move still
-// reaches the strip that heard its note-on.
+// suspended engine, a note-off queued or held across a track move still
+// reaches the strip that heard its note-on, and the keyboard opens a track to
+// its own notes only.
 namespace duskstudio::scenario
 {
 namespace
@@ -141,12 +143,140 @@ ScenarioResult runTrackMove (ScenarioContext& ctx)
         ctx.expect (engine.moveTracks (*back), "the tracks did not move back");
     return ctx.verdict();
 }
+// The keyboard opening a stopped, IN-off track must not open it to the live
+// input as well: a key already held on the input is reset ahead of the
+// keyboard's note, and one played meanwhile never reaches the instrument.
+ScenarioResult runLiveInputStaysShut (ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    const int input = engine.getVirtualKeyboardInputIndex();
+    if (input < 0) return ScenarioResult::skip ("the MIDI input bank has no injectable input");
+    if (! probeTrack (ctx, 0)) return ctx.verdict();
+    ctx.session().track (0).midiInputIndex.store (input);
+    // Long enough for a gate an earlier case left ringing to close.
+    ctx.pump ((int) (ScenarioContext::kSampleRate * (midi::AuditionGate::kMaxRingSeconds + 0.1))
+              / ScenarioContext::kBlockSize);
+    ctx.cleanup ([&engine] { engine.releaseAuditions(); });
+
+    dusk::MidiBuffer chord;
+    midiprobe::addMessage (chord, 0x90, 48, 100);
+    ctx.pumpWithMidi (input, std::move (chord));
+    ctx.pump (1);
+    const auto silent = heardOn (ctx, 0);
+    ctx.expect (silent.voices == 1 && silent.onKey == 48, "the IN-off track did not take its live input: " + describe (silent));
+    ctx.expect (engine.getChannelStrip (0).getOutLDb() <= midiprobe::kSilentDb, "the IN-off track was heard before the keyboard played");
+
+    ctx.expect (engine.auditionNoteOn (0, 1, 60, 100), "the keyboard's note was not taken");
+    ctx.pump (1);
+    const auto playing = heardOn (ctx, 0);
+    ctx.expect (playing.voices == 1 && playing.onKey == 60,
+                "the live key held on the input was not reset ahead of the keyboard's note: " + describe (playing));
+
+    dusk::MidiBuffer live;
+    midiprobe::addMessage (live, 0x90, 72, 100);
+    ctx.pumpWithMidi (input, std::move (live));
+    ctx.pump (1);
+    const auto after = heardOn (ctx, 0);
+    ctx.note ("held on the input " + describe (silent) + " / keyboard " + describe (playing) + " / live key " + describe (after));
+    ctx.expect (after.ons == playing.ons && after.voices == 1 && after.onKey == 60,
+                "a live key played while only the keyboard opened the strip reached the instrument");
+
+    engine.auditionNoteOff (0, 1, 60);
+    ctx.pump (1);
+    ctx.expect (heardOn (ctx, 0).voices == 0, "the keyboard's note did not end");
+    return ctx.verdict();
+}
+
+// Nothing piles up for later while the callback takes nothing in: a second
+// note-on waits for a block to have run, and none is taken in Mastering,
+// whose blocks never reach the tracks. Note-offs are always taken.
+ScenarioResult runPacedNoteOns (ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    if (! probeTrack (ctx, 0)) return ctx.verdict();
+    ctx.pump (kSettleBlocks);
+    const auto stage = engine.getStage();
+    ctx.cleanup ([&engine, stage] { engine.releaseAuditions(); engine.setStage (stage); });
+
+    ctx.expect (engine.auditionNoteOn (0, 1, 60, 100), "the first note was not taken");
+    engine.auditionNoteOff (0, 1, 60);
+    ctx.expect (! engine.auditionNoteOn (0, 1, 62, 100), "a second note-on was taken before any block ran");
+    ctx.pump (1);
+    ctx.expect (engine.auditionNoteOn (0, 1, 62, 100), "the next note-on was refused after a block had run");
+    ctx.pump (1);
+    const auto played = heardOn (ctx, 0);
+    ctx.expect (played.ons == 2 && played.offs == 1 && played.voices == 1 && played.onKey == 62,
+                "the paced notes did not play in turn: " + describe (played));
+
+    engine.setStage (AudioEngine::Stage::Mastering);
+    ctx.expect (! engine.auditionNoteOn (0, 1, 64, 100), "a note-on was taken in the Mastering stage");
+    engine.auditionNoteOff (0, 1, 62);
+    ctx.expect (! engine.isAuditionHeld (0, 1, 62), "the note-off was refused in the Mastering stage");
+    ctx.pump (3);
+    ctx.expect (heardOn (ctx, 0).offs == 1, "a Mastering block reached the track");
+    engine.setStage (stage);
+    ctx.pump (1);
+    const auto back = heardOn (ctx, 0);
+    ctx.note ("played " + describe (played) + " / back from Mastering " + describe (back));
+    ctx.expect (back.ons == 2 && back.offs == 2 && back.voices == 0,
+                "leaving Mastering did not deliver just the waiting note-off");
+    return ctx.verdict();
+}
+
+// A held key ends at Stop and, during playback, at a loop seam, the way a key
+// held on the track's MIDI input does.
+ScenarioResult runEndsAtStopAndSeam (ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+    if (! probeTrack (ctx, 0)) return ctx.verdict();
+    ctx.pump (kSettleBlocks);
+    ctx.cleanup ([&engine, &transport]
+    {
+        engine.releaseAuditions();
+        engine.stop();
+        transport.setLoopEnabled (false);
+    });
+
+    engine.play();
+    ctx.pump (kSettleBlocks);
+    ctx.expect (engine.auditionNoteOn (0, 1, 60, 100), "the note was not taken during playback");
+    ctx.pump (1);
+    const auto rolling = heardOn (ctx, 0);
+    ctx.expect (rolling.voices == 1, "the note never played during playback: " + describe (rolling));
+    engine.stop();
+    ctx.pump (kSettleBlocks);
+    const auto stopped = heardOn (ctx, 0);
+    ctx.expect (stopped.voices == 0 && stopped.chokes > rolling.chokes, "Stop left the held key sounding: " + describe (stopped));
+    engine.auditionNoteOff (0, 1, 60);
+    ctx.pump (1);
+
+    constexpr std::int64_t loopStart = 500, loopEnd = 3000;
+    transport.setLoopRange (loopStart, loopEnd);
+    transport.setLoopEnabled (true);
+    transport.setPlayhead (loopStart);
+    engine.play();
+    ctx.pump (kSettleBlocks);
+    ctx.expect (engine.auditionNoteOn (0, 1, 62, 100), "the note was not taken in the loop");
+    ctx.pump (1);
+    const auto looping = heardOn (ctx, 0);
+    ctx.expect (looping.voices == 1, "the note never played in the loop: " + describe (looping));
+    ctx.pump ((int) ((loopEnd - loopStart) / ScenarioContext::kBlockSize) + 2);
+    const auto wrapped = heardOn (ctx, 0);
+    ctx.note ("rolling " + describe (rolling) + " / stopped " + describe (stopped)
+              + " / looping " + describe (looping) + " / wrapped " + describe (wrapped));
+    ctx.expect (wrapped.voices == 0 && wrapped.chokes > looping.chokes, "the loop seam left the held key sounding");
+    engine.auditionNoteOff (0, 1, 62);
+    ctx.pump (1);
+    return ctx.verdict();
+}
 #else
 ScenarioResult withoutClap (ScenarioContext&)
 {
     return ScenarioResult::skip ("built without the native CLAP host");
 }
-constexpr Run runSuspended = withoutClap, runTrackMove = withoutClap;
+constexpr Run runSuspended = withoutClap, runTrackMove = withoutClap, runLiveInputStaysShut = withoutClap,
+              runPacedNoteOns = withoutClap, runEndsAtStopAndSeam = withoutClap;
 #endif
 
 const std::vector<std::string> kTags { "midi", "audition", "clap" };
@@ -161,5 +291,11 @@ const ScenarioRegistrar suspendedRegistrar { Scenario {
     "midi.audition_waits_out_a_suspended_engine", kTags, Needs::Engine, kFixtures, running (runSuspended) } };
 const ScenarioRegistrar moveRegistrar { Scenario {
     "midi.audition_note_off_follows_track_move", kTags, Needs::Engine, kFixtures, running (runTrackMove) } };
+const ScenarioRegistrar liveInputRegistrar { Scenario {
+    "midi.audition_keeps_live_input_shut_with_in_off", kTags, Needs::Engine, kFixtures, running (runLiveInputStaysShut) } };
+const ScenarioRegistrar pacedRegistrar { Scenario {
+    "midi.audition_note_ons_wait_for_the_callback", kTags, Needs::Engine, kFixtures, running (runPacedNoteOns) } };
+const ScenarioRegistrar stopSeamRegistrar { Scenario {
+    "midi.audition_ends_at_stop_and_loop_seam", kTags, Needs::Engine, kFixtures, running (runEndsAtStopAndSeam) } };
 } // namespace
 } // namespace duskstudio::scenario

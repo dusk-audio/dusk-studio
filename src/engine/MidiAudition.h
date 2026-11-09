@@ -130,15 +130,20 @@ private:
 };
 
 // Appends one track's share of a block's auditioned messages at the block's
-// first sample, after whatever the block already holds there. False when the
-// buffer is full; the caller then gives the block up the way it gives up any
-// block it could not carry whole.
-inline bool appendAuditions (const AuditionEvent* events, int count, int track,
+// first sample, after whatever the block already holds there. With startNotes
+// false no note-on goes in, though the note-off of a note started earlier
+// still does. False when the buffer is full; the caller then gives the block
+// up the way it gives up any block it could not carry whole.
+inline bool appendAuditions (const AuditionEvent* events, int count, int track, bool startNotes,
                              dusk::MidiBuffer& out) noexcept
 {
     for (int i = 0; i < count; ++i)
-        if (events[i].track == track && ! out.addEvent (events[i].bytes.data(), 3, 0))
+    {
+        const auto& event = events[i];
+        const bool starts = (event.bytes[0] & 0xF0) == 0x90 && event.bytes[2] > 0;
+        if (event.track == track && (startNotes || ! starts) && ! out.addEvent (event.bytes.data(), 3, 0))
             return false;
+    }
     return true;
 }
 
