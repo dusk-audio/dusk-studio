@@ -2,8 +2,13 @@
 #include "MidiProbeHarness.h"
 
 #include <cstdint>
+#include <memory>
 #include <string>
+#include <vector>
 
+// Stop chokes every voice a CLAP instrument holds. A loop wrap or a jump while
+// rolling ends only what the timeline played, so keys held through the track's
+// input go on sounding across it.
 namespace duskstudio::scenario
 {
 namespace
@@ -13,9 +18,9 @@ constexpr int kTrackIndex   = 0;
 constexpr int kSettleBlocks = 3;
 constexpr std::int64_t kJumpTarget = 48000 * 10;
 
-// The first loop ends inside a block, so its seam is reset there. The second
-// ends on a block boundary, so the block before the seam ends on it and the
-// transport has wrapped before the next, which resets the seam at its head.
+// The first loop ends inside a block, so its seam falls there. The second ends
+// on a block boundary, so the block before the seam ends on it and the
+// transport has wrapped before the next, which meets the seam at its head.
 struct LoopLeg
 {
     const char* name;
@@ -60,6 +65,25 @@ Counters holdVoices (ScenarioContext& ctx, int input)
     return readCounters (ctx);
 }
 
+void releaseVoices (ScenarioContext& ctx, int input)
+{
+    dusk::MidiBuffer notes;
+    midiprobe::addMessage (notes, 0x80, 60, 0);
+    midiprobe::addMessage (notes, 0x80, 67, 0);
+    ctx.pumpWithMidi (input, std::move (notes));
+    ctx.pump (1);
+}
+
+void checkKept (ScenarioContext& ctx, const std::string& event,
+                const Counters& before, const Counters& after)
+{
+    const std::string prefix = event + ": ";
+    ctx.note (prefix + "before " + describe (before) + " / after " + describe (after));
+    ctx.expect ((int) after.voicesHeld == (int) before.voicesHeld, prefix + "the held keys were cut");
+    ctx.expect ((int) after.chokesSeen == (int) before.chokesSeen, prefix + "a choke reached the plugin");
+    ctx.expect ((int) after.noteOffsSeen == (int) before.noteOffsSeen, prefix + "a note-off reached the plugin");
+}
+
 void checkChoked (ScenarioContext& ctx, const char* event,
                   const Counters& before, const Counters& after)
 {
@@ -101,6 +125,7 @@ ScenarioResult runChoke (ScenarioContext& ctx)
         engine.stop();
         ctx.pump (kSettleBlocks);
         checkChoked (ctx, "stop", held, readCounters (ctx));
+        releaseVoices (ctx, input);
     }
 
     for (const auto& leg : kLoopLegs)
@@ -118,11 +143,12 @@ ScenarioResult runChoke (ScenarioContext& ctx)
         ctx.pump ((int) ((leg.end - leg.start) / ScenarioContext::kBlockSize) + 2);
         ctx.note (name + ": playhead landed at "
                   + std::to_string ((long long) transport.getPlayhead()));
-        checkChoked (ctx, leg.name, held, readCounters (ctx));
+        checkKept (ctx, name, held, readCounters (ctx));
 
         engine.stop();
         transport.setLoopEnabled (false);
         ctx.pump (kSettleBlocks);
+        releaseVoices (ctx, input);
     }
 
     {
@@ -134,10 +160,40 @@ ScenarioResult runChoke (ScenarioContext& ctx)
 
         transport.setPlayhead (kJumpTarget);
         ctx.pump (kSettleBlocks);
-        checkChoked (ctx, "playhead jump", held, readCounters (ctx));
+        checkKept (ctx, "playhead jump", held, readCounters (ctx));
 
         engine.stop();
         ctx.pump (1);
+        releaseVoices (ctx, input);
+    }
+
+    // A note a region plays gets its note-off from Stop as well as the choke,
+    // for an instrument that would ignore the reset.
+    {
+        auto& track = session.track (kTrackIndex);
+        auto regions = std::make_unique<std::vector<MidiRegion>>();
+        MidiRegion region;
+        region.lengthInTicks = 4 * kMidiTicksPerQuarter;
+        region.lengthInSamples = ticksToSamples (region.lengthInTicks, ScenarioContext::kSampleRate,
+                                                 session.tempoBpm.load (std::memory_order_acquire));
+        region.notes.push_back ({ 1, 48, 100, 0, region.lengthInTicks });
+        regions->push_back (std::move (region));
+        track.midiRegions.publish (std::move (regions));
+        ctx.cleanup ([&track] { track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>>()); });
+
+        transport.setPlayhead (0);
+        engine.play();
+        ctx.pump (kSettleBlocks);
+        const auto playing = readCounters (ctx);
+        ctx.expect ((int) playing.voicesHeld == 1, "region note: the instrument never received it");
+        engine.stop();
+        ctx.pump (kSettleBlocks);
+        const auto stopped = readCounters (ctx);
+        ctx.note ("region note: before " + describe (playing) + " / after " + describe (stopped));
+        ctx.expect (stopped.voicesHeld <= 0.0, "region note: it was still held after Stop");
+        ctx.expect ((int) stopped.noteOffsSeen == (int) playing.noteOffsSeen + 1,
+                    "region note: Stop did not end it with a note-off");
+        ctx.expect (stopped.chokesSeen > playing.chokesSeen, "region note: Stop sent no choke");
     }
 
     return ctx.verdict();
@@ -145,7 +201,7 @@ ScenarioResult runChoke (ScenarioContext& ctx)
 #endif
 
 const ScenarioRegistrar registrar { Scenario {
-    "clap.choke_on_stop_loop_jump",
+    "clap.choke_on_stop_only",
     { "clap", "midi", "panic", "transport" },
     Needs::Engine,
     { "panic_probe.clap" },

@@ -581,7 +581,9 @@ Switching into or out of MASTERING force-stops the transport. The mix engine and
 From left to right:
 
 - **Stop** (■). Halts playback or recording and silences held notes in hosted
-  instruments even when their tracks are muted or excluded by solo. It sends a
+  instruments even when their tracks are muted or excluded by solo. Each note a
+  MIDI region was playing gets its note-off first, so an instrument that
+  ignores all notes off still stops it; then Stop sends all notes off, a
   controller reset, centred pitch bend and zero channel pressure on all MIDI
   channels. The playhead goes back to where playback or the take began, or
   wherever **Playhead on Stop**
@@ -766,7 +768,7 @@ This block is visible in the RECORDING stage, alongside a small **I/O** button t
 - **MIDI out** (MIDI mode): optional external MIDI output to drive a hardware synth as you play, or **None**.
 - **Activity LED**: blinks green when MIDI arrives on the chosen channel.
 
-A note you are holding ends when the track stops listening to it: choosing another **MIDI port**, setting **Channel** to one the note is not on, turning **IN** off while the transport rolls, or disarming a track that plays the on-screen keyboard sends the track's instrument all notes off. Notes the timeline is holding sound again at once. Opening the channel up to **Omni** leaves held notes alone. The same goes for a plug-in that stops getting the track's MIDI at all: switched to **Mono** or **Stereo** with the plug-in still loaded, it gets all notes off the first time it runs as an effect, or when the track goes back to MIDI if it never ran, and a frozen track's plug-in gets it when you unfreeze.
+A note you are holding ends when the track stops listening to it: choosing another **MIDI port**, setting **Channel** to one the note is not on, turning **IN** off while the transport rolls, or disarming a track that plays the on-screen keyboard sends the track's instrument all notes off. Notes the timeline is holding sound again at once. Opening the channel up to **Omni** leaves held notes alone. The same goes for a plug-in that stops getting the track's MIDI at all: switched to **Mono** or **Stereo** with the plug-in still loaded, it gets all notes off the first time it runs as an effect, or when the track goes back to MIDI if it never ran, and a frozen track's plug-in gets it when you unfreeze. A loop wrap, a seek or scrub while the transport rolls, and pressing **Play** leave a note you hold, and your sustain pedal, alone; **Stop** ends them.
 
 ## ARM, IN, PRINT/FREEZE (RECORDING stage)
 
@@ -1255,7 +1257,7 @@ To repeat a section while you experiment:
 2. Check that the **Loop** button on the transport bar is lit. **L** or the button turns loop off and on again without moving the brackets.
 3. Press Play (for loop playback) or Record (for loop recording).
 
-In loop play, the transport wraps at the loop boundary indefinitely. Loop recording also wraps and creates a new take on each pass. On an audio track every pass is kept as a take on the track, up to **1,024 passes** in one loop take, and the newest pass is placed on the timeline; pick between the passes in the audio editor's take lanes. With **MIDI Merge** off, a MIDI track keeps the current pass plus up to **8 previous passes** attached to one range-aligned region, so you can cycle performances after stopping. With **MIDI Merge** on, each pass adds its performance to the region instead. A loop must be at least 128 samples long to record.
+In loop play, the transport wraps at the loop boundary indefinitely. At each wrap a MIDI track ends only what its regions were playing: their notes stop with note-offs, and a pedal, mod wheel, expression, pitch bend or pressure the regions moved goes back to its default unless the loop start sets it again. Notes the regions hold across the loop start sound again. Keys you hold through the track's input, your own sustain pedal, and the release and reverb tails still ringing carry on across the wrap; a key a region is playing too, on the same channel, ends with the region's note. A seek or scrub while the transport rolls, and pressing Play, do the same. Loop recording also wraps and creates a new take on each pass. On an audio track every pass is kept as a take on the track, up to **1,024 passes** in one loop take, and the newest pass is placed on the timeline; pick between the passes in the audio editor's take lanes. With **MIDI Merge** off, a MIDI track keeps the current pass plus up to **8 previous passes** attached to one range-aligned region, so you can cycle performances after stopping. With **MIDI Merge** on, each pass adds its performance to the region instead. A loop must be at least 128 samples long to record.
 
 With Punch enabled, each pass records only the overlap between the loop and punch ranges. Pressing Record anywhere inside the loop aligns the gesture to that effective capture start before count-in or pre-roll begins, so every pass covers the same timeline range. Punch post-roll auto-stop is suspended during loop recording; press Stop when you are finished.
 
@@ -1364,7 +1366,7 @@ Click the ruler to seek the playhead. Drag across the ruler, then choose **Set l
 
 Each region is drawn as a rounded coloured rectangle. Audio regions show a waveform thumbnail; MIDI regions show a piano-keyboard glyph and the first few notes. The region's left edge is its start position; the right edge is start + length.
 
-A MIDI region plays only what lies inside it. A note that runs past the right edge stops at the edge, and a note that starts after it does not play. A note still sounding at a loop end stops there.
+A MIDI region plays only what lies inside it. A note that runs past the right edge stops at the edge, and a note that starts after it does not play. A note still sounding at a loop end stops there, without cutting the notes you play live.
 
 An edit made while a MIDI track plays never leaves a note hanging. Mute, move or delete a region, switch its take, edit its notes in the piano roll, change the tempo, or undo or redo any of these, and each sounding note the timeline no longer plays where the transport is stops at once. The track's other notes play on, and a note the edit leaves under the transport ends where it now ends. Pressing **Record** during playback stops the notes an armed MIDI track was playing.
 

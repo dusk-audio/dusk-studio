@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <initializer_list>
 #include <map>
 #include <memory>
 #include <random>
@@ -687,6 +688,48 @@ TEST_CASE ("MIDI held counts follow scheduled timestamps and channel resets",
     CHECK (sounding.total == expectedTotal);
     CHECK (sounding.count[midischedule::NoteCount::keyOf (0, 60)] == 0);
     CHECK (sounding.count[midischedule::NoteCount::keyOf (2, 64)] == 1);
+}
+
+TEST_CASE ("the controllers a timeline holds go back to their defaults on their own channels, pedals first",
+           "[midi][schedule]")
+{
+    midischedule::HeldControls held;
+    const auto hear = [&held] (std::initializer_list<std::uint8_t> bytes)
+    {
+        const std::vector<std::uint8_t> message (bytes);
+        held.hear (message.data(), (int) message.size());
+    };
+    hear ({ 0xB0, 64, 127 });   // sustain down, channel 1
+    hear ({ 0xB0, 1, 40 });     // modulation
+    hear ({ 0xB0, 74, 90 });    // no default to return to
+    hear ({ 0xE2, 0, 80 });     // pitch bend, channel 3
+    hear ({ 0xD2, 30 });        // channel pressure
+    hear ({ 0xA2, 60, 50 });    // key pressure
+    hear ({ 0xB5, 11, 90 });    // expression, channel 6
+    hear ({ 0xB5, 66, 127 });   // sostenuto
+    hear ({ 0xB5, 66, 0 });     // and up again
+    hear ({ 0xB9, 64, 127 });   // channel 10, then a controller reset there
+    hear ({ 0xB9, 121, 0 });
+    CHECK (held.count() == 6);
+
+    std::vector<std::vector<std::uint8_t>> sent;
+    REQUIRE (held.forEachDefault ([&sent] (const std::uint8_t* data, int numBytes)
+    {
+        sent.emplace_back (data, data + numBytes);
+        return true;
+    }));
+    const std::vector<std::vector<std::uint8_t>> expected {
+        { 0xB0, 64, 0 }, { 0xB0, 1, 0 }, { 0xE2, 0, 64 }, { 0xD2, 0 }, { 0xA2, 60, 0 }, { 0xB5, 11, 127 }
+    };
+    CHECK (sent == expected);
+
+    int offered = 0;
+    CHECK_FALSE (held.forEachDefault ([&offered] (const std::uint8_t*, int) { return ++offered < 2; }));
+    CHECK (offered == 2);
+
+    for (const auto& message : sent)
+        held.hear (message.data(), (int) message.size());
+    CHECK (held.count() == 0);
 }
 
 TEST_CASE ("a region dense with controllers still plays its notes, a block at a time",

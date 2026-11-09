@@ -46,7 +46,7 @@ platform's runner), **manual** (with the reason). Run everything with
 | # | Item | Bucket | Covered by |
 |---|---|---|---|
 | 25 | Panic reaches every path (open, muted, soloed-out) | scenario | `midi.panic_all_paths` |
-| 26 | CLAP-only voices are choked on stop, loop wrap, jump | scenario | `clap.choke_on_stop_loop_jump` |
+| 26 | CLAP-only voices are choked on stop, and a loop wrap or jump leaves the player's keys | scenario | `clap.choke_on_stop_only` |
 | 27 | Irregular SMF files import | scenario + unit | `import.smf_irregular`; `midi_file_reader.cpp`, `file_importer_midi.cpp` |
 | 28 | A dense MIDI output block keeps every event | scenario + unit | `midi.out_dense_block`; `generated_midi_budget.cpp`, `midi_fifo_overflow.cpp` |
 | 29 | Callback add/remove never stalls | unit | `midi_device_layer.cpp` under the TSan job |

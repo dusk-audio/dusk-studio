@@ -1290,6 +1290,13 @@ private:
     std::array<midischedule::NoteCount, Session::kNumTracks> midiTimelineSounding {};
     std::array<MidiTimelineStamp, Session::kNumTracks> midiTimelineSeen {};
     midischedule::NoteCount midiTimelineHeldScratch;
+    // The controllers each track's timeline holds off their defaults, beside
+    // the notes above, so a jump returns them and leaves the player's alone.
+    // Same threading.
+    std::array<midischedule::HeldControls, Session::kNumTracks> midiTimelineControls {};
+    // What the timeline holds where a jump releases it, audio thread only.
+    midischedule::NoteCount midiReleaseNotesScratch;
+    midischedule::HeldControls midiReleaseControlsScratch;
 
     // MIDI hot-plug. The backend's MIDI thread reports that the OS port set
     // moved; noteMidiDeviceChange arms a single delayed pass so one plug (a

@@ -93,6 +93,104 @@ struct NoteCount
     }
 };
 
+// The controllers a track's timeline has moved off their defaults on its
+// instrument, per channel: the pedals (CC 64-69), modulation and expression,
+// pitch bend and channel and key pressure, the ones Reset All Controllers
+// returns. Any other controller has no default to go back to. Audio thread.
+struct HeldControls
+{
+    enum Lane : unsigned { Pedal64, Pedal65, Pedal66, Pedal67, Pedal68, Pedal69,
+                           Modulation, Expression, PitchBend, Pressure, kLanes };
+
+    std::array<std::uint16_t, 16> away {};
+    std::array<std::array<std::uint64_t, 2>, 16> keysPressed {};
+
+    void hear (const std::uint8_t* data, int numBytes) noexcept
+    {
+        if (numBytes < 2) return;
+        const auto kind = data[0] & 0xF0;
+        const auto channel = (std::size_t) (data[0] & 0x0F);
+        if (kind == 0xD0) { mark (channel, Pressure, data[1] != 0); return; }
+        if (numBytes < 3) return;
+        if (kind == 0xE0) { mark (channel, PitchBend, data[1] != 0 || data[2] != 64); return; }
+        if (kind == 0xA0)
+        {
+            auto& word = keysPressed[channel][(data[1] & 0x7F) / 64];
+            const auto bit = std::uint64_t { 1 } << ((data[1] & 0x7F) % 64);
+            word = data[2] != 0 ? (word | bit) : (word & ~bit);
+            return;
+        }
+        if (kind != 0xB0) return;
+        const auto controller = data[1];
+        if (controller >= 64 && controller <= 69) mark (channel, (Lane) (Pedal64 + controller - 64u), data[2] != 0);
+        else if (controller == 1) mark (channel, Modulation, data[2] != 0);
+        else if (controller == 11) mark (channel, Expression, data[2] != 127);
+        else if (controller == 121) { away[channel] = 0; keysPressed[channel] = {}; }
+    }
+
+    // The messages forEachDefault sends.
+    int count() const noexcept
+    {
+        int n = 0;
+        for (std::size_t channel = 0; channel < 16; ++channel)
+        {
+            n += bits (away[channel]);
+            n += bits (keysPressed[channel][0]) + bits (keysPressed[channel][1]);
+        }
+        return n;
+    }
+
+    // Each controller back to its default through emit (data, numBytes), the
+    // pedals first, so the notes they hold end with note-offs sent after them.
+    // False when emit refused one.
+    template <typename Emit>
+    bool forEachDefault (Emit&& emit) const noexcept
+    {
+        for (std::size_t channel = 0; channel < 16; ++channel)
+            for (unsigned lane = Pedal64; lane <= Pedal69; ++lane)
+                if ((away[channel] & (1u << lane)) != 0)
+                {
+                    const std::array<std::uint8_t, 3> message { (std::uint8_t) (0xB0 | channel), (std::uint8_t) (64 + lane), 0 };
+                    if (! emit (message.data(), 3)) return false;
+                }
+        for (std::size_t channel = 0; channel < 16; ++channel)
+        {
+            const auto status = [channel] (int kind) { return (std::uint8_t) (kind | (int) channel); };
+            const auto has = [this, channel] (Lane lane) { return (away[channel] & (1u << lane)) != 0; };
+            const std::array<std::uint8_t, 3> modulation { status (0xB0), 1, 0 };
+            const std::array<std::uint8_t, 3> expression { status (0xB0), 11, 127 };
+            const std::array<std::uint8_t, 3> bend { status (0xE0), 0, 64 };
+            const std::array<std::uint8_t, 2> pressure { status (0xD0), 0 };
+            if ((has (Modulation) && ! emit (modulation.data(), 3))
+                || (has (Expression) && ! emit (expression.data(), 3))
+                || (has (PitchBend) && ! emit (bend.data(), 3))
+                || (has (Pressure) && ! emit (pressure.data(), 2)))
+                return false;
+            for (int key = 0; key < 128; ++key)
+                if ((keysPressed[channel][(std::size_t) key / 64] & (std::uint64_t { 1 } << (key % 64))) != 0)
+                {
+                    const std::array<std::uint8_t, 3> message { status (0xA0), (std::uint8_t) key, 0 };
+                    if (! emit (message.data(), 3)) return false;
+                }
+        }
+        return true;
+    }
+
+private:
+    void mark (std::size_t channel, Lane lane, bool isAway) noexcept
+    {
+        const auto bit = (std::uint16_t) (1u << lane);
+        away[channel] = (std::uint16_t) (isAway ? (away[channel] | bit) : (away[channel] & ~bit));
+    }
+
+    static int bits (std::uint64_t value) noexcept
+    {
+        int n = 0;
+        for (; value != 0; value &= value - 1) ++n;
+        return n;
+    }
+};
+
 enum class Outcome
 {
     complete,
