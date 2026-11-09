@@ -307,7 +307,7 @@ std::optional<ScenarioResult> runPianoKeyboardAudition (GuiHost& host, ScenarioC
     const auto beforeExtra = std::make_shared<Heard>();
     steps->push_back ({ 200, [&ctx, &host, &engine, base, beforeExtra]
     {
-        host.openPianoRoll (kRollTrack, 0);
+        if (! host.pianoRollOpen()) host.openPianoRoll (kRollTrack, 0);
         ctx.expect (host.pianoRollOpen(), "the piano roll did not reopen for Escape");
         *base = engine.auditionMessagesDelivered();
         *beforeExtra = heardOn (ctx, kRollTrack);
@@ -346,7 +346,7 @@ std::optional<ScenarioResult> runPianoKeyboardAudition (GuiHost& host, ScenarioC
             if (! anotherTrack) regions->push_back (region);
             regions->push_back (std::move (otherRegion));
             session.track (destination).midiRegions.publish (std::move (regions));
-            host.openPianoRoll (kRollTrack, 0);
+            if (! host.pianoRollOpen()) host.openPianoRoll (kRollTrack, 0);
             ctx.expect (host.pianoRollOpen(), "the source piano roll did not open");
             *base = engine.auditionMessagesDelivered();
             *beforeExtra = heardOn (ctx, kRollTrack);
@@ -445,7 +445,7 @@ std::optional<ScenarioResult> runPianoKeyboardAudition (GuiHost& host, ScenarioC
     };
     steps->push_back ({ 200, [&ctx, &host, &engine, &session, &rollTrack, keyboardInput]
     {
-        host.openPianoRoll (kRollTrack, 0);
+        if (! host.pianoRollOpen()) host.openPianoRoll (kRollTrack, 0);
         ctx.expect (host.pianoRollOpen(), "the piano roll did not reopen");
         auto& transport = engine.getTransport();
         transport.setLoopEnabled (false);
@@ -482,7 +482,7 @@ std::optional<ScenarioResult> runPianoKeyboardAudition (GuiHost& host, ScenarioC
         std::filesystem::create_directories (nextSession.parent_path());
         ctx.expect (engine.publishPluginStateForSave (true), "the audition probe state could not be saved");
         ctx.expect (SessionSerializer::save (session, nextSession), "the next audition session could not be saved");
-        host.openPianoRoll (kRollTrack, 0);
+        if (! host.pianoRollOpen()) host.openPianoRoll (kRollTrack, 0);
         ctx.expect (host.pianoRollOpen(), "the piano roll did not open before a failed session change");
         *base = engine.auditionMessagesDelivered();
     } });
@@ -492,7 +492,7 @@ std::optional<ScenarioResult> runPianoKeyboardAudition (GuiHost& host, ScenarioC
     {
         ctx.expect (! host.openSession (ctx.tempDir() / "missing" / "session.json"), "opening a missing session succeeded");
         host.closeTopModal();
-        host.openPianoRoll (kRollTrack, 0);
+        if (! host.pianoRollOpen()) host.openPianoRoll (kRollTrack, 0);
         ctx.expect (host.pianoRollOpen(), "a failed open made the old piano roll unusable");
         host.pianoKeyPointer (69, false);
     }, delivered (1), "the key before the failed open was not heard", {}, 4000 });
