@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <functional>
 #include <map>
@@ -38,6 +39,7 @@
 #include "device/MicrophoneAccess.h"
 #include "../session/Session.h"
 #include "../session/RegionEditActions.h"
+#include "../session/MidiRecoveryWriter.h"
 #include "MidiTimelineSchedule.h"
 #include "AudioWorkerPool.h"
 #include "MasteringPlayer.h"
@@ -803,6 +805,16 @@ public:
         return timelineSampleRate (getCurrentSampleRate(), getLastDeviceSampleRate(), session.sessionSampleRate);
     }
 
+    // Message thread. Builds the playing and takes files of every MIDI track as
+    // the session stands and queues them for its midi/tracks folder, where
+    // each is written only when it differs from the newest of its kind. Take
+    // files still waiting go first, unless processing is held out.
+    void queueMidiTrackFiles();
+    // Message thread. Queues the take files still waiting, even with
+    // processing held out, and returns once every MIDI recovery file queued so
+    // far is written or has failed.
+    void flushMidiRecoveryFiles();
+
     // Engine-side xrun: callback wall-clock exceeded the buffer's
     // audio time. Distinct from getBackendXRunCount.
     int    getXRunCount() const noexcept         { return xrunCount.load         (std::memory_order_relaxed); }
@@ -1310,6 +1322,25 @@ private:
     PlaybackServiceTimer playbackServiceTimer { *this };
     int playbackIdleTicks = 0;
     bool playbackServicePosted = false;
+
+    // Passes a record commit took, with when it took them. Each is built into a
+    // take file and queued once processing runs: Stop commits with the
+    // callback held silent, and building a long loop take's files does not get
+    // to stretch that silence. Message thread.
+    struct PendingMidiTake
+    {
+        RecordManager::RecordedMidiPass recorded;
+        std::chrono::system_clock::time_point committed;
+    };
+    std::vector<PendingMidiTake> pendingMidiTakeFiles;
+    void queuePendingMidiTakeFiles();      // not while processing is held out
+    void queuePendingMidiTakeFilesNow();   // held out or not
+    // Writes the take files and the track files off the message thread. A file
+    // that fails is reported on stderr and changes nothing else: each is a copy
+    // kept beside session.json.
+    static void reportMidiRecoveryWrite (const midirecovery::PendingFile& file,
+                                         const midirecovery::WriteResult& result);
+    midirecovery::Writer midiRecoveryWriter { &AudioEngine::reportMidiRecoveryWrite };
 
     // Outlives the engine so a hop still queued when it dies is a no-op instead
     // of a use-after-free: the poll thread posts those, and joining it in the

@@ -872,6 +872,10 @@ target_sources(DuskStudio PRIVATE
     # fallback off Linux (DeviceManagerJuce.cpp). Gated below the target_sources().
     src/engine/midi/MidiDevices.cpp
     src/engine/midi/MidiFileReader.cpp
+    src/engine/midi/MidiFileWriter.cpp
+    src/session/MidiRecovery.cpp
+    src/session/MidiRecoveryWriter.cpp
+    src/session/SessionBackups.cpp
     src/engine/NativePluginCache.cpp
     src/engine/PlaybackEngine.cpp
     src/engine/PluginDescriptor.cpp
@@ -994,11 +998,13 @@ target_sources(DuskStudio PRIVATE
     src/ui/scenario/cases/gui_keyboard_transport.cpp
     src/ui/scenario/cases/gui_mastering_bounce.cpp
     src/ui/scenario/cases/gui_midi_learn_plugins.cpp
+    src/ui/scenario/cases/gui_midi_recovery.cpp
     src/ui/scenario/cases/gui_mixer.cpp
     src/ui/scenario/cases/gui_piano_roll.cpp
     src/ui/scenario/cases/gui_plugin_editors.cpp
     src/ui/scenario/cases/gui_plugin_folders.cpp
     src/ui/scenario/cases/gui_regions_markers.cpp
+    src/ui/scenario/cases/gui_session_backups.cpp
     src/ui/scenario/cases/gui_session_dirty.cpp
     src/ui/scenario/cases/gui_session_file.cpp
     src/ui/scenario/cases/gui_sfz_live.cpp

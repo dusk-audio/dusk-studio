@@ -14,6 +14,8 @@
 #endif
 #include "DuskFileBrowser.h"
 #include "SaveTargetChecks.h"
+#include "SessionOpenAlerts.h"
+#include "LocalTimeText.h"
 #include "AuxView.h"
 #include "BounceDialog.h"
 #include "RenderInProgress.h"
@@ -56,6 +58,7 @@
 #include "../session/ParamEditAction.h"
 #include "../session/RegionEditActions.h"
 #include "../session/RecentSessions.h"
+#include "../session/SessionBackups.h"
 #include "../session/SessionSerializer.h"
 #include "../session/UnreferencedAudio.h"
 #include "../engine/FileImporter.h"
@@ -93,6 +96,28 @@ juce::File toFile (const std::filesystem::path& p)
 std::filesystem::path toPath (const juce::File& f)
 {
     return std::filesystem::u8path (f.getFullPathName().toStdString());
+}
+
+// A backup that is not kept never fails the save it belongs to.
+void reportSessionBackups (const sessionbackups::Result& result)
+{
+    for (const auto& failure : result.failures)
+        std::fprintf (stderr, "[Dusk Studio/MainComponent] a session backup step failed (\"%s\": %s).\n",
+                      failure.path.u8string().c_str(), failure.error.message().c_str());
+}
+
+// The session folder a session file opens from: a backup's is the folder its
+// backups folder is in, any other file's the folder it is in.
+std::filesystem::path sessionFolderFor (const std::filesystem::path& sessionJson)
+{
+    if (auto folder = sessionbackups::sessionFolderOf (sessionJson)) return *folder;
+    return sessionJson.parent_path();
+}
+
+bool isBackupOf (const std::filesystem::path& file, const std::filesystem::path& sessionDir)
+{
+    const auto folder = sessionbackups::sessionFolderOf (file);
+    return folder && savecheck::isSameLocation (*folder, sessionDir);
 }
 
 juce::Array<juce::File> toFileArray (const std::vector<std::filesystem::path>& paths)
@@ -1267,6 +1292,7 @@ MainComponent::~MainComponent()
     scanModal            .closeAndDeleteBodyNow();
     quitModal            .closeAndDeleteBodyNow();
     recoveryModal        .closeAndDeleteBodyNow();
+    openFailureModal     .closeAndDeleteBodyNow();
    #if DUSKSTUDIO_HAS_NATIVE_UI
     // The settings view listens to the engine and the device manager, so its window
     // goes down here rather than waiting for a deferred teardown that would run after
@@ -2023,10 +2049,10 @@ void MainComponent::maybeStartStartupPluginScan()
     // yet, or that later call would no-op. (resized() may call us repeatedly
     // meanwhile; each just returns here until the dialog closes.)
     if (startupDialogPending) return;
-    // Defer past an open crash-recovery or unsaved-changes prompt so the scan's
-    // progress modal doesn't stack over the user's decision. Both prompts'
-    // exit paths re-invoke us once that choice is made.
-    if (recoveryModal.isOpen() || quitModal.isOpen()) return;
+    // Defer past an open crash-recovery, unsaved-changes or session-won't-open
+    // prompt so the scan's progress modal doesn't stack over the user's
+    // decision. Each prompt's exit paths re-invoke us once that choice is made.
+    if (recoveryModal.isOpen() || quitModal.isOpen() || openFailurePending()) return;
     startupScanTriggered = true;   // fire exactly once, whatever the toggle says
 
     const bool enabled = appconfig::getScanPluginsOnStartup();
@@ -3517,7 +3543,7 @@ void MainComponent::guardSessionSwitchThen (const char* title,
     // guardUnsavedThen would drop the request on a busy modal, and the recovery
     // prompt would be replaced mid-decision - either way silently, and after
     // the stop below had already taken the transport down for nothing.
-    if (quitModal.isOpen() || recoveryModal.isOpen())
+    if (quitModal.isOpen() || recoveryModal.isOpen() || openFailurePending())
     {
         setStatusText ("Session not switched: close the open prompt first");
         if (onCancelled) onCancelled();
@@ -3583,9 +3609,10 @@ bool MainComponent::createNewSessionAt (const juce::File& dir, SessionTemplate t
     // re-resolves MIDI, and rebuilds the console / aux / mastering UI - so
     // nothing from the previous session carries over.
     const auto target = dir.getChildFile ("session.json");
-    // Refuse to clobber an existing session - "New" must never blank someone
-    // else's work. The user picks a fresh name (or opens the existing one).
-    if (target.existsAsFile())
+    // Refuse a folder holding a session's files - "New" must never blank someone
+    // else's work, and the new session's backups would prune theirs. The user
+    // picks a fresh name (or opens the existing one).
+    if (savecheck::holdsSessionFiles (toPath (dir)))
     {
         setStatusForPath ("A session already exists at", target);
         return false;
@@ -3595,11 +3622,15 @@ bool MainComponent::createNewSessionAt (const juce::File& dir, SessionTemplate t
     // Stamped before the write, so the session lands on disk as the user asked
     // for it and the normal load path rebuilds the UI from that.
     applyTemplate (*fresh, tmpl);
-    if (! SessionSerializer::writeAtomic (target, SessionSerializer::serialize (*fresh)))
+    const auto json = SessionSerializer::serialize (*fresh);
+    if (! SessionSerializer::writeAtomic (target, json))
     {
         setStatusForPath ("Could not create session at", target);
         return false;
     }
+    // The first save then finds the session.json it replaces already backed up.
+    reportSessionBackups (sessionbackups::keepSaved (toPath (dir), std::chrono::system_clock::now(),
+                                                     json.toStdString()));
     fresh.reset();   // release the scratch Session before the live load runs
 
     if (! finishLoadingSessionFrom (target, dir))
@@ -3627,11 +3658,12 @@ bool MainComponent::saveRefusedWhileBusy()
 }
 
 // A prompt closed without an answer, by anything but its buttons, still owes
-// the caller a reply: a quit's Save has detached the audio.
-struct MainComponent::SaveReply
+// the caller a reply: a quit's Save has detached the audio, and an open's caller
+// waits on it to bring the Startup dialog back or to arm a scripted quit.
+struct MainComponent::PromptReply
 {
     std::function<void (bool)> onComplete;
-    ~SaveReply()
+    ~PromptReply()
     {
         if (onComplete) dusk::callAsync ([done = std::move (onComplete)] { done (false); });
     }
@@ -3651,14 +3683,14 @@ void MainComponent::saveSessionTo (const std::filesystem::path& sessionDir, std:
         if (onComplete) onComplete (saved);
         return;
     }
-    auto reply = std::make_shared<SaveReply>();
+    auto reply = std::make_shared<PromptReply>();
     reply->onComplete = std::move (onComplete);
     askToSaveAnyway (sessionDir, std::move (attempt), captureError, std::move (reply));
 }
 
 void MainComponent::askToSaveAnyway (const std::filesystem::path& sessionDir,
                                      std::shared_ptr<AudioEngine::PreparedPluginState> failed,
-                                     const std::string& captureError, std::shared_ptr<SaveReply> reply)
+                                     const std::string& captureError, std::shared_ptr<PromptReply> reply)
 {
     std::string slots;
     for (std::size_t start = 0; start < captureError.size();)
@@ -3708,6 +3740,7 @@ bool MainComponent::writeSessionTo (const juce::File& requestedDir,
     captureError.clear();
     if (requestedDir == juce::File() || saveRefusedWhileBusy()) return false;
 
+    const bool firstSave = ! sessionOnDisk;
     const auto oldDir = session.getSessionDirectory();
     // Another spelling of the session's own folder (a link, a bind mount) is a
     // plain Save: consolidating a folder onto itself deletes each source file
@@ -3754,12 +3787,15 @@ bool MainComponent::writeSessionTo (const juce::File& requestedDir,
     SessionSerializer::ConsolidationResult consolidated;
     if (isSaveAs)
     {
+        // The take files still queued for the old folder have to be in its
+        // midi/ before that is copied.
+        engine.flushMidiRecoveryFiles();
         consolidated = SessionSerializer::consolidateInto (session, dir, ownsOldDir);
         if (! consolidated.ok)
         {
             setStatusForPath ("Save failed", dir);
             showDuskAlert (*this, "Save failed",
-                              "Dusk Studio could not copy the session's audio "
+                              "Dusk Studio could not copy the session's files "
                               "into the new folder:\n\n    "
                               + consolidated.errorMessage + "\n\n"
                               "Common causes: disk full or missing write "
@@ -3820,10 +3856,15 @@ bool MainComponent::writeSessionTo (const juce::File& requestedDir,
                                                       : engine.getLastDeviceSampleRate();
     }
     const juce::String json = SessionSerializer::serialize (session);
+    // One time for both, so the file this save replaces sorts just ahead of
+    // the save's own copy.
+    const auto savedAt = std::chrono::system_clock::now();
+    reportSessionBackups (sessionbackups::keepCurrent (toPath (dir), savedAt));
     const bool saveOk = SessionSerializer::writeAtomic (target, json);
 
     if (saveOk)
     {
+        reportSessionBackups (sessionbackups::keepSaved (toPath (dir), savedAt, json.toStdString()));
         notepadDirty = false;
        #if DUSKSTUDIO_HAS_NATIVE_UI
         if (notepadWindow != nullptr)
@@ -3863,7 +3904,13 @@ bool MainComponent::writeSessionTo (const juce::File& requestedDir,
             // without this, re-opening the old session pops a stale recovery
             // prompt.
             deleteAutosaveFor (oldSidecar);
+            // A first save takes the MIDI files along rather than copying
+            // them, so the Untitled folder they were in is free for the next
+            // new session.
+            if (firstSave && ownsOldDir)
+                SessionSerializer::removeCopiedMidiSources (consolidated, toPath (oldDir));
         }
+        engine.queueMidiTrackFiles();
         RecentSessions::add (toPath (dir));
         // A successful manual save makes the autosave stale - drop it so the
         // recovery prompt doesn't fire on the next clean load.
@@ -3877,6 +3924,10 @@ bool MainComponent::writeSessionTo (const juce::File& requestedDir,
         return true;
     }
     undoSaveAs();
+    // MIDI recovery does not wait on session.json's health. A failed Save As
+    // has just taken its new folder back, as the alert promises, so nothing
+    // goes there.
+    if (! isSaveAs) engine.queueMidiTrackFiles();
     setStatusForPath ("Save failed", target);
     // Status-label-only feedback is too easy to miss on a critical
     // operation. Pop a modal so the user knows the session WASN'T
@@ -3926,9 +3977,9 @@ static std::uint32_t dirtyComparisonHash (const juce::String& stripped)
         juce::DefaultHashFunctions::generateHash (stripped, 0x7fffffff));
 }
 
-bool MainComponent::autosaveIsNewerThan (const juce::File& sessionJson) const
+bool MainComponent::autosaveIsNewerThan (const juce::File& sessionJson, const std::filesystem::path& sessionDir) const
 {
-    const auto autosave = getAutosaveFileFor (sessionJson.getParentDirectory());
+    const auto autosave = getAutosaveFileFor (toFile (sessionDir));
     if (! autosave.existsAsFile()) return false;
     if (! sessionJson.existsAsFile()) return true;   // autosave is the only state we have
     // Content-based comparison only. mtime is unreliable on common
@@ -3993,6 +4044,9 @@ void MainComponent::discardWrittenAutosave()
         && dusk::fs::loadFileAsString (toPath (target)) == lastWrittenAutosaveJson.toStdString()
         && ! target.deleteFile()) return;
     setLastWrittenAutosaveJson ({}, {});
+    // That autosave queued track files of a state since undone; the writer
+    // skips any that already hold the saved one.
+    engine.queueMidiTrackFiles();
 }
 
 void MainComponent::writeAutosave()
@@ -4028,6 +4082,8 @@ void MainComponent::writeAutosave()
     if (strippedHash == lastWrittenAutosaveStrippedHash
         && stripped == stripVolatileStateForDirtyCompare (lastWrittenAutosaveComparisonJson)) return;
 
+    // The MIDI track files go whether or not the autosave itself lands.
+    engine.queueMidiTrackFiles();
     if (! SessionSerializer::writeAtomic (target, json))
     {
         DBG ("MainComponent: autosave write failed at " << target.getFullPathName());
@@ -4127,7 +4183,10 @@ bool MainComponent::currentSessionDirty()
     const auto strippedCurrent = stripVolatileStateForDirtyCompare (SessionSerializer::serialize (session));
     const auto strippedSaved   = stripVolatileStateForDirtyCompare (lastSavedSessionJson);
     if (lastSavedSessionJson.isEmpty())
-        return autosaveIsNewerThan (toFile (sidecarFolder()).getChildFile ("session.json"));
+    {
+        const auto sidecar = sidecarFolder();
+        return autosaveIsNewerThan (toFile (sidecar / "session.json"), sidecar);
+    }
 
     if (strippedCurrent != strippedSaved) return true;
 
@@ -4374,6 +4433,11 @@ void MainComponent::beginSafeShutdown()
     if (transport.isRecording() || transport.isPlaying())
         engine.stop();
 
+    // Before any plug-in is torn down: plug-in destructors have aborted at
+    // shutdown before, and the engine's destructor is the only other drain.
+    shutdown::emitPhase ("phase 2b: write MIDI recovery files");
+    engine.flushMidiRecoveryFiles();
+
     if (! engineDetached)
     {
         shutdown::emitPhase ("phase 3: detach audio callback");
@@ -4531,13 +4595,13 @@ void MainComponent::saveAsPrompt()
 void MainComponent::openSessionPath (const juce::File& path)
 {
     // Accept either the session.json itself or the session directory holding it.
-    juce::File sessionJson;
-    if (path.isDirectory())
-        sessionJson = path.getChildFile ("session.json");
-    else if (path.hasFileExtension ("json"))
-        sessionJson = path;
+    const bool isFolder = path.isDirectory();
+    const auto sessionJson = isFolder ? path.getChildFile ("session.json") : path;
 
-    if (sessionJson.existsAsFile())
+    // A folder whose session.json has gone still opens, into the alert that
+    // offers its autosave and backups. One with no session's files in it is
+    // not a session, and is ignored.
+    if (isFolder ? savecheck::holdsSessionFiles (toPath (path)) : path.hasFileExtension ("json"))
     {
         // A handed-over session ends a startup pick still in flight. Its browser
         // may be replaced by the switch's own Save As, which would never answer,
@@ -4549,7 +4613,10 @@ void MainComponent::openSessionPath (const juce::File& path)
         // load into its completion callback - otherwise the recovery prompt
         // would open on top of the still-present startup dialog.
         juce::Component::SafePointer<MainComponent> safeThis (this);
-        dismissStartupDialog ([safeThis, sessionJson]
+        // A Save in the prompt below runs retention, which could otherwise
+        // remove the very backup handed over before it is read.
+        auto pin = std::make_shared<sessionbackups::Pin> (toPath (sessionJson));
+        dismissStartupDialog ([safeThis, sessionJson, pin]
         {
             auto* self = safeThis.getComponent();
             if (self == nullptr) return;
@@ -4562,10 +4629,10 @@ void MainComponent::openSessionPath (const juce::File& path)
                 "Another session was opened from outside Dusk Studio, and your "
                 "current session has unsaved changes. If you don't save, those "
                 "changes are discarded when the other session opens.",
-                [safeThis, sessionJson]
+                [safeThis, sessionJson, pin]
             {
                 if (auto* s = safeThis.getComponent())
-                    s->loadSessionFromJson (sessionJson);   // shows its own alert on failure
+                    s->loadSessionFromJson (sessionJson, [pin] (bool) {});
             });
         });
     }
@@ -4585,20 +4652,21 @@ bool MainComponent::answerRecoveryPrompt (int choice)
 bool MainComponent::loadSessionFromJson (const juce::File& sessionJson,
                                          std::function<void (bool loaded)> onComplete)
 {
+    const auto folder = sessionFolderFor (toPath (sessionJson));
+    const auto dir = toFile (folder);
     if (! sessionJson.existsAsFile())
     {
         setStatusForPath ("No session at", sessionJson);
-        if (onComplete) onComplete (false);
+        showOpenFailure (toPath (sessionJson), folder, { SessionLoadFailure::FileUnavailable, 0, 0 },
+                         std::move (onComplete), {});
         return false;
     }
-
-    const auto dir = sessionJson.getParentDirectory();
 
     // Recovery prompt path. The dialog is async so we hand it a continuation
     // that runs the actual load once the user has picked. The synchronous
     // bool return reflects only "we accepted the load attempt"; the load
     // itself completes after the dialog dismisses.
-    if (autosaveIsNewerThan (sessionJson))
+    if (autosaveIsNewerThan (sessionJson, folder))
     {
         const auto autosave = getAutosaveFileFor (dir);
         juce::Component::SafePointer<MainComponent> safe (this);
@@ -4609,25 +4677,29 @@ bool MainComponent::loadSessionFromJson (const juce::File& sessionJson,
             sessionJson.getLastModificationTime());
         body->setSize (560, 280);
 
+        // The startup scan waits past the prompt, and past any alert a load
+        // that fails raises.
+        const auto afterwards = [safe, onComplete] (bool loaded)
+        {
+            if (auto* self = safe.getComponent())
+                self->maybeStartStartupPluginScan();
+            if (onComplete) onComplete (loaded);
+        };
         auto* raw = body.get();
-        raw->onRecover = [safe, dir, autosave, onComplete]
+        raw->onRecover = [safe, folder, autosave, afterwards]
         {
             if (auto* self = safe.getComponent())
             {
                 self->recoveryModal.close();
-                const bool loaded = self->finishLoadingSessionFrom (autosave, dir);
-                self->maybeStartStartupPluginScan();   // deferred past the recovery prompt
-                if (onComplete) onComplete (loaded);
+                self->finishOpening (toPath (autosave), folder, afterwards, {});
             }
         };
-        raw->onLoad = [safe, sessionJson, dir, onComplete]
+        raw->onLoad = [safe, sessionJson, folder, afterwards]
         {
             if (auto* self = safe.getComponent())
             {
                 self->recoveryModal.close();
-                const bool loaded = self->finishLoadingSessionFrom (sessionJson, dir);
-                self->maybeStartStartupPluginScan();
-                if (onComplete) onComplete (loaded);
+                self->finishOpening (toPath (sessionJson), folder, afterwards, {});
             }
         };
         raw->onCancel = [safe, onComplete]
@@ -4658,14 +4730,136 @@ bool MainComponent::loadSessionFromJson (const juce::File& sessionJson,
         return true;
     }
 
-    const bool loaded = finishLoadingSessionFrom (sessionJson, dir);
-    if (onComplete) onComplete (loaded);
-    return loaded;
+    return finishOpening (toPath (sessionJson), folder, std::move (onComplete), {});
+}
+
+bool MainComponent::finishOpening (const std::filesystem::path& sessionJson, const std::filesystem::path& sessionDir,
+                                   std::function<void (bool loaded)> onComplete, FailedOpens failedBefore)
+{
+    SessionLoadError failure;
+    const bool loaded = finishLoadingSessionFrom (toFile (sessionJson), toFile (sessionDir), &failure);
+    if (loaded || failure.failure == SessionLoadFailure::None)
+    {
+        if (onComplete) onComplete (loaded);
+        return loaded;
+    }
+    showOpenFailure (sessionJson, sessionDir, failure, std::move (onComplete), std::move (failedBefore));
+    return false;
+}
+
+void MainComponent::showOpenFailure (const std::filesystem::path& failed, const std::filesystem::path& dir,
+                                     const SessionLoadError& error, std::function<void (bool loaded)> onComplete,
+                                     FailedOpens failedBefore)
+{
+    namespace stdfs = std::filesystem;
+    SafePointer<MainComponent> safe (this);
+    auto reply = std::make_shared<PromptReply>();
+    // The startup scan waits past the alert.
+    reply->onComplete = [safe, done = std::move (onComplete)] (bool loaded)
+    {
+        if (auto* self = safe.getComponent())
+            self->maybeStartStartupPluginScan();
+        if (done) done (loaded);
+    };
+    const auto answer = [reply] (bool loaded) { reply->answer (loaded); };
+    // Shortcuts stay off: a take recorded under the alert would be committed to
+    // the session an offer then loads over, without asking.
+    const DuskModalPlacement placement { &openFailureModal, /*forwardShortcuts*/ false };
+
+    // Rolling back to a backup or the autosave would lose what the newer
+    // version saved, and the next save would replace it.
+    if (error.failure == SessionLoadFailure::NewerVersion)
+    {
+        showDuskAlert (*this, openalert::kNewerVersionTitle,
+                       openalert::newerVersionMessage (failed.u8string(), error.fileVersion, error.supportedVersion),
+                       [answer] { answer (false); }, placement);
+        return;
+    }
+
+    std::error_code ec;
+    const auto failedType = stdfs::symlink_status (dusk::fs::nativeIOPath (failed), ec).type();
+    openalert::WontOpen report;
+    report.file = failed.u8string();
+    report.problem = error.failure == SessionLoadFailure::InvalidJson     ? openalert::Problem::Damaged
+                   : error.failure == SessionLoadFailure::MigrationFailed ? openalert::Problem::NotMigrated
+                   : failedType == stdfs::file_type::not_found            ? openalert::Problem::Missing
+                                                                          : openalert::Problem::Unreadable;
+
+    // Nothing that has failed since the user asked for this session is
+    // offered again, and no backup newer than one that failed.
+    auto failedNow = std::move (failedBefore);
+    const auto autosave = dir / "session.json.autosave";
+    if (savecheck::isSameLocation (autosave, failed)) failedNow.autosave = true;
+    if (isBackupOf (failed, dir)
+        && (failedNow.oldestBackup.empty()
+            || failed.filename().u8string() < failedNow.oldestBackup.filename().u8string()))
+        failedNow.oldestBackup = failed;
+
+    const bool hasAutosave = stdfs::is_regular_file (dusk::fs::nativeIOPath (autosave), ec);
+    const bool offersAutosave = hasAutosave && ! failedNow.autosave;
+    report.autosave = offersAutosave;
+    if (const auto written = dusk::fs::lastModificationTimeSecs (autosave); offersAutosave && written > 0)
+        report.autosaveTime = localMinuteText ((std::time_t) written);
+
+    // One that holds the same bytes as the file that failed would fail the same way.
+    auto backup = sessionbackups::newest (dir, failedNow.oldestBackup);
+    while (backup && sessionbackups::sameBytes (failed, *backup))
+        backup = sessionbackups::newest (dir, *backup);
+    if (backup)
+    {
+        report.backup = true;
+        if (const auto savedAt = sessionbackups::savedAtOf (*backup))
+            report.backupTime = localMinuteText (std::chrono::system_clock::to_time_t (*savedAt));
+        report.backupIsOlder = ! failedNow.oldestBackup.empty();
+        // Any load but the autosave's own removes it.
+        report.discardsAutosave = hasAutosave;
+    }
+    // A file that cannot be read cannot be copied, so nothing keeps it.
+    report.keepsFile = failedType == stdfs::file_type::regular && report.problem != openalert::Problem::Unreadable
+                    && (isBackupOf (failed, dir) || savecheck::isSameLocation (failed, dir / "session.json"));
+    if (stdfs::is_directory (dusk::fs::nativeIOPath (dir / "midi"), ec))
+        report.midiFolder = (dir / "midi").u8string();
+
+    const auto message = openalert::wontOpenMessage (report);
+    if (! offersAutosave && ! backup)
+    {
+        showDuskAlert (*this, openalert::kWontOpenTitle, message, [answer] { answer (false); }, placement);
+        return;
+    }
+
+    // The load waits a tick, so it does not replace the alert's body while that
+    // body's own button runs. Counted as an open prompt until it runs, so
+    // nothing opens in that tick for the load to land on without asking.
+    const auto open = [safe, dir, answer, failedNow] (const stdfs::path& file)
+    {
+        return [safe, dir, answer, failedNow, file]
+        {
+            if (auto* self = safe.getComponent()) ++self->offerLoadsPending;
+            dusk::callAsync ([safe, dir, answer, failedNow, file]
+            {
+                if (auto* self = safe.getComponent())
+                {
+                    --self->offerLoadsPending;
+                    self->finishOpening (file, dir, answer, failedNow);
+                }
+                else
+                    answer (false);
+            });
+        };
+    };
+    // Left to right as Recover from autosave? has them: Cancel, then the saved
+    // state, then the autosave's newer one.
+    std::vector<DuskDecisionAction> actions { { "Cancel", [answer] { answer (false); } } };
+    if (backup) actions.push_back ({ openalert::backupButton (report), open (*backup) });
+    if (offersAutosave) actions.push_back ({ openalert::kOpenAutosave, open (autosave) });
+    showDuskDecision (*this, openalert::kWontOpenTitle, message, std::move (actions), placement);
 }
 
 bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
-                                                 const juce::File& dir)
+                                                 const juce::File& dir,
+                                                 SessionLoadError* failure)
 {
+    if (failure != nullptr) *failure = {};
     // Flush the outgoing session's notepad while getSessionDirectory() still
     // points at it. A write failure leaves the outgoing document dirty and
     // aborts the switch instead of replacing its in-memory text.
@@ -4697,6 +4891,7 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     SessionLoadError loadError;
     if (! SessionSerializer::load (session, sourceJson, &loadError))
     {
+        if (failure != nullptr) *failure = loadError;
         session.setSessionDirectory (previousDir);
         if (loadError.failure == SessionLoadFailure::NewerVersion)
         {
@@ -4719,6 +4914,7 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
 
     const bool loadedFromAutosave =
         sourceJson.getFileName().endsWithIgnoreCase (".autosave");
+    const bool loadedFromBackup = isBackupOf (toPath (sourceJson), toPath (dir));
 
     // When the user chose "load saved session" the autosave's job is done -
     // they made a deliberate choice to discard it, so clean up for the next
@@ -4928,18 +5124,26 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     setLastWrittenAutosaveJson ({}, {});
     sessionOnDisk = true;
 
+    // A session whose MIDI has no recovery files yet gets them at open, not
+    // at its first edit. The device was switched to the session's rate above
+    // where it could be, so the files are built at the rate playback reads
+    // the session's positions at.
+    engine.queueMidiTrackFiles();
+
     // Recovery must end with the recovered state on disk. Without this,
     // the snapshot seeded above makes the session look clean: the quit
     // dirty-check passes, the autosave tick skips, and the recovered
     // work exists nowhere durable - quit + relaunch would land on the
     // stale session.json. saveSessionTo persists it and (only on
     // success) deletes the autosave; on failure the autosave survives
-    // and the save-failed alert fires.
-    if (loadedFromAutosave)
+    // and the save-failed alert fires. A backup opened is recovered the
+    // same way, and the save keeps the session.json it replaces in backups/.
+    if (loadedFromAutosave || loadedFromBackup)
     {
         // Until a save lands, the recovered work is on disk only as the
-        // autosave. Only a successful save clears this, so no late answer from
-        // the save's prompt can land on a session opened after it.
+        // autosave or the backup. Only a successful save clears this, so no
+        // late answer from the save's prompt can land on a session opened
+        // after it.
         saveIncomplete = true;
         savedBaselineOnDisk = false;
         saveSessionTo (toPath (dir));

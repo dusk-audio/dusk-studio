@@ -280,7 +280,7 @@ function Get-RegressGuiCatalog([string]$text, $exitCode) {
 # The ordinary GUI scenarios every build registers. Only a package run reaches
 # the phase that checks it, so the Linux windows-gui-catalog leg compares it
 # with the registry on every source run with GUI scenarios.
-function Get-RegressWindowsGuiCatalogCount { return 315 }
+function Get-RegressWindowsGuiCatalogCount { return 322 }
 
 function Get-RegressWindowsGuiSkips {
     return [ordered]@{
@@ -303,6 +303,7 @@ function Get-RegressWindowsGuiSkips {
         'gui.plugin_edits_prompt_lv2' = 'missing fixture: state_probe.lv2'
         'gui.settings_rescan_devices' = 'requires native settings and ALSA sequencer'
         'gui.slot_health_labels' = 'the sandbox stub children are driven on POSIX only'
+        'gui.unreadable_session_alert' = 'file permissions do not stop a read on Windows'
     }
 }
 

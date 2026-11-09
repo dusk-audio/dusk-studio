@@ -1,0 +1,690 @@
+#include "../GuiScenarioSupport.h"
+#include "../../LocalTimeText.h"
+#include "../../SessionOpenAlerts.h"
+#include "../../../session/SessionBackups.h"
+#include "../../../session/SessionSerializer.h"
+
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <ctime>
+#include <filesystem>
+#include <fstream>
+#include <memory>
+#include <optional>
+#include <string>
+#include <system_error>
+#include <vector>
+
+namespace duskstudio::scenario::gui
+{
+namespace
+{
+namespace fs = std::filesystem;
+
+std::vector<std::string> backupsIn (const fs::path& sessionDir)
+{
+    std::vector<std::string> names;
+    std::error_code error;
+    for (fs::directory_iterator it (sessionDir / "backups", error), end; ! error && it != end; it.increment (error))
+        names.push_back (it->path().filename().u8string());
+    std::sort (names.begin(), names.end());
+    return names;
+}
+
+bool writeText (const fs::path& file, const std::string& text)
+{
+    std::error_code error;
+    fs::create_directories (file.parent_path(), error);
+    std::ofstream out (file, std::ios::binary);
+    out << text;
+    return static_cast<bool> (out);
+}
+
+bool absent (const fs::path& path)
+{
+    std::error_code error;
+    return fs::symlink_status (path, error).type() == fs::file_type::not_found;
+}
+
+// A session of the folder with track 1's fader at faderDb, saved to target.
+bool saveFixture (const fs::path& sessionDir, const fs::path& target, float faderDb,
+                  const fs::path& audio = {})
+{
+    auto fixture = std::make_unique<Session>();
+    applySessionDirectory (*fixture, sessionDir);
+    fixture->track (0).strip.faderDb.store (faderDb);
+    if (! audio.empty())
+    {
+        AudioRegion region;
+        region.lengthInSamples = 4800;
+        region.file = decltype (region.file) (audio.u8string().c_str());
+        fixture->track (1).regions = { region };
+    }
+    std::error_code error;
+    fs::create_directories (target.parent_path(), error);
+    return SessionSerializer::save (*fixture, target);
+}
+
+bool faderIs (const fs::path& sessionJson, float faderDb)
+{
+    return std::abs (savedFaderOf (sessionJson) - faderDb) < 1.0e-4f;
+}
+
+std::string savedTimeOf (const fs::path& backup)
+{
+    const auto savedAt = sessionbackups::savedAtOf (backup);
+    return savedAt ? localMinuteText (std::chrono::system_clock::to_time_t (*savedAt)) : std::string();
+}
+
+bool anyBackupHolds (const fs::path& sessionDir, const std::string& bytes)
+{
+    for (const auto& name : backupsIn (sessionDir))
+        if (fileBytes (sessionDir / "backups" / name) == bytes) return true;
+    return false;
+}
+
+std::string alertText (const char* title, const std::string& message)
+{
+    return std::string (title) + "\n" + message;
+}
+
+// Every case here opens what it made, so it registers the same way back.
+std::optional<ScenarioResult> beginBackupCase (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    if (! ctx.engine().getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires a stopped transport and no modal");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save the initial session");
+    ctx.cleanup ([&host, &session, originalDir, restore]
+    {
+        host.closeStartupDialog();
+        drainModals (host);
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+    });
+    reopenSavedSession (host, restore);
+    return std::nullopt;
+}
+
+// Each Save keeps a copy of what it wrote in backups/, and the session.json it
+// replaces when no backup holds it. An autosave keeps none. Save As takes
+// backups/ along.
+std::optional<ScenarioResult> runSavesKeepSessionBackups (GuiHost& host, ScenarioContext& ctx)
+{
+    if (auto early = beginBackupCase (host, ctx)) return early;
+    auto& session = ctx.session();
+    const auto folder = ctx.tempDir() / "Backed up";
+    const auto sessionJson = folder / "session.json";
+    if (! saveFixture (folder, sessionJson, -6.0f)) return ScenarioResult::fail ("could not write the session");
+    const auto opened = fileBytes (sessionJson);
+    reopenSavedSession (host, sessionJson);
+    if (currentSessionDirectory (session) != folder) return ScenarioResult::fail ("could not open the session");
+    if (! ctx.expect (backupsIn (folder).empty(), "opening the session wrote a backup")) return ctx.verdict();
+
+    auto& fader = session.track (0).strip.faderDb;
+    const auto kept = std::make_shared<std::vector<std::string>>();
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 100, [&fader] { fader.store (-3.0f); } });
+    pushFileMenuSteps (host, ctx, *steps, "Save");
+    steps->push_back ({ 500, [&host, &ctx, folder, sessionJson, opened, kept]
+    {
+        ctx.expect (host.statusMessage() == "Saved: Backed up", "Save reported '" + host.statusMessage() + "'");
+        *kept = backupsIn (folder);
+        if (! ctx.expect (kept->size() == 2, "the first Save left " + std::to_string (kept->size())
+                                                 + " backups, not the session.json it replaced and the one it wrote"))
+            return;
+        ctx.expect (fileBytes (folder / "backups" / kept->front()) == opened,
+                    "the first backup is not the session.json the Save replaced");
+        ctx.expect (fileBytes (folder / "backups" / kept->back()) == fileBytes (sessionJson),
+                    "the newest backup is not the session.json the Save wrote");
+    } });
+    pushFileMenuSteps (host, ctx, *steps, "Save");
+    steps->push_back ({ 500, [&ctx, &fader, folder, kept]
+    {
+        ctx.expect (backupsIn (folder) == *kept, "a Save with nothing changed kept another backup");
+        fader.store (-1.0f);
+    } });
+    pushFileMenuSteps (host, ctx, *steps, "Save");
+    steps->push_back ({ 500, [&host, &ctx, &fader, folder, sessionJson, kept]
+    {
+        const auto names = backupsIn (folder);
+        if (! ctx.expect (names.size() == 3 && std::equal (kept->begin(), kept->end(), names.begin()),
+                          "a Save after a change left " + std::to_string (names.size())
+                              + " backups, not the two before it and one more"))
+            return;
+        ctx.expect (fileBytes (folder / "backups" / names.back()) == fileBytes (sessionJson),
+                    "the newest backup is not the session.json the second Save wrote");
+        ctx.expect (faderIs (folder / "backups" / names.back(), -1.0f), "the newest backup does not hold the change");
+        *kept = names;
+        fader.store (-2.0f);
+        host.autosaveTick();
+        ctx.expect (! absent (folder / "session.json.autosave"), "the autosave tick wrote no autosave");
+        ctx.expect (backupsIn (folder) == names, "an autosave kept a backup");
+    } });
+
+    const auto copy = ctx.tempDir() / "Backed up copy";
+    pushSaveAsSteps (host, ctx, *steps, copy);
+    steps->push_back ({ 500, [&ctx, &session, folder, copy, kept]
+    {
+        ctx.expect (currentSessionDirectory (session) == copy,
+                    "Save As left the session at '" + currentSessionDirectory (session).string() + "'");
+        const auto copied = backupsIn (copy);
+        if (! ctx.expect (copied.size() == kept->size() + 1 && std::equal (kept->begin(), kept->end(), copied.begin()),
+                          "Save As left " + std::to_string (copied.size()) + " backups in the new folder, not the "
+                              + std::to_string (kept->size()) + " it took along and the one it wrote"))
+            return;
+        for (const auto& name : *kept)
+            ctx.expect (fileBytes (copy / "backups" / name) == fileBytes (folder / "backups" / name),
+                        "Save As changed the backup " + name);
+        ctx.expect (fileBytes (copy / "backups" / copied.back()) == fileBytes (copy / "session.json"),
+                    "the new folder's newest backup is not its session.json");
+        ctx.expect (backupsIn (folder) == *kept, "Save As changed the old folder's backups");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar savesKeepSessionBackups { Scenario {
+    "gui.saves_keep_session_backups", { "gui", "session", "autosave" }, Needs::Engine | Needs::Gui,
+    {}, {}, 30000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runSavesKeepSessionBackups (host, ctx); }
+} };
+
+// A session.json that does not read raises an alert that offers the newest
+// backup. Opening it saves it as session.json and keeps the damaged file in
+// backups/; a backup that does not read either offers the next older one.
+std::optional<ScenarioResult> runDamagedSessionOpensBackup (GuiHost& host, ScenarioContext& ctx)
+{
+    if (auto early = beginBackupCase (host, ctx)) return early;
+    auto& session = ctx.session();
+    const auto before = currentSessionDirectory (session);
+    const auto folder = ctx.tempDir() / "Damaged";
+    const auto sessionJson = folder / "session.json";
+    const auto good = folder / "backups" / "20261101-090000Z_session.json";
+    const auto broken = folder / "backups" / "20261102-090000Z_session.json";
+    if (! saveFixture (folder, good, -9.0f) || ! writeText (broken, "{ also damaged")
+        || ! writeText (sessionJson, "{ damaged"))
+        return ScenarioResult::fail ("could not write the damaged session");
+    std::error_code error;
+    fs::create_directories (folder / "midi" / "tracks", error);
+
+    openalert::WontOpen report;
+    report.file = sessionJson.u8string();
+    report.problem = openalert::Problem::Damaged;
+    report.backup = true;
+    report.backupTime = savedTimeOf (broken);
+    report.keepsFile = true;
+    report.midiFolder = (folder / "midi").u8string();
+    ctx.expect (! host.openSession (sessionJson), "the damaged session.json reported a load");
+    ctx.expect (currentSessionDirectory (session) == before, "the damaged session.json switched the session");
+    ctx.expect (host.modalText() == alertText (openalert::kWontOpenTitle, openalert::wontOpenMessage (report)),
+                "the alert read '" + host.modalText() + "'");
+    ctx.expect (! host.clickModalButton (openalert::kOpenAutosave), "the alert offered an autosave there is not");
+
+    // A session handed over just before the offer is chosen reaches its
+    // switch after the alert has closed and before the offer loads, and is
+    // refused there, so the offer never loads over it unasked.
+    const auto meanwhile = ctx.tempDir() / "Handed over meanwhile";
+    if (! saveFixture (meanwhile, meanwhile / "session.json", -3.0f))
+        return ScenarioResult::fail ("could not write the session handed over meanwhile");
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 100, [&host, &ctx, meanwhile]
+    {
+        host.requestSessionSwitch (meanwhile);
+        ctx.expect (host.clickModalButton (openalert::kOpenNewestBackup), "the alert did not offer the newest backup");
+    } });
+    steps->push_back ({ 0, [&host, &ctx, &session, before, broken, good, report]
+    {
+        ctx.expect (currentSessionDirectory (session) == before,
+                    "a session handed over as the offer was chosen opened, at '"
+                        + currentSessionDirectory (session).string() + "'");
+        auto older = report;
+        older.file = broken.u8string();
+        older.backupTime = savedTimeOf (good);
+        older.backupIsOlder = true;
+        ctx.expect (host.modalText() == alertText (openalert::kWontOpenTitle, openalert::wontOpenMessage (older)),
+                    "the damaged backup's alert read '" + host.modalText() + "'");
+        ctx.expect (! host.clickModalButton (openalert::kOpenNewestBackup),
+                    "the damaged backup's alert called the older backup the newest");
+        ctx.expect (host.clickModalButton (openalert::kOpenOlderBackup), "the alert did not offer the older backup");
+    },
+    [&host, broken] { return host.modalText().find (broken.u8string()) != std::string::npos; },
+    "opening the damaged backup raised no alert naming it" });
+    steps->push_back ({ 0, [&host, &ctx, &session, folder, sessionJson, good, broken]
+    {
+        ctx.expect (currentSessionDirectory (session) == folder, "the older backup did not open in the session folder");
+        ctx.expect (host.statusMessage() == "Saved: Damaged",
+                    "opening the backup reported '" + host.statusMessage() + "' rather than saving it");
+        ctx.expect (faderIs (sessionJson, -9.0f), "session.json does not hold the backup that opened");
+        ctx.expect (anyBackupHolds (folder, "{ damaged"), "the session.json that would not open is not in backups/");
+        ctx.expect (fileBytes (broken) == "{ also damaged" && faderIs (good, -9.0f), "opening a backup changed a backup");
+        const auto names = backupsIn (folder);
+        ctx.expect (! names.empty() && fileBytes (folder / "backups" / names.back()) == fileBytes (sessionJson),
+                    "the newest backup is not the session.json the open saved");
+        ctx.expect (absent (folder / "backups" / "session.json"), "the open saved a session.json into backups/");
+    },
+    [&host, &session, folder] { return host.modalStackEmpty() && currentSessionDirectory (session) == folder; },
+    "the older backup did not open" });
+
+    // Load saved session in the recovery prompt, on a damaged session.json,
+    // raises the alert, which offers the autosave too.
+    const auto autosave = folder / "session.json.autosave";
+    steps->push_back ({ 100, [&host, &ctx, sessionJson, autosave]
+    {
+        if (! ctx.expect (writeText (sessionJson, "{ damaged again")
+                              && saveFixture (sessionJson.parent_path(), autosave, -7.0f),
+                          "could not damage the session again"))
+            return;
+        host.openSession (sessionJson);
+        ctx.expect (host.modalText().rfind ("Recover from autosave?", 0) == 0,
+                    "a damaged session.json with an autosave raised '" + host.modalText() + "', not the recovery prompt");
+        ctx.expect (host.answerRecovery (GuiHost::Recovery::LoadSaved), "the recovery prompt did not take Load saved session");
+    } });
+    steps->push_back ({ 0, [&host, &ctx]
+    {
+        ctx.expect (host.modalText().find ("\n    The autosave, from ") != std::string::npos,
+                    "the alert did not offer the autosave: '" + host.modalText() + "'");
+        ctx.expect (host.modalText().find ("\n    The newest backup, from ") != std::string::npos,
+                    "the alert did not offer the newest backup: '" + host.modalText() + "'");
+        ctx.expect (host.clickModalButton (openalert::kOpenAutosave), "the alert did not offer Open Autosave");
+    },
+    [&host] { return host.modalText().rfind (openalert::kWontOpenTitle, 0) == 0; },
+    "Load saved session on a damaged session.json raised no alert" });
+    steps->push_back ({ 0, [&ctx, folder, autosave]
+    {
+        ctx.expect (absent (autosave), "the autosave is still there once it was saved as session.json");
+        ctx.expect (anyBackupHolds (folder, "{ damaged again"), "the session.json that would not open is not in backups/");
+    },
+    [&host, sessionJson] { return host.modalStackEmpty() && faderIs (sessionJson, -7.0f); },
+    "Open Autosave did not save the autosave as session.json" });
+
+    // Once a backup has failed, an autosave that fails after it offers neither
+    // itself nor that backup again, only the next older one.
+    const auto twice = ctx.tempDir() / "Damaged twice";
+    const auto twiceAutosave = twice / "session.json.autosave";
+    const auto twiceGood = twice / "backups" / "20261101-090000Z_session.json";
+    const auto twiceBroken = twice / "backups" / "20261102-090000Z_session.json";
+    steps->push_back ({ 100, [&host, &ctx, twice, twiceAutosave, twiceGood, twiceBroken]
+    {
+        if (! ctx.expect (saveFixture (twice, twiceGood, -11.0f) && writeText (twiceBroken, "{ broken backup")
+                              && writeText (twiceAutosave, "{ broken autosave"),
+                          "could not write the session that fails twice"))
+            return;
+        ctx.expect (! host.openSession (twice / "session.json"), "the session with no session.json reported a load");
+        ctx.expect (host.modalText().find ("\n    The autosave") != std::string::npos,
+                    "the alert did not offer the autosave: '" + host.modalText() + "'");
+        ctx.expect (host.clickModalButton (openalert::kOpenNewestBackup), "the alert did not offer the newest backup");
+    } });
+    steps->push_back ({ 0, [&host, &ctx]
+    {
+        ctx.expect (host.modalText().find ("\n    The autosave") != std::string::npos,
+                    "the damaged backup's alert did not offer the autosave: '" + host.modalText() + "'");
+        ctx.expect (host.clickModalButton (openalert::kOpenAutosave), "the damaged backup's alert did not offer Open Autosave");
+    },
+    [&host, twiceBroken] { return host.modalText().find (twiceBroken.u8string()) != std::string::npos; },
+    "opening the damaged newest backup raised no alert naming it" });
+    steps->push_back ({ 0, [&host, &ctx, twiceAutosave, twiceGood]
+    {
+        openalert::WontOpen failedAutosave;
+        failedAutosave.file = twiceAutosave.u8string();
+        failedAutosave.problem = openalert::Problem::Damaged;
+        failedAutosave.backup = true;
+        failedAutosave.backupTime = savedTimeOf (twiceGood);
+        failedAutosave.backupIsOlder = true;
+        failedAutosave.discardsAutosave = true;
+        ctx.expect (host.modalText() == alertText (openalert::kWontOpenTitle, openalert::wontOpenMessage (failedAutosave)),
+                    "the damaged autosave's alert read '" + host.modalText() + "'");
+        ctx.expect (! host.clickModalButton (openalert::kOpenAutosave), "the damaged autosave's alert offered it again");
+        ctx.expect (! host.clickModalButton (openalert::kOpenNewestBackup),
+                    "the damaged autosave's alert offered the backup that had failed");
+        ctx.expect (host.clickModalButton (openalert::kOpenOlderBackup),
+                    "the damaged autosave's alert did not offer the older backup");
+    },
+    [&host, twiceAutosave] { return host.modalText().find (twiceAutosave.u8string()) != std::string::npos; },
+    "opening the damaged autosave raised no alert naming it" });
+    steps->push_back ({ 0, [&ctx, twice, twiceBroken]
+    {
+        ctx.expect (faderIs (twice / "session.json", -11.0f), "session.json does not hold the older backup");
+        ctx.expect (fileBytes (twiceBroken) == "{ broken backup", "opening the older backup changed the damaged one");
+    },
+    [&host, &session, twice] { return host.modalStackEmpty() && currentSessionDirectory (session) == twice; },
+    "the older backup did not open after the autosave failed" });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar damagedSessionOpensBackup { Scenario {
+    "gui.damaged_session_opens_backup", { "gui", "session" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runDamagedSessionOpensBackup (host, ctx); }
+} };
+
+// A session.json this process may not read says so. The alert still offers the
+// backup, but promises to keep nothing in backups/, since a file that cannot be
+// read cannot be copied there.
+std::optional<ScenarioResult> runUnreadableSessionAlert (GuiHost& host, ScenarioContext& ctx)
+{
+   #if defined (_WIN32)
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("file permissions do not stop a read on Windows");
+   #else
+    if (auto early = beginBackupCase (host, ctx)) return early;
+    auto& session = ctx.session();
+    const auto before = currentSessionDirectory (session);
+    const auto folder = ctx.tempDir() / "Unreadable";
+    const auto sessionJson = folder / "session.json";
+    const auto backup = folder / "backups" / "20261101-090000Z_session.json";
+    if (! saveFixture (folder, sessionJson, -6.0f) || ! saveFixture (folder, backup, -9.0f))
+        return ScenarioResult::fail ("could not write the session and its backup");
+    std::error_code error;
+    fs::permissions (sessionJson, fs::perms::none, error);
+    ctx.cleanup ([sessionJson]
+    {
+        std::error_code restored;
+        fs::permissions (sessionJson, fs::perms::owner_read | fs::perms::owner_write, restored);
+    });
+    if (error || std::ifstream (sessionJson).is_open())
+        return ScenarioResult::skip ("file permissions do not stop this process reading");
+    const auto backupsBefore = backupsIn (folder);
+
+    openalert::WontOpen report;
+    report.file = sessionJson.u8string();
+    report.problem = openalert::Problem::Unreadable;
+    report.backup = true;
+    report.backupTime = savedTimeOf (backup);
+    ctx.expect (! host.openSession (sessionJson), "the unreadable session.json reported a load");
+    ctx.expect (currentSessionDirectory (session) == before, "the unreadable session.json switched the session");
+    const auto text = host.modalText();
+    ctx.expect (text == alertText (openalert::kWontOpenTitle, openalert::wontOpenMessage (report)),
+                "the alert read '" + text + "'");
+    ctx.expect (text.find ("The file could not be read.") != std::string::npos,
+                "the alert did not say the file could not be read");
+    ctx.expect (text.find ("kept in backups/") == std::string::npos,
+                "the alert promised to keep a file it cannot read");
+
+    // Handed over from outside, as the command line and a second launch do, a
+    // folder with no session's files in it is ignored, and one with them opens.
+    const auto plain = ctx.tempDir() / "Plain folder";
+    fs::create_directories (plain / "audio", error);
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 100, [&host, &ctx] { ctx.expect (host.clickModalButton ("Cancel"), "the alert did not offer Cancel"); } });
+    steps->push_back ({ 300, [&host, &ctx, &session, before, folder, backupsBefore, plain]
+    {
+        ctx.expect (host.modalStackEmpty(), "Cancel left '" + host.modalText() + "' up");
+        ctx.expect (currentSessionDirectory (session) == before, "Cancel switched the session");
+        ctx.expect (backupsIn (folder) == backupsBefore, "the unreadable session's backups changed");
+        host.requestSessionSwitch (plain);
+    } });
+    steps->push_back ({ 300, [&host, &ctx, &session, before, folder]
+    {
+        ctx.expect (host.modalStackEmpty(), "a folder holding no session raised '" + host.modalText() + "'");
+        ctx.expect (currentSessionDirectory (session) == before, "a folder holding no session switched the session");
+        host.requestSessionSwitch (folder);
+    } });
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.clickModalButton ("Cancel"), "the alert did not offer Cancel"); },
+    [&host] { return host.modalText().rfind (openalert::kWontOpenTitle, 0) == 0; },
+    "the unreadable session's folder, handed over, raised no alert" });
+    // A folder holding only backups/ or only midi/ is a session whose
+    // session.json has gone: handed over, it raises the alert, which offers
+    // the backup when there is one.
+    const auto backupsOnly = ctx.tempDir() / "Only backups";
+    const auto onlyBackup = backupsOnly / "backups" / "20261101-090000Z_session.json";
+    const auto midiOnly = ctx.tempDir() / "Only MIDI";
+    if (! saveFixture (backupsOnly, onlyBackup, -12.0f)
+        || ! writeText (midiOnly / "midi" / "tracks" / "20261101-090000Z_track01_Keys.mid", "MThd"))
+        return ScenarioResult::fail ("could not write the folders with only backups or MIDI");
+    steps->push_back ({ 300, [&host, &ctx, &session, before, backupsOnly]
+    {
+        ctx.expect (host.modalStackEmpty(), "Cancel left '" + host.modalText() + "' up");
+        ctx.expect (currentSessionDirectory (session) == before, "Cancel switched the session");
+        host.requestSessionSwitch (backupsOnly);
+    } });
+    steps->push_back ({ 0, [&host, &ctx, backupsOnly, onlyBackup]
+    {
+        openalert::WontOpen onlyBackups;
+        onlyBackups.file = (backupsOnly / "session.json").u8string();
+        onlyBackups.problem = openalert::Problem::Missing;
+        onlyBackups.backup = true;
+        onlyBackups.backupTime = savedTimeOf (onlyBackup);
+        ctx.expect (host.modalText() == alertText (openalert::kWontOpenTitle, openalert::wontOpenMessage (onlyBackups)),
+                    "the folder holding only backups raised '" + host.modalText() + "'");
+        ctx.expect (host.clickModalButton (openalert::kOpenNewestBackup), "the alert did not offer the folder's backup");
+    },
+    [&host] { return host.modalText().rfind (openalert::kWontOpenTitle, 0) == 0; },
+    "the folder holding only backups, handed over, raised no alert" });
+    steps->push_back ({ 0, [&host, &ctx, backupsOnly, midiOnly]
+    {
+        ctx.expect (faderIs (backupsOnly / "session.json", -12.0f), "the folder's backup was not saved as session.json");
+        host.requestSessionSwitch (midiOnly);
+    },
+    [&host, &session, backupsOnly]
+    { return host.modalStackEmpty() && currentSessionDirectory (session) == backupsOnly; },
+    "the backup of the folder holding only backups did not open" });
+    steps->push_back ({ 0, [&host, &ctx, midiOnly]
+    {
+        openalert::WontOpen onlyMidi;
+        onlyMidi.file = (midiOnly / "session.json").u8string();
+        onlyMidi.problem = openalert::Problem::Missing;
+        onlyMidi.midiFolder = (midiOnly / "midi").u8string();
+        ctx.expect (host.modalText() == alertText (openalert::kWontOpenTitle, openalert::wontOpenMessage (onlyMidi)),
+                    "the folder holding only MIDI raised '" + host.modalText() + "'");
+        ctx.expect (host.clickModalButton ("OK"), "the alert with nothing to offer did not offer OK");
+    },
+    [&host] { return host.modalText().rfind (openalert::kWontOpenTitle, 0) == 0; },
+    "the folder holding only MIDI, handed over, raised no alert" });
+    steps->push_back ({ 300, [&host, &ctx, &session, backupsOnly]
+    {
+        ctx.expect (host.modalStackEmpty(), "OK left '" + host.modalText() + "' up");
+        ctx.expect (currentSessionDirectory (session) == backupsOnly, "OK switched the session");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+   #endif
+}
+
+const ScenarioRegistrar unreadableSessionAlert { Scenario {
+    "gui.unreadable_session_alert", { "gui", "session" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runUnreadableSessionAlert (host, ctx); }
+} };
+
+// File > Open of a backup opens the session it belongs to, from its own
+// folder, so its audio is found, and saves it as session.json at once.
+std::optional<ScenarioResult> runOpenBackupFromFileMenu (GuiHost& host, ScenarioContext& ctx)
+{
+    if (auto early = beginBackupCase (host, ctx)) return early;
+    auto& session = ctx.session();
+    const auto folder = ctx.tempDir() / "Opened backup";
+    const auto sessionJson = folder / "session.json";
+    const auto audio = folder / "audio" / "Ramp.wav";
+    const auto backup = folder / "backups" / "20261101-090000Z_session.json";
+    std::error_code error;
+    fs::create_directories (audio.parent_path(), error);
+    if (! writeRampFixture (audio, 48000.0, 4800) || ! saveFixture (folder, sessionJson, -4.0f, audio)
+        || ! saveFixture (folder, backup, -8.0f, audio))
+        return ScenarioResult::fail ("could not write the session and its backup");
+    const auto replaced = fileBytes (sessionJson);
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    pushFileMenuSteps (host, ctx, *steps, "Open...");
+    steps->push_back ({ 0, [&host, &ctx, backup]
+    {
+        if (! ctx.expect (host.focusFileName(), "the Open browser has no name field")) return;
+        typeReplacing (host, backup.string());
+        ctx.expect (host.clickModalButton ("Open"), "the Open browser has no Open button");
+    },
+    [&host] { return host.modalText().rfind ("Open session.json", 0) == 0; },
+    "File > Open... did not bring up the Open browser" });
+    steps->push_back ({ 0, [&host, &ctx, &session, folder, sessionJson, audio, replaced]
+    {
+        ctx.expect (host.statusMessage() == "Saved: Opened backup",
+                    "opening the backup reported '" + host.statusMessage() + "' rather than saving it");
+        ctx.expect (faderIs (sessionJson, -8.0f), "session.json does not hold the backup that opened");
+        const auto& regions = session.track (1).regions;
+        ctx.expect (regions.size() == 1 && regions.front().file.getFullPathName().toStdString() == audio.u8string(),
+                    "the backup's audio did not resolve against the session folder");
+        ctx.expect (session.missingAudioFilesAfterLoad.empty(), "the backup opened with its audio missing");
+        ctx.expect (anyBackupHolds (folder, replaced), "the session.json the open replaced is not in backups/");
+        const auto names = backupsIn (folder);
+        ctx.expect (! names.empty() && fileBytes (folder / "backups" / names.back()) == fileBytes (sessionJson),
+                    "the newest backup is not the session.json the open saved");
+        for (const char* stray : { "session.json", "audio", "backups", "midi", "notepad.md" })
+            ctx.expect (absent (folder / "backups" / stray),
+                        std::string ("opening a backup made ") + stray + " in backups/");
+    },
+    [&host, &session, folder] { return host.modalStackEmpty() && currentSessionDirectory (session) == folder; },
+    "the backup did not open in its session folder" });
+
+    // Handed over from outside while the session has unsaved changes, a backup
+    // the prompt's Save would retire as one too many is still there to open.
+    const auto handedOver = std::make_shared<fs::path>();
+    steps->push_back ({ 100, [&host, &ctx, &session, folder, handedOver]
+    {
+        const auto start = std::chrono::system_clock::now() - std::chrono::seconds (60);
+        for (int i = 0; i < 25; ++i)
+        {
+            const auto file = folder / "backups" / sessionbackups::fileName (start + std::chrono::seconds (i));
+            if (! ctx.expect (i == 0 ? saveFixture (folder, file, -13.0f) : writeText (file, "{}"),
+                              "could not write the backups to retire"))
+                return;
+            if (i == 0) *handedOver = file;
+        }
+        session.track (0).strip.faderDb.store (-2.0f);
+        host.requestSessionSwitch (*handedOver);
+    } });
+    steps->push_back ({ 0, [&host, &ctx]
+    { ctx.expect (host.clickModalButton ("Save"), "the unsaved-changes prompt did not offer Save"); },
+    [&host] { return host.modalText().find ("Save changes before opening another session?") != std::string::npos; },
+    "the backup handed over raised no unsaved-changes prompt" });
+    steps->push_back ({ 0, [&host, &ctx, handedOver]
+    {
+        ctx.expect (host.statusMessage() == "Saved: Opened backup",
+                    "opening the handed-over backup reported '" + host.statusMessage() + "'");
+        ctx.expect (faderIs (*handedOver, -13.0f), "the handed-over backup changed or went");
+    },
+    [&host, folder] { return host.modalStackEmpty() && faderIs (folder / "session.json", -13.0f); },
+    "the backup handed over did not open once the prompt's Save had run" });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar openBackupFromFileMenu { Scenario {
+    "gui.open_backup_from_file_menu", { "gui", "session" }, Needs::Engine | Needs::Gui,
+    {}, {}, 25000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runOpenBackupFromFileMenu (host, ctx); }
+} };
+
+// A session from a newer Dusk Studio says so and offers nothing: a backup or
+// the autosave would roll it back, and the next save would replace it.
+std::optional<ScenarioResult> runNewerSessionAlert (GuiHost& host, ScenarioContext& ctx)
+{
+    if (auto early = beginBackupCase (host, ctx)) return early;
+    auto& session = ctx.session();
+    const auto before = currentSessionDirectory (session);
+    const auto folder = ctx.tempDir() / "Future";
+    const auto sessionJson = folder / "session.json";
+    const auto future = std::string (R"({"version":9999,"tracks":[{"name":"From the future"}]})");
+    if (! writeText (sessionJson, future)
+        || ! saveFixture (folder, folder / "backups" / "20261101-090000Z_session.json", -5.0f))
+        return ScenarioResult::fail ("could not write the session");
+    Session probe;
+    SessionLoadError expected;
+    SessionSerializer::load (probe, sessionJson, &expected);
+    if (expected.failure != SessionLoadFailure::NewerVersion)
+        return ScenarioResult::fail ("the fixture does not read as a newer format");
+    const auto backupsBefore = backupsIn (folder);
+
+    ctx.expect (! host.openSession (sessionJson), "the newer session reported a load");
+    ctx.expect (host.modalText() == alertText (openalert::kNewerVersionTitle,
+                                               openalert::newerVersionMessage (sessionJson.u8string(), 9999,
+                                                                               expected.supportedVersion)),
+                "the alert read '" + host.modalText() + "'");
+    ctx.expect (! host.clickModalButton (openalert::kOpenNewestBackup), "the newer session's alert offered a backup");
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 100, [&host, &ctx] { ctx.expect (host.clickModalButton ("OK"), "the alert did not offer OK"); } });
+    steps->push_back ({ 300, [&host, &ctx, &session, before, folder, sessionJson, future, backupsBefore]
+    {
+        ctx.expect (host.modalStackEmpty(), "OK left a modal open");
+        ctx.expect (currentSessionDirectory (session) == before, "the newer session switched the session");
+        ctx.expect (fileBytes (sessionJson) == future, "the newer session's session.json changed");
+        ctx.expect (backupsIn (folder) == backupsBefore, "the newer session's backups changed");
+        ctx.expect (host.statusMessage().rfind ("Session format 9999 is newer than supported format", 0) == 0,
+                    "the status read '" + host.statusMessage() + "'");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar newerSessionAlert { Scenario {
+    "gui.newer_session_alert", { "gui", "session" }, Needs::Engine | Needs::Gui,
+    {}, {}, 10000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runNewerSessionAlert (host, ctx); }
+} };
+
+// A recent session whose session.json has gone offers its newest backup, and
+// the startup dialog stays away once that opens.
+std::optional<ScenarioResult> runStartupRecentOpensBackup (GuiHost& host, ScenarioContext& ctx)
+{
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("requires the native UI");
+   #else
+    if (host.startupDialogOpen()) return ScenarioResult::skip ("requires no startup dialog");
+    if (auto early = beginBackupCase (host, ctx)) return early;
+    auto& session = ctx.session();
+    const auto folder = ctx.tempDir() / "Lost session";
+    const auto backup = folder / "backups" / "20261101-090000Z_session.json";
+    if (! saveFixture (folder, backup, -5.0f)) return ScenarioResult::fail ("could not write the backup");
+
+    openalert::WontOpen report;
+    report.file = (folder / "session.json").u8string();
+    report.problem = openalert::Problem::Missing;
+    report.backup = true;
+    report.backupTime = savedTimeOf (backup);
+    if (! ctx.expect (host.openStartupDialog ({ folder }, true), "the startup dialog did not open")) return ctx.verdict();
+
+    const auto click = [&host, &ctx] (const std::string& control)
+    { ctx.expect (host.clickStartupControl (control), "the startup dialog did not show " + control); };
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 400, [click] { click ("row:0"); } });
+    steps->push_back ({ 100, [click] { click ("row:0"); } });
+    steps->push_back ({ 0, [&host, &ctx, report]
+    {
+        ctx.expect (! host.startupDialogOpen(), "the startup dialog stayed up with the alert");
+        ctx.expect (host.modalText() == alertText (openalert::kWontOpenTitle, openalert::wontOpenMessage (report)),
+                    "the alert read '" + host.modalText() + "'");
+        ctx.expect (host.clickModalButton (openalert::kOpenNewestBackup), "the alert did not offer the backup");
+    },
+    [&host] { return host.modalText().rfind (openalert::kWontOpenTitle, 0) == 0; },
+    "the recent session with no session.json raised no alert" });
+    steps->push_back ({ 300, [&host, &ctx, &session, folder, backup]
+    {
+        ctx.expect (! host.startupDialogOpen(), "the startup dialog came back after the backup opened");
+        ctx.expect (faderIs (folder / "session.json", -5.0f), "the backup was not saved as session.json");
+        ctx.expect (faderIs (backup, -5.0f), "opening the backup changed it");
+        const auto names = backupsIn (folder);
+        ctx.expect (! names.empty() && fileBytes (folder / "backups" / names.back()) == fileBytes (folder / "session.json"),
+                    "the newest backup is not the session.json the open saved");
+        ctx.expect (host.statusMessage() == "Saved: Lost session", "the open reported '" + host.statusMessage() + "'");
+    },
+    [&host, &session, folder] { return host.modalStackEmpty() && currentSessionDirectory (session) == folder; },
+    "the backup did not open" });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+   #endif
+}
+
+const ScenarioRegistrar startupRecentOpensBackup { Scenario {
+    "gui.startup_recent_opens_backup", { "gui", "startup", "session" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runStartupRecentOpensBackup (host, ctx); }
+} };
+} // namespace
+} // namespace duskstudio::scenario::gui

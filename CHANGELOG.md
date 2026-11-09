@@ -5,6 +5,47 @@ All notable changes to Dusk Studio. Format loosely follows
 back-filled from `git log`; once tags exist this file is the
 canonical source.
 
+## [0.17.0] - Unreleased
+
+### Added
+
+- **MIDI recovery files.** A session's MIDI no longer lives only inside
+  `session.json`. Each recorded MIDI pass is written to the session's
+  `midi/takes/` folder as a Standard MIDI File when it commits, every pass of
+  a loop take included. Opening a session, every save and every autosave
+  write each MIDI track to `midi/tracks/`: a playing file with the regions
+  that play and, when the track has muted regions or previous takes, a takes
+  file with those. Files are written on a thread of their own and never
+  replaced. Importing a track's playing file at the start of the timeline
+  puts its notes back where they played.
+- **Session backups.** Every save also keeps a copy of `session.json` in the
+  session's `backups/` folder, named by the UTC second it was saved in, and a
+  `session.json` changed outside a save is kept there before a save replaces
+  it. Dusk Studio keeps the 20 newest and the newest of each of the last 30
+  days. Opening a backup with **File > Open...** saves it as `session.json` at
+  once. Save As takes `backups/` and `midi/` along.
+- **Session won't open.** A session whose `session.json` is missing, cannot
+  be read, is damaged or cannot be brought up to date raises an alert that
+  says why, offers the session's autosave and newest backup, and names its
+  `midi/` folder. The one chosen is saved as `session.json` at once, and a
+  backup that fails too offers the next older one. A session saved by a
+  newer Dusk Studio raises its own alert. Before, a failed open only showed
+  "Load failed" in the status bar.
+
+### Changed
+
+- **Folders that hold a session's files.** Save As and **New** refuse a
+  folder that holds a `session.json`, an autosave, notes, a `midi/` or a
+  `backups/` folder, where before only a `session.json` counted, and a new
+  Untitled session passes over a folder with `midi/` or `backups/` as it
+  already did one with a session, an autosave or notes. The first save of a
+  session you had never saved moves its MIDI recovery files out of its
+  `Untitled` folder.
+- **Folders opened from the command line or a file manager.** A folder that
+  holds a session's files but no `session.json` opens into the **Session
+  won't open** alert, which offers its autosave and backups. Any other folder
+  without a `session.json` is still ignored.
+
 ## [0.16.1] - 2026-11-07
 
 ### Added

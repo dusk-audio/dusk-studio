@@ -62,7 +62,7 @@ try {
     Assert-Snapshot (($beforeTemp -join "`n") -ne ($afterTemp -join "`n")) `
         'The snapshot missed a real change in a watched temporary directory'
     $allowed = Get-RegressWindowsGuiSkips
-    Assert-Snapshot ($allowed.Count -eq 19) 'The Windows skip policy must name exactly 19 unsupported paths'
+    Assert-Snapshot ($allowed.Count -eq 20) 'The Windows skip policy must name exactly 20 unsupported paths'
     $skips = $allowed.Count
     $supported = (Get-RegressWindowsGuiCatalogCount) - $skips
     function Format-SuiteFooter([int]$pass, [int]$fail, [int]$skip) { return "=== scenarios: $pass pass, $fail fail, $skip skip ===" }

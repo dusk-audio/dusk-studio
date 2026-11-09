@@ -186,8 +186,25 @@ public:
         double capturedSampleRate = 0.0;
         float capturedBpm = 0.0f;
         std::vector<CapturedMidiTrackPass> tracks;
+
+        // One track's pass as played: a region where the pass started, before
+        // any merge.
+        MidiRegion regionOf (const CapturedMidiTrackPass& captured) const;
     };
     std::vector<CapturedMidiPassGroup> takeMidiPassGroups();
+
+    struct RecordedMidiPass
+    {
+        int trackIndex = -1;
+        MidiRegion pass;
+    };
+    // Message thread. Each pass with notes or controls the last stopRecording
+    // took with Merge off, oldest first on each track, as a region where it was
+    // played: a linear take's new region without the regions it covered, and
+    // each pass of a loop take, those too old to stay among a region's previous
+    // takes included when they hold events of their own. Taking them leaves
+    // none. Merge passes come through takeMidiPassGroups instead.
+    std::vector<RecordedMidiPass> takeRecordedMidiPasses();
 
     // True from startRecording until stopRecording, which is also exactly how
     // long a take's WAV has no region pointing at it.
@@ -428,5 +445,8 @@ private:
     int recordLatencyOffsetSamples = 0;
 
     std::vector<TrackCommitDiff> lastCommitDiff;
+    // Needs no synchronisation: stopRecording fills it only after the audio
+    // thread has left the recorder, and the audio thread never reaches it.
+    std::vector<RecordedMidiPass> recordedMidiPasses;
 };
 } // namespace duskstudio

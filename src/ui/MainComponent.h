@@ -15,6 +15,7 @@
 #include "../engine/AudioEngine.h"
 #include "../foundation/MessageThread.h"
 #include "../session/Session.h"
+#include "../session/SessionSerializer.h"
 #include "../session/SessionTemplates.h"
 
 namespace duskstudio
@@ -179,12 +180,12 @@ private:
     // slots that stopped the Save, and is empty when something else did.
     bool writeSessionTo (const juce::File& sessionDir, const AudioEngine::PreparedPluginState* keepFrom,
                          AudioEngine::PreparedPluginState& attempt, std::string& captureError);
-    struct SaveReply;
+    struct PromptReply;
     // The Save failed prompt for the slots a capture could not read; Save
     // anyway saves with exactly those slots kept, and asks again if another fails.
     void askToSaveAnyway (const std::filesystem::path& sessionDir,
                           std::shared_ptr<AudioEngine::PreparedPluginState> failed,
-                          const std::string& captureError, std::shared_ptr<SaveReply> reply);
+                          const std::string& captureError, std::shared_ptr<PromptReply> reply);
     // True, with a status line, while a render from any modal or a DP import is
     // unfinished.
     bool saveRefusedWhileBusy();
@@ -194,15 +195,39 @@ private:
     // name, so a session.json there does not make it this session's file.
     bool sessionOnDisk = false;
     bool saveGoesInPlace() const;
-    // onComplete runs once, after the load attempt or any recovery-prompt choice,
-    // with whether a session loaded. The return value only says the attempt was
-    // accepted when the recovery prompt is up.
+    // onComplete runs once, after the load attempt and the user's answer to any
+    // recovery prompt or failure alert, with whether a session loaded. The
+    // return value only says the attempt was accepted when the recovery prompt
+    // is up, and is false for a file that did not open even when the alert
+    // then opens something in its place.
     bool loadSessionFromJson (const juce::File& sessionJson,
                               std::function<void (bool loaded)> onComplete = {});
     // Tail-half called either directly (no autosave) or from the
-    // recovery prompt callback.
+    // recovery prompt callback. failure, when given, says what was wrong with
+    // a file that did not load; it stays None when the load stopped before
+    // reading it, after raising an alert of its own.
     bool finishLoadingSessionFrom (const juce::File& sessionJson,
-                                    const juce::File& sessionDir);
+                                    const juce::File& sessionDir,
+                                    SessionLoadError* failure = nullptr);
+    // What has failed to open since the user asked for a session, carried
+    // from each failure alert to the next: the oldest backup that failed, and
+    // whether the autosave did.
+    struct FailedOpens
+    {
+        std::filesystem::path oldestBackup;
+        bool autosave = false;
+    };
+    // finishLoadingSessionFrom, then for a file that did not open the alert
+    // that says why and offers what could open instead. onComplete runs once,
+    // when a load succeeds or the user has answered the last alert.
+    bool finishOpening (const std::filesystem::path& sessionJson, const std::filesystem::path& sessionDir,
+                        std::function<void (bool loaded)> onComplete, FailedOpens failedBefore);
+    void showOpenFailure (const std::filesystem::path& failedJson, const std::filesystem::path& sessionDir,
+                          const SessionLoadError& error, std::function<void (bool loaded)> onComplete,
+                          FailedOpens failedBefore);
+    // A failure alert is up, or one of its offers is about to load.
+    bool openFailurePending() const { return openFailureModal.isOpen() || offerLoadsPending > 0; }
+    int offerLoadsPending = 0;
     // onResolved runs once with whether a session opened: false when the user
     // backs out of the unsaved-changes prompt, the browser or the recovery prompt,
     // or the chosen session fails to load.
@@ -320,7 +345,7 @@ private:
     void writeAutosave();
     void discardWrittenAutosave();
     juce::File getAutosaveFileFor (const juce::File& sessionDir) const;
-    bool autosaveIsNewerThan (const juce::File& sessionJson) const;
+    bool autosaveIsNewerThan (const juce::File& sessionJson, const std::filesystem::path& sessionDir) const;
     void deleteAutosaveFor   (const juce::File& sessionDir) const;
     // The folder writeAutosave and saveNotepadNow write into (see
     // savecheck::sidecarFolder). Empty when there is nowhere safe.
@@ -433,6 +458,8 @@ private:
     EmbeddedModal quitModal;
     // Replaces juce::AlertWindow so styling matches the rest of the app.
     EmbeddedModal recoveryModal;
+    // Session won't open, and Session needs a newer Dusk Studio.
+    EmbeddedModal openFailureModal;
    #if DUSKSTUDIO_HAS_NATIVE_UI
     // The virtual keyboard is native: a framework child over the window with a dim
     // sibling behind it, the shape every ported panel takes. Built on first open.

@@ -12,6 +12,7 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <utility>
 
 namespace duskstudio
 {
@@ -376,6 +377,7 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
     midiCompletedOrdinals = {};
     for (auto& pending : pendingMidiPasses) pending.clear();
     for (auto& preview : lastMidiPreviews) preview.reset();
+    recordedMidiPasses.clear();
     recordLatencyOffsetSamples = latencyOffsetSamples;
     loopPlan = loopCapturePlan;
     recordStartTick = recordTempoMap.samplesToTicks (midiCaptureTimelineStart(), sampleRate);
@@ -658,6 +660,22 @@ void RecordManager::serviceMidiCapture()
         }
 }
 
+MidiRegion RecordManager::CapturedMidiPassGroup::regionOf (const CapturedMidiTrackPass& captured) const
+{
+    MidiRegion region;
+    region.timelineStart = timelineStart;
+    region.lengthInSamples = captured.pass.lengthInSamples;
+    region.lengthInTicks = captured.pass.lengthInTicks;
+    region.notes = captured.pass.notes;
+    region.ccs = captured.pass.ccs;
+    return region;
+}
+
+std::vector<RecordManager::RecordedMidiPass> RecordManager::takeRecordedMidiPasses()
+{
+    return std::exchange (recordedMidiPasses, {});
+}
+
 std::vector<RecordManager::CapturedMidiPassGroup> RecordManager::takeMidiPassGroups()
 {
     serviceMidiCapture();
@@ -765,6 +783,7 @@ void RecordManager::stopRecording (std::int64_t endSample)
     // method (after the after-snapshot pass) when something actually
     // changed; tracks untouched by the commit are dropped.
     lastCommitDiff.clear();
+    recordedMidiPasses.clear();
     std::array<std::vector<AudioRegion>, Session::kNumTracks> beforeAudio;
     std::array<std::vector<MidiRegion>,  Session::kNumTracks> beforeMidi;
     std::array<std::vector<AudioTake>,   Session::kNumTracks> beforeTakes;
@@ -860,18 +879,11 @@ void RecordManager::stopRecording (std::int64_t endSample)
                 }
             };
 
-            for (int passIndex = 0; passIndex < midiLoopPassCount; ++passIndex)
+            // One pass from its events in `drained`. A pass that carries state
+            // starts with the notes still held and the controls in force, and
+            // one that is followed lets its CCs go at its end.
+            auto buildPass = [&] (const PassDescriptor& pass, bool carriesState, bool followed)
             {
-                const auto& pass = midiLoopPasses[(size_t) passIndex];
-                if (pass.lengthInSamples <= 0) continue;
-
-                // Consume evicted older passes once to recover held-note and
-                // controller state at the first kept boundary. The outer loop
-                // is capped at current + eight prior takes.
-                while (drainedIndex < drained.size()
-                       && drained[drainedIndex].passOrdinal < pass.passOrdinal)
-                    seedState (drained[drainedIndex++]);
-
                 MidiRegion passRegion;
                 passRegion.timelineStart = loopPlan.captureStartSample;
                 passRegion.lengthInSamples = pass.lengthInSamples;
@@ -882,7 +894,7 @@ void RecordManager::stopRecording (std::int64_t endSample)
                     ! pass.endsPass || pass.lengthInSamples < captureLength
                 };
 
-                if (passIndex > 0 || pass.passOrdinal > 1)
+                if (carriesState)
                 {
                     for (int key = 0; key < (int) activeNotes.size(); ++key)
                         if (activeNotes[(size_t) key].active)
@@ -968,7 +980,7 @@ void RecordManager::stopRecording (std::int64_t endSample)
                     passRegion.notes.push_back (committed);
                 }
 
-                if (passIndex + 1 < midiLoopPassCount)
+                if (followed)
                 {
                     for (int key = 0; key < (int) controllerState.size(); ++key)
                     {
@@ -982,7 +994,41 @@ void RecordManager::stopRecording (std::int64_t endSample)
                         passRegion.ccs.push_back (reset);
                     }
                 }
+                return passRegion;
+            };
 
+            // The window keeps the bounds of the newest passes only. A seek
+            // waits for the loop take to end, so every older pass covered the
+            // whole capture range, and the events it left in the queue are
+            // what was played in it. Building those passes, rather than only
+            // reading their events, leaves the notes and controls the first
+            // kept pass starts from unchanged.
+            if (midiLoopPassCount > 0)
+                while (drainedIndex < drained.size()
+                       && drained[drainedIndex].passOrdinal < midiLoopPasses[0].passOrdinal)
+                {
+                    PassDescriptor evicted;
+                    evicted.passOrdinal = drained[drainedIndex].passOrdinal;
+                    evicted.lengthInSamples = captureLength;
+                    evicted.endsPass = true;
+                    auto passRegion = buildPass (evicted, evicted.passOrdinal > 1, true);
+                    if (! passRegion.notes.empty() || ! passRegion.ccs.empty())
+                        recordedMidiPasses.push_back ({ t, std::move (passRegion) });
+                }
+
+            for (int passIndex = 0; passIndex < midiLoopPassCount; ++passIndex)
+            {
+                const auto& pass = midiLoopPasses[(size_t) passIndex];
+                if (pass.lengthInSamples <= 0) continue;
+
+                // An ordinal the window holds no bounds for only carries its
+                // held notes and controls on.
+                while (drainedIndex < drained.size()
+                       && drained[drainedIndex].passOrdinal < pass.passOrdinal)
+                    seedState (drained[drainedIndex++]);
+
+                auto passRegion = buildPass (pass, passIndex > 0 || pass.passOrdinal > 1,
+                                             passIndex + 1 < midiLoopPassCount);
                 if (! passRegion.notes.empty() || ! passRegion.ccs.empty())
                     nonemptyPasses.push_back (std::move (passRegion));
             }
@@ -992,6 +1038,8 @@ void RecordManager::stopRecording (std::int64_t endSample)
                 cap.reset();
                 continue;
             }
+            for (const auto& pass : nonemptyPasses)
+                recordedMidiPasses.push_back ({ t, pass });
 
             MidiRegion region = std::move (nonemptyPasses.back());
             for (auto it = nonemptyPasses.rbegin() + 1;
@@ -1140,6 +1188,7 @@ void RecordManager::stopRecording (std::int64_t endSample)
         // NOT absorbed - the user can still see / cycle to the older
         // takes via the badge UI; partial-overlap merging would need
         // a tick-domain split routine that's out of scope here.
+        recordedMidiPasses.push_back ({ t, region });
         const std::int64_t newStart = region.timelineStart;
         const std::int64_t newEnd   = newStart + region.lengthInSamples;
         session.track (t).midiRegions.mutate (

@@ -6,7 +6,9 @@
 namespace duskstudio
 {
 // Off events folded into lengthInTicks - no dangling on/off bookkeeping.
-// Negative or zero length = "all-notes-off across region" sentinel.
+// A note of zero or negative length plays its note-off right behind its
+// note-on, on the same sample. A MIDI recovery file ends it one tick after it
+// starts: on one tick, a file puts the note-off first.
 struct MidiNote
 {
     int  channel       = 1;     // 1..16

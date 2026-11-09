@@ -237,12 +237,22 @@ add_executable(dusk-studio-tests
     ${CMAKE_SOURCE_DIR}/src/engine/FileImporter.cpp
     midi_file_reader.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/midi/MidiFileReader.cpp
+    midi_file_writer.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/midi/MidiFileWriter.cpp
+    midi_recovery.cpp
+    ${CMAKE_SOURCE_DIR}/src/session/MidiRecovery.cpp
+    midi_recovery_writer.cpp
+    ${CMAKE_SOURCE_DIR}/src/session/MidiRecoveryWriter.cpp
+    session_backups.cpp
+    ${CMAKE_SOURCE_DIR}/src/session/SessionBackups.cpp
+    session_open_alerts.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/DpImporter.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/DpAligner.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/RecordManager.cpp
     record_loop_take_stacking.cpp
     record_midi_merge_capture.cpp
     record_midi_overdub_diff.cpp
+    record_midi_take_files.cpp
     record_offset_placement.cpp
     record_stop_waits_for_audio.cpp
     playback_loop_read.cpp
@@ -323,6 +333,7 @@ target_sources(dusk-studio-tests PRIVATE
     foundation_text_format.cpp
     foundation_vector_ops.cpp
     foundation_fs.cpp
+    foundation_atomic_file.cpp
     log_file.cpp
     ${CMAKE_SOURCE_DIR}/src/util/LogFile.cpp
     host_info.cpp

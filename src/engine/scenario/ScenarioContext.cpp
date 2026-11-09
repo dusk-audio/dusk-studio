@@ -39,6 +39,9 @@ ScenarioContext::ScenarioContext (Session& s, AudioEngine& e,
 ScenarioContext::~ScenarioContext()
 {
     if (! completed) runCleanups();
+    // A take the case committed can still be waiting to be written into the
+    // scratch folder.
+    engineRef.flushMidiRecoveryFiles();
     if (! scratchDir.empty())
     {
         std::error_code error;

@@ -211,6 +211,31 @@ TEST_CASE ("SessionSerializer explains rejected loads and clears stale errors", 
     dir.deleteRecursively();
 }
 
+// Windows' permissions() only sets the read-only attribute, which never stops a
+// read, and a skipped case fails this ctest group.
+#if ! defined(_WIN32)
+TEST_CASE ("SessionSerializer reports a session.json it cannot read as unavailable, not damaged",
+           "[session][serializer][version]")
+{
+    using namespace duskstudio;
+    const auto dir = makeTempSessionDir();
+    const auto target = dir.getChildFile ("session.json");
+    const auto path = std::filesystem::u8path (target.getFullPathName().toStdString());
+    writeRaw (target, R"({"version":11,"tracks":[{"name":"Locked"}]})");
+    std::filesystem::permissions (path, std::filesystem::perms::none);
+    const bool readable = std::ifstream (path).is_open();
+    auto live = std::make_unique<Session>();
+    SessionLoadError error;
+    const bool loaded = SessionSerializer::load (*live, path, &error);
+    std::filesystem::permissions (path, std::filesystem::perms::owner_all);
+    dir.deleteRecursively();
+    if (readable) SKIP ("file permissions do not stop this process reading");
+
+    CHECK_FALSE (loaded);
+    CHECK (error.failure == SessionLoadFailure::FileUnavailable);
+}
+#endif
+
 TEST_CASE ("SessionSerializer loads an unchanged format-10 file written by released 0.15.1", "[session][serializer][version]")
 {
     using namespace duskstudio;

@@ -21,6 +21,7 @@
 #include "CompModeMap.h"
 #include "../session/RegionEditActions.h"
 #include "../session/MidiMerge.h"
+#include "../session/MidiRecovery.h"
 #include "../session/TakeComp.h"
 #include "../session/TrackMove.h"
 #include "DeviceFallbackMessage.h"
@@ -1855,6 +1856,11 @@ AudioEngine::~AudioEngine()
     deviceManager.removeCallback (this);
     midiIn.detachCallback();
     deviceManager.closeDevice();
+    // A take committed while processing was held out is still waiting. Writing
+    // here rather than when the writer member goes puts every file on disk
+    // before the members that host plug-ins are torn down, and a plug-in
+    // destructor has aborted at shutdown before.
+    flushMidiRecoveryFiles();
     // After the callback is gone - nothing pushes to the out-queue, the
     // pump drains or drops what's left, then the output bank can destruct.
     midiOut.stopPump();
@@ -2392,6 +2398,7 @@ void AudioEngine::serviceMidiRecording()
         if (onBeforeRecordCommit) onBeforeRecordCommit (changedMask);
         std::vector<MidiMergePassAction::TrackDiff> diffs;
         std::vector<std::pair<int, int>> committed;
+        std::vector<RecordManager::RecordedMidiPass> played;
         for (const auto& captured : group.tracks)
         {
             if (captured.pass.notes.empty() && captured.pass.ccs.empty()) continue;
@@ -2410,10 +2417,7 @@ void AudioEngine::serviceMidiRecording()
                 after.push_back (std::move (fresh));
             }
             auto& target = after[(std::size_t) targetIndex];
-            MidiRegion pass;
-            pass.notes = captured.pass.notes;
-            pass.ccs = captured.pass.ccs;
-            pass.lengthInTicks = captured.pass.lengthInTicks;
+            auto pass = group.regionOf (captured);
             const midischedule::RegionClock clock (session.tempoMap.empty() ? nullptr : &session.tempoMap,
                                                    sr, bpm, target.timelineStart);
             const auto merged = mergeMidiPassAt (target, pass, group.timelineStart, clock);
@@ -2421,14 +2425,61 @@ void AudioEngine::serviceMidiRecording()
             diffs.push_back ({ captured.trackIndex, std::move (before), std::move (after),
                               { group.gestureId, group.passOrdinal } });
             committed.emplace_back (captured.trackIndex, targetIndex);
+            played.push_back ({ captured.trackIndex, std::move (pass) });
         }
         if (diffs.empty()) continue;
         undoManager.beginNewTransaction ("MIDI Merge pass");
         if (undoManager.perform (new MidiMergePassAction (session, *this, std::move (diffs))))
+        {
             for (const auto& target : committed)
                 if (onMidiPassCommitted) onMidiPassCommitted (target.first, target.second);
+            const auto committedAt = std::chrono::system_clock::now();
+            for (auto& recorded : played)
+                pendingMidiTakeFiles.push_back ({ std::move (recorded), committedAt });
+        }
         undoManager.beginNewTransaction();
     }
+    queuePendingMidiTakeFiles();
+}
+
+void AudioEngine::queuePendingMidiTakeFiles()
+{
+    if (! isProcessingSuspended()) queuePendingMidiTakeFilesNow();
+}
+
+void AudioEngine::queuePendingMidiTakeFilesNow()
+{
+    if (pendingMidiTakeFiles.empty()) return;
+    const auto sessionDir = std::filesystem::u8path (session.getSessionDirectory().getFullPathName().toStdString());
+    const double sampleRate = getTimelineSampleRate();
+    for (const auto& pending : std::exchange (pendingMidiTakeFiles, {}))
+        if (auto file = midirecovery::pendingTakeFile (sessionDir, pending.committed, session, sampleRate,
+                                                       pending.recorded.trackIndex, pending.recorded.pass))
+            midiRecoveryWriter.queue (std::move (*file));
+}
+
+void AudioEngine::queueMidiTrackFiles()
+{
+    queuePendingMidiTakeFiles();
+    const auto sessionDir = std::filesystem::u8path (session.getSessionDirectory().getFullPathName().toStdString());
+    for (auto& file : midirecovery::pendingTrackFiles (sessionDir, std::chrono::system_clock::now(), session,
+                                                       getTimelineSampleRate()))
+        midiRecoveryWriter.queue (std::move (file));
+}
+
+void AudioEngine::flushMidiRecoveryFiles()
+{
+    queuePendingMidiTakeFilesNow();
+    midiRecoveryWriter.flush();
+}
+
+void AudioEngine::reportMidiRecoveryWrite (const midirecovery::PendingFile& file,
+                                           const midirecovery::WriteResult& result)
+{
+    const char* const what = file.folder == midirecovery::Folder::Takes ? "take" : "track";
+    for (const auto& failure : result.failures)
+        std::fprintf (stderr, "[Dusk Studio/AudioEngine] track %d: a MIDI %s file was not written (\"%s\": %s).\n",
+                      file.trackNumber, what, failure.path.u8string().c_str(), failure.error.message().c_str());
 }
 
 void AudioEngine::play (PlaybackEngine::Audition audition)
@@ -2490,6 +2541,9 @@ void AudioEngine::stop()
             if (onBeforeRecordCommit)
                 onBeforeRecordCommit (recordManager.getActiveCaptureTrackMask());
             recordManager.stopRecording (endSample);
+            const auto committedAt = std::chrono::system_clock::now();
+            for (auto& recorded : recordManager.takeRecordedMidiPasses())
+                pendingMidiTakeFiles.push_back ({ std::move (recorded), committedAt });
             updateAssetWorkPause();
             serviceMidiRecording();
             activeRecordStart.store (std::numeric_limits<std::int64_t>::min(),
@@ -2517,6 +2571,7 @@ void AudioEngine::stop()
         playbackEngine.stopPlayback();
     }
 
+    queuePendingMidiTakeFiles();
     performPendingDspRestartIfIdle();
 }
 

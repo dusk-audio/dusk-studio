@@ -206,11 +206,17 @@ public:
             auto cb = act.onClick;
             btn->onClick = [cb] { if (cb) cb(); };
             addAndMakeVisible (*btn);
+            buttonWidths.push_back (std::max (110, btn->getBestWidthForHeight (kButtonStripH)));
             buttons.push_back (std::move (btn));
         }
         setWantsKeyboardFocus (true);
-        const int w = std::max (480, 60 + 120 * (int) actions.size());
-        setSize (w, 220);
+        setTitle (titleStr);
+        setDescription (messageStr);
+        int buttonRow = 0;
+        for (const int width : buttonWidths)
+            buttonRow += width + 8;
+        const int w = std::max ({ 480, 60 + 120 * (int) actions.size(), 40 + buttonRow });
+        setSize (w, panelHeightForMessage (messageStr, w));
     }
 
     void paint (juce::Graphics& g) override
@@ -224,7 +230,7 @@ public:
         // Right-to-left: last action in vector lands at far right.
         for (int i = (int) buttons.size() - 1; i >= 0; --i)
         {
-            buttons[(size_t) i]->setBounds (row.removeFromRight (110));
+            buttons[(size_t) i]->setBounds (row.removeFromRight (buttonWidths[(size_t) i]));
             if (i > 0) row.removeFromRight (8);
         }
     }
@@ -236,6 +242,7 @@ private:
     juce::String titleStr, messageStr;
     std::vector<DuskDecisionAction> actions;
     std::vector<std::unique_ptr<juce::TextButton>> buttons;
+    std::vector<int> buttonWidths;
 };
 
 // -----------------------------------------------------------------------------
@@ -323,20 +330,21 @@ private:
 void showDuskAlert (juce::Component& parent,
                      juce::String title,
                      juce::String message,
-                     std::function<void()> onDismiss)
+                     std::function<void()> onDismiss,
+                     DuskModalPlacement placement)
 {
+    auto* modal = placement.modal != nullptr ? placement.modal : &alertModal();
     auto panel = std::make_unique<AlertPanel> (std::move (title), std::move (message));
-    panel->onOK = [onDismiss]() mutable
+    const auto dismiss = [modal, onDismiss]() mutable
     {
-        alertModal().close();
+        modal->close();
         if (onDismiss) onDismiss();
     };
-    alertModal().show (parent, std::move (panel),
-                          /*onDismiss*/ [onDismiss]() mutable
-                          {
-                              alertModal().close();
-                              if (onDismiss) onDismiss();
-                          });
+    panel->onOK = dismiss;
+    modal->show (parent, std::move (panel), dismiss,
+                 /*dismissOnClickOutside*/ true, /*dismissOnEscape*/ true,
+                 /*dimAlpha*/ 0.55f, /*hidePluginEditors*/ true,
+                 /*useOverlay*/ true, placement.forwardShortcuts);
 }
 
 void showDuskConfirm (juce::Component& parent,
@@ -377,25 +385,29 @@ void showDuskConfirm (juce::Component& parent,
 void showDuskDecision (juce::Component& parent,
                         juce::String title,
                         juce::String message,
-                        std::vector<DuskDecisionAction> actions)
+                        std::vector<DuskDecisionAction> actions,
+                        DuskModalPlacement placement)
 {
+    auto* modal = placement.modal != nullptr ? placement.modal : &decisionModal();
     // Wrap each action's onClick so the modal closes first, then the
     // callback fires. Without the wrap, callbacks that themselves open
     // another modal would stack instead of replace.
     for (auto& act : actions)
     {
         auto orig = std::move (act.onClick);
-        act.onClick = [orig]() mutable
+        act.onClick = [modal, orig]() mutable
         {
-            decisionModal().close();
+            modal->close();
             if (orig) orig();
         };
     }
     auto panel = std::make_unique<DecisionPanel> (
         std::move (title), std::move (message), std::move (actions));
-    decisionModal().show (parent, std::move (panel), /*onDismiss*/ {},
-                             /*dismissOnClickOutside*/ false,
-                             /*dismissOnEscape*/        false);
+    modal->show (parent, std::move (panel), /*onDismiss*/ {},
+                 /*dismissOnClickOutside*/ false,
+                 /*dismissOnEscape*/        false,
+                 /*dimAlpha*/ 0.55f, /*hidePluginEditors*/ true,
+                 /*useOverlay*/ true, placement.forwardShortcuts);
 }
 
 void showDuskTextInput (juce::Component& parent,

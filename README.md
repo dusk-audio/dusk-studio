@@ -54,7 +54,8 @@ for 1.0.
 The feature backlog is effectively closed. Every spec phase is in, plus Tascam
 DP-24SD parity and project import, MTC and MIDI Clock sync, cross-track plugin
 delay compensation, broad undo coverage (notes, automation, tempo, renames),
-portable session folders that move between machines, a piecewise tempo map, a
+portable session folders that move between machines and keep a backup of every
+save and every MIDI part as a Standard MIDI File, a piecewise tempo map, a
 true-peak mastering limiter, session open-with and an update notice on launch.
 
 A fresh install is useful with nothing else on the machine. Five insert units
@@ -70,7 +71,7 @@ private releases repo, with a signed `SHA256SUMS` beside them. What is left
 before 1.0 is release engineering, low-spec and Raspberry Pi performance, and
 deeper accessibility.
 
-The C++ suite declares 2050 Catch2 test cases across 300 test source files.
+The C++ suite declares 2120 Catch2 test cases across 307 test source files.
 Linux amd64, Linux arm64 and macOS build and run it on every push; Windows runs
 it on every push and PR; ThreadSanitizer and ASan plus UBSan run it on every
 push and PR. All of those, plus the framework-coupling ratchet, are required
@@ -183,7 +184,7 @@ src/
   ui/          # MainComponent, ConsoleView, channel/aux/master strips, mastering view
     imgui/     # native surfaces: startup, audio settings, audio editor, unit editors, keyboard
   util/        # native log storage + CrashHandler signal reports
-tests/         # 2050 Catch2 test cases declared in C++ (session, recording, MIDI, IPC, DSP)
+tests/         # 2120 Catch2 test cases declared in C++ (session, recording, MIDI, IPC, DSP)
 packaging/     # .desktop, AppStream, MIME, macOS bundle, for tarball + DMG builds
 docs/          # maintainer guide, the 1.0 plan, migration plans
   DuskStudio.md  # authoritative product spec

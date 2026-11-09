@@ -1300,10 +1300,11 @@ std::optional<ScenarioResult> runMasteringMixFollowsSaveAs (GuiHost& host, Scena
                     when + ": the waveform shows '" + host.masteringWaveformFile().string() + "'");
     };
 
-    // A folder where session.json would go makes that write fail for any user.
+    // A folder where session.json's temporary file would go makes that write
+    // fail for any user, in a folder that holds no session's files.
     const auto blocked = ctx.tempDir() / "Blocked json";
-    fs::create_directories (blocked / "session.json");
-    std::ofstream (blocked / "session.json" / "keep") << "theirs";
+    fs::create_directories (blocked / "session.json.tmp");
+    std::ofstream (blocked / "session.json.tmp" / "keep") << "theirs";
     const auto copy = ctx.tempDir() / "Saved copy";
     static constexpr std::int64_t kStart = 48000;
 

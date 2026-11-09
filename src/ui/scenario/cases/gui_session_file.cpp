@@ -1295,11 +1295,12 @@ std::optional<ScenarioResult> runSaveAsFailureKeepsSession (GuiHost& host, Scena
     if (currentSessionDirectory (session) != mine || regionFile() != take)
         return ScenarioResult::fail ("could not open the session with its take");
 
-    // A folder that is not empty where the save writes a file makes that
-    // write fail for any user, root included; an empty one would be replaced.
+    // A folder that is not empty where the save writes its temporary file
+    // makes that write fail for any user, root included, in a folder that
+    // holds no session's files; an empty one would be replaced.
     const auto blockedJson = ctx.tempDir() / "Blocked json";
     const auto blockedNotes = ctx.tempDir() / "Blocked notes";
-    for (const auto& blocker : { blockedJson / "session.json", blockedNotes / "notepad.md" })
+    for (const auto& blocker : { blockedJson / "session.json.tmp", blockedNotes / "notepad.md.tmp" })
     {
         fs::create_directories (blocker);
         std::ofstream (blocker / "keep") << "theirs";
@@ -2273,7 +2274,7 @@ std::optional<ScenarioResult> runOopCaptureFailureSave (GuiHost& host, ScenarioC
     dusk::fs::writeStringToFile (folder / "state" / "lv2" / "sentinel" / "bank.bin", "keep source state");
     fs::create_directories (copy / "audio");
     dusk::fs::writeStringToFile (copy / "audio" / "existing.wav", "keep target media");
-    dusk::fs::writeStringToFile (copy / "notepad.md", "keep target notes\n");
+    dusk::fs::writeStringToFile (copy / "notes.txt", "keep target notes\n");
     reopenSavedSession (host, folder / "session.json");
 
     using File = std::decay_t<decltype (session.getSessionDirectory())>;

@@ -1,5 +1,6 @@
 #include "../GuiScenarioSupport.h"
 #include "../../AppConfig.h"
+#include "../../SessionOpenAlerts.h"
 #include "../../../engine/McuController.h"
 #include "../../../engine/McuProtocol.h"
 #include "../../../engine/audiofile/FileWriter.h"
@@ -935,9 +936,10 @@ const ScenarioRegistrar interruptedQuitSave { Scenario {
 } };
 
 // A prompt deciding what happens to the session takes no shortcuts. R and Space
-// under the quit prompt, a session-switch prompt and the autosave recovery
-// prompt leave the transport stopped, also once a click beside the prompt has
-// handed the window the keyboard. A dialog that passes the transport keys on
+// under the quit prompt, a session-switch prompt, the autosave recovery prompt
+// and the Session won't open alert leave the transport stopped, also
+// once a click beside the prompt has handed the window the keyboard. No other
+// session opens under the alert. A dialog that passes the transport keys on
 // still does, and the keys work again once the prompts are answered.
 std::optional<ScenarioResult> runPromptsWithholdKeys (GuiHost& host, ScenarioContext& ctx)
 {
@@ -976,6 +978,13 @@ std::optional<ScenarioResult> runPromptsWithholdKeys (GuiHost& host, ScenarioCon
     const bool autosaved = SessionSerializer::save (session, other.parent_path() / "session.json.autosave");
     fader.store (savedFader);
     if (! autosaved) return ScenarioResult::fail ("could not write Other's autosave");
+    // A damaged session with a backup, whose alert would load the backup over
+    // whatever a key under it recorded.
+    const auto damaged = ctx.tempDir() / "Damaged" / "session.json";
+    std::filesystem::create_directories (damaged.parent_path() / "backups");
+    if (! SessionSerializer::save (session, damaged.parent_path() / "backups" / "20261101-090000Z_session.json")
+        || ! (std::ofstream (damaged) << "{ damaged"))
+        return ScenarioResult::fail ("could not write the damaged session");
 
     auto steps = std::make_shared<std::vector<Step>>();
     // One key per step: R then Space in a row would start a take and stop it
@@ -1043,6 +1052,22 @@ std::optional<ScenarioResult> runPromptsWithholdKeys (GuiHost& host, ScenarioCon
     triesKeys ("under the recovery prompt");
     steps->push_back ({ 100, [&host, &ctx]
     { ctx.expect (host.answerRecovery (GuiHost::Recovery::Cancel), "the recovery prompt was not up for Cancel"); } });
+    steps->push_back ({ 300, [&host, &ctx, promptUp, damaged]
+    {
+        ctx.expect (host.modalStackEmpty(), "Cancel left '" + host.modalText() + "' up");
+        host.openSession (damaged);
+        promptUp (openalert::kWontOpenTitle, "Opening a damaged session");
+    } });
+    triesKeys ("under the Session won't open alert");
+    steps->push_back ({ 100, [&host, other] { host.requestSessionSwitch (other); } });
+    steps->push_back ({ 300, [&host, &ctx, promptUp]
+    {
+        ctx.expect (host.statusMessage() == "Session not switched: close the open prompt first",
+                    "a session switch under the Session won't open alert left the status '"
+                        + host.statusMessage() + "'");
+        if (promptUp (openalert::kWontOpenTitle, "A session switch under the alert"))
+            ctx.expect (host.clickModalButton ("Cancel"), "the Session won't open alert did not offer Cancel");
+    } });
     steps->push_back ({ 300, [&host, &ctx]
     {
         ctx.expect (host.modalStackEmpty(), "Cancel left '" + host.modalText() + "' up");
