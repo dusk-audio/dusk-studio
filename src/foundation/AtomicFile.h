@@ -34,14 +34,31 @@ inline std::string atomicTemporaryName()
 }
 
 #if ! defined(_WIN32)
-// What a file system answers when it cannot sync a folder at all, rather than
-// failing to.
-inline bool folderSyncUnsupported (int code) noexcept
+// What a file system answers when it cannot do a kind of sync at all, rather
+// than failing to.
+inline bool syncUnsupported (int code) noexcept
 {
    #if defined(EOPNOTSUPP) && EOPNOTSUPP != ENOTSUP
     if (code == EOPNOTSUPP) return true;
    #endif
     return code == EINVAL || code == ENOTSUP;
+}
+
+// On macOS fsync leaves the bytes in the drive's own cache, which a power loss
+// can still take; F_FULLFSYNC asks the drive to write them out. Only a file
+// system that cannot do it gets the plain fsync instead: any other failure is
+// the write's own and is reported.
+inline int fullSync (int handle) noexcept
+{
+   #if defined(__APPLE__) && defined(F_FULLFSYNC)
+    int flushed;
+    do { flushed = ::fcntl (handle, F_FULLFSYNC); } while (flushed != 0 && errno == EINTR);
+    if (flushed == 0) return 0;
+    if (! syncUnsupported (errno) && errno != ENOTTY) return flushed;
+   #endif
+    int synced;
+    do { synced = ::fsync (handle); } while (synced != 0 && errno == EINTR);
+    return synced;
 }
 #endif
 } // namespace detail
@@ -80,8 +97,7 @@ inline bool syncFile (const std::filesystem::path& file, std::error_code& error)
         error = { errno, std::generic_category() };
         return false;
     }
-    int synced;
-    do { synced = ::fsync (handle); } while (synced != 0 && errno == EINTR);
+    const int synced = detail::fullSync (handle);
     if (synced != 0) error = { errno, std::generic_category() };
     ::close (handle);
     return synced == 0;
@@ -104,11 +120,10 @@ inline bool syncFolder (const std::filesystem::path& folder, std::error_code& er
         error = { errno, std::generic_category() };
         return false;
     }
-    int synced;
-    do { synced = ::fsync (handle); } while (synced != 0 && errno == EINTR);
+    const int synced = detail::fullSync (handle);
     const int syncError = synced != 0 ? errno : 0;
     ::close (handle);
-    if (syncError != 0 && ! detail::folderSyncUnsupported (syncError))
+    if (syncError != 0 && ! detail::syncUnsupported (syncError))
     {
         error = { syncError, std::generic_category() };
         return false;
@@ -132,8 +147,8 @@ inline bool writeFileAtomically (const std::filesystem::path& target, const void
 {
     error.clear();
     const auto* bytes = static_cast<const char*> (data);
-    constexpr std::size_t kChunk = std::size_t { 1 } << 30;
-    constexpr int kNameAttempts = 64;
+    static constexpr std::size_t kChunk = std::size_t { 1 } << 30;
+    static constexpr int kNameAttempts = 64;
 
 #if defined(_WIN32)
     std::wstring temporary;
@@ -220,9 +235,7 @@ inline bool writeFileAtomically (const std::filesystem::path& target, const void
             if (written == 0) return fail (std::make_error_code (std::errc::io_error));
             done += static_cast<std::size_t> (written);
         }
-        int synced;
-        do { synced = ::fsync (handle); } while (synced != 0 && errno == EINTR);
-        if (synced != 0) return fail (lastError());
+        if (detail::fullSync (handle) != 0) return fail (lastError());
         const bool closed = ::close (handle) == 0;
         handle = -1;
         if (! closed) return fail (lastError());
