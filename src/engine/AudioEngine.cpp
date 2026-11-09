@@ -7877,13 +7877,18 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                                 releasedAny = true;
                                 return addGeneratedMidi (status, data1, data2, strandedAt);
                             }, &pending);
+                        // An edit can take a pedal away without ending a
+                        // note. A merge recording looks here every block,
+                        // and moves the controllers only when the timeline
+                        // changed or a note ended.
+                        const bool edited = releasedAny || timelineStamp != midiTimelineSeen[(size_t) t];
                         if (released != midischedule::Outcome::complete
-                            || (releasedAny && ! readTimelineHeld()))
+                            || (edited && ! readTimelineHeld()))
                         {
                             midiEventsDropped = true;
                             return;
                         }
-                        restoreControls = releasedAny && heldControls.count() > 0;
+                        restoreControls = edited && heldControls.count() > 0;
                     }
 
                     const auto outcome = midischedule::scheduleSpan (

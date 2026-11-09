@@ -18,7 +18,8 @@
 // rolls - a region muted under them, a note shortened, or Record pressed on
 // the armed track. When what is left of the timeline still holds its sustain
 // pedal there, they ring on under it, as the notes it released before did;
-// when the edit took the pedal away, it comes up and lets them go.
+// when the edit took the pedal away, it comes up and lets them go, even when
+// the edit ends no note.
 namespace duskstudio::scenario
 {
 namespace
@@ -113,6 +114,10 @@ bool editRegion (ScenarioContext& ctx, Track& track, int index, const std::funct
 // ends and the one released before both ring on under it.
 constexpr Sounding kAllLetGo { 0, 0, 0 };
 constexpr Sounding kRingingUnderThePedal { 0, 2, 1 };
+// An edit that ends no note: the other region's note plays on, and the note
+// released before rings on only while the pedal stays down.
+constexpr Sounding kPedalLetUp { 1, 0, 0 };
+constexpr Sounding kNothingChanged { 1, 1, 1 };
 
 void leg (ScenarioContext& ctx, const vst3::NativeVst3Slot& slot, const std::string& what,
           const std::function<bool()>& edit, Sounding expected = kAllLetGo)
@@ -132,7 +137,9 @@ void leg (ScenarioContext& ctx, const vst3::NativeVst3Slot& slot, const std::str
     ctx.pump (kSettleBlocks);
     const auto after = readSounding (slot);
     ctx.note (what + ": sounding " + describe (sounding) + " / after " + describe (after));
-    ctx.expect (after.held == expected.held, what + ": the region's note was left held");
+    ctx.expect (after.held == expected.held,
+                what + (expected.held != 0 ? ": a note the edit left playing was cut"
+                                           : ": the region's note was left held"));
     ctx.expect (after.sustained == expected.sustained,
                 what + (expected.pedalDown != 0 ? ": the notes ringing under the pedal were cut"
                                                 : ": the region's pedal left its notes sustained"));
@@ -206,6 +213,20 @@ ScenarioResult runReleaseLiftsPedal (ScenarioContext& ctx)
     {
         return editRegion (ctx, track, 1, [] (MidiRegion& r) { r.muted = true; });
     }, kRingingUnderThePedal);
+
+    publish (track, { pedalRegion(), notes });
+    ctx.pump (kSettleBlocks);
+    leg (ctx, slot, "muting the pedal's region while another region's note plays on", [&ctx, &track]
+    {
+        return editRegion (ctx, track, 0, [] (MidiRegion& r) { r.muted = true; });
+    }, kPedalLetUp);
+
+    publish (track, { pedalRegion(), notes });
+    ctx.pump (kSettleBlocks);
+    leg (ctx, slot, "an edit that ends no note and leaves the pedal down", [&ctx, &track]
+    {
+        return editRegion (ctx, track, 1, [] (MidiRegion& r) { r.notes.push_back ({ 1, 72, 100, 1800, 100 }); });
+    }, kNothingChanged);
 
     publish (track, oneRegion());
     ctx.pump (kSettleBlocks);
