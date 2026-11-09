@@ -205,7 +205,7 @@ If a change touches a unit that has tests, those tests must pass. If it touches 
 
 ### Before a push
 
-Run `scripts/regress.sh prepush` (`TMPDIR=/var/tmp` on the Linux dev box) and push only on `regress prepush: OK`. It builds and tests the checkout on Linux, on the macOS build node and in the win11 VM (MSVC, CI's Windows targets and ctest) at once, including the suite under CI's realtime and memlock limits. A fresh checkout needs its submodules and both `build/` and `build-tests/` configured first. Batch fixes into one push: every push restarts the macOS CI job from the beginning.
+Run `scripts/regress.sh prepush` (`TMPDIR=/var/tmp` on the Linux dev box) and push only on `regress prepush: OK`. It first checks the lines the branch adds for the MSVC hazards under *Code style*, then builds and tests the checkout on Linux, on the macOS build node and in the win11 VM (MSVC, CI's Windows targets and ctest) at once, including the suite under CI's realtime and memlock limits. A fresh checkout needs its submodules and both `build/` and `build-tests/` configured first. Batch fixes into one push: every push restarts the macOS CI job from the beginning.
 
 For macOS GUI validation, Marc authorizes automatically selecting **Allow** for Dusk Studio's microphone and removable-volume requests. Start `scripts/regress/mac/allow-prompts.js` alongside the owned validation app, bound to its PID file and exact executable path; keep its action log with the run. This approval persists across rebuilds and future testing. Other applications and permission types require separate authorization.
 
@@ -229,6 +229,7 @@ When the manual and the code disagree, decide which one is wrong and fix that on
 ## Code style
 
 - **C++17.** No `concepts`, no `std::format`, no `std::ranges` outside of trivially-replaceable uses.
+- **MSVC hazards.** Never name anything `near`, `far`, `small` or `interface`: `<windows.h>` defines them away as macros. Make a function-local constant `static constexpr`: MSVC rejects a lambda without a capture default that reads a plain local `constexpr` (C3493), which GCC and Clang accept. `tools/msvc-hazards.py` checks the lines a branch adds, and `scripts/regress.sh prepush` runs it first.
 - **Naming** — `camelCase` methods/locals/members, `PascalCase` classes/structs, `kPascalCase` constants, `SCREAMING_SNAKE` only for macros.
 - **Headers** — `#pragma once`. Include order: JUCE → project-local (`../session/Session.h`, etc.) → STL.
 - **Comments** — default to none. Only write a comment when the *why* is non-obvious: a hidden invariant, a workaround for a specific bug, behaviour that would surprise a reader. Don't restate what the code does. Don't reference task numbers, PR descriptions, or the conversation that produced the change.
