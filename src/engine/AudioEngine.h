@@ -1344,6 +1344,14 @@ private:
     // the notes above, so a jump returns them and leaves the player's alone.
     // Same threading.
     std::array<midischedule::HeldControls, Session::kNumTracks> midiTimelineControls {};
+    // A pedal lifted in a one-frame block cannot come down until the next
+    // callback, or VST3 coalesces away the release. Same threading as above.
+    struct DeferredMidiPedals
+    {
+        std::array<std::uint16_t, 16> lanes {};
+        std::array<std::array<std::uint8_t, 6>, 16> values {};
+    };
+    std::array<DeferredMidiPedals, Session::kNumTracks> midiDeferredPedals {};
     // What the timeline holds where a jump releases it, audio thread only.
     midischedule::NoteCount midiReleaseNotesScratch;
     midischedule::HeldControls midiReleaseControlsScratch;
