@@ -2456,6 +2456,8 @@ std::optional<ScenarioResult> runMidiActivityLed (GuiHost& host, ScenarioContext
     track.midiChannel.store (1);
     if (! ctx.expect (strip->openInputSettings ((int) Track::Mode::Midi), "could not open MIDI input settings"))
         return ctx.verdict();
+    ctx.expect (track.mode.load() == (int) Track::Mode::Midi,
+                "opening MIDI input settings did not switch the track to MIDI");
     auto seen = std::make_shared<bool> (false);
     auto steps = std::make_shared<std::vector<Step>>();
     steps->push_back ({ 300, [strip, &ctx, &engine, &track]

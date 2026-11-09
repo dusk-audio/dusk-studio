@@ -51,7 +51,9 @@ def drive(binary, work):
                 desktop.tap(ord("p"))
                 wait_value("pasted", str(count))
 
-            wait_value("ready", "ready", 20)
+            # Readiness follows the lifecycle, font and donor-editor checks.
+            # Give them the same budget as the probe watchdog.
+            wait_value("ready", "ready", 60)
             desktop.click(480, 540)
             external = ("x" * 4095 + "\u65e5\u672c\u8a9e\U0001f642\n").encode() * 64
             (exchange / "external").write_bytes(external)

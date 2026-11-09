@@ -261,7 +261,7 @@ std::optional<ScenarioResult> runNativeMidiLearn (GuiHost& host, ScenarioContext
         handle->closeEditor();
         handle->unloadNativePlugins();
         handle->refreshInsertButton();
-        session.track (kStripIndex).mode.store (mode);
+        handle->restoreTrackMode (mode);
         session.midiBindings.publish (std::make_unique<std::vector<MidiBinding>> (bindings));
         session.midiLearnPending.store (-1);
         session.midiLearnCapture.store (capture);
