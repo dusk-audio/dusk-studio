@@ -66,6 +66,7 @@ std::optional<ScenarioResult> runPianoKeyboardAudition (GuiHost& host, ScenarioC
                   loop = engine.getTransport().isLoopEnabled(), punch = engine.getTransport().isPunchEnabled(),
                   editMode = session.editMode]
     {
+        host.pausePianoFrames (false);
         host.pianoKeyPointer (60, false);
         host.closePiano();
         engine.stop();
@@ -265,6 +266,41 @@ std::optional<ScenarioResult> runPianoKeyboardAudition (GuiHost& host, ScenarioC
     }, delivered (19), "the key pressed before closing never reached the track", {}, 4000 });
     steps->push_back ({ 0, [check, untouched] { check (9, 9, 0, 67, 67, "closing the editor on G4"); untouched(); },
         delivered (20), "closing the editor left the held key sounding", {}, 4000 });
+
+    const auto stalled = std::make_shared<Heard>();
+    steps->push_back ({ 200, [&ctx, &host, &engine, base, stalled]
+    {
+        ctx.expect (host.openPiano (kRollTrack, 0), "the piano roll did not reopen for paused drawing");
+        *base = engine.auditionMessagesDelivered();
+        *stalled = heardOn (ctx, kRollTrack);
+        host.pianoKeyPointer (60, true);
+    } });
+    steps->push_back ({ 0, [&ctx, &host, &engine, stalled]
+    {
+        ctx.expect (heardOn (ctx, kRollTrack).voices == 1, "the key before paused drawing was not held");
+        ctx.expect (host.pausePianoFrames (true), "the piano roll could not pause drawing");
+        const auto frames = host.pianoCompletedFrames();
+        const auto deliveredBefore = engine.auditionMessagesDelivered();
+        host.pianoKeyPointer (60, false);
+        // Resume independently of runSteps, which waits for the queued release to draw.
+        ctx.later (250, [&ctx, &host, &engine, stalled, frames, deliveredBefore]
+        {
+            ctx.expect (host.pianoCompletedFrames() == frames, "the paused piano roll still drew frames");
+            ctx.expect (engine.auditionMessagesDelivered() == deliveredBefore,
+                        "the queued release was consumed without a frame");
+            const auto held = heardOn (ctx, kRollTrack);
+            ctx.expect (held.voices == 1 && held.offs == stalled->offs,
+                        "the held key ended before drawing resumed");
+            host.pausePianoFrames (false);
+        });
+    }, delivered (1), "the key before paused drawing never reached the track", {}, 4000 });
+    steps->push_back ({ 0, [&ctx, untouched, stalled]
+    {
+        const auto released = heardOn (ctx, kRollTrack);
+        ctx.expect (released.voices == 0 && released.ons == stalled->ons + 1 && released.offs == stalled->offs + 1,
+                    "resuming drawing did not release the held key exactly once");
+        untouched();
+    }, delivered (2), "resuming drawing left the audition held", {}, 4000 });
 
     const auto beforeExtra = std::make_shared<Heard>();
     steps->push_back ({ 200, [&ctx, &host, &engine, base, beforeExtra]
