@@ -331,6 +331,10 @@ public:
         for (std::size_t i = 0; i < names.size(); ++i)
             parameters.addParameter (names[i], nullptr, i == 0 ? EveryCc::kMaxHeldNotes : kMaxNoteOffsSeen, 0.0,
                                      ParameterInfo::kIsReadOnly, EveryCc::HeldNotes + (ParamID) i);
+        // Hosts allocate MIDI parameter queues from the enumerated parameter IDs.
+        for (int32 index = 0; index < kChannels * kCountCtrlNumber; ++index)
+            parameters.addParameter (STR16 ("MIDI Controller"), nullptr, 0, 0.0,
+                                     ParameterInfo::kIsHidden, kParameterBase + (ParamID) index);
         return kResultOk;
     }
 
