@@ -56,6 +56,8 @@ public:
     virtual std::array<double, 4> viewportForScenario() const = 0;
     virtual std::array<int, 4> optionsForScenario() const = 0;
     virtual bool notePointForScenario (std::int64_t tick, int pitch, ImVec2& point) const = 0;
+    // The middle of a pitch's key on the keyboard; false while that key is out of view.
+    virtual bool keyPointForScenario (int pitch, ImVec2& point) const = 0;
     virtual std::array<double, 4> laneBoundsForScenario (bool cc) const = 0;
     virtual std::array<double, 4> gridBoundsForScenario() const = 0;
     virtual ImVec2 bodyPointForScenario (ImVec2 nativePoint) const = 0;

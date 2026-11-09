@@ -116,6 +116,12 @@ public:
 
     // The names the last whole frame drew: track, region, take and session names.
     virtual GlyphTally nameGlyphsForScenario() const { return {}; }
+
+    // The window lost the keyboard focus. A button held when that happens may
+    // never report its release (a Wayland pointer leaving the window sends
+    // none), so a view that sounds or edits for as long as a button is held
+    // lets go here.
+    virtual void focusLost() {}
 };
 
 // A native modal panel over the JUCE shell.

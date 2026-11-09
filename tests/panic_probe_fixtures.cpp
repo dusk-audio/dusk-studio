@@ -188,11 +188,12 @@ TEST_CASE ("panic-probe CLAP fixture loads as an instrument with read-only count
     REQUIRE (probe.load (DUSKSTUDIO_PANIC_PROBE_CLAP_FIXTURE_PATH, pluginId));
     REQUIRE (probe.slot.isLoadedInstrument());
     REQUIRE (probe.slot.getLatencySamples() == latency);
-    REQUIRE (probe.slot.paramCount() == 13);
+    REQUIRE (probe.slot.paramCount() == 17);
 
     for (const char* name : { "voicesHeld", "chokesSeen", "cc120Seen", "cc123Seen",
                               "noteOffsSeen", "noteOnsSeen", "lastNoteOnOffset", "lastNoteOffOffset",
-                              "cc121Seen", "pitchCentersSeen", "pressureZerosSeen", "bentChannels", "pressedChannels" })
+                              "cc121Seen", "pitchCentersSeen", "pressureZerosSeen", "bentChannels", "pressedChannels",
+                              "lastNoteOnKey", "lastNoteOnVelocity", "lastNoteOnChannel", "lastNoteOffKey" })
     {
         INFO ("counter: " << name);
         REQUIRE_THAT (probe.counter (name), WithinAbs (0.0, 1.0e-9));
@@ -230,6 +231,9 @@ TEST_CASE ("panic-probe CLAP fixture tracks voices on both note ports",
     REQUIRE_THAT (probe.runRaw (onSecondPort), WithinAbs (0.2, 1.0e-6));
     REQUIRE_THAT (probe.counter ("noteOnsSeen"), WithinAbs (3.0, 1.0e-9));
     REQUIRE_THAT (probe.counter ("lastNoteOnOffset"), WithinAbs (9.0, 1.0e-9));
+    REQUIRE_THAT (probe.counter ("lastNoteOnKey"), WithinAbs (64.0, 1.0e-9));
+    REQUIRE_THAT (probe.counter ("lastNoteOnVelocity"), WithinAbs (102.0, 1.0e-9));
+    REQUIRE_THAT (probe.counter ("lastNoteOnChannel"), WithinAbs (0.0, 1.0e-9));
 
     ClapEventList off;
     off.addNote (CLAP_EVENT_NOTE_OFF, 0, 0, 60);
@@ -240,6 +244,7 @@ TEST_CASE ("panic-probe CLAP fixture tracks voices on both note ports",
     REQUIRE_THAT (probe.counter ("voicesHeld"), WithinAbs (0.0, 1.0e-9));
     REQUIRE_THAT (probe.counter ("noteOffsSeen"), WithinAbs (2.0, 1.0e-9));
     REQUIRE_THAT (probe.counter ("lastNoteOffOffset"), WithinAbs (12.0, 1.0e-9));
+    REQUIRE_THAT (probe.counter ("lastNoteOffKey"), WithinAbs (64.0, 1.0e-9));
     REQUIRE_THAT (probe.counter ("chokesSeen"), WithinAbs (0.0, 1.0e-9));
 }
 
@@ -303,11 +308,14 @@ TEST_CASE ("panic-probe CLAP fixture counts raw MIDI on its MIDI-dialect port",
 
     ClapEventList notes;
     notes.addMidi (1, 0x90, 60, 100);
-    notes.addMidi (1, 0x90, 64, 100);
+    notes.addMidi (1, 0x90, 64, 90);
     notes.events[1].midi.header.time = 9;
     REQUIRE_THAT (probe.runRaw (notes), WithinAbs (0.2, 1.0e-6));
     REQUIRE_THAT (probe.counter ("noteOnsSeen"), WithinAbs (2.0, 1.0e-9));
     REQUIRE_THAT (probe.counter ("lastNoteOnOffset"), WithinAbs (9.0, 1.0e-9));
+    REQUIRE_THAT (probe.counter ("lastNoteOnKey"), WithinAbs (64.0, 1.0e-9));
+    REQUIRE_THAT (probe.counter ("lastNoteOnVelocity"), WithinAbs (90.0, 1.0e-9));
+    REQUIRE_THAT (probe.counter ("lastNoteOnChannel"), WithinAbs (0.0, 1.0e-9));
 
     SECTION ("CC 120 silences every voice")
     {

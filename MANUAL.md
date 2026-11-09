@@ -1615,6 +1615,18 @@ A locked region stays visible and selectable, and its notes can be copied. Editi
 
 Snap resolution sits beside **Snap** in the toolbar; **Chase** and the zoom controls sit at the right. The status bar holds the **Notes** and **Colour** dropdowns, **Key snap**, and the **Mute** and **Lock** checkboxes.
 
+## Playing the keyboard
+
+Click a key on the keyboard at the left of the grid to hear it. The note plays at velocity 100, the velocity a drawn note gets, on the channel shown after **ch** in the status bar. Hold the button to sustain the note, and let go anywhere to end it. As you drag, the key under the pointer plays, and the last one ends as the next one starts. Drag out over the grid and the note follows the pointer's height.
+
+The note goes to the region's track and no other, whatever the track's **MIDI port**, **Channel** and **ARM** are set to. It plays through the track's instrument and its strip as the region's own notes do, so the track's mute and solo apply. You hear it with the transport stopped, even with **IN** off, and during playback. Playing the keyboard does not make the track's live MIDI input heard with **IN** off. In the **MASTERING** stage the keyboard plays nothing.
+
+Nothing you play here is recorded, even while you record on the track: it never becomes a note in the region or in a take, and it adds no undo step.
+
+A note you are holding ends when you let go, when the piano roll closes, when you switch to another window and when you stop the transport. During playback a loop jumping back ends it too, as it ends a key held on a MIDI controller.
+
+A frozen track starts no note from the keyboard, so on a frozen track it plays nothing.
+
 ## Creating notes
 
 In **Draw** mode (**D**), click an empty grid cell to create a note at that pitch and tick. With snap on, the note starts at the nearest grid line; with snap off, it starts exactly where you click. Its length follows the current note-entry grid; with snap off, it defaults to a quarter note. The note's velocity defaults to 100.
@@ -2344,7 +2356,7 @@ When `session.json` will not open, the **Session won't open** alert offers the a
 
 ### Session backups
 
-Every save also keeps a copy of the `session.json` it wrote in the session's `backups/` folder, named by the time it was saved in UTC, such as `20261108-143005Z_session.json` (a second copy in the same second ends `_002`, and so on), so sorting by name puts them in the order they were saved, and the newest backup is your last save. A `session.json` that changed without a save, such as one edited by hand, one saved by an older Dusk Studio, or a damaged one, is kept there too, named by the time of the save that replaces it. **New Session** keeps a copy of the session it creates, and **Save As** takes `backups/` along to the new folder. An autosave keeps no backup. Dusk Studio never replaces a backup. It keeps the 20 newest and, of older ones, the newest of each of the last 30 days, and removes the rest; it never removes any other file in `backups/`.
+Every save also keeps a copy of the `session.json` it wrote in the session's `backups/` folder, named by the time it was saved in UTC, such as `20261108-143005Z_session.json` (a second copy in the same second ends `_002`, and so on), so sorting by name puts them in the order they were saved, and the newest backup is your last save unless that save could not write its backup, for example on a full disk; such a failure does not stop the save. A `session.json` that changed without a save, such as one edited by hand, one saved by an older Dusk Studio, or a damaged one, is kept there too, named by the time of the save that replaces it. **New Session** keeps a copy of the session it creates, and **Save As** takes `backups/` along to the new folder. An autosave keeps no backup. Dusk Studio never replaces a backup. It keeps the 20 newest and, of older ones, the newest of each of the last 30 days, and removes the rest; it never removes any other file in `backups/`.
 
 To go back to a backup, open it with **File → Open…** and choose the file in `backups/`, or choose **Open Newest Backup** when a session will not open (see **Session won't open** under *Messages*). Either way the backup opens as the session in its folder, is saved as `session.json` at once, and the `session.json` it replaces is kept in `backups/`. A backup opened from the command line or your file manager is kept until it has opened, even when the unsaved-changes prompt saves the session it belongs to first and that save would otherwise remove it as one too many.
 
@@ -2352,7 +2364,7 @@ To go back to a backup, open it with **File → Open…** and choose the file in
 
 `midi/takes/` holds each MIDI pass you record. `midi/tracks/` gets a new playing file for a MIDI track when a region of it plays, and a new takes file when it has a muted region or a previous take, whenever opening the session, a save or an autosave finds that file's MIDI changed since the newest one of its kind; see *Where files are saved* under *Recording*. A name starts with the UTC time the file was written, then the track number and name, as in `20261108-143005Z_track07_Keys.mid`. A track's playing file holds the regions that play, as they play. Its takes file, ending `.takes.mid`, holds the muted regions and every region's previous takes, each as a track of its own named after its region and take.
 
-To get a track's MIDI back, press **Home** to move the playhead to the start of the timeline, then import the track's newest playing file with **File → Import Audio or MIDI…** onto a MIDI track. Its notes and controllers land on the bars and beats where they played, and play at the same times when the session has the tempo it had then. The import reads no tempo from the file, so in a new session set the tempo first, and add any tempo changes the session had on the timeline ruler; the file carries its tempo map up to its last note, and other MIDI software can show it. The import also merges all of a file's tracks into one region, so a takes file would bring every take in on top of the others. To get one take back, import its pass from `midi/takes/`, or open the takes file in other MIDI software and pick the take there.
+To get a track's MIDI back, press **Home** to move the playhead to the start of the timeline, then import the track's newest playing file with **File → Import Audio or MIDI…** onto a MIDI track. A track whose regions were all muted or deleted gets no new playing file, so its newest one can hold notes the track no longer played; a newer takes file, or a session backup, shows what changed. Its notes and controllers land on the bars and beats where they played, and play at the same times when the session has the tempo it had then. The import reads no tempo from the file, so in a new session set the tempo first, and add any tempo changes the session had on the timeline ruler; the file carries its tempo map up to its last note, and other MIDI software can show it. The import also merges all of a file's tracks into one region, so a takes file would bring every take in on top of the others. To get one take back, import its pass from `midi/takes/`, or open the takes file in other MIDI software and pick the take there.
 
 ### Copying a session
 

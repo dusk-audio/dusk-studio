@@ -61,9 +61,12 @@ struct Box
 };
 
 enum class Drag { none, move, resize, noteVelocity, velocity, cc, box, range, pan,
-                  velocityHeight, ccHeight, loopIn, loopOut, punchIn, punchOut, dropped };
+                  velocityHeight, ccHeight, loopIn, loopOut, punchIn, punchOut, audition, dropped };
 enum class Popup { none, quantize, scale, velocity, note, region, rename };
 enum class Glyph { undo, redo, split, glue, quantize, properties, cc, zoomOut, zoomIn, zoomFit };
+
+// The channel the status bar shows for a region.
+int regionChannel (const MidiRegion& r) { return r.notes.empty() ? 1 : r.notes.front().channel; }
 
 struct PaletteEntry { const char* label; std::uint32_t argb; };
 constexpr PaletteEntry kPalette[] {
@@ -95,6 +98,7 @@ public:
     bool marksMissingGlyphs() const override { return true; }
     bool capturesKeyboard() const override { return ! covered() && (popupOpen || popupRequested != Popup::none); }
     bool takeDismissRequest() override { return std::exchange (dismissRequested, false); }
+    void focusLost() override { if (drag == Drag::audition) cancelGesture(); }
     bool claimsShortcut (ShellShortcut key) const override
     {
         if (covered() && host.keyboardClaimsShortcut && host.keyboardClaimsShortcut (key)) return true;
@@ -134,6 +138,13 @@ public:
     {
         if (! laidOut) return false;
         p = screen ({ xForTick (tick), yForNoteNumber (pitch) + kNoteHeight * 0.5f });
+        return true;
+    }
+    bool keyPointForScenario (int pitch, ImVec2& p) const override
+    {
+        const ImVec2 key { kKeyboardWidth * 0.5f, yForNoteNumber (pitch) + kNoteHeight * 0.5f };
+        if (! laidOut || ! keyboardArea().contains (key)) return false;
+        p = screen (key);
         return true;
     }
     std::array<double, 4> laneBoundsForScenario (bool cc) const override
@@ -312,6 +323,8 @@ private:
     int dragButton = ImGuiMouseButton_Left, draggedCcIdx = -1, dragOriginNoteNum = 0;
     int panStartScrollX = 0, panStartScrollY = 0, resizeStartStripH = 0;
     std::int64_t dragOriginTick = 0, dragNoteStartTick = 0;
+    // The key the keyboard is sounding, and where; -1 when none.
+    int auditionTrack = -1, auditionChannel = 1, auditionNote = -1;
     bool rangeActive = false, noteEditActive = false;
     std::int64_t rangeStartTick = 0, rangeEndTick = 0;
     MidiRegion noteEditBefore;
@@ -469,8 +482,30 @@ private:
             noteEditActive = true;
         }
     }
+    Box keyboardArea() const { return { 0, grid.y, kKeyboardWidth, grid.h }; }
+    // Sounds `note` on the region's track in place of the key sounding now, at
+    // the velocity a drawn note gets and on the channel the status bar shows.
+    void audition (int note)
+    {
+        if (note == auditionNote) return;
+        endAudition();
+        const auto* r = region();
+        if (r == nullptr) return;
+        const int channel = regionChannel (*r);
+        if (! engine.auditionNoteOn (trackIdx, channel, note, MidiNote {}.velocity)) return;
+        auditionTrack = trackIdx;
+        auditionChannel = channel;
+        auditionNote = note;
+    }
+    void endAudition()
+    {
+        if (auditionNote < 0) return;
+        engine.auditionNoteOff (auditionTrack, auditionChannel, auditionNote);
+        auditionNote = -1;
+    }
     void cancelGesture()
     {
+        endAudition();
         if (noteEditActive && trackIdx >= 0 && trackIdx < Session::kNumTracks
             && session.track (trackIdx).midiRegions.edits() == noteEditRevision)
             if (auto* r = region()) *r = noteEditBefore;
@@ -768,6 +803,12 @@ private:
             return;
         }
         if (button != ImGuiMouseButton_Left) return;
+        if (keyboardArea().contains (p))
+        {
+            drag = Drag::audition;
+            audition (noteNumberForY (p.y));
+            return;
+        }
         if (rulerArea.contains (p))
         {
             auto& t = engine.getTransport();
@@ -858,7 +899,7 @@ private:
     void pointerDrag (ImVec2 p)
     {
         auto* r = region();
-        if (r == nullptr) return;
+        if (r == nullptr || drag == Drag::audition) return;
         if (drag == Drag::pan)
         {
             scrollX = std::max (0, panStartScrollX - static_cast<int> (p.x - dragStart.x));
@@ -936,6 +977,7 @@ private:
                 : drag == Drag::cc ? "Edit CC" : "Edit velocity";
             if (session.track (trackIdx).midiRegions.edits() == noteEditRevision) pushNoteEdit (noteEditBefore, name);
         }
+        endAudition();
         drag = Drag::none; rubberBand = {}; draggedCcIdx = -1; edit.dragAnchor = -1; edit.dragSnapshots.clear();
     }
     void handlePointer (bool popupWasOpen)
@@ -951,15 +993,25 @@ private:
                 if (io.MouseClicked[button]) { pointerDown (local (io.MousePos), button); break; }
         if (noteEditActive && session.track (trackIdx).midiRegions.edits() != noteEditRevision)
         { noteEditActive = false; drag = Drag::dropped; }
+        // The engine ended the key itself (a session switch): the gesture is over.
+        if (auditionNote >= 0 && ! engine.isAuditionHeld (auditionTrack, auditionChannel, auditionNote))
+        {
+            auditionNote = -1;
+            if (drag == Drag::audition) drag = Drag::dropped;
+        }
         if (drag != Drag::none)
         {
             if (ImGui::IsMousePosValid())
             {
                 const auto p = local (io.MousePos);
                 if (p.x != dragLast.x || p.y != dragLast.y) { pointerDrag (p); dragLast = p; }
+                // Anywhere the button is held, the key at the pointer's height,
+                // so a wheel scroll under a still pointer plays on as well.
+                if (drag == Drag::audition) audition (noteNumberForY (p.y));
             }
             if (! io.MouseDown[dragButton]) pointerUp();
         }
+        if (drag != Drag::audition) endAudition();
         if (! popupWasOpen && surface.contains (local (io.MousePos)) && ImGui::IsWindowHovered())
         {
             bool edge = false;
@@ -1066,8 +1118,8 @@ private:
             if (y + kNoteHeight < grid.y || y >= grid.bottom()) continue;
             const int pitch = note % 12;
             const bool black = pitch == 1 || pitch == 3 || pitch == 6 || pitch == 8 || pitch == 10;
-            fill (ctx, { 0, y, kKeyboardWidth, kNoteHeight }, 0xffc2c2ca);
-            if (black) fill (ctx, { 0, y, 48, kNoteHeight - 1 }, 0xff242428);
+            fill (ctx, { 0, y, kKeyboardWidth, kNoteHeight }, note == auditionNote && ! black ? 0xff4a90d8 : 0xffc2c2ca);
+            if (black) fill (ctx, { 0, y, 48, kNoteHeight - 1 }, note == auditionNote ? 0xff3a78b8 : 0xff242428);
             fill (ctx, { grid.x, y, grid.w, kNoteHeight }, black ? 0xff141418 : 0xff1c1c24);
             if (! isInScale (note)) fill (ctx, { grid.x, y, grid.w, kNoteHeight }, 0xff000000, 0.30f);
             line (ctx, { 0, y + kNoteHeight }, { kKeyboardWidth, y + kNoteHeight }, 0xff85858f);
@@ -1452,7 +1504,7 @@ private:
             const float x = boxes[4].right() + 10, room = boxes[5].x - x - 10;
             if (room >= 100)
                 readout ({ x, top + 4, room, 22 }, std::to_string (r->notes.size()) + " notes  -  ch "
-                         + std::to_string (r->notes.empty() ? 1 : r->notes.front().channel));
+                         + std::to_string (regionChannel (*r)));
         }
     }
     void drawScroll (dw::Context& ctx)
@@ -1667,7 +1719,7 @@ private:
             ImGui::Separator();
             ImGui::TextDisabled ("%zu notes  -  %lld bars  -  ch %d", current->notes.size(),
                 static_cast<long long> (current->lengthInTicks / (kMidiTicksPerQuarter * std::max (1, session.beatsPerBar.load (std::memory_order_relaxed)))),
-                current->notes.empty() ? 1 : current->notes.front().channel);
+                regionChannel (*current));
         }
     }
 };
@@ -1784,6 +1836,7 @@ void PianoRollViewImpl::showSwappedTake()
 
 void PianoRollViewImpl::showRegion (int newRegionIdx)
 {
+    endAudition();
     if (newRegionIdx != regionIdx)
         stepRecordChordHad = false;
     regionIdx = newRegionIdx;

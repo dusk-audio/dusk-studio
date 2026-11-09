@@ -91,6 +91,8 @@ add_executable(dusk-studio-tests
     midi_channel_playback.cpp
     midi_capture_stream.cpp
     midi_merge_playback.cpp
+    midi_audition.cpp
+    support/AllocationObserver.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/MidiCaptureStream.cpp
     atomic_park.cpp
     audio_worker_pool.cpp
@@ -988,7 +990,6 @@ if(DUSKSTUDIO_NATIVE_VST3)
         vst3_bundle_load.cpp
         vst3_hostcontext_lifetime.cpp
         vst3_instance_process.cpp
-        support/AllocationObserver.cpp
         vst3_native_slot.cpp
         vst3_scanner.cpp
         vst3_state_revision.cpp
@@ -1262,8 +1263,13 @@ catch_discover_tests(dusk-studio-tests
     TEST_SPEC "[sfz-filesystem-fixture]"
     EXTRA_ARGS --allow-running-no-tests
     PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:")
+# File permissions stop no read by root, so a case that needs them skips there.
 catch_discover_tests(dusk-studio-tests
-    TEST_SPEC "~[alsa]~[ipc]~[host-limits]~[sfz-disk-full]~[sfz-location-disk-full]~[sfz-store-disk-full]~[sfz-filesystem-fixture]")
+    TEST_SPEC "[permission-fixture]"
+    EXTRA_ARGS --allow-running-no-tests
+    PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:")
+catch_discover_tests(dusk-studio-tests
+    TEST_SPEC "~[alsa]~[ipc]~[host-limits]~[sfz-disk-full]~[sfz-location-disk-full]~[sfz-store-disk-full]~[sfz-filesystem-fixture]~[permission-fixture]")
 # [ipc] cases start plug-in hosts and assert on bounded response times. Run
 # them serially so other cases cannot starve their control threads.
 catch_discover_tests(dusk-studio-tests
@@ -1352,6 +1358,10 @@ if(Python3_Interpreter_FOUND)
     add_test(NAME manual-coverage-checker
         COMMAND "${Python3_EXECUTABLE}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/manual_coverage.py"
+                --self-test)
+    add_test(NAME msvc-hazards-checker
+        COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_SOURCE_DIR}/tools/msvc-hazards.py"
                 --self-test)
     # update-patrons.py writes its credentials file with os.fchmod, which the
     # maintainer machines have and Windows Python does not.
