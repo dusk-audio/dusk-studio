@@ -212,10 +212,10 @@ TEST_CASE ("SessionSerializer explains rejected loads and clears stale errors", 
 }
 
 // Windows' permissions() only sets the read-only attribute, which never stops a
-// read, and a skipped case fails this ctest group.
+// read, so there the case could only ever skip.
 #if ! defined(_WIN32)
 TEST_CASE ("SessionSerializer reports a session.json it cannot read as unavailable, not damaged",
-           "[session][serializer][version]")
+           "[session][serializer][version][permission-fixture]")
 {
     using namespace duskstudio;
     const auto dir = makeTempSessionDir();

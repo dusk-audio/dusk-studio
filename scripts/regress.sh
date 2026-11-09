@@ -302,6 +302,15 @@ run_platform() {
     return 0
 }
 if [[ "$TARGET" == prepush ]]; then
+    # Two things MSVC rejects and GCC and Clang accept, in the lines this
+    # branch adds: caught here in seconds, where the Windows leg's build takes
+    # ten minutes to say the same. The orchestration contract runs a copy of
+    # this script with stub runners and no checker beside it.
+    if [[ -f "${REPO_ROOT}/tools/msvc-hazards.py" ]] \
+        && ! (cd "${REPO_ROOT}" && python3 tools/msvc-hazards.py); then
+        echo "regress prepush: FAILED (fix the msvc-hazards lines above first)"
+        exit 1
+    fi
     # A run holds the lock in its log folder until its last runner exits, so a
     # folder whose lock is free belongs to no live run. The capture leg and the
     # legs on a private GNOME session keep their scratch folders when they fail.
