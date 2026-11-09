@@ -9,8 +9,16 @@
 #include <array>
 #include <cstdlib>
 #include <filesystem>
+#include <memory>
 #include <string>
 #include <utility>
+
+#if defined(_WIN32)
+ #ifndef NOMINMAX
+  #define NOMINMAX
+ #endif
+ #include <windows.h>
+#endif
 
 namespace
 {
@@ -34,6 +42,26 @@ struct StoreTree
     ~StoreTree() { std::error_code ignored; fs::remove_all (dusk::fs::nativeIOPath (root), ignored); }
     fs::path root;
 };
+
+#if defined(_WIN32)
+void ageChangeTime (const fs::path& path)
+{
+    const auto handle = CreateFileW (path.c_str(), FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES,
+                                    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                    nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    REQUIRE (handle != INVALID_HANDLE_VALUE);
+    const std::unique_ptr<void, decltype (&CloseHandle)> file (handle, &CloseHandle);
+    FILE_BASIC_INFO info {};
+    REQUIRE (GetFileInformationByHandleEx (file.get(), FileBasicInfo, &info, sizeof (info)) != FALSE);
+    info.CreationTime.QuadPart = 0;
+    info.LastAccessTime.QuadPart = 0;
+    info.LastWriteTime.QuadPart = 0;
+    info.FileAttributes = 0;
+    // The edit must change this timestamp even within one Windows clock tick.
+    info.ChangeTime.QuadPart -= 36'000'000'000LL;
+    REQUIRE (SetFileInformationByHandle (file.get(), FileBasicInfo, &info, sizeof (info)) != FALSE);
+}
+#endif
 
 ProviderPack provider (char version = 'a')
 {
@@ -653,6 +681,7 @@ TEST_CASE ("SFZ installed tree digests include paths and contents without receip
     SECTION ("A restored last-write time cannot hide an edit to an already hashed file")
     {
         const auto first = tree.root / "Piano.sfz";
+        ageChangeTime (first);
         const auto modified = fs::last_write_time (first);
         bool edited = false;
         OperationControl control;
