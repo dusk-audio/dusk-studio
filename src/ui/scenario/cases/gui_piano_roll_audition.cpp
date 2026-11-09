@@ -265,7 +265,7 @@ std::optional<ScenarioResult> runPianoKeyboardAudition (GuiHost& host, ScenarioC
 
     // Recording on the roll's own track, IN off: a key played on the
     // on-screen keyboard is the take, and the roll's keyboard is not in it.
-    constexpr int kRecordedKey = 50, kAuditionedKey = 70;
+    static constexpr int kRecordedKey = 50, kAuditionedKey = 70;
     const auto postKeyboard = [&engine] (bool on)
     {
         const std::uint8_t message[] { (std::uint8_t) (on ? 0x90 : 0x80), (std::uint8_t) kRecordedKey,

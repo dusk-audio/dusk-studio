@@ -251,7 +251,7 @@ ScenarioResult runEndsAtStopAndSeam (ScenarioContext& ctx)
     engine.auditionNoteOff (0, 1, 60);
     ctx.pump (1);
 
-    constexpr std::int64_t loopStart = 500, loopEnd = 3000;
+    static constexpr std::int64_t loopStart = 500, loopEnd = 3000;
     transport.setLoopRange (loopStart, loopEnd);
     transport.setLoopEnabled (true);
     transport.setPlayhead (loopStart);

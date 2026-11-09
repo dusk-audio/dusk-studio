@@ -242,8 +242,8 @@ TEST_CASE ("Audition handoff allocates nothing on either side", "[midi][audition
 TEST_CASE ("Audition gate keeps a stopped track open until the release dies away",
            "[midi][audition]")
 {
-    constexpr double rate = 48000.0;
-    constexpr int block = 480;
+    static constexpr double rate = 48000.0;
+    static constexpr int block = 480;
     const std::array<std::uint8_t, 3> on60 { 0x90, 60, 100 }, off60 { 0x80, 60, 0 },
                                       on62 { 0x90, 62, 100 }, off62 { 0x80, 62, 0 };
     AuditionGate gate;
