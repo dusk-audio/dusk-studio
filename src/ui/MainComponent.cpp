@@ -550,8 +550,8 @@ public:
         bodyLabel.setText (
             "An autosave file is newer than the saved session at\n"
             + sessionDir.getFullPathName()
-            + "\n\nAutosave:  " + autosaveTime.toString (true, true)
-            + "\nSaved:        " + savedTime    .toString (true, true)
+            + "\n\nAutosave:  " + localMinuteText (static_cast<std::time_t> (autosaveTime.toMilliseconds() / 1000)).c_str()
+            + "\nSaved:        " + localMinuteText (static_cast<std::time_t> (savedTime.toMilliseconds() / 1000)).c_str()
             + "\n\nDusk Studio probably exited unexpectedly. "
               "Recover the newer autosave, or load the saved session and "
               "discard it?",
@@ -871,6 +871,7 @@ MainComponent::MainComponent()
         { if (auto* self = safeThis.getComponent()) self->refreshImportPickers(); });
        #endif
     };
+    engine.recoveryFolderForMidi = [this] { return prepareMidiRecoveryFolder(); };
     engine.onMidiPassCommitted = [this] (int trackIndex, int regionIndex)
     {
        #if DUSKSTUDIO_HAS_NATIVE_UI
@@ -1235,6 +1236,8 @@ MainComponent::~MainComponent()
     pluginpicker::closeForShutdown();
     stopTimer();   // halt autosave before tearing down engine / session
     guiRun.reset();
+    // The engine can commit a final take after this component's members die.
+    engine.recoveryFolderForMidi = [folder = prepareMidiRecoveryFolder()] { return folder; };
     engine.setPluginRestoreAlertSink ({});
     engine.onBeforeTracksMove = nullptr;
     engine.onTracksMoved = nullptr;
@@ -3790,7 +3793,7 @@ bool MainComponent::writeSessionTo (const juce::File& requestedDir,
         // The take files still queued for the old folder have to be in its
         // midi/ before that is copied.
         engine.flushMidiRecoveryFiles();
-        consolidated = SessionSerializer::consolidateInto (session, dir, ownsOldDir);
+        consolidated = SessionSerializer::consolidateInto (session, dir, ownsOldDir, toPath (oldSidecar));
         if (! consolidated.ok)
         {
             setStatusForPath ("Save failed", dir);
@@ -3907,8 +3910,8 @@ bool MainComponent::writeSessionTo (const juce::File& requestedDir,
             // A first save takes the MIDI files along rather than copying
             // them, so the Untitled folder they were in is free for the next
             // new session.
-            if (firstSave && ownsOldDir)
-                SessionSerializer::removeCopiedMidiSources (consolidated, toPath (oldDir));
+            if (firstSave)
+                SessionSerializer::removeCopiedMidiSources (consolidated, toPath (oldSidecar));
         }
         engine.queueMidiTrackFiles();
         RecentSessions::add (toPath (dir));
@@ -4028,6 +4031,17 @@ std::filesystem::path MainComponent::sidecarFolder() const
 {
     return savecheck::sidecarFolder (toPath (session.getSessionDirectory()), sessionOnDisk,
                                      privateUnsavedFolder());
+}
+
+std::filesystem::path MainComponent::prepareMidiRecoveryFolder() const
+{
+    const auto folder = sidecarFolder();
+    if (! folder.empty() && folder != toPath (session.getSessionDirectory()))
+    {
+        std::error_code ignored;
+        std::filesystem::create_directories (dusk::fs::nativeIOPath (folder), ignored);
+    }
+    return folder;
 }
 
 void MainComponent::discardWrittenAutosave()

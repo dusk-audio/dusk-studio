@@ -367,3 +367,43 @@ TEST_CASE ("Two files hold the same bytes only when both read and match", "[sess
     CHECK_FALSE (backups::sameBytes (a, temp.path() / "missing.json"));
     CHECK_FALSE (backups::sameBytes (temp.path() / "missing.json", temp.path() / "missing.json"));
 }
+
+TEST_CASE ("Session backup ordering survives a clock rollback and a full copy suffix", "[session][backups]")
+{
+    const duskstudio::test::TempDirectory temp ("dusk-backups-clock-rollback-");
+    const auto dir = temp.path();
+    const auto folder = dir / "backups";
+    const auto now = Clock::now();
+    const auto future = now + std::chrono::hours (24);
+    stdfs::create_directory (folder);
+    stdfs::path original;
+    SECTION ("ordinary future backup") { original = folder / backups::fileName (future); }
+    SECTION ("copy 999 with holes before it") { original = folder / backups::fileName (future, 999); }
+    write (original, "first");
+
+    auto result = backups::keepSaved (dir, now, "second");
+    REQUIRE (result.failures.empty());
+    REQUIRE (result.written.size() == 1);
+    CHECK (backups::newest (dir) == result.written.front());
+    CHECK (backups::newest (dir, result.written.front()) == original);
+    CHECK (result.written.front().filename() > original.filename());
+    CHECK (read (original) == "first");
+    result = backups::keepSaved (dir, now, "second");
+    CHECK (result.failures.empty());
+    CHECK (result.written.empty());
+    result = backups::keepSaved (dir, now, "first");
+    REQUIRE (result.failures.empty());
+    REQUIRE (result.written.size() == 1);
+    CHECK (backups::newest (dir) == result.written.front());
+
+    for (int i = 0; i < backups::kKeepNewest + 5; ++i)
+    {
+        const auto bytes = "edit " + std::to_string (i);
+        result = backups::keepSaved (dir, now, bytes);
+        REQUIRE (result.failures.empty());
+        REQUIRE (result.written.size() == 1);
+        CHECK (backups::newest (dir) == result.written.front());
+        CHECK (read (result.written.front()) == bytes);
+    }
+    CHECK (namesIn (folder).size() == backups::kKeepNewest);
+}

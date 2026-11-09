@@ -100,3 +100,50 @@ TEST_CASE ("writeFileAtomically reports a write it cannot make and leaves nothin
         CHECK (namesIn (temp.path()) == std::vector<std::string> { "take.mid" });
     }
 }
+
+TEST_CASE ("Atomic create publishes complete bytes only under an unused name", "[foundation][fs][atomic]")
+{
+    const duskstudio::test::TempDirectory temp ("dusk-atomic-create-only-");
+    const auto target = temp.path() / "take.mid";
+    const std::string bytes ("MThd\0\0\0\x06\x80\xff", 10);
+    std::error_code error;
+    REQUIRE (dusk::fs::writeFileAtomically (target, bytes.data(), bytes.size(), error,
+                                          dusk::fs::AtomicWriteMode::CreateNew));
+    CHECK_FALSE (error);
+    CHECK (dusk::fs::loadFileAsString (target) == bytes);
+    CHECK (namesIn (temp.path()) == std::vector<std::string> { "take.mid" });
+}
+
+TEST_CASE ("Atomic create preserves an existing destination and removes its temporary file",
+           "[foundation][fs][atomic]")
+{
+    const duskstudio::test::TempDirectory temp ("dusk-atomic-collision-");
+    const auto target = temp.path() / "take.mid";
+    std::error_code error;
+
+    SECTION ("regular file")
+    {
+        REQUIRE (writeText (target, "someone else's file", error));
+        CHECK_FALSE (dusk::fs::writeFileAtomically (target, "new", 3, error, dusk::fs::AtomicWriteMode::CreateNew));
+        CHECK (error == std::errc::file_exists);
+        CHECK (dusk::fs::loadFileAsString (target) == "someone else's file");
+    }
+    SECTION ("directory")
+    {
+        REQUIRE (stdfs::create_directory (target));
+        CHECK_FALSE (dusk::fs::writeFileAtomically (target, "new", 3, error, dusk::fs::AtomicWriteMode::CreateNew));
+        CHECK (error);
+        CHECK (stdfs::is_directory (target));
+    }
+    SECTION ("dangling symlink")
+    {
+        stdfs::create_symlink ("absent.mid", target, error);
+        if (error) SKIP ("the test filesystem cannot create symlinks");
+        CHECK_FALSE (dusk::fs::writeFileAtomically (target, "new", 3, error, dusk::fs::AtomicWriteMode::CreateNew));
+        CHECK (error == std::errc::file_exists);
+        CHECK (stdfs::is_symlink (stdfs::symlink_status (target)));
+        CHECK (stdfs::read_symlink (target) == "absent.mid");
+        CHECK_FALSE (stdfs::exists (temp.path() / "absent.mid"));
+    }
+    CHECK (namesIn (temp.path()) == std::vector<std::string> { "take.mid" });
+}

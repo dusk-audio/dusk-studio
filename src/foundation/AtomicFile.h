@@ -132,18 +132,21 @@ inline bool syncFolder (const std::filesystem::path& folder, std::error_code& er
 #endif
 }
 
+enum class AtomicWriteMode { Replace, CreateNew };
+
 // Replaces `target` with `size` bytes so that a reader, or the next start after
 // a crash or a power loss, finds the old file or the whole new one and never
 // part of either: the bytes go to a new file beside the target, reach the disk,
 // and are renamed over it, and on POSIX the folder is synced so the rename
-// lasts too. The folder must exist.
+// lasts too. The folder must exist. CreateNew atomically refuses an existing
+// destination, including one created while the temporary file was written.
 //
 // False, with `error` saying why, when any step fails; nothing is thrown, and
 // the temporary file is removed. The target then holds the old file, unless
 // only the final folder sync failed: the new file is in place, but a power loss
 // could still take the rename back.
 inline bool writeFileAtomically (const std::filesystem::path& target, const void* data, std::size_t size,
-                                 std::error_code& error) noexcept
+                                 std::error_code& error, AtomicWriteMode mode = AtomicWriteMode::Replace) noexcept
 {
     error.clear();
     const auto* bytes = static_cast<const char*> (data);
@@ -194,7 +197,8 @@ inline bool writeFileAtomically (const std::filesystem::path& target, const void
 
         // Write-through carries the rename to the disk; NTFS has no folder flush.
         const auto destination = nativeIOPath (target).native();
-        if (! MoveFileExW (temporary.c_str(), destination.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+        const DWORD flags = MOVEFILE_WRITE_THROUGH | (mode == AtomicWriteMode::Replace ? MOVEFILE_REPLACE_EXISTING : 0);
+        if (! MoveFileExW (temporary.c_str(), destination.c_str(), flags))
             return fail (lastError());
         return true;
     }
@@ -240,7 +244,14 @@ inline bool writeFileAtomically (const std::filesystem::path& target, const void
         handle = -1;
         if (! closed) return fail (lastError());
 
-        if (std::rename (temporary.c_str(), target.c_str()) != 0) return fail (lastError());
+        const int renamed = mode == AtomicWriteMode::Replace
+            ? std::rename (temporary.c_str(), target.c_str())
+           #if defined(__APPLE__)
+            : ::renamex_np (temporary.c_str(), target.c_str(), RENAME_EXCL);
+           #else
+            : ::renameat2 (AT_FDCWD, temporary.c_str(), AT_FDCWD, target.c_str(), RENAME_NOREPLACE);
+           #endif
+        if (renamed != 0) return fail (lastError());
         temporary.clear();
 
         std::error_code folderError;

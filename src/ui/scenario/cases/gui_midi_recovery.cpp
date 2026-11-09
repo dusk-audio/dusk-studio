@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <optional>
 #include <string>
@@ -213,6 +214,49 @@ std::optional<ScenarioResult> runSavesKeepMidiTrackFiles (GuiHost& host, Scenari
         ctx.expect (absent (untitled / "midi"), "the first save left a midi folder in the Untitled folder");
         ctx.expect (savecheck::unsavedSessionFolder (parent) == untitled,
                     "the Untitled folder was not free again after the first save");
+    } });
+    const auto foreignParent = ctx.tempDir() / "Foreign session";
+    const auto foreign = foreignParent / "Untitled";
+    const auto privateDir = dusk::fs::appConfigDir() / "unsaved-session";
+    const auto preserved = ctx.tempDir() / "private-recovery-before";
+    const auto rescued = foreignParent / "Rescued";
+    auto diverted = std::make_shared<std::vector<std::string>>();
+    steps->push_back ({ 100, [&host, &ctx, &engine, &track, foreignParent, foreign, privateDir, preserved, diverted]
+    {
+        engine.flushMidiRecoveryFiles();
+        std::error_code error;
+        if (fs::exists (privateDir, error)) fs::rename (privateDir, preserved);
+        ctx.cleanup ([&engine, privateDir, preserved]
+        {
+            engine.flushMidiRecoveryFiles();
+            std::error_code ignored;
+            fs::remove_all (privateDir, ignored);
+            if (fs::exists (preserved, ignored)) fs::rename (preserved, privateDir, ignored);
+        });
+        host.startUnsavedSessionIn (foreignParent);
+        std::ofstream (foreign / "session.json") << "foreign session";
+        setVelocity (track, 91);
+        engine.queueMidiTrackFiles();
+        engine.flushMidiRecoveryFiles();
+        *diverted = namesIn (privateDir / "midi" / "tracks");
+        ctx.expect (diverted->size() == 1, "MIDI recovery did not use the private sidecar folder");
+        ctx.expect (absent (foreign / "midi"), "MIDI recovery wrote into a folder claimed by a foreign session");
+        host.autosaveTick();
+        engine.flushMidiRecoveryFiles();
+        ctx.expect (namesIn (privateDir / "midi" / "tracks") == *diverted,
+                    "autosave did not deduplicate the private MIDI snapshot");
+    } });
+    pushSaveAsSteps (host, ctx, *steps, rescued);
+    steps->push_back ({ 500, [&host, &ctx, &engine, &session, foreign, privateDir, rescued, diverted]
+    {
+        engine.flushMidiRecoveryFiles();
+        ctx.expect (currentSessionDirectory (session) == rescued && host.sessionOnDisk(),
+                    "the foreign-folder session did not save to its chosen destination");
+        ctx.expect (fileBytes (foreign / "session.json") == "foreign session" && absent (foreign / "midi"),
+                    "Save As changed the foreign session's folder");
+        ctx.expect (namesIn (rescued / "midi" / "tracks") == *diverted && diverted->size() == 1,
+                    "Save As did not carry the private MIDI recovery files");
+        ctx.expect (absent (privateDir / "midi"), "the first save left its private MIDI source behind");
     } });
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;

@@ -350,6 +350,7 @@ private:
     // The folder writeAutosave and saveNotepadNow write into (see
     // savecheck::sidecarFolder). Empty when there is nowhere safe.
     std::filesystem::path sidecarFolder() const;
+    std::filesystem::path prepareMidiRecoveryFolder() const;
     // <Music>/Dusk Studio, the parent a launch session starts in (see
     // dusk::fs::appMusicDir). Empty when there is no home folder.
     static std::filesystem::path defaultSessionsFolder();

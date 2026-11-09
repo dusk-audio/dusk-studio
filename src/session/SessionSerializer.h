@@ -84,11 +84,13 @@ public:
     // old folder's state/, midi/ and backups/ trees go along: each file of
     // midi/ and backups/ is copied to the same place under the new folder
     // unless a file is already there, which is skipped. A session that never
-    // owned that folder leaves all three behind. Both trees are read as they
-    // were before anything was written, since the new folder can be in them.
+    // owned that folder leaves all three behind. An explicit midiSourceFolder
+    // carries only that owned sidecar's midi/ tree. Both trees are read before
+    // anything is written, since the new folder can be in them.
     static ConsolidationResult consolidateInto (Session& session,
                                                 const juce::File& newSessionDir,
-                                                bool ownsOldFolder = true);
+                                                bool ownsOldFolder = true,
+                                                const std::filesystem::path& midiSourceFolder = {});
 
     // For a Save As that fails after a successful consolidateInto: every
     // repointed path goes back to its old value, and the copies and anything

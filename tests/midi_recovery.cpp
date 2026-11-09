@@ -925,3 +925,77 @@ TEST_CASE ("A MIDI takes file that changes again within a second takes the next 
     });
     CHECK (namesIn (temp.path() / "midi" / "tracks") == names);
 }
+
+TEST_CASE ("MIDI recovery ordering and deduplication survive clock rollback", "[midi][recovery]")
+{
+    const duskstudio::test::TempDirectory temp ("dusk-midi-clock-rollback-");
+    recovery::PendingFile file { temp.path(), utc (kNovember8th143005), 7, "Keys",
+                                recovery::TrackFile::Playing, recovery::Folder::Tracks, { 1, 2, 3 } };
+    SECTION ("playing snapshot") {}
+    SECTION ("takes snapshot") { file.kind = recovery::TrackFile::Takes; }
+    SECTION ("recorded pass") { file.folder = recovery::Folder::Takes; }
+    const auto first = recovery::writeFile (file);
+    REQUIRE (first.failures.empty());
+    REQUIRE (first.written.size() == 1);
+    file.made -= std::chrono::hours (24);
+    file.bytes.back() = 4;
+    auto changed = recovery::writeFile (file);
+    REQUIRE (changed.failures.empty());
+    REQUIRE (changed.written.size() == 1);
+    CHECK (changed.written.front().filename() > first.written.front().filename());
+    CHECK (contentOf (first.written.front()) == Bytes { 1, 2, 3 });
+    CHECK (contentOf (changed.written.front()) == file.bytes);
+    if (file.folder == recovery::Folder::Tracks)
+    {
+        const auto unchanged = recovery::writeFile (file);
+        CHECK (unchanged.failures.empty());
+        CHECK (unchanged.written.empty());
+    }
+    file.bytes.back() = 3;
+    const auto returned = recovery::writeFile (file);
+    REQUIRE (returned.failures.empty());
+    REQUIRE (returned.written.size() == 1);
+    CHECK (returned.written.front().filename() > changed.written.front().filename());
+}
+
+TEST_CASE ("MIDI recovery finds normalized filenames without confusing copy and takes suffixes",
+           "[midi][recovery]")
+{
+    const duskstudio::test::TempDirectory temp ("dusk-midi-normalized-");
+    const std::string composed = "Caf\xc3\xa9", decomposed = "Cafe\xcc\x81";
+    const auto probe = temp.path() / stdfs::u8path (decomposed);
+    std::ofstream (dusk::fs::nativeIOPath (probe)) << "probe";
+    std::error_code error;
+    if (! stdfs::equivalent (probe, temp.path() / stdfs::u8path (composed), error))
+        SKIP ("the test filesystem distinguishes Unicode normalization forms");
+    stdfs::remove (probe);
+
+    const auto folder = temp.path() / "midi" / "tracks";
+    stdfs::create_directories (folder);
+    for (const auto& suffix : { std::string {}, std::string { "_002" }, std::string { ".takes" } })
+        for (const auto kind : { recovery::TrackFile::Playing, recovery::TrackFile::Takes })
+        {
+            CAPTURE (suffix, (int) kind);
+            recovery::PendingFile file { temp.path(), utc (kNovember8th143005), 7, composed + suffix,
+                                        kind, recovery::Folder::Tracks, { 1, 2, 3, (std::uint8_t) kind } };
+            const auto original = folder / stdfs::u8path (
+                recovery::fileName (file.made, file.trackNumber, decomposed + suffix, kind, 2));
+            std::ofstream out (dusk::fs::nativeIOPath (original), std::ios::binary);
+            out.write (reinterpret_cast<const char*> (file.bytes.data()), (std::streamsize) file.bytes.size());
+            out.close();
+            auto result = recovery::writeFile (file);
+            REQUIRE (result.failures.empty());
+            CHECK (result.written.empty());
+            file.bytes[0] = 9;
+            result = recovery::writeFile (file);
+            REQUIRE (result.failures.empty());
+            REQUIRE (result.written.size() == 1);
+            CHECK (contentOf (original).front() == 1);
+            CHECK (contentOf (result.written.front()) == file.bytes);
+            result = recovery::writeFile (file);
+            CHECK (result.failures.empty());
+            CHECK (result.written.empty());
+            stdfs::remove_all (folder);
+            stdfs::create_directory (folder);
+        }
+}

@@ -7,9 +7,7 @@
 #include <string>
 #include <string_view>
 
-// The UTC second that starts the name of every file Dusk Studio keeps for
-// recovery, "20261108-143005Z", so a plain name sort is the order they were
-// made in.
+// UTC timestamps used in recovery filenames, such as "20261108-143005Z".
 namespace duskstudio::recoverystamp
 {
 inline constexpr std::size_t kStampLength = 16;

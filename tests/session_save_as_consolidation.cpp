@@ -774,3 +774,52 @@ TEST_CASE ("consolidateInto leaves what it copies into the old midi or backups f
         }
     }
 }
+
+TEST_CASE ("consolidateInto carries an owned MIDI sidecar independently of a foreign session folder",
+           "[session][serializer][consolidate][midi]")
+{
+    const auto root = makeTempDir ("dusk-consolidate-private-midi-");
+    const struct Cleanup { juce::File dir; ~Cleanup() { dir.deleteRecursively(); } } cleanup { root };
+    const auto foreign = root.getChildFile ("Foreign");
+    const auto sidecar = root.getChildFile ("Owned sidecar");
+    const auto destination = root.getChildFile ("Saved");
+    Session s;
+    s.setSessionDirectory (foreign);
+    for (const auto& folder : { foreign, sidecar })
+        for (const char* name : { "midi/takes/pass.mid", "midi/tracks/track.mid",
+                                  "backups/old.json", "state/lv2/state.ttl" })
+        {
+            const auto file = folder.getChildFile (name);
+            REQUIRE (file.getParentDirectory().createDirectory().wasOk());
+            REQUIRE (file.replaceWithText (folder.getFileName() + ": " + name));
+        }
+    REQUIRE (foreign.getChildFile ("session.json").replaceWithText ("foreign session"));
+    const auto foreignBefore = listing (foreign);
+    const auto ownedBefore = listing (sidecar);
+    const auto result = SessionSerializer::consolidateInto (s, destination, false, pathOf (sidecar));
+    REQUIRE (result.ok);
+    REQUIRE (result.copiedMidiFiles.size() == 2);
+    CHECK_FALSE (destination.getChildFile ("state").exists());
+    CHECK_FALSE (destination.getChildFile ("backups").exists());
+    for (const char* name : { "midi/takes/pass.mid", "midi/tracks/track.mid" })
+        CHECK (destination.getChildFile (name).loadFileAsString() == sidecar.getChildFile (name).loadFileAsString());
+    CHECK (listing (foreign) == foreignBefore);
+    CHECK (listing (sidecar) == ownedBefore);
+
+    SECTION ("a failed save removes copies and keeps both sources")
+    {
+        SessionSerializer::revertConsolidation (s, result);
+        CHECK_FALSE (destination.exists());
+        CHECK (listing (sidecar) == ownedBefore);
+    }
+    SECTION ("a successful first save removes only the durable MIDI sources")
+    {
+        SessionSerializer::removeCopiedMidiSources (result, pathOf (sidecar));
+        CHECK_FALSE (sidecar.getChildFile ("midi").exists());
+        CHECK (sidecar.getChildFile ("backups/old.json").existsAsFile());
+        CHECK (sidecar.getChildFile ("state/lv2/state.ttl").existsAsFile());
+        CHECK (destination.getChildFile ("midi/takes/pass.mid").existsAsFile());
+    }
+    CHECK (listing (foreign) == foreignBefore);
+    CHECK (foreign.getChildFile ("session.json").loadFileAsString() == "foreign session");
+}

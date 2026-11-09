@@ -236,6 +236,8 @@ public:
     // Message thread.
     std::function<void (std::uint32_t capturedTracks)> onBeforeRecordCommit;
     std::function<void (int trackIndex, int regionIndex)> onMidiPassCommitted;
+    // Message thread: resolves a safe recovery folder before each batch is queued.
+    std::function<std::filesystem::path()> recoveryFolderForMidi;
     void serviceMidiRecording();
     sfz::LibraryService& getSfzLibrary() noexcept { return *sfzLibrary; }
     bool changeSfzLibraryLocation (std::filesystem::path destination, bool moveExisting, std::string& error);

@@ -120,7 +120,8 @@ enum class Folder
 };
 
 // One file built and waiting to be written, with everything its write
-// needs. `made` stamps its name: when the take committed or the save ran,
+// needs. `made` starts its name; existing later files advance that stamp after
+// a clock rollback. It records when the take committed or the save ran,
 // not when the disk got to it.
 struct PendingFile
 {

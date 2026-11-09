@@ -244,17 +244,47 @@ int copyOf (std::string_view name, std::string_view tagAndName, TrackFile kind) 
     return copy >= 2 ? copy : 0;
 }
 
+int copyOfFile (const stdfs::path& folder, const std::string& name, int trackNumber,
+                const std::string& sanitized, TrackFile kind)
+{
+    if (const int copy = copyOf (name, trackTag (trackNumber) + sanitized, kind); copy != 0) return copy;
+    const auto extension = extensionOf (kind);
+    if (! isStamp (name) || name.size() < kStampLength + extension.size()
+        || name.compare (name.size() - extension.size(), extension.size(), extension) != 0)
+        return 0;
+
+    // HFS+ lists decomposed names even when the requested track name is NFC.
+    // Let the filesystem decide equivalence, retaining its actual spelling.
+    const auto matches = [&] (int copy)
+    {
+        std::error_code error;
+        const auto requested = folder / stdfs::u8path (fileNameFor (name.substr (0, kStampLength),
+                                                                  trackNumber, sanitized, kind, copy));
+        return stdfs::equivalent (dusk::fs::nativeIOPath (folder / stdfs::u8path (name)),
+                                  dusk::fs::nativeIOPath (requested), error);
+    };
+    if (matches (1)) return 1;
+    const auto end = name.size() - extension.size();
+    if (end < kStampLength + 4 || name[end - 4] != '_') return 0;
+    int copy = 0;
+    for (std::size_t i = end - 3; i < end; ++i)
+    {
+        if (name[i] < '0' || name[i] > '9') return 0;
+        copy = copy * 10 + name[i] - '0';
+    }
+    return copy >= 2 && matches (copy) ? copy : 0;
+}
+
 // The newest of `names` for this track, sanitized name and kind: the latest
 // stamp, and in that second the highest copy.
-std::optional<std::string> newestOf (const std::vector<std::string>& names, int trackNumber,
-                                     const std::string& sanitized, TrackFile kind)
+std::optional<std::string> newestOf (const stdfs::path& folder, const std::vector<std::string>& names,
+                                     int trackNumber, const std::string& sanitized, TrackFile kind)
 {
-    const auto tagAndName = trackTag (trackNumber) + sanitized;
     const std::string* newest = nullptr;
     int newestCopy = 0;
     for (const auto& name : names)
     {
-        const int copy = copyOf (name, tagAndName, kind);
+        const int copy = copyOfFile (folder, name, trackNumber, sanitized, kind);
         if (copy == 0) continue;
         const int order = newest == nullptr ? 1 : name.compare (0, kStampLength, *newest, 0, kStampLength);
         if (order > 0 || (order == 0 && copy > newestCopy))
@@ -308,13 +338,10 @@ bool makeFolder (const stdfs::path& sessionDir, const stdfs::path& folder, Write
     return true;
 }
 
-// Writes `bytes` under the first name for this second that nothing in `folder`
-// holds yet, so no file there is ever replaced. When the second's copies run
-// out, the names go on in the seconds after it, which still sort after every
-// file made before.
+// Preserve filename order after a clock rollback or exhausted copy suffix.
 void writeNew (WriteResult& result, const stdfs::path& sessionDir, const stdfs::path& folder,
                std::chrono::system_clock::time_point now, int trackNumber, const std::string& sanitized,
-               TrackFile kind, const std::vector<std::uint8_t>& bytes)
+               TrackFile kind, const std::vector<std::uint8_t>& bytes, const std::optional<std::string>& newest)
 {
     if (bytes.empty())
     {
@@ -323,10 +350,18 @@ void writeNew (WriteResult& result, const stdfs::path& sessionDir, const stdfs::
     }
     if (! makeFolder (sessionDir, folder, result)) return;
 
+    int firstCopy = 1;
+    if (newest)
+        if (const auto newestTime = recoverystamp::timeOfStamp (*newest);
+            newestTime && *newestTime >= std::chrono::floor<std::chrono::seconds> (now))
+        {
+            now = *newestTime;
+            firstCopy = copyOfFile (folder, *newest, trackNumber, sanitized, kind) + 1;
+        }
     for (int second = 0; second < kMaxSeconds; ++second)
     {
         const auto stamp = utcStamp (now + std::chrono::seconds (second));
-        for (int copy = 1; copy <= kMaxCopies; ++copy)
+        for (int copy = second == 0 ? firstCopy : 1; copy <= kMaxCopies; ++copy)
         {
             const auto target = folder / stdfs::u8path (fileNameFor (stamp, trackNumber, sanitized, kind, copy));
             std::error_code error;
@@ -337,8 +372,10 @@ void writeNew (WriteResult& result, const stdfs::path& sessionDir, const stdfs::
                 result.failures.push_back ({ target, error });
                 return;
             }
-            if (dusk::fs::writeFileAtomically (target, bytes.data(), bytes.size(), error))
+            if (dusk::fs::writeFileAtomically (target, bytes.data(), bytes.size(), error, dusk::fs::AtomicWriteMode::CreateNew))
                 result.written.push_back (target);
+            else if (error == std::errc::file_exists)
+                continue;
             else
                 result.failures.push_back ({ target, error });
             return;
@@ -480,12 +517,10 @@ WriteResult writeFile (const PendingFile& file) noexcept
     return guarded (file.sessionDir, [&] (WriteResult& result)
     {
         const auto folder = file.sessionDir / "midi" / (file.folder == Folder::Takes ? "takes" : "tracks");
-        if (file.folder == Folder::Tracks && ! file.bytes.empty())
-        {
-            const auto newest = newestOf (fileNamesIn (folder, result), file.trackNumber, file.name, file.kind);
-            if (newest && holds (folder / stdfs::u8path (*newest), file.bytes)) return;
-        }
-        writeNew (result, file.sessionDir, folder, file.made, file.trackNumber, file.name, file.kind, file.bytes);
+        const auto newest = newestOf (folder, fileNamesIn (folder, result), file.trackNumber, file.name, file.kind);
+        if (file.folder == Folder::Tracks && ! file.bytes.empty()
+            && newest && holds (folder / stdfs::u8path (*newest), file.bytes)) return;
+        writeNew (result, file.sessionDir, folder, file.made, file.trackNumber, file.name, file.kind, file.bytes, newest);
     });
 }
 } // namespace duskstudio::midirecovery
