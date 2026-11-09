@@ -1,6 +1,7 @@
 #include "../Scenario.h"
 #include "MidiProbeHarness.h"
 #include "../../Transport.h"
+#include "../../device/IODeviceCallback.h"
 
 #if DUSKSTUDIO_HAS_NATIVE_VST3
  #include "../../vst3/Vst3Bundle.h"
@@ -461,6 +462,84 @@ bool setUp (ScenarioContext& ctx, int input, const char* probeName)
     return true;
 }
 
+void oneFrameSeamLeg (ScenarioContext& ctx, vst3::NativeVst3Slot& slot, int input)
+{
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+    auto& track = ctx.session().track (kTrack);
+    const auto pumpFrame = [&] (int frames = 1)
+    {
+        std::array<float, 2> output {};
+        std::array<float*, 2> outputs { &output[0], &output[1] };
+        device::CallbackContext callback;
+        engine.audioDeviceIOCallback (nullptr, 0, outputs.data(), 2, frames, callback);
+    };
+
+    enum class Next { Continue, Stop, Seek, EditUp, EditDown, NarrowInput, Reprepare };
+    for (const auto next : { Next::Continue, Next::Stop, Next::Seek, Next::EditUp, Next::EditDown, Next::NarrowInput, Next::Reprepare })
+    {
+        engine.stop();
+        transport.setLoopEnabled (false);
+        track.inputMonitor.store (true, std::memory_order_relaxed);
+        publishRegion (track);
+        ctx.pump (kSettleBlocks);
+        holdKeys (ctx, input);
+        transport.setLoopRange (samplesAt (100), samplesAt (kLoopEndTick));
+        transport.setLoopEnabled (true);
+        transport.setPlayhead (samplesAt (kLoopEndTick) - ScenarioContext::kBlockSize);
+        engine.play();
+        ctx.pump (1);
+        const auto before = readCounters (slot);
+        pumpFrame();
+        const auto lifted = readCounters (slot);
+        ctx.note ("one-frame seam: before " + describe (before) + " / lifted " + describe (lifted));
+        ctx.expect (before.pedalDown == (kPlayerPedalChannels | kTimelinePedalChannels),
+                    "one-frame seam: the timeline pedal was not held before the wrap");
+        ctx.expect (lifted.pedalDown == kPlayerPedalChannels,
+                    "one-frame seam: the pedal re-press erased its release");
+        ctx.expect (lifted.pedalLifts > before.pedalLifts,
+                    "one-frame seam: no pedal release reached the instrument");
+        ctx.expect (lifted.sustained == 1 && lifted.held == 2,
+                    "one-frame seam: a live voice was cut or a timeline voice was left sustained");
+        pumpFrame (0);
+        ctx.expect (readCounters (slot).pedalDown == lifted.pedalDown,
+                    "an empty block consumed the deferred pedal");
+        if (next == Next::Stop) engine.pressStop();
+        if (next == Next::Seek)
+        {
+            transport.setLoopEnabled (false);
+            transport.setPlayhead (0);
+        }
+        if (next == Next::EditUp || next == Next::EditDown)
+        {
+            auto regions = std::make_unique<std::vector<MidiRegion>> (track.midiRegions.current());
+            regions->front().ccs.front().value = next == Next::EditUp ? 0 : 100;
+            track.midiRegions.publish (std::move (regions));
+        }
+        if (next == Next::NarrowInput) track.inputMonitor.store (false, std::memory_order_relaxed);
+        if (next == Next::Reprepare) engine.prepareForSelfTest (ScenarioContext::kSampleRate, ScenarioContext::kBlockSize);
+        pumpFrame();
+        const auto restored = readCounters (slot);
+        if (next == Next::Stop)
+            checkStopped (ctx, "Stop before deferred pedal", lifted, restored);
+        else if (next == Next::NarrowInput || next == Next::Reprepare)
+        {
+            ctx.expect (restored.held == 1 && restored.sustained == 0 && restored.pedalDown == 0,
+                        "resetting the route restored an obsolete pedal or kept a live voice");
+            pumpFrame();
+            ctx.expect (readCounters (slot).pedalDown == kTimelinePedalChannels,
+                        "the fresh reset did not restore its own deferred pedal");
+        }
+        else
+            checkKept (ctx, "pedal after one frame, transition " + std::to_string ((int) next), before, restored,
+                       { next == Next::Seek ? 0 : 1,
+                         next == Next::Seek || next == Next::EditUp ? 0 : kTimelinePedalChannels });
+        engine.pressStop();
+        ctx.pump (kSettleBlocks);
+        releaseKeys (ctx, input);
+    }
+}
+
 ScenarioResult runSeamKeepsLiveKeys (ScenarioContext& ctx)
 {
     auto& engine = ctx.engine();
@@ -493,6 +572,7 @@ ScenarioResult runSeamKeepsLiveKeys (ScenarioContext& ctx)
     monitorOffLeg (ctx, slot, input);
     overfullSeamLeg (ctx, slot, input, track);
     controllersLeg (ctx, slot, track);
+    oneFrameSeamLeg (ctx, slot, input);
     return ctx.verdict();
 }
 

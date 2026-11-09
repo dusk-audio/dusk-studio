@@ -739,6 +739,21 @@ if(DUSKSTUDIO_NATIVE_LV2)
     target_compile_features(dusk-studio-midi-probe-lv2-fixture PRIVATE cxx_std_17)
     target_link_libraries(dusk-studio-midi-probe-lv2-fixture PRIVATE PkgConfig::LV2)
 
+    set(DUSKSTUDIO_MIDI_SEAM_LV2_BUNDLE "${CMAKE_CURRENT_BINARY_DIR}/midi-seam-probe-fixture.lv2")
+    file(MAKE_DIRECTORY "${DUSKSTUDIO_MIDI_SEAM_LV2_BUNDLE}")
+    configure_file(fixtures/midi_seam_probe_manifest.ttl
+        "${DUSKSTUDIO_MIDI_SEAM_LV2_BUNDLE}/manifest.ttl" COPYONLY)
+    configure_file(fixtures/midi_seam_probe_plugin.ttl
+        "${DUSKSTUDIO_MIDI_SEAM_LV2_BUNDLE}/midi_seam_probe_plugin.ttl" COPYONLY)
+    add_library(dusk-studio-midi-seam-lv2-fixture MODULE fixtures/midi_seam_probe_lv2.cpp)
+    set_target_properties(dusk-studio-midi-seam-lv2-fixture PROPERTIES
+        PREFIX ""
+        OUTPUT_NAME "midi_seam_probe_fixture"
+        LIBRARY_OUTPUT_DIRECTORY "$<1:${DUSKSTUDIO_MIDI_SEAM_LV2_BUNDLE}>")
+    target_compile_features(dusk-studio-midi-seam-lv2-fixture PRIVATE cxx_std_17)
+    target_link_libraries(dusk-studio-midi-seam-lv2-fixture PRIVATE PkgConfig::LV2)
+    add_dependencies(dusk-studio-tests dusk-studio-midi-seam-lv2-fixture)
+
     configure_file(fixtures/state_probe_manifest.ttl
         "${DUSKSTUDIO_STATE_PROBE_LV2_BUNDLE}/manifest.ttl" COPYONLY)
     configure_file(fixtures/state_probe_plugin.ttl
