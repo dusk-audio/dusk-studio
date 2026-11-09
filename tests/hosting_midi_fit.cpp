@@ -1,6 +1,9 @@
 #include <catch2/catch_test_macros.hpp>
+#include <juce_audio_basics/juce_audio_basics.h>
 
 #include "engine/hosting/MidiFit.h"
+#include "engine/hosting/StandardVst3Midi.h"
+#include "support/AllocationObserver.h"
 
 #include <array>
 #include <cstdint>
@@ -149,4 +152,173 @@ TEST_CASE ("a block over its host's room keeps every pedal's release",
     CHECK (carries (sent, 0xB0, 64, 0));
     CHECK (carries (sent, 0x80, 60, 0));
     CHECK (carries (sent, 0x90, 60, 100));   // the room left over goes in block order
+}
+
+TEST_CASE ("standard VST3 panic expansion preserves bounded note releases", "[midi][hosting][panic][allocation]")
+{
+    duskstudio::hosting::StandardVst3Midi adapter;
+    std::vector<Sent> sent;
+    sent.reserve (duskstudio::hosting::StandardVst3Midi::kMaxMessages);
+    const auto render = [&] (const dusk::MidiBuffer& block, bool refuse = false)
+    {
+        sent.clear();
+        std::size_t allocations = 0;
+        {
+            duskstudio::test::AllocationObserver observer;
+            adapter.deliver (block, [&] (const std::uint8_t* data, int bytes, int at)
+            {
+                if (refuse) return false;
+                sent.push_back ({ data[0], data[1], bytes >= 3 ? data[2] : std::uint8_t { 0 }, bytes, at });
+                return true;
+            });
+            allocations = observer.count();
+        }
+        REQUIRE (allocations == 0);
+        REQUIRE (sent.size() <= duskstudio::hosting::StandardVst3Midi::kMaxMessages);
+    };
+    const auto offs = [&] (int channel, int key)
+    {
+        int count = 0;
+        for (const auto& message : sent)
+            if (message.status == (0x80 | channel) && message.data1 == key) ++count;
+        return count;
+    };
+
+    SECTION ("a panic releases counted onsets only on its own channel and at its sample")
+    {
+        dusk::MidiBuffer block;
+        add (block, 0x90, 60, 100);
+        add (block, 0x90, 60, 100);
+        add (block, 0x91, 64, 100);
+        add (block, 0x80, 60, 0);
+        render (block);
+        block.clear();
+        const std::array<std::uint8_t, 3> panic { 0xB0, 123, 0 }, next { 0x90, 65, 100 };
+        REQUIRE (block.addEvent (panic.data(), 3, 17));
+        REQUIRE (block.addEvent (next.data(), 3, 18));
+        render (block);
+        REQUIRE (sent.size() == 3);
+        CHECK (offs (0, 60) == 1);
+        CHECK (offs (1, 64) == 0);
+        CHECK (sent[1].samplePosition == 17);
+        CHECK (sent[2].samplePosition == 18);
+        block.clear();
+        REQUIRE (duskstudio::midi::emitTransportStopReset (block, 0));
+        render (block);
+        CHECK (offs (0, 65) == 1);
+        CHECK (offs (1, 64) == 1);
+        CHECK (offs (0, 60) == 0);
+    }
+
+    SECTION ("a panic backlog drains in empty blocks and excludes intervening onsets")
+    {
+        dusk::MidiBuffer block;
+        for (int note = 0; note < 1024; ++note) add (block, 0x90, 60, 100);
+        for (int pass = 0; pass < 4; ++pass) render (block);
+        block.clear();
+        REQUIRE (duskstudio::midi::emitTransportStopReset (block, 0));
+        render (block);
+        int released = offs (0, 60);
+        CHECK (released < 4096);
+        block.clear();
+        add (block, 0x90, 61, 100);
+        for (int pass = 0; pass < 4 && released < 4096; ++pass)
+        {
+            render (block);
+            released += offs (0, 60);
+            CHECK_FALSE (carries (sent, 0x90, 61, 100));
+            CHECK (carries (sent, 0xB0, 64, 0));
+        }
+        REQUIRE (released == 4096);
+        render (block);
+        CHECK (carries (sent, 0x90, 61, 100));
+        block.clear();
+        REQUIRE (duskstudio::midi::emitTransportStopReset (block, 0));
+        render (block);
+        CHECK (offs (0, 61) == 1);
+        CHECK (offs (0, 60) == 0);
+    }
+
+    SECTION ("a full destination cannot discard a release permanently")
+    {
+        dusk::MidiBuffer block;
+        add (block, 0x92, 62, 100);
+        render (block);
+        block.clear();
+        add (block, 0x82, 62, 0);
+        render (block, true);
+        REQUIRE (sent.empty());
+        block.clear();
+        render (block);
+        CHECK (offs (2, 62) == 1);
+        CHECK (carries (sent, 0xB2, 64, 0));
+    }
+
+    SECTION ("dense ordinary events preserve a trailing release")
+    {
+        dusk::MidiBuffer block;
+        add (block, 0x90, 60, 100);
+        render (block);
+        block.clear();
+        for (int point = 0; point < 4000; ++point) add (block, 0xB0, 1, 100);
+        add (block, 0x80, 60, 0);
+        render (block);
+        CHECK (offs (0, 60) == 1);
+        block.clear();
+        add (block, 0xB0, 123, 0);
+        render (block);
+        CHECK (offs (0, 60) == 0);
+    }
+
+    SECTION ("in-place legacy rewriting preserves the allocation across empty blocks and reprepare")
+    {
+        juce::MidiBuffer block;
+        block.ensureSize (dusk::kMidiRoutingBlockBytes);
+        adapter.prepare();
+        const auto rewrite = [&]
+        {
+            std::size_t allocations = 0;
+            const auto* storage = block.data.begin();
+            {
+                duskstudio::test::AllocationObserver observer;
+                adapter.rewrite (block);
+                allocations = observer.count();
+            }
+            CHECK (allocations == 0);
+            CHECK (block.data.begin() == storage);
+            CHECK (block.getNumEvents() <= (int) adapter.kMaxMessages);
+        };
+        const std::array<std::uint8_t, 3> onset { 0x90, 60, 100 }, panic { 0xB0, 123, 0 };
+        for (int pass = 0; pass < 4; ++pass)
+        {
+            block.clear();
+            for (int note = 0; note < 1024; ++note) block.addEvent (onset.data(), 3, 0);
+            rewrite();
+        }
+        adapter.prepare();
+        block.clear();
+        block.addEvent (panic.data(), 3, 0);
+        int released = 0;
+        for (int pass = 0; pass < 4; ++pass)
+        {
+            rewrite();
+            for (const auto event : block)
+                if (event.numBytes == 3 && event.data[0] == 0x80 && event.data[1] == 60) ++released;
+            block.clear();
+        }
+        CHECK (released == 4096);
+    }
+
+    SECTION ("a new instance starts with no inherited note ownership")
+    {
+        dusk::MidiBuffer block;
+        add (block, 0x90, 60, 100);
+        render (block);
+        adapter.reset();
+        block.clear();
+        add (block, 0xB0, 123, 0);
+        render (block);
+        REQUIRE (sent.size() == 1);
+        CHECK (offs (0, 60) == 0);
+    }
 }

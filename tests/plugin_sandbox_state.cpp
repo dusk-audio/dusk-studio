@@ -4,12 +4,14 @@
 #include "TestTempDirectory.h"
 #include "engine/PluginManager.h"
 #include "engine/PluginSlot.h"
+#include "engine/MidiPanic.h"
 #include "engine/ScanProcess.h"
 #include "engine/ipc/PluginScanProtocol.h"
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -485,4 +487,77 @@ TEST_CASE ("A sandboxed write the child never received survives a capture withou
     CHECK (captureError == "a parameter change could not be sent to the sandboxed plug-in");
 }
 #endif
+#endif
+
+#if DUSKSTUDIO_HAS_OOP_PLUGINS && defined (DUSKSTUDIO_PANIC_PROBE_VST3_FIXTURE_PATH)
+TEST_CASE ("A standard VST3 sandbox releases held notes after reprepare and dense MIDI", "[plugin][ipc][midi][panic]")
+{
+    using Catch::Matchers::WithinAbs;
+    juce::ScopedJuceInitialiser_GUI juceInit;
+    duskstudio::PluginManager manager;
+    manager.setOopEnabled (true);
+    manager.setHostExecutableOverride (DUSKSTUDIO_PLUGIN_HOST_PATH, "--ipc-host");
+    duskstudio::PluginSlot slot;
+    slot.setManager (manager);
+    slot.prepareToPlay (48000.0, 64);
+    duskstudio::PluginDescriptor descriptor;
+    descriptor.name = "Dusk Every-CC Probe Fixture";
+    descriptor.descriptiveName = descriptor.name;
+    descriptor.formatName = "VST3";
+    descriptor.backend = duskstudio::PluginBackend::JuceLegacy;
+    descriptor.location = DUSKSTUDIO_PANIC_PROBE_VST3_FIXTURE_PATH;
+    descriptor.uniqueId = -426199743;
+    descriptor.isInstrument = true;
+    descriptor.numOutputChannels = 2;
+    juce::String error;
+    REQUIRE (slot.loadFromDescriptor (descriptor, error));
+    REQUIRE (slot.isRemote());
+
+    bool mono = false;
+    SECTION ("stereo processing") {}
+    SECTION ("mono processing") { mono = true; }
+    std::array<float, 64> left {}, right {};
+    juce::MidiBuffer midi;
+    midi.ensureSize (dusk::kMidiRoutingBlockBytes);
+    const auto add = [&] (std::uint8_t status, std::uint8_t key, std::uint8_t value)
+    {
+        const std::array<std::uint8_t, 3> message { status, key, value };
+        REQUIRE (midi.addEvent (message.data(), 3, 0));
+    };
+    const auto render = [&]
+    {
+        left.fill (0.0f); right.fill (0.0f);
+        const auto result = mono ? slot.processMonoBlock (left.data(), 64, midi)
+                                 : slot.processStereoBlock (left.data(), right.data(), 64, midi);
+        REQUIRE (result.has_value());
+        REQUIRE_FALSE (slot.wasAutoBypassed());
+        midi.clear();
+        return left.back();
+    };
+    add (0x90, 60, 100);
+    add (0x91, 72, 100);
+    REQUIRE_THAT (render(), WithinAbs (0.2f, 1.0e-6f));
+    slot.prepareToPlay (44100.0, 64);
+    REQUIRE (slot.isRemote());
+    add (0xB0, 123, 0);
+    REQUIRE_THAT (render(), WithinAbs (0.1f, 1.0e-6f));
+    add (0xB1, 123, 0);
+    REQUIRE_THAT (render(), WithinAbs (0.0f, 1.0e-6f));
+
+    add (0x90, 60, 100);
+    REQUIRE_THAT (render(), WithinAbs (0.1f, 1.0e-6f));
+    for (int point = 0; point < 4000; ++point) add (0xB0, 1, 100);
+    add (0x80, 60, 0);
+    REQUIRE_THAT (render(), WithinAbs (0.0f, 1.0e-6f));
+
+    add (0xB1, 64, 127);
+    add (0x91, 74, 100);
+    REQUIRE_THAT (render(), WithinAbs (0.1f, 1.0e-6f));
+    add (0x81, 74, 0);
+    REQUIRE_THAT (render(), WithinAbs (0.1f, 1.0e-6f));
+    REQUIRE (duskstudio::midi::forEachTransportStopResetMessage ([&] (const std::uint8_t* data, int bytes)
+    { return midi.addEvent (data, bytes, 0); }));
+    REQUIRE_THAT (render(), WithinAbs (0.0f, 1.0e-6f));
+    REQUIRE_THAT (render(), WithinAbs (0.0f, 1.0e-6f));
+}
 #endif

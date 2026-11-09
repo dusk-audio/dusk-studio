@@ -69,6 +69,13 @@ canonical source.
 
 ### Fixed
 
+- **MIDI notes at playback and Stop.** Starting playback inside a region sounds
+  its held notes immediately. Standard VST3 hosting sends explicit note-offs
+  at Stop, including through the sandbox, and VST3 note tracking survives an
+  audio-device reinitialization so Stop can still release the held keys.
+- **Sustain at a loop boundary.** Even with a one-sample audio block, a pedal
+  lifted and restored at a loop boundary stays up long enough to release the
+  previous pass's notes.
 - **Soundfonts that made no sound.** An SFZ or SF2 instrument loaded through
   SFZ Manager, **Browse...** or an opened session plays again. In 0.16.0 it
   stayed silent until the audio device restarted, for example after a buffer
