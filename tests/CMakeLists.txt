@@ -1358,6 +1358,10 @@ if(Python3_Interpreter_FOUND)
         COMMAND "${Python3_EXECUTABLE}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/manual_coverage.py"
                 --self-test)
+    add_test(NAME msvc-hazards-checker
+        COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_SOURCE_DIR}/tools/msvc-hazards.py"
+                --self-test)
     # update-patrons.py writes its credentials file with os.fchmod, which the
     # maintainer machines have and Windows Python does not.
     if(NOT WIN32)
