@@ -3386,8 +3386,6 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         const auto sessionDir = scenario::currentSessionDirectory (owner.session);
         if (sessionDir != launch.sessionDir)
             lines.push_back ("session directory is " + sessionDir.string());
-        if (owner.ownedMidiRecoveryDir != launch.midiRecoveryDir)
-            lines.push_back ("MIDI journal ownership changed");
 
         return lines;
     }
@@ -3427,6 +3425,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
             }
 
         owner.stopTransportForSessionSwitch();
+        owner.engine.flushMidiRecoveryFiles();
         // Only another move hands the strips back to the slots they launched
         // in, and the tracks' data goes with them.
         if (const auto back = moveBackToLaunch()) owner.engine.moveTracks (*back);
