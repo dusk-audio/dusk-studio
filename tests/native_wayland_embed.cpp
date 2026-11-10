@@ -348,6 +348,12 @@ private:
     {
         try
         {
+            if (reportedStage != static_cast<int> (stage))
+            {
+                reportedStage = static_cast<int> (stage);
+                std::fprintf (stderr, "native panel stage %d\n", reportedStage);
+                std::fflush (stdout);
+            }
             require (std::chrono::steady_clock::now() < deadline, "native probe timed out");
            #if DUSK_NATIVE_PROBE_DAF
             for (auto& host : donorHosts) if (host) host->tick();
@@ -760,6 +766,7 @@ private:
     std::unique_ptr<SharedWaylandApplication::Registration> fault;
     const std::chrono::steady_clock::time_point deadline = std::chrono::steady_clock::now() + std::chrono::seconds (60);
     Stage stage = Stage::open;
+    int reportedStage = -1;
     int closed = 0;
     int visibilityCycles = 0;
     std::uintptr_t originalParent = 0;

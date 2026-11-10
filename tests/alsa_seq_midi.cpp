@@ -18,6 +18,33 @@
 #include <thread>
 #include <vector>
 
+namespace
+{
+// Keep real hot-plug announcements, but isolate negative callback assertions
+// from other processes. The raw ProbeClient still proves positive notification.
+std::atomic<bool> onlyTestProcessClients { false };
+
+struct IsolatedSeqClients
+{
+    IsolatedSeqClients() { onlyTestProcessClients.store (true); }
+    ~IsolatedSeqClients() { onlyTestProcessClients.store (false); }
+};
+}
+
+extern "C" int __real_snd_seq_query_next_client (snd_seq_t*, snd_seq_client_info_t*);
+
+extern "C" int __wrap_snd_seq_query_next_client (snd_seq_t* seq, snd_seq_client_info_t* info)
+{
+    int result = 0;
+    do
+    {
+        result = __real_snd_seq_query_next_client (seq, info);
+    }
+    while (result >= 0 && onlyTestProcessClients.load()
+           && snd_seq_client_info_get_pid (info) != static_cast<int> (getpid()));
+    return result;
+}
+
 using namespace duskstudio::midi;
 
 namespace
@@ -666,6 +693,7 @@ TEST_CASE ("ALSA seq backend reports a port appearing and disappearing", "[midi]
 TEST_CASE ("ALSA seq backend does not report its own subscriptions as a change",
            "[midi][alsa]")
 {
+    const IsolatedSeqClients isolatedClients;
     if (! loopbackAvailable())
         SKIP ("ALSA sequencer loopback unavailable - headless CI");
 
@@ -693,9 +721,6 @@ TEST_CASE ("ALSA seq backend does not report its own subscriptions as a change",
         in.disableAll();
     }
 
-    // Nothing came or went, so nothing may be reported. A failure here means
-    // either subscribe traffic is being counted or some other MIDI client on the
-    // machine appeared during the window.
     REQUIRE_FALSE (changes.waitFor (1, 250));
 
     in.stop();
@@ -820,6 +845,7 @@ TEST_CASE ("ALSA seq backends list neither of this process's own clients", "[mid
 TEST_CASE ("ALSA seq backend does not report this process's own clients coming and going",
            "[midi][alsa]")
 {
+    const IsolatedSeqClients isolatedClients;
     if (! loopbackAvailable())
         SKIP ("ALSA sequencer loopback unavailable - headless CI");
 
@@ -834,10 +860,13 @@ TEST_CASE ("ALSA seq backend does not report this process's own clients coming a
 
     for (int i = 0; i < 4; ++i)
     {
-        AlsaSeqMidiOutput out;
-        (void) out.enumerate();
+        {
+            AlsaSeqMidiOutput out;
+            (void) out.enumerate();
+            REQUIRE_FALSE (changes.waitFor (1, 250));
+        }
+        REQUIRE_FALSE (changes.waitFor (1, 250));
     }
-    REQUIRE_FALSE (changes.waitFor (1, 250));
 
     ProbeClient probe;
     REQUIRE (probe.appear());

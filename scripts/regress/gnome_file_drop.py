@@ -52,10 +52,36 @@ def run_source(paths):
         source.connect("prepare", prepare)
         source.connect("drag-begin", lambda *_: print("DRAG begin", flush=True))
         source.connect("drag-end", lambda *_: print("DRAG end", flush=True))
+        source.connect("drag-cancel", lambda _source, _drag, reason:
+                       print("DRAG cancelled: " + reason.value_nick, flush=True) or False)
         label.add_controller(source)
         window.set_child(label)
+        announced = set()
+
+        def ready(_widget, _clock):
+            surface = window.get_surface()
+            if surface is not None:
+                state = (surface.get_width(), surface.get_height(), int(surface.get_state()), window.is_active())
+                if state not in announced:
+                    print("SOURCE geometry/state:", state, flush=True)
+                    announced.add(state)
+            if not window.get_mapped() or not window.is_active() or surface is None:
+                return True
+            if label.get_width() <= 0 or label.get_height() <= 0:
+                return True
+            if "MAPPED" not in announced:
+                print("MAPPED", flush=True)
+                announced.add("MAPPED")
+            # GTK includes the client-side shadow margins in the surface size.
+            if (surface.get_state() & Gdk.ToplevelState.LEFT_TILED
+                    and abs(surface.get_width() - MONITOR[0] // 2) <= 64
+                    and surface.get_height() >= MONITOR[1] - 64):
+                print("TILED", flush=True)
+                return False
+            return True
+
+        label.add_tick_callback(ready)
         window.present()
-        print("MAPPED", flush=True)
 
     app = Gtk.Application(application_id="audio.dusk.studio.DropTestSource",
                           flags=Gio.ApplicationFlags.NON_UNIQUE)
@@ -140,27 +166,32 @@ class Desktop:
             self.key(modifier, False)
         time.sleep(0.5)
 
-    def drag(self, start, end):
+    def drag(self, start, end, begun):
         self.at(*start)
         self.button(True)
-        time.sleep(0.2)
-        steps = 40
-        dx, dy = (end[0] - start[0]) // steps, (end[1] - start[1]) // steps
-        for _ in range(steps):
-            self.move(dx, dy)
-            time.sleep(0.025)
-        self.move(end[0] - start[0] - steps * dx - 2, end[1] - start[1] - steps * dy - 2)
-        for _ in range(2):
+        try:
+            time.sleep(0.2)
+            self.move(40, 0)
+            if not wait_for(begun, 10, step=0.05):
+                raise Failure("the drag source never began a drag")
+            start = (start[0] + 40, start[1])
+            steps = 40
+            dx, dy = (end[0] - start[0]) // steps, (end[1] - start[1]) // steps
+            for _ in range(steps):
+                self.move(dx, dy)
+                time.sleep(0.025)
+            self.move(end[0] - start[0] - steps * dx - 2, end[1] - start[1] - steps * dy - 2)
+            for _ in range(2):
+                time.sleep(0.4)
+                self.move(1, 1)
             time.sleep(0.4)
-            self.move(1, 1)
-        time.sleep(0.4)
-        self.button(False)
-        time.sleep(1.0)
+        finally:
+            self.button(False)
 
 
 def wait_for(predicate, seconds, step=0.2):
-    end = time.time() + seconds
-    while time.time() < end:
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
         value = predicate()
         if value:
             return value
@@ -305,10 +336,10 @@ class Test:
         self.source = subprocess.Popen([sys.executable, "-I", os.path.abspath(__file__), "source", *paths],
                                        stdout=open(log, "w"), stderr=subprocess.STDOUT)
         if not wait_for(lambda: "MAPPED" in read_lines(log), 20):
-            raise Failure("the drag source did not map")
-        time.sleep(1.0)
+            raise Failure("the drag source did not map and gain focus")
         self.desktop.tap(KEY_LEFT, KEY_SUPER)
-        time.sleep(1.0)
+        if not wait_for(lambda: "TILED" in read_lines(log), 20):
+            raise Failure("the drag source did not tile on the left")
         self.source_log = log
 
     def close_source(self):
@@ -320,10 +351,19 @@ class Test:
 
     def drop(self, paths, target):
         self.open_source(paths)
-        drags = sum(1 for l in read_lines(self.source_log) if l == "DRAG end")
-        self.desktop.drag((MONITOR[0] // 4, MONITOR[1] // 2), target)
-        if not wait_for(lambda: sum(1 for l in read_lines(self.source_log) if l == "DRAG end") > drags, 10):
-            raise Failure("the drag from the source never ended")
+        def drag_state(marker):
+            lines = read_lines(self.source_log)
+            cancelled = next((line for line in lines if line.startswith("DRAG cancelled:")), None)
+            if cancelled:
+                raise Failure(cancelled)
+            if self.source.poll() is not None:
+                raise Failure("the drag source exited")
+            return marker in lines
+
+        self.desktop.drag((MONITOR[0] // 4, MONITOR[1] // 2), target,
+                          lambda: drag_state("DRAG begin"))
+        if not wait_for(lambda: drag_state("DRAG end"), 10):
+            raise Failure("the started drag never ended after release")
 
     def wait_for_button(self, app, colour, what):
         found = wait_for(lambda: find_button(app.grab("picker")[0], colour), 10, step=0.5)

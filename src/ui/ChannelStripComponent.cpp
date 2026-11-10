@@ -4031,6 +4031,7 @@ void ChannelStripComponent::openIoConfigPopup()
 juce::Component* ChannelStripComponent::openIoConfigPopupForCapture (int mode)
 {
     if (ioConfigModal.isOpen()) ioConfigModal.close();
+    showTrackMode (jlimit (0, 2, track.mode.load (std::memory_order_relaxed)));
     modeSelector.setSelectedId (jlimit (0, 2, mode) + 1, juce::sendNotificationSync);
     openIoConfigPopup();
     return ioConfigModal.getBody();

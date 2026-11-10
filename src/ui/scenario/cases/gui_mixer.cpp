@@ -1030,18 +1030,32 @@ std::optional<ScenarioResult> runMidiSelectors (GuiHost& host, ScenarioContext& 
     track.inputMonitor.store (true);
     engine.refreshMidiInputs();
     const auto& outputs = engine.getMidiOutputDevices();
-    int destination = -1;
+    int initialDestination = -1;
     for (int i = 0; i < (int) outputs.size(); ++i)
-        if (outputs[(size_t) i].name.find (name) != std::string::npos) destination = i;
-    if (destination < 0) return ScenarioResult::fail ("private MIDI destination was not enumerated");
-    const auto destinationId = outputs[(size_t) destination].identifier;
-    const int keyboard = engine.getVirtualKeyboardInputIndex();
-    if (keyboard < 0) return ScenarioResult::fail ("virtual keyboard was not enumerated");
-    const auto keyboardId = engine.getMidiInputDevices()[(size_t) keyboard].identifier;
-    host.switchToStage (GuiHost::Stage::Recording);
-    const int maxRows = std::max ({ 17, (int) engine.getMidiInputDevices().size() + 1, (int) outputs.size() + 1 });
-    const auto select = [&host, maxRows] (int row)
+        if (outputs[(size_t) i].name.find (name) != std::string::npos) initialDestination = i;
+    if (initialDestination < 0) return ScenarioResult::fail ("private MIDI destination was not enumerated");
+    const auto destinationId = outputs[(size_t) initialDestination].identifier;
+    const auto destination = [&engine, destinationId]
     {
+        const auto& current = engine.getMidiOutputDevices();
+        for (int i = 0; i < (int) current.size(); ++i)
+            if (current[(size_t) i].identifier == destinationId) return i;
+        return -1;
+    };
+    const auto keyboard = [&engine] { return engine.getVirtualKeyboardInputIndex(); };
+    if (keyboard() < 0) return ScenarioResult::fail ("virtual keyboard was not enumerated");
+    const auto keyboardId = engine.getMidiInputDevices()[(size_t) keyboard()].identifier;
+    // Make the pending hot-plug refresh move the virtual keyboard's index.
+    const int sourcePort = snd_seq_create_simple_port (seq.get(), "late source",
+        SND_SEQ_PORT_CAP_READ | SND_SEQ_PORT_CAP_SUBS_READ,
+        SND_SEQ_PORT_TYPE_MIDI_GENERIC | SND_SEQ_PORT_TYPE_APPLICATION);
+    if (sourcePort < 0) return ScenarioResult::fail ("could not create the late MIDI source");
+    ctx.cleanup ([seq, sourcePort] { snd_seq_delete_simple_port (seq.get(), sourcePort); });
+    host.switchToStage (GuiHost::Stage::Recording);
+    const auto select = [&host, &engine] (int row)
+    {
+        const int maxRows = std::max ({ 17, (int) engine.getMidiInputDevices().size() + 1,
+                                      (int) engine.getMidiOutputDevices().size() + 1 });
         for (int i = 0; i < maxRows; ++i) host.pressPeerKey ("cursor up");
         for (int i = 0; i < row; ++i) host.pressPeerKey ("cursor down");
         host.pressPeerKey ("Return");
@@ -1052,20 +1066,19 @@ std::optional<ScenarioResult> runMidiSelectors (GuiHost& host, ScenarioContext& 
     // the value. The popup that holds the pickers is the one modal under them.
     auto popupDepth = std::make_shared<int> (0);
     const auto pick = [&host, &ctx, select, popupDepth]
-                      (std::vector<Step>& into, int kind, int row, std::function<bool()> taken, std::string what)
+                      (std::vector<Step>& into, int kind, std::function<int()> row, std::function<bool()> taken, std::string what)
     {
         into.push_back ({ 0, [&host, &ctx, kind]
         { ctx.expect (host.clickMidiSelector (0, kind), "MIDI selector was not visible"); },
         [&host, popupDepth] { return host.modalCount() == *popupDepth; }, "the previous MIDI picker never closed" });
         // While a picker is still to open its combo ignores a second click.
-        into.push_back ({ 0, [select, row] { select (row); },
+        into.push_back ({ 0, [select, row] { select (row()); },
         [&host, popupDepth] { return host.modalCount() > *popupDepth; }, "the MIDI picker did not open",
         [&host, kind] { host.clickMidiSelector (0, kind); } });
-        // The keys choose by position from the top, so going through them
-        // again picks the same row.
+        // Resolve the row again if a hot-plug refresh rebuilt the picker.
         into.push_back ({ 0, [] {},
         [&host, popupDepth, taken] { return host.modalCount() == *popupDepth && taken(); }, std::move (what),
-        [&host, select, row, popupDepth] { if (host.modalCount() > *popupDepth) select (row); } });
+        [&host, select, row, popupDepth] { if (host.modalCount() > *popupDepth) select (row()); } });
     };
     auto steps = std::make_shared<std::vector<Step>>();
     // The client and port made above reach the app as a hot-plug notice, and
@@ -1081,10 +1094,11 @@ std::optional<ScenarioResult> runMidiSelectors (GuiHost& host, ScenarioContext& 
     "the hot-plug refresh for the private MIDI destination never finished" });
     steps->push_back ({ 0, [&track, &engine, &ctx, keyboard, keyboardId, destination, destinationId]
     {
-        track.midiInputIndex.store (keyboard);
+        if (! ctx.expect (keyboard() >= 0 && destination() >= 0, "the configured MIDI ports disappeared")) return;
+        track.midiInputIndex.store (keyboard());
         track.midiInputIdentifier = keyboardId;
         track.midiChannel.store (0);
-        track.midiOutputIndex.store (destination);
+        track.midiOutputIndex.store (destination());
         track.midiOutputIdentifier = destinationId;
         const auto registered = engine.isAudioCallbackRegistered();
         const auto rate = engine.getCurrentSampleRate();
@@ -1113,19 +1127,19 @@ std::optional<ScenarioResult> runMidiSelectors (GuiHost& host, ScenarioContext& 
         track.midiOutputIndex.store (-1);
         track.midiOutputIdentifier.clear();
     } });
-    pick (*steps, 0, keyboard + 1, [&track, keyboard] { return track.midiInputIndex.load() == keyboard; },
+    pick (*steps, 0, [keyboard] { return keyboard() + 1; }, [&track, keyboard] { return track.midiInputIndex.load() == keyboard(); },
           "input picker did not select the virtual keyboard");
-    pick (*steps, 1, 3, [&track] { return track.midiChannel.load() == 3; }, "channel picker did not select channel 3");
-    pick (*steps, 2, destination + 1, [&track, destination] { return track.midiOutputIndex.load() == destination; },
+    pick (*steps, 1, [] { return 3; }, [&track] { return track.midiChannel.load() == 3; }, "channel picker did not select channel 3");
+    pick (*steps, 2, [destination] { return destination() + 1; }, [&track, destination] { return track.midiOutputIndex.load() == destination(); },
           "output picker did not select the destination");
     auto heard = std::make_shared<std::pair<bool, bool>> (false, false);
     steps->push_back ({ 0, [&host, &track, &engine, &ctx, keyboard, keyboardId, destination, destinationId]
     {
-        ctx.expect (track.midiInputIndex.load() == keyboard && track.midiInputIdentifier.toStdString() == keyboardId,
+        ctx.expect (track.midiInputIndex.load() == keyboard() && track.midiInputIdentifier.toStdString() == keyboardId,
                     "input picker did not select and identify the virtual keyboard");
         ctx.expect (host.midiSelectorText (0, 0) == "Virtual Keyboard (Dusk Studio)", "input picker displayed the wrong port");
         ctx.expect (track.midiChannel.load() == 3 && host.midiSelectorText (0, 1) == "Ch 3", "channel picker did not select channel 3");
-        ctx.expect (track.midiOutputIndex.load() == destination && track.midiOutputIdentifier.toStdString() == destinationId,
+        ctx.expect (track.midiOutputIndex.load() == destination() && track.midiOutputIdentifier.toStdString() == destinationId,
                     "output picker did not select and identify the destination");
         const std::uint8_t rejected[] = { 0xb1, 74, 100 };
         const std::uint8_t accepted[] = { 0xb2, 74, 101 };
@@ -1147,9 +1161,9 @@ std::optional<ScenarioResult> runMidiSelectors (GuiHost& host, ScenarioContext& 
             }
         return heard->first;
     }, "selected MIDI output did not receive the accepted channel" });
-    pick (*steps, 0, 0, [&track] { return track.midiInputIndex.load() == -1; }, "input None did not clear the route");
-    pick (*steps, 1, 0, [&track] { return track.midiChannel.load() == 0; }, "Omni did not clear the channel filter");
-    pick (*steps, 2, 0, [&track] { return track.midiOutputIndex.load() == -1; }, "output None did not clear the route");
+    pick (*steps, 0, [] { return 0; }, [&track] { return track.midiInputIndex.load() == -1; }, "input None did not clear the route");
+    pick (*steps, 1, [] { return 0; }, [&track] { return track.midiChannel.load() == 0; }, "Omni did not clear the channel filter");
+    pick (*steps, 2, [] { return 0; }, [&track] { return track.midiOutputIndex.load() == -1; }, "output None did not clear the route");
     steps->push_back ({ 0, [&host, &track, &ctx]
     {
         ctx.expect (track.midiInputIndex.load() == -1 && track.midiInputIdentifier.isEmpty()
