@@ -141,10 +141,11 @@ enum class AtomicWriteMode { Replace, CreateNew };
 // lasts too. The folder must exist. CreateNew atomically refuses an existing
 // destination, including one created while the temporary file was written.
 //
-// False, with `error` saying why, when any step fails; nothing is thrown, and
-// the temporary file is removed. The target then holds the old file, unless
-// only the final folder sync failed: the new file is in place, but a power loss
-// could still take the rename back.
+// False, with `error` saying why, when writing, publication or sync fails;
+// nothing is thrown. The target then holds the old file, unless only the final
+// folder sync failed: the new file is in place, but a power loss could take it
+// back. Temporary-file cleanup is best effort. Successful hard-link publication
+// stays successful if removing its temporary name fails.
 inline bool writeFileAtomically (const std::filesystem::path& target, const void* data, std::size_t size,
                                  std::error_code& error, AtomicWriteMode mode = AtomicWriteMode::Replace) noexcept
 {
@@ -244,14 +245,22 @@ inline bool writeFileAtomically (const std::filesystem::path& target, const void
         handle = -1;
         if (! closed) return fail (lastError());
 
-        const int renamed = mode == AtomicWriteMode::Replace
+        int published = mode == AtomicWriteMode::Replace
             ? std::rename (temporary.c_str(), target.c_str())
            #if defined(__APPLE__)
             : ::renamex_np (temporary.c_str(), target.c_str(), RENAME_EXCL);
            #else
             : ::renameat2 (AT_FDCWD, temporary.c_str(), AT_FDCWD, target.c_str(), RENAME_NOREPLACE);
            #endif
-        if (renamed != 0) return fail (lastError());
+       #if defined(__linux__)
+        if (published != 0 && mode == AtomicWriteMode::CreateNew
+            && (errno == ENOSYS || errno == EINVAL || errno == EOPNOTSUPP))
+        {
+            published = ::link (temporary.c_str(), target.c_str());
+            if (published == 0) ::unlink (temporary.c_str());
+        }
+       #endif
+        if (published != 0) return fail (lastError());
         temporary.clear();
 
         std::error_code folderError;

@@ -218,14 +218,17 @@ std::optional<ScenarioResult> runSavesKeepMidiTrackFiles (GuiHost& host, Scenari
     const auto foreignParent = ctx.tempDir() / "Foreign session";
     const auto foreign = foreignParent / "Untitled";
     const auto privateDir = dusk::fs::appConfigDir() / "unsaved-session";
-    const auto preserved = ctx.tempDir() / "private-recovery-before";
+    const auto preserved = privateDir.parent_path() / "unsaved-session.scenario-preserved";
     const auto rescued = foreignParent / "Rescued";
     auto diverted = std::make_shared<std::vector<std::string>>();
     steps->push_back ({ 100, [&host, &ctx, &engine, &track, foreignParent, foreign, privateDir, preserved, diverted]
     {
         engine.flushMidiRecoveryFiles();
         std::error_code error;
-        if (fs::exists (privateDir, error)) fs::rename (privateDir, preserved);
+        const bool occupied = fs::exists (preserved, error);
+        if (! ctx.expect (! error && ! occupied, "the preserved recovery folder is already occupied or unavailable")) return;
+        if (fs::exists (privateDir, error)) fs::rename (privateDir, preserved, error);
+        if (! ctx.expect (! error, "could not set aside the existing private recovery folder")) return;
         ctx.cleanup ([&engine, privateDir, preserved]
         {
             engine.flushMidiRecoveryFiles();

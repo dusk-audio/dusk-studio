@@ -834,6 +834,15 @@ TEST_CASE ("MIDI playing and takes files are each written only when they change"
     // The names a pass writes, sorted; files keeps each file written with what
     // it held then.
     using Names = std::vector<std::string>;
+    const Names unrelated {
+        "20261109-143005Z_track07_KeysExtra.mid",
+        "20261109-143005Z_track07_KeysExtra_002.takes.mid",
+        "20261109-143005Z_track07_Keys_002Extra.mid",
+        "20261109-143005Z_track08_Keys.mid",
+    };
+    REQUIRE (stdfs::create_directories (folder));
+    for (const auto& name : unrelated)
+        REQUIRE (dusk::fs::writeStringToFile (folder / name, "unrelated snapshot"));
     std::vector<std::pair<stdfs::path, Bytes>> files;
     const auto writeAt = [&] (int minute)
     {
@@ -879,14 +888,19 @@ TEST_CASE ("MIDI playing and takes files are each written only when they change"
         CAPTURE (file.first);
         CHECK (contentOf (file.first) == file.second);
     }
-    CHECK (namesIn (folder) == Names {
+    Names expected {
         "20261108-143005Z_track07_Keys.mid",
         "20261108-143005Z_track07_Keys.takes.mid",
         "20261108-143205Z_track07_Keys.mid",
         "20261108-143405Z_track07_Keys.takes.mid",
         "20261108-143605Z_track07_Keys.mid",
         "20261108-143605Z_track07_Keys.takes.mid",
-    });
+    };
+    for (const auto& name : unrelated)
+        CHECK (dusk::fs::loadFileAsString (folder / name) == "unrelated snapshot");
+    expected.insert (expected.end(), unrelated.begin(), unrelated.end());
+    std::sort (expected.begin(), expected.end());
+    CHECK (namesIn (folder) == expected);
 }
 
 TEST_CASE ("A MIDI takes file that changes again within a second takes the next copy number",

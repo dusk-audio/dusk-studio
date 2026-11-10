@@ -375,7 +375,9 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         realtime_cpu_guard.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/RealtimeKit.cpp)
     target_link_libraries(dusk-studio-tests PRIVATE asound)
-    target_link_options(dusk-studio-tests PRIVATE "-Wl,--wrap=snd_seq_query_next_client")
+    target_link_options(dusk-studio-tests PRIVATE
+        "-Wl,--wrap=snd_seq_query_next_client"
+        "-Wl,--wrap=renameat2" "-Wl,--wrap=link" "-Wl,--wrap=unlink" "-Wl,--wrap=fsync")
     add_executable(dusk-alsa-output-tests
         alsa_seq_output_schedule.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/midi/AlsaSeqMidi.cpp)

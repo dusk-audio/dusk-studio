@@ -248,6 +248,11 @@ int copyOfFile (const stdfs::path& folder, const std::string& name, int trackNum
                 const std::string& sanitized, TrackFile kind)
 {
     if (const int copy = copyOf (name, trackTag (trackNumber) + sanitized, kind); copy != 0) return copy;
+    const auto ascii = [] (const std::string& text)
+    {
+        return std::all_of (text.begin(), text.end(), [] (unsigned char c) { return c < 0x80; });
+    };
+    if (ascii (name) && ascii (sanitized)) return 0;
     const auto extension = extensionOf (kind);
     if (! isStamp (name) || name.size() < kStampLength + extension.size()
         || name.compare (name.size() - extension.size(), extension.size(), extension) != 0)
