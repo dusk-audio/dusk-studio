@@ -282,6 +282,11 @@ RecordManager::PreparedMidiCapture::~PreparedMidiCapture() = default;
 RecordManager::PreparedMidiCapture::PreparedMidiCapture (PreparedMidiCapture&&) noexcept = default;
 RecordManager::PreparedMidiCapture& RecordManager::PreparedMidiCapture::operator= (PreparedMidiCapture&&) noexcept = default;
 
+bool RecordManager::PreparedMidiCapture::hasTracks() const noexcept
+{
+    return std::any_of (captures.begin(), captures.end(), [] (const auto& capture) { return capture != nullptr; });
+}
+
 RecordManager::PreparedMidiCapture RecordManager::prepareMidiCapture (bool loopCapture)
 {
     PreparedMidiCapture prepared;
@@ -375,6 +380,8 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
     nextMidiGroupOrdinal = 1;
     midiCaptureGestureId = nextMidiCaptureGestureId.fetch_add (1, std::memory_order_relaxed);
     midiCompletedOrdinals = {};
+    midiJournalHandles = {};
+    midiJournal = nullptr;
     for (auto& pending : pendingMidiPasses) pending.clear();
     for (auto& preview : lastMidiPreviews) preview.reset();
     recordedMidiPasses.clear();
@@ -649,13 +656,36 @@ void RecordManager::collectMidiPasses (int trackIndex)
     }
 }
 
+void RecordManager::beginMidiJournals (midirecovery::Journal& journal, const std::filesystem::path& folder)
+{
+    if (! isActive() || midiJournal != nullptr) return;
+    midiJournal = &journal;
+    auto timing = midirecovery::timingOf (session, recordSampleRate);
+    timing.tempoMap = recordTempoMap;
+    timing.bpm = recordTempoBpm;
+    const auto made = std::chrono::system_clock::now();
+    for (int track = 0; track < Session::kNumTracks; ++track)
+        if (midiCaptures[(size_t) track])
+        {
+            midiJournalHandles[(size_t) track] = journal.begin ({ folder, made, track + 1,
+                session.track (track).nameUtf8(), timing, midiCaptureTimelineStart(),
+                loopPlan.enabled ? loopPlan.captureEndSample - loopPlan.captureStartSample : 0 });
+            if (midiJournalHandles[(size_t) track].id == 0)
+                std::fprintf (stderr, "[Dusk Studio/RecordManager] track %d: live MIDI recovery could not start.\n", track + 1);
+        }
+}
+
 void RecordManager::serviceMidiCapture()
 {
     const auto linearLength = linearMidiCaptureLength.load (std::memory_order_relaxed);
     for (int track = 0; track < Session::kNumTracks; ++track)
         if (auto& cap = midiCaptures[(size_t) track])
         {
-            cap->stream.service (linearLength);
+            cap->stream.service (linearLength, [this, track] (const auto& drain)
+            {
+                if (midiJournal != nullptr)
+                    midiJournal->append (midiJournalHandles[(size_t) track], drain);
+            });
             collectMidiPasses (track);
         }
 }
@@ -702,7 +732,7 @@ std::vector<RecordManager::CapturedMidiPassGroup> RecordManager::takeMidiPassGro
             auto pass = std::move (pending.front());
             pending.pop_front();
             if (! pass.notes.empty() || ! pass.ccs.empty())
-                group.tracks.push_back ({ track, std::move (pass) });
+                group.tracks.push_back ({ track, std::move (pass), midiJournalHandles[(size_t) track].id });
         }
         result.push_back (std::move (group));
     }
@@ -754,6 +784,9 @@ void RecordManager::stopRecording (std::int64_t endSample)
     for (int track = 0; track < Session::kNumTracks; ++track)
         if (auto& cap = midiCaptures[(size_t) track])
         {
+            const auto& journal = midiJournalHandles[(size_t) track];
+            if (journal.id != 0 && ! midiJournal->finish (journal, finalMidiOrdinal, finalMidiEnd))
+                std::fprintf (stderr, "[Dusk Studio/RecordManager] track %d: live MIDI recovery could not finish.\n", track + 1);
             cap->stream.sealFinal (finalMidiOrdinal, finalMidiEnd);
             collectMidiPasses (track);
         }
@@ -1013,7 +1046,7 @@ void RecordManager::stopRecording (std::int64_t endSample)
                     evicted.endsPass = true;
                     auto passRegion = buildPass (evicted, evicted.passOrdinal > 1, true);
                     if (! passRegion.notes.empty() || ! passRegion.ccs.empty())
-                        recordedMidiPasses.push_back ({ t, std::move (passRegion) });
+                        recordedMidiPasses.push_back ({ t, std::move (passRegion), midiJournalHandles[(size_t) t].id, evicted.passOrdinal });
                 }
 
             for (int passIndex = 0; passIndex < midiLoopPassCount; ++passIndex)
@@ -1039,7 +1072,7 @@ void RecordManager::stopRecording (std::int64_t endSample)
                 continue;
             }
             for (const auto& pass : nonemptyPasses)
-                recordedMidiPasses.push_back ({ t, pass });
+                recordedMidiPasses.push_back ({ t, pass, midiJournalHandles[(size_t) t].id, pass.provenance.loopPassOrdinal });
 
             MidiRegion region = std::move (nonemptyPasses.back());
             for (auto it = nonemptyPasses.rbegin() + 1;
@@ -1188,7 +1221,7 @@ void RecordManager::stopRecording (std::int64_t endSample)
         // NOT absorbed - the user can still see / cycle to the older
         // takes via the badge UI; partial-overlap merging would need
         // a tick-domain split routine that's out of scope here.
-        recordedMidiPasses.push_back ({ t, region });
+        recordedMidiPasses.push_back ({ t, region, midiJournalHandles[(size_t) t].id, 1 });
         const std::int64_t newStart = region.timelineStart;
         const std::int64_t newEnd   = newStart + region.lengthInSamples;
         session.track (t).midiRegions.mutate (

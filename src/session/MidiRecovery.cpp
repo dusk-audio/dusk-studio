@@ -336,6 +336,7 @@ bool makeFolder (const stdfs::path& sessionDir, const stdfs::path& folder, Write
     for (const auto& level : { folder.parent_path(), folder })
     {
         stdfs::create_directory (dusk::fs::nativeIOPath (level), error);
+        if (! error) dusk::fs::syncFolder (level.parent_path(), error);
         if (! error) continue;
         result.failures.push_back ({ level, error });
         return false;

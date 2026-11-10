@@ -555,6 +555,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         launch.tapeExpanded = owner.tapeStripExpanded;
         launch.sessionDir = scenario::currentSessionDirectory (owner.session);
         launch.sessionOnDisk = owner.sessionOnDisk;
+        launch.midiRecoveryDir = owner.ownedMidiRecoveryDir;
         launch.masterMute = owner.session.master().mute.load();
         launch.masteringSource = owner.session.mastering().sourceFile.getFullPathName().toStdString();
         if (owner.tapeStrip != nullptr)
@@ -3385,6 +3386,8 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         const auto sessionDir = scenario::currentSessionDirectory (owner.session);
         if (sessionDir != launch.sessionDir)
             lines.push_back ("session directory is " + sessionDir.string());
+        if (owner.ownedMidiRecoveryDir != launch.midiRecoveryDir)
+            lines.push_back ("MIDI journal ownership changed");
 
         return lines;
     }
@@ -3465,6 +3468,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         // Cases put their session back by opening a saved copy, which marks it
         // opened from disk even when the launch session never was.
         owner.sessionOnDisk = launch.sessionOnDisk;
+        owner.ownedMidiRecoveryDir = launch.midiRecoveryDir;
 
         // Leaving full screen can recreate the peer, so it is fetched again
         // before the launch bounds go back.
@@ -3516,6 +3520,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         std::array<const ChannelStrip*, Session::kNumTracks> stripOrder {};
         std::string masteringSource;
         std::filesystem::path sessionDir;
+        std::filesystem::path midiRecoveryDir;
         bool sessionOnDisk = false;
     };
 
