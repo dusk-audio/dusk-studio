@@ -290,8 +290,10 @@ std::optional<ScenarioResult> runLiveMidiJournal (GuiHost& host, ScenarioContext
             session.setTrackArmed (index, armed[(std::size_t) index]);
     });
     const auto privateDir = dusk::fs::appConfigDir() / "unsaved-session";
-    const auto preserved = ctx.tempDir() / "private-before-live-journal";
+    const auto preserved = privateDir.parent_path() / "unsaved-session.live-journal-scenario-preserved";
     std::error_code preserveError;
+    const bool occupied = fs::exists (preserved, preserveError);
+    if (preserveError || occupied) return ScenarioResult::fail ("the preserved recovery folder is already occupied or unavailable");
     if (fs::exists (privateDir, preserveError)) fs::rename (privateDir, preserved, preserveError);
     if (preserveError) return ScenarioResult::fail ("could not preserve the private recovery folder");
     ctx.cleanup ([&engine, privateDir, preserved]
@@ -375,7 +377,7 @@ std::optional<ScenarioResult> runLiveMidiJournal (GuiHost& host, ScenarioContext
             ctx.expect (absent (untitled / "midi"), "live recording wrote into the never-saved session folder");
             if (foreign) std::ofstream (untitled / "session.json") << "foreign session";
             pass->blocked = engine.recoveryFolderForMidi() / "midi" / "takes";
-            pass->backup = ctx.tempDir() / (foreign ? "foreign-takes-before" : "takes-before");
+            pass->backup = pass->blocked.parent_path() / "takes.scenario-preserved";
             std::error_code error;
             fs::create_directories (pass->blocked.parent_path(), error);
             if (! ctx.expect (! error, "could not prepare final-write failure")) return;
@@ -387,7 +389,7 @@ std::optional<ScenarioResult> runLiveMidiJournal (GuiHost& host, ScenarioContext
             ctx.expect (pass->blocking, "could not block final take publication");
             if (! foreign)
             {
-                pass->checkpointBackup = ctx.tempDir() / "checkpoint-before";
+                pass->checkpointBackup = pass->checkpoint.parent_path().parent_path() / "recording.scenario-preserved";
                 fs::rename (pass->checkpoint.parent_path(), pass->checkpointBackup, error);
                 if (! ctx.expect (! error, "could not preserve the earlier live checkpoint")) return;
                 std::ofstream blockedCheckpoint (pass->checkpoint.parent_path());
