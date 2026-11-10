@@ -3456,7 +3456,7 @@ void discardConsolidatedFiles (const SessionSerializer::ConsolidationResult& don
 
 SessionSerializer::ConsolidationResult
 SessionSerializer::consolidateInto (Session& s, const juce::File& newSessionDir,
-                                    bool ownsOldFolder)
+                                    bool ownsOldFolder, const std::filesystem::path& midiSourceFolder)
 {
     ConsolidationResult res;
     const auto oldDir = s.getSessionDirectory();
@@ -3489,9 +3489,12 @@ SessionSerializer::consolidateInto (Session& s, const juce::File& newSessionDir,
         noteIfAbsent (newPath / name);
 
     FolderTree midiTree { "midi", {}, {} }, backupsTree { "backups", {}, {} };
-    const bool carriesTrees = ownsOldFolder && ! oldPath.empty();
-    if (carriesTrees
-        && (! listFolderTree (res, oldPath, newPath, midiTree) || ! listFolderTree (res, oldPath, newPath, backupsTree)))
+    const auto midiSource = ! midiSourceFolder.empty() ? midiSourceFolder
+                                                     : ownsOldFolder ? oldPath : std::filesystem::path {};
+    const bool carriesMidi = ! midiSource.empty();
+    const bool carriesBackups = ownsOldFolder && ! oldPath.empty();
+    if ((carriesMidi && ! listFolderTree (res, midiSource, newPath, midiTree))
+        || (carriesBackups && ! listFolderTree (res, oldPath, newPath, backupsTree)))
     {
         res.ok = false;
         return res;
@@ -3605,9 +3608,8 @@ SessionSerializer::consolidateInto (Session& s, const juce::File& newSessionDir,
         }
         res.copiedFiles.push_back (fsPathOf (target));
     }
-    if (carriesTrees
-        && (! copyFolderTree (res, oldPath, newPath, midiTree, &res.copiedMidiFiles, noteIfAbsent)
-            || ! copyFolderTree (res, oldPath, newPath, backupsTree, nullptr, noteIfAbsent)))
+    if ((carriesMidi && ! copyFolderTree (res, midiSource, newPath, midiTree, &res.copiedMidiFiles, noteIfAbsent))
+        || (carriesBackups && ! copyFolderTree (res, oldPath, newPath, backupsTree, nullptr, noteIfAbsent)))
     {
         discardConsolidatedFiles (res);
         res.ok = false;

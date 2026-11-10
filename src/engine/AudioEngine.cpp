@@ -2455,7 +2455,8 @@ void AudioEngine::queuePendingMidiTakeFiles()
 void AudioEngine::queuePendingMidiTakeFilesNow()
 {
     if (pendingMidiTakeFiles.empty()) return;
-    const auto sessionDir = std::filesystem::u8path (session.getSessionDirectory().getFullPathName().toStdString());
+    const auto sessionDir = recoveryFolderForMidi ? recoveryFolderForMidi()
+        : std::filesystem::u8path (session.getSessionDirectory().getFullPathName().toStdString());
     const double sampleRate = getTimelineSampleRate();
     for (const auto& pending : std::exchange (pendingMidiTakeFiles, {}))
         if (auto file = midirecovery::pendingTakeFile (sessionDir, pending.committed, session, sampleRate,
@@ -2466,7 +2467,8 @@ void AudioEngine::queuePendingMidiTakeFilesNow()
 void AudioEngine::queueMidiTrackFiles()
 {
     queuePendingMidiTakeFiles();
-    const auto sessionDir = std::filesystem::u8path (session.getSessionDirectory().getFullPathName().toStdString());
+    const auto sessionDir = recoveryFolderForMidi ? recoveryFolderForMidi()
+        : std::filesystem::u8path (session.getSessionDirectory().getFullPathName().toStdString());
     for (auto& file : midirecovery::pendingTrackFiles (sessionDir, std::chrono::system_clock::now(), session,
                                                        getTimelineSampleRate()))
         midiRecoveryWriter.queue (std::move (file));
