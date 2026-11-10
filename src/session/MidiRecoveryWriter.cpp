@@ -121,8 +121,8 @@ struct Journal::Impl
         PendingFile file;
     };
 
-    Impl (Writer::Report value, std::size_t capacity)
-        : report (std::move (value)), records (std::max<std::size_t> (1, capacity)),
+    Impl (Writer::Report value, std::size_t recordCapacity)
+        : report (std::move (value)), records (std::max<std::size_t> (1, recordCapacity)),
           scratch (records.size()), worker ([this] { run(); }) {}
     ~Impl()
     {
