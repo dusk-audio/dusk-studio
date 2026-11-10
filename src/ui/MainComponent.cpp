@@ -60,6 +60,7 @@
 #include "../session/RecentSessions.h"
 #include "../session/SessionBackups.h"
 #include "../session/SessionSerializer.h"
+#include "../foundation/AtomicFile.h"
 #include "../session/UnreferencedAudio.h"
 #include "../engine/FileImporter.h"
 #include "../engine/PlaybackEngine.h"
@@ -872,6 +873,7 @@ MainComponent::MainComponent()
        #endif
     };
     engine.recoveryFolderForMidi = [this] { return prepareMidiRecoveryFolder(); };
+    engine.journalFolderForMidi = [this] { return prepareMidiJournalFolder(); };
     engine.onMidiPassCommitted = [this] (int trackIndex, int regionIndex)
     {
        #if DUSKSTUDIO_HAS_NATIVE_UI
@@ -1238,6 +1240,7 @@ MainComponent::~MainComponent()
     guiRun.reset();
     // The engine can commit a final take after this component's members die.
     engine.recoveryFolderForMidi = [folder = prepareMidiRecoveryFolder()] { return folder; };
+    engine.journalFolderForMidi = {};
     engine.setPluginRestoreAlertSink ({});
     engine.onBeforeTracksMove = nullptr;
     engine.onTracksMoved = nullptr;
@@ -3787,13 +3790,20 @@ bool MainComponent::writeSessionTo (const juce::File& requestedDir,
     // (same dir) is a no-op here. State capture has succeeded; the copy runs
     // outside its process gate, so a long copy adds no dropout.
     const bool isSaveAs = oldDir != juce::File() && dir != oldDir;
+    const bool consolidationPerformed = isSaveAs || (firstSave && ! ownedMidiRecoveryDir.empty());
     SessionSerializer::ConsolidationResult consolidated;
-    if (isSaveAs)
+    if (consolidationPerformed)
     {
         // The take files still queued for the old folder have to be in its
         // midi/ before that is copied.
-        engine.flushMidiRecoveryFiles();
-        consolidated = SessionSerializer::consolidateInto (session, dir, ownsOldDir, toPath (oldSidecar));
+        if (! engine.flushMidiRecoveryFiles (toPath (oldSidecar), ownedMidiRecoveryDir))
+        {
+            setStatusForPath ("Save failed", dir);
+            showDuskAlert (*this, "Save failed",
+                "Could not finish writing MIDI recovery files. Check disk space and permissions, then save again.");
+            return false;
+        }
+        consolidated = SessionSerializer::consolidateInto (session, dir, ownsOldDir, toPath (oldSidecar), ownedMidiRecoveryDir);
         if (! consolidated.ok)
         {
             setStatusForPath ("Save failed", dir);
@@ -3811,9 +3821,9 @@ bool MainComponent::writeSessionTo (const juce::File& requestedDir,
                                 + " missing audio file(s) were not copied to", dir);
     }
     // Both failure alerts below promise the session is as it was.
-    const auto undoSaveAs = [this, isSaveAs, &consolidated, &oldDir]
+    const auto undoSaveAs = [this, consolidationPerformed, &consolidated, &oldDir]
     {
-        if (! isSaveAs) return;
+        if (! consolidationPerformed) return;
         SessionSerializer::revertConsolidation (session, consolidated);
         session.setSessionDirectory (oldDir);
     };
@@ -3907,11 +3917,12 @@ bool MainComponent::writeSessionTo (const juce::File& requestedDir,
             // without this, re-opening the old session pops a stale recovery
             // prompt.
             deleteAutosaveFor (oldSidecar);
-            // A first save takes the MIDI files along rather than copying
-            // them, so the Untitled folder they were in is free for the next
-            // new session.
-            if (firstSave)
-                SessionSerializer::removeCopiedMidiSources (consolidated, toPath (oldSidecar));
+        }
+        if (firstSave && consolidationPerformed)
+        {
+            SessionSerializer::removeCopiedMidiSources (consolidated, toPath (oldSidecar));
+            if (! ownedMidiRecoveryDir.empty())
+                SessionSerializer::removeCopiedMidiSources (consolidated, ownedMidiRecoveryDir);
         }
         sessionOnDisk = true;
         engine.queueMidiTrackFiles();
@@ -4025,6 +4036,7 @@ void MainComponent::startUnsavedSessionIn (const std::filesystem::path& parent)
     const auto dir = savecheck::launchSessionFolder (parent, privateUnsavedFolder(), []
         { return dusk::fs::createUniqueTempDirectory ("dusk-studio-unsaved-"); });
     session.setSessionDirectory (toFile (dir));
+    ownedMidiRecoveryDir.clear();
 }
 
 std::filesystem::path MainComponent::sidecarFolder() const
@@ -4042,6 +4054,35 @@ std::filesystem::path MainComponent::prepareMidiRecoveryFolder() const
         std::filesystem::create_directories (dusk::fs::nativeIOPath (folder), ignored);
     }
     return folder;
+}
+
+std::filesystem::path MainComponent::prepareMidiJournalFolder()
+{
+    if (sessionOnDisk) return toPath (session.getSessionDirectory());
+    if (! ownedMidiRecoveryDir.empty()) return ownedMidiRecoveryDir;
+    const auto privateFolder = privateUnsavedFolder();
+    if (privateFolder.empty()) return {};
+    const auto parent = privateFolder / "recordings";
+    std::error_code error;
+    for (const auto& level : { privateFolder, parent })
+    {
+        std::filesystem::create_directory (dusk::fs::nativeIOPath (level), error);
+        if (! error) dusk::fs::syncFolder (level.parent_path(), error);
+        if (error) return {};
+    }
+    const auto stamp = std::to_string (std::chrono::steady_clock::now().time_since_epoch().count());
+    for (int attempt = 0; attempt < 128; ++attempt)
+    {
+        const auto candidate = parent / (stamp + "-" + std::to_string (attempt));
+        if (std::filesystem::create_directory (dusk::fs::nativeIOPath (candidate), error))
+        {
+            if (! dusk::fs::syncFolder (parent, error)) return {};
+            ownedMidiRecoveryDir = candidate;
+            return candidate;
+        }
+        if (error && error != std::errc::file_exists) break;
+    }
+    return {};
 }
 
 void MainComponent::discardWrittenAutosave()
@@ -4922,6 +4963,7 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     }
     const auto tAfterParse = juce::Time::getMillisecondCounterHiRes();
     ++sessionLoadSerial;
+    ownedMidiRecoveryDir.clear();
 
     // The notepad is session-bound: drop any open editor from the previous
     // session and adopt the new session's sidecar.

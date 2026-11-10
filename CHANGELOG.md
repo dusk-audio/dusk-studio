@@ -9,6 +9,10 @@ canonical source.
 
 ### Added
 
+- **Live MIDI recovery.** Recording writes current and completed MIDI passes to
+  recoverable `.recording.mid` checkpoints without adding audio-thread work.
+  A checkpoint stays until its finished take reaches disk. First Save carries
+  privately owned checkpoints from an unsaved session into its saved folder.
 - **MIDI recovery files.** A session's MIDI no longer lives only inside
   `session.json`. Each recorded MIDI pass is written to the session's
   `midi/takes/` folder as a Standard MIDI File when it commits, every pass of

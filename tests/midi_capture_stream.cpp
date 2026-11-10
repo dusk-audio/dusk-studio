@@ -461,3 +461,90 @@ TEST_CASE ("MIDI capture retains events before a sample boundary that rounds to 
     REQUIRE (shortPass[0].notes == std::vector<MidiNote> { { 1, 64, 90, 0, 1 } });
     REQUIRE (shortPass[0].ccs == std::vector<MidiCc> { { 1, 64, 127, 0 } });
 }
+
+TEST_CASE ("MIDI capture drains can be replayed without retaining the live queue", "[recording][midi][capture-stream][journal]")
+{
+    MidiCaptureStream live (4), replay (1);
+    std::vector<MidiCaptureStream::Record> copied;
+    MidiCaptureStream::DrainView snapshot;
+    const auto copy = [&] (const MidiCaptureStream::DrainView& view)
+    {
+        snapshot = view;
+        copied.assign (view.first, view.first + view.firstCount);
+        copied.insert (copied.end(), view.second, view.second + view.secondCount);
+        snapshot.first = copied.data();
+        snapshot.firstCount = copied.size();
+        snapshot.second = nullptr;
+        snapshot.secondCount = 0;
+    };
+    const auto replayLast = [&]
+    {
+        replay.replay (snapshot);
+        const auto& a = live.preview();
+        const auto& b = replay.preview();
+        CHECK (b.passOrdinal == a.passOrdinal);
+        CHECK (b.lengthInSamples == a.lengthInSamples);
+        CHECK (b.lengthInTicks == a.lengthInTicks);
+        CHECK (b.notes == a.notes);
+        CHECK (b.ccs == a.ccs);
+    };
+    SECTION ("wrapped drains retain loop passes and unfinished held notes")
+    {
+        live.configure ([] (std::int64_t at) { return at / 2; }, 100);
+        replay.configure ([] (std::int64_t at) { return at / 2; }, 100);
+        REQUIRE (live.pushEvent (1, 10, 0x92, 64, 90));
+        REQUIRE (live.publishProgress (1, 30, false));
+        live.service (-1, copy);
+        replayLast();
+        REQUIRE (live.pushEvent (1, 40, 0xB2, 64, 127));
+        REQUIRE (live.publishProgress (1, 100, true));
+        REQUIRE (live.publishProgress (2, 100, true));
+        REQUIRE (live.publishProgress (3, 20, false));
+        bool wrapped = false;
+        live.service (-1, [&] (const auto& view)
+        {
+            wrapped = view.firstCount > 0 && view.secondCount > 0;
+            copy (view);
+        });
+        REQUIRE (wrapped);
+        replayLast();
+        const auto completed = replay.takeCompleted();
+        REQUIRE (completed.size() == 2);
+        CHECK (completed[0].notes == std::vector<MidiNote> { { 3, 64, 90, 5, 45 } });
+        CHECK (completed[1].notes == std::vector<MidiNote> { { 3, 64, 90, 0, 50 } });
+        CHECK (replay.preview().notes == std::vector<MidiNote> { { 3, 64, 90, 0, 10 } });
+        REQUIRE (live.publishProgress (3, 40, false));
+        live.service (30, copy);
+        replayLast();
+        CHECK (replay.preview().notes == std::vector<MidiNote> { { 3, 64, 90, 0, 15 } });
+    }
+    SECTION ("a rejected payload closes notes at the last reliable progress")
+    {
+        const bool loseRelease = GENERATE (false, true);
+        REQUIRE (live.pushEvent (1, 0, 0x90, 60, 100));
+        REQUIRE (live.publishProgress (1, 10, false));
+        live.service (-1, copy);
+        replayLast();
+        if (loseRelease) REQUIRE (live.pushEvent (1, 15, 0x80, 60, 0));
+        REQUIRE (live.publishProgress (1, 20, false));
+        live.service();
+        REQUIRE (live.publishProgress (1, 30, false));
+        live.service (-1, copy);
+        replay.replay (snapshot);
+        CHECK (replay.preview().notes == std::vector<MidiNote> {
+            { 1, 60, 100, 0, loseRelease ? 10 : 30 } });
+    }
+    SECTION ("an overflowed completion marker is reconstructed in the replay")
+    {
+        live.configure ({}, 100);
+        replay.configure ({}, 100);
+        for (int note = 60; note < 64; ++note) REQUIRE (live.pushEvent (1, 0, 0x90, (std::uint8_t) note, 100));
+        REQUIRE_FALSE (live.publishProgress (1, 100, true));
+        live.service (-1, copy);
+        replayLast();
+        const auto completed = replay.takeCompleted();
+        REQUIRE (completed.size() == 1);
+        REQUIRE (completed.front().notes.size() == 4);
+        for (const auto& note : completed.front().notes) CHECK (note.lengthInTicks == 100);
+    }
+}

@@ -40,6 +40,24 @@ public:
         std::uint64_t sequence = 0;
     };
 
+    struct Record
+    {
+        RawEvent event;
+        bool progress = false;
+        bool complete = false;
+    };
+    struct DrainView
+    {
+        const Record* first = nullptr;
+        std::size_t firstCount = 0;
+        const Record* second = nullptr;
+        std::size_t secondCount = 0;
+        std::int64_t linearCaptureLength = -1;
+        std::uint64_t attemptedSequence = 0;
+        int completedOrdinal = 0;
+    };
+    using DrainObserver = std::function<void (const DrainView&)>;
+
     using SampleToTick = std::function<std::int64_t (std::int64_t)>;
     static constexpr std::size_t kDefaultCapacity = 65536;
 
@@ -53,7 +71,10 @@ public:
     bool publishProgress (int passOrdinal, std::int64_t endSample,
                           bool complete) noexcept;
 
-    bool service (std::int64_t linearCaptureLength = -1);
+    // The observer may copy the retained drain; its pointers expire on return.
+    bool service (std::int64_t linearCaptureLength = -1, const DrainObserver& observer = {});
+    // A consumer-owned decoder with no producer can replay a copied drain.
+    bool replay (const DrainView& drain);
     void sealFinal (int passOrdinal, std::int64_t endSample);
     std::vector<MidiCapturedPass> takeCompleted();
     const MidiCapturePreview& preview() const noexcept { return previewSnapshot; }
@@ -63,12 +84,6 @@ public:
     }
 
 private:
-    struct Record
-    {
-        RawEvent event;
-        bool progress = false;
-        bool complete = false;
-    };
     struct HeldNote
     {
         bool active = false;
@@ -82,6 +97,7 @@ private:
 
     bool push (Record record) noexcept;
     void consume (const Record& record);
+    bool finishDrain (bool changed, std::uint64_t attemptedSnapshot, int completedSnapshot);
     void advanceToPass (int passOrdinal);
     void finishPass (std::int64_t endSample, bool carryState);
     void recoverGap();

@@ -823,3 +823,54 @@ TEST_CASE ("consolidateInto carries an owned MIDI sidecar independently of a for
     CHECK (listing (foreign) == foreignBefore);
     CHECK (foreign.getChildFile ("session.json").loadFileAsString() == "foreign session");
 }
+
+TEST_CASE ("First Save carries owned live MIDI journals alongside ordinary recovery files", "[session][serializer][consolidate][midi][journal]")
+{
+    bool inPlace = false, rollback = false, foreign = false;
+    SECTION ("new destination") {}
+    SECTION ("first save in the current folder") { inPlace = true; }
+    SECTION ("failed save rolls back both copies") { rollback = true; }
+    SECTION ("failed first save in place preserves the original folder") { inPlace = rollback = true; }
+    SECTION ("foreign current folder remains untouched") { foreign = true; }
+    const auto root = makeTempDir ("dusk-consolidate-journal-");
+    const struct Cleanup { juce::File dir; ~Cleanup() { dir.deleteRecursively(); } } cleanup { root };
+    const auto oldDir = root.getChildFile ("Current");
+    const auto sidecar = foreign ? root.getChildFile ("Owned sidecar") : oldDir;
+    const auto journal = foreign ? sidecar.getChildFile ("recordings/owned") : root.getChildFile ("Owned journal");
+    const auto destination = inPlace ? oldDir : root.getChildFile ("Saved");
+    Session s;
+    s.setSessionDirectory (oldDir);
+    const auto ordinary = sidecar.getChildFile ("midi/takes/pass.mid");
+    const auto checkpoint = journal.getChildFile ("midi/recording/pass.recording.mid");
+    for (const auto& file : { ordinary, checkpoint })
+    {
+        REQUIRE (file.getParentDirectory().createDirectory().wasOk());
+        REQUIRE (file.replaceWithText (file.getFileName()));
+    }
+    if (foreign) REQUIRE (oldDir.getChildFile ("session.json").replaceWithText ("foreign session"));
+    const auto before = listing (oldDir);
+    const auto result = SessionSerializer::consolidateInto (s, destination, ! foreign, pathOf (sidecar), pathOf (journal));
+    REQUIRE (result.ok);
+    REQUIRE (destination.getChildFile ("midi/takes/pass.mid").loadFileAsString() == "pass.mid");
+    REQUIRE (destination.getChildFile ("midi/recording/pass.recording.mid").loadFileAsString() == "pass.recording.mid");
+    REQUIRE (result.copiedMidiFiles.size() == (inPlace ? 1 : 2));
+    if (rollback)
+    {
+        SessionSerializer::revertConsolidation (s, result);
+        if (inPlace) REQUIRE (listing (destination) == before);
+        else REQUIRE_FALSE (destination.exists());
+        REQUIRE (ordinary.existsAsFile());
+        REQUIRE (checkpoint.existsAsFile());
+    }
+    else
+    {
+        SessionSerializer::removeCopiedMidiSources (result, pathOf (sidecar));
+        REQUIRE (checkpoint.existsAsFile());
+        SessionSerializer::removeCopiedMidiSources (result, pathOf (journal));
+        REQUIRE_FALSE (checkpoint.exists());
+        REQUIRE_FALSE (journal.getChildFile ("midi").exists());
+        REQUIRE (ordinary.existsAsFile() == inPlace);
+        REQUIRE (destination.getChildFile ("midi/recording/pass.recording.mid").existsAsFile());
+    }
+    if (foreign) REQUIRE (listing (oldDir) == before);
+}

@@ -566,6 +566,28 @@ ScenarioResult midiRecordingLivesInJson (ScenarioContext& ctx)
         start.addEvent (controller, 3, 64);
         ctx.pumpWithMidi (input, std::move (start));
         ctx.pump (16);
+        engine.serviceMidiRecording();
+        engine.flushMidiRecoveryFiles();
+        std::vector<std::filesystem::path> checkpoints;
+        std::error_code checkpointError;
+        for (std::filesystem::directory_iterator it (ctx.sessionDir() / "midi" / "recording", checkpointError), end;
+             ! checkpointError && it != end; it.increment (checkpointError))
+            if (it->path().extension() == ".mid") checkpoints.push_back (it->path());
+        if (! ctx.expect (! checkpointError && checkpoints.size() == 1,
+                          "the unfinished MIDI pass has no unique checkpoint" + with))
+            return ctx.verdict();
+        midi::MidiFileReader checkpoint;
+        if (! ctx.expect (checkpoint.readFile (checkpoints.front()), "the live checkpoint is not a readable MIDI file" + with))
+            return ctx.verdict();
+        bool heldOn = false, heldOff = false, capturedControl = false;
+        for (const auto& part : checkpoint.tracks())
+            for (const auto& event : part)
+            {
+                heldOn |= event.isNoteOn() && event.noteNumber() == 60;
+                heldOff |= event.isNoteOff() && event.noteNumber() == 60;
+                capturedControl |= event.status == 0xb2 && event.data1 == 74 && event.data2 == 87;
+            }
+        ctx.expect (heldOn && heldOff && capturedControl, "the checkpoint lost the held note or its controller" + with);
         dusk::MidiBuffer finish;
         const std::uint8_t noteOff[] { 0x82, 60, 0 };
         finish.addEvent (noteOff, 3, 0);

@@ -238,6 +238,7 @@ public:
     std::function<void (int trackIndex, int regionIndex)> onMidiPassCommitted;
     // Message thread: resolves a safe recovery folder before each batch is queued.
     std::function<std::filesystem::path()> recoveryFolderForMidi;
+    std::function<std::filesystem::path()> journalFolderForMidi;
     void serviceMidiRecording();
     sfz::LibraryService& getSfzLibrary() noexcept { return *sfzLibrary; }
     bool changeSfzLibraryLocation (std::filesystem::path destination, bool moveExisting, std::string& error);
@@ -847,8 +848,10 @@ public:
     void queueMidiTrackFiles();
     // Message thread. Queues the take files still waiting, even with
     // processing held out, and returns once every MIDI recovery file queued so
-    // far is written or has failed.
-    void flushMidiRecoveryFiles();
+    // far is written or has failed. True means the requested source folders
+    // have no unfinished journal writes and can be copied while stopped.
+    bool flushMidiRecoveryFiles (const std::filesystem::path& copiedFolder = {},
+                                 const std::filesystem::path& copiedJournalFolder = {});
 
     // Engine-side xrun: callback wall-clock exceeded the buffer's
     // audio time. Distinct from getBackendXRunCount.
@@ -1406,6 +1409,7 @@ private:
     static void reportMidiRecoveryWrite (const midirecovery::PendingFile& file,
                                          const midirecovery::WriteResult& result);
     midirecovery::Writer midiRecoveryWriter { &AudioEngine::reportMidiRecoveryWrite };
+    midirecovery::Journal midiRecoveryJournal { &AudioEngine::reportMidiRecoveryWrite };
 
     // Outlives the engine so a hop still queued when it dies is a no-op instead
     // of a use-after-free: the poll thread posts those, and joining it in the

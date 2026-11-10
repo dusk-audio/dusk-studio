@@ -5,6 +5,8 @@
 #include "engine/RecordManager.h"
 #include "engine/MidiTimelineSchedule.h"
 #include "session/Session.h"
+#include "session/MidiRecoveryWriter.h"
+#include "engine/midi/MidiFileReader.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -888,4 +890,69 @@ TEST_CASE ("Pending MIDI Merge uses the current playback clock after a constant-
     REQUIRE (target.notes.size() == 1);
     CHECK (clock.at (target.notes[0].startTick) == 24000);
     CHECK (clock.at (target.notes[0].startTick + target.notes[0].lengthInTicks) == 48000);
+}
+
+TEST_CASE ("RecordManager journals every loop before Stop and identifies each final pass", "[recording][recordmanager][midi][journal]")
+{
+    const bool merge = GENERATE (false, true);
+    CaptureFixture fixture (merge);
+    midirecovery::Journal journal;
+    const auto folder = std::filesystem::u8path (fixture.temporary.directory.getFullPathName().toStdString());
+    const auto recordings = folder / "midi" / "recording";
+    REQUIRE (fixture.manager.startRecording (kSampleRate, 100, 0, loopPlan()));
+    fixture.manager.beginMidiJournals (journal, folder);
+    std::vector<RecordManager::RecordedMidiPass> finals;
+    const auto collect = [&]
+    {
+        for (const auto& group : fixture.manager.takeMidiPassGroups())
+            for (const auto& track : group.tracks)
+                finals.push_back ({ track.trackIndex, group.regionOf (track), track.journalId, group.passOrdinal });
+    };
+    for (int ordinal = 1; ordinal <= 12; ++ordinal)
+    {
+        writeLoop (fixture.manager, 0, ordinal, note (60 + ordinal));
+        fixture.manager.serviceMidiCapture();
+        if (merge) collect();
+    }
+    journal.flush();
+    std::size_t checkpointCount = 0;
+    for (const auto& entry : std::filesystem::directory_iterator (recordings))
+    {
+        midi::MidiFileReader reader;
+        REQUIRE (reader.readFile (entry.path()));
+        ++checkpointCount;
+    }
+    REQUIRE (checkpointCount == 12);
+    // Stop must observe this last undrained partial pass too.
+    writeLoop (fixture.manager, 0, 13, note (80, 10, 20), 40);
+    fixture.manager.stopRecording (140);
+    journal.flush();
+    bool finalCheckpoint = false;
+    for (const auto& entry : std::filesystem::directory_iterator (recordings))
+    {
+        midi::MidiFileReader reader;
+        REQUIRE (reader.readFile (entry.path()));
+        for (const auto& track : reader.tracks())
+            for (const auto& event : track)
+                finalCheckpoint |= event.isNoteOn() && event.noteNumber() == 80;
+    }
+    REQUIRE (finalCheckpoint);
+    if (merge) collect();
+    else finals = fixture.manager.takeRecordedMidiPasses();
+    REQUIRE (finals.size() == 13);
+    for (std::size_t i = 0; i < finals.size(); ++i)
+    {
+        const auto& final = finals[i];
+        REQUIRE (final.journalId != 0);
+        REQUIRE (final.journalId == finals.front().journalId);
+        REQUIRE (final.passOrdinal == (int) i + 1);
+        auto file = midirecovery::pendingTakeFile (folder, std::chrono::system_clock::now(),
+            fixture.session, kSampleRate, final.trackIndex, final.pass);
+        REQUIRE (file);
+        REQUIRE (journal.commit (std::move (*file), final.journalId, final.passOrdinal));
+    }
+    journal.flush();
+    REQUIRE (std::filesystem::is_empty (recordings));
+    REQUIRE (std::distance (std::filesystem::directory_iterator (folder / "midi" / "takes"),
+                            std::filesystem::directory_iterator {}) == 13);
 }

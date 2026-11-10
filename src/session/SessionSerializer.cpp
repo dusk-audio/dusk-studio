@@ -3456,19 +3456,19 @@ void discardConsolidatedFiles (const SessionSerializer::ConsolidationResult& don
 
 SessionSerializer::ConsolidationResult
 SessionSerializer::consolidateInto (Session& s, const juce::File& newSessionDir,
-                                    bool ownsOldFolder, const std::filesystem::path& midiSourceFolder)
+                                    bool ownsOldFolder, const std::filesystem::path& midiSourceFolder,
+                                    const std::filesystem::path& journalSourceFolder)
 {
     ConsolidationResult res;
     const auto oldDir = s.getSessionDirectory();
-    if (newSessionDir == juce::File() || newSessionDir == oldDir)
-        return res;
+    if (newSessionDir == juce::File()) return res;
     // The session's own folder spelled another way (a link, a bind mount):
     // copying a file onto itself deletes it before the copy.
     const auto newPath = std::filesystem::u8path (newSessionDir.getFullPathName().toStdString());
     const auto oldPath = std::filesystem::u8path (oldDir.getFullPathName().toStdString());
     std::error_code sameDirError;
-    if (! oldPath.empty() && std::filesystem::equivalent (newPath, oldPath, sameDirError))
-        return res;
+    const bool sameDirectory = newSessionDir == oldDir
+        || (! oldPath.empty() && std::filesystem::equivalent (newPath, oldPath, sameDirError));
 
     auto noteIfAbsent = [&res] (const std::filesystem::path& p)
     {
@@ -3477,6 +3477,32 @@ SessionSerializer::consolidateInto (Session& s, const juce::File& newSessionDir,
             && std::find (res.createdPaths.begin(), res.createdPaths.end(), p) == res.createdPaths.end())
             res.createdPaths.push_back (p);
     };
+    const auto midiSource = ! midiSourceFolder.empty() ? midiSourceFolder
+                                                     : ownsOldFolder ? oldPath : std::filesystem::path {};
+    std::error_code sameJournalError;
+    const bool carriesJournal = ! journalSourceFolder.empty() && journalSourceFolder != midiSource
+        && ! std::filesystem::equivalent (journalSourceFolder, midiSource, sameJournalError);
+    FolderTree journalTree { "midi", {}, {} };
+    if (carriesJournal && ! listFolderTree (res, journalSourceFolder, newPath, journalTree))
+    {
+        res.ok = false;
+        return res;
+    }
+    if (sameDirectory)
+    {
+        if (carriesJournal)
+        {
+            noteIfAbsent (newPath / "midi");
+            if (! copyFolderTree (res, journalSourceFolder, newPath, journalTree, &res.copiedMidiFiles, noteIfAbsent))
+            {
+                discardConsolidatedFiles (res);
+                res.ok = false;
+            }
+        }
+        res.filesCopied = (int) res.copiedFiles.size();
+        return res;
+    }
+
     auto noteMissingDirs = [&noteIfAbsent] (const File& dir)
     {
         std::vector<std::filesystem::path> missing;
@@ -3489,8 +3515,6 @@ SessionSerializer::consolidateInto (Session& s, const juce::File& newSessionDir,
         noteIfAbsent (newPath / name);
 
     FolderTree midiTree { "midi", {}, {} }, backupsTree { "backups", {}, {} };
-    const auto midiSource = ! midiSourceFolder.empty() ? midiSourceFolder
-                                                     : ownsOldFolder ? oldPath : std::filesystem::path {};
     const bool carriesMidi = ! midiSource.empty();
     const bool carriesBackups = ownsOldFolder && ! oldPath.empty();
     if ((carriesMidi && ! listFolderTree (res, midiSource, newPath, midiTree))
@@ -3609,6 +3633,7 @@ SessionSerializer::consolidateInto (Session& s, const juce::File& newSessionDir,
         res.copiedFiles.push_back (fsPathOf (target));
     }
     if ((carriesMidi && ! copyFolderTree (res, midiSource, newPath, midiTree, &res.copiedMidiFiles, noteIfAbsent))
+        || (carriesJournal && ! copyFolderTree (res, journalSourceFolder, newPath, journalTree, &res.copiedMidiFiles, noteIfAbsent))
         || (carriesBackups && ! copyFolderTree (res, oldPath, newPath, backupsTree, nullptr, noteIfAbsent)))
     {
         discardConsolidatedFiles (res);
@@ -3655,21 +3680,24 @@ void SessionSerializer::removeCopiedMidiSources (const ConsolidationResult& done
         }
         return entry->second;
     };
+    if (oldSessionDir.empty()) return;
     for (const auto& [source, copy] : done.copiedMidiFiles)
     {
+        const auto relative = source.lexically_relative (oldSessionDir);
+        if (relative.empty() || relative.is_absolute() || *relative.begin() != "midi") continue;
         // A source goes only once a power loss could no longer take its copy
         // back: the copy's bytes, and its name in each folder below the new
         // session folder, which the session.json write has synced.
         std::error_code error;
         bool lasting = dusk::fs::syncFile (copy, error);
         auto folder = copy.parent_path();
-        for (auto rest = source.lexically_relative (oldSessionDir).parent_path(); lasting && ! rest.empty();
+        for (auto rest = relative.parent_path(); lasting && ! rest.empty();
              rest = rest.parent_path(), folder = folder.parent_path())
             lasting = lasts (folder);
         if (lasting) stdfs::remove (dusk::fs::nativeIOPath (source), ignored);
     }
     const auto midi = oldSessionDir / "midi";
-    for (const auto& folder : { midi / "takes", midi / "tracks", midi })
+    for (const auto& folder : { midi / "takes", midi / "tracks", midi / "recording", midi })
     {
         const auto native = dusk::fs::nativeIOPath (folder);
         if (stdfs::symlink_status (native, ignored).type() == stdfs::file_type::directory

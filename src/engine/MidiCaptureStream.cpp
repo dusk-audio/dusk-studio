@@ -319,7 +319,7 @@ void MidiCaptureStream::rebuildPreview()
     previewSnapshot.generation = generation;
 }
 
-bool MidiCaptureStream::service (std::int64_t linearCaptureLength)
+bool MidiCaptureStream::service (std::int64_t linearCaptureLength, const DrainObserver& observer)
 {
     if (sealed) return false;
     const bool limitChanged = linearPreviewLength != linearCaptureLength;
@@ -331,13 +331,38 @@ bool MidiCaptureStream::service (std::int64_t linearCaptureLength)
     const auto attemptedSnapshot = attemptedSequence.load (std::memory_order_acquire);
     const auto readyEnd = writePosition.load (std::memory_order_acquire);
     auto read = readPosition.load (std::memory_order_relaxed);
-    bool changed = limitChanged || read != readyEnd;
+    if (observer)
+    {
+        const auto start = (std::size_t) (read % records.size());
+        const auto count = (std::size_t) (readyEnd - read);
+        const auto firstCount = std::min (count, records.size() - start);
+        observer ({ records.data() + start, firstCount, records.data(), count - firstCount,
+                    linearCaptureLength, attemptedSnapshot, completedSnapshot });
+    }
+    const bool changed = limitChanged || read != readyEnd;
     while (read != readyEnd)
     {
         consume (records[(std::size_t) (read % records.size())]);
         ++read;
         readPosition.store (read, std::memory_order_release);
     }
+    return finishDrain (changed, attemptedSnapshot, completedSnapshot);
+}
+
+bool MidiCaptureStream::replay (const DrainView& drain)
+{
+    if (sealed) return false;
+    const bool limitChanged = linearPreviewLength != drain.linearCaptureLength;
+    linearPreviewLength = drain.linearCaptureLength;
+    previewNeedsRebuild = previewNeedsRebuild || limitChanged;
+    for (std::size_t i = 0; i < drain.firstCount; ++i) consume (drain.first[i]);
+    for (std::size_t i = 0; i < drain.secondCount; ++i) consume (drain.second[i]);
+    return finishDrain (limitChanged || drain.firstCount > 0 || drain.secondCount > 0,
+                        drain.attemptedSequence, drain.completedOrdinal);
+}
+
+bool MidiCaptureStream::finishDrain (bool changed, std::uint64_t attemptedSnapshot, int completedSnapshot)
+{
     if (attemptedSnapshot >= expectedSequence)
     {
         recoverGap();
