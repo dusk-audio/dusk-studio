@@ -92,6 +92,12 @@ TEST_CASE ("A session backup's name gives back when it was saved", "[session][ba
     CHECK_FALSE (backups::savedAtOf ("20230229-000000Z_session.json"));
     CHECK_FALSE (backups::savedAtOf ("20261108-246005Z_session.json"));
     CHECK_FALSE (backups::savedAtOf ("20261108-143005Z_track01_Keys.mid"));
+    const auto future = backups::savedAtOf ("25000101-000000Z_session.json");
+    const auto seconds = std::chrono::seconds (16725225600LL);
+    const bool representable = seconds <= std::chrono::floor<std::chrono::seconds> (Clock::duration::max());
+    CHECK (future.has_value() == representable);
+    if (future)
+        CHECK (std::chrono::floor<std::chrono::seconds> (future->time_since_epoch()) == seconds);
 }
 
 TEST_CASE ("A saved session.json is kept in backups, once for the same bytes, never over another file",
@@ -366,4 +372,45 @@ TEST_CASE ("Two files hold the same bytes only when both read and match", "[sess
     CHECK_FALSE (backups::sameBytes (a, c));
     CHECK_FALSE (backups::sameBytes (a, temp.path() / "missing.json"));
     CHECK_FALSE (backups::sameBytes (temp.path() / "missing.json", temp.path() / "missing.json"));
+}
+
+TEST_CASE ("Session backup ordering survives a clock rollback and a full copy suffix", "[session][backups]")
+{
+    const duskstudio::test::TempDirectory temp ("dusk-backups-clock-rollback-");
+    const auto dir = temp.path();
+    const auto folder = dir / "backups";
+    const auto now = Clock::now();
+    const auto future = now + std::chrono::hours (24);
+    stdfs::create_directory (folder);
+    stdfs::path original;
+    SECTION ("ordinary future backup") { original = folder / backups::fileName (future); }
+    SECTION ("imported stamp beyond a nanosecond clock") { original = folder / "25000101-000000Z_session.json"; }
+    SECTION ("copy 999 with holes before it") { original = folder / backups::fileName (future, 999); }
+    write (original, "first");
+
+    auto result = backups::keepSaved (dir, now, "second");
+    REQUIRE (result.failures.empty());
+    REQUIRE (result.written.size() == 1);
+    CHECK (backups::newest (dir) == result.written.front());
+    CHECK (backups::newest (dir, result.written.front()) == original);
+    CHECK (result.written.front().filename() > original.filename());
+    CHECK (read (original) == "first");
+    result = backups::keepSaved (dir, now, "second");
+    CHECK (result.failures.empty());
+    CHECK (result.written.empty());
+    result = backups::keepSaved (dir, now, "first");
+    REQUIRE (result.failures.empty());
+    REQUIRE (result.written.size() == 1);
+    CHECK (backups::newest (dir) == result.written.front());
+
+    for (int i = 0; i < backups::kKeepNewest + 5; ++i)
+    {
+        const auto bytes = "edit " + std::to_string (i);
+        result = backups::keepSaved (dir, now, bytes);
+        REQUIRE (result.failures.empty());
+        REQUIRE (result.written.size() == 1);
+        CHECK (backups::newest (dir) == result.written.front());
+        CHECK (read (result.written.front()) == bytes);
+    }
+    CHECK (namesIn (folder).size() == backups::kKeepNewest);
 }

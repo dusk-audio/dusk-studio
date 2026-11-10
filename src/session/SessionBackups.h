@@ -16,7 +16,8 @@
 //
 // "20261108-143005Z_session.json" names a backup by the UTC second it was
 // saved in; further backups of that second end "_002" to "_999" before
-// ".json". A plain name sort is the order they were made in.
+// ".json". After a clock rollback or copy 999, names advance past the newest
+// existing backup, so a plain name sort still gives their creation order.
 //
 // A backup is never replaced. Retention, after each write, is the only thing
 // that removes files there, and only files with backup names: it keeps the 20

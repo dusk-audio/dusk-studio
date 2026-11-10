@@ -148,18 +148,28 @@ void retain (const stdfs::path& folder, Result& result)
     }
 }
 
-// Writes bytes under the first name of that second nothing in backups/ holds
-// yet, so no file there is ever replaced, then applies retention.
+// Keep filename order monotonic even if the wall clock moved backwards.
 void writeNew (Result& result, const stdfs::path& sessionDir, std::chrono::system_clock::time_point savedAt,
-               std::string_view bytes)
+               std::string_view bytes, std::string_view newest)
 {
     const auto folder = sessionDir / kFolder;
     if (! makeFolder (sessionDir, folder, result)) return;
 
-    const auto stamp = utcStamp (savedAt);
-    for (int copy = 1; copy <= kMaxCopies; ++copy)
+    auto filenameTime = std::chrono::floor<std::chrono::seconds> (savedAt);
+    int firstCopy = 1;
+    if (const auto newestTime = recoverystamp::timeOfStamp (newest);
+        newestTime && *newestTime >= filenameTime)
     {
-        const auto target = folder / stdfs::u8path (nameFor (stamp, copy));
+        filenameTime = *newestTime;
+        const auto suffix = newest.substr (kStampLength + kBase.size(),
+                                           newest.size() - kStampLength - kBase.size() - kExtension.size());
+        firstCopy = suffix.empty() ? 2 : 1 + (suffix[1] - '0') * 100 + (suffix[2] - '0') * 10 + (suffix[3] - '0');
+    }
+    for (int attempt = 0; attempt < kMaxCopies; ++attempt)
+    {
+        const int position = firstCopy - 1 + attempt;
+        const auto stamp = utcStamp (filenameTime + std::chrono::seconds (position / kMaxCopies));
+        const auto target = folder / stdfs::u8path (nameFor (stamp, position % kMaxCopies + 1));
         std::error_code error;
         const auto status = stdfs::symlink_status (dusk::fs::nativeIOPath (target), error);
         if (status.type() != stdfs::file_type::not_found)
@@ -168,8 +178,9 @@ void writeNew (Result& result, const stdfs::path& sessionDir, std::chrono::syste
             result.failures.push_back ({ target, error });
             return;
         }
-        if (! dusk::fs::writeFileAtomically (target, bytes.data(), bytes.size(), error))
+        if (! dusk::fs::writeFileAtomically (target, bytes.data(), bytes.size(), error, dusk::fs::AtomicWriteMode::CreateNew))
         {
+            if (error == std::errc::file_exists) continue;
             result.failures.push_back ({ target, error });
             return;
         }
@@ -284,7 +295,7 @@ Result keepCurrent (const std::filesystem::path& sessionDir, std::chrono::system
         const auto folder = sessionDir / kFolder;
         const auto names = backupsIn (folder, &result);
         if (! names.empty() && holds (folder / stdfs::u8path (names.back()), content)) return;
-        writeNew (result, sessionDir, keptAt, content);
+        writeNew (result, sessionDir, keptAt, content, names.empty() ? std::string_view {} : names.back());
     });
 }
 
@@ -296,7 +307,7 @@ Result keepSaved (const std::filesystem::path& sessionDir, std::chrono::system_c
         const auto folder = sessionDir / kFolder;
         const auto names = backupsIn (folder, &result);
         if (! names.empty() && holds (folder / stdfs::u8path (names.back()), bytes)) return;
-        writeNew (result, sessionDir, savedAt, bytes);
+        writeNew (result, sessionDir, savedAt, bytes, names.empty() ? std::string_view {} : names.back());
     });
 }
 
@@ -356,7 +367,12 @@ std::optional<std::chrono::system_clock::time_point> savedAtOf (const std::files
 {
     const auto name = backup.filename().u8string();
     if (! isBackupName (name)) return std::nullopt;
-    return recoverystamp::timeOfStamp (name);
+    const auto parsed = recoverystamp::timeOfStamp (name);
+    using Clock = std::chrono::system_clock;
+    if (! parsed || *parsed < std::chrono::ceil<std::chrono::seconds> (Clock::time_point::min())
+        || *parsed > std::chrono::floor<std::chrono::seconds> (Clock::time_point::max()))
+        return std::nullopt;
+    return Clock::time_point (std::chrono::duration_cast<Clock::duration> (parsed->time_since_epoch()));
 }
 
 bool sameBytes (const std::filesystem::path& a, const std::filesystem::path& b) noexcept

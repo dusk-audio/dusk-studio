@@ -375,7 +375,9 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         realtime_cpu_guard.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/RealtimeKit.cpp)
     target_link_libraries(dusk-studio-tests PRIVATE asound)
-    target_link_options(dusk-studio-tests PRIVATE "-Wl,--wrap=snd_seq_query_next_client")
+    target_link_options(dusk-studio-tests PRIVATE
+        "-Wl,--wrap=snd_seq_query_next_client"
+        "-Wl,--wrap=renameat2" "-Wl,--wrap=link" "-Wl,--wrap=unlink" "-Wl,--wrap=fsync")
     add_executable(dusk-alsa-output-tests
         alsa_seq_output_schedule.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/midi/AlsaSeqMidi.cpp)
@@ -1264,13 +1266,18 @@ catch_discover_tests(dusk-studio-tests
     TEST_SPEC "[sfz-filesystem-fixture]"
     EXTRA_ARGS --allow-running-no-tests
     PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:")
+# Normalization-insensitive lookup is available on HFS+ and APFS, not every test filesystem.
+catch_discover_tests(dusk-studio-tests
+    TEST_SPEC "[normalization-fixture]"
+    EXTRA_ARGS --allow-running-no-tests
+    PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:")
 # File permissions stop no read by root, so a case that needs them skips there.
 catch_discover_tests(dusk-studio-tests
     TEST_SPEC "[permission-fixture]"
     EXTRA_ARGS --allow-running-no-tests
     PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:")
 catch_discover_tests(dusk-studio-tests
-    TEST_SPEC "~[alsa]~[ipc]~[host-limits]~[sfz-disk-full]~[sfz-location-disk-full]~[sfz-store-disk-full]~[sfz-filesystem-fixture]~[permission-fixture]")
+    TEST_SPEC "~[alsa]~[ipc]~[host-limits]~[sfz-disk-full]~[sfz-location-disk-full]~[sfz-store-disk-full]~[sfz-filesystem-fixture]~[normalization-fixture]~[permission-fixture]")
 # [ipc] cases start plug-in hosts and assert on bounded response times. Run
 # them serially so other cases cannot starve their control threads.
 catch_discover_tests(dusk-studio-tests
