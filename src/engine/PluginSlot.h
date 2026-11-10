@@ -4,6 +4,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include "PluginDescriptor.h"
+#include "hosting/StandardVst3Midi.h"
 #include "../foundation/MessageThread.h"
 #include "../foundation/ProcessedBlock.h"
 #include "../foundation/TransportPosition.h"
@@ -117,7 +118,8 @@ public:
     bool isBypassed() const noexcept             { return bypassed.load (std::memory_order_relaxed); }
 
     // In-place process. Empty MIDI buffer for FX inserts; per-track MIDI
-    // for instrument plugins. Mono-only plugins on stereo input are
+    // for instrument plugins. In-process VST3 callers must reserve
+    // kMidiRoutingBlockBytes in the MIDI buffer. Mono-only plugins on stereo input are
     // averaged to mono and broadcast back to both channels. Returns the
     // rendered block's timing, or no value on dry fallback. A reset flag marks
     // the first rendered block after the host reinitialised the processor.
@@ -386,6 +388,8 @@ private:
     // it blocking, so a plugin can never be re-prepared mid-processBlock even
     // on a reconfigure path the engine-level gate didn't anticipate.
     juce::SpinLock processLock;
+    hosting::StandardVst3Midi standardMidi;
+    bool standardVst3 = false;
 
     // Audio thread, with processLock held by the process call. The latency
     // report follows the flag (getLatencySamples), and the overrun count starts

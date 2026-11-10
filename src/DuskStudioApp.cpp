@@ -668,7 +668,7 @@ static bool runHeadlessInstrumentTest (const juce::String& pluginPath)
 
     std::vector<float> L ((size_t) blockSize), R ((size_t) blockSize);
     juce::MidiBuffer hostMidi;
-    hostMidi.ensureSize (dusk::kMidiBlockBytes);
+    hostMidi.ensureSize (dusk::kMidiRoutingBlockBytes);
     float peak = 0.0f;
     double rms  = 0.0;
     long long counted = 0;

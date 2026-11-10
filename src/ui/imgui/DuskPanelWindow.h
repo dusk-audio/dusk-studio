@@ -252,6 +252,7 @@ public:
     bool focusForScenario();
     bool hasKeyboardForScenario() const noexcept;
     std::uint64_t completedFramesForScenario() const noexcept;
+    void pauseFramesForScenario (bool paused) noexcept;
     bool capturesKeyboardForScenario() const noexcept;
     // How often a field or menu opening has asked the system to focus the child.
     int keyboardRequestsForScenario() const noexcept;
