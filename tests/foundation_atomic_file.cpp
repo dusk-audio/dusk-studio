@@ -11,9 +11,13 @@
 #include <system_error>
 #include <vector>
 
-
 #if defined(__linux__)
  #include <sys/stat.h>
+#elif defined(__APPLE__)
+ #include <dlfcn.h>
+#endif
+
+#if defined(__linux__) || defined(__APPLE__)
 
 namespace
 {
@@ -29,6 +33,7 @@ struct PublicationFaults
 };
 }
 
+#if defined(__linux__)
 extern "C" int __real_renameat2 (int, const char*, int, const char*, unsigned);
 extern "C" int __real_link (const char*, const char*);
 extern "C" int __real_unlink (const char*);
@@ -44,7 +49,24 @@ extern "C" int __wrap_renameat2 (int sourceDir, const char* source, int targetDi
     return __real_renameat2 (sourceDir, source, targetDir, target, flags);
 }
 
+#else
+extern "C" int renamex_np (const char* source, const char* target, unsigned flags)
+{
+    if (publicationFaults != nullptr && flags == RENAME_EXCL)
+    {
+        errno = publicationFaults->renameError;
+        return -1;
+    }
+    static const auto original = reinterpret_cast<decltype (&::renamex_np)> (dlsym (RTLD_NEXT, "renamex_np"));
+    return original (source, target, flags);
+}
+#endif
+
+#if defined(__linux__)
 extern "C" int __wrap_link (const char* source, const char* target)
+#else
+extern "C" int link (const char* source, const char* target)
+#endif
 {
     if (publicationFaults != nullptr)
     {
@@ -63,10 +85,19 @@ extern "C" int __wrap_link (const char* source, const char* target)
             if (written != 7 || closed != 0) { errno = EIO; return -1; }
         }
     }
+   #if defined(__linux__)
     return __real_link (source, target);
+   #else
+    static const auto original = reinterpret_cast<decltype (&::link)> (dlsym (RTLD_NEXT, "link"));
+    return original (source, target);
+   #endif
 }
 
+#if defined(__linux__)
 extern "C" int __wrap_unlink (const char* path)
+#else
+extern "C" int unlink (const char* path)
+#endif
 {
     if (publicationFaults != nullptr)
     {
@@ -77,9 +108,15 @@ extern "C" int __wrap_unlink (const char* path)
             return -1;
         }
     }
+   #if defined(__linux__)
     return __real_unlink (path);
+   #else
+    static const auto original = reinterpret_cast<decltype (&::unlink)> (dlsym (RTLD_NEXT, "unlink"));
+    return original (path);
+   #endif
 }
 
+#if defined(__linux__)
 extern "C" int __wrap_fsync (int handle)
 {
     struct stat info {};
@@ -94,6 +131,7 @@ extern "C" int __wrap_fsync (int handle)
     }
     return __real_fsync (handle);
 }
+#endif
 #endif
 
 namespace stdfs = std::filesystem;
@@ -234,15 +272,20 @@ TEST_CASE ("Atomic create preserves an existing destination and removes its temp
     CHECK (namesIn (temp.path()) == std::vector<std::string> { "take.mid" });
 }
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
 TEST_CASE ("Atomic create falls back to hard links only when no-replace rename is unsupported",
            "[foundation][fs][atomic][atomic-fallback]")
 {
     const duskstudio::test::TempDirectory temp ("dusk-atomic-fallback-");
     const auto target = temp.path() / "take.mid";
     PublicationFaults faults;
+   #if defined(__APPLE__)
+    faults.renameError = ENOTSUP;
+   #else
     faults.renameError = GENERATE (ENOSYS, EINVAL, EOPNOTSUPP);
-    bool succeeds = true, published = true, temporaryRemains = false;
+   #endif
+    bool succeeds = true, temporaryRemains = false;
+    [[maybe_unused]] bool published = true;
     int expectedError = 0, expectedLinks = 1, expectedUnlinks = 1;
     std::string expectedBytes = "complete";
     auto mode = dusk::fs::AtomicWriteMode::CreateNew;
@@ -272,11 +315,13 @@ TEST_CASE ("Atomic create falls back to hard links only when no-replace rename i
         faults.unlinkError = EACCES;
         temporaryRemains = true;
     }
+   #if defined(__linux__)
     SECTION ("folder sync failure still reports failed durability")
     {
         faults.syncError = expectedError = EIO;
         succeeds = false;
     }
+   #endif
     SECTION ("ordinary replacement keeps using rename")
     {
         mode = dusk::fs::AtomicWriteMode::Replace;
@@ -287,7 +332,9 @@ TEST_CASE ("Atomic create falls back to hard links only when no-replace rename i
     CHECK (error == (expectedError == 0 ? std::error_code {} : std::error_code (expectedError, std::generic_category())));
     CHECK (faults.links == expectedLinks);
     CHECK (faults.unlinks == expectedUnlinks);
+   #if defined(__linux__)
     CHECK (faults.folderSyncs == (published ? 1 : 0));
+   #endif
     const auto names = namesIn (temp.path());
     if (expectedBytes.empty())
     {

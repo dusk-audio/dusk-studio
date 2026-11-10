@@ -252,9 +252,13 @@ inline bool writeFileAtomically (const std::filesystem::path& target, const void
            #else
             : ::renameat2 (AT_FDCWD, temporary.c_str(), AT_FDCWD, target.c_str(), RENAME_NOREPLACE);
            #endif
-       #if defined(__linux__)
+       #if defined(__linux__) || defined(__APPLE__)
         if (published != 0 && mode == AtomicWriteMode::CreateNew
+           #if defined(__APPLE__)
+            && errno == ENOTSUP)
+           #else
             && (errno == ENOSYS || errno == EINVAL || errno == EOPNOTSUPP))
+           #endif
         {
             published = ::link (temporary.c_str(), target.c_str());
             if (published == 0) ::unlink (temporary.c_str());

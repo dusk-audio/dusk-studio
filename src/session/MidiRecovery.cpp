@@ -247,14 +247,16 @@ int copyOf (std::string_view name, std::string_view tagAndName, TrackFile kind) 
 int copyOfFile (const stdfs::path& folder, const std::string& name, int trackNumber,
                 const std::string& sanitized, TrackFile kind)
 {
-    if (const int copy = copyOf (name, trackTag (trackNumber) + sanitized, kind); copy != 0) return copy;
+    const auto tag = trackTag (trackNumber);
+    if (const int copy = copyOf (name, tag + sanitized, kind); copy != 0) return copy;
     const auto ascii = [] (const std::string& text)
     {
         return std::all_of (text.begin(), text.end(), [] (unsigned char c) { return c < 0x80; });
     };
     if (ascii (name) && ascii (sanitized)) return 0;
     const auto extension = extensionOf (kind);
-    if (! isStamp (name) || name.size() < kStampLength + extension.size()
+    if (! isStamp (name) || name.size() < kStampLength + tag.size() + extension.size()
+        || name.compare (kStampLength, tag.size(), tag) != 0
         || name.compare (name.size() - extension.size(), extension.size(), extension) != 0)
         return 0;
 

@@ -863,7 +863,7 @@ TEST_CASE ("ALSA seq backend does not report this process's own clients coming a
         {
             AlsaSeqMidiOutput out;
             (void) out.enumerate();
-            REQUIRE (changes.total() == 0);
+            REQUIRE_FALSE (changes.waitFor (1, 250));
         }
         REQUIRE (changes.total() == 0);
     }
