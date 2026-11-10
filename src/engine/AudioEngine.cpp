@@ -2432,7 +2432,7 @@ void AudioEngine::serviceMidiRecording()
             diffs.push_back ({ captured.trackIndex, std::move (before), std::move (after),
                               { group.gestureId, group.passOrdinal } });
             committed.emplace_back (captured.trackIndex, targetIndex);
-            played.push_back ({ captured.trackIndex, std::move (pass) });
+            played.push_back ({ captured.trackIndex, std::move (pass), captured.journalId, group.passOrdinal });
         }
         if (diffs.empty()) continue;
         undoManager.beginNewTransaction ("MIDI Merge pass");
@@ -2463,7 +2463,11 @@ void AudioEngine::queuePendingMidiTakeFilesNow()
     for (const auto& pending : std::exchange (pendingMidiTakeFiles, {}))
         if (auto file = midirecovery::pendingTakeFile (sessionDir, pending.committed, session, sampleRate,
                                                        pending.recorded.trackIndex, pending.recorded.pass))
-            midiRecoveryWriter.queue (std::move (*file));
+        {
+            if (pending.recorded.journalId == 0
+                || ! midiRecoveryJournal.commit (*file, pending.recorded.journalId, pending.recorded.passOrdinal))
+                midiRecoveryWriter.queue (std::move (*file));
+        }
 }
 
 void AudioEngine::queueMidiTrackFiles()
@@ -2476,10 +2480,15 @@ void AudioEngine::queueMidiTrackFiles()
         midiRecoveryWriter.queue (std::move (file));
 }
 
-void AudioEngine::flushMidiRecoveryFiles()
+bool AudioEngine::flushMidiRecoveryFiles (const std::filesystem::path& copiedFolder,
+                                           const std::filesystem::path& copiedJournalFolder)
 {
     queuePendingMidiTakeFilesNow();
     midiRecoveryWriter.flush();
+    const bool ready = midiRecoveryJournal.flush (copiedFolder);
+    if (! copiedJournalFolder.empty() && copiedJournalFolder != copiedFolder)
+        return midiRecoveryJournal.flush (copiedJournalFolder) && ready;
+    return ready;
 }
 
 void AudioEngine::reportMidiRecoveryWrite (const midirecovery::PendingFile& file,
@@ -2846,11 +2855,16 @@ void AudioEngine::record()
     }
 
     auto preparedMidi = recordManager.prepareMidiCapture (loopPlan.enabled);
+    const auto journalFolder = ! preparedMidi.hasTracks() ? std::filesystem::path {}
+        : journalFolderForMidi ? journalFolderForMidi()
+        : std::filesystem::u8path (session.getSessionDirectory().getFullPathName().toStdString());
     suspendProcessing();
     struct ResumeGuard
     {
         AudioEngine& engine;
-        ~ResumeGuard() { engine.resumeProcessing(); }
+        bool held = true;
+        void resume() { if (std::exchange (held, false)) engine.resumeProcessing(); }
+        ~ResumeGuard() { resume(); }
     } resumeGuard { *this };
 
     if (pendingDeviceStopSample.load (std::memory_order_acquire) >= 0
@@ -2959,6 +2973,8 @@ void AudioEngine::record()
     playbackEngine.preparePlayback (PlaybackEngine::Audition::Honour);  // un-armed tracks still play through
     transport.setState (Transport::State::Recording);
     schedulePlaybackService();
+    resumeGuard.resume();
+    recordManager.beginMidiJournals (midiRecoveryJournal, journalFolder);
 }
 
 void AudioEngine::jumpToPrevMarker()

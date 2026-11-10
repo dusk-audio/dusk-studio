@@ -16,6 +16,7 @@
 #include "audiofile/ThreadedFileWriter.h"
 #include "audiofile/WriterDrainPool.h"
 #include "MidiCaptureStream.h"
+#include "../session/MidiRecoveryWriter.h"
 #include "MidiMergePlayback.h"
 
 namespace dusk::audio { struct WriteSpec; }
@@ -59,6 +60,7 @@ public:
         ~PreparedMidiCapture();
         PreparedMidiCapture (PreparedMidiCapture&&) noexcept;
         PreparedMidiCapture& operator= (PreparedMidiCapture&&) noexcept;
+        bool hasTracks() const noexcept;
 
     private:
         friend class RecordManager;
@@ -172,11 +174,13 @@ public:
     }
     const MidiCapturePreview* midiCapturePreview (int trackIndex) const noexcept;
     void serviceMidiCapture();
+    void beginMidiJournals (midirecovery::Journal& journal, const std::filesystem::path& folder);
 
     struct CapturedMidiTrackPass
     {
         int trackIndex = -1;
         MidiCapturedPass pass;
+        std::uint64_t journalId = 0;
     };
     struct CapturedMidiPassGroup
     {
@@ -197,6 +201,8 @@ public:
     {
         int trackIndex = -1;
         MidiRegion pass;
+        std::uint64_t journalId = 0;
+        int passOrdinal = 1;
     };
     // Message thread. Each pass with notes or controls the last stopRecording
     // took with Merge off, oldest first on each track, as a region where it was
@@ -370,6 +376,8 @@ private:
     std::array<std::deque<MidiCapturedPass>, Session::kNumTracks> pendingMidiPasses;
     std::array<std::optional<MidiCapturePreview>, Session::kNumTracks> lastMidiPreviews;
     std::array<int, Session::kNumTracks> midiCompletedOrdinals {};
+    midirecovery::Journal* midiJournal = nullptr;
+    std::array<midirecovery::Journal::Handle, Session::kNumTracks> midiJournalHandles {};
     std::uint32_t capturedMidiTrackMask = 0;
     int nextMidiGroupOrdinal = 1;
     std::uint64_t midiCaptureGestureId = 0;

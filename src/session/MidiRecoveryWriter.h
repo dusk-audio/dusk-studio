@@ -1,12 +1,14 @@
 #pragma once
 
 #include "MidiRecovery.h"
+#include "../engine/MidiCaptureStream.h"
 
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
 #include <functional>
 #include <mutex>
+#include <memory>
 #include <thread>
 
 namespace duskstudio::midirecovery
@@ -57,5 +59,48 @@ private:
     // Held across each write, so a file written on a caller's thread never
     // races the thread for a name.
     std::mutex              writing;
+};
+
+class Journal
+{
+public:
+    struct Config
+    {
+        std::filesystem::path sessionDir;
+        std::chrono::system_clock::time_point made;
+        int trackNumber = 0;
+        std::string name;
+        Timing timing;
+        std::int64_t timelineStart = 0;
+        std::int64_t loopLength = 0;
+    };
+    struct Handle
+    {
+        std::uint64_t id = 0;
+        MidiCaptureStream::DrainView latest;
+        std::uint64_t dropped = 0;
+    };
+
+    explicit Journal (Writer::Report report = {},
+                      std::size_t capacity = 4 * MidiCaptureStream::kDefaultCapacity);
+    ~Journal();
+
+    // Message thread. Zero means the worker could not be started; no disk fallback.
+    Handle begin (Config config) noexcept;
+    // Bounded, allocation-free copy from the sole capture consumer. Never waits.
+    bool append (Handle& handle, const MidiCaptureStream::DrainView& drain) noexcept;
+    bool finish (const Handle& handle, int passOrdinal, std::int64_t endSample) noexcept;
+    // The worker retires this pass's checkpoint only after a durable final write.
+    bool commit (const PendingFile& file, std::uint64_t id, int passOrdinal) noexcept;
+    // Message thread. Forces checkpoints and waits for preceding work. True
+    // means the selected folder has no active decoder or unwritten pass and
+    // stays unchanged until another message-thread submission. Empty selects all.
+    bool flush (const std::filesystem::path& folder = {});
+
+private:
+    struct Impl;
+    Writer::Report report;
+    std::size_t capacity;
+    std::unique_ptr<Impl> impl;
 };
 } // namespace duskstudio::midirecovery
