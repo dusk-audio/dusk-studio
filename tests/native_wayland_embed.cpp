@@ -352,7 +352,7 @@ private:
             {
                 reportedStage = static_cast<int> (stage);
                 std::fprintf (stderr, "native panel stage %d\n", reportedStage);
-                std::fflush (stdout);
+                std::fflush (stderr);
             }
             require (std::chrono::steady_clock::now() < deadline, "native probe timed out");
            #if DUSK_NATIVE_PROBE_DAF
