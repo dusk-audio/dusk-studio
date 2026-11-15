@@ -113,7 +113,7 @@ SFZ_LOG="${CAPTURE_ROOT}/sfz.log"
 cleanup() {
   null_audio_stop
   xvfb_session_stop
-  rm -rf "${CAPTURE_ROOT}"
+  sandbox_remove "${CAPTURE_ROOT}"
 }
 trap cleanup EXIT
 

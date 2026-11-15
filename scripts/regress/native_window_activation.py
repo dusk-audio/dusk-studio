@@ -13,6 +13,10 @@ import time
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from gnome_file_drop import Desktop, Failure, wait_for
 
+# What the app prints, whatever the reason, when it runs without the
+# single-instance slot.
+NO_SLOT = " - starting without the single-instance slot"
+
 
 def text(path):
     return path.read_text(errors="replace") if path.exists() else ""
@@ -149,6 +153,10 @@ def drive(binary, work):
                     stderr=resources.enter_context(app_log.open("w")))
                 resources.callback(stop, app)
             else:
+                unslotted = [l for l in text(app_log).splitlines() if NO_SLOT in l]
+                if unslotted:
+                    raise Failure("the running instance has no single-instance slot to hand over to: "
+                                  + unslotted[0])
                 with (work / (case + ".handoff")).open("w") as output:
                     result = subprocess.run([binary, str(sessions[index])], env=launch_env,
                                             stdout=output, stderr=output, timeout=60)

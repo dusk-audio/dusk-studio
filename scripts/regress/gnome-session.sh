@@ -10,6 +10,8 @@
 # legs do. Set DUSK_REGRESS_SCENARIO_KEEP=1 to keep the scratch directory.
 
 GNOME_SESSION_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/regress/common.sh
+source "$GNOME_SESSION_DIR/common.sh"
 GNOME_WORK=""
 GNOME_RT=""
 GNOME_HOME=""
@@ -21,6 +23,7 @@ gnome_started_audio=0
 # stragglers (portals, the keyring, Xwayland) are found once Mutter is gone.
 gnome_session_cleanup() {
     local pass p
+    [[ -n "$GNOME_RT" ]] || { rm -rf "$GNOME_WORK"; return; }
     for pass in TERM KILL; do
         for p in $(pgrep -u "$(id -u)"); do
             { tr '\0' '\n' <"/proc/$p/environ"; } 2>/dev/null | grep -qxF "XDG_RUNTIME_DIR=$GNOME_RT" \
@@ -32,10 +35,13 @@ gnome_session_cleanup() {
         fusermount3 -u "$mount" 2>/dev/null || fusermount -u "$mount" 2>/dev/null || true
     done
     if ((gnome_started_audio)); then null_audio_stop; fi
-    if [[ "${DUSK_REGRESS_SCENARIO_KEEP:-0}" == 1 || "$GNOME_KEEP" == 1 ]]; then
-        echo "kept ${GNOME_WORK}"
+    # A failed case keeps the scratch directory for its grabs; the runtime dir
+    # holds only the sockets of processes that are gone by now.
+    if [[ "${DUSK_REGRESS_SCENARIO_KEEP:-0}" == 1 ]]; then
+        echo "kept ${GNOME_WORK} (runtime dir ${GNOME_RT})"
     else
-        rm -rf "$GNOME_WORK"
+        rm -rf "$GNOME_RT"
+        if [[ "$GNOME_KEEP" == 1 ]]; then echo "kept ${GNOME_WORK}"; else rm -rf "$GNOME_WORK"; fi
     fi
 }
 
@@ -44,10 +50,10 @@ gnome_session_cleanup() {
 # through.
 gnome_session_setup() {
     GNOME_WORK="$(mktemp -d "${TMPDIR:-/tmp}/duskstudio-$1.XXXXXX")" || exit 1
-    GNOME_RT="$GNOME_WORK/rt"
     GNOME_HOME="$GNOME_WORK/home"
     trap gnome_session_cleanup EXIT
-    mkdir -m 700 "$GNOME_RT" && mkdir -p "$GNOME_HOME/.config" "$GNOME_HOME/.local/share" \
+    GNOME_RT="$(regress_runtime_dir)" || exit 1
+    mkdir -p "$GNOME_HOME/.config" "$GNOME_HOME/.local/share" \
         "$GNOME_HOME/.local/state" "$GNOME_HOME/.cache" "$GNOME_WORK/app" "$GNOME_WORK/tmp" || exit 1
 
     GNOME_PIPEWIRE_DIR="${DUSK_REGRESS_PIPEWIRE_DIR:-}"

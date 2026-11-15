@@ -520,19 +520,26 @@ pushes are batched, because each one cancels the macOS job in progress (about
 The Mac source leg can use a dedicated validation tree:
 
 ```bash
-mkdir -p "$HOME/dusk-scratch/tmp/pp"
+mkdir -p "$HOME/dusk-scratch/tmp"
 DUSK_REGRESS_MAC_REPO=dusk-386-current \
 DUSK_REGRESS_MAC_DAF=dusk-016-validation-deps/DAF \
 DUSK_REGRESS_MAC_CONFIGURE=dusk-016-prepush-configure.sh \
 DUSK_REGRESS_MAC_BUILD_DIR=build-prepush \
 DUSK_REGRESS_MAC_TEST_BUILD_DIR=build-prepush-tests \
-TMPDIR="$HOME/dusk-scratch/tmp/pp" scripts/regress.sh prepush
+TMPDIR="$HOME/dusk-scratch/tmp" scripts/regress.sh prepush
 ```
 
-On the Linux dev box, `TMPDIR` for a regress run is a short per-run directory
-under `~/dusk-scratch/tmp/`, removed after a passing run. Nothing new goes in
-`/var/tmp`, `/tmp` is a 4 GB tmpfs, and a long `TMPDIR` overruns the Unix-socket
-path limit in some legs.
+On the Linux dev box, every regress run uses the one folder
+`TMPDIR="$HOME/dusk-scratch/tmp"`: nothing new
+goes in `/var/tmp`, which fills up, and `/tmp` is a 4 GB tmpfs. Each run makes
+its own folders inside it, and `prepush` removes the week-old ones it names
+above, which it looks for in `$TMPDIR` alone; a fresh `TMPDIR` per run would
+leave a failed run's folders there for good. The length of `TMPDIR` does not
+matter: the runtime dirs the legs hand the app, the only paths a socket limit
+applies to, are made apart from it (see "Scenario legs" below). It has to be a
+real path, though: with a symlink anywhere in it the SFZ scenarios refuse their
+ownership directory, and `bb-gnome-file-drop`, `bb-x11-drop-input` and the GNOME
+`window-activation` cases fail.
 
 Source, DAF and helper paths are absolute or relative to the remote home;
 build paths are absolute or relative to the selected source. Explicit source
@@ -746,7 +753,17 @@ display, so each leg gets a throwaway directory and a private environment:
   [src/util/SingleInstance.cpp](../src/util/SingleInstance.cpp) keys the
   single-instance slot on `$XDG_RUNTIME_DIR/dusk-studio/instance-<hash of
   DISPLAY>.sock`, so a per-leg runtime dir is what stops a leg handing a session
-  to - or stealing one from - the copy of Dusk Studio you have open.
+  to - or stealing one from - the copy of Dusk Studio you have open. That path
+  has to fit the 108 bytes of a Unix socket address, which leaves the runtime
+  dir 64 characters, so it is not made in the leg's scratch folder under
+  `$TMPDIR` but by `regress_runtime_dir` (`scripts/regress/common.sh`) as a
+  `dusk-rt.*` folder in your own `$XDG_RUNTIME_DIR`, or in `/tmp` when that is
+  unset or itself too long. It holds sockets only, the scratch folder links to
+  it as `runtime`, and it goes when the scratch folder goes, Ctrl-C included,
+  or stays with it under `DUSK_REGRESS_SCENARIO_KEEP=1`. The private GNOME
+  sessions and the X11 drop leg make theirs the same way. `bb-handoff`,
+  `bb-crash-relaunch` and the window-activation handoffs fail at once, naming
+  the app's line, when the first instance starts without the slot.
 - Private `HOME` and `XDG_CONFIG_HOME`, mode 0700. `dusk::fs::userConfigDir()`
   resolves `$HOME/.config` and does **not** read `XDG_CONFIG_HOME`, so only a
   private `HOME` keeps Recent Sessions, `app-config.properties` and crash logs
@@ -764,8 +781,8 @@ display, so each leg gets a throwaway directory and a private environment:
   deadline that caps the waits inside it.
 - Child processes are found with `pgrep -P <app pid>`. Never a bare `pkill` or
   `pkill -f`: it would take down the maintainer's own session along with the leg.
-- `DUSK_REGRESS_SCENARIO_KEEP=1` keeps each leg's directory instead of deleting
-  it, and prints the path.
+- `DUSK_REGRESS_SCENARIO_KEEP=1` keeps each leg's directory and runtime dir
+  instead of deleting them, and prints both paths.
 
 `bb-crash-relaunch` is the one to watch. The POSIX handoff has no
 acknowledgement, so two instances racing for a slot a killed instance left
@@ -1109,8 +1126,8 @@ centre the in-window panels below, default 28).
 #### Window activation only
 
 ```bash
-mkdir -p "$HOME/dusk-scratch/tmp/wa"
-TMPDIR="$HOME/dusk-scratch/tmp/wa" scripts/regress.sh mac --window-activation-only
+mkdir -p "$HOME/dusk-scratch/tmp"
+TMPDIR="$HOME/dusk-scratch/tmp" scripts/regress.sh mac --window-activation-only
 ```
 
 runs only the window-activation cases, against whatever is installed in
@@ -1320,8 +1337,8 @@ Overrides: `DUSK_REGRESS_VM`, `DUSK_REGRESS_LIBVIRT_URI`, `DUSK_REGRESS_HOST_IP`
 #### Window activation against the installed package
 
 ```bash
-mkdir -p "$HOME/dusk-scratch/tmp/wi"
-TMPDIR="$HOME/dusk-scratch/tmp/wi" scripts/regress.sh windows --installed X.Y.Z
+mkdir -p "$HOME/dusk-scratch/tmp"
+TMPDIR="$HOME/dusk-scratch/tmp" scripts/regress.sh windows --installed X.Y.Z
 ```
 
 runs `phase4-window-activation` and `isolation-audit` against the MSI already
@@ -1868,9 +1885,9 @@ manual checks that the script cannot cover:
   [window-activation smoke test](../tests/window_activation_smoke_test.md)
   against the release: its four cases through
   `scripts/regress.sh mac --window-activation-only` and
-  `scripts/regress.sh windows --installed X.Y.Z`, each with a per-run `TMPDIR`
-  under `~/dusk-scratch/tmp/` (package mode
-  runs them too), the Linux ones in `scripts/regress.sh linux --release-run`,
+  `scripts/regress.sh windows --installed X.Y.Z`, each with
+  `TMPDIR="$HOME/dusk-scratch/tmp"` (package mode runs them too), the Linux
+  ones in `scripts/regress.sh linux --release-run`,
   and its "What still needs a person" checks by hand.
 - In every bundled `LICENSES.txt`, confirm the full-text section is present and
   the JUCE-bundled entries cover HarfBuzz, SheenBidi, libjpeg, libpng, zlib,
