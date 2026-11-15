@@ -3,6 +3,7 @@
 #include <juce_core/juce_core.h>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <deque>
 #include <filesystem>
 #include <functional>
@@ -378,6 +379,7 @@ private:
     std::array<int, Session::kNumTracks> midiCompletedOrdinals {};
     midirecovery::Journal* midiJournal = nullptr;
     std::array<midirecovery::Journal::Handle, Session::kNumTracks> midiJournalHandles {};
+    std::chrono::steady_clock::time_point nextMidiCheckpoint {};
     std::uint32_t capturedMidiTrackMask = 0;
     int nextMidiGroupOrdinal = 1;
     std::uint64_t midiCaptureGestureId = 0;

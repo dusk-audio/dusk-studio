@@ -61,6 +61,11 @@ private:
     std::mutex              writing;
 };
 
+// Keeps each pass of a MIDI take being recorded in a playable checkpoint,
+// midi/recording/<take>_pass<N>.recording.mid, until its final file is on the
+// disk. One worker thread decodes what the capture drains hand it and writes
+// the checkpoints. Everything but the destructor runs on the message thread,
+// the capture's only consumer.
 class Journal
 {
 public:
@@ -77,30 +82,46 @@ public:
     struct Handle
     {
         std::uint64_t id = 0;
-        MidiCaptureStream::DrainView latest;
-        std::uint64_t dropped = 0;
     };
 
     explicit Journal (Writer::Report report = {},
                       std::size_t capacity = 4 * MidiCaptureStream::kDefaultCapacity);
     ~Journal();
 
-    // Message thread. Zero means the worker could not be started; no disk fallback.
+    // Zero means the worker could not be started; no disk fallback.
     Handle begin (Config config) noexcept;
-    // Bounded, allocation-free copy from the sole capture consumer. Never waits.
-    bool append (Handle& handle, const MidiCaptureStream::DrainView& drain) noexcept;
+    // Bounded, allocation-free copy of one drain. Never waits on the worker.
+    // A drain that only moves the capture position is kept back, as its newest
+    // position, until a drain with more in it or the next checkpoint request
+    // takes it along. False when the drain did not fit: its events are left out
+    // of the checkpoints, held notes end where the last drain that fit left
+    // them, and the next drain that fits reports the gap.
+    bool append (const Handle& handle, const MidiCaptureStream::DrainView& drain) noexcept;
+    // Once the worker has decoded every drain appended before this, it writes
+    // each current pass whose notes or controllers changed since its checkpoint
+    // was written and retries the passes still unwritten. A journal whose
+    // writes keep failing sits out a growing number of requests. The recorder
+    // asks about once a second.
+    void checkpoint() noexcept;
     bool finish (const Handle& handle, int passOrdinal, std::int64_t endSample) noexcept;
     // The worker retires this pass's checkpoint only after a durable final write.
     bool commit (const PendingFile& file, std::uint64_t id, int passOrdinal) noexcept;
-    // Message thread. Forces checkpoints and waits for preceding work. True
-    // means the selected folder has no active decoder or unwritten pass and
-    // stays unchanged until another message-thread submission. Empty selects all.
+    // Waits for everything handed over before it, then for a checkpoint round
+    // that retries every journal. True when no take is still recording into
+    // the selected folder; empty selects all. A pass whose checkpoint could
+    // not be written does not count: the session holds it, and it goes on
+    // retrying in its folder.
     bool flush (const std::filesystem::path& folder = {});
+
+    // Runs on the worker each time it has found nothing to do, just before it
+    // sleeps. Set before the first begin.
+    void setIdleHookForTest (std::function<void()> hook) { idleHook = std::move (hook); }
 
 private:
     struct Impl;
     Writer::Report report;
     std::size_t capacity;
+    std::function<void()> idleHook;
     std::unique_ptr<Impl> impl;
 };
 } // namespace duskstudio::midirecovery

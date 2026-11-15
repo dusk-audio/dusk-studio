@@ -848,8 +848,9 @@ public:
     void queueMidiTrackFiles();
     // Message thread. Queues the take files still waiting, even with
     // processing held out, and returns once every MIDI recovery file queued so
-    // far is written or has failed. True means the requested source folders
-    // have no unfinished journal writes and can be copied while stopped.
+    // far is written or has failed. True means no take is still recording
+    // into the requested source folders, so they can be copied while stopped.
+    // A checkpoint that could not be written does not count against them.
     bool flushMidiRecoveryFiles (const std::filesystem::path& copiedFolder = {},
                                  const std::filesystem::path& copiedJournalFolder = {});
 

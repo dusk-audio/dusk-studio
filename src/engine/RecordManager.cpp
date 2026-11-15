@@ -18,6 +18,9 @@ namespace duskstudio
 {
 namespace
 {
+// How often a recording asks its MIDI journal to bring its checkpoints up to date.
+constexpr auto kMidiCheckpointInterval = std::chrono::seconds (1);
+
 class RecordingSink final : public dusk::audio::IFileWriteSink
 {
 public:
@@ -660,6 +663,7 @@ void RecordManager::beginMidiJournals (midirecovery::Journal& journal, const std
 {
     if (! isActive() || midiJournal != nullptr) return;
     midiJournal = &journal;
+    nextMidiCheckpoint = std::chrono::steady_clock::now() + kMidiCheckpointInterval;
     auto timing = midirecovery::timingOf (session, recordSampleRate);
     timing.tempoMap = recordTempoMap;
     timing.bpm = recordTempoBpm;
@@ -688,6 +692,17 @@ void RecordManager::serviceMidiCapture()
             });
             collectMidiPasses (track);
         }
+    // The journal's worker has no timer of its own: this tick, which runs
+    // while recording, asks it for checkpoints.
+    if (midiJournal != nullptr && isActive())
+    {
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= nextMidiCheckpoint)
+        {
+            nextMidiCheckpoint = now + kMidiCheckpointInterval;
+            midiJournal->checkpoint();
+        }
+    }
 }
 
 MidiRegion RecordManager::CapturedMidiPassGroup::regionOf (const CapturedMidiTrackPass& captured) const

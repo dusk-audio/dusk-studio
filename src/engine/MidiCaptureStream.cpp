@@ -298,6 +298,7 @@ void MidiCaptureStream::rebuildPreview()
     }
     std::stable_sort (previewSnapshot.notes.begin(), previewSnapshot.notes.end(),
         [] (const MidiNote& a, const MidiNote& b) { return a.startTick < b.startTick; });
+    previewSnapshot.contentGeneration = ++contentGeneration;
     heldPreviewIndices.fill (noIndex);
     for (std::size_t i = 0; i < previewSnapshot.notes.size(); ++i)
     {

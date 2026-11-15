@@ -271,8 +271,10 @@ std::optional<ScenarioResult> runLiveMidiJournal (GuiHost& host, ScenarioContext
     auto& session = ctx.session();
     if (! engine.getTransport().isStopped() || ! host.modalStackEmpty())
         return ScenarioResult::skip ("requires a stopped transport and no modal");
+    // A false here means a take the journal was given never finished, with
+    // the transport stopped: an engine fault, not a busy disk.
     if (! engine.flushMidiRecoveryFiles())
-        return ScenarioResult::skip ("requires earlier MIDI journals to finish");
+        return ScenarioResult::fail ("an earlier take's MIDI journal never finished");
     const auto originalDir = currentSessionDirectory (session);
     const auto restore = ctx.tempDir() / "restore.json";
     if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save the initial session");
@@ -312,9 +314,9 @@ std::optional<ScenarioResult> runLiveMidiJournal (GuiHost& host, ScenarioContext
         const auto destination = foreign ? parent / "Saved" : untitled;
         struct Pass
         {
-            fs::path root, checkpoint, blocked, backup, checkpointBackup;
+            fs::path root, rootBackup, checkpoint, blocked, backup;
             std::string bytes;
-            bool blocking = false, checkpointBlocked = false;
+            bool blocking = false;
         };
         auto pass = std::make_shared<Pass>();
         ctx.cleanup ([&engine, pass]
@@ -325,13 +327,9 @@ std::optional<ScenarioResult> runLiveMidiJournal (GuiHost& host, ScenarioContext
             if (pass->blocking) fs::remove (pass->blocked, ignored);
             if (! pass->backup.empty() && fs::exists (pass->backup, ignored))
                 fs::rename (pass->backup, pass->blocked, ignored);
-            if (pass->checkpointBlocked)
-            {
-                fs::remove (pass->checkpoint.parent_path(), ignored);
-                fs::rename (pass->checkpointBackup, pass->checkpoint.parent_path(), ignored);
-            }
             engine.flushMidiRecoveryFiles();
             if (! pass->root.empty()) fs::remove_all (pass->root, ignored);
+            if (! pass->rootBackup.empty()) fs::remove_all (pass->rootBackup, ignored);
         });
         steps->push_back ({ 100, [&host, &engine, &session, parent]
         {
@@ -389,13 +387,11 @@ std::optional<ScenarioResult> runLiveMidiJournal (GuiHost& host, ScenarioContext
             ctx.expect (pass->blocking, "could not block final take publication");
             if (! foreign)
             {
-                pass->checkpointBackup = pass->checkpoint.parent_path().parent_path() / "recording.scenario-preserved";
-                fs::rename (pass->checkpoint.parent_path(), pass->checkpointBackup, error);
-                if (! ctx.expect (! error, "could not preserve the earlier live checkpoint")) return;
-                std::ofstream blockedCheckpoint (pass->checkpoint.parent_path());
-                blockedCheckpoint << "blocked checkpoint refresh";
-                pass->checkpointBlocked = blockedCheckpoint.good();
-                ctx.expect (pass->checkpointBlocked, "could not block the final checkpoint refresh");
+                // The private folder goes, as an unplugged drive would, so
+                // the pass's last checkpoint cannot be written at Stop.
+                pass->rootBackup = pass->root.parent_path() / (pass->root.filename().u8string() + ".scenario-preserved");
+                fs::rename (pass->root, pass->rootBackup, error);
+                ctx.expect (! error, "could not take the private journal folder away");
             }
         }, [&engine]
         {
@@ -406,35 +402,54 @@ std::optional<ScenarioResult> runLiveMidiJournal (GuiHost& host, ScenarioContext
         {
             engine.stop();
             engine.flushMidiRecoveryFiles();
-            const auto kept = pass->checkpointBlocked ? pass->checkpointBackup / pass->checkpoint.filename() : pass->checkpoint;
+            const auto kept = ! pass->rootBackup.empty()
+                ? pass->rootBackup / "midi" / "recording" / pass->checkpoint.filename() : pass->checkpoint;
             ctx.expect (! kept.empty() && fs::is_regular_file (kept), "failed final publication removed the live checkpoint");
-            pass->bytes = fileBytes (kept);
+            if (pass->rootBackup.empty()) pass->bytes = fileBytes (kept);
             std::error_code error;
             if (pass->blocking) fs::remove (pass->blocked, error);
             pass->blocking = false;
             if (fs::exists (pass->backup, error)) fs::rename (pass->backup, pass->blocked, error);
         } });
+        pushSaveAsSteps (host, ctx, *steps, destination);
         if (! foreign)
         {
-            pushSaveAsSteps (host, ctx, *steps, destination);
-            steps->push_back ({ 100, [&ctx, &host, &engine, untitled, pass]
+            // A pass whose checkpoint and final file both failed is in the
+            // session, so it must not hold the first Save back. Its checkpoint
+            // keeps trying where it was, and never lands in the saved folder.
+            steps->push_back ({ 100, [&ctx, &host, &engine, &session, untitled, pass]
             {
-                ctx.expect (host.modalText().find ("Could not finish writing MIDI recovery files") != std::string::npos,
-                            "Save As did not report the unwritten checkpoint");
-                ctx.expect (host.clickModalButton ("OK"), "the failed Save did not offer OK");
-                ctx.expect (absent (untitled / "session.json") && ! host.sessionOnDisk(),
-                            "Save As published the session while its checkpoint could still change");
+                ctx.expect (host.modalStackEmpty(), "Save As raised '" + host.modalText() + "'");
+                drainModals (host);
+                ctx.expect (currentSessionDirectory (session) == untitled && host.sessionOnDisk()
+                                && fs::is_regular_file (untitled / "session.json"),
+                            "an unwritten checkpoint held the first Save back");
                 std::error_code error;
-                fs::remove (pass->checkpoint.parent_path(), error);
-                fs::rename (pass->checkpointBackup, pass->checkpoint.parent_path(), error);
-                if (! ctx.expect (! error, "could not restore the checkpoint folder")) return;
-                pass->checkpointBlocked = false;
-                ctx.expect (engine.flushMidiRecoveryFiles (pass->root), "the unblocked checkpoint did not finish");
-                pass->bytes = fileBytes (pass->checkpoint);
+                fs::rename (pass->rootBackup, pass->root, error);
+                if (! ctx.expect (! error, "could not bring the private journal folder back")) return;
+                pass->rootBackup.clear();
+                ctx.expect (engine.flushMidiRecoveryFiles (pass->root), "a stopped take still counts as recording");
+                ctx.expect (fs::is_regular_file (pass->checkpoint) && fileBytes (pass->checkpoint) != pass->bytes,
+                            "the unwritten checkpoint was not retried in its own folder");
+                ctx.expect (absent (untitled / "midi" / "recording" / pass->checkpoint.filename()),
+                            "the retried checkpoint was written into the saved session");
             } });
+            // The private folder is no longer the session's, so a later Save
+            // As leaves what is still in it alone.
+            const auto copy = parent / "Copy";
+            pushSaveAsSteps (host, ctx, *steps, copy);
+            steps->push_back ({ 100, [&ctx, &engine, &session, copy, pass]
+            {
+                engine.flushMidiRecoveryFiles();
+                ctx.expect (currentSessionDirectory (session) == copy, "Save As left the session at '"
+                                + currentSessionDirectory (session).string() + "'");
+                ctx.expect (absent (copy / "midi" / "recording" / pass->checkpoint.filename()),
+                            "Save As copied the private folder's checkpoint again after the first Save");
+                ctx.expect (fs::is_regular_file (pass->checkpoint), "Save As took the private folder's checkpoint");
+            } });
+            continue;
         }
-        pushSaveAsSteps (host, ctx, *steps, destination);
-        steps->push_back ({ 100, [&ctx, &host, &engine, &session, destination, untitled, foreign, pass]
+        steps->push_back ({ 100, [&ctx, &host, &engine, &session, destination, untitled, pass]
         {
             engine.flushMidiRecoveryFiles();
             ctx.expect (currentSessionDirectory (session) == destination && host.sessionOnDisk(),
@@ -443,9 +458,8 @@ std::optional<ScenarioResult> runLiveMidiJournal (GuiHost& host, ScenarioContext
             ctx.expect (! pass->bytes.empty() && fileBytes (copied) == pass->bytes,
                         "first Save did not carry the surviving checkpoint");
             ctx.expect (absent (pass->checkpoint), "first Save left the copied private checkpoint behind");
-            if (foreign)
-                ctx.expect (fileBytes (untitled / "session.json") == "foreign session" && absent (untitled / "midi"),
-                            "recording or Save As changed the foreign session");
+            ctx.expect (fileBytes (untitled / "session.json") == "foreign session" && absent (untitled / "midi"),
+                        "recording or Save As changed the foreign session");
         } });
     }
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });

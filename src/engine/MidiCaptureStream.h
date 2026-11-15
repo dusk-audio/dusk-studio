@@ -23,6 +23,9 @@ struct MidiCapturedPass
 struct MidiCapturePreview : MidiCapturedPass
 {
     std::uint64_t generation = 0;
+    // Moves only when the notes or controllers change, not when the pass and
+    // its held notes just grow longer.
+    std::uint64_t contentGeneration = 0;
 };
 
 // One audio producer and one message-thread consumer. configure and sealFinal
@@ -129,6 +132,7 @@ private:
     bool previewNeedsRebuild = true;
     std::uint64_t expectedSequence = 1;
     std::uint64_t generation = 0;
+    std::uint64_t contentGeneration = 0;
     int lastCompletedOrdinal = 0;
     bool sealed = false;
 };

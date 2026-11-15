@@ -8,6 +8,8 @@
 #include "engine/midi/MidiFileReader.h"
 
 #include <algorithm>
+#include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
@@ -15,6 +17,7 @@
 #include <future>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 using namespace duskstudio;
@@ -55,6 +58,46 @@ std::vector<std::string> namesIn (const stdfs::path& folder)
         names.push_back (it->path().filename().u8string());
     std::sort (names.begin(), names.end());
     return names;
+}
+
+// Polls rather than waiting on a timer: CI's ThreadSanitizer misreads timed
+// condition-variable waits as a double lock.
+template <typename Done>
+bool eventually (Done done, std::chrono::milliseconds budget = std::chrono::seconds (10))
+{
+    const auto deadline = std::chrono::steady_clock::now() + budget;
+    while (! done())
+    {
+        if (std::chrono::steady_clock::now() > deadline) return done();
+        std::this_thread::yield();
+    }
+    return true;
+}
+
+std::vector<int> noteOnKeysIn (const stdfs::path& file)
+{
+    std::vector<int> keys;
+    midi::MidiFileReader reader;
+    if (! reader.readFile (file)) return keys;
+    for (const auto& track : reader.tracks())
+        for (const auto& event : track)
+            if (event.isNoteOn()) keys.push_back (event.noteNumber());
+    return keys;
+}
+
+// One 10 ms service tick of a recorder at 48 kHz: four 120-sample audio
+// blocks, each publishing its progress, with a note-on in the first and its
+// note-off in the third.
+void playTick (MidiCaptureStream& capture, std::int64_t tick, int key)
+{
+    const auto start = tick * 480;
+    for (int block = 0; block < 4; ++block)
+    {
+        const auto at = start + block * 120;
+        if (block == 0) REQUIRE (capture.pushEvent (1, at, 0x90, (std::uint8_t) key, 100));
+        if (block == 2) REQUIRE (capture.pushEvent (1, at, 0x80, (std::uint8_t) key, 0));
+        REQUIRE (capture.publishProgress (1, at + 120, false));
+    }
 }
 
 // What the writer reported, in the order it reported it. Read only after a
@@ -342,9 +385,14 @@ TEST_CASE ("Live MIDI journals preserve unfinished passes until their final file
         REQUIRE (capture.publishProgress (1, 100, true));
         REQUIRE (capture.publishProgress (2, 100, true));
         capture.service (-1, [&] (const auto& view) { REQUIRE (journal.append (handle, view)); });
-        REQUIRE (journal.finish (handle, 2, 100));
+        // A take still recording into the folder keeps it from being ready.
         REQUIRE_FALSE (journal.flush (config.sessionDir));
         REQUIRE_FALSE (journal.flush (config.sessionDir / "."));
+        REQUIRE (journal.finish (handle, 2, 100));
+        // Passes whose checkpoints could not be written do not: the session
+        // being saved holds them, and they go on retrying where they were.
+        REQUIRE (journal.flush (config.sessionDir));
+        REQUIRE (journal.flush (config.sessionDir / "."));
         const auto takes = directory.parent_path() / "takes";
         { std::ofstream blocked (takes); blocked << "blocked final folder"; }
         REQUIRE (journal.commit (fileFor (temp.path(), 60, recovery::Folder::Takes), handle.id, 1));
@@ -356,6 +404,70 @@ TEST_CASE ("Live MIDI journals preserve unfinished passes until their final file
         REQUIRE (journal.flush (config.sessionDir));
         REQUIRE (namesIn (directory) == std::vector<std::string> { "20261108-143005Z_track07_Keys_pass1.recording.mid" });
         REQUIRE (noteOffs (directory / namesIn (directory).front()) == std::vector<std::int64_t> { 1100 });
+    }
+    SECTION ("a pass holding nothing but controllers chased from earlier passes gets no checkpoint")
+    {
+        recovery::Journal journal (reports.callback());
+        config.loopLength = 100;
+        auto handle = journal.begin (config);
+        MidiCaptureStream capture;
+        capture.configure ({}, 100);
+        REQUIRE (capture.pushEvent (1, 10, 0xb0, 64, 127));
+        REQUIRE (capture.publishProgress (1, 100, true));
+        REQUIRE (capture.publishProgress (2, 100, true));
+        REQUIRE (capture.publishProgress (3, 40, false));
+        capture.service (-1, [&] (const auto& view) { REQUIRE (journal.append (handle, view)); });
+        journal.checkpoint();
+        journal.flush();
+        CHECK (namesIn (directory) == std::vector<std::string> { "20261108-143005Z_track07_Keys_pass1.recording.mid" });
+        REQUIRE (journal.finish (handle, 3, 40));
+        journal.flush();
+        CHECK (namesIn (directory).size() == 1);
+        // Stop gives a final file only to the pass with a controller of its own.
+        REQUIRE (journal.commit (fileFor (temp.path(), 60, recovery::Folder::Takes), handle.id, 1));
+        journal.flush();
+        CHECK (namesIn (directory).empty());
+    }
+    SECTION ("a checkpoint gives up once every name it may take is taken")
+    {
+        REQUIRE (stdfs::create_directories (directory));
+        const std::string stem = "20261108-143005Z_track07_Keys_pass1";
+        for (int copy = 1; copy <= 999; ++copy)
+            std::ofstream (directory / (stem + (copy > 1 ? "_" + std::to_string (copy) : std::string()) + ".recording.mid"))
+                << "foreign recording";
+        recovery::Journal journal (reports.callback());
+        auto handle = journal.begin (config);
+        MidiCaptureStream capture;
+        REQUIRE (capture.pushEvent (1, 0, 0x90, 60, 100));
+        REQUIRE (capture.publishProgress (1, 10, false));
+        capture.service (-1, [&] (const auto& view) { REQUIRE (journal.append (handle, view)); });
+        journal.flush();
+        CHECK (namesIn (directory).size() == 999);
+        REQUIRE (reports.results.size() == 1);
+        REQUIRE (reports.results.front().failures.size() == 1);
+        CHECK (reports.results.front().failures.front().error == std::errc::file_exists);
+    }
+    SECTION ("a checkpoint that keeps failing is reported once, however often it is retried")
+    {
+        REQUIRE (stdfs::create_directory (directory.parent_path()));
+        { std::ofstream blocked (directory); blocked << "blocked recording folder"; }
+        recovery::Journal journal (reports.callback());
+        auto handle = journal.begin (config);
+        MidiCaptureStream capture;
+        REQUIRE (capture.pushEvent (1, 0, 0x90, 60, 100));
+        REQUIRE (capture.publishProgress (1, 10, false));
+        capture.service (-1, [&] (const auto& view) { REQUIRE (journal.append (handle, view)); });
+        for (int round = 0; round < 5; ++round)
+        {
+            journal.checkpoint();
+            journal.flush();
+        }
+        CHECK (reports.results.size() == 1);
+        REQUIRE (stdfs::remove (directory));
+        journal.flush();
+        CHECK (namesIn (directory).size() == 1);
+        REQUIRE (reports.results.size() == 2);
+        CHECK (reports.results.back().failures.empty());
     }
     SECTION ("a checkpoint never claims an existing recording file")
     {
@@ -455,4 +567,294 @@ TEST_CASE ("A stalled MIDI journal worker cannot block or allocate in capture su
         for (int i = 0; i < 1000; ++i) idleAccepted &= journal.append (second, empty);
         CHECK (idleAccepted);
     });
+}
+
+TEST_CASE ("A live MIDI checkpoint is rewritten only when its notes or controllers change", "[midi][recovery][journal]")
+{
+    const duskstudio::test::TempDirectory temp ("dusk-midi-journal-quiet-");
+    Reports reports;
+    recovery::Journal journal (reports.callback());
+    recovery::Journal::Config config;
+    config.sessionDir = temp.path();
+    config.made = november8th();
+    config.trackNumber = 7;
+    config.name = "Keys";
+    config.timing.sampleRate = kMidiTicksPerQuarter;
+    config.timing.bpm = 60.0f;
+    auto handle = journal.begin (config);
+    REQUIRE (handle.id != 0);
+    MidiCaptureStream capture;
+    std::int64_t position = 0;
+    int ticks = 0;
+    bool accepted = true;
+    // Service ticks of four audio blocks each, nothing played in them, and a
+    // checkpoint request every hundred ticks as the recorder makes them.
+    const auto quiet = [&] (int count)
+    {
+        for (int i = 0; i < count; ++i)
+        {
+            for (int block = 0; block < 4; ++block)
+                REQUIRE (capture.publishProgress (1, position += 10, false));
+            capture.service (-1, [&] (const auto& view) { accepted &= journal.append (handle, view); });
+            if (++ticks % 100 == 0) journal.checkpoint();
+        }
+    };
+    const auto checkpointWrites = [&]
+    {
+        return std::count_if (reports.results.begin(), reports.results.end(), [] (const recovery::WriteResult& result)
+        {
+            return ! result.written.empty() && result.failures.empty();
+        });
+    };
+    const auto directory = temp.path() / "midi" / "recording";
+
+    SECTION ("a held note")
+    {
+        REQUIRE (capture.pushEvent (1, 0, 0x90, 60, 100));
+        quiet (1);
+        journal.checkpoint();
+        journal.flush();
+        REQUIRE (checkpointWrites() == 1);
+        const auto names = namesIn (directory);
+        REQUIRE (names.size() == 1);
+        const auto path = directory / names.front();
+        const auto first = contentOf (path);
+
+        quiet (500);
+        journal.flush();
+        CHECK (accepted);
+        CHECK (checkpointWrites() == 1);
+        CHECK (contentOf (path) == first);
+
+        REQUIRE (capture.pushEvent (1, position, 0xb0, 1, 64));
+        quiet (1);
+        journal.checkpoint();
+        journal.flush();
+        CHECK (checkpointWrites() == 2);
+        midi::MidiFileReader reader;
+        REQUIRE (reader.readFile (path));
+        bool modulation = false;
+        for (const auto& track : reader.tracks())
+            for (const auto& event : track)
+                modulation |= event.status == 0xb0 && event.data1 == 1 && event.data2 == 64;
+        CHECK (modulation);
+
+        // Stop closes the note at the end of the take.
+        REQUIRE (journal.finish (handle, 1, position));
+        journal.flush();
+        CHECK (checkpointWrites() == 3);
+        REQUIRE (reader.readFile (path));
+        std::vector<std::int64_t> offs;
+        for (const auto& track : reader.tracks())
+            for (const auto& event : track)
+                if (event.isChannelMessage() && (event.status & 0xf0) == 0x80 && event.data1 == 60)
+                    offs.push_back (event.tick);
+        CHECK (offs == std::vector<std::int64_t> { position });
+    }
+    SECTION ("nothing played")
+    {
+        quiet (500);
+        REQUIRE (journal.finish (handle, 1, position));
+        journal.flush();
+        CHECK (accepted);
+        CHECK (reports.results.empty());
+        CHECK (namesIn (directory).empty());
+    }
+}
+
+// The recorder's cadence, 100 service ticks and one checkpoint request a
+// second, kept up for three seconds by two tracks with a note in every tick,
+// while the worker is held in one slow write: the queue has to take all of it.
+TEST_CASE ("A MIDI journal worker held in one write through seconds of dense capture drops nothing", "[midi][recovery][journal][ipc]")
+{
+    const duskstudio::test::TempDirectory temp ("dusk-midi-journal-dense-");
+    std::atomic<bool> stalled { false }, release { false };
+    Reports reports;
+    recovery::Journal journal ([&] (const recovery::PendingFile& file, const recovery::WriteResult& result)
+    {
+        reports.files.push_back (file);
+        reports.results.push_back (result);
+        if (! stalled.exchange (true))
+            while (! release.load()) std::this_thread::yield();
+    });
+    struct Unstall
+    {
+        std::atomic<bool>& release;
+        ~Unstall() { release.store (true); }
+    } unstall { release };
+
+    recovery::Journal::Config config;
+    config.sessionDir = temp.path();
+    config.made = november8th();
+    config.name = "Keys";
+    config.trackNumber = 3;
+    config.loopLength = 100;
+    auto stall = journal.begin (config);
+    config.loopLength = 0;
+    config.trackNumber = 1;
+    auto first = journal.begin (config);
+    config.trackNumber = 2;
+    auto second = journal.begin (config);
+    REQUIRE (stall.id != 0);
+    REQUIRE (first.id != 0);
+    REQUIRE (second.id != 0);
+
+    // A loop pass that ends at once takes the worker into its first write.
+    MidiCaptureStream loop;
+    loop.configure ({}, 100);
+    REQUIRE (loop.pushEvent (1, 0, 0x90, 60, 100));
+    REQUIRE (loop.publishProgress (1, 100, true));
+    loop.service (-1, [&] (const auto& view) { REQUIRE (journal.append (stall, view)); });
+    REQUIRE (eventually ([&] { return stalled.load(); }));
+
+    static constexpr int kTicks = 300;
+    std::array<MidiCaptureStream, 2> captures;
+    const std::array<recovery::Journal::Handle*, 2> handles { &first, &second };
+    bool accepted = true;
+    for (int tick = 0; tick < kTicks; ++tick)
+    {
+        for (std::size_t track = 0; track < captures.size(); ++track)
+        {
+            playTick (captures[track], tick, 36 + (int) track * 24 + tick % 24);
+            captures[track].service (-1, [&] (const auto& view) { accepted &= journal.append (*handles[track], view); });
+        }
+        if (tick % 100 == 99) journal.checkpoint();
+    }
+    release.store (true);
+    CHECK (accepted);
+
+    const auto directory = temp.path() / "midi" / "recording";
+    const auto complete = [&] (const char* name, int track)
+    {
+        const auto keys = noteOnKeysIn (directory / name);
+        REQUIRE (keys.size() == (std::size_t) kTicks);
+        for (int tick = 0; tick < kTicks; ++tick)
+            if (keys[(std::size_t) tick] != 36 + track * 24 + tick % 24) return false;
+        return true;
+    };
+    journal.flush();
+    for (const auto& result : reports.results) CHECK (result.failures.empty());
+    CHECK (complete ("20261108-143005Z_track01_Keys_pass1.recording.mid", 0));
+    CHECK (complete ("20261108-143005Z_track02_Keys_pass1.recording.mid", 1));
+
+    REQUIRE (journal.finish (first, 1, kTicks * 480));
+    REQUIRE (journal.finish (second, 1, kTicks * 480));
+    journal.flush();
+    for (const auto& result : reports.results) CHECK (result.failures.empty());
+    CHECK (complete ("20261108-143005Z_track01_Keys_pass1.recording.mid", 0));
+    CHECK (complete ("20261108-143005Z_track02_Keys_pass1.recording.mid", 1));
+}
+
+// The hook runs on the worker each time it has found nothing to do, just
+// before it sleeps. A drain appended there has to wake it by itself: nothing
+// else is sent. The half-second bound also fails a worker that would only come
+// back on a timer.
+TEST_CASE ("A MIDI journal drain appended as its worker goes to sleep still wakes it", "[midi][recovery][journal][ipc]")
+{
+    const duskstudio::test::TempDirectory temp ("dusk-midi-journal-wake-");
+    // Writes into a session folder that is not there fail at once, with no
+    // disk sync, so the report times the wake-up and not the disk.
+    const auto absent = temp.path() / "absent";
+    std::atomic<bool> armed { false }, appended { false }, accepted { false }, reached { false };
+    recovery::Journal::Handle handle;
+    std::vector<MidiCaptureStream::Record> records;
+    MidiCaptureStream::DrainView drain;
+    recovery::Journal journal ([&] (const recovery::PendingFile& file, const recovery::WriteResult&)
+    {
+        if (file.trackNumber == 5) reached.store (true);
+    });
+    journal.setIdleHookForTest ([&]
+    {
+        if (! armed.exchange (false)) return;
+        accepted.store (journal.append (handle, drain));
+        appended.store (true);
+    });
+    recovery::Journal::Config config;
+    config.sessionDir = absent;
+    config.made = november8th();
+    config.trackNumber = 5;
+    config.name = "Keys";
+    config.loopLength = 100;
+    handle = journal.begin (config);
+    REQUIRE (handle.id != 0);
+    {
+        MidiCaptureStream capture;
+        capture.configure ({}, 100);
+        REQUIRE (capture.pushEvent (1, 0, 0x90, 60, 100));
+        REQUIRE (capture.publishProgress (1, 100, true));
+        capture.service (-1, [&] (const auto& view)
+        {
+            drain = view;
+            records.assign (view.first, view.first + view.firstCount);
+            records.insert (records.end(), view.second, view.second + view.secondCount);
+        });
+        drain.first = records.data();
+        drain.firstCount = records.size();
+        drain.second = nullptr;
+        drain.secondCount = 0;
+    }
+    journal.flush();
+    armed.store (true);
+    // Wakes the worker for a take file of no journal's, so the hook runs at
+    // the idle point after it.
+    REQUIRE (journal.commit (fileFor (absent, 60, recovery::Folder::Takes), handle.id + 1000, 1));
+    REQUIRE (eventually ([&] { return appended.load(); }));
+    REQUIRE (accepted.load());
+    CHECK (eventually ([&] { return reached.load(); }, std::chrono::milliseconds (500)));
+}
+
+// A take begun and appended to while the worker is deciding to sleep: the
+// batch must not be decoded before the take is in hand, nor dropped.
+TEST_CASE ("A MIDI take begun and appended as the journal worker goes to sleep is decoded", "[midi][recovery][journal][ipc]")
+{
+    const duskstudio::test::TempDirectory temp ("dusk-midi-journal-late-take-");
+    const auto absent = temp.path() / "absent";
+    std::atomic<bool> armed { false }, done { false }, accepted { false }, reached { false };
+    std::vector<MidiCaptureStream::Record> records;
+    MidiCaptureStream::DrainView drain;
+    recovery::Journal::Config config;
+    config.sessionDir = absent;
+    config.made = november8th();
+    config.trackNumber = 6;
+    config.name = "Keys";
+    config.loopLength = 100;
+    recovery::Journal journal ([&] (const recovery::PendingFile& file, const recovery::WriteResult&)
+    {
+        if (file.trackNumber == 6) reached.store (true);
+    });
+    journal.setIdleHookForTest ([&]
+    {
+        if (! armed.exchange (false)) return;
+        const auto late = journal.begin (config);
+        accepted.store (late.id != 0 && journal.append (late, drain));
+        done.store (true);
+    });
+    {
+        MidiCaptureStream capture;
+        capture.configure ({}, 100);
+        REQUIRE (capture.pushEvent (1, 0, 0x90, 60, 100));
+        REQUIRE (capture.publishProgress (1, 100, true));
+        capture.service (-1, [&] (const auto& view)
+        {
+            drain = view;
+            records.assign (view.first, view.first + view.firstCount);
+            records.insert (records.end(), view.second, view.second + view.secondCount);
+        });
+        drain.first = records.data();
+        drain.firstCount = records.size();
+        drain.second = nullptr;
+        drain.secondCount = 0;
+    }
+    auto earlier = config;
+    earlier.trackNumber = 2;
+    const auto first = journal.begin (earlier);
+    REQUIRE (first.id != 0);
+    journal.flush();
+    armed.store (true);
+    REQUIRE (journal.commit (fileFor (absent, 60, recovery::Folder::Takes), first.id + 1000, 1));
+    REQUIRE (eventually ([&] { return done.load(); }));
+    REQUIRE (accepted.load());
+    // Nothing else wakes the worker, and a batch decoded without its take
+    // would be dropped without a word, so the pass's report is the proof.
+    CHECK (eventually ([&] { return reached.load(); }));
 }

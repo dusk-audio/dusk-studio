@@ -548,3 +548,30 @@ TEST_CASE ("MIDI capture drains can be replayed without retaining the live queue
         for (const auto& note : completed.front().notes) CHECK (note.lengthInTicks == 100);
     }
 }
+
+TEST_CASE ("A MIDI capture preview's content generation moves with its notes and controllers, not its length",
+           "[recording][midi][capture-stream][journal]")
+{
+    MidiCaptureStream stream;
+    const auto content = [&] { return stream.preview().contentGeneration; };
+    const auto empty = content();
+    REQUIRE (stream.publishProgress (1, 10, false));
+    REQUIRE (stream.service());
+    CHECK (content() == empty);
+
+    REQUIRE (stream.pushEvent (1, 10, 0x90, 60, 100));
+    REQUIRE (stream.publishProgress (1, 20, false));
+    REQUIRE (stream.service());
+    const auto noted = content();
+    CHECK (noted != empty);
+
+    REQUIRE (stream.publishProgress (1, 40, false));
+    REQUIRE (stream.service());
+    CHECK (stream.preview().notes == std::vector<MidiNote> { { 1, 60, 100, 10, 30 } });
+    CHECK (content() == noted);
+
+    REQUIRE (stream.pushEvent (1, 40, 0xb0, 1, 64));
+    REQUIRE (stream.publishProgress (1, 50, false));
+    REQUIRE (stream.service());
+    CHECK (content() != noted);
+}

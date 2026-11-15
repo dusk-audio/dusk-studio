@@ -3795,14 +3795,10 @@ bool MainComponent::writeSessionTo (const juce::File& requestedDir,
     if (consolidationPerformed)
     {
         // The take files still queued for the old folder have to be in its
-        // midi/ before that is copied.
-        if (! engine.flushMidiRecoveryFiles (toPath (oldSidecar), ownedMidiRecoveryDir))
-        {
-            setStatusForPath ("Save failed", dir);
-            showDuskAlert (*this, "Save failed",
-                "Could not finish writing MIDI recovery files. Check disk space and permissions, then save again.");
-            return false;
-        }
+        // midi/ before that is copied. The take stopped above was the only one
+        // that could still be writing there. A checkpoint that cannot be
+        // written does not hold the save back: its pass is in the session.
+        engine.flushMidiRecoveryFiles (toPath (oldSidecar), ownedMidiRecoveryDir);
         consolidated = SessionSerializer::consolidateInto (session, dir, ownsOldDir, toPath (oldSidecar), ownedMidiRecoveryDir);
         if (! consolidated.ok)
         {
@@ -3924,6 +3920,9 @@ bool MainComponent::writeSessionTo (const juce::File& requestedDir,
             if (! ownedMidiRecoveryDir.empty())
                 SessionSerializer::removeCopiedMidiSources (consolidated, ownedMidiRecoveryDir);
         }
+        // Takes now journal into the session's folder. What is left in the
+        // private one stays there, and a later Save As does not copy it again.
+        ownedMidiRecoveryDir.clear();
         sessionOnDisk = true;
         engine.queueMidiTrackFiles();
         RecentSessions::add (toPath (dir));
@@ -4064,10 +4063,11 @@ std::filesystem::path MainComponent::prepareMidiJournalFolder()
     if (privateFolder.empty()) return {};
     const auto parent = privateFolder / "recordings";
     std::error_code error;
+    // Record waits on this, so only a folder made here has its entry synced.
     for (const auto& level : { privateFolder, parent })
     {
-        std::filesystem::create_directory (dusk::fs::nativeIOPath (level), error);
-        if (! error) dusk::fs::syncFolder (level.parent_path(), error);
+        if (std::filesystem::create_directory (dusk::fs::nativeIOPath (level), error) && ! error)
+            dusk::fs::syncFolder (level.parent_path(), error);
         if (error) return {};
     }
     const auto stamp = std::to_string (std::chrono::steady_clock::now().time_since_epoch().count());
