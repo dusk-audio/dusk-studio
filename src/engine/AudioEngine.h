@@ -853,6 +853,11 @@ public:
     // A checkpoint that could not be written does not count against them.
     bool flushMidiRecoveryFiles (const std::filesystem::path& copiedFolder = {},
                                  const std::filesystem::path& copiedJournalFolder = {});
+    // Message thread. See midirecovery::Journal::release.
+    void releaseMidiJournalFolder (const std::filesystem::path& folder) noexcept
+    {
+        midiRecoveryJournal.release (folder);
+    }
     // Shows a MIDI recovery file that could not be written: called on the
     // message thread with the first failure of each report. The disk workers
     // report a file once, and a checkpoint again only when it fails another

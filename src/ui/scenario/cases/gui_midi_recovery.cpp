@@ -464,6 +464,7 @@ std::optional<ScenarioResult> runLiveMidiJournal (GuiHost& host, ScenarioContext
             ctx.expect (! pass->bytes.empty() && fileBytes (copied) == pass->bytes,
                         "first Save did not carry the surviving checkpoint");
             ctx.expect (absent (pass->checkpoint), "first Save left the copied private checkpoint behind");
+            ctx.expect (absent (pass->root), "first Save left the private journal folder it emptied behind");
             ctx.expect (fileBytes (untitled / "session.json") == "foreign session" && absent (untitled / "midi"),
                         "recording or Save As changed the foreign session");
         } });

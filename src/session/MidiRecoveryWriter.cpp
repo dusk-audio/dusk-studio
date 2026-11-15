@@ -18,6 +18,24 @@ constexpr int kMaxCheckpointCopies = 999;
 // A journal whose last write failed sits out this many checkpoint requests at
 // most, doubling from one after each failure. Flush and the close try at once.
 constexpr unsigned kMaxRetryWait = 32;
+
+// Removes the folder's midi/recording, then midi, then the folder itself, each
+// only while it is an empty folder. True when none of them is left.
+bool removeIfEmpty (const std::filesystem::path& folder)
+{
+    namespace stdfs = std::filesystem;
+    for (const auto& level : { folder / "midi" / "recording", folder / "midi", folder })
+    {
+        const auto native = dusk::fs::nativeIOPath (level);
+        std::error_code error;
+        const auto type = stdfs::symlink_status (native, error).type();
+        if (type == stdfs::file_type::not_found) continue;
+        if (error || type != stdfs::file_type::directory || ! stdfs::is_empty (native, error) || error
+            || ! stdfs::remove (native, error))
+            return false;
+    }
+    return true;
+}
 } // namespace
 
 Writer::Writer (Report reportIn) : report (std::move (reportIn)) {}
@@ -145,9 +163,10 @@ struct Journal::Impl
         std::uint64_t id = 0, batchFence = 0;
         int passOrdinal = 1;
         std::int64_t endSample = 0;
-        bool finish = false;
+        bool finish = false, release = false;
         Producer producer;
         PendingFile file;
+        std::filesystem::path folder;
     };
 
     Impl (Writer::Report value, std::size_t recordCapacity, std::function<void()> hook)
@@ -468,8 +487,32 @@ struct Journal::Impl
         completed (*state);
     }
 
+    // A take still recording into the folder, or a pass it retries there.
+    bool writesInto (const std::filesystem::path& folder) const
+    {
+        return std::any_of (states.begin(), states.end(), [&] (const auto& entry)
+        {
+            const auto& state = *entry.second;
+            return state.config.sessionDir == folder && (state.decoder || ! state.pending.empty());
+        });
+    }
+
+    void tidyReleased()
+    {
+        for (auto it = released.begin(); it != released.end();)
+            if (! writesInto (*it) && removeIfEmpty (*it)) it = released.erase (it);
+            else ++it;
+    }
+
     void process (const Job& job)
     {
+        if (job.release)
+        {
+            if (std::find (released.begin(), released.end(), job.folder) == released.end())
+                released.push_back (job.folder);
+            tidyReleased();
+            return;
+        }
         const auto found = states.find (job.id);
         if (job.finish)
         {
@@ -488,6 +531,7 @@ struct Journal::Impl
             completed (state);
             state.decoder.reset();
             if (state.checkpoints.empty() && state.pending.empty()) states.erase (found);
+            if (! released.empty()) tidyReleased();
             return;
         }
         auto result = writeFile (job.file);
@@ -507,6 +551,7 @@ struct Journal::Impl
                 else state.checkpoints.erase (checkpoint);
             }
             if (! state.decoder && state.checkpoints.empty() && state.pending.empty()) states.erase (found);
+            if (! released.empty()) tidyReleased();
         }
         notify (job.file, result);
     }
@@ -591,7 +636,8 @@ struct Journal::Impl
             }
             catch (...)
             {
-                if (job) failure (job->file, job->file.sessionDir, std::make_error_code (std::errc::io_error));
+                if (job && ! job->release)
+                    failure (job->file, job->file.sessionDir, std::make_error_code (std::errc::io_error));
                 continue;
             }
             if (flush != 0)
@@ -625,6 +671,8 @@ struct Journal::Impl
     std::atomic<std::uint64_t> recordRead { 0 }, batchWrite { 0 }, batchRead { 0 };
     // The worker's.
     std::map<std::uint64_t, std::unique_ptr<State>> states;
+    // Folders let go of and not yet removed.
+    std::vector<std::filesystem::path> released;
     std::deque<std::pair<std::uint64_t, std::unique_ptr<State>>> started;
     // Guarded by mutex.
     std::mutex mutex;
@@ -743,5 +791,31 @@ bool Journal::flush (const std::filesystem::path& folder)
     lock.lock();
     impl->progress.wait (lock, [&] { return impl->completedFlush >= target; });
     return impl->completedFlushReady;
+}
+
+void Journal::release (const std::filesystem::path& folder) noexcept
+{
+    if (folder.empty()) return;
+    try
+    {
+        // With no worker no take has journaled anywhere.
+        if (! impl)
+        {
+            removeIfEmpty (folder);
+            return;
+        }
+        Impl::Job job;
+        job.batchFence = impl->batchWrite.load (std::memory_order_relaxed);
+        job.release = true;
+        job.folder = folder;
+        {
+            const std::lock_guard<std::mutex> lock (impl->mutex);
+            impl->jobs.push_back (std::move (job));
+        }
+        impl->wake.signal();
+    }
+    catch (...)
+    {
+    }
 }
 } // namespace duskstudio::midirecovery

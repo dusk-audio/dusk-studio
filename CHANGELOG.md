@@ -25,7 +25,8 @@ canonical source.
   lost at quit if neither its checkpoint nor its take file was written. A
   take file, checkpoint or track file that cannot be written is reported in
   the status bar. First Save carries privately owned checkpoints from an
-  unsaved session into its saved folder.
+  unsaved session into its saved folder, and a private folder left empty is
+  removed.
 - **MIDI recovery files.** A session's MIDI no longer lives only inside
   `session.json`. Each recorded MIDI pass is written to the session's
   `midi/takes/` folder as a Standard MIDI File when it commits, every pass of

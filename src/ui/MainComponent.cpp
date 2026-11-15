@@ -1247,6 +1247,7 @@ MainComponent::~MainComponent()
     engine.recoveryFolderForMidi = [folder = prepareMidiRecoveryFolder()] { return folder; };
     engine.journalFolderForMidi = {};
     engine.setMidiRecoveryFailureSink ({});
+    releaseMidiJournalFolder();
     engine.setPluginRestoreAlertSink ({});
     engine.onBeforeTracksMove = nullptr;
     engine.onTracksMoved = nullptr;
@@ -3930,7 +3931,7 @@ bool MainComponent::writeSessionTo (const juce::File& requestedDir,
         }
         // Takes now journal into the session's folder. What is left in the
         // private one stays there, and a later Save As does not copy it again.
-        ownedMidiRecoveryDir.clear();
+        releaseMidiJournalFolder();
         sessionOnDisk = true;
         engine.queueMidiTrackFiles();
         RecentSessions::add (toPath (dir));
@@ -4043,7 +4044,7 @@ void MainComponent::startUnsavedSessionIn (const std::filesystem::path& parent)
     const auto dir = savecheck::launchSessionFolder (parent, privateUnsavedFolder(), []
         { return dusk::fs::createUniqueTempDirectory ("dusk-studio-unsaved-"); });
     session.setSessionDirectory (toFile (dir));
-    ownedMidiRecoveryDir.clear();
+    releaseMidiJournalFolder();
 }
 
 std::filesystem::path MainComponent::sidecarFolder() const
@@ -4100,6 +4101,13 @@ std::filesystem::path MainComponent::prepareMidiJournalFolder()
         if (error && error != std::errc::file_exists) break;
     }
     return {};
+}
+
+void MainComponent::releaseMidiJournalFolder()
+{
+    if (ownedMidiRecoveryDir.empty()) return;
+    engine.releaseMidiJournalFolder (ownedMidiRecoveryDir);
+    ownedMidiRecoveryDir.clear();
 }
 
 void MainComponent::showMidiRecoveryFailure (int trackNumber, const std::filesystem::path& path, std::error_code error)
@@ -4990,7 +4998,7 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     }
     const auto tAfterParse = juce::Time::getMillisecondCounterHiRes();
     ++sessionLoadSerial;
-    ownedMidiRecoveryDir.clear();
+    releaseMidiJournalFolder();
 
     // The notepad is session-bound: drop any open editor from the previous
     // session and adopt the new session's sidecar.

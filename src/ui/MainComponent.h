@@ -353,6 +353,9 @@ private:
     std::filesystem::path sidecarFolder() const;
     std::filesystem::path prepareMidiRecoveryFolder() const;
     std::filesystem::path prepareMidiJournalFolder();
+    // Hands the private journal folder back to the engine, which removes it
+    // once nothing is left in it.
+    void releaseMidiJournalFolder();
     void showMidiRecoveryFailure (int trackNumber, const std::filesystem::path& path, std::error_code error);
     // <Music>/Dusk Studio, the parent a launch session starts in (see
     // dusk::fs::appMusicDir). Empty when there is no home folder.

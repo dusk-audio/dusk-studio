@@ -113,6 +113,11 @@ public:
     // session being saved holds such a pass only while a region keeps it; a
     // loop pass older than its region's previous takes is held nowhere else.
     bool flush (const std::filesystem::path& folder = {});
+    // Lets go of a folder its owner made for takes to journal into. Its
+    // midi/recording, then midi, then the folder itself are removed, each
+    // only while empty, once no take still records there or retries a pass
+    // it could not write. A file anywhere in it keeps it.
+    void release (const std::filesystem::path& folder) noexcept;
 
     // Runs on the worker each time it has found nothing to do, just before it
     // sleeps. Set before the first begin.

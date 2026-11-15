@@ -858,3 +858,106 @@ TEST_CASE ("A MIDI take begun and appended as the journal worker goes to sleep i
     // would be dropped without a word, so the pass's report is the proof.
     CHECK (eventually ([&] { return reached.load(); }));
 }
+
+TEST_CASE ("A MIDI journal lets a folder it wrote into go only once nothing is left in it", "[midi][recovery][journal]")
+{
+    const duskstudio::test::TempDirectory temp ("dusk-midi-journal-release-");
+    const auto folder = temp.path() / "recordings" / "take";
+    const auto directory = folder / "midi" / "recording";
+    REQUIRE (stdfs::create_directories (folder));
+    Reports reports;
+    recovery::Journal::Config config;
+    config.sessionDir = folder;
+    config.made = november8th();
+    config.trackNumber = 7;
+    config.name = "Keys";
+    const auto playNote = [] (recovery::Journal& journal, const recovery::Journal::Handle& handle)
+    {
+        MidiCaptureStream capture;
+        REQUIRE (capture.pushEvent (1, 0, 0x90, 60, 100));
+        REQUIRE (capture.publishProgress (1, 10, false));
+        capture.service (-1, [&] (const auto& view) { REQUIRE (journal.append (handle, view)); });
+    };
+
+    SECTION ("a folder no take wrote into goes at once, even before any take began")
+    {
+        recovery::Journal journal (reports.callback());
+        journal.release (folder);
+        journal.flush();
+        CHECK_FALSE (stdfs::exists (folder));
+        CHECK (stdfs::is_directory (folder.parent_path()));
+    }
+    SECTION ("a folder whose take was stopped with nothing played goes")
+    {
+        recovery::Journal journal (reports.callback());
+        auto handle = journal.begin (config);
+        REQUIRE (handle.id != 0);
+        REQUIRE (journal.finish (handle, 1, 0));
+        journal.release (folder);
+        journal.flush();
+        CHECK_FALSE (stdfs::exists (folder));
+    }
+    SECTION ("a folder goes once the last checkpoint in it gives way to its take file")
+    {
+        recovery::Journal journal (reports.callback());
+        auto handle = journal.begin (config);
+        REQUIRE (handle.id != 0);
+        playNote (journal, handle);
+        REQUIRE (journal.finish (handle, 1, 10));
+        journal.release (folder);
+        journal.flush();
+        REQUIRE (namesIn (directory).size() == 1);
+        const auto elsewhere = temp.path() / "Untitled";
+        REQUIRE (stdfs::create_directory (elsewhere));
+        REQUIRE (journal.commit (fileFor (elsewhere, 60, recovery::Folder::Takes), handle.id, 1));
+        journal.flush();
+        CHECK (namesIn (elsewhere / "midi" / "takes").size() == 1);
+        CHECK_FALSE (stdfs::exists (folder));
+    }
+    SECTION ("a checkpoint whose take file was never written keeps its folder")
+    {
+        recovery::Journal journal (reports.callback());
+        auto handle = journal.begin (config);
+        REQUIRE (handle.id != 0);
+        playNote (journal, handle);
+        REQUIRE (journal.finish (handle, 1, 10));
+        journal.release (folder);
+        journal.flush();
+        CHECK (namesIn (directory).size() == 1);
+    }
+    SECTION ("an empty folder a pass still waits to be written into stays until it is written")
+    {
+        struct Writable
+        {
+            stdfs::path folder;
+            ~Writable() { std::error_code ignored; stdfs::permissions (folder, stdfs::perms::owner_all, ignored); }
+        } writable { folder };
+        stdfs::permissions (folder, stdfs::perms::owner_read | stdfs::perms::owner_exec);
+        std::error_code blocked;
+        if (stdfs::create_directory (folder / "probe", blocked))
+        {
+            stdfs::remove (folder / "probe", blocked);
+            SKIP ("a folder without write permission can still be written in here");
+        }
+        recovery::Journal journal (reports.callback());
+        auto handle = journal.begin (config);
+        REQUIRE (handle.id != 0);
+        playNote (journal, handle);
+        REQUIRE (journal.finish (handle, 1, 10));
+        journal.release (folder);
+        journal.flush();
+        REQUIRE (stdfs::is_directory (folder));
+        REQUIRE (stdfs::is_empty (folder));
+        stdfs::permissions (folder, stdfs::perms::owner_all);
+        journal.flush();
+        CHECK (namesIn (directory).size() == 1);
+    }
+    SECTION ("a file of anyone else's keeps the folder and stays as it is")
+    {
+        { std::ofstream foreign (folder / "notes.txt"); foreign << "someone's notes"; }
+        recovery::Journal journal (reports.callback());
+        journal.release (folder);
+        journal.flush();
+        CHECK (dusk::fs::loadFileAsString (folder / "notes.txt") == "someone's notes");
+    }
+}
