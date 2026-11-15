@@ -31,7 +31,7 @@ Remove it again:
 
 REQUIREMENTS
 ------------
-A normal desktop Linux (X11 or Wayland). Audio runs over PipeWire/JACK
+A normal desktop Linux (X11 or Wayland). Audio runs over PipeWire
 (preferred) or ALSA.
 
 The binary links these libraries and will not start without them. The PipeWire

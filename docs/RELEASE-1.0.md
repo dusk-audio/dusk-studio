@@ -130,7 +130,7 @@ post-1.0 under decision 0001; decision 0002 has since resumed that work.
 | 535 | Local instrument browser for soundfonts on disk | done | Local browsing shipped in 0.14; #804 adds repository browsing alongside it in 0.16. |
 | 536 | Walk the demo path on packaged builds and file what it snags on | 1.0 | Individual demo-path bugs have been fixed one at a time. Nobody has walked the whole path on a shipped build. |
 | 605 | Self-test coverage across CI platforms | 1.0 | macOS CI and the Linux and macOS release jobs now run it; Windows CI does not, and the regression runner's Windows leg covers it (see the checklist). |
-| 804 | SFZ library: online catalog, downloads and portable locators | 0.16 (validation pending) | Four external SFZ sources, staged installation, portable references and asynchronous loading; follow-up fixes and final validation remain on milestone 0.16. |
+| 804 | SFZ library: online catalog, downloads and portable locators | done | Shipped in 0.16: four external SFZ sources, staged installation, portable references and asynchronous loading. |
 | 606 | Built-in suite placeholder in package contract | 1.0 | The contract listed plugin files the in-binary suite never produces. |
 | 607 | Signing wording in release docs | 1.0 | README, QUICKSTART and MANUAL described all builds as unsigned after the workflow gained signing. |
 | 608 | Release-plan status drift | 1.0 | This document listed #531 to #534 as open after they shipped. |

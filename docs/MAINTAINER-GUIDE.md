@@ -79,7 +79,6 @@ You do not need all of JUCE. You need these pieces, in roughly this order:
 | `LookAndFeel` | All custom drawing (faders, knobs, VU) routes through here. | [src/ui/DuskStudioLookAndFeel.h](../src/ui/DuskStudioLookAndFeel.h) |
 | `AudioDeviceManager` + `AudioIODeviceCallback` | The audio entry point. | [src/engine/AudioEngine.cpp](../src/engine/AudioEngine.cpp) |
 | `AudioBuffer<float>`, `dsp::ProcessSpec`, `dsp::IIR`, `dsp::Oversampling` | The DSP vocabulary. | [src/dsp/](../src/dsp/) |
-| `AudioFormatWriter::ThreadedWriter` + `TimeSliceThread` | Lock-free disk recording. | [src/engine/RecordManager.cpp](../src/engine/RecordManager.cpp) |
 | `AudioPluginFormatManager`, `AudioPluginInstance` | Hosting VST3/LV2/AU. | [src/engine/PluginManager.cpp](../src/engine/PluginManager.cpp), [src/engine/PluginSlot.cpp](../src/engine/PluginSlot.cpp) |
 | `var` / `JSON` | Session save/load. | [src/session/SessionSerializer.cpp](../src/session/SessionSerializer.cpp) |
 
@@ -93,14 +92,14 @@ This is the part that has no shortcut. The audio thread is a hard-real-time dead
 
 On the audio thread you may **not**: allocate (`new`, `push_back`, `resize`, `std::string`, `juce::String`), lock a mutex, do file/network/log I/O, or call any UI/message-thread API. You communicate with other threads only through `std::atomic<T>` and lock-free FIFOs.
 
-Read Part 3's thread table until you can recite it. Then read the actual callback (`AudioEngine::audioDeviceIOCallbackWithContext`, Part 3) and notice it obeys every rule.
+Read Part 3's thread table until you can recite it. Then read the actual callback (`AudioEngine::audioDeviceIOCallback`, Part 3) and notice it obeys every rule.
 
 ### Step 5 — Trace one signal end-to-end (the keystone exercise)
 
 When you can do this from memory, you can maintain the app. Trace a fader move:
 
 1. User drags the channel fader → `Slider::onValueChange` lambda fires (message thread) → `track.strip.faderDb.store(db, relaxed)` writes an atomic in the `Session`.
-2. Next audio block: `AudioEngine::audioDeviceIOCallbackWithContext` runs (audio thread). For that track it calls `ChannelStrip::processAndAccumulate(...)`.
+2. Next audio block: `AudioEngine::audioDeviceIOCallback` runs (audio thread). For that track it calls `ChannelStrip::processAndAccumulate(...)`.
 3. `ChannelStrip` reads `faderDb` (lock-free), feeds a `SmoothedValue` (so the change ramps over ~20 ms, no click), applies gain, accumulates into the master mix buffer.
 4. The master mix is copied to the device output; the strip writes a peak value into a meter atom.
 5. `ChannelStripComponent::timerCallback` (message thread, 30 Hz) reads the meter atom and repaints the meter.
@@ -175,7 +174,7 @@ DuskStudioApp (JUCE app)              src/DuskStudioApp.cpp
 
 ### The one function to understand: the audio callback
 
-`AudioEngine::audioDeviceIOCallbackWithContext()` in [src/engine/AudioEngine.cpp](../src/engine/AudioEngine.cpp) is ~1000 lines and **runs on the audio thread, once per buffer (every few ms)**. Everything in Part 4 about DSP is in service of this function. Its order is the signal flow:
+`AudioEngine::audioDeviceIOCallback()` in [src/engine/AudioEngine.cpp](../src/engine/AudioEngine.cpp) is ~1000 lines and **runs on the audio thread, once per buffer (every few ms)**. Everything in Part 4 about DSP is in service of this function. Its order is the signal flow:
 
 1. **Bail on empty / oversized blocks** — `numSamples == 0` early-returns; oversized host blocks are guarded. (JACK/PipeWire really do send these during transitions.)
 2. **Drain MIDI inputs** — lock-free pull from each device's `MidiMessageCollector`.
@@ -214,8 +213,8 @@ After binding, the audio thread reads parameters straight from the session's ato
 | **Audio** | the callback + all DSP | read/write `atomic`, lock-free FIFO push/pop, math | allocate, lock, I/O, log, touch UI |
 | **Message (UI)** | all `Component` code, timers, file dialogs, save/load | everything normal | block on the audio thread |
 | **MIDI input** | JUCE's handler → `MidiMessageCollector` | lock-free enqueue | heavy work |
-| **Playback prefetch** | `TimeSliceThread` in `PlaybackEngine` | read WAVs ahead of the playhead | — |
-| **Record disk** | `TimeSliceThread` in `RecordManager` | drain the write FIFO to disk | — |
+| **Playback prefetch** | `ReaderFillPool` workers in `PlaybackEngine` | read WAVs ahead of the playhead | — |
+| **Record disk** | `WriterDrainPool` thread in `RecordManager` | drain each track's write ring to disk | — |
 | **MIDI out pump** | 1 ms loop in `AudioEngine` | drain the MIDI-out FIFO, call `sendBlockOfMessages` (it locks — that's why it can't run on the audio thread) | — |
 
 Cross-thread state is *always* `std::atomic` or a lock-free FIFO. Metering atomics use `memory_order_relaxed`. Flags that gate audio reads of newly-published data (automation mode, swapped plugin pointer) use `release` on the writer and `acquire` on the audio reader. This is the single subtlest thing in the codebase — when in doubt, find an existing pattern (PluginSlot's swap, RecordManager's in-flight counter) and copy its ordering exactly.
@@ -226,7 +225,7 @@ Cross-thread state is *always* `std::atomic` or a lock-free FIFO. Metering atomi
 
 ### Recording & playback (lock-free disk I/O)
 
-- **Recording:** `RecordManager` owns one `AudioFormatWriter::ThreadedWriter` per armed track. The audio thread only calls `write()` (lock-free push to a JUCE queue); a `TimeSliceThread` drains it to a WAV. On stop, the new WAV becomes an `AudioRegion` on the track.
+- **Recording:** `RecordManager` owns one `dusk::audio::ThreadedFileWriter` per armed track. The audio thread only calls `push()` (lock-free push to the writer's ring); the one `WriterDrainPool` disk thread drains every ring to its WAV. On stop, the new WAV becomes an `AudioRegion` on the track.
 - **Playback:** `PlaybackEngine` opens readers for every region ahead of time; the audio thread asks `readForTrack()` to sum all active regions at the playhead. A prefetch miss yields silence — it never blocks.
 
 ---
@@ -237,7 +236,7 @@ Cross-thread state is *always* `std::atomic` or a lock-free FIFO. Metering atomi
 
 `ChannelStrip`, `BusStrip`, `AuxLaneStrip`, `MasterBus`, `MasteringChain`, `PluginSlot` all share this shape:
 
-- **`prepare(sampleRate, blockSize, ...)`** — cache the sample rate, `.prepare(spec)` every `juce::dsp` member, `.reset()` every `SmoothedValue`, size every scratch buffer. Must be idempotent (it gets called again on device change).
+- **`prepare(sampleRate, blockSize, ...)`** — cache the sample rate, prepare every filter, oversampler and vendored core it owns, `.reset()` every `SmoothedValue`, size every scratch buffer. Must be idempotent (it gets called again on device change).
 - **`bind(params)`** — stash a reference to the matching session param struct.
 - **`processInPlace(L, R, n)`** or **`processAndAccumulate(...)`** — the audio-thread entry: update smoother targets at the top, run DSP, write meter atoms at the bottom.
 
@@ -247,19 +246,15 @@ Per channel: **HPF → 4-band EQ → compressor (Opto/FET/VCA) → sends → pan
 
 ### Where the actual EQ/comp/tape code lives (vendored DSP)
 
-This is a gotcha that will confuse you the first time: **the EQ, compressor, and tape DSP are not in this repo.** They are header-only "cores" shared with the Dusk Audio plugins, pulled in from the plugins repo at configure time (`-DDUSK_PLUGINS_PATH`, else fetched at the commit in `DONOR_REV`). Classes like `UniversalCompressor`, `BritishEQProcessor`, `TubeEQProcessor`, and the TapeMachine processor come from there.
+This is a gotcha that will confuse you the first time: **the EQ, compressor, and tape DSP are not in this repo.** They are "cores" shared with the Dusk Audio plugins, pulled in from the plugins repo at configure time (`-DDUSK_PLUGINS_PATH`, else fetched at the commit in `DONOR_REV`). The channel EQ `duskaudio::FourKEQDSP`, the channel, bus and master compressor `duskaudio::UniversalCompressorDSP`, the master tube EQ `duskaudio::MultiQTube`, the mastering multiband `UniversalCompressor` and the Tape Machine 2 plug-in come from there.
 
 If the plugins repo can't be fetched, configure stops with an error. There is no build without it: the mastering EQ, loudness meter and oversampler include donor headers too. Reconfigure with network access, or point `-DDUSK_PLUGINS_PATH` at a plugins checkout.
 
-### The atomic-pointer pattern for vendored DSP (the one pattern to copy)
+### Feeding parameters to vendored DSP (the one pattern to copy)
 
-The vendored DSP exposes its parameters through a JUCE `AudioProcessorValueTreeState` (APVTS). Looking up a parameter by name (`getRawParameterValue("threshold")`) is a **string hash lookup — forbidden on the audio thread.** So the pattern is: cache the pointer **once** in `prepare`, write through it every block.
+Every vendored core but one takes its parameters through plain setters. At the top of each block the strip reads the session atomics and calls those setters: `ChannelStrip::updateCompParameters()` in [src/dsp/ChannelStrip.cpp](../src/dsp/ChannelStrip.cpp) drives `duskaudio::UniversalCompressorDSP`, whose setters are atomic stores, and `ChannelStrip::updateEqParameters()` drives `duskaudio::FourKEQDSP` when the EQ settings have changed. Copy that shape for any new vendored processor: no string lookup, no allocation, no host notification.
 
-The reference implementation is `ChannelStrip::bindCompParams()` in [src/dsp/ChannelStrip.cpp](../src/dsp/ChannelStrip.cpp). Copy it verbatim for any new vendored processor:
-
-1. In `prepare`, call `getRawParameterValue("name")` for each param and store the returned `std::atomic<float>*`.
-2. Each block, read the session param and `storeAtom(cachedPtr, value)` — no string lookup, no allocation, no host notification.
-3. The vendored `processBlock` reads the same atomics.
+The exception exposes its parameters through a JUCE `AudioProcessorValueTreeState` (APVTS): the mastering multiband `UniversalCompressor`. Looking up an APVTS parameter by name (`getRawParameterValue("threshold")`) is a **string hash lookup, forbidden on the audio thread.** So `MasteringChain::bindCompParams()` in [src/dsp/MasteringChain.cpp](../src/dsp/MasteringChain.cpp) caches each returned `std::atomic<float>*` once in `prepare`, `MasteringChain::updateCompParameters()` writes the session value through it with `storeAtom(cachedPtr, value)` every block, and the donor's `processBlock` reads the same atomics. Do not add another APVTS-backed processor.
 
 ### Parameters: the two sources
 
@@ -271,6 +266,8 @@ Metering uses `mutable std::atomic<float>` on the param struct so DSP holding a 
 ### Oversampling — read this before touching any DSP
 
 There is **one** oversampling control: the **Effect Oversampling** dropdown in Audio Device settings. The engine drives the chosen factor (1×/2×/4×) through every processor. Individual DSP units **must not** enable their own internal oversampling — doing so double-oversamples and wastes CPU. When you add a processor, wire it to read the engine-wide setting; never call its `setInternalOversamplingEnabled`.
+
+Three units in the mastering chain run a fixed 4× of their own on purpose, and are not violations to fix. [BrickwallLimiter](../src/dsp/BrickwallLimiter.h) cannot limit true peak without it, and as the terminal stage it has nothing downstream to double-oversample. [MasteringDigitalEq](../src/dsp/MasteringDigitalEq.h) runs its biquads at 4× so its curves do not cramp near Nyquist. The [LoudnessMeter](../src/dsp/LoudnessMeter.cpp) true-peak detector measures at 4×, as ITU-R BS.1770 Annex 2 defines true peak; it is a meter and changes no audio.
 
 ---
 
@@ -1911,9 +1908,9 @@ RUN TESTS        ctest --test-dir build-tests --output-on-failure
 ASAN / TSAN      -DDUSKSTUDIO_ENABLE_ASAN=ON  /  -DDUSKSTUDIO_ENABLE_TSAN=ON
 OVERRIDE DEPS    -DJUCE_PATH=…  -DDUSK_PLUGINS_PATH=…
 
-THE HEART        AudioEngine::audioDeviceIOCallbackWithContext()   src/engine/AudioEngine.cpp
+THE HEART        AudioEngine::audioDeviceIOCallback()              src/engine/AudioEngine.cpp
 THE DATA         src/session/Session.h
-THE PATTERN      ChannelStrip::bindCompParams()                    src/dsp/ChannelStrip.cpp
+THE PATTERN      ChannelStrip::updateCompParameters()              src/dsp/ChannelStrip.cpp
 THE NERVOUS SYS  UI writes atom → audio reads atom → audio writes meter atom → UI timer reads it
 THE RULES        Part 3's thread table — no alloc / lock / I/O / UI on the audio thread
 ```

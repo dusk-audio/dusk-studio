@@ -26,7 +26,7 @@ juce_events, juce_graphics, juce_gui_basics, juce_gui_extra`
 
 `juce_audio_utils` unlinked on every platform once nothing used it (no
 production AudioThumbnail, device selector, keyboard or player consumer was
-left). `juce_audio_devices` links on macOS and Windows only.
+left). The app links `juce_audio_devices` on macOS and Windows only.
 
 A module leaves the link line only when its whole subsystem is reimplemented
 and every call site is flipped. `juce_core` unlinks last. The
