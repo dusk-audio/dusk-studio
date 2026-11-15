@@ -1,6 +1,9 @@
 #pragma once
 
 #include "IpcChannel.h"
+#if defined(__linux__)
+ #include "ChildTempDirectory_Linux.h"
+#endif
 
 #include <cstdint>
 #include <string>
@@ -11,7 +14,8 @@
 // Linux  : posix_spawn() with file actions to remap the channel endpoint.
 //          The exec'd helper arms prctl(PR_SET_PDEATHSIG) and verifies the
 //          expected parent PID before doing other work. Reaping via
-//          waitpid(WNOHANG); termination via SIGTERM then SIGKILL.
+//          waitpid(WNOHANG); termination via SIGTERM then SIGKILL. The
+//          child's TMPDIR is a folder of its own, removed once it is reaped.
 // macOS  : posix_spawn() with file actions to remap the channel endpoint
 //          to kChildInheritFd. Normal teardown is parent-supervised; a hard
 //          parent crash can leave an orphan because macOS has no PDEATHSIG.
@@ -80,6 +84,9 @@ private:
     // Linux stores the pid_t value directly; -1 = not spawned.
     std::intptr_t pid   { -1 };
     bool          alive { false };
+   #if defined(__linux__)
+    ChildTempDirectory tempDirectory;
+   #endif
 };
 
 } // namespace duskstudio::ipc::platform

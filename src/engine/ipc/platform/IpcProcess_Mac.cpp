@@ -30,7 +30,7 @@ bool ChildProcess::spawn (const std::string& executablePath,
 {
     pid_t spawned = -1;
     if (! detail::posixSpawn (executablePath, args, childChannelEnd,
-                              parentChannelEnd,
+                              parentChannelEnd, environ,
                               spawned, errorOut))
         return false;
 

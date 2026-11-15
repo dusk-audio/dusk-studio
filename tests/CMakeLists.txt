@@ -1120,6 +1120,10 @@ if (_duskstudio_ipc_test_enabled)
     if (UNIX)
         target_sources(dusk-studio-tests PRIVATE ipc_channel_peer_close.cpp)
     endif()
+    # Each child's TMPDIR is a folder of its own on Linux only.
+    if (UNIX AND NOT APPLE)
+        target_sources(dusk-studio-tests PRIVATE plugin_child_temp.cpp)
+    endif()
     target_sources(dusk-studio-tests PRIVATE
         ipc_stub_round_trip.cpp
         ipc_prepare_without_plugin.cpp

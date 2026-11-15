@@ -20,6 +20,9 @@
  #include <sys/wait.h>
  #include <unistd.h>
  extern "C" char** environ;
+ #if defined(__linux__)
+  #include "ipc/platform/ChildTempDirectory_Linux.h"
+ #endif
 #endif
 
 namespace duskstudio
@@ -197,6 +200,9 @@ struct ScanProcess::Impl
 {
     int output = -1;
     pid_t child = -1;
+   #if defined(__linux__)
+    ipc::platform::ChildTempDirectory tempDirectory;
+   #endif
 
     ~Impl()
     {
@@ -212,6 +218,9 @@ struct ScanProcess::Impl
         int status = 0;
         while (::waitpid (child, &status, 0) < 0 && errno == EINTR) {}
         child = -1;
+       #if defined(__linux__)
+        tempDirectory.remove();
+       #endif
     }
 
     bool start (const std::vector<std::string>& arguments)
@@ -276,8 +285,13 @@ struct ScanProcess::Impl
         std::vector<char*> argv;
         for (const auto& argument : arguments) argv.push_back (const_cast<char*> (argument.c_str()));
         argv.push_back (nullptr);
+       #if defined(__linux__)
+        char* const* environment = tempDirectory.environment();
+       #else
+        char* const* environment = environ;
+       #endif
         pid_t spawned = -1;
-        if (::posix_spawn (&spawned, arguments.front().c_str(), &actions, &attributes, argv.data(), environ) != 0)
+        if (::posix_spawn (&spawned, arguments.front().c_str(), &actions, &attributes, argv.data(), environment) != 0)
             return false;
         child = spawned;
         return true;

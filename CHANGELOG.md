@@ -93,6 +93,11 @@ canonical source.
   LV2 plug-in's state ended Dusk Studio when its `state.ttl` could not be
   read, as when a folder sat in its place or the disk failed. The read now
   fails cleanly and the plug-in keeps the state it has.
+- **Plug-in host and scan children.** A sandbox or scan child builds only the
+  plug-in format it was started for, so it starts in a few milliseconds
+  instead of loading every installed LV2 bundle first, and on Linux its
+  temporary folder is removed when the child ends. Before, a child that was
+  killed left a `temp_*` folder behind.
 
 ## [0.16.1] - 2026-11-07
 

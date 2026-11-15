@@ -25,9 +25,12 @@ bool ChildProcess::spawn (const std::string& executablePath,
 
     pid_t spawned = -1;
     if (! detail::posixSpawn (executablePath, childArgs, childChannelEnd,
-                              parentChannelEnd,
+                              parentChannelEnd, tempDirectory.environment(),
                               spawned, errorOut))
+    {
+        tempDirectory.remove();
         return false;
+    }
 
     pid = (std::intptr_t) spawned;
     closeHandle (childChannelEnd);
@@ -44,6 +47,7 @@ bool ChildProcess::pollExit() noexcept
     if (r < 0)  return false;
     pid   = -1;
     alive = false;
+    tempDirectory.remove();
     return true;
 }
 
@@ -58,7 +62,13 @@ void ChildProcess::terminate (int graceMs) noexcept
     {
         int status = 0;
         const pid_t r = ::waitpid ((pid_t) pid, &status, WNOHANG);
-        if (r == (pid_t) pid) { pid = -1; alive = false; return; }
+        if (r == (pid_t) pid)
+        {
+            pid = -1;
+            alive = false;
+            tempDirectory.remove();
+            return;
+        }
         ::usleep (10000);
     }
 
@@ -69,6 +79,7 @@ void ChildProcess::terminate (int graceMs) noexcept
         ::waitpid ((pid_t) pid, &status, 0);
         pid = -1;
         alive = false;
+        tempDirectory.remove();
     }
 }
 

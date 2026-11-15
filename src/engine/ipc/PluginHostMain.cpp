@@ -1199,6 +1199,36 @@ private:
 };
 #endif
 
+// Adds the format a scan names or a load needs, the first time it is needed.
+// False for a format this build does not host.
+bool addFormatNamed (duskstudio::juce_compat::FormatManager& manager, const std::string& name)
+{
+    for (auto* format : manager.getFormats())
+        if (format->getName().toStdString() == name) return true;
+   #if JUCE_PLUGINHOST_AU && JUCE_MAC
+    if (name == "AudioUnit")
+    {
+        duskstudio::juce_compat::addFormat<juce::AudioUnitPluginFormat> (manager);
+        return true;
+    }
+   #endif
+   #if JUCE_PLUGINHOST_VST3
+    if (name == "VST3")
+    {
+        duskstudio::juce_compat::addFormat<juce::VST3PluginFormat> (manager);
+        return true;
+    }
+   #endif
+   #if JUCE_PLUGINHOST_LV2
+    if (name == "LV2")
+    {
+        duskstudio::juce_compat::addFormat<juce::LV2PluginFormat> (manager);
+        return true;
+    }
+   #endif
+    return false;
+}
+
 bool parsePluginDescriptionXml (const juce::String& xml,
                                   juce::PluginDescription& out)
 {
@@ -1278,9 +1308,13 @@ std::uint32_t handleLoadPlugin (HostState& host,
     // until some later RPC happens to republish it.
     const auto deadline = std::chrono::steady_clock::now()
                         + std::chrono::milliseconds (kHostLifecycleWaitMs);
-    if (desc.pluginFormatName == "LV2"
-        && runOnHostMessageThreadAndWait ([&host]
-        { duskstudio::juce_compat::primeCustomLv2 (host.formatManager, duskstudio::pluginpaths::load()); }, kHostLifecycleWaitMs)
+    // Formats are added on the message thread, which is where JUCE creates the
+    // instances they load.
+    if (runOnHostMessageThreadAndWait ([&host, format = desc.pluginFormatName.toStdString()]
+        {
+            if (addFormatNamed (host.formatManager, format) && format == "LV2")
+                duskstudio::juce_compat::primeCustomLv2 (host.formatManager, duskstudio::pluginpaths::load());
+        }, kHostLifecycleWaitMs)
             != HostDispatchResult::Done)
         return kControlStatusLifecycleFailed;
 
@@ -1855,7 +1889,6 @@ int runIpcHost (int argc, const char* const* argv) noexcept
     juce::ScopedJuceInitialiser_GUI juceInit;
 
     hostMessageThreadId = std::this_thread::get_id();
-    duskstudio::juce_compat::addDefaultFormats (host.formatManager);
 
     {
         char k = 'k';
@@ -2051,33 +2084,32 @@ int runScan (int argc, const char* const* argv) noexcept
     // `const String x (CharPointer_UTF8 (argv[i]))` as a function declaration
     // (most-vexing-parse), then fails because argv[i] isn't a constant array
     // bound. Braces can't be a parameter list, so they disambiguate.
-    const juce::String formatName { juce::CharPointer_UTF8 (argv[scanIdx + 1]) };
-    const juce::String fileOrId   { juce::CharPointer_UTF8 (argv[scanIdx + 2]) };
+    const std::string formatName { argv[scanIdx + 1] };
+    const juce::String fileOrId  { juce::CharPointer_UTF8 (argv[scanIdx + 2]) };
 
     // Some formats post messages to themselves while probing; give them a
     // MessageManager to dispatch to.
     juce::ScopedJuceInitialiser_GUI juceInit;
 
-    duskstudio::juce_compat::FormatManager fm;
-    duskstudio::juce_compat::addDefaultFormats (fm);
-
-    juce::AudioPluginFormat* chosen = nullptr;
-    for (auto* f : fm.getFormats())
-        if (f != nullptr && f->getName() == formatName) { chosen = f; break; }
-
-    if (chosen == nullptr)
+    // The manager goes before the payload does: the LV2 format removes its temp
+    // folder only in its destructor, and the parent kills this process as soon
+    // as it has read the whole payload. The rows are copies; nothing in them
+    // points into a format.
+    std::string payload;
     {
-        std::fprintf (stderr, "[dusk-studio-plugin-host] unknown format \"%s\"\n",
-                      formatName.toRawUTF8());
-        return 65;
+        duskstudio::juce_compat::FormatManager fm;
+        if (! addFormatNamed (fm, formatName))
+        {
+            std::fprintf (stderr, "[dusk-studio-plugin-host] unknown format \"%s\"\n",
+                          formatName.c_str());
+            return 65;
+        }
+
+        juce::OwnedArray<juce::PluginDescription> found;
+        if (formatName == "LV2") duskstudio::juce_compat::primeCustomLv2 (fm, duskstudio::pluginpaths::load());
+        fm.getFormat (0)->findAllTypesForFile (found, fileOrId);   // may crash/hang - that is the point
+        payload = duskstudio::scanproto::makePayload (descriptorsFromJuce (found));
     }
-
-    juce::OwnedArray<juce::PluginDescription> found;
-    if (formatName == "LV2") duskstudio::juce_compat::primeCustomLv2 (fm, duskstudio::pluginpaths::load());
-    chosen->findAllTypesForFile (found, fileOrId);   // may crash/hang - that is the point
-
-    const auto payload = duskstudio::scanproto::makePayload (
-        descriptorsFromJuce (found));
     std::fwrite (payload.data(), 1, payload.size(), stdout);
     std::fflush (stdout);
     return 0;
