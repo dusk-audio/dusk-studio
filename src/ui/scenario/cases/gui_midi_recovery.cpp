@@ -5,6 +5,8 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -39,6 +41,17 @@ std::vector<std::array<int, 2>> noteOnsIn (const fs::path& file)
         for (const auto& event : part)
             if (event.isNoteOn()) notes.push_back ({ event.noteNumber(), event.velocity() });
     return notes;
+}
+
+std::vector<std::int64_t> noteOnTicksIn (const fs::path& file)
+{
+    std::vector<std::int64_t> ticks;
+    midi::MidiFileReader reader;
+    if (! reader.readFile (file)) return ticks;
+    for (const auto& part : reader.tracks())
+        for (const auto& event : part)
+            if (event.isNoteOn()) ticks.push_back (event.tick);
+    return ticks;
 }
 
 bool absent (const fs::path& path)
@@ -472,6 +485,137 @@ std::optional<ScenarioResult> runLiveMidiJournal (GuiHost& host, ScenarioContext
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
 }
+
+// A take that opening another session stops belongs to the session it was
+// recorded in: its file goes to that session's midi/takes, named after that
+// session's track and at its tempo, and its checkpoint there goes only once
+// that file is on the disk. The session opened gets none of it.
+std::optional<ScenarioResult> runSessionSwitchFilesTake (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires a stopped transport and no modal");
+    if (! engine.flushMidiRecoveryFiles())
+        return ScenarioResult::fail ("an earlier take's MIDI journal never finished");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save the initial session");
+    std::array<bool, Session::kNumTracks> armed {};
+    for (int index = 0; index < Session::kNumTracks; ++index)
+        armed[(std::size_t) index] = session.track (index).recordArmed.load();
+    ctx.cleanup ([&host, &engine, &session, originalDir, restore, armed]
+    {
+        engine.stop();
+        drainModals (host);
+        engine.flushMidiRecoveryFiles();
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+        for (int index = 0; index < Session::kNumTracks; ++index)
+            session.setTrackArmed (index, armed[(std::size_t) index]);
+    });
+
+    const auto recorded = ctx.tempDir() / "Recorded here";
+    const auto opened = ctx.tempDir() / "Opened next";
+    const auto write = [] (const fs::path& folder, const char* name, float bpm)
+    {
+        auto saved = std::make_unique<Session>();
+        applySessionDirectory (*saved, folder);
+        saved->tempoBpm.store (bpm);
+        auto& track = saved->track (0);
+        track.name = name;
+        track.mode.store ((int) Track::Mode::Midi);
+        return SessionSerializer::save (*saved, folder / "session.json");
+    };
+    if (! write (recorded, "Keys", 100.0f) || ! write (opened, "Drums", 160.0f))
+        return ScenarioResult::fail ("could not write the two sessions");
+
+    struct Take
+    {
+        fs::path checkpoint;
+        std::vector<std::int64_t> ticks;
+    };
+    auto take = std::make_shared<Take>();
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 100, [&host, &engine, &session, recorded]
+    {
+        reopenSavedSession (host, recorded / "session.json");
+        for (int index = 0; index < Session::kNumTracks; ++index)
+        {
+            session.setTrackArmed (index, false);
+            session.track (index).midiOutputIndex.store (-1);
+            session.track (index).midiOutputIdentifier.clear();
+        }
+        auto& track = session.track (0);
+        track.midiInputIndex.store (engine.getVirtualKeyboardInputIndex());
+        track.midiInputIdentifier.clear();
+        track.midiChannel.store (0);
+        session.countInEnabled.store (false);
+        session.midiMergeEnabled.store (false);
+        session.setTrackArmed (0, true);
+        session.recomputeRtCounters();
+        auto& transport = engine.getTransport();
+        transport.setLoopEnabled (false);
+        transport.setPunchEnabled (false);
+        // A second in, so the take's start tick depends on the tempo.
+        const double rate = engine.getCurrentSampleRate();
+        transport.setPlayhead ((std::int64_t) (rate > 0.0 ? rate : 48000.0));
+    } });
+    steps->push_back ({ 100, [&ctx, &host, &session, recorded]
+    {
+        ctx.expect (currentSessionDirectory (session) == recorded, "the session to record in did not open");
+        ctx.expect (host.clickRecord(), "Record was unavailable");
+    } });
+    steps->push_back ({ 0, [&engine]
+    {
+        const std::uint8_t note[] { 0x90, 64, 90 };
+        engine.postVirtualKeyboardMidi (note, 3);
+    }, [&engine] { return engine.getTransport().isRecording(); }, "MIDI recording did not start", {}, 4000 });
+    steps->push_back ({ 250, [&ctx, &engine, recorded, take]
+    {
+        engine.serviceMidiRecording();
+        engine.flushMidiRecoveryFiles();
+        const auto names = namesIn (recorded / "midi" / "recording");
+        if (! ctx.expect (names.size() == 1, "the held note has no live checkpoint in its session")) return;
+        take->checkpoint = recorded / "midi" / "recording" / names.front();
+        take->ticks = noteOnTicksIn (take->checkpoint);
+        ctx.expect (take->ticks.size() == 1, "the live checkpoint does not hold the held note");
+    }, [&engine]
+    {
+        const auto* preview = engine.getRecordManager().midiCapturePreview (0);
+        return preview != nullptr && ! preview->notes.empty();
+    }, "the virtual key never reached the recorder", {}, 4000 });
+    steps->push_back ({ 100, [&ctx, &host, &engine, &session, recorded, opened, take]
+    {
+        reopenSavedSession (host, opened / "session.json");
+        ctx.expect (currentSessionDirectory (session) == opened && engine.getTransport().isStopped(),
+                    "opening the next session did not stop the take and switch to it");
+        engine.flushMidiRecoveryFiles();
+        const auto takes = recorded / "midi" / "takes";
+        const auto names = namesIn (takes);
+        if (ctx.expect (names.size() == 1, "the stopped take left " + std::to_string (names.size())
+                                               + " files in its own session's midi/takes, not 1"))
+        {
+            ctx.expect (names.front().size() > 16 && names.front().substr (16) == "_track01_Keys.mid",
+                        "the take file is named '" + names.front() + "', not after its own session's track");
+            const auto ticks = noteOnTicksIn (takes / names.front());
+            ctx.expect (ticks.size() == 1 && take->ticks.size() == 1
+                            && std::llabs (ticks.front() - take->ticks.front()) <= 1,
+                        "the take file does not place the note at its own session's tempo");
+        }
+        ctx.expect (! take->checkpoint.empty() && absent (take->checkpoint),
+                    "the take's checkpoint outlived its finished file");
+        ctx.expect (absent (opened / "midi"), "the session opened got MIDI recovery files of the take");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar sessionSwitchFilesTake { Scenario {
+    "gui.session_switch_files_take_in_its_session", { "gui", "session", "record", "midi" }, Needs::Engine | Needs::Gui,
+    {}, {}, 30000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runSessionSwitchFilesTake (host, ctx); }
+} };
 
 const ScenarioRegistrar liveMidiJournal { Scenario {
     "gui.live_midi_journal_first_save", { "gui", "session", "record", "midi" }, Needs::Engine | Needs::Gui,
