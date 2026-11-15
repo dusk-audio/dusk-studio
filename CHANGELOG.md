@@ -20,8 +20,12 @@ canonical source.
   recoverable `.recording.mid` checkpoints without adding audio-thread work.
   A checkpoint is rewritten only when a note or controller has arrived, about
   once a second at most, and stays until its finished take reaches disk. One
-  that cannot be written never stops a save. First Save carries privately
-  owned checkpoints from an unsaved session into its saved folder.
+  that cannot be written never stops a save; it is retried, and with **MIDI
+  Merge** off a loop pass older than the previous takes its region keeps is
+  lost at quit if neither its checkpoint nor its take file was written. A
+  take file, checkpoint or track file that cannot be written is reported in
+  the status bar. First Save carries privately owned checkpoints from an
+  unsaved session into its saved folder.
 - **MIDI recovery files.** A session's MIDI no longer lives only inside
   `session.json`. Each recorded MIDI pass is written to the session's
   `midi/takes/` folder as a Standard MIDI File when it commits, every pass of

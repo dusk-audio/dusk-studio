@@ -853,6 +853,13 @@ public:
     // A checkpoint that could not be written does not count against them.
     bool flushMidiRecoveryFiles (const std::filesystem::path& copiedFolder = {},
                                  const std::filesystem::path& copiedJournalFolder = {});
+    // Shows a MIDI recovery file that could not be written: called on the
+    // message thread with the first failure of each report. The disk workers
+    // report a file once, and a checkpoint again only when it fails another
+    // way. Any thread; empty to stop.
+    using MidiRecoveryFailureSink =
+        std::function<void (int trackNumber, const std::filesystem::path& path, std::error_code error)>;
+    void setMidiRecoveryFailureSink (MidiRecoveryFailureSink sink);
 
     // Engine-side xrun: callback wall-clock exceeded the buffer's
     // audio time. Distinct from getBackendXRunCount.
@@ -1405,12 +1412,20 @@ private:
     void queuePendingMidiTakeFiles();      // not while processing is held out
     void queuePendingMidiTakeFilesNow();   // held out or not
     // Writes the take files and the track files off the message thread. A file
-    // that fails is reported on stderr and changes nothing else: each is a copy
-    // kept beside session.json.
-    static void reportMidiRecoveryWrite (const midirecovery::PendingFile& file,
-                                         const midirecovery::WriteResult& result);
-    midirecovery::Writer midiRecoveryWriter { &AudioEngine::reportMidiRecoveryWrite };
-    midirecovery::Journal midiRecoveryJournal { &AudioEngine::reportMidiRecoveryWrite };
+    // that fails is reported on stderr and to the failure sink, and changes
+    // nothing else: each is a copy kept beside session.json. The reports run
+    // on the workers, up to their joins in the destructor, so what they read
+    // is declared before them.
+    std::mutex midiRecoveryFailureLock;
+    MidiRecoveryFailureSink midiRecoveryFailureSink;   // guarded by midiRecoveryFailureLock
+    void reportMidiRecoveryWrite (const midirecovery::PendingFile& file,
+                                  const midirecovery::WriteResult& result);
+    midirecovery::Writer midiRecoveryWriter {
+        [this] (const midirecovery::PendingFile& file, const midirecovery::WriteResult& result)
+        { reportMidiRecoveryWrite (file, result); } };
+    midirecovery::Journal midiRecoveryJournal {
+        [this] (const midirecovery::PendingFile& file, const midirecovery::WriteResult& result)
+        { reportMidiRecoveryWrite (file, result); } };
 
     // Outlives the engine so a hop still queued when it dies is a no-op instead
     // of a use-after-free: the poll thread posts those, and joining it in the

@@ -109,8 +109,9 @@ public:
     // Waits for everything handed over before it, then for a checkpoint round
     // that retries every journal. True when no take is still recording into
     // the selected folder; empty selects all. A pass whose checkpoint could
-    // not be written does not count: the session holds it, and it goes on
-    // retrying in its folder.
+    // not be written does not count: it goes on retrying in its folder. The
+    // session being saved holds such a pass only while a region keeps it; a
+    // loop pass older than its region's previous takes is held nowhere else.
     bool flush (const std::filesystem::path& folder = {});
 
     // Runs on the worker each time it has found nothing to do, just before it

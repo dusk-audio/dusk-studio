@@ -411,6 +411,12 @@ std::optional<ScenarioResult> runLiveMidiJournal (GuiHost& host, ScenarioContext
             pass->blocking = false;
             if (fs::exists (pass->backup, error)) fs::rename (pass->backup, pass->blocked, error);
         } });
+        // The take file that could not be written is reported where the user
+        // sees it, once the disk worker's report reaches the message thread.
+        steps->push_back ({ 0, [] {}, [&host]
+        {
+            return host.statusMessage().rfind ("MIDI recovery file not written for track 1: ", 0) == 0;
+        }, "a MIDI recovery file that could not be written was not reported in the status bar", {}, 2000 });
         pushSaveAsSteps (host, ctx, *steps, destination);
         if (! foreign)
         {

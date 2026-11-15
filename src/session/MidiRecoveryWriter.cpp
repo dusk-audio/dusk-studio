@@ -512,8 +512,8 @@ struct Journal::Impl
     }
 
     // Only a take still recording into the folder keeps it from being ready.
-    // A pass whose checkpoint could not be written is in the session being
-    // saved, and goes on retrying where it was.
+    // A pass whose checkpoint could not be written goes on retrying where it
+    // was; the session being saved holds it only while a region keeps it.
     bool readyFor (const std::filesystem::path& folder) const
     {
         return std::none_of (states.begin(), states.end(), [&] (const auto& entry)

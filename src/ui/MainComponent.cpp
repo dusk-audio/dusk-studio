@@ -874,6 +874,11 @@ MainComponent::MainComponent()
     };
     engine.recoveryFolderForMidi = [this] { return prepareMidiRecoveryFolder(); };
     engine.journalFolderForMidi = [this] { return prepareMidiJournalFolder(); };
+    engine.setMidiRecoveryFailureSink ([safe = SafePointer<MainComponent> (this)]
+                                       (int trackNumber, const std::filesystem::path& path, std::error_code error)
+    {
+        if (auto* self = safe.getComponent()) self->showMidiRecoveryFailure (trackNumber, path, error);
+    });
     engine.onMidiPassCommitted = [this] (int trackIndex, int regionIndex)
     {
        #if DUSKSTUDIO_HAS_NATIVE_UI
@@ -1241,6 +1246,7 @@ MainComponent::~MainComponent()
     // The engine can commit a final take after this component's members die.
     engine.recoveryFolderForMidi = [folder = prepareMidiRecoveryFolder()] { return folder; };
     engine.journalFolderForMidi = {};
+    engine.setMidiRecoveryFailureSink ({});
     engine.setPluginRestoreAlertSink ({});
     engine.onBeforeTracksMove = nullptr;
     engine.onTracksMoved = nullptr;
@@ -3797,7 +3803,9 @@ bool MainComponent::writeSessionTo (const juce::File& requestedDir,
         // The take files still queued for the old folder have to be in its
         // midi/ before that is copied. The take stopped above was the only one
         // that could still be writing there. A checkpoint that cannot be
-        // written does not hold the save back: its pass is in the session.
+        // written does not hold the save back, though a loop pass older than
+        // its region keeps then lives only in the journal until a retry
+        // writes it.
         engine.flushMidiRecoveryFiles (toPath (oldSidecar), ownedMidiRecoveryDir);
         consolidated = SessionSerializer::consolidateInto (session, dir, ownsOldDir, toPath (oldSidecar), ownedMidiRecoveryDir);
         if (! consolidated.ok)
@@ -4092,6 +4100,16 @@ std::filesystem::path MainComponent::prepareMidiJournalFolder()
         if (error && error != std::errc::file_exists) break;
     }
     return {};
+}
+
+void MainComponent::showMidiRecoveryFailure (int trackNumber, const std::filesystem::path& path, std::error_code error)
+{
+    auto reason = error.message();
+    while (! reason.empty() && (reason.back() == '\n' || reason.back() == '\r' || reason.back() == ' '))
+        reason.pop_back();
+    const auto text = "MIDI recovery file not written for track " + std::to_string (trackNumber) + ": " + reason;
+    setStatusText (text.c_str());
+    statusLabel.setTooltip (path.u8string());
 }
 
 void MainComponent::discardWrittenAutosave()

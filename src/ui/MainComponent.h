@@ -353,6 +353,7 @@ private:
     std::filesystem::path sidecarFolder() const;
     std::filesystem::path prepareMidiRecoveryFolder() const;
     std::filesystem::path prepareMidiJournalFolder();
+    void showMidiRecoveryFailure (int trackNumber, const std::filesystem::path& path, std::error_code error);
     // <Music>/Dusk Studio, the parent a launch session starts in (see
     // dusk::fs::appMusicDir). Empty when there is no home folder.
     static std::filesystem::path defaultSessionsFolder();

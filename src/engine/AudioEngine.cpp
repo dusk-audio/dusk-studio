@@ -2491,6 +2491,12 @@ bool AudioEngine::flushMidiRecoveryFiles (const std::filesystem::path& copiedFol
     return ready;
 }
 
+void AudioEngine::setMidiRecoveryFailureSink (MidiRecoveryFailureSink sink)
+{
+    const std::lock_guard<std::mutex> lock (midiRecoveryFailureLock);
+    midiRecoveryFailureSink = std::move (sink);
+}
+
 void AudioEngine::reportMidiRecoveryWrite (const midirecovery::PendingFile& file,
                                            const midirecovery::WriteResult& result)
 {
@@ -2498,6 +2504,16 @@ void AudioEngine::reportMidiRecoveryWrite (const midirecovery::PendingFile& file
     for (const auto& failure : result.failures)
         std::fprintf (stderr, "[Dusk Studio/AudioEngine] track %d: a MIDI %s file was not written (\"%s\": %s).\n",
                       file.trackNumber, what, failure.path.u8string().c_str(), failure.error.message().c_str());
+    if (result.failures.empty()) return;
+    MidiRecoveryFailureSink sink;
+    {
+        const std::lock_guard<std::mutex> lock (midiRecoveryFailureLock);
+        sink = midiRecoveryFailureSink;
+    }
+    if (! sink) return;
+    const auto& first = result.failures.front();
+    dusk::callAsync ([sink = std::move (sink), track = file.trackNumber, path = first.path, error = first.error]
+                     { sink (track, path, error); });
 }
 
 void AudioEngine::play (PlaybackEngine::Audition audition)
