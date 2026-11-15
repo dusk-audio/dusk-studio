@@ -6,6 +6,7 @@
 #include <juce_core/juce_core.h>
 
 #include <algorithm>
+#include <cstdlib>
 
 namespace
 {
@@ -304,49 +305,44 @@ TEST_CASE("AriaBank: returns nullopt when no *.bank.xml is found",
     root.deleteRecursively();
 }
 
-// Optional fixture validation - runs only when the Swirly Drums package
-// is present at the path the developer that wrote this test had on disk
-// (the spec mentioned this exact location). Skipped silently elsewhere
-// so the test binary stays portable.
 TEST_CASE("AriaGui: Swirly fixture parses with expected widget counts",
           "[aria_gui][.fixture]")
 {
-    const juce::File swirlyRoot { "/Users/marckorte/Downloads/Swirly.Drums_1104" };
-    if (! swirlyRoot.isDirectory())
-        SUCCEED("Swirly fixture not present at " + swirlyRoot.getFullPathName()
-                + " - skipping");
-    else
-    {
-        auto fullKitSfz = swirlyRoot.getChildFile("Programs/Full_kit.sfz");
-        REQUIRE(fullKitSfz.existsAsFile());
+    const char* swirlyPath = std::getenv("DUSKSTUDIO_TEST_ARIA_DIR");
+    if (swirlyPath == nullptr || *swirlyPath == '\0')
+        SKIP("DUSKSTUDIO_TEST_ARIA_DIR is not set; point it at the unpacked Swirly Drums package");
+    const juce::File swirlyRoot { juce::String::fromUTF8(swirlyPath) };
+    REQUIRE(swirlyRoot.isDirectory());
 
-        auto bankOpt = duskstudio::AriaBank::tryLoadFromSfz(fullKitSfz);
-        REQUIRE(bankOpt.has_value());
-        REQUIRE(bankOpt->programs.size() == 8);
-        REQUIRE(bankOpt->bankName == "Swirly Drums");
-        REQUIRE(bankOpt->selectedIndex >= 0);
-        REQUIRE(bankOpt->programs[(size_t) bankOpt->selectedIndex].sfzFile
-                == fullKitSfz);
+    auto fullKitSfz = swirlyRoot.getChildFile("Programs/Full_kit.sfz");
+    REQUIRE(fullKitSfz.existsAsFile());
 
-        auto fullKitXml = swirlyRoot.getChildFile("GUI/Full_kit.xml");
-        REQUIRE(fullKitXml.existsAsFile());
+    auto bankOpt = duskstudio::AriaBank::tryLoadFromSfz(fullKitSfz);
+    REQUIRE(bankOpt.has_value());
+    REQUIRE(bankOpt->programs.size() == 8);
+    REQUIRE(bankOpt->bankName == "Swirly Drums");
+    REQUIRE(bankOpt->selectedIndex >= 0);
+    REQUIRE(bankOpt->programs[(size_t) bankOpt->selectedIndex].sfzFile
+            == fullKitSfz);
 
-        auto docOpt = duskstudio::AriaGuiDoc::parse(fullKitXml);
-        REQUIRE(docOpt.has_value());
-        REQUIRE(docOpt->width  == 775);
-        REQUIRE(docOpt->height == 335);
-        REQUIRE(countKind(docOpt->widgets,
-                          duskstudio::AriaWidgetKind::StaticImage) == 1);
-        REQUIRE(countKind(docOpt->widgets,
-                          duskstudio::AriaWidgetKind::StaticText)  == 72);
-        REQUIRE(countKind(docOpt->widgets,
-                          duskstudio::AriaWidgetKind::Slider)      == 27);
-        REQUIRE(countKind(docOpt->widgets,
-                          duskstudio::AriaWidgetKind::Knob)        == 34);
-        REQUIRE(countKind(docOpt->widgets,
-                          duskstudio::AriaWidgetKind::OptionMenu)  == 2);
+    auto fullKitXml = swirlyRoot.getChildFile("GUI/Full_kit.xml");
+    REQUIRE(fullKitXml.existsAsFile());
 
-        // Image paths in XML are relative to the GUI dir.
-        REQUIRE(docOpt->resourceDir == swirlyRoot.getChildFile("GUI"));
-    }
+    auto docOpt = duskstudio::AriaGuiDoc::parse(fullKitXml);
+    REQUIRE(docOpt.has_value());
+    REQUIRE(docOpt->width  == 775);
+    REQUIRE(docOpt->height == 335);
+    REQUIRE(countKind(docOpt->widgets,
+                      duskstudio::AriaWidgetKind::StaticImage) == 1);
+    REQUIRE(countKind(docOpt->widgets,
+                      duskstudio::AriaWidgetKind::StaticText)  == 72);
+    REQUIRE(countKind(docOpt->widgets,
+                      duskstudio::AriaWidgetKind::Slider)      == 27);
+    REQUIRE(countKind(docOpt->widgets,
+                      duskstudio::AriaWidgetKind::Knob)        == 34);
+    REQUIRE(countKind(docOpt->widgets,
+                      duskstudio::AriaWidgetKind::OptionMenu)  == 2);
+
+    // Image paths in XML are relative to the GUI dir.
+    REQUIRE(docOpt->resourceDir == swirlyRoot.getChildFile("GUI"));
 }

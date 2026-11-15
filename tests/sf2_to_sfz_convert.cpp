@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -20,8 +21,6 @@
 
 namespace
 {
-const juce::File kFluidR3 { "/Users/marckorte/Downloads/FluidR3_GM_GS.sf2" };
-
 juce::File freshTempDir()
 {
     auto d = juce::File::getSpecialLocation(juce::File::tempDirectory)
@@ -304,16 +303,16 @@ TEST_CASE ("Sf2ToSfz separates malformed sample bounds from extraction finalizat
    #endif
 }
 
-TEST_CASE("Sf2ToSfz: converts FluidR3 preset 0 to SFZ + WAVs", "[sf2conv][.fixture]")
+TEST_CASE("Sf2ToSfz: converts preset 0 of a real SF2 bank to SFZ + WAVs", "[sf2conv][.fixture]")
 {
-    if (! kFluidR3.existsAsFile())
-    {
-        SUCCEED("FluidR3 fixture not present - skipping");
-        return;
-    }
+    const char* bankPath = std::getenv("DUSKSTUDIO_TEST_SF2");
+    if (bankPath == nullptr || *bankPath == '\0')
+        SKIP("DUSKSTUDIO_TEST_SF2 is not set; point it at an SF2 bank such as FluidR3_GM_GS.sf2");
+    const juce::File bank { juce::String::fromUTF8(bankPath) };
+    REQUIRE(bank.existsAsFile());
 
     auto dir = freshTempDir();
-    auto conv = duskstudio::convertSf2Preset(kFluidR3, 0, dir);
+    auto conv = duskstudio::convertSf2Preset(bank, 0, dir);
 
     REQUIRE(conv.ok);
     REQUIRE(conv.error.empty());
