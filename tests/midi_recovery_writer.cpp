@@ -746,9 +746,10 @@ TEST_CASE ("A MIDI journal worker held in one write through seconds of dense cap
 }
 
 // The hook runs on the worker each time it has found nothing to do, just
-// before it sleeps. A drain appended there has to wake it by itself: nothing
-// else is sent. The half-second bound also fails a worker that would only come
-// back on a timer.
+// before it sleeps. It is armed by the report of a take file of no journal's,
+// so the idle point it acts at comes after that job, with nothing else left
+// to wake the worker: a drain appended there has to wake it by itself. The
+// half-second bound also fails a worker that would only come back on a timer.
 TEST_CASE ("A MIDI journal drain appended as its worker goes to sleep still wakes it", "[midi][recovery][journal][ipc]")
 {
     const duskstudio::test::TempDirectory temp ("dusk-midi-journal-wake-");
@@ -761,6 +762,7 @@ TEST_CASE ("A MIDI journal drain appended as its worker goes to sleep still wake
     MidiCaptureStream::DrainView drain;
     recovery::Journal journal ([&] (const recovery::PendingFile& file, const recovery::WriteResult&)
     {
+        if (file.trackNumber == 7) armed.store (true);
         if (file.trackNumber == 5) reached.store (true);
     });
     journal.setIdleHookForTest ([&]
@@ -793,10 +795,6 @@ TEST_CASE ("A MIDI journal drain appended as its worker goes to sleep still wake
         drain.second = nullptr;
         drain.secondCount = 0;
     }
-    journal.flush();
-    armed.store (true);
-    // Wakes the worker for a take file of no journal's, so the hook runs at
-    // the idle point after it.
     REQUIRE (journal.commit (fileFor (absent, 60, recovery::Folder::Takes), handle.id + 1000, 1));
     REQUIRE (eventually ([&] { return appended.load(); }));
     REQUIRE (accepted.load());
@@ -804,7 +802,8 @@ TEST_CASE ("A MIDI journal drain appended as its worker goes to sleep still wake
 }
 
 // A take begun and appended to while the worker is deciding to sleep: the
-// batch must not be decoded before the take is in hand, nor dropped.
+// batch must not be decoded before the take is in hand, nor dropped. Armed as
+// above, by the report of a take file of no journal's.
 TEST_CASE ("A MIDI take begun and appended as the journal worker goes to sleep is decoded", "[midi][recovery][journal][ipc]")
 {
     const duskstudio::test::TempDirectory temp ("dusk-midi-journal-late-take-");
@@ -820,6 +819,7 @@ TEST_CASE ("A MIDI take begun and appended as the journal worker goes to sleep i
     config.loopLength = 100;
     recovery::Journal journal ([&] (const recovery::PendingFile& file, const recovery::WriteResult&)
     {
+        if (file.trackNumber == 7) armed.store (true);
         if (file.trackNumber == 6) reached.store (true);
     });
     journal.setIdleHookForTest ([&]
@@ -849,14 +849,69 @@ TEST_CASE ("A MIDI take begun and appended as the journal worker goes to sleep i
     earlier.trackNumber = 2;
     const auto first = journal.begin (earlier);
     REQUIRE (first.id != 0);
-    journal.flush();
-    armed.store (true);
     REQUIRE (journal.commit (fileFor (absent, 60, recovery::Folder::Takes), first.id + 1000, 1));
     REQUIRE (eventually ([&] { return done.load(); }));
     REQUIRE (accepted.load());
     // Nothing else wakes the worker, and a batch decoded without its take
     // would be dropped without a word, so the pass's report is the proof.
     CHECK (eventually ([&] { return reached.load(); }));
+}
+
+// Each checkpoint request goes out from the idle hook, so the worker takes it
+// in alone, and what it did shows at the next idle point. No flush is made: a
+// flush retries at once. After the first failure a journal sits out one
+// request, after the second two.
+TEST_CASE ("A MIDI checkpoint that keeps failing waits out twice as many requests after each failure", "[midi][recovery][journal][ipc]")
+{
+    const duskstudio::test::TempDirectory temp ("dusk-midi-journal-backoff-");
+    const auto directory = temp.path() / "midi" / "recording";
+    REQUIRE (stdfs::create_directory (directory.parent_path()));
+    { std::ofstream blocked (directory); blocked << "blocked recording folder"; }
+    std::atomic<int> failures { 0 }, written { 0 };
+    std::atomic<bool> driving { false }, done { false };
+    int idle = 0;
+    std::vector<bool> seen;
+    recovery::Journal journal ([&] (const recovery::PendingFile&, const recovery::WriteResult& result)
+    {
+        if (! result.failures.empty() && failures.fetch_add (1) == 0) driving.store (true);
+        if (! result.written.empty()) written.fetch_add (1);
+    });
+    journal.setIdleHookForTest ([&]
+    {
+        if (! driving.load() || done.load()) return;
+        const int at = idle++;
+        if (at == 2)
+        {
+            std::error_code ignored;
+            stdfs::remove (directory, ignored);
+        }
+        if (at >= 3) seen.push_back (! namesIn (directory).empty());
+        if (at == 5)
+        {
+            done.store (true);
+            return;
+        }
+        journal.checkpoint();
+    });
+    recovery::Journal::Config config;
+    config.sessionDir = temp.path();
+    config.made = november8th();
+    config.trackNumber = 7;
+    config.name = "Keys";
+    auto handle = journal.begin (config);
+    REQUIRE (handle.id != 0);
+    MidiCaptureStream capture;
+    REQUIRE (capture.pushEvent (1, 0, 0x90, 60, 100));
+    REQUIRE (capture.publishProgress (1, 10, false));
+    capture.service (-1, [&] (const auto& view) { REQUIRE (journal.append (handle, view)); });
+    journal.checkpoint();
+    REQUIRE (eventually ([&] { return done.load(); }));
+    // Requests 1 and 2 after the first failure: one waited out, one retried
+    // and failed. The folder is free from request 3, which with the next is
+    // waited out; request 5 writes the checkpoint.
+    CHECK (seen == std::vector<bool> { false, false, true });
+    CHECK (failures.load() == 1);
+    CHECK (written.load() == 1);
 }
 
 TEST_CASE ("A MIDI journal lets a folder it wrote into go only once nothing is left in it", "[midi][recovery][journal]")
