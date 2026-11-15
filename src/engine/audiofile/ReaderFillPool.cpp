@@ -1,5 +1,7 @@
 #include "ReaderFillPool.h"
 
+#include "../../foundation/ThreadName.h"
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -7,10 +9,6 @@
 #include <limits>
 #include <stdexcept>
 #include <tuple>
-
-#if defined(__linux__)
- #include <pthread.h>
-#endif
 
 namespace dusk::audio
 {
@@ -461,13 +459,9 @@ void ReaderFillPool::run (unsigned index)
 {
     // Named like the DSP lanes, so top -H, ps -L and /proc can tell the threads
     // that issue playback reads from the rest of the process.
-#if defined(__linux__)
     char name[16];
     std::snprintf (name, sizeof name, "DuskFill %u", index);
-    pthread_setname_np (pthread_self(), name);
-#else
-    (void) index;
-#endif
+    dusk::setCurrentThreadName (name);
     while (! stop.load (std::memory_order_acquire))
     {
         if (pumpOnce()) continue;

@@ -61,6 +61,7 @@
 #endif
 #include "../../foundation/AutoResetEvent.h"
 #include "../../foundation/MessageThread.h"
+#include "../../foundation/ThreadName.h"
 #include "../JuceCompat.h"
 #include "../DuskStudioPlayHead.h"
 #include "platform/ChildAppKit.h"
@@ -1863,10 +1864,15 @@ int runIpcHost (int argc, const char* const* argv) noexcept
     }
 
     host.midiScratch.ensureSize (kMidiBytes);
-    std::thread worker (audioWorkerLoop, std::ref (host));
+    std::thread worker ([&host]
+    {
+        dusk::setCurrentThreadName ("DuskHostAudio");
+        audioWorkerLoop (host);
+    });
 
     std::thread sockThread ([&host]
     {
+        dusk::setCurrentThreadName ("DuskHostSocket");
         while (! host.shouldQuit.load (std::memory_order_acquire))
         {
             ControlMsgHeader hdr {};

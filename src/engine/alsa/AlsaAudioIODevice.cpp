@@ -2,6 +2,7 @@
 #include "../RealtimeKit.h"
 #include "../RtPriority.h"
 #include "../../foundation/Text.h"
+#include "../../foundation/ThreadName.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -894,7 +895,7 @@ void AlsaAudioIODevice::start (device::IODeviceCallback* newCallback)
     // is asked from here, so the D-Bus round trip never delays a block.
     ioShouldExit.store (false, std::memory_order_release);
     ioThreadId.store (0, std::memory_order_relaxed);
-    ioThread = std::thread ([this] { ioThreadRun(); });
+    ioThread = std::thread ([this] { dusk::setCurrentThreadName ("DuskAlsaIO"); ioThreadRun(); });
     if (ioThreadScheduled.wait (1000))
     {
         const auto threadId = ioThreadId.load (std::memory_order_relaxed);

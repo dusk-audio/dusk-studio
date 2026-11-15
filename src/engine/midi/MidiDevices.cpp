@@ -1,4 +1,5 @@
 #include "MidiDevices.h"
+#include "../../foundation/ThreadName.h"
 
 #if defined(__linux__)
  #include "AlsaSeqMidi.h"
@@ -446,7 +447,7 @@ void MidiOutputBank::pumpLoop()
 void MidiOutputBank::startPump()
 {
     if (pumpRunning.exchange (true)) return;
-    pump = std::thread ([this] { pumpLoop(); });
+    pump = std::thread ([this] { dusk::setCurrentThreadName ("DuskMidiOut"); pumpLoop(); });
 }
 
 void MidiOutputBank::stopPump()

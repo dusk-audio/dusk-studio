@@ -1,6 +1,7 @@
 #include "CoreMidiBackend.h"
 #include "CoreMidiProtocol.h"
 #include "MidiPacketDecoder.h"
+#include "../../foundation/ThreadName.h"
 
 #include <CoreMIDI/CoreMIDI.h>
 #include <mach/mach_time.h>
@@ -425,7 +426,7 @@ public:
     CoreMidiOutput()
     {
         if (MIDIOutputPortCreate (processClient().client, CFSTR ("Dusk MIDI Output"), &port) == noErr)
-            worker = std::thread ([this] { run(); });
+            worker = std::thread ([this] { dusk::setCurrentThreadName ("DuskCoreMidiOut"); run(); });
     }
 
     ~CoreMidiOutput() override

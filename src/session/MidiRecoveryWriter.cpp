@@ -1,6 +1,7 @@
 #include "MidiRecoveryWriter.h"
 #include "../foundation/AtomicFile.h"
 #include "../foundation/AutoResetEvent.h"
+#include "../foundation/ThreadName.h"
 
 #include <algorithm>
 #include <map>
@@ -65,7 +66,7 @@ void Writer::queue (PendingFile file) noexcept
     {
         const std::lock_guard<std::mutex> lock (mutex);
         if (! worker.joinable())
-            worker = std::thread ([this] { run(); });
+            worker = std::thread ([this] { dusk::setCurrentThreadName ("DuskMidiRecov"); run(); });
         // A failed push leaves `file` as it was, for the write below.
         files.push_back (std::move (file));
         ++queued;
@@ -180,7 +181,7 @@ struct Journal::Impl
     Impl (Writer::Report value, std::size_t recordCapacity, std::function<void()> hook)
         : report (std::move (value)), records (std::max<std::size_t> (1, recordCapacity)),
           batches (std::max<std::size_t> (64, records.size() / 8)), idleHook (std::move (hook)),
-          worker ([this] { run(); }) {}
+          worker ([this] { dusk::setCurrentThreadName ("DuskMidiJournal"); run(); }) {}
     ~Impl()
     {
         { const std::lock_guard<std::mutex> lock (mutex); stopping = true; }

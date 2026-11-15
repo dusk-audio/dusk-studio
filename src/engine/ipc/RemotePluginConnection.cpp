@@ -18,6 +18,7 @@
 #endif
 
 #include "../../foundation/MessageThread.h"
+#include "../../foundation/ThreadName.h"
 
 namespace duskstudio::ipc
 {
@@ -683,7 +684,7 @@ void RemotePluginConnection::startReaderThread()
 {
     if (readerStarted) return;
     readerExited.store (false, std::memory_order_release);
-    readerThread = std::thread ([this] { readerLoop(); });
+    readerThread = std::thread ([this] { dusk::setCurrentThreadName ("DuskOopReader"); readerLoop(); });
     readerStarted = true;
 }
 

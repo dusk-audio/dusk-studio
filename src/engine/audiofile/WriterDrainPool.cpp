@@ -1,6 +1,7 @@
 #include "WriterDrainPool.h"
 
 #include "ThreadedFileWriter.h"
+#include "../../foundation/ThreadName.h"
 
 #include <algorithm>
 
@@ -10,7 +11,7 @@ WriterDrainPool::WriterDrainPool (int maxWritersIn)
     : maxWriters ((std::size_t) std::max (1, maxWritersIn))
 {
     writers.reserve (maxWriters);
-    worker = std::thread ([this] { run(); });
+    worker = std::thread ([this] { dusk::setCurrentThreadName ("DuskRecDrain"); run(); });
 }
 
 WriterDrainPool::~WriterDrainPool()

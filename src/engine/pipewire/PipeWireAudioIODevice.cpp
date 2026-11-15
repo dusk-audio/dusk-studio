@@ -338,7 +338,7 @@ std::string PipeWireAudioIODevice::open (const device::ChannelSet& inputChannels
 
     ensurePipeWireInit();
 
-    threadLoop = pw_thread_loop_new ("Dusk Studio PipeWire", nullptr);
+    threadLoop = pw_thread_loop_new ("DuskPipeWire", nullptr);
     if (threadLoop == nullptr)
     {
         lastError = "pw_thread_loop_new failed";

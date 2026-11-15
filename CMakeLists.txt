@@ -848,6 +848,7 @@ target_sources(DuskStudio PRIVATE
     src/DuskStudioApp.cpp
     src/foundation/Fft.cpp
     src/foundation/MessageThread.cpp
+    src/foundation/ThreadName.cpp
     src/foundation/UndoManager.cpp
     # Native CLAP sources are added below, gated by DUSKSTUDIO_HAS_NATIVE_CLAP.
     src/engine/AudioEngine.cpp
@@ -1584,6 +1585,7 @@ if(_duskstudio_oop_enabled)
         src/engine/ipc/PluginHostXErrors.cpp
         src/engine/PluginDescriptor.cpp
         src/foundation/MessageThread.cpp
+        src/foundation/ThreadName.cpp
         ${_duskstudio_ipc_child_platform_sources})
     target_compile_features (dusk-studio-plugin-host PRIVATE cxx_std_17)
     target_compile_definitions (dusk-studio-plugin-host PRIVATE

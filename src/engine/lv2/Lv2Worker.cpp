@@ -1,4 +1,5 @@
 #include "Lv2Worker.h"
+#include "../../foundation/ThreadName.h"
 
 #include <algorithm>
 #include <cstring>
@@ -121,7 +122,7 @@ bool Lv2Worker::attach (LV2_Handle pluginHandle, const LV2_Worker_Interface* wor
     {
         stopRequested.store (false, std::memory_order_relaxed);
         threadRunning.store (true, std::memory_order_release);
-        thread = std::thread ([this] { threadMain(); });
+        thread = std::thread ([this] { dusk::setCurrentThreadName ("DuskLv2Worker"); threadMain(); });
     }
     catch (const std::system_error& e)
     {
