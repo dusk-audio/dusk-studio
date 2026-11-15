@@ -504,16 +504,23 @@ std::optional<ScenarioResult> runPianoKeyboardAudition (GuiHost& host, ScenarioC
     {
         ctx.expect (! host.openSession (ctx.tempDir() / "missing" / "session.json"), "opening a missing session succeeded");
         host.closeTopModal();
+    }, [&ctx, heardKey = delivered (1)] { return heardKey() && heardOn (ctx, kRollTrack).voices == 1; },
+        "the key before the failed open was not heard", {}, 4000 });
+    // The pointer still holds the key here: the alert a failed open raises
+    // closes the piano roll, and that has to end the note. Its late release
+    // comes after the check.
+    steps->push_back ({ 0, [&ctx, &host]
+    {
         if (! host.pianoRollOpen()) host.openPianoRoll (kRollTrack, 0);
         ctx.expect (host.pianoRollOpen(), "a failed open made the old piano roll unusable");
         host.pianoKeyPointer (69, false);
-    }, delivered (1), "the key before the failed open was not heard", {}, 4000 });
+    }, [&ctx] { return heardOn (ctx, kRollTrack).voices == 0; },
+        "a failed session open left the audition held", {}, 4000 });
     steps->push_back ({ 200, [&host, &engine, base]
     {
         *base = engine.auditionMessagesDelivered();
         host.pianoKeyPointer (70, true);
-    }, [&ctx] { return heardOn (ctx, kRollTrack).voices == 0; },
-        "a failed session open left the audition held", {}, 4000 });
+    } });
     steps->push_back ({ 0, [&ctx, &host, nextSession]
     { ctx.expect (host.openSession (nextSession), "the next audition session did not load"); },
         delivered (1), "the key before the successful open was not heard", {}, 4000 });
