@@ -1324,14 +1324,19 @@ if(DUSKSTUDIO_NATIVE_AU)
         src/engine/au/AuEditor.mm)
     find_library(DUSKSTUDIO_AUDIOTOOLBOX_FRAMEWORK AudioToolbox REQUIRED)
     find_library(DUSKSTUDIO_AUDIOUNIT_FRAMEWORK AudioUnit REQUIRED)
-    find_library(DUSKSTUDIO_COREAUDIOKIT_FRAMEWORK CoreAudioKit REQUIRED)
     find_library(DUSKSTUDIO_AU_COCOA_FRAMEWORK Cocoa REQUIRED)
     target_link_libraries(DuskStudio PRIVATE
         ${DUSKSTUDIO_AUDIOTOOLBOX_FRAMEWORK}
         ${DUSKSTUDIO_AUDIOUNIT_FRAMEWORK}
-        ${DUSKSTUDIO_COREAUDIOKIT_FRAMEWORK}
         ${DUSKSTUDIO_AU_COCOA_FRAMEWORK})
     target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_NATIVE_AU=1)
+endif()
+
+# JUCE's AU format (JUCE_PLUGINHOST_AU, set on Darwin below) uses CoreAudioKit's
+# AUGenericView whether or not the native AU host is built.
+if(APPLE)
+    find_library(DUSKSTUDIO_COREAUDIOKIT_FRAMEWORK CoreAudioKit REQUIRED)
+    target_link_libraries(DuskStudio PRIVATE ${DUSKSTUDIO_COREAUDIOKIT_FRAMEWORK})
 endif()
 
 # The format-neutral Cocoa/X11 component bridge is already part of the
