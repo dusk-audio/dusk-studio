@@ -15,6 +15,7 @@
 #if ! defined(_WIN32)
  #include <cstdio>
  #include <fcntl.h>
+ #include <sys/stat.h>
  #include <unistd.h>
 #endif
 
@@ -59,6 +60,45 @@ inline int fullSync (int handle) noexcept
     int synced;
     do { synced = ::fsync (handle); } while (synced != 0 && errno == EINTR);
     return synced;
+}
+
+// What a file system answers when it cannot rename without replacing at all,
+// rather than failing to.
+inline bool noReplaceRenameUnsupported (int code) noexcept
+{
+   #if defined(__APPLE__)
+    return code == ENOTSUP;
+   #else
+    return code == ENOSYS || code == EINVAL || code == EOPNOTSUPP;
+   #endif
+}
+
+// What link answers on a file system without hard links: EPERM on Linux, and
+// ENOTSUP from exFAT and FAT on macOS.
+inline bool hardLinksUnsupported (int code) noexcept
+{
+   #if defined(EOPNOTSUPP) && EOPNOTSUPP != ENOTSUP
+    if (code == EOPNOTSUPP) return true;
+   #endif
+   #if defined(__APPLE__)
+    return code == ENOTSUP;
+   #else
+    return code == EPERM || code == ENOTSUP || code == ENOSYS;
+   #endif
+}
+
+// The last way to publish without replacing, where the file system offers no
+// atomic one: the name is checked free, then the file renamed onto it.
+inline int renameIfAbsent (const char* source, const char* target) noexcept
+{
+    struct stat existing {};
+    if (::lstat (target, &existing) == 0)
+    {
+        errno = EEXIST;
+        return -1;
+    }
+    if (errno != ENOENT) return -1;
+    return std::rename (source, target);
 }
 #endif
 } // namespace detail
@@ -138,8 +178,12 @@ enum class AtomicWriteMode { Replace, CreateNew };
 // a crash or a power loss, finds the old file or the whole new one and never
 // part of either: the bytes go to a new file beside the target, reach the disk,
 // and are renamed over it, and on POSIX the folder is synced so the rename
-// lasts too. The folder must exist. CreateNew atomically refuses an existing
-// destination, including one created while the temporary file was written.
+// lasts too. The folder must exist. CreateNew refuses an existing destination,
+// atomically where the file system can rename without replacing or make hard
+// links, so one created while the temporary file was written is refused too.
+// Where it can do neither, as exFAT on macOS cannot, the name is checked free
+// just before a plain rename, and a file another program makes in between
+// would be replaced.
 //
 // False, with `error` saying why, when writing, publication or sync fails;
 // nothing is thrown. The target then holds the old file, unless only the final
@@ -253,15 +297,12 @@ inline bool writeFileAtomically (const std::filesystem::path& target, const void
             : ::renameat2 (AT_FDCWD, temporary.c_str(), AT_FDCWD, target.c_str(), RENAME_NOREPLACE);
            #endif
        #if defined(__linux__) || defined(__APPLE__)
-        if (published != 0 && mode == AtomicWriteMode::CreateNew
-           #if defined(__APPLE__)
-            && errno == ENOTSUP)
-           #else
-            && (errno == ENOSYS || errno == EINVAL || errno == EOPNOTSUPP))
-           #endif
+        if (published != 0 && mode == AtomicWriteMode::CreateNew && detail::noReplaceRenameUnsupported (errno))
         {
             published = ::link (temporary.c_str(), target.c_str());
             if (published == 0) ::unlink (temporary.c_str());
+            else if (detail::hardLinksUnsupported (errno))
+                published = detail::renameIfAbsent (temporary.c_str(), target.c_str());
         }
        #endif
         if (published != 0) return fail (lastError());

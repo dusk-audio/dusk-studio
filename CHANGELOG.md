@@ -29,8 +29,11 @@ canonical source.
   write each MIDI track to `midi/tracks/`: a playing file with the regions
   that play and, when the track has muted regions or previous takes, a takes
   file with those. Files are written on a thread of their own and never
-  replaced. Importing a track's playing file at the start of the timeline
-  puts its notes back where they played.
+  replaced. On a volume that can neither rename without replacing nor make
+  hard links, such as an exFAT drive on macOS, that holds for Dusk Studio's
+  own writes only, and the same goes for session backups. Importing a
+  track's playing file at the start of the timeline puts its notes back
+  where they played.
 - **Session backups.** Every save also keeps a copy of `session.json` in the
   session's `backups/` folder, named by the UTC second it was saved in, and a
   `session.json` changed outside a save is kept there before a save replaces

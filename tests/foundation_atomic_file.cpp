@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <system_error>
 #include <vector>
@@ -18,20 +19,17 @@
 #endif
 
 #if defined(__linux__) || defined(__APPLE__)
+ #include "support/PublicationFaults.h"
+
+using duskstudio::test::PublicationFaults;
 
 namespace
 {
-struct PublicationFaults;
 thread_local PublicationFaults* publicationFaults = nullptr;
-struct PublicationFaults
-{
-    PublicationFaults() { publicationFaults = this; }
-    ~PublicationFaults() { publicationFaults = nullptr; }
-    int renameError = EINVAL, linkError = 0, unlinkError = 0, syncError = 0;
-    int links = 0, unlinks = 0, folderSyncs = 0;
-    bool raceTarget = false;
-};
 }
+
+duskstudio::test::PublicationFaults::PublicationFaults() { publicationFaults = this; }
+duskstudio::test::PublicationFaults::~PublicationFaults() { publicationFaults = nullptr; }
 
 #if defined(__linux__)
 extern "C" int __real_renameat2 (int, const char*, int, const char*, unsigned);
@@ -41,7 +39,7 @@ extern "C" int __real_fsync (int);
 
 extern "C" int __wrap_renameat2 (int sourceDir, const char* source, int targetDir, const char* target, unsigned flags)
 {
-    if (publicationFaults != nullptr && flags == RENAME_NOREPLACE)
+    if (publicationFaults != nullptr && publicationFaults->renameError != 0 && flags == RENAME_NOREPLACE)
     {
         errno = publicationFaults->renameError;
         return -1;
@@ -52,7 +50,7 @@ extern "C" int __wrap_renameat2 (int sourceDir, const char* source, int targetDi
 #else
 extern "C" int renamex_np (const char* source, const char* target, unsigned flags)
 {
-    if (publicationFaults != nullptr && flags == RENAME_EXCL)
+    if (publicationFaults != nullptr && publicationFaults->renameError != 0 && flags == RENAME_EXCL)
     {
         errno = publicationFaults->renameError;
         return -1;
@@ -122,10 +120,15 @@ extern "C" int __wrap_fsync (int handle)
     struct stat info {};
     if (publicationFaults != nullptr && ::fstat (handle, &info) == 0 && S_ISDIR (info.st_mode))
     {
-        ++publicationFaults->folderSyncs;
-        if (publicationFaults->syncError != 0)
+        auto& faults = *publicationFaults;
+        ++faults.folderSyncs;
+        char name[4096];
+        const auto length = ::readlink (("/proc/self/fd/" + std::to_string (handle)).c_str(), name, sizeof (name));
+        faults.syncedFolders.emplace_back (name, length > 0 ? (std::size_t) length : 0);
+        if (faults.syncError != 0 && faults.syncFailures != 0)
         {
-            errno = publicationFaults->syncError;
+            if (faults.syncFailures > 0) --faults.syncFailures;
+            errno = faults.syncError;
             return -1;
         }
     }
@@ -273,23 +276,38 @@ TEST_CASE ("Atomic create preserves an existing destination and removes its temp
 }
 
 #if defined(__linux__) || defined(__APPLE__)
-TEST_CASE ("Atomic create falls back to hard links only when no-replace rename is unsupported",
+TEST_CASE ("Atomic create falls back to hard links, then to a checked rename, only when the file system lacks each",
            "[foundation][fs][atomic][atomic-fallback]")
 {
     const duskstudio::test::TempDirectory temp ("dusk-atomic-fallback-");
     const auto target = temp.path() / "take.mid";
+    // The sections that publish through a real hard link need a file system
+    // that makes them; exFAT and FAT on macOS do not.
+    const bool hardLinks = [&]
+    {
+        const auto probe = temp.path() / "probe";
+        { std::ofstream (probe) << "probe"; }
+        std::error_code error, ignored;
+        stdfs::create_hard_link (probe, temp.path() / "probe-link", error);
+        stdfs::remove (temp.path() / "probe-link", ignored);
+        stdfs::remove (probe, ignored);
+        return ! error;
+    }();
+    const auto needHardLinks = [hardLinks] { if (! hardLinks) SKIP ("the test file system cannot make hard links"); };
     PublicationFaults faults;
    #if defined(__APPLE__)
     faults.renameError = ENOTSUP;
+    static constexpr int kNoHardLinks = ENOTSUP;   // what exFAT answers on macOS
    #else
     faults.renameError = GENERATE (ENOSYS, EINVAL, EOPNOTSUPP);
+    static constexpr int kNoHardLinks = EPERM;     // what link(2) answers on Linux
    #endif
     bool succeeds = true, temporaryRemains = false;
     [[maybe_unused]] bool published = true;
     int expectedError = 0, expectedLinks = 1, expectedUnlinks = 1;
     std::string expectedBytes = "complete";
     auto mode = dusk::fs::AtomicWriteMode::CreateNew;
-    SECTION ("unsupported no-replace publishes complete bytes") {}
+    SECTION ("unsupported no-replace publishes complete bytes") { needHardLinks(); }
     SECTION ("a destination created before link wins the race")
     {
         faults.raceTarget = true;
@@ -297,9 +315,22 @@ TEST_CASE ("Atomic create falls back to hard links only when no-replace rename i
         expectedError = EEXIST;
         expectedBytes = "foreign";
     }
-    SECTION ("link failure preserves its error and cleans the temporary file")
+    SECTION ("a file system without hard links publishes complete bytes by a checked rename")
     {
-        faults.linkError = expectedError = EPERM;
+        faults.linkError = kNoHardLinks;
+        expectedUnlinks = 0;
+    }
+    SECTION ("a checked rename refuses an existing destination and cleans the temporary file")
+    {
+        { std::ofstream (target) << "foreign"; }
+        faults.linkError = kNoHardLinks;
+        succeeds = published = false;
+        expectedError = EEXIST;
+        expectedBytes = "foreign";
+    }
+    SECTION ("a link failure of any other kind preserves its error and cleans the temporary file")
+    {
+        faults.linkError = expectedError = GENERATE (EACCES, EIO, ENOSPC);
         succeeds = published = false;
         expectedBytes.clear();
     }
@@ -312,12 +343,14 @@ TEST_CASE ("Atomic create falls back to hard links only when no-replace rename i
     }
     SECTION ("temporary cleanup failure does not undo publication")
     {
+        needHardLinks();
         faults.unlinkError = EACCES;
         temporaryRemains = true;
     }
    #if defined(__linux__)
     SECTION ("folder sync failure still reports failed durability")
     {
+        needHardLinks();
         faults.syncError = expectedError = EIO;
         succeeds = false;
     }
