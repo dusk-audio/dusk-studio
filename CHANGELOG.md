@@ -9,10 +9,19 @@ canonical source.
 
 ### Added
 
+- **Playing the piano roll keyboard.** Clicking a key on the keyboard at the
+  left of the piano roll plays it on the region's track, at velocity 100 and
+  on the channel the status bar shows. Holding the button sustains the note,
+  dragging plays each key the pointer passes, and letting go anywhere ends it.
+  The note plays through the track's instrument and strip with the transport
+  stopped or rolling, even with **IN** off, and is never recorded or added to
+  undo.
 - **Live MIDI recovery.** Recording writes current and completed MIDI passes to
   recoverable `.recording.mid` checkpoints without adding audio-thread work.
-  A checkpoint stays until its finished take reaches disk. First Save carries
-  privately owned checkpoints from an unsaved session into its saved folder.
+  A checkpoint is rewritten only when a note or controller has arrived, about
+  once a second at most, and stays until its finished take reaches disk. One
+  that cannot be written never stops a save. First Save carries privately
+  owned checkpoints from an unsaved session into its saved folder.
 - **MIDI recovery files.** A session's MIDI no longer lives only inside
   `session.json`. Each recorded MIDI pass is written to the session's
   `midi/takes/` folder as a Standard MIDI File when it commits, every pass of
@@ -50,6 +59,23 @@ canonical source.
   won't open** alert, which offers its autosave and backups. Any other folder
   without a `session.json` is still ignored.
 
+### Fixed
+
+- **MIDI notes at playback and Stop.** Starting playback inside a region sounds
+  its held notes immediately. Standard VST3 hosting sends explicit note-offs
+  at Stop, including through the sandbox, and VST3 note tracking survives an
+  audio-device reinitialization so Stop can still release the held keys.
+- **Sustain at a loop boundary.** Even with a one-sample audio block, a pedal
+  lifted and restored at a loop boundary stays up long enough to release the
+  previous pass's notes.
+- **VST3 synth notes at Stop, and held keys at a loop wrap.** Stop gives each
+  note a MIDI region was playing its own note-off before all notes off, so an
+  instrument that ignores all notes off, as some VST3 synths do, still stops.
+  A loop wrap, a seek or scrub while the transport rolls, and pressing
+  **Play** end only what the regions were playing. With **IN** on, keys you
+  hold, your sustain pedal and the tails still ringing carry on across them,
+  as does a key held on the piano roll keyboard.
+
 ## [0.16.1] - 2026-11-07
 
 ### Added
@@ -73,13 +99,6 @@ canonical source.
 
 ### Fixed
 
-- **MIDI notes at playback and Stop.** Starting playback inside a region sounds
-  its held notes immediately. Standard VST3 hosting sends explicit note-offs
-  at Stop, including through the sandbox, and VST3 note tracking survives an
-  audio-device reinitialization so Stop can still release the held keys.
-- **Sustain at a loop boundary.** Even with a one-sample audio block, a pedal
-  lifted and restored at a loop boundary stays up long enough to release the
-  previous pass's notes.
 - **Soundfonts that made no sound.** An SFZ or SF2 instrument loaded through
   SFZ Manager, **Browse...** or an opened session plays again. In 0.16.0 it
   stayed silent until the audio device restarted, for example after a buffer
