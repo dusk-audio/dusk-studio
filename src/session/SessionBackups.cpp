@@ -100,8 +100,10 @@ bool makeFolder (const stdfs::path& sessionDir, const stdfs::path& folder, Resul
         return false;
     }
     // Only the one level: a session folder removed meanwhile must not come
-    // back as the parent of its backups.
+    // back as the parent of its backups. Its entry is synced even when it was
+    // there already, as the backup that made it may have failed to.
     stdfs::create_directory (dusk::fs::nativeIOPath (folder), error);
+    if (! error) dusk::fs::syncFolder (sessionDir, error);
     if (! error) return true;
     result.failures.push_back ({ folder, error });
     return false;

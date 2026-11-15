@@ -4063,11 +4063,13 @@ std::filesystem::path MainComponent::prepareMidiJournalFolder()
     if (privateFolder.empty()) return {};
     const auto parent = privateFolder / "recordings";
     std::error_code error;
-    // Record waits on this, so only a folder made here has its entry synced.
+    // Record waits on this. Each entry is synced even when its folder was
+    // there already, as an earlier Record may have failed to; with nothing
+    // changed that costs a fraction of a millisecond.
     for (const auto& level : { privateFolder, parent })
     {
-        if (std::filesystem::create_directory (dusk::fs::nativeIOPath (level), error) && ! error)
-            dusk::fs::syncFolder (level.parent_path(), error);
+        std::filesystem::create_directory (dusk::fs::nativeIOPath (level), error);
+        if (! error) dusk::fs::syncFolder (level.parent_path(), error);
         if (error) return {};
     }
     const auto stamp = std::to_string (std::chrono::steady_clock::now().time_since_epoch().count());
@@ -4076,7 +4078,14 @@ std::filesystem::path MainComponent::prepareMidiJournalFolder()
         const auto candidate = parent / (stamp + "-" + std::to_string (attempt));
         if (std::filesystem::create_directory (dusk::fs::nativeIOPath (candidate), error))
         {
-            if (! dusk::fs::syncFolder (parent, error)) return {};
+            // A folder whose name may not last is not used: the next Record
+            // makes another.
+            if (! dusk::fs::syncFolder (parent, error))
+            {
+                std::error_code ignored;
+                std::filesystem::remove (dusk::fs::nativeIOPath (candidate), ignored);
+                return {};
+            }
             ownedMidiRecoveryDir = candidate;
             return candidate;
         }

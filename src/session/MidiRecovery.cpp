@@ -334,12 +334,14 @@ bool makeFolder (const stdfs::path& sessionDir, const stdfs::path& folder, Write
         return false;
     }
     // One level at a time: a session folder removed while a file waited to be
-    // written must not come back as the parent of its midi folder.
+    // written must not come back as the parent of its midi folder. Each
+    // level's entry is synced even when the level was there already, as the
+    // write that made it may have failed to; with nothing changed that costs
+    // a fraction of a millisecond.
     for (const auto& level : { folder.parent_path(), folder })
     {
-        // Only a folder made here needs its entry synced.
-        if (stdfs::create_directory (dusk::fs::nativeIOPath (level), error) && ! error)
-            dusk::fs::syncFolder (level.parent_path(), error);
+        stdfs::create_directory (dusk::fs::nativeIOPath (level), error);
+        if (! error) dusk::fs::syncFolder (level.parent_path(), error);
         if (! error) continue;
         result.failures.push_back ({ level, error });
         return false;

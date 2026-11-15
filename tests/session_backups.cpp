@@ -3,6 +3,7 @@
 #include "TestTempDirectory.h"
 #include "foundation/Fs.h"
 #include "session/SessionBackups.h"
+#include "support/PublicationFaults.h"
 
 #include <algorithm>
 #include <chrono>
@@ -138,6 +139,30 @@ TEST_CASE ("A saved session.json is kept in backups, once for the same bytes, ne
         CHECK_FALSE (stdfs::exists (gone));
     }
 }
+
+#if defined(__linux__)
+TEST_CASE ("A session backup is reported kept only once the backups folder's name is on the disk",
+           "[session][backups]")
+{
+    const duskstudio::test::TempDirectory temp ("dusk-session-backups-folder-sync-");
+    const auto dir = temp.path();
+    const auto at = utc (kNovember8th143005);
+
+    duskstudio::test::PublicationFaults faults;
+    faults.syncError = EIO;
+    faults.syncFailures = 1;
+    const auto failed = backups::keepSaved (dir, at, "{\"version\":11}");
+    REQUIRE (failed.written.empty());
+    REQUIRE (failed.failures.size() == 1);
+    REQUIRE (stdfs::is_directory (dir / "backups"));
+
+    faults.syncedFolders.clear();
+    const auto kept = backups::keepSaved (dir, at + std::chrono::seconds (1), "{\"version\":12}");
+    REQUIRE (kept.failures.empty());
+    REQUIRE (kept.written.size() == 1);
+    CHECK (std::count (faults.syncedFolders.begin(), faults.syncedFolders.end(), stdfs::canonical (dir).string()) > 0);
+}
+#endif
 
 TEST_CASE ("A session.json about to be replaced is kept when no backup holds it", "[session][backups]")
 {

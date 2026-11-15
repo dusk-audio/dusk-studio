@@ -8,6 +8,7 @@
 #include "engine/midi/MidiFileReader.h"
 #include "foundation/Fs.h"
 #include "session/MidiRecovery.h"
+#include "support/PublicationFaults.h"
 
 #include <algorithm>
 #include <chrono>
@@ -743,6 +744,42 @@ TEST_CASE ("A MIDI take file is not written outside a session folder that does n
     CHECK (result.failures.front().error);
     CHECK_FALSE (stdfs::exists (missing));
 }
+
+#if defined(__linux__)
+TEST_CASE ("A MIDI take file is reported written only once every folder above it is on the disk",
+           "[midi][recovery]")
+{
+    const duskstudio::test::TempDirectory temp ("dusk-midi-recovery-folder-sync-");
+    auto session = std::make_unique<Session>();
+    session->track (6).name = "Keys";
+    MidiRegion pass;
+    pass.notes.push_back (note (1, 60, 100, 0, 480));
+    const auto midi = temp.path() / "midi";
+
+    duskstudio::test::PublicationFaults faults;
+    faults.syncError = EIO;
+    faults.syncFailures = 1;
+    const auto failed = writeTake (temp.path(), utc (kNovember8th143005), *session, 6, pass);
+    REQUIRE (failed.written.empty());
+    REQUIRE (failed.failures.size() == 1);
+    CHECK (failed.failures.front().error == std::errc::io_error);
+    // The folder is there, but a power loss could still take its name away.
+    REQUIRE (stdfs::is_directory (midi));
+
+    faults.syncedFolders.clear();
+    const auto retried = writeTake (temp.path(), utc (kNovember8th143005), *session, 6, pass);
+    REQUIRE (retried.failures.empty());
+    REQUIRE (retried.written.size() == 1);
+    const auto synced = [&] (const stdfs::path& folder)
+    {
+        return std::count (faults.syncedFolders.begin(), faults.syncedFolders.end(),
+                           stdfs::canonical (folder).string()) > 0;
+    };
+    CHECK (synced (temp.path()));
+    CHECK (synced (midi));
+    CHECK (synced (midi / "takes"));
+}
+#endif
 
 TEST_CASE ("A MIDI take file is built with all its write needs, for a pass that holds events on a track there is",
            "[midi][recovery]")
