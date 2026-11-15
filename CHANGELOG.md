@@ -89,6 +89,10 @@ canonical source.
   pedal a region plays too on the same channel. One that would have to end
   more than 48 of the regions' notes and pedals at once sends all notes off
   instead, which ends held keys too.
+- **An LV2 plug-in whose state file cannot be read.** Saving or restoring an
+  LV2 plug-in's state ended Dusk Studio when its `state.ttl` could not be
+  read, as when a folder sat in its place or the disk failed. The read now
+  fails cleanly and the plug-in keeps the state it has.
 
 ## [0.16.1] - 2026-11-07
 
