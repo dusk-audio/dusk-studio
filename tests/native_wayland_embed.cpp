@@ -15,10 +15,12 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
 #include <fstream>
 #include <functional>
 #include <iterator>
 #include <stdexcept>
+#include <string>
 #include <utility>
 
 namespace
@@ -34,6 +36,27 @@ void require (bool ok, const char* message)
     if (! ok) throw std::runtime_error (message);
 }
 
+// The driver kills the probe on failure, which would drop block-buffered lines.
+void pass (const char* line)
+{
+    std::puts (line);
+    std::fflush (stdout);
+}
+
+// Same clock and format as the compositor's log, so the two line up.
+std::string wallClock()
+{
+    const auto now = std::chrono::system_clock::now();
+    const auto seconds = std::chrono::system_clock::to_time_t (now);
+    const auto millis = std::chrono::duration_cast<std::chrono::milliseconds> (now.time_since_epoch()).count() % 1000;
+    std::tm local {};
+    localtime_r (&seconds, &local);
+    char text[32];
+    std::snprintf (text, sizeof (text), "%02d:%02d:%02d.%03d", local.tm_hour, local.tm_min, local.tm_sec,
+                   static_cast<int> (millis));
+    return text;
+}
+
 class ForeignEditorProbe
 {
 public:
@@ -45,7 +68,7 @@ public:
             require (! modal.showBorrowed (shell, refused, {}, {}, presentation), "foreign editor opened without X11");
             require (! modal.isOpen() && ! modal.hasSeparatePeer() && refused.getParentComponent() == nullptr,
                      "refused foreign editor changed the layout");
-            std::puts ("PASS foreign editor refusal: native-only session remains usable");
+            pass ("PASS foreign editor refusal: native-only session remains usable");
             return;
         }
         client = std::make_unique<ForeignClient>();
@@ -125,11 +148,21 @@ public:
                 body.reset();
                 require (! modal.hasSeparatePeer(), "destroyed editor retained a separate-parent binding");
                 shell.setBounds (shellBounds);
-                std::puts ("PASS foreign X11 editors: separate parent, resize, dialog cover, retained peer, reopen, native close");
+                pass ("PASS foreign X11 editors: separate parent, resize, dialog cover, retained peer, reopen, native close");
                 return true;
         }
         ++stage;
+        std::fprintf (stderr, "foreign editor step %d at %s\n", stage, wallClock().c_str());
         return false;
+    }
+
+    std::string describeWait() const
+    {
+        if (client == nullptr) return "the native-only refusal";
+        return "foreign editor step " + std::to_string (stage) + " waiting for the X11 client to become "
+             + (stage % 2 == 0 ? "viewable" : "unviewable") + ": "
+             + client->describe (body != nullptr ? body->getHostWindowID() : 0,
+                                 peer != nullptr ? reinterpret_cast<::Window> (peer->getNativeHandle()) : 0);
     }
 
 private:
@@ -140,8 +173,14 @@ private:
         ForeignClient()
         {
             require (display != nullptr, "Xwayland test connection failed");
-            window = ::XCreateSimpleWindow (display, DefaultRootWindow (display), 0, 0, 240, 160, 0, 0, 0x4080a0);
-            ::XMapWindow (display, window);
+            // A managed top-level gets its mutter-x11-frames frame asynchronously,
+            // and the reparent into it can land after the embedder's and take the
+            // client back. Stay unmanaged and let the embedder map it, as XEmbed asks.
+            ::XSetWindowAttributes attributes {};
+            attributes.background_pixel = 0x4080a0;
+            attributes.override_redirect = True;
+            window = ::XCreateWindow (display, DefaultRootWindow (display), 0, 0, 240, 160, 0, CopyFromParent,
+                                      InputOutput, CopyFromParent, CWBackPixel | CWOverrideRedirect, &attributes);
             ::XSync (display, False);
         }
         ~ForeignClient()
@@ -155,6 +194,47 @@ private:
             ::XWindowAttributes attributes {};
             require (::XGetWindowAttributes (display, window, &attributes) != 0, "foreign X11 child was destroyed");
             return attributes.map_state == IsViewable;
+        }
+        std::string describe (::Window host, ::Window editor) const
+        {
+            const auto state = [this] (::Window target) -> std::string
+            {
+                ::XWindowAttributes attributes {};
+                if (target == 0 || ::XGetWindowAttributes (display, target, &attributes) == 0) return "missing";
+                return attributes.map_state == IsViewable ? "viewable"
+                     : attributes.map_state == IsUnviewable ? "unviewable" : "unmapped";
+            };
+            const auto parentOf = [this] (::Window target) -> ::Window
+            {
+                ::Window root = 0, parent = 0, *children = nullptr;
+                unsigned count = 0;
+                if (target == 0 || ::XQueryTree (display, target, &root, &parent, &children, &count) == 0) return 0;
+                if (children != nullptr) ::XFree (children);
+                return parent;
+            };
+            const auto name = [&] (::Window target) -> std::string
+            {
+                if (target == 0) return "none";
+                if (target == DefaultRootWindow (display)) return "the root";
+                if (target == host) return "the embedding host";
+                if (target == editor) return "the editor window";
+                char hex[24];
+                std::snprintf (hex, sizeof (hex), "0x%lx", static_cast<unsigned long> (target));
+                const auto frameFor = ::XInternAtom (display, "_MUTTER_FRAME_FOR", True);
+                ::Atom type = None;
+                int format = 0;
+                unsigned long items = 0, after = 0;
+                unsigned char* data = nullptr;
+                const bool frame = frameFor != None
+                    && ::XGetWindowProperty (display, target, frameFor, 0, 1, False, AnyPropertyType,
+                                             &type, &format, &items, &after, &data) == Success
+                    && type != None;
+                if (data != nullptr) ::XFree (data);
+                return frame ? std::string ("window-manager frame ") + hex : std::string (hex);
+            };
+            return "client is " + state (window) + " under " + name (parentOf (window))
+                 + ", embedding host is " + state (host) + " under " + name (parentOf (host))
+                 + ", editor window is " + state (editor) + " under " + name (parentOf (editor));
         }
     };
 
@@ -338,6 +418,29 @@ private:
         return reinterpret_cast<std::uintptr_t> (shell.getPeer()->getNativeHandle());
     }
 
+    std::string pendingWait() const
+    {
+        if (stage == Stage::clipboardMapping && foreignEditors != nullptr)
+            return " on " + foreignEditors->describeWait();
+        const bool fullScreenWait = stage == Stage::fontMapping || stage == Stage::clipboardMapping
+                                   #if DUSK_NATIVE_PROBE_DAF
+                                    || stage == Stage::donorMapping
+                                   #endif
+                                    ;
+        if (fullScreenWait)
+            return " waiting for full screen: the shell is " + std::to_string (shell.getWidth()) + "x"
+                 + std::to_string (shell.getHeight()) + ", it needs at least " + std::to_string (kFullWidth)
+                 + "x" + std::to_string (kFullHeight);
+        return {};
+    }
+
+    static constexpr int kFullWidth = 1900, kFullHeight = 1000;
+
+    bool isFullScreen() const
+    {
+        return shell.getWidth() >= kFullWidth && shell.getHeight() >= kFullHeight;
+    }
+
     bool bothRendered() const
     {
         require (a.window() != nullptr && b.window() != nullptr, "a panel disappeared before rendering");
@@ -351,10 +454,11 @@ private:
             if (reportedStage != static_cast<int> (stage))
             {
                 reportedStage = static_cast<int> (stage);
-                std::fprintf (stderr, "native panel stage %d\n", reportedStage);
+                std::fprintf (stderr, "native panel stage %d at %s\n", reportedStage, wallClock().c_str());
                 std::fflush (stderr);
             }
-            require (std::chrono::steady_clock::now() < deadline, "native probe timed out");
+            if (std::chrono::steady_clock::now() >= deadline)
+                throw std::runtime_error ("native probe timed out" + pendingWait());
            #if DUSK_NATIVE_PROBE_DAF
             for (auto& host : donorHosts) if (host) host->tick();
            #endif
@@ -484,7 +588,7 @@ private:
                     require (replacement != nullptr && replacement != failedApplication, "failed world was reused");
                     fault.reset();
                     failedApplication.reset();
-                    std::puts ("PASS native shared panels: render, hide/show, hidden resize, two shells, sibling lifetime, cancellation, parent recreation, pump failure");
+                    pass ("PASS native shared panels: render, hide/show, hidden resize, two shells, sibling lifetime, cancellation, parent recreation, pump failure");
                     if (exchange.empty())
                     {
                         finish (0);
@@ -499,7 +603,7 @@ private:
                     break;
                 }
                 case Stage::fontMapping:
-                    if (shell.getWidth() < 1900 || shell.getHeight() < 1000) return;
+                    if (! isFullScreen()) return;
                     fontPanel.setView (std::make_unique<FontView> (fontSnapshot));
                     require (fontPanel.open (parent(), { 50, 50, 300, 200, 1.0 }), "font panel open failed");
                     stage = Stage::fontRendered;
@@ -530,7 +634,7 @@ private:
                     break;
                 case Stage::fontClosed:
                     if (fontPanel.isOpen()) return;
-                    std::puts ("PASS native panel fonts: scale up, scale down, same native window");
+                    pass ("PASS native panel fonts: scale up, scale down, same native window");
                    #if DUSK_NATIVE_PROBE_DAF
                     stage = Stage::donorMapping;
                    #else
@@ -539,7 +643,7 @@ private:
                     break;
                #if DUSK_NATIVE_PROBE_DAF
                 case Stage::donorMapping:
-                    if (shell.getWidth() < 1900 || shell.getHeight() < 1000) return;
+                    if (! isFullScreen()) return;
                     startDonors();
                     stage = Stage::donorRendered;
                     break;
@@ -582,12 +686,12 @@ private:
                     otherShell.setVisible (false);
                     shell.setVisible (true);
                     shell.getPeer()->setFullScreen (true);
-                    std::puts ("PASS native donor editors: four plug-ins, shared panels, resize, cancellation, reopen, parent lifetime");
+                    pass ("PASS native donor editors: four plug-ins, shared panels, resize, cancellation, reopen, parent lifetime");
                     stage = Stage::clipboardMapping;
                     break;
                #endif
                 case Stage::clipboardMapping:
-                    if (shell.getWidth() < 1900 || shell.getHeight() < 1000) return;
+                    if (! isFullScreen()) return;
                     if (foreignEditors == nullptr) foreignEditors = std::make_unique<ForeignEditorProbe> (shell);
                     if (! foreignEditors->advance()) return;
                     foreignEditors.reset();
@@ -616,7 +720,7 @@ private:
                     if (std::filesystem::exists (exchange / "done"))
                     {
                         require (mousePresses >= 2, "native child pointer input was not delivered");
-                        std::puts ("PASS native clipboard: external Unicode, large self-copy, empty publication, sibling replacement");
+                        pass ("PASS native clipboard: external Unicode, large self-copy, empty publication, sibling replacement");
                         finish (0);
                     }
                     break;
@@ -764,7 +868,8 @@ private:
     duskstudio::imgui::DuskPanelWindow fontPanel { "probe-fonts", "probe-fonts", "Font Probe" };
     std::shared_ptr<SharedWaylandApplication> failedApplication;
     std::unique_ptr<SharedWaylandApplication::Registration> fault;
-    const std::chrono::steady_clock::time_point deadline = std::chrono::steady_clock::now() + std::chrono::seconds (60);
+    const std::chrono::steady_clock::time_point deadline = std::chrono::steady_clock::now() + std::chrono::seconds (
+        std::getenv ("DUSK_NATIVE_PROBE_WATCHDOG") != nullptr ? std::atoi (std::getenv ("DUSK_NATIVE_PROBE_WATCHDOG")) : 60);
     Stage stage = Stage::open;
     int reportedStage = -1;
     int closed = 0;

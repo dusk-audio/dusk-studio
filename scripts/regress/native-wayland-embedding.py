@@ -10,6 +10,8 @@ import sys
 import tempfile
 import time
 
+PROBE_WATCHDOG_SECONDS = 60
+
 
 def drive(binary, work):
     sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -21,6 +23,7 @@ def drive(binary, work):
     exchange = work / "clipboard"
     exchange.mkdir()
     env["DUSK_NATIVE_PROBE_WORK"] = str(exchange)
+    env["DUSK_NATIVE_PROBE_WATCHDOG"] = str(PROBE_WATCHDOG_SECONDS)
     processes = []
     code = 1
     with (work / "probe.log").open("w") as log:
@@ -52,8 +55,9 @@ def drive(binary, work):
                 wait_value("pasted", str(count))
 
             # Readiness follows the lifecycle, font and donor-editor checks.
-            # Give them the same budget as the probe watchdog.
-            wait_value("ready", "ready", 60)
+            # Outlast the probe's own watchdog so a stalled probe exits with the
+            # wait it is stuck on instead of being torn down silently.
+            wait_value("ready", "ready", PROBE_WATCHDOG_SECONDS + 15)
             desktop.click(480, 540)
             external = ("x" * 4095 + "\u65e5\u672c\u8a9e\U0001f642\n").encode() * 64
             (exchange / "external").write_bytes(external)
@@ -167,7 +171,8 @@ def run(binary, with_x11=False):
     try:
         with (work / "mutter.log").open("w") as log:
             try:
-                result = subprocess.run(command, env=env, stdout=log, stderr=subprocess.STDOUT, timeout=90)
+                result = subprocess.run(command, env=env, stdout=log, stderr=subprocess.STDOUT,
+                                        timeout=PROBE_WATCHDOG_SECONDS + 60)
                 if result.returncode == 0 and (work / "result").read_text() == "0":
                     code = 0
             except (subprocess.TimeoutExpired, OSError):
