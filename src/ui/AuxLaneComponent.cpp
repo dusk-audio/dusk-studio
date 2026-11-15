@@ -18,6 +18,7 @@
 #include "HardwareInsertEditor.h"
 #include "PlatformWindowing.h"
 #include "PluginPickerHelpers.h"
+#include "RepaintGate.h"
 #if DUSKSTUDIO_HAS_NATIVE_UI
  #include "NativeEditorEmbedScale.h"
  #include "imgui/BuiltinLaneView.h"
@@ -34,8 +35,11 @@
 #include "../session/ParamEditAction.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <string>
 #include <utility>
 
@@ -111,7 +115,38 @@ imgui::DuskPanelWindow::Geometry builtinViewGeometry (const AuxLaneComponent& la
 class AuxLaneComponent::StripMeter final : public juce::Component
 {
 public:
-    explicit StripMeter (const AuxLaneParams& p) : params (p) {}
+    explicit StripMeter (const AuxLaneParams& p) : params (p) { levelsMoved(); }
+
+    // Samples the levels paint() draws, and reports whether what it draws moved.
+    // The atoms are raw per-block peaks, so paint() must not read them again.
+    bool levelsMoved()
+    {
+        shownL = dbToMeterFrac (params.meterPostL.load (std::memory_order_relaxed));
+        shownR = dbToMeterFrac (params.meterPostR.load (std::memory_order_relaxed));
+        const float h = (float) getHeight();
+        auto column = [h] (float frac)
+        {
+            const float fillH = h * frac;
+            return drawnAbove (fillH, 0.0f, fillH);
+        };
+        auto zone = [] (float frac) { return (frac >= 0.97f ? 1 : 0) + (frac >= 0.91f ? 1 : 0); };
+        const bool l = paintedL.changed (column (shownL).key(), kSubPixelRepaint);
+        const bool r = paintedR.changed (column (shownR).key(), kSubPixelRepaint);
+        const bool looked = paintedLook.changed ((float) (zone (shownL) + 3 * zone (shownR)), 0.0f);
+        return l || r || looked;
+    }
+
+    // 1 when the left column is drawn lit two thirds of the way down, 0 when
+    // it is not, -1 when the meter is too small to tell.
+    int leftColumnLitForScenario()
+    {
+        if (getWidth() < 6 || getHeight() < 30) return -1;
+        const auto image = createComponentSnapshot (getLocalBounds());
+        const auto pixel = image.getPixelAt (1 + (getWidth() - 2) / 4, getHeight() * 7 / 10);
+        const int high = std::max ({ pixel.getRed(), pixel.getGreen(), pixel.getBlue() });
+        const int low  = std::min ({ pixel.getRed(), pixel.getGreen(), pixel.getBlue() });
+        return high - low > 24 ? 1 : 0;
+    }
 
     void paint (juce::Graphics& g) override
     {
@@ -121,10 +156,8 @@ public:
         g.setColour (juce::Colour (0xff34343c));
         g.drawRoundedRectangle (r.reduced (0.5f), 2.0f, 1.0f);
 
-        const float lDb = params.meterPostL.load (std::memory_order_relaxed);
-        const float rDb = params.meterPostR.load (std::memory_order_relaxed);
-        const float lFrac = dbToMeterFrac (lDb);
-        const float rFrac = dbToMeterFrac (rDb);
+        const float lFrac = shownL;
+        const float rFrac = shownR;
 
         const float w = r.getWidth();
         const float h = r.getHeight();
@@ -161,12 +194,14 @@ public:
 
 private:
     const AuxLaneParams& params;
+    float shownL = 0.0f, shownR = 0.0f;
+    PaintedValue paintedL, paintedR, paintedLook;
 };
 
 class AuxLaneComponent::SendSourcePanel final : public juce::Component
 {
 public:
-    SendSourcePanel (Session& s, int laneIdx) : session (s), laneIndex (laneIdx) {}
+    SendSourcePanel (Session& s, int laneIdx) : session (s), laneIndex (laneIdx) { rowsChanged(); }
 
     bool captureRows = false;
     std::vector<std::string> paintedRows;
@@ -195,19 +230,12 @@ public:
             auto row = inner.removeFromTop (rowH);
             if (row.getHeight() <= 0) break;
 
-            const auto& tr = session.track (i);
-            const float liveDb = tr.strip.liveAuxSendDb[(size_t) laneIndex]
-                                     .load (std::memory_order_relaxed);
-            const float setDb  = tr.strip.auxSendDb[(size_t) laneIndex]
-                                     .load (std::memory_order_relaxed);
-            const float inputDb = tr.meterInputDb.load (std::memory_order_relaxed);
-            const float sendDb  = (liveDb <= ChannelStripParams::kAuxSendOffDb
-                                     ? setDb : liveDb);
-            const bool sendOn = sendDb > ChannelStripParams::kAuxSendOffDb;
+            const auto& shown = rows[(size_t) i];
+            const bool sendOn = shown.sendOn;
 
             // Track index + colour swatch.
             auto idxArea = row.removeFromLeft (22);
-            g.setColour (tr.colour.withAlpha (sendOn ? 0.9f : 0.35f));
+            g.setColour (shown.colour.withAlpha (sendOn ? 0.9f : 0.35f));
             g.fillRect (idxArea.reduced (2, 4));
             g.setColour (sendOn ? juce::Colours::white : juce::Colour (0xff707078));
             g.drawText (std::to_string (i + 1), idxArea, juce::Justification::centred, false);
@@ -219,7 +247,7 @@ public:
             auto nameArea = row.removeFromLeft (std::max (60, row.getWidth() / 2));
             g.setColour (sendOn ? juce::Colour (0xffe0e0e4) : juce::Colour (0xff606068));
             const auto number = std::to_string (i + 1);
-            const auto rawName = tr.name.trim().toStdString();
+            const auto rawName = shown.name.trim().toStdString();
             const auto displayName = rawName.empty() || rawName == number ? "Trk " + number
                                                                            : rawName;
             g.drawText (displayName, nameArea.reduced (4, 0),
@@ -228,12 +256,14 @@ public:
             // dB readout on the right.
             auto dbArea = row.removeFromRight (52);
             g.setColour (sendOn ? juce::Colour (0xffe0e0e4) : juce::Colour (0xff505058));
-            const auto dbText = sendOn ? dusk::text::format ("%.1f dB", static_cast<double> (sendDb))
-                                       : std::string ("-inf");
+            const std::string dbText (shown.dbText);
             g.drawText (dbText, dbArea, juce::Justification::centredRight, false);
 
             // Meter bar between name and dB.
             auto meterArea = row.reduced (2, 3);
+            meterWidth = meterArea.getWidth();
+            meterRows[(size_t) i] = { meterArea.getX(), meterArea.getY(),
+                                      meterArea.getWidth(), meterArea.getHeight() };
             if (captureRows && getLocalBounds().contains (dbArea))
                 paintedRows.push_back (number + "\t" + displayName + "\t" + dbText
                                        + (meterArea.isEmpty() ? "\tno meter" : "\tmeter"));
@@ -243,7 +273,7 @@ public:
                 g.fillRect (meterArea);
                 if (sendOn)
                 {
-                    const float inFrac = dbToMeterFrac (inputDb);
+                    const float inFrac = shown.inFrac;
                     juce::Rectangle<int> fill = meterArea;
                     fill.setWidth (static_cast<int> (
                         std::lround (static_cast<float> (meterArea.getWidth()) * inFrac)));
@@ -254,14 +284,115 @@ public:
         }
     }
 
+    // Samples every row paint() draws, and reports whether what it draws moved.
+    // paint() reads only these samples: the input meters are raw per-block
+    // peaks, and a second read would draw a level the change test never saw.
+    bool rowsChanged()
+    {
+        bool changed = false;
+        for (int i = 0; i < Session::kNumTracks; ++i)
+        {
+            const auto& tr = session.track (i);
+            const float liveDb = tr.strip.liveAuxSendDb[(size_t) laneIndex].load (std::memory_order_relaxed);
+            const float setDb  = tr.strip.auxSendDb[(size_t) laneIndex].load (std::memory_order_relaxed);
+            const float sendDb = liveDb <= ChannelStripParams::kAuxSendOffDb ? setDb : liveDb;
+            RowSample now;
+            now.sendOn = sendDb > ChannelStripParams::kAuxSendOffDb;
+            now.inFrac = dbToMeterFrac (tr.meterInputDb.load (std::memory_order_relaxed));
+            if (now.sendOn)
+                std::snprintf (now.dbText, sizeof now.dbText, "%.1f dB", static_cast<double> (sendDb));
+            now.colour = tr.colour;
+            auto& was = rows[(size_t) i];
+            if (was.sampled && was.sendOn == now.sendOn
+                && std::strcmp (was.dbText, now.dbText) == 0
+                && fillOf (was) == fillOf (now) && zoneOf (was) == zoneOf (now)
+                && was.colour == now.colour && was.name == tr.name)
+                continue;
+            now.name = tr.name;
+            now.sampled = true;
+            was = now;
+            changed = true;
+        }
+        return changed;
+    }
+
+    // 1 when a row's meter is drawn lit a third of the way across, 0 when it
+    // is not, -1 when the row is not laid out wide enough to tell.
+    int rowMeterLitForScenario (int row)
+    {
+        if (row < 0 || row >= Session::kNumTracks) return -1;
+        const auto area = meterRows[(size_t) row];
+        if (area[2] < 6 || area[3] < 2) return -1;
+        const auto image = createComponentSnapshot (getLocalBounds());
+        const auto pixel = image.getPixelAt (area[0] + area[2] * 3 / 10, area[1] + area[3] / 2);
+        const int high = std::max ({ pixel.getRed(), pixel.getGreen(), pixel.getBlue() });
+        const int low  = std::min ({ pixel.getRed(), pixel.getGreen(), pixel.getBlue() });
+        return high - low > 24 ? 1 : 0;
+    }
+
 private:
+    struct RowSample
+    {
+        bool sampled = false, sendOn = false;
+        float inFrac = 0.0f;
+        char dbText[24] = "-inf";
+        decltype (Track::colour) colour;
+        decltype (Track::name) name;
+    };
+
+    // The fill paint() draws for a row, at the meter width it last laid out.
+    long fillOf (const RowSample& row) const noexcept
+    {
+        return row.sendOn ? std::lround (static_cast<float> (meterWidth) * row.inFrac) : -1;
+    }
+    static int zoneOf (const RowSample& row) noexcept
+    {
+        return row.sendOn ? (row.inFrac >= 0.97f ? 2 : row.inFrac >= 0.91f ? 1 : 0) : -1;
+    }
+
     Session& session;
     int laneIndex;
+    int meterWidth = 0;
+    std::array<RowSample, Session::kNumTracks> rows {};
+    std::array<std::array<int, 4>, Session::kNumTracks> meterRows {};
 };
+
+void AuxLaneComponent::refreshMetersForCapture()
+{
+    if (stripMeter != nullptr) stripMeter->levelsMoved();
+    if (sendPanel != nullptr) sendPanel->rowsChanged();
+}
+
+std::array<int, 2> AuxLaneComponent::metersDrawSampleForScenario (int track, float db)
+{
+    if (stripMeter == nullptr || sendPanel == nullptr || ! isShowing()
+        || track < 0 || track >= Session::kNumTracks)
+        return { -1, -1 };
+    auto& meters = lane.params;
+    auto& source = engine.getSession().track (track);
+    meters.meterPostL.store (db, std::memory_order_relaxed);
+    meters.meterPostR.store (db, std::memory_order_relaxed);
+    source.meterInputDb.store (db, std::memory_order_relaxed);
+    refreshMetersForCapture();
+    meters.meterPostL.store (-100.0f, std::memory_order_relaxed);
+    meters.meterPostR.store (-100.0f, std::memory_order_relaxed);
+    source.meterInputDb.store (-100.0f, std::memory_order_relaxed);
+    return { stripMeter->leftColumnLitForScenario(), sendPanel->rowMeterLitForScenario (track) };
+}
+
+std::array<int, 4> AuxLaneComponent::stripMeterBoundsForScenario() const
+{
+    if (stripMeter == nullptr) return {};
+    const auto* top = getTopLevelComponent();
+    const auto r = top != nullptr ? top->getLocalArea (stripMeter.get(), stripMeter->getLocalBounds())
+                                  : stripMeter->getBounds();
+    return { r.getX(), r.getY(), r.getWidth(), r.getHeight() };
+}
 
 bool AuxLaneComponent::captureSourcesForScenario (bool enabled)
 {
     if (sendPanel == nullptr) return false;
+    sendPanel->rowsChanged();
     sendPanel->captureRows = enabled;
     sendPanel->paintedRows.clear();
     sendPanel->repaint();
@@ -529,8 +660,16 @@ void AuxLaneComponent::timerCallback()
         if (builtinViewNeedsSync (i))
             scheduleBuiltinViewSync();
     }
-    if (stripMeter != nullptr) stripMeter->repaint();
-    if (sendPanel  != nullptr) sendPanel->repaint();
+    if (stripMeter != nullptr && stripMeter->levelsMoved())
+    {
+        countGatedRepaint();
+        stripMeter->repaint();
+    }
+    if (sendPanel != nullptr && sendPanel->rowsChanged())
+    {
+        countGatedRepaint();
+        sendPanel->repaint();
+    }
 
     // Motor-fader animate + Write/Touch capture, mirroring the per-
     // channel pattern in ChannelStripComponent::timerCallback. Animate

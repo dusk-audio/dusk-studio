@@ -9,6 +9,9 @@
 #endif
 
 #include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <cstring>
 #include <utility>
 
 namespace duskstudio
@@ -41,9 +44,44 @@ MiniTimelineStrip::~MiniTimelineStrip()
    #endif
 }
 
-std::int64_t MiniTimelineStrip::songEndSamples() const noexcept
+#if DUSKSTUDIO_HAS_NATIVE_UI
+namespace
 {
-    auto end = engine.getTransport().getPlayhead();
+// A region moved or trimmed in place changes no count, so the regions are also
+// walked again on this period.
+constexpr auto kRegionRescan = std::chrono::milliseconds (500);
+
+template <typename Shown, typename Markers>
+bool markersMatch (const Shown& shown, const Markers& markers)
+{
+    if (shown.size() != markers.size()) return false;
+    for (size_t i = 0; i < markers.size(); ++i)
+    {
+        const auto& s = shown[i];
+        const auto& m = markers[i];
+        if (s.sample != m.timelineSamples || s.colour != m.colour.getARGB()
+            || std::strcmp (s.name.c_str(), m.name.toRawUTF8()) != 0)
+            return false;
+    }
+    return true;
+}
+} // namespace
+
+std::uint64_t MiniTimelineStrip::regionSignature() const noexcept
+{
+    std::uint64_t signature = 0;
+    for (int t = 0; t < Session::kNumTracks; ++t)
+    {
+        const auto& track = session.track (t);
+        signature = signature * 1000003u ^ track.regions.size();
+        signature = signature * 1000003u ^ track.midiRegions.edits();
+    }
+    return signature;
+}
+
+std::int64_t MiniTimelineStrip::contentEndSamples() const noexcept
+{
+    std::int64_t end = 0;
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
         for (const auto& r : session.track (t).regions)
@@ -55,15 +93,33 @@ std::int64_t MiniTimelineStrip::songEndSamples() const noexcept
     return std::max (end, static_cast<std::int64_t> (engine.getTimelineSampleRate() * 60.0));
 }
 
+#endif
+
 void MiniTimelineStrip::updateState()
 {
    #if DUSKSTUDIO_HAS_NATIVE_UI
     if (view == nullptr || closing) return;
-    view->state.end = songEndSamples();
-    view->state.playhead = engine.getTransport().getPlayhead();
-    view->state.markers.clear();
-    for (const auto& marker : session.getMarkers())
-        view->state.markers.push_back ({ marker.name.toStdString(), marker.timelineSamples, marker.colour.getARGB() });
+    auto& state = view->state;
+    const auto& markers = session.getMarkers();
+    const bool markersMoved = ! markersMatch (state.markers, markers);
+    if (markersMoved)
+    {
+        state.markers.clear();
+        for (const auto& marker : markers)
+            state.markers.push_back ({ marker.name.toStdString(), marker.timelineSamples, marker.colour.getARGB() });
+    }
+    const auto now = std::chrono::steady_clock::now();
+    const auto rate = engine.getTimelineSampleRate();
+    const auto regions = regionSignature();
+    if (markersMoved || now >= nextRegionScan || std::abs (rate - scannedRate) > 0.0 || regions != scannedRegions)
+    {
+        contentEnd = contentEndSamples();
+        nextRegionScan = now + kRegionRescan;
+        scannedRate = rate;
+        scannedRegions = regions;
+    }
+    state.playhead = engine.getTransport().getPlayhead();
+    state.end = std::max (contentEnd, state.playhead);
    #endif
 }
 

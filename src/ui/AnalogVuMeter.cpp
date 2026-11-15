@@ -42,6 +42,7 @@ constexpr float kRefreshHz         = 60.0f;
 constexpr float kVuTimeConstantMs  = 65.0f;
 constexpr float kOvershootDamping  = 0.78f;
 constexpr float kOvershootStiff    = 180.0f;
+constexpr float kDegToRad          = 3.14159265358979f / 180.0f;
 
 // Below this face width the numeric scale labels are suppressed - they
 // collide on narrow bus strips, ticks alone read clearly. Matches the
@@ -251,16 +252,34 @@ void AnalogVuMeter::timerCallback()
     if (rightRms != nullptr)
         tickChannel (rightRms, needlePosR, needleVelR, rawR);
 
+    const auto nowMs = juce::Time::getMillisecondCounter();
     const float maxRaw = std::max (rawL, rawR);
     if (maxRaw >= kPeakTriggerVuDb)
-        peakHoldUntilMs = juce::Time::getMillisecondCounter() + (std::uint32_t) kPeakHoldMs;
+        peakHoldUntilMs = nowMs + (std::uint32_t) kPeakHoldMs;
+    // Wrap-safe: the millisecond counter wraps every ~49 days, and the signed
+    // remaining time stays right across the wrap.
+    peakLit = peakHoldUntilMs != 0 && (std::int32_t) (peakHoldUntilMs - nowMs) > 0;
 
     // Re-bake the cache if the window moved to a different-DPI monitor so the
     // face stays crisp (resize already rebuilds for size changes).
+    bool faceRebuilt = false;
     if (cachedFace.isValid() && std::abs (currentDisplayScale (*this) - lastScale) > 0.01f)
+    {
         rebuildCachedFace();
+        faceRebuilt = true;
+    }
 
-    repaint();
+    // Pixels the needle tip travels per unit of angleFrac.
+    const float tipTravelPx = (baselineRad - arcRadius * 0.02f) * halfArcDeg * kDegToRad;
+    const float needleEps = tipTravelPx > 0.0f ? kSubPixelRepaint / tipTravelPx : 0.0f;
+    const bool movedL = paintedNeedleL.changed (needlePosL, needleEps);
+    const bool movedR = rightRms != nullptr && paintedNeedleR.changed (needlePosR, needleEps);
+    const bool ledFlipped = paintedPeakLed.changed (peakLit ? 1.0f : 0.0f, 0.0f);
+    if (faceRebuilt || movedL || movedR || ledFlipped)
+    {
+        countGatedRepaint();
+        repaint();
+    }
 }
 
 void AnalogVuMeter::rebuildCachedFace()
@@ -642,22 +661,14 @@ void AnalogVuMeter::paint (juce::Graphics& g)
         drawNeedle (needlePosL, kNeedle, 1.4f);
     }
 
-    // PEAK LED overlay - lit while the hold timer is still in the future.
-    // Wrap-safe compare: juce::Time::getMillisecondCounter wraps every ~49
-    // days; a plain `now < peakHoldUntilMs` would briefly lie when the
-    // deadline straddles the wrap. Casting the diff to int32 gives a
-    // signed remaining-ms that handles the wrap correctly.
-    if (peakHoldUntilMs != 0 && ! peakLedRect.isEmpty())
+    // PEAK LED overlay, lit while the hold the timer last sampled runs.
+    if (peakLit && ! peakLedRect.isEmpty())
     {
-        const auto now = juce::Time::getMillisecondCounter();
-        if ((std::int32_t) (peakHoldUntilMs - now) > 0)
-        {
-            g.setColour (kPeakLedOn);
-            g.fillEllipse (peakLedRect);
-            // Soft glow so the lit state pops against the cream face.
-            g.setColour (kPeakLedOn.withAlpha (0.35f));
-            g.fillEllipse (peakLedRect.expanded (peakLedRect.getWidth() * 0.25f));
-        }
+        g.setColour (kPeakLedOn);
+        g.fillEllipse (peakLedRect);
+        // Soft glow so the lit state pops against the cream face.
+        g.setColour (kPeakLedOn.withAlpha (0.35f));
+        g.fillEllipse (peakLedRect.expanded (peakLedRect.getWidth() * 0.25f));
     }
 }
 } // namespace duskstudio

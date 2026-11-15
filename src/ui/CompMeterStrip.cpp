@@ -16,6 +16,7 @@ CompMeterStrip::CompMeterStrip (Source s) : src (std::move (s))
 {
     setOpaque (false);
     setMouseCursor (juce::MouseCursor::PointingHandCursor);
+    sampleControls();
     startTimerHz (30);
 }
 
@@ -198,7 +199,61 @@ void CompMeterStrip::timerCallback()
     // a dB - prevents a tiny residual fill that looks like a stuck LED.
     if (displayedGrDb > -0.05f) displayedGrDb = 0.0f;
 
-    repaint();
+    sampleControls();
+    if (lookChanged())
+    {
+        countGatedRepaint();
+        repaint();
+    }
+}
+
+void CompMeterStrip::sampleControls()
+{
+    shownThresholdDb = src.getThresholdDb ? src.getThresholdDb() : 0.0f;
+    shownEngaged = src.isEngaged ? src.isEngaged() : false;
+}
+
+CompMeterStrip::Look CompMeterStrip::look() const noexcept
+{
+    Look l;
+    if (showInputBar && ! inputBarArea.isEmpty())
+    {
+        const float span = inputBarArea.getHeight() - 2.0f;
+        const float frac = jlimit (0.0f, 1.0f, dbToFrac (displayedInputDb));
+        l.input = drawnAbove (frac, 0.001f, span * frac);
+        const float peakFrac = dbToFrac (inputPeakHoldDb);
+        l.peak = drawnAbove (peakFrac, 0.001f, peakFrac * span);
+        l.peakHot = peakFrac > dbToFrac (-3.0f);
+    }
+    const float grAbs = jlimit (0.0f, std::abs (kGrFloorDb), std::abs (displayedGrDb));
+    const float grFrac = jlimit (0.0f, 1.0f, grAbs / std::abs (kGrFloorDb));
+    l.gr = drawnAbove (grFrac, 0.001f, (grBarArea.getHeight() - 2.0f) * grFrac);
+    if (showHandle)
+    {
+        const auto refBar = (showInputBar && ! inputBarArea.isEmpty()) ? inputBarArea : grBarArea;
+        l.handleY = yForDb (shownThresholdDb, refBar);
+    }
+    l.engaged = shownEngaged;
+    return l;
+}
+
+bool CompMeterStrip::lookChanged() noexcept
+{
+    // The tighter of a tenth of a dB and kSubPixelRepaint, in pixels.
+    auto eps = [] (float pixels, float dbRange)
+    {
+        return pixels > 0.0f && dbRange > 0.0f ? std::min (kSubPixelRepaint, 0.1f * pixels / dbRange) : 0.0f;
+    };
+    const auto now = look();
+    const float range = src.ceilingDb - src.floorDb;
+    const float inputEps = eps (inputBarArea.getHeight() - 2.0f, range);
+    const auto refBar = (showInputBar && ! inputBarArea.isEmpty()) ? inputBarArea : grBarArea;
+    const bool input  = paintedInput.changed (now.input.key(), inputEps);
+    const bool peak   = paintedPeak.changed (now.peak.key(), inputEps);
+    const bool gr     = paintedGr.changed (now.gr.key(), eps (grBarArea.getHeight() - 2.0f, -kGrFloorDb));
+    const bool handle = paintedHandle.changed (now.handleY, eps (refBar.getHeight() - 4.0f, range));
+    const bool tinted = paintedFlags.changed ((float) ((now.peakHot ? 1 : 0) + (now.engaged ? 2 : 0)), 0.0f);
+    return input || peak || gr || handle || tinted;
 }
 
 namespace
@@ -206,7 +261,7 @@ namespace
 // Renders one segmented-LED bar - dark background, gradient fill, and thin
 // black gridlines that give the stacked-LED look from hardware level meters.
 void drawSegmentedBar (juce::Graphics& g,
-                        juce::Rectangle<float> bar, float frac,
+                        juce::Rectangle<float> bar, DrawnExtent fill,
                         juce::Colour topColour, juce::Colour bottomColour,
                         bool fillFromTop,
                         int forcedSegments = -1)
@@ -214,10 +269,9 @@ void drawSegmentedBar (juce::Graphics& g,
     g.setColour (juce::Colour (0xff060608));
     g.fillRoundedRectangle (bar, 1.5f);
 
-    const float clamped = jlimit (0.0f, 1.0f, frac);
-    if (clamped > 0.001f)
+    if (fill.shown)
     {
-        const float fillH = (bar.getHeight() - 2.0f) * clamped;
+        const float fillH = fill.px;
         const float x = bar.getX() + 1.0f;
         const float w = bar.getWidth() - 2.0f;
         const float y = fillFromTop ? bar.getY() + 1.0f
@@ -319,36 +373,31 @@ void CompMeterStrip::paint (juce::Graphics& g)
         }
     }
 
+    const auto drawn = look();
     if (showInputBar && ! inputBarArea.isEmpty())
     {
-        const float frac = dbToFrac (displayedInputDb);
-        drawSegmentedBar (g, inputBarArea, frac,
+        drawSegmentedBar (g, inputBarArea, drawn.input,
                           juce::Colour (0xffe05050),
                           juce::Colour (0xff44d058),
                           /*fillFromTop=*/false);
 
-        const float peakFrac = dbToFrac (inputPeakHoldDb);
-        if (peakFrac > 0.001f)
+        if (drawn.peak.shown)
         {
-            const float y = inputBarArea.getBottom() - 1.0f
-                              - peakFrac * (inputBarArea.getHeight() - 2.0f);
-            g.setColour (peakFrac > dbToFrac (-3.0f) ? juce::Colour (0xffff8080)
-                                                      : juce::Colour (0xfff0f0f0));
+            const float y = inputBarArea.getBottom() - 1.0f - drawn.peak.px;
+            g.setColour (drawn.peakHot ? juce::Colour (0xffff8080)
+                                       : juce::Colour (0xfff0f0f0));
             g.fillRect (juce::Rectangle<float> (inputBarArea.getX() + 1.0f, y - 0.5f,
                                                   inputBarArea.getWidth() - 2.0f, 1.4f));
         }
     }
 
     {
-        const float grAbs = jlimit (0.0f, std::abs (kGrFloorDb),
-                                            std::abs (displayedGrDb));
-        const float frac = grAbs / std::abs (kGrFloorDb);
         // Force one segment per dB of reduction (24 segments for the
         // 0..-24 dB range) so each visible LED step represents 1 dB -
         // lets the user read GR amount off the bar directly without a
         // dB tick column.
         const int grSegments = (int) std::abs (kGrFloorDb);
-        drawSegmentedBar (g, grBarArea, frac,
+        drawSegmentedBar (g, grBarArea, drawn.gr,
                           juce::Colour (fourKColors::kCompGold).brighter (0.25f),
                           juce::Colour (fourKColors::kHfRed).brighter (0.10f),
                           /*fillFromTop=*/true,
@@ -361,8 +410,7 @@ void CompMeterStrip::paint (juce::Graphics& g)
         // bar (same vertical extent, used purely as a Y mapping target).
         const auto refBar = (showInputBar && ! inputBarArea.isEmpty()) ? inputBarArea
                                                                         : grBarArea;
-        const float thresh = src.getThresholdDb ? src.getThresholdDb() : 0.0f;
-        const float y = yForDb (thresh, refBar);
+        const float y = drawn.handleY;
 
         // Bigger, more prominent triangle when the IN bar is hidden - the
         // fader-side layout needs the handle to read clearly without a
@@ -379,7 +427,7 @@ void CompMeterStrip::paint (juce::Graphics& g)
                          baseX, y + halfH,
                          tipX,  y);
 
-        const bool engaged = src.isEngaged ? src.isEngaged() : false;
+        const bool engaged = drawn.engaged;
         const auto fill   = engaged ? juce::Colour (fourKColors::kCompGold).brighter (0.30f)
                                      : juce::Colour (0xff909098);
         const auto outline = juce::Colour (0xff0a0a0a);
@@ -418,6 +466,8 @@ void CompMeterStrip::mouseDown (const juce::MouseEvent& e)
         const float db = dbForY (e.y, refBar);
         if (src.setThresholdDb) src.setThresholdDb (db);
         if (src.autoEnable)     src.autoEnable();
+        sampleControls();
+        lookChanged();
         repaint();
     }
 }
@@ -430,6 +480,8 @@ void CompMeterStrip::mouseDrag (const juce::MouseEvent& e)
     const float db = dbForY (e.y, refBar);
     if (src.setThresholdDb) src.setThresholdDb (db);
     if (src.autoEnable)     src.autoEnable();
+    sampleControls();
+    lookChanged();
     repaint();
 }
 
@@ -441,6 +493,8 @@ void CompMeterStrip::mouseUp (const juce::MouseEvent&)
 void CompMeterStrip::mouseDoubleClick (const juce::MouseEvent&)
 {
     if (src.resetThreshold) src.resetThreshold();
+    sampleControls();
+    lookChanged();
     repaint();
 }
 } // namespace duskstudio

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
+#include "RepaintGate.h"
 #include <algorithm>
 #include <functional>
 
@@ -26,6 +27,7 @@ public:
     {
         setMouseCursor (juce::MouseCursor::PointingHandCursor);
         setTooltip ("Compressor bypass - green when engaged, click to toggle");
+        refresh();
     }
 
     void paint (juce::Graphics& g) override
@@ -42,7 +44,7 @@ public:
         auto r = getLocalBounds().toFloat();
         const float d = std::min ({r.getWidth(), r.getHeight(), 10.0f});
         r = r.withSizeKeepingCentre (d, d);
-        const bool on = isEnabledFn ? isEnabledFn() : false;
+        const bool on = shownOn;
 
         g.setColour (juce::Colour (0xff0a0a0c));
         g.fillEllipse (r);
@@ -63,11 +65,25 @@ public:
     void mouseDown (const juce::MouseEvent&) override
     {
         if (toggleFn) toggleFn();
-        repaint();
+        refresh();
+    }
+
+    // paint() draws the state this last sampled. Owners call it from their
+    // refresh timers for changes the LED is not told about.
+    void refresh()
+    {
+        shownOn = isEnabledFn && isEnabledFn();
+        if (paintedOn.changed (shownOn ? 1.0f : 0.0f, 0.0f))
+        {
+            countGatedRepaint();
+            repaint();
+        }
     }
 
 private:
     std::function<bool()> isEnabledFn;
     std::function<void()> toggleFn;
+    bool shownOn = false;
+    PaintedValue paintedOn;
 };
 } // namespace duskstudio

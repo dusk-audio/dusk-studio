@@ -85,6 +85,12 @@ canonical source.
   monitored wakes those threads about 2,000 times a second less. A track
   that is muted or has no input also costs the audio thread about a
   twentieth of what it did.
+- **A still console stays still.** The VU meters, gain-reduction meters, level
+  meters, peak readouts and section lights repaint only when what they show
+  has changed, so a stopped console with no input no longer redraws them 30
+  to 60 times a second. The mini timeline still follows the playhead on every
+  frame and rereads the regions twice a second, at once when a region is
+  added or removed or a marker changes.
 
 ### Fixed
 

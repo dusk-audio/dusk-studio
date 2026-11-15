@@ -1004,6 +1004,7 @@ target_sources(DuskStudio PRIVATE
     src/ui/scenario/cases/gui_import_browser.cpp
     src/ui/scenario/cases/gui_keyboard_transport.cpp
     src/ui/scenario/cases/gui_mastering_bounce.cpp
+    src/ui/scenario/cases/gui_meters.cpp
     src/ui/scenario/cases/gui_midi_learn_plugins.cpp
     src/ui/scenario/cases/gui_midi_recovery.cpp
     src/ui/scenario/cases/gui_mixer.cpp

@@ -51,7 +51,7 @@ src/session/Session.h	61
 src/session/SessionSerializer.cpp	77
 src/session/SessionSerializer.h	13
 src/session/SessionTemplates.cpp	3
-src/ui/AnalogVuMeter.cpp	113
+src/ui/AnalogVuMeter.cpp	111
 src/ui/AnalogVuMeter.h	7
 src/ui/AuxLaneComponent.cpp	146
 src/ui/AuxLaneComponent.h	28
@@ -59,11 +59,11 @@ src/ui/AuxView.cpp	60
 src/ui/AuxView.h	5
 src/ui/BounceDialog.cpp	45
 src/ui/BounceDialog.h	12
-src/ui/BusComponent.cpp	291
+src/ui/BusComponent.cpp	289
 src/ui/BusComponent.h	45
 src/ui/ChannelEqEditor.cpp	77
 src/ui/ChannelEqEditor.h	13
-src/ui/ChannelStripComponent.cpp	632
+src/ui/ChannelStripComponent.cpp	630
 src/ui/ChannelStripComponent.h	106
 src/ui/ClapPluginEditorComponent.cpp	18
 src/ui/ClapPluginEditorComponent.h	8
@@ -105,7 +105,7 @@ src/ui/Lv2PluginEditorComponent.cpp	3
 src/ui/Lv2PluginEditorComponent.h	4
 src/ui/MainComponent.cpp	403
 src/ui/MainComponent.h	55
-src/ui/MasterStripComponent.cpp	328
+src/ui/MasterStripComponent.cpp	326
 src/ui/MasterStripComponent.h	55
 src/ui/MasteringView.cpp	143
 src/ui/MasteringView.h	26

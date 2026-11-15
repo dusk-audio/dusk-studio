@@ -6,6 +6,8 @@
 #include "GuiHost.h"
 #include "NativeEmbeddedParent.h"
 
+#include <chrono>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
@@ -41,7 +43,10 @@ private:
     void syncWindow();
     void updateState();
     void hideTooltip();
-    std::int64_t songEndSamples() const noexcept;
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    std::int64_t contentEndSamples() const noexcept;
+    std::uint64_t regionSignature() const noexcept;
+   #endif
 
     Session& session;
     AudioEngine& engine;
@@ -54,6 +59,12 @@ private:
     platform::EmbeddedChildLatch latch;
     bool closing = false, capturePaint = false;
     std::string shownTooltip;
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    std::int64_t contentEnd = 0;
+    std::uint64_t scannedRegions = 0;
+    double scannedRate = 0.0;
+    std::chrono::steady_clock::time_point nextRegionScan {};
+   #endif
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MiniTimelineStrip)
 };

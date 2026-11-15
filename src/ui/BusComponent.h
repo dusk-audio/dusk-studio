@@ -9,6 +9,8 @@
 #include "AnalogVuMeter.h"
 #include "CompMeterStrip.h"
 #include "SplitModuleButton.h"
+#include "LevelMeterDraw.h"
+#include "RepaintGate.h"
 #include "EmbeddedModal.h"
 
 namespace duskstudio
@@ -150,11 +152,11 @@ private:
     void resetCompSection();
     void syncEqKnobs();
     juce::Label outputPeakLabel;
-    float displayedOutputLDb = -100.0f;
-    float displayedOutputRDb = -100.0f;
-    float outputPeakHoldLDb  = -100.0f;
-    float outputPeakHoldRDb  = -100.0f;
-    int   outputPeakHoldFramesL = 0;
-    int   outputPeakHoldFramesR = 0;
+    // The output meter draws only what the timer sampled into these, so its
+    // repaint gate keys on exactly what paint() shows.
+    LevelBallistics outputL, outputR;
+    LevelBarGate meterGateL, meterGateR;
+    PeakReadout peakReadout;
+    PaintedValue paintedPeakColour;
 };
 } // namespace duskstudio

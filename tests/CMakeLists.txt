@@ -206,6 +206,8 @@ add_executable(dusk-studio-tests
     session_mcu_roundtrip.cpp
     console_bank_mapping.cpp
     track_meter_source.cpp
+    repaint_gate.cpp
+    level_meter_draw.cpp
     mcu_receiver_decode.cpp
     mcu_controller_emit.cpp
     mcu_fader_taper.cpp

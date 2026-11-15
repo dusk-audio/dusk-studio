@@ -118,6 +118,12 @@ public:
     virtual std::string slotLabel (int slot) const = 0;
     virtual bool captureSources (bool enabled) = 0;
     virtual std::vector<std::string> sourceRows() const = 0;
+    // Samples the lane's meters and a track's input meter at `db`, drops them
+    // to silence without a meter tick, and reports whether the lane's strip
+    // meter and that track's Sources row still draw the sample: 1 drawn, 0
+    // not, -1 when either is not laid out to tell. The audio thread can write
+    // a meter between the store and the sample, so retry a miss.
+    virtual std::array<int, 2> metersDrawSample (int track, float db) = 0;
 };
 
 class GuiHost
@@ -498,6 +504,23 @@ public:
     virtual bool canvasHasKeyboardFocus() const = 0;
 
     virtual bool meterClip (int index) = 0;
+    // Repaints and text refreshes the console's meters and strips have asked for
+    // since launch.
+    virtual std::uint64_t meterRepaintRequests() const = 0;
+    // The window as the display server holds it, read back into `ppm`: of a
+    // Channel strip's input meter (its lower part, where a decay ends) or an
+    // Aux lane's strip meter (below its -20 dB tick), how many pixels are lit,
+    // and the meter's height in interface units. Only noCapture means the
+    // platform cannot read a window back (anything but an X11 window on
+    // Linux); notShown and captureFailed are failures wherever it can.
+    struct MeterRest
+    {
+        enum class Status { noCapture, notShown, captureFailed, read };
+        Status status = Status::noCapture;
+        int lit = 0, height = 0;
+    };
+    virtual MeterRest meterRestPixels (StripKind kind, int index,
+                                       const std::filesystem::path& ppm) = 0;
     virtual bool openMidiIo (int index) = 0;
     virtual bool clickMidiSelector (int index, int kind) = 0;
     virtual std::string midiSelectorText (int index, int kind) const = 0;
