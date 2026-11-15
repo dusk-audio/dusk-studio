@@ -14,7 +14,7 @@ Verified on Ubuntu 22.04 LTS and Fedora 39. Other distros work with equivalent p
 sudo apt-get update
 sudo apt-get install -y --no-install-recommends \
   build-essential cmake ninja-build pkg-config git \
-  libasound2-dev libjack-jackd2-dev libpipewire-0.3-dev \
+  libasound2-dev libpipewire-0.3-dev \
   libsndfile1-dev libsodium-dev libmp3lame-dev \
   liblilv-dev libsuil-dev lv2-dev \
   ladspa-sdk \
@@ -31,7 +31,7 @@ sudo apt-get install -y --no-install-recommends \
 ```bash
 sudo dnf install -y \
   gcc-c++ cmake ninja-build pkgconf-pkg-config git \
-  alsa-lib-devel pipewire-jack-audio-connection-kit-devel pipewire-devel \
+  alsa-lib-devel pipewire-devel \
   libsndfile-devel libsodium-devel lame-devel \
   lilv-devel suil-devel lv2-devel \
   ladspa-devel \
@@ -54,10 +54,7 @@ The PipeWire, LV2-host and MP3-bounce packages are probed at configure time and 
 when absent; each miss costs you one easy-to-miss line in the configure log, so
 read it, or pass `-DDUSKSTUDIO_REQUIRE_PIPEWIRE=ON`,
 `-DDUSKSTUDIO_REQUIRE_NATIVE_LV2=ON` and `-DDUSKSTUDIO_REQUIRE_LAME=ON`, as CI
-and the release builds do, to make each miss a configure error. On Fedora,
-take the `pipewire-jack-*` JACK headers rather than
-`jack-audio-connection-kit-devel`: the two conflict, and dnf will refuse the
-transaction on a PipeWire box.
+and the release builds do, to make each miss a configure error.
 
 ## Repository layout
 
@@ -127,9 +124,9 @@ cmake -S . -B build-linux -G Ninja -DCMAKE_BUILD_TYPE=Release \
 
 #### Windowing backend
 
-DGL picks X11 or Wayland at configure time, and `-DDGL_BACKEND=` decides which: `auto` (the default) takes X11 whenever the X11 development files are installed and Wayland only when they are absent, `x11` and `wayland` ask for one and fail the configure if its development files are missing. Because one `dgl-opengl3` target serves every consumer in the tree, this is a property of the whole build directory: it is X11 or Wayland, not both.
+DGL picks its windowing backends at configure time, and `-DDGL_BACKEND=` decides which: `auto` (the default), `x11`, `wayland` or `both`. Dusk Studio's configure turns `auto` into `both` when the JUCE fork and the DAF checkout pass the shared Wayland connection probe ([cmake/NativeWaylandCapabilities.cmake](../cmake/NativeWaylandCapabilities.cmake)), and prints `Native Wayland embedding: shared host connection supported` when it does. A `both` build carries X11 and Wayland in one binary and loads the Wayland libraries only when the Wayland path is first tried, so the native views run on X11 by default and on Wayland under `DUSKSTUDIO_NATIVE_WAYLAND=1`. When the probe fails, `auto` keeps DAF's own rule: X11 whenever the X11 development files are installed, Wayland only when they are absent. `x11`, `wayland` and `both` ask for those backends explicitly and fail the configure if their development files are missing. One `dgl-opengl3` target serves every consumer in the tree, so the choice holds for the whole build directory.
 
-Leave it at `auto` for the app. The notepad is a native child window placed inside the JUCE main window, and Wayland has no window embedding — a `-DDGL_BACKEND=wayland` build of the app therefore refuses to open the notepad, reporting *Unable to embed session notepad with the current display backend*. The flag is there for the GUI tower's own build directories, which run standalone framework windows on a real Wayland session:
+Leave it at `auto` for the app. The notepad is a native child window placed inside the JUCE main window, which is an X11 window unless you opt in to native Wayland. A `-DDGL_BACKEND=wayland` build has no X11 path to embed with, so in the default mode it refuses to open the notepad, reporting *Unable to embed session notepad with the current display backend*. The flag is there for the GUI tower's own build directories, which run standalone framework windows on a real Wayland session:
 
 ```bash
 cmake -S . -B build-spike -G Ninja -DCMAKE_BUILD_TYPE=Release \
@@ -224,7 +221,7 @@ Dusk Studio ships two backends of its own, both speaking to the system directly 
 
 On a machine with no saved settings the first backend that enumerates any device is selected ([DeviceManager.cpp:227-236](../src/engine/device/DeviceManager.cpp#L227-L236)), which is PipeWire when it's built in and the graph is up. After that your saved choice wins: the stored device blob names its backend and that lookup runs first ([DeviceManager.cpp:426-430](../src/engine/device/DeviceManager.cpp#L426-L430)).
 
-There is no JACK backend to pick — no JACK device type is registered, so nothing JACK-shaped appears in the panel. Dusk Studio used to reach PipeWire through JUCE's JACK path over the pipewire-jack shim, and the native backend replaced it; `juce_audio_devices` still compiles (pulled in transitively by `juce_audio_utils`, [CMakeLists.txt:1316-1320](../CMakeLists.txt#L1316-L1320)) with `JUCE_JACK=1`, which is why the JACK development headers stay a build dependency. To feed other applications while the PipeWire backend is active, patch Dusk Studio inside the graph with qpwgraph or Helvum; on the ALSA backend there is no graph to patch.
+There is no JACK backend to pick: no JACK device type is registered, so nothing JACK-shaped appears in the panel. Dusk Studio used to reach PipeWire through JUCE's JACK path over the pipewire-jack shim, and the native backend replaced it; JUCE's device module no longer compiles into the Linux app, so the build needs no JACK development headers. To feed other applications while the PipeWire backend is active, patch Dusk Studio inside the graph with qpwgraph or Helvum; on the ALSA backend there is no graph to patch.
 
 The Dusk Studio-native ALSA backend handles USB hot-unplug by surfacing the device error to the engine, which finalises any in-flight take. Details in [MANUAL.md](../MANUAL.md#audio-device-disconnected-mid-session).
 

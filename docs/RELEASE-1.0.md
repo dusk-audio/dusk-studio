@@ -1,10 +1,12 @@
 # Dusk Studio 1.0 release plan
 
-1.0 ships on the current framework stack. The re-platforming campaign onto DAF
-resumes after 1.0 as the 1.1+ H-series. No work
-lands before 1.0 whose main effect is reducing framework coupling, unless it
-fixes a release blocker or belongs to the explicitly approved 0.16 piano-roll
-port in #875.
+The re-platforming campaign onto DAF is not parked until after 1.0.
+[Decision 0002](decisions/0002-native-wayland-and-daf.md) resumed it on
+2026-10-28. [campaign.md](dejuce/campaign.md) sets its goal, all JUCE removed
+by 1.0, and holds the tower order. Work that replaces JUCE with Dusk-owned code
+is welcome now, most of all where it moves native Wayland forward. The
+definition of done below covers what a user can do with the app and builds
+that install without a fight.
 
 This file is the plan of record for the 1.0 milestone. It carries the
 definition of done, the original issue triage, the ordered work plan, the
@@ -72,45 +74,49 @@ Each line below is a check somebody can run and get a yes or a no.
 ## Triage
 
 This table records the original 1.0 planning decisions; it is not a live list of
-open issues. GitHub milestones are authoritative. The [0.16 milestone](https://github.com/dusk-audio/dusk-studio/milestone/9)
-tracks the release blockers and final validation that must finish before its tag.
+open issues. GitHub milestones are authoritative. The open
+[0.17 milestone](https://github.com/dusk-audio/dusk-studio/milestone/11) tracks
+the release blockers and final validation that must finish before its tag.
+A row numbered `-` was triaged from an issue that no longer exists on GitHub;
+the decision it records stands. The framework-removal rows were bucketed
+post-1.0 under decision 0001; decision 0002 has since resumed that work.
 
 | # | Title | Bucket | Reason |
 |---|---|---|---|
-| 74 | New Feature: Downloadable SFZ | superseded | Replaced by #804's repository browser and downloads in 0.16. |
+| - | New Feature: Downloadable SFZ | superseded | Replaced by #804's repository browser and downloads in 0.16. |
 | 75 | New Feature: Built In Plugins | 1.0 | Agreed 1.0 scope. A fresh install must have a reverb, delay, colour and instrument. Scoped in a comment on the issue. |
-| 124 | Playlist comping (Option B) | done | Shipped in 0.15 as take folders: every recording pass is kept whole as a take on its track, and the comp is built in the audio editor's take lanes. |
-| 252 | SFZ library: cancellable download and hardened ZIP install | superseded | Implemented under #804 in 0.16, including libcurl and libarchive. |
-| 253 | SFZ library: portable session locator and asynchronous loading | superseded | Implemented under #804 in 0.16. |
-| 254 | SFZ library: embedded catalog UI and audited launch packs | superseded | #804 implements browsing external SFZ repositories in 0.16; no signed catalog or instrument packs are bundled. |
-| 286 | Allow builds without signed SFZ catalog support | post-1.0 | Build-option convenience. Does not change what a shipped release does. |
-| 294 | Consolidate and pin the reusable DSP/UI source of truth | post-1.0 | Framework-removal campaign. |
-| 295 | [H2] Replace the mastering multiband processor | post-1.0 | Framework-removal campaign. |
+| - | Playlist comping (Option B) | done | Shipped in 0.15 as take folders: every recording pass is kept whole as a take on its track, and the comp is built in the audio editor's take lanes. |
+| - | SFZ library: cancellable download and hardened ZIP install | superseded | Implemented under #804 in 0.16, including libcurl and libarchive. |
+| - | SFZ library: portable session locator and asynchronous loading | superseded | Implemented under #804 in 0.16. |
+| - | SFZ library: embedded catalog UI and audited launch packs | superseded | #804 implements browsing external SFZ repositories in 0.16; no signed catalog or instrument packs are bundled. |
+| - | Allow builds without signed SFZ catalog support | post-1.0 | Build-option convenience. Does not change what a shipped release does. |
+| - | Consolidate and pin the reusable DSP/UI source of truth | post-1.0 | Framework-removal campaign. |
+| - | [H2] Replace the mastering multiband processor | post-1.0 | Framework-removal campaign. |
 | 296 | [H1d] Replace TapePanel with the TapeMachine 2 DAF UI | 0.14 | The master tape and the built-in tape unit run the Tape Machine 2 plug-in with its own editor; TapePanel is deleted. |
-| 297 | [H6] Delete plug-in hosting and unlink the audio-processors module | post-1.0 | Framework-removal campaign. |
-| 298 | [Devices/macOS] Replace the CoreAudio and CoreMIDI backends | post-1.0 | Framework-removal campaign. |
-| 299 | [Devices/Windows] Replace the WASAPI/ASIO and MIDI backends | post-1.0 | Framework-removal campaign. |
-| 300 | [Engine] Remove remaining audio-basics and DSP primitives | post-1.0 | Framework-removal campaign. |
-| 302 | [DAF fork] Complete the pugl platform contract | post-1.0 | Framework-removal campaign, and touches an out-of-bounds repo. |
-| 303 | [App shell] Replace the application, window and message-thread classes | post-1.0 | Framework-removal campaign. |
-| 304 | [GUI foundation] Dusk ImGui theme, widgets, layout, menus, modals | post-1.0 | Framework-removal campaign. |
-| 305 | [Accessibility] Replace accessibility, keyboard nav and IME behaviour | post-1.0 | Framework-removal campaign. Screen-reader support must survive the port. |
-| 306 | [Waveforms] Replace AudioThumbnail and unlink two modules | post-1.0 | Framework-removal campaign. |
-| 307 | [GUI] Port console, mixer, aux, master strip and DSP editor views | post-1.0 | Framework-removal campaign. |
-| 308 | [GUI] Port tape, region, transport and timeline views | post-1.0 | Framework-removal campaign. |
-| 309 | [GUI] Port piano roll, virtual keyboard, bindings, controller views | post-1.0 | Framework-removal campaign. |
-| 310 | [GUI] Port mastering, multisample, picker and native editor views | post-1.0 | Framework-removal campaign. |
-| 311 | [GUI] Port startup, settings, dialogs, file, import and support flows | post-1.0 | Framework-removal campaign. |
-| 312 | [Model] Remove framework types from session, serialization, undo | post-1.0 | Framework-removal campaign. |
-| 313 | [Platform] Replace remaining core utilities and application services | post-1.0 | Framework-removal campaign. |
-| 314 | [Final gate] Remove the framework from CMake, CI, packaging, tests, docs | post-1.0 | Framework-removal campaign. |
-| 320 | Route macOS builds to the dusk-mac-air self-hosted runner | post-1.0 | Cost optimisation with no user-visible effect, and the runner is offline. |
+| - | [H6] Delete plug-in hosting and unlink the audio-processors module | post-1.0 | Framework-removal campaign. |
+| - | [Devices/macOS] Replace the CoreAudio and CoreMIDI backends | post-1.0 | Framework-removal campaign. |
+| - | [Devices/Windows] Replace the WASAPI/ASIO and MIDI backends | post-1.0 | Framework-removal campaign. |
+| - | [Engine] Remove remaining audio-basics and DSP primitives | post-1.0 | Framework-removal campaign. |
+| - | [DAF fork] Complete the pugl platform contract | post-1.0 | Framework-removal campaign, and touches an out-of-bounds repo. |
+| - | [App shell] Replace the application, window and message-thread classes | post-1.0 | Framework-removal campaign. |
+| - | [GUI foundation] Dusk ImGui theme, widgets, layout, menus, modals | post-1.0 | Framework-removal campaign. |
+| - | [Accessibility] Replace accessibility, keyboard nav and IME behaviour | post-1.0 | Framework-removal campaign. Screen-reader support must survive the port. |
+| - | [Waveforms] Replace AudioThumbnail and unlink two modules | post-1.0 | Framework-removal campaign. |
+| - | [GUI] Port console, mixer, aux, master strip and DSP editor views | post-1.0 | Framework-removal campaign. |
+| - | [GUI] Port tape, region, transport and timeline views | post-1.0 | Framework-removal campaign. |
+| - | [GUI] Port piano roll, virtual keyboard, bindings, controller views | post-1.0 | Framework-removal campaign. |
+| - | [GUI] Port mastering, multisample, picker and native editor views | post-1.0 | Framework-removal campaign. |
+| - | [GUI] Port startup, settings, dialogs, file, import and support flows | post-1.0 | Framework-removal campaign. |
+| - | [Model] Remove framework types from session, serialization, undo | post-1.0 | Framework-removal campaign. |
+| - | [Platform] Replace remaining core utilities and application services | post-1.0 | Framework-removal campaign. |
+| - | [Final gate] Remove the framework from CMake, CI, packaging, tests, docs | post-1.0 | Framework-removal campaign. |
+| - | Route macOS builds to the dusk-mac-air self-hosted runner | post-1.0 | Cost optimisation with no user-visible effect, and the runner is offline. |
 | 340 | Change Tape Machine to use the Tape Machine 2 plugin | 1.0 | The built-in colour insert (#75) runs this core, and the master bus cannot run a different one from the same donor path. Landed with a tone regression pinning the new voicing. |
 | 341 | Change EQ DSP to 4K-EQ-2 DSP | done | The channel EQ runs the 4K EQ 2 core. Landed with a tone regression pinning the new voicing. The bus EQ has since moved to its own Tone EQ (#705). |
-| 342 | Change compressors to use Multi-Comp-2 DSP | deferred (1.1) | Moved to 1.1 on 2026-09-15: the Multi-Comp 2 core is not finished in the plugins repo, so 1.0 ships the current compressor core. |
+| - | Change compressors to use Multi-Comp-2 DSP | deferred (1.1) | Moved to 1.1 on 2026-09-15: the Multi-Comp 2 core is not finished in the plugins repo, so 1.0 ships the current compressor core. |
 | 442 | ASan+UBSan and Raspberry Pi jobs are not required checks | done | Both are required checks on `main` now, the Pi build included. |
 | 500 | CloneTrackAction native-insert clone and undo has no coverage | 1.0 | A shipped clone and undo path with no automated test. |
-| 501 | Inline non-modal editor status in the aux slot area | post-1.0 | The unprompted modal was already removed by #459; the remaining alerts are click-initiated. What is left is additive inline status, absorbed by the aux GUI port. |
+| - | Inline non-modal editor status in the aux slot area | post-1.0 | The unprompted modal was already removed by #459; the remaining alerts are click-initiated. What is left is additive inline status, absorbed by the aux GUI port. |
 | 503 | Small residues from the milestone-6 audits | 1.0 | Four small correctness defects in shipped single-instance and hosting code. |
 | 504 | Windows IPC self-test harnesses resolve the child without .exe and hang | done | Fixed by #570. Not a CI gate. See the verdict below. |
 | 507 | SIGTERM bypasses the staged shutdown | 1.0-blocker | Logout or a supervisor stop skips the unsaved-changes prompt and leaves plugin children to the reaper. |
@@ -249,10 +255,15 @@ How it runs in CI:
   `FileImporter` cases, so a build that silently drops those Windows
   regressions fails rather than passing with fewer tests.
 
-Discovery is automatic. `catch_discover_tests` registers each case, in two
-passes: `[alsa]` with `--allow-running-no-tests` so an all-skipped headless run
-scores as a pass, and `~[alsa]` for everything else. Adding a `TEST_CASE` and
-listing its `.cpp` in `tests/CMakeLists.txt` is the whole wiring step.
+Discovery is automatic. `catch_discover_tests` registers each case of
+`dusk-studio-tests` in eight tag-filtered passes. The passes for cases that
+skip on a host without the fixture they need (`[alsa]`, `[host-limits]`, the
+SFZ disk-full tags, `[sfz-filesystem-fixture]` and `[permission-fixture]`) add
+`--allow-running-no-tests`, so an all-skipped run scores as a pass. `[ipc]` and
+`[sfz-shutdown]` cases run serially, and one general pass takes everything
+else. On Linux the separate `dusk-alsa-output-tests` binary gets a pass of its
+own. Adding a `TEST_CASE` and listing its `.cpp` in `tests/CMakeLists.txt` is
+the whole wiring step.
 
 The release jobs in `release.yml` build and run the suite again on each
 platform before packaging. No artifact is produced from a red suite.
@@ -329,23 +340,21 @@ release.
 
 ## Out of scope for 1.0
 
-- Anything whose main effect is reducing framework coupling. The whole
-  H-series (#294 through #314) is deferred, except for the bounded piano-roll
-  work approved in #875. The donor-core moves are not in
-  that class. #340 is in 1.0 because the built-in colour insert needs the Tape
-  Machine 2 core and the master bus cannot run a different core from the same
-  donor path. #341 is in 1.0 so the EQ ships its V2 tone rather than one
-  voicing replaced in the first point release. Both landed with a tone
-  regression pinning the new voicing.
-- Compressors on the Multi-Comp 2 core (#342). The core is not finished in the
-  plugins repo, so 1.0 ships the
-  current compressor core and the swap moves to 1.1.
-- DAF is consumed, not reworked. It is the one framework repository, with pugl
-  and the widget kit in-tree, and consuming it is how the native notepad UI and
-  the built-in unit editors are built. A change to it lands only when a 1.0
-  feature needs it, through a DAF pull request, never as a refactor.
-- MIDI take folders and Flatten. Both were dropped; audio comping (#124)
+- Compressors on the Multi-Comp 2 core. The core is not finished in the
+  plugins repo, so 1.0 ships the current compressor core and the swap moves
+  to 1.1. The other donor-core moves are in 1.0: #340 because the built-in
+  colour insert needs the Tape Machine 2 core and the master bus cannot run a
+  different core from the same donor path, and #341 so the EQ ships its V2
+  tone rather than one voicing replaced in the first point release. Both
+  landed with a tone regression pinning the new voicing.
+- Reworking DAF for its own sake. It is the one framework repository, with
+  pugl and the widget kit in-tree, and the native notepad UI and the built-in
+  unit editors are built on it. A change to it lands through a DAF pull
+  request when Dusk Studio needs it; under decision 0002 that includes the
+  native Wayland work, such as the runtime backend choice and file drop
+  targets.
+- MIDI take folders and Flatten. Both were dropped; audio comping
   shipped in 0.15 as take folders.
-- Self-hosted macOS build routing (#320).
+- Self-hosted macOS build routing.
 - Any feature not named in the definition of done above. New feature requests
   arriving during the 1.0 push get `post-1.0` on sight.

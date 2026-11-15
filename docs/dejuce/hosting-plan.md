@@ -2,9 +2,10 @@
 
 # De-JUCE — plugin-hosting tower (campaign plan)
 
-Status: **H1a-c merged (PR #114); H3 merged (PR #118); H4 merged (PR #119,
-`3c5c901`); H5 scout complete; H5a ready on `dejuce/hosting-h5a`; H1d implemented on
-`fix/696-donor-main-pin`; H2 blocked on the donor multiband port.** Marc's call on
+Status: **H1a-c merged (PR #114); H1d merged (PR #700, `f78042b7`); H3
+merged (PR #118); H4 merged (PR #119, `3c5c901`); H5a merged (PRs
+#120/#121/#122); H5b merged (PR #154, `3e9120be`); H5c merged (PR #317,
+`bc1fcecb`); H2 blocked on the donor multiband port; H6 not started.** Marc's call on
 2026-07-26 reversed the 2026-07-01 keep-JUCE-fallback decision: the JUCE
 plugin-hosting path gets deleted entirely; native hosting must cover CLAP and
 VST3 on Linux, macOS, and Windows, LV2 on Linux and macOS, plus AU on macOS.
@@ -16,8 +17,8 @@ merges. Read `docs/dejuce/campaign.md` + the memory ledger first.
 
 - Only hosts: `INativeInstance` implementations (clap/, lv2/, vst3/, au/).
 - `juce_audio_processors` unlinked on all three platforms (module count
-  12 -> 11; `juce_audio_utils`/`juce_audio_formats` still wait for the GUI
-  tower's AudioThumbnail replacement).
+  11 -> 10; `juce_audio_utils` is already gone, and `juce_audio_formats`
+  stays while `juce_dsp` depends on it).
 - Deleted: PluginSlot, PluginManager's JUCE half (AudioPluginFormatManager /
   KnownPluginList / createPluginInstance), JuceCompat.h, PluginHostMain's
   JUCE message loop + MessageManagerLock sites (the OOP child shrinks to the
@@ -101,7 +102,8 @@ merges. Read `docs/dejuce/campaign.md` + the memory ledger first.
   181 -> 179; full CTest 493/493 plus private-Xvfb self-test, synthetic SFZ
   sound verdict, and picker screenshot review passed. Spec:
   [hosting-h4-descriptors.md](hosting-h4-descriptors.md).
-- **H5 — platform ports (three sequential PRs; H5a is READY).** H5a ports
+- **H5 — platform ports (three sequential PRs). DONE (PRs #120-#122, #154,
+  #317).** H5a ports
   CLAP/LV2/VST3 to macOS, including bundle discovery/loading, Cocoa editor
   embeds, and the portable VST3 host context. H5b adds the native macOS AU
   layer on AudioComponent/AudioUnit APIs. H5c ports CLAP/VST3 to Windows,

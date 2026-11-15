@@ -2160,8 +2160,6 @@ target_compile_definitions(DuskStudio PRIVATE
     $<$<BOOL:${DUSKSTUDIO_JUCE_HAS_WAYLAND}>:DUSKSTUDIO_JUCE_HAS_WAYLAND=1>
     JUCE_APPLICATION_NAME_STRING="Dusk Studio"
     JUCE_APPLICATION_VERSION_STRING="$<TARGET_PROPERTY:DuskStudio,JUCE_VERSION>"
-    JUCE_JACK=1
-    JUCE_ALSA=1
     # Native Wayland windowing on Linux (plugdata fork). Bypasses XWayland
     # and the meta_window_unmanage assertion that crashes mutter when an
     # X11 toplevel is destroyed while focused.
@@ -2190,8 +2188,8 @@ if((CMAKE_SYSTEM_NAME STREQUAL "Linux") AND TARGET juce::pkgconfig_JUCE_WAYLAND_
     target_link_libraries(DuskStudio PRIVATE juce::pkgconfig_JUCE_WAYLAND_LINUX_DEPS)
 endif()
 
-# Linux uses the native device layer. juce_audio_utils still pulls the JUCE
-# device module transitively until that higher-level module unlinks.
+# Linux uses the native device layer, so JUCE's device module links only on
+# macOS and Windows, for DeviceManagerJuce.cpp and the JUCE MIDI fallback.
 if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_libraries(DuskStudio PRIVATE juce::juce_audio_devices)
 endif()
@@ -2200,7 +2198,6 @@ target_link_libraries(DuskStudio PRIVATE
     juce::juce_audio_basics
     juce::juce_audio_formats
     juce::juce_audio_processors
-    juce::juce_audio_utils
     juce::juce_core
     juce::juce_data_structures
     juce::juce_dsp

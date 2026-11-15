@@ -1213,7 +1213,6 @@ if(DUSK_PLUGINS_PATH)
 
     # Modules referenced only transitively by the projucer-shim umbrella header.
     target_link_libraries(dusk-studio-tests PRIVATE
-        juce::juce_audio_utils
         juce::juce_data_structures
         juce::juce_events
         juce::juce_gui_extra)

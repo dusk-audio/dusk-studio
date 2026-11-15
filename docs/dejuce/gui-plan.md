@@ -139,13 +139,20 @@ the default), `x11` and `wayland`, and fails the configure when the requested
 backend's libraries are missing.
 
 Note the consequence for build layout: **the backend is a per-configure choice**,
-because one `dgl-opengl3` target serves every consumer in the tree. A build
-directory is X11 or Wayland, not both. The spike therefore lives in its own
-build directory rather than beside the app.
+because one `dgl-opengl3` target serves every consumer in the tree. When this
+section was written a build directory was X11 or Wayland, not both, so the spike
+got its own build directory rather than sitting beside the app. DAF has since
+added `both`, which builds X11 and Wayland into one binary and loads the Wayland
+libraries only when that path is first tried. The app's configure picks `both`
+whenever the JUCE fork and the DAF checkout pass the shared Wayland connection
+probe (`cmake/NativeWaylandCapabilities.cmake`); the native views then embed as
+Wayland subsurfaces of the JUCE main window under the experimental
+`DUSKSTUDIO_NATIVE_WAYLAND=1` mode, and as X11 child windows otherwise.
 
-**The app's own configures cannot take `wayland` yet, and G0 did not give it to
-them.** The vehicle every phase up to G5 uses is a framework child window placed
-inside the JUCE main window, and Wayland has no window embedding: pugl says so
+The rest of this section records the state at G0. **The app's own configures
+could not take `wayland` then, and G0 did not give it to them.** The vehicle
+every phase up to G5 uses is a framework child window placed inside the JUCE
+main window, and Wayland has no window embedding: pugl says so
 (`wayland.c`, "Wayland has no window embedding, ignoring parent"),
 `puglSetWindowPosition` answers `PUGL_UNSUPPORTED` there, and
 `NativeNotepadWindow` deliberately refuses the backend rather than let the
@@ -322,7 +329,7 @@ desktop application.
 | # | Capability | Status | Reference |
 |---|---|---|---|
 | 1 | IME / text input | Partial | `wayland.c:1430`, `:2970` |
-| 2 | Drag and drop | Absent (offers actively declined) | `wayland.c:1909` |
+| 2 | Drag and drop | Present at `DAF_REV` for files dropped on a top-level window (X11, Wayland, macOS, Windows; not an embedded window), via `Window::setAcceptingFileDrops`. The app's timeline does not use it yet: `TapeStrip` still takes drops through JUCE's drop target | DAF `dgl/Window.hpp:422`, `src/ui/TapeStrip.h:20` |
 | 3 | Multiple top-level windows | Present | `wayland.c:186`, `wayland.h:151` |
 | 4 | Transient parent / modal | Partial (parent yes, modal no) | `wayland.c:3070`, `:3813` |
 | 5 | Portal parenting (xdg-foreign) | Fixed on `dusk/302-app-contract`, lands with the G0 repin | `wayland.c` export, `Window::getPortalParentHandle()` |
@@ -483,8 +490,9 @@ first frame — and `reinit()` is the way to ask for one back.
 
 ## 5. Phases
 
-`src/ui/` is **119 files carrying 7,675 of the tree's 9,055 JUCE uses** (85%),
-across roughly 54,000 lines of `.cpp`. It cannot land in one PR. The
+`src/ui/` is **101 files carrying 5,585 of the tree's 6,824 JUCE uses** (82%),
+across roughly 44,000 lines of `.cpp` (allowlist counts, November 2026). It
+cannot land in one PR. The
 incremental vehicle is the pattern the notepad already ships: a framework child
 window embedded over the JUCE main window through the native parent handle and
 `Window::setEmbeddedOffset`, with the JUCE side reduced to a placeholder. That
@@ -711,10 +719,13 @@ density tiers; the automation, take and metering paths exercised live.
 
 ### G4 — The arrangement
 
-`TapeStrip`, `AudioRegionEditor`, `PianoRollComponent`, `TransportBar`,
-`MasteringView` and their helpers. Mechanically similar to G3 but with real
-scrolling, selection and drag semantics, so drag and drop (§3, row 2) is decided
-here.
+`TapeStrip`, `TransportBar`, `MasteringView` and their helpers. The audio
+region editor and the piano roll are already native
+(`src/ui/imgui/AudioEditorView.*`, `src/ui/imgui/PianoRollView.*`); the JUCE
+`AudioRegionEditor` was deleted in #832 and `PianoRollComponent` went with the
+native piano roll. Mechanically similar to G3 but with real scrolling,
+selection and drag semantics, so the timeline's move onto DAF's file drops
+(§3, row 2) is decided here.
 
 Owns: roughly 20 files, ~15,000 lines.
 
@@ -733,7 +744,7 @@ Owns: `MainComponent.{h,cpp}` (6,000 lines), `DuskStudioApp.{h,cpp}`,
 
 What is left once no UI is JUCE: `MessageThread.cpp` rewritten on the pugl
 world's timers and event loop, `juce_data_structures`, the remaining
-`juce_audio_utils`/`juce_audio_formats` links, and the last `juce::String`/`File`/`Colour` holdouts in
+`juce_audio_formats` link, and the last `juce::String`/`File`/`Colour` holdouts in
 `src/session` and `src/engine` that were anchored by UI types.
 
 Mastering and region waveforms already use native `WaveformSource` snapshots.
@@ -741,16 +752,15 @@ The region editor requests bounded, exact visible-column details for sample-leve
 zoom and same-file slices; metadata and audio reads run on the source worker.
 Paint uses one immutable snapshot so the waveform and ruler share a native sample
 rate. Until metadata arrives, existing engine-rate fallback behavior applies.
-AudioThumbnail has no production consumers. Module unlink still needs a separate
-audit of transitive includes and all platform builds. Persistent waveform caches
-and broader tape-view waveforms remain separate work; native GUI and accessibility
-gates are unchanged.
+AudioThumbnail has no production consumers, and `juce_audio_utils` is unlinked.
+Persistent waveform caches and broader tape-view waveforms remain separate work;
+native GUI and accessibility gates are unchanged.
 
 Module unlink order, each step its own commit so a bisect lands on one module:
 
 ```
 juce_gui_extra -> juce_gui_basics -> juce_graphics
-  -> juce_audio_utils -> juce_audio_formats
+  -> juce_audio_formats (once juce_dsp, which depends on it, is gone)
   -> juce_data_structures -> juce_events -> juce_core
 ```
 

@@ -359,7 +359,7 @@ The cross-OS layout (development happens on macOS, Linux testing on a separate m
 - Any pure-logic change in `session/`, `engine/`, `dsp/` that doesn't need a live device or the Dusk DSP (region math, marker math, range conversions, smoother behavior).
 - Every fixed bug: write the failing test first, then fix.
 
-Don't test: UI components (no harness yet), anything needing a real audio device or the full DSP chain — those belong in `DUSKSTUDIO_RUN_SELFTEST=1`.
+Don't cover UI behaviour with a Catch2 test: it goes in a GUI scenario under [src/ui/scenario/cases/](../src/ui/scenario/cases/) (see [Writing a scenario](#writing-a-scenario)). Anything needing a real audio device or the full DSP chain belongs in `DUSKSTUDIO_RUN_SELFTEST=1` or the in-app scenario suite.
 
 To add one: drop `tests/<unit>_<aspect>.cpp` following [tests/smoke_brickwall_limiter.cpp](../tests/smoke_brickwall_limiter.cpp), then add the `.cpp` **and every `src/…` it pulls in** to [tests/CMakeLists.txt](../tests/CMakeLists.txt) (narrow link — list only what's transitively reachable). `catch_discover_tests` registers each `TEST_CASE` with ctest automatically.
 

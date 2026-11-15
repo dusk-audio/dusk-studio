@@ -18,21 +18,25 @@ stable background.
 
 Remove **all** JUCE from Dusk Studio by 1.0, incrementally, tower by tower.
 The north-star metric is **JUCE modules unlinked from CMake**, not
-files-off-allowlist. Currently linked (12):
+files-off-allowlist. Currently linked (11):
 
 `juce_audio_basics, juce_audio_devices, juce_audio_formats,
-juce_audio_processors, juce_audio_utils, juce_core, juce_data_structures,
-juce_dsp, juce_events, juce_graphics, juce_gui_basics, juce_gui_extra`
+juce_audio_processors, juce_core, juce_data_structures, juce_dsp,
+juce_events, juce_graphics, juce_gui_basics, juce_gui_extra`
+
+`juce_audio_utils` unlinked on every platform once nothing used it (no
+production AudioThumbnail, device selector, keyboard or player consumer was
+left). `juce_audio_devices` links on macOS and Windows only.
 
 A module leaves the link line only when its whole subsystem is reimplemented
 and every call site is flipped. `juce_core` unlinks last. The
-`tools/juce-gate.sh` ratchet (allowlist 184 files) is the file-level
+`tools/juce-gate.sh` ratchet (allowlist 155 files) is the file-level
 backstop, not the goal.
 
 Metric caveat: JUCE module declarations pull dependencies transitively —
-e.g. `juce_audio_utils` depends on `juce_audio_devices`, so removing the
-direct `juce_audio_devices` link still leaves the module compiling until
-`juce_audio_utils` itself unlinks. "Unlinked" for a tower means the direct
+e.g. `juce_dsp` depends on `juce_audio_formats`, so removing the direct
+`juce_audio_formats` link still leaves the module compiling until `juce_dsp`
+itself unlinks. "Unlinked" for a tower means the direct
 link line is gone AND zero `src/` translation units include the module's
 headers on the platform in question; the object code leaves the binary when
 the last transitive dependent goes.
@@ -44,9 +48,8 @@ link on one platform while the others keep the JUCE path scores a
 **platform-scoped** unlink (e.g. "Linux-unlinked"): report that progress
 explicitly, but the count stays put until macOS and Windows follow.
 Phase-3-audio is exactly this shape — `juce_audio_devices` goes
-Linux-unlinked while mac/win keep the JUCE device path, so the count of 12
-does not move; it drops to 11 only when the mac/win path is also
-reimplemented.
+Linux-unlinked while mac/win keep the JUCE device path, so it stays in the
+count until the mac/win path is also reimplemented.
 
 ## Done (condensed — full history in memory `project_dejuce_history.md`)
 
@@ -99,7 +102,8 @@ reimplemented.
   `std::thread` + SCHED_RR with timed-join/detach-and-park teardown;
   `juce_audio_devices` is Linux-unlinked (direct link + all Linux src
   includes gone; mac/win keep the wrapped path in `DeviceManagerJuce.cpp`, so
-  the global count stays 12 per the platform-scope rule). Deliberate
+  the global count stayed 12 per the platform-scope rule). Its object code
+  left the Linux app when `juce_audio_utils` unlinked. Deliberate
   behaviour change: no auto-open on backend switch. Allowlist 194 → 184.
   Bench debts outstanding at merge: ALSA hot-unplug mid-play, xrun recovery
   under load, buffer/SR swap, periods knob, PipeWire streaming + SR/quantum
@@ -117,8 +121,9 @@ reimplemented.
   is JUCE-free (allowlist −2, gate 182 — the "zero movement" honest-yield
   prediction missed this). Mastering and region waveforms now use the native
   `WaveformSource`; no production AudioThumbnail consumer remains.
-  `juce_audio_formats` and `juce_audio_utils` still link pending a transitive
-  include and cross-platform module-unlink audit.
+  `juce_audio_utils` has since unlinked from the app and the test binary.
+  `juce_audio_formats` still compiles into the app through `juce_dsp`'s
+  module dependency.
   Bench debts at spec §Owed. Spec:
   [audiofile-plan.md](audiofile-plan.md).
 
@@ -132,9 +137,8 @@ reimplemented.
    hosting path (PluginSlot/PluginManager JUCE half/PluginHostMain loop) and
    both remaining in-app JUCE donor processors (TapeMachine -> TapeMachineDSP,
    Multiband UniversalCompressor -> framework-free donor port) are deleted. Unlinks
-   `juce_audio_processors` globally. AudioThumbnail consumers have migrated;
-   the remaining `juce_audio_utils` and `juce_audio_formats` links need their
-   own transitive-dependency audit before removal.
+   `juce_audio_processors` globally. `juce_audio_utils` is already gone;
+   `juce_audio_formats` stays until `juce_dsp` unlinks.
    Multi-PR tower, phases H1-H6 in
    [hosting-plan.md](hosting-plan.md).
 2. **GUI tower (finale)** — framework decision (Marc, 2026-07-27): build on
