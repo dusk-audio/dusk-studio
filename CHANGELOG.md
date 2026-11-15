@@ -66,6 +66,9 @@ canonical source.
   holds a session's files but no `session.json` opens into the **Session
   won't open** alert, which offers its autosave and backups. Any other folder
   without a `session.json` is still ignored.
+- **Times in Recover from autosave?** The autosave's and the saved session's
+  times are shown in local time to the minute, as in `2026-11-08 14:30`, as
+  the **Session won't open** alert shows them.
 
 ### Fixed
 
@@ -80,9 +83,12 @@ canonical source.
   note a MIDI region was playing its own note-off before all notes off, so an
   instrument that ignores all notes off, as some VST3 synths do, still stops.
   A loop wrap, a seek or scrub while the transport rolls, and pressing
-  **Play** end only what the regions were playing. With **IN** on, keys you
-  hold, your sustain pedal and the tails still ringing carry on across them,
-  as does a key held on the piano roll keyboard.
+  **Play** end the notes and pedals the regions were playing. With **IN** on,
+  keys you hold, your sustain pedal and the tails still ringing carry on
+  across them, as does a key held on the piano roll keyboard, except a key or
+  pedal a region plays too on the same channel. One that would have to end
+  more than 48 of the regions' notes and pedals at once sends all notes off
+  instead, which ends held keys too.
 
 ## [0.16.1] - 2026-11-07
 
