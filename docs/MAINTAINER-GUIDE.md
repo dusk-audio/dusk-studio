@@ -579,8 +579,9 @@ Layout: `scripts/regress.sh` only dispatches and routes options. The work is in
 which `mac.sh` hands a package run to, with the window-activation cases in
 `mac-window-activation.sh`) over the shared leg bookkeeping in
 `scripts/regress/common.sh`, the private-display plumbing in
-`scripts/regress/xvfb.sh` and the scenario legs in
-`scripts/regress/scenarios.sh`, plus the guest-side helpers in
+`scripts/regress/xvfb.sh`, the scenario legs in
+`scripts/regress/scenarios.sh` and the idle wake-up leg in
+`scripts/regress/idle-wakeups.sh`, plus the guest-side helpers in
 `scripts/regress/windows/` (the source leg's in `scripts/regress/windows/source/`)
 and the Screen Sharing helper in `scripts/regress/mac/`.
 
@@ -607,6 +608,7 @@ PipeWire.
 | `bb-gnome-file-drop` | real file drags from a GTK app onto the tape strip in a private headless GNOME session, through Mutter's XWayland relay as on a GNOME desktop: a WAV, a MIDI file and three WAVs at once, each imported through its picker and read back from the autosave. Linux only; `SKIP` without Mutter, XWayland, `dbus-run-session`, xdotool, ImageMagick's `import`, `fusermount3`, or python3 with GTK 4, NumPy and Pillow. See "Scenario legs" below. |
 | `window-activation:launch`, `:covered`, `:minimized`, `:handoff` | the Linux cases of [tests/window_activation_smoke_test.md](../tests/window_activation_smoke_test.md), in a private headless GNOME session as `bb-gnome-file-drop` runs: the app started, then three second launches handing it a session, with a GTK window maximized in front of it, with its window minimized, and over an unsaved edit, where the save prompt must hold the session back until Don't Save. Each passes when Mutter's active window and the X input focus are the app's one window, shown, and the GTK window lost the keyboard and no longer gets the pointer at the app window's centre. Linux only; `SKIP` without Mutter, XWayland, `dbus-run-session`, xdotool, xprop, ImageMagick's `import`, `fusermount3`, or python3 with GTK 4, NumPy and Pillow. A case with no result line fails with the reason the run gave, and a run whose cases all pass but whose session does not end cleanly adds a failed `window-activation:session` row. See "Scenario legs" below. |
 | `bb-x11-drop-input` | XDND drags and a late pointer device against the app on a private bare Xvfb: a drop whose source sends XdndLeave before it answers for the data, a source that never answers, a uri-list holding a comment, a web link and two local WAVs, a link-only drag, and a click from a pointer added after launch, judged from the autosave. Linux only; `SKIP` without Xvfb, xdotool, ImageMagick's `import`, gcc with the libX11, libXi and libXtst headers, or python3 with NumPy and Pillow. See "Scenario legs" below. |
+| `bb-idle-wakeups` | how many times a second each thread of an idle app wakes up, against the ceilings in `tools/idle-wakeup-budget.tsv`: the minimal session on a private Xvfb and the private null PipeWire graph, transport stopped, each thread's voluntary context switches read from `/proc` twice, 10 seconds apart. Fails on a thread name the budget does not list or one over its ceiling. Source mode only, after the scenario legs; `SKIP` without the private null graph. See "Scenario legs" below. |
 | `scenarios-gui` | `DUSKSTUDIO_RUN_SCENARIOS=gui:<cases>`: the scenarios that need a window, split across several app instances that run at once, each in its own sandbox on its own Xvfb display (half the cores, at most four; `DUSK_REGRESS_GUI_SHARDS=N` overrides, `1` runs them in one instance). Cases are dealt longest first by the times the last run recorded in `~/.cache/dusk-regress/gui-case-ms.tsv`. The leg passes only if every instance reaches its summary line and every case dealt out reports. Enabled by default for `prepush` and package runs; standalone Linux runs need `--gui-scenarios`. |
 | `windows-gui-catalog` | the GUI scenarios this build lists, helpers left out, against `Get-RegressWindowsGuiCatalogCount` in `scripts/regress/windows/lib.ps1`, the count the Windows runner's GUI phase requires. Fails when they differ, so a change that adds or removes a GUI scenario changes that number with it. Source runs with GUI scenarios only, including by default for `prepush`. |
 | `capture-screenshots` | `docs/capture-screenshots.sh` against the binary in `build/` (`DUSK_CAPTURE_BIN`), writing into a scratch `dusk-capture.*` folder under `$TMPDIR` (`DUSK_CAPTURE_OUT`), never `docs/images/`. Passes when the script exits 0 after confirming every figure `docs/screenshot-list.md` marks ✅ was written; `FAIL` names the missing figures and keeps the folder, with the script's output in `capture.log`, and a pass removes it. About 60 to 90 seconds. `SKIP` without ImageMagick or PipeWire, or with `DUSK_REGRESS_REAL_AUDIO=1`, since the captures need the private null graph. On by default; `--no-capture` leaves it out. |
@@ -843,6 +845,43 @@ pointer's import each land once, and nothing else does. The link-only drag
 passes when the window is unchanged three seconds after the drop, so neither a
 picker nor the "Unsupported or unreadable audio file" alert opened. The leg
 takes 25 to 45 seconds and needs a PipeWire socket, as `bb-gnome-file-drop` does.
+
+`bb-idle-wakeups` runs `scripts/regress/idle-wakeups.sh`, which opens the
+minimal session through `DUSKSTUDIO_LOAD_SESSION` in a `sandbox_env` profile,
+on its own Xvfb display and the private null PipeWire graph, and leaves the
+transport stopped. It waits for the `[Dusk Studio/PipeWire] opened` line, which
+carries the rate and quantum, the `[Dusk Studio/Load]` line and the declined
+startup scan, then until the process has started no thread for
+`DUSK_IDLE_SETTLE` seconds (default 3), since a thread born inside the window
+brings its startup into the count. Then it reads `voluntary_ctxt_switches` for
+every thread under
+`/proc/<pid>/task` twice, `DUSK_IDLE_WINDOW` seconds apart (default 10). Each
+voluntary switch is the thread blocking, and it wakes once for each, so the
+difference is its wake-up count. The table has one row per thread name, a
+trailing number read as an index (`DuskDSP 3` counts under `DuskDSP *`) and
+the message thread shown as `[main]`, apart from the threads that keep the
+program's name (JUCE's timer thread, Mesa's helpers), with the thread count
+and wake-ups per second, then the total and the CPU time the
+process used over the window. After the window the app gets SIGTERM and must
+quit through the shutdown phases with status 0.
+
+`tools/idle-wakeup-budget.tsv` holds one `thread-name<TAB>ceiling` record per
+line, the idiom of `tools/juce-allowlist.txt`. A ceiling is wake-ups per second,
+or `<n>/block` for a thread the audio clock drives, which is n wake-ups per
+audio block at the rate and quantum the device opened with: the PipeWire data
+thread and the DSP pool wake every block, and their ceilings follow the
+quantum instead of pretending to be zero. A name the budget does not list
+fails, as does a name over its ceiling, and that includes a thread that ended
+inside the window; a line that does not parse fails the whole check. A name well under its ceiling passes with a `hint:` naming the
+lower value. `bash scripts/regress/idle-wakeups.sh --update` lowers each
+ceiling to the run plus headroom and drops names that did not run, and exits
+3 without touching the budget when a thread ended inside the window, since
+that sample cannot say whether its name still runs; it never raises a ceiling
+or adds a name, so that is a hand edit, seen in review like an
+allowlist addition. `--app <binary>` measures another build, and `--tsv <file>`
+writes the rows for comparing runs. Wake-ups are counts, not times, so a
+loaded machine moves them little; the DSP pool's line scales with the core
+count (`DUSKSTUDIO_AUDIO_WORKERS` pins it).
 
 Legs whose app-side seam is not in the binary report `SKIP` with the name of
 what is missing (`DUSKSTUDIO_QUIT_AFTER_MS`, the `[Dusk Studio/startup]`

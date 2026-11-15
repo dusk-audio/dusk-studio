@@ -1,0 +1,26 @@
+# Wake-ups per second each thread of an idle Dusk Studio may cost, checked by
+# scripts/regress/idle-wakeups.sh (the bb-idle-wakeups leg). One
+# thread-name<TAB>ceiling record per line; threads of one name count together,
+# and a trailing number in a name is an index, written as *. A ceiling is
+# wake-ups per second, or <n>/block for a thread the audio clock drives: n
+# wake-ups per audio block at the rate and quantum the device opened with.
+# Re-record after a fix with: bash scripts/regress/idle-wakeups.sh --update
+# It only lowers ceilings and drops names that no longer run. Raising a ceiling
+# or adding a name is a hand edit, and the change has to say why.
+# Recorded on an 8-core box (six DSP pool workers), 48000 Hz at quantum 512, on
+# Xvfb, where Mesa's llvmpipe threads draw the window.
+DuskDSP *	6.7/block
+DuskFill *	1
+DuskInstance	1
+DuskMidiIn	1
+DuskMidiOut	1171
+DuskPipeWire	1
+DuskRecDrain	605
+DuskSampleLoad	51
+DuskSfzArtwork	1
+DuskSfzLibrary	1
+DuskStu:disk$*	1
+DuskStudio	496
+[main]	1479
+data-loop.*	1.2/block
+llvmpipe-*	1526
