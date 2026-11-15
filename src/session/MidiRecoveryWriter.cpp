@@ -328,8 +328,6 @@ struct Journal::Impl
     {
         if (state.retired.count (ordinal) != 0 || region.lengthInSamples <= 0) return true;
         auto file = state.file();
-        file.bytes = buildTakeFile (state.config.timing, region, state.config.name);
-        if (file.bytes.empty()) return false;
         const auto folder = file.sessionDir / "midi" / "recording";
         std::error_code error;
         if (! std::filesystem::is_directory (dusk::fs::nativeIOPath (file.sessionDir), error))
@@ -344,6 +342,10 @@ struct Journal::Impl
             if (error) return failed (state, ordinal, file, level, error);
         }
         state.foldersSynced = true;
+        // Built once there is a folder to write it in, so a retry into one that
+        // has gone builds nothing.
+        file.bytes = buildTakeFile (state.config.timing, region, state.config.name);
+        if (file.bytes.empty()) return false;
         auto known = state.checkpoints.find (ordinal);
         std::filesystem::path path;
         if (known != state.checkpoints.end())
