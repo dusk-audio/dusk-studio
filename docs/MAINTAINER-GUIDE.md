@@ -298,7 +298,7 @@ CMake auto-detects three external repos at configure time, on top of four git su
 
 - **Submodules** (`external/clap`, `external/dusk-fizz`, `external/sheenbidi`, `external/vst3sdk`): clone with `--recurse-submodules`, or run `git submodule update --init --recursive`. They fail in different ways, which is worth knowing before you debug the wrong one. Missing `external/sheenbidi` is fatal whenever the native UI or the tests are built: configure stops with "SheenBidi is missing at external/sheenbidi". Missing `external/clap` is fatal: the native CLAP host defaults ON on Linux, macOS, and Windows, and the configure stops with a "CLAP headers missing" error. Missing `external/vst3sdk` is loud but survivable: a STATUS line, native VST3 disabled, unless you explicitly asked for `-DDUSKSTUDIO_NATIVE_VST3=ON`, which turns it fatal. Missing `external/dusk-fizz` says **nothing at all**: the block is wrapped in a bare `EXISTS` test, so SF2 / multisample support simply isn't in the binary.
 
-- **JUCE:** `-DJUCE_PATH=…` wins; else on Linux it prefers `../JUCE-wayland` (a plugdata-team fork with ~5 local commits Dusk Studio depends on — XEmbed, X11-on-Wayland fix, peer-creation latch), falling back to `../JUCE`; on macOS it uses `../JUCE` (upstream). The upstream-vs-fork API difference (`addDefaultFormatsToManager`) is hidden behind [src/engine/JuceCompat.h](../src/engine/JuceCompat.h) — call `duskstudio::juce_compat::addDefaultFormats(fm)` and never sprinkle `#ifdef __linux__` at call sites.
+- **JUCE:** `-DJUCE_PATH=…` wins; else on Linux it prefers `../JUCE-wayland` (Dusk's mirror `dusk-audio/JUCE-wayland`, built on plugdata-team's `wayland-juce8` branch and cloned by CI at the tag set as `JUCE_TAG` in the Linux workflows; it carries local commits Dusk Studio depends on: XEmbed, X11-on-Wayland fix, peer-creation latch), falling back to `../JUCE`; on macOS it uses `../JUCE` (upstream). The upstream-vs-fork API difference (`addDefaultFormatsToManager`) is hidden behind [src/engine/JuceCompat.h](../src/engine/JuceCompat.h) — call `duskstudio::juce_compat::addDefaultFormats(fm)` and never sprinkle `#ifdef __linux__` at call sites.
 - **Dusk plugins:** `-DDUSK_PLUGINS_PATH=…` wins; otherwise configure fetches the commit named in the `DONOR_REV` file into `build/_deps/dusk-plugins`, the same commit every CI and release workflow clones. Point `-DDUSK_PLUGINS_PATH` at your `../plugins` checkout only to try donor edits against Dusk Studio. If the fetch fails (no network, no git), configure stops with an error; reconfigure with network access or pass `-DDUSK_PLUGINS_PATH`. To move the donor, change `DONOR_REV` and the donor revisions in LICENSES.txt together.
 - **SFZ repository libraries:** [cmake/SfzDependencies.cmake](../cmake/SfzDependencies.cmake)
   links libcurl >= 7.62.0 for HTTPS and libarchive >= 3.4.0 for ZIP extraction.
@@ -520,13 +520,19 @@ pushes are batched, because each one cancels the macOS job in progress (about
 The Mac source leg can use a dedicated validation tree:
 
 ```bash
+mkdir -p "$HOME/dusk-scratch/tmp/pp"
 DUSK_REGRESS_MAC_REPO=dusk-386-current \
 DUSK_REGRESS_MAC_DAF=dusk-016-validation-deps/DAF \
 DUSK_REGRESS_MAC_CONFIGURE=dusk-016-prepush-configure.sh \
 DUSK_REGRESS_MAC_BUILD_DIR=build-prepush \
 DUSK_REGRESS_MAC_TEST_BUILD_DIR=build-prepush-tests \
-TMPDIR=/var/tmp scripts/regress.sh prepush
+TMPDIR="$HOME/dusk-scratch/tmp/pp" scripts/regress.sh prepush
 ```
+
+On the Linux dev box, `TMPDIR` for a regress run is a short per-run directory
+under `~/dusk-scratch/tmp/`, removed after a passing run. Nothing new goes in
+`/var/tmp`, `/tmp` is a 4 GB tmpfs, and a long `TMPDIR` overruns the Unix-socket
+path limit in some legs.
 
 Source, DAF and helper paths are absolute or relative to the remote home;
 build paths are absolute or relative to the selected source. Explicit source
@@ -703,8 +709,8 @@ tarball instead of `build/`, installed the way a user installs it.
 `--release-run` downloads the `release-linux-<arch>` artifact of that
 `release.yml` run with `gh run download`; the artifact is kept for one day, so
 run the gate the day the candidate is built. Everything is unpacked and
-installed under one scratch directory, `/tmp/duskstudio-regress-package.*`,
-which is removed on exit, Ctrl-C included.
+installed under one scratch directory, `duskstudio-regress-package.*` under
+`$TMPDIR` (`/tmp` when it is unset), which is removed on exit, Ctrl-C included.
 
 The source legs (`configure-check`, `build-app`, `build-tests`, `ctest`,
 `juce-gate`) are reported as `SKIP`: they build and test the checkout, which
@@ -1103,7 +1109,8 @@ centre the in-window panels below, default 28).
 #### Window activation only
 
 ```bash
-TMPDIR=/var/tmp scripts/regress.sh mac --window-activation-only
+mkdir -p "$HOME/dusk-scratch/tmp/wa"
+TMPDIR="$HOME/dusk-scratch/tmp/wa" scripts/regress.sh mac --window-activation-only
 ```
 
 runs only the window-activation cases, against whatever is installed in
@@ -1313,7 +1320,8 @@ Overrides: `DUSK_REGRESS_VM`, `DUSK_REGRESS_LIBVIRT_URI`, `DUSK_REGRESS_HOST_IP`
 #### Window activation against the installed package
 
 ```bash
-TMPDIR=/var/tmp scripts/regress.sh windows --installed X.Y.Z
+mkdir -p "$HOME/dusk-scratch/tmp/wi"
+TMPDIR="$HOME/dusk-scratch/tmp/wi" scripts/regress.sh windows --installed X.Y.Z
 ```
 
 runs `phase4-window-activation` and `isolation-audit` against the MSI already
@@ -1859,8 +1867,9 @@ manual checks that the script cannot cover:
 - Run the
   [window-activation smoke test](../tests/window_activation_smoke_test.md)
   against the release: its four cases through
-  `TMPDIR=/var/tmp scripts/regress.sh mac --window-activation-only` and
-  `TMPDIR=/var/tmp scripts/regress.sh windows --installed X.Y.Z` (package mode
+  `scripts/regress.sh mac --window-activation-only` and
+  `scripts/regress.sh windows --installed X.Y.Z`, each with a per-run `TMPDIR`
+  under `~/dusk-scratch/tmp/` (package mode
   runs them too), the Linux ones in `scripts/regress.sh linux --release-run`,
   and its "What still needs a person" checks by hand.
 - In every bundled `LICENSES.txt`, confirm the full-text section is present and
