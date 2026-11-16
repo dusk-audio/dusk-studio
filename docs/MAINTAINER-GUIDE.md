@@ -1501,13 +1501,14 @@ check the guest before the next run, since the preflight refuses a busy tree.
 |---|---|
 | `vm-preflight` | the guest answers over ssh, nothing is already running in the tree, the tree is the runner's (its `.dusk-regress-tree` marker, written when the run creates the tree or adopts one an older runner made), `<tree>\tmp` and the last run's `regress\` (with its bundle) removed, then its drive has the free space floor for a cold or a warm run, and the scripts are copied. A failure ends the run. |
 | `update` | the tree is at HEAD: the merge base with `origin/main` (and any other commit the local ones stand on) fetched from GitHub by hash, the local commits sent as a git bundle, submodules synced, the donor at `DONOR_REV`, DAF at `DAF_REV`. Mesa and Python are reinstalled when `scripts/fetch-windows-software-opengl.ps1` changed, the vcpkg packages when `vcpkg.json` did. |
+| `snapshot-check` | CI's "Check regression profile snapshots" step: its script is read from the `windows-tests.yml` at HEAD and run in the guest's checkout under Windows PowerShell, with `$ErrorActionPreference` at `Stop` and the step's exit code, as the step runs, but with `TEMP` and `TMP` in the tree's `tmp\` instead of the shared account's, and the process's execution policy at `Bypass` (the guest's is `Restricted`, where CI's runners let a script run). An error comes back as text, not as the CLIXML a redirected error stream would carry. A workflow whose step is gone, is no longer `shell: powershell` or no longer runs `tests\windows_regress_snapshot.ps1` fails the leg rather than checking nothing. |
 | `build` | `DuskStudio`, `dusk-studio-tests` and `dusk-windows-software-opengl-probe` at `-j4`, as CI builds them, reconfiguring first when the configure script changed. A failure's note counts the compile and link errors and names the first. |
 | `mesa` | CI's "Verify packaged Mesa selects llvmpipe" step, and the fixture plug-ins and app files CI's upload steps require. |
 | `ctest-inventory` | every test name the `windows-tests.yml` at HEAD requires is in the CTest inventory. The names are read from the workflow, so the two never drift; finding none fails. |
 | `ctest` | the whole suite, serially, as CI runs it. The note names the failed tests. |
 | `footprint` | after every run that passed `vm-preflight`, pass or fail: `head.bundle` and `<tree>\tmp` removed, then the tree's size, its largest parts under the table, and the drive's free space. |
 
-A failed `update` or `build` turns the legs after it into `SKIP` rows. Timings
+A failed `update` or `build` turns the legs after it into `SKIP` rows; a failed `snapshot-check` does not stop the build. Timings
 on the 8 GB guest: about 5 minutes for ctest; a build after a DAF move
 rebuilds the native UI.
 

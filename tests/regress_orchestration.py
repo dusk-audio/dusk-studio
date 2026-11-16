@@ -665,7 +665,20 @@ else:
         shutil.copyfile(repo / "scripts/regress" / name, win_runners / name)
     shutil.copytree(repo / "scripts/regress/windows/source", win_runners / "windows/source")
     (win_root / ".github/workflows").mkdir(parents=True)
-    (win_root / ".github/workflows/windows-tests.yml").write_text(
+    snapshot_step = (
+        "      - name: Check regression profile snapshots\n"
+        "        shell: powershell\n"
+        "        run: |\n"
+        "          foreach ($snapshotTemp in @($env:TEMP, $env:TEMP.ToLowerInvariant())) {\n"
+        "            $env:TEMP = $snapshotTemp\n"
+        "            .\\tests\\windows_regress_snapshot.ps1\n"
+        "          }\n"
+        "\n"
+        "      - name: Clone JUCE 8.0.4\n"
+        "        shell: bash\n")
+    workflow = win_root / ".github/workflows/windows-tests.yml"
+    workflow.write_text(
+        snapshot_step +
         "          for required in \\\n"
         "            \"cross-platform-validator-contract\"; do\n"
         "            grep -Fq \"$required\" <<< \"$inventory\" || exit 1\n"
@@ -728,6 +741,16 @@ if kind == "ctest" and " list" in command:
         print("  Test #1: " + name + "\\r")
 elif kind == "ctest":
     print("100% tests passed, 0 tests failed out of 2")
+elif kind == "snapshot":
+    for needle in ("Set-Location -LiteralPath (Join-Path $root 'src')", "$env:TEMP = $tmp",
+                   "foreach ($snapshotTemp in", ".\\\\tests\\\\windows_regress_snapshot.ps1",
+                   "$ErrorActionPreference = 'Stop'", "Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass",
+                   "try {{", "}} catch {{"):
+        assert needle in script, ("the snapshot step is not the workflow's", needle, script)
+    assert script.index("$env:TEMP = $tmp") < script.index("foreach ($snapshotTemp in"), script
+    if os.environ.get("REGRESS_TEST_SNAPSHOT_FAIL"):
+        print("The snapshot missed owned fixture entries\\r")
+        sys.exit(1)
 elif kind == "tidy":
     print("removed C:\\\\t\\\\regress\\\\head.bundle (0.0 GB)\\r")
     print("regress:part src 2147483648\\r")
@@ -765,7 +788,8 @@ for arg in sys.argv[1:-1]:
 
     result, calls = windows_source({})
     assert result.returncode == 0, (result.stdout, result.stderr)
-    assert [kind for kind, _ in calls] == ["preflight", "update", "build", "mesa", "ctest", "ctest", "tidy"], calls
+    assert [kind for kind, _ in calls] == ["preflight", "update", "snapshot", "build", "mesa", "ctest", "ctest", "tidy"], calls
+    assert "[PASS] snapshot-check" in result.stdout, result.stdout
     assert calls[0][1] == "$root = 'C:\\Users\\marc\\dusk-audit-win'; $coldGb = '11'; $warmGb = '6'", calls[0]
     assert "[PASS] footprint" in result.stdout, result.stdout
     assert "warm tree C:\\Users\\marc\\dusk-audit-win 3.0 GB, C:\\ 10.0 GB free" in result.stdout, result.stdout
@@ -786,10 +810,23 @@ for arg in sys.argv[1:-1]:
 
     result, calls = windows_source({"REGRESS_TEST_BUILD_FAIL": "1"})
     assert result.returncode != 0, result.stdout
-    assert [kind for kind, _ in calls] == ["preflight", "update", "build", "tidy"], calls
+    assert [kind for kind, _ in calls] == ["preflight", "update", "snapshot", "build", "tidy"], calls
     assert "FAIL   build" in result.stdout and "1 errors, first a.cpp(1): error C2065" in result.stdout, result.stdout
     for leg in ("mesa", "ctest-inventory", "ctest"):
         assert f"SKIP   {leg} " in result.stdout, (leg, result.stdout)
+
+    result, calls = windows_source({"REGRESS_TEST_SNAPSHOT_FAIL": "1"})
+    assert result.returncode != 0 and "FAIL   snapshot-check" in result.stdout, result.stdout
+    assert [kind for kind, _ in calls][-1] == "tidy", calls
+    original_workflow = workflow.read_text()
+    for broken in (original_workflow.replace(snapshot_step, ""),
+                   original_workflow.replace("        shell: powershell\n", "        shell: pwsh\n", 1),
+                   original_workflow.replace("windows_regress_snapshot.ps1", "something_else.ps1")):
+        workflow.write_text(broken)
+        result, calls = windows_source({})
+        assert result.returncode != 0 and "FAIL   snapshot-check" in result.stdout, result.stdout
+        assert "snapshot" not in [kind for kind, _ in calls], ("a step that changed shape still ran", calls)
+    workflow.write_text(original_workflow)
 
     result, calls = windows_source({"DUSK_REGRESS_WIN_ROOT": "C:\\a b"})
     assert result.returncode != 0 and not calls, (result.stdout, calls)

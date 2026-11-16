@@ -155,6 +155,54 @@ leg_mesa() {
     win_run 600 "$(remote_cmd mesa.cmd)"
 }
 
+# CI's "Check regression profile snapshots" step, taken from the workflow at
+# this commit and run in the guest's checkout the way the step runs it: Windows
+# PowerShell, $ErrorActionPreference Stop, and the step's exit code. Its TEMP is
+# the tree's tmp\ rather than the shared account's. A step that is missing or
+# no longer a powershell one fails rather than checking nothing. The guest's
+# execution policy is Restricted, where CI's runners let a .ps1 run, so this
+# process alone runs unrestricted; and an error goes out as text, since one
+# left to the redirected error stream comes back serialised as CLIXML.
+leg_snapshot() {
+    local workflow="${REPO_ROOT}/.github/workflows/windows-tests.yml" step="${RUN_DIR}/snapshot"
+    mkdir -p "$step"
+    awk '
+        /^[[:space:]]*- name: Check regression profile snapshots[[:space:]]*$/ { found = 1; next }
+        found && !body && /^[[:space:]]*- name:/ { exit }
+        found && !body && /^[[:space:]]*shell:[[:space:]]*powershell[[:space:]]*$/ { shell = 1; next }
+        found && !body && /^[[:space:]]*run:[[:space:]]*\|[[:space:]]*$/ { body = 1; match($0, /^[[:space:]]*/); indent = RLENGTH; next }
+        body && /^[[:space:]]*$/ { print ""; next }
+        body { match($0, /^[[:space:]]*/); if (RLENGTH <= indent) exit; print substr($0, indent + 3) }
+        END { if (!shell) exit 1 }
+    ' "$workflow" >"${step}/block.ps1" || {
+        echo "error: no powershell step 'Check regression profile snapshots' in $workflow" >&2
+        return 1
+    }
+    grep -q 'windows_regress_snapshot\.ps1' "${step}/block.ps1" || {
+        echo "error: the 'Check regression profile snapshots' step in $workflow no longer runs tests\\windows_regress_snapshot.ps1" >&2
+        return 1
+    }
+    sed 's/^/  | /' "${step}/block.ps1"
+    cp "${SOURCE_DIR}/inline-lib.ps1" "${step}/inline-lib.ps1"
+    {
+        printf '%s\n' "\$ErrorActionPreference = 'Stop'" \
+            "Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force" \
+            "\$tmp = Join-Path \$root 'tmp'" \
+            "New-Item -ItemType Directory -Force -Path \$tmp | Out-Null" \
+            "\$env:TEMP = \$tmp" "\$env:TMP = \$tmp" \
+            "Set-Location -LiteralPath (Join-Path \$root 'src')" \
+            "try {"
+        cat "${step}/block.ps1"
+        printf '%s\n' "} catch {" \
+            "  'error: ' + \$_.Exception.Message" \
+            "  \$_.InvocationInfo.PositionMessage" \
+            "  exit 1" \
+            "}" \
+            "if (Test-Path -LiteralPath variable:\\LASTEXITCODE) { exit \$LASTEXITCODE }" "exit 0"
+    } >"${step}/snapshot.ps1"
+    win_run 600 "$(remote_ps "${step}/snapshot.ps1")"
+}
+
 # The names CI insists on come from the workflow at this commit, so the two
 # lists cannot drift apart. Finding none means the step changed shape, and
 # that fails rather than passing an empty check.
@@ -216,6 +264,7 @@ fi
 
 regress_leg "update" leg_update
 if [[ "$(last_leg)" == PASS ]]; then
+    regress_leg "snapshot-check" leg_snapshot
     build_leg
     if [[ "$(last_leg)" == PASS ]]; then
         regress_leg "mesa" leg_mesa
@@ -225,7 +274,7 @@ if [[ "$(last_leg)" == PASS ]]; then
         for leg in mesa ctest-inventory ctest; do regress_skip "$leg" "the build failed"; done
     fi
 else
-    for leg in build mesa ctest-inventory ctest; do regress_skip "$leg" "the update failed"; done
+    for leg in snapshot-check build mesa ctest-inventory ctest; do regress_skip "$leg" "the update failed"; done
 fi
 
 # The bundle and tmp go whatever the run's verdict; the warm tree stays, and
