@@ -118,7 +118,8 @@ public:
     // the selected folder; empty selects all. A pass whose checkpoint could
     // not be written does not count: it goes on retrying in its folder. The
     // session being saved holds such a pass only while a region keeps it; a
-    // loop pass older than its region's previous takes is held nowhere else.
+    // loop pass older than its region's previous takes is held nowhere else
+    // unless its take file was written.
     bool flush (const std::filesystem::path& folder = {});
     // Lets go of a folder its owner made for takes to journal into. Its
     // midi/recording, then midi, then the folder itself are removed, each

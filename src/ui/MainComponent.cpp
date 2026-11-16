@@ -3805,8 +3805,8 @@ bool MainComponent::writeSessionTo (const juce::File& requestedDir,
         // midi/ before that is copied. The take stopped above was the only one
         // that could still be writing there. A checkpoint that cannot be
         // written does not hold the save back, though a loop pass older than
-        // its region keeps then lives only in the journal until a retry
-        // writes it.
+        // its region keeps, whose take file failed too, then lives only in
+        // the journal until a retry writes it.
         engine.flushMidiRecoveryFiles (toPath (oldSidecar), ownedMidiRecoveryDir);
         consolidated = SessionSerializer::consolidateInto (session, dir, ownsOldDir, toPath (oldSidecar), ownedMidiRecoveryDir);
         if (! consolidated.ok)
