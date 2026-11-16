@@ -32,8 +32,8 @@ if (-not (Test-Path -LiteralPath $root)) {
   }
 }
 
-# A package run's folder is in use while its app runs. One whose phase 4 never
-# finished still holds Notepad's saved session, which nobody has put back.
+# A package run's folder is in use while its app runs. One that still holds
+# Notepad's saved session holds a copy phase 4 did not put back.
 $apps = @(Get-Process DuskStudio, dusk-studio-plugin-host -ErrorAction SilentlyContinue)
 foreach ($run in @(Get-ChildItem -LiteralPath $env:LOCALAPPDATA -Directory -Filter 'dusk-regress-*' -ErrorAction SilentlyContinue)) {
   if (-not (Test-Path -LiteralPath (Join-Path $run.FullName '.dusk-regress-run'))) {
@@ -46,8 +46,8 @@ foreach ($run in @(Get-ChildItem -LiteralPath $env:LOCALAPPDATA -Directory -Filt
     continue
   }
   $activation = Join-Path $run.FullName 'activation'
-  if ((Test-Path -LiteralPath "$activation\notepad-localstate") -and -not (Test-Path -LiteralPath "$activation\phase4.done")) {
-    "error: $($run.FullName) holds Notepad's saved session from a phase 4 that never put it back; restore $activation\notepad-localstate by hand, then remove the folder"
+  if (Test-Path -LiteralPath "$activation\notepad-localstate") {
+    "error: $($run.FullName) holds Notepad's saved session from a phase 4 that did not put it back; restore $activation\notepad-localstate by hand, then remove the folder"
     $status = 1
     continue
   }

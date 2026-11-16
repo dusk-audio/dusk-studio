@@ -143,13 +143,13 @@ def interrupted(signum, frame):
 def runtime_dir():
     """A private runtime dir short enough for the app's single-instance socket.
 
-    The app binds <runtime>/dusk-studio/instance-<16 hex>.sock, 43 characters past
+    The app binds <runtime>/dusk-studio/instance-<16 hex>.sock, 43 bytes past
     the directory, and sun_path holds 108 bytes with the NUL, so the directory
-    stays within 64 characters however long TMPDIR is (as regress_runtime_dir in
+    stays within 64 bytes however long TMPDIR is (as regress_runtime_dir in
     common.sh does it)."""
     for base in (os.environ.get("XDG_RUNTIME_DIR", ""), "/tmp"):
         if (base.startswith("/") and os.path.isdir(base) and os.access(base, os.W_OK)
-                and len(os.path.join(base, "dusk-rt.XXXXXXXX")) <= 64):
+                and len(os.fsencode(os.path.join(base, "dusk-rt.XXXXXXXX"))) <= 64):
             return Path(tempfile.mkdtemp(prefix="dusk-rt.", dir=base))
     raise OSError("no directory short enough for a runtime dir")
 

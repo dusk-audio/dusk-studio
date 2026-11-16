@@ -79,6 +79,9 @@ try {
     if (-not $rgPhase4Done) {
         $rgLeft += "phase 4 has not finished, so Notepad's backup is still in it"
         $rgKeep = $true
+    } elseif (Test-Path -LiteralPath "$rgWaDir\notepad-localstate") {
+        $rgLeft += "phase 4 did not put Notepad's saved session back; restore $rgWaDir\notepad-localstate to Notepad's LocalState by hand"
+        $rgKeep = $true
     }
     if (Test-Path $rgRoot) {
         if ($rgKeep) {

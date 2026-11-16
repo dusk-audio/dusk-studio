@@ -13,7 +13,7 @@
 function Get-TreeProcesses {
   $parts = @($root.TrimEnd('\') -split '\\' | ForEach-Object { [regex]::Escape($_) })
   $pattern = '(?i)' + ($parts -join '[\\/]') + '(?=[\\/"'' ]|$)'
-  $all = @(Get-CimInstance Win32_Process)
+  $all = @(Get-CimInstance Win32_Process -ErrorAction Stop)
   $byId = @{}
   foreach ($p in $all) { $byId[[int]$p.ProcessId] = $p }
   $mine = @{}

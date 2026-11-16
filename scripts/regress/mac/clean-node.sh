@@ -40,18 +40,27 @@ for run in "$base"/regress-*; do
     token="${run##*/}"
     pid=""
     [[ -s "$run/pid" ]] && read -r pid <"$run/pid"
-    # A pid file weeks old may name a process group that is someone else's by
-    # now: only one still running this run's own command keeps the folder.
-    if [[ "$pid" =~ ^[0-9]+$ ]] && group_alive "$pid" \
-        && [[ "$(ps -ww -o command= -p "$pid" 2>/dev/null)" == *" dusk-regress $token" ]]; then
-        echo "warn: left alone, its run is still going (process group $pid): $run"
-        continue
+    # A pid file weeks old may name a process that is someone else's by now:
+    # its group keeps the folder while its leader still runs this run's own
+    # command, or has gone while what it started runs on. No new process takes
+    # the pid of a group that still has members.
+    if [[ "$pid" =~ ^[0-9]+$ ]] && group_alive "$pid"; then
+        command="$(ps -ww -o command= -p "$pid" 2>/dev/null)"
+        if [[ -z "$command" ]]; then
+            echo "warn: left alone, its process group $pid still runs, with its leader gone: $run"
+            continue
+        elif [[ "$command" == *" dusk-regress $token" ]]; then
+            echo "warn: left alone, its run is still going (process group $pid): $run"
+            continue
+        fi
     fi
     remove "the run folder" "$run"
 done
 
 # A source run's claim on a checkout names its run folder; with the folder gone
-# the claim is a leftover. The mutex around claiming is held for a moment only.
+# the claim is a leftover. The lock around claims is held for a moment only, and
+# a run lets go of it with the process that took it, so a lock file no one
+# holds is a leftover too; it goes while this holds it.
 for claim in "$base"/source-claim-*; do
     [[ -f "$claim" ]] || continue
     holder=""
@@ -62,8 +71,14 @@ for claim in "$base"/source-claim-*; do
         remove "the source claim" "$claim"
     fi
 done
-if [[ -d "$base/source-claim.lock" && -n "$(find "$base/source-claim.lock" -maxdepth 0 -mmin +1 2>/dev/null)" ]]; then
-    rmdir "$base/source-claim.lock" && echo "removed the stale claim mutex $base/source-claim.lock"
+lock="$base/source-claim.lock"
+if [[ -f "$lock" ]]; then
+    if (exec 9>>"$lock" && perl -MFcntl=:flock -e 'open(my $fh, ">&=", 9) or exit 2; exit(flock($fh, LOCK_EX | LOCK_NB) ? 0 : 1)' \
+        && rm -f "$lock"); then
+        echo "removed the claim lock $lock"
+    else
+        echo "warn: left alone, the claim lock $lock, which a run holds"
+    fi
 fi
 
 pkg="$HOME/dusk-regress-pkg"

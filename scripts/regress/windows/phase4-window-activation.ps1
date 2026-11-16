@@ -572,6 +572,26 @@ function Get-WaHow($o) {
     return 'neither foreground nor flash'
 }
 
+# Puts Notepad's saved session back from the copy taken before phase 4 started
+# it, and drops the copy only once it is back. A copy that is still there after
+# this is one that was not put back.
+function Restore-WaNotepadState($backup, $live) {
+    if (-not (Test-Path -LiteralPath $backup)) {
+        $script:rgLog += "error: Notepad's backup at $backup is gone; its saved session was left as Notepad wrote it`n"
+        return $false
+    }
+    try {
+        if (Test-Path -LiteralPath $live) { Remove-Item -LiteralPath $live -Recurse -Force -ErrorAction Stop }
+        Copy-Item -LiteralPath $backup -Destination $live -Recurse -Force -ErrorAction Stop
+    } catch {
+        $script:rgLog += "error: Notepad's saved session was not put back from ${backup}: $_`n"
+        return $false
+    }
+    $script:rgLog += "Notepad's saved session put back`n"
+    Remove-Item -LiteralPath $backup -Recurse -Force -ErrorAction SilentlyContinue
+    return $true
+}
+
 $rgWa = "$rgRoot\activation"
 $rgWatch = $null
 $rgNotepad = $null
@@ -622,8 +642,13 @@ try {
     if ((Get-Process Notepad -ErrorAction SilentlyContinue) -or -not $rgNotepadPkg) {
         $rgLog += "REGRESS-NOTE Notepad's saved session was not backed up (Notepad running or not the packaged one)`n"
     } elseif (Test-Path "$($rgNotepadPkg.FullName)\LocalState") {
+        try {
+            Copy-Item -Recurse -Force "$($rgNotepadPkg.FullName)\LocalState" "$rgWa\notepad-localstate" -ErrorAction Stop
+        } catch {
+            Remove-Item -Recurse -Force "$rgWa\notepad-localstate" -ErrorAction SilentlyContinue
+            throw "could not back up Notepad's saved session: $_"
+        }
         $rgNotepadState = "$rgWa\notepad-localstate"
-        Copy-Item -Recurse -Force "$($rgNotepadPkg.FullName)\LocalState" $rgNotepadState
     }
     $rgBefore = @([RegressActivation.Api]::TopLevel() | Where-Object { $_.Class -eq 'Notepad' } | ForEach-Object { $_.Hwnd })
     Start-Process notepad.exe
@@ -915,19 +940,18 @@ try {
             Stop-Process -Id $np -Force -ErrorAction SilentlyContinue
             Start-Sleep -Seconds 1
         }
-        if (Get-Process -Id $np -ErrorAction SilentlyContinue) {
-            $rgLog += "error: Notepad (pid $np) did not close`n"
-        } elseif ($rgNotepadState -and (Test-Path $rgNotepadState)) {
-            $live = "$($rgNotepadPkg.FullName)\LocalState"
-            Remove-Item -Recurse -Force $live -ErrorAction SilentlyContinue
-            Copy-Item -Recurse -Force $rgNotepadState $live
-            $rgLog += "Notepad's saved session put back`n"
-        } elseif ($rgNotepadState) {
-            $rgLog += "error: Notepad's backup at $rgNotepadState is gone; its saved session was left as Notepad wrote it`n"
+    }
+    if ($rgNotepadState) {
+        $rgStill = @(Get-Process Notepad -ErrorAction SilentlyContinue)
+        if ($rgStill.Count -gt 0) {
+            $rgLog += "error: Notepad (pid $(($rgStill | ForEach-Object Id) -join ', ')) did not close, so its saved session stays backed up in $rgNotepadState`n"
+        } else {
+            [void](Restore-WaNotepadState $rgNotepadState "$($rgNotepadPkg.FullName)\LocalState")
         }
     }
     if ($rgFolder) { try { $rgFolder.Quit() } catch { } }
-    # run-cleanup removes the run folder, Notepad's backup with it, only after this.
+    # Marks the end of phase 4. A backup still in the folder was not put back,
+    # and run-cleanup and the clean keep the folder for it.
     if (Test-Path $rgWa) { Set-Content -Path "$rgWa\phase4.done" -Value '' }
     if ($null -ne $rgWatch) {
         $rgWatch.Stop()

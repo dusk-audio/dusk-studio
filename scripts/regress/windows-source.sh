@@ -61,8 +61,9 @@ remote_ps() {
 
 win_cancel() {
     printf '\n--- stopping the run in %s ---\n' "$WIN_HOST"
-    if timeout --foreground 120 ssh "${SSH_OPTS[@]}" "$WIN_HOST" \
-        "$(remote_ps "${SOURCE_DIR}/cancel.ps1")" </dev/null; then
+    local command
+    if command="$(remote_ps "${SOURCE_DIR}/cancel.ps1")" \
+        && timeout --foreground 120 ssh "${SSH_OPTS[@]}" "$WIN_HOST" "$command" </dev/null; then
         return 0
     fi
     echo "error: could not confirm that the run in ${WIN_HOST}:${WIN_ROOT} stopped;" \
@@ -140,8 +141,9 @@ check_guest_clock() {
 # has them as.
 leg_preflight() {
     check_guest_clock || return 1
-    win_run 600 "$(remote_ps "${SOURCE_DIR}/preflight.ps1" coldGb="$FREE_COLD_GB" warmGb="$FREE_WARM_GB")" \
-        || return 1
+    local command
+    command="$(remote_ps "${SOURCE_DIR}/preflight.ps1" coldGb="$FREE_COLD_GB" warmGb="$FREE_WARM_GB")" || return 1
+    win_run 600 "$command" || return 1
     mkdir "${RUN_DIR}/stage"
     local file
     for file in "$SOURCE_DIR"/*.cmd "$SOURCE_DIR"/*.ps1; do

@@ -196,15 +196,16 @@ regress_run_exit_hooks() {
 
 # regress_runtime_dir: makes and prints a new private directory for a launch's
 # XDG_RUNTIME_DIR. The app binds $XDG_RUNTIME_DIR/dusk-studio/instance-<16 hex>.sock,
-# 43 characters past the directory, and sun_path holds 108 bytes with the NUL,
-# so the directory has to stay within 64 characters however long TMPDIR is. It
+# 43 bytes past the directory, and sun_path holds 108 bytes with the NUL, so
+# the directory has to stay within 64 bytes however long TMPDIR is. It
 # goes in the caller's own runtime dir, else /tmp, and only ever holds sockets.
 regress_runtime_dir() {
-    local base dir
+    local base dir bytes
     for base in "${XDG_RUNTIME_DIR:-}" /tmp; do
         [[ "$base" == /* && -d "$base" && -w "$base" ]] || continue
         dir="$base/dusk-rt.XXXXXX"
-        ((${#dir} <= 64)) || continue
+        bytes="$(LC_ALL=C; printf '%s' "${#dir}")"
+        ((bytes <= 64)) || continue
         dir="$(mktemp -d "$dir")" || continue
         chmod 700 "$dir" || { rm -rf "$dir"; return 1; }
         printf '%s' "$dir"

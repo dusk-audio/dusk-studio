@@ -13,6 +13,10 @@
 # stays until a build does work.
 param([string]$Root, [string]$Head, [string]$BuildLog)
 $ErrorActionPreference = 'Continue'
+trap {
+  "warn: whether the tree holds $Head could not be told ($_); nothing is recorded until a build does work"
+  exit 0
+}
 $stamp = Join-Path $Root 'stamps\built-commit'
 $src = Join-Path $Root 'src'
 $build = Join-Path $src 'build-tests'

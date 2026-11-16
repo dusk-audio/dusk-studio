@@ -605,7 +605,7 @@ runs and are cleaned at its end (below).
 | Air, source leg | `~/.cache/dusk-regress/regress-<8 hex>-<pid>/`: a pid file while a leg runs, and `t/`, the `TMPDIR` of every leg; the checkout's claim, `~/.cache/dusk-regress/source-claim-<checksum>`; the `regress-<sha>` branch it pushes | the run's `footprint` leg, or its exit, Ctrl-C included once the cancel is acknowledged; the branch when the node goes back to its previous branch | the node's own `build/` and `build-tests/`, and DAF moved to `DAF_REV` |
 | Air, package leg | `~/dusk-regress-pkg/<timestamp>/` (marker `.dusk-regress-run`), each launch's `TMPDIR` inside it; a `regress-pkg-<sha>` branch for a moment | the `footprint` leg, and the run's exit, Ctrl-C included | `/Applications/DuskStudio.app` and the fixture worktree `~/src/dusk-studio-regress` with its `build-tests/` |
 | Guest, source leg | `<tree>\regress\` with `head.bundle`, and `<tree>\tmp\`, the `TEMP` and `TMP` of every step | the `footprint` leg removes the bundle and `tmp`; after Ctrl-C the next preflight does | the tree, `C:\Users\marc\dusk-audit-win` (marker `.dusk-regress-tree`), with the commit it last built in `stamps\built-commit` |
-| Guest, package leg | `%LOCALAPPDATA%\dusk-regress-<timestamp>\` (marker `.dusk-regress-run`), each launch's `TEMP` and the app's log and crash reports inside it | `run-cleanup`, which first sends the folder's logs, phase 4's logs and every launch's app log and `crash-*.txt` here (`posts/guest-*`); a folder whose evidence it could not read or send (a refused read, a failed post, or more than 64 MB) is kept, named under `left in the guest:`, and fails the leg. After Ctrl-C the next run's install step or a clean does | the installed package (uninstalling needs a UAC prompt), and the `temp_*` and `dusk-*` entries that appeared in the account's `TEMP` while phase 4 ran |
+| Guest, package leg | `%LOCALAPPDATA%\dusk-regress-<timestamp>\` (marker `.dusk-regress-run`), each launch's `TEMP` and the app's log and crash reports inside it | `run-cleanup`, which first sends the folder's logs, phase 4's logs and every launch's app log and `crash-*.txt` here (`posts/guest-*`); a folder whose evidence it could not read or send (a refused read, a failed post, or more than 64 MB) is kept, named under `left in the guest:`, and fails the leg. A folder that still holds Notepad's saved session, which phase 4 did not put back, is kept the same way. A later run names an earlier run's folder under `left in the guest:` and leaves it; a clean removes it | the installed package (uninstalling needs a UAC prompt), and the `temp_*` and `dusk-*` entries that appeared in the account's `TEMP` while phase 4 ran |
 
 Phase 4 starts the app from Explorer, and Explorer hands it the account's own
 `TEMP`, so whatever temp folders the app leaves (#1003, #1023) land there. The
@@ -624,19 +624,22 @@ own `TMPDIR` in place, and the preflight says which one the tests write to.
 The last run of a wave ends with `scripts/regress.sh clean all`, or is run with
 `--clean` (on `prepush`, `all`, `mac`, `windows` and `windows-source`), which
 runs the same clean for every host the run used once it has ended, pass or fail.
-Ctrl-C or a TERM stops the run without a clean, and `all` does not go on to the
-platforms after the one it stopped in. The next Windows source run then builds
+Ctrl-C or a TERM stops the run without a clean, and so does a `prepush` runner
+stopped on its own; `all` does not go on to the platforms after the one it
+stopped in. The next Windows source run then builds
 from nothing (about an hour); the Air's build trees are the node's own and
 stay. A clean removes what the runner owns and nothing else, and never signals a
 process:
 
 - On the Air, the run folders under `~/.cache/dusk-regress/regress-*` whose
   process group is gone, the source claims (`source-claim-*`) whose run folder
-  is gone, the `regress-<sha>` and `regress-pkg-<sha>` branches no
+  is gone, the claim lock when no run holds it, the `regress-<sha>` and
+  `regress-pkg-<sha>` branches no
   worktree has checked out, and the package run folders under
   `~/dusk-regress-pkg` (a `.dusk-regress-run` marker or a `<date>-<time>` name).
   A pid in those folders may be weeks old and someone else's process by now, so
-  a slot whose process group is alive, and a package folder whose `caffeinate`
+  a slot whose process group is alive (its leader still running that run, or
+  gone while what it started runs on), and a package folder whose `caffeinate`
   or a pid it listed is alive or whose disk image is still mounted, is left
   alone and named. A branch some worktree still has checked out is a `WARN`
   naming the worktree: check out the branch you want there and clean again. The
@@ -645,7 +648,8 @@ process:
 - In the guest, the source tree, only with its `.dusk-regress-tree` marker and
   only when no process has it on its command line, and the package run folders,
   only with their `.dusk-regress-run` marker, only while no Dusk Studio runs,
-  and not one whose phase 4 never put Notepad's saved session back. It clears the
+  and not one that still holds Notepad's saved session, which phase 4 drops
+  only once it has put it back. It clears the
   `DUSKSTUDIO_*` variables a dead phase 4 left in the user environment. A folder
   is emptied entry by entry with `rd`, which removes a junction rather than what
   it points at, and its marker goes last (and is put back if the emptied folder
@@ -1155,14 +1159,15 @@ stays in `.git/modules`.
 
 **One source run per checkout.** Two source runs in one node checkout move it
 under each other, and the first then builds or tests a mix of two commits. So
-`mac-preflight` claims the checkout: under a short `mkdir` mutex
-(`~/.cache/dusk-regress/source-claim.lock`) it writes the run's folder name into
-`~/.cache/dusk-regress/source-claim-<checksum of the checkout path>`. Of two
-runs started in the same second, the one that takes the mutex second finds the
-first's claim and is refused with `another source run holds ...`. A claim's run
-counts as live while a call of it is in flight (the pid in its folder names a
-live process group still running that run's command) or its folder was written
-in the last 600 s, which covers the gap between two calls; the age comes from
+`mac-preflight` claims the checkout: holding a lock on
+`~/.cache/dusk-regress/source-claim.lock` it writes the run's folder name into
+`~/.cache/dusk-regress/source-claim-<checksum of the checkout's physical path>`,
+so two spellings of one path are one claim. Of two runs started in the same
+second, the one that takes the lock second finds the first's claim and is
+refused with `another source run holds ...`. A claim's run counts as live while
+the pid in its folder names a live process group, whose leader still runs that
+run's command or has gone while what it started runs on, or while its folder
+was written in the last 600 s, which covers the gap between two calls; the age comes from
 `stat`, not from BSD `find -mmin`, which rounds up. A run of an older runner
 writes no claim and no `source` file in its folder; it is refused against only
 while a call of it is in flight, with `a run of an older runner is live`. Every
@@ -1171,11 +1176,12 @@ the checkout when it does not (exit 76); such a run does not put the checkout
 back, since another run has it. While `mac-restore` has not put the checkout
 back, the run keeps its folder and its claim, so no other run takes the checkout
 from under the retry at exit; if that retry fails too, both stay and the run
-says so. Otherwise the claim goes at the exit. A mutex older than a minute was
-left by a run that died inside the claim, which takes well under a second; it
-is renamed away rather than removed in place, and put back if it turns out to be
-a fresh one, so two runs that both find it stale do not both end up holding it.
-`clean mac` removes claims whose run folder is gone.
+says so. Otherwise the claim goes at the exit, under the same lock, so a run
+that took it over in between keeps it. The lock is a `flock` the node's perl
+takes on the shell's descriptor (macOS has no `flock(1)`), so it ends with the
+process that holds it and a run that dies inside leaves nothing to break; the
+holder removes the file as it lets go. `clean mac` removes claims whose run
+folder is gone, and a lock file no run holds.
 
 What it cannot prove: **anything with a window**. Launching the GUI from an ssh
 session aborts in the main window constructor on that node, and it does so on
@@ -1390,9 +1396,11 @@ home, the AppData, Documents and Music known folders, the temp folder and the
 two named Dusk Studio folders resolve, and fails if any of them lands outside
 that launch's folder; it logs the Profile known folder for the record only.
 Each run folder carries a
-`.dusk-regress-run` marker. `run-cleanup` removes it at the end of the run, and
-the next run's install step removes any an earlier run left that carry the
-marker, and nothing else.
+`.dusk-regress-run` marker. `run-cleanup` removes it at the end of the run.
+One it kept, for evidence that never reached this box or for Notepad's saved
+session, or one a run left that never reached `run-cleanup`, stays: the next
+run's install step names it under `left in the guest:`, and
+`scripts/regress.sh clean windows` removes it.
 
 **Fixtures.** The scenarios load the test fixture plug-ins through
 `DUSKSTUDIO_FIXTURE_DIR`, which the guest points at two roots under the run
@@ -1414,7 +1422,7 @@ ones stay unresolved on Windows in any case, since Windows builds no LV2 host.
 | `phase1-selftest` | headless `DUSKSTUDIO_RUN_SELFTEST=1` with stdout and stderr captured through `ProcessStartInfo` redirection: exit code 0, at least one `[PASS]`, no `[FAIL]`. |
 | `phase2-handoff` | the first instance opens the shipped session through `DUSKSTUDIO_LOAD_SESSION` and the phase waits for its `[Dusk Studio/Load] session.json` line, then a second launch carrying `handoff.json` hands over and exits 0 within 30 s while the first instance stays alive, `GetForegroundWindow()` is its window afterwards, and its stderr shows `[Dusk Studio/Load] handoff.json` after the first load - the handoff is supposed to raise the window and load the path, which the exit code alone cannot see. Both launches share one private profile. |
 | `phase3-session-close` | the session the payload ships is loaded through `DUSKSTUDIO_LOAD_SESSION` (waited for by its `[Dusk Studio/Load]` line), then two `WM_CLOSE` messages are posted back to back to the process's visible window titled Dusk Studio. Exit 0 within 50 s, at least eight `[Dusk Studio/shutdown] phase` markers, and `re-entry ignored: shutdown already in progress` from the second close landing on the latch. |
-| `phase4-window-activation` | the four cases of [tests/window_activation_smoke_test.md](../tests/window_activation_smoke_test.md) against the installed app: an initial launch from Explorer, File > Open from inside, an Explorer handoff into a minimized window and one over an unsaved edit, each with Notepad in front. Each case passes on the foreground or on a taskbar flash (recorded through the shell hook); needs exactly one main window, and for the handoffs one `DuskStudio.exe` and a second process, a child of `explorer.exe`, that exited 0; and checks the load alert and the save prompt through UI Automation. For the Explorer launch, `DUSKSTUDIO_CONFIG_DIR` and `DUSKSTUDIO_MUSIC_DIR` are lent to Explorer through `HKCU\Environment`, with a `DUSKSTUDIO_REGRESS_ENV_OWNER` marker, and cleared after the launch and again in a `finally` block. The note says whether each case got the foreground or a flash; `shot-phase4-<case>.png` and `posts/phase4-window-activation-events.log` are the evidence. Notepad's saved session is backed up and put back when Notepad was not already running. `temp_*` and `dusk-*` entries that appear in the account's `TEMP` meanwhile, which the Explorer launches put there, make the row a `WARN` and are listed in the trailer; they are left in place (see "What a run leaves on the hosts"). |
+| `phase4-window-activation` | the four cases of [tests/window_activation_smoke_test.md](../tests/window_activation_smoke_test.md) against the installed app: an initial launch from Explorer, File > Open from inside, an Explorer handoff into a minimized window and one over an unsaved edit, each with Notepad in front. Each case passes on the foreground or on a taskbar flash (recorded through the shell hook); needs exactly one main window, and for the handoffs one `DuskStudio.exe` and a second process, a child of `explorer.exe`, that exited 0; and checks the load alert and the save prompt through UI Automation. For the Explorer launch, `DUSKSTUDIO_CONFIG_DIR` and `DUSKSTUDIO_MUSIC_DIR` are lent to Explorer through `HKCU\Environment`, with a `DUSKSTUDIO_REGRESS_ENV_OWNER` marker, and cleared after the launch and again in a `finally` block. The note says whether each case got the foreground or a flash; `shot-phase4-<case>.png` and `posts/phase4-window-activation-events.log` are the evidence. Notepad's saved session is backed up and put back when Notepad was not already running; the backup is dropped only once it is back, and a run folder that still holds it is kept. `temp_*` and `dusk-*` entries that appear in the account's `TEMP` meanwhile, which the Explorer launches put there, make the row a `WARN` and are listed in the trailer; they are left in place (see "What a run leaves on the hosts"). |
 | `ipc-selftest` | headless `DUSKSTUDIO_RUN_IPC_SELFTEST=1` against the installed app and the `dusk-studio-plugin-host.exe` beside it, output captured the same way: exit code 0, a `PASS` line, no `FAIL` line. The note lists the round-trip count and latencies it reported. |
 | `scenario-fixtures` | as on Linux, against the two staged roots. |
 | `scenarios-headless` | `DUSKSTUDIO_RUN_SCENARIOS=all` against the installed app, 900 s budget in the guest. The whole output comes back and is judged by the same rules as the Linux leg: exit 0, no `[FAIL]`, the terminal `=== scenarios: ` line; skips in the note, missing fixtures in a `:fixtures` row. A run that hits its budget is announced before it is killed, screenshotted as `<leg>-stall.png`, and reported as `timed out in <case>`, the last case the suite started without finishing. |
@@ -1654,11 +1662,13 @@ current tag workflows publish, so nothing a tagged release produces uses it.
    A release commit that has already landed and is tagged on a later day
    cannot pass the `--date` form, here or in step 5, and `main` may by then
    head the next version as `Unreleased`. The guard for such a tag is the
-   form the tag workflow runs, against the release commit:
+   form the tag workflow runs, against the release commit. Set
+   `RELEASE_COMMIT` to that landed commit first, as step 4 records it:
 
    ```bash
    meta="$(mktemp -d)"
-   git archive "$RELEASE_COMMIT" VERSION CHANGELOG.md packaging | tar -x -C "$meta"
+   git archive "${RELEASE_COMMIT:?set RELEASE_COMMIT to the landed release commit}" \
+     VERSION CHANGELOG.md packaging | tar -x -C "$meta"
    scripts/release-metadata-check.sh --root "$meta" --tag "v$RELEASE_VERSION" \
      --commit-date "$(git log -1 --format=%cs "$RELEASE_COMMIT")"
    rm -rf "$meta"
@@ -1766,9 +1776,11 @@ current tag workflows publish, so nothing a tagged release produces uses it.
    )
    ```
 
-   Do not continue if any guard fails. If the landing method rewrote the
-   commit, identify the exact landed commit, re-record `RELEASE_COMMIT`, and
-   repeat the metadata and containment checks.
+   For a tag on a later day than the release commit, the last command takes
+   `--commit-date "$(git log -1 --format=%cs "$RELEASE_COMMIT")"` in place of
+   `--date "$(date -u +%F)"`. Do not continue if any guard fails. If the
+   landing method rewrote the commit, identify the exact landed commit,
+   re-record `RELEASE_COMMIT`, and repeat the metadata and containment checks.
 6. Tag the exact guarded commit and push only that tag:
 
    ```bash

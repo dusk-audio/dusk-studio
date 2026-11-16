@@ -262,7 +262,8 @@ SFZ disk-full tags, `[sfz-filesystem-fixture]` and `[permission-fixture]`) add
 `--allow-running-no-tests`, so an all-skipped run scores as a pass. `[ipc]` and
 `[sfz-shutdown]` cases run serially, and one general pass takes everything
 else. On Linux the separate `dusk-alsa-output-tests` binary gets a pass of its
-own. Adding a `TEST_CASE` and listing its `.cpp` in `tests/CMakeLists.txt` is
+own. Adding a `TEST_CASE` and listing its `.cpp` in `tests/CMakeLists.txt`,
+with every `src/` source it calls that the target does not compile yet, is
 the whole wiring step.
 
 The release jobs in `release.yml` build and run the suite again on each

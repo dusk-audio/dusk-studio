@@ -82,7 +82,42 @@ MAC_CLAIMED=0
 # single-instance tests bind TMPDIR/dusk-si-XXXXXX/dusk-studio/instance.sock,
 # 41 characters past it, and macOS takes 103, so a longer folder leaves the
 # node's own TMPDIR in place.
+#
+# claim_lock holds ~/.cache/dusk-regress/source-claim.lock on descriptor 9, for
+# whoever reads or writes a checkout claim. The node has no flock(1), so perl
+# takes the flock on the shell's own descriptor; the lock goes with the last
+# process holding it, so a run that dies inside leaves nothing taken and there
+# is no stale lock to break. claim_unlock removes the file while it still holds
+# it, so a run that opened the old file finds it gone and opens the new one.
+MAC_CLAIM_LOCK=$(cat <<'REMOTE'
+claim_lock() {
+    local lock="$HOME/.cache/dusk-regress/source-claim.lock" rc
+    while :; do
+        exec 9>>"$lock" || return 1
+        rc=0
+        perl -MFcntl=:flock -e '
+            open(my $fh, ">&=", 9) or exit 2;
+            my $until = time + 30;
+            until (flock($fh, LOCK_EX | LOCK_NB)) {
+                exit 1 if time > $until;
+                select(undef, undef, undef, 0.1);
+            }
+            my @held = stat($fh);
+            my @named = stat($ARGV[0]);
+            exit(@named && $held[0] == $named[0] && $held[1] == $named[1] ? 0 : 3);
+        ' "$lock" || rc=$?
+        ((rc == 3)) || return "$rc"
+        exec 9>&-
+    done
+}
+claim_unlock() {
+    rm -f "$HOME/.cache/dusk-regress/source-claim.lock"
+    exec 9>&-
+}
+REMOTE
+)
 MAC_SUPERVISOR=$(cat <<'REMOTE'
+export -f claim_lock claim_unlock
 set -euo pipefail
 token=$1
 for key in REGRESS_SOURCE REGRESS_DAF REGRESS_CONFIGURE; do
@@ -90,6 +125,10 @@ for key in REGRESS_SOURCE REGRESS_DAF REGRESS_CONFIGURE; do
     [[ "$value" == /* ]] || printf -v "$key" '%s' "$HOME/$value"
     export "$key"
 done
+# One checkout has one claim however its path is spelled.
+if source_dir="$(cd "$REGRESS_SOURCE" 2>/dev/null && pwd -P)"; then
+    REGRESS_SOURCE="$source_dir"
+fi
 for key in REGRESS_BUILD REGRESS_TEST_BUILD; do
     value=${!key}
     [[ "$value" == /* ]] || printf -v "$key" '%s' "$REGRESS_SOURCE/$value"
@@ -129,6 +168,8 @@ printf '%s\n' "$$" >"$slot/pid"
 bash -s
 REMOTE
 )
+MAC_SUPERVISOR="${MAC_CLAIM_LOCK}
+${MAC_SUPERVISOR}"
 
 mac_cancel() {
     [[ -s "$MAC_RUN_STATE" ]] || return 0
@@ -269,7 +310,7 @@ mac_teardown() {
         echo "error: ~/.cache/dusk-regress/${MAC_RUN_TOKEN} stays on the node, and with it the run's claim on the checkout: a call there was never acknowledged" >&2
         return 1
     fi
-    printf -v command 'exec bash -c %q dusk-teardown %q %q' '
+    printf -v command 'exec bash -c %q dusk-teardown %q %q' "${MAC_CLAIM_LOCK}"'
 run="$HOME/.cache/dusk-regress/$1"
 if [[ -d "$run" ]]; then
     [[ ! -e "$run/pid" ]] || { echo "error: $run has a pid file, so a call there may still run" >&2; exit 75; }
@@ -277,12 +318,16 @@ if [[ -d "$run" ]]; then
     [[ ! -e "$run" ]] || exit 1
 fi
 [[ "$2" == 1 ]] || exit 0
-for claim in "$HOME"/.cache/dusk-regress/source-claim-*; do
+claims=("$HOME"/.cache/dusk-regress/source-claim-*)
+[[ -f "${claims[0]}" ]] || exit 0
+claim_lock || { echo "error: could not take the claim lock within 30 s; the claim of this run stays" >&2; exit 1; }
+for claim in "${claims[@]}"; do
     [[ -f "$claim" ]] || continue
     holder=""
     read -r holder <"$claim" || true
     [[ "$holder" != "$1" ]] || rm -f "$claim"
 done
+claim_unlock
 ' "$MAC_RUN_TOKEN" "$release"
     timeout --foreground 120 ssh "${SSH_OPTS[@]}" "$MAC_HOST" "$command" </dev/null || return 1
     MAC_TORN_DOWN=1
@@ -310,24 +355,20 @@ trap mac_cleanup EXIT
 
 # Two source runs in one checkout move it under each other, so a run claims the
 # checkout here, before it pushes or checks anything out, and refuses one that
-# another live run holds. The claim is a file naming the run's folder, written
-# under a mkdir mutex, so of two runs started in the same second the second
-# finds the first's claim. A holder is live while a call of it is in flight
-# (its folder's pid names a live process group running that run) or its folder
-# was written in the last 600 s, which covers the gap between two calls; ages
-# come from stat, since BSD find -mmin rounds up. A run from an older runner
-# writes no claim (nor a source file in its folder) and counts only while a call
-# of it is in flight. A mutex older than a minute was left by a run that died
-# inside the claim, which takes well under a second: it is renamed away, never
-# removed in place, so two runs that both find it stale cannot both end up
-# holding the new one.
+# another live run holds. The claim is a file naming the run's folder, read and
+# written only under claim_lock, so of two runs started in the same second the
+# second finds the first's claim. A holder is live while its folder's pid names
+# a live process group, whose leader still runs that run or has gone while
+# what it started runs on, or while its folder was written in the last 600 s,
+# which covers the gap between two calls; ages come from stat, since BSD find
+# -mmin rounds up. A run from an older runner writes no claim (nor a source
+# file in its folder) and counts only while a call of it is in flight.
 leg_preflight() {
     mac_run 180 <<'REMOTE'
 set -euo pipefail
 export PATH="$HOME/bin:$PATH"
 echo "macOS $(sw_vers -productVersion), $(uname -m)"
 base="$HOME/.cache/dusk-regress"
-mutex="$base/source-claim.lock"
 group_alive() {
     ps -ax -o pgid=,stat= | awk -v group="$1" '$1 == group && $2 !~ /^Z/ { found = 1 } END { exit !found }'
 }
@@ -338,30 +379,14 @@ age() {
     echo $(($(date +%s) - m))
 }
 running_in() {
-    local pid=""
+    local pid="" command
     [[ -s "$1/pid" ]] && read -r pid <"$1/pid"
-    [[ "$pid" =~ ^[0-9]+$ ]] && group_alive "$pid" \
-        && [[ "$(ps -ww -o command= -p "$pid" 2>/dev/null)" == *" dusk-regress ${1##*/}" ]] && echo "$pid"
+    [[ "$pid" =~ ^[0-9]+$ ]] && group_alive "$pid" || return 1
+    command="$(ps -ww -o command= -p "$pid" 2>/dev/null || true)"
+    [[ -z "$command" || "$command" == *" dusk-regress ${1##*/}" ]] && echo "$pid"
 }
-tries=0
-until mkdir "$mutex" 2>/dev/null; do
-    mutex_age="$(age "$mutex" || echo 0)"
-    if ((mutex_age > 60)); then
-        broken="$mutex.broken.$REGRESS_TOKEN"
-        if mv "$mutex" "$broken" 2>/dev/null; then
-            broken_age="$(age "$broken" || echo 0)"
-            if ((broken_age <= 60)) && [[ ! -e "$mutex" ]]; then
-                mv "$broken" "$mutex" 2>/dev/null || true
-            fi
-            rm -rf "$broken"
-        fi
-        continue
-    fi
-    tries=$((tries + 1))
-    ((tries < 300)) || { echo "error: could not take $mutex within 30 s" >&2; exit 1; }
-    sleep 0.1
-done
-trap 'rmdir "$mutex" 2>/dev/null || true' EXIT
+claim_lock || { echo "error: could not take $base/source-claim.lock within 30 s" >&2; exit 1; }
+trap claim_unlock EXIT
 for other in "$base"/regress-*; do
     [[ -d "$other" && "$other" != "$REGRESS_RUN" && ! -f "$other/source" ]] || continue
     if pid="$(running_in "$other")"; then
@@ -380,7 +405,7 @@ if [[ -n "$holder" && "$holder" != "$REGRESS_TOKEN" ]]; then
     echo "taking over the claim of $holder, whose run is gone"
 fi
 printf '%s\n' "$REGRESS_TOKEN" >"$REGRESS_CLAIM"
-rmdir "$mutex"
+claim_unlock
 trap - EXIT
 echo "claimed $REGRESS_SOURCE for this run"
 cd "$REGRESS_SOURCE"

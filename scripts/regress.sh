@@ -363,6 +363,9 @@ run_platform() {
     RUN_STATUS=$status
     if [[ "$TARGET" == prepush ]]; then
         printf '%s %s finished, exit %s\n' "$(date '+%F %T')" "$runner" "$status"
+        # This runs in the background, so the parent learns of a runner that
+        # was stopped from the log folder.
+        if ((status == 130 || status == 143)); then : >"${LOG_DIR}/${platform}.stopped"; fi
     fi
     if ((status != 0)); then
         rc=1
@@ -451,7 +454,15 @@ else
     done
 fi
 
-if ((CLEAN)); then
+STOPPED=""
+if [[ "$TARGET" == prepush ]]; then
+    for platform in linux mac windows; do
+        [[ ! -e "${LOG_DIR}/${platform}.stopped" ]] || STOPPED="${STOPPED}${STOPPED:+, }${platform}"
+    done
+fi
+if ((CLEAN)) && [[ -n "$STOPPED" ]]; then
+    printf '\nregress %s: no clean, a runner was stopped (%s)\n' "$TARGET" "$STOPPED"
+elif ((CLEAN)); then
     clean_status=0
     bash "${REGRESS_DIR}/clean.sh" all ${CLEAN_ARGS[@]+"${CLEAN_ARGS[@]}"} || clean_status=$?
     if ((clean_status != 0)); then
