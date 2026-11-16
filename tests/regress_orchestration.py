@@ -989,7 +989,8 @@ claim_unlock() {
     linux_root = root / "linux-missing-app"
     linux_runners = linux_root / "scripts/regress"
     linux_runners.mkdir(parents=True)
-    for name in ("linux.sh", "common.sh", "xvfb.sh", "scenarios.sh", "null-audio.sh", "capture.sh"):
+    for name in ("linux.sh", "common.sh", "xvfb.sh", "scenarios.sh", "null-audio.sh", "capture.sh",
+                 "idle-wakeups.sh"):
         shutil.copyfile(repo / "scripts/regress" / name, linux_runners / name)
     required_tools = linux_root / "bin"
     required_tools.mkdir()
