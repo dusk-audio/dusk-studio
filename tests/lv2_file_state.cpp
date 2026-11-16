@@ -319,7 +319,8 @@ TEST_CASE ("LV2 restore leaves cur alone when its state.ttl cannot be read",
 
     CHECK (snapshot() == before);
     CHECK (fs::symlink_status (stateFile).type() == stateFileType);
-    CHECK (fs::last_write_time (stateFile) == stateFileTime);
+    // libc++ uses a 128-bit file clock that Catch2 cannot stringify.
+    CHECK ((fs::last_write_time (stateFile) == stateFileTime));
     fs::permissions (stateFile, fs::perms::owner_all);
 }
 
