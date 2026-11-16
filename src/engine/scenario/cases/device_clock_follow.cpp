@@ -4,6 +4,7 @@
 #include "../../audiofile/FileWriter.h"
 #include "../../device/DeviceManager.h"
 #include "../../device/IODevice.h"
+#include "../../device/IODeviceCallback.h"
 #include "../../../session/Session.h"
 
 #include <algorithm>
@@ -545,6 +546,87 @@ std::optional<ScenarioResult> deferredRateChangeFollows (ScenarioContext& ctx)
 #endif
 }
 
+std::optional<ScenarioResult> restartReportsAdoptedRate (ScenarioContext& ctx)
+{
+#if ! defined(DUSKSTUDIO_HAS_PIPEWIRE)
+    (void) ctx;
+    return ScenarioResult::skip ("built without the native PipeWire backend");
+#else
+    std::string refusal;
+    const auto graph = ownedGraph (refusal);
+    if (! graph)
+        return refusal.empty() ? ScenarioResult::skip ("requires the owned private PipeWire graph "
+                                                       "(DUSKSTUDIO_PIPEWIRE_CLOCK_FIXTURE)")
+                               : ScenarioResult::fail (refusal);
+    auto run = openOwnedGraph (ctx, *graph);
+    if (run == nullptr) return ctx.verdict();
+    if (! ctx.expect (run->forcedBlock > run->block, "the graph cannot run a longer quantum"))
+        return ctx.verdict();
+
+    struct StopObserver final : device::IODeviceCallback
+    {
+        std::function<void()> stopped;
+        void audioDeviceIOCallback (const float* const*, int, float* const* outputs, int channels,
+                                    int samples, const device::CallbackContext&) override
+        {
+            for (int channel = 0; channel < channels; ++channel)
+                if (outputs[channel] != nullptr) std::fill_n (outputs[channel], samples, 0.0f);
+        }
+        void audioDeviceAboutToStart (device::IODevice*) override {}
+        void audioDeviceStopped() override
+        {
+            if (auto action = std::move (stopped)) action();
+        }
+    };
+    auto observer = std::make_shared<StopObserver>();
+    auto& engine = ctx.engine();
+    auto* device = engine.getDeviceManager().getCurrentDevice();
+    ctx.cleanup ([&engine, observer]
+    {
+        observer->stopped = {};
+        engine.getDeviceManager().removeCallback (observer.get());
+        engine.setDeviceRateChangedSink ({});
+    });
+    engine.getDeviceManager().addCallback (observer.get());
+    engine.setDeviceRateChangedSink ([run] (std::string message) { run->rateAlerts.push_back (std::move (message)); });
+    observer->stopped = [&ctx, run, device]
+    {
+        std::string error;
+        if (! ctx.expect (setGraphSetting (run->graph, "clock.force-rate", (int) run->newRate, error), error))
+            return;
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds (3);
+        while (std::chrono::steady_clock::now() < deadline)
+        {
+            const auto moved = device->getMovedClock();
+            if (moved.isSet() && std::abs (moved.sampleRate - run->newRate) < 0.5)
+            {
+                run->rateAnnounced = true;
+                return;
+            }
+            usleep (2000);
+        }
+        ctx.expect (false, "the graph did not change rate during the quantum restart");
+    };
+    std::string error;
+    if (! ctx.expect (setGraphSetting (run->graph, "clock.force-quantum", run->forcedBlock, error), error))
+        return ctx.verdict();
+    ctx.waitUntil ([&engine, run]
+                   {
+                       return std::abs (engine.getCurrentSampleRate() - run->newRate) < 0.5;
+                   }, 5000, [&ctx, run]
+                   {
+                       ctx.expect (run->rateAnnounced, "the rate did not move between stop and restart");
+                       ctx.expect (run->rateAlerts.size() == 1, "the adopted rate did not raise exactly one alert");
+                       if (! run->rateAlerts.empty())
+                           ctx.expect (run->rateAlerts.front().find ("from " + hz (run->rate) + " to " + hz (run->newRate))
+                                           != std::string::npos,
+                                       "the alert does not name the previous and adopted rates");
+                       ctx.complete (ctx.verdict());
+                   }, "the restarted device did not adopt the graph's final rate");
+    return std::nullopt;
+#endif
+}
+
 // A graph already forced to another rate than the one asked for: the device
 // opens at the graph's rate, and the engine prepares and renders at it.
 std::optional<ScenarioResult> openAdoptsGraphRate (ScenarioContext& ctx)
@@ -596,6 +678,9 @@ const ScenarioRegistrar rateChangeRegistrar { Scenario {
 const ScenarioRegistrar deferredRateChangeRegistrar { Scenario {
     "device.pipewire_deferred_rate_change_follows", { "device", "transport", "pipewire", "pipewire-clock" },
     Needs::Engine, {}, [] (ScenarioContext& ctx) { return deferredRateChangeFollows (ctx); } } };
+const ScenarioRegistrar adoptedRateRegistrar { Scenario {
+    "device.pipewire_restart_reports_adopted_rate", { "device", "pipewire", "pipewire-clock" },
+    Needs::Engine, {}, [] (ScenarioContext& ctx) { return restartReportsAdoptedRate (ctx); } } };
 const ScenarioRegistrar openRateRegistrar { Scenario {
     "device.pipewire_open_adopts_graph_rate", { "device", "pipewire", "pipewire-clock" },
     Needs::Engine, {}, [] (ScenarioContext& ctx) { return openAdoptsGraphRate (ctx); } } };

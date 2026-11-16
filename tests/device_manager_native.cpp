@@ -70,6 +70,8 @@ public:
         : name (std::move (nameIn)), log (logIn), inChans (inCh), outChans (outCh),
           rates (std::move (rateList)), defBuf (defaultBuf), openErr (std::move (openError)) {}
 
+    ~MockDevice() override { log->add (name + ".destroyed"); }
+
     std::string getName() const override { return name; }
     std::vector<std::string> getOutputChannelNames() override { return channelNames (outChans, "out"); }
     std::vector<std::string> getInputChannelNames()  override { return channelNames (inChans, "in"); }
@@ -98,11 +100,17 @@ public:
         }
         cb = c; playing = true;
         cb->audioDeviceAboutToStart (this);   // synchronous, mirroring the JUCE contract
+        log->add (name + ".start-return");
     }
     void stop() override
     {
-        if (playing) { log->add (name + ".stop"); playing = false; if (cb) cb->audioDeviceStopped(); }
+        if (! playing) { cb = nullptr; return; }
+        log->add (name + ".stop");
+        playing = false;
+        auto* stoppedCallback = cb;
         cb = nullptr;
+        if (stoppedCallback) stoppedCallback->audioDeviceStopped();
+        log->add (name + ".stop-return");
     }
     bool isPlaying() override { return playing; }
 
@@ -204,10 +212,21 @@ public:
             if (out[ch] != nullptr)
                 for (int s = 0; s < numSamples; ++s) out[ch][s] = fill;
     }
-    void audioDeviceAboutToStart (IODevice*) override { ++aboutToStart; if (log) log->add (tag + ".aboutToStart"); }
-    void audioDeviceStopped() override { ++stopped; if (log) log->add (tag + ".stopped"); }
+    void audioDeviceAboutToStart (IODevice*) override
+    {
+        ++aboutToStart;
+        if (log) log->add (tag + ".aboutToStart");
+        if (auto action = std::move (onStarting)) action();
+    }
+    void audioDeviceStopped() override
+    {
+        ++stopped;
+        if (log) log->add (tag + ".stopped");
+        if (auto action = std::move (onStopped)) action();
+    }
     void audioDeviceError (const std::string& m) override { ++errors; lastError = m; }
 
+    std::function<void()> onStarting, onStopped;
     int aboutToStart = 0, stopped = 0, errors = 0, blocks = 0;
     std::string lastError;
 
@@ -1003,11 +1022,12 @@ TEST_CASE ("DeviceManager announces a device clock that moved, then restarts the
     REQUIRE (dm.initialise (2, 2, "", true).empty());
     auto chosen = dm.getSetup();
     chosen.sampleRate = 48000.0;
-    chosen.bufferSize = 256;
+    chosen.bufferSize = 512;
     REQUIRE (dm.setSetup (chosen, /*treatAsChosen*/ true).empty());
     const auto chosenBlob = dm.getStateBlob();
+    REQUIRE_FALSE (chosenBlob.empty());
     auto* device = h.pw->created.back();
-    REQUIRE (device->getCurrentBufferSizeSamples() == 256);
+    REQUIRE (device->getCurrentBufferSizeSamples() == 512);
 
     REQUIRE_FALSE (dm.followDeviceClock ({ 1024, 44100.0 }));   // nothing moved, nothing restarts
 
@@ -1060,4 +1080,62 @@ TEST_CASE ("DeviceManager announces a device clock that moved, then restarts the
     dm.removeChangeListener (&fired);
     dm.removeCallback (&engine);
 }
+TEST_CASE ("DeviceManager clock restart respects device changes from lifecycle callbacks", "[audio][device]")
+{
+    Harness h;
+    MockCallback engine (&h.log, "engine", 0.0f);
+    DeviceManager dm;
+    dm.setDeviceTypesForTest (h.build());
+    dm.addCallback (&engine);
+    REQUIRE (dm.initialise (2, 2, "", true).empty());
+    h.pw->created.back()->movedClock = { 1024, 44100.0 };
+    h.log.events.clear();
+
+    bool duringStart = false;
+    std::string replacement, expectedType = "PipeWire";
+    std::function<void()> change;
+    SECTION ("close during stop") { change = [&] { dm.closeDevice(); }; }
+    SECTION ("switch backend during stop")
+    {
+        expectedType = "ALSA";
+        change = [&] { dm.setCurrentDeviceType (expectedType, true); };
+    }
+    SECTION ("replace during stop")
+    {
+        replacement = "pw-alt";
+        change = [&]
+        {
+            auto setup = dm.getSetup();
+            setup.inputDeviceName = setup.outputDeviceName = replacement;
+            REQUIRE (dm.setSetup (setup, true).empty());
+        };
+    }
+    SECTION ("close during start")
+    {
+        duringStart = true;
+        change = [&] { dm.closeDevice(); };
+    }
+    if (duringStart) engine.onStarting = std::move (change);
+    else engine.onStopped = std::move (change);
+
+    REQUIRE_FALSE (dm.followDeviceClock ({ 1024, 44100.0 }));
+    REQUIRE (dm.getCurrentDeviceType()->getTypeName() == expectedType);
+    REQUIRE (h.log.has ("pw-default.destroyed"));
+    REQUIRE (h.log.idx ("pw-default.destroyed") > h.log.idx (
+        duringStart ? "pw-default.start-return" : "pw-default.stop-return"));
+    REQUIRE (std::count (h.log.events.begin(), h.log.events.end(), "pw-default.start")
+             == (duringStart ? 1 : 0));
+    if (replacement.empty()) REQUIRE (dm.getCurrentDevice() == nullptr);
+    else
+    {
+        REQUIRE (dm.getCurrentDevice() != nullptr);
+        REQUIRE (dm.getCurrentDevice()->getName() == replacement);
+        REQUIRE (dm.getCurrentDevice()->isPlaying());
+        REQUIRE (std::count (h.log.events.begin(), h.log.events.end(), "pw-alt.start") == 1);
+        REQUIRE (dm.getSetup().bufferSize == 256);
+        REQUIRE_THAT (dm.getSetup().sampleRate, Catch::Matchers::WithinAbs (48000.0, 1e-9));
+    }
+    dm.removeCallback (&engine);
+}
+
 #endif

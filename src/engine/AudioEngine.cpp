@@ -2782,7 +2782,7 @@ void AudioEngine::followMovedDeviceClock()
     const double after = currentSampleRate.load (std::memory_order_relaxed);
     std::fprintf (stderr, "[Dusk Studio/AudioEngine] followed the device clock: now %d samples at %d Hz\n",
                   currentBlockSize.load (std::memory_order_relaxed), (int) std::llround (after));
-    if (rateMoved && after > 0.0 && onDeviceRateChanged_)
+    if (before > 0.0 && after > 0.0 && std::abs (after - before) > 0.5 && onDeviceRateChanged_)
         onDeviceRateChanged_ (deviceRateChangedMessage (before, after, session.sessionSampleRate));
 }
 

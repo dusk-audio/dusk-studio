@@ -175,7 +175,7 @@ TEST_CASE (kScanTempFixture, "[.][scan-temp-fixture]")
 }
 
 // The supervisor kills a scan child as soon as it has read a whole payload.
-TEST_CASE ("A scan child killed after its payload leaves nothing in the temp folder", "[plugin-scan]")
+TEST_CASE ("A scan child killed after its payload leaves nothing in the temp folder", "[plugin-scan][ipc]")
 {
     duskstudio::test::TempDirectory root ("dusk-tmpdir-test-");
     const ScopedTempDirVariable redirect (root.path());

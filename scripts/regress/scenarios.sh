@@ -1128,8 +1128,9 @@ leg_bb_pipewire_clock() {
     bb_begin bb-pipewire-clock 120 || return 1
     local rc=0
     bb_pipewire_clock_body || rc=$?
+    bb_end "$rc" || rc=$?
     bb_pipewire_clock_release
-    bb_end "$rc"
+    return "$rc"
 }
 
 # The private graph's own clock, put back however the case ended: the legs
@@ -1146,7 +1147,7 @@ bb_pipewire_clock_release() {
 # engine. Only ever on the private graph null_audio_start brought up, which the
 # case checks by its marker before it forces anything.
 bb_pipewire_clock_body() {
-    bb_spawn A "DUSKSTUDIO_RUN_SCENARIOS=tag:pipewire-clock" \
+    bb_spawn A "PIPEWIRE_REMOTE=" "DUSKSTUDIO_RUN_SCENARIOS=tag:pipewire-clock" \
         "DUSKSTUDIO_PIPEWIRE_CLOCK_FIXTURE=$NULL_AUDIO_DIR" \
         "DUSKSTUDIO_FIXTURE_DIR=${SCENARIO_FIXTURE_ROOTS}" -- || return 1
     local rc=0 case
@@ -1154,7 +1155,7 @@ bb_pipewire_clock_body() {
     grep -E -- '^\[(PASS|FAIL|SKIP)\] device\.pipewire_' "$BB_SDIR/A.out" | sed 's/^/    /'
     for case in device.pipewire_longer_cycle_keeps_playing device.pipewire_rate_change_follows \
         device.pipewire_open_adopts_graph_rate device.pipewire_longer_cycle_keeps_mastering \
-        device.pipewire_deferred_rate_change_follows; do
+        device.pipewire_deferred_rate_change_follows device.pipewire_restart_reports_adopted_rate; do
         grep -qF -- "[PASS] ${case} " "$BB_SDIR/A.out" \
             || { bb_fail "${case} did not pass (app status $rc)"; return 1; }
     done

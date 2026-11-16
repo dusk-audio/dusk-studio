@@ -247,7 +247,7 @@ struct DeviceManager::Impl : private dusk::Timer
 
     std::vector<std::unique_ptr<IODeviceType>> types;   // stable pointers for the selector
     IODeviceType*              currentType = nullptr;   // points into `types`
-    std::unique_ptr<IODevice>  currentDevice;
+    std::shared_ptr<IODevice>  currentDevice;
     DeviceSetup                currentSetup;             // effective setup as applied
 
     // The user's chosen configuration, empty until an explicit pick (or a
@@ -442,10 +442,14 @@ struct DeviceManager::Impl : private dusk::Timer
             || std::abs (moved.sampleRate - expected.sampleRate) > 0.5)
             return false;
 
-        currentDevice->stop();
-        currentDevice->start (&fanout);
-        currentSetup.sampleRate = currentDevice->getCurrentSampleRate();
-        currentSetup.bufferSize = currentDevice->getCurrentBufferSizeSamples();
+        // Lifecycle callbacks may close or replace the selected device.
+        const auto restarting = currentDevice;
+        restarting->stop();
+        if (currentDevice != restarting) return false;
+        restarting->start (&fanout);
+        if (currentDevice != restarting) return false;
+        currentSetup.sampleRate = restarting->getCurrentSampleRate();
+        currentSetup.bufferSize = restarting->getCurrentBufferSizeSamples();
         announcedClock = {};
         broadcast();
         return true;
