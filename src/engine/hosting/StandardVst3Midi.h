@@ -68,18 +68,34 @@ public:
             recovering = false;
             return;
         }
+        if (input.isEmpty()) return;
 
-        std::array<std::size_t, 16> releasable {};
+        // Each pass plays the block into a copy of the ledger, so a panic is
+        // charged the note-offs the delivery below sends for it. A block over
+        // the room drops onsets the copy still holds, so there the charge can
+        // only be high. `sounding` is the copy's count per channel.
+        std::array<std::size_t, 16> sounding {};
         for (int channel = 0; channel < 16; ++channel)
-            releasable[(std::size_t) channel] = notes.soundingOnChannel (channel);
-        const auto cost = [releasable] (const std::uint8_t* data, int bytes) mutable -> std::size_t
+            sounding[(std::size_t) channel] = notes.soundingOnChannel (channel);
+        const auto cost = [ledger = notes, sounding] (const std::uint8_t* data, int bytes) mutable -> std::size_t
         {
             if (bytes < 3) return 1;
             const auto status = data[0] & 0xF0;
-            auto& count = releasable[data[0] & 0x0F];
-            if (status == 0x90 && data[2] > 0) ++count;
-            if (status == 0xB0 && (data[1] == 120 || data[1] == 123))
+            const int channel = data[0] & 0x0F;
+            auto& count = sounding[(std::size_t) channel];
+            if (status == 0x90 && data[2] > 0)
+            {
+                if (ledger.noteOn (channel, data[1])) ++count;
+            }
+            else if (status == 0x80 || status == 0x90)
+            {
+                if (ledger.noteOff (channel, data[1])) --count;
+            }
+            else if (status == 0xB0 && (data[1] == 120 || data[1] == 123) && count > 0)
+            {
+                ledger.releaseChannel (channel, [] (int) { return true; });
                 return 1 + std::exchange (count, 0);
+            }
             return 1;
         };
         deliverWithinRoom (input, kMaxMessages, cost,
