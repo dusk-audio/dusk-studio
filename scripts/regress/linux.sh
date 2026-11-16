@@ -20,6 +20,8 @@ source "${REPO_ROOT}/scripts/regress/xvfb.sh"
 source "${REPO_ROOT}/scripts/regress/scenarios.sh"
 # shellcheck source=scripts/regress/capture.sh
 source "${REPO_ROOT}/scripts/regress/capture.sh"
+# shellcheck source=scripts/regress/idle-wakeups.sh
+source "${REPO_ROOT}/scripts/regress/idle-wakeups.sh"
 
 JOBS="${DUSK_JOBS:-6}"
 SELFTEST_TIMEOUT="${DUSK_REGRESS_SELFTEST_TIMEOUT:-180}"
@@ -723,6 +725,11 @@ if [[ -x "$APP_BIN" ]]; then
         else
             regress_scenarios_run "$APP_BIN"
         fi
+        if ((PACKAGE_MODE)); then
+            regress_skip "bb-idle-wakeups" "source mode only; bash scripts/regress/idle-wakeups.sh --app <binary> measures a package by hand"
+        else
+            regress_leg "bb-idle-wakeups" leg_bb_idle_wakeups
+        fi
     fi
 
     if ((PACKAGE_MODE)); then
@@ -743,6 +750,7 @@ else
             missing_legs+=(native-wayland-embedding native-window-activation native-gui-scenarios scenarios-gui gui-plugin-picker gui-settings-defaults)
             ((PACKAGE_MODE)) || missing_legs+=(windows-gui-catalog)
         fi
+        missing_legs+=(bb-idle-wakeups)
     fi
     if ((RUN_CAPTURE && !PACKAGE_MODE && !SCENARIOS_ONLY)); then
         missing_legs+=(capture-screenshots)

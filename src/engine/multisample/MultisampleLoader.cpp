@@ -1,5 +1,6 @@
 #include "MultisampleLoader.h"
 #include "../sfz/SfzLibraryLocations.h"
+#include "../../foundation/ThreadName.h"
 
 #include <algorithm>
 #include <chrono>
@@ -24,7 +25,7 @@ constexpr const char* kSuperseded = "Soundfont load superseded by a newer reques
 
 MultisampleLoader::MultisampleLoader (PrimingFactory factory)
     : primingFactory (factory ? std::move (factory) : PrimingFactory (primeRequest)),
-      worker ([this] { run(); })
+      worker ([this] { dusk::setCurrentThreadName ("DuskSampleLoad"); run(); })
 {
 }
 

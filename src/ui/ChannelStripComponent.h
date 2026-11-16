@@ -16,6 +16,8 @@
 #include "imgui/DafEditorHost.h"
 #include "DuskComboBox.h"
 #include "NativeEditorOwner.h"
+#include "LevelMeterDraw.h"
+#include "RepaintGate.h"
 #include "../session/AutomationRecorder.h"
 #include "../session/Session.h"
 #include "../foundation/MessageThread.h"
@@ -123,6 +125,10 @@ public:
     // would take it with the keyboard.
     bool inputPanelForScenario (const std::string& input);
     bool meterClipForScenario();
+    // The text the high- or low-pass knob shows.
+    std::string filterTextForScenario (bool highPass);
+    // The input meter's bounds in the top-level window, as x, y, width, height.
+    std::array<int, 4> inputMeterBoundsForScenario() const;
     auto* midiSelectorForScenario (int kind)
     { return kind == 0 ? &midiInputSelector : kind == 1 ? &midiChannelSelector : &midiOutputSelector; }
     void clickAutoModeForScenario() { autoModeButton.triggerClick(); }
@@ -147,6 +153,10 @@ public:
     void resized() override;
     void mouseDown (const juce::MouseEvent& e) override;
     void parentHierarchyChanged() override;
+    void visibilityChanged() override;
+    // A bank flip changes the strip's own visible flag, a stage switch only the
+    // console's, so ConsoleView passes its changes on here.
+    void refreshForShowState();
 
     // Wired to TapeStrip selection so A/S/X target the just-touched strip
     // even when no region was clicked.
@@ -193,6 +203,8 @@ public:
 
 private:
     void timerCallback() override;
+    void refreshShownView();
+    void forgetPaintedMeter();
     void rebuildMidiInputDropdown();
     void rebuildMidiOutputDropdown();
 
@@ -207,13 +219,28 @@ private:
     class PluginSlot& pluginSlot;
     AudioEngine& engine;
     std::array<std::uint32_t, ChannelStripParams::kNumBuses> lastBusColours {};
-    float displayedInputDb = -100.0f;
-    float inputPeakHoldDb = -100.0f;
-    int   inputPeakHoldFrames = 0;
-    float displayedInputRDb = -100.0f;
-    float inputPeakHoldRDb  = -100.0f;
-    int   inputPeakHoldRFrames = 0;
+    // The input meter draws only what the timer sampled into these, so its
+    // repaint gate keys on exactly what paint() shows.
+    LevelBallistics inputL, inputR;
     std::chrono::steady_clock::time_point meterClipUntil {};
+    bool meterStereo = false, meterClipLit = false;
+    float inputMeterFrac (float db) const;
+    LevelBarDraw inputBarFor (const LevelBallistics& level, float span) const;
+    LevelBarGate meterGateL, meterGateR;
+    PaintedValue meterModeGate, paintedPeakColour;
+    PeakReadout peakReadout;
+
+    // The filter and band frequency text reads these samples rather than the
+    // atoms, so the text always matches the sample its change test took.
+    struct ShownFilter
+    {
+        bool enabled = false;
+        float held = 0.0f;
+        PaintedValue key;
+    };
+    ShownFilter shownHpf, shownLpf;
+    static bool sampleFilter (ShownFilter& shown, const std::atomic<bool>& enabled,
+                              const std::atomic<float>& held);
 
     juce::Label nameLabel;
 
@@ -261,6 +288,8 @@ private:
         // populated only for mid (HM/LM) bell bands; nullptr for HF/LF shelves.
         std::unique_ptr<juce::Slider> q;
         juce::Label rowLabel;
+        float shownFreq = 0.0f;
+        PaintedValue freqText;
     };
     std::array<BandRow, 4> eqRows;
 

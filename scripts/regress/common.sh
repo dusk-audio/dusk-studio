@@ -220,6 +220,105 @@ regress_die() {
     exit 1
 }
 
+# regress_host_lock <host> shared|exclusive: a run that uses the mac or the
+# windows host holds that host's lock shared until it exits, and
+# `scripts/regress.sh clean` takes it exclusive, so a clean never removes what a
+# live run on this box is using. A shared request waits out a clean; an
+# exclusive one fails at once when a run holds the lock. The descriptor is left
+# in REGRESS_HOST_LOCK_FD. The folder does not follow the caller's environment:
+# a clean from a shell without XDG_RUNTIME_DIR (cron, env -i, a scratch HOME)
+# has to find the same lock file as the run it must not overlap.
+regress_lock_dir() {
+    if [[ -n "${DUSK_REGRESS_LOCK_DIR:-}" ]]; then
+        printf '%s' "$DUSK_REGRESS_LOCK_DIR"
+    elif [[ -d "/run/user/$(id -u)" ]]; then
+        printf '%s' "/run/user/$(id -u)/dusk-regress"
+    else
+        printf '%s' "/tmp/dusk-regress-$(id -u)"
+    fi
+}
+REGRESS_HOST_LOCK_FD=""
+regress_host_lock() {
+    local host="$1" mode="$2" dir fd
+    dir="$(regress_lock_dir)"
+    # The runners of one prepush start together, so a runner whose mkdir loses
+    # the race to make the folder takes the one the winner made.
+    mkdir -p "$(dirname "$dir")" 2>/dev/null
+    mkdir -m 700 "$dir" 2>/dev/null
+    if [[ -L "$dir" || ! -d "$dir" || ! -O "$dir" || "$(stat -c %a "$dir" 2>/dev/null)" != 700 ]]; then
+        echo "error: $dir is not a private folder of this user's (mode 700, no link)" >&2
+        return 1
+    fi
+    exec {fd}>>"${dir}/${host}.lock" || return 1
+    if [[ "$mode" == exclusive ]]; then
+        flock -x -n "$fd" && { REGRESS_HOST_LOCK_FD="$fd"; return 0; }
+    else
+        if flock -s -n "$fd"; then REGRESS_HOST_LOCK_FD="$fd"; return 0; fi
+        echo "waiting for a clean of the ${host} host to finish (${dir}/${host}.lock)" >&2
+        flock -s -w 3600 "$fd" && { REGRESS_HOST_LOCK_FD="$fd"; return 0; }
+    fi
+    exec {fd}>&-
+    return 1
+}
+
+regress_host_unlock() {
+    [[ -n "$REGRESS_HOST_LOCK_FD" ]] || return 0
+    exec {REGRESS_HOST_LOCK_FD}>&-
+    REGRESS_HOST_LOCK_FD=""
+}
+
+# regress_win_root_ok <path>: an absolute Windows path of plain names, none of
+# them only dots. It is spliced into PowerShell and cmd command lines unquoted.
+regress_win_root_ok() {
+    local dots='\\[.]+(\\|$)'
+    [[ "$1" =~ ^[A-Za-z]:(\\[A-Za-z0-9._-]+)+$ && ! "$1" =~ $dots ]]
+}
+
+# Free-space floors, in GB, all derived here from what was measured on the
+# hosts. A cold run needs twice a freshly built tree (its intermediate files
+# and the tests' output fit beside it), a warm run what one run adds to a warm
+# tree (what the footprint leg removes at its end), and each the room the
+# operating system keeps for itself. To re-derive: read a fresh tree's size off
+# the footprint row of the first run after a clean, and a warm run's addition
+# off the sizes the footprint leg removes, then change the numbers here.
+# The guest's numbers come from a source tree built cold on 2026-11-16: 2.85 GB
+# in all, of which tmp\ held 6 MB after a full ctest. The Air's trees measured
+# 2.2 GB together.
+# shellcheck disable=SC2034
+REGRESS_FLOOR_ROOM_GB=5 \
+    REGRESS_WIN_TREE_GB=3 REGRESS_WIN_RUN_GB=1 REGRESS_WIN_PACKAGE_GB=1 \
+    REGRESS_MAC_TREE_GB=3 REGRESS_MAC_RUN_GB=2 REGRESS_MAC_PACKAGE_GB=2
+regress_floor_cold() { printf '%s' "$((2 * $1 + REGRESS_FLOOR_ROOM_GB))"; }
+regress_floor_warm() { printf '%s' "$(($1 + REGRESS_FLOOR_ROOM_GB))"; }
+
+# regress_win_ps <tree root> <script> [name=value...]: a PowerShell command line
+# that runs <script> in the Windows guest with $rgScript (its name), $root and
+# the named values set and inline-lib.ps1 from the script's folder in front of
+# it. Scripts travel this way when they must not depend on the copy of the
+# scripts in the guest. Full-line comments stay behind, since the command line
+# Windows takes is 32767 characters, and progress records would come back over
+# the redirected stream as CLIXML.
+regress_win_ps() {
+    local root="$1" script="$2" encoded pair
+    shift 2
+    encoded="$({
+        printf "\$ProgressPreference = 'SilentlyContinue'\r\n\$rgScript = '%s'\r\n\$root = '%s'\r\n" \
+            "$(basename "$script" .ps1)" "$root"
+        for pair in "$@"; do printf "\$%s = '%s'\r\n" "${pair%%=*}" "${pair#*=}"; done
+        cat "$(dirname "$script")/inline-lib.ps1" "$script" | sed '/^[[:space:]]*#/d'
+    } | iconv -f UTF-8 -t UTF-16LE | base64 -w0)"
+    if ((${#encoded} > 30000)); then
+        printf 'error: %s is too long to send inline (%s characters encoded)\n' "$script" "${#encoded}" >&2
+        return 1
+    fi
+    printf 'powershell -NoProfile -NonInteractive -EncodedCommand %s; exit $LASTEXITCODE' "$encoded"
+}
+
+# regress_gb <bytes>: the size in GB with one decimal.
+regress_gb() {
+    awk -v b="$1" 'BEGIN { printf "%.1f GB", b / 1073741824 }'
+}
+
 regress_require() {
     local tool
     for tool in "$@"; do

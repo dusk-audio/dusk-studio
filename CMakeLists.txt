@@ -848,6 +848,7 @@ target_sources(DuskStudio PRIVATE
     src/DuskStudioApp.cpp
     src/foundation/Fft.cpp
     src/foundation/MessageThread.cpp
+    src/foundation/ThreadName.cpp
     src/foundation/UndoManager.cpp
     # Native CLAP sources are added below, gated by DUSKSTUDIO_HAS_NATIVE_CLAP.
     src/engine/AudioEngine.cpp
@@ -1004,9 +1005,11 @@ target_sources(DuskStudio PRIVATE
     src/ui/scenario/cases/gui_import_browser.cpp
     src/ui/scenario/cases/gui_keyboard_transport.cpp
     src/ui/scenario/cases/gui_mastering_bounce.cpp
+    src/ui/scenario/cases/gui_meters.cpp
     src/ui/scenario/cases/gui_midi_learn_plugins.cpp
     src/ui/scenario/cases/gui_midi_recovery.cpp
     src/ui/scenario/cases/gui_mixer.cpp
+    src/ui/scenario/cases/gui_panel_frames.cpp
     src/ui/scenario/cases/gui_piano_roll.cpp
     src/ui/scenario/cases/gui_piano_roll_audition.cpp
     src/ui/scenario/cases/gui_plugin_editors.cpp
@@ -1325,14 +1328,19 @@ if(DUSKSTUDIO_NATIVE_AU)
         src/engine/au/AuEditor.mm)
     find_library(DUSKSTUDIO_AUDIOTOOLBOX_FRAMEWORK AudioToolbox REQUIRED)
     find_library(DUSKSTUDIO_AUDIOUNIT_FRAMEWORK AudioUnit REQUIRED)
-    find_library(DUSKSTUDIO_COREAUDIOKIT_FRAMEWORK CoreAudioKit REQUIRED)
     find_library(DUSKSTUDIO_AU_COCOA_FRAMEWORK Cocoa REQUIRED)
     target_link_libraries(DuskStudio PRIVATE
         ${DUSKSTUDIO_AUDIOTOOLBOX_FRAMEWORK}
         ${DUSKSTUDIO_AUDIOUNIT_FRAMEWORK}
-        ${DUSKSTUDIO_COREAUDIOKIT_FRAMEWORK}
         ${DUSKSTUDIO_AU_COCOA_FRAMEWORK})
     target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_NATIVE_AU=1)
+endif()
+
+# JUCE's AU format (JUCE_PLUGINHOST_AU, set on Darwin below) uses CoreAudioKit's
+# AUGenericView whether or not the native AU host is built.
+if(APPLE)
+    find_library(DUSKSTUDIO_COREAUDIOKIT_FRAMEWORK CoreAudioKit REQUIRED)
+    target_link_libraries(DuskStudio PRIVATE ${DUSKSTUDIO_COREAUDIOKIT_FRAMEWORK})
 endif()
 
 # The format-neutral Cocoa/X11 component bridge is already part of the
@@ -1585,6 +1593,7 @@ if(_duskstudio_oop_enabled)
         src/engine/ipc/PluginHostXErrors.cpp
         src/engine/PluginDescriptor.cpp
         src/foundation/MessageThread.cpp
+        src/foundation/ThreadName.cpp
         ${_duskstudio_ipc_child_platform_sources})
     target_compile_features (dusk-studio-plugin-host PRIVATE cxx_std_17)
     target_compile_definitions (dusk-studio-plugin-host PRIVATE
@@ -2167,8 +2176,6 @@ target_compile_definitions(DuskStudio PRIVATE
     $<$<BOOL:${DUSKSTUDIO_JUCE_HAS_WAYLAND}>:DUSKSTUDIO_JUCE_HAS_WAYLAND=1>
     JUCE_APPLICATION_NAME_STRING="Dusk Studio"
     JUCE_APPLICATION_VERSION_STRING="$<TARGET_PROPERTY:DuskStudio,JUCE_VERSION>"
-    JUCE_JACK=1
-    JUCE_ALSA=1
     # Native Wayland windowing on Linux (plugdata fork). Bypasses XWayland
     # and the meta_window_unmanage assertion that crashes mutter when an
     # X11 toplevel is destroyed while focused.
@@ -2197,8 +2204,8 @@ if((CMAKE_SYSTEM_NAME STREQUAL "Linux") AND TARGET juce::pkgconfig_JUCE_WAYLAND_
     target_link_libraries(DuskStudio PRIVATE juce::pkgconfig_JUCE_WAYLAND_LINUX_DEPS)
 endif()
 
-# Linux uses the native device layer. juce_audio_utils still pulls the JUCE
-# device module transitively until that higher-level module unlinks.
+# Linux uses the native device layer, so JUCE's device module links only on
+# macOS and Windows, for DeviceManagerJuce.cpp and the JUCE MIDI fallback.
 if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_libraries(DuskStudio PRIVATE juce::juce_audio_devices)
 endif()
@@ -2207,7 +2214,6 @@ target_link_libraries(DuskStudio PRIVATE
     juce::juce_audio_basics
     juce::juce_audio_formats
     juce::juce_audio_processors
-    juce::juce_audio_utils
     juce::juce_core
     juce::juce_data_structures
     juce::juce_dsp

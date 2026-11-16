@@ -3,6 +3,16 @@
 
 namespace duskstudio
 {
+namespace
+{
+const juce::Font& telemetryFont()
+{
+    static const juce::Font font (juce::FontOptions (
+        juce::Font::getDefaultMonospacedFontName(), 12.0f, juce::Font::plain));
+    return font;
+}
+} // namespace
+
 SystemStatusBar::SystemStatusBar (AudioEngine& e) : engine (e)
 {
     setOpaque (true);
@@ -26,7 +36,8 @@ void SystemStatusBar::timerCallback()
     lastReadings = pinnedReadings.value_or (DspReadings { (double) engine.getCpuUsage(),
                                                           engine.getXRunCount(),
                                                           engine.getBackendXRunCount(),
-                                                          engine.getRealtimeDemotionCount() });
+                                                          engine.getRealtimeDemotionCount(),
+                                                          engine.getStallCount() });
     lastDspSeverity = dspSeverity (lastReadings);
     lastAudioWarn   = ! engine.hasUsableOutputs() && sr > 0.0;
 
@@ -55,16 +66,24 @@ void SystemStatusBar::timerCallback()
     // Two xrun counts: engine-self-detected (callback overrun) / backend
     // (driver EPIPE on ALSA, JACK xrun callback). They have different fixes
     // - surfacing both lets a glitchy session be diagnosed at a glance.
-    dspInfo = "DSP: " + juce::String ((int) std::round (lastReadings.cpuUsage * 100.0)) + "%"
-            + " (" + juce::String (lastReadings.engineOverruns) + "/" + juce::String (lastReadings.backendXruns) + ")";
+    std::string dsp = "DSP: " + std::to_string ((int) std::round (lastReadings.cpuUsage * 100.0)) + "% ("
+                    + std::to_string (lastReadings.engineOverruns) + "/"
+                    + std::to_string (lastReadings.backendXruns) + ")";
     // Oversampling badge, only above 1x: a session saved at 2x/4x
     // multiplies the whole mixer's DSP cost, and without the badge that
     // cost reads as an inexplicable load spike.
     if (const int ox = engine.getSession().oversamplingFactor.load (std::memory_order_relaxed); ox > 1)
-        dspInfo += " @" + juce::String (ox) + "x";
+        dsp += " @" + std::to_string (ox) + "x";
     // Audio threads a stalled plug-in pushed off realtime priority.
     if (lastReadings.realtimeDemotions > 0)
-        dspInfo += (" RT " + std::to_string (lastReadings.realtimeDemotions)).c_str();
+        dsp += " RT " + std::to_string (lastReadings.realtimeDemotions);
+    if (lastReadings.stalls > 0)
+        dsp += " STALL " + std::to_string (lastReadings.stalls);
+    if (dspInfo != dsp.c_str())
+    {
+        dspInfo = dsp.c_str();
+        dspTextWidth = juce::GlyphArrangement::getStringWidthInt (telemetryFont(), dspInfo);
+    }
 
     // Chord readout. Audio thread maintains heldMidiNotes; we snapshot
     // here, fingerprint to skip re-analysis when nothing changed, and
@@ -122,8 +141,6 @@ void SystemStatusBar::paint (juce::Graphics& g)
 {
     // Fonts are immutable + shareable in JUCE; build them once instead of
     // re-constructing (and re-querying the default mono font name) every paint.
-    static const juce::Font telemetryFont (juce::FontOptions (
-        juce::Font::getDefaultMonospacedFontName(), 12.0f, juce::Font::plain));
     static const juce::Font chordFont (juce::FontOptions (
         juce::Font::getDefaultMonospacedFontName(), 18.0f, juce::Font::bold));
 
@@ -132,7 +149,7 @@ void SystemStatusBar::paint (juce::Graphics& g)
     g.drawRect (getLocalBounds(), 1);
 
     auto bounds = getLocalBounds().reduced (8, 0);
-    g.setFont (telemetryFont);
+    g.setFont (telemetryFont());
 
     // DSP info now reads "DSP: 12% (3/0)" at worst - engine/backend xrun
     // pair widens the right column slightly.
@@ -153,7 +170,7 @@ void SystemStatusBar::paint (juce::Graphics& g)
         g.setFont (chordFont);
         g.drawText (chordInfo, chordBounds, juce::Justification::centredRight, false);
         // Restore the status-bar font for the audio / DSP segments below.
-        g.setFont (telemetryFont);
+        g.setFont (telemetryFont());
     }
 
     // Audio segment goes red when the device opened with no outputs -

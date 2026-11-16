@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
+#include <algorithm>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -29,13 +30,17 @@ public:
     // hit test so the reset zone always matches what's drawn.
     juce::Rectangle<int> dspSegmentBounds() const noexcept
     {
-        // Wide enough for the worst case incl. the oversampling badge and
-        // the realtime count: "DSP: 100% (99/99) @4x RT 9".
-        return getLocalBounds().reduced (8, 0).removeFromRight (195);
+        // Its usual width holds "DSP: 100% (99/99) @4x RT 9"; past that it grows
+        // into the Audio segment as far as its text needs, so the counts at
+        // its end are never what is cut off.
+        return getLocalBounds().reduced (8, 0).removeFromRight (std::max (kDspSegmentWidth, dspTextWidth + kDspTextPad));
     }
 
     // The DSP segment exactly as the last tick built it.
     std::string dspReadoutForScenario() const { return dspInfo.toStdString(); }
+
+    // Whether that text fits inside the segment, in the font it is drawn in.
+    bool dspReadoutFitsForScenario() const noexcept { return dspTextWidth + kDspTextPad <= dspSegmentBounds().getWidth(); }
 
     // Stands in for the engine's readings until cleared with nullopt, and
     // rebuilds the readout from them at once.
@@ -50,6 +55,9 @@ private:
     AudioEngine& engine;
     juce::String audioInfo  { "Audio: -" };
     juce::String dspInfo    { "DSP: -"   };
+    int          dspTextWidth = 0;   // dspInfo's width in the telemetry font
+    static constexpr int kDspSegmentWidth = 195;
+    static constexpr int kDspTextPad = 4;
     juce::String chordInfo;   // empty when nothing is held
 
     // The ChordAnalyzer ctor allocates (it builds an internal pattern

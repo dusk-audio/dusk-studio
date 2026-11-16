@@ -2,6 +2,7 @@
 #include "SfzCatalogJson.h"
 #include "../../foundation/AppConfigDir.h"
 #include "../../foundation/Fs.h"
+#include "../../foundation/ThreadName.h"
 
 #include <sodium.h>
 
@@ -390,7 +391,7 @@ LibraryService::LibraryService (LibraryLocations configured, fs::path file, std:
                                         : cacheDirectory / "sfz-cache" / "repository"),
       artworkCache (cacheDirectory.empty() ? store.root() / ".artwork-cache"
                                             : cacheDirectory / "sfz-cache" / "artwork", transport),
-      worker ([this] { run(); }) {}
+      worker ([this] { dusk::setCurrentThreadName ("DuskSfzLibrary"); run(); }) {}
 
 LibraryService::~LibraryService()
 {

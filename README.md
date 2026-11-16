@@ -71,7 +71,7 @@ private releases repo, with a signed `SHA256SUMS` beside them. What is left
 before 1.0 is release engineering, low-spec and Raspberry Pi performance, and
 deeper accessibility.
 
-The C++ suite declares 2171 Catch2 test cases across 311 test source files.
+The C++ suite declares 2199 Catch2 test cases across 317 test source files.
 Linux amd64, Linux arm64 and macOS build and run it on every push; Windows runs
 it on every push and PR; ThreadSanitizer and ASan plus UBSan run it on every
 push and PR. All of those, plus the framework-coupling ratchet, are required
@@ -138,9 +138,9 @@ Channels 1-24 ───────────────→ 4 Aux Buses ─�
 
 - **DSP** comes from the Dusk Audio plugin suite (4K EQ 2, Multi-Comp
   FET/Opto/VCA, Multi-Q, Tape Machine 2, shared AnalogEmulation), so the mixer
-  and the standalone plugins share one DSP source of truth. The channel and bus
-  EQs run the 4K EQ 2 engine; the master tape runs Tape Machine 2 with the
-  plugin's own editor.
+  and the standalone plugins share one DSP source of truth. The channel EQ runs
+  the 4K EQ 2 engine; the master tape runs Tape Machine 2 with the plugin's own
+  editor.
 - **Built-in units** are compiled into the application, so they need no scan and
   work on a fresh install: Utility, DuskVerb 2, Tape Echo 2, Tape Machine 2 and
   Sunset. DuskVerb 2, Tape Echo 2, Tape Machine 2 and Sunset show the plugin's
@@ -161,13 +161,14 @@ Channels 1-24 ───────────────→ 4 Aux Buses ─�
   hard fork of sfizz, converting SF2 to SFZ on load. No external synth required.
 - **Removing the framework** is a standing campaign, tracked in
   [docs/dejuce/campaign.md](docs/dejuce/campaign.md) and enforced by a ratchet
-  in CI that lets framework coupling fall but never rise. It resumes after 1.0.
+  in CI that lets framework coupling fall but never rise. Its goal is the whole
+  framework gone by 1.0.
 
 ## Repository
 
 ```
 src/
-  dsp/         # ChannelStrip, AuxBusStrip, MasterBus, BrickwallLimiter
+  dsp/         # ChannelStrip, BusStrip, AuxLaneStrip, MasterBus, BrickwallLimiter
   engine/      # AudioEngine, RecordManager, PlaybackEngine, BounceEngine, MasteringChain
     pipewire/  # native PipeWire backend, preferred on Linux
     alsa/      # native ALSA backend, the Linux fallback
@@ -184,7 +185,7 @@ src/
   ui/          # MainComponent, ConsoleView, channel/aux/master strips, mastering view
     imgui/     # native surfaces: startup, audio settings, audio editor, unit editors, keyboard
   util/        # native log storage + CrashHandler signal reports
-tests/         # 2171 Catch2 test cases declared in C++ (session, recording, MIDI, IPC, DSP)
+tests/         # 2199 Catch2 test cases declared in C++ (session, recording, MIDI, IPC, DSP)
 packaging/     # .desktop, AppStream, MIME, macOS bundle, for tarball + DMG builds
 docs/          # maintainer guide, the 1.0 plan, migration plans
   DuskStudio.md  # authoritative product spec

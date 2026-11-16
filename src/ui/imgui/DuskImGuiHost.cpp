@@ -263,8 +263,17 @@ struct DuskImGuiHost::Impl final : private dusk::Timer
             return false;
         }
 
-        startTimer (kPumpIntervalMs);
+        startTimer (pumpIntervalMs);
         return true;
+    }
+
+    void setPumpInterval (int intervalMs)
+    {
+        if (intervalMs == pumpIntervalMs)
+            return;
+        pumpIntervalMs = intervalMs;
+        if (isTimerRunning() && ! closeRequested)
+            startTimer (intervalMs);
     }
 
     void close()
@@ -273,6 +282,8 @@ struct DuskImGuiHost::Impl final : private dusk::Timer
             return;
         closeRequested = true;
         closeWasPumped = false;
+        if (pumpIntervalMs != kPumpIntervalMs)
+            startTimer (kPumpIntervalMs);
         platform::releaseKeyboardFromChild (window->getNativeWindowHandle(), embeddedParent.handle);
        #if DUSKSTUDIO_HAS_SHARED_WAYLAND
         if (sharedApplication != nullptr)
@@ -395,7 +406,7 @@ struct DuskImGuiHost::Impl final : private dusk::Timer
             const auto started = std::chrono::steady_clock::now();
             app->idle();
             const auto finished = std::chrono::steady_clock::now();
-            nextPumpAt = nextPumpAfter (started, finished, kPumpIntervalMs);
+            nextPumpAt = nextPumpAfter (started, finished, pumpIntervalMs);
             if (! firstFrameConfirmed)
             {
                 firstFrameConfirmed = true;
@@ -513,6 +524,7 @@ struct DuskImGuiHost::Impl final : private dusk::Timer
     bool closeRequested = false;
     bool closeWasPumped = false;
     bool takesKeyboardOnOpen = true;
+    int pumpIntervalMs = kPumpIntervalMs;
     std::chrono::steady_clock::time_point nextPumpAt {};
 };
 
@@ -546,6 +558,11 @@ const std::string& DuskImGuiHost::lastOpenFailure() const noexcept
 void DuskImGuiHost::setGeometry (Geometry geometry)
 {
     impl->setGeometry (geometry);
+}
+
+void DuskImGuiHost::setPumpIntervalMs (int intervalMs)
+{
+    impl->setPumpInterval (intervalMs);
 }
 
 void DuskImGuiHost::close()

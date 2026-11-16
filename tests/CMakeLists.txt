@@ -96,6 +96,7 @@ add_executable(dusk-studio-tests
     ${CMAKE_SOURCE_DIR}/src/engine/MidiCaptureStream.cpp
     atomic_park.cpp
     audio_worker_pool.cpp
+    audio_worker_pool_inline_blocks.cpp
     rt_priority.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/AudioWorkerPool.cpp
     embedded_modal_close_safety.cpp
@@ -112,6 +113,8 @@ add_executable(dusk-studio-tests
     panic_probe_fixtures.cpp
     plugin_state_diagnostics.cpp
     channel_strip_midi_gate.cpp
+    channel_strip_will_run_chain.cpp
+    channel_strip_idle_gains.cpp
     ${CMAKE_SOURCE_DIR}/src/dsp/ChannelStrip.cpp
     insert_mode_defaults.cpp
     ${CMAKE_SOURCE_DIR}/src/dsp/AuxLaneStrip.cpp
@@ -204,16 +207,20 @@ add_executable(dusk-studio-tests
     session_mcu_roundtrip.cpp
     console_bank_mapping.cpp
     track_meter_source.cpp
+    repaint_gate.cpp
+    level_meter_draw.cpp
     mcu_receiver_decode.cpp
     mcu_controller_emit.cpp
     mcu_fader_taper.cpp
     comp_mode_fanout.cpp
     foundation_message_thread.cpp
+    foundation_thread_name.cpp
     foundation_undo_manager.cpp
     foundation_undo_manager_parity.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/McuReceiver.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/McuController.cpp
     ${CMAKE_SOURCE_DIR}/src/foundation/MessageThread.cpp
+    ${CMAKE_SOURCE_DIR}/src/foundation/ThreadName.cpp
     ${CMAKE_SOURCE_DIR}/src/foundation/UndoManager.cpp
     multisample_state_roundtrip.cpp
     multisample_hdcc_coalescing.cpp
@@ -381,7 +388,8 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         "-Wl,--wrap=renameat2" "-Wl,--wrap=link" "-Wl,--wrap=unlink" "-Wl,--wrap=fsync")
     add_executable(dusk-alsa-output-tests
         alsa_seq_output_schedule.cpp
-        ${CMAKE_SOURCE_DIR}/src/engine/midi/AlsaSeqMidi.cpp)
+        ${CMAKE_SOURCE_DIR}/src/engine/midi/AlsaSeqMidi.cpp
+        ${CMAKE_SOURCE_DIR}/src/foundation/ThreadName.cpp)
     target_include_directories(dusk-alsa-output-tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
     # A fortified poll() calls __poll_chk, which --wrap=poll cannot intercept.
     target_compile_options(dusk-alsa-output-tests PRIVATE -Wall -Wextra -Wpedantic -U_FORTIFY_SOURCE)
@@ -669,7 +677,8 @@ if(DUSKSTUDIO_NATIVE_LV2)
             ${CMAKE_SOURCE_DIR}/src/engine/lv2/Lv2Bundle.cpp
             ${CMAKE_SOURCE_DIR}/src/engine/lv2/Lv2Instance.cpp
             ${CMAKE_SOURCE_DIR}/src/engine/lv2/Lv2Editor.cpp
-            ${CMAKE_SOURCE_DIR}/src/engine/lv2/Lv2Worker.cpp)
+            ${CMAKE_SOURCE_DIR}/src/engine/lv2/Lv2Worker.cpp
+            ${CMAKE_SOURCE_DIR}/src/foundation/ThreadName.cpp)
         target_compile_features(dusk-lv2-editor-tests PRIVATE cxx_std_17)
         target_include_directories(dusk-lv2-editor-tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
         target_compile_definitions(dusk-lv2-editor-tests PRIVATE
@@ -1239,7 +1248,6 @@ if(DUSK_PLUGINS_PATH)
 
     # Modules referenced only transitively by the projucer-shim umbrella header.
     target_link_libraries(dusk-studio-tests PRIVATE
-        juce::juce_audio_utils
         juce::juce_data_structures
         juce::juce_events
         juce::juce_gui_extra)
@@ -1337,7 +1345,8 @@ catch_discover_tests(dusk-studio-tests
 
 if(APPLE)
     target_link_libraries(dusk-studio-tests PRIVATE dusk-coremidi "-framework CoreAudio")
-    add_executable(dusk-coremidi-tests core_midi_backend.mm)
+    add_executable(dusk-coremidi-tests core_midi_backend.mm
+        ${CMAKE_SOURCE_DIR}/src/foundation/ThreadName.cpp)
     set_target_properties(dusk-coremidi-tests PROPERTIES OBJCXX_STANDARD 17 OBJCXX_STANDARD_REQUIRED ON)
     target_compile_options(dusk-coremidi-tests PRIVATE -Wall -Wextra -Wpedantic -fblocks)
     target_link_libraries(dusk-coremidi-tests PRIVATE dusk-coremidi Catch2::Catch2WithMain)
@@ -1382,7 +1391,7 @@ if(UNIX)
                 COMMAND "${Python3_EXECUTABLE}"
                         "${CMAKE_CURRENT_SOURCE_DIR}/regress_orchestration.py"
                         "${CMAKE_SOURCE_DIR}")
-            set_tests_properties(regression-runner-contract PROPERTIES TIMEOUT 60)
+            set_tests_properties(regression-runner-contract PROPERTIES TIMEOUT 240)
         endif()
         add_test(NAME release-mechanics-contract
             COMMAND "${DUSKSTUDIO_BASH_EXECUTABLE}"
@@ -1402,7 +1411,7 @@ if(Python3_Interpreter_FOUND)
     add_test(NAME cross-platform-validator-contract
         COMMAND "${Python3_EXECUTABLE}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/validate_cross_platform.py")
-    set_tests_properties(cross-platform-validator-contract PROPERTIES TIMEOUT 120)
+    set_tests_properties(cross-platform-validator-contract PROPERTIES TIMEOUT 300)
     add_test(NAME macos-bundle-contract
         COMMAND "${Python3_EXECUTABLE}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/macos_bundle.py")

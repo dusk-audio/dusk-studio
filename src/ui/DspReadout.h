@@ -10,18 +10,20 @@ struct DspReadings
     int    engineOverruns    = 0;
     int    backendXruns      = 0;
     int    realtimeDemotions = 0;
+    int    stalls            = 0;
 };
 
 enum class DspSeverity { normal, risk, disruption };
 
 // Only the backend reports a stream disruption. An engine overrun is a block
 // that finished late, which device buffering can absorb, so it ranks with high
-// load and a realtime demotion as a risk.
+// load as a risk, and so do the two warnings that a plug-in stalled: a
+// realtime demotion and a block held up for seconds.
 constexpr DspSeverity dspSeverity (const DspReadings& r) noexcept
 {
     if (r.backendXruns > 0)
         return DspSeverity::disruption;
-    if (r.engineOverruns > 0 || r.cpuUsage > 0.85 || r.realtimeDemotions > 0)
+    if (r.engineOverruns > 0 || r.cpuUsage > 0.85 || r.realtimeDemotions > 0 || r.stalls > 0)
         return DspSeverity::risk;
     return DspSeverity::normal;
 }

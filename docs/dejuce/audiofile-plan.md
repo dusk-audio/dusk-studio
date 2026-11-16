@@ -12,8 +12,9 @@ swept the residue (orphaned umbrella includes in FileImporter/DpImporter/
 DpAligner headers) and closed the docs. Net allowlist −2
 (LameMp3Writer.{h,cpp} cleaned → gate 182) — the honest-yield "zero
 movement" prediction missed this. Zero production call sites remain on the
-JUCE audio-format APIs; the module unlink waits on juce_audio_utils (GUI
-tower). Bench debts at §Owed.**
+JUCE audio-format APIs. juce_audio_utils has since unlinked, so the module
+unlink now waits on juce_dsp, whose module declaration depends on it. Bench
+debts at §Owed.**
 This spec is archival once PR-2 merges.
 
 Read order for an executing session: `docs/dejuce/campaign.md` → this file →
@@ -30,20 +31,23 @@ seam in `src/engine/audiofile/` (`dusk::audio::FileReader` / `FileWriter` /
 
 **Honest yield, stated up front:** ZERO allowlist movement and NO module
 unlink from this tower alone. Every consumer keeps other JUCE (AudioBuffer,
-File/String, TimeSliceThread, dsp, GUI), and `juce_audio_utils`
-(AudioThumbnail) transitively keeps `juce_audio_formats` compiling until the
-GUI tower. The deliverable is: zero production call sites on the JUCE
-audio-format APIs, so `juce_audio_formats` becomes unlinkable the moment
-`juce_audio_utils` goes (GUI tower), with no residual work. That unlink will
+File/String, TimeSliceThread, dsp, GUI). When this was written
+`juce_audio_utils` (AudioThumbnail) also kept `juce_audio_formats` compiling;
+that link is gone, and `juce_dsp`, whose module declaration depends on
+`juce_audio_formats`, is now the only thing keeping it in the build. The
+deliverable is: zero production call sites on the JUCE audio-format APIs, so
+`juce_audio_formats` becomes unlinkable the moment `juce_dsp` goes, with no
+residual work. That unlink will
 be global rather than platform-scoped: libsndfile is required on every
 platform, so no JUCE fallback path survives anywhere. The gate ratchet does
 not move; do not chase it.
 
 **Out of scope (do not pull in):** `juce::MidiFile` (FileImporter,
 MainComponent — juce_audio_basics MIDI content, dies with the events tower);
-`AudioThumbnail`/`AudioThumbnailCache` (AudioRegionEditor, MasteringView —
-juce_audio_utils, GUI tower); the resamplers `WindowedSincInterpolator` /
-`LagrangeInterpolator` (juce_audio_basics — keep them; a native SRC is its
+`AudioThumbnail`/`AudioThumbnailCache`, since replaced in MasteringView and the
+region editor by the native `WaveformSource` (AudioRegionEditor itself was
+deleted in #832, and `juce_audio_utils` is unlinked); the resamplers
+`WindowedSincInterpolator` / `LagrangeInterpolator` (juce_audio_basics — keep them; a native SRC is its
 own decision later); `juce::TimeSliceThread` where it survives for other
 uses.
 

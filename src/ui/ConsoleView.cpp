@@ -326,6 +326,13 @@ void ConsoleView::applyCompactState()
     }
 }
 
+void ConsoleView::visibilityChanged()
+{
+    for (auto& strip : strips)
+        if (strip != nullptr)
+            strip->refreshForShowState();
+}
+
 void ConsoleView::setStripsMixingMode (bool mixing)
 {
     stripsMixing = mixing;

@@ -14,6 +14,8 @@ class PanelFontFallback
 public:
     explicit PanelFontFallback (std::filesystem::path fontFile = {});
     void request (std::string_view text);
+    // A character asked for that the next update has not tried yet.
+    bool waiting() const;
     bool update (float pixels);
     void reserve (ImFontAtlas& atlas);
     void rasterise (ImFontAtlas& atlas, ImFont& font);

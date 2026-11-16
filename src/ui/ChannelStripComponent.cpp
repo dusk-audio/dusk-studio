@@ -47,6 +47,7 @@
 #include "../session/RegionEditActions.h"
 #include "AuxSendText.h"
 #include <algorithm>
+#include <cmath>
 #include <stdexcept>
 #include <cstdio>
 
@@ -273,10 +274,11 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     enableValueLabel (hpfKnob, "", 0);
     // OFF follows the switch, not the knob: a converted older session can
     // leave a filter on at its OFF end, where it still plays.
-    hpfKnob.textFromValueFunction = [&strip = track.strip] (double v)
+    sampleFilter (shownHpf, track.strip.hpfEnabled, track.strip.hpfFreq);
+    hpfKnob.textFromValueFunction = [this] (double v)
     {
-        if (! strip.hpfEnabled.load (std::memory_order_relaxed)) return std::string ("OFF");
-        return formatFrequency (shownFrequency (v, strip.hpfFreq.load (std::memory_order_relaxed),
+        if (! shownHpf.enabled) return std::string ("OFF");
+        return formatFrequency (shownFrequency (v, shownHpf.held,
                                                 ChannelStripParams::kHpfMinHz, ChannelStripParams::kHpfMaxHz));
     };
     hpfKnob.valueFromTextFunction = [parseFrequencyText] (const auto& text)
@@ -303,10 +305,11 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     lpfKnob.setHelpText ("Channel low-pass filter cutoff, in hertz; OFF when fully up.");
     styleCompactKnob (lpfKnob, filterWhite);
     enableValueLabel (lpfKnob, "", 0);
-    lpfKnob.textFromValueFunction = [&strip = track.strip] (double v)
+    sampleFilter (shownLpf, track.strip.lpfEnabled, track.strip.lpfFreq);
+    lpfKnob.textFromValueFunction = [this] (double v)
     {
-        if (! strip.lpfEnabled.load (std::memory_order_relaxed)) return std::string ("OFF");
-        return formatFrequency (shownFrequency (v, strip.lpfFreq.load (std::memory_order_relaxed),
+        if (! shownLpf.enabled) return std::string ("OFF");
+        return formatFrequency (shownFrequency (v, shownLpf.held,
                                                 ChannelStripParams::kLpfMinHz, ChannelStripParams::kLpfMaxHz));
     };
     lpfKnob.valueFromTextFunction = [parseFrequencyText] (const auto& text)
@@ -624,9 +627,11 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         // textFromValueFunction must be set BEFORE setValue, otherwise the
         // initial text is rendered with the default formatter ("2000") and
         // doesn't get our "2.0k" notation until the user moves the knob.
-        row.freq->textFromValueFunction = [held = &track.strip.eqFreq (spec.freq), lo = spec.freqMin, hi = spec.freqMax] (double v)
+        row.shownFreq = track.strip.eqFreq (spec.freq).load (std::memory_order_relaxed);
+        row.freqText.changed (row.shownFreq, 0.0f);
+        row.freq->textFromValueFunction = [&row, lo = spec.freqMin, hi = spec.freqMax] (double v)
         {
-            return formatFrequency (shownFrequency (v, held->load (std::memory_order_relaxed), lo, hi));
+            return formatFrequency (shownFrequency (v, row.shownFreq, lo, hi));
         };
         row.freq->valueFromTextFunction = [parseFrequencyText] (const auto& text)
         {
@@ -2282,12 +2287,28 @@ void ChannelStripComponent::showPluginSlotMenu()
 void ChannelStripComponent::refreshInsertButtonForCapture()
 {
     refreshPluginSlotButton();
+    if (insertBypassLed != nullptr) insertBypassLed->refresh();
     repaint();
 }
 
 void ChannelStripComponent::refreshMetersForCapture()
 {
     timerCallback();
+}
+
+LevelBarDraw ChannelStripComponent::inputBarFor (const LevelBallistics& level, float span) const
+{
+    return inputBarDraw (level.displayed, inputMeterFrac (level.displayed),
+                         level.peak, inputMeterFrac (level.peak), span);
+}
+
+float ChannelStripComponent::inputMeterFrac (float db) const
+{
+    const auto& faderRange = faderSlider.getNormalisableRange();
+    const double clamped = jlimit ((double) faderRange.start,
+                                   (double) faderRange.end,
+                                   (double) db);
+    return (float) jlimit (0.0, 1.0, faderRange.convertTo0to1 (clamped));
 }
 
 bool ChannelStripComponent::insertSlotOccupied() const
@@ -5323,14 +5344,9 @@ void ChannelStripComponent::timerCallback()
         }
     }
 
-    // Sync the inline COMP mode button with the underlying atoms so it
-    // reflects writes from other surfaces (meter-strip threshold drag,
-    // popup editor's ON toggle, MIDI binding, etc.). State-only refresh
-    // every tick is cheap; the heavier knob-visibility filter only
-    // fires when compMode actually changed since the last apply
-    // (catches session-load + MIDI-binding mode swaps that bypass the
-    // popup-menu callback).
-    refreshCompModeButtonState();
+    // The knob-visibility filter fires only when compMode changed since the
+    // last apply (catches session-load + MIDI-binding mode swaps that bypass
+    // the popup-menu callback).
     {
         const int liveMode = jlimit (0, 2,
             track.strip.compMode.load (std::memory_order_relaxed));
@@ -5343,16 +5359,6 @@ void ChannelStripComponent::timerCallback()
                           // stale positions.
         }
     }
-    if (eqHeaderBtn != nullptr)
-    {
-        // Surface the active EQ type on the header so the user can
-        // Type cue now lives on the dedicated eqTypeChip mid-strip
-        // (between HM and LM rows). Just repaint the header so its LED
-        // tracks atom changes from external mutation paths.
-        eqHeaderBtn->refresh();
-    }
-    if (insertBypassLed != nullptr)
-        insertBypassLed->repaint();   // tracks bypass atom + slot load/unload
     // Sync the dedicated E/G chip's label + toggle state from the atom
     // so external writes (popup editor type picker) reflect inline.
     {
@@ -5390,33 +5396,14 @@ void ChannelStripComponent::timerCallback()
         syncKnob (vcaOutputKnob,   sp.compVcaOutput.load   (std::memory_order_relaxed));
         syncKnob (hpfKnob,         sp.hpfFreq.load         (std::memory_order_relaxed));
         syncKnob (lpfKnob,         sp.lpfFreq.load         (std::memory_order_relaxed));
-        // MIDI, a control surface or the EQ editor can switch a filter
-        // without moving this knob, and its text reads the switch.
-        hpfKnob.updateText();
-        lpfKnob.updateText();
         for (size_t i = 0; i < eqRows.size(); ++i)
         {
             const auto& spec = bandSpecs()[i];
             auto& row = eqRows[i];
             if (row.gain != nullptr) syncKnob (*row.gain, spec.gainPtr (track.strip)->load (std::memory_order_relaxed));
             if (row.q != nullptr)    syncKnob (*row.q,    spec.qPtr (track.strip)->load (std::memory_order_relaxed));
-            if (row.freq != nullptr)
-            {
-                syncKnob (*row.freq, track.strip.eqFreq (spec.freq).load (std::memory_order_relaxed));
-                // A frequency held past the knob's range leaves it on its end stop,
-                // where a new held value moves nothing, but the text reads it.
-                row.freq->updateText();
-            }
+            if (row.freq != nullptr) syncKnob (*row.freq, track.strip.eqFreq (spec.freq).load (std::memory_order_relaxed));
         }
-    }
-
-    // Keep split-button state visuals in sync with atom changes made by
-    // editors, automation, or MIDI rather than only by the last pointer click.
-    if (compactMode)
-    {
-        eqCompactButton.refresh();
-        compCompactButton.refresh();
-        auxCompactButton.refresh();
     }
 
     // Detect bus-colour edits made via the aux strip's right-click menu and
@@ -5437,24 +5424,8 @@ void ChannelStripComponent::timerCallback()
         }
     }
 
-    // Input level meter - fast attack on rise, slow decay; with a peak-hold
-    // marker that lingers for ~600 ms before falling. Stereo mode also
-    // smooths the R channel so the second LED bar can be drawn alongside.
-    auto smoothMeter = [] (float incoming, float& displayed,
-                            float& peakHold, int& peakHoldFrames)
-    {
-        if (incoming > displayed) displayed = incoming;
-        else                       displayed += (incoming - displayed) * 0.15f;
-
-        if (incoming >= peakHold)
-        {
-            peakHold       = incoming;
-            peakHoldFrames = 18;  // ~600 ms at 30 Hz
-        }
-        else if (peakHoldFrames > 0) --peakHoldFrames;
-        else peakHold = std::max (-100.0f, peakHold - 1.5f);
-    };
-
+    // Input level meter. Stereo mode also smooths the R channel so the second
+    // LED bar can be drawn alongside.
     const int trackMode = track.mode.load (std::memory_order_relaxed);
     const bool stereoMode = trackMode == (int) Track::Mode::Stereo;
 
@@ -5475,41 +5446,32 @@ void ChannelStripComponent::timerCallback()
     const float outR     = track.meterOutRDb.load (std::memory_order_relaxed);
     const float lDb = showInput ? track.meterInputDb.load (std::memory_order_relaxed)
                                 : (stereoMode ? outL : std::max (outL, outR));
-    smoothMeter (lDb, displayedInputDb, inputPeakHoldDb, inputPeakHoldFrames);
+    inputL.step (lDb);
     const float rDb = showInput ? track.meterInputRDb.load (std::memory_order_relaxed) : outR;
+    const auto now = std::chrono::steady_clock::now();
     if (lDb >= 0.0f || (stereoMode && rDb >= 0.0f))
-        meterClipUntil = std::chrono::steady_clock::now() + std::chrono::seconds (1);
+        meterClipUntil = now + std::chrono::seconds (1);
+    meterClipLit = now < meterClipUntil;
+    meterStereo = stereoMode;
 
     if (stereoMode)
     {
-        smoothMeter (rDb, displayedInputRDb, inputPeakHoldRDb, inputPeakHoldRFrames);
+        inputR.step (rDb);
     }
     else
     {
         // Bleed the R channel back to silence when the user flips out of
         // stereo so the dual-bar doesn't ghost-hold its last value.
-        displayedInputRDb = -100.0f;
-        inputPeakHoldRDb  = -100.0f;
+        inputR.displayed = -100.0f;
+        inputR.peak      = -100.0f;
     }
 
-    // GR repaint is handled inside CompMeterStrip's own Timer.
-    if (! inputMeterArea.isEmpty())  repaint (inputMeterArea);
-
-    // Update the numeric readout below the meter.
-    // One-decimal dB readout, matching the bus + master output-peak readouts
-    // so the level number reads identically across every strip type. The
-    // label's minimumHorizontalScale keeps "-12.3" inside the narrow column.
-    if (inputPeakHoldDb <= -60.0f)
-        inputPeakLabel.setText ("-inf", juce::dontSendNotification);
+    // The levels above step while the strip is hidden, so its first paint after
+    // showing draws them as they are; visibilityChanged refreshes the rest.
+    if (shownInLayout (*this))
+        refreshShownView();
     else
-        inputPeakLabel.setText (juce::String (inputPeakHoldDb, 1),
-                                  juce::dontSendNotification);
-
-    // Tint the readout when peaks get hot.
-    inputPeakLabel.setColour (juce::Label::textColourId,
-        inputPeakHoldDb >= -3.0f  ? juce::Colour (0xffff5050) :
-        inputPeakHoldDb >= -12.0f ? juce::Colour (0xffe0c050) :
-                                     juce::Colour (0xffd0d0d0));
+        forgetPaintedMeter();
 
     // Motor-fader / motor-pan animation: when the audio engine is feeding
     // a live atom from the lane (Read, or Touch when not grabbed), mirror
@@ -6176,6 +6138,9 @@ void ChannelStripComponent::onTrackModeChanged()
 void ChannelStripComponent::showTrackMode (int mode)
 {
     shownTrackMode = mode;
+    // The meter column is laid out for the new mode below, so its bars switch
+    // with it rather than on the next tick.
+    meterStereo = mode == (int) Track::Mode::Stereo;
     modeSelector.setSelectedId (mode + 1, juce::dontSendNotification);
     refreshInputSelectorVisibility();
     refreshPluginSlotButton();
@@ -6240,13 +6205,132 @@ void ChannelStripComponent::onHpfKnobChanged()
 {
     track.strip.moveEqFreq (ChannelStripParams::EqFreq::Hpf, (float) hpfKnob.getValue());
     // The knob wrote its text before this switched the filter.
+    sampleFilter (shownHpf, track.strip.hpfEnabled, track.strip.hpfFreq);
     hpfKnob.updateText();
 }
 
 void ChannelStripComponent::onLpfKnobChanged()
 {
     track.strip.moveEqFreq (ChannelStripParams::EqFreq::Lpf, (float) lpfKnob.getValue());
+    sampleFilter (shownLpf, track.strip.lpfEnabled, track.strip.lpfFreq);
     lpfKnob.updateText();
+}
+
+bool ChannelStripComponent::sampleFilter (ShownFilter& shown, const std::atomic<bool>& enabled,
+                                          const std::atomic<float>& held)
+{
+    const bool on = enabled.load (std::memory_order_relaxed);
+    const float hz = held.load (std::memory_order_relaxed);
+    if (! shown.key.changed (on ? hz : -1.0f, 0.0f)) return false;
+    shown.enabled = on;
+    shown.held = hz;
+    return true;
+}
+
+// What the strip shows of state that changes behind it: the module lights, the
+// filter and band frequency text, the input meter and its peak readout. The timer
+// skips it while the strip is hidden, so showing the strip runs it at once, before
+// its first paint.
+void ChannelStripComponent::refreshShownView()
+{
+    // The COMP button follows writes from other surfaces: the meter strip's
+    // threshold drag, the popup editor's ON toggle, a MIDI binding.
+    refreshCompModeButtonState();
+    if (eqHeaderBtn != nullptr)
+        eqHeaderBtn->refresh();
+    if (insertBypassLed != nullptr)
+        insertBypassLed->refresh();   // tracks bypass atom + slot load/unload
+    if (compactMode)
+    {
+        eqCompactButton.refresh();
+        compCompactButton.refresh();
+        auxCompactButton.refresh();
+    }
+
+    // MIDI, a control surface or the EQ editor can switch a filter without moving
+    // its knob, and its text reads the switch.
+    const auto& sp = track.strip;
+    if (sampleFilter (shownHpf, sp.hpfEnabled, sp.hpfFreq))
+    {
+        countGatedRepaint();
+        hpfKnob.updateText();
+    }
+    if (sampleFilter (shownLpf, sp.lpfEnabled, sp.lpfFreq))
+    {
+        countGatedRepaint();
+        lpfKnob.updateText();
+    }
+    for (size_t i = 0; i < eqRows.size(); ++i)
+    {
+        auto& row = eqRows[i];
+        if (row.freq == nullptr) continue;
+        // A frequency held past the knob's range leaves it on its end stop, where a
+        // new held value moves nothing, but the text reads it.
+        const float held = track.strip.eqFreq (bandSpecs()[i].freq).load (std::memory_order_relaxed);
+        if (row.freqText.changed (held, 0.0f))
+        {
+            row.shownFreq = held;
+            countGatedRepaint();
+            row.freq->updateText();
+        }
+    }
+
+    // GR repaint is handled inside CompMeterStrip's own Timer.
+    if (! inputMeterArea.isEmpty())
+    {
+        const float span = (float) inputMeterArea.getHeight() - 2.0f;
+        const bool left  = meterGateL.changed (inputBarFor (inputL, span));
+        const bool right = meterGateR.changed (inputBarFor (inputR, span));
+        const bool mode  = meterModeGate.changed ((float) ((meterStereo ? 1 : 0) + (meterClipLit ? 2 : 0)), 0.0f);
+        if (left || right || mode)
+        {
+            countGatedRepaint();
+            repaint (inputMeterArea);
+        }
+    }
+
+    // One-decimal dB readout, matching the bus + master output-peak readouts so
+    // the level number reads identically across every strip type. The label's
+    // minimumHorizontalScale keeps "-12.3" inside the narrow column.
+    if (peakReadout.update (inputL.peak))
+    {
+        countGatedRepaint();
+        inputPeakLabel.setText (peakReadout.text, juce::dontSendNotification);
+    }
+
+    // Tint the readout when peaks get hot.
+    const float peakDb = inputL.peak;
+    if (paintedPeakColour.changed (peakDb >= -3.0f ? 2.0f : peakDb >= -12.0f ? 1.0f : 0.0f, 0.0f))
+        inputPeakLabel.setColour (juce::Label::textColourId,
+            peakDb >= -3.0f  ? juce::Colour (0xffff5050) :
+            peakDb >= -12.0f ? juce::Colour (0xffe0c050) :
+                                juce::Colour (0xffd0d0d0));
+}
+
+// A hidden strip's next paint draws the meter as the timer last stepped it, which
+// need not be what the gate last asked for, so the gate starts again from nothing.
+void ChannelStripComponent::forgetPaintedMeter()
+{
+    meterGateL.forget();
+    meterGateR.forget();
+    meterModeGate.forget();
+}
+
+std::string ChannelStripComponent::filterTextForScenario (bool highPass)
+{
+    auto& knob = highPass ? hpfKnob : lpfKnob;
+    return knob.getTextFromValue (knob.getValue()).toStdString();
+}
+
+void ChannelStripComponent::visibilityChanged()
+{
+    refreshForShowState();
+}
+
+void ChannelStripComponent::refreshForShowState()
+{
+    if (shownInLayout (*this))
+        refreshShownView();
 }
 
 void ChannelStripComponent::setCompMode (int modeIndex)
@@ -6515,6 +6599,13 @@ bool ChannelStripComponent::groupChipViewForScenario (std::string& text, int& ma
                       && withinBlendRounding (pixel.getBlue(), expected.getBlue()));
 }
 
+std::array<int, 4> ChannelStripComponent::inputMeterBoundsForScenario() const
+{
+    const auto* top = getTopLevelComponent();
+    const auto r = top != nullptr ? top->getLocalArea (this, inputMeterArea) : inputMeterArea;
+    return { r.getX(), r.getY(), r.getWidth(), r.getHeight() };
+}
+
 bool ChannelStripComponent::meterClipForScenario()
 {
     if (! isShowing() || inputMeterArea.isEmpty()) return false;
@@ -6606,25 +6697,16 @@ void ChannelStripComponent::paint (juce::Graphics& g)
     // approach and put 0 dB at 91 % of bar height while the fader's "0"
     // tick (with SkewFactorFromMidPoint(-12) on a -100..+12 range) lived
     // at ~96 % - they read as two different scales for the same signal.
-    const auto& faderRange = faderSlider.getNormalisableRange();
-    auto dbToFrac = [&] (float db) {
-        const double clamped = jlimit ((double) faderRange.start,
-                                              (double) faderRange.end,
-                                              (double) db);
-        return (float) jlimit (0.0, 1.0,
-                                      faderRange.convertTo0to1 (clamped));
-    };
+    auto dbToFrac = [this] (float db) { return inputMeterFrac (db); };
 
     if (! inputMeterArea.isEmpty())
     {
-        const bool stereoMode = (track.mode.load (std::memory_order_relaxed)
-                                  == (int) Track::Mode::Stereo);
-
         // Single bar (mono / midi) or split L|R bars (stereo) in the same
         // total meter footprint. Stereo halves the bar width so both fit
         // without expanding the meter column.
-        auto drawBar = [&] (juce::Rectangle<float> bar, float dispDb, float peakDb)
+        auto drawBar = [&] (juce::Rectangle<float> bar, const LevelBallistics& level)
         {
+            const auto draw = inputBarFor (level, bar.getHeight() - 2.0f);
             g.setColour (juce::Colour (0xff060608));
             g.fillRoundedRectangle (bar, 1.5f);
             g.setColour (juce::Colour (0xff2a2a30));
@@ -6637,17 +6719,14 @@ void ChannelStripComponent::paint (juce::Graphics& g)
             const juce::Colour kLedGreen  (0xff20d040);
             const juce::Colour kLedYellow (0xfff0e020);
             const juce::Colour kLedRed    (0xffff2020);
-            auto colourForDb = [&] (float db) -> juce::Colour
+            auto colourForZone = [&] (int zone) -> juce::Colour
             {
-                if (db >=  5.0f) return kLedRed;
-                if (db >= -5.0f) return kLedYellow;
-                return kLedGreen;
+                return zone == 2 ? kLedRed : zone == 1 ? kLedYellow : kLedGreen;
             };
 
-            const float frac = dbToFrac (dispDb);
-            if (frac > 0.001f)
+            if (draw.fill.shown)
             {
-                const float fillH = (bar.getHeight() - 2.0f) * frac;
+                const float fillH = draw.fill.px;
                 const float x = bar.getX() + 1.0f;
                 const float w = bar.getWidth() - 2.0f;
                 const float y = bar.getBottom() - 1.0f - fillH;
@@ -6655,7 +6734,7 @@ void ChannelStripComponent::paint (juce::Graphics& g)
 
                 // Soft outer glow under the fill - tip-colour driven so the
                 // glow shifts with the meter peak.
-                const auto tipCol = colourForDb (dispDb);
+                const auto tipCol = colourForZone (draw.fillZone);
                 g.setColour (tipCol.withAlpha (0.20f));
                 g.fillRect (fillRect.expanded (1.5f));
                 g.setColour (tipCol.withAlpha (0.10f));
@@ -6688,12 +6767,11 @@ void ChannelStripComponent::paint (juce::Graphics& g)
                             kLedGreen);
             }
 
-            const float peakFrac = dbToFrac (peakDb);
-            if (peakFrac > 0.001f)
+            if (draw.peak.shown)
             {
-                const float y = bar.getBottom() - 1.0f - peakFrac * (bar.getHeight() - 2.0f);
-                g.setColour (peakDb >= 5.0f ? juce::Colour (0xffff8080)
-                                              : juce::Colour (0xfff0f0f0));
+                const float y = bar.getBottom() - 1.0f - draw.peak.px;
+                g.setColour (draw.peakHot ? juce::Colour (0xffff8080)
+                                          : juce::Colour (0xfff0f0f0));
                 g.fillRect (juce::Rectangle<float> (bar.getX() + 1.0f, y - 0.5f,
                                                       bar.getWidth() - 2.0f, 1.4f));
             }
@@ -6709,7 +6787,7 @@ void ChannelStripComponent::paint (juce::Graphics& g)
             }
         };
 
-        if (stereoMode)
+        if (meterStereo)
         {
             const auto full = inputMeterArea.toFloat();
             const float halfW = (full.getWidth() - 1.0f) * 0.5f;   // 1 px gap between bars
@@ -6717,8 +6795,8 @@ void ChannelStripComponent::paint (juce::Graphics& g)
                                                         halfW, full.getHeight());
             const auto barR = juce::Rectangle<float> (full.getX() + halfW + 1.0f, full.getY(),
                                                         halfW, full.getHeight());
-            drawBar (barL, displayedInputDb,  inputPeakHoldDb);
-            drawBar (barR, displayedInputRDb, inputPeakHoldRDb);
+            drawBar (barL, inputL);
+            drawBar (barR, inputR);
 
             // Tiny "L" / "R" caption above each bar so the user immediately
             // sees the meter is now stereo.
@@ -6739,9 +6817,9 @@ void ChannelStripComponent::paint (juce::Graphics& g)
         }
         else
         {
-            drawBar (inputMeterArea.toFloat(), displayedInputDb, inputPeakHoldDb);
+            drawBar (inputMeterArea.toFloat(), inputL);
         }
-        if (std::chrono::steady_clock::now() < meterClipUntil)
+        if (meterClipLit)
         {
             g.setColour (decltype (track.colour) (0xffff2020));
             g.fillRect (inputMeterArea.withHeight (4).reduced (1, 0));

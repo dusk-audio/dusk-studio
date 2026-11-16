@@ -52,6 +52,12 @@ canonical source.
   backup that fails too offers the next older one. A session saved by a
   newer Dusk Studio raises its own alert. Before, a failed open only showed
   "Load failed" in the status bar.
+- **Stalled plug-in count.** The DSP readout ends in `STALL n` when a plug-in
+  that stopped responding held a block up for seconds: one that kept a
+  Multicore DSP thread busy for more than 2 seconds, or one the audio thread
+  was still running after about 3 seconds. A terminal line says which. The
+  count turns the readout amber, and the double-click that resets the other
+  counters resets it.
 
 ### Changed
 
@@ -69,6 +75,31 @@ canonical source.
 - **Times in Recover from autosave?** The autosave's and the saved session's
   times are shown in local time to the minute, as in `2026-11-08 14:30`, as
   the **Session won't open** alert shows them.
+- **An idle mixer lets the CPU rest.** Multicore DSP woke every worker thread
+  for every block, whatever the tracks had to do. A block now goes to the
+  workers only when tracks in two or more of their groups have work.
+  Otherwise the audio thread runs it alone and the workers sleep. The thread
+  that sends MIDI out and the thread that writes recordings to disk sleep as
+  well, until an output is open or a take is recording. On an 8-core machine
+  at 48 kHz with a 512-sample buffer, a stopped session with nothing
+  monitored wakes those threads about 2,000 times a second less. A track
+  that is muted or has no input also costs the audio thread about a
+  twentieth of what it did.
+- **A still console stays still.** The VU meters, gain-reduction meters, level
+  meters, peak readouts and section lights repaint only when what they show
+  has changed, so a stopped console with no input no longer redraws them 30
+  to 60 times a second. The mini timeline rereads the regions twice a second,
+  at once when a region is added or removed or a marker changes.
+- **Native panels draw only when something changes.** The mini timeline, the
+  mastering EQ, limiter and phase panels, the piano roll and the virtual
+  keyboard draw when the pointer moves over them, on a click, a key or a
+  window resize, and when what they show changes: the playhead, a marker, a
+  region, a parameter, a meter or the spectrum. Otherwise they draw four
+  times a second. Before, every native panel drew 60 frames a second, so the
+  mini timeline kept the main window rendering with the transport stopped.
+  The audio editor, the startup window, the audio settings, the SFZ library,
+  the channel compressor editor, the built-in unit editors on the strips and
+  the aux lane's built-in unit panel still draw every frame.
 
 ### Fixed
 

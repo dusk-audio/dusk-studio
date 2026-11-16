@@ -76,7 +76,7 @@ jobs:
           packages: >-
             build-essential g++-12 cmake ninja-build pkg-config ccache
             llvm
-            libasound2-dev libjack-jackd2-dev libmp3lame-dev libsndfile1-dev libsodium-dev
+            libasound2-dev libmp3lame-dev libsndfile1-dev libsodium-dev
             libpipewire-0.3-dev
             liblilv-dev libsuil-dev lv2-dev
             ladspa-sdk
@@ -204,7 +204,7 @@ jobs:
           packages: >-
             build-essential cmake ninja-build pkg-config ccache
             llvm
-            libasound2-dev libjack-jackd2-dev libmp3lame-dev libsndfile1-dev libsodium-dev
+            libasound2-dev libmp3lame-dev libsndfile1-dev libsodium-dev
             libpipewire-0.3-dev
             liblilv-dev libsuil-dev lv2-dev
             ladspa-sdk

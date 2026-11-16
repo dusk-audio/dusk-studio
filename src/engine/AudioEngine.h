@@ -175,6 +175,33 @@ public:
     // Test-only, Linux: the kernel thread id of every DSP worker, in lane order.
     std::vector<std::int64_t> dspWorkerThreadIdsForTest() const { return workerPool.workerThreadIdsForTest(); }
 
+    // Blocks whose strip pass the worker pool ran since the engine was made.
+    // The audio thread counts them; any thread may read.
+    std::uint64_t getPoolDispatchCount() const noexcept
+    {
+        return poolDispatches.load (std::memory_order_relaxed);
+    }
+
+    // Test-only: the worker threads the pool runs now, 0 when it is off.
+    int activeDspWorkersForTest() const noexcept
+    {
+        return workerPool.isActive() ? workerPool.laneCount() - 1 : 0;
+    }
+
+    // Test-only. True hands every block to an active pool however few lanes
+    // have work; false puts the dispatch rule back.
+    void setPoolDispatchForcedForTest (bool forced) noexcept
+    {
+        poolDispatchMinLanes.store (forced ? 0 : kPoolDispatchMinLanes, std::memory_order_relaxed);
+    }
+
+    // The first track of DSP lane `lane` of `lanes`. Each lane runs the tracks
+    // up to the next lane's first.
+    static constexpr int dspLaneFirstTrack (int lane, int lanes) noexcept
+    {
+        return (Session::kNumTracks * lane) / lanes;
+    }
+
     // The audio-device orchestrator. The settings UI + self-test drive it through
     // the dusk API (IODevice / DeviceSetup / listener callbacks); no JUCE device
     // type crosses this boundary.
@@ -896,6 +923,29 @@ public:
     // included. 0 elsewhere. Any thread; one atomic load per counter.
     int    getRealtimeDemotionCount() const noexcept;
 
+    // How many blocks since resetXRunCounts() a plug-in hung in its processing
+    // held up: those that waited over 2 s for a Multicore DSP lane, and those
+    // the diagnostics found still running on the audio thread 2 s after they
+    // first saw them. Any thread.
+    int    getStallCount() const noexcept;
+    // Test-only: one lane stall, counted where the pool counts its own.
+    void   noteDspLaneStallForTest() noexcept    { workerPool.noteJoinStallForTest(); }
+    // Test-only, with processing suspended: true stands a callback in flight
+    // that has not returned, false takes it away again. Message thread.
+    void   holdCallbackInFlightForTest (bool held) noexcept
+    {
+        callbacksInFlight.fetch_add (held ? 1 : -1, std::memory_order_seq_cst);
+        if (held) callbacksEntered.fetch_add (1, std::memory_order_relaxed);
+    }
+    // Test-only: how long the diagnostics watch a callback in flight before
+    // they count it as stuck. Message thread.
+    void   setStuckCallbackLimitForTest (int ms) noexcept { stuckWatch.limitMs = ms; }
+    static constexpr int kStuckCallbackLimitMs = 2000;
+    // Test-only: one tick of the engine's once-a-second diagnostics, which
+    // print a stderr line for each counter that rose since the last tick.
+    // Message thread.
+    void   drainCallbackDiagnosticsForTest()      { drainCallbackDiagnostics(); }
+
     // Per-section callback timing (see PerfSections below). Capture is
     // normally enabled by DUSKSTUDIO_PERF=1 + a 2 s reporter timer; the
     // headless session-perf harness enables it directly and prints once
@@ -1226,13 +1276,14 @@ private:
     };
     std::array<TrackDspJob, Session::kNumTracks> trackJobs;
 
-    // Opt-in parallel strip DSP
-    // The DSP pass over the 24 strips can be fanned out across worker threads
-    // when DUSKSTUDIO_AUDIO_WORKERS is set (default: serial, the proven path).
-    // Each lane accumulates its strip subset into its OWN buffer set so the
-    // workers never write a shared buffer; a serial reduce then sums the lane
-    // sets into mixL/busL/auxLaneL. Metering + recording stay on a serial tail
-    // pass (audio thread), so worker threads only ever run pure DSP.
+    // Parallel strip DSP
+    // The DSP pass over the 24 strips fans out across worker threads when the
+    // pool runs (Multicore DSP; DUSKSTUDIO_AUDIO_WORKERS overrides the count)
+    // and the block has work for at least two lanes. Each lane accumulates its
+    // strip subset into its OWN buffer set so the workers never write a shared
+    // buffer; a serial reduce then sums the lane sets into mixL/busL/auxLaneL.
+    // Metering + recording stay on a serial tail pass (audio thread), so
+    // worker threads only ever run pure DSP.
     static constexpr int kMaxDspLanes = 16;
     struct AccumSet
     {
@@ -1252,6 +1303,16 @@ private:
     // separately handled: prepare/stopped quiesce the pool first.)
     bool workerPoolStarted = false;
     int  currentBlockSamples = 0;        // stashed for the worker lane job
+
+    // A block goes to the pool only when at least this many lanes hold a strip
+    // that will run its chain. 0 while a test forces every block there.
+    static constexpr int kPoolDispatchMinLanes = 2;
+    std::atomic<int>           poolDispatchMinLanes { kPoolDispatchMinLanes };
+    std::atomic<std::uint64_t> poolDispatches { 0 };
+    // The lanes holding a strip that will run its chain this block, by
+    // ChannelStrip::willRunChain, counted up to `enough`. Hardware inserts are
+    // left out: they run on the audio thread whichever path the block takes.
+    int countBusyLanes (int numSamples, int enough) const noexcept;
 
     // Env DUSKSTUDIO_AUDIO_WORKERS (CI / power users) overrides desiredWorkers.
     int  resolveTargetWorkers() const noexcept;
@@ -1555,8 +1616,26 @@ private:
     std::int64_t lastReportedSilent = 0;
     int          lastReportedRealtimeDemotions = 0;
     int          lastReportedUnattributedOverruns = 0;
+    int          lastReportedLaneStalls = 0;
     // rt::realtimeDemotions() count plus unattributed at the last reset.
     std::atomic<int>    realtimeDemotionBaseline { 0 };
+    // Callbacks that got past the gate, counted as each enters. With
+    // callbacksInFlight it tells diagTimer whether the block in flight now is
+    // the one it saw in flight before.
+    std::atomic<std::uint64_t> callbacksEntered { 0 };
+    // diagTimer (message thread) only: the block it is watching, since when it
+    // has seen it in flight, and whether it has counted it.
+    struct StuckCallbackWatch
+    {
+        std::uint64_t entered = 0;
+        std::chrono::steady_clock::time_point since {};
+        bool counted = false;
+        int  limitMs = kStuckCallbackLimitMs;
+    };
+    StuckCallbackWatch stuckWatch;
+    std::atomic<int>    stuckCallbacks { 0 };
+    // workerPool.joinStallCount() plus stuckCallbacks at the last reset.
+    std::atomic<int>    stallBaseline { 0 };
 
     std::atomic<int>    xrunCount         { 0 };
     // Device xrun count at the last resetXRunCounts(); subtracted in

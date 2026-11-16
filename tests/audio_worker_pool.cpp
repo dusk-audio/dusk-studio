@@ -234,6 +234,48 @@ TEST_CASE ("AudioWorkerPool: a device deadline reaches every worker without runn
     pool.stop();
 }
 
+TEST_CASE ("AudioWorkerPool: a lane that holds the join past the stall limit is counted once",
+           "[worker-pool][ipc]")
+{
+    // The join counts a stall after this many of its 1 ms waits: 2000 in the
+    // app, 100 here, so the case takes about a tenth of a second.
+    AudioWorkerPool pool;
+    pool.setJoinStallWaitsForTest (100);
+    std::atomic<bool> hold { true };
+    pool.start (1, [&hold] (int lane)
+    {
+        if (lane == 0)
+            while (hold.load (std::memory_order_acquire))
+                std::this_thread::yield();
+    });
+
+    // Lets the lane go once the stall is counted, or at a deadline only a
+    // regression reaches, so a failure fails instead of hanging.
+    bool sawBlocked = false;
+    std::thread release ([&pool, &hold, &sawBlocked]
+    {
+        const auto deadline = juce::Time::getMillisecondCounter() + 5000;
+        while (pool.joinStallCount() == 0 && juce::Time::getMillisecondCounter() < deadline)
+        {
+            sawBlocked = sawBlocked || pool.isJoinBlocked();
+            std::this_thread::yield();
+        }
+        // The join waits on the held lane until the release below, so this
+        // holds even when the stall was counted before this thread first ran.
+        sawBlocked = sawBlocked || pool.isJoinBlocked();
+        hold.store (false, std::memory_order_release);
+    });
+    callWithWatchdog ("runBlock()", [&pool] { pool.runBlock(); }, 10000);
+    release.join();
+    REQUIRE (pool.joinStallCount() == 1);
+    REQUIRE (sawBlocked);
+    REQUIRE_FALSE (pool.isJoinBlocked());
+
+    callWithWatchdog ("runBlock()", [&pool] { pool.runBlock(); });
+    REQUIRE (pool.joinStallCount() == 1);
+    pool.stop();
+}
+
 #if defined(__linux__)
 TEST_CASE ("AudioWorkerPool: a worker-count change keeps the threads it already has",
            "[worker-pool]")

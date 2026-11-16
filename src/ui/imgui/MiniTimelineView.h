@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <exception>
 #include <functional>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -42,6 +43,16 @@ public:
     bool claimsShortcut (ShellShortcut) const override { return true; }
     bool marksMissingGlyphs() const override { return true; }
     GlyphTally nameGlyphsForScenario() const override { return glyphs; }
+
+    // In the last frame's pixels, so playback redraws only when the playhead moves a pixel.
+    std::optional<std::uint64_t> liveStamp() override
+    {
+        StampHash hash;
+        hash.add (xForSample (state.playhead)).add (activeMarker());
+        for (const auto& marker : state.markers)
+            hash.add (xForSample (marker.sample)).add (marker.colour).add (marker.name);
+        return hash.value;
+    }
 
     bool controlPointForScenario (const std::string& control, ImVec2& point, float = 0.5f) const override
     {
@@ -86,10 +97,7 @@ public:
             dl->AddLine ({ x, mid - size.y * 0.25f }, { x, mid + size.y * 0.25f },
                          rgba (0xff90a0b0), ctx.s (1.6f));
 
-        int active = -1;
-        for (int i = 0; i < static_cast<int> (state.markers.size()); ++i)
-            if (state.markers[static_cast<size_t> (i)].sample <= state.playhead) active = i;
-            else break;
+        const int active = activeMarker();
 
         for (size_t i = 0; i < state.markers.size(); ++i)
         {
@@ -182,6 +190,14 @@ private:
     float scale = 1.0f;
     GlyphTally glyphs;
 
+    int activeMarker() const
+    {
+        int active = -1;
+        for (int i = 0; i < static_cast<int> (state.markers.size()); ++i)
+            if (state.markers[static_cast<size_t> (i)].sample <= state.playhead) active = i;
+            else break;
+        return active;
+    }
     static std::uint32_t markerColour (std::uint32_t c) { return (c >> 24) != 0 ? c : 0xffe0a050; }
     static std::uint32_t alpha (std::uint32_t c, std::uint32_t a) { return (c & 0x00ffffff) | (a << 24); }
     static std::uint32_t brighter (std::uint32_t c, float amount)

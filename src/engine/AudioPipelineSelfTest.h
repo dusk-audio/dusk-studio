@@ -121,6 +121,7 @@ private:
     std::string testCompHeavyGR();          // extreme settings: characterize harmonics at heavy GR
     std::string testCompPerTrack();         // all 16 tracks under Opto produce identical output
     std::string testParallelMatchesSerial(); // worker-pool mix == serial mix within float-reassoc tol
+    std::string testPoolDispatchRule();      // pool wakes only for busy strips in 2+ lanes; same mix as dispatching every block
     std::string testMidiPlayAlongMonitor();   // armed+IN MIDI track sounds live notes in Stopped AND Playing
     std::string testAudioPlayAlongSends();    // IN audio track feeds its aux send in Stopped AND Playing
     std::string testLoopRecordTakeStacking(); // one callback crosses loop seam into a second audio+MIDI take
@@ -137,7 +138,9 @@ private:
                                     bool eqEnabled, bool compEnabled,
                                     bool tapeOn, int oversamplingFactor,
                                     int numWarmupBlocks, int numMeasureBlocks,
-                                    int workerCount = -1);
+                                    int workerCount = -1,
+                                    bool everyBlockToPool = false,
+                                    int firstActiveTrack = 0);
 
     AudioEngine& engine;
     device::DeviceManager& deviceManager;

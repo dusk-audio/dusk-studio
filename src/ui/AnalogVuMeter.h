@@ -2,6 +2,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "../foundation/MessageThread.h"
+#include "RepaintGate.h"
 #include <atomic>
 
 namespace duskstudio
@@ -101,12 +102,16 @@ private:
 
     // PEAK LED hold deadline (Time::getMillisecondCounter()). 0 = idle.
     // Set by timerCallback when the unclamped VU dB on either channel
-    // crosses kPeakTriggerVuDb; paint() lights the LED until now() passes
-    // this stamp. Single timestamp covers both channels - one PEAK LED.
+    // crosses kPeakTriggerVuDb; each tick sets peakLit until the stamp
+    // passes, and paint() lights the LED from peakLit. Single timestamp
+    // covers both channels - one PEAK LED.
     std::uint32_t peakHoldUntilMs = 0;
+    bool peakLit = false;
 
     // Cached LED geometry computed in rebuildCachedFace so paint() can
     // overlay the lit state without recomputing layout each frame.
     juce::Rectangle<float> peakLedRect;
+
+    PaintedValue paintedNeedleL, paintedNeedleR, paintedPeakLed;
 };
 } // namespace duskstudio

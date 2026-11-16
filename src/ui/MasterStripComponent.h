@@ -10,6 +10,8 @@
 #include "DuskComboBox.h"
 #include "EmbeddedModal.h"
 #include "SplitModuleButton.h"
+#include "LevelMeterDraw.h"
+#include "RepaintGate.h"
 #include "imgui/DafEditorHost.h"
 #include "../foundation/MessageThread.h"
 
@@ -162,11 +164,12 @@ private:
     void resetEqSection();
     void resetCompSection();
     juce::Label outputPeakLabel;
-    float displayedOutputLDb = -100.0f;
-    float displayedOutputRDb = -100.0f;
-    float outputPeakHoldLDb  = -100.0f;
-    float outputPeakHoldRDb  = -100.0f;
-    int   outputPeakHoldFramesL = 0;
-    int   outputPeakHoldFramesR = 0;
+    // The output meter draws only what the timer sampled into these, so its
+    // repaint gate keys on exactly what paint() shows.
+    LevelBallistics outputL, outputR;
+    float outputMeterFrac (float db) const;
+    LevelBarGate meterGateL, meterGateR;
+    PeakReadout peakReadout;
+    PaintedValue paintedPeakColour;
 };
 } // namespace duskstudio

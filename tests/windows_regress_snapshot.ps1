@@ -269,6 +269,7 @@ try {
     Write-Output "Windows foreground timing: 14 integer boundary controls, 2 session controls, $script:foregroundRejections invalid inputs rejected"
 
     Write-Output 'Windows regression snapshots: 7 checks passed'
+    & (Join-Path $PSScriptRoot 'windows_regress_cleanup.ps1')
 } finally {
     $env:TEMP = $originalTemp
     if (Test-Path -LiteralPath $snapshotRoot) { Remove-Item -LiteralPath $snapshotRoot -Recurse -Force }

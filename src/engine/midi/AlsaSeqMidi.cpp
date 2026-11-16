@@ -1,4 +1,5 @@
 #include "AlsaSeqMidi.h"
+#include "../../foundation/ThreadName.h"
 
 #if defined(__linux__)
 
@@ -450,7 +451,7 @@ struct AlsaSeqMidiInput::Impl
     {
         if (seq == nullptr || coder == nullptr || wakePipe[0] < 0 || running.load()) return;
         running.store (true, std::memory_order_release);
-        pollThread = std::thread ([this] { run(); });
+        pollThread = std::thread ([this] { dusk::setCurrentThreadName ("DuskMidiIn"); run(); });
     }
 
     void stopThread()

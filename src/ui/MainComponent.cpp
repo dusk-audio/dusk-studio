@@ -853,7 +853,11 @@ MainComponent::MainComponent()
         const int rollTrack = pianoRoll != nullptr ? pianoRollTrackIdx : -1;
         const bool rollCaptured = rollTrack >= 0 && rollTrack < Session::kNumTracks
                                && (capturedTracks & (std::uint32_t { 1 } << rollTrack)) != 0;
-        if (rollCaptured) pianoRoll->yieldDragToRecordCommit();
+        if (rollCaptured)
+        {
+            pianoRoll->yieldDragToRecordCommit();
+            pianoRollWindow->wake();
+        }
         const auto rollGeneration = pianoRollGeneration;
         const auto rollEdits = rollCaptured ? session.track (rollTrack).midiRegions.edits() : 0u;
         const bool mergeCapture = engine.getRecordManager().isMidiMergeCapture();
@@ -865,7 +869,10 @@ MainComponent::MainComponent()
             if (! mergeCapture && rollCaptured && self->pianoRollShowing() && self->pianoRollGeneration == rollGeneration
                 && self->pianoRollTrackIdx == rollTrack
                 && self->session.track (rollTrack).midiRegions.edits() != rollEdits)
+            {
                 self->pianoRoll->showCommittedRegion();
+                self->pianoRollWindow->wake();
+            }
         });
        #else
         dusk::callAsync ([safeThis]
@@ -883,7 +890,10 @@ MainComponent::MainComponent()
     {
        #if DUSKSTUDIO_HAS_NATIVE_UI
         if (pianoRollShowing() && pianoRollTrackIdx == trackIndex)
+        {
             pianoRoll->showCommittedRegion (regionIndex);
+            pianoRollWindow->wake();
+        }
        #endif
         refreshImportPickers();
     };
@@ -1445,7 +1455,9 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         const bool repeat = description == editorKeyHeld && now - editorKeyHeldAt < std::chrono::seconds (1);
         editorKeyHeld = description;
         editorKeyHeldAt = now;
-        if (pianoRoll->handleShellKey (description, repeat)) return true;
+        const bool handled = pianoRoll->handleShellKey (description, repeat);
+        pianoRollWindow->wake();
+        if (handled) return true;
     }
    #endif
     if (modalUp || panelKeys != imgui::PanelShellKeys::all || tuner != nullptr)
@@ -1632,14 +1644,22 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     if (code == 'T' && mods.isAltDown() && ! cmd)
     {
        #if DUSKSTUDIO_HAS_NATIVE_UI
-        if (pianoRollShowing()) pianoRoll->followRegionEdits();
+        if (pianoRollShowing())
+        {
+            pianoRoll->followRegionEdits();
+            pianoRollWindow->wake();
+        }
        #endif
         const bool rollOpen = pianoRoll != nullptr;
         const bool cycled = tapeStrip != nullptr
             && (rollOpen ? tapeStrip->cycleMidiTake (pianoRollTrackIdx, pianoRollRegionIdx, ! shift)
                          : tapeStrip->cycleSelectedMidiTake (! shift));
        #if DUSKSTUDIO_HAS_NATIVE_UI
-        if (cycled && rollOpen) pianoRoll->showSwappedTake();
+        if (cycled && rollOpen)
+        {
+            pianoRoll->showSwappedTake();
+            pianoRollWindow->wake();
+        }
        #endif
         if (cycled)
             return true;
@@ -7432,7 +7452,11 @@ void MainComponent::undoOrRedo (bool redo)
     }
     undoOrExplain (engine, *this, redo);
    #if DUSKSTUDIO_HAS_NATIVE_UI
-    if (pianoRollShowing()) pianoRoll->followRegionEdits();
+    if (pianoRollShowing())
+    {
+        pianoRoll->followRegionEdits();
+        pianoRollWindow->wake();
+    }
    #endif
     refreshImportPickers();
 }
@@ -7503,7 +7527,11 @@ void MainComponent::toggleVirtualKeyboard()
         callbacks.closed = [this]
         {
             virtualKeyboardView = nullptr;
-            if (pianoRollShowing()) pianoRoll->stepRecordKeyboardClosed();
+            if (pianoRollShowing())
+            {
+                pianoRoll->stepRecordKeyboardClosed();
+                pianoRollWindow->wake();
+            }
             virtualKeyboardDim.reset();
             virtualKeyboardHider.restore();
             reclaimFocusFromNotepad();
@@ -7541,13 +7569,19 @@ void MainComponent::toggleVirtualKeyboard()
         {
             if (auto* self = safeThis.getComponent())
                 if (self->pianoRollShowing())
+                {
                     self->pianoRoll->stepRecordNoteOn (note, velocity, channel);
+                    self->pianoRollWindow->wake();
+                }
         },
         [safeThis] (int note, int channel)
         {
             if (auto* self = safeThis.getComponent())
                 if (self->pianoRollShowing())
+                {
                     self->pianoRoll->stepRecordNoteOff (note, channel);
+                    self->pianoRollWindow->wake();
+                }
         });
     virtualKeyboardView = keyboardView.get();
     virtualKeyboardWindow->setView (std::move (keyboardView));

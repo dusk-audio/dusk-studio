@@ -6,9 +6,9 @@
 $rgVersion = '@@VERSION@@'
 try {
     Stop-RegressApps
-    if (Test-Path $rgRoot) { Remove-Item -Recurse -Force $rgRoot }
+    if (-not (Remove-RegressTree $rgRoot '.dusk-regress-run')) { throw "could not clear $rgRoot" }
     New-Item -ItemType Directory -Path $rgRoot | Out-Null
-    Set-Content -Path "$rgRoot\.dusk-regress-run" -Value 'dusk-regress run folder; removed by the next run'
+    Set-Content -Path "$rgRoot\.dusk-regress-run" -Value 'dusk-regress run folder; removed by the run-cleanup leg, or by scripts/regress.sh clean windows'
 
     $found = @{}
     foreach ($view in 'Registry64', 'Registry32') {

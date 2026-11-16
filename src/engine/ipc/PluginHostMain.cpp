@@ -62,6 +62,7 @@
 #include "../../foundation/AutoResetEvent.h"
 #include "../../foundation/MessageThread.h"
 #include "../../foundation/ScopedNoDenormals.h"
+#include "../../foundation/ThreadName.h"
 #include "../JuceCompat.h"
 #include "../DuskStudioPlayHead.h"
 #if defined (__linux__)
@@ -1991,10 +1992,15 @@ int runIpcHost (int argc, const char* const* argv) noexcept
    #if defined (__linux__)
     host.renderCpuTimeLimited = guardRenderThreadCpuTime();
    #endif
-    std::thread worker (audioWorkerLoop, std::ref (host));
+    std::thread worker ([&host]
+    {
+        dusk::setCurrentThreadName ("DuskHostAudio");
+        audioWorkerLoop (host);
+    });
 
     std::thread sockThread ([&host]
     {
+        dusk::setCurrentThreadName ("DuskHostSocket");
         while (! host.shouldQuit.load (std::memory_order_acquire))
         {
             ControlMsgHeader hdr {};

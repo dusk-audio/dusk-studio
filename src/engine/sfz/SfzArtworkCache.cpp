@@ -2,6 +2,7 @@
 #include "SfzDirectoryLease.h"
 #include "SfzProvider.h"
 #include "../../foundation/Fs.h"
+#include "../../foundation/ThreadName.h"
 
 #include <sodium.h>
 
@@ -107,7 +108,8 @@ void trimDiskCache (const fs::path& root)
 } // namespace
 
 ArtworkCache::ArtworkCache (fs::path directory, std::shared_ptr<HttpTransport> http)
-    : root (std::move (directory)), transport (std::move (http)), worker ([this] { run(); }) {}
+    : root (std::move (directory)), transport (std::move (http)),
+      worker ([this] { dusk::setCurrentThreadName ("DuskSfzArtwork"); run(); }) {}
 
 ArtworkCache::~ArtworkCache()
 {
