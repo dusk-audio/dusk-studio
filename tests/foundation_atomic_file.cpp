@@ -247,6 +247,7 @@ TEST_CASE ("Atomic create preserves an existing destination and removes its temp
     const duskstudio::test::TempDirectory temp ("dusk-atomic-collision-");
     const auto target = temp.path() / "take.mid";
     std::error_code error;
+    bool symlinks = true;
 
     SECTION ("regular file")
     {
@@ -265,13 +266,21 @@ TEST_CASE ("Atomic create preserves an existing destination and removes its temp
     SECTION ("dangling symlink")
     {
         stdfs::create_symlink ("absent.mid", target, error);
-        if (error) SKIP ("the test filesystem cannot create symlinks");
-        CHECK_FALSE (dusk::fs::writeFileAtomically (target, "new", 3, error, dusk::fs::AtomicWriteMode::CreateNew));
-        CHECK (error == std::errc::file_exists);
-        CHECK (stdfs::is_symlink (stdfs::symlink_status (target)));
-        CHECK (stdfs::read_symlink (target) == "absent.mid");
-        CHECK_FALSE (stdfs::exists (temp.path() / "absent.mid"));
+        symlinks = ! error;
+        if (! symlinks)
+        {
+            WARN ("the test file system cannot make symlinks, so a dangling one was not tried");
+        }
+        else
+        {
+            CHECK_FALSE (dusk::fs::writeFileAtomically (target, "new", 3, error, dusk::fs::AtomicWriteMode::CreateNew));
+            CHECK (error == std::errc::file_exists);
+            CHECK (stdfs::is_symlink (stdfs::symlink_status (target)));
+            CHECK (stdfs::read_symlink (target) == "absent.mid");
+            CHECK_FALSE (stdfs::exists (temp.path() / "absent.mid"));
+        }
     }
+    if (! symlinks) return;
     CHECK (namesIn (temp.path()) == std::vector<std::string> { "take.mid" });
 }
 
@@ -293,7 +302,6 @@ TEST_CASE ("Atomic create falls back to hard links, then to a checked rename, on
         stdfs::remove (probe, ignored);
         return ! error;
     }();
-    const auto needHardLinks = [hardLinks] { if (! hardLinks) SKIP ("the test file system cannot make hard links"); };
     PublicationFaults faults;
    #if defined(__APPLE__)
     faults.renameError = ENOTSUP;
@@ -307,7 +315,19 @@ TEST_CASE ("Atomic create falls back to hard links, then to a checked rename, on
     int expectedError = 0, expectedLinks = 1, expectedUnlinks = 1;
     std::string expectedBytes = "complete";
     auto mode = dusk::fs::AtomicWriteMode::CreateNew;
-    SECTION ("unsupported no-replace publishes complete bytes") { needHardLinks(); }
+    bool leftOut = false;
+    if (hardLinks)
+    {
+        SECTION ("unsupported no-replace publishes complete bytes") {}
+    }
+    else
+    {
+        SECTION ("publication through a real hard link is left out")
+        {
+            WARN ("the test file system cannot make hard links, so the sections that publish through one did not run");
+            leftOut = true;
+        }
+    }
     SECTION ("a destination created before link wins the race")
     {
         faults.raceTarget = true;
@@ -341,25 +361,29 @@ TEST_CASE ("Atomic create falls back to hard links, then to a checked rename, on
         expectedLinks = 0;
         expectedBytes.clear();
     }
-    SECTION ("temporary cleanup failure does not undo publication")
+    if (hardLinks)
     {
-        needHardLinks();
-        faults.unlinkError = EACCES;
-        temporaryRemains = true;
+        SECTION ("temporary cleanup failure does not undo publication")
+        {
+            faults.unlinkError = EACCES;
+            temporaryRemains = true;
+        }
+       #if defined(__linux__)
+        SECTION ("folder sync failure still reports failed durability")
+        {
+            faults.syncError = expectedError = EIO;
+            succeeds = false;
+        }
+       #endif
     }
-   #if defined(__linux__)
-    SECTION ("folder sync failure still reports failed durability")
-    {
-        needHardLinks();
-        faults.syncError = expectedError = EIO;
-        succeeds = false;
-    }
-   #endif
     SECTION ("ordinary replacement keeps using rename")
     {
         mode = dusk::fs::AtomicWriteMode::Replace;
         expectedLinks = expectedUnlinks = 0;
     }
+    // Catch2 learns of a section only by reaching it, so a return before the
+    // last one would hide every section after it.
+    if (leftOut) return;
     std::error_code error;
     CHECK (dusk::fs::writeFileAtomically (target, "complete", 8, error, mode) == succeeds);
     CHECK (error == (expectedError == 0 ? std::error_code {} : std::error_code (expectedError, std::generic_category())));
