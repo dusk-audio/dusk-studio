@@ -13,6 +13,13 @@
 
 namespace duskstudio::midirecovery
 {
+// The failure of a report to put in front of the user, or null. Only a file
+// that is not there counts: not a take file written whose checkpoint could
+// not be retired afterwards, not a checkpoint written with a gap in it (the
+// journal's no_buffer_space notice), and not a report that names no track.
+// Those are for the log alone.
+const Failure* missingFileFailure (const PendingFile& file, const WriteResult& result) noexcept;
+
 // Writes MIDI recovery files on a thread of its own, one at a time and in the
 // order they were queued, so a commit, a save or an autosave does not wait for
 // the disk. Only flush() waits: Save As calls it before copying midi/, and

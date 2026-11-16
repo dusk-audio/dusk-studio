@@ -38,6 +38,14 @@ bool removeIfEmpty (const std::filesystem::path& folder)
 }
 } // namespace
 
+const Failure* missingFileFailure (const PendingFile& file, const WriteResult& result) noexcept
+{
+    if (! result.written.empty() || file.trackNumber <= 0) return nullptr;
+    for (const auto& failure : result.failures)
+        if (failure.error != std::errc::no_buffer_space) return &failure;
+    return nullptr;
+}
+
 Writer::Writer (Report reportIn) : report (std::move (reportIn)) {}
 
 Writer::~Writer()

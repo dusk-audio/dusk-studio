@@ -1037,3 +1037,109 @@ TEST_CASE ("A MIDI journal keeps an empty folder a pass still waits to be writte
     CHECK (namesIn (directory).size() == 1);
 }
 #endif
+
+// What the disk workers report, and which reports put a failure in front of
+// the user: only one about a file that is not there.
+TEST_CASE ("A MIDI recovery report shows a failure only for a file that is not there", "[midi][recovery][journal]")
+{
+    const duskstudio::test::TempDirectory temp ("dusk-midi-recovery-shown-");
+    const auto takes = temp.path() / "midi" / "takes";
+    const auto directory = temp.path() / "midi" / "recording";
+    REQUIRE (stdfs::create_directory (temp.path() / "midi"));
+    Reports reports;
+    const auto shown = [&] (std::size_t report) -> const recovery::Failure*
+    {
+        REQUIRE (report < reports.results.size());
+        return recovery::missingFileFailure (reports.files[report], reports.results[report]);
+    };
+
+    SECTION ("a take file that cannot be written")
+    {
+        { std::ofstream blocked (takes); blocked << "blocked take folder"; }
+        recovery::Writer writer (reports.callback());
+        writer.queue (fileFor (temp.path(), 60, recovery::Folder::Takes));
+        writer.flush();
+        REQUIRE (reports.results.size() == 1);
+        const auto* failure = shown (0);
+        REQUIRE (failure != nullptr);
+        CHECK (failure->path == takes);
+    }
+    SECTION ("a track file that cannot be written")
+    {
+        { std::ofstream blocked (temp.path() / "midi" / "tracks"); blocked << "blocked track folder"; }
+        recovery::Writer writer (reports.callback());
+        writer.queue (fileFor (temp.path(), 60, recovery::Folder::Tracks));
+        writer.flush();
+        REQUIRE (reports.results.size() == 1);
+        CHECK (shown (0) != nullptr);
+    }
+    SECTION ("a checkpoint that cannot be written")
+    {
+        { std::ofstream blocked (directory); blocked << "blocked recording folder"; }
+        recovery::Journal journal (reports.callback());
+        auto handle = journal.begin (keysIn (temp.path()));
+        REQUIRE (handle.id != 0);
+        playNote (journal, handle);
+        journal.flush();
+        REQUIRE (reports.results.size() == 1);
+        const auto* failure = shown (0);
+        REQUIRE (failure != nullptr);
+        CHECK (failure->path == directory);
+        CHECK (reports.files[0].trackNumber == 7);
+    }
+    SECTION ("a take file written whose checkpoint could not be retired")
+    {
+        recovery::Journal journal (reports.callback());
+        auto handle = journal.begin (keysIn (temp.path()));
+        REQUIRE (handle.id != 0);
+        playNote (journal, handle);
+        REQUIRE (journal.finish (handle, 1, 10));
+        journal.flush();
+        const auto names = namesIn (directory);
+        REQUIRE (names.size() == 1);
+        // A folder that is not empty in the checkpoint's place cannot be removed.
+        const auto checkpoint = directory / names.front();
+        REQUIRE (stdfs::remove (checkpoint));
+        REQUIRE (stdfs::create_directory (checkpoint));
+        { std::ofstream inside (checkpoint / "kept"); inside << "kept"; }
+        const auto elsewhere = temp.path() / "Untitled";
+        REQUIRE (stdfs::create_directory (elsewhere));
+        REQUIRE (journal.commit (fileFor (elsewhere, 60, recovery::Folder::Takes), handle.id, 1));
+        journal.flush();
+        const auto last = reports.results.size() - 1;
+        REQUIRE (reports.results[last].written.size() == 1);
+        REQUIRE (reports.results[last].failures.size() == 1);
+        CHECK (reports.results[last].failures.front().path == checkpoint);
+        CHECK (shown (last) == nullptr);
+    }
+    SECTION ("a checkpoint written with a gap in it")
+    {
+        recovery::Journal journal (reports.callback(), 2);
+        auto handle = journal.begin (keysIn (temp.path()));
+        REQUIRE (handle.id != 0);
+        MidiCaptureStream capture (8);
+        REQUIRE (capture.pushEvent (1, 0, 0x90, 60, 100));
+        REQUIRE (capture.publishProgress (1, 10, false));
+        capture.service (-1, [&] (const auto& view) { REQUIRE (journal.append (handle, view)); });
+        journal.flush();
+        REQUIRE (capture.pushEvent (1, 15, 0x80, 60, 0));
+        REQUIRE (capture.pushEvent (1, 16, 0xb0, 1, 100));
+        REQUIRE (capture.publishProgress (1, 20, false));
+        capture.service (-1, [&] (const auto& view) { REQUIRE_FALSE (journal.append (handle, view)); });
+        REQUIRE (capture.publishProgress (1, 30, false));
+        capture.service (-1, [&] (const auto& view) { REQUIRE (journal.append (handle, view)); });
+        journal.flush();
+        const auto gap = std::find_if (reports.results.begin(), reports.results.end(), [] (const recovery::WriteResult& result)
+        {
+            return ! result.failures.empty() && result.failures.front().error == std::errc::no_buffer_space;
+        });
+        REQUIRE (gap != reports.results.end());
+        CHECK (shown ((std::size_t) (gap - reports.results.begin())) == nullptr);
+        CHECK (namesIn (directory).size() == 1);
+    }
+    SECTION ("a report that names no track")
+    {
+        const recovery::WriteResult failed { {}, { { temp.path(), std::make_error_code (std::errc::io_error) } } };
+        CHECK (recovery::missingFileFailure (recovery::PendingFile {}, failed) == nullptr);
+    }
+}
