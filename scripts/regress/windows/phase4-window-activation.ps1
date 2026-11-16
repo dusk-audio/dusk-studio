@@ -937,7 +937,7 @@ try {
 
 $rgTempNew = @(Get-RegressAppTempNames | Where-Object { $rgTempBefore -notcontains $_ })
 if ($rgTempNew.Count -gt 0) {
-    $rgTempText = "$($rgTempNew.Count) temp_* and dusk-* entries appeared in $([IO.Path]::GetTempPath()) during phase 4, whose Explorer launches use the account's TEMP; the account is shared, so they are left there (the app's own leftovers are #1003 and #1023)"
+    $rgTempText = "$($rgTempNew.Count) temp_* and dusk-* entries appeared in $([IO.Path]::GetTempPath()) during phase 4, whose Explorer launches use the account's TEMP; the account is shared, so they are left there (temp folders the app itself does not remove)"
     $rgLog += "REGRESS-WARN $rgTempText`nREGRESS-LEFT $rgTempText`n"
 }
 foreach ($n in $rgNotes) { $rgLog += "REGRESS-NOTE $n`n" }

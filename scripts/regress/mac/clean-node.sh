@@ -40,12 +40,11 @@ for run in "$base"/regress-*; do
     token="${run##*/}"
     pid=""
     [[ -s "$run/pid" ]] && read -r pid <"$run/pid"
-    if [[ "$pid" =~ ^[0-9]+$ ]] && group_alive "$pid"; then
-        if [[ "$(ps -ww -o command= -p "$pid" 2>/dev/null)" == *" dusk-regress $token" ]]; then
-            echo "warn: left alone, its run is still going (process group $pid): $run"
-        else
-            echo "warn: left alone, process group $pid is alive, though no longer this run's: $run"
-        fi
+    # A pid file weeks old may name a process group that is someone else's by
+    # now: only one still running this run's own command keeps the folder.
+    if [[ "$pid" =~ ^[0-9]+$ ]] && group_alive "$pid" \
+        && [[ "$(ps -ww -o command= -p "$pid" 2>/dev/null)" == *" dusk-regress $token" ]]; then
+        echo "warn: left alone, its run is still going (process group $pid): $run"
         continue
     fi
     remove "the run folder" "$run"

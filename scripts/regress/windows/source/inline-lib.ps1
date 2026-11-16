@@ -6,12 +6,29 @@
 # Closing the ssh session ends only the shell it started, so a run's build and
 # test processes are found by the tree on their command line. CMake, ctest and
 # Python write it with forward slashes, and a longer name that starts the same
-# (dusk-audit-win2) is another tree.
+# (dusk-audit-win2) is another tree. The scripts sent inline carry the tree only
+# inside their -EncodedCommand, so that is decoded and searched too; this
+# process and the shells that started it are left out, since their command
+# lines carry the same text.
 function Get-TreeProcesses {
   $parts = @($root.TrimEnd('\') -split '\\' | ForEach-Object { [regex]::Escape($_) })
   $pattern = '(?i)' + ($parts -join '[\\/]') + '(?=[\\/"'' ]|$)'
-  @(Get-CimInstance Win32_Process | Where-Object {
-    $_.ProcessId -ne $PID -and $_.CommandLine -and $_.CommandLine -match $pattern
+  $all = @(Get-CimInstance Win32_Process)
+  $byId = @{}
+  foreach ($p in $all) { $byId[[int]$p.ProcessId] = $p }
+  $mine = @{}
+  $id = [int]$PID
+  while ($byId.ContainsKey($id) -and -not $mine.ContainsKey($id)) {
+    $mine[$id] = $true
+    $id = [int]$byId[$id].ParentProcessId
+  }
+  @($all | Where-Object {
+    if ($mine.ContainsKey([int]$_.ProcessId) -or -not $_.CommandLine) { return $false }
+    if ($_.CommandLine -match $pattern) { return $true }
+    $encoded = [regex]::Match($_.CommandLine, '-EncodedCommand\s+([A-Za-z0-9+/=]+)')
+    if (-not $encoded.Success) { return $false }
+    try { $text = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($encoded.Groups[1].Value)) } catch { return $false }
+    return ($text -match $pattern)
   })
 }
 

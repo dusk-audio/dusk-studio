@@ -1138,7 +1138,7 @@ stays in `.git/modules`.
 
 | Leg | What it proves |
 |---|---|
-| `mac-preflight` | node reachable; tracked checkout and submodule worktrees clean; previous branch and commits recorded; the free space floor met (see "What a run leaves on the hosts"), and the `TMPDIR` the tests get named.; and the node's checkout claimed for this run (below). Refused, before anything is pushed or checked out, while another source run is live in the same checkout: one whose folder under `~/.cache/dusk-regress` has a live process group, or one that holds the checkout's claim. The error names that run's folder. |
+| `mac-preflight` | node reachable; tracked checkout and submodule worktrees clean; previous branch and commits recorded; the free space floor met (see "What a run leaves on the hosts"), the `TMPDIR` the tests get named; and the node's checkout claimed for this run (see "One source run per checkout" below). Refused, before anything is pushed or checked out, while another run holds the checkout's claim, or while a run of an older runner (which writes no claim) has a call in flight on the node. The error names that run's folder. |
 | `push-head` / `mac-checkout` | the node builds this exact commit. `WARN` when a submodule cannot be synced to the recorded pin. |
 | `daf-revision` | `~/src/DAF` checked out at `DAF_REV`, the commit CI builds against, fetching it from GitHub when the clone lacks it. A clone that cannot reach that commit fails the leg. DAF is left there, not put back. |
 | `configure-app` / `configure-tests` | both trees configure through `~/mac-configure.sh`. |
@@ -1153,16 +1153,25 @@ stays in `.git/modules`.
 under each other, and the first then builds or tests a mix of two commits. So
 `mac-preflight` claims the checkout: under a short `mkdir` mutex
 (`~/.cache/dusk-regress/source-claim.lock`) it writes the run's folder name into
-`~/.cache/dusk-regress/source-claim-<checksum of the checkout path>`, unless
-another run is live there, and that is refused. A run counts as live while a
-call of it is in flight (its folder's process group is alive) or its folder was
-written in the last ten minutes, which covers the gap between two calls; a run
-from an older runner, which writes no claim, counts while a call of it is in
-flight. Two runs started in the same second take the mutex one after the other,
-and the second finds the first's claim. Every later call checks that the claim
-still names its run and stops before touching the checkout when it does not.
-The claim goes at the run's exit, after the checkout is put back; a claim whose
-run folder is gone is taken over, and `clean mac` removes it.
+`~/.cache/dusk-regress/source-claim-<checksum of the checkout path>`. Of two
+runs started in the same second, the one that takes the mutex second finds the
+first's claim and is refused with `another source run holds ...`. A claim's run
+counts as live while a call of it is in flight (the pid in its folder names a
+live process group still running that run's command) or its folder was written
+in the last 600 s, which covers the gap between two calls; the age comes from
+`stat`, not from BSD `find -mmin`, which rounds up. A run of an older runner
+writes no claim and no `source` file in its folder; it is refused against only
+while a call of it is in flight, with `a run of an older runner is live`. Every
+later call checks that the claim still names its run, and stops before touching
+the checkout when it does not (exit 76); such a run does not put the checkout
+back, since another run has it. While `mac-restore` has not put the checkout
+back, the run keeps its folder and its claim, so no other run takes the checkout
+from under the retry at exit; if that retry fails too, both stay and the run
+says so. Otherwise the claim goes at the exit. A mutex older than a minute was
+left by a run that died inside the claim, which takes well under a second; it
+is renamed away rather than removed in place, and put back if it turns out to be
+a fresh one, so two runs that both find it stale do not both end up holding it.
+`clean mac` removes claims whose run folder is gone.
 
 What it cannot prove: **anything with a window**. Launching the GUI from an ssh
 session aborts in the main window constructor on that node, and it does so on
@@ -1510,15 +1519,17 @@ travel inline as `-EncodedCommand` with `inline-lib.ps1` in front of them.
 Closing an ssh session does not end the processes under it,
 so a leg that times out, loses its connection or is interrupted (Ctrl-C, or
 `prepush` stopping its runners) sends the cancel, which ends everything whose
-command line names the tree. If that cannot be confirmed the leg says so;
+command line names the tree, the inline scripts included: those carry the tree
+only inside their `-EncodedCommand`, which the cancel and the preflight's busy
+check decode. If that cannot be confirmed the leg says so;
 check the guest before the next run, since the preflight refuses a busy tree.
 
 | Leg | What it proves |
 |---|---|
-| `vm-preflight` | the guest answers over ssh, its clock is within 60 s of this box's (see "Guest clock" below), nothing is already running in the tree, the tree is the runner's (its `.dusk-regress-tree` marker, written when the run creates the tree or adopts one an older runner made), `<tree>\tmp` and the last run's `regress\` (with its bundle) removed, then its drive has the free space floor for a cold or a warm run, and the scripts are copied. A failure ends the run. Build outputs stamped later than the guest's now remove `src\build-tests`, with a `warn:` line in capitals, so the run builds from nothing; sources and dependencies stamped in the future are stamped back to now. |
+| `vm-preflight` | the guest answers over ssh, its clock is within 60 s of this box's (see "Guest clock" below), nothing is already running in the tree, the tree is the runner's (its `.dusk-regress-tree` marker, written when the run creates the tree or adopts one an older runner made), `<tree>\tmp` and the last run's `regress\` (with its bundle) removed, then its drive has the free space floor for a cold or a warm run, and the scripts are copied. A failure ends the run. Build outputs stamped later than the guest's now remove `src\build-tests` so the run builds from nothing, and sources and dependencies stamped in the future are stamped back to now; either makes the row a `WARN`. The scan runs only in the guest and is checked by hand there on a scratch tree, not by the contract test. |
 | `update` | the tree is at HEAD: the merge base with `origin/main` (and any other commit the local ones stand on) fetched from GitHub by hash, the local commits sent as a git bundle, submodules synced, the donor at `DONOR_REV`, DAF at `DAF_REV`. Mesa and Python are reinstalled when `scripts/fetch-windows-software-opengl.ps1` changed, the vcpkg packages when `vcpkg.json` did. |
-| `snapshot-check` | CI's "Check regression profile snapshots" step: its script is read from the `windows-tests.yml` at HEAD and run in the guest's checkout under Windows PowerShell, with `$ErrorActionPreference` at `Stop` and the step's exit code, as the step runs, but with `TEMP` and `TMP` in the tree's `tmp\` instead of the shared account's, and the process's execution policy at `Bypass` (the guest's is `Restricted`, where CI's runners let a script run). An error comes back as text, not as the CLIXML a redirected error stream would carry. A workflow whose step is gone, is no longer `shell: powershell` or no longer runs `tests\windows_regress_snapshot.ps1` fails the leg rather than checking nothing. |
-| `build` | `DuskStudio`, `dusk-studio-tests` and `dusk-windows-software-opengl-probe` at `-j4`, as CI builds them, reconfiguring first when the configure script changed. A failure's note counts the compile and link errors and names the first. Then `built.cmd` compares the commit with the one the tree last built (`stamps\built-commit`): when they differ and ninja printed `no work to do`, the leg fails if any file that changed between them is one the build reads, by ninja's own record (`build.ninja` for sources and generated inputs, its deps log for headers), and the legs that would test that build are skipped. A change to documents or to sources this platform does not compile passes. The built commit is recorded only when the check passes. When the old commit is not in the guest's clone, or ninja's deps log cannot be read, the row is a `WARN`. |
+| `snapshot-check` | CI's "Check regression profile snapshots" step: its script is read from the `windows-tests.yml` at HEAD, copied to `<tree>\regress\snapshot.ps1` and run from there with `-File` (so the cancel and the busy check find it by the tree on its command line), in the guest's checkout under Windows PowerShell, with `$ErrorActionPreference` at `Stop` and the step's exit code, as the step runs, but with `TEMP` and `TMP` in the tree's `tmp\` instead of the shared account's, and `-ExecutionPolicy Bypass` (the guest's is `Restricted`, where CI's runners let a script run). An error comes back as text, not as the CLIXML a redirected error stream would carry. A workflow whose step is gone, is no longer `shell: powershell` or no longer runs `tests\windows_regress_snapshot.ps1` fails the leg rather than checking nothing. |
+| `build` | `DuskStudio`, `dusk-studio-tests` and `dusk-windows-software-opengl-probe` at `-j4`, as CI builds them, reconfiguring first when the configure script changed. A failure's note counts the compile and link errors and names the first. A build in which ninja did work records the commit in `stamps\built-commit` in the same remote call. One in which it printed `no work to do` at a commit other than the recorded one goes through `built-check.ps1` in that call: the leg fails, and the legs that would test that build are skipped, when a file that changed between the two is one the build reads by ninja's own record: `build.ninja` for sources and generated inputs, its deps log for headers, in both the absolute form and the form relative to the build folder that MSVC's deps keep. A submodule counts by the files that changed inside it. When ninja re-ran CMake first, the configure inputs on the `RERUN_CMAKE` edge compared correctly and do not count, but every other edge still does; an input-less `phony` edge, which only lets a path go missing, never counts. A change to documents, to CMake inputs alone, or to sources this platform does not compile passes and is recorded. When the old commit or a submodule's commits are not in the guest's clones, or ninja's deps log cannot be read, or nothing is recorded yet, the row is a `WARN` and nothing is recorded, so the doubt stays until a build does work. `built-check.ps1` runs only in the guest; the contract test drives the leg around it through a stand-in, and its own cases are checked by hand on the guest: a docs-only change, a CMake-only change after ninja re-ran CMake, a compiled source change, a header-only change, each against a recorded commit. |
 | `mesa` | CI's "Verify packaged Mesa selects llvmpipe" step, and the fixture plug-ins and app files CI's upload steps require. |
 | `ctest-inventory` | every test name the `windows-tests.yml` at HEAD requires is in the CTest inventory. The names are read from the workflow, so the two never drift; finding none fails. |
 | `ctest` | the whole suite, serially, as CI runs it. The note names the failed tests. |

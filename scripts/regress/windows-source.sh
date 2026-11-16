@@ -104,8 +104,6 @@ last_leg() {
     printf '%s' "${REGRESS_LEG_STATUS[${#REGRESS_LEG_STATUS[@]} - 1]}"
 }
 
-# The guest reads the cmd scripts with CRLF line ends whatever this checkout
-# has them as.
 # A guest clock that is off by hours stamps the build later than the sources
 # checked out once it has synced and stepped back, and ninja then builds nothing.
 check_guest_clock() {
@@ -138,6 +136,8 @@ check_guest_clock() {
     echo "guest clock ${guest_text}, this box ${host_text}: within ${CLOCK_MARGIN} s"
 }
 
+# The guest reads the cmd scripts with CRLF line ends whatever this checkout
+# has them as.
 leg_preflight() {
     check_guest_clock || return 1
     win_run 600 "$(remote_ps "${SOURCE_DIR}/preflight.ps1" coldGb="$FREE_COLD_GB" warmGb="$FREE_WARM_GB")" \
@@ -167,13 +167,18 @@ leg_update() {
 }
 
 # A failed build ends with its compile and link errors gathered from the
-# ninja output, which -k 0 lets run past the first one.
+# ninja output, which -k 0 lets run past the first one. A build that did no
+# work is checked in the same call against the commit the tree last built
+# (built-check.ps1): exit 87 is a stale build, and a warn: line a doubt.
 build_leg() {
     printf '\n--- build ---\n'
     local start=$SECONDS log="${RUN_DIR}/build.log" rc=0 note=""
-    win_run 7200 "$(remote_cmd build.cmd)" >"$log" 2>&1 || rc=$?
+    win_run 7200 "$(remote_cmd build.cmd "$HEAD_SHA")" >"$log" 2>&1 || rc=$?
     cat "$log"
-    if ((rc != 0)); then
+    if ((rc == 87)); then
+        note="$(tr -d '\r' <"$log" | grep -m1 '^error: ' || true)"
+        regress_record build FAIL "$((SECONDS - start))" "${note:-a stale build}"
+    elif ((rc != 0)); then
         local pattern='error C[0-9]+|error LNK[0-9]+|fatal error' errors count first
         errors="$(grep -E "${pattern}|^FAILED: " "$log" | tr -d '\r' || true)"
         note="exit $rc"
@@ -184,20 +189,13 @@ build_leg() {
             note="${note}: ${count:-0} errors${first:+, first ${first##*\\src\\}}"
         fi
         regress_record build FAIL "$((SECONDS - start))" "$note"
-        return 0
-    fi
-    # The build passed; whether it built this commit is built.cmd's question.
-    local nowork=0 check="${RUN_DIR}/built.log" check_rc=0
-    if tr -d '\r' <"$log" | grep -q '^ninja: no work to do\.$'; then nowork=1; fi
-    win_run 900 "$(remote_cmd built.cmd "$HEAD_SHA" "$nowork")" >"$check" 2>&1 || check_rc=$?
-    tr -d '\r' <"$check"
-    note="$(tr -d '\r' <"$check" | grep -m1 -E '^(error|warn): ' || true)"
-    if ((check_rc != 0)); then
-        regress_record build FAIL "$((SECONDS - start))" "${note:-the built-commit check exited ${check_rc}}"
-    elif [[ "$note" == warn:* ]]; then
-        regress_record build WARN "$((SECONDS - start))" "$note"
     else
-        regress_record build PASS "$((SECONDS - start))"
+        note="$(tr -d '\r' <"$log" | grep -m1 '^warn: ' || true)"
+        if [[ -n "$note" ]]; then
+            regress_record build WARN "$((SECONDS - start))" "$note"
+        else
+            regress_record build PASS "$((SECONDS - start))"
+        fi
     fi
 }
 
@@ -209,10 +207,13 @@ leg_mesa() {
 # this commit and run in the guest's checkout the way the step runs it: Windows
 # PowerShell, $ErrorActionPreference Stop, and the step's exit code. Its TEMP is
 # the tree's tmp\ rather than the shared account's. A step that is missing or
-# no longer a powershell one fails rather than checking nothing. The guest's
-# execution policy is Restricted, where CI's runners let a .ps1 run, so this
-# process alone runs unrestricted; and an error goes out as text, since one
-# left to the redirected error stream comes back serialised as CLIXML.
+# no longer a powershell one fails rather than checking nothing. It runs from
+# a file in <tree>\regress\, so its command line names the tree for the cancel
+# and the next preflight's busy check, and with nothing of inline-lib.ps1 in
+# scope, as in CI. The guest's execution policy is Restricted, where CI's
+# runners let a .ps1 run, so this process alone bypasses it; and an error goes
+# out as text, since one left to the redirected error stream comes back
+# serialised as CLIXML.
 leg_snapshot() {
     local workflow="${REPO_ROOT}/.github/workflows/windows-tests.yml" step="${RUN_DIR}/snapshot"
     mkdir -p "$step"
@@ -233,10 +234,9 @@ leg_snapshot() {
         return 1
     }
     sed 's/^/  | /' "${step}/block.ps1"
-    cp "${SOURCE_DIR}/inline-lib.ps1" "${step}/inline-lib.ps1"
     {
         printf '%s\n' "\$ErrorActionPreference = 'Stop'" \
-            "Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force" \
+            "\$root = '${WIN_ROOT}'" \
             "\$tmp = Join-Path \$root 'tmp'" \
             "New-Item -ItemType Directory -Force -Path \$tmp | Out-Null" \
             "\$env:TEMP = \$tmp" "\$env:TMP = \$tmp" \
@@ -249,8 +249,9 @@ leg_snapshot() {
             "  exit 1" \
             "}" \
             "if (Test-Path -LiteralPath variable:\\LASTEXITCODE) { exit \$LASTEXITCODE }" "exit 0"
-    } >"${step}/snapshot.ps1"
-    win_run 600 "$(remote_ps "${step}/snapshot.ps1")"
+    } | sed 's/\r$//; s/$/\r/' >"${step}/snapshot.ps1"
+    timeout 300 scp "${SSH_OPTS[@]}" -q "${step}/snapshot.ps1" "${WIN_HOST}:${SCRIPTS//\\//}/snapshot.ps1" || return 1
+    win_run 600 "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ${SCRIPTS}\\snapshot.ps1; exit \$LASTEXITCODE"
 }
 
 # The names CI insists on come from the workflow at this commit, so the two
@@ -306,8 +307,27 @@ echo "started $(date '+%F %T')"
 echo "guest   ${WIN_HOST}:${WIN_ROOT}"
 echo "commit  $(git rev-parse --short HEAD) on merge base $(git rev-parse --short "$BASE_SHA")"
 
-regress_leg "vm-preflight" leg_preflight
-if [[ "$(last_leg)" != PASS ]]; then
+# A warn: line, such as the build folder removed for its future stamps, makes
+# the row a WARN; the run goes on.
+preflight_leg() {
+    printf '\n--- vm-preflight ---\n'
+    local start=$SECONDS log="${RUN_DIR}/preflight.log" rc=0 note
+    leg_preflight >"$log" 2>&1 || rc=$?
+    tr -d '\r' <"$log"
+    if ((rc != 0)); then
+        note="$(tr -d '\r' <"$log" | grep -m1 '^error: ' || true)"
+        regress_record vm-preflight FAIL "$((SECONDS - start))" "${note:-exit ${rc}}"
+    else
+        note="$(tr -d '\r' <"$log" | grep -m1 '^warn: ' || true)"
+        if [[ -n "$note" ]]; then
+            regress_record vm-preflight WARN "$((SECONDS - start))" "$note"
+        else
+            regress_record vm-preflight PASS "$((SECONDS - start))"
+        fi
+    fi
+}
+preflight_leg
+if [[ "$(last_leg)" == FAIL ]]; then
     regress_summary "regress windows-source" || true
     exit 1
 fi

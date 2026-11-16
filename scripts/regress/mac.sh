@@ -67,6 +67,9 @@ MAC_REMOTE_REPO=""
 MAC_RUN_TOKEN="regress-${HEAD_SHORT:0:8}-$$"
 MAC_RUN_STATE="$(mktemp "${TMPDIR:-/tmp}/dusk-mac-run.XXXXXX")"
 MAC_RUN_BLOCKED="${MAC_RUN_STATE}.blocked"
+# Touched when a call finds the run's claim gone: the checkout is another
+# run's then, so this one neither restores it nor keeps its folder for that.
+MAC_CLAIM_LOST="${MAC_RUN_STATE}.lost"
 # Set once mac-preflight has claimed the node's checkout for this run; every
 # later call first checks that the claim is still this run's.
 MAC_CLAIMED=0
@@ -196,6 +199,7 @@ mac_run() {
     # 76: the supervisor found the claim gone before it started anything.
     if ((status == 76)); then
         : >"$MAC_RUN_STATE"
+        touch "$MAC_CLAIM_LOST"
     elif ((status != 0)); then
         mac_cancel || return 75
     else
@@ -210,6 +214,10 @@ MAC_RESTORED=0
 restore_branch() {
     [[ -n "$MAC_PREV_BRANCH" ]] || return 0
     ((!MAC_RESTORED)) || return 0
+    if [[ -f "$MAC_CLAIM_LOST" ]]; then
+        echo "error: the checkout is not put back: this run lost its claim on it, so another run has it now" >&2
+        return 1
+    fi
     if [[ -f "$MAC_RUN_BLOCKED" ]]; then
         echo "error: the node's checkout stays on ${REMOTE_BRANCH}: a call there was never acknowledged" >&2
         return 1
@@ -279,25 +287,40 @@ done
     timeout --foreground 120 ssh "${SSH_OPTS[@]}" "$MAC_HOST" "$command" </dev/null || return 1
     MAC_TORN_DOWN=1
 }
-# A restore retried here runs through mac_run, which makes the run's folder
-# again, so the teardown runs again after it.
+# While the checkout is not back, the run keeps its folder and claim, so no
+# other run takes the checkout from under the retry at exit. A run that lost
+# its claim has nothing to keep them for. A restore retried here runs through
+# mac_run, which makes the run's folder again, so the teardown runs again after.
+restore_pending() {
+    [[ -n "$MAC_PREV_BRANCH" ]] && ((!MAC_RESTORED)) && [[ ! -f "$MAC_CLAIM_LOST" ]]
+}
 mac_cleanup() {
-    if ((!MAC_RESTORED)) && [[ -n "$MAC_PREV_BRANCH" ]]; then
+    if restore_pending; then
         restore_branch || true
         MAC_TORN_DOWN=0
     fi
-    mac_teardown 1 || true
-    rm -f "$MAC_RUN_STATE" "$MAC_RUN_BLOCKED"
+    if restore_pending; then
+        echo "error: ~/.cache/dusk-regress/${MAC_RUN_TOKEN} and the run's claim stay on the node: its checkout is not back where the run found it. Put it back by hand, then scripts/regress.sh clean mac removes both; until then the claim keeps other runs off the checkout for ten minutes after the folder was last written" >&2
+    else
+        mac_teardown 1 || true
+    fi
+    rm -f "$MAC_RUN_STATE" "$MAC_RUN_BLOCKED" "$MAC_CLAIM_LOST"
 }
 trap mac_cleanup EXIT
 
 # Two source runs in one checkout move it under each other, so a run claims the
 # checkout here, before it pushes or checks anything out, and refuses one that
 # another live run holds. The claim is a file naming the run's folder, written
-# under a mkdir mutex, so two runs started in the same second cannot both take
-# it. A holder is live while its folder has a call in flight or was written to
-# in the last ten minutes (between calls); a run from an older runner has no
-# claim but shows as a live process group in its folder.
+# under a mkdir mutex, so of two runs started in the same second the second
+# finds the first's claim. A holder is live while a call of it is in flight
+# (its folder's pid names a live process group running that run) or its folder
+# was written in the last 600 s, which covers the gap between two calls; ages
+# come from stat, since BSD find -mmin rounds up. A run from an older runner
+# writes no claim (nor a source file in its folder) and counts only while a call
+# of it is in flight. A mutex older than a minute was left by a run that died
+# inside the claim, which takes well under a second: it is renamed away, never
+# removed in place, so two runs that both find it stale cannot both end up
+# holding the new one.
 leg_preflight() {
     mac_run 180 <<'REMOTE'
 set -euo pipefail
@@ -308,15 +331,30 @@ mutex="$base/source-claim.lock"
 group_alive() {
     ps -ax -o pgid=,stat= | awk -v group="$1" '$1 == group && $2 !~ /^Z/ { found = 1 } END { exit !found }'
 }
-slot_pid_alive() {
+age() {
+    local m
+    m="$(stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null)" || return 1
+    [[ "$m" =~ ^[0-9]+$ ]] || return 1
+    echo $(($(date +%s) - m))
+}
+running_in() {
     local pid=""
     [[ -s "$1/pid" ]] && read -r pid <"$1/pid"
-    [[ "$pid" =~ ^[0-9]+$ ]] && group_alive "$pid" && echo "$pid"
+    [[ "$pid" =~ ^[0-9]+$ ]] && group_alive "$pid" \
+        && [[ "$(ps -ww -o command= -p "$pid" 2>/dev/null)" == *" dusk-regress ${1##*/}" ]] && echo "$pid"
 }
 tries=0
 until mkdir "$mutex" 2>/dev/null; do
-    if [[ -n "$(find "$mutex" -maxdepth 0 -mmin +1 2>/dev/null)" ]]; then
-        rmdir "$mutex" 2>/dev/null || true
+    mutex_age="$(age "$mutex" || echo 0)"
+    if ((mutex_age > 60)); then
+        broken="$mutex.broken.$REGRESS_TOKEN"
+        if mv "$mutex" "$broken" 2>/dev/null; then
+            broken_age="$(age "$broken" || echo 0)"
+            if ((broken_age <= 60)) && [[ ! -e "$mutex" ]]; then
+                mv "$broken" "$mutex" 2>/dev/null || true
+            fi
+            rm -rf "$broken"
+        fi
         continue
     fi
     tries=$((tries + 1))
@@ -325,21 +363,18 @@ until mkdir "$mutex" 2>/dev/null; do
 done
 trap 'rmdir "$mutex" 2>/dev/null || true' EXIT
 for other in "$base"/regress-*; do
-    [[ -d "$other" && "$other" != "$REGRESS_RUN" ]] || continue
-    source_dir="$HOME/src/dusk-studio"
-    [[ -f "$other/source" ]] && read -r source_dir <"$other/source"
-    [[ "$source_dir" == "$REGRESS_SOURCE" ]] || continue
-    if pid="$(slot_pid_alive "$other")"; then
-        echo "error: another source run is live in $REGRESS_SOURCE: ${other##*/} (process group $pid); this run leaves the checkout alone" >&2
+    [[ -d "$other" && "$other" != "$REGRESS_RUN" && ! -f "$other/source" ]] || continue
+    if pid="$(running_in "$other")"; then
+        echo "error: a run of an older runner is live on the node: ${other##*/} (process group $pid); this run leaves the checkout alone" >&2
         exit 1
     fi
 done
 holder=""
 [[ -f "$REGRESS_CLAIM" ]] && read -r holder <"$REGRESS_CLAIM"
 if [[ -n "$holder" && "$holder" != "$REGRESS_TOKEN" ]]; then
-    if [[ -d "$base/$holder" ]] && { slot_pid_alive "$base/$holder" >/dev/null \
-        || [[ -n "$(find "$base/$holder" -maxdepth 0 -mmin -10 2>/dev/null)" ]]; }; then
-        echo "error: another source run holds $REGRESS_SOURCE: $holder (its folder $base/$holder is in use); this run leaves the checkout alone" >&2
+    holder_age="$(age "$base/$holder" || echo 999999)"
+    if pid="$(running_in "$base/$holder")" || ((holder_age <= 600)); then
+        echo "error: another source run holds $REGRESS_SOURCE: $holder (${pid:+process group $pid, }its folder written ${holder_age} s ago); this run leaves the checkout alone" >&2
         exit 1
     fi
     echo "taking over the claim of $holder, whose run is gone"
@@ -700,7 +735,9 @@ mac_footprint_leg() {
     done < <(sed -n 's/^regress:tree //p' <<<"$out")
     run_kb="$(sed -n 's/^regress:run //p' <<<"$out")"
     free_kb="$(sed -n 's/^regress:free //p' <<<"$out")"
-    if ((rc != 0)) || [[ ! "$free_kb" =~ ^[0-9]+$ ]]; then
+    if restore_pending; then
+        regress_record footprint FAIL "$((SECONDS - start))" "the run's folder is kept: the checkout is not back yet, and the exit tries again"
+    elif ((rc != 0)) || [[ ! "$free_kb" =~ ^[0-9]+$ ]]; then
         mac_teardown || true
         regress_record footprint FAIL "$((SECONDS - start))" "exit ${rc}"
     elif ! mac_teardown; then
