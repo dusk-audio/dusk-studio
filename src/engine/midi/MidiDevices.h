@@ -13,6 +13,7 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 // The single seam between Dusk Studio's engine and the platform MIDI backend.
@@ -140,8 +141,11 @@ private:
 };
 
 // Owns the output-port bank plus the whole RT out-queue apparatus: the SPSC
-// queue the audio thread pushes per-port blocks into and the 1 ms pump thread
-// that drains it into the backend, where blocking is harmless.
+// queue the audio thread pushes per-port blocks into and the pump thread that
+// drains it into the backend, where blocking is harmless. The audio thread
+// cannot signal the pump, so the pump polls every 1 ms while an output is
+// open. With none open queueRt drops every block, and the pump sleeps until
+// ensureOpen wakes it.
 class MidiOutputBank
 {
 public:
@@ -200,8 +204,12 @@ public:
     void startPump();
     void stopPump();
 
+    // Test seam: runs on the pump thread each time it finds no output open,
+    // just before it sleeps. Set before startPump.
+    void setPumpIdleHookForTest (std::function<void()> hook) { pumpIdleHook = std::move (hook); }
+
 private:
-    void drainQueue();     // pump thread
+    bool drainQueue();     // pump thread; false when no output is open
     void pumpLoop();
 
     // bankMutex held. A send through the backend that reopens, once per failure
@@ -230,6 +238,8 @@ private:
     // publishes 0 before it touches anything and the new count after, so a
     // racing reader sees "closed", never a stale bound. The pump also clears a
     // flag, under bankMutex, when a failed send leaves its port unrecoverable.
+    // Every write to the flags holds bankMutex: the pump scans them under it
+    // before it retires the queue and sleeps.
     std::array<std::atomic<bool>, kMaxPorts> openFlags {};
     std::atomic<int> numOpenFlags { 0 };
 
@@ -264,6 +274,10 @@ private:
 
     std::thread       pump;
     std::atomic<bool> pumpRunning { false };
+    // ensureOpen and stopPump signal it after storing what the pump checks
+    // before it sleeps. The event latches, so one that lands between that
+    // check and the wait ends the wait at once.
     dusk::AutoResetEvent pumpWake;
+    std::function<void()> pumpIdleHook;
 };
 } // namespace duskstudio::midi

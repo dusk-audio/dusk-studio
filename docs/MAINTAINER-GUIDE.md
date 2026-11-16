@@ -215,8 +215,8 @@ After binding, the audio thread reads parameters straight from the session's ato
 | **Message (UI)** | all `Component` code, timers, file dialogs, save/load | everything normal | block on the audio thread |
 | **MIDI input** | JUCE's handler → `MidiMessageCollector` | lock-free enqueue | heavy work |
 | **Playback prefetch** | `TimeSliceThread` in `PlaybackEngine` | read WAVs ahead of the playhead | — |
-| **Record disk** | `TimeSliceThread` in `RecordManager` | drain the write FIFO to disk | — |
-| **MIDI out pump** | 1 ms loop in `AudioEngine` | drain the MIDI-out FIFO, call `sendBlockOfMessages` (it locks — that's why it can't run on the audio thread) | — |
+| **Record disk** | `DuskRecDrain`, the `WriterDrainPool` in `RecordManager` | drain each take's write ring to disk, every 2 ms while a take is registered; with none it sleeps until one is | — |
+| **MIDI out pump** | `DuskMidiOut`, the pump in `MidiOutputBank` | drain the MIDI-out queue into the backend's send, which can block, so it cannot run on the audio thread; every 1 ms while an output is open, and with none it sleeps until one opens | — |
 
 Cross-thread state is *always* `std::atomic` or a lock-free FIFO. Metering atomics use `memory_order_relaxed`. Flags that gate audio reads of newly-published data (automation mode, swapped plugin pointer) use `release` on the writer and `acquire` on the audio reader. This is the single subtlest thing in the codebase — when in doubt, find an existing pattern (PluginSlot's swap, RecordManager's in-flight counter) and copy its ordering exactly.
 
