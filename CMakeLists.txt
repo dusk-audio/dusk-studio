@@ -1620,6 +1620,12 @@ if(_duskstudio_oop_enabled)
         # Xlib for the child's own X error handler; the framework loads the
         # same libX11 at runtime, so the handler covers its connection too.
         target_link_libraries(dusk-studio-plugin-host PRIVATE X11)
+        # For the realtime CPU guard and the nice-level fallback. Built without
+        # DUSKSTUDIO_HAS_RTKIT on purpose: RTKit serves a fixed number of
+        # processes and threads per user, the app's own audio threads and
+        # PipeWire draw on the same allowance, and a child per plug-in would
+        # use it up. The child takes realtime only where RLIMIT_RTPRIO lets it.
+        target_sources(dusk-studio-plugin-host PRIVATE src/engine/RealtimeKit.cpp)
     elseif(APPLE)
         find_library(DUSKSTUDIO_OOP_AUDIOUNIT_FRAMEWORK AudioUnit REQUIRED)
         find_library(DUSKSTUDIO_OOP_COREAUDIOKIT_FRAMEWORK CoreAudioKit REQUIRED)

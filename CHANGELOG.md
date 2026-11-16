@@ -98,6 +98,11 @@ canonical source.
   instead of loading every installed LV2 bundle first, and on Linux its
   temporary folder is removed when the child ends. Before, a child that was
   killed left a `temp_*` folder behind.
+- **Sandboxed plug-ins under load.** On Linux the sandbox child's audio thread
+  runs at realtime priority, the priority of Dusk Studio's own DSP threads,
+  where your account's realtime limit allows it, so a busy machine no longer
+  makes a sandboxed plug-in miss its blocks. On every OS the child flushes
+  denormal numbers while the plug-in processes.
 
 ## [0.16.1] - 2026-11-07
 

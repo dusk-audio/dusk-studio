@@ -938,6 +938,24 @@ if(DUSKSTUDIO_NATIVE_VST3)
     get_target_property(DUSKSTUDIO_MANY_PARAMS_VST3_BUNDLE
         dusk-studio-many-params-vst3-fixture SMTG_PLUGIN_PACKAGE_PATH)
 
+    smtg_add_vst3plugin(dusk-studio-render-probe-vst3-fixture
+        fixtures/render_probe_vst3.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/common/pluginview.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/main/moduleinit.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/main/pluginfactory.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/vstbus.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/vstcomponentbase.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/vsteditcontroller.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/vstparameters.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/vstsinglecomponenteffect.cpp)
+    target_link_libraries(dusk-studio-render-probe-vst3-fixture PRIVATE dusk-vst3-hosting)
+    target_compile_definitions(dusk-studio-render-probe-vst3-fixture
+        PRIVATE PROJECT_INCLUDES_VSTEDITCONTROLLER=1)
+    get_target_property(DUSKSTUDIO_RENDER_PROBE_VST3_BUNDLE
+        dusk-studio-render-probe-vst3-fixture SMTG_PLUGIN_PACKAGE_PATH)
+    set_property(SOURCE plugin_sandbox_realtime.cpp APPEND PROPERTY COMPILE_DEFINITIONS
+        DUSKSTUDIO_RENDER_PROBE_VST3_FIXTURE_PATH="${DUSKSTUDIO_RENDER_PROBE_VST3_BUNDLE}")
+
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         smtg_add_vst3plugin(dusk-studio-stale-window-vst3-fixture
             fixtures/stale_window_vst3.cpp
@@ -979,7 +997,8 @@ if(DUSKSTUDIO_NATIVE_VST3)
                 dusk-studio-crash-state-vst3-fixture
                 dusk-studio-split-state-vst3-fixture
                 dusk-studio-state-probe-vst3-fixture
-                dusk-studio-many-params-vst3-fixture)
+                dusk-studio-many-params-vst3-fixture
+                dusk-studio-render-probe-vst3-fixture)
             get_target_property(DUSKSTUDIO_VST3_FIXTURE_OPTIONS ${vst3Fixture} COMPILE_OPTIONS)
             if(DUSKSTUDIO_VST3_FIXTURE_OPTIONS)
                 list(TRANSFORM DUSKSTUDIO_VST3_FIXTURE_OPTIONS REPLACE "/Zi" "/Z7")
@@ -1030,7 +1049,8 @@ if(DUSKSTUDIO_NATIVE_VST3)
         dusk-studio-crash-state-vst3-fixture
         dusk-studio-split-state-vst3-fixture
         dusk-studio-state-probe-vst3-fixture
-        dusk-studio-many-params-vst3-fixture)
+        dusk-studio-many-params-vst3-fixture
+        dusk-studio-render-probe-vst3-fixture)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         target_sources(dusk-studio-tests PRIVATE vst3_hostcontext_runloop.cpp)
     endif()
@@ -1127,6 +1147,7 @@ if (_duskstudio_ipc_test_enabled)
     target_sources(dusk-studio-tests PRIVATE
         ipc_stub_round_trip.cpp
         ipc_prepare_without_plugin.cpp
+        plugin_sandbox_realtime.cpp
         plugin_sandbox_state.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/ipc/RemotePluginConnection.cpp
         ${_duskstudio_ipc_test_sources})
@@ -1295,12 +1316,19 @@ catch_discover_tests(dusk-studio-tests
     TEST_SPEC "[permission-fixture]"
     EXTRA_ARGS --allow-running-no-tests
     PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:")
+# A sandbox child takes realtime scheduling only where RLIMIT_RTPRIO lets it, and
+# a CI runner's does not, so a case that needs it skips there. It starts a
+# plug-in host, so it runs serially like the [ipc] cases.
 catch_discover_tests(dusk-studio-tests
-    TEST_SPEC "~[alsa]~[ipc]~[host-limits]~[sfz-disk-full]~[sfz-location-disk-full]~[sfz-store-disk-full]~[sfz-filesystem-fixture]~[normalization-fixture]~[permission-fixture]")
+    TEST_SPEC "[realtime-fixture]"
+    EXTRA_ARGS --allow-running-no-tests
+    PROPERTIES RUN_SERIAL TRUE SKIP_REGULAR_EXPRESSION "SKIPPED:")
+catch_discover_tests(dusk-studio-tests
+    TEST_SPEC "~[alsa]~[ipc]~[host-limits]~[sfz-disk-full]~[sfz-location-disk-full]~[sfz-store-disk-full]~[sfz-filesystem-fixture]~[normalization-fixture]~[permission-fixture]~[realtime-fixture]")
 # [ipc] cases start plug-in hosts and assert on bounded response times. Run
 # them serially so other cases cannot starve their control threads.
 catch_discover_tests(dusk-studio-tests
-    TEST_SPEC "[ipc]~[scan-grandchild-fixture]~[sfz-shutdown]~[sfz-service-disk-full]~[xvfb]"
+    TEST_SPEC "[ipc]~[scan-grandchild-fixture]~[sfz-shutdown]~[sfz-service-disk-full]~[xvfb]~[realtime-fixture]"
     PROPERTIES RUN_SERIAL TRUE)
 catch_discover_tests(dusk-studio-tests
     TEST_SPEC "[sfz-shutdown]"
