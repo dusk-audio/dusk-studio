@@ -52,6 +52,12 @@ canonical source.
   backup that fails too offers the next older one. A session saved by a
   newer Dusk Studio raises its own alert. Before, a failed open only showed
   "Load failed" in the status bar.
+- **Stalled plug-in count.** The DSP readout ends in `STALL n` when a plug-in
+  that stopped responding held a block up for seconds: one that kept a
+  Multicore DSP thread busy for more than 2 seconds, or one the audio thread
+  was still running after about 3 seconds. A terminal line says which. The
+  count turns the readout amber, and the double-click that resets the other
+  counters resets it.
 
 ### Changed
 

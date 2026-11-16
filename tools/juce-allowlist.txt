@@ -134,7 +134,7 @@ src/ui/ShortcutsPanel.h	36
 src/ui/SplitModuleButton.h	42
 src/ui/SteppedKnob.h	12
 src/ui/SupportersPanel.h	41
-src/ui/SystemStatusBar.cpp	30
+src/ui/SystemStatusBar.cpp	28
 src/ui/SystemStatusBar.h	11
 src/ui/TapeStrip.cpp	324
 src/ui/TapeStrip.h	51

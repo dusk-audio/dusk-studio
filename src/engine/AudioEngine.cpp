@@ -1808,6 +1808,12 @@ int AudioEngine::getRealtimeDemotionCount() const noexcept
    #endif
 }
 
+int AudioEngine::getStallCount() const noexcept
+{
+    return std::max (0, workerPool.joinStallCount() + stuckCallbacks.load (std::memory_order_relaxed)
+                            - stallBaseline.load (std::memory_order_relaxed));
+}
+
 void AudioEngine::resetXRunCounts() noexcept
 {
     xrunCount.store (0, std::memory_order_relaxed);
@@ -1815,6 +1821,8 @@ void AudioEngine::resetXRunCounts() noexcept
     const auto demotions = rt::realtimeDemotions();
     realtimeDemotionBaseline.store (demotions.count + demotions.unattributed, std::memory_order_relaxed);
    #endif
+    stallBaseline.store (workerPool.joinStallCount() + stuckCallbacks.load (std::memory_order_relaxed),
+                         std::memory_order_relaxed);
     int devCount = 0;
     if (auto* dev = deviceManager.getCurrentDevice())
         devCount = dev->getXRunCount();
@@ -2236,6 +2244,38 @@ void AudioEngine::drainCallbackDiagnostics()
                       (int) (dims & 0xffffffffu),
                       (long long) (silent - lastReportedSilent));
         lastReportedSilent = silent;
+    }
+
+    const int stalls = workerPool.joinStallCount();
+    if (stalls != lastReportedLaneStalls)
+    {
+        std::fprintf (stderr, "[Dusk Studio/AudioEngine] DSP lane STALLED - a block waited over 2 s for a "
+                              "Multicore DSP lane %d time(s) since last report; a plug-in on that lane's "
+                              "strips is likely hung in its processing\n",
+                      stalls - lastReportedLaneStalls);
+        lastReportedLaneStalls = stalls;
+    }
+
+    // A block that has not returned: the same callback in flight at every
+    // tick since the watch began. One waiting on a lane in the pool's join is
+    // the lane stall above, so it is left to that count.
+    const auto now = std::chrono::steady_clock::now();
+    const auto entered = callbacksEntered.load (std::memory_order_relaxed);
+    if (callbacksInFlight.load (std::memory_order_seq_cst) == 0 || entered != stuckWatch.entered)
+    {
+        stuckWatch.entered = entered;
+        stuckWatch.since = now;
+        stuckWatch.counted = false;
+    }
+    else if (! stuckWatch.counted && ! workerPool.isJoinBlocked()
+             && now - stuckWatch.since >= std::chrono::milliseconds (stuckWatch.limitMs))
+    {
+        stuckWatch.counted = true;
+        stuckCallbacks.fetch_add (1, std::memory_order_relaxed);
+        std::fprintf (stderr, "[Dusk Studio/AudioEngine] callback STUCK - the audio callback has not returned "
+                              "for %lld s; a plug-in in a block the audio thread runs alone is likely hung "
+                              "in its processing\n",
+                      (long long) std::chrono::duration_cast<std::chrono::seconds> (now - stuckWatch.since).count());
     }
 }
 
@@ -5738,6 +5778,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         ~InFlightGuard() { counter.fetch_sub (1, std::memory_order_acq_rel); }
     };
     const InFlightGuard inFlightGuard { callbacksInFlight };
+    callbacksEntered.fetch_add (1, std::memory_order_relaxed);
 
     if ((int) mixL.size() < numSamples)
     {

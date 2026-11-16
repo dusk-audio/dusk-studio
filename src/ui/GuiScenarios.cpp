@@ -1453,6 +1453,11 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         return owner.systemStatusBar != nullptr ? owner.systemStatusBar->dspPaintForScenario() : 0;
     }
 
+    bool dspReadoutFits() const override
+    {
+        return owner.systemStatusBar != nullptr && owner.systemStatusBar->dspReadoutFitsForScenario();
+    }
+
     int consolePageCount() const override { return owner.consoleView->numBanks(); }
     bool consolePageMatches (int index) const override
     {

@@ -292,6 +292,9 @@ public:
     // ARGB, 0 without a status bar.
     virtual bool pinDspReadings (std::optional<DspReadings>) = 0;
     virtual std::uint32_t dspReadoutPaint() = 0;
+    // Whether the DSP segment's text fits inside the segment; false without a
+    // status bar.
+    virtual bool dspReadoutFits() const = 0;
     virtual bool clickRecord() = 0;
     virtual bool clickMidiMerge() = 0;
     virtual bool clickPianoMidiMerge() = 0;

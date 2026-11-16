@@ -450,6 +450,7 @@ void AudioWorkerPool::runBlock() noexcept
         std::this_thread::yield();
     }
     int waitedMs = 0;
+    joinBlocked.store (true, std::memory_order_relaxed);
     while (done.load (std::memory_order_acquire) < active)
     {
         completion.wait (1);
@@ -458,9 +459,10 @@ void AudioWorkerPool::runBlock() noexcept
         // NO stderr on the audio thread - and let a non-RT consumer surface
         // joinStallCount(). At 2 s the deadline is long dead, so a reader racing
         // this increment is immaterial.
-        if (++waitedMs == 2000)
+        if (++waitedMs == joinStallWaits)
             joinStalls.fetch_add (1, std::memory_order_relaxed);
     }
+    joinBlocked.store (false, std::memory_order_relaxed);
 }
 
 void AudioWorkerPool::quiesce()

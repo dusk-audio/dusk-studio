@@ -108,6 +108,19 @@ public:
     // processBlock). Bumped RT-safely from runBlock; poll from a non-RT thread.
     int joinStallCount() const noexcept { return joinStalls.load (std::memory_order_relaxed); }
 
+    // Whether the caller of runBlock is blocked in the join, waiting on a lane
+    // past the short spin. A watchdog that sees a block run long reads it to
+    // tell a lane's stall, which joinStallCount() counts, from one on the
+    // caller's own thread. Any thread.
+    bool isJoinBlocked() const noexcept { return joinBlocked.load (std::memory_order_relaxed); }
+
+    // Test-only: one join stall, counted as runBlock counts one.
+    void noteJoinStallForTest() noexcept { joinStalls.fetch_add (1, std::memory_order_relaxed); }
+
+    // Test-only, with no runBlock in flight: how many 1 ms waits the join makes
+    // before it counts a stall, 2000 otherwise.
+    void setJoinStallWaitsForTest (int waits) noexcept { joinStallWaits = waits; }
+
 private:
     struct Worker;
     std::vector<std::unique_ptr<Worker>> workers_;
@@ -120,6 +133,8 @@ private:
     std::atomic<bool>     quiescing { false };
     std::atomic<bool>     quit { false };
     std::atomic<int>      joinStalls { 0 };    // count of >2 s join stalls (diagnostic)
+    std::atomic<bool>     joinBlocked { false };
+    int                   joinStallWaits = 2000;
     dusk::AutoResetEvent  completion;          // auto-reset; signalled by the last worker
 
     // The last setDeviceDeadline. Written by the message thread only while
