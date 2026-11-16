@@ -82,7 +82,9 @@ canonical source.
   that sends MIDI out and the thread that writes recordings to disk sleep as
   well, until an output is open or a take is recording. On an 8-core machine
   at 48 kHz with a 512-sample buffer, a stopped session with nothing
-  monitored wakes those threads about 2,000 times a second less.
+  monitored wakes those threads about 2,000 times a second less. A track
+  that is muted or has no input also costs the audio thread about a
+  twentieth of what it did.
 
 ### Fixed
 

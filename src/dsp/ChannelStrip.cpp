@@ -515,6 +515,22 @@ void ChannelStrip::updateGainTargets() noexcept
     }
 }
 
+void ChannelStrip::parkGainSmoothers (int numSamples) noexcept
+{
+    faderGain.setTargetValue (0.0f);
+    faderGain.skip (numSamples);
+    for (auto& s : busGain)
+    {
+        s.setTargetValue (0.0f);
+        s.skip (numSamples);
+    }
+    for (auto& s : auxSendGain)
+    {
+        s.setTargetValue (0.0f);
+        s.skip (numSamples);
+    }
+}
+
 #if DUSKSTUDIO_HAS_DUSK_DSP
 // The console saturation is the channel's always-on console floor, so the EQ
 // processor runs every block regardless of the EQ bypass. When the EQ section
@@ -1297,21 +1313,13 @@ void ChannelStrip::processAndAccumulate (const float* inL,
     // track also takes the stereo path - inL/inR carry its pre-rendered audio.
     const bool stereo = (inR != nullptr) || isMidi || isFrozen;
 
-    // No params, or an audio track with no input -> tick the smoothers down
-    // (so M/S transitions sound smooth) and bail. MIDI tracks are exempt
-    // from the inL == nullptr bail because their audio source comes from
-    // the plugin, not an input buffer.
+    // No params, or an audio track with no input -> ramp the gains down (so
+    // the strip fades back in when it next mixes) and bail. MIDI tracks are
+    // exempt from the inL == nullptr bail because their audio source comes
+    // from the plugin, not an input buffer.
     if (paramsRef == nullptr || (inL == nullptr && ! isMidi))
     {
-        faderGain.setTargetValue (0.0f);
-        for (auto& s : busGain)     s.setTargetValue (0.0f);
-        for (auto& s : auxSendGain) s.setTargetValue (0.0f);
-        for (int i = 0; i < numSamples; ++i)
-        {
-            faderGain.getNextValue();
-            for (auto& s : busGain)     s.getNextValue();
-            for (auto& s : auxSendGain) s.getNextValue();
-        }
+        parkGainSmoothers (numSamples);
         // Same rationale as the not-passing skip below: output is cut for the
         // whole bail, so the held PDC / oversampler tail is dropped rather than
         // replayed on resume, and the drained latch lets a latency retarget
@@ -1349,15 +1357,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
     if (! passByGate && ! (isMidi && hasLoadedMidiConsumer())
         && ! needsProcessedMono && ! pingRequested && (freezeCapL == nullptr || freezeCapR == nullptr))
     {
-        faderGain.setTargetValue (0.0f);
-        for (auto& s : busGain)     s.setTargetValue (0.0f);
-        for (auto& s : auxSendGain) s.setTargetValue (0.0f);
-        for (int i = 0; i < numSamples; ++i)
-        {
-            faderGain.getNextValue();
-            for (auto& s : busGain)     s.getNextValue();
-            for (auto& s : auxSendGain) s.getNextValue();
-        }
+        parkGainSmoothers (numSamples);
         // The PDC lines still hold the last pdcAppliedSamples of pre-skip
         // audio (and the oversampler's half-band FIRs hold osLatencySamples
         // more); a plain return would freeze that there and replay it into
@@ -1940,20 +1940,12 @@ void ChannelStrip::processAndAccumulate (const float* inL,
 
     if (! passByGate)
     {
-        // Strip is muted/soloed-out/IN-off - keep the smoothers ticking but
-        // don't accumulate to master/buses. The DSP STILL ran above, so a
+        // Strip is muted/soloed-out/IN-off - ramp the gains down but don't
+        // accumulate to master/buses. The DSP STILL ran above, so a
         // recording-armed track with `printEffects` can still capture the
         // post-effects signal even when the engineer has IN off (direct
         // hardware monitoring scenario).
-        faderGain.setTargetValue (0.0f);
-        for (auto& s : busGain)     s.setTargetValue (0.0f);
-        for (auto& s : auxSendGain) s.setTargetValue (0.0f);
-        for (int i = 0; i < numSamples; ++i)
-        {
-            faderGain.getNextValue();
-            for (auto& s : busGain)     s.getNextValue();
-            for (auto& s : auxSendGain) s.getNextValue();
-        }
+        parkGainSmoothers (numSamples);
         return;
     }
 

@@ -616,6 +616,16 @@ private:
     std::atomic<float*> stemCapR { nullptr };
 
     void updateGainTargets() noexcept;
+    // Ramps the fader, bus and aux-send gains toward zero across a block the
+    // strip does not mix, one skip per smoother, so the next block it mixes
+    // fades in from where the ramp got to. Kept out of line: code added to
+    // processAndAccumulate's body has slowed the loops of strips that do mix.
+#if defined(_MSC_VER)
+    __declspec(noinline)
+#elif defined(__GNUC__)
+    __attribute__((noinline))
+#endif
+    void parkGainSmoothers (int numSamples) noexcept;
     void updateEqParameters() noexcept;
     void updateCompParameters() noexcept;
 };

@@ -109,7 +109,7 @@ The audio thread (`AudioEngine::audioDeviceIOCallback` and any `process*` it cal
 - **Memory ordering**: metering atomics use `std::memory_order_relaxed`; state flags that gate audio reads (e.g. plugin instance pointer, RT counters in Session) use `release` on the writer side and `acquire` on the audio-thread reader.
 - **Check `numSamples == 0`** — early return, JUCE/JACK can send empty blocks during transitions.
 - **Check `mixL.size() < numSamples`** — host-driven oversized blocks are real (see the existing guard in the callback). Either bail with cleared output, or chunk the work.
-- **Smoothers don't tick during skipped passes** — when an aux/track is silent and we skip its DSP, smoothers stay frozen and pick up correctly when audio resumes. Don't "advance" smoothers manually.
+- **Smoothers don't tick during skipped passes** — when an aux/track is silent and we skip its DSP, smoothers stay frozen and pick up correctly when audio resumes. Don't "advance" smoothers manually. The one deliberate exception is a channel strip that is muted, gated out or has no input: `ChannelStrip::parkGainSmoothers` ramps its fader, bus and send gains to zero in one step per block, so the strip fades back in when it mixes again.
 
 ## DSP lifecycle
 
