@@ -21,9 +21,16 @@ XVFB_LIBGL_VALUE=""
 # report the display back, which it only does once the display accepts clients.
 xvfb_session_start() {
     local display_number attempt
+    # A shell that is killed outright never reaches xvfb_session_stop. With
+    # setpriv at hand the kernel ends Xvfb when the shell that started it dies.
+    local -a with_parent=()
+    if command -v setpriv >/dev/null 2>&1; then
+        with_parent=(setpriv --pdeathsig TERM)
+    fi
     XVFB_DISPLAY_FILE="$(mktemp "${TMPDIR:-/tmp}/duskstudio-regress-display.XXXXXX")"
     XVFB_LOG_FILE="$(mktemp "${TMPDIR:-/tmp}/duskstudio-regress-xvfb.XXXXXX")"
-    Xvfb -displayfd 3 -screen 0 1920x1200x24 -nolisten tcp +extension GLX +render \
+    ${with_parent[@]+"${with_parent[@]}"} \
+        Xvfb -displayfd 3 -screen 0 1920x1200x24 -nolisten tcp +extension GLX +render \
         3>"$XVFB_DISPLAY_FILE" 2>"$XVFB_LOG_FILE" &
     XVFB_PID=$!
     for ((attempt = 0; attempt < 100; ++attempt)); do

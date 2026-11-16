@@ -1341,6 +1341,31 @@ regress_capture_leg /opt/under-test/DuskStudio
     assert "kill" not in (repo / "scripts/regress/mac/clean-node.sh").read_text().replace("killed", ""), \
         "clean-node.sh signals a process"
 
+    # An Xvfb the helper started ends with the shell that started it, also when
+    # that shell is killed with a signal it cannot trap.
+    if shutil.which("Xvfb") and shutil.which("setpriv"):
+        xvfb_harness = r'''
+set -euo pipefail
+source "$DUSK_REGRESS_TEST_ROOT/scripts/regress/xvfb.sh"
+xvfb_session_start
+echo "$XVFB_PID"
+read -r _ || true
+'''
+        shell = subprocess.Popen(["bash", "-c", xvfb_harness], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                 text=True, env=dict(child_environment, DUSK_REGRESS_TEST_ROOT=str(repo)))
+        started = ""
+        try:
+            started = shell.stdout.readline().strip()
+            assert started.isdigit() and running(int(started)), ("the Xvfb helper started no server", started)
+            shell.kill()
+            shell.wait(timeout=10)
+            wait_for(lambda: not running(int(started)), "an Xvfb outlived the killed shell that started it")
+        finally:
+            if shell.poll() is None:
+                shell.kill()
+            if started.isdigit() and running(int(started)):
+                os.kill(int(started), signal.SIGTERM)
+
     # When this box has PowerShell, every guest script must parse.
     pwsh = shutil.which("pwsh")
     if pwsh:
@@ -1361,5 +1386,6 @@ regress_capture_leg /opt/under-test/DuskStudio
 
 print("regression runner: interrupt cleanup, runtime dirs under a long TMPDIR, prepush log folders, "
       "capture leg, timing cache, Mac paths, "
-      "missing app, Windows source leg, added submodule checkouts, the host locks and the host clean pass"
+      "missing app, Windows source leg, added submodule checkouts, the host locks, the host clean pass "
+      "and an Xvfb that ends with its shell"
       + ("" if shutil.which("pwsh") else "; no pwsh here, so the guest scripts were not parsed"))
