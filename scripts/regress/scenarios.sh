@@ -73,7 +73,10 @@ SCENARIO_LEG_NAMES=(scenario-fixtures scenarios-headless "${SCENARIO_BB_LEG_NAME
 SANDBOX_ENV=()
 
 # sandbox_env <dir>: SANDBOX_ENV becomes the env assignments for a private
-# HOME, TMPDIR, XDG base directories and runtime dir under <dir>, which must exist.
+# HOME, TMPDIR and XDG base directories under <dir>, which must exist, and a
+# private runtime dir. That one lives on a short path of its own
+# (regress_runtime_dir), linked as <dir>/runtime; a second call for the same
+# <dir> reuses it, and sandbox_remove takes it away with <dir>.
 #
 # PipeWire finds its socket through the runtime dir, and without it the engine
 # falls back to ALSA and opens the first sound card directly. So PipeWire keeps
@@ -81,9 +84,15 @@ SANDBOX_ENV=()
 # otherwise the machine's, which the app joins as an ordinary client instead of
 # grabbing the maintainer's interface.
 sandbox_env() {
-    local dir="$1"
+    local dir="$1" runtime
     local pipewire_dir="${NULL_AUDIO_DIR:-${PIPEWIRE_RUNTIME_DIR:-${XDG_RUNTIME_DIR:-}}}"
-    mkdir -p "$dir/home" "$dir/config" && mkdir -p -m 700 "$dir/runtime" "$dir/tmp" || return 1
+    mkdir -p "$dir/home" "$dir/config" && mkdir -p -m 700 "$dir/tmp" || return 1
+    if [[ -L "$dir/runtime" && -d "$dir/runtime" ]]; then
+        runtime="$(readlink "$dir/runtime")"
+    else
+        runtime="$(regress_runtime_dir)" || return 1
+        ln -sfn "$runtime" "$dir/runtime" || { rm -rf "$runtime"; return 1; }
+    fi
     SANDBOX_ENV=(
         "HOME=$dir/home"
         "TMPDIR=$dir/tmp"
@@ -91,13 +100,30 @@ sandbox_env() {
         "XDG_DATA_HOME=$dir/home/.local/share"
         "XDG_CACHE_HOME=$dir/home/.cache"
         "XDG_STATE_HOME=$dir/home/.local/state"
-        "XDG_RUNTIME_DIR=$dir/runtime"
+        "XDG_RUNTIME_DIR=$runtime"
         "DUSKSTUDIO_CONFIG_DIR=$dir/home/.config/Dusk Studio"
         "DUSKSTUDIO_MUSIC_DIR=$dir/music"
     )
     if [[ -n "$pipewire_dir" ]]; then
         SANDBOX_ENV+=("PIPEWIRE_RUNTIME_DIR=$pipewire_dir")
     fi
+}
+
+# sandbox_remove <path>: removes <path> and the runtime dir of every sandbox
+# sandbox_env made at <path> or one level below it.
+sandbox_remove() {
+    local path="$1" link target
+    [[ -n "$path" && -e "$path" ]] || return 0
+    # The damaged-recent leg leaves a 0000 directory behind on purpose.
+    chmod -R u+rwX "$path" 2>/dev/null || true
+    for link in "$path/runtime" "$path"/*/runtime; do
+        [[ -L "$link" ]] || continue
+        target="$(readlink "$link")"
+        if [[ "${target##*/}" == dusk-rt.* && -d "$target" && ! -L "$target" && -O "$target" ]]; then
+            rm -rf "$target"
+        fi
+    done
+    rm -rf "$path"
 }
 
 BB_SDIR=""
@@ -248,6 +274,19 @@ bb_case_skipped() {
     return 0
 }
 
+# What the app prints, whatever the reason, when it runs without the
+# single-instance slot.
+BB_NO_SLOT=" - starting without the single-instance slot"
+
+# bb_assert_slot <tag>: for a leg that hands sessions between instances, which
+# without the slot can only time out on a reason that names something else.
+bb_assert_slot() {
+    local tag="$1" line
+    line="$(grep -m1 -F -- "$BB_NO_SLOT" "$BB_SDIR/$tag.err" 2>/dev/null)" || return 0
+    bb_fail "$tag runs without the single-instance slot the leg needs: ${line}"
+    return 1
+}
+
 bb_assert_absent() {
     local tag="$1" literal="$2"
     grep -qF -- "$literal" "$BB_SDIR/$tag.err" 2>/dev/null || return 0
@@ -303,11 +342,9 @@ bb_end() {
     fi
     if [[ -n "$BB_SDIR" ]]; then
         if [[ "${DUSK_REGRESS_SCENARIO_KEEP:-0}" == 1 ]]; then
-            printf '  kept %s\n' "$BB_SDIR"
+            printf '  kept %s (runtime dir %s)\n' "$BB_SDIR" "$(readlink "$BB_SDIR/runtime")"
         else
-            # The damaged-recent leg leaves a 0000 directory behind on purpose.
-            chmod -R u+rwX "$BB_SDIR" 2>/dev/null || true
-            rm -rf "$BB_SDIR"
+            sandbox_remove "$BB_SDIR"
         fi
     fi
     BB_SDIR=""
@@ -350,6 +387,7 @@ scenarios_list() {
 sandboxed_app_run() {
     local secs="$1" spec="$2" dir rc=0
     dir="$(mktemp -d "${TMPDIR:-/tmp}/duskstudio-scenarios.XXXXXX")" || return 1
+    regress_at_exit "sandbox_remove $(printf '%q' "$dir")"
     if sandbox_env "$dir"; then
         xvfb_run "$secs" env -u DBUS_SESSION_BUS_ADDRESS "${SANDBOX_ENV[@]}" \
             "DUSKSTUDIO_RUN_SCENARIOS=${spec}" \
@@ -358,7 +396,7 @@ sandboxed_app_run() {
     else
         rc=1
     fi
-    rm -rf "$dir"
+    sandbox_remove "$dir"
     return "$rc"
 }
 
@@ -532,6 +570,7 @@ bb_handoff_body() {
 
     bb_spawn A "DUSKSTUDIO_LOAD_SESSION=$first" -- || return 1
     bb_wait_marker A "[Dusk Studio/Load] session.json" 120 || return 1
+    bb_assert_slot A || return 1
 
     bb_spawn B -- "$second" || return 1
     bb_wait_exit B 60 || return 1
@@ -554,6 +593,7 @@ bb_crash_relaunch_body() {
 
     bb_spawn A "DUSKSTUDIO_LOAD_SESSION=$session" -- || return 1
     bb_wait_marker A "[Dusk Studio/Load] session.json" 120 || return 1
+    bb_assert_slot A || return 1
 
     kill -9 "${BB_PID[A]}" 2>/dev/null || true
     wait "${BB_PID[A]}" 2>/dev/null || true
@@ -605,7 +645,7 @@ bb_no_runtime_dir_body() {
         ${quit_timer[@]+"${quit_timer[@]}"} -- || return 1
 
     bb_wait_marker A "XDG_RUNTIME_DIR is unset or not an absolute path" 60 || return 1
-    bb_assert_marker A " - starting without the single-instance slot" || return 1
+    bb_assert_marker A "$BB_NO_SLOT" || return 1
     bb_wait_marker A "[Dusk Studio/Load] session.json" 120 || return 1
 
     if scenarios_has_quit_timer; then

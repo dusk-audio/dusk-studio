@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -55,6 +56,102 @@ bb_end 0
                             capture_output=True, text=True, timeout=10)
     assert result.returncode == 0, (result.stdout, result.stderr)
     assert not any(runner_tmp.iterdir()), "interrupted scenario scratch escaped its sandbox"
+
+    # The app binds $XDG_RUNTIME_DIR/dusk-studio/instance-<16 hex>.sock, so a
+    # launch gets its single-instance slot only while that fits sun_path.
+    long_tmp = runner_tmp / ("a-folder-name-long-enough-to-overrun-a-single-instance-socket-" + "x" * 32)
+    long_tmp.mkdir()
+    assert len(str(long_tmp)) >= 90, long_tmp
+    bind_slot = root / "bind-slot.py"
+    bind_slot.write_text(
+        "import os, socket, stat\n"
+        "runtime = os.environ['XDG_RUNTIME_DIR']\n"
+        "print('runtime', runtime, oct(stat.S_IMODE(os.stat(runtime).st_mode)))\n"
+        "os.mkdir(os.path.join(runtime, 'dusk-studio'), 0o700)\n"
+        "with socket.socket(socket.AF_UNIX) as slot:\n"
+        "    slot.bind(os.path.join(runtime, 'dusk-studio', 'instance-0123456789abcdef.sock'))\n"
+        "print('bound')\n")
+    sandbox_slot_harness = r'''
+set -euo pipefail
+source "$DUSK_REGRESS_TEST_ROOT/scripts/regress/common.sh"
+source "$DUSK_REGRESS_TEST_ROOT/scripts/regress/scenarios.sh"
+bb_begin long-tmpdir-slot
+printf 'first %s\n' "$(readlink "$BB_SDIR/runtime")"
+sandbox_env "$BB_SDIR"
+env "${SANDBOX_ENV[@]}" python3 -I "$DUSK_REGRESS_TEST_BIND"
+bb_end 0
+'''
+    # A runtime base short in characters and long in bytes: 59 characters and
+    # 89 bytes with the helper's dusk-rt.XXXXXX.
+    wide_runtime = Path(tempfile.mkdtemp(prefix="d" + "\u00e9" * 30, dir="/tmp"))
+    pipewire_stub = Path(tempfile.mkdtemp(prefix="dusk-pw-stub.", dir="/tmp"))
+    pipewire_socket = socket.socket(socket.AF_UNIX)
+    pipewire_socket.bind(str(pipewire_stub / "pipewire-0"))
+    gnome_slot_harness = r'''
+set -uo pipefail
+source "$DUSK_REGRESS_TEST_ROOT/scripts/regress/gnome-session.sh"
+gnome_session_setup long-tmpdir-gnome
+printf 'first %s\n' "$GNOME_RT"
+XDG_RUNTIME_DIR="$GNOME_RT" python3 -I "$DUSK_REGRESS_TEST_BIND" || exit 1
+'''
+    try:
+        # The second case is a session whose own runtime dir is too long to use.
+        for runtime_base in (os.environ.get("XDG_RUNTIME_DIR"), str(long_tmp), str(wide_runtime)):
+            for name, harness in (("sandbox_env", sandbox_slot_harness), ("gnome-session.sh", gnome_slot_harness)):
+                environment = dict(child_environment, TMPDIR=str(long_tmp), DUSK_REGRESS_TEST_ROOT=str(repo),
+                                   DUSK_REGRESS_TEST_BIND=str(bind_slot), DUSK_REGRESS_SCENARIO_KEEP="0",
+                                   DUSK_REGRESS_PIPEWIRE_DIR=str(pipewire_stub), LC_ALL="C.UTF-8")
+                if runtime_base is None:
+                    environment.pop("XDG_RUNTIME_DIR", None)
+                else:
+                    environment["XDG_RUNTIME_DIR"] = runtime_base
+                result = subprocess.run(["bash", "-c", harness], env=environment,
+                                        capture_output=True, text=True, timeout=20)
+                where = (name, runtime_base, result.stdout, result.stderr)
+                assert result.returncode == 0, where
+                first = result.stdout.split("first ", 1)[1].split("\n", 1)[0]
+                runtime, mode = result.stdout.split("runtime ", 1)[1].split("\n", 1)[0].rsplit(" ", 1)
+                assert runtime == first, where
+                assert len(os.fsencode(runtime) + b"/dusk-studio/instance-0123456789abcdef.sock") < 108, where
+                assert mode == "0o700", where
+                assert "bound" in result.stdout, where
+                assert not runtime.startswith("/var/tmp"), where
+                assert not Path(runtime).exists(), ("runtime dir outlived the leg",) + where
+                assert not any(long_tmp.iterdir()), ("scratch outlived the leg",) + where
+        interrupted_harness = r'''
+set -euo pipefail
+source "$DUSK_REGRESS_TEST_ROOT/scripts/regress/common.sh"
+source "$DUSK_REGRESS_TEST_ROOT/scripts/regress/scenarios.sh"
+trap 'bb_end 0 >/dev/null 2>&1 || true; regress_run_exit_hooks' EXIT
+bb_begin interrupted-slot
+printf 'first %s\n' "$(readlink "$BB_SDIR/runtime")"
+kill -INT $$
+sleep 5
+'''
+        result = subprocess.run(["bash", "-c", interrupted_harness],
+                                env=dict(child_environment, TMPDIR=str(long_tmp), DUSK_REGRESS_TEST_ROOT=str(repo),
+                                         DUSK_REGRESS_SCENARIO_KEEP="0"),
+                                capture_output=True, text=True, timeout=20)
+        runtime = result.stdout.split("first ", 1)[1].split("\n", 1)[0]
+        assert runtime and not Path(runtime).exists(), ("an interrupted leg left its runtime dir", result)
+        assert not any(long_tmp.iterdir()), ("an interrupted leg left its scratch", result)
+        embed_probe = ("import importlib.util, sys\n"
+                       "spec = importlib.util.spec_from_file_location('embed', sys.argv[1])\n"
+                       "embed = importlib.util.module_from_spec(spec)\n"
+                       "spec.loader.exec_module(embed)\n"
+                       "made = embed.runtime_dir()\n"
+                       "made.rmdir()\n"
+                       "sys.stdout.buffer.write(bytes(made))\n")
+        result = subprocess.run([sys.executable, "-c", embed_probe, str(repo / "scripts/regress/native-wayland-embedding.py")],
+                                env=dict(child_environment, XDG_RUNTIME_DIR=str(wide_runtime), LC_ALL="C.UTF-8"),
+                                capture_output=True, timeout=20)
+        assert result.returncode == 0 and len(result.stdout) <= 64, \
+            ("the embedding probe's runtime dir is over 64 bytes", result)
+    finally:
+        pipewire_socket.close()
+        shutil.rmtree(pipewire_stub)
+        shutil.rmtree(wide_runtime)
+    long_tmp.rmdir()
 
     scripts = root / "scripts"
     runners = scripts / "regress"
@@ -688,5 +785,6 @@ regress_capture_leg /opt/under-test/DuskStudio
     assert (host / ".git/modules" / added).is_dir(), "the added submodule's clone was removed"
     assert git(host, "status", "--porcelain", "--ignore-submodules=all") == "", "the tree is not clean"
 
-print("regression runner: interrupt cleanup, prepush log folders, capture leg, timing cache, Mac paths, "
+print("regression runner: interrupt cleanup, runtime dirs under a long TMPDIR, prepush log folders, "
+      "capture leg, timing cache, Mac paths, "
       "missing app, Windows source leg and added submodule checkouts pass")
