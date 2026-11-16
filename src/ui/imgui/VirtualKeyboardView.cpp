@@ -252,8 +252,9 @@ private:
             // Start a note from this panel's own key state, sustain it from the X
             // server's. XQueryKeymap reports physical state for the whole server, so
             // taking the start edge from it would sound whatever the user types in
-            // another window while the panel happens to be open - the panel keeps
-            // drawing, and so polling, whether or not it holds the focus. Once a note
+            // another window while the panel happens to be open - the panel draws, and
+            // so polls, at least four times a second whether or not it holds the
+            // focus. Once a note
             // is sounding the server's state is the point: it is what stops the note
             // dropping between the event pairs an auto-repeating key produces.
             const bool down = slot.note >= 0 ? keyIsDown (entry)

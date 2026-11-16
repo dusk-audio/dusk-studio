@@ -511,6 +511,12 @@ struct MainComponent::ScenarioAuxLaneHandle final : scenario::AuxLaneHandle
         return component != nullptr ? component->sourceRowsForScenario() : std::vector<std::string>();
     }
 
+    std::vector<std::string> drawnSourceRows() override
+    {
+        auto* component = laneComponent();
+        return component != nullptr ? component->drawnSourceRowsForScenario() : std::vector<std::string>();
+    }
+
     std::array<int, 2> metersDrawSample (int track, float db) override
     {
         auto* component = laneComponent();
@@ -1128,6 +1134,16 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
        #endif
         return std::nullopt;
     }
+    std::optional<float> panelClockAfterRest (const std::string& logTag) override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        if (auto* window = imgui::DuskPanelWindow::openForScenario (logTag))
+            return window->takeClockAfterRestForScenario();
+       #else
+        (void) logTag;
+       #endif
+        return std::nullopt;
+    }
     bool panelInput (const std::string& logTag, const std::string& input) override
     {
        #if DUSKSTUDIO_HAS_NATIVE_UI
@@ -1539,6 +1555,13 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     {
         auto* strip = owner.consoleView != nullptr ? owner.consoleView->getStripComponent (track) : nullptr;
         return strip != nullptr ? strip->auxSendLabelForScenario (send) : std::string {};
+    }
+
+    std::optional<std::string> stripFilterText (int track, bool highPass) override
+    {
+        auto* strip = owner.consoleView != nullptr ? owner.consoleView->getStripComponent (track) : nullptr;
+        if (strip == nullptr || ! strip->isShowing()) return std::nullopt;
+        return strip->filterTextForScenario (highPass);
     }
 
     std::string clockText() const override

@@ -27,6 +27,8 @@ constexpr int kSettleMs  = 15000;
 constexpr int kTailMs    = 25000;
 constexpr int kIdleMs    = 3000;
 constexpr int kPollGapMs = 200;
+// A dozen meter ticks.
+constexpr int kHiddenMs  = 400;
 
 using Clock = std::chrono::steady_clock;
 
@@ -278,6 +280,92 @@ std::optional<ScenarioResult> runIdleMetersStayStill (GuiHost& host, ScenarioCon
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
 }
+
+// A hidden lane or strip skips its refresh, so what changed while it was hidden
+// has to be on its first paint once it shows. Each check reads that paint in the
+// step that shows it, before any meter tick can run.
+std::optional<ScenarioResult> runHiddenViewsShowCurrentState (GuiHost& host, ScenarioContext& ctx)
+{
+    if (! host.modalStackEmpty()) return ScenarioResult::skip ("requires no open modal");
+    auto& track = ctx.session().track (0);
+    auto& send = track.strip.auxSendDb[(size_t) kAuxLane];
+    auto& liveSend = track.strip.liveAuxSendDb[(size_t) kAuxLane];
+    keepStage (host, ctx);
+    ctx.keep (track.strip.hpfEnabled);
+    ctx.keep (track.strip.hpfFreq);
+    ctx.keep (send);
+    ctx.keep (liveSend);
+    track.strip.hpfEnabled.store (false);
+    send.store (-20.0f);
+    liveSend.store (-20.0f);
+
+    host.switchToStage (GuiHost::Stage::Aux);
+    const int originalLane = host.activeAuxLane();
+    if (originalLane >= 0 && originalLane != kAuxLane)
+    {
+        ctx.cleanup ([&host, originalLane] { host.clickAuxSelector (originalLane); });
+        host.clickAuxSelector (kAuxLane);
+    }
+    if (host.activeAuxLane() != kAuxLane || host.auxLane (kAuxLane) == nullptr)
+        return ScenarioResult::fail ("the aux stage does not show the first lane");
+    host.switchToStage (GuiHost::Stage::Mixing);
+
+    // Each change lands while its view is hidden, and must ask for no repaint then.
+    auto asked = std::make_shared<std::uint64_t> (0);
+    const auto expectNoneAsked = [&host, &ctx, asked] (const std::string& what)
+    {
+        const auto more = host.meterRepaintRequests() - *asked;
+        ctx.expect (more == 0, what + " asked for " + std::to_string (more) + " repaints while hidden");
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ kHiddenMs, [&host, &send, &liveSend, asked]
+    {
+        *asked = host.meterRepaintRequests();
+        send.store (-7.5f);
+        liveSend.store (-7.5f);
+    } });
+    steps->push_back ({ kHiddenMs, [&host, &ctx, expectNoneAsked]
+    {
+        expectNoneAsked ("the aux lane");
+        host.switchToStage (GuiHost::Stage::Aux);
+        auto* lane = host.auxLane (kAuxLane);
+        const auto rows = lane != nullptr ? lane->drawnSourceRows() : std::vector<std::string>();
+        const auto row = std::find_if (rows.begin(), rows.end(),
+                                       [] (const std::string& drawn) { return drawn.rfind ("1\t", 0) == 0; });
+        if (ctx.expect (row != rows.end(), "the lane's first paint after it showed drew no first Sources row"))
+            ctx.expect (row->find ("\t-7.5 dB\t") != std::string::npos,
+                        "the lane's first paint after it showed drew the first Sources row as \"" + *row
+                            + "\", not at the -7.5 dB it was set to while hidden");
+    } });
+    steps->push_back ({ kHiddenMs, [&host, &track, asked]
+    {
+        *asked = host.meterRepaintRequests();
+        track.strip.hpfFreq.store (120.0f);
+        track.strip.hpfEnabled.store (true);
+    } });
+    steps->push_back ({ kHiddenMs, [&host, &ctx, expectNoneAsked]
+    {
+        expectNoneAsked ("the channel strips");
+        host.switchToStage (GuiHost::Stage::Mixing);
+        const auto text = host.stripFilterText (0, true);
+        if (! text)
+        {
+            ctx.note ("the first channel strip is on another console page, so its first paint is not checked");
+            return;
+        }
+        ctx.expect (! text->empty() && *text != "OFF",
+                    "the strip's first paint after it showed has its high-pass at \"" + *text
+                        + "\", though the filter was switched on while it was hidden");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar hiddenViews { Scenario {
+    "gui.hidden_meters_show_current_state", { "gui", "meter" }, Needs::Engine | Needs::Gui,
+    {}, {}, 30000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runHiddenViewsShowCurrentState (host, ctx); }
+} };
 
 const ScenarioRegistrar idleMeters { Scenario {
     "gui.idle_meters_stay_still", { "gui", "meter" }, Needs::Engine | Needs::Gui,

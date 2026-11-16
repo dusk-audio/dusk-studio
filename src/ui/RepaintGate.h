@@ -62,6 +62,24 @@ inline DrawnExtent drawnAbove (float value, float threshold, float px) noexcept
     return drawn;
 }
 
+// Whether `component` and every component above it are set visible, so a paint
+// can reach it. Unlike isShowing() a minimised window still counts: restoring one
+// calls no visibilityChanged, so a component that stopped refreshing while
+// minimised would come back with what it showed then.
+template <typename ComponentType>
+bool shownInLayout (const ComponentType& component) noexcept
+{
+    if (! component.isVisible())
+        return false;
+    const auto* above = component.getParentComponent();
+    if (above == nullptr)
+        return component.isOnDesktop();
+    for (; above->getParentComponent() != nullptr; above = above->getParentComponent())
+        if (! above->isVisible())
+            return false;
+    return above->isVisible() && above->isOnDesktop();
+}
+
 // Repaints the gated meters and strips have asked for, process-wide, so the GUI
 // scenarios can tell an idle console from a moving one.
 inline std::atomic<std::uint64_t> gatedRepaintRequests { 0 };

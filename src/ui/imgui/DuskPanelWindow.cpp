@@ -59,7 +59,8 @@ constexpr auto kFrameFloor = std::chrono::milliseconds (250);
 // and at kIdlePumpMs once kInputHold passes without one. Input a child reads from its
 // own display connection waits for the next pump, so an idle panel answers the first
 // event at most kIdlePumpMs late. Input and state the shell hands a panel from outside
-// its own event handlers must call wake(), which restarts the pump at once.
+// its own event handlers must call wake(), which asks for the frames input asks for
+// and puts an idle pump back on kActivePumpMs, so the panel draws within that.
 constexpr int kActivePumpMs = 16;
 constexpr int kIdlePumpMs = 32;
 
@@ -739,7 +740,8 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
             imguiContext = ImGui::GetCurrentContext();
             // The clock ran on through the frames not drawn, and a hover delay or a
             // fade would otherwise jump by all of it.
-            if (std::exchange (afterGap, false))
+            drawingAfterGap = std::exchange (afterGap, false);
+            if (drawingAfterGap)
                 ImGui::GetIO().DeltaTime = std::min (ImGui::GetIO().DeltaTime, kFrameSeconds);
             const auto scale = static_cast<float> (getWindow().getScaleFactor());
             bool glyphsChanged = false;
@@ -767,6 +769,8 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
 
         void onImGuiDisplay() override
         {
+            if (std::exchange (drawingAfterGap, false))
+                clockAfterGap = ImGui::GetIO().DeltaTime;
             owner.draw (static_cast<float> (getWidth()), static_cast<float> (getHeight()),
                         static_cast<float> (getWindow().getScaleFactor()));
             // The framework does not act on the cursor a view asks Dear ImGui for.
@@ -907,7 +911,11 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
         unsigned int drawnWidth = 0, drawnHeight = 0;
         double drawnScale = 0.0;
         int framesOwed = 0;
-        bool afterGap = false;
+        bool afterGap = false, drawingAfterGap = false;
+
+    public:
+        // Dear ImGui's frame time on the last frame drawn after a gap.
+        std::optional<float> clockAfterGap;
     };
 
     Impl (std::string className, std::string logTagToUse, std::string displayName)
@@ -1435,6 +1443,12 @@ bool DuskPanelWindow::inputSeenForScenario() noexcept
 bool DuskPanelWindow::drawingForScenario() noexcept
 {
     return panelFramesDrawing > 0;
+}
+std::optional<float> DuskPanelWindow::takeClockAfterRestForScenario()
+{
+    if (! isOpen() || impl->panelWidget == nullptr)
+        return std::nullopt;
+    return std::exchange (impl->panelWidget->clockAfterGap, std::nullopt);
 }
 void DuskPanelWindow::framesOnDemandForScenario (bool onDemand, bool floor) noexcept
 {

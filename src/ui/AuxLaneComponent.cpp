@@ -121,6 +121,7 @@ public:
     // The atoms are raw per-block peaks, so paint() must not read them again.
     bool levelsMoved()
     {
+        resampleAtPaint = false;
         shownL = dbToMeterFrac (params.meterPostL.load (std::memory_order_relaxed));
         shownR = dbToMeterFrac (params.meterPostR.load (std::memory_order_relaxed));
         const float h = (float) getHeight();
@@ -148,8 +149,13 @@ public:
         return high - low > 24 ? 1 : 0;
     }
 
+    // The timer leaves a hidden meter unsampled, so its first paint samples.
+    void resampleAtNextPaint() noexcept { resampleAtPaint = true; }
+
     void paint (juce::Graphics& g) override
     {
+        if (resampleAtPaint)
+            levelsMoved();
         auto r = getLocalBounds().toFloat();
         g.setColour (juce::Colour (0xff1c1c22));
         g.fillRoundedRectangle (r, 2.0f);
@@ -196,6 +202,7 @@ private:
     const AuxLaneParams& params;
     float shownL = 0.0f, shownR = 0.0f;
     PaintedValue paintedL, paintedR, paintedLook;
+    bool resampleAtPaint = false;
 };
 
 class AuxLaneComponent::SendSourcePanel final : public juce::Component
@@ -206,8 +213,13 @@ public:
     bool captureRows = false;
     std::vector<std::string> paintedRows;
 
+    // The timer leaves hidden rows unsampled, so their first paint samples.
+    void resampleAtNextPaint() noexcept { resampleAtPaint = true; }
+
     void paint (juce::Graphics& g) override
     {
+        if (resampleAtPaint)
+            rowsChanged();
         if (captureRows) paintedRows.clear();
         auto bounds = getLocalBounds().toFloat();
         g.setColour (juce::Colour (0xff141418));
@@ -289,6 +301,7 @@ public:
     // peaks, and a second read would draw a level the change test never saw.
     bool rowsChanged()
     {
+        resampleAtPaint = false;
         bool changed = false;
         for (int i = 0; i < Session::kNumTracks; ++i)
         {
@@ -353,6 +366,7 @@ private:
     Session& session;
     int laneIndex;
     int meterWidth = 0;
+    bool resampleAtPaint = false;
     std::array<RowSample, Session::kNumTracks> rows {};
     std::array<std::array<int, 4>, Session::kNumTracks> meterRows {};
 };
@@ -402,6 +416,15 @@ bool AuxLaneComponent::captureSourcesForScenario (bool enabled)
 std::vector<std::string> AuxLaneComponent::sourceRowsForScenario() const
 {
     return sendPanel != nullptr ? sendPanel->paintedRows : std::vector<std::string>();
+}
+
+std::vector<std::string> AuxLaneComponent::drawnSourceRowsForScenario()
+{
+    if (sendPanel == nullptr || sendPanel->getLocalBounds().isEmpty()) return {};
+    const bool capturing = std::exchange (sendPanel->captureRows, true);
+    (void) sendPanel->createComponentSnapshot (sendPanel->getLocalBounds());
+    sendPanel->captureRows = capturing;
+    return sendPanel->paintedRows;
 }
 
 AuxLaneComponent::AuxLaneComponent (AuxLane& l, AuxLaneStrip& s, int idx,
@@ -660,15 +683,25 @@ void AuxLaneComponent::timerCallback()
         if (builtinViewNeedsSync (i))
             scheduleBuiltinViewSync();
     }
-    if (stripMeter != nullptr && stripMeter->levelsMoved())
+    if (stripMeter != nullptr)
     {
-        countGatedRepaint();
-        stripMeter->repaint();
+        if (! shownInLayout (*stripMeter))
+            stripMeter->resampleAtNextPaint();
+        else if (stripMeter->levelsMoved())
+        {
+            countGatedRepaint();
+            stripMeter->repaint();
+        }
     }
-    if (sendPanel != nullptr && sendPanel->rowsChanged())
+    if (sendPanel != nullptr)
     {
-        countGatedRepaint();
-        sendPanel->repaint();
+        if (! shownInLayout (*sendPanel))
+            sendPanel->resampleAtNextPaint();
+        else if (sendPanel->rowsChanged())
+        {
+            countGatedRepaint();
+            sendPanel->repaint();
+        }
     }
 
     // Motor-fader animate + Write/Touch capture, mirroring the per-

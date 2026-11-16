@@ -125,6 +125,8 @@ public:
     // would take it with the keyboard.
     bool inputPanelForScenario (const std::string& input);
     bool meterClipForScenario();
+    // The text the high- or low-pass knob shows.
+    std::string filterTextForScenario (bool highPass);
     // The input meter's bounds in the top-level window, as x, y, width, height.
     std::array<int, 4> inputMeterBoundsForScenario() const;
     auto* midiSelectorForScenario (int kind)
@@ -151,6 +153,10 @@ public:
     void resized() override;
     void mouseDown (const juce::MouseEvent& e) override;
     void parentHierarchyChanged() override;
+    void visibilityChanged() override;
+    // A bank flip changes the strip's own visible flag, a stage switch only the
+    // console's, so ConsoleView passes its changes on here.
+    void refreshForShowState();
 
     // Wired to TapeStrip selection so A/S/X target the just-touched strip
     // even when no region was clicked.
@@ -197,6 +203,8 @@ public:
 
 private:
     void timerCallback() override;
+    void refreshShownView();
+    void forgetPaintedMeter();
     void rebuildMidiInputDropdown();
     void rebuildMidiOutputDropdown();
 

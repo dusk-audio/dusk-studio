@@ -312,6 +312,9 @@ public:
     // outside a run; `floor` off also drops the periodic safety frame, so an idle
     // panel's count holds exactly.
     static void framesOnDemandForScenario (bool onDemand, bool floor) noexcept;
+    // How far the last frame drawn after a rest moved Dear ImGui's clock, in
+    // seconds; cleared by the call, and empty when no such frame was drawn since.
+    std::optional<float> takeClockAfterRestForScenario();
     // The open panel with this log tag; null when none is open.
     static DuskPanelWindow* openForScenario (const std::string& logTag) noexcept;
 

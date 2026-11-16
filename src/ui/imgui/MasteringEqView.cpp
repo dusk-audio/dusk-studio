@@ -9,6 +9,7 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <utility>
 #include <vector>
 
 namespace duskstudio::imgui
@@ -34,6 +35,8 @@ constexpr float kCurveDbRange = 18.0f;
 // EQ curve sits on top in its own scale.
 constexpr float kSpecFloorDb = -96.0f;
 constexpr float kSpecTopDb = 6.0f;
+// A trace point that moves less than this in a tick has caught up.
+constexpr float kTraceStepDb = 0.05f;
 
 constexpr int kFftOrder = 11;
 constexpr int kFftSize = 1 << kFftOrder;
@@ -179,7 +182,7 @@ public:
     // trace that has caught up with that rests.
     std::optional<std::uint64_t> liveStamp() override
     {
-        if (showSpectrum && chain != nullptr && (spectrumMoving || scopeChangesTrace()))
+        if (showSpectrum && chain != nullptr && (spectrumMoving || scopeMovesTrace()))
             return std::nullopt;
         StampHash hash;
         for (int i = 0; i < 5; ++i)
@@ -192,20 +195,86 @@ public:
     }
 
 private:
-    // Silence still lowers a trace above the floor. No bin can reach the floor while
-    // every sample is under a quarter of its gain: the windowed transform is at most
-    // N times the peak, and kRef scales by 4/N.
-    bool scopeChangesTrace()
+    // Whether the next spectrum tick would move the drawn trace, judged on what the
+    // scope holds now. Sound the trace cannot show, such as a hiss under its floor, or
+    // a steady tone it has caught up with, leaves it at rest.
+    bool scopeMovesTrace()
     {
-        if (chain->scopeSamplesWritten() == scopeReadAt)
+        const auto written = chain->scopeSamplesWritten();
+        if (written == scopeReadAt || chain->readScopeLatest (fftScratch.data(), kFftSize) < kFftSize)
             return false;
-        if (std::any_of (specDb.begin(), specDb.end(), [] (float db) { return db > kSpecFloorDb + 0.05f; }))
-            return true;
-        if (chain->readScopeLatest (fftScratch.data(), kFftSize) < kFftSize)
-            return false;
+        const auto bins = drawnBins();
+        bool moves = false;
+        if (! (traceOnFloor (bins) && scopeUnderFloor()))
+        {
+            analyse();
+            for (int i = bins.first; i < bins.second && ! moves; ++i)
+            {
+                const float shown = specDb[static_cast<std::size_t> (i)];
+                moves = std::abs (eased (shown, rawDb[static_cast<std::size_t> (i)]) - shown) > kTraceStepDb;
+            }
+        }
+        if (! moves)
+            scopeReadAt = written;
+        return moves;
+    }
+
+    bool traceOnFloor (std::pair<int, int> bins) const
+    {
+        for (int i = bins.first; i < bins.second; ++i)
+            if (specDb[static_cast<std::size_t> (i)] > kSpecFloorDb + kTraceStepDb)
+                return false;
+        return true;
+    }
+
+    // No bin can reach the floor while every sample is under a quarter of its gain:
+    // the windowed transform is at most N times the peak, and kRef scales by 4/N.
+    bool scopeUnderFloor() const
+    {
         static const float audible = dusk::audio::decibelsToGain (kSpecFloorDb, -200.0f) * 0.25f;
-        return std::any_of (fftScratch.begin(), fftScratch.end(),
-                            [] (float sample) { return std::abs (sample) >= audible; });
+        return std::none_of (fftScratch.begin(), fftScratch.end(),
+                             [] (float sample) { return std::abs (sample) >= audible; });
+    }
+
+    // The bins drawSpectrum draws, as [first, end).
+    std::pair<int, int> drawnBins() const
+    {
+        const double sampleRate = chain != nullptr ? chain->getScopeSampleRate() : 48000.0;
+        if (! (sampleRate > 0.0))
+            return { 0, 0 };
+        const float binHz = static_cast<float> (sampleRate) / static_cast<float> (kFftSize);
+        int first = 1;
+        while (first < kNumBins && static_cast<float> (first) * binHz < kFreqMinHz)
+            ++first;
+        int end = first;
+        while (end < kNumBins && static_cast<float> (end) * binHz <= kFreqMaxHz)
+            ++end;
+        return { first, end };
+    }
+
+    static float eased (float shown, float db)
+    {
+        return db > shown ? db : shown + (db - shown) * 0.25f;
+    }
+
+    // What fftScratch holds as a spectrum on the plot's scale, into rawDb.
+    void analyse()
+    {
+        std::copy (fftScratch.begin(), fftScratch.end(), fftWork.begin());
+        for (int i = 0; i < kFftSize; ++i)
+            fftWork[static_cast<std::size_t> (i)] *= fftWindow[static_cast<std::size_t> (i)];
+
+        static_assert (kNumBins <= kFftSize / 2 + 1, "spectrum reads past the magnitude bins");
+        fft.performFrequencyOnlyForwardTransform (fftWork.data());
+
+        // 4/N: single-sided scaling (2/N) times the 2x that compensates the Hann
+        // window's 0.5 coherent gain, so a bin-centred 0 dBFS sine reads near 0 dBFS.
+        static constexpr float kRef = 4.0f / static_cast<float> (kFftSize);
+        for (int i = 0; i < kNumBins; ++i)
+            rawDb[static_cast<std::size_t> (i)] = clampf (kSpecFloorDb, kSpecTopDb,
+                                                          dusk::audio::gainToDecibels (
+                                                              fftWork[static_cast<std::size_t> (i)] * kRef,
+                                                              kSpecFloorDb));
     }
 
     struct Rect { float x0, y0, x1, y1; };
@@ -272,26 +341,15 @@ private:
         scopeReadAt = written;
         spectrumDirty = true;
 
-        std::copy (fftScratch.begin(), fftScratch.end(), fftWork.begin());
-        for (int i = 0; i < kFftSize; ++i)
-            fftWork[static_cast<std::size_t> (i)] *= fftWindow[static_cast<std::size_t> (i)];
-
-        static_assert (kNumBins <= kFftSize / 2 + 1, "spectrum reads past the magnitude bins");
-        fft.performFrequencyOnlyForwardTransform (fftWork.data());
-
-        // 4/N: single-sided scaling (2/N) times the 2x that compensates the Hann
-        // window's 0.5 coherent gain, so a bin-centred 0 dBFS sine reads near 0 dBFS.
-        constexpr float kRef = 4.0f / static_cast<float> (kFftSize);
+        analyse();
+        const auto bins = drawnBins();
         for (int i = 0; i < kNumBins; ++i)
         {
-            const float db = clampf (kSpecFloorDb, kSpecTopDb,
-                                     dusk::audio::gainToDecibels (
-                                         fftWork[static_cast<std::size_t> (i)] * kRef,
-                                         kSpecFloorDb));
             float& smoothed = specDb[static_cast<std::size_t> (i)];
             const float before = smoothed;
-            smoothed = db > smoothed ? db : smoothed + (db - smoothed) * 0.25f;
-            spectrumMoving = spectrumMoving || std::abs (smoothed - before) > 0.05f;
+            smoothed = eased (smoothed, rawDb[static_cast<std::size_t> (i)]);
+            spectrumMoving = spectrumMoving
+                          || (i >= bins.first && i < bins.second && std::abs (smoothed - before) > kTraceStepDb);
         }
     }
 
@@ -724,6 +782,7 @@ private:
     std::array<float, kFftSize> fftScratch {};
     std::array<float, kFftSize * 2> fftWork {};
     std::array<float, kNumBins> specDb {};
+    std::array<float, kNumBins> rawDb {};
     std::vector<ImVec2> spectrumPoints;
     std::array<std::array<ImVec2, kCurvePoints>, 5> bandCurves {};
     std::array<ImVec2, kCurvePoints> totalCurve {};

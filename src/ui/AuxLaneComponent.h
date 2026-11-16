@@ -94,6 +94,8 @@ public:
     // would, since the harness blocks its ticks.
     void refreshMetersForCapture();
     std::vector<std::string> sourceRowsForScenario() const;
+    // The Sources rows as a paint now draws them, without sampling first.
+    std::vector<std::string> drawnSourceRowsForScenario();
     // Load a built-in unit the way the picker's row does, and read back what the
     // slot's inline editor is: the unit it was built for, or empty when no
     // editor is up. A built-in that brings its own editor never shares a slot

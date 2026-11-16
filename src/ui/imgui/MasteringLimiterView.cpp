@@ -38,6 +38,8 @@ constexpr float kThreshMaxDb = 0.0f;
 constexpr float kCeilingMinDb = -12.0f;
 constexpr float kCeilingMaxDb = 0.0f;
 constexpr float kAttenMaxDb = 20.0f;
+// A bar fill under this fraction of its travel is not drawn.
+constexpr float kFillShown = 0.001f;
 
 // One meter tick per JUCE timer tick, so the release coefficients below land on the
 // same ballistics they were tuned for at 30 Hz.
@@ -103,6 +105,7 @@ public:
                          ctx.s (1.0f));
 
         tickMeters();
+        barTravel = 0.0f;
 
         const float inset = ctx.s (kOuterInset);
         const float left = origin.x + inset;
@@ -125,15 +128,19 @@ public:
     }
 
     // The meters ease towards their levels on frames, so they ask for every frame
-    // until the drawn values are within a hundredth of a dB of them.
+    // while easing on would still change what they draw. A level past the end of a
+    // meter's scale draws the same as the end, so a quiet hiss under the scale,
+    // whose peak moves every block, leaves the panel at rest.
     std::optional<std::uint64_t> liveStamp() override
     {
         const float gr = limiter.getCurrentGrDb();
         const float post = std::max (params.meterPostMasterLDb.load (std::memory_order_relaxed),
                                      params.meterPostMasterRDb.load (std::memory_order_relaxed));
-        const auto behind = [] (float target, float drawn) { return std::abs (target - drawn) > 0.01f; };
-        if (behind (gr, displayedGrDb) || behind (post, displayedOutDb)
-            || behind (post - displayedGrDb, displayedInDb))
+        if (barTravel > 0.0f
+            && (barMoves (inFraction (post - displayedGrDb), inFraction (displayedInDb))
+                || barMoves (outFraction (post), outFraction (displayedOutDb))
+                || barMoves (attenFraction (gr), attenFraction (displayedGrDb))
+                || std::lround (gr * 10.0f) != std::lround (displayedGrDb * 10.0f)))
             return std::nullopt;
         // The readouts show tenths, and nothing under -99.
         const auto tenths = [] (float value) { return value <= -99.0f ? -1000L : std::lround (value * 10.0f); };
@@ -152,6 +159,29 @@ public:
     }
 
 private:
+    static float inFraction (float db)
+    {
+        return (clampf (kThreshMinDb, kThreshMaxDb, db) - kThreshMinDb) / (kThreshMaxDb - kThreshMinDb);
+    }
+
+    static float outFraction (float db)
+    {
+        return (clampf (kCeilingMinDb, kCeilingMaxDb, db) - kCeilingMinDb) / (kCeilingMaxDb - kCeilingMinDb);
+    }
+
+    static float attenFraction (float grDb)
+    {
+        return clampf (0.0f, kAttenMaxDb, std::abs (grDb)) / kAttenMaxDb;
+    }
+
+    // Whether easing a bar from `drawn` to `target`, both fractions of its travel,
+    // still changes it: a fill that appears or goes, or an edge that moves a
+    // quarter of a pixel.
+    bool barMoves (float target, float drawn) const
+    {
+        return (target > kFillShown) != (drawn > kFillShown) || std::abs (target - drawn) * barTravel > 0.25f;
+    }
+
     void tickMeters()
     {
         meterClock += ImGui::GetIO().DeltaTime;
@@ -278,6 +308,7 @@ private:
         const float metersBottom = lufsTop - ctx.s (4.0f) - ctx.s (kMeterBottomPad);
         if (metersBottom - metersTop <= ctx.s (30.0f))
             return;
+        barTravel = (metersBottom - metersTop) - ctx.s (4.0f);
 
         const float available = (br.x - tl.x) - ctx.s (kAttenW) - 2.0f * ctx.s (kMeterGap)
                               - 2.0f * ctx.s (kHandlePad);
@@ -357,7 +388,7 @@ private:
     void drawLevelFill (dw::Context& ctx, const Rect& bar, float frac, unsigned int top,
                         unsigned int bottom)
     {
-        if (frac <= 0.001f)
+        if (frac <= kFillShown)
             return;
         const float height = ((bar.y1 - bar.y0) - ctx.s (4.0f)) * frac;
         // The gradient spans the whole well rather than the lit part, so a column that
@@ -389,11 +420,7 @@ private:
     void drawThreshold (dw::Context& ctx, const Rect& bar)
     {
         drawWell (ctx, bar);
-        drawLevelFill (ctx, bar,
-                       clampf (0.0f, 1.0f,
-                               (clampf (kThreshMinDb, kThreshMaxDb, displayedInDb)
-                                - kThreshMinDb) / (kThreshMaxDb - kThreshMinDb)),
-                       kThreshFillTop, kFillBottom);
+        drawLevelFill (ctx, bar, inFraction (displayedInDb), kThreshFillTop, kFillBottom);
 
         // The limiter has no threshold of its own - it drives the input into the
         // ceiling - so the handle sits at minus the drive.
@@ -423,11 +450,7 @@ private:
     void drawCeiling (dw::Context& ctx, const Rect& bar)
     {
         drawWell (ctx, bar);
-        drawLevelFill (ctx, bar,
-                       clampf (0.0f, 1.0f,
-                               (clampf (kCeilingMinDb, kCeilingMaxDb, displayedOutDb)
-                                - kCeilingMinDb) / (kCeilingMaxDb - kCeilingMinDb)),
-                       kCeilingFillTop, kFillBottom);
+        drawLevelFill (ctx, bar, outFraction (displayedOutDb), kCeilingFillTop, kFillBottom);
 
         const float ceiling = params.limiterCeilingDb.load (std::memory_order_relaxed);
         const float handleY = dbToY (ceiling, kCeilingMinDb, kCeilingMaxDb, bar);
@@ -489,9 +512,8 @@ private:
     {
         drawWell (ctx, bar);
 
-        const float reduction = clampf (0.0f, kAttenMaxDb, std::abs (displayedGrDb));
-        const float frac = reduction / kAttenMaxDb;
-        if (frac > 0.001f)
+        const float frac = attenFraction (displayedGrDb);
+        if (frac > kFillShown)
         {
             const float height = ((bar.y1 - bar.y0) - ctx.s (4.0f)) * frac;
             ctx.dl->AddRectFilledMultiColor (
@@ -579,6 +601,8 @@ private:
     float displayedOutDb = -100.0f;
     float displayedGrDb = 0.0f;
     float meterClock = 0.0f;
+    // The meters' height in pixels as the last frame drew them; 0 when it drew none.
+    float barTravel = 0.0f;
     int mode = 0;
     bool stereoLink = false;
     bool threshResetHeld = false;

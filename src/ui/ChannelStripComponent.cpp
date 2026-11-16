@@ -5344,14 +5344,9 @@ void ChannelStripComponent::timerCallback()
         }
     }
 
-    // Sync the inline COMP mode button with the underlying atoms so it
-    // reflects writes from other surfaces (meter-strip threshold drag,
-    // popup editor's ON toggle, MIDI binding, etc.). State-only refresh
-    // every tick is cheap; the heavier knob-visibility filter only
-    // fires when compMode actually changed since the last apply
-    // (catches session-load + MIDI-binding mode swaps that bypass the
-    // popup-menu callback).
-    refreshCompModeButtonState();
+    // The knob-visibility filter fires only when compMode changed since the
+    // last apply (catches session-load + MIDI-binding mode swaps that bypass
+    // the popup-menu callback).
     {
         const int liveMode = jlimit (0, 2,
             track.strip.compMode.load (std::memory_order_relaxed));
@@ -5364,16 +5359,6 @@ void ChannelStripComponent::timerCallback()
                           // stale positions.
         }
     }
-    if (eqHeaderBtn != nullptr)
-    {
-        // Surface the active EQ type on the header so the user can
-        // Type cue now lives on the dedicated eqTypeChip mid-strip
-        // (between HM and LM rows). Just repaint the header so its LED
-        // tracks atom changes from external mutation paths.
-        eqHeaderBtn->refresh();
-    }
-    if (insertBypassLed != nullptr)
-        insertBypassLed->refresh();   // tracks bypass atom + slot load/unload
     // Sync the dedicated E/G chip's label + toggle state from the atom
     // so external writes (popup editor type picker) reflect inline.
     {
@@ -5411,47 +5396,14 @@ void ChannelStripComponent::timerCallback()
         syncKnob (vcaOutputKnob,   sp.compVcaOutput.load   (std::memory_order_relaxed));
         syncKnob (hpfKnob,         sp.hpfFreq.load         (std::memory_order_relaxed));
         syncKnob (lpfKnob,         sp.lpfFreq.load         (std::memory_order_relaxed));
-        // MIDI, a control surface or the EQ editor can switch a filter
-        // without moving this knob, and its text reads the switch.
-        if (sampleFilter (shownHpf, sp.hpfEnabled, sp.hpfFreq))
-        {
-            countGatedRepaint();
-            hpfKnob.updateText();
-        }
-        if (sampleFilter (shownLpf, sp.lpfEnabled, sp.lpfFreq))
-        {
-            countGatedRepaint();
-            lpfKnob.updateText();
-        }
         for (size_t i = 0; i < eqRows.size(); ++i)
         {
             const auto& spec = bandSpecs()[i];
             auto& row = eqRows[i];
             if (row.gain != nullptr) syncKnob (*row.gain, spec.gainPtr (track.strip)->load (std::memory_order_relaxed));
             if (row.q != nullptr)    syncKnob (*row.q,    spec.qPtr (track.strip)->load (std::memory_order_relaxed));
-            if (row.freq != nullptr)
-            {
-                syncKnob (*row.freq, track.strip.eqFreq (spec.freq).load (std::memory_order_relaxed));
-                // A frequency held past the knob's range leaves it on its end stop,
-                // where a new held value moves nothing, but the text reads it.
-                const float held = track.strip.eqFreq (spec.freq).load (std::memory_order_relaxed);
-                if (row.freqText.changed (held, 0.0f))
-                {
-                    row.shownFreq = held;
-                    countGatedRepaint();
-                    row.freq->updateText();
-                }
-            }
+            if (row.freq != nullptr) syncKnob (*row.freq, track.strip.eqFreq (spec.freq).load (std::memory_order_relaxed));
         }
-    }
-
-    // Keep split-button state visuals in sync with atom changes made by
-    // editors, automation, or MIDI rather than only by the last pointer click.
-    if (compactMode)
-    {
-        eqCompactButton.refresh();
-        compCompactButton.refresh();
-        auxCompactButton.refresh();
     }
 
     // Detect bus-colour edits made via the aux strip's right-click menu and
@@ -5514,37 +5466,12 @@ void ChannelStripComponent::timerCallback()
         inputR.peak      = -100.0f;
     }
 
-    // GR repaint is handled inside CompMeterStrip's own Timer.
-    if (! inputMeterArea.isEmpty())
-    {
-        const float span = (float) inputMeterArea.getHeight() - 2.0f;
-        const bool left  = meterGateL.changed (inputBarFor (inputL, span));
-        const bool right = meterGateR.changed (inputBarFor (inputR, span));
-        const bool mode  = meterModeGate.changed ((float) ((meterStereo ? 1 : 0) + (meterClipLit ? 2 : 0)), 0.0f);
-        if (left || right || mode)
-        {
-            countGatedRepaint();
-            repaint (inputMeterArea);
-        }
-    }
-
-    // Update the numeric readout below the meter.
-    // One-decimal dB readout, matching the bus + master output-peak readouts
-    // so the level number reads identically across every strip type. The
-    // label's minimumHorizontalScale keeps "-12.3" inside the narrow column.
-    if (peakReadout.update (inputL.peak))
-    {
-        countGatedRepaint();
-        inputPeakLabel.setText (peakReadout.text, juce::dontSendNotification);
-    }
-
-    // Tint the readout when peaks get hot.
-    const float peakDb = inputL.peak;
-    if (paintedPeakColour.changed (peakDb >= -3.0f ? 2.0f : peakDb >= -12.0f ? 1.0f : 0.0f, 0.0f))
-        inputPeakLabel.setColour (juce::Label::textColourId,
-            peakDb >= -3.0f  ? juce::Colour (0xffff5050) :
-            peakDb >= -12.0f ? juce::Colour (0xffe0c050) :
-                                juce::Colour (0xffd0d0d0));
+    // The levels above step while the strip is hidden, so its first paint after
+    // showing draws them as they are; visibilityChanged refreshes the rest.
+    if (shownInLayout (*this))
+        refreshShownView();
+    else
+        forgetPaintedMeter();
 
     // Motor-fader / motor-pan animation: when the audio engine is feeding
     // a live atom from the lane (Read, or Touch when not grabbed), mirror
@@ -6298,6 +6225,112 @@ bool ChannelStripComponent::sampleFilter (ShownFilter& shown, const std::atomic<
     shown.enabled = on;
     shown.held = hz;
     return true;
+}
+
+// What the strip shows of state that changes behind it: the module lights, the
+// filter and band frequency text, the input meter and its peak readout. The timer
+// skips it while the strip is hidden, so showing the strip runs it at once, before
+// its first paint.
+void ChannelStripComponent::refreshShownView()
+{
+    // The COMP button follows writes from other surfaces: the meter strip's
+    // threshold drag, the popup editor's ON toggle, a MIDI binding.
+    refreshCompModeButtonState();
+    if (eqHeaderBtn != nullptr)
+        eqHeaderBtn->refresh();
+    if (insertBypassLed != nullptr)
+        insertBypassLed->refresh();   // tracks bypass atom + slot load/unload
+    if (compactMode)
+    {
+        eqCompactButton.refresh();
+        compCompactButton.refresh();
+        auxCompactButton.refresh();
+    }
+
+    // MIDI, a control surface or the EQ editor can switch a filter without moving
+    // its knob, and its text reads the switch.
+    const auto& sp = track.strip;
+    if (sampleFilter (shownHpf, sp.hpfEnabled, sp.hpfFreq))
+    {
+        countGatedRepaint();
+        hpfKnob.updateText();
+    }
+    if (sampleFilter (shownLpf, sp.lpfEnabled, sp.lpfFreq))
+    {
+        countGatedRepaint();
+        lpfKnob.updateText();
+    }
+    for (size_t i = 0; i < eqRows.size(); ++i)
+    {
+        auto& row = eqRows[i];
+        if (row.freq == nullptr) continue;
+        // A frequency held past the knob's range leaves it on its end stop, where a
+        // new held value moves nothing, but the text reads it.
+        const float held = track.strip.eqFreq (bandSpecs()[i].freq).load (std::memory_order_relaxed);
+        if (row.freqText.changed (held, 0.0f))
+        {
+            row.shownFreq = held;
+            countGatedRepaint();
+            row.freq->updateText();
+        }
+    }
+
+    // GR repaint is handled inside CompMeterStrip's own Timer.
+    if (! inputMeterArea.isEmpty())
+    {
+        const float span = (float) inputMeterArea.getHeight() - 2.0f;
+        const bool left  = meterGateL.changed (inputBarFor (inputL, span));
+        const bool right = meterGateR.changed (inputBarFor (inputR, span));
+        const bool mode  = meterModeGate.changed ((float) ((meterStereo ? 1 : 0) + (meterClipLit ? 2 : 0)), 0.0f);
+        if (left || right || mode)
+        {
+            countGatedRepaint();
+            repaint (inputMeterArea);
+        }
+    }
+
+    // One-decimal dB readout, matching the bus + master output-peak readouts so
+    // the level number reads identically across every strip type. The label's
+    // minimumHorizontalScale keeps "-12.3" inside the narrow column.
+    if (peakReadout.update (inputL.peak))
+    {
+        countGatedRepaint();
+        inputPeakLabel.setText (peakReadout.text, juce::dontSendNotification);
+    }
+
+    // Tint the readout when peaks get hot.
+    const float peakDb = inputL.peak;
+    if (paintedPeakColour.changed (peakDb >= -3.0f ? 2.0f : peakDb >= -12.0f ? 1.0f : 0.0f, 0.0f))
+        inputPeakLabel.setColour (juce::Label::textColourId,
+            peakDb >= -3.0f  ? juce::Colour (0xffff5050) :
+            peakDb >= -12.0f ? juce::Colour (0xffe0c050) :
+                                juce::Colour (0xffd0d0d0));
+}
+
+// A hidden strip's next paint draws the meter as the timer last stepped it, which
+// need not be what the gate last asked for, so the gate starts again from nothing.
+void ChannelStripComponent::forgetPaintedMeter()
+{
+    meterGateL.forget();
+    meterGateR.forget();
+    meterModeGate.forget();
+}
+
+std::string ChannelStripComponent::filterTextForScenario (bool highPass)
+{
+    auto& knob = highPass ? hpfKnob : lpfKnob;
+    return knob.getTextFromValue (knob.getValue()).toStdString();
+}
+
+void ChannelStripComponent::visibilityChanged()
+{
+    refreshForShowState();
+}
+
+void ChannelStripComponent::refreshForShowState()
+{
+    if (shownInLayout (*this))
+        refreshShownView();
 }
 
 void ChannelStripComponent::setCompMode (int modeIndex)

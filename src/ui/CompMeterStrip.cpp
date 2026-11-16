@@ -200,7 +200,16 @@ void CompMeterStrip::timerCallback()
     if (displayedGrDb > -0.05f) displayedGrDb = 0.0f;
 
     sampleControls();
-    if (lookChanged())
+    if (! shownInLayout (*this))
+    {
+        // The next paint draws the levels stepped above, not what was last asked for.
+        paintedInput.forget();
+        paintedPeak.forget();
+        paintedGr.forget();
+        paintedHandle.forget();
+        paintedFlags.forget();
+    }
+    else if (lookChanged())
     {
         countGatedRepaint();
         repaint();

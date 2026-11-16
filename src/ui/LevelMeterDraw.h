@@ -92,6 +92,13 @@ struct LevelBarGate
         const bool looked = look.changed ((float) (draw.fillZone + 3 * (draw.peakHot ? 1 : 0)), 0.0f);
         return filled || peaked || looked;
     }
+
+    void forget() noexcept
+    {
+        fill.forget();
+        peak.forget();
+        look.forget();
+    }
 };
 
 // The one-decimal peak readout under a meter, "-inf" at -60 dB and below. The

@@ -269,6 +269,15 @@ void AnalogVuMeter::timerCallback()
         faceRebuilt = true;
     }
 
+    if (! shownInLayout (*this))
+    {
+        // The next paint draws the needles stepped above, not what was last asked for.
+        paintedNeedleL.forget();
+        paintedNeedleR.forget();
+        paintedPeakLed.forget();
+        return;
+    }
+
     // Pixels the needle tip travels per unit of angleFrac.
     const float tipTravelPx = (baselineRad - arcRadius * 0.02f) * halfArcDeg * kDegToRad;
     const float needleEps = tipTravelPx > 0.0f ? kSubPixelRepaint / tipTravelPx : 0.0f;

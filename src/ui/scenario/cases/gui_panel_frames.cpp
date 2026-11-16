@@ -27,6 +27,10 @@ constexpr int kPollGapMs = 200;
 constexpr int kDrawBoundMs = 10000;
 constexpr int kFloorWindowMs = 1500;
 constexpr int kFloorMs = 250;
+// Dear ImGui's tooltip delay is 400 ms, and a panel that stopped drawing before it ran
+// out would leave the tooltip to the safety frame.
+constexpr int kDrawsOnForMs = 500;
+constexpr float kClockAfterRestS = 0.05f;
 
 using Clock = std::chrono::steady_clock;
 using Panels = std::vector<std::string>;
@@ -90,23 +94,65 @@ void pushStaysStill (GuiHost& host, ScenarioContext& ctx, std::vector<Step>& ste
     } });
 }
 
-// Panels at rest draw again once `change` has run.
-void pushDrawsOn (GuiHost& host, ScenarioContext& ctx, std::vector<Step>& steps,
-                  const Panels& panels, const std::string& what, std::function<bool()> change)
+enum class Cause { model, input };
+
+struct Woken
 {
-    auto base = std::make_shared<std::uint64_t> (0);
+    std::uint64_t base = 0, seen = 0;
+    Clock::time_point at {}, lastFrame {};
+};
+
+// Panels at rest draw again once `change` has run, and the first frame after the
+// rest moves Dear ImGui's clock by a frame, not by the rest. After input they keep
+// drawing for long enough that a hover delay can run out.
+void pushDrawsOn (GuiHost& host, ScenarioContext& ctx, std::vector<Step>& steps,
+                  const Panels& panels, const std::string& what, std::function<bool()> change,
+                  Cause cause = Cause::model)
+{
+    auto woken = std::make_shared<Woken>();
     steps.push_back ({ 0, [] {}, framesQuiet (host, panels),
         "the panel never came to rest before " + what, {}, kDrawBoundMs });
-    steps.push_back ({ 0, [&host, &ctx, panels, base, what, change]
+    steps.push_back ({ 0, [&host, &ctx, panels, woken, what, change]
     {
-        *base = framesOf (host, panels).value_or (0);
+        woken->base = woken->seen = framesOf (host, panels).value_or (0);
+        for (const auto& tag : panels)
+            host.panelClockAfterRest (tag);
+        woken->at = woken->lastFrame = Clock::now();
         ctx.expect (change(), what + " could not be made");
     } });
-    steps.push_back ({ 0, [] {}, [&host, panels, base]
+    steps.push_back ({ 0, [&host, &ctx, panels, what]
+    {
+        bool drawn = false;
+        for (const auto& tag : panels)
+        {
+            const auto clock = host.panelClockAfterRest (tag);
+            if (! clock) continue;
+            drawn = true;
+            ctx.expect (*clock <= kClockAfterRestS, what + ": the first frame " + tag + " drew after its rest moved its clock "
+                                                       + std::to_string (*clock) + " s");
+        }
+        ctx.expect (drawn, what + " drew no frame after a rest");
+    }, [&host, panels, woken]
     {
         const auto frames = framesOf (host, panels);
-        return frames && *frames > *base;
+        return frames && *frames > woken->base;
     }, what + " drew no frame", {}, kDrawBoundMs });
+    if (cause != Cause::input) return;
+    steps.push_back ({ 0, [&ctx, woken, what]
+    {
+        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds> (woken->lastFrame - woken->at).count();
+        ctx.expect (ms >= kDrawsOnForMs, what + ": the last frame came " + std::to_string (ms) + " ms after the input, under "
+                                             + std::to_string (kDrawsOnForMs) + " ms");
+    }, [&host, panels, woken]
+    {
+        const auto now = Clock::now();
+        if (const auto frames = framesOf (host, panels); frames && *frames != woken->seen)
+        {
+            woken->seen = *frames;
+            woken->lastFrame = now;
+        }
+        return now - woken->at >= std::chrono::milliseconds (kDrawsOnForMs + 1000);
+    }, what + " was not watched to its end", {}, kDrawBoundMs });
 }
 
 struct FloorStart
@@ -320,22 +366,22 @@ std::optional<ScenarioResult> runMiniTimelineOnDemand (GuiHost& host, ScenarioCo
     });
     pushPlayheadShown (host, ctx, *steps, "after a region lengthened the song", "mini-timeline-region.ppm");
     pushDrawsOn (host, ctx, *steps, mini, "moving the pointer over it",
-                 [&host] { return host.panelInput ("mini-timeline", "hover"); });
+                 [&host] { return host.panelInput ("mini-timeline", "hover"); }, Cause::input);
     pushDrawsOn (host, ctx, *steps, mini, "a click on it",
-                 [&host, seconds] { return host.clickMiniSample (seconds (30.0)); });
+                 [&host, seconds] { return host.clickMiniSample (seconds (30.0)); }, Cause::input);
     // The framework takes the modifiers from every pointer event, and the pointer that
     // leaves the panel takes their release with it.
     pushDrawsOn (host, ctx, *steps, mini, "moving the pointer over it with Shift held",
-                 [&host] { return host.panelInput ("mini-timeline", "shift + hover"); });
+                 [&host] { return host.panelInput ("mini-timeline", "shift + hover"); }, Cause::input);
     pushStaysStill (host, ctx, *steps, mini, "the mini timeline after a pointer that held Shift");
     pushDrawsOn (host, ctx, *steps, mini, "a key at it",
-                 [&host] { return host.pressMiniKey ("left shift"); });
+                 [&host] { return host.pressMiniKey ("left shift"); }, Cause::input);
     pushDrawsOn (host, ctx, *steps, mini, "resizing the window", [&host, size]
     {
         if (size.size() < 4) return false;
         const int narrower = size[0] - 60;
         return host.resizeMainWindow (narrower >= size[2] ? narrower : size[0] + 60, size[1]);
-    });
+    }, Cause::input);
     pushStaysStill (host, ctx, *steps, mini, "the mini timeline after the changes");
     pushFloor (host, ctx, *steps, mini, "the idle mini timeline");
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
@@ -377,7 +423,7 @@ std::optional<ScenarioResult> runMasteringPanelsOnDemand (GuiHost& host, Scenari
     });
     for (const auto& tag : all)
         pushDrawsOn (host, ctx, *steps, { tag }, "moving the pointer over " + tag,
-                     [&host, tag] { return host.panelInput (tag, "hover"); });
+                     [&host, tag] { return host.panelInput (tag, "hover"); }, Cause::input);
     pushStaysStill (host, ctx, *steps, all, "the mastering panels after the changes");
     pushFloor (host, ctx, *steps, all, "the idle mastering panels");
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
@@ -401,9 +447,9 @@ std::optional<ScenarioResult> runVirtualKeyboardOnDemand (GuiHost& host, Scenari
     pushOpened (host, *steps, keyboard, [&host] { return host.virtualKeyboardOpen(); }, "the virtual keyboard");
     pushStaysStill (host, ctx, *steps, keyboard, "the idle virtual keyboard");
     pushDrawsOn (host, ctx, *steps, keyboard, "moving the pointer over it",
-                 [&host] { return host.panelInput ("virtual-keyboard", "hover"); });
+                 [&host] { return host.panelInput ("virtual-keyboard", "hover"); }, Cause::input);
     pushDrawsOn (host, ctx, *steps, keyboard, "a key at it",
-                 [&host] { return host.panelInput ("virtual-keyboard", "left shift"); });
+                 [&host] { return host.panelInput ("virtual-keyboard", "left shift"); }, Cause::input);
     pushStaysStill (host, ctx, *steps, keyboard, "the virtual keyboard after the input");
     pushFloor (host, ctx, *steps, keyboard, "the idle virtual keyboard");
     // The window takes two pump ticks to go, and the next case must not find it.
@@ -449,11 +495,11 @@ std::optional<ScenarioResult> runPianoRollOnDemand (GuiHost& host, ScenarioConte
         return true;
     });
     pushDrawsOn (host, ctx, *steps, roll, "moving the pointer over it",
-                 [&host] { return host.panelInput ("piano-roll", "hover"); });
+                 [&host] { return host.panelInput ("piano-roll", "hover"); }, Cause::input);
     // The shell hands the piano roll every key its child does not hold, which on
     // Windows is all of them, and select all changes nothing the view's stamp reads.
     pushDrawsOn (host, ctx, *steps, roll, "select all passed on by the shell",
-                 [&host] { return host.pressPeerKey (commandChord ('a'), controlCharacter ('a')); });
+                 [&host] { return host.pressPeerKey (commandChord ('a'), controlCharacter ('a')); }, Cause::input);
     steps->push_back ({ 0, [&host, &ctx]
     { ctx.expect (host.pianoSelection().size() == 2, "select all did not select the region's two notes"); } });
     pushStaysStill (host, ctx, *steps, roll, "the piano roll after the changes");

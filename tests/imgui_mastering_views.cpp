@@ -4,6 +4,7 @@
 #include "dsp/BrickwallLimiter.h"
 #include "dsp/MasteringChain.h"
 #include "dsp/PhaseAnalyzer.h"
+#include "foundation/Decibels.h"
 #include "session/Session.h"
 #include "ui/imgui/DuskTheme.h"
 #include "ui/imgui/MasteringEqView.h"
@@ -657,6 +658,33 @@ TEST_CASE ("a mastering view's live stamp holds while what it shows holds, and m
 
         params.eqBandGainDb[2].store (params.eqBandGainDb[2].load() + 3.0f);
         REQUIRE (view->liveStamp() != idle);
+
+        // The audio callback writes the scope every block, stopped or not.
+        std::uint32_t state = 1;
+        const auto hiss = [&] (float rms)
+        {
+            for (int i = 0; i < 512; ++i)
+            {
+                state = state * 1664525u + 1013904223u;
+                left[(size_t) i] = right[(size_t) i]
+                    = rms * 1.7320508f * (static_cast<float> (state >> 8) / 8388608.0f - 1.0f);
+            }
+            chain.processInPlace (left.data(), right.data(), 512);
+        };
+        const float underFloor = dusk::audio::decibelsToGain (-95.0f);
+        for (int block = 0; block < 8; ++block) hiss (underFloor);
+        rest();
+        int resting = 0;
+        for (int block = 0; block < 60; ++block)
+        {
+            hiss (underFloor);
+            resting += view->liveStamp().has_value() ? 1 : 0;
+            panel.frame (*view);
+        }
+        REQUIRE (resting == 60);
+
+        hiss (dusk::audio::decibelsToGain (-40.0f));
+        REQUIRE_FALSE (view->liveStamp().has_value());
     }
 
     SECTION ("the limiter, which asks for every frame while its meters ease")
@@ -683,6 +711,40 @@ TEST_CASE ("a mastering view's live stamp holds while what it shows holds, and m
 
         params.limiterCeilingDb.store (params.limiterCeilingDb.load() - 0.5f);
         REQUIRE (view->liveStamp() != idle);
+    }
+
+    SECTION ("the limiter, which rests on a hiss under its meters' scales and soon after Stop")
+    {
+        BrickwallLimiter limiter;
+        auto view = imgui::makeMasteringLimiterView (params, limiter);
+        std::uint32_t state = 1;
+        const auto hissDb = [&state]
+        {
+            state = state * 1664525u + 1013904223u;
+            return -60.0f + static_cast<float> (state >> 8) / 16777216.0f * 3.0f;
+        };
+        for (int frame = 0; frame < 120; ++frame)
+        {
+            params.meterPostMasterLDb.store (hissDb());
+            panel.frame (*view);
+        }
+        int resting = 0;
+        for (int block = 0; block < 60; ++block)
+        {
+            params.meterPostMasterLDb.store (hissDb());
+            resting += view->liveStamp().has_value() ? 1 : 0;
+            panel.frame (*view);
+        }
+        REQUIRE (resting == 60);
+
+        params.meterPostMasterLDb.store (-1.0f);
+        for (int frame = 0; frame < 30; ++frame) panel.frame (*view);
+        params.meterPostMasterLDb.store (-100.0f);
+        int frames = 0;
+        for (; frames < 600 && ! view->liveStamp().has_value(); ++frames)
+            panel.frame (*view);
+        // Half a second at the panel's 60 frames a second.
+        REQUIRE (frames <= 30);
     }
 
     SECTION ("the phase meter")

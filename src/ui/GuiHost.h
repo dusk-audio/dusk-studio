@@ -118,6 +118,9 @@ public:
     virtual std::string slotLabel (int slot) const = 0;
     virtual bool captureSources (bool enabled) = 0;
     virtual std::vector<std::string> sourceRows() const = 0;
+    // The Sources rows as the lane's next paint draws them, taken without
+    // sampling the session first.
+    virtual std::vector<std::string> drawnSourceRows() = 0;
     // Samples the lane's meters and a track's input meter at `db`, drops them
     // to silence without a meter tick, and reports whether the lane's strip
     // meter and that track's Sources row still draw the sample: 1 drawn, 0
@@ -150,6 +153,9 @@ public:
     virtual bool grMetersShown() const = 0;
     // The level text under a channel strip's send knob, as drawn.
     virtual std::string stripSendLabel (int track, int send) const = 0;
+    // The text a channel strip's high- or low-pass knob shows; empty while the
+    // strip is not showing.
+    virtual std::optional<std::string> stripFilterText (int track, bool highPass) = 0;
 
     virtual bool builtinPointer (int track, const std::string& control, float position, bool pressed) = 0;
     virtual void closeBuiltin (int track) = 0;
@@ -296,6 +302,9 @@ public:
     // Frames the open native panel with this log tag ("mini-timeline", "piano-roll",
     // "mastering-eq", ...) has completed; empty while none is open.
     virtual std::optional<std::uint64_t> panelFrames (const std::string& logTag) const = 0;
+    // How far that panel's last frame drawn after a rest moved Dear ImGui's clock, in
+    // seconds. Cleared by the call; empty when it drew none since, or none is open.
+    virtual std::optional<float> panelClockAfterRest (const std::string& logTag) = 0;
     // Input for that panel as DuskPanelWindow::inputForScenario reads it: a key,
     // "hover", "shift + hover" or "scroll-down".
     virtual bool panelInput (const std::string& logTag, const std::string& input) = 0;
