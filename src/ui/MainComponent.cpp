@@ -4112,9 +4112,11 @@ void MainComponent::releaseMidiJournalFolder()
 
 void MainComponent::showMidiRecoveryFailure (int trackNumber, const std::filesystem::path& path, std::error_code error)
 {
-    auto reason = error.message();
-    while (! reason.empty() && (reason.back() == '\n' || reason.back() == '\r' || reason.back() == ' '))
-        reason.pop_back();
+    // On Windows a system message comes localized, in a code page the label
+    // does not read. The portable condition's text does not.
+    const auto condition = error.default_error_condition();
+    const auto reason = condition.category() == std::generic_category() ? condition.message()
+                                                                        : "error " + std::to_string (error.value());
     const auto text = "MIDI recovery file not written for track " + std::to_string (trackNumber) + ": " + reason;
     setStatusText (text.c_str());
     statusLabel.setTooltip (path.u8string());
