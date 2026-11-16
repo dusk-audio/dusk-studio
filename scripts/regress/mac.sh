@@ -36,6 +36,8 @@ if [[ -n "${DUSK_REGRESS_MAC_REPO:-}" ]]; then
     MAC_DEDICATED=1
 fi
 JOBS="${DUSK_JOBS:-5}"
+FREE_COLD_GB="${DUSK_REGRESS_MAC_FREE_COLD_GB:-$(regress_floor_cold "$REGRESS_MAC_TREE_GB")}"
+FREE_WARM_GB="${DUSK_REGRESS_MAC_FREE_WARM_GB:-$(regress_floor_warm "$REGRESS_MAC_RUN_GB")}"
 SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30)
 
 while [[ $# -gt 0 ]]; do
@@ -49,7 +51,10 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-regress_require ssh git timeout
+[[ "$FREE_COLD_GB" =~ ^[0-9]+$ && "$FREE_WARM_GB" =~ ^[0-9]+$ ]] \
+    || regress_die "DUSK_REGRESS_MAC_FREE_COLD_GB and DUSK_REGRESS_MAC_FREE_WARM_GB are whole numbers of GB"
+regress_require ssh git timeout flock
+regress_host_lock mac shared || regress_die "could not take the mac host lock"
 cd "$REPO_ROOT"
 
 HEAD_SHA="$(git rev-parse HEAD)"
@@ -59,13 +64,60 @@ MAC_PREV_BRANCH=""
 MAC_PREV_COMMIT=""
 MAC_PREV_SUBMODULES=""
 MAC_REMOTE_REPO=""
-MAC_RUN_TOKEN="regress-${HEAD_SHORT}-$$"
+MAC_RUN_TOKEN="regress-${HEAD_SHORT:0:8}-$$"
 MAC_RUN_STATE="$(mktemp "${TMPDIR:-/tmp}/dusk-mac-run.XXXXXX")"
 MAC_RUN_BLOCKED="${MAC_RUN_STATE}.blocked"
+# Touched when a call finds the run's claim gone: the checkout is another
+# run's then, so this one neither restores it nor keeps its folder for that.
+MAC_CLAIM_LOST="${MAC_RUN_STATE}.lost"
+# Set once mac-preflight has claimed the node's checkout for this run; every
+# later call first checks that the claim is still this run's.
+MAC_CLAIMED=0
 
 # A disconnected non-PTY ssh session can leave its build running. Keep an
 # identifiable remote process group so cancellation can acknowledge its exit.
+# Everything a run writes on the node outside the build trees goes in its own
+# folder, ~/.cache/dusk-regress/<token>, which the run removes when it ends: a
+# pid file while a call is in flight, and t/, the TMPDIR of every call. The
+# single-instance tests bind TMPDIR/dusk-si-XXXXXX/dusk-studio/instance.sock,
+# 41 characters past it, and macOS takes 103, so a longer folder leaves the
+# node's own TMPDIR in place.
+#
+# claim_lock holds ~/.cache/dusk-regress/source-claim.lock on descriptor 9, for
+# whoever reads or writes a checkout claim. The node has no flock(1), so perl
+# takes the flock on the shell's own descriptor; the lock goes with the last
+# process holding it, so a run that dies inside leaves nothing taken and there
+# is no stale lock to break. claim_unlock removes the file while it still holds
+# it, so a run that opened the old file finds it gone and opens the new one.
+MAC_CLAIM_LOCK=$(cat <<'REMOTE'
+claim_lock() {
+    local lock="$HOME/.cache/dusk-regress/source-claim.lock" rc
+    while :; do
+        exec 9>>"$lock" || return 1
+        rc=0
+        perl -MFcntl=:flock -e '
+            open(my $fh, ">&=", 9) or exit 2;
+            my $until = time + 30;
+            until (flock($fh, LOCK_EX | LOCK_NB)) {
+                exit 1 if time > $until;
+                select(undef, undef, undef, 0.1);
+            }
+            my @held = stat($fh);
+            my @named = stat($ARGV[0]);
+            exit(@named && $held[0] == $named[0] && $held[1] == $named[1] ? 0 : 3);
+        ' "$lock" || rc=$?
+        ((rc == 3)) || return "$rc"
+        exec 9>&-
+    done
+}
+claim_unlock() {
+    rm -f "$HOME/.cache/dusk-regress/source-claim.lock"
+    exec 9>&-
+}
+REMOTE
+)
 MAC_SUPERVISOR=$(cat <<'REMOTE'
+export -f claim_lock claim_unlock
 set -euo pipefail
 token=$1
 for key in REGRESS_SOURCE REGRESS_DAF REGRESS_CONFIGURE; do
@@ -73,21 +125,41 @@ for key in REGRESS_SOURCE REGRESS_DAF REGRESS_CONFIGURE; do
     [[ "$value" == /* ]] || printf -v "$key" '%s' "$HOME/$value"
     export "$key"
 done
+# One checkout has one claim however its path is spelled.
+if source_dir="$(cd "$REGRESS_SOURCE" 2>/dev/null && pwd -P)"; then
+    REGRESS_SOURCE="$source_dir"
+fi
 for key in REGRESS_BUILD REGRESS_TEST_BUILD; do
     value=${!key}
     [[ "$value" == /* ]] || printf -v "$key" '%s' "$REGRESS_SOURCE/$value"
     export "$key"
 done
 umask 077
-base="$HOME/.cache/dusk-regress"
-mkdir -p "$base"
-slot="$base/$token"
-mkdir "$slot"
+REGRESS_CLAIM="$HOME/.cache/dusk-regress/source-claim-$(printf '%s' "$REGRESS_SOURCE" | cksum | awk '{ print $1 }')"
+export REGRESS_CLAIM
+claim_locked=0
+if [[ "$REGRESS_CLAIMED" == 1 ]]; then
+    claim_lock || { echo "error: could not lock the checkout claim before starting a call" >&2; exit 1; }
+    claim_locked=1
+    trap claim_unlock EXIT
+    holder=""
+    if [[ -f "$REGRESS_CLAIM" ]]; then read -r holder <"$REGRESS_CLAIM" || true; fi
+    [[ "$holder" == "$token" ]] || {
+        echo "error: this run no longer holds $REGRESS_SOURCE (its claim names '${holder:-nobody}'); stopping before it touches the checkout" >&2
+        exit 76
+    }
+fi
+slot="$HOME/.cache/dusk-regress/$token"
+mkdir -p "$slot/t"
+[[ ! -e "$slot/pid" ]] || exit 75
+export REGRESS_RUN="$slot" REGRESS_TOKEN="$token"
+printf '%s\n' "$REGRESS_SOURCE" >"$slot/source"
+if ((${#slot} + 2 <= 62)); then export TMPDIR="$slot/t"; fi
 cleanup() {
     rc=$?
+    if ((claim_locked)); then claim_unlock; fi
     if ((rc == 0)); then
         rm -f "$slot/pid"
-        rmdir "$slot"
     fi
 }
 trap cleanup EXIT
@@ -98,9 +170,16 @@ pgid=$(ps -o pgid= -p "$$")
 pgid=${pgid//[[:space:]]/}
 [[ "$pgid" == "$$" ]] || exit 70
 printf '%s\n' "$$" >"$slot/pid"
+touch "$slot"
+if ((claim_locked)); then
+    claim_locked=0
+    claim_unlock
+fi
 bash -s
 REMOTE
 )
+MAC_SUPERVISOR="${MAC_CLAIM_LOCK}
+${MAC_SUPERVISOR}"
 
 mac_cancel() {
     [[ -s "$MAC_RUN_STATE" ]] || return 0
@@ -131,7 +210,6 @@ fi
 for ((attempt = 0; attempt < 100; ++attempt)); do
     if ! group_alive; then
         rm -f "$slot/pid"
-        rmdir "$slot" 2>/dev/null || true
         exit 0
     fi
     sleep 0.1
@@ -163,13 +241,17 @@ MAC_DAF_REV="$(tr -d '[:space:]' < DAF_REV)"
 mac_run() {
     [[ ! -f "$MAC_RUN_BLOCKED" ]] || return 75
     local deadline="$1" command status=0
-    printf -v command 'exec env REGRESS_SOURCE=%q REGRESS_DAF=%q REGRESS_CONFIGURE=%q REGRESS_BUILD=%q REGRESS_TEST_BUILD=%q REGRESS_DAF_REV=%q REGRESS_DEDICATED=%q REGRESS_JOBS=%q REGRESS_COMMIT=%q REGRESS_DONOR=%q REGRESS_BRANCH=%q REGRESS_HOST=%q bash -c %q dusk-regress %q' \
+    printf -v command 'exec env REGRESS_SOURCE=%q REGRESS_DAF=%q REGRESS_CONFIGURE=%q REGRESS_BUILD=%q REGRESS_TEST_BUILD=%q REGRESS_DAF_REV=%q REGRESS_DEDICATED=%q REGRESS_JOBS=%q REGRESS_COMMIT=%q REGRESS_DONOR=%q REGRESS_BRANCH=%q REGRESS_HOST=%q REGRESS_FREE_COLD_GB=%q REGRESS_FREE_WARM_GB=%q REGRESS_CLAIMED=%q bash -c %q dusk-regress %q' \
         "$MAC_REPO" "$MAC_DAF" "$MAC_CONFIGURE" "$MAC_BUILD_DIR" "$MAC_TEST_BUILD_DIR" \
         "$MAC_DAF_REV" "$MAC_DEDICATED" "$JOBS" "$HEAD_SHA" "$DONOR_REV" "$REMOTE_BRANCH" \
-        "$MAC_HOST" "$MAC_SUPERVISOR" "$MAC_RUN_TOKEN"
+        "$MAC_HOST" "$FREE_COLD_GB" "$FREE_WARM_GB" "$MAC_CLAIMED" "$MAC_SUPERVISOR" "$MAC_RUN_TOKEN"
     printf '%s\n' "$MAC_RUN_TOKEN" >"$MAC_RUN_STATE"
     timeout --foreground "$deadline" ssh "${SSH_OPTS[@]}" "$MAC_HOST" "$command" || status=$?
-    if ((status != 0)); then
+    # 76: the supervisor found the claim gone before it started anything.
+    if ((status == 76)); then
+        : >"$MAC_RUN_STATE"
+        touch "$MAC_CLAIM_LOST"
+    elif ((status != 0)); then
         mac_cancel || return 75
     else
         : >"$MAC_RUN_STATE"
@@ -177,9 +259,20 @@ mac_run() {
     return "$status"
 }
 
+# Fails when the node's checkout is not back where the run found it, so the
+# mac-restore row says so; the exit path tries again until it is.
+MAC_RESTORED=0
 restore_branch() {
-    [[ ! -f "$MAC_RUN_BLOCKED" ]] || return 0
     [[ -n "$MAC_PREV_BRANCH" ]] || return 0
+    ((!MAC_RESTORED)) || return 0
+    if [[ -f "$MAC_CLAIM_LOST" ]]; then
+        echo "error: the checkout is not put back: this run lost its claim on it, so another run has it now" >&2
+        return 1
+    fi
+    if [[ -f "$MAC_RUN_BLOCKED" ]]; then
+        echo "error: the node's checkout stays on ${REMOTE_BRANCH}: a call there was never acknowledged" >&2
+        return 1
+    fi
     # The name comes from the node's own checkout and is spliced into a script
     # the remote bash interprets, so it travels as a bash-quoted word (%q): a
     # ref name may legally contain $, ;, &, | and quotes. abbrev-ref reports
@@ -193,7 +286,7 @@ restore_branch() {
         label="$MAC_PREV_BRANCH"
     fi
     printf '\n--- restoring %s to %s ---\n' "$MAC_HOST" "$label"
-    mac_run 600 <<REMOTE || echo "warning: could not restore ${label}" >&2
+    if ! mac_run 600 <<REMOTE; then
 set -euo pipefail
 cd "\$REGRESS_SOURCE"
 git checkout -q ${checkout_args}
@@ -210,18 +303,121 @@ SUBMODULES
 git rev-parse --abbrev-ref HEAD
 git submodule status
 REMOTE
+        echo "error: could not restore ${MAC_HOST} to ${label}" >&2
+        return 1
+    fi
+    MAC_RESTORED=1
+}
+# Removes the run's folder on the node. Not while a call there is
+# unacknowledged: whatever it started may still be writing to it.
+MAC_TORN_DOWN=0
+# mac_teardown [release]: with release, the run's claim on the checkout goes
+# too, which only the exit does: a restore retried there still needs it.
+mac_teardown() {
+    local release="${1:-0}" command
+    ((!MAC_TORN_DOWN || release)) || return 0
+    if [[ -f "$MAC_RUN_BLOCKED" ]]; then
+        echo "error: ~/.cache/dusk-regress/${MAC_RUN_TOKEN} stays on the node, and with it the run's claim on the checkout: a call there was never acknowledged" >&2
+        return 1
+    fi
+    printf -v command 'exec bash -c %q dusk-teardown %q %q' "${MAC_CLAIM_LOCK}"'
+run="$HOME/.cache/dusk-regress/$1"
+if [[ -d "$run" ]]; then
+    [[ ! -e "$run/pid" ]] || { echo "error: $run has a pid file, so a call there may still run" >&2; exit 75; }
+    rm -rf "$run"
+    [[ ! -e "$run" ]] || exit 1
+fi
+[[ "$2" == 1 ]] || exit 0
+claims=("$HOME"/.cache/dusk-regress/source-claim-*)
+[[ -f "${claims[0]}" ]] || exit 0
+claim_lock || { echo "error: could not take the claim lock within 30 s; the claim of this run stays" >&2; exit 1; }
+for claim in "${claims[@]}"; do
+    [[ -f "$claim" ]] || continue
+    holder=""
+    read -r holder <"$claim" || true
+    [[ "$holder" != "$1" ]] || rm -f "$claim"
+done
+claim_unlock
+' "$MAC_RUN_TOKEN" "$release"
+    timeout --foreground 120 ssh "${SSH_OPTS[@]}" "$MAC_HOST" "$command" </dev/null || return 1
+    MAC_TORN_DOWN=1
+}
+# While the checkout is not back, the run keeps its folder and claim, so no
+# other run takes the checkout from under the retry at exit. A run that lost
+# its claim has nothing to keep them for. A restore retried here runs through
+# mac_run, which makes the run's folder again, so the teardown runs again after.
+restore_pending() {
+    [[ -n "$MAC_PREV_BRANCH" ]] && ((!MAC_RESTORED)) && [[ ! -f "$MAC_CLAIM_LOST" ]]
 }
 mac_cleanup() {
-    restore_branch
-    rm -f "$MAC_RUN_STATE" "$MAC_RUN_BLOCKED"
+    if restore_pending; then
+        restore_branch || true
+        MAC_TORN_DOWN=0
+    fi
+    if restore_pending; then
+        echo "error: ~/.cache/dusk-regress/${MAC_RUN_TOKEN} and the run's claim stay on the node: its checkout is not back where the run found it. Put it back by hand, then scripts/regress.sh clean mac removes both; until then the claim keeps other runs off the checkout for ten minutes after the folder was last written" >&2
+    else
+        mac_teardown 1 || true
+    fi
+    rm -f "$MAC_RUN_STATE" "$MAC_RUN_BLOCKED" "$MAC_CLAIM_LOST"
 }
 trap mac_cleanup EXIT
 
+# Two source runs in one checkout move it under each other, so a run claims the
+# checkout here, before it pushes or checks anything out, and refuses one that
+# another live run holds. The claim is a file naming the run's folder, read and
+# written only under claim_lock, so of two runs started in the same second the
+# second finds the first's claim. A holder is live while its folder's pid names
+# a live process group, whose leader still runs that run or has gone while
+# what it started runs on, or while its folder was written in the last 600 s,
+# which covers the gap between two calls; ages come from stat, since BSD find
+# -mmin rounds up. A run from an older runner writes no claim (nor a source
+# file in its folder) and counts only while a call of it is in flight.
 leg_preflight() {
     mac_run 180 <<'REMOTE'
 set -euo pipefail
 export PATH="$HOME/bin:$PATH"
 echo "macOS $(sw_vers -productVersion), $(uname -m)"
+base="$HOME/.cache/dusk-regress"
+group_alive() {
+    ps -ax -o pgid=,stat= | awk -v group="$1" '$1 == group && $2 !~ /^Z/ { found = 1 } END { exit !found }'
+}
+age() {
+    local m
+    m="$(stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null)" || return 1
+    [[ "$m" =~ ^[0-9]+$ ]] || return 1
+    echo $(($(date +%s) - m))
+}
+running_in() {
+    local pid="" command
+    [[ -s "$1/pid" ]] && read -r pid <"$1/pid"
+    [[ "$pid" =~ ^[0-9]+$ ]] && group_alive "$pid" || return 1
+    command="$(ps -ww -o command= -p "$pid" 2>/dev/null || true)"
+    [[ -z "$command" || "$command" == *" dusk-regress ${1##*/}" ]] && echo "$pid"
+}
+claim_lock || { echo "error: could not take $base/source-claim.lock within 30 s" >&2; exit 1; }
+trap claim_unlock EXIT
+for other in "$base"/regress-*; do
+    [[ -d "$other" && "$other" != "$REGRESS_RUN" && ! -f "$other/source" ]] || continue
+    if pid="$(running_in "$other")"; then
+        echo "error: a run of an older runner is live on the node: ${other##*/} (process group $pid); this run leaves the checkout alone" >&2
+        exit 1
+    fi
+done
+holder=""
+if [[ -f "$REGRESS_CLAIM" ]]; then read -r holder <"$REGRESS_CLAIM" || true; fi
+if [[ -n "$holder" && "$holder" != "$REGRESS_TOKEN" ]]; then
+    holder_age="$(age "$base/$holder" || echo 999999)"
+    if pid="$(running_in "$base/$holder")" || ((holder_age <= 600)); then
+        echo "error: another source run holds $REGRESS_SOURCE: $holder (${pid:+process group $pid, }its folder written ${holder_age} s ago); this run leaves the checkout alone" >&2
+        exit 1
+    fi
+    echo "taking over the claim of $holder, whose run is gone"
+fi
+printf '%s\n' "$REGRESS_TOKEN" >"$REGRESS_CLAIM"
+claim_unlock
+trap - EXIT
+echo "claimed $REGRESS_SOURCE for this run"
 cd "$REGRESS_SOURCE"
 if [[ "$REGRESS_DEDICATED" == 1 ]]; then
     [[ "$(git config --bool dusk.validationWorktree || true)" == true ]] || {
@@ -251,6 +447,20 @@ if [[ -n "$(git submodule foreach --recursive --quiet 'git status --porcelain' 2
     git submodule foreach --recursive --quiet 'git status --short | sed "s|^|  $path: |"' >&2
     exit 1
 fi
+free_kb="$(df -k "$HOME" | awk 'NR == 2 { print $4 }')"
+kind=warm
+want="$REGRESS_FREE_WARM_GB"
+if [[ ! -f "$REGRESS_BUILD/CMakeCache.txt" || ! -f "$REGRESS_TEST_BUILD/CMakeCache.txt" ]]; then
+    kind=cold
+    want="$REGRESS_FREE_COLD_GB"
+fi
+free_gb="$(awk -v k="$free_kb" 'BEGIN { printf "%.1f", k / 1048576 }')"
+if ((free_kb < want * 1048576)); then
+    echo "error: $HOME has $free_gb GB free; a $kind run needs $want GB" >&2
+    exit 1
+fi
+echo "$HOME has $free_gb GB free; a $kind run needs $want GB"
+echo "tests write to ${TMPDIR:-the default TMPDIR of the node}"
 echo "regress:source $(pwd -P)"
 echo "regress:branch $(git rev-parse --abbrev-ref HEAD)"
 echo "regress:commit $(git rev-parse HEAD)"
@@ -503,6 +713,7 @@ preflight_rc=0
 preflight_out="$(leg_preflight)" || preflight_rc=$?
 printf '%s\n' "$preflight_out"
 if ((preflight_rc == 0)); then
+    MAC_CLAIMED=1
     MAC_REMOTE_REPO="$(sed -n 's/^regress:source //p' <<<"$preflight_out" | head -1)"
     MAC_PREV_BRANCH="$(sed -n 's/^regress:branch //p' <<<"$preflight_out" | head -1)"
     MAC_PREV_COMMIT="$(sed -n 's/^regress:commit //p' <<<"$preflight_out" | head -1)"
@@ -534,5 +745,43 @@ mac_scenarios_leg
 regress_skip "gui-launch" "foreground desktop session required for native GUI input"
 regress_skip "scenarios-gui" "foreground desktop session required for native GUI input"
 regress_skip "ipc-selftest" "Linux-only code path"
+
+regress_leg "mac-restore" restore_branch
+
+# The warm trees stay and the run's folder goes, pass or fail, and their sizes
+# and the node's free space end the table.
+leg_footprint() {
+    mac_run 600 <<'REMOTE'
+set -euo pipefail
+for dir in "$REGRESS_BUILD" "$REGRESS_TEST_BUILD"; do
+    [[ -d "$dir" ]] && echo "regress:tree $(du -sk "$dir" | cut -f1) ${dir##*/}"
+done
+echo "regress:run $(du -sk "$REGRESS_RUN" | cut -f1)"
+echo "regress:free $(df -k "$HOME" | awk 'NR == 2 { print $4 }')"
+REMOTE
+}
+mac_footprint_leg() {
+    printf '\n--- footprint ---\n'
+    local start=$SECONDS out rc=0 trees="" kb name run_kb free_kb
+    out="$(leg_footprint 2>&1)" || rc=$?
+    grep -v '^regress:' <<<"$out" || true
+    while read -r kb name; do
+        trees="${trees}${trees:+, }${name} $(regress_gb "$((kb * 1024))")"
+    done < <(sed -n 's/^regress:tree //p' <<<"$out")
+    run_kb="$(sed -n 's/^regress:run //p' <<<"$out")"
+    free_kb="$(sed -n 's/^regress:free //p' <<<"$out")"
+    if restore_pending; then
+        regress_record footprint FAIL "$((SECONDS - start))" "the run's folder is kept: the checkout is not back yet, and the exit tries again"
+    elif ((rc != 0)) || [[ ! "$free_kb" =~ ^[0-9]+$ ]]; then
+        mac_teardown || true
+        regress_record footprint FAIL "$((SECONDS - start))" "exit ${rc}"
+    elif ! mac_teardown; then
+        regress_record footprint FAIL "$((SECONDS - start))" "the run's folder ~/.cache/dusk-regress/${MAC_RUN_TOKEN} was not removed"
+    else
+        regress_record footprint PASS "$((SECONDS - start))" \
+            "warm trees ${trees:-none}; run folder $(regress_gb "$((${run_kb:-0} * 1024))") removed; $(regress_gb "$((free_kb * 1024))") free"
+    fi
+}
+mac_footprint_leg
 
 regress_summary "regress mac"

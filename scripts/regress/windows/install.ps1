@@ -135,13 +135,16 @@ $rgInstaller = $null
 try {
     Stop-RegressApps
 
-    # Earlier runs' folders, and only those: each carries the marker file.
-    Get-ChildItem $env:LOCALAPPDATA -Directory -Filter 'dusk-regress-*' -ErrorAction SilentlyContinue |
-        Where-Object { $_.FullName -ne $rgRoot -and (Test-Path (Join-Path $_.FullName '.dusk-regress-run')) } |
-        ForEach-Object { Remove-Item -Recurse -Force $_.FullName -ErrorAction SilentlyContinue }
-    if (Test-Path $rgRoot) { Remove-Item -Recurse -Force $rgRoot }
+    # An earlier run's folder is there only when its run-cleanup kept it, for
+    # evidence that never reached the host or for Notepad's saved session, or
+    # never ran. Whether it goes is scripts/regress.sh clean windows's call.
+    foreach ($rgEarlier in @(Get-ChildItem $env:LOCALAPPDATA -Directory -Filter 'dusk-regress-*' -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -ne $rgRoot -and (Test-Path (Join-Path $_.FullName '.dusk-regress-run')) })) {
+        $rgLog += "REGRESS-LEFT an earlier run's folder $($rgEarlier.FullName); scripts/regress.sh clean windows removes it`n"
+    }
+    if (-not (Remove-RegressTree $rgRoot '.dusk-regress-run')) { throw "could not clear $rgRoot" }
     New-Item -ItemType Directory -Path "$rgRoot\regress-session" | Out-Null
-    Set-Content -Path "$rgRoot\.dusk-regress-run" -Value 'dusk-regress run folder; removed by the next run'
+    Set-Content -Path "$rgRoot\.dusk-regress-run" -Value 'dusk-regress run folder; removed by the run-cleanup leg, or by scripts/regress.sh clean windows'
 
     $rgMsi = "$rgRoot\@@MSI@@"
     Get-RegressFile '@@MSI@@' $rgMsi

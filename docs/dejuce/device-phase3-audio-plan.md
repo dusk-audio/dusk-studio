@@ -57,6 +57,8 @@ PR-A = P0–P2, PR-B = P3–P5; PR-B branch starts only after PR-A merges.
    deliverable: **direct link removed on Linux + zero `src/` translation
    units include the module's headers on Linux.** Object code physically
    leaves the binary when `juce_audio_utils` unlinks (hosting/GUI towers).
+   Since done: `juce_audio_utils` unlinked, and the device module's object
+   code left the Linux app with it.
 5. **Allowlist mechanics.** `JuceMidiBackend.{h,cpp}` set the precedent of
    *adding* a last-resort mac/win fallback file to `tools/juce-allowlist.txt`.
    `DeviceManagerJuce.cpp` follows (+1). The tower removes ~11 entries

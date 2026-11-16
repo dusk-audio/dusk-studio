@@ -383,10 +383,13 @@ scenarios_list() {
 
 # sandboxed_app_run <secs> <scenario spec>: the in-app suite on its own display,
 # in a sandbox that goes away with the run.
-sandboxed_app_run() {
+sandboxed_app_run() (
     local secs="$1" spec="$2" dir rc=0
     dir="$(mktemp -d "${TMPDIR:-/tmp}/duskstudio-scenarios.XXXXXX")" || return 1
-    regress_at_exit "sandbox_remove $(printf '%q' "$dir")"
+    trap 'sandbox_remove "$dir"' EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    trap 'exit 129' HUP
     if sandbox_env "$dir"; then
         xvfb_run "$secs" env -u DBUS_SESSION_BUS_ADDRESS "${SANDBOX_ENV[@]}" \
             "DUSKSTUDIO_RUN_SCENARIOS=${spec}" \
@@ -395,9 +398,8 @@ sandboxed_app_run() {
     else
         rc=1
     fi
-    sandbox_remove "$dir"
     return "$rc"
-}
+)
 
 scenarios_binary_has() {
     grep -q -a -- "$1" "$APP_BIN" 2>/dev/null

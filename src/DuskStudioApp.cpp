@@ -42,6 +42,8 @@
  #include "engine/device/DeviceManager.h"
  #include "engine/device/IODeviceCallback.h"
  #include "foundation/Text.h"
+#else
+ #include <juce_audio_devices/juce_audio_devices.h>
 #endif
 #include "session/Session.h"
 #include "foundation/Decibels.h"
@@ -588,7 +590,7 @@ static void runHeadlessToneTest()
         const int xrunBefore = dev->getXRunCount();
 
         dm.playTestSound();
-        juce::Thread::sleep (durationMs);
+        std::this_thread::sleep_for (std::chrono::milliseconds (durationMs));
 
         const int xrunAfter = dev->getXRunCount();
         std::fprintf (stdout, "Backend xrun count: before=%d after=%d delta=%d\n",
