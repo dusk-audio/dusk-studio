@@ -30,9 +30,9 @@ template <typename Call>
 bool returnsPromptly (Call call)
 {
     auto returned = std::make_shared<std::atomic<bool>> (false);
-    std::thread caller ([returned, call = std::move (call)]() mutable
+    std::thread caller ([returned, work = std::move (call)]() mutable
     {
-        call();
+        work();
         returned->store (true);
     });
     const bool prompt = eventually ([&] { return returned->load(); });
