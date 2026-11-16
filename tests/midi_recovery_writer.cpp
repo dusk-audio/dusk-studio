@@ -998,6 +998,19 @@ TEST_CASE ("A MIDI journal lets a folder it wrote into go only once nothing is l
         journal.flush();
         CHECK (dusk::fs::loadFileAsString (folder / "notes.txt") == "someone's notes");
     }
+    SECTION ("a folder a take still records into stays, empty as it is")
+    {
+        recovery::Journal journal (reports.callback());
+        auto handle = journal.begin (config);
+        REQUIRE (handle.id != 0);
+        journal.release (folder);
+        journal.flush();
+        REQUIRE (stdfs::is_directory (folder));
+        playNote (journal, handle);
+        journal.checkpoint();
+        journal.flush();
+        CHECK (namesIn (directory).size() == 1);
+    }
 }
 
 // Windows' permissions() only sets the read-only attribute, which stops nothing
