@@ -914,6 +914,27 @@ TEST_CASE ("A MIDI checkpoint that keeps failing waits out twice as many request
     CHECK (written.load() == 1);
 }
 
+namespace
+{
+recovery::Journal::Config keysIn (const stdfs::path& sessionDir)
+{
+    recovery::Journal::Config config;
+    config.sessionDir = sessionDir;
+    config.made = november8th();
+    config.trackNumber = 7;
+    config.name = "Keys";
+    return config;
+}
+
+void playNote (recovery::Journal& journal, const recovery::Journal::Handle& handle)
+{
+    MidiCaptureStream capture;
+    REQUIRE (capture.pushEvent (1, 0, 0x90, 60, 100));
+    REQUIRE (capture.publishProgress (1, 10, false));
+    capture.service (-1, [&] (const auto& view) { REQUIRE (journal.append (handle, view)); });
+}
+} // namespace
+
 TEST_CASE ("A MIDI journal lets a folder it wrote into go only once nothing is left in it", "[midi][recovery][journal]")
 {
     const duskstudio::test::TempDirectory temp ("dusk-midi-journal-release-");
@@ -921,18 +942,7 @@ TEST_CASE ("A MIDI journal lets a folder it wrote into go only once nothing is l
     const auto directory = folder / "midi" / "recording";
     REQUIRE (stdfs::create_directories (folder));
     Reports reports;
-    recovery::Journal::Config config;
-    config.sessionDir = folder;
-    config.made = november8th();
-    config.trackNumber = 7;
-    config.name = "Keys";
-    const auto playNote = [] (recovery::Journal& journal, const recovery::Journal::Handle& handle)
-    {
-        MidiCaptureStream capture;
-        REQUIRE (capture.pushEvent (1, 0, 0x90, 60, 100));
-        REQUIRE (capture.publishProgress (1, 10, false));
-        capture.service (-1, [&] (const auto& view) { REQUIRE (journal.append (handle, view)); });
-    };
+    const auto config = keysIn (folder);
 
     SECTION ("a folder no take wrote into goes at once, even before any take began")
     {
@@ -980,33 +990,6 @@ TEST_CASE ("A MIDI journal lets a folder it wrote into go only once nothing is l
         journal.flush();
         CHECK (namesIn (directory).size() == 1);
     }
-    SECTION ("an empty folder a pass still waits to be written into stays until it is written")
-    {
-        struct Writable
-        {
-            stdfs::path folder;
-            ~Writable() { std::error_code ignored; stdfs::permissions (folder, stdfs::perms::owner_all, ignored); }
-        } writable { folder };
-        stdfs::permissions (folder, stdfs::perms::owner_read | stdfs::perms::owner_exec);
-        std::error_code blocked;
-        if (stdfs::create_directory (folder / "probe", blocked))
-        {
-            stdfs::remove (folder / "probe", blocked);
-            SKIP ("a folder without write permission can still be written in here");
-        }
-        recovery::Journal journal (reports.callback());
-        auto handle = journal.begin (config);
-        REQUIRE (handle.id != 0);
-        playNote (journal, handle);
-        REQUIRE (journal.finish (handle, 1, 10));
-        journal.release (folder);
-        journal.flush();
-        REQUIRE (stdfs::is_directory (folder));
-        REQUIRE (stdfs::is_empty (folder));
-        stdfs::permissions (folder, stdfs::perms::owner_all);
-        journal.flush();
-        CHECK (namesIn (directory).size() == 1);
-    }
     SECTION ("a file of anyone else's keeps the folder and stays as it is")
     {
         { std::ofstream foreign (folder / "notes.txt"); foreign << "someone's notes"; }
@@ -1016,3 +999,41 @@ TEST_CASE ("A MIDI journal lets a folder it wrote into go only once nothing is l
         CHECK (dusk::fs::loadFileAsString (folder / "notes.txt") == "someone's notes");
     }
 }
+
+// Windows' permissions() only sets the read-only attribute, which stops nothing
+// being made in a folder, so there the case could only ever skip.
+#if ! defined(_WIN32)
+TEST_CASE ("A MIDI journal keeps an empty folder a pass still waits to be written into until it is written",
+           "[midi][recovery][journal][permission-fixture]")
+{
+    const duskstudio::test::TempDirectory temp ("dusk-midi-journal-waiting-");
+    const auto folder = temp.path() / "recordings" / "take";
+    const auto directory = folder / "midi" / "recording";
+    REQUIRE (stdfs::create_directories (folder));
+    struct Writable
+    {
+        stdfs::path folder;
+        ~Writable() { std::error_code ignored; stdfs::permissions (folder, stdfs::perms::owner_all, ignored); }
+    } writable { folder };
+    stdfs::permissions (folder, stdfs::perms::owner_read | stdfs::perms::owner_exec);
+    std::error_code blocked;
+    if (stdfs::create_directory (folder / "probe", blocked))
+    {
+        stdfs::remove (folder / "probe", blocked);
+        SKIP ("a folder without write permission can still be written in here");
+    }
+    Reports reports;
+    recovery::Journal journal (reports.callback());
+    auto handle = journal.begin (keysIn (folder));
+    REQUIRE (handle.id != 0);
+    playNote (journal, handle);
+    REQUIRE (journal.finish (handle, 1, 10));
+    journal.release (folder);
+    journal.flush();
+    REQUIRE (stdfs::is_directory (folder));
+    REQUIRE (stdfs::is_empty (folder));
+    stdfs::permissions (folder, stdfs::perms::owner_all);
+    journal.flush();
+    CHECK (namesIn (directory).size() == 1);
+}
+#endif
