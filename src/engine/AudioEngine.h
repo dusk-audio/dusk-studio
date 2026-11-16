@@ -923,6 +923,16 @@ public:
         onDeviceLostAlert_ = std::move (sink);
     }
 
+    // UI sink invoked, on the message thread, after the engine followed the
+    // audio device to a sample rate something outside the app moved it to (a
+    // PipeWire graph forced to another rate). The message says what changed;
+    // the transport has already stopped. Set at startup (MainComponent),
+    // nullable.
+    void setDeviceRateChangedSink (DeviceLostAlertSink sink) noexcept
+    {
+        onDeviceRateChanged_ = std::move (sink);
+    }
+
     // One-shot startup device-open outcome. Empty = the saved device opened.
     // Non-empty when the saved device was busy and we fell back (or couldn't).
     // The UI reads it ONCE after construction - the alert sinks above are still
@@ -1597,6 +1607,7 @@ private:
     std::string         microphoneNotice_;
 
     DeviceLostAlertSink onDeviceLostAlert_;
+    DeviceLostAlertSink onDeviceRateChanged_;
     RecordBlockedSink   onRecordBlocked_;
     PluginRestoreAlertSink onPluginRestoreAlert_;
 
@@ -1619,6 +1630,12 @@ private:
     bool dspRestartPending_ = false;
     void performPendingDspRestartIfIdle();
     void performDspRestart();
+
+    // Message-thread only. Re-prepares at the clock the device moved to under
+    // its stream: a new rate at once, stopping the transport and telling the
+    // user; a new block size alone once the transport is stopped, the device
+    // handing longer cycles over in blocks of the old size until then.
+    void followMovedDeviceClock();
 
     // Message-thread only. While set, changeListenerCallback skips
     // persisting device state: the current device is a startup fallback

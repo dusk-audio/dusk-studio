@@ -264,6 +264,7 @@ struct DeviceManager::Impl : private dusk::Timer
     std::map<void*, std::function<void()>> listeners;
     std::atomic<bool> broadcastPending { false };
     bool backendsRegistered = false;
+    DeviceClock announcedClock;   // the moved clock the listeners last heard of
 
     ~Impl() override
     {
@@ -284,7 +285,17 @@ struct DeviceManager::Impl : private dusk::Timer
 
     void timerCallback() override
     {
-        if (currentDevice != nullptr && currentDevice->isOpen()) return;
+        if (currentDevice != nullptr && currentDevice->isOpen())
+        {
+            const auto moved = currentDevice->getMovedClock();
+            if (moved.bufferSize != announcedClock.bufferSize
+                || std::abs (moved.sampleRate - announcedClock.sampleRate) > 0.5)
+            {
+                announcedClock = moved;
+                if (moved.isSet()) broadcast();
+            }
+            return;
+        }
         stopTimer();
         if (currentDevice == nullptr) return;
 
@@ -391,6 +402,7 @@ struct DeviceManager::Impl : private dusk::Timer
         if (! err.empty()) { dev->close(); return err; }
 
         currentDevice = std::move (dev);
+        announcedClock = {};
 
         // Effective setup as applied (a backend may round rate/buffer or clamp
         // channels); keep the requested useDefault flags.
@@ -401,8 +413,11 @@ struct DeviceManager::Impl : private dusk::Timer
         currentSetup.bufferSize = currentDevice->getCurrentBufferSizeSamples();
 
         // start() synchronously drives audioDeviceAboutToStart, clearing
-        // deviceChangePending and sizing the fan-out scratch.
+        // deviceChangePending and sizing the fan-out scratch. It also adopts a
+        // clock the device moved to since open(), so the two are read again.
         currentDevice->start (&fanout);
+        currentSetup.sampleRate = currentDevice->getCurrentSampleRate();
+        currentSetup.bufferSize = currentDevice->getCurrentBufferSizeSamples();
         startTimerHz (30);
 
         if (treatAsChosen)
@@ -415,6 +430,25 @@ struct DeviceManager::Impl : private dusk::Timer
 
         broadcast();
         return {};
+    }
+
+    // The device stays open: only the stream restarts, so the graph keeps our
+    // node and its links, and nothing reads this as a disconnection.
+    bool followDeviceClock (const DeviceClock& expected)
+    {
+        if (currentDevice == nullptr || ! currentDevice->isPlaying()) return false;
+        const auto moved = currentDevice->getMovedClock();
+        if (! moved.isSet() || moved.bufferSize != expected.bufferSize
+            || std::abs (moved.sampleRate - expected.sampleRate) > 0.5)
+            return false;
+
+        currentDevice->stop();
+        currentDevice->start (&fanout);
+        currentSetup.sampleRate = currentDevice->getCurrentSampleRate();
+        currentSetup.bufferSize = currentDevice->getCurrentBufferSizeSamples();
+        announcedClock = {};
+        broadcast();
+        return true;
     }
 
     void broadcast()
@@ -595,6 +629,13 @@ std::string DeviceManager::setSetup (const DeviceSetup& d, bool treatAsChosen)
     impl->deviceChangePending.store (true, std::memory_order_release);
     return impl->openDeviceFromSetup (d, treatAsChosen);
 }
+
+DeviceClock DeviceManager::getMovedDeviceClock() const
+{
+    return impl->currentDevice != nullptr ? impl->currentDevice->getMovedClock() : DeviceClock {};
+}
+
+bool DeviceManager::followDeviceClock (const DeviceClock& expected) { return impl->followDeviceClock (expected); }
 
 void DeviceManager::addCallback (IODeviceCallback* callback) { impl->addCallback (callback); }
 

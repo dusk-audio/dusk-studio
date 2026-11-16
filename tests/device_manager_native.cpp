@@ -30,6 +30,7 @@
 
 using duskstudio::device::CallbackContext;
 using duskstudio::device::ChannelSet;
+using duskstudio::device::DeviceClock;
 using duskstudio::device::DeviceManager;
 using duskstudio::device::DeviceSetup;
 using duskstudio::device::DeviceStateBlob;
@@ -89,6 +90,12 @@ public:
     void start (IODeviceCallback* c) override
     {
         log->add (name + ".start");
+        if (movedClock.isSet())
+        {
+            appliedBuf = movedClock.bufferSize;
+            appliedRate = movedClock.sampleRate;
+            movedClock = {};
+        }
         cb = c; playing = true;
         cb->audioDeviceAboutToStart (this);   // synchronous, mirroring the JUCE contract
     }
@@ -108,6 +115,11 @@ public:
     int getOutputLatencyInSamples() override { return 0; }
     int getInputLatencyInSamples()  override { return 0; }
     int getXRunCount() const noexcept override { return 0; }
+    DeviceClock getMovedClock() const override { return movedClock; }
+
+    // What a PipeWire graph forced to another quantum or rate reports; the next
+    // start() adopts it, as the real device does.
+    DeviceClock movedClock;
 
     // Drive one synthetic block / error through whatever start() installed (the
     // manager's fan-out).
@@ -977,5 +989,75 @@ TEST_CASE ("DeviceManager broadcast: async and coalesced on the message thread",
     REQUIRE (fired == 1);   // coalesced: three requests, one fire
 
     dm.removeChangeListener (&fired);
+}
+
+TEST_CASE ("DeviceManager announces a device clock that moved, then restarts the stream at it",
+           "[audio][device][pipewire][ipc]")
+{
+    juce::ScopedJuceInitialiser_GUI juceInit;
+    Harness h;
+    MockCallback engine (&h.log, "engine", 0.0f);
+    DeviceManager dm;
+    dm.setDeviceTypesForTest (h.build());
+    dm.addCallback (&engine);
+    REQUIRE (dm.initialise (2, 2, "", true).empty());
+    auto chosen = dm.getSetup();
+    chosen.sampleRate = 48000.0;
+    chosen.bufferSize = 256;
+    REQUIRE (dm.setSetup (chosen, /*treatAsChosen*/ true).empty());
+    const auto chosenBlob = dm.getStateBlob();
+    auto* device = h.pw->created.back();
+    REQUIRE (device->getCurrentBufferSizeSamples() == 256);
+
+    REQUIRE_FALSE (dm.followDeviceClock ({ 1024, 44100.0 }));   // nothing moved, nothing restarts
+
+    // The open's own broadcast fires first; the clock moves inside it, so a
+    // second fire can only be the manager's watch announcing the move. The
+    // pump then runs on for a few watch ticks to see it announced only once.
+    int fired = 0, announced = 0, ticksAfter = 0;
+    dm.addChangeListener (&fired, [&]
+    {
+        if (++fired == 1)
+            device->movedClock = { 1024, 44100.0 };
+        else if (dm.getMovedDeviceClock().isSet())
+            ++announced;
+    });
+    pumpUntil ([&] { return announced > 0 && ++ticksAfter > 30; }, 3000);
+    REQUIRE (announced == 1);
+    REQUIRE (dm.getMovedDeviceClock().bufferSize == 1024);
+    REQUIRE_THAT (dm.getMovedDeviceClock().sampleRate, Catch::Matchers::WithinAbs (44100.0, 1e-9));
+
+    const int startsBefore = engine.aboutToStart, stopsBefore = engine.stopped;
+    h.log.events.clear();
+    // A caller that decided on another clock than the one the device is at
+    // now restarts nothing.
+    REQUIRE_FALSE (dm.followDeviceClock ({ 2048, 44100.0 }));
+    REQUIRE_FALSE (dm.followDeviceClock ({ 1024, 48000.0 }));
+    REQUIRE (engine.stopped == stopsBefore);
+    REQUIRE (dm.followDeviceClock (dm.getMovedDeviceClock()));
+
+    // The stream restarts on the same open device; nothing is closed or
+    // recreated, and the restart is not a deliberate device change.
+    REQUIRE (engine.stopped == stopsBefore + 1);
+    REQUIRE (engine.aboutToStart == startsBefore + 1);
+    REQUIRE (h.log.idx ("engine.stopped") < h.log.idx ("pw-default.start"));
+    REQUIRE (h.log.idx ("pw-default.start") < h.log.idx ("engine.aboutToStart"));
+    REQUIRE_FALSE (h.log.has ("close"));
+    REQUIRE_FALSE (h.log.has ("create"));
+    REQUIRE (dm.getCurrentDevice() == device);
+    REQUIRE (device->isOpen());
+    REQUIRE (device->isPlaying());
+    REQUIRE_FALSE (dm.isDeviceChangePending());
+
+    // getSetup reports what runs; the user's chosen setup is what persists.
+    REQUIRE (dm.getSetup().bufferSize == 1024);
+    REQUIRE_THAT (dm.getSetup().sampleRate, Catch::Matchers::WithinAbs (44100.0, 1e-9));
+    REQUIRE (dm.getStateBlob() == chosenBlob);
+
+    REQUIRE_FALSE (dm.getMovedDeviceClock().isSet());
+    REQUIRE_FALSE (dm.followDeviceClock ({ 1024, 44100.0 }));
+
+    dm.removeChangeListener (&fired);
+    dm.removeCallback (&engine);
 }
 #endif

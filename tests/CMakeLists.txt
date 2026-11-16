@@ -163,6 +163,7 @@ add_executable(dusk-studio-tests
     # injects its own device types via setDeviceTypesForTest.
     device_manager_native.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/device/DeviceManager.cpp
+    graph_clock.cpp
     update_checker_version.cpp
     session_schema_migration.cpp
     dsp_components_test.cpp

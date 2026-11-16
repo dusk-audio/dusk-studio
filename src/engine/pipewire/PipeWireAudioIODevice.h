@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../device/GraphClock.h"
 #include "../device/IODevice.h"
 #include "../device/IODeviceCallback.h"
 
@@ -37,8 +38,11 @@ namespace duskstudio
 //     already runs its data thread at RT priority).
 //   - Target node chosen via PW_KEY_TARGET_OBJECT = the node name captured at
 //     enumeration; the session manager links our ports to it.
-//   - Quantum (block size) requested via PW_KEY_NODE_LATENCY; the graph may
-//     round it. getCurrentBufferSizeSamples reports the value actually used.
+//   - Quantum (block size) and rate requested via PW_KEY_NODE_LATENCY and the
+//     node.force-* keys; the graph decides. open() adopts the quantum and rate
+//     of the graph's first cycle. When the graph later settles on another one,
+//     a longer cycle is handed over in blocks of the started size and
+//     getMovedClock reports the change until a restart adopts it.
 class PipeWireAudioIODevice final : public device::IODevice
 {
 public:
@@ -88,6 +92,8 @@ public:
     int getInputLatencyInSamples()  override    { return inputLatency; }
 
     int getXRunCount() const noexcept override  { return xrunCount.load (std::memory_order_relaxed); }
+
+    device::DeviceClock getMovedClock() const override;
 
     // Synthetic backend self-test - exercises the pure-logic surfaces that need
     // no live graph (active-channel counting from a mask, node.latency string
@@ -143,6 +149,7 @@ private:
 
     double openedSampleRate = 0.0;
     int    currentBlockSize = 0;
+    int    requestedRate    = 0;      // stands in for a cycle that reports no rate
     int    maxQuantum       = 0;      // scratch ceiling; cycles above this are dropped
     int    outputLatency    = 0;
     int    inputLatency     = 0;
@@ -168,12 +175,16 @@ private:
     std::atomic<bool> isDeviceOpen { false };
     std::atomic<bool> isStarted    { false };
     std::atomic<int>  xrunCount    { 0 };
-    // The graph's real quantum, captured from the first process cycle. PipeWire
-    // runs the graph at its own block size (often not the value we requested),
-    // so open() adopts this as currentBlockSize before the engine prepares.
-    std::atomic<int>  negotiatedQuantum { 0 };
+    // Every cycle's quantum and rate against the ones the callback was started
+    // at. PipeWire runs the graph at its own block size and rate (often not the
+    // ones we requested), so open() adopts the first cycle's before the engine
+    // prepares, and start() adopts the clock the graph has moved to since.
+    device::ClockWatch clockWatch;
 
     std::string lastError;
+
+    // Message thread, with no callback attached: the started block size and rate.
+    void adoptClock (int blockSize, int sampleRate);
 
     // After the filter connects, link our ports to the chosen sink/source ports
     // (the session manager won't). Discovers the global port ids via a registry

@@ -326,6 +326,7 @@ std::string PipeWireAudioIODevice::open (const device::ChannelSet& inputChannels
     const int quantum = std::max (32, bufferSizeSamples);
     openedSampleRate  = sampleRate;
     currentBlockSize  = quantum;
+    requestedRate     = rate;
     maxQuantum        = kMaxQuantum;
 
     // Unlinked-port scratch. silenceIn stays zeroed (read by the callback for a
@@ -446,7 +447,7 @@ std::string PipeWireAudioIODevice::open (const device::ChannelSet& inputChannels
     // started, onProcess may read these on the very first cycle.
     lastXrunRecovering = false;
     xrunCount.store (0, std::memory_order_relaxed);
-    negotiatedQuantum.store (0, std::memory_order_relaxed);
+    clockWatch.reset();
 
     if (const int rc = pw_thread_loop_start (threadLoop); rc < 0)
     {
@@ -535,12 +536,14 @@ std::string PipeWireAudioIODevice::open (const device::ChannelSet& inputChannels
         return lastError;
     }
 
-    // Adopt the graph's real quantum: PipeWire runs the graph at its own block
-    // size (our request is only advisory), so the engine must prepare for what
-    // onProcess actually delivers - otherwise its oversized-block guard clears
-    // every block to silence. A quantum above maxQuantum is itself dropped by
-    // onProcess, so treat "no usable quantum" as a failed open rather than
-    // silently keeping the requested size.
+    // Adopt the graph's real quantum and rate: PipeWire runs the graph at its
+    // own block size and rate (our request is only advisory, and the graph's
+    // settings can force others), so the engine must prepare for what onProcess
+    // actually delivers - a longer block than it prepared for is otherwise
+    // split, and a different rate plays every recording at the wrong speed. A
+    // quantum above maxQuantum is itself dropped by onProcess, so treat "no
+    // usable quantum" as a failed open rather than silently keeping the
+    // requested size.
     //
     // STREAMING says our node was started, not that the graph has run a cycle:
     // the elected driver may still be a device node waking from suspend, which
@@ -553,10 +556,11 @@ std::string PipeWireAudioIODevice::open (const device::ChannelSet& inputChannels
     // already allows longer.
     const auto quantumDeadline = std::chrono::steady_clock::now()
                                + std::chrono::milliseconds (kQuantumWaitMs);
-    while (negotiatedQuantum.load (std::memory_order_acquire) == 0
+    while (! clockWatch.latest().isSet()
            && std::chrono::steady_clock::now() < quantumDeadline)
         std::this_thread::sleep_for (std::chrono::milliseconds (1));
-    const int nq = negotiatedQuantum.load (std::memory_order_acquire);
+    const auto graphClock = clockWatch.latest();
+    const int nq = graphClock.bufferSize;
     if (nq <= 0 || nq > maxQuantum)
     {
         lastError = "PipeWire delivered no usable quantum (" + std::to_string (nq)
@@ -564,9 +568,7 @@ std::string PipeWireAudioIODevice::open (const device::ChannelSet& inputChannels
         close();
         return lastError;
     }
-    currentBlockSize = nq;
-    if (wantOutput) outputLatency = nq;
-    if (wantInput)  inputLatency  = nq;
+    adoptClock (nq, (int) graphClock.sampleRate);
 
     pw_thread_loop_lock (threadLoop);
     const bool stillStreaming = pw_filter_get_state (filter, nullptr) == PW_FILTER_STATE_STREAMING;
@@ -584,7 +586,7 @@ std::string PipeWireAudioIODevice::open (const device::ChannelSet& inputChannels
     std::fprintf (stderr,
                   "[Dusk Studio/PipeWire] opened \"%s\" rate=%d quantum=%d out=%dch in=%dch "
                   "links=%d target-out=\"%s\" target-in=\"%s\"\n",
-                  displayName.c_str(), rate, currentBlockSize,
+                  displayName.c_str(), (int) openedSampleRate, currentBlockSize,
                   numOutputChannels, numInputChannels, (int) linkProxies.size(),
                   wantOutput ? outputId.c_str() : "-",
                   wantInput  ? inputId.c_str()  : "-");
@@ -733,6 +735,16 @@ void PipeWireAudioIODevice::start (device::IODeviceCallback* newCallback)
     if (isStarted.load (std::memory_order_acquire))
         return;
 
+    // No callback is attached here, so the block size onProcess splits cycles
+    // into changes before anything can be handed blocks of it.
+    if (const auto moved = getMovedClock(); moved.isSet())
+    {
+        std::fprintf (stderr, "[Dusk Studio/PipeWire] following the graph clock from %d samples at %d Hz "
+                              "to %d samples at %d Hz\n",
+                      currentBlockSize, (int) openedSampleRate, moved.bufferSize, (int) moved.sampleRate);
+        adoptClock (moved.bufferSize, (int) moved.sampleRate);
+    }
+
     newCallback->audioDeviceAboutToStart (this);
 
     {
@@ -741,6 +753,25 @@ void PipeWireAudioIODevice::start (device::IODeviceCallback* newCallback)
     }
 
     isStarted.store (true, std::memory_order_release);
+}
+
+device::DeviceClock PipeWireAudioIODevice::getMovedClock() const
+{
+    if (! isDeviceOpen.load (std::memory_order_acquire))
+        return {};
+    // A quantum past the scratch ceiling is never serviced, so following it
+    // would only restart the stream into the same dropped cycles.
+    const auto moved = clockWatch.movedTo();
+    return moved.bufferSize <= maxQuantum ? moved : device::DeviceClock {};
+}
+
+void PipeWireAudioIODevice::adoptClock (int blockSize, int sampleRate)
+{
+    currentBlockSize = blockSize;
+    openedSampleRate = sampleRate;
+    if (numOutputChannels > 0) outputLatency = blockSize;
+    if (numInputChannels > 0)  inputLatency  = blockSize;
+    clockWatch.prepare (blockSize, sampleRate);
 }
 
 void PipeWireAudioIODevice::stop()
@@ -766,9 +797,12 @@ void PipeWireAudioIODevice::onProcess (struct spa_io_position* position) noexcep
     if (n == 0)
         return;
 
-    // Release: open() reads this to size the block the engine prepares for, so
-    // the cycle's port setup must be visible to it once the value is.
-    negotiatedQuantum.store ((int) n, std::memory_order_release);
+    // The graph's rate is 1/rate.denom. open() reads this cycle's clock to size
+    // the block the engine prepares for (a release store inside), and a clock
+    // that settles somewhere new is published for the message thread.
+    const auto& clockRate = position->clock.rate;
+    const int sampleRate = clockRate.num == 1 && clockRate.denom > 0 ? (int) clockRate.denom : requestedRate;
+    clockWatch.observe ((int) n, sampleRate);
 
     // Count one xrun per recovery episode: increment on the rising edge of the
     // XRUN_RECOVER flag, not on every cycle it stays set (a recovery can span
@@ -808,12 +842,22 @@ void PipeWireAudioIODevice::onProcess (struct spa_io_position* position) noexcep
     for (int i = 0; i < numOutputChannels; ++i)
         std::memset (callbackOutPointers[(size_t) i], 0, (size_t) n * sizeof (float));
 
+    // A cycle longer than the block the callback was started at (the graph's
+    // quantum went up under it) goes over in blocks of that size, back to back,
+    // until a restart adopts the new quantum. The started size is read under
+    // the lock that published the callback, so the two always belong together.
     const std::lock_guard<std::mutex> sl (callbackLock);
-    if (callback != nullptr)
-        callback->audioDeviceIOCallback (
-            callbackInPointers.data(),  numInputChannels,
-            callbackOutPointers.data(), numOutputChannels,
-            (int) n, {});
+    if (callback == nullptr)
+        return;
+    const device::CallbackContext context {};
+    device::forEachSubBlock (callbackInPointers.data(), numInputChannels,
+                             callbackOutPointers.data(), numOutputChannels,
+                             (int) n, clockWatch.preparedBufferSize(),
+                             [this, &context] (const float* const* in, float* const* out, int numSamples)
+                             {
+                                 callback->audioDeviceIOCallback (in, numInputChannels, out, numOutputChannels,
+                                                                  numSamples, context);
+                             });
 }
 
 void PipeWireAudioIODevice::onFilterStateChanged() noexcept

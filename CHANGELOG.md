@@ -103,6 +103,14 @@ canonical source.
   where your account's realtime limit allows it, so a busy machine no longer
   makes a sandboxed plug-in miss its blocks. On every OS the child flushes
   denormal numbers while the plug-in processes.
+- **PipeWire graphs that change block size or rate.** When another
+  application or a PipeWire setting moved the graph to a longer block, Dusk
+  Studio went silent with the playhead frozen until the device was reopened,
+  and a change of rate went unnoticed. It now keeps playing through a longer
+  block and takes the new size once nothing plays or records. A new rate
+  stops the transport, restarts the engine at that rate and raises the
+  **Sample rate changed** alert. On opening, it runs at the rate the graph
+  really has.
 
 ## [0.16.1] - 2026-11-07
 
