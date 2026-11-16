@@ -7,14 +7,15 @@
 #include <string>
 #include <string_view>
 
-// The UTC second that starts the name of every file Dusk Studio keeps for
-// recovery, "20261108-143005Z", so a plain name sort is the order they were
-// made in.
+// UTC timestamps used in recovery filenames, such as "20261108-143005Z".
 namespace duskstudio::recoverystamp
 {
 inline constexpr std::size_t kStampLength = 16;
+// Filename dates can exceed a native nanosecond clock's range.
+using StampTime = std::chrono::time_point<std::chrono::system_clock, std::chrono::seconds>;
 
-inline std::string utcStamp (std::chrono::system_clock::time_point now)
+template <typename Duration>
+inline std::string utcStamp (std::chrono::time_point<std::chrono::system_clock, Duration> now)
 {
     const auto seconds = (long long) std::chrono::floor<std::chrono::seconds> (now.time_since_epoch()).count();
     const auto days = (seconds >= 0 ? seconds : seconds - 86399) / 86400;
@@ -51,7 +52,7 @@ inline bool isStamp (std::string_view name) noexcept
 
 // The second a stamp at the start of name gives, or nothing when it is no
 // stamp or names no real date and time.
-inline std::optional<std::chrono::system_clock::time_point> timeOfStamp (std::string_view name) noexcept
+inline std::optional<StampTime> timeOfStamp (std::string_view name) noexcept
 {
     if (! isStamp (name)) return std::nullopt;
     const auto number = [name] (std::size_t at, std::size_t digits)
@@ -76,7 +77,7 @@ inline std::optional<std::chrono::system_clock::time_point> timeOfStamp (std::st
     const auto dayOfYear = (153 * (month > 2 ? month - 3 : month + 9) + 2) / 5 + day - 1;
     const auto dayOfEra = yearOfEra * 365 + yearOfEra / 4 - yearOfEra / 100 + dayOfYear;
     const auto days = era * 146097 + dayOfEra - 719468;
-    return std::chrono::system_clock::time_point (
+    return StampTime (
         std::chrono::seconds (days * 86400 + hour * 3600 + minute * 60 + second));
 }
 } // namespace duskstudio::recoverystamp

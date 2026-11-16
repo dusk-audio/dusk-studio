@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include "TestTempDirectory.h"
 #include "foundation/AtomicFile.h"
@@ -6,9 +7,135 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <system_error>
 #include <vector>
+
+#if defined(__linux__)
+ #include <sys/stat.h>
+#elif defined(__APPLE__)
+ #include <dlfcn.h>
+#endif
+
+#if defined(__linux__) || defined(__APPLE__)
+ #include "support/PublicationFaults.h"
+
+using duskstudio::test::PublicationFaults;
+
+namespace
+{
+thread_local PublicationFaults* publicationFaults = nullptr;
+}
+
+duskstudio::test::PublicationFaults::PublicationFaults() { publicationFaults = this; }
+duskstudio::test::PublicationFaults::~PublicationFaults() { publicationFaults = nullptr; }
+
+#if defined(__linux__)
+extern "C" int __real_renameat2 (int, const char*, int, const char*, unsigned);
+extern "C" int __real_link (const char*, const char*);
+extern "C" int __real_unlink (const char*);
+extern "C" int __real_fsync (int);
+
+extern "C" int __wrap_renameat2 (int sourceDir, const char* source, int targetDir, const char* target, unsigned flags)
+{
+    if (publicationFaults != nullptr && publicationFaults->renameError != 0 && flags == RENAME_NOREPLACE)
+    {
+        errno = publicationFaults->renameError;
+        return -1;
+    }
+    return __real_renameat2 (sourceDir, source, targetDir, target, flags);
+}
+
+#else
+extern "C" int renamex_np (const char* source, const char* target, unsigned flags)
+{
+    if (publicationFaults != nullptr && publicationFaults->renameError != 0 && flags == RENAME_EXCL)
+    {
+        errno = publicationFaults->renameError;
+        return -1;
+    }
+    static const auto original = reinterpret_cast<decltype (&::renamex_np)> (dlsym (RTLD_NEXT, "renamex_np"));
+    return original (source, target, flags);
+}
+#endif
+
+#if defined(__linux__)
+extern "C" int __wrap_link (const char* source, const char* target)
+#else
+extern "C" int link (const char* source, const char* target)
+#endif
+{
+    if (publicationFaults != nullptr)
+    {
+        ++publicationFaults->links;
+        if (publicationFaults->linkError != 0)
+        {
+            errno = publicationFaults->linkError;
+            return -1;
+        }
+        if (publicationFaults->raceTarget)
+        {
+            const int handle = ::open (target, O_WRONLY | O_CREAT | O_EXCL, 0600);
+            if (handle < 0) return -1;
+            const auto written = ::write (handle, "foreign", 7);
+            const int closed = ::close (handle);
+            if (written != 7 || closed != 0) { errno = EIO; return -1; }
+        }
+    }
+   #if defined(__linux__)
+    return __real_link (source, target);
+   #else
+    static const auto original = reinterpret_cast<decltype (&::link)> (dlsym (RTLD_NEXT, "link"));
+    return original (source, target);
+   #endif
+}
+
+#if defined(__linux__)
+extern "C" int __wrap_unlink (const char* path)
+#else
+extern "C" int unlink (const char* path)
+#endif
+{
+    if (publicationFaults != nullptr)
+    {
+        ++publicationFaults->unlinks;
+        if (publicationFaults->unlinkError != 0)
+        {
+            errno = publicationFaults->unlinkError;
+            return -1;
+        }
+    }
+   #if defined(__linux__)
+    return __real_unlink (path);
+   #else
+    static const auto original = reinterpret_cast<decltype (&::unlink)> (dlsym (RTLD_NEXT, "unlink"));
+    return original (path);
+   #endif
+}
+
+#if defined(__linux__)
+extern "C" int __wrap_fsync (int handle)
+{
+    struct stat info {};
+    if (publicationFaults != nullptr && ::fstat (handle, &info) == 0 && S_ISDIR (info.st_mode))
+    {
+        auto& faults = *publicationFaults;
+        ++faults.folderSyncs;
+        char name[4096];
+        const auto length = ::readlink (("/proc/self/fd/" + std::to_string (handle)).c_str(), name, sizeof (name));
+        faults.syncedFolders.emplace_back (name, length > 0 ? (std::size_t) length : 0);
+        if (faults.syncError != 0 && faults.syncFailures != 0)
+        {
+            if (faults.syncFailures > 0) --faults.syncFailures;
+            errno = faults.syncError;
+            return -1;
+        }
+    }
+    return __real_fsync (handle);
+}
+#endif
+#endif
 
 namespace stdfs = std::filesystem;
 
@@ -100,3 +227,184 @@ TEST_CASE ("writeFileAtomically reports a write it cannot make and leaves nothin
         CHECK (namesIn (temp.path()) == std::vector<std::string> { "take.mid" });
     }
 }
+
+TEST_CASE ("Atomic create publishes complete bytes only under an unused name", "[foundation][fs][atomic]")
+{
+    const duskstudio::test::TempDirectory temp ("dusk-atomic-create-only-");
+    const auto target = temp.path() / "take.mid";
+    const std::string bytes ("MThd\0\0\0\x06\x80\xff", 10);
+    std::error_code error;
+    REQUIRE (dusk::fs::writeFileAtomically (target, bytes.data(), bytes.size(), error,
+                                          dusk::fs::AtomicWriteMode::CreateNew));
+    CHECK_FALSE (error);
+    CHECK (dusk::fs::loadFileAsString (target) == bytes);
+    CHECK (namesIn (temp.path()) == std::vector<std::string> { "take.mid" });
+}
+
+TEST_CASE ("Atomic create preserves an existing destination and removes its temporary file",
+           "[foundation][fs][atomic]")
+{
+    const duskstudio::test::TempDirectory temp ("dusk-atomic-collision-");
+    const auto target = temp.path() / "take.mid";
+    std::error_code error;
+    bool symlinks = true;
+
+    SECTION ("regular file")
+    {
+        REQUIRE (writeText (target, "someone else's file", error));
+        CHECK_FALSE (dusk::fs::writeFileAtomically (target, "new", 3, error, dusk::fs::AtomicWriteMode::CreateNew));
+        CHECK (error == std::errc::file_exists);
+        CHECK (dusk::fs::loadFileAsString (target) == "someone else's file");
+    }
+    SECTION ("directory")
+    {
+        REQUIRE (stdfs::create_directory (target));
+        CHECK_FALSE (dusk::fs::writeFileAtomically (target, "new", 3, error, dusk::fs::AtomicWriteMode::CreateNew));
+        CHECK (error);
+        CHECK (stdfs::is_directory (target));
+    }
+    SECTION ("dangling symlink")
+    {
+        stdfs::create_symlink ("absent.mid", target, error);
+        symlinks = ! error;
+        if (! symlinks)
+        {
+            WARN ("the test file system cannot make symlinks, so a dangling one was not tried");
+        }
+        else
+        {
+            CHECK_FALSE (dusk::fs::writeFileAtomically (target, "new", 3, error, dusk::fs::AtomicWriteMode::CreateNew));
+            CHECK (error == std::errc::file_exists);
+            CHECK (stdfs::is_symlink (stdfs::symlink_status (target)));
+            CHECK (stdfs::read_symlink (target) == "absent.mid");
+            CHECK_FALSE (stdfs::exists (temp.path() / "absent.mid"));
+        }
+    }
+    if (! symlinks) return;
+    CHECK (namesIn (temp.path()) == std::vector<std::string> { "take.mid" });
+}
+
+#if defined(__linux__) || defined(__APPLE__)
+TEST_CASE ("Atomic create falls back to hard links, then to a checked rename, only when the file system lacks each",
+           "[foundation][fs][atomic][atomic-fallback]")
+{
+    const duskstudio::test::TempDirectory temp ("dusk-atomic-fallback-");
+    const auto target = temp.path() / "take.mid";
+    // The sections that publish through a real hard link need a file system
+    // that makes them; exFAT and FAT on macOS do not.
+    const bool hardLinks = [&]
+    {
+        const auto probe = temp.path() / "probe";
+        { std::ofstream (probe) << "probe"; }
+        std::error_code error, ignored;
+        stdfs::create_hard_link (probe, temp.path() / "probe-link", error);
+        stdfs::remove (temp.path() / "probe-link", ignored);
+        stdfs::remove (probe, ignored);
+        return ! error;
+    }();
+    PublicationFaults faults;
+   #if defined(__APPLE__)
+    faults.renameError = ENOTSUP;
+    static constexpr int kNoHardLinks = ENOTSUP;   // what exFAT answers on macOS
+   #else
+    faults.renameError = GENERATE (ENOSYS, EINVAL, EOPNOTSUPP);
+    static constexpr int kNoHardLinks = EPERM;     // what link(2) answers on Linux
+   #endif
+    bool succeeds = true, temporaryRemains = false;
+    [[maybe_unused]] bool published = true;
+    int expectedError = 0, expectedLinks = 1, expectedUnlinks = 1;
+    std::string expectedBytes = "complete";
+    auto mode = dusk::fs::AtomicWriteMode::CreateNew;
+    bool leftOut = false;
+    if (hardLinks)
+    {
+        SECTION ("unsupported no-replace publishes complete bytes") {}
+    }
+    else
+    {
+        SECTION ("publication through a real hard link is left out")
+        {
+            WARN ("the test file system cannot make hard links, so the sections that publish through one did not run");
+            leftOut = true;
+        }
+    }
+    SECTION ("a destination created before link wins the race")
+    {
+        faults.raceTarget = true;
+        succeeds = published = false;
+        expectedError = EEXIST;
+        expectedBytes = "foreign";
+    }
+    SECTION ("a file system without hard links publishes complete bytes by a checked rename")
+    {
+        faults.linkError = kNoHardLinks;
+        expectedUnlinks = 0;
+    }
+    SECTION ("a checked rename refuses an existing destination and cleans the temporary file")
+    {
+        { std::ofstream (target) << "foreign"; }
+        faults.linkError = kNoHardLinks;
+        succeeds = published = false;
+        expectedError = EEXIST;
+        expectedBytes = "foreign";
+    }
+    SECTION ("a link failure of any other kind preserves its error and cleans the temporary file")
+    {
+        faults.linkError = expectedError = GENERATE (EACCES, EIO, ENOSPC);
+        succeeds = published = false;
+        expectedBytes.clear();
+    }
+    SECTION ("an unrelated rename error is not retried with link")
+    {
+        faults.renameError = expectedError = EACCES;
+        succeeds = published = false;
+        expectedLinks = 0;
+        expectedBytes.clear();
+    }
+    if (hardLinks)
+    {
+        SECTION ("temporary cleanup failure does not undo publication")
+        {
+            faults.unlinkError = EACCES;
+            temporaryRemains = true;
+        }
+       #if defined(__linux__)
+        SECTION ("folder sync failure still reports failed durability")
+        {
+            faults.syncError = expectedError = EIO;
+            succeeds = false;
+        }
+       #endif
+    }
+    SECTION ("ordinary replacement keeps using rename")
+    {
+        mode = dusk::fs::AtomicWriteMode::Replace;
+        expectedLinks = expectedUnlinks = 0;
+    }
+    // Catch2 learns of a section only by reaching it, so a return before the
+    // last one would hide every section after it.
+    if (leftOut) return;
+    std::error_code error;
+    CHECK (dusk::fs::writeFileAtomically (target, "complete", 8, error, mode) == succeeds);
+    CHECK (error == (expectedError == 0 ? std::error_code {} : std::error_code (expectedError, std::generic_category())));
+    CHECK (faults.links == expectedLinks);
+    CHECK (faults.unlinks == expectedUnlinks);
+   #if defined(__linux__)
+    CHECK (faults.folderSyncs == (published ? 1 : 0));
+   #endif
+    const auto names = namesIn (temp.path());
+    if (expectedBytes.empty())
+    {
+        CHECK_FALSE (stdfs::exists (target));
+        CHECK (names.empty());
+    }
+    else
+    {
+        CHECK (dusk::fs::loadFileAsString (target) == expectedBytes);
+        CHECK (names.size() == (temporaryRemains ? 2 : 1));
+        if (temporaryRemains && names.size() == 2)
+            for (const auto& name : names)
+                CHECK (stdfs::equivalent (temp.path() / name, target));
+    }
+}
+#endif

@@ -5,7 +5,10 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdint>
+#include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <optional>
 #include <string>
@@ -38,6 +41,17 @@ std::vector<std::array<int, 2>> noteOnsIn (const fs::path& file)
         for (const auto& event : part)
             if (event.isNoteOn()) notes.push_back ({ event.noteNumber(), event.velocity() });
     return notes;
+}
+
+std::vector<std::int64_t> noteOnTicksIn (const fs::path& file)
+{
+    std::vector<std::int64_t> ticks;
+    midi::MidiFileReader reader;
+    if (! reader.readFile (file)) return ticks;
+    for (const auto& part : reader.tracks())
+        for (const auto& event : part)
+            if (event.isNoteOn()) ticks.push_back (event.tick);
+    return ticks;
 }
 
 bool absent (const fs::path& path)
@@ -214,9 +228,402 @@ std::optional<ScenarioResult> runSavesKeepMidiTrackFiles (GuiHost& host, Scenari
         ctx.expect (savecheck::unsavedSessionFolder (parent) == untitled,
                     "the Untitled folder was not free again after the first save");
     } });
+    const auto foreignParent = ctx.tempDir() / "Foreign session";
+    const auto foreign = foreignParent / "Untitled";
+    const auto privateDir = dusk::fs::appConfigDir() / "unsaved-session";
+    const auto preserved = privateDir.parent_path() / "unsaved-session.scenario-preserved";
+    const auto rescued = foreignParent / "Rescued";
+    auto diverted = std::make_shared<std::vector<std::string>>();
+    steps->push_back ({ 100, [&host, &ctx, &engine, &track, foreignParent, foreign, privateDir, preserved, diverted]
+    {
+        engine.flushMidiRecoveryFiles();
+        std::error_code error;
+        const bool occupied = fs::exists (preserved, error);
+        if (! ctx.expect (! error && ! occupied, "the preserved recovery folder is already occupied or unavailable")) return;
+        if (fs::exists (privateDir, error)) fs::rename (privateDir, preserved, error);
+        if (! ctx.expect (! error, "could not set aside the existing private recovery folder")) return;
+        ctx.cleanup ([&engine, privateDir, preserved]
+        {
+            engine.flushMidiRecoveryFiles();
+            std::error_code ignored;
+            fs::remove_all (privateDir, ignored);
+            if (fs::exists (preserved, ignored)) fs::rename (preserved, privateDir, ignored);
+        });
+        host.startUnsavedSessionIn (foreignParent);
+        std::ofstream (foreign / "session.json") << "foreign session";
+        setVelocity (track, 91);
+        engine.queueMidiTrackFiles();
+        engine.flushMidiRecoveryFiles();
+        *diverted = namesIn (privateDir / "midi" / "tracks");
+        ctx.expect (diverted->size() == 1, "MIDI recovery did not use the private sidecar folder");
+        ctx.expect (absent (foreign / "midi"), "MIDI recovery wrote into a folder claimed by a foreign session");
+        host.autosaveTick();
+        engine.flushMidiRecoveryFiles();
+        ctx.expect (namesIn (privateDir / "midi" / "tracks") == *diverted,
+                    "autosave did not deduplicate the private MIDI snapshot");
+    } });
+    pushSaveAsSteps (host, ctx, *steps, rescued);
+    steps->push_back ({ 500, [&host, &ctx, &engine, &session, foreign, privateDir, rescued, diverted]
+    {
+        engine.flushMidiRecoveryFiles();
+        ctx.expect (currentSessionDirectory (session) == rescued && host.sessionOnDisk(),
+                    "the foreign-folder session did not save to its chosen destination");
+        ctx.expect (fileBytes (foreign / "session.json") == "foreign session" && absent (foreign / "midi"),
+                    "Save As changed the foreign session's folder");
+        ctx.expect (namesIn (rescued / "midi" / "tracks") == *diverted && diverted->size() == 1,
+                    "Save As did not carry the private MIDI recovery files");
+        ctx.expect (absent (privateDir / "midi"), "the first save left its private MIDI source behind");
+    } });
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
 }
+
+std::optional<ScenarioResult> runLiveMidiJournal (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires a stopped transport and no modal");
+    // A false here means a take the journal was given never finished, with
+    // the transport stopped: an engine fault, not a busy disk.
+    if (! engine.flushMidiRecoveryFiles())
+        return ScenarioResult::fail ("an earlier take's MIDI journal never finished");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save the initial session");
+    std::array<bool, Session::kNumTracks> armed {};
+    for (int index = 0; index < Session::kNumTracks; ++index)
+        armed[(std::size_t) index] = session.track (index).recordArmed.load();
+    ctx.cleanup ([&host, &engine, &session, originalDir, restore, armed]
+    {
+        engine.stop();
+        drainModals (host);
+        engine.flushMidiRecoveryFiles();
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+        for (int index = 0; index < Session::kNumTracks; ++index)
+            session.setTrackArmed (index, armed[(std::size_t) index]);
+    });
+    const auto privateDir = dusk::fs::appConfigDir() / "unsaved-session";
+    const auto preserved = privateDir.parent_path() / "unsaved-session.live-journal-scenario-preserved";
+    std::error_code preserveError;
+    const bool occupied = fs::exists (preserved, preserveError);
+    if (preserveError || occupied) return ScenarioResult::fail ("the preserved recovery folder is already occupied or unavailable");
+    if (fs::exists (privateDir, preserveError)) fs::rename (privateDir, preserved, preserveError);
+    if (preserveError) return ScenarioResult::fail ("could not preserve the private recovery folder");
+    ctx.cleanup ([&engine, privateDir, preserved]
+    {
+        engine.stop();
+        engine.flushMidiRecoveryFiles();
+        std::error_code ignored;
+        fs::remove_all (privateDir, ignored);
+        if (fs::exists (preserved, ignored)) fs::rename (preserved, privateDir, ignored);
+    });
+    auto steps = std::make_shared<std::vector<Step>>();
+    for (const bool foreign : { false, true })
+    {
+        const auto parent = ctx.tempDir() / (foreign ? "Foreign" : "In place");
+        const auto untitled = parent / "Untitled";
+        const auto destination = foreign ? parent / "Saved" : untitled;
+        struct Pass
+        {
+            fs::path root, rootBackup, checkpoint, blocked, backup;
+            std::string bytes;
+            bool blocking = false;
+        };
+        auto pass = std::make_shared<Pass>();
+        ctx.cleanup ([&engine, pass]
+        {
+            engine.stop();
+            engine.flushMidiRecoveryFiles();
+            std::error_code ignored;
+            if (pass->blocking) fs::remove (pass->blocked, ignored);
+            if (! pass->backup.empty() && fs::exists (pass->backup, ignored))
+                fs::rename (pass->backup, pass->blocked, ignored);
+            engine.flushMidiRecoveryFiles();
+            if (! pass->root.empty()) fs::remove_all (pass->root, ignored);
+            if (! pass->rootBackup.empty()) fs::remove_all (pass->rootBackup, ignored);
+        });
+        steps->push_back ({ 100, [&host, &engine, &session, parent]
+        {
+            engine.stop();
+            host.startUnsavedSessionIn (parent);
+            for (int index = 0; index < Session::kNumTracks; ++index)
+            {
+                session.setTrackArmed (index, false);
+                session.track (index).midiOutputIndex.store (-1);
+                session.track (index).midiOutputIdentifier.clear();
+            }
+            auto& track = session.track (0);
+            track.mode.store ((int) Track::Mode::Midi);
+            track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>>());
+            track.midiInputIndex.store (engine.getVirtualKeyboardInputIndex());
+            track.midiInputIdentifier.clear();
+            track.midiChannel.store (0);
+            session.countInEnabled.store (false);
+            session.midiMergeEnabled.store (false);
+            session.setTrackArmed (0, true);
+            session.recomputeRtCounters();
+            engine.getTransport().setLoopEnabled (false);
+            engine.getTransport().setPunchEnabled (false);
+            engine.getTransport().setPlayhead (0);
+        } });
+        steps->push_back ({ 100, [&ctx, &host] { ctx.expect (host.clickRecord(), "Record was unavailable"); } });
+        steps->push_back ({ 0, [&engine]
+        {
+            const std::uint8_t note[] { 0x92, 67, 99 };
+            engine.postVirtualKeyboardMidi (note, 3);
+        }, [&engine] { return engine.getTransport().isRecording(); }, "MIDI recording did not start", {}, 4000 });
+        steps->push_back ({ 250, [&ctx, &engine, untitled, foreign, pass]
+        {
+            engine.serviceMidiRecording();
+            engine.flushMidiRecoveryFiles();
+            pass->root = engine.journalFolderForMidi();
+            const auto names = namesIn (pass->root / "midi" / "recording");
+            if (! ctx.expect (names.size() == 1, "the held note has no private live checkpoint")) return;
+            pass->checkpoint = pass->root / "midi" / "recording" / names.front();
+            pass->bytes = fileBytes (pass->checkpoint);
+            ctx.expect (noteOnsIn (pass->checkpoint) == std::vector<std::array<int, 2>> { { 67, 99 } },
+                        "the live checkpoint changed the held note");
+            ctx.expect (absent (untitled / "midi"), "live recording wrote into the never-saved session folder");
+            if (foreign) std::ofstream (untitled / "session.json") << "foreign session";
+            pass->blocked = engine.recoveryFolderForMidi() / "midi" / "takes";
+            pass->backup = pass->blocked.parent_path() / "takes.scenario-preserved";
+            std::error_code error;
+            fs::create_directories (pass->blocked.parent_path(), error);
+            if (! ctx.expect (! error, "could not prepare final-write failure")) return;
+            if (fs::exists (pass->blocked, error)) fs::rename (pass->blocked, pass->backup, error);
+            if (! ctx.expect (! error, "could not preserve earlier recovery files")) return;
+            std::ofstream blocked (pass->blocked);
+            blocked << "blocked final take";
+            pass->blocking = blocked.good();
+            ctx.expect (pass->blocking, "could not block final take publication");
+            if (! foreign)
+            {
+                // The private folder goes, as an unplugged drive would, so
+                // the pass's last checkpoint cannot be written at Stop.
+                pass->rootBackup = pass->root.parent_path() / (pass->root.filename().u8string() + ".scenario-preserved");
+                fs::rename (pass->root, pass->rootBackup, error);
+                ctx.expect (! error, "could not take the private journal folder away");
+            }
+        }, [&engine]
+        {
+            const auto* preview = engine.getRecordManager().midiCapturePreview (0);
+            return preview != nullptr && ! preview->notes.empty();
+        }, "the virtual key never reached the recorder", {}, 4000 });
+        steps->push_back ({ 100, [&ctx, &engine, pass]
+        {
+            engine.stop();
+            engine.flushMidiRecoveryFiles();
+            const auto kept = ! pass->rootBackup.empty()
+                ? pass->rootBackup / "midi" / "recording" / pass->checkpoint.filename() : pass->checkpoint;
+            ctx.expect (! kept.empty() && fs::is_regular_file (kept), "failed final publication removed the live checkpoint");
+            if (pass->rootBackup.empty()) pass->bytes = fileBytes (kept);
+            std::error_code error;
+            if (pass->blocking) fs::remove (pass->blocked, error);
+            pass->blocking = false;
+            if (fs::exists (pass->backup, error)) fs::rename (pass->backup, pass->blocked, error);
+        } });
+        // The take file that could not be written is reported where the user
+        // sees it, once the disk worker's report reaches the message thread,
+        // with the folder that stopped it in the tooltip.
+        steps->push_back ({ 0, [] {}, [&host, pass]
+        {
+            return host.statusMessage().rfind ("MIDI recovery file not written for track 1: ", 0) == 0
+                && host.statusTooltip() == pass->blocked.u8string();
+        }, "a MIDI recovery file that could not be written was not reported in the status bar with its path", {}, 2000 });
+        pushSaveAsSteps (host, ctx, *steps, destination);
+        if (! foreign)
+        {
+            // A pass whose checkpoint and final file both failed is in the
+            // session, so it must not hold the first Save back. Its checkpoint
+            // keeps trying where it was, and never lands in the saved folder.
+            steps->push_back ({ 100, [&ctx, &host, &engine, &session, untitled, pass]
+            {
+                ctx.expect (host.modalStackEmpty(), "Save As raised '" + host.modalText() + "'");
+                drainModals (host);
+                ctx.expect (currentSessionDirectory (session) == untitled && host.sessionOnDisk()
+                                && fs::is_regular_file (untitled / "session.json"),
+                            "an unwritten checkpoint held the first Save back");
+                std::error_code error;
+                fs::rename (pass->rootBackup, pass->root, error);
+                if (! ctx.expect (! error, "could not bring the private journal folder back")) return;
+                pass->rootBackup.clear();
+                ctx.expect (engine.flushMidiRecoveryFiles (pass->root), "a stopped take still counts as recording");
+                ctx.expect (fs::is_regular_file (pass->checkpoint) && fileBytes (pass->checkpoint) != pass->bytes,
+                            "the unwritten checkpoint was not retried in its own folder");
+                ctx.expect (absent (untitled / "midi" / "recording" / pass->checkpoint.filename()),
+                            "the retried checkpoint was written into the saved session");
+            } });
+            // The private folder is no longer the session's, so a later Save
+            // As leaves what is still in it alone.
+            const auto copy = parent / "Copy";
+            pushSaveAsSteps (host, ctx, *steps, copy);
+            steps->push_back ({ 100, [&ctx, &engine, &session, copy, pass]
+            {
+                engine.flushMidiRecoveryFiles();
+                ctx.expect (currentSessionDirectory (session) == copy, "Save As left the session at '"
+                                + currentSessionDirectory (session).string() + "'");
+                ctx.expect (absent (copy / "midi" / "recording" / pass->checkpoint.filename()),
+                            "Save As copied the private folder's checkpoint again after the first Save");
+                ctx.expect (fs::is_regular_file (pass->checkpoint), "Save As took the private folder's checkpoint");
+            } });
+            continue;
+        }
+        steps->push_back ({ 100, [&ctx, &host, &engine, &session, destination, untitled, pass]
+        {
+            engine.flushMidiRecoveryFiles();
+            ctx.expect (currentSessionDirectory (session) == destination && host.sessionOnDisk(),
+                        "first Save did not publish the chosen session");
+            const auto copied = destination / "midi" / "recording" / pass->checkpoint.filename();
+            ctx.expect (! pass->bytes.empty() && fileBytes (copied) == pass->bytes,
+                        "first Save did not carry the surviving checkpoint");
+            ctx.expect (absent (pass->checkpoint), "first Save left the copied private checkpoint behind");
+            ctx.expect (absent (pass->root), "first Save left the private journal folder it emptied behind");
+            ctx.expect (fileBytes (untitled / "session.json") == "foreign session" && absent (untitled / "midi"),
+                        "recording or Save As changed the foreign session");
+        } });
+    }
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+// A take that opening another session stops belongs to the session it was
+// recorded in: its file goes to that session's midi/takes, named after that
+// session's track and at its tempo, and its checkpoint there goes only once
+// that file is on the disk. The session opened gets none of it.
+std::optional<ScenarioResult> runSessionSwitchFilesTake (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires a stopped transport and no modal");
+    if (! engine.flushMidiRecoveryFiles())
+        return ScenarioResult::fail ("an earlier take's MIDI journal never finished");
+    const auto originalDir = currentSessionDirectory (session);
+    const auto restore = ctx.tempDir() / "restore.json";
+    if (! SessionSerializer::save (session, restore)) return ScenarioResult::fail ("could not save the initial session");
+    std::array<bool, Session::kNumTracks> armed {};
+    for (int index = 0; index < Session::kNumTracks; ++index)
+        armed[(std::size_t) index] = session.track (index).recordArmed.load();
+    ctx.cleanup ([&host, &engine, &session, originalDir, restore, armed]
+    {
+        engine.stop();
+        drainModals (host);
+        engine.flushMidiRecoveryFiles();
+        reopenSavedSession (host, restore);
+        applySessionDirectory (session, originalDir);
+        for (int index = 0; index < Session::kNumTracks; ++index)
+            session.setTrackArmed (index, armed[(std::size_t) index]);
+    });
+
+    const auto recorded = ctx.tempDir() / "Recorded here";
+    const auto opened = ctx.tempDir() / "Opened next";
+    const auto write = [] (const fs::path& folder, const char* name, float bpm)
+    {
+        auto saved = std::make_unique<Session>();
+        applySessionDirectory (*saved, folder);
+        saved->tempoBpm.store (bpm);
+        auto& track = saved->track (0);
+        track.name = name;
+        track.mode.store ((int) Track::Mode::Midi);
+        return SessionSerializer::save (*saved, folder / "session.json");
+    };
+    if (! write (recorded, "Keys", 100.0f) || ! write (opened, "Drums", 160.0f))
+        return ScenarioResult::fail ("could not write the two sessions");
+
+    struct Take
+    {
+        fs::path checkpoint;
+        std::vector<std::int64_t> ticks;
+    };
+    auto take = std::make_shared<Take>();
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 100, [&host, &engine, &session, recorded]
+    {
+        reopenSavedSession (host, recorded / "session.json");
+        for (int index = 0; index < Session::kNumTracks; ++index)
+        {
+            session.setTrackArmed (index, false);
+            session.track (index).midiOutputIndex.store (-1);
+            session.track (index).midiOutputIdentifier.clear();
+        }
+        auto& track = session.track (0);
+        track.midiInputIndex.store (engine.getVirtualKeyboardInputIndex());
+        track.midiInputIdentifier.clear();
+        track.midiChannel.store (0);
+        session.countInEnabled.store (false);
+        session.midiMergeEnabled.store (false);
+        session.setTrackArmed (0, true);
+        session.recomputeRtCounters();
+        auto& transport = engine.getTransport();
+        transport.setLoopEnabled (false);
+        transport.setPunchEnabled (false);
+        // A second in, so the take's start tick depends on the tempo.
+        const double rate = engine.getCurrentSampleRate();
+        transport.setPlayhead ((std::int64_t) (rate > 0.0 ? rate : 48000.0));
+    } });
+    steps->push_back ({ 100, [&ctx, &host, &session, recorded]
+    {
+        ctx.expect (currentSessionDirectory (session) == recorded, "the session to record in did not open");
+        ctx.expect (host.clickRecord(), "Record was unavailable");
+    } });
+    steps->push_back ({ 0, [&engine]
+    {
+        const std::uint8_t note[] { 0x90, 64, 90 };
+        engine.postVirtualKeyboardMidi (note, 3);
+    }, [&engine] { return engine.getTransport().isRecording(); }, "MIDI recording did not start", {}, 4000 });
+    steps->push_back ({ 250, [&ctx, &engine, recorded, take]
+    {
+        engine.serviceMidiRecording();
+        engine.flushMidiRecoveryFiles();
+        const auto names = namesIn (recorded / "midi" / "recording");
+        if (! ctx.expect (names.size() == 1, "the held note has no live checkpoint in its session")) return;
+        take->checkpoint = recorded / "midi" / "recording" / names.front();
+        take->ticks = noteOnTicksIn (take->checkpoint);
+        ctx.expect (take->ticks.size() == 1, "the live checkpoint does not hold the held note");
+    }, [&engine]
+    {
+        const auto* preview = engine.getRecordManager().midiCapturePreview (0);
+        return preview != nullptr && ! preview->notes.empty();
+    }, "the virtual key never reached the recorder", {}, 4000 });
+    steps->push_back ({ 100, [&ctx, &host, &engine, &session, recorded, opened, take]
+    {
+        reopenSavedSession (host, opened / "session.json");
+        ctx.expect (currentSessionDirectory (session) == opened && engine.getTransport().isStopped(),
+                    "opening the next session did not stop the take and switch to it");
+        engine.flushMidiRecoveryFiles();
+        const auto takes = recorded / "midi" / "takes";
+        const auto names = namesIn (takes);
+        if (ctx.expect (names.size() == 1, "the stopped take left " + std::to_string (names.size())
+                                               + " files in its own session's midi/takes, not 1"))
+        {
+            ctx.expect (names.front().size() > 16 && names.front().substr (16) == "_track01_Keys.mid",
+                        "the take file is named '" + names.front() + "', not after its own session's track");
+            const auto ticks = noteOnTicksIn (takes / names.front());
+            ctx.expect (ticks.size() == 1 && take->ticks.size() == 1
+                            && std::llabs (ticks.front() - take->ticks.front()) <= 1,
+                        "the take file does not place the note at its own session's tempo");
+        }
+        ctx.expect (! take->checkpoint.empty() && absent (take->checkpoint),
+                    "the take's checkpoint outlived its finished file");
+        ctx.expect (absent (opened / "midi"), "the session opened got MIDI recovery files of the take");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar sessionSwitchFilesTake { Scenario {
+    "gui.session_switch_files_take_in_its_session", { "gui", "session", "record", "midi" }, Needs::Engine | Needs::Gui,
+    {}, {}, 30000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runSessionSwitchFilesTake (host, ctx); }
+} };
+
+const ScenarioRegistrar liveMidiJournal { Scenario {
+    "gui.live_midi_journal_first_save", { "gui", "session", "record", "midi" }, Needs::Engine | Needs::Gui,
+    {}, {}, 40000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runLiveMidiJournal (host, ctx); }
+} };
 
 const ScenarioRegistrar savesKeepMidiTrackFiles { Scenario {
     "gui.saves_keep_midi_track_files", { "gui", "session", "autosave", "midi" }, Needs::Engine | Needs::Gui,

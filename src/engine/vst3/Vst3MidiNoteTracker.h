@@ -12,18 +12,23 @@ class MidiNoteTracker
 public:
     void reset() noexcept { noteOnCounts.fill (0); }
 
-    void noteOn (int channel, int key) noexcept
+    // Both report whether a count changed.
+    bool noteOn (int channel, int key) noexcept
     {
-        if (! valid (channel, key)) return;
+        if (! valid (channel, key)) return false;
         auto& count = noteOnCounts[index (channel, key)];
-        if (count < std::numeric_limits<NoteCount>::max()) ++count;
+        if (count == std::numeric_limits<NoteCount>::max()) return false;
+        ++count;
+        return true;
     }
 
-    void noteOff (int channel, int key) noexcept
+    bool noteOff (int channel, int key) noexcept
     {
-        if (! valid (channel, key)) return;
+        if (! valid (channel, key)) return false;
         auto& count = noteOnCounts[index (channel, key)];
-        if (count > 0) --count;
+        if (count == 0) return false;
+        --count;
+        return true;
     }
 
     bool isSounding (int channel, int key) const noexcept

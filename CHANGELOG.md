@@ -9,15 +9,36 @@ canonical source.
 
 ### Added
 
+- **Playing the piano roll keyboard.** Clicking a key on the keyboard at the
+  left of the piano roll plays it on the region's track, at velocity 100 and
+  on the channel the status bar shows. Holding the button sustains the note,
+  dragging plays each key the pointer passes, and letting go anywhere ends it.
+  The note plays through the track's instrument and strip with the transport
+  stopped or rolling, even with **IN** off, and is never recorded or added to
+  undo.
+- **Live MIDI recovery.** Recording writes current and completed MIDI passes to
+  recoverable `.recording.mid` checkpoints without adding audio-thread work.
+  A checkpoint is rewritten only when a note or controller has arrived, about
+  once a second at most, and stays until its finished take reaches disk. One
+  that cannot be written never stops a save; it is retried, and with **MIDI
+  Merge** off a loop pass older than the previous takes its region keeps is
+  lost at quit if neither its checkpoint nor its take file was written. A
+  take file, checkpoint or track file that cannot be written is reported in
+  the status bar. First Save carries privately owned checkpoints from an
+  unsaved session into its saved folder, and a private folder left empty is
+  removed.
 - **MIDI recovery files.** A session's MIDI no longer lives only inside
   `session.json`. Each recorded MIDI pass is written to the session's
   `midi/takes/` folder as a Standard MIDI File when it commits, every pass of
   a loop take included. Opening a session, every save and every autosave
   write each MIDI track to `midi/tracks/`: a playing file with the regions
   that play and, when the track has muted regions or previous takes, a takes
-  file with those. Files are written on a thread of their own and never
-  replaced. Importing a track's playing file at the start of the timeline
-  puts its notes back where they played.
+  file with those. Take and track files are written on a thread of their own
+  and never replaced. On a volume that can neither rename without replacing nor make
+  hard links, such as an exFAT drive on macOS, that holds for Dusk Studio's
+  own writes only, and the same goes for session backups. Importing a
+  track's playing file at the start of the timeline puts its notes back
+  where they played.
 - **Session backups.** Every save also keeps a copy of `session.json` in the
   session's `backups/` folder, named by the UTC second it was saved in, and a
   `session.json` changed outside a save is kept there before a save replaces
@@ -45,6 +66,29 @@ canonical source.
   holds a session's files but no `session.json` opens into the **Session
   won't open** alert, which offers its autosave and backups. Any other folder
   without a `session.json` is still ignored.
+- **Times in Recover from autosave?** The autosave's and the saved session's
+  times are shown in local time to the minute, as in `2026-11-08 14:30`, as
+  the **Session won't open** alert shows them.
+
+### Fixed
+
+- **MIDI notes at playback and Stop.** Starting playback inside a region sounds
+  its held notes immediately. Standard VST3 hosting sends explicit note-offs
+  at Stop, including through the sandbox, and VST3 note tracking survives an
+  audio-device reinitialization so Stop can still release the held keys.
+- **Sustain at a loop boundary.** Even with a one-sample audio block, a pedal
+  lifted and restored at a loop boundary stays up long enough to release the
+  previous pass's notes.
+- **VST3 synth notes at Stop, and held keys at a loop wrap.** Stop gives each
+  note a MIDI region was playing its own note-off before all notes off, so an
+  instrument that ignores all notes off, as some VST3 synths do, still stops.
+  A loop wrap, a seek or scrub while the transport rolls, and pressing
+  **Play** end the notes and pedals the regions were playing. With **IN** on,
+  keys you hold, your sustain pedal and the tails still ringing carry on
+  across them, as does a key held on the piano roll keyboard, except a key or
+  pedal a region plays too on the same channel. One that would have to end
+  more than 48 of the regions' notes and pedals at once sends all notes off
+  instead, which ends held keys too.
 
 ## [0.16.1] - 2026-11-07
 

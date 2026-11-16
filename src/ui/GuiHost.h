@@ -210,6 +210,8 @@ public:
     virtual bool pianoNotePointer (std::int64_t tick, int pitch, bool down, int modifiers = 0) = 0;
     // The pointer over a pitch's key on the open piano roll's keyboard.
     virtual bool pianoKeyPointer (int pitch, bool down) = 0;
+    virtual bool pausePianoFrames (bool paused) = 0;
+    virtual std::uint64_t pianoCompletedFrames() const = 0;
     virtual std::vector<int> pianoSelection() const = 0;
     // The open piano roll's edit cursor, in ticks from the region's start; -1 when none is open.
     virtual std::int64_t pianoEditCursor() const = 0;
@@ -651,6 +653,8 @@ public:
     // Whether any modal's render is still running: bounce, mixdown, master export or freeze.
     virtual bool renderRunning() const = 0;
     virtual std::string statusMessage() const = 0;
+    // The status bar's tooltip, the full path of the file a message names.
+    virtual std::string statusTooltip() const = 0;
     virtual void requestSessionSwitch (const std::filesystem::path& sessionJson) = 0;
     // Opens a session the way File > Open does: a newer autosave beside it
     // raises the recovery prompt instead of loading.

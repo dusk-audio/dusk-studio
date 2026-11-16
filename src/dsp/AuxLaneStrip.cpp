@@ -274,10 +274,9 @@ void AuxLaneStrip::prepare (double sampleRate, int blockSize)
     insertScratchL.assign ((size_t) std::max (1, blockSize), 0.0f);
     insertScratchR.assign ((size_t) std::max (1, blockSize), 0.0f);
 
-    // Pre-size the MIDI scratch so the audio thread's plugin-output
-    // addEvent calls (PluginSlot / RemotePluginConnection deserialise)
-    // can't grow it. 4 KB matches the channel-strip allotment.
-    pluginMidiScratch.ensureSize (4096);
+    // Includes explicit note-offs expanded by the standard VST3 panic adapter.
+    // A plug-in's own MIDI output can still exceed this reservation.
+    pluginMidiScratch.ensureSize (dusk::kMidiRoutingBlockBytes);
 }
 
 std::vector<hosting::NativeRestoreFailure> AuxLaneStrip::takeNativeRestoreFailures()

@@ -15,6 +15,7 @@
 #if ! defined(_WIN32)
  #include <cstdio>
  #include <fcntl.h>
+ #include <sys/stat.h>
  #include <unistd.h>
 #endif
 
@@ -59,6 +60,45 @@ inline int fullSync (int handle) noexcept
     int synced;
     do { synced = ::fsync (handle); } while (synced != 0 && errno == EINTR);
     return synced;
+}
+
+// What a file system answers when it cannot rename without replacing at all,
+// rather than failing to.
+inline bool noReplaceRenameUnsupported (int code) noexcept
+{
+   #if defined(__APPLE__)
+    return code == ENOTSUP;
+   #else
+    return code == ENOSYS || code == EINVAL || code == EOPNOTSUPP;
+   #endif
+}
+
+// What link answers on a file system without hard links: EPERM on Linux, and
+// ENOTSUP from exFAT and FAT on macOS.
+inline bool hardLinksUnsupported (int code) noexcept
+{
+   #if defined(EOPNOTSUPP) && EOPNOTSUPP != ENOTSUP
+    if (code == EOPNOTSUPP) return true;
+   #endif
+   #if defined(__APPLE__)
+    return code == ENOTSUP;
+   #else
+    return code == EPERM || code == ENOTSUP || code == ENOSYS;
+   #endif
+}
+
+// The last way to publish without replacing, where the file system offers no
+// atomic one: the name is checked free, then the file renamed onto it.
+inline int renameIfAbsent (const char* source, const char* target) noexcept
+{
+    struct stat existing {};
+    if (::lstat (target, &existing) == 0)
+    {
+        errno = EEXIST;
+        return -1;
+    }
+    if (errno != ENOENT) return -1;
+    return std::rename (source, target);
 }
 #endif
 } // namespace detail
@@ -132,18 +172,26 @@ inline bool syncFolder (const std::filesystem::path& folder, std::error_code& er
 #endif
 }
 
+enum class AtomicWriteMode { Replace, CreateNew };
+
 // Replaces `target` with `size` bytes so that a reader, or the next start after
 // a crash or a power loss, finds the old file or the whole new one and never
 // part of either: the bytes go to a new file beside the target, reach the disk,
 // and are renamed over it, and on POSIX the folder is synced so the rename
-// lasts too. The folder must exist.
+// lasts too. The folder must exist. CreateNew refuses an existing destination,
+// atomically where the file system can rename without replacing or make hard
+// links, so one created while the temporary file was written is refused too.
+// Where it can do neither, as exFAT on macOS cannot, the name is checked free
+// just before a plain rename, and a file another program makes in between
+// would be replaced.
 //
-// False, with `error` saying why, when any step fails; nothing is thrown, and
-// the temporary file is removed. The target then holds the old file, unless
-// only the final folder sync failed: the new file is in place, but a power loss
-// could still take the rename back.
+// False, with `error` saying why, when writing, publication or sync fails;
+// nothing is thrown. The target then holds the old file, unless only the final
+// folder sync failed: the new file is in place, but a power loss could take it
+// back. Temporary-file cleanup is best effort. Successful hard-link publication
+// stays successful if removing its temporary name fails.
 inline bool writeFileAtomically (const std::filesystem::path& target, const void* data, std::size_t size,
-                                 std::error_code& error) noexcept
+                                 std::error_code& error, AtomicWriteMode mode = AtomicWriteMode::Replace) noexcept
 {
     error.clear();
     const auto* bytes = static_cast<const char*> (data);
@@ -194,7 +242,8 @@ inline bool writeFileAtomically (const std::filesystem::path& target, const void
 
         // Write-through carries the rename to the disk; NTFS has no folder flush.
         const auto destination = nativeIOPath (target).native();
-        if (! MoveFileExW (temporary.c_str(), destination.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+        const DWORD flags = MOVEFILE_WRITE_THROUGH | (mode == AtomicWriteMode::Replace ? MOVEFILE_REPLACE_EXISTING : 0);
+        if (! MoveFileExW (temporary.c_str(), destination.c_str(), flags))
             return fail (lastError());
         return true;
     }
@@ -240,7 +289,23 @@ inline bool writeFileAtomically (const std::filesystem::path& target, const void
         handle = -1;
         if (! closed) return fail (lastError());
 
-        if (std::rename (temporary.c_str(), target.c_str()) != 0) return fail (lastError());
+        int published = mode == AtomicWriteMode::Replace
+            ? std::rename (temporary.c_str(), target.c_str())
+           #if defined(__APPLE__)
+            : ::renamex_np (temporary.c_str(), target.c_str(), RENAME_EXCL);
+           #else
+            : ::renameat2 (AT_FDCWD, temporary.c_str(), AT_FDCWD, target.c_str(), RENAME_NOREPLACE);
+           #endif
+       #if defined(__linux__) || defined(__APPLE__)
+        if (published != 0 && mode == AtomicWriteMode::CreateNew && detail::noReplaceRenameUnsupported (errno))
+        {
+            published = ::link (temporary.c_str(), target.c_str());
+            if (published == 0) ::unlink (temporary.c_str());
+            else if (detail::hardLinksUnsupported (errno))
+                published = detail::renameIfAbsent (temporary.c_str(), target.c_str());
+        }
+       #endif
+        if (published != 0) return fail (lastError());
         temporary.clear();
 
         std::error_code folderError;

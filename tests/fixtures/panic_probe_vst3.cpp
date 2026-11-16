@@ -331,6 +331,10 @@ public:
         for (std::size_t i = 0; i < names.size(); ++i)
             parameters.addParameter (names[i], nullptr, i == 0 ? EveryCc::kMaxHeldNotes : kMaxNoteOffsSeen, 0.0,
                                      ParameterInfo::kIsReadOnly, EveryCc::HeldNotes + (ParamID) i);
+        // Hosts allocate MIDI parameter queues from the enumerated parameter IDs.
+        for (int32 index = 0; index < kChannels * kCountCtrlNumber; ++index)
+            parameters.addParameter (STR16 ("MIDI Controller"), nullptr, 0, 0.0,
+                                     ParameterInfo::kIsHidden, kParameterBase + (ParamID) index);
         return kResultOk;
     }
 
@@ -402,6 +406,18 @@ public:
             for (auto& voice : channel)
                 if (voice.state == Voice::Tail && (voice.tailLeft -= data.numSamples) <= 0)
                     voice.state = Voice::Silent;
+
+        // Hosts that cache controller values need the processor's feedback.
+        if (data.outputParameterChanges != nullptr && data.numSamples > 0)
+            for (ParamID id = EveryCc::HeldNotes; id <= EveryCc::Pressure; ++id)
+            {
+                int32 queueIndex = 0;
+                if (auto* queue = data.outputParameterChanges->addParameterData (id, queueIndex))
+                {
+                    int32 pointIndex = 0;
+                    queue->addPoint (data.numSamples - 1, getParamNormalized (id), pointIndex);
+                }
+            }
 
         const auto sounding = (float) (count (Voice::Held) + count (Voice::Sustained));
         for (int32 channel = 0; channel < 2; ++channel)

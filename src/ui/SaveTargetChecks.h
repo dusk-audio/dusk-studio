@@ -173,9 +173,8 @@ std::filesystem::path launchSessionFolder (const std::filesystem::path& parent,
     return dir;
 }
 
-// Where a session keeps its autosave and notepad. A never-saved session starts
-// in a folder that holds no session, but a session.json can still appear there
-// later from outside; its files then go to privateDir instead.
+// A never-saved session's folder can receive a foreign session.json later.
+// Its autosave, notepad and MIDI recovery files then go to privateDir instead.
 inline std::filesystem::path sidecarFolder (const std::filesystem::path& sessionDir,
                                             bool savedOrOpened,
                                             const std::filesystem::path& privateDir)

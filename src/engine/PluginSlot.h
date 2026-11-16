@@ -4,6 +4,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include "PluginDescriptor.h"
+#include "hosting/StandardVst3Midi.h"
 #include "../foundation/MessageThread.h"
 #include "../foundation/ProcessedBlock.h"
 #include "../foundation/TransportPosition.h"
@@ -117,7 +118,8 @@ public:
     bool isBypassed() const noexcept             { return bypassed.load (std::memory_order_relaxed); }
 
     // In-place process. Empty MIDI buffer for FX inserts; per-track MIDI
-    // for instrument plugins. Mono-only plugins on stereo input are
+    // for instrument plugins. In-process VST3 callers must reserve
+    // kMidiRoutingBlockBytes in the MIDI buffer. Mono-only plugins on stereo input are
     // averaged to mono and broadcast back to both channels. Returns the
     // rendered block's timing, or no value on dry fallback. A reset flag marks
     // the first rendered block after the host reinitialised the processor.
@@ -303,6 +305,15 @@ public:
     void engageAutoBypassForTest() noexcept { engageAutoBypass(); }
    #endif
 
+   #if defined(DUSKSTUDIO_TESTS) && DUSKSTUDIO_HAS_OOP_PLUGINS
+    // Sandbox seam: how long the next blocks wait for the child to answer
+    // before the slot bypasses it.
+    void setOopProcessTimeoutNsForTest (long long timeoutNs) noexcept
+    {
+        oopProcessTimeoutNs.store (timeoutNs, std::memory_order_relaxed);
+    }
+   #endif
+
    #if JUCE_MAC && DUSKSTUDIO_HAS_OOP_PLUGINS
     // Mac dual-load shell-instance API. Loads a parent-process copy of
     // the plugin solely to host its editor in the main app window while
@@ -386,6 +397,8 @@ private:
     // it blocking, so a plugin can never be re-prepared mid-processBlock even
     // on a reconfigure path the engine-level gate didn't anticipate.
     juce::SpinLock processLock;
+    hosting::StandardVst3Midi standardMidi;
+    bool standardVst3 = false;
 
     // Audio thread, with processLock held by the process call. The latency
     // report follows the flag (getLatencySamples), and the overrun count starts
@@ -536,6 +549,16 @@ private:
     std::atomic<int>  remoteNumOut      { 0 };
     std::atomic<bool> remoteIsInstrument { false };
     std::atomic<bool> remoteCrashed { false };
+
+    // OOP timeout per processBlock round-trip. Generous because the child
+    // has to memcpy through SHM, run the plugin, memcpy back. A 100 ms cap
+    // is well under the audio-thread starvation point (~250 ms = visible
+    // glitch on most kernels) and well over a misbehaving plugin's typical
+    // stall.
+    static constexpr long long kOopProcessTimeoutNs = 100'000'000LL;
+    // Read by the audio thread once per sandboxed block. Only a test moves it
+    // off the constant.
+    std::atomic<long long> oopProcessTimeoutNs { kOopProcessTimeoutNs };
 
     // The OOP round-trip serialises MIDI to raw bytes; processBlockSync takes
     // a dusk::MidiBuffer. Bridged once per block from the caller's juce buffer

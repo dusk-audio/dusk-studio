@@ -699,6 +699,7 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
 
         void onDisplay() override
         {
+            if (owner.framesPausedForScenario) return;
             if (const int interval = scenarioFrameIntervalMs(); interval > 0)
             {
                 // Held on the message thread, as a software renderer's frame is: no
@@ -981,6 +982,7 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
     std::string capturePath;
     int framesDrawn = 0;
     std::uint64_t completedFrames = 0;
+    bool framesPausedForScenario = false;
     DuskImGuiHost host;
 };
 
@@ -1219,6 +1221,10 @@ bool DuskPanelWindow::hasKeyboardForScenario() const noexcept
 std::uint64_t DuskPanelWindow::completedFramesForScenario() const noexcept
 {
     return impl->completedFrames;
+}
+void DuskPanelWindow::pauseFramesForScenario (bool paused) noexcept
+{
+    impl->framesPausedForScenario = paused;
 }
 bool DuskPanelWindow::capturesKeyboardForScenario() const noexcept
 {

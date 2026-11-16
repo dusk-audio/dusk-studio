@@ -239,6 +239,8 @@ std::optional<ScenarioResult> runNativeMidiLearn (GuiHost& host, ScenarioContext
     if (! engine.getTransport().isStopped() || ! host.modalStackEmpty()
         || session.midiLearnPending.load() >= 0)
         return ScenarioResult::skip ("requires stopped transport, no modal and no pending learn");
+    if (session.track (kStripIndex).frozen.load())
+        return ScenarioResult::skip ("requires an unfrozen track");
     if (engine.getMidiInputDevices().empty())
         return ScenarioResult::skip ("requires an enumerated MIDI input for injection");
 
@@ -1106,6 +1108,7 @@ std::optional<ScenarioResult> runPluginKindMismatch (GuiHost& host, ScenarioCont
     if (! engine.getTransport().isStopped()) return ScenarioResult::skip ("requires stopped transport");
     auto& session = ctx.session();
     auto& track = session.track (0);
+    if (track.frozen.load()) return ScenarioResult::skip ("requires an unfrozen track");
     auto& slot = engine.getChannelStrip (0).getPluginSlot();
     if (slot.isLoaded()) return ScenarioResult::skip ("requires an empty standard plugin slot");
     const auto originalDir = currentSessionDirectory (session);

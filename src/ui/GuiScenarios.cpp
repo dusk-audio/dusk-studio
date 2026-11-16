@@ -555,6 +555,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         launch.tapeExpanded = owner.tapeStripExpanded;
         launch.sessionDir = scenario::currentSessionDirectory (owner.session);
         launch.sessionOnDisk = owner.sessionOnDisk;
+        launch.midiRecoveryDir = owner.ownedMidiRecoveryDir;
         launch.masterMute = owner.session.master().mute.load();
         launch.masteringSource = owner.session.mastering().sourceFile.getFullPathName().toStdString();
         if (owner.tapeStrip != nullptr)
@@ -1297,6 +1298,24 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
             && pianoPointer (point.x, point.y, down);
        #else
         (void) pitch; (void) down; return false;
+       #endif
+    }
+    bool pausePianoFrames (bool paused) override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        if (! owner.pianoRollShowing()) return false;
+        owner.pianoRollWindow->pauseFramesForScenario (paused);
+        return true;
+       #else
+        (void) paused; return false;
+       #endif
+    }
+    std::uint64_t pianoCompletedFrames() const override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        return owner.pianoRollShowing() ? owner.pianoRollWindow->completedFramesForScenario() : 0;
+       #else
+        return 0;
        #endif
     }
     std::vector<int> pianoSelection() const override
@@ -3228,6 +3247,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         return false;
     }
     std::string statusMessage() const override { return owner.statusLabel.getText().toStdString(); }
+    std::string statusTooltip() const override { return owner.statusLabel.getTooltip().toStdString(); }
 
     void requestSessionSwitch (const std::filesystem::path& sessionJson) override
     {
@@ -3406,6 +3426,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
             }
 
         owner.stopTransportForSessionSwitch();
+        owner.engine.flushMidiRecoveryFiles();
         // Only another move hands the strips back to the slots they launched
         // in, and the tracks' data goes with them.
         if (const auto back = moveBackToLaunch()) owner.engine.moveTracks (*back);
@@ -3447,6 +3468,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         // Cases put their session back by opening a saved copy, which marks it
         // opened from disk even when the launch session never was.
         owner.sessionOnDisk = launch.sessionOnDisk;
+        owner.ownedMidiRecoveryDir = launch.midiRecoveryDir;
 
         // Leaving full screen can recreate the peer, so it is fetched again
         // before the launch bounds go back.
@@ -3498,6 +3520,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         std::array<const ChannelStrip*, Session::kNumTracks> stripOrder {};
         std::string masteringSource;
         std::filesystem::path sessionDir;
+        std::filesystem::path midiRecoveryDir;
         bool sessionOnDisk = false;
     };
 

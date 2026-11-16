@@ -194,6 +194,7 @@ private:
     // launch session's folder can hold a session someone saved under that
     // name, so a session.json there does not make it this session's file.
     bool sessionOnDisk = false;
+    std::filesystem::path ownedMidiRecoveryDir;
     bool saveGoesInPlace() const;
     // onComplete runs once, after the load attempt and the user's answer to any
     // recovery prompt or failure alert, with whether a session loaded. The
@@ -350,6 +351,12 @@ private:
     // The folder writeAutosave and saveNotepadNow write into (see
     // savecheck::sidecarFolder). Empty when there is nowhere safe.
     std::filesystem::path sidecarFolder() const;
+    std::filesystem::path prepareMidiRecoveryFolder() const;
+    std::filesystem::path prepareMidiJournalFolder();
+    // Hands the private journal folder back to the engine, which removes it
+    // once nothing is left in it.
+    void releaseMidiJournalFolder();
+    void showMidiRecoveryFailure (int trackNumber, const std::filesystem::path& path, std::error_code error);
     // <Music>/Dusk Studio, the parent a launch session starts in (see
     // dusk::fs::appMusicDir). Empty when there is no home folder.
     static std::filesystem::path defaultSessionsFolder();

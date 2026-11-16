@@ -375,7 +375,9 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         realtime_cpu_guard.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/RealtimeKit.cpp)
     target_link_libraries(dusk-studio-tests PRIVATE asound)
-    target_link_options(dusk-studio-tests PRIVATE "-Wl,--wrap=snd_seq_query_next_client")
+    target_link_options(dusk-studio-tests PRIVATE
+        "-Wl,--wrap=snd_seq_query_next_client"
+        "-Wl,--wrap=renameat2" "-Wl,--wrap=link" "-Wl,--wrap=unlink" "-Wl,--wrap=fsync")
     add_executable(dusk-alsa-output-tests
         alsa_seq_output_schedule.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/midi/AlsaSeqMidi.cpp)
@@ -736,6 +738,21 @@ if(DUSKSTUDIO_NATIVE_LV2)
         LIBRARY_OUTPUT_DIRECTORY "$<1:${DUSKSTUDIO_MIDI_PROBE_LV2_BUNDLE}>")
     target_compile_features(dusk-studio-midi-probe-lv2-fixture PRIVATE cxx_std_17)
     target_link_libraries(dusk-studio-midi-probe-lv2-fixture PRIVATE PkgConfig::LV2)
+
+    set(DUSKSTUDIO_MIDI_SEAM_LV2_BUNDLE "${CMAKE_CURRENT_BINARY_DIR}/midi-seam-probe-fixture.lv2")
+    file(MAKE_DIRECTORY "${DUSKSTUDIO_MIDI_SEAM_LV2_BUNDLE}")
+    configure_file(fixtures/midi_seam_probe_manifest.ttl
+        "${DUSKSTUDIO_MIDI_SEAM_LV2_BUNDLE}/manifest.ttl" COPYONLY)
+    configure_file(fixtures/midi_seam_probe_plugin.ttl
+        "${DUSKSTUDIO_MIDI_SEAM_LV2_BUNDLE}/midi_seam_probe_plugin.ttl" COPYONLY)
+    add_library(dusk-studio-midi-seam-lv2-fixture MODULE fixtures/midi_seam_probe_lv2.cpp)
+    set_target_properties(dusk-studio-midi-seam-lv2-fixture PROPERTIES
+        PREFIX ""
+        OUTPUT_NAME "midi_seam_probe_fixture"
+        LIBRARY_OUTPUT_DIRECTORY "$<1:${DUSKSTUDIO_MIDI_SEAM_LV2_BUNDLE}>")
+    target_compile_features(dusk-studio-midi-seam-lv2-fixture PRIVATE cxx_std_17)
+    target_link_libraries(dusk-studio-midi-seam-lv2-fixture PRIVATE PkgConfig::LV2)
+    add_dependencies(dusk-studio-tests dusk-studio-midi-seam-lv2-fixture)
 
     configure_file(fixtures/state_probe_manifest.ttl
         "${DUSKSTUDIO_STATE_PROBE_LV2_BUNDLE}/manifest.ttl" COPYONLY)
@@ -1264,13 +1281,18 @@ catch_discover_tests(dusk-studio-tests
     TEST_SPEC "[sfz-filesystem-fixture]"
     EXTRA_ARGS --allow-running-no-tests
     PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:")
+# Normalization-insensitive lookup is available on HFS+ and APFS, not every test filesystem.
+catch_discover_tests(dusk-studio-tests
+    TEST_SPEC "[normalization-fixture]"
+    EXTRA_ARGS --allow-running-no-tests
+    PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:")
 # File permissions stop no read by root, so a case that needs them skips there.
 catch_discover_tests(dusk-studio-tests
     TEST_SPEC "[permission-fixture]"
     EXTRA_ARGS --allow-running-no-tests
     PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:")
 catch_discover_tests(dusk-studio-tests
-    TEST_SPEC "~[alsa]~[ipc]~[host-limits]~[sfz-disk-full]~[sfz-location-disk-full]~[sfz-store-disk-full]~[sfz-filesystem-fixture]~[permission-fixture]")
+    TEST_SPEC "~[alsa]~[ipc]~[host-limits]~[sfz-disk-full]~[sfz-location-disk-full]~[sfz-store-disk-full]~[sfz-filesystem-fixture]~[normalization-fixture]~[permission-fixture]")
 # [ipc] cases start plug-in hosts and assert on bounded response times. Run
 # them serially so other cases cannot starve their control threads.
 catch_discover_tests(dusk-studio-tests

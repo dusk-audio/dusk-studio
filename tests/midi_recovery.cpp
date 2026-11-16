@@ -8,6 +8,7 @@
 #include "engine/midi/MidiFileReader.h"
 #include "foundation/Fs.h"
 #include "session/MidiRecovery.h"
+#include "support/PublicationFaults.h"
 
 #include <algorithm>
 #include <chrono>
@@ -744,6 +745,42 @@ TEST_CASE ("A MIDI take file is not written outside a session folder that does n
     CHECK_FALSE (stdfs::exists (missing));
 }
 
+#if defined(__linux__)
+TEST_CASE ("A MIDI take file is reported written only once every folder above it is on the disk",
+           "[midi][recovery]")
+{
+    const duskstudio::test::TempDirectory temp ("dusk-midi-recovery-folder-sync-");
+    auto session = std::make_unique<Session>();
+    session->track (6).name = "Keys";
+    MidiRegion pass;
+    pass.notes.push_back (note (1, 60, 100, 0, 480));
+    const auto midi = temp.path() / "midi";
+
+    duskstudio::test::PublicationFaults faults;
+    faults.syncError = EIO;
+    faults.syncFailures = 1;
+    const auto failed = writeTake (temp.path(), utc (kNovember8th143005), *session, 6, pass);
+    REQUIRE (failed.written.empty());
+    REQUIRE (failed.failures.size() == 1);
+    CHECK (failed.failures.front().error == std::errc::io_error);
+    // The folder is there, but a power loss could still take its name away.
+    REQUIRE (stdfs::is_directory (midi));
+
+    faults.syncedFolders.clear();
+    const auto retried = writeTake (temp.path(), utc (kNovember8th143005), *session, 6, pass);
+    REQUIRE (retried.failures.empty());
+    REQUIRE (retried.written.size() == 1);
+    const auto synced = [&] (const stdfs::path& folder)
+    {
+        return std::count (faults.syncedFolders.begin(), faults.syncedFolders.end(),
+                           stdfs::canonical (folder).string()) > 0;
+    };
+    CHECK (synced (temp.path()));
+    CHECK (synced (midi));
+    CHECK (synced (midi / "takes"));
+}
+#endif
+
 TEST_CASE ("A MIDI take file is built with all its write needs, for a pass that holds events on a track there is",
            "[midi][recovery]")
 {
@@ -834,6 +871,15 @@ TEST_CASE ("MIDI playing and takes files are each written only when they change"
     // The names a pass writes, sorted; files keeps each file written with what
     // it held then.
     using Names = std::vector<std::string>;
+    const Names unrelated {
+        "20261109-143005Z_track07_KeysExtra.mid",
+        "20261109-143005Z_track07_KeysExtra_002.takes.mid",
+        "20261109-143005Z_track07_Keys_002Extra.mid",
+        "20261109-143005Z_track08_Keys.mid",
+    };
+    REQUIRE (stdfs::create_directories (folder));
+    for (const auto& name : unrelated)
+        REQUIRE (dusk::fs::writeStringToFile (folder / name, "unrelated snapshot"));
     std::vector<std::pair<stdfs::path, Bytes>> files;
     const auto writeAt = [&] (int minute)
     {
@@ -879,14 +925,19 @@ TEST_CASE ("MIDI playing and takes files are each written only when they change"
         CAPTURE (file.first);
         CHECK (contentOf (file.first) == file.second);
     }
-    CHECK (namesIn (folder) == Names {
+    Names expected {
         "20261108-143005Z_track07_Keys.mid",
         "20261108-143005Z_track07_Keys.takes.mid",
         "20261108-143205Z_track07_Keys.mid",
         "20261108-143405Z_track07_Keys.takes.mid",
         "20261108-143605Z_track07_Keys.mid",
         "20261108-143605Z_track07_Keys.takes.mid",
-    });
+    };
+    for (const auto& name : unrelated)
+        CHECK (dusk::fs::loadFileAsString (folder / name) == "unrelated snapshot");
+    expected.insert (expected.end(), unrelated.begin(), unrelated.end());
+    std::sort (expected.begin(), expected.end());
+    CHECK (namesIn (folder) == expected);
 }
 
 TEST_CASE ("A MIDI takes file that changes again within a second takes the next copy number",
@@ -924,4 +975,92 @@ TEST_CASE ("A MIDI takes file that changes again within a second takes the next 
         "20261108-143005Z_track07_Keys_003.takes.mid",
     });
     CHECK (namesIn (temp.path() / "midi" / "tracks") == names);
+}
+
+TEST_CASE ("MIDI recovery ordering and deduplication survive clock rollback", "[midi][recovery]")
+{
+    const duskstudio::test::TempDirectory temp ("dusk-midi-clock-rollback-");
+    recovery::PendingFile file { temp.path(), utc (kNovember8th143005), 7, "Keys",
+                                recovery::TrackFile::Playing, recovery::Folder::Tracks, { 1, 2, 3 } };
+    SECTION ("playing snapshot") {}
+    SECTION ("takes snapshot") { file.kind = recovery::TrackFile::Takes; }
+    SECTION ("recorded pass") { file.folder = recovery::Folder::Takes; }
+    auto first = recovery::writeFile (file);
+    REQUIRE (first.failures.empty());
+    REQUIRE (first.written.size() == 1);
+    SECTION ("imported stamp beyond a nanosecond clock")
+    {
+        auto name = first.written.front().filename().u8string();
+        name.replace (0, 16, "25000101-000000Z");
+        const auto imported = first.written.front().parent_path() / stdfs::u8path (name);
+        stdfs::rename (first.written.front(), imported);
+        first.written.front() = imported;
+    }
+    file.made -= std::chrono::hours (24);
+    file.bytes.back() = 4;
+    auto changed = recovery::writeFile (file);
+    REQUIRE (changed.failures.empty());
+    REQUIRE (changed.written.size() == 1);
+    CHECK (changed.written.front().filename() > first.written.front().filename());
+    CHECK (contentOf (first.written.front()) == Bytes { 1, 2, 3 });
+    CHECK (contentOf (changed.written.front()) == file.bytes);
+    if (file.folder == recovery::Folder::Tracks)
+    {
+        const auto unchanged = recovery::writeFile (file);
+        CHECK (unchanged.failures.empty());
+        CHECK (unchanged.written.empty());
+    }
+    file.bytes.back() = 3;
+    const auto returned = recovery::writeFile (file);
+    REQUIRE (returned.failures.empty());
+    REQUIRE (returned.written.size() == 1);
+    CHECK (returned.written.front().filename() > changed.written.front().filename());
+}
+
+TEST_CASE ("MIDI recovery finds normalized filenames without confusing copy and takes suffixes",
+           "[midi][recovery][normalization-fixture]")
+{
+    const duskstudio::test::TempDirectory temp ("dusk-midi-normalized-");
+    const std::string composed = "Caf\xc3\xa9", decomposed = "Cafe\xcc\x81";
+    const auto probe = temp.path() / stdfs::u8path (decomposed);
+    std::ofstream probeFile (dusk::fs::nativeIOPath (probe));
+    probeFile << "probe";
+    probeFile.close();
+    REQUIRE (! probeFile.fail());
+    std::error_code error;
+    const bool equivalent = stdfs::equivalent (probe, temp.path() / stdfs::u8path (composed), error);
+    REQUIRE ((! error || error == std::errc::no_such_file_or_directory));
+    if (! equivalent)
+        SKIP ("the test filesystem distinguishes Unicode normalization forms");
+    stdfs::remove (probe);
+
+    const auto folder = temp.path() / "midi" / "tracks";
+    stdfs::create_directories (folder);
+    for (const auto& suffix : { std::string {}, std::string { "_002" }, std::string { ".takes" } })
+        for (const auto kind : { recovery::TrackFile::Playing, recovery::TrackFile::Takes })
+        {
+            CAPTURE (suffix, (int) kind);
+            recovery::PendingFile file { temp.path(), utc (kNovember8th143005), 7, composed + suffix,
+                                        kind, recovery::Folder::Tracks, { 1, 2, 3, (std::uint8_t) kind } };
+            const auto original = folder / stdfs::u8path (
+                recovery::fileName (file.made, file.trackNumber, decomposed + suffix, kind, 2));
+            std::ofstream out (dusk::fs::nativeIOPath (original), std::ios::binary);
+            out.write (reinterpret_cast<const char*> (file.bytes.data()), (std::streamsize) file.bytes.size());
+            out.close();
+            auto result = recovery::writeFile (file);
+            REQUIRE (result.failures.empty());
+            CHECK (result.written.empty());
+            const auto originalBytes = file.bytes;
+            file.bytes[0] = 9;
+            result = recovery::writeFile (file);
+            REQUIRE (result.failures.empty());
+            REQUIRE (result.written.size() == 1);
+            CHECK (contentOf (original) == originalBytes);
+            CHECK (contentOf (result.written.front()) == file.bytes);
+            result = recovery::writeFile (file);
+            CHECK (result.failures.empty());
+            CHECK (result.written.empty());
+            stdfs::remove_all (folder);
+            stdfs::create_directory (folder);
+        }
 }

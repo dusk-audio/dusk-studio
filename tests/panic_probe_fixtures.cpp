@@ -687,6 +687,17 @@ TEST_CASE ("a panic ends every held note on a VST3 synth that maps all notes off
         REQUIRE_THAT (probe.noteOffsSeen(), WithinAbs (5.0, 1.0e-6));
     }
 
+    SECTION ("Stop after reactivation keeps the held-note ledger")
+    {
+        std::string error;
+        REQUIRE (probe.slot.reactivate (44100.0, kBlock, error));
+        dusk::MidiBuffer stop;
+        REQUIRE (duskstudio::midi::emitTransportStopReset (stop, 0));
+        REQUIRE_THAT (probe.run (&stop), WithinAbs (0.0, 1.0e-6));
+        REQUIRE_THAT (probe.heldNotes(), WithinAbs (0.0, 1.0e-6));
+        REQUIRE_THAT (probe.noteOffsSeen(), WithinAbs (5.0, 1.0e-6));
+    }
+
     SECTION ("a hanging reset and the chase behind it")
     {
         dusk::MidiBuffer seam;
@@ -723,6 +734,12 @@ TEST_CASE ("a hosted VST3 block bigger than the host's event list still ends its
         probe.run (&stop);
         REQUIRE_THAT (probe.heldNotes(), WithinAbs (1.0 / 16.0, 1.0e-6));
         REQUIRE_THAT (probe.noteOffsSeen(), WithinAbs (1024.0, 1.0e-6));
+        SECTION ("continuous processing") {}
+        SECTION ("reactivation preserves pending releases")
+        {
+            std::string error;
+            REQUIRE (probe.slot.reactivate (44100.0, kBlock, error));
+        }
         probe.run (nullptr);
         REQUIRE_THAT (probe.heldNotes(), WithinAbs (1.0 / 16.0, 1.0e-6));
         REQUIRE_THAT (probe.noteOffsSeen(), WithinAbs (2048.0, 1.0e-6));
