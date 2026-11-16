@@ -598,9 +598,9 @@ runs and are cleaned at its end (below).
 
 | Host | What a run writes | Removed by | What stays |
 |---|---|---|---|
-| Air, source leg | `~/.cache/dusk-regress/regress-<8 hex>-<pid>/`: a pid file while a leg runs, and `t/`, the `TMPDIR` of every leg; the `regress-<sha>` branch it pushes | the run's `footprint` leg, or its exit, Ctrl-C included once the cancel is acknowledged; the branch when the node goes back to its previous branch | the node's own `build/` and `build-tests/`, and DAF moved to `DAF_REV` |
+| Air, source leg | `~/.cache/dusk-regress/regress-<8 hex>-<pid>/`: a pid file while a leg runs, and `t/`, the `TMPDIR` of every leg; the checkout's claim, `~/.cache/dusk-regress/source-claim-<checksum>`; the `regress-<sha>` branch it pushes | the run's `footprint` leg, or its exit, Ctrl-C included once the cancel is acknowledged; the branch when the node goes back to its previous branch | the node's own `build/` and `build-tests/`, and DAF moved to `DAF_REV` |
 | Air, package leg | `~/dusk-regress-pkg/<timestamp>/` (marker `.dusk-regress-run`), each launch's `TMPDIR` inside it; a `regress-pkg-<sha>` branch for a moment | the `footprint` leg, and the run's exit, Ctrl-C included | `/Applications/DuskStudio.app` and the fixture worktree `~/src/dusk-studio-regress` with its `build-tests/` |
-| Guest, source leg | `<tree>\regress\` with `head.bundle`, and `<tree>\tmp\`, the `TEMP` and `TMP` of every step | the `footprint` leg removes the bundle and `tmp`; after Ctrl-C the next preflight does | the tree, `C:\Users\marc\dusk-audit-win` (marker `.dusk-regress-tree`) |
+| Guest, source leg | `<tree>\regress\` with `head.bundle`, and `<tree>\tmp\`, the `TEMP` and `TMP` of every step | the `footprint` leg removes the bundle and `tmp`; after Ctrl-C the next preflight does | the tree, `C:\Users\marc\dusk-audit-win` (marker `.dusk-regress-tree`), with the commit it last built in `stamps\built-commit` |
 | Guest, package leg | `%LOCALAPPDATA%\dusk-regress-<timestamp>\` (marker `.dusk-regress-run`), each launch's `TEMP` and the app's log and crash reports inside it | `run-cleanup`, which first sends the folder's logs, phase 4's logs and every launch's app log and `crash-*.txt` here (`posts/guest-*`); a folder whose evidence it could not read or send (a refused read, a failed post, or more than 64 MB) is kept, named under `left in the guest:`, and fails the leg. After Ctrl-C the next run's install step or a clean does | the installed package (uninstalling needs a UAC prompt), and the `temp_*` and `dusk-*` entries that appeared in the account's `TEMP` while phase 4 ran |
 
 Phase 4 starts the app from Explorer, and Explorer hands it the account's own
@@ -627,7 +627,8 @@ stay. A clean removes what the runner owns and nothing else, and never signals a
 process:
 
 - On the Air, the run folders under `~/.cache/dusk-regress/regress-*` whose
-  process group is gone, the `regress-<sha>` and `regress-pkg-<sha>` branches no
+  process group is gone, the source claims (`source-claim-*`) whose run folder
+  is gone, the `regress-<sha>` and `regress-pkg-<sha>` branches no
   worktree has checked out, and the package run folders under
   `~/dusk-regress-pkg` (a `.dusk-regress-run` marker or a `<date>-<time>` name).
   A pid in those folders may be weeks old and someone else's process by now, so
@@ -1137,7 +1138,7 @@ stays in `.git/modules`.
 
 | Leg | What it proves |
 |---|---|
-| `mac-preflight` | node reachable; tracked checkout and submodule worktrees clean; previous branch and commits recorded; the free space floor met (see "What a run leaves on the hosts"), and the `TMPDIR` the tests get named. |
+| `mac-preflight` | node reachable; tracked checkout and submodule worktrees clean; previous branch and commits recorded; the free space floor met (see "What a run leaves on the hosts"), and the `TMPDIR` the tests get named.; and the node's checkout claimed for this run (below). Refused, before anything is pushed or checked out, while another source run is live in the same checkout: one whose folder under `~/.cache/dusk-regress` has a live process group, or one that holds the checkout's claim. The error names that run's folder. |
 | `push-head` / `mac-checkout` | the node builds this exact commit. `WARN` when a submodule cannot be synced to the recorded pin. |
 | `daf-revision` | `~/src/DAF` checked out at `DAF_REV`, the commit CI builds against, fetching it from GitHub when the clone lacks it. A clone that cannot reach that commit fails the leg. DAF is left there, not put back. |
 | `configure-app` / `configure-tests` | both trees configure through `~/mac-configure.sh`. |
@@ -1147,6 +1148,21 @@ stays in `.git/modules`.
 | `scenarios` | `DUSKSTUDIO_RUN_SCENARIOS=all` against the same `.app`, behind the same marker-file deadline, with `DUSKSTUDIO_FIXTURE_DIR` pointed at the node's `build-tests` tree and `tests/fixtures`. Passes only on exit 0, no `[FAIL]` line, and the terminal `=== scenarios: ` summary. Skipped cases go into the leg's note - this node builds no LV2 host, so the LV2 cases skip there and the AU scan case runs only there. |
 | `mac-restore` | the node's checkout back on the branch or commit and submodule commits `mac-preflight` recorded, and the scratch branch deleted. Fails when that cannot be confirmed; the run's exit tries again. |
 | `footprint` | after `mac-restore`: the sizes of both build trees and the node's free space, and the run's folder under `~/.cache/dusk-regress` removed. Fails when that folder stays. |
+
+**One source run per checkout.** Two source runs in one node checkout move it
+under each other, and the first then builds or tests a mix of two commits. So
+`mac-preflight` claims the checkout: under a short `mkdir` mutex
+(`~/.cache/dusk-regress/source-claim.lock`) it writes the run's folder name into
+`~/.cache/dusk-regress/source-claim-<checksum of the checkout path>`, unless
+another run is live there, and that is refused. A run counts as live while a
+call of it is in flight (its folder's process group is alive) or its folder was
+written in the last ten minutes, which covers the gap between two calls; a run
+from an older runner, which writes no claim, counts while a call of it is in
+flight. Two runs started in the same second take the mutex one after the other,
+and the second finds the first's claim. Every later call checks that the claim
+still names its run and stops before touching the checkout when it does not.
+The claim goes at the run's exit, after the checkout is put back; a claim whose
+run folder is gone is taken over, and `clean mac` removes it.
 
 What it cannot prove: **anything with a window**. Launching the GUI from an ssh
 session aborts in the main window constructor on that node, and it does so on
@@ -1499,14 +1515,27 @@ check the guest before the next run, since the preflight refuses a busy tree.
 
 | Leg | What it proves |
 |---|---|
-| `vm-preflight` | the guest answers over ssh, nothing is already running in the tree, the tree is the runner's (its `.dusk-regress-tree` marker, written when the run creates the tree or adopts one an older runner made), `<tree>\tmp` and the last run's `regress\` (with its bundle) removed, then its drive has the free space floor for a cold or a warm run, and the scripts are copied. A failure ends the run. |
+| `vm-preflight` | the guest answers over ssh, its clock is within 60 s of this box's (see "Guest clock" below), nothing is already running in the tree, the tree is the runner's (its `.dusk-regress-tree` marker, written when the run creates the tree or adopts one an older runner made), `<tree>\tmp` and the last run's `regress\` (with its bundle) removed, then its drive has the free space floor for a cold or a warm run, and the scripts are copied. A failure ends the run. Build outputs stamped later than the guest's now remove `src\build-tests`, with a `warn:` line in capitals, so the run builds from nothing; sources and dependencies stamped in the future are stamped back to now. |
 | `update` | the tree is at HEAD: the merge base with `origin/main` (and any other commit the local ones stand on) fetched from GitHub by hash, the local commits sent as a git bundle, submodules synced, the donor at `DONOR_REV`, DAF at `DAF_REV`. Mesa and Python are reinstalled when `scripts/fetch-windows-software-opengl.ps1` changed, the vcpkg packages when `vcpkg.json` did. |
 | `snapshot-check` | CI's "Check regression profile snapshots" step: its script is read from the `windows-tests.yml` at HEAD and run in the guest's checkout under Windows PowerShell, with `$ErrorActionPreference` at `Stop` and the step's exit code, as the step runs, but with `TEMP` and `TMP` in the tree's `tmp\` instead of the shared account's, and the process's execution policy at `Bypass` (the guest's is `Restricted`, where CI's runners let a script run). An error comes back as text, not as the CLIXML a redirected error stream would carry. A workflow whose step is gone, is no longer `shell: powershell` or no longer runs `tests\windows_regress_snapshot.ps1` fails the leg rather than checking nothing. |
-| `build` | `DuskStudio`, `dusk-studio-tests` and `dusk-windows-software-opengl-probe` at `-j4`, as CI builds them, reconfiguring first when the configure script changed. A failure's note counts the compile and link errors and names the first. |
+| `build` | `DuskStudio`, `dusk-studio-tests` and `dusk-windows-software-opengl-probe` at `-j4`, as CI builds them, reconfiguring first when the configure script changed. A failure's note counts the compile and link errors and names the first. Then `built.cmd` compares the commit with the one the tree last built (`stamps\built-commit`): when they differ and ninja printed `no work to do`, the leg fails if any file that changed between them is one the build reads, by ninja's own record (`build.ninja` for sources and generated inputs, its deps log for headers), and the legs that would test that build are skipped. A change to documents or to sources this platform does not compile passes. The built commit is recorded only when the check passes. When the old commit is not in the guest's clone, or ninja's deps log cannot be read, the row is a `WARN`. |
 | `mesa` | CI's "Verify packaged Mesa selects llvmpipe" step, and the fixture plug-ins and app files CI's upload steps require. |
 | `ctest-inventory` | every test name the `windows-tests.yml` at HEAD requires is in the CTest inventory. The names are read from the workflow, so the two never drift; finding none fails. |
 | `ctest` | the whole suite, serially, as CI runs it. The note names the failed tests. |
 | `footprint` | after every run that passed `vm-preflight`, pass or fail: `head.bundle` and `<tree>\tmp` removed, then the tree's size, its largest parts under the table, and the drive's free space. |
+
+**Guest clock.** Before anything else, `vm-preflight` reads the guest's UTC
+clock and fails when it is more than 60 s from this box's, with both times and
+how far apart they are. The guest's real-time clock keeps the host's local time
+(libvirt `clock offset='localtime'`); while the guest's time zone differs from
+the host's, Windows reads it as hours off from boot until its first time sync,
+then steps back. A tree built before that step has objects stamped later than
+any source checked out after it, and ninja builds nothing: on 2026-11-16 a run
+passed 2009 tests for a commit that has 2030. Wait for the sync, or set the
+guest's time zone to the host's; the runner never changes the guest's settings.
+60 s is well past the drift between two time syncs, and the ssh round trip is
+measured around the reading rather than counted against it; the fault it is for
+is hours.
 
 A failed `update` or `build` turns the legs after it into `SKIP` rows; a failed `snapshot-check` does not stop the build. Timings
 on the 8 GB guest: about 5 minutes for ctest; a build after a DAF move

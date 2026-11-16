@@ -563,7 +563,59 @@ else:
         return result, calls
 
     def run_folders(home):
-        return sorted((home / ".cache/dusk-regress").glob("regress-*"))
+        return sorted((home / ".cache/dusk-regress").glob("regress-*")) + \
+            sorted((home / ".cache/dusk-regress").glob("source-claim*"))
+
+    # Two source runs started together: one claims the checkout, the other is
+    # refused in mac-preflight, before it pushes or runs anything there.
+    runs = []
+    for name in ("first", "second"):
+        run_trace = root / f"claim-{name}.jsonl"
+        run_trace.write_text("")
+        runs.append((run_trace, subprocess.Popen(
+            ["/bin/bash", str(runners / "mac.sh")], env=dict(environment, REGRESS_TEST_TRACE=str(run_trace)),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)))
+    outcomes = []
+    for run_trace, run in runs:
+        stdout, stderr = run.communicate(timeout=60)
+        outcomes.append((run.returncode, stdout, stderr,
+                         [json.loads(line) for line in run_trace.read_text().splitlines()]))
+    passed = [o for o in outcomes if o[0] == 0]
+    refused = [o for o in outcomes if o[0] != 0]
+    assert len(passed) == 1 and len(refused) == 1, [o[:3] for o in outcomes]
+    code, stdout, stderr, calls = refused[0]
+    assert "FAIL   mac-preflight" in stdout and "another source run" in stderr, (stdout, stderr)
+    assert not any(call["args"][:1] == ["push"] or call["command"] in ("cmake", "ctest", configured_helper.name)
+                   for call in calls), ("the refused run touched the node", calls)
+    assert not run_folders(remote_home), ("a run left its folder or claim", run_folders(remote_home))
+
+    # A run from an older runner shows only as a live process group in its
+    # folder; a claim whose run is gone is taken over.
+    old_slot = remote_home / ".cache/dusk-regress/regress-old-999"
+    old_slot.mkdir(parents=True)
+    old_run = subprocess.Popen(["bash", "-c", "sleep 3600; exit 0", "dusk-regress", "regress-old-999"],
+                               start_new_session=True, stdin=subprocess.DEVNULL,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        (old_slot / "pid").write_text(f"{old_run.pid}\n")
+        (old_slot / "source").write_text(f"{configured_source}\n")
+        result, calls = configured_run({})
+        assert result.returncode != 0 and "regress-old-999" in result.stderr, (result.stdout, result.stderr)
+        assert not any(call["args"][:1] == ["push"] for call in calls), calls
+    finally:
+        os.killpg(old_run.pid, signal.SIGKILL)
+        old_run.wait()
+    shutil.rmtree(old_slot)
+    claim = next(iter((remote_home / ".cache/dusk-regress").glob("source-claim-*")), None)
+    assert claim is None, ("a refused run left a claim", claim)
+    checksum = subprocess.run(["cksum"], input=str(configured_source), capture_output=True,
+                              text=True, check=True).stdout.split()[0]
+    stale_claim = remote_home / ".cache/dusk-regress" / f"source-claim-{checksum}"
+    stale_claim.write_text("regress-gone-1\n")
+    result, calls = configured_run({})
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert "taking over the claim of regress-gone-1" in result.stdout, result.stdout
+    assert not run_folders(remote_home), run_folders(remote_home)
 
     # A restore that fails is a failed row, the exit tries it again, and the
     # run's folder still goes after that second try.
@@ -727,6 +779,17 @@ else:
     kind = re.search(r"\\\\regress\\\\([a-z]+)\\.cmd", command).group(1)
 with open("{win_trace}", "a") as out:
     out.write(kind + "\\t" + command + "\\n")
+if kind == "clock":
+    skew = int(os.environ.get("REGRESS_TEST_CLOCK_SKEW", "0"))
+    print("regress:utc " + str(int(time.time() * 1000) + skew * 1000) + "\\r")
+if kind == "build" and os.environ.get("REGRESS_TEST_NOWORK"):
+    print("ninja: no work to do.\\r")
+if kind == "built":
+    if os.environ.get("REGRESS_TEST_STALE"):
+        print("error: ninja did no work, but files the build reads changed since 1234567, the commit the tree last built (1 of the 3 changed; first src/a.cpp).\\r")
+        sys.exit(1)
+    if os.environ.get("REGRESS_TEST_BUILT_UNKNOWN"):
+        print("warn: ninja did no work for the head, and what changed since 1234567 cannot be told\\r")
 if kind == "build" and os.environ.get("REGRESS_TEST_BUILD_HANG"):
     with open("{win_root}/build-ssh.pid", "w") as out:
         out.write(str(os.getpid()))
@@ -788,13 +851,16 @@ for arg in sys.argv[1:-1]:
 
     result, calls = windows_source({})
     assert result.returncode == 0, (result.stdout, result.stderr)
-    assert [kind for kind, _ in calls] == ["preflight", "update", "snapshot", "build", "mesa", "ctest", "ctest", "tidy"], calls
+    assert [kind for kind, _ in calls] == ["clock", "preflight", "update", "snapshot", "build", "built", "mesa",
+                                           "ctest", "ctest", "tidy"], calls
+    assert calls[5][1].endswith(f"built.cmd {head_sha} 0; exit $LASTEXITCODE"), calls[5]
+    assert "within 60 s" in result.stdout, result.stdout
     assert "[PASS] snapshot-check" in result.stdout, result.stdout
-    assert calls[0][1] == "$root = 'C:\\Users\\marc\\dusk-audit-win'; $coldGb = '11'; $warmGb = '6'", calls[0]
+    assert calls[1][1] == "$root = 'C:\\Users\\marc\\dusk-audit-win'; $coldGb = '11'; $warmGb = '6'", calls[1]
     assert "[PASS] footprint" in result.stdout, result.stdout
     assert "warm tree C:\\Users\\marc\\dusk-audit-win 3.0 GB, C:\\ 10.0 GB free" in result.stdout, result.stdout
     assert "tree parts: src 2.0 GB; src\\build-tests 1.5 GB" in result.stdout, result.stdout
-    update = calls[1][1]
+    update = calls[2][1]
     assert f"update.cmd {head_sha} {base_sha} C:\\Users\\marc\\dusk-audit-win\\regress\\head.bundle; exit $LASTEXITCODE" in update, update
     assert (copied / "head.bundle").exists()
     for script in ("update.cmd", "build.cmd", "env.cmd", "verify-mesa.ps1"):
@@ -810,7 +876,7 @@ for arg in sys.argv[1:-1]:
 
     result, calls = windows_source({"REGRESS_TEST_BUILD_FAIL": "1"})
     assert result.returncode != 0, result.stdout
-    assert [kind for kind, _ in calls] == ["preflight", "update", "snapshot", "build", "tidy"], calls
+    assert [kind for kind, _ in calls] == ["clock", "preflight", "update", "snapshot", "build", "tidy"], calls
     assert "FAIL   build" in result.stdout and "1 errors, first a.cpp(1): error C2065" in result.stdout, result.stdout
     for leg in ("mesa", "ctest-inventory", "ctest"):
         assert f"SKIP   {leg} " in result.stdout, (leg, result.stdout)
@@ -833,7 +899,36 @@ for arg in sys.argv[1:-1]:
     result, calls = windows_source({"DUSK_REGRESS_WIN_FREE_WARM_GB": "lots"})
     assert result.returncode != 0 and not calls, (result.stdout, calls)
     result, calls = windows_source({"DUSK_REGRESS_WIN_FREE_COLD_GB": "45", "DUSK_REGRESS_WIN_FREE_WARM_GB": "12"})
-    assert calls[0][1].endswith("$coldGb = '45'; $warmGb = '12'"), calls[0]
+    assert calls[1][1].endswith("$coldGb = '45'; $warmGb = '12'"), calls[1]
+
+    # A guest clock hours off refuses the run before anything in the tree moves;
+    # one inside the margin passes.
+    result, calls = windows_source({"REGRESS_TEST_CLOCK_SKEW": str(3 * 3600)})
+    assert result.returncode != 0 and [kind for kind, _ in calls] == ["clock"], (result.stdout, calls)
+    assert "the guest's clock reads" in result.stderr and "this box's" in result.stderr, result.stderr
+    assert "10800 s (3 h 00 min) ahead" in result.stderr and "set the guest's time zone to the host's" in result.stderr, \
+        result.stderr
+    result, calls = windows_source({"REGRESS_TEST_CLOCK_SKEW": "-7200"})
+    assert result.returncode != 0 and [kind for kind, _ in calls] == ["clock"], (result.stdout, calls)
+    assert "7200 s (2 h 00 min) behind" in result.stderr, result.stderr
+    result, calls = windows_source({"REGRESS_TEST_CLOCK_SKEW": "30"})
+    assert result.returncode == 0, (result.stdout, result.stderr)
+
+    # A build that did no work is checked against the commit the tree last
+    # built; a stale one fails the build and skips what would test it.
+    result, calls = windows_source({"REGRESS_TEST_NOWORK": "1"})
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    built = next(command for kind, command in calls if kind == "built")
+    assert built.endswith(f"built.cmd {head_sha} 1; exit $LASTEXITCODE"), built
+    result, calls = windows_source({"REGRESS_TEST_NOWORK": "1", "REGRESS_TEST_STALE": "1"})
+    assert result.returncode != 0 and "FAIL   build" in result.stdout, result.stdout
+    assert "ninja did no work, but files the build reads changed" in result.stdout.split("FAIL   build", 1)[1], result.stdout
+    assert [kind for kind, _ in calls][-2:] == ["built", "tidy"], calls
+    for leg in ("mesa", "ctest-inventory", "ctest"):
+        assert f"SKIP   {leg} " in result.stdout, (leg, result.stdout)
+    result, calls = windows_source({"REGRESS_TEST_NOWORK": "1", "REGRESS_TEST_BUILT_UNKNOWN": "1"})
+    assert result.returncode == 0 and "WARN   build" in result.stdout, result.stdout
+    assert "ctest" in [kind for kind, _ in calls], ("a WARN build stopped the run", calls)
 
     shutil.copyfile(repo / "scripts/regress/clean.sh", win_runners / "clean.sh")
 
@@ -865,7 +960,7 @@ for arg in sys.argv[1:-1]:
     git("checkout", "-q", "--detach", base_sha)
     result, calls = windows_source({})
     assert result.returncode == 0, (result.stdout, result.stderr)
-    assert f"update.cmd {base_sha} {base_sha}; exit" in calls[1][1], calls[1]
+    assert f"update.cmd {base_sha} {base_sha}; exit" in calls[2][1], calls[2]
     git("checkout", "-q", "--detach", head_sha)
 
     for arguments in (["--msi", "x.msi"], ["--fixtures-run", "1"], ["--release-run", "1"]):
@@ -1046,6 +1141,8 @@ regress_capture_leg /opt/under-test/DuskStudio
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     (slots / "regress-live-333/pid").write_text(f"{live.pid}\n")
     (slots / "configure-016-selection.sh").write_text("not the runner's\n")
+    (slots / "source-claim-111").write_text("regress-gone-1\n")
+    (slots / "source-claim-222").write_text("regress-live-333\n")
     for name, marked in (("20261021-223044", False), ("20261115-123300", True), ("notes", False),
                          ("20261116-000001", True), ("20261116-000002", True), ("20261116-000003", True)):
         (node / "dusk-regress-pkg" / name).mkdir(parents=True)
@@ -1109,14 +1206,16 @@ regress_capture_leg /opt/under-test/DuskStudio
     try:
         result = clean_mac()
         assert result.returncode == 1 and "[FAIL] clean" in result.stdout, (result.stdout, result.stderr)
-        assert "6 removed" in result.stdout, result.stdout
+        assert "7 removed" in result.stdout, result.stdout
+        assert "removed the source claim" in result.stdout and "source-claim-111" in result.stdout, result.stdout
+        assert "warn: left alone, the claim" in result.stdout and "source-claim-222" in result.stdout, result.stdout
         assert "dusk-studio-regress is checked out on regress-deadbeef" in result.stdout, result.stdout
         assert "warn: left alone, process group" in result.stdout and "no longer this run's" in result.stdout, result.stdout
         for why in ("its caffeinate", "which it started, is alive", "still mounted"):
             assert f"error: left alone, " in result.stdout and why in result.stdout, (why, result.stdout)
         assert running(caffeinate.pid) and running(recycled.pid), "the clean signalled a process"
         assert sorted(p.name for p in slots.iterdir()) == \
-            ["configure-016-selection.sh", "other", "regress-live-333", "regress-recycled-444"]
+            ["configure-016-selection.sh", "other", "regress-live-333", "regress-recycled-444", "source-claim-222"]
         assert sorted(p.name for p in pkg.iterdir()) == \
             ["20261116-000001", "20261116-000002", "20261116-000003", "notes"]
         branches = git(checkout, "for-each-ref", "--format=%(refname:short)", "refs/heads").split()
@@ -1130,7 +1229,8 @@ regress_capture_leg /opt/under-test/DuskStudio
         result = clean_mac()
         assert result.returncode == 0 and "[WARN] clean" in result.stdout, (result.stdout, result.stderr)
         assert "4 removed" in result.stdout and "checked out on regress-a772befe" in result.stdout, result.stdout
-        assert sorted(p.name for p in slots.iterdir()) == ["configure-016-selection.sh", "other", "regress-live-333"]
+        assert sorted(p.name for p in slots.iterdir()) == \
+            ["configure-016-selection.sh", "other", "regress-live-333", "source-claim-222"]
         assert sorted(p.name for p in pkg.iterdir()) == ["notes"]
     finally:
         for process in (live, caffeinate, recycled):
@@ -1150,6 +1250,15 @@ regress_capture_leg /opt/under-test/DuskStudio
         assert needle in preflight, ("preflight.ps1 lost its ownership check", needle)
     assert preflight.index("Remove-RegressTree $leftover") < preflight.index("Get-RegressFree $root"), \
         "preflight measures the free space before it tidies"
+    for needle in ("Get-RegressFutureFiles $root", "Remove-RegressTree $build", "LastWriteTimeUtc = $now"):
+        assert needle in preflight, ("preflight lost its future-stamp handling", needle)
+    assert preflight.index("Get-RegressFutureFiles") < preflight.index("Get-RegressFree $root"), \
+        "preflight measures the free space before it removes a stale build"
+    check = (source / "built-check.ps1").read_text()
+    for needle in ("diff --name-only $prev $Head", "build.ninja", "-t deps", "exit 1"):
+        assert needle in check, ("built-check.ps1 lost a part of its check", needle)
+    assert check.index("exit 1") < check.rindex("Save-Built"), "a stale build is recorded as built"
+    assert "built-check.ps1" in (source / "built.cmd").read_text()
     clean_ps = (source / "clean.ps1").read_text()
     for needle in ("Test-Path -LiteralPath $rgMarker -PathType Leaf", "Remove-RegressTree $root '.dusk-regress-tree'",
                    "'.dusk-regress-run'", "Remove-RegressTree $run.FullName '.dusk-regress-run'"):

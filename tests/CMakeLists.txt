@@ -1348,7 +1348,7 @@ if(UNIX)
                 COMMAND "${Python3_EXECUTABLE}"
                         "${CMAKE_CURRENT_SOURCE_DIR}/regress_orchestration.py"
                         "${CMAKE_SOURCE_DIR}")
-            set_tests_properties(regression-runner-contract PROPERTIES TIMEOUT 120)
+            set_tests_properties(regression-runner-contract PROPERTIES TIMEOUT 240)
         endif()
         add_test(NAME release-mechanics-contract
             COMMAND "${DUSKSTUDIO_BASH_EXECUTABLE}"

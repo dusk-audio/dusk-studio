@@ -23,6 +23,11 @@ WIN_KEY="${DUSK_REGRESS_WIN_KEY:-${HOME}/.ssh/dusk_winvm}"
 WIN_ROOT="${DUSK_REGRESS_WIN_ROOT:-${DEFAULT_ROOT}}"
 FREE_COLD_GB="${DUSK_REGRESS_WIN_FREE_COLD_GB:-$(regress_floor_cold "$REGRESS_WIN_TREE_GB")}"
 FREE_WARM_GB="${DUSK_REGRESS_WIN_FREE_WARM_GB:-$(regress_floor_warm "$REGRESS_WIN_RUN_GB")}"
+# How far the guest's clock may be from this box's, in seconds. A guest whose
+# real-time clock keeps the host's local time under another time zone is off by
+# whole hours; drift between two time syncs is seconds, and the ssh round trip
+# is measured around the reading, not counted against it.
+CLOCK_MARGIN=60
 SSH_OPTS=(-i "$WIN_KEY" -o BatchMode=yes -o ConnectTimeout=15
     -o ServerAliveInterval=30 -o ServerAliveCountMax=4)
 
@@ -101,7 +106,40 @@ last_leg() {
 
 # The guest reads the cmd scripts with CRLF line ends whatever this checkout
 # has them as.
+# A guest clock that is off by hours stamps the build later than the sources
+# checked out once it has synced and stepped back, and ninja then builds nothing.
+check_guest_clock() {
+    local before after guest log="${RUN_DIR}/clock.log" off
+    before="$(date +%s%3N)"
+    win_run 120 "$(remote_ps "${SOURCE_DIR}/clock.ps1")" >"$log" 2>&1 || { cat "$log"; return 1; }
+    after="$(date +%s%3N)"
+    guest="$(tr -d '\r' <"$log" | sed -n 's/^regress:utc \([0-9]*\)$/\1/p' | tail -1)"
+    if [[ -z "$guest" ]]; then
+        cat "$log"
+        echo "error: the guest did not report its clock" >&2
+        return 1
+    fi
+    off=0
+    ((guest >= before - CLOCK_MARGIN * 1000)) || off=$((guest - before))
+    ((guest <= after + CLOCK_MARGIN * 1000)) || off=$((guest - after))
+    local guest_text host_text
+    guest_text="$(date -u -d "@$((guest / 1000))" '+%F %T UTC')"
+    host_text="$(date -u -d "@$((after / 1000))" '+%F %T UTC')"
+    if ((off != 0)); then
+        local apart
+        apart="$(awk -v ms="$((guest - (before + after) / 2))" 'BEGIN {
+            s = ms / 1000; way = s < 0 ? "behind" : "ahead"; if (s < 0) s = -s
+            m = int(s / 60 + 0.5); printf "%.0f s (%d h %02d min) %s", s, int(m / 60), m % 60, way }')"
+        echo "error: the guest's clock reads ${guest_text} and this box's ${host_text}: the guest is ${apart}, more than the ${CLOCK_MARGIN} s allowed." \
+            "A guest whose real-time clock keeps local time under another time zone runs that far off from boot until its first time sync." \
+            "Wait for that sync, or set the guest's time zone to the host's; the runner does not change the guest's settings." >&2
+        return 1
+    fi
+    echo "guest clock ${guest_text}, this box ${host_text}: within ${CLOCK_MARGIN} s"
+}
+
 leg_preflight() {
+    check_guest_clock || return 1
     win_run 600 "$(remote_ps "${SOURCE_DIR}/preflight.ps1" coldGb="$FREE_COLD_GB" warmGb="$FREE_WARM_GB")" \
         || return 1
     mkdir "${RUN_DIR}/stage"
@@ -146,6 +184,18 @@ build_leg() {
             note="${note}: ${count:-0} errors${first:+, first ${first##*\\src\\}}"
         fi
         regress_record build FAIL "$((SECONDS - start))" "$note"
+        return 0
+    fi
+    # The build passed; whether it built this commit is built.cmd's question.
+    local nowork=0 check="${RUN_DIR}/built.log" check_rc=0
+    if tr -d '\r' <"$log" | grep -q '^ninja: no work to do\.$'; then nowork=1; fi
+    win_run 900 "$(remote_cmd built.cmd "$HEAD_SHA" "$nowork")" >"$check" 2>&1 || check_rc=$?
+    tr -d '\r' <"$check"
+    note="$(tr -d '\r' <"$check" | grep -m1 -E '^(error|warn): ' || true)"
+    if ((check_rc != 0)); then
+        regress_record build FAIL "$((SECONDS - start))" "${note:-the built-commit check exited ${check_rc}}"
+    elif [[ "$note" == warn:* ]]; then
+        regress_record build WARN "$((SECONDS - start))" "$note"
     else
         regress_record build PASS "$((SECONDS - start))"
     fi
@@ -266,12 +316,12 @@ regress_leg "update" leg_update
 if [[ "$(last_leg)" == PASS ]]; then
     regress_leg "snapshot-check" leg_snapshot
     build_leg
-    if [[ "$(last_leg)" == PASS ]]; then
+    if [[ "$(last_leg)" != FAIL ]]; then
         regress_leg "mesa" leg_mesa
         regress_leg "ctest-inventory" leg_ctest_inventory
         ctest_leg
     else
-        for leg in mesa ctest-inventory ctest; do regress_skip "$leg" "the build failed"; done
+        for leg in mesa ctest-inventory ctest; do regress_skip "$leg" "the build failed, or is not this commit's"; done
     fi
 else
     for leg in snapshot-check build mesa ctest-inventory ctest; do regress_skip "$leg" "the update failed"; done

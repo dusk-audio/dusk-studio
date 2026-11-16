@@ -89,6 +89,26 @@ function Remove-RegressTree([string]$path, [string]$marker = '') {
   return $false
 }
 
+# Every file under <path> stamped later than <limit> (UTC), without following a
+# link. EnumerateFileSystemInfos throws on a folder it cannot list, which is
+# skipped rather than ending the walk.
+function Get-RegressFutureFiles([string]$path, [DateTime]$limit) {
+  $found = New-Object 'Collections.Generic.List[IO.FileInfo]'
+  if (-not (Test-Path -LiteralPath $path -PathType Container)) { return , $found }
+  $stack = New-Object 'Collections.Generic.Stack[IO.DirectoryInfo]'
+  $stack.Push((New-Object IO.DirectoryInfo $path))
+  while ($stack.Count -gt 0) {
+    $dir = $stack.Pop()
+    try { $entries = @($dir.EnumerateFileSystemInfos()) } catch { continue }
+    foreach ($entry in $entries) {
+      if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { continue }
+      if ($entry -is [IO.DirectoryInfo]) { $stack.Push($entry) }
+      elseif ($entry.LastWriteTimeUtc -gt $limit) { $found.Add($entry) }
+    }
+  }
+  return , $found
+}
+
 # The tree's size by top-level entry, then the free space on its drive, as
 # lines the host reads: regress:part <name> <bytes>, regress:footprint <tree
 # bytes> <free bytes> <drive>.

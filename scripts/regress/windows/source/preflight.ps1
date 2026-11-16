@@ -45,6 +45,34 @@ foreach ($leftover in @((Join-Path $root 'tmp'), (Join-Path $root 'regress'))) {
   if (-not (Remove-RegressTree $leftover)) { "error: could not remove $leftover"; exit 1 }
   if ($bytes -gt 0) { "removed {0} ({1})" -f $leftover, (Format-RegressGb $bytes) }
 }
+# A guest whose clock ran ahead (the host compared the two before this) leaves
+# build outputs stamped later than any source checked out after the clock steps
+# back, and ninja then takes the stale build for current: the build goes and
+# this run builds from nothing. Sources and dependencies stamped in the future
+# are only stamped back to now, which costs their objects one rebuild instead
+# of one on every run until that time has passed.
+$now = [DateTime]::UtcNow
+$future = Get-RegressFutureFiles $root $now.AddSeconds(60)
+if ($future.Count -gt 0) {
+  $build = Join-Path $root 'src\build-tests'
+  $buildPrefix = $build + '\'
+  $inBuild = @($future | Where-Object { $_.FullName.StartsWith($buildPrefix, [StringComparison]::OrdinalIgnoreCase) })
+  $latest = ($future | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1).LastWriteTimeUtc
+  if ($inBuild.Count -gt 0) {
+    "warn: {1} holds files stamped as late as {2:yyyy-MM-dd HH:mm:ss} UTC ({0} of them), after the guest's now, {3:yyyy-MM-dd HH:mm:ss} UTC: ninja would take them for newer than anything checked out today and build nothing. REMOVING {1}; this run builds from nothing." -f $inBuild.Count, $build, $latest, $now
+    if (-not (Remove-RegressTree $build)) { "error: could not remove $build"; exit 1 }
+  }
+  $stale = @($future | Where-Object {
+    -not $_.FullName.StartsWith($buildPrefix, [StringComparison]::OrdinalIgnoreCase) -and $_.FullName -notmatch '\\\.git(\\|$)'
+  })
+  $reset = 0
+  foreach ($file in $stale) {
+    try { $file.LastWriteTimeUtc = $now; $reset++ } catch { }
+  }
+  if ($stale.Count -gt 0) {
+    "warn: sources and dependencies were stamped as late as {1:yyyy-MM-dd HH:mm:ss} UTC ({0} in all, {2} of them stamped back to now), so their objects rebuild once rather than on every run until then" -f $stale.Count, $latest, $reset
+  }
+}
 # Windows Search indexes everything under the profile, the tree too; what is
 # created under a folder carrying this attribute inherits it.
 try {

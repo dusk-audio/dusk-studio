@@ -51,6 +51,22 @@ for run in "$base"/regress-*; do
     remove "the run folder" "$run"
 done
 
+# A source run's claim on a checkout names its run folder; with the folder gone
+# the claim is a leftover. The mutex around claiming is held for a moment only.
+for claim in "$base"/source-claim-*; do
+    [[ -f "$claim" ]] || continue
+    holder=""
+    read -r holder <"$claim" || true
+    if [[ -n "$holder" && -d "$base/$holder" ]]; then
+        echo "warn: left alone, the claim $claim of $holder, whose run folder is still there"
+    else
+        remove "the source claim" "$claim"
+    fi
+done
+if [[ -d "$base/source-claim.lock" && -n "$(find "$base/source-claim.lock" -maxdepth 0 -mmin +1 2>/dev/null)" ]]; then
+    rmdir "$base/source-claim.lock" && echo "removed the stale claim mutex $base/source-claim.lock"
+fi
+
 pkg="$HOME/dusk-regress-pkg"
 for run in "$pkg"/*; do
     [[ -d "$run" ]] || continue
