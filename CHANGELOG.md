@@ -33,8 +33,8 @@ canonical source.
   a loop take included. Opening a session, every save and every autosave
   write each MIDI track to `midi/tracks/`: a playing file with the regions
   that play and, when the track has muted regions or previous takes, a takes
-  file with those. Files are written on a thread of their own and never
-  replaced. On a volume that can neither rename without replacing nor make
+  file with those. Take and track files are written on a thread of their own
+  and never replaced. On a volume that can neither rename without replacing nor make
   hard links, such as an exFAT drive on macOS, that holds for Dusk Studio's
   own writes only, and the same goes for session backups. Importing a
   track's playing file at the start of the timeline puts its notes back

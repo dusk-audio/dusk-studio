@@ -2352,7 +2352,7 @@ A session keeps three kinds of copies of itself, so a crash, a damaged `session.
 - `backups/` holds a copy of `session.json` from each save.
 - `midi/` holds the session's MIDI as Standard MIDI Files, which other MIDI software reads too.
 
-Dusk Studio never writes a backup or a MIDI recovery file over a file that is already there, even one another program creates under the same name at the same moment. A few volumes, such as an exFAT drive on macOS, can neither rename a file without replacing one nor make hard links, which that needs. There Dusk Studio checks that the name is free just before it moves the finished file into place, so its own writes still never replace a file, but another program's file made in between could be replaced.
+Dusk Studio never writes a backup, a take file or a track file over a file that is already there, even one another program creates under the same name at the same moment. A live checkpoint in `midi/recording/` takes a name no file has when it is first written, and from then on replaces only its own earlier copy. A few volumes, such as an exFAT drive on macOS, can neither rename a file without replacing one nor make hard links, which that needs. There Dusk Studio checks that the name is free just before it moves a new file into place. That keeps it from replacing any file it can see, but a file another program makes in that instant could be replaced.
 
 When `session.json` will not open, the **Session won't open** alert offers the autosave and the newest backup; see *Messages*.
 
