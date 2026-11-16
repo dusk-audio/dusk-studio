@@ -2,6 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$repo_root/scripts/regress/common.sh"
 source "$repo_root/scripts/regress/xvfb.sh"
 source "$repo_root/scripts/regress/scenarios.sh"
 app="${1:-$repo_root/build/DuskStudio_artefacts/Release/DuskStudio}"
@@ -19,7 +20,7 @@ case "$beta_format" in
     *) printf 'Usage: %s [app] [LV2|CLAP]\n' "$0" >&2; exit 2 ;;
 esac
 scratch="$(mktemp -d "${TMPDIR:-/tmp}/dusk-plugin-picker.XXXXXX")"
-trap 'xvfb_session_stop; rm -rf "$scratch"' EXIT
+trap 'xvfb_session_stop; sandbox_remove "$scratch"' EXIT
 
 for attempt in 1 2 3; do
     run_dir="$scratch/$attempt"

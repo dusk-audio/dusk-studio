@@ -332,6 +332,7 @@ PY
 sandboxed() {
     local dir rc=0
     dir="$(mktemp -d "${TMPDIR:-/tmp}/duskstudio-regress.XXXXXX")" || return 1
+    regress_at_exit "sandbox_remove $(printf '%q' "$dir")"
     if sandbox_env "$dir"; then
         (
             export "${SANDBOX_ENV[@]}"
@@ -341,7 +342,7 @@ sandboxed() {
     else
         rc=1
     fi
-    rm -rf "$dir"
+    sandbox_remove "$dir"
     return "$rc"
 }
 
@@ -384,8 +385,7 @@ INSTALL_ENV=()
 
 package_cleanup() {
     [[ -n "$PACKAGE_DIR" ]] || return 0
-    chmod -R u+rwX "$PACKAGE_DIR" 2>/dev/null || true
-    rm -rf "$PACKAGE_DIR"
+    sandbox_remove "$PACKAGE_DIR"
 }
 
 # The asset label package-tarball.sh gives this machine's architecture.
