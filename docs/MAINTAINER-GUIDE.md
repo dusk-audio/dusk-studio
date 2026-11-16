@@ -605,7 +605,7 @@ runs and are cleaned at its end (below).
 | Air, source leg | `~/.cache/dusk-regress/regress-<8 hex>-<pid>/`: a pid file while a leg runs, and `t/`, the `TMPDIR` of every leg; the checkout's claim, `~/.cache/dusk-regress/source-claim-<checksum>`; the `regress-<sha>` branch it pushes | the run's `footprint` leg, or its exit, Ctrl-C included once the cancel is acknowledged; the branch when the node goes back to its previous branch | the node's own `build/` and `build-tests/`, and DAF moved to `DAF_REV` |
 | Air, package leg | `~/dusk-regress-pkg/<timestamp>/` (marker `.dusk-regress-run`), each launch's `TMPDIR` inside it; a `regress-pkg-<sha>` branch for a moment | the `footprint` leg, and the run's exit, Ctrl-C included | `/Applications/DuskStudio.app` and the fixture worktree `~/src/dusk-studio-regress` with its `build-tests/` |
 | Guest, source leg | `<tree>\regress\` with `head.bundle`, and `<tree>\tmp\`, the `TEMP` and `TMP` of every step | the `footprint` leg removes the bundle and `tmp`; after Ctrl-C the next preflight does | the tree, `C:\Users\marc\dusk-audit-win` (marker `.dusk-regress-tree`), with the commit it last built in `stamps\built-commit` |
-| Guest, package leg | `%LOCALAPPDATA%\dusk-regress-<timestamp>\` (marker `.dusk-regress-run`), each launch's `TEMP` and the app's log and crash reports inside it | `run-cleanup`, which first sends the folder's logs, phase 4's logs and every launch's app log and `crash-*.txt` here (`posts/guest-*`); a folder whose evidence it could not read or send (a refused read, a failed post, or more than 64 MB) is kept, named under `left in the guest:`, and fails the leg. A folder that still holds Notepad's saved session, which phase 4 did not put back, is kept the same way. A later run names an earlier run's folder under `left in the guest:` and leaves it; a clean removes it | the installed package (uninstalling needs a UAC prompt), and the `temp_*` and `dusk-*` entries that appeared in the account's `TEMP` while phase 4 ran |
+| Guest, package leg | `%LOCALAPPDATA%\dusk-regress-<timestamp>\` (marker `.dusk-regress-run`), each launch's `TEMP` and the app's log and crash reports inside it | `run-cleanup`, which first sends the folder's logs, phase 4's logs and every launch's app log and `crash-*.txt` here (`posts/guest-*`); a folder whose evidence it could not read or send (a refused read, a failed post, or more than 64 MB) is kept, named under `left in the guest:`, and fails the leg. A folder that still holds Notepad's saved session, which phase 4 did not put back, is kept the same way. A later run names an earlier run's folder under `left in the guest:` and leaves it; a clean removes it only after any saved Notepad session has been restored and its backup removed | the installed package (uninstalling needs a UAC prompt), and the `temp_*` and `dusk-*` entries that appeared in the account's `TEMP` while phase 4 ran |
 
 Phase 4 starts the app from Explorer, and Explorer hands it the account's own
 `TEMP`, so whatever temp folders the app leaves (#1003, #1023) land there. The
@@ -1399,8 +1399,13 @@ Each run folder carries a
 `.dusk-regress-run` marker. `run-cleanup` removes it at the end of the run.
 One it kept, for evidence that never reached this box or for Notepad's saved
 session, or one a run left that never reached `run-cleanup`, stays: the next
-run's install step names it under `left in the guest:`, and
-`scripts/regress.sh clean windows` removes it.
+run's install step names it under `left in the guest:`. After saving any needed
+evidence, `scripts/regress.sh clean windows` removes it unless it still contains
+`activation\notepad-localstate`. Both cleanup commands preserve that backup.
+Close Notepad, copy the backup's contents back into the matching Notepad package's
+`LocalState` folder under `%LOCALAPPDATA%\Packages`, and verify the restored
+session. Only then remove `activation\notepad-localstate` from the run folder
+and run `scripts/regress.sh clean windows` again.
 
 **Fixtures.** The scenarios load the test fixture plug-ins through
 `DUSKSTUDIO_FIXTURE_DIR`, which the guest points at two roots under the run

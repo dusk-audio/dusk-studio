@@ -60,6 +60,50 @@ bb_end 0
     assert result.returncode == 0, (result.stdout, result.stderr)
     assert not any(runner_tmp.iterdir()), "interrupted scenario scratch escaped its sandbox"
 
+    signal_harness = r'''
+set -euo pipefail
+source "$DUSK_REGRESS_TEST_ROOT/scripts/regress/common.sh"
+source "$DUSK_REGRESS_TEST_ROOT/scripts/regress/scenarios.sh"
+APP_BIN=/bin/true
+xvfb_run() {
+    printf '%s\n%s\n%s\n' "$BASHPID" "$dir" "$(readlink "$dir/runtime")" > "$SIGNAL_READY"
+    if [[ -n "$SIGNAL_FINISH" ]]; then return "$SIGNAL_FINISH"; fi
+    read -r _ < "$SIGNAL_GATE"
+}
+if [[ "$SIGNAL_CALLER" == substitution ]]; then
+    output="$(sandboxed_app_run 60 list)"
+else
+    sandboxed_app_run 60 list &
+    wait $!
+fi
+'''
+    for caller, finish in ((caller, finish) for caller in ("substitution", "background") for finish in ("", "0", "42")):
+        ready = root / f"signal-{caller}-{finish}.ready"
+        gate = root / f"signal-{caller}-{finish}.gate"
+        os.mkfifo(gate)
+        with os.fdopen(os.open(gate, os.O_RDWR), "w"):
+            launched = subprocess.Popen(
+                ["bash", "-c", signal_harness], start_new_session=True,
+                env=dict(child_environment, DUSK_REGRESS_TEST_ROOT=str(repo),
+                         SIGNAL_CALLER=caller, SIGNAL_READY=str(ready), SIGNAL_GATE=str(gate), SIGNAL_FINISH=finish,
+                         DUSK_REGRESS_SCENARIO_KEEP="0"),
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            paths = []
+            try:
+                wait_for(lambda: ready.exists() and len(ready.read_text().splitlines()) == 3)
+                pid, *paths = ready.read_text().splitlines()
+                if not finish:
+                    os.kill(int(pid), signal.SIGTERM)
+                stdout, stderr = launched.communicate(timeout=10)
+                assert launched.returncode == (int(finish) if finish else 143), (caller, finish, launched.returncode, stdout, stderr)
+                assert not any(Path(path).exists() for path in paths), (caller, paths)
+            finally:
+                if launched.poll() is None:
+                    os.killpg(launched.pid, signal.SIGKILL)
+                launched.wait()
+                for path in paths:
+                    shutil.rmtree(path, ignore_errors=True)
+
     # The app binds $XDG_RUNTIME_DIR/dusk-studio/instance-<16 hex>.sock, so a
     # launch gets its single-instance slot only while that fits sun_path.
     long_tmp = runner_tmp / ("a-folder-name-long-enough-to-overrun-a-single-instance-socket-" + "x" * 32)
@@ -759,6 +803,73 @@ else:
     # that took the claim over in between keeps it.
     claim_lock_file = remote_home / ".cache/dusk-regress/source-claim.lock"
 
+    mac_source = (runners / "mac.sh").read_text()
+    wait_marker = '''if (my $ready = $ENV{REGRESS_TEST_LOCK_WAIT}) {
+                    open(my $out, ">", $ready) or die $!;
+                    print $out "waiting\\n";
+                    close($out);
+                }
+                exit 1 if time > $until;'''
+    assert mac_source.count("exit 1 if time > $until;") == 1
+    (runners / "mac.sh").write_text(mac_source.replace("exit 1 if time > $until;", wait_marker))
+
+    lock_probe = root / "probe-claim-lock.py"
+    lock_probe.write_text('''import fcntl, sys
+with open(sys.argv[1], "a") as handle:
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        held = False
+    except BlockingIOError:
+        held = True
+    assert held == (sys.argv[2] == "held"), "claim transition did not hold the lock"
+''')
+    lock_functions = mac_source.split("MAC_CLAIM_LOCK=$(cat <<'REMOTE'\n", 1)[1].split("\nREMOTE\n", 1)[0]
+    supervisor = mac_source.split("MAC_SUPERVISOR=$(cat <<'REMOTE'\n", 1)[1].split("\nREMOTE\n", 1)[0]
+    probe = 'python3 "$REGRESS_TEST_LOCK_PROBE" "$HOME/.cache/dusk-regress/source-claim.lock" held\n'
+    supervisor = supervisor.replace('    holder=""\n', "    " + probe + '    holder=""\n', 1)
+    publish_pid = "printf '%s\\n' \"$$\" >\"$slot/pid\"\n"
+    assert publish_pid in supervisor
+    supervisor = supervisor.replace(publish_pid, publish_pid + probe, 1)
+    holder.mkdir()
+    claim_file.write_text(holder.name + "\n")
+    stamp = time.time() - 660
+    os.utime(holder, (stamp, stamp))
+    try:
+        result = subprocess.run(
+            ["/bin/bash", "-c", lock_functions + "\n" + supervisor, "dusk-regress", holder.name],
+            input='python3 "$REGRESS_TEST_LOCK_PROBE" "$HOME/.cache/dusk-regress/source-claim.lock" free\n',
+            env=dict(environment, REGRESS_SOURCE=str(configured_source), REGRESS_DAF=str(configured_daf),
+                     REGRESS_CONFIGURE=str(configured_helper), REGRESS_BUILD=str(app_build),
+                     REGRESS_TEST_BUILD=str(test_build), REGRESS_CLAIMED="1",
+                     REGRESS_TEST_LOCK_PROBE=str(lock_probe)),
+            start_new_session=True, capture_output=True, text=True, timeout=10)
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        assert time.time() - holder.stat().st_mtime < 30, "call startup did not refresh the run"
+        interrupted_unlock = lock_functions.replace("claim_unlock() {", "release_held_claim() {") + r'''
+claim_unlock() {
+    release_held_claim
+    if [[ "${REGRESS_TEST_INTERRUPT_UNLOCK:-}" == 1 ]]; then
+        REGRESS_TEST_INTERRUPT_UNLOCK=0
+        printf 'successor\n' > "$HOME/.cache/dusk-regress/source-claim.lock"
+        kill -TERM "$BASHPID"
+    fi
+}
+'''
+        result = subprocess.run(
+            ["/bin/bash", "-c", interrupted_unlock + "\n" + supervisor, "dusk-regress", holder.name],
+            input="exit 0\n", start_new_session=True, capture_output=True, text=True, timeout=10,
+            env=dict(environment, REGRESS_SOURCE=str(configured_source), REGRESS_DAF=str(configured_daf),
+                     REGRESS_CONFIGURE=str(configured_helper), REGRESS_BUILD=str(app_build),
+                     REGRESS_TEST_BUILD=str(test_build), REGRESS_CLAIMED="1",
+                     REGRESS_TEST_LOCK_PROBE=str(lock_probe), REGRESS_TEST_INTERRUPT_UNLOCK="1"))
+        assert result.returncode == 143, (result.stdout, result.stderr)
+        assert claim_lock_file.exists() and claim_lock_file.read_text() == "successor\n", \
+            "interrupted unlock removed the successor's lock"
+    finally:
+        shutil.rmtree(holder)
+        claim_file.unlink()
+        claim_lock_file.unlink(missing_ok=True)
+
     def lock_claims():
         handle = open(claim_lock_file, "a")
         fcntl.flock(handle, fcntl.LOCK_EX)
@@ -767,38 +878,44 @@ else:
         return handle
 
     held = lock_claims()
-    waiting = subprocess.Popen(["/bin/bash", str(runners / "mac.sh")], env=environment,
+    lock_waiting = root / "claim-lock-waiting"
+    waiting = subprocess.Popen(["/bin/bash", str(runners / "mac.sh")],
+                               env=dict(environment, REGRESS_TEST_LOCK_WAIT=str(lock_waiting)),
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     try:
-        time.sleep(2)
+        wait_for(lock_waiting.exists, "the child never attempted the held claim lock")
         assert waiting.poll() is None and not claim_file.exists(), \
             ("a run claimed the checkout while another held the claim lock", waiting.poll())
     finally:
         held.close()
+        if sys.exc_info()[0] is not None:
+            waiting.terminate()
+            waiting.communicate(timeout=20)
     stdout, stderr = waiting.communicate(timeout=60)
     assert waiting.returncode == 0 and "claimed " in stdout, (stdout, stderr)
     assert not run_folders(remote_home), run_folders(remote_home)
 
     held = None
+    lock_waiting.unlink()
     release_at = root / "claim-release-hold"
     releasing = subprocess.Popen(["/bin/bash", str(runners / "mac.sh")],
-                                 env=dict(environment, REGRESS_TEST_HOLD=str(release_at)),
+                                 env=dict(environment, REGRESS_TEST_HOLD=str(release_at),
+                                          REGRESS_TEST_LOCK_WAIT=str(lock_waiting)),
                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     try:
         wait_for(lambda: claim_file.exists() and not claim_lock_file.exists(), "the run did not claim the checkout")
-        run_folder = remote_home / ".cache/dusk-regress" / claim_file.read_text().strip()
         held = lock_claims()
         release_at.touch()
-        deadline = time.monotonic() + 60
-        while run_folder.exists() and releasing.poll() is None and time.monotonic() < deadline:
-            time.sleep(0.05)
-        time.sleep(1)
+        wait_for(lock_waiting.exists, "the release never attempted the held claim lock")
         assert releasing.poll() is None and claim_file.exists(), \
             ("the run let go of its claim without the claim lock", releasing.poll())
     finally:
         if held is not None:
             held.close()
         release_at.touch()
+        if sys.exc_info()[0] is not None:
+            releasing.terminate()
+            releasing.communicate(timeout=20)
     stdout, stderr = releasing.communicate(timeout=60)
     release_at.unlink()
     assert releasing.returncode == 0, (stdout, stderr)

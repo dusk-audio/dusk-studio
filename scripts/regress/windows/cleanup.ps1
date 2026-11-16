@@ -35,26 +35,25 @@ try {
     # app's own log and crash reports. All of it reaches the host, under a name
     # that says where it came from, before the folder goes.
     $rgEvidence = @()
+    $rgKeep = $false
     if (Test-Path -LiteralPath $rgRoot) {
-        foreach ($f in @(Get-ChildItem -LiteralPath $rgRoot -File -Filter '*.log' -ErrorAction SilentlyContinue)) {
-            $rgEvidence += @{ File = $f; Name = 'guest-' + $f.Name }
+        $rgWalk = Get-RegressFutureFiles $rgRoot ([DateTime]::MinValue)
+        foreach ($dir in $rgWalk.Unlisted) {
+            $rgLeft += "could not list evidence in $dir"
+            $rgKeep = $true
         }
-        foreach ($f in @(Get-ChildItem -LiteralPath "$rgRoot\activation" -Recurse -File -Filter '*.log' -Force -ErrorAction SilentlyContinue)) {
-            $rel = $f.FullName.Substring("$rgRoot\activation".Length + 1)
-            $rgEvidence += @{ File = $f; Name = "guest-activation-$rel" -replace '[^A-Za-z0-9._-]', '_' }
-        }
-        foreach ($launch in @(Get-ChildItem -LiteralPath "$rgRoot\launch" -Directory -ErrorAction SilentlyContinue)) {
-            $rgFound = @(Get-ChildItem -LiteralPath $launch.FullName -Recurse -File -Force -ErrorAction SilentlyContinue |
-                Where-Object { ($_.Name -like '*.log' -and $_.FullName -like '*\config\*') -or $_.Name -like 'crash-*.txt' })
-            foreach ($f in $rgFound) {
-                $rel = $f.FullName.Substring($launch.FullName.Length + 1) -replace '[^A-Za-z0-9._-]', '_'
-                $rgEvidence += @{ File = $f; Name = "guest-launch-$($launch.Name)-$rel" -replace '[^A-Za-z0-9._-]', '_' }
+        foreach ($f in $rgWalk.Files) {
+            $plain = Get-RegressPlainPath $f.FullName
+            $rel = $plain.Substring($rgRoot.TrimEnd('\').Length + 1)
+            if (($rel -notmatch '\\' -and $f.Name -like '*.log') -or
+                $rel -like 'activation\*.log' -or
+                ($rel -like 'launch\*' -and (($f.Name -like '*.log' -and $plain -like '*\config\*') -or $f.Name -like 'crash-*.txt'))) {
+                $rgEvidence += @{ File = $f; Name = "guest-$rel" -replace '[^A-Za-z0-9._-]', '_' }
             }
         }
     }
     $rgEvidenceBytes = [long]0
     foreach ($e in $rgEvidence) { $rgEvidenceBytes += $e.File.Length }
-    $rgKeep = $false
     if ($rgEvidenceBytes -gt $rgEvidenceCap) {
         $rgLeft += "the run's logs and crash reports come to {0:N1} MB, over the {1:N0} MB this step sends" -f ($rgEvidenceBytes / 1MB), ($rgEvidenceCap / 1MB)
         $rgKeep = $true
@@ -85,7 +84,7 @@ try {
     }
     if (Test-Path $rgRoot) {
         if ($rgKeep) {
-            $rgLog += "REGRESS-LEFT the run folder $rgRoot, kept because this step failed with what it holds; scripts/regress.sh clean windows removes it once it is no longer needed`n"
+            $rgLog += "REGRESS-LEFT the run folder $rgRoot, kept because this step failed with what it holds; restore any saved Notepad session and preserve needed evidence before scripts/regress.sh clean windows`n"
         } elseif (-not (Test-Path "$rgRoot\.dusk-regress-run")) {
             throw "$rgRoot has no run marker; not removing it"
         } elseif (Remove-RegressTree $rgRoot '.dusk-regress-run') {

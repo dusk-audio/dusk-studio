@@ -255,6 +255,14 @@ function Get-RegressSnapshot {
         ForEach-Object {
             $_.Refresh()
             $rows += "$($_.FullName)|temp|$($_.LastWriteTimeUtc.Ticks)"
+            if ($_.PSIsContainer) {
+                Get-ChildItem -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue |
+                    ForEach-Object {
+                        $_.Refresh()
+                        $len = if ($_.PSIsContainer) { 'dir' } else { $_.Length }
+                        $rows += "$($_.FullName)|$len|$($_.LastWriteTimeUtc.Ticks)"
+                    }
+            }
         }
     return $rows
 }

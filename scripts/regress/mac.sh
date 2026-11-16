@@ -137,7 +137,11 @@ done
 umask 077
 REGRESS_CLAIM="$HOME/.cache/dusk-regress/source-claim-$(printf '%s' "$REGRESS_SOURCE" | cksum | awk '{ print $1 }')"
 export REGRESS_CLAIM
+claim_locked=0
 if [[ "$REGRESS_CLAIMED" == 1 ]]; then
+    claim_lock || { echo "error: could not lock the checkout claim before starting a call" >&2; exit 1; }
+    claim_locked=1
+    trap claim_unlock EXIT
     holder=""
     if [[ -f "$REGRESS_CLAIM" ]]; then read -r holder <"$REGRESS_CLAIM" || true; fi
     [[ "$holder" == "$token" ]] || {
@@ -153,6 +157,7 @@ printf '%s\n' "$REGRESS_SOURCE" >"$slot/source"
 if ((${#slot} + 2 <= 62)); then export TMPDIR="$slot/t"; fi
 cleanup() {
     rc=$?
+    if ((claim_locked)); then claim_unlock; fi
     if ((rc == 0)); then
         rm -f "$slot/pid"
     fi
@@ -165,6 +170,11 @@ pgid=$(ps -o pgid= -p "$$")
 pgid=${pgid//[[:space:]]/}
 [[ "$pgid" == "$$" ]] || exit 70
 printf '%s\n' "$$" >"$slot/pid"
+touch "$slot"
+if ((claim_locked)); then
+    claim_locked=0
+    claim_unlock
+fi
 bash -s
 REMOTE
 )
