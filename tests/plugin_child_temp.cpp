@@ -85,7 +85,7 @@ struct ScanRun
 {
     std::string output;
     bool sawPayloadEnd = false;
-    bool exited = false;   // exited by itself, not by a signal
+    int exitCode = -1;
     std::vector<std::string> created;
 };
 
@@ -142,7 +142,7 @@ ScanRun runScanChild (const std::string& format, const std::string& file,
     if (killAtPayloadEnd || ! closed) ::kill (pid, SIGKILL);
     int status = 0;
     REQUIRE (::waitpid (pid, &status, 0) == pid);
-    run.exited = WIFEXITED (status);
+    if (WIFEXITED (status)) run.exitCode = WEXITSTATUS (status);
 
     alignas (inotify_event) char events[16384];
     for (auto bytes = ::read (watch.value, events, sizeof (events)); bytes > 0;
@@ -242,7 +242,7 @@ TEST_CASE ("A scan child builds only the format it is asked to scan", "[ipc][plu
 {
     duskstudio::test::TempDirectory root ("dusk-tmpdir-test-");
     const auto run = runScanChild ("VST3", DUSKSTUDIO_SPLIT_STATE_VST3_FIXTURE_PATH, root.path(), false);
-    CHECK (run.exited);
+    CHECK (run.exitCode == 0);
     const auto rows = duskstudio::scanproto::parsePayload (duskstudio::scanproto::extractPayload (run.output));
     REQUIRE (rows.has_value());
     CHECK (rows->size() == 1);
