@@ -124,6 +124,33 @@ public:
         drawMeters (ctx, ImVec2 (left, y), ImVec2 (metersRight, bottom));
     }
 
+    // The meters ease towards their levels on frames, so they ask for every frame
+    // until the drawn values are within a hundredth of a dB of them.
+    std::optional<std::uint64_t> liveStamp() override
+    {
+        const float gr = limiter.getCurrentGrDb();
+        const float post = std::max (params.meterPostMasterLDb.load (std::memory_order_relaxed),
+                                     params.meterPostMasterRDb.load (std::memory_order_relaxed));
+        const auto behind = [] (float target, float drawn) { return std::abs (target - drawn) > 0.01f; };
+        if (behind (gr, displayedGrDb) || behind (post, displayedOutDb)
+            || behind (post - displayedGrDb, displayedInDb))
+            return std::nullopt;
+        // The readouts show tenths, and nothing under -99.
+        const auto tenths = [] (float value) { return value <= -99.0f ? -1000L : std::lround (value * 10.0f); };
+        StampHash hash;
+        hash.add (tenths (params.meterIntegratedLufs.load (std::memory_order_relaxed)))
+            .add (tenths (params.meterTruePeakDb.load (std::memory_order_relaxed)))
+            .add (tenths (params.meterShortTermLufs.load (std::memory_order_relaxed)))
+            .add (params.limiterEnabled.load (std::memory_order_relaxed))
+            .add (params.limiterMode.load (std::memory_order_relaxed))
+            .add (params.limiterReleaseMs.load (std::memory_order_relaxed))
+            .add (params.limiterLookaheadMs.load (std::memory_order_relaxed))
+            .add (params.limiterStereoLink.load (std::memory_order_relaxed))
+            .add (params.limiterDriveDb.load (std::memory_order_relaxed))
+            .add (params.limiterCeilingDb.load (std::memory_order_relaxed));
+        return hash.value;
+    }
+
 private:
     void tickMeters()
     {

@@ -2,6 +2,7 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "dsp/BrickwallLimiter.h"
+#include "dsp/MasteringChain.h"
 #include "dsp/PhaseAnalyzer.h"
 #include "session/Session.h"
 #include "ui/imgui/DuskTheme.h"
@@ -15,6 +16,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -603,4 +605,119 @@ TEST_CASE ("the compact mastering Phase view scrolls clipped controls without ch
     REQUIRE (monoWrites == 0);
     REQUIRE (analyzer.report().frames == frames);
     REQUIRE (analyzer.report().broadband.flagged);
+}
+
+TEST_CASE ("a mastering view's live stamp holds while what it shows holds, and moves when that changes",
+           "[mastering][imgui]")
+{
+    Session session;
+    auto& params = session.mastering();
+    HeadlessPanel panel;
+    panel.movePointer ({ -100.0f, -100.0f });
+
+    SECTION ("the EQ, whose trace rests on a scope that stopped and falls again on new silence")
+    {
+        params.compEnabled.store (false);
+        params.limiterEnabled.store (false);
+        MasteringChain chain;
+        chain.prepare (48000.0, 512);
+        chain.bind (params);
+        std::vector<float> left (512), right (512);
+        int played = 0;
+        const auto play = [&] (float level, int blocks)
+        {
+            for (int block = 0; block < blocks; ++block, played += 512)
+            {
+                for (int i = 0; i < 512; ++i)
+                    left[(size_t) i] = right[(size_t) i] = level * std::sin (0.05f * static_cast<float> (played + i));
+                chain.processInPlace (left.data(), right.data(), 512);
+            }
+        };
+        auto view = imgui::makeMasteringEqView (params, &chain);
+        const auto rest = [&]
+        {
+            for (int frame = 0; frame < 600 && ! view->liveStamp().has_value(); ++frame)
+                panel.frame (*view);
+            return view->liveStamp();
+        };
+
+        play (0.0f, 8);
+        const auto idle = rest();
+        REQUIRE (idle.has_value());
+        panel.frame (*view);
+        REQUIRE (view->liveStamp() == idle);
+
+        play (0.5f, 8);
+        REQUIRE_FALSE (view->liveStamp().has_value());
+        REQUIRE (rest() == idle);
+
+        play (0.0f, 8);
+        REQUIRE_FALSE (view->liveStamp().has_value());
+        REQUIRE (rest() == idle);
+
+        params.eqBandGainDb[2].store (params.eqBandGainDb[2].load() + 3.0f);
+        REQUIRE (view->liveStamp() != idle);
+    }
+
+    SECTION ("the limiter, which asks for every frame while its meters ease")
+    {
+        BrickwallLimiter limiter;
+        auto view = imgui::makeMasteringLimiterView (params, limiter);
+        const auto settle = [&]
+        {
+            for (int frame = 0; frame < 2000 && ! view->liveStamp().has_value(); ++frame)
+                panel.frame (*view);
+            return view->liveStamp();
+        };
+        const auto idle = settle();
+        REQUIRE (idle.has_value());
+        panel.frame (*view);
+        REQUIRE (view->liveStamp() == idle);
+
+        params.meterPostMasterLDb.store (-6.0f);
+        REQUIRE_FALSE (view->liveStamp().has_value());
+        for (int frame = 0; frame < 4; ++frame) panel.frame (*view);
+        params.meterPostMasterLDb.store (-100.0f);
+        REQUIRE_FALSE (view->liveStamp().has_value());
+        REQUIRE (settle() == idle);
+
+        params.limiterCeilingDb.store (params.limiterCeilingDb.load() - 0.5f);
+        REQUIRE (view->liveStamp() != idle);
+    }
+
+    SECTION ("the phase meter")
+    {
+        PhaseAnalyzer analyzer;
+        analyzer.prepare (48000.0, params.phase.snapshot());
+        auto view = imgui::makeMasteringPhaseView (params.phase, analyzer, [] { return false; }, [] (bool) {});
+        for (int frame = 0; frame < 3; ++frame) panel.frame (*view);
+        const auto idle = view->liveStamp();
+        REQUIRE (idle.has_value());
+        panel.frame (*view);
+        REQUIRE (view->liveStamp() == idle);
+        primeInvertedPhase (analyzer, params.phase.snapshot());
+        const auto analysed = view->liveStamp();
+        REQUIRE (analysed != idle);
+        params.phase.bands.store (params.phase.bands.load() == 16 ? 24 : 16);
+        REQUIRE (view->liveStamp() != analysed);
+    }
+
+    SECTION ("the phase meter settling on silence after a mix")
+    {
+        params.phase.averagingMs.store (50.0f);
+        PhaseAnalyzer analyzer;
+        primeInvertedPhase (analyzer, params.phase.snapshot());
+        auto view = imgui::makeMasteringPhaseView (params.phase, analyzer, [] { return false; }, [] (bool) {});
+        std::vector<float> silence ((size_t) analyzer.windowSize(), 0.0f);
+        std::optional<std::uint64_t> previous;
+        int unchanged = 0;
+        for (int chunk = 0; chunk < 400 && unchanged < 16; ++chunk)
+        {
+            analyzer.push (silence.data(), silence.data(), (int) silence.size());
+            const auto stamp = view->liveStamp();
+            unchanged = stamp == previous ? unchanged + 1 : 0;
+            previous = stamp;
+        }
+        REQUIRE (unchanged >= 16);
+    }
 }

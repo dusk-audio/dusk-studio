@@ -70,6 +70,9 @@ public:
     // EQ's FFT overlay. Overlapping writes may mix windows; atomic samples
     // keep this approximate UI view race-free, including during prepare.
     int    readScopeLatest (float* dest, int count) const noexcept;
+    // Samples pushed into the scope so far. It stands still while no audio callback
+    // runs, which tells a buffer left holding the last sound from new sound.
+    long long scopeSamplesWritten() const noexcept { return scopeWritePos.load (std::memory_order_acquire); }
     double getScopeSampleRate() const noexcept { return scopeSampleRate.load (std::memory_order_relaxed); }
 
 private:

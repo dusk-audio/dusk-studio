@@ -6,11 +6,13 @@
 
 #include <DuskWidgets.hpp>
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <string>
+#include <type_traits>
 
 namespace duskstudio::imgui
 {
@@ -122,6 +124,37 @@ public:
     // none), so a view that sounds or edits for as long as a button is held
     // lets go here.
     virtual void focusLost() {}
+
+    // Everything the body draws from that input does not change, folded into one
+    // value, read between frames. The window draws when it changes, on input and
+    // on a slow floor, and otherwise leaves the last frame up. Empty asks for a
+    // frame whenever the window can draw one: what a view that cannot say gets,
+    // and what one in the middle of an animation returns.
+    virtual std::optional<std::uint64_t> liveStamp() { return std::nullopt; }
+};
+
+// Folds values into a liveStamp.
+struct StampHash
+{
+    std::uint64_t value = 1469598103934665603ull;
+
+    template <typename T>
+    StampHash& add (const T& item) noexcept
+    {
+        static_assert (std::is_trivially_copyable<T>::value, "hash the bytes of plain values only");
+        const auto* bytes = reinterpret_cast<const unsigned char*> (&item);
+        for (std::size_t i = 0; i < sizeof (T); ++i)
+            value = (value ^ bytes[i]) * 1099511628211ull;
+        return *this;
+    }
+
+    StampHash& add (const std::string& text) noexcept
+    {
+        add (text.size());
+        for (const char c : text)
+            add (c);
+        return *this;
+    }
 };
 
 // A native modal panel over the JUCE shell.
@@ -212,6 +245,11 @@ public:
     const std::string& lastOpenFailure() const noexcept;
 
     void setGeometry (Geometry geometry);
+
+    // The shell changed what the view shows from outside the window's own events: a
+    // key it passed on, a commit, a take swap. The window draws as it does after input.
+    void wake();
+
     void close();
     bool isOpen() const noexcept;
 
@@ -238,7 +276,8 @@ public:
     bool clickControlForScenario (const std::string& control);
     // Two clicks the view reads as a double-click at any frame rate.
     bool doubleClickControlForScenario (const std::string& control);
-    // "scroll-down", "focus-out", or a key as parseKeyDescription reads it.
+    // "scroll-down", "focus-out", "hover" or "shift + hover" (the pointer moving over the
+    // middle), or a key as parseKeyDescription reads it.
     bool inputForScenario (const std::string& input);
     // Characters typed into whatever field has the keyboard.
     bool typeForScenario (const std::string& text);
@@ -268,6 +307,13 @@ public:
     static bool inputSeenForScenario() noexcept;
     // Whether any panel is inside its own frame now.
     static bool drawingForScenario() noexcept;
+    // Scenario runs and screenshot captures draw every panel continuously, because
+    // they count and wait for frames. On, the panels draw on demand as they do
+    // outside a run; `floor` off also drops the periodic safety frame, so an idle
+    // panel's count holds exactly.
+    static void framesOnDemandForScenario (bool onDemand, bool floor) noexcept;
+    // The open panel with this log tag; null when none is open.
+    static DuskPanelWindow* openForScenario (const std::string& logTag) noexcept;
 
 private:
     struct Impl;

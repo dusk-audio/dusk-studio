@@ -88,9 +88,18 @@ canonical source.
 - **A still console stays still.** The VU meters, gain-reduction meters, level
   meters, peak readouts and section lights repaint only when what they show
   has changed, so a stopped console with no input no longer redraws them 30
-  to 60 times a second. The mini timeline still follows the playhead on every
-  frame and rereads the regions twice a second, at once when a region is
-  added or removed or a marker changes.
+  to 60 times a second. The mini timeline rereads the regions twice a second,
+  at once when a region is added or removed or a marker changes.
+- **Native panels draw only when something changes.** The mini timeline, the
+  mastering EQ, limiter and phase panels, the piano roll and the virtual
+  keyboard draw when the pointer moves over them, on a click, a key or a
+  window resize, and when what they show changes: the playhead, a marker, a
+  region, a parameter, a meter or the spectrum. Otherwise they draw four
+  times a second. Before, every native panel drew 60 frames a second, so the
+  mini timeline kept the main window rendering with the transport stopped.
+  The audio editor, the startup window, the audio settings, the SFZ library,
+  the channel compressor editor, the built-in unit editors on the strips and
+  the aux lane's built-in unit panel still draw every frame.
 
 ### Fixed
 

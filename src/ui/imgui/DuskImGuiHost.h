@@ -84,6 +84,11 @@ public:
 
     void setGeometry (Geometry geometry);
 
+    // How often the framework's events are pumped, 16 ms until set. A view that has
+    // nothing to draw slows it, and puts it back when input arrives. A close in
+    // progress keeps the 16 ms ticks its teardown counts on.
+    void setPumpIntervalMs (int intervalMs);
+
     // Teardown is deferred over two event-pump ticks; close() only asks for it.
     void close();
 

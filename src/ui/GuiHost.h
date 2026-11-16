@@ -289,6 +289,16 @@ public:
     virtual bool clickMiniMarker (int index) = 0;
     // A key at the mini timeline's native child, as a focused child receives it.
     virtual bool pressMiniKey (const std::string& description) = 0;
+    // The native panels draw every frame under the runner, which counts them. On, they
+    // draw on demand as they do outside a run, and with `floor` off they also skip the
+    // periodic frame. Every case that turns this on turns it off in its cleanup.
+    virtual void panelFramesOnDemand (bool onDemand, bool floor) = 0;
+    // Frames the open native panel with this log tag ("mini-timeline", "piano-roll",
+    // "mastering-eq", ...) has completed; empty while none is open.
+    virtual std::optional<std::uint64_t> panelFrames (const std::string& logTag) const = 0;
+    // Input for that panel as DuskPanelWindow::inputForScenario reads it: a key,
+    // "hover", "shift + hover" or "scroll-down".
+    virtual bool panelInput (const std::string& logTag, const std::string& input) = 0;
     virtual bool clickTimeFormat() = 0;
     // The menu bar's DSP segment, and a double-click on it.
     virtual std::string dspReadout() const = 0;
@@ -396,7 +406,8 @@ public:
     // "recent:<path>", "new:<template>", "open-file", "quit" or "skip"; empty
     // until the dialog has been dismissed.
     virtual std::string startupChoice() const = 0;
-    // For "audio-editor", "piano-roll" or "startup": { characters, without a glyph }
+    // For "audio-editor", "piano-roll", "startup", or any other open native panel by
+    // the log tag panelFrames takes: { characters, without a glyph }
     // over the names the panel drew in its last frame, or { -1, -1 } while it is not
     // open.
     virtual std::array<int, 2> panelNameGlyphs (const std::string& panel) const = 0;

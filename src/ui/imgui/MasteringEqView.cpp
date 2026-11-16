@@ -173,7 +173,41 @@ public:
                           ImVec2 (right, br.y - inset));
     }
 
+    // The spectrum ticks on frames, so it asks for every frame while the trace is still
+    // moving towards what it last read, or while new samples reach the scope that would
+    // move it. A scope the audio callback stopped writing holds its last sound, and a
+    // trace that has caught up with that rests.
+    std::optional<std::uint64_t> liveStamp() override
+    {
+        if (showSpectrum && chain != nullptr && (spectrumMoving || scopeChangesTrace()))
+            return std::nullopt;
+        StampHash hash;
+        for (int i = 0; i < 5; ++i)
+            hash.add (params.eqBandFreq[i].load (std::memory_order_relaxed))
+                .add (params.eqBandGainDb[i].load (std::memory_order_relaxed))
+                .add (params.eqBandQ[i].load (std::memory_order_relaxed));
+        hash.add (params.eqEnabled.load (std::memory_order_relaxed)).add (showSpectrum)
+            .add (chain != nullptr ? chain->getScopeSampleRate() : 0.0);
+        return hash.value;
+    }
+
 private:
+    // Silence still lowers a trace above the floor. No bin can reach the floor while
+    // every sample is under a quarter of its gain: the windowed transform is at most
+    // N times the peak, and kRef scales by 4/N.
+    bool scopeChangesTrace()
+    {
+        if (chain->scopeSamplesWritten() == scopeReadAt)
+            return false;
+        if (std::any_of (specDb.begin(), specDb.end(), [] (float db) { return db > kSpecFloorDb + 0.05f; }))
+            return true;
+        if (chain->readScopeLatest (fftScratch.data(), kFftSize) < kFftSize)
+            return false;
+        static const float audible = dusk::audio::decibelsToGain (kSpecFloorDb, -200.0f) * 0.25f;
+        return std::any_of (fftScratch.begin(), fftScratch.end(),
+                            [] (float sample) { return std::abs (sample) >= audible; });
+    }
+
     struct Rect { float x0, y0, x1, y1; };
 
     static bool sameRect (const Rect& a, const Rect& b)
@@ -229,10 +263,13 @@ private:
             return;
         spectrumClock = 0.0f;
 
+        spectrumMoving = false;
         if (! showSpectrum || chain == nullptr)
             return;
+        const auto written = chain->scopeSamplesWritten();
         if (chain->readScopeLatest (fftScratch.data(), kFftSize) < kFftSize)
             return;   // not enough audio buffered yet
+        scopeReadAt = written;
         spectrumDirty = true;
 
         std::copy (fftScratch.begin(), fftScratch.end(), fftWork.begin());
@@ -252,7 +289,9 @@ private:
                                          fftWork[static_cast<std::size_t> (i)] * kRef,
                                          kSpecFloorDb));
             float& smoothed = specDb[static_cast<std::size_t> (i)];
+            const float before = smoothed;
             smoothed = db > smoothed ? db : smoothed + (db - smoothed) * 0.25f;
+            spectrumMoving = spectrumMoving || std::abs (smoothed - before) > 0.05f;
         }
     }
 
@@ -700,6 +739,8 @@ private:
     bool spectrumDirty = true;
     int draggingBand = -1;
     float spectrumClock = 0.0f;
+    long long scopeReadAt = -1;
+    bool spectrumMoving = false;
 };
 } // namespace
 

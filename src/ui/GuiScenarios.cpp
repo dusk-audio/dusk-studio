@@ -1110,6 +1110,33 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     {
         return owner.miniTimeline != nullptr && owner.miniTimeline->pressKeyForScenario (description);
     }
+    void panelFramesOnDemand (bool onDemand, bool floor) override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        imgui::DuskPanelWindow::framesOnDemandForScenario (onDemand, floor);
+       #else
+        (void) onDemand; (void) floor;
+       #endif
+    }
+    std::optional<std::uint64_t> panelFrames (const std::string& logTag) const override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        if (const auto* window = imgui::DuskPanelWindow::openForScenario (logTag))
+            return window->completedFramesForScenario();
+       #else
+        (void) logTag;
+       #endif
+        return std::nullopt;
+    }
+    bool panelInput (const std::string& logTag, const std::string& input) override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        auto* window = imgui::DuskPanelWindow::openForScenario (logTag);
+        return window != nullptr && window->inputForScenario (input);
+       #else
+        (void) logTag; (void) input; return false;
+       #endif
+    }
     void refreshMasteringSource() override
     {
         if (owner.masteringView != nullptr) owner.masteringView->followSource();
@@ -1904,13 +1931,15 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
    #if DUSKSTUDIO_HAS_NATIVE_UI
     imgui::DuskPanelWindow* openPanel (const std::string& panel) const
     {
-        if (panel == "audio-editor" && owner.audioEditorShowing()) return owner.audioEditorWindow.get();
-        if (panel == "piano-roll" && owner.pianoRollShowing()) return owner.pianoRollWindow.get();
-        if (panel == "startup" && owner.startupWindow != nullptr && owner.startupWindow->isOpen())
-            return owner.startupWindow.get();
-        if (panel == "settings" && owner.audioSettingsWindow != nullptr && owner.audioSettingsWindow->isOpen())
-            return owner.audioSettingsWindow.get();
-        return nullptr;
+        // A window still open while its editor closes is not one these may read.
+        if (panel == "audio-editor") return owner.audioEditorShowing() ? owner.audioEditorWindow.get() : nullptr;
+        if (panel == "piano-roll") return owner.pianoRollShowing() ? owner.pianoRollWindow.get() : nullptr;
+        if (panel == "startup")
+            return owner.startupWindow != nullptr && owner.startupWindow->isOpen() ? owner.startupWindow.get() : nullptr;
+        if (panel == "settings")
+            return owner.audioSettingsWindow != nullptr && owner.audioSettingsWindow->isOpen()
+                ? owner.audioSettingsWindow.get() : nullptr;
+        return imgui::DuskPanelWindow::openForScenario (panel);
     }
    #endif
     std::array<int, 2> panelNameGlyphs (const std::string& panel) const override
@@ -3499,6 +3528,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         for (int guard = 0; guard < 32 && ! stack.empty(); ++guard)
             stack.back()->close();
         abandonPendingFlows();
+        panelFramesOnDemand (false, true);
 
         owner.destroyPianoRoll();
         owner.destroyAudioEditor();

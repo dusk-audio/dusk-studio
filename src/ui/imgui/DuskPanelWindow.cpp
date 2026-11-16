@@ -43,9 +43,37 @@ constexpr unsigned int kPlateBorder = 0x3a3a42ffu;
 // nothing left in the queue: the frame that took the last event, and the one after
 // it for whatever that event set in motion.
 constexpr int kSettledFrames = 2;
-constexpr float kScenarioFrameSeconds = 1.0f / 60.0f;
+constexpr float kFrameSeconds = 1.0f / 60.0f;
 int panelsWithUnseenScenarioInput = 0;
 int panelFramesDrawing = 0;
+
+// A panel draws only when a frame is wanted: for kInputHold after input and at least
+// kFramesAfterInput frames, while Dear ImGui is in the middle of something, when the
+// view's liveStamp changes, and every kFrameFloor whatever happens, so a model change
+// a view's stamp misses is late rather than lost.
+constexpr auto kInputHold = std::chrono::milliseconds (750);
+constexpr int kFramesAfterInput = 3;
+constexpr auto kFrameFloor = std::chrono::milliseconds (250);
+
+// The event pump and the geometry poll run at kActivePumpMs while frames are wanted
+// and at kIdlePumpMs once kInputHold passes without one. Input a child reads from its
+// own display connection waits for the next pump, so an idle panel answers the first
+// event at most kIdlePumpMs late. Input and state the shell hands a panel from outside
+// its own event handlers must call wake(), which restarts the pump at once.
+constexpr int kActivePumpMs = 16;
+constexpr int kIdlePumpMs = 32;
+
+bool scenarioFramesOnDemand = false;
+bool scenarioFrameFloor = true;
+
+// The scenario runner and the screenshot harness count frames and wait for them, so
+// under either one the panels draw continuously unless a case asks otherwise.
+bool harnessDrawsContinuously()
+{
+    static const bool continuous = std::getenv ("DUSKSTUDIO_RUN_SCENARIOS") != nullptr
+                                || std::getenv ("DUSKSTUDIO_CAPTURE_DIR") != nullptr;
+    return continuous && ! scenarioFramesOnDemand;
+}
 
 // A scenario run can hold the panels to the frame rate of a loaded software
 // renderer, which is where a case's timing assumptions break. 0 leaves them alone.
@@ -454,7 +482,12 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
     {
     public:
         PanelWidget (DGL::Window& window, Impl& ownerRef)
-            : DGL::ImGuiTopLevelWidget (window, 13.0f), owner (ownerRef) {}
+            : DGL::ImGuiTopLevelWidget (window, 13.0f), owner (ownerRef)
+        {
+            lastInputAt = std::chrono::steady_clock::now();
+            framesOwed = kFramesAfterInput;
+            owner.pace (true);
+        }
 
         ~PanelWidget() override
         {
@@ -557,6 +590,16 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
                 scrollForScenario (-20.0);
                 return true;
             }
+            if (input == "hover" || input == "shift + hover")
+            {
+                noteScenarioInput();
+                MotionEvent motion;
+                if (input != "hover") motion.mod = DGL::kModifierShift;
+                motion.pos = { getWidth() * 0.5, getHeight() * 0.5 };
+                motion.absolutePos = motion.pos;
+                onMotion (motion);
+                return true;
+            }
             const auto chord = parseKeyDescription (input);
             if (! chord || ! press (*chord))
                 return false;
@@ -578,6 +621,19 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
 
         bool hasKeyboard() const noexcept { return keyboardFocused; }
 
+        void noteActivity()
+        {
+            const auto now = std::chrono::steady_clock::now();
+            lastInputAt = now;
+            framesOwed = kFramesAfterInput;
+            owner.pace (true);
+            // The first event after a rest draws at once. Later ones are left to the
+            // idle callback, so a pointer reporting at 1 kHz cannot drive more than a
+            // frame per tick on a platform that paints on every invalidate.
+            if (now - drawnAt >= std::chrono::milliseconds (kActivePumpMs))
+                repaint();
+        }
+
         void noteScenarioInput()
         {
             if (quietFrames >= kSettledFrames)
@@ -597,8 +653,56 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
         }
 
     protected:
+        void idleCallback() override
+        {
+            const auto now = std::chrono::steady_clock::now();
+            if (frameWanted (now))
+            {
+                lastWantedAt = now;
+                DGL::ImGuiTopLevelWidget::idleCallback();
+            }
+            else
+            {
+                afterGap = true;
+                if ((! scenarioFramesOnDemand || scenarioFrameFloor) && now - drawnAt >= kFrameFloor)
+                    DGL::ImGuiTopLevelWidget::idleCallback();
+            }
+            owner.pace (now - lastWantedAt < kInputHold);
+        }
+
+        bool onMouse (const MouseEvent& event) override
+        {
+            noteActivity();
+            return DGL::ImGuiTopLevelWidget::onMouse (event);
+        }
+
+        bool onMotion (const MotionEvent& event) override
+        {
+            noteActivity();
+            return DGL::ImGuiTopLevelWidget::onMotion (event);
+        }
+
+        bool onScroll (const ScrollEvent& event) override
+        {
+            noteActivity();
+            return DGL::ImGuiTopLevelWidget::onScroll (event);
+        }
+
+        bool onCharacterInput (const CharacterInputEvent& event) override
+        {
+            noteActivity();
+            return DGL::ImGuiTopLevelWidget::onCharacterInput (event);
+        }
+
+        void onResize (const ResizeEvent& event) override
+        {
+            noteActivity();
+            DGL::ImGuiTopLevelWidget::onResize (event);
+        }
+
         void onFocusChanged (const FocusEvent& event) override
         {
+            noteActivity();
             keyboardFocused = event.focus;
             DGL::ImGuiTopLevelWidget::onFocusChanged (event);
             // A grab crossing lends the focus to a grab and gets it back; it does
@@ -613,6 +717,7 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
         // to keep through forwardShortcuts; every other key stays here.
         bool onKeyboard (const DGL::Widget::KeyboardEvent& event) override
         {
+            noteActivity();
             auto key = event;
             // The framework's ImGui adapter does not map keypad Enter.
             if (key.key == DGL::kKeyPadEnter) key.key = DGL::kKeyEnter;
@@ -631,6 +736,11 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
         // the step's delay, so it is time no step asked to wait.
         void onImGuiPrepareFrame() override
         {
+            imguiContext = ImGui::GetCurrentContext();
+            // The clock ran on through the frames not drawn, and a hover delay or a
+            // fade would otherwise jump by all of it.
+            if (std::exchange (afterGap, false))
+                ImGui::GetIO().DeltaTime = std::min (ImGui::GetIO().DeltaTime, kFrameSeconds);
             const auto scale = static_cast<float> (getWindow().getScaleFactor());
             bool glyphsChanged = false;
             if (owner.view != nullptr && owner.view->marksMissingGlyphs())
@@ -651,8 +761,8 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
             const float waited = std::chrono::duration<float> (now - unseenSince).count();
             unseenSince = now;
             auto& io = ImGui::GetIO();
-            io.DeltaTime = std::max (io.DeltaTime - std::max (0.0f, waited - kScenarioFrameSeconds),
-                                     std::min (io.DeltaTime, kScenarioFrameSeconds));
+            io.DeltaTime = std::max (io.DeltaTime - std::max (0.0f, waited - kFrameSeconds),
+                                     std::min (io.DeltaTime, kFrameSeconds));
         }
 
         void onImGuiDisplay() override
@@ -707,6 +817,10 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
                 std::this_thread::sleep_until (lastFrameAt + std::chrono::milliseconds (interval));
                 lastFrameAt = std::chrono::steady_clock::now();
             }
+            drawnStamp = owner.view != nullptr ? owner.view->liveStamp() : std::nullopt;
+            drawnWidth = getWidth();
+            drawnHeight = getHeight();
+            drawnScale = getWindow().getScaleFactor();
             {
                 struct Drawing
                 {
@@ -715,12 +829,39 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
                 } drawing;
                 DGL::ImGuiTopLevelWidget::onDisplay();
             }
+            drawnAt = std::chrono::steady_clock::now();
+            framesOwed = std::max (0, framesOwed - 1);
             ++owner.completedFrames;
             owner.captureFrameIfAsked (static_cast<int> (getWidth()),
                                        static_cast<int> (getHeight()));
         }
 
     private:
+        // Asked between frames, so Dear ImGui's state is what the last frame left.
+        bool frameWanted (std::chrono::steady_clock::time_point now)
+        {
+            if (harnessDrawsContinuously() || ! owner.capturePath.empty() || owner.view == nullptr
+                || imguiContext == nullptr || framesOwed > 0 || now - lastInputAt < kInputHold)
+                return true;
+            if (getWidth() != drawnWidth || getHeight() != drawnHeight
+                || std::abs (getWindow().getScaleFactor() - drawnScale) > 1.0e-6)
+                return true;
+            const auto& g = *imguiContext;
+            if (g.InputEventsQueue.Size > 0 || g.ActiveId != 0 || g.IO.WantTextInput
+                || g.OpenPopupStack.Size > 0 || g.DragDropActive || owner.drag.active != 0)
+                return true;
+            for (const bool down : g.IO.MouseDown)
+                if (down) return true;
+            // Not the modifier entries: the framework sets those from every pointer
+            // event, and a pointer that leaves the window takes their release with it.
+            for (int key = ImGuiKey_NamedKey_BEGIN; key < ImGuiKey_ReservedForModCtrl; ++key)
+                if (g.IO.KeysData[key - ImGuiKey_NamedKey_BEGIN].Down) return true;
+            if (owner.fontFallback.waiting())
+                return true;
+            const auto stamp = owner.view->liveStamp();
+            return ! stamp || stamp != drawnStamp;
+        }
+
         bool press (const KeyChord& chord)
         {
             KeyboardEvent key;
@@ -760,18 +901,37 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
         DGL::MouseButton heldButton = DGL::kMouseButtonLeft;
         ImGuiMouseCursor appliedCursor = ImGuiMouseCursor_Arrow;
         std::chrono::steady_clock::time_point lastFrameAt;
+        ImGuiContext* imguiContext = nullptr;
+        std::chrono::steady_clock::time_point lastInputAt, lastWantedAt, drawnAt;
+        std::optional<std::uint64_t> drawnStamp;
+        unsigned int drawnWidth = 0, drawnHeight = 0;
+        double drawnScale = 0.0;
+        int framesOwed = 0;
+        bool afterGap = false;
     };
 
-    Impl (std::string className, std::string logTag, std::string displayName)
-        : host ({ std::move (className), logTag, std::move (displayName) },
-                firstFrameMarkerPath (logTag))
+    Impl (std::string className, std::string logTagToUse, std::string displayName)
+        : logTag (logTagToUse),
+          host ({ std::move (className), logTagToUse, std::move (displayName) },
+                firstFrameMarkerPath (logTagToUse))
     {
     }
 
     ~Impl() override { stopTimer(); }
 
-    void startGeometryPolling() { startTimer (16); }
+    void startGeometryPolling() { startTimer (paced ? kActivePumpMs : kIdlePumpMs); }
     void stopGeometryPolling() { stopTimer(); }
+
+    void pace (bool active)
+    {
+        if (active == paced)
+            return;
+        paced = active;
+        const int interval = active ? kActivePumpMs : kIdlePumpMs;
+        host.setPumpIntervalMs (interval);
+        if (isTimerRunning())
+            startTimer (interval);
+    }
 
     void timerCallback() override
     {
@@ -781,6 +941,10 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
         if (wanted != lastGeometry)
         {
             lastGeometry = wanted;
+            // A move resizes nothing, and a scale change on a surface that keeps its
+            // size reports no resize either. Before the call, which can close the window.
+            if (panelWidget != nullptr)
+                panelWidget->noteActivity();
             host.setGeometry ({ wanted.x, wanted.y, wanted.width, wanted.height,
                                 wanted.scaleFactor });
         }
@@ -983,15 +1147,17 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
     int framesDrawn = 0;
     std::uint64_t completedFrames = 0;
     bool framesPausedForScenario = false;
+    bool paced = true;
+    std::string logTag;
     DuskImGuiHost host;
 };
 
 namespace
 {
 // Never freed, so a window destroyed during static teardown still finds it.
-std::vector<const DuskPanelWindow*>& liveWindows()
+std::vector<DuskPanelWindow*>& liveWindows()
 {
-    static auto* windows = new std::vector<const DuskPanelWindow*>();
+    static auto* windows = new std::vector<DuskPanelWindow*>();
     return *windows;
 }
 } // namespace
@@ -1252,7 +1418,15 @@ std::optional<GlyphTally> DuskPanelWindow::nameGlyphsForScenario() const
 void DuskPanelWindow::expectInputForScenario()
 {
     if (isOpen() && impl->panelWidget != nullptr)
+    {
         impl->panelWidget->noteScenarioInput();
+        impl->panelWidget->noteActivity();
+    }
+}
+void DuskPanelWindow::wake()
+{
+    if (isOpen() && impl->panelWidget != nullptr)
+        impl->panelWidget->noteActivity();
 }
 bool DuskPanelWindow::inputSeenForScenario() noexcept
 {
@@ -1261,5 +1435,17 @@ bool DuskPanelWindow::inputSeenForScenario() noexcept
 bool DuskPanelWindow::drawingForScenario() noexcept
 {
     return panelFramesDrawing > 0;
+}
+void DuskPanelWindow::framesOnDemandForScenario (bool onDemand, bool floor) noexcept
+{
+    scenarioFramesOnDemand = onDemand;
+    scenarioFrameFloor = floor;
+}
+DuskPanelWindow* DuskPanelWindow::openForScenario (const std::string& logTag) noexcept
+{
+    for (auto* window : liveWindows())
+        if (window->isOpen() && window->impl->logTag == logTag)
+            return window;
+    return nullptr;
 }
 } // namespace duskstudio::imgui

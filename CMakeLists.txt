@@ -1008,6 +1008,7 @@ target_sources(DuskStudio PRIVATE
     src/ui/scenario/cases/gui_midi_learn_plugins.cpp
     src/ui/scenario/cases/gui_midi_recovery.cpp
     src/ui/scenario/cases/gui_mixer.cpp
+    src/ui/scenario/cases/gui_panel_frames.cpp
     src/ui/scenario/cases/gui_piano_roll.cpp
     src/ui/scenario/cases/gui_piano_roll_audition.cpp
     src/ui/scenario/cases/gui_plugin_editors.cpp

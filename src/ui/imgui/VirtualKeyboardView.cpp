@@ -11,6 +11,7 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
+#include <optional>
 #include <string>
 
 namespace duskstudio::imgui
@@ -170,6 +171,15 @@ public:
         handleTyping();
         handleMouse (ctx, kbTl, kbBr);
         drawKeyboard (ctx, kbTl, kbBr);
+    }
+
+    // A sounding note is released by counting frames without its key down.
+    std::optional<std::uint64_t> liveStamp() override
+    {
+        if (mouseHeld.note >= 0
+            || std::any_of (held.begin(), held.end(), [] (const auto& note) { return note.note >= 0; }))
+            return std::nullopt;
+        return StampHash {}.add (centreNote).add (channel).value;
     }
 
 private:
