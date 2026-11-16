@@ -2378,7 +2378,8 @@ void AudioEngine::servicePlayback()
     playbackEngine.service();
     // A swap the audio thread has taken is still fading for a few milliseconds
     // before it hands the old streams back, so the timer outlasts the last work.
-    bool workPending = ! transport.isStopped() || recordManager.isActive() || playbackEngine.hasPendingWork();
+    bool workPending = ! transport.isStopped() || recordManager.isActive() || playbackEngine.hasPendingWork()
+                    || deviceManager.getMovedDeviceClock().isSet();
 #if DUSKSTUDIO_HAS_MULTISAMPLE
     workPending = workPending || hasPendingMultisampleLoads();
 #endif
@@ -2692,9 +2693,9 @@ void AudioEngine::performPendingDspRestartIfIdle()
     if (std::this_thread::get_id() != ownerThread
         || deviceLifecycleDepth.load (std::memory_order_acquire) != 0
         || isProcessingSuspended() || offlineRenderActive.load (std::memory_order_acquire)
-        || ! isAudioCallbackRegistered() || ! transport.isStopped()) return;
+        || ! isAudioCallbackRegistered()) return;
     followMovedDeviceClock();
-    if (! dspRestartPending_) return;
+    if (! transport.isStopped() || ! dspRestartPending_) return;
     dspRestartPending_ = false;
     performDspRestart();
 }
@@ -5565,6 +5566,8 @@ void AudioEngine::onDeviceManagerChanged()
     // The manager also broadcasts when the device's clock moved under its
     // stream.
     followMovedDeviceClock();
+    if (deviceManager.getMovedDeviceClock().isSet())
+        schedulePlaybackService();
 
     // The hot-unplug signal is "we had a live device, now the
     // current device is null." User-driven settings changes also

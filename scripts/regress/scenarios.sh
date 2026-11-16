@@ -1111,7 +1111,8 @@ bb_pipewire_clock_body() {
     bb_wait_exit A 90 || rc=$?
     grep -E -- '^\[(PASS|FAIL|SKIP)\] device\.pipewire_' "$BB_SDIR/A.out" | sed 's/^/    /'
     for case in device.pipewire_longer_cycle_keeps_playing device.pipewire_rate_change_follows \
-        device.pipewire_open_adopts_graph_rate; do
+        device.pipewire_open_adopts_graph_rate device.pipewire_longer_cycle_keeps_mastering \
+        device.pipewire_deferred_rate_change_follows; do
         grep -qF -- "[PASS] ${case} " "$BB_SDIR/A.out" \
             || { bb_fail "${case} did not pass (app status $rc)"; return 1; }
     done

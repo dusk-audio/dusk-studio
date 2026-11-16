@@ -255,6 +255,14 @@ function Get-RegressSnapshot {
         ForEach-Object {
             $_.Refresh()
             $rows += "$($_.FullName)|temp|$($_.LastWriteTimeUtc.Ticks)"
+            if ($_.PSIsContainer) {
+                Get-ChildItem -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue |
+                    ForEach-Object {
+                        $_.Refresh()
+                        $len = if ($_.PSIsContainer) { 'dir' } else { $_.Length }
+                        $rows += "$($_.FullName)|$len|$($_.LastWriteTimeUtc.Ticks)"
+                    }
+            }
         }
     return $rows
 }
@@ -280,7 +288,7 @@ function Get-RegressGuiCatalog([string]$text, $exitCode) {
 # The ordinary GUI scenarios every build registers. Only a package run reaches
 # the phase that checks it, so the Linux windows-gui-catalog leg compares it
 # with the registry on every source run with GUI scenarios.
-function Get-RegressWindowsGuiCatalogCount { return 326 }
+function Get-RegressWindowsGuiCatalogCount { return 327 }
 
 function Get-RegressWindowsGuiSkips {
     return [ordered]@{

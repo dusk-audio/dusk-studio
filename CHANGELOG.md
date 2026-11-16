@@ -72,6 +72,9 @@ canonical source.
 
 ### Fixed
 
+- **Recording after a device stop.** Opening another session before the
+  stopped device's recording cleanup runs now commits the take to its
+  original session, including its MIDI recovery files.
 - **MIDI notes at playback and Stop.** Starting playback inside a region sounds
   its held notes immediately. Standard VST3 hosting sends explicit note-offs
   at Stop, including through the sandbox, and VST3 note tracking survives an

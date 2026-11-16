@@ -56,9 +56,15 @@ try {
     Assert-Snapshot (@($deleted | Where-Object { $_.StartsWith($file + '|') }).Count -eq 0) `
         'The snapshot retained a deleted file'
 
-    $beforeTemp = @($deleted | Where-Object { $_.StartsWith($tempChild + '|temp|') })
+    $beforeTemp = @($deleted | Where-Object {
+        $_.StartsWith($tempChild + '|temp|') -or $_.StartsWith($tempChild + [IO.Path]::DirectorySeparatorChar)
+    })
+    $tempWriteTime = [IO.Directory]::GetLastWriteTimeUtc($tempChild)
     [IO.File]::WriteAllText((Join-Path $tempChild 'changed'), 'changed')
-    $afterTemp = @(Get-OwnedSnapshot | Where-Object { $_.StartsWith($tempChild + '|temp|') })
+    [IO.Directory]::SetLastWriteTimeUtc($tempChild, $tempWriteTime)
+    $afterTemp = @(Get-OwnedSnapshot | Where-Object {
+        $_.StartsWith($tempChild + '|temp|') -or $_.StartsWith($tempChild + [IO.Path]::DirectorySeparatorChar)
+    })
     Assert-Snapshot (($beforeTemp -join "`n") -ne ($afterTemp -join "`n")) `
         'The snapshot missed a real change in a watched temporary directory'
     $allowed = Get-RegressWindowsGuiSkips

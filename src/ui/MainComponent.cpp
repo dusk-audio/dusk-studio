@@ -3528,7 +3528,9 @@ void MainComponent::stopTransportForSessionSwitch()
     if (mastering.isPlaying()) mastering.stop();
 
     auto& transport = engine.getTransport();
-    if (! transport.isRecording() && ! transport.isPlaying()) return;
+    // A device stop marks the transport stopped before capture is committed.
+    if (! transport.isRecording() && ! transport.isPlaying()
+        && ! engine.getRecordManager().isActive()) return;
 
     engine.stop();
     if (transportBar != nullptr)

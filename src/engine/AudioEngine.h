@@ -189,6 +189,8 @@ public:
     void observeAudioRegistrationForScenario (std::function<void (bool)> observer)
     { audioRegistrationObserver = std::move (observer); }
     void servicePlaybackForScenario() { servicePlayback(); }
+    bool playbackServiceIdleForScenario() const
+    { return ! playbackServiceTimer.isTimerRunning() && ! playbackServicePosted; }
 
     // Track FREEZE (message thread). The render is ASYNC (BounceEngine::
     // startFreeze on a worker thread) so a long render never wedges the UI, so

@@ -163,6 +163,7 @@ struct ClockRun
     int block = 0, forcedBlock = 0;
     Mark mark;
     std::vector<std::string> rateAlerts;
+    bool openingAnnounced = false, rateAnnounced = false, processingHeld = false;
 };
 
 // Opens the owned graph's device with nothing forced, or with `forcedRate`
@@ -313,6 +314,90 @@ std::optional<ScenarioResult> longerCycleKeepsPlaying (ScenarioContext& ctx)
 #endif
 }
 
+std::optional<ScenarioResult> longerCycleKeepsMastering (ScenarioContext& ctx)
+{
+#if ! defined(DUSKSTUDIO_HAS_PIPEWIRE)
+    (void) ctx;
+    return ScenarioResult::skip ("built without the native PipeWire backend");
+#else
+    std::string refusal;
+    const auto graph = ownedGraph (refusal);
+    if (! graph)
+        return refusal.empty() ? ScenarioResult::skip ("requires the owned private PipeWire graph "
+                                                       "(DUSKSTUDIO_PIPEWIRE_CLOCK_FIXTURE)")
+                               : ScenarioResult::fail (refusal);
+    auto run = openOwnedGraph (ctx, *graph);
+    if (run == nullptr) return ctx.verdict();
+    if (! ctx.expect (run->forcedBlock > run->block, "the graph cannot run a longer quantum"))
+        return ctx.verdict();
+
+    auto& engine = ctx.engine();
+    auto& player = engine.getMasteringPlayer();
+    const auto oldStage = engine.getStage();
+    ctx.cleanup ([&engine, &player, oldStage]
+    {
+        player.stop();
+        player.unloadFile();
+        engine.setStage (oldStage);
+    });
+    const auto tone = ctx.tempDir() / "mastering-tone.wav";
+    if (! ctx.expect (writeTone (tone, (int) run->rate), "could not write the mastering tone"))
+        return ctx.verdict();
+    engine.setStage (AudioEngine::Stage::Mastering);
+    if (! ctx.expect (player.loadFile (SessionFile (tone.u8string().c_str())),
+                      "could not load the mastering tone"))
+        return ctx.verdict();
+    player.play();
+    ctx.waitUntil ([&ctx, &engine, &player, run]
+                   {
+                       return player.getPlayhead() > (std::int64_t) run->block * 16
+                           && engine.playbackServiceIdleForScenario()
+                           && ctx.session().mastering().meterPostMasterLDb.load (std::memory_order_relaxed) > -30.0f;
+                   }, 5000,
+                   [&ctx, &engine, &player, run]
+    {
+        std::string error;
+        if (! ctx.expect (setGraphSetting (run->graph, "clock.force-quantum", run->forcedBlock, error), error))
+        {
+            ctx.complete (ctx.verdict());
+            return;
+        }
+        run->mark = { player.getPlayhead(), std::chrono::steady_clock::now() };
+        ctx.later (kWindowMs / 4, [&ctx]
+        {
+            ctx.session().mastering().meterPostMasterLDb.store (-100.0f, std::memory_order_relaxed);
+        });
+        ctx.later (kWindowMs, [&ctx, &engine, &player, run]
+        {
+            const double seconds = std::chrono::duration<double> (
+                std::chrono::steady_clock::now() - run->mark.at).count();
+            const double share = (double) (player.getPlayhead() - run->mark.playhead) / (seconds * run->rate);
+            ctx.expect (player.isPlaying() && engine.getTransport().isStopped(),
+                        "the graph change interrupted mastering playback");
+            ctx.expect (share > 0.75, "mastering did not render the elapsed audio time");
+            ctx.expect (ctx.session().mastering().meterPostMasterLDb.load (std::memory_order_relaxed) > -30.0f,
+                        "mastering output went silent after the graph change");
+            ctx.expect (engine.getCurrentBlockSize() == run->block
+                            && engine.getDeviceManager().getSetup().bufferSize == run->block,
+                        "the engine or settings adopted a new block size during mastering playback");
+            player.stop();
+            ctx.waitUntil ([&engine, run]
+                           {
+                               return engine.getCurrentBlockSize() == run->forcedBlock
+                                   && engine.getDeviceManager().getSetup().bufferSize == run->forcedBlock;
+                           }, 3000, [&ctx, &engine]
+                           {
+                               ctx.waitUntil ([&engine] { return engine.playbackServiceIdleForScenario(); }, 3000,
+                                              [&ctx] { ctx.complete (ctx.verdict()); },
+                                              "the playback service kept polling after the clock was adopted");
+                           },
+                           "the engine and settings did not adopt the new block size after mastering stopped");
+        });
+    }, "the mastering tone did not play with its playback service idle");
+    return std::nullopt;
+#endif
+}
+
 // The graph moves to another rate while a tone plays: the engine follows it at
 // once, the transport stops, the alert says so, and the engine then renders at
 // the new rate.
@@ -388,6 +473,78 @@ std::optional<ScenarioResult> rateChangeFollows (ScenarioContext& ctx)
 #endif
 }
 
+std::optional<ScenarioResult> deferredRateChangeFollows (ScenarioContext& ctx)
+{
+#if ! defined(DUSKSTUDIO_HAS_PIPEWIRE)
+    (void) ctx;
+    return ScenarioResult::skip ("built without the native PipeWire backend");
+#else
+    std::string refusal;
+    const auto graph = ownedGraph (refusal);
+    if (! graph)
+        return refusal.empty() ? ScenarioResult::skip ("requires the owned private PipeWire graph "
+                                                       "(DUSKSTUDIO_PIPEWIRE_CLOCK_FIXTURE)")
+                               : ScenarioResult::fail (refusal);
+    auto run = openOwnedGraph (ctx, *graph);
+    if (run == nullptr) return ctx.verdict();
+    auto& engine = ctx.engine();
+    ctx.cleanup ([&engine, run]
+    {
+        engine.getDeviceManager().removeChangeListener (run.get());
+        if (run->processingHeld) engine.resumeProcessing();
+        engine.setDeviceRateChangedSink ({});
+    });
+    engine.setDeviceRateChangedSink ([run] (std::string message) { run->rateAlerts.push_back (std::move (message)); });
+    engine.getDeviceManager().addChangeListener (run.get(), [&engine, run]
+    {
+        const auto moved = engine.getDeviceManager().getMovedDeviceClock();
+        if (! moved.isSet()) run->openingAnnounced = true;
+        else if (run->processingHeld && std::abs (moved.sampleRate - run->newRate) < 0.5)
+            run->rateAnnounced = true;
+    });
+    ctx.waitUntil ([run] { return run->openingAnnounced; }, 3000, [&ctx, &engine, run]
+    {
+        playTone (ctx, run, [&ctx, &engine, run]
+        {
+            engine.suspendProcessing();
+            run->processingHeld = true;
+            std::string error;
+            if (! ctx.expect (setGraphSetting (run->graph, "clock.force-rate", (int) run->newRate, error), error))
+            {
+                ctx.complete (ctx.verdict());
+                return;
+            }
+            ctx.waitUntil ([run] { return run->rateAnnounced; }, 3000, [&ctx, &engine, run]
+            {
+                ctx.expect (engine.getTransport().isPlaying() && engine.isAudioCallbackRegistered(),
+                            "suspending processing stopped the transport or detached its callback");
+                ctx.expect (std::abs (engine.getCurrentSampleRate() - run->rate) < 0.5 && run->rateAlerts.empty(),
+                            "the clock was followed while processing was suspended");
+                engine.resumeProcessing();
+                run->processingHeld = false;
+                ctx.waitUntil ([&engine, run]
+                               {
+                                   return std::abs (engine.getCurrentSampleRate() - run->newRate) < 0.5
+                                       && engine.getTransport().isStopped() && ! run->rateAlerts.empty();
+                               }, 4000, [&ctx, &engine, run]
+                               {
+                                   ctx.expect (run->rateAlerts.size() == 1, "the deferred rate change raised multiple alerts");
+                                   engine.play();
+                                   run->mark = markNow (engine);
+                                   expectRenderedAfter (ctx, run, kWindowMs, run->newRate, "after the deferred rate change",
+                                                        [&ctx, &engine]
+                                                        {
+                                                            engine.stop();
+                                                            ctx.complete (ctx.verdict());
+                                                        });
+                               }, "the announced rate was not followed when processing resumed during playback");
+            }, "the rate change was not announced while processing was suspended");
+        });
+    }, "the opening device notification was not delivered");
+    return std::nullopt;
+#endif
+}
+
 // A graph already forced to another rate than the one asked for: the device
 // opens at the graph's rate, and the engine prepares and renders at it.
 std::optional<ScenarioResult> openAdoptsGraphRate (ScenarioContext& ctx)
@@ -430,9 +587,15 @@ std::optional<ScenarioResult> openAdoptsGraphRate (ScenarioContext& ctx)
 const ScenarioRegistrar longerCycleRegistrar { Scenario {
     "device.pipewire_longer_cycle_keeps_playing", { "device", "transport", "pipewire", "pipewire-clock" },
     Needs::Engine, {}, [] (ScenarioContext& ctx) { return longerCycleKeepsPlaying (ctx); } } };
+const ScenarioRegistrar masteringCycleRegistrar { Scenario {
+    "device.pipewire_longer_cycle_keeps_mastering", { "device", "mastering", "pipewire", "pipewire-clock" },
+    Needs::Engine, {}, [] (ScenarioContext& ctx) { return longerCycleKeepsMastering (ctx); } } };
 const ScenarioRegistrar rateChangeRegistrar { Scenario {
     "device.pipewire_rate_change_follows", { "device", "transport", "pipewire", "pipewire-clock" },
     Needs::Engine, {}, [] (ScenarioContext& ctx) { return rateChangeFollows (ctx); } } };
+const ScenarioRegistrar deferredRateChangeRegistrar { Scenario {
+    "device.pipewire_deferred_rate_change_follows", { "device", "transport", "pipewire", "pipewire-clock" },
+    Needs::Engine, {}, [] (ScenarioContext& ctx) { return deferredRateChangeFollows (ctx); } } };
 const ScenarioRegistrar openRateRegistrar { Scenario {
     "device.pipewire_open_adopts_graph_rate", { "device", "pipewire", "pipewire-clock" },
     Needs::Engine, {}, [] (ScenarioContext& ctx) { return openAdoptsGraphRate (ctx); } } };
