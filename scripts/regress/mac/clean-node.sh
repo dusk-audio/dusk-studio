@@ -1,0 +1,116 @@
+# shellcheck shell=bash
+# Runs on the macOS node, sent over ssh by scripts/regress/clean.sh with
+# REGRESS_REPOS (the node checkouts) and REGRESS_TREES (the warm build trees),
+# one per line, relative to HOME or absolute, in the environment. Removes what
+# the regression runner left there and nothing else: run folders under
+# ~/.cache/dusk-regress whose process group is gone, the regress-* branches it
+# pushed that no worktree has checked out, and package run folders under
+# ~/dusk-regress-pkg. The build trees stay. It never signals a process: a pid
+# in a file weeks old may since have become anyone's, the maintainer's own
+# Dusk Studio included, so anything still alive leaves its folder in place.
+# The node's bash is 3.2, which wants a regex in a variable.
+set -uo pipefail
+status=0
+stamp_re='^[0-9]{8}-[0-9]{6}$'
+branch_re='^regress-(pkg-)?[0-9a-f]{7,40}$'
+
+group_alive() {
+    ps -ax -o pgid=,stat= | awk -v group="$1" '$1 == group && $2 !~ /^Z/ { found = 1 } END { exit !found }'
+}
+size_kb() {
+    du -sk "$1" 2>/dev/null | awk '{ print $1 }'
+}
+gb() {
+    awk -v k="${1:-0}" 'BEGIN { printf "%.1f GB", k / 1048576 }'
+}
+remove() {
+    local what="$1" path="$2" kb
+    kb="$(size_kb "$path")"
+    if rm -rf "$path" && [[ ! -e "$path" ]]; then
+        echo "removed $what $path ($(gb "$kb"))"
+    else
+        echo "error: could not remove $what $path"
+        status=1
+    fi
+}
+
+base="$HOME/.cache/dusk-regress"
+for run in "$base"/regress-*; do
+    [[ -d "$run" ]] || continue
+    token="${run##*/}"
+    pid=""
+    [[ -s "$run/pid" ]] && read -r pid <"$run/pid"
+    if [[ "$pid" =~ ^[0-9]+$ ]] && group_alive "$pid"; then
+        if [[ "$(ps -ww -o command= -p "$pid" 2>/dev/null)" == *" dusk-regress $token" ]]; then
+            echo "warn: left alone, its run is still going (process group $pid): $run"
+        else
+            echo "warn: left alone, process group $pid is alive, though no longer this run's: $run"
+        fi
+        continue
+    fi
+    remove "the run folder" "$run"
+done
+
+pkg="$HOME/dusk-regress-pkg"
+for run in "$pkg"/*; do
+    [[ -d "$run" ]] || continue
+    name="${run##*/}"
+    if [[ ! -f "$run/.dusk-regress-run" && ! "$name" =~ $stamp_re ]]; then
+        echo "warn: left alone, not a package run folder: $run"
+        continue
+    fi
+    live=""
+    cpid=""
+    [[ -f "$run/caffeinate.pid" ]] && read -r cpid <"$run/caffeinate.pid"
+    if [[ "$cpid" =~ ^[0-9]+$ && "$(ps -p "$cpid" -o comm= 2>/dev/null)" == *caffeinate ]]; then
+        live="its caffeinate (pid $cpid) still runs"
+    fi
+    if [[ -z "$live" && -f "$run/pids" ]]; then
+        while read -r apid; do
+            if [[ "$apid" =~ ^[0-9]+$ ]] && ps -p "$apid" >/dev/null 2>&1; then
+                live="pid $apid, which it started, is alive ($(ps -p "$apid" -o comm= 2>/dev/null))"
+                break
+            fi
+        done <"$run/pids"
+    fi
+    if [[ -z "$live" ]] && mount | grep -qF " on $run/mnt "; then
+        live="its disk image is still mounted at $run/mnt"
+    fi
+    if [[ -n "$live" ]]; then
+        echo "error: left alone, $live: $run"
+        status=1
+        continue
+    fi
+    remove "the package run folder" "$run"
+done
+[[ -d "$pkg" ]] && rmdir "$pkg" 2>/dev/null
+
+while IFS= read -r repo; do
+    [[ -n "$repo" ]] || continue
+    [[ "$repo" == /* ]] || repo="$HOME/$repo"
+    [[ -e "$repo/.git" ]] || continue
+    worktrees="$(git -C "$repo" worktree list --porcelain | awk '
+        /^worktree / { path = substr($0, 10) }
+        /^branch refs\/heads\// { print substr($0, 19) "\t" path }')"
+    while IFS= read -r branch; do
+        [[ -n "$branch" ]] || continue
+        where="$(awk -F '\t' -v b="$branch" '$1 == b { print $2 }' <<<"$worktrees")"
+        if [[ ! "$branch" =~ $branch_re ]]; then
+            echo "left alone, not a branch name the runner gives: $branch in $repo"
+        elif [[ -n "$where" ]]; then
+            echo "warn: $where is checked out on $branch, which a run never put back; check out the branch you want there, then clean again"
+        elif git -C "$repo" branch -q -D "$branch"; then
+            echo "removed the branch $branch from $repo"
+        else
+            echo "error: could not delete the branch $branch from $repo"
+            status=1
+        fi
+    done < <(git -C "$repo" for-each-ref --format='%(refname:short)' 'refs/heads/regress-*')
+done <<<"$REGRESS_REPOS"
+while IFS= read -r tree; do
+    [[ -n "$tree" ]] || continue
+    [[ "$tree" == /* ]] || tree="$HOME/$tree"
+    [[ -d "$tree" ]] && echo "regress:tree $(size_kb "$tree") $tree"
+done <<<"$REGRESS_TREES"
+echo "regress:free $(df -k "$HOME" | awk 'NR == 2 { print $4 }')"
+exit "$status"

@@ -32,6 +32,7 @@ REPO_SLUG="dusk-audio/dusk-studio"
 ENGINE_TIMEOUT=900
 GUI_TIMEOUT=1800
 MIC_TIMEOUT=90
+FREE_GB="${DUSK_REGRESS_MAC_FREE_PACKAGE_GB:-$(regress_floor_warm "$REGRESS_MAC_PACKAGE_GB")}"
 SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30)
 
 # Screen coordinates of the microphone prompt's Allow button on the node's
@@ -77,7 +78,9 @@ if [[ -n "$DMG" ]]; then
     [[ -f "$DMG" ]] || regress_die "no such disk image: $DMG"
     DMG="$(cd "$(dirname "$DMG")" && pwd)/$(basename "$DMG")"
 fi
-regress_require ssh scp git timeout
+[[ "$FREE_GB" =~ ^[0-9]+$ ]] || regress_die "DUSK_REGRESS_MAC_FREE_PACKAGE_GB is a whole number of GB"
+regress_require ssh scp git timeout flock
+regress_host_lock mac shared || regress_die "could not take the mac host lock"
 if [[ -n "$RELEASE_RUN" ]]; then
     regress_require gh
     regress_require_release_run "$REPO_SLUG" "$RELEASE_RUN"
@@ -114,12 +117,13 @@ BIN="$APP/Contents/MacOS/DuskStudio"
 FIXTURE_DIR="$HOME/$TREE/build-tests:$HOME/$TREE/tests/fixtures"
 
 # sandbox <dir>: SANDBOX_ENV becomes a private HOME, XDG base directories,
-# runtime dir, config dir and music dir, all under <dir>.
+# runtime dir, temp dir, config dir and music dir, all under <dir>.
 sandbox() {
     local d="$1"
-    mkdir -p -m 700 "$d" "$d/home" "$d/config" "$d/runtime" "$d/music" || return 1
+    mkdir -p -m 700 "$d" "$d/home" "$d/config" "$d/runtime" "$d/music" "$d/tmp" || return 1
     SANDBOX_ENV=(
         "HOME=$d/home"
+        "TMPDIR=$d/tmp"
         "XDG_CONFIG_HOME=$d/config"
         "XDG_DATA_HOME=$d/home/.local/share"
         "XDG_CACHE_HOME=$d/home/.cache"
@@ -172,7 +176,7 @@ vnc() {
 
 remote_cleanup() {
     stop_watcher
-    mac_run 120 <<'REMOTE' || echo "warning: could not clean up ${MAC_HOST}:~/${REMOTE_RUN}" >&2
+    mac_run 120 <<'REMOTE' && return 0
 [[ -d "$HOME/$RUN" ]] || exit 0
 while read -r pid; do
     [[ -n "$pid" && "$(ps -p "$pid" -o command= 2>/dev/null)" == "$BIN"* ]] && kill -9 "$pid" 2>/dev/null
@@ -190,8 +194,38 @@ fi
 [[ -d "$HOME/$RUN/mnt" ]] && hdiutil detach -force -quiet "$HOME/$RUN/mnt" 2>/dev/null
 rm -rf "$HOME/$RUN"
 rmdir "$HOME/dusk-regress-pkg" 2>/dev/null
-exit 0
+[[ ! -e "$HOME/$RUN" ]]
 REMOTE
+    echo "warning: could not clean up ${MAC_HOST}:~/${REMOTE_RUN}" >&2
+    return 1
+}
+
+# The fixture worktree's build-tests is the warm tree a package run keeps; the
+# run's node folder goes before the table, and its size and the node's free
+# space end it.
+pkg_footprint_leg() {
+    printf '\n--- footprint ---\n'
+    local start=$SECONDS out rc=0 tree_kb run_kb free_kb removed=1
+    run_kb="$(mac_run 300 <<'REMOTE'
+du -sk "$HOME/$RUN" 2>/dev/null | cut -f1
+REMOTE
+)" || true
+    remote_cleanup || removed=0
+    out="$(mac_run 300 <<'REMOTE'
+[[ -d "$HOME/$TREE/build-tests" ]] && echo "regress:tree $(du -sk "$HOME/$TREE/build-tests" | cut -f1)"
+echo "regress:free $(df -k "$HOME" | awk 'NR == 2 { print $4 }')"
+REMOTE
+)" || rc=$?
+    tree_kb="$(sed -n 's/^regress:tree //p' <<<"$out")"
+    free_kb="$(sed -n 's/^regress:free //p' <<<"$out")"
+    if ((rc != 0)) || [[ ! "$free_kb" =~ ^[0-9]+$ ]]; then
+        regress_record footprint FAIL "$((SECONDS - start))" "exit ${rc}"
+    elif ((!removed)); then
+        regress_record footprint FAIL "$((SECONDS - start))" "the node folder ~/${REMOTE_RUN} was not removed"
+    else
+        regress_record footprint PASS "$((SECONDS - start))" \
+            "warm tree ~/${MAC_TREE}/build-tests $(regress_gb "$((${tree_kb:-0} * 1024))"); ~/${REMOTE_RUN} $(regress_gb "$((${run_kb:-0} * 1024))") removed; $(regress_gb "$((free_kb * 1024))") free"
+    fi
 }
 
 stop_watcher() {
@@ -211,7 +245,7 @@ trap 'exit 143' TERM
 # so caffeinate runs for the whole leg (bounded, in case the cleanup never runs).
 leg_preflight() {
     local out rc=0
-    out="$(mac_run 120 <<'REMOTE'
+    out="$(mac_run 120 FREE_GB="$FREE_GB" <<'REMOTE'
 if curl -s -m 5 localhost:11434/api/generate -d '{"model":"qwen-review","keep_alive":0}' >/dev/null 2>&1; then
     echo "ollama: unload requested"
 fi
@@ -221,8 +255,17 @@ if [[ -n "$running" ]]; then
     echo "error: $BIN is already running (pid $(echo $running)); quit it before replacing the app" >&2
     exit 1
 fi
+free_kb="$(df -k "$HOME" | awk 'NR == 2 { print $4 }')"
+free_gb="$(awk -v k="$free_kb" 'BEGIN { printf "%.1f", k / 1048576 }')"
+if ((free_kb < FREE_GB * 1048576)); then
+    echo "error: $HOME has $free_gb GB free; a package run needs $FREE_GB GB" >&2
+    exit 1
+fi
+echo "$HOME has $free_gb GB free; a package run needs $FREE_GB GB"
 mkdir -p "$HOME/$RUN" || exit 1
 touch "$HOME/$RUN/pids" "$HOME/$RUN/started"
+echo 'dusk-regress package run folder; removed when the run ends, or by scripts/regress.sh clean mac' \
+    >"$HOME/$RUN/.dusk-regress-run"
 nohup caffeinate -d -i -u -s -t 14400 >/dev/null 2>&1 &
 echo $! >"$HOME/$RUN/caffeinate.pid"
 echo "regress:home $HOME"
@@ -770,6 +813,7 @@ if ((WA_ONLY)); then
     stop_watcher
     prompts_leg
     regress_leg "crash-reports" leg_crash_reports
+    pkg_footprint_leg
     echo
     echo "logs:        ${RUN_DIR}/"
     regress_summary "regress mac window-activation"
@@ -827,6 +871,7 @@ regress_skip "ipc-selftest" "Linux-only code path"
 if ((installed)); then
     regress_skip "package-uninstall" "left in /Applications; the next run replaces it"
 fi
+pkg_footprint_leg
 
 echo
 echo "logs:        ${RUN_DIR}/"

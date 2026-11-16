@@ -36,6 +36,8 @@ if [[ -n "${DUSK_REGRESS_MAC_REPO:-}" ]]; then
     MAC_DEDICATED=1
 fi
 JOBS="${DUSK_JOBS:-5}"
+FREE_COLD_GB="${DUSK_REGRESS_MAC_FREE_COLD_GB:-$(regress_floor_cold "$REGRESS_MAC_TREE_GB")}"
+FREE_WARM_GB="${DUSK_REGRESS_MAC_FREE_WARM_GB:-$(regress_floor_warm "$REGRESS_MAC_RUN_GB")}"
 SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30)
 
 while [[ $# -gt 0 ]]; do
@@ -49,7 +51,10 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-regress_require ssh git timeout
+[[ "$FREE_COLD_GB" =~ ^[0-9]+$ && "$FREE_WARM_GB" =~ ^[0-9]+$ ]] \
+    || regress_die "DUSK_REGRESS_MAC_FREE_COLD_GB and DUSK_REGRESS_MAC_FREE_WARM_GB are whole numbers of GB"
+regress_require ssh git timeout flock
+regress_host_lock mac shared || regress_die "could not take the mac host lock"
 cd "$REPO_ROOT"
 
 HEAD_SHA="$(git rev-parse HEAD)"
@@ -59,12 +64,18 @@ MAC_PREV_BRANCH=""
 MAC_PREV_COMMIT=""
 MAC_PREV_SUBMODULES=""
 MAC_REMOTE_REPO=""
-MAC_RUN_TOKEN="regress-${HEAD_SHORT}-$$"
+MAC_RUN_TOKEN="regress-${HEAD_SHORT:0:8}-$$"
 MAC_RUN_STATE="$(mktemp "${TMPDIR:-/tmp}/dusk-mac-run.XXXXXX")"
 MAC_RUN_BLOCKED="${MAC_RUN_STATE}.blocked"
 
 # A disconnected non-PTY ssh session can leave its build running. Keep an
 # identifiable remote process group so cancellation can acknowledge its exit.
+# Everything a run writes on the node outside the build trees goes in its own
+# folder, ~/.cache/dusk-regress/<token>, which the run removes when it ends: a
+# pid file while a call is in flight, and t/, the TMPDIR of every call. The
+# single-instance tests bind TMPDIR/dusk-si-XXXXXX/dusk-studio/instance.sock,
+# 41 characters past it, and macOS takes 103, so a longer folder leaves the
+# node's own TMPDIR in place.
 MAC_SUPERVISOR=$(cat <<'REMOTE'
 set -euo pipefail
 token=$1
@@ -79,15 +90,15 @@ for key in REGRESS_BUILD REGRESS_TEST_BUILD; do
     export "$key"
 done
 umask 077
-base="$HOME/.cache/dusk-regress"
-mkdir -p "$base"
-slot="$base/$token"
-mkdir "$slot"
+slot="$HOME/.cache/dusk-regress/$token"
+mkdir -p "$slot/t"
+[[ ! -e "$slot/pid" ]] || exit 75
+export REGRESS_RUN="$slot"
+if ((${#slot} + 2 <= 62)); then export TMPDIR="$slot/t"; fi
 cleanup() {
     rc=$?
     if ((rc == 0)); then
         rm -f "$slot/pid"
-        rmdir "$slot"
     fi
 }
 trap cleanup EXIT
@@ -131,7 +142,6 @@ fi
 for ((attempt = 0; attempt < 100; ++attempt)); do
     if ! group_alive; then
         rm -f "$slot/pid"
-        rmdir "$slot" 2>/dev/null || true
         exit 0
     fi
     sleep 0.1
@@ -163,10 +173,10 @@ MAC_DAF_REV="$(tr -d '[:space:]' < DAF_REV)"
 mac_run() {
     [[ ! -f "$MAC_RUN_BLOCKED" ]] || return 75
     local deadline="$1" command status=0
-    printf -v command 'exec env REGRESS_SOURCE=%q REGRESS_DAF=%q REGRESS_CONFIGURE=%q REGRESS_BUILD=%q REGRESS_TEST_BUILD=%q REGRESS_DAF_REV=%q REGRESS_DEDICATED=%q REGRESS_JOBS=%q REGRESS_COMMIT=%q REGRESS_DONOR=%q REGRESS_BRANCH=%q REGRESS_HOST=%q bash -c %q dusk-regress %q' \
+    printf -v command 'exec env REGRESS_SOURCE=%q REGRESS_DAF=%q REGRESS_CONFIGURE=%q REGRESS_BUILD=%q REGRESS_TEST_BUILD=%q REGRESS_DAF_REV=%q REGRESS_DEDICATED=%q REGRESS_JOBS=%q REGRESS_COMMIT=%q REGRESS_DONOR=%q REGRESS_BRANCH=%q REGRESS_HOST=%q REGRESS_FREE_COLD_GB=%q REGRESS_FREE_WARM_GB=%q bash -c %q dusk-regress %q' \
         "$MAC_REPO" "$MAC_DAF" "$MAC_CONFIGURE" "$MAC_BUILD_DIR" "$MAC_TEST_BUILD_DIR" \
         "$MAC_DAF_REV" "$MAC_DEDICATED" "$JOBS" "$HEAD_SHA" "$DONOR_REV" "$REMOTE_BRANCH" \
-        "$MAC_HOST" "$MAC_SUPERVISOR" "$MAC_RUN_TOKEN"
+        "$MAC_HOST" "$FREE_COLD_GB" "$FREE_WARM_GB" "$MAC_SUPERVISOR" "$MAC_RUN_TOKEN"
     printf '%s\n' "$MAC_RUN_TOKEN" >"$MAC_RUN_STATE"
     timeout --foreground "$deadline" ssh "${SSH_OPTS[@]}" "$MAC_HOST" "$command" || status=$?
     if ((status != 0)); then
@@ -177,9 +187,16 @@ mac_run() {
     return "$status"
 }
 
+# Fails when the node's checkout is not back where the run found it, so the
+# mac-restore row says so; the exit path tries again until it is.
+MAC_RESTORED=0
 restore_branch() {
-    [[ ! -f "$MAC_RUN_BLOCKED" ]] || return 0
     [[ -n "$MAC_PREV_BRANCH" ]] || return 0
+    ((!MAC_RESTORED)) || return 0
+    if [[ -f "$MAC_RUN_BLOCKED" ]]; then
+        echo "error: the node's checkout stays on ${REMOTE_BRANCH}: a call there was never acknowledged" >&2
+        return 1
+    fi
     # The name comes from the node's own checkout and is spliced into a script
     # the remote bash interprets, so it travels as a bash-quoted word (%q): a
     # ref name may legally contain $, ;, &, | and quotes. abbrev-ref reports
@@ -193,7 +210,7 @@ restore_branch() {
         label="$MAC_PREV_BRANCH"
     fi
     printf '\n--- restoring %s to %s ---\n' "$MAC_HOST" "$label"
-    mac_run 600 <<REMOTE || echo "warning: could not restore ${label}" >&2
+    if ! mac_run 600 <<REMOTE; then
 set -euo pipefail
 cd "\$REGRESS_SOURCE"
 git checkout -q ${checkout_args}
@@ -210,9 +227,39 @@ SUBMODULES
 git rev-parse --abbrev-ref HEAD
 git submodule status
 REMOTE
+        echo "error: could not restore ${MAC_HOST} to ${label}" >&2
+        return 1
+    fi
+    MAC_RESTORED=1
 }
+# Removes the run's folder on the node. Not while a call there is
+# unacknowledged: whatever it started may still be writing to it.
+MAC_TORN_DOWN=0
+mac_teardown() {
+    ((!MAC_TORN_DOWN)) || return 0
+    if [[ -f "$MAC_RUN_BLOCKED" ]]; then
+        echo "error: ~/.cache/dusk-regress/${MAC_RUN_TOKEN} stays on the node: a call there was never acknowledged" >&2
+        return 1
+    fi
+    local command
+    printf -v command 'exec bash -c %q dusk-teardown %q' '
+run="$HOME/.cache/dusk-regress/$1"
+[[ -d "$run" ]] || exit 0
+[[ ! -e "$run/pid" ]] || { echo "error: $run has a pid file, so a call there may still run" >&2; exit 75; }
+rm -rf "$run"
+[[ ! -e "$run" ]]
+' "$MAC_RUN_TOKEN"
+    timeout --foreground 120 ssh "${SSH_OPTS[@]}" "$MAC_HOST" "$command" </dev/null || return 1
+    MAC_TORN_DOWN=1
+}
+# A restore retried here runs through mac_run, which makes the run's folder
+# again, so the teardown runs again after it.
 mac_cleanup() {
-    restore_branch
+    if ((!MAC_RESTORED)) && [[ -n "$MAC_PREV_BRANCH" ]]; then
+        restore_branch || true
+        MAC_TORN_DOWN=0
+    fi
+    mac_teardown || true
     rm -f "$MAC_RUN_STATE" "$MAC_RUN_BLOCKED"
 }
 trap mac_cleanup EXIT
@@ -251,6 +298,20 @@ if [[ -n "$(git submodule foreach --recursive --quiet 'git status --porcelain' 2
     git submodule foreach --recursive --quiet 'git status --short | sed "s|^|  $path: |"' >&2
     exit 1
 fi
+free_kb="$(df -k "$HOME" | awk 'NR == 2 { print $4 }')"
+kind=warm
+want="$REGRESS_FREE_WARM_GB"
+if [[ ! -f "$REGRESS_BUILD/CMakeCache.txt" || ! -f "$REGRESS_TEST_BUILD/CMakeCache.txt" ]]; then
+    kind=cold
+    want="$REGRESS_FREE_COLD_GB"
+fi
+free_gb="$(awk -v k="$free_kb" 'BEGIN { printf "%.1f", k / 1048576 }')"
+if ((free_kb < want * 1048576)); then
+    echo "error: $HOME has $free_gb GB free; a $kind run needs $want GB" >&2
+    exit 1
+fi
+echo "$HOME has $free_gb GB free; a $kind run needs $want GB"
+echo "tests write to ${TMPDIR:-the default TMPDIR of the node}"
 echo "regress:source $(pwd -P)"
 echo "regress:branch $(git rev-parse --abbrev-ref HEAD)"
 echo "regress:commit $(git rev-parse HEAD)"
@@ -534,5 +595,41 @@ mac_scenarios_leg
 regress_skip "gui-launch" "foreground desktop session required for native GUI input"
 regress_skip "scenarios-gui" "foreground desktop session required for native GUI input"
 regress_skip "ipc-selftest" "Linux-only code path"
+
+regress_leg "mac-restore" restore_branch
+
+# The warm trees stay and the run's folder goes, pass or fail, and their sizes
+# and the node's free space end the table.
+leg_footprint() {
+    mac_run 600 <<'REMOTE'
+set -euo pipefail
+for dir in "$REGRESS_BUILD" "$REGRESS_TEST_BUILD"; do
+    [[ -d "$dir" ]] && echo "regress:tree $(du -sk "$dir" | cut -f1) ${dir##*/}"
+done
+echo "regress:run $(du -sk "$REGRESS_RUN" | cut -f1)"
+echo "regress:free $(df -k "$HOME" | awk 'NR == 2 { print $4 }')"
+REMOTE
+}
+mac_footprint_leg() {
+    printf '\n--- footprint ---\n'
+    local start=$SECONDS out rc=0 trees="" kb name run_kb free_kb
+    out="$(leg_footprint 2>&1)" || rc=$?
+    grep -v '^regress:' <<<"$out" || true
+    while read -r kb name; do
+        trees="${trees}${trees:+, }${name} $(regress_gb "$((kb * 1024))")"
+    done < <(sed -n 's/^regress:tree //p' <<<"$out")
+    run_kb="$(sed -n 's/^regress:run //p' <<<"$out")"
+    free_kb="$(sed -n 's/^regress:free //p' <<<"$out")"
+    if ((rc != 0)) || [[ ! "$free_kb" =~ ^[0-9]+$ ]]; then
+        mac_teardown || true
+        regress_record footprint FAIL "$((SECONDS - start))" "exit ${rc}"
+    elif ! mac_teardown; then
+        regress_record footprint FAIL "$((SECONDS - start))" "the run's folder ~/.cache/dusk-regress/${MAC_RUN_TOKEN} was not removed"
+    else
+        regress_record footprint PASS "$((SECONDS - start))" \
+            "warm trees ${trees:-none}; run folder $(regress_gb "$((${run_kb:-0} * 1024))") removed; $(regress_gb "$((free_kb * 1024))") free"
+    fi
+}
+mac_footprint_leg
 
 regress_summary "regress mac"

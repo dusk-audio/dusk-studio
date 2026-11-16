@@ -138,10 +138,10 @@ try {
     # Earlier runs' folders, and only those: each carries the marker file.
     Get-ChildItem $env:LOCALAPPDATA -Directory -Filter 'dusk-regress-*' -ErrorAction SilentlyContinue |
         Where-Object { $_.FullName -ne $rgRoot -and (Test-Path (Join-Path $_.FullName '.dusk-regress-run')) } |
-        ForEach-Object { Remove-Item -Recurse -Force $_.FullName -ErrorAction SilentlyContinue }
-    if (Test-Path $rgRoot) { Remove-Item -Recurse -Force $rgRoot }
+        ForEach-Object { [void](Remove-RegressTree $_.FullName '.dusk-regress-run') }
+    if (-not (Remove-RegressTree $rgRoot '.dusk-regress-run')) { throw "could not clear $rgRoot" }
     New-Item -ItemType Directory -Path "$rgRoot\regress-session" | Out-Null
-    Set-Content -Path "$rgRoot\.dusk-regress-run" -Value 'dusk-regress run folder; removed by the next run'
+    Set-Content -Path "$rgRoot\.dusk-regress-run" -Value 'dusk-regress run folder; removed by the run-cleanup leg, or by scripts/regress.sh clean windows'
 
     $rgMsi = "$rgRoot\@@MSI@@"
     Get-RegressFile '@@MSI@@' $rgMsi

@@ -16,6 +16,8 @@
 #   scripts/regress.sh all --release-run <id>
 #   scripts/regress.sh windows-source        build + ctest HEAD in the win11 guest
 #   scripts/regress.sh prepush               linux, mac and windows source legs, at once
+#   scripts/regress.sh prepush --clean       the same, then what it leaves on the hosts goes
+#   scripts/regress.sh clean all             remove what runs left on the mac and windows hosts
 #
 # Per-platform prerequisites and what each leg proves: docs/MAINTAINER-GUIDE.md,
 # "Part 9b - Regression run across platforms".
@@ -28,6 +30,7 @@ REGRESS_DIR="${REPO_ROOT}/scripts/regress"
 usage() {
     cat <<'EOF'
 usage: scripts/regress.sh [linux|mac|windows|windows-source|all|prepush] [options]
+       scripts/regress.sh clean [mac|windows|all] [--host <user@host>]
 
   linux    (default) build, tests, ctest, JUCE gate, self-test, IPC,
            scenario and manual figure legs
@@ -113,6 +116,20 @@ usage: scripts/regress.sh [linux|mac|windows|windows-source|all|prepush] [option
            folders of earlier runs, and the scratch folders failed capture
            and GNOME session legs kept, once they are over a week old.
 
+  clean    remove what runs leave on the hosts, and nothing else (default all):
+             mac      run folders under ~/.cache/dusk-regress whose process
+                      group is gone, the regress-* branches the runner pushed
+                      that no worktree has checked out, and the package run
+                      folders under ~/dusk-regress-pkg; the build trees stay
+             windows  the source tree, only with its .dusk-regress-tree
+                      marker, and package run folders, only with their
+                      .dusk-regress-run marker
+           Refused for a host a run on this box is still using.
+
+  --clean  on mac, windows, windows-source, all and prepush: once the run has
+           ended, pass or fail (not after Ctrl-C), run clean for every host it
+           used. For the last run of a branch.
+
   -h, --help   this text
 EOF
 }
@@ -130,6 +147,7 @@ fi
 
 case "$TARGET" in
     linux | mac | windows | windows-source | all | prepush) ;;
+    clean) exec bash "${REGRESS_DIR}/clean.sh" "$@" ;;
     *)
         usage >&2
         echo >&2
@@ -138,8 +156,58 @@ case "$TARGET" in
         ;;
 esac
 
+# --clean belongs to no platform runner: it is taken out here, and clean.sh runs
+# once the runs are over, for the hosts they used, with the same --host.
+CLEAN=0
+CLEAN_ARGS=()
+kept_args=()
+previous=""
+for arg in "$@"; do
+    if [[ "$arg" == --clean ]]; then
+        CLEAN=1
+    else
+        kept_args+=("$arg")
+        [[ "$previous" != --host ]] || CLEAN_ARGS=(--host "$arg")
+    fi
+    previous="$arg"
+done
+set -- ${kept_args[@]+"${kept_args[@]}"}
+case "$TARGET" in
+    linux) CLEAN_HOST="" ;;
+    mac) CLEAN_HOST=mac ;;
+    windows | windows-source) CLEAN_HOST=windows ;;
+    all | prepush) CLEAN_HOST=all ;;
+esac
+if ((CLEAN)) && [[ -z "$CLEAN_HOST" ]]; then
+    echo "error: --clean removes what runs leave on the mac and windows hosts; a linux run uses neither" >&2
+    exit 2
+fi
+
 if [[ "$TARGET" != all && "$TARGET" != prepush ]]; then
-    exec bash "${REGRESS_DIR}/${TARGET}.sh" "$@"
+    ((CLEAN)) || exec bash "${REGRESS_DIR}/${TARGET}.sh" "$@"
+    # The runner gets a process group of its own, so Ctrl-C or a TERM reaches it
+    # once, from here, and it stops its host's work the way it does when run
+    # alone. An interrupted or terminated run gets no clean.
+    set -m
+    bash "${REGRESS_DIR}/${TARGET}.sh" "$@" </dev/null &
+    runner=$!
+    set +m
+    forward_signal() {
+        trap '' INT TERM
+        kill -s "$1" -- "-${runner}" 2>/dev/null || true
+        wait "$runner" 2>/dev/null || true
+        exit "$2"
+    }
+    trap 'forward_signal INT 130' INT
+    trap 'forward_signal TERM 143' TERM
+    status=0
+    wait "$runner" || status=$?
+    trap - INT TERM
+    if ((status == 130 || status == 143)); then exit "$status"; fi
+    clean_status=0
+    bash "${REGRESS_DIR}/clean.sh" "$CLEAN_HOST" ${CLEAN_ARGS[@]+"${CLEAN_ARGS[@]}"} || clean_status=$?
+    if ((status != 0)); then exit "$status"; fi
+    exit "$clean_status"
 fi
 
 # `all` runs three scripts that each reject options they do not know, so the
@@ -269,6 +337,7 @@ if [[ "${DUSK_REGRESS_DRY_RUN:-0}" == 1 ]]; then
     else
         printf 'windows: %s\n' "${WINDOWS_ARGS[*]-}"
     fi
+    ((!CLEAN)) || printf 'clean:   all %s\n' "${CLEAN_ARGS[*]-}" | sed 's/ *$//'
     exit 0
 fi
 
@@ -279,6 +348,7 @@ export DUSK_REGRESS_RECORD_FILE="$RECORD_FILE"
 # A runner that dies before its first leg (a usage error, a missing tool)
 # records nothing, so its exit status gets a row of its own.
 rc=0
+RUN_STATUS=0
 # run_platform <platform> <runner> [options]: the platform labels the rows,
 # the runner is the script under scripts/regress/ that records them.
 run_platform() {
@@ -290,6 +360,7 @@ run_platform() {
         printf '%s %s started\n' "$(date '+%F %T')" "$runner"
     fi
     bash "${REGRESS_DIR}/${runner}.sh" "$@" || status=$?
+    RUN_STATUS=$status
     if [[ "$TARGET" == prepush ]]; then
         printf '%s %s finished, exit %s\n' "$(date '+%F %T')" "$runner" "$status"
     fi
@@ -365,9 +436,29 @@ if [[ "$TARGET" == prepush ]]; then
     set +m
     trap - INT TERM
 else
-    run_platform linux linux ${LINUX_ARGS[@]+"${LINUX_ARGS[@]}"}
-    run_platform mac mac ${MAC_ARGS[@]+"${MAC_ARGS[@]}"}
-    run_platform windows windows ${WINDOWS_ARGS[@]+"${WINDOWS_ARGS[@]}"}
+    # A runner that stopped on Ctrl-C or a TERM ends `all` there: the rest of
+    # the platforms do not start, and nothing is cleaned.
+    for platform in linux mac windows; do
+        case "$platform" in
+            linux) run_platform linux linux ${LINUX_ARGS[@]+"${LINUX_ARGS[@]}"} ;;
+            mac) run_platform mac mac ${MAC_ARGS[@]+"${MAC_ARGS[@]}"} ;;
+            windows) run_platform windows windows ${WINDOWS_ARGS[@]+"${WINDOWS_ARGS[@]}"} ;;
+        esac
+        if ((RUN_STATUS == 130 || RUN_STATUS == 143)); then
+            printf '\nregress all: stopped in %s (exit %s); the platforms after it did not run\n' "$platform" "$RUN_STATUS"
+            exit "$RUN_STATUS"
+        fi
+    done
+fi
+
+if ((CLEAN)); then
+    clean_status=0
+    bash "${REGRESS_DIR}/clean.sh" all ${CLEAN_ARGS[@]+"${CLEAN_ARGS[@]}"} || clean_status=$?
+    if ((clean_status != 0)); then
+        rc=1
+        grep -q $'\tFAIL\tclean\t' "$RECORD_FILE" \
+            || printf 'clean\tFAIL\trunner\t0\texit %s with no failed leg\n' "$clean_status" >>"$RECORD_FILE"
+    fi
 fi
 
 printf '\n===== regress %s =====\n' "$TARGET"

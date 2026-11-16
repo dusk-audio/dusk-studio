@@ -104,7 +104,7 @@ function Read-RegressStderr($state, $ms) {
 # DUSKSTUDIO_EXPECT_MP3 turns the MP3 scenarios' skip into a failure.
 function New-RegressSandbox($name) {
     $base = "$rgRoot\launch\$name"
-    if (Test-Path $base) { Remove-Item -Recurse -Force $base }
+    if (-not (Remove-RegressTree $base)) { throw "could not clear $base" }
     $home_ = "$base\home"
     foreach ($d in @("$home_\AppData\Roaming", "$home_\AppData\Local", "$home_\Documents",
             "$home_\Music", "$home_\Desktop", "$base\temp", "$base\config", "$base\music")) {
@@ -257,6 +257,17 @@ function Get-RegressSnapshot {
             $rows += "$($_.FullName)|temp|$($_.LastWriteTimeUtc.Ticks)"
         }
     return $rows
+}
+
+# The Explorer launches of phase 4 take the account's own TEMP: Explorer hands
+# its children its environment. Lending TEMP through HKCU\Environment would put
+# every process started in that window, not only ours, in the run folder, and
+# the account is shared. temp_<hex> is JUCE's generic name, which other software
+# in the account makes too, so what appears is counted and reported, never
+# removed.
+function Get-RegressAppTempNames {
+    return @(Get-ChildItem -LiteralPath ([IO.Path]::GetTempPath()) -Force -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -like 'temp_*' -or $_.Name -like 'dusk-*' } | ForEach-Object { $_.Name })
 }
 
 function Get-RegressGuiCatalog([string]$text, $exitCode) {

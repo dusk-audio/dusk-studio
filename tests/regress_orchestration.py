@@ -15,19 +15,21 @@ import time
 repo = Path(sys.argv[1]).resolve()
 
 
-def wait_for(predicate):
+def wait_for(predicate, what="regression runner did not reach the expected state"):
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline:
         if predicate():
             return
         time.sleep(0.01)
-    raise AssertionError("regression runner did not reach the expected state")
+    raise AssertionError(what)
 
 
+# An exited process reads Z until its parent reaps it and X while that happens,
+# and then its /proc entry goes; none of those is running.
 def running(pid):
     try:
-        return Path(f"/proc/{pid}/stat").read_text().split(") ", 1)[1][0] != "Z"
-    except FileNotFoundError:
+        return Path(f"/proc/{pid}/stat").read_text().split(") ", 1)[1][0] not in "ZX"
+    except (FileNotFoundError, ProcessLookupError, IndexError):
         return False
 
 
@@ -35,8 +37,9 @@ with tempfile.TemporaryDirectory(prefix="dusk-regress-contract-") as scratch:
     root = Path(scratch)
     runner_tmp = root / "tmp"
     runner_tmp.mkdir()
+    locks = root / "locks"
     child_environment = dict(os.environ, DUSK_REGRESS_RECORD_FILE=str(root / "results.tsv"),
-                             TMPDIR=str(runner_tmp))
+                             TMPDIR=str(runner_tmp), DUSK_REGRESS_LOCK_DIR=str(locks))
     sandbox_harness = r'''
 set -euo pipefail
 source "$DUSK_REGRESS_TEST_ROOT/scripts/regress/common.sh"
@@ -156,8 +159,9 @@ sleep 5
             f"echo $! > '{root}/{platform}.timeout'\n"
             "wait\n"
         )
+    (runners / "clean.sh").write_text(f"#!/usr/bin/env bash\ntouch '{root}/clean.called'\n")
     process = subprocess.Popen(
-        ["bash", str(scripts / "regress.sh"), "prepush"],
+        ["bash", str(scripts / "regress.sh"), "prepush", "--clean"],
         env=child_environment,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         start_new_session=True,
@@ -182,6 +186,7 @@ sleep 5
         wait_for(lambda: not any(running(pid) for pid in children))
         log_dir = Path(stdout.split("logs in ", 1)[1].splitlines()[0])
         assert log_dir.is_dir(), "an interrupted prepush removed its logs"
+        assert not (root / "clean.called").exists(), "an interrupted prepush --clean cleaned the hosts"
     finally:
         for group in groups:
             try:
@@ -194,13 +199,31 @@ sleep 5
     logs_runners = logs_root / "scripts/regress"
     logs_runners.mkdir(parents=True)
     shutil.copyfile(repo / "scripts/regress.sh", logs_root / "scripts/regress.sh")
-    for runner, platform in (("linux", "linux"), ("mac", "mac"), ("windows-source", "windows")):
+    for runner, platform in (("linux", "linux"), ("mac", "mac"), ("windows-source", "windows"),
+                             ("windows", "windows")):
         (logs_runners / f"{runner}.sh").write_text(
             "#!/usr/bin/env bash\n"
             f'status="${{REGRESS_TEST_{platform.upper()}:-PASS}}"\n'
-            f'printf "{platform}\\t%s\\tstub\\t0\\t\\n" "$status" >>"$DUSK_REGRESS_RECORD_FILE"\n'
+            'printf "args:%s\\n" "$*"\n'
+            '[[ "$status" != INT ]] || exit 130\n'
+            'if [[ "$status" == SLEEP ]]; then\n'
+            '    sleep 3600 &\n'
+            '    child=$!\n'
+            f'    trap \'kill $child; echo $$ >"{logs_root}/{runner}.term"; exit 143\' TERM\n'
+            f'    echo $$ >"{logs_root}/{runner}.sleeping"\n'
+            '    wait "$child"\n'
+            'fi\n'
+            f'[[ -z "${{DUSK_REGRESS_RECORD_FILE:-}}" ]] || printf "{platform}\\t%s\\tstub\\t0\\t\\n" "$status" >>"$DUSK_REGRESS_RECORD_FILE"\n'
             '[[ "$status" == PASS ]]\n'
         )
+    clean_trace = logs_root / "clean.args"
+    (logs_runners / "clean.sh").write_text(
+        "#!/usr/bin/env bash\n"
+        f"printf '%s\\n' \"$@\" >'{clean_trace}'\n"
+        'status="${REGRESS_TEST_CLEAN:-PASS}"\n'
+        '[[ -z "${DUSK_REGRESS_RECORD_FILE:-}" ]] || printf "mac\\t%s\\tclean\\t0\\t\\n" "$status" >>"$DUSK_REGRESS_RECORD_FILE"\n'
+        '[[ "$status" == PASS ]]\n'
+    )
     logs_tmp = logs_root / "tmp"
     logs_tmp.mkdir()
     week = 7 * 24 * 3600
@@ -258,9 +281,113 @@ sleep 5
         verdict = result.stdout.split("regress prepush: FAILED", 1)[1]
         assert log_dir.is_dir() and (log_dir / "mac.log").is_file(), "a failing prepush lost its logs"
         assert str(log_dir) in verdict, result.stdout
+        assert not clean_trace.exists(), "prepush without --clean cleaned the hosts"
     finally:
         owner_lock.close()
     assert owned.is_dir()
+
+    def regress(*arguments, **statuses):
+        clean_trace.unlink(missing_ok=True)
+        environment = dict(child_environment, TMPDIR=str(logs_tmp), **statuses)
+        environment.pop("DUSK_REGRESS_RECORD_FILE")
+        result = subprocess.run(["/bin/bash", str(logs_root / "scripts/regress.sh"), *arguments],
+                                env=environment, capture_output=True, text=True, timeout=20)
+        cleaned = clean_trace.read_text().splitlines() if clean_trace.exists() else None
+        return result, cleaned
+
+    result, cleaned = regress("prepush", "--clean", "--host", "u@h")
+    assert result.returncode == 0 and "regress prepush: OK" in result.stdout, (result.stdout, result.stderr)
+    assert cleaned == ["all", "--host", "u@h"], cleaned
+    assert "mac/clean" in result.stdout, result.stdout
+    result, cleaned = regress("prepush", "--clean", REGRESS_TEST_CLEAN="FAIL")
+    assert result.returncode == 1 and "regress prepush: FAILED" in result.stdout, result.stdout
+    assert cleaned == ["all"], cleaned
+    result, cleaned = regress("prepush", "--clean", REGRESS_TEST_WINDOWS="FAIL")
+    assert result.returncode == 1 and cleaned == ["all"], ("a failed prepush --clean did not clean", result.stdout)
+    for arguments, host in ((["mac", "--clean", "--host", "u@h"], ["mac", "--host", "u@h"]),
+                            (["windows-source", "--clean"], ["windows"]),
+                            (["clean", "windows"], ["windows"])):
+        result, cleaned = regress(*arguments)
+        assert result.returncode == 0, (arguments, result.stdout, result.stderr)
+        assert cleaned == host, (arguments, cleaned)
+        assert "--clean" not in result.stdout, ("--clean reached a platform runner", result.stdout)
+    result, cleaned = regress("mac", "--clean", REGRESS_TEST_MAC="FAIL")
+    assert result.returncode == 1 and cleaned == ["mac"], (result.returncode, cleaned)
+    result, cleaned = regress("mac", "--clean", REGRESS_TEST_MAC="INT")
+    assert result.returncode == 130 and cleaned is None, ("an interrupted run was cleaned", result.returncode, cleaned)
+    result, cleaned = regress("mac", REGRESS_TEST_MAC="PASS")
+    assert result.returncode == 0 and cleaned is None, cleaned
+    result, cleaned = regress("linux", "--clean")
+    assert result.returncode == 2 and cleaned is None, (result.returncode, result.stderr)
+    result, cleaned = regress("all", "--clean", REGRESS_TEST_MAC="INT")
+    assert result.returncode == 130 and cleaned is None, ("an interrupted all --clean cleaned", result.stdout)
+    assert result.stdout.count("args:") == 2 and "stopped in mac" in result.stdout, \
+        ("all ran on after an interrupt", result.stdout)
+    result, cleaned = regress("all", "--clean")
+    assert result.returncode == 0 and cleaned == ["all"], (result.stdout, cleaned)
+
+    # A TERM to the --clean wrapper reaches the runner, and nothing is cleaned.
+    clean_trace.unlink(missing_ok=True)
+    term_environment = dict(child_environment, TMPDIR=str(logs_tmp), REGRESS_TEST_MAC="SLEEP")
+    term_environment.pop("DUSK_REGRESS_RECORD_FILE")
+    wrapper = subprocess.Popen(["/bin/bash", str(logs_root / "scripts/regress.sh"), "mac", "--clean"],
+                               env=term_environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                               text=True, start_new_session=True)
+    try:
+        sleeping = logs_root / "mac.sleeping"
+        wait_for(lambda: sleeping.exists() and sleeping.read_text().strip())
+        wrapper.send_signal(signal.SIGTERM)
+        stdout, stderr = wrapper.communicate(timeout=10)
+        assert wrapper.returncode == 143, (wrapper.returncode, stdout, stderr)
+        assert (logs_root / "mac.term").exists(), "the TERM did not reach the runner"
+        assert not clean_trace.exists(), "a terminated run was cleaned"
+    finally:
+        stub = logs_root / "mac.sleeping"
+        for pid, kill in ((wrapper.pid, os.killpg),
+                          (int(stub.read_text()) if stub.exists() else None, os.kill)):
+            if pid is not None and running(pid):
+                try:
+                    kill(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+        wrapper.wait()
+
+    # The three runners of a prepush take their locks at the same moment, and
+    # after a reboot the lock folder is not there yet: every one of them has to
+    # get its lock, whichever makes the folder.
+    taker = (
+        'source "$1/scripts/regress/common.sh"\n'
+        'until [[ -e "$2" ]]; do :; done\n'
+        'regress_host_lock "$3" shared && echo locked\n')
+    for round_ in range(5):
+        race_dir = root / f"lock-race-{round_}" / "dusk-regress"
+        go = root / f"lock-race-{round_}.go"
+        takers = [subprocess.Popen(["bash", "-c", taker, "taker", str(repo), str(go), host],
+                                   env=dict(child_environment, DUSK_REGRESS_LOCK_DIR=str(race_dir)),
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                  for host in ("mac", "windows", "mac", "windows", "mac", "windows")]
+        go.touch()
+        outcomes = [taker_process.communicate(timeout=20) for taker_process in takers]
+        assert all(out.strip() == "locked" for out, _ in outcomes), ("a lock taker lost the race", outcomes)
+        assert oct(race_dir.stat().st_mode & 0o777) == "0o700", oct(race_dir.stat().st_mode)
+    for name, make in (("open-mode", lambda d: d.mkdir(mode=0o755)),
+                       ("a-link", lambda d: d.symlink_to(root / "lock-race-0" / "dusk-regress"))):
+        bad = root / f"lock-bad-{name}" / "dusk-regress"
+        bad.parent.mkdir()
+        make(bad)
+        result = subprocess.run(["bash", "-c", 'source "$1/scripts/regress/common.sh"; regress_host_lock mac shared',
+                                 "taker", str(repo)], env=dict(child_environment, DUSK_REGRESS_LOCK_DIR=str(bad)),
+                                capture_output=True, text=True, timeout=10)
+        assert result.returncode != 0 and "not a private folder" in result.stderr, (name, result)
+
+    def lock_is_held(host):
+        with open(locks / f"{host}.lock", "a") as probe:
+            try:
+                fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return True
+            fcntl.flock(probe, fcntl.LOCK_UN)
+            return False
 
     shutil.copyfile(repo / "scripts/regress/mac.sh", runners / "mac.sh")
     shutil.copyfile(repo / "scripts/regress/common.sh", runners / "common.sh")
@@ -304,13 +431,18 @@ sleep 5
         remote_pid = int(marker.read_text())
         # SSH disconnects leave this separate remote group alive.
         assert os.getpgid(remote_pid) != process.pid
+        assert lock_is_held("mac"), "a running mac leg does not hold the mac host lock"
+        refused = subprocess.run(["/bin/bash", str(repo / "scripts/regress/clean.sh"), "mac"],
+                                 env=environment, capture_output=True, text=True, timeout=10)
+        assert refused.returncode == 1 and "a run on this box is using the mac host" in refused.stdout, \
+            ("a clean ran beside a live mac run", refused.stdout, refused.stderr)
         process.send_signal(signal.SIGINT)
         stdout, stderr = process.communicate(timeout=20)
         assert process.returncode == 130, (process.returncode, stdout, stderr)
         log_dir = Path(stdout.split("logs in ", 1)[1].splitlines()[0])
         mac_log = (log_dir / "mac.log").read_text()
         assert "not acknowledged" not in mac_log, mac_log
-        assert not running(remote_pid), "prepush returned before remote cancellation finished"
+        wait_for(lambda: not running(remote_pid), "the remote run outlived the cancellation prepush waited for")
     finally:
         for pid in (remote_pid, process.pid):
             if pid is not None and running(pid):
@@ -357,7 +489,8 @@ scenarios_gui_sharded_leg scenarios-gui 5
 import json,os,pathlib,sys
 with open(os.environ['REGRESS_TEST_TRACE'],'a') as out:
     out.write(json.dumps({'command':pathlib.Path(sys.argv[0]).name,'args':sys.argv[1:],
-                          'cwd':os.getcwd(),'fixtures':os.environ.get('DUSKSTUDIO_FIXTURE_DIR')})+'\\n')
+                          'cwd':os.getcwd(),'fixtures':os.environ.get('DUSKSTUDIO_FIXTURE_DIR'),
+                          'tmpdir':os.environ.get('TMPDIR')})+'\\n')
 '''
     git_mock = recorder + '''
 args=sys.argv[1:]
@@ -367,6 +500,8 @@ if args[:1]==['-C']:
     args=args[2:]
 if args[:1]==['pull']:
     sys.exit('Dedicated validation must not pull a developer dependency')
+if args[:1]==['checkout'] and '--detach' in args and os.environ.get('REGRESS_TEST_RESTORE_FAIL'):
+    sys.exit('error: pathspec did not match')
 if args[:1]==['status'] and cwd==os.environ['REGRESS_TEST_DAF_ROOT']:
     if os.environ.get('REGRESS_TEST_DAF_DIRTY'): print(' M file')
 elif args[:1]==['config']:
@@ -416,7 +551,8 @@ else:
                        DUSK_REGRESS_MAC_DAF=str(configured_daf),
                        DUSK_REGRESS_MAC_CONFIGURE=str(configured_helper),
                        DUSK_REGRESS_MAC_BUILD_DIR="app build",
-                       DUSK_REGRESS_MAC_TEST_BUILD_DIR="test build")
+                       DUSK_REGRESS_MAC_TEST_BUILD_DIR="test build",
+                       DUSK_REGRESS_MAC_FREE_COLD_GB="0", DUSK_REGRESS_MAC_FREE_WARM_GB="0")
 
     def configured_run(overrides):
         trace.write_text("")
@@ -426,8 +562,39 @@ else:
         calls = [json.loads(line) for line in trace.read_text().splitlines()]
         return result, calls
 
+    def run_folders(home):
+        return sorted((home / ".cache/dusk-regress").glob("regress-*"))
+
+    # A restore that fails is a failed row, the exit tries it again, and the
+    # run's folder still goes after that second try.
+    result, calls = configured_run({"REGRESS_TEST_RESTORE_FAIL": "1"})
+    assert result.returncode != 0 and "FAIL   mac-restore" in result.stdout, (result.stdout, result.stderr)
+    assert result.stderr.count("error: could not restore") == 2, result.stderr
+    assert not run_folders(remote_home), ("a failed restore left the run's folder", run_folders(remote_home))
+
+    short_home = Path(tempfile.mkdtemp(prefix="d", dir="/tmp"))
+    try:
+        result, calls = configured_run({"HOME": str(short_home)})
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        ctest = next(call for call in calls if call["command"] == "ctest")
+        run_tmp = Path(ctest["tmpdir"])
+        assert run_tmp.name == "t" and run_tmp.parent.parent == short_home / ".cache/dusk-regress", ctest
+        assert len(str(run_tmp)) + len("/dusk-si-XXXXXX/dusk-studio/instance.sock") < 104, run_tmp
+        assert not run_tmp.parent.exists() and not run_folders(short_home), "the run's folder outlived it"
+        result, calls = configured_run({"HOME": str(short_home), "DUSK_REGRESS_MAC_FREE_WARM_GB": "999999"})
+        assert result.returncode != 0 and "a warm run needs 999999 GB" in result.stderr, (result.stdout, result.stderr)
+        assert not any(call["command"] == "cmake" for call in calls), calls
+        assert not run_folders(short_home), "a refused run left its folder"
+    finally:
+        shutil.rmtree(short_home)
+
     result, calls = configured_run({})
     assert result.returncode == 0, (result.stdout, result.stderr)
+    assert "[PASS] footprint" in result.stdout and "warm trees app build " in result.stdout, result.stdout
+    assert not run_folders(remote_home), ("a passing run left its folder", run_folders(remote_home))
+    # This HOME is too long for a socket path under the run's folder, so the
+    # tests keep the node's TMPDIR.
+    assert all(call["tmpdir"] == environment["TMPDIR"] for call in calls), calls
     assert any(call["command"] == configured_helper.name and
                call["args"][0] == str(app_build) for call in calls), calls
     assert any(call["command"] == configured_helper.name and
@@ -538,8 +705,11 @@ command = sys.argv[-1]
 encoded = re.search(r"-EncodedCommand (\\S+);", command)
 if encoded:
     script = base64.b64decode(encoded.group(1)).decode("utf-16-le")
-    kind = "cancel" if "taskkill" in script else "preflight"
-    command = next(line for line in script.splitlines() if line.startswith("$root"))
+    kind = re.search(r"^\\$rgScript = '([a-z]+)'", script, re.M).group(1)
+    assert "function Remove-RegressTree" in script, "inline-lib.ps1 did not travel with " + kind
+    assert not re.search(r"^\\s*#", script, re.M), "comment lines travelled with " + kind
+    command = "; ".join(line for line in script.splitlines()
+                        if re.match(r"\\$(root|coldGb|warmGb) = ", line))
 else:
     kind = re.search(r"\\\\regress\\\\([a-z]+)\\.cmd", command).group(1)
 with open("{win_trace}", "a") as out:
@@ -558,6 +728,20 @@ if kind == "ctest" and " list" in command:
         print("  Test #1: " + name + "\\r")
 elif kind == "ctest":
     print("100% tests passed, 0 tests failed out of 2")
+elif kind == "tidy":
+    print("removed C:\\\\t\\\\regress\\\\head.bundle (0.0 GB)\\r")
+    print("regress:part src 2147483648\\r")
+    print("regress:part src\\\\build-tests 1610612736\\r")
+    print("regress:footprint 3221225472 10737418240 C:\\\\\\r")
+elif kind == "clean":
+    if os.environ.get("REGRESS_TEST_CLEAN_REFUSE"):
+        print("error: C:\\\\t has no .dusk-regress-tree marker, so it is not removed.\\r")
+        print("regress:free 1073741824 C:\\\\\\r")
+        sys.exit(1)
+    print("removed the source tree C:\\\\t (3.0 GB)\\r")
+    print("removed the package run folder C:\\\\l\\\\dusk-regress-1 (0.1 GB)\\r")
+    print("warn: left alone, no .dusk-regress-run marker: C:\\\\l\\\\dusk-regress-2\\r")
+    print("regress:free 21474836480 C:\\\\\\r")
 ''')
     (win_mocks / "scp").write_text(f'''#!/usr/bin/python3
 import shutil, sys
@@ -581,8 +765,11 @@ for arg in sys.argv[1:-1]:
 
     result, calls = windows_source({})
     assert result.returncode == 0, (result.stdout, result.stderr)
-    assert [kind for kind, _ in calls] == ["preflight", "update", "build", "mesa", "ctest", "ctest"], calls
-    assert calls[0][1] == "$root = 'C:\\Users\\marc\\dusk-audit-win'", calls[0]
+    assert [kind for kind, _ in calls] == ["preflight", "update", "build", "mesa", "ctest", "ctest", "tidy"], calls
+    assert calls[0][1] == "$root = 'C:\\Users\\marc\\dusk-audit-win'; $coldGb = '11'; $warmGb = '6'", calls[0]
+    assert "[PASS] footprint" in result.stdout, result.stdout
+    assert "warm tree C:\\Users\\marc\\dusk-audit-win 3.0 GB, C:\\ 10.0 GB free" in result.stdout, result.stdout
+    assert "tree parts: src 2.0 GB; src\\build-tests 1.5 GB" in result.stdout, result.stdout
     update = calls[1][1]
     assert f"update.cmd {head_sha} {base_sha} C:\\Users\\marc\\dusk-audit-win\\regress\\head.bundle; exit $LASTEXITCODE" in update, update
     assert (copied / "head.bundle").exists()
@@ -595,17 +782,48 @@ for arg in sys.argv[1:-1]:
     result, calls = windows_source({"REGRESS_TEST_INVENTORY": required[0]})
     assert result.returncode != 0, result.stdout
     assert "missing from CTest: " + required[1] in result.stderr, result.stderr
-    assert [kind for kind, _ in calls][-1] == "ctest", calls
+    assert [kind for kind, _ in calls][-2:] == ["ctest", "tidy"], calls
 
     result, calls = windows_source({"REGRESS_TEST_BUILD_FAIL": "1"})
     assert result.returncode != 0, result.stdout
-    assert [kind for kind, _ in calls] == ["preflight", "update", "build"], calls
+    assert [kind for kind, _ in calls] == ["preflight", "update", "build", "tidy"], calls
     assert "FAIL   build" in result.stdout and "1 errors, first a.cpp(1): error C2065" in result.stdout, result.stdout
     for leg in ("mesa", "ctest-inventory", "ctest"):
         assert f"SKIP   {leg} " in result.stdout, (leg, result.stdout)
 
     result, calls = windows_source({"DUSK_REGRESS_WIN_ROOT": "C:\\a b"})
     assert result.returncode != 0 and not calls, (result.stdout, calls)
+    result, calls = windows_source({"DUSK_REGRESS_WIN_FREE_WARM_GB": "lots"})
+    assert result.returncode != 0 and not calls, (result.stdout, calls)
+    result, calls = windows_source({"DUSK_REGRESS_WIN_FREE_COLD_GB": "45", "DUSK_REGRESS_WIN_FREE_WARM_GB": "12"})
+    assert calls[0][1].endswith("$coldGb = '45'; $warmGb = '12'"), calls[0]
+
+    shutil.copyfile(repo / "scripts/regress/clean.sh", win_runners / "clean.sh")
+
+    def windows_clean(*arguments, **overrides):
+        win_trace.write_text("")
+        result = subprocess.run(["/bin/bash", str(win_root / "scripts/regress.sh"), "clean", *arguments],
+                                env=dict(win_environment, **overrides), capture_output=True,
+                                text=True, timeout=20)
+        return result, [line.split("\t", 1)[0] for line in win_trace.read_text().splitlines()]
+
+    result, kinds = windows_clean("windows")
+    assert result.returncode == 0 and kinds == ["clean"], (result.stdout, result.stderr, kinds)
+    assert "[WARN] clean" in result.stdout and "marc@192.168.122.85: 2 removed, C:\\ 20.0 GB free" in result.stdout, result.stdout
+    assert "warn: left alone, no .dusk-regress-run marker" in result.stdout, result.stdout
+    result, kinds = windows_clean("windows", REGRESS_TEST_CLEAN_REFUSE="1")
+    assert result.returncode == 1 and "[FAIL] clean" in result.stdout, result.stdout
+    assert "has no .dusk-regress-tree marker" in result.stdout.split("[FAIL] clean", 1)[1], result.stdout
+    held = open(locks / "windows.lock", "a")
+    fcntl.flock(held, fcntl.LOCK_SH)
+    try:
+        result, kinds = windows_clean("windows")
+        assert result.returncode == 1 and not kinds, ("a clean ran beside a live run", result.stdout, kinds)
+        assert "a run on this box is using the windows guest" in result.stdout, result.stdout
+    finally:
+        held.close()
+    result, kinds = windows_clean("nowhere")
+    assert result.returncode != 0 and not kinds, (result.stdout, kinds)
 
     git("checkout", "-q", "--detach", base_sha)
     result, calls = windows_source({})
@@ -640,10 +858,17 @@ for arg in sys.argv[1:-1]:
         marker = win_root / "build-ssh.pid"
         wait_for(lambda: marker.exists() and marker.read_text().strip())
         hung = int(marker.read_text())
+        assert lock_is_held("windows"), "a running windows-source leg does not hold the windows host lock"
+        kinds_before = len(win_trace.read_text().splitlines())
+        refused = subprocess.run(["/bin/bash", str(win_root / "scripts/regress.sh"), "clean", "windows"],
+                                 env=win_environment, capture_output=True, text=True, timeout=10)
+        assert refused.returncode == 1 and "a run on this box is using the windows guest" in refused.stdout, \
+            ("a clean ran beside a live windows-source run", refused.stdout, refused.stderr)
+        assert len(win_trace.read_text().splitlines()) == kinds_before, "the refused clean reached the guest"
         process.send_signal(signal.SIGINT)
         stdout, stderr = process.communicate(timeout=20)
         assert process.returncode == 130, (process.returncode, stdout, stderr)
-        assert not running(hung), "the Windows leg's ssh outlived the interrupt"
+        wait_for(lambda: not running(hung), "the Windows leg's ssh outlived the interrupt")
         kinds = [line.split("\t", 1)[0] for line in win_trace.read_text().splitlines()]
         assert kinds[-1] == "cancel", kinds
         log_dir = Path(stdout.split("logs in ", 1)[1].splitlines()[0])
@@ -769,6 +994,163 @@ regress_capture_leg /opt/under-test/DuskStudio
     assert (host / ".git/modules" / added).is_dir(), "the added submodule's clone was removed"
     assert git(host, "status", "--porcelain", "--ignore-submodules=all") == "", "the tree is not clean"
 
+    # The Mac clean, against a node home with one of everything it must
+    # remove and everything it must leave.
+    node = Path(tempfile.mkdtemp(prefix="dusk-node-", dir=root))
+    slots = node / ".cache/dusk-regress"
+    for name in ("regress-dead0001-111", "regress-nopid-222", "regress-live-333", "other"):
+        (slots / name / "t").mkdir(parents=True)
+    finished = subprocess.Popen(["true"])
+    finished.wait()
+    (slots / "regress-dead0001-111/pid").write_text(f"{finished.pid}\n")
+    # Every live fixture outlives the test until its teardown ends it.
+    live = subprocess.Popen(["bash", "-c", "sleep 3600; exit 0", "dusk-regress", "regress-live-333"],
+                            start_new_session=True, stdin=subprocess.DEVNULL,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    (slots / "regress-live-333/pid").write_text(f"{live.pid}\n")
+    (slots / "configure-016-selection.sh").write_text("not the runner's\n")
+    for name, marked in (("20261021-223044", False), ("20261115-123300", True), ("notes", False),
+                         ("20261116-000001", True), ("20261116-000002", True), ("20261116-000003", True)):
+        (node / "dusk-regress-pkg" / name).mkdir(parents=True)
+        if marked:
+            (node / "dusk-regress-pkg" / name / ".dusk-regress-run").write_text("run\n")
+    checkout = node / "src/dusk-studio"
+    (checkout / "build").mkdir(parents=True)
+    git(checkout, "init", "-q")
+    (checkout / "file").write_text("x\n")
+    git(checkout, "add", "file")
+    git(checkout, "commit", "-q", "-m", "base")
+    for branch in ("regress-0123abcd", "regress-pkg-0123456789ab", "regress-feature", "regress-deadbeef"):
+        git(checkout, "branch", branch)
+    git(checkout, "worktree", "add", "-q", str(node / "src/dusk-studio-regress"), "regress-deadbeef")
+    git(checkout, "checkout", "-q", "-b", "regress-a772befe")
+    clean_root = root / "mac-clean"
+    clean_runners = clean_root / "scripts/regress"
+    (clean_runners / "mac").mkdir(parents=True)
+    shutil.copyfile(repo / "scripts/regress.sh", clean_root / "scripts/regress.sh")
+    for name in ("clean.sh", "common.sh", "mac/clean-node.sh"):
+        shutil.copyfile(repo / "scripts/regress" / name, clean_runners / name)
+    clean_bin = clean_root / "bin"
+    clean_bin.mkdir()
+    (clean_bin / "ssh").write_text("#!/usr/bin/python3\nimport subprocess,sys\n"
+                                   "sys.exit(subprocess.run(['/bin/bash','-c',sys.argv[-1]]).returncode)\n")
+    mounts = clean_root / "mounts.txt"
+    (clean_bin / "mount").write_text(f"#!/bin/sh\ncat '{mounts}' 2>/dev/null\nexit 0\n")
+    for name in ("ssh", "mount"):
+        (clean_bin / name).chmod(0o755)
+    shutil.copyfile(shutil.which("sleep"), clean_bin / "caffeinate")
+    (clean_bin / "caffeinate").chmod(0o755)
+    quiet = dict(start_new_session=True, stdin=subprocess.DEVNULL,
+                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # A group leader alive under the slot's pid, but not this run's; a live
+    # caffeinate; a live pid a run listed; a disk image still mounted.
+    recycled = subprocess.Popen(["sleep", "3600"], **quiet)
+    (slots / "regress-recycled-444" / "t").mkdir(parents=True)
+    (slots / "regress-recycled-444/pid").write_text(f"{recycled.pid}\n")
+    caffeinate = subprocess.Popen([str(clean_bin / "caffeinate"), "3600"], **quiet)
+
+    def process_text(pid, name):
+        try:
+            return Path(f"/proc/{pid}/{name}").read_bytes().replace(b"\0", b" ").decode().strip()
+        except (FileNotFoundError, ProcessLookupError):
+            return ""
+
+    wait_for(lambda: process_text(live.pid, "cmdline").endswith(" dusk-regress regress-live-333")
+             and process_text(recycled.pid, "comm") == "sleep"
+             and process_text(caffeinate.pid, "comm") == "caffeinate", "the live fixtures did not come up")
+    pkg = node / "dusk-regress-pkg"
+    (pkg / "20261116-000001/caffeinate.pid").write_text(f"{caffeinate.pid}\n")
+    (pkg / "20261116-000002/pids").write_text(f"{recycled.pid}\n")
+    (pkg / "20261116-000003/mnt").mkdir()
+    mounts.write_text(f"/dev/disk9s1 on {pkg}/20261116-000003/mnt (hfs, local, read-only)\n")
+    clean_environment = dict(git_env, HOME=str(node), PATH=f"{clean_bin}:{os.environ['PATH']}")
+
+    def clean_mac():
+        return subprocess.run(["/bin/bash", str(clean_root / "scripts/regress.sh"), "clean", "mac"],
+                              env=clean_environment, capture_output=True, text=True, timeout=30)
+
+    try:
+        result = clean_mac()
+        assert result.returncode == 1 and "[FAIL] clean" in result.stdout, (result.stdout, result.stderr)
+        assert "6 removed" in result.stdout, result.stdout
+        assert "dusk-studio-regress is checked out on regress-deadbeef" in result.stdout, result.stdout
+        assert "warn: left alone, process group" in result.stdout and "no longer this run's" in result.stdout, result.stdout
+        for why in ("its caffeinate", "which it started, is alive", "still mounted"):
+            assert f"error: left alone, " in result.stdout and why in result.stdout, (why, result.stdout)
+        assert running(caffeinate.pid) and running(recycled.pid), "the clean signalled a process"
+        assert sorted(p.name for p in slots.iterdir()) == \
+            ["configure-016-selection.sh", "other", "regress-live-333", "regress-recycled-444"]
+        assert sorted(p.name for p in pkg.iterdir()) == \
+            ["20261116-000001", "20261116-000002", "20261116-000003", "notes"]
+        branches = git(checkout, "for-each-ref", "--format=%(refname:short)", "refs/heads").split()
+        assert sorted(branches) == ["main", "regress-a772befe", "regress-deadbeef", "regress-feature"], branches
+        assert (checkout / "build").is_dir() and "dusk-studio/build" in result.stdout, result.stdout
+
+        for process in (caffeinate, recycled):
+            process.kill()
+            process.wait()
+        mounts.unlink()
+        result = clean_mac()
+        assert result.returncode == 0 and "[WARN] clean" in result.stdout, (result.stdout, result.stderr)
+        assert "4 removed" in result.stdout and "checked out on regress-a772befe" in result.stdout, result.stdout
+        assert sorted(p.name for p in slots.iterdir()) == ["configure-016-selection.sh", "other", "regress-live-333"]
+        assert sorted(p.name for p in pkg.iterdir()) == ["notes"]
+    finally:
+        for process in (live, caffeinate, recycled):
+            if process.poll() is None:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            process.wait()
+
+    # The ownership checks are what keeps a clean off someone else's folder, so
+    # each script that must carry one is held to it.
+    source = repo / "scripts/regress/windows/source"
+    preflight = (source / "preflight.ps1").read_text()
+    for needle in ("'.dusk-regress-tree'", "'stamps'", "'regress\\env.cmd'", "Set-Content -LiteralPath $rgMarker",
+                   "Test-RegressReparse $root"):
+        assert needle in preflight, ("preflight.ps1 lost its ownership check", needle)
+    assert preflight.index("Remove-RegressTree $leftover") < preflight.index("Get-RegressFree $root"), \
+        "preflight measures the free space before it tidies"
+    clean_ps = (source / "clean.ps1").read_text()
+    for needle in ("Test-Path -LiteralPath $rgMarker -PathType Leaf", "Remove-RegressTree $root '.dusk-regress-tree'",
+                   "'.dusk-regress-run'", "Remove-RegressTree $run.FullName '.dusk-regress-run'"):
+        assert needle in clean_ps, ("clean.ps1 lost its marker check", needle)
+    lib = "\n".join(line for line in (source / "inline-lib.ps1").read_text().splitlines()
+                    if not line.lstrip().startswith("#"))
+    assert "rd /s /q" in lib and "Remove-Item" not in lib and "/MIR" not in lib, \
+        "inline-lib.ps1 removes through links again"
+    cleanup = (repo / "scripts/regress/windows/cleanup.ps1").read_text()
+    assert "Remove-RegressTree $rgRoot '.dusk-regress-run'" in cleanup and "Remove-Item -Recurse" not in cleanup, \
+        "cleanup.ps1 lost its marker-last removal"
+    for name in ("install.ps1", "installed.ps1"):
+        assert "Set-Content -Path \"$rgRoot\\.dusk-regress-run\"" in (repo / "scripts/regress/windows" / name).read_text(), \
+            (name, "writes no run marker")
+    assert "touch \"$HOME/$RUN/pids\"" in (repo / "scripts/regress/mac-package.sh").read_text() and \
+        "/.dusk-regress-run" in (repo / "scripts/regress/mac-package.sh").read_text(), "mac-package.sh writes no run marker"
+    assert "kill" not in (repo / "scripts/regress/mac/clean-node.sh").read_text().replace("killed", ""), \
+        "clean-node.sh signals a process"
+
+    # When this box has PowerShell, every guest script must parse.
+    pwsh = shutil.which("pwsh")
+    if pwsh:
+        parse = root / "parse.ps1"
+        parse.write_text(
+            "$bad = 0\n"
+            "foreach ($f in $args) {\n"
+            "  $t = (Get-Content -Raw -LiteralPath $f) -replace '@@[A-Z]+@@', '1'\n"
+            "  $e = $null\n"
+            "  [void][System.Management.Automation.Language.Parser]::ParseInput($t, [ref]$null, [ref]$e)\n"
+            "  foreach ($x in $e) { \"${f}: line $($x.Extent.StartLineNumber): $($x.Message)\"; $bad++ }\n"
+            "}\n"
+            "exit $bad\n")
+        scripts_ps1 = sorted(str(p) for p in (repo / "scripts/regress/windows").rglob("*.ps1"))
+        result = subprocess.run([pwsh, "-NoProfile", "-File", str(parse), *scripts_ps1],
+                                capture_output=True, text=True, timeout=60)
+        assert result.returncode == 0, ("a guest script does not parse", result.stdout, result.stderr)
+
 print("regression runner: interrupt cleanup, runtime dirs under a long TMPDIR, prepush log folders, "
       "capture leg, timing cache, Mac paths, "
-      "missing app, Windows source leg and added submodule checkouts pass")
+      "missing app, Windows source leg, added submodule checkouts, the host locks and the host clean pass"
+      + ("" if shutil.which("pwsh") else "; no pwsh here, so the guest scripts were not parsed"))

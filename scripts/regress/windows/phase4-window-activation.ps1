@@ -581,6 +581,7 @@ $rgNotes = @()
 $rgVerdicts = @()
 $rgCaseLog = ''
 $rgP = $null
+$rgTempBefore = @(Get-RegressAppTempNames)
 try {
     if ($rgTypeError) { throw $rgTypeError }
     Stop-WaApps
@@ -591,7 +592,7 @@ try {
         if ($null -ne (Get-Item 'HKCU:\Environment').GetValue($n)) { throw "the user environment already sets $n; it is not the harness's to change" }
     }
 
-    if (Test-Path $rgWa) { Remove-Item -Recurse -Force $rgWa }
+    if (-not (Remove-RegressTree $rgWa)) { throw "could not clear $rgWa" }
     foreach ($d in 'a', 'b', 'c', 'launch') { New-Item -ItemType Directory -Force -Path "$rgWa\$d" | Out-Null }
     $rgA = "$rgWa\a\wa-a.json"
     $rgB = "$rgWa\b\wa-b.json"
@@ -934,6 +935,11 @@ try {
     }
 }
 
+$rgTempNew = @(Get-RegressAppTempNames | Where-Object { $rgTempBefore -notcontains $_ })
+if ($rgTempNew.Count -gt 0) {
+    $rgTempText = "$($rgTempNew.Count) temp_* and dusk-* entries appeared in $([IO.Path]::GetTempPath()) during phase 4, whose Explorer launches use the account's TEMP; the account is shared, so they are left there (the app's own leftovers are #1003 and #1023)"
+    $rgLog += "REGRESS-WARN $rgTempText`nREGRESS-LEFT $rgTempText`n"
+}
 foreach ($n in $rgNotes) { $rgLog += "REGRESS-NOTE $n`n" }
 $rgLog += "REGRESS-PHASE phase4-window-activation RESULT $rgResult`nREGRESS-PHASE phase4-window-activation END`n"
 Invoke-RegressPost $rgLog

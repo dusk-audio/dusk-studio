@@ -484,6 +484,8 @@ scripts/regress.sh all --perf --msi /path/to/installer.msi
 scripts/regress.sh all --release-run 1234567890 --fixtures-run 2345678901
 scripts/regress.sh windows-source        # build + ctest HEAD in the win11 guest
 scripts/regress.sh prepush               # linux, mac and windows source legs, before a push
+scripts/regress.sh prepush --clean       # the same, then clean both hosts: the last run of a branch
+scripts/regress.sh clean all             # remove what runs left on the Air and in the guest
 ```
 
 `prepush` is the check before a branch goes to GitHub: the Linux and macOS
@@ -583,6 +585,113 @@ Each platform prints its own table as it finishes, and `all` ends with one
 table of every platform's legs, named `<platform>/<leg>`. A platform whose
 runner exits non-zero without a failed leg (a usage error, a missing tool) gets
 a `<platform>/runner` row, so it cannot drop out of the table unseen.
+
+### What a run leaves on the hosts
+
+Everything a run writes on the Air or in the guest lands in a folder that run
+owns, and the run removes it when it ends, pass or fail, once the logs and crash
+reports it holds are on this box; on a failure the copy here is the evidence.
+What stays on purpose is named in each platform's last rows: the warm trees, with
+their size and the host's free space, in `footprint`, and on Windows anything
+else under `left in the guest:` in the trailer. Trees stay warm through a wave of
+runs and are cleaned at its end (below).
+
+| Host | What a run writes | Removed by | What stays |
+|---|---|---|---|
+| Air, source leg | `~/.cache/dusk-regress/regress-<8 hex>-<pid>/`: a pid file while a leg runs, and `t/`, the `TMPDIR` of every leg; the `regress-<sha>` branch it pushes | the run's `footprint` leg, or its exit, Ctrl-C included once the cancel is acknowledged; the branch when the node goes back to its previous branch | the node's own `build/` and `build-tests/`, and DAF moved to `DAF_REV` |
+| Air, package leg | `~/dusk-regress-pkg/<timestamp>/` (marker `.dusk-regress-run`), each launch's `TMPDIR` inside it; a `regress-pkg-<sha>` branch for a moment | the `footprint` leg, and the run's exit, Ctrl-C included | `/Applications/DuskStudio.app` and the fixture worktree `~/src/dusk-studio-regress` with its `build-tests/` |
+| Guest, source leg | `<tree>\regress\` with `head.bundle`, and `<tree>\tmp\`, the `TEMP` and `TMP` of every step | the `footprint` leg removes the bundle and `tmp`; after Ctrl-C the next preflight does | the tree, `C:\Users\marc\dusk-audit-win` (marker `.dusk-regress-tree`) |
+| Guest, package leg | `%LOCALAPPDATA%\dusk-regress-<timestamp>\` (marker `.dusk-regress-run`), each launch's `TEMP` and the app's log and crash reports inside it | `run-cleanup`, which first sends the folder's logs, phase 4's logs and every launch's app log and `crash-*.txt` here (`posts/guest-*`); a folder whose evidence it could not read or send (a refused read, a failed post, or more than 64 MB) is kept, named under `left in the guest:`, and fails the leg. After Ctrl-C the next run's install step or a clean does | the installed package (uninstalling needs a UAC prompt), and the `temp_*` and `dusk-*` entries that appeared in the account's `TEMP` while phase 4 ran |
+
+Phase 4 starts the app from Explorer, and Explorer hands it the account's own
+`TEMP`, so whatever temp folders the app leaves (#1003, #1023) land there. The
+account is shared with other work, which makes JUCE's `temp_<hex>` names too, so
+nothing there is removed: phase 4 counts what appeared while it ran, its row is a
+`WARN` saying so, and the trailer lists the count. Lending `TEMP` through
+`HKCU\Environment` the way phase 4 lends the config folder is not done either:
+every process started in that window, not only the app, would write into the run
+folder.
+
+A run on the Air keeps `TMPDIR` in its own folder only while that path is 62
+characters or shorter: the single-instance tests bind a socket 41 characters
+below it, and macOS takes 103. A longer one (an unusual `HOME`) leaves the node's
+own `TMPDIR` in place, and the preflight says which one the tests write to.
+
+The last run of a wave ends with `scripts/regress.sh clean all`, or is run with
+`--clean` (on `prepush`, `all`, `mac`, `windows` and `windows-source`), which
+runs the same clean for every host the run used once it has ended, pass or fail.
+Ctrl-C or a TERM stops the run without a clean, and `all` does not go on to the
+platforms after the one it stopped in. The next Windows source run then builds
+from nothing (about an hour); the Air's build trees are the node's own and
+stay. A clean removes what the runner owns and nothing else, and never signals a
+process:
+
+- On the Air, the run folders under `~/.cache/dusk-regress/regress-*` whose
+  process group is gone, the `regress-<sha>` and `regress-pkg-<sha>` branches no
+  worktree has checked out, and the package run folders under
+  `~/dusk-regress-pkg` (a `.dusk-regress-run` marker or a `<date>-<time>` name).
+  A pid in those folders may be weeks old and someone else's process by now, so
+  a slot whose process group is alive, and a package folder whose `caffeinate`
+  or a pid it listed is alive or whose disk image is still mounted, is left
+  alone and named. A branch some worktree still has checked out is a `WARN`
+  naming the worktree: check out the branch you want there and clean again. The
+  node's build trees, the fixture worktree, other files in `~/.cache/dusk-regress`
+  and every other branch stay.
+- In the guest, the source tree, only with its `.dusk-regress-tree` marker and
+  only when no process has it on its command line, and the package run folders,
+  only with their `.dusk-regress-run` marker, only while no Dusk Studio runs,
+  and not one whose phase 4 never put Notepad's saved session back. It clears the
+  `DUSKSTUDIO_*` variables a dead phase 4 left in the user environment. A folder
+  is emptied entry by entry with `rd`, which removes a junction rather than what
+  it points at, and its marker goes last (and is put back if the emptied folder
+  itself will not go, as when a process has it as its current directory), so a
+  removal that stops part way leaves a folder the next clean takes again; a root that is itself a link is refused.
+  Unmarked `dusk-regress-*` folders are a `WARN`; the account's `TEMP` entries
+  and the installed package are listed and left alone; vcpkg, JUCE and the SDKs
+  outside the tree are never touched.
+
+A tree an older runner made has no marker. The first `windows-source` run that
+finds one adopts it, writing the marker, when it holds `stamps\` and
+`regress\env.cmd`, which only the runner makes; a non-empty folder without them
+fails the preflight instead of being built in. `clean` itself never adopts, so
+it refuses an unmarked tree. The preflight also marks the tree root
+not-content-indexed, to keep Windows Search out of it.
+
+Each clean takes its host's lock exclusively, one host at a time, and every run
+that uses the host holds the same lock shared until it exits: a clean refuses a
+host a run on this box is using, and a run started during a clean waits for it.
+The lock lives in `/run/user/<uid>/dusk-regress/` (in `/tmp/dusk-regress-<uid>/`
+on a box without it) whatever the calling shell's environment, so a clean from
+cron or `env -i` finds the same lock as the run; only `DUSK_REGRESS_LOCK_DIR`
+moves it. A run from a checkout that predates the lock does not take it, so do
+not clean while one is going.
+
+Every leg checks the free space on its host against a floor before it builds,
+and stops with how much is free and how much it wants: in `vm-preflight` and
+`mac-preflight` for the source legs, in `mac-preflight` for the Air's package
+leg, and in `console-probe` for the guest's package leg. The guest's source
+preflight first removes `tmp\` and the last run's bundle, then measures.
+
+| Run | Floor | Override |
+|---|---|---|
+| Guest source, cold (no `src\build-tests\CMakeCache.txt`) | 11 GB | `DUSK_REGRESS_WIN_FREE_COLD_GB` |
+| Guest source, warm | 6 GB | `DUSK_REGRESS_WIN_FREE_WARM_GB` |
+| Guest package | 6 GB | `DUSK_REGRESS_WIN_FREE_PACKAGE_GB` |
+| Air source, cold (either build tree without a cache) | 11 GB | `DUSK_REGRESS_MAC_FREE_COLD_GB` |
+| Air source, warm | 7 GB | `DUSK_REGRESS_MAC_FREE_WARM_GB` |
+| Air package | 7 GB | `DUSK_REGRESS_MAC_FREE_PACKAGE_GB` |
+
+The floors come from one table in `scripts/regress/common.sh`. A cold floor is
+twice a freshly built tree, so the build's intermediate files and the tests'
+output fit beside it, plus 5 GB the operating system keeps for itself; a warm
+floor is what one warm run adds to its tree, plus the same 5 GB. The guest's
+numbers come from a source tree built cold on 2026-11-16: 2.85 GB in all
+(`src` 2.2 GB, of it `build-tests` 1.9 GB; `v` 0.4 GB; `deps` 0.2 GB), with 6 MB
+in `tmp\` after a full ctest, rounded up to 3 GB and 1 GB. The Air's build trees
+measured 2.2 GB together. To re-derive them, read the tree's size off the
+`footprint` row of the first run after a clean, and a warm run's addition off the
+sizes the `footprint` leg reports removing (the bundle and `tmp\` in the guest,
+the run folder on the Air), then change the numbers in that table.
 
 Layout: `scripts/regress.sh` only dispatches and routes options. The work is in
 `scripts/regress/{linux,mac,windows,windows-source}.sh` (and `mac-package.sh`,
@@ -1021,14 +1130,14 @@ fetches `DONOR_REV` into each build tree's `_deps`.
 
 The commit under test never goes through GitHub: it is pushed straight over ssh
 to `refs/heads/regress-<short sha>` in the node's checkout. The node's previous
-branch and submodule commits are recorded at the start and restored on exit,
-including when a leg fails. A submodule only the commit under test has loses its
+branch and submodule commits are recorded at the start and restored after the
+last leg, or on exit when the run ends early, including when a leg fails. A submodule only the commit under test has loses its
 checkout on the way back, so the next preflight finds a clean tree; its clone
 stays in `.git/modules`.
 
 | Leg | What it proves |
 |---|---|
-| `mac-preflight` | node reachable; tracked checkout and submodule worktrees clean; previous branch and commits recorded. |
+| `mac-preflight` | node reachable; tracked checkout and submodule worktrees clean; previous branch and commits recorded; the free space floor met (see "What a run leaves on the hosts"), and the `TMPDIR` the tests get named. |
 | `push-head` / `mac-checkout` | the node builds this exact commit. `WARN` when a submodule cannot be synced to the recorded pin. |
 | `daf-revision` | `~/src/DAF` checked out at `DAF_REV`, the commit CI builds against, fetching it from GitHub when the clone lacks it. A clone that cannot reach that commit fails the leg. DAF is left there, not put back. |
 | `configure-app` / `configure-tests` | both trees configure through `~/mac-configure.sh`. |
@@ -1036,6 +1145,8 @@ stays in `.git/modules`.
 | `build-app` / `build-tests` / `ctest` | the same build and test surface as CI's macOS job. |
 | `selftest` | `DUSKSTUDIO_RUN_SELFTEST=1` against the built `.app`, behind a marker-file deadline. |
 | `scenarios` | `DUSKSTUDIO_RUN_SCENARIOS=all` against the same `.app`, behind the same marker-file deadline, with `DUSKSTUDIO_FIXTURE_DIR` pointed at the node's `build-tests` tree and `tests/fixtures`. Passes only on exit 0, no `[FAIL]` line, and the terminal `=== scenarios: ` summary. Skipped cases go into the leg's note - this node builds no LV2 host, so the LV2 cases skip there and the AU scan case runs only there. |
+| `mac-restore` | the node's checkout back on the branch or commit and submodule commits `mac-preflight` recorded, and the scratch branch deleted. Fails when that cannot be confirmed; the run's exit tries again. |
+| `footprint` | after `mac-restore`: the sizes of both build trees and the node's free space, and the run's folder under `~/.cache/dusk-regress` removed. Fails when that folder stays. |
 
 What it cannot prove: **anything with a window**. Launching the GUI from an ssh
 session aborts in the main window constructor on that node, and it does so on
@@ -1082,7 +1193,7 @@ next build is incremental.
 
 | Leg | What it proves |
 |---|---|
-| `mac-preflight` | node reachable, review model unloaded, no `/Applications/DuskStudio.app` already running. Starts `caffeinate -d -i -u -s` for the whole leg (bounded to four hours): without it the screen locks after about 20 minutes and the GUI suite stalls. |
+| `mac-preflight` | node reachable, review model unloaded, no `/Applications/DuskStudio.app` already running, the free space floor met. Starts `caffeinate -d -i -u -s` for the whole leg (bounded to four hours): without it the screen locks after about 20 minutes and the GUI suite stalls. |
 | `screen-unlocked` | the desktop session is unlocked, unlocking it over Screen Sharing when it is not. |
 | `package-fetch` | `--release-run` only: the run's disk image downloaded, and its head commit taken as the source commit. |
 | `dmg-install` | the file name is `dusk-studio-X.Y.Z-macOS-arm64.dmg`, the app inside reports that version, it replaces `/Applications/DuskStudio.app` (quarantine attribute cleared), the installed binary is identical to the image's, and `codesign --verify --deep --strict` passes. The app stays installed afterwards; the next run replaces it. |
@@ -1096,6 +1207,7 @@ next build is incremental.
 | `window-activation:launch`, `:session-open`, `:minimized`, `:handoff` | the four cases of [tests/window_activation_smoke_test.md](../tests/window_activation_smoke_test.md), against the installed app in a private `HOME`: each time Dusk Studio is the frontmost application, its one main window is the topmost normal window with its title-bar buttons in colour in a capture, and one process runs. The cases open sessions through Cmd+O and through LaunchServices (`open -a`), with Calculator in front, and check the load alert and the save prompt in captures. Evidence (captures, probe snapshots) in `window-activation/` under the run directory. |
 | `privacy-prompts` | a watcher reads tccd's log over ssh from the first launch to the last, and answers the microphone prompt Allow over Screen Sharing. It never clicks any other prompt. Fails on a microphone prompt left unanswered while the process that asked still ran, or answered the other way, and on any folder prompt or prompt of another kind, however it was answered: the suites run in a private `HOME` and should raise none. |
 | `crash-reports` | no `DuskStudio*` report in `~/Library/Logs/DiagnosticReports` since the leg started. |
+| `footprint` | the run's node folder removed (with the app it started and its `caffeinate`), and the size of the fixture worktree's `build-tests` and the node's free space reported. Fails when the folder stays. |
 
 The microphone prompt's Allow button is clicked at a fixed point on the Air's
 1920x1080 desktop, `DUSK_REGRESS_MAC_MIC_ALLOW` (default `1019,408`), and only
@@ -1113,8 +1225,9 @@ screen (which blocks this run's launches without being raised again) is
 answered too, as long as the process that raised it is still running. Screen
 Sharing logs in as the ssh user. The suite logs, `prompts.log` and the screenshots
 stay in `$TMPDIR/dusk-regress-mac-<timestamp>/`; everything on the node lives
-under `~/dusk-regress-pkg/<timestamp>/` and is removed on exit, Ctrl-C
-included, along with any app the leg started and its `caffeinate`. Other
+under `~/dusk-regress-pkg/<timestamp>/` and is removed by the `footprint` leg
+and again on exit, Ctrl-C included, along with any app the leg started and its
+`caffeinate`. Every launch's `TMPDIR` is inside its sandbox there. Other
 overrides: `DUSK_REGRESS_MAC_HOST`, `DUSK_REGRESS_MAC_VNC_HOST` (default: the
 ssh host), `DUSK_REGRESS_MAC_VNC_LOGIN`, `DUSK_JOBS`,
 `DUSK_REGRESS_MAC_TITLE_BAR` (the title-bar height the window-activation cases
@@ -1248,8 +1361,9 @@ home, the AppData, Documents and Music known folders, the temp folder and the
 two named Dusk Studio folders resolve, and fails if any of them lands outside
 that launch's folder; it logs the Profile known folder for the record only.
 Each run folder carries a
-`.dusk-regress-run` marker; the next run removes run folders with the marker
-and nothing else.
+`.dusk-regress-run` marker. `run-cleanup` removes it at the end of the run, and
+the next run's install step removes any an earlier run left that carry the
+marker, and nothing else.
 
 **Fixtures.** The scenarios load the test fixture plug-ins through
 `DUSKSTUDIO_FIXTURE_DIR`, which the guest points at two roots under the run
@@ -1266,12 +1380,12 @@ ones stay unresolved on Windows in any case, since Windows builds no LV2 host.
 | `fixtures` | the fixture roots staged and zipped for the guest. |
 | `host-servers` | the script and report channels are listening on `192.168.122.1`. |
 | `guest-wake` | the domain is running and its display is not blanked. Screenshot in the run directory. |
-| `console-probe` | a fresh PowerShell console is up and accepting typed input, before any phase is typed into it. |
+| `console-probe` | a fresh PowerShell console is up and accepting typed input, before any phase is typed into it, and the guest's drive has the free space a package run needs (see "What a run leaves on the hosts"); this is the package leg's free-space check. |
 | `msi-install` | the package installs (or is already installed) through `msiexec`: the Windows Installer then lists exactly this ProductCode for the upgrade code, at this version, under `Program Files`, installed per machine with its uninstall entry under HKLM (see Per machine); every file of the package's File table is at the path its Directory table names and matches the manifest byte for byte; nothing else is in the install folder; `dusk-studio-plugin-host.exe` sits beside `DuskStudio.exe`; the all-users Start menu and desktop shortcuts exist and point at the installed executable; its FileVersion and its `--version` (run in a private profile) report the package version. It also snapshots the real user's Documents, Music, Desktop and Dusk Studio config folders and the entries at the top of the real home folder for `isolation-audit`. |
 | `phase1-selftest` | headless `DUSKSTUDIO_RUN_SELFTEST=1` with stdout and stderr captured through `ProcessStartInfo` redirection: exit code 0, at least one `[PASS]`, no `[FAIL]`. |
 | `phase2-handoff` | the first instance opens the shipped session through `DUSKSTUDIO_LOAD_SESSION` and the phase waits for its `[Dusk Studio/Load] session.json` line, then a second launch carrying `handoff.json` hands over and exits 0 within 30 s while the first instance stays alive, `GetForegroundWindow()` is its window afterwards, and its stderr shows `[Dusk Studio/Load] handoff.json` after the first load - the handoff is supposed to raise the window and load the path, which the exit code alone cannot see. Both launches share one private profile. |
 | `phase3-session-close` | the session the payload ships is loaded through `DUSKSTUDIO_LOAD_SESSION` (waited for by its `[Dusk Studio/Load]` line), then two `WM_CLOSE` messages are posted back to back to the process's visible window titled Dusk Studio. Exit 0 within 50 s, at least eight `[Dusk Studio/shutdown] phase` markers, and `re-entry ignored: shutdown already in progress` from the second close landing on the latch. |
-| `phase4-window-activation` | the four cases of [tests/window_activation_smoke_test.md](../tests/window_activation_smoke_test.md) against the installed app: an initial launch from Explorer, File > Open from inside, an Explorer handoff into a minimized window and one over an unsaved edit, each with Notepad in front. Each case passes on the foreground or on a taskbar flash (recorded through the shell hook); needs exactly one main window, and for the handoffs one `DuskStudio.exe` and a second process, a child of `explorer.exe`, that exited 0; and checks the load alert and the save prompt through UI Automation. For the Explorer launch, `DUSKSTUDIO_CONFIG_DIR` and `DUSKSTUDIO_MUSIC_DIR` are lent to Explorer through `HKCU\Environment`, with a `DUSKSTUDIO_REGRESS_ENV_OWNER` marker, and cleared after the launch and again in a `finally` block. The note says whether each case got the foreground or a flash; `shot-phase4-<case>.png` and `posts/phase4-window-activation-events.log` are the evidence. Notepad's saved session is backed up and put back when Notepad was not already running. |
+| `phase4-window-activation` | the four cases of [tests/window_activation_smoke_test.md](../tests/window_activation_smoke_test.md) against the installed app: an initial launch from Explorer, File > Open from inside, an Explorer handoff into a minimized window and one over an unsaved edit, each with Notepad in front. Each case passes on the foreground or on a taskbar flash (recorded through the shell hook); needs exactly one main window, and for the handoffs one `DuskStudio.exe` and a second process, a child of `explorer.exe`, that exited 0; and checks the load alert and the save prompt through UI Automation. For the Explorer launch, `DUSKSTUDIO_CONFIG_DIR` and `DUSKSTUDIO_MUSIC_DIR` are lent to Explorer through `HKCU\Environment`, with a `DUSKSTUDIO_REGRESS_ENV_OWNER` marker, and cleared after the launch and again in a `finally` block. The note says whether each case got the foreground or a flash; `shot-phase4-<case>.png` and `posts/phase4-window-activation-events.log` are the evidence. Notepad's saved session is backed up and put back when Notepad was not already running. `temp_*` and `dusk-*` entries that appear in the account's `TEMP` meanwhile, which the Explorer launches put there, make the row a `WARN` and are listed in the trailer; they are left in place (see "What a run leaves on the hosts"). |
 | `ipc-selftest` | headless `DUSKSTUDIO_RUN_IPC_SELFTEST=1` against the installed app and the `dusk-studio-plugin-host.exe` beside it, output captured the same way: exit code 0, a `PASS` line, no `FAIL` line. The note lists the round-trip count and latencies it reported. |
 | `scenario-fixtures` | as on Linux, against the two staged roots. |
 | `scenarios-headless` | `DUSKSTUDIO_RUN_SCENARIOS=all` against the installed app, 900 s budget in the guest. The whole output comes back and is judged by the same rules as the Linux leg: exit 0, no `[FAIL]`, the terminal `=== scenarios: ` line; skips in the note, missing fixtures in a `:fixtures` row. A run that hits its budget is announced before it is killed, screenshotted as `<leg>-stall.png`, and reported as `timed out in <case>`, the last case the suite started without finishing. |
@@ -1280,6 +1394,7 @@ ones stay unresolved on Windows in any case, since Windows builds no LV2 host.
 | `gui-plugin-picker` | `SKIP`: its seeded cache names the LV2 fixture, and Windows builds no LV2 host. It runs on Linux. |
 | `isolation-audit` | nothing in the real user's Documents, Music, Desktop, `%APPDATA%\Dusk Studio` or `%LOCALAPPDATA%\Dusk Studio`, no entry at the top of the real home folder (by name; the `NTUSER*` hive files are left out), and no `dusk-studio-*` entry in the real temp folder appeared, changed or went away since `msi-install`; the user environment (`HKCU\Environment`) names no `DUSKSTUDIO_*` variable, so a value phase 4 lent Explorer and failed to clear fails the run; and every folder a launch resolves (home, AppData, Documents, Music, temp, config, the Music folder) sits inside its private profile. Either an escape or a folder that does not resolve is a `FAIL`. The Profile known folder is logged, never judged (see Isolation). |
 | `package-uninstall` | `SKIP`: the package is left installed. |
+| `run-cleanup` | as for `--installed` below, in every mode: nothing running, the user environment clear, the run folder's top-level logs, phase 4's logs under `activation\`, and every launch's app log and `crash-*.txt` sent here (`posts/guest-*`), and the run folder removed, marker last. A folder whose evidence could not be read or sent (a refused read, a failed post, or more than 64 MB) is kept and fails the leg. The note gives the folder's size and the drive's free space. The trailer then lists under `left in the guest:` the installed package and anything a phase reported leaving. |
 
 Every phase opens its own console from the Run dialog (Win+R, `powershell`):
 a phase that calls `SetForegroundWindow` steals focus, so the next `send-key`
@@ -1351,7 +1466,7 @@ it finds and does not start it again. Its legs, after `host-servers`, `guest-wak
 | `installed-check` | stands in for `msi-install`: exactly one Dusk Studio is installed for all users, at X.Y.Z, under `Program Files`; its `DuskStudio.exe` FileVersion and `--version` report X.Y.Z. Records the executable and the real-profile snapshot for the audit in a run folder of its own. |
 | `phase4-window-activation` | as in package mode. |
 | `isolation-audit` | as in package mode, against the snapshot `installed-check` took. |
-| `run-cleanup` | leaves the guest clean: no `DuskStudio.exe` or plug-in host running, no `DUSKSTUDIO_*` variable in the user environment, and the run folder removed (only with its `.dusk-regress-run` marker). It first waits up to 90 s for a phase 4 the host stopped waiting for to finish putting Notepad's saved session back, and leaves the run folder, backup included, when it has not. Variables phase 4 lent and left behind still fail the leg, and are cleared when phase 4's owner marker is with them. |
+| `run-cleanup` | leaves the guest clean: no `DuskStudio.exe` or plug-in host running, no `DUSKSTUDIO_*` variable in the user environment, the run folder's logs and the app's logs and crash reports sent to this box, and the run folder removed (only with its `.dusk-regress-run` marker, which goes last). It first waits up to 90 s for a phase 4 the host stopped waiting for to finish putting Notepad's saved session back, and leaves the run folder, backup included, when it has not. Variables phase 4 lent and left behind still fail the leg, and are cleared when phase 4's owner marker is with them. |
 
 ### Windows source
 
@@ -1373,9 +1488,10 @@ DUSK_REGRESS_WIN_ROOT='C:\Users\marc\other-tree' scripts/regress.sh windows-sour
 Every run first replaces `<tree>\regress\` in the guest with
 `scripts/regress/windows/source/`, so the guest never runs a stale script. The
 guest's ssh shell is PowerShell; each remote command is a single PowerShell line
-ending in `exit $LASTEXITCODE`, and the two scripts that must work before or
-without that copy, the preflight and the cancel, travel inline as
-`-EncodedCommand`. Closing an ssh session does not end the processes under it,
+ending in `exit $LASTEXITCODE`, and the scripts that must work before or
+without that copy, the preflight, the cancel, the tidy at the end and `clean`,
+travel inline as `-EncodedCommand` with `inline-lib.ps1` in front of them.
+Closing an ssh session does not end the processes under it,
 so a leg that times out, loses its connection or is interrupted (Ctrl-C, or
 `prepush` stopping its runners) sends the cancel, which ends everything whose
 command line names the tree. If that cannot be confirmed the leg says so;
@@ -1383,12 +1499,13 @@ check the guest before the next run, since the preflight refuses a busy tree.
 
 | Leg | What it proves |
 |---|---|
-| `vm-preflight` | the guest answers over ssh, nothing is already running in the tree, and the scripts are copied. A failure ends the run. |
+| `vm-preflight` | the guest answers over ssh, nothing is already running in the tree, the tree is the runner's (its `.dusk-regress-tree` marker, written when the run creates the tree or adopts one an older runner made), `<tree>\tmp` and the last run's `regress\` (with its bundle) removed, then its drive has the free space floor for a cold or a warm run, and the scripts are copied. A failure ends the run. |
 | `update` | the tree is at HEAD: the merge base with `origin/main` (and any other commit the local ones stand on) fetched from GitHub by hash, the local commits sent as a git bundle, submodules synced, the donor at `DONOR_REV`, DAF at `DAF_REV`. Mesa and Python are reinstalled when `scripts/fetch-windows-software-opengl.ps1` changed, the vcpkg packages when `vcpkg.json` did. |
 | `build` | `DuskStudio`, `dusk-studio-tests` and `dusk-windows-software-opengl-probe` at `-j4`, as CI builds them, reconfiguring first when the configure script changed. A failure's note counts the compile and link errors and names the first. |
 | `mesa` | CI's "Verify packaged Mesa selects llvmpipe" step, and the fixture plug-ins and app files CI's upload steps require. |
 | `ctest-inventory` | every test name the `windows-tests.yml` at HEAD requires is in the CTest inventory. The names are read from the workflow, so the two never drift; finding none fails. |
 | `ctest` | the whole suite, serially, as CI runs it. The note names the failed tests. |
+| `footprint` | after every run that passed `vm-preflight`, pass or fail: `head.bundle` and `<tree>\tmp` removed, then the tree's size, its largest parts under the table, and the drive's free space. |
 
 A failed `update` or `build` turns the legs after it into `SKIP` rows. Timings
 on the 8 GB guest: about 5 minutes for ctest; a build after a DAF move
@@ -1403,7 +1520,9 @@ Never reboot or destroy the guest for this leg.
 Overrides: `DUSK_REGRESS_WIN_HOST` (default `marc@192.168.122.85`),
 `DUSK_REGRESS_WIN_KEY`, `DUSK_REGRESS_WIN_ROOT` (default
 `C:\Users\marc\dusk-audit-win`; plain names only, since it is spliced into
-command lines), and in the guest the `DUSK_WIN_*` tool paths in `env.cmd`.
+command lines), `DUSK_REGRESS_WIN_FREE_COLD_GB` and
+`DUSK_REGRESS_WIN_FREE_WARM_GB`, and in the guest the `DUSK_WIN_*` tool paths in
+`env.cmd`.
 
 ### Adding a leg
 

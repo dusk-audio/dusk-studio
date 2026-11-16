@@ -1,6 +1,9 @@
-# Last step of an --installed run, which leaves the guest clean: no
-# instance running, nothing of the run on disk, and the user environment free
-# of the private folders phase 4 lends Explorer for one launch.
+# Last step of every package run that reached the guest, pass or fail: no
+# instance running, the run's evidence sent to the host, nothing of the run on
+# disk, and the user environment free of the private folders phase 4 lends
+# Explorer for one launch. A REGRESS-LEFT line names what stays in the guest;
+# the host's trailer lists them.
+$rgEvidenceCap = 64MB
 try {
     # A phase 4 the host stopped waiting for may still be running, with Notepad's
     # saved session backed up in the run folder until it has put it back.
@@ -25,17 +28,78 @@ try {
         }
         $rgLog += "cleared the user environment phase 4 left behind`n"
     }
-    if (-not $rgPhase4Done) {
-        $rgLeft += "phase 4 has not finished; $rgRoot is left in place, Notepad's backup included"
-    } elseif (Test-Path $rgRoot) {
-        if (-not (Test-Path "$rgRoot\.dusk-regress-run")) { throw "$rgRoot has no run marker; not removing it" }
-        Remove-Item -Recurse -Force $rgRoot -ErrorAction SilentlyContinue
-        if (Test-Path $rgRoot) { $rgLeft += "could not remove $rgRoot" } else { $rgLog += "removed $rgRoot`n" }
+
+    # The evidence no phase posted: the logs at the top of the run folder
+    # (msiexec's, each launch's output), phase 4's under activation\ (each
+    # case's primary instance), and, from every launch's private profile, the
+    # app's own log and crash reports. All of it reaches the host, under a name
+    # that says where it came from, before the folder goes.
+    $rgEvidence = @()
+    if (Test-Path -LiteralPath $rgRoot) {
+        foreach ($f in @(Get-ChildItem -LiteralPath $rgRoot -File -Filter '*.log' -ErrorAction SilentlyContinue)) {
+            $rgEvidence += @{ File = $f; Name = 'guest-' + $f.Name }
+        }
+        foreach ($f in @(Get-ChildItem -LiteralPath "$rgRoot\activation" -Recurse -File -Filter '*.log' -Force -ErrorAction SilentlyContinue)) {
+            $rel = $f.FullName.Substring("$rgRoot\activation".Length + 1)
+            $rgEvidence += @{ File = $f; Name = "guest-activation-$rel" -replace '[^A-Za-z0-9._-]', '_' }
+        }
+        foreach ($launch in @(Get-ChildItem -LiteralPath "$rgRoot\launch" -Directory -ErrorAction SilentlyContinue)) {
+            $rgFound = @(Get-ChildItem -LiteralPath $launch.FullName -Recurse -File -Force -ErrorAction SilentlyContinue |
+                Where-Object { ($_.Name -like '*.log' -and $_.FullName -like '*\config\*') -or $_.Name -like 'crash-*.txt' })
+            foreach ($f in $rgFound) {
+                $rel = $f.FullName.Substring($launch.FullName.Length + 1) -replace '[^A-Za-z0-9._-]', '_'
+                $rgEvidence += @{ File = $f; Name = "guest-launch-$($launch.Name)-$rel" -replace '[^A-Za-z0-9._-]', '_' }
+            }
+        }
     }
+    $rgEvidenceBytes = [long]0
+    foreach ($e in $rgEvidence) { $rgEvidenceBytes += $e.File.Length }
+    $rgKeep = $false
+    if ($rgEvidenceBytes -gt $rgEvidenceCap) {
+        $rgLeft += "the run's logs and crash reports come to {0:N1} MB, over the {1:N0} MB this step sends" -f ($rgEvidenceBytes / 1MB), ($rgEvidenceCap / 1MB)
+        $rgKeep = $true
+    } else {
+        # The phases run with errors set to continue, so a read that is
+        # refused has to be made to throw, or an empty body would be sent and
+        # the log it never read removed with the folder.
+        foreach ($e in $rgEvidence) {
+            try {
+                $rgBody = Get-Content -LiteralPath $e.File.FullName -Raw -ErrorAction Stop
+                Invoke-RegressPost $rgBody $e.Name
+            } catch {
+                $rgLeft += "could not read or send $($e.File.FullName): $_"
+                $rgKeep = $true
+            }
+        }
+        $rgLog += "sent $($rgEvidence.Count) logs and crash reports to the host`n"
+    }
+
+    $rgBytes = (Get-ChildItem -LiteralPath $rgRoot -Recurse -Force -File -ErrorAction SilentlyContinue |
+        Measure-Object -Property Length -Sum).Sum
+    if (-not $rgPhase4Done) {
+        $rgLeft += "phase 4 has not finished, so Notepad's backup is still in it"
+        $rgKeep = $true
+    }
+    if (Test-Path $rgRoot) {
+        if ($rgKeep) {
+            $rgLog += "REGRESS-LEFT the run folder $rgRoot, kept because this step failed with what it holds; scripts/regress.sh clean windows removes it once it is no longer needed`n"
+        } elseif (-not (Test-Path "$rgRoot\.dusk-regress-run")) {
+            throw "$rgRoot has no run marker; not removing it"
+        } elseif (Remove-RegressTree $rgRoot '.dusk-regress-run') {
+            $rgLog += "removed $rgRoot`n"
+            $rgLog += "REGRESS-NOTE run folder {0:N1} GB removed`n" -f ($rgBytes / 1GB)
+        } else {
+            $rgLeft += "could not remove all of $rgRoot"
+            $rgLog += "REGRESS-LEFT what is left of the run folder $rgRoot; it keeps its marker, so scripts/regress.sh clean windows takes the rest`n"
+        }
+    }
+    $rgDrive = [IO.Path]::GetPathRoot($env:LOCALAPPDATA)
+    $rgLog += "REGRESS-NOTE {0} {1:N1} GB free`n" -f $rgDrive, ((New-Object IO.DriveInfo $rgDrive).AvailableFreeSpace / 1GB)
     foreach ($l in $rgLeft) { $rgLog += "error: $l`n" }
     if ($rgLeft.Count -eq 0) { $rgResult = 'PASS' }
 } catch {
     $rgLog += "run-cleanup failed: $_`n"
+    if (Test-Path $rgRoot) { $rgLog += "REGRESS-LEFT the run folder $rgRoot`n" }
 }
 
 $rgLog += "REGRESS-PHASE run-cleanup RESULT $rgResult`nREGRESS-PHASE run-cleanup END`n"
