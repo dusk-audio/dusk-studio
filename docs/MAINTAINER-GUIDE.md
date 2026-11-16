@@ -516,13 +516,17 @@ find nothing new, so a branch needs one CI round rather than several, and
 pushes are batched, because each one cancels the macOS job in progress (about
 45 minutes on a cold cache) and starts it again.
 
-The Mac source leg can use a dedicated validation tree:
+The Mac source leg can use a dedicated validation tree in place of the node's
+`src/dusk-studio` and `src/DAF`: a checkout marked with
+`git config dusk.validationWorktree true`, a clean DAF checkout at `DAF_REV`
+and a configure helper of its own. The names below are examples; the node
+keeps no such tree between releases.
 
 ```bash
 mkdir -p "$HOME/dusk-scratch/tmp"
-DUSK_REGRESS_MAC_REPO=dusk-386-current \
-DUSK_REGRESS_MAC_DAF=dusk-016-validation-deps/DAF \
-DUSK_REGRESS_MAC_CONFIGURE=dusk-016-prepush-configure.sh \
+DUSK_REGRESS_MAC_REPO=dusk-validation \
+DUSK_REGRESS_MAC_DAF=dusk-validation-deps/DAF \
+DUSK_REGRESS_MAC_CONFIGURE=dusk-validation-configure.sh \
 DUSK_REGRESS_MAC_BUILD_DIR=build-prepush \
 DUSK_REGRESS_MAC_TEST_BUILD_DIR=build-prepush-tests \
 TMPDIR="$HOME/dusk-scratch/tmp" scripts/regress.sh prepush
