@@ -1485,7 +1485,25 @@ current tag workflows publish, so nothing a tagged release produces uses it.
    It stops on a heading dated any other day, a `VERSION` or AppStream entry
    that disagrees with it, or an empty release-notes summary; the tag workflow
    repeats the check against the tagged commit's own date. Review and verify
-   all release metadata. Then run the Patreon freshness check from the primary
+   all release metadata.
+
+   A release commit that has already landed and is tagged on a later day
+   cannot pass the `--date` form, here or in step 5, and `main` may by then
+   head the next version as `Unreleased`. The guard for such a tag is the
+   form the tag workflow runs, against the release commit:
+
+   ```bash
+   meta="$(mktemp -d)"
+   git archive "$RELEASE_COMMIT" VERSION CHANGELOG.md packaging | tar -x -C "$meta"
+   scripts/release-metadata-check.sh --root "$meta" --tag "v$RELEASE_VERSION" \
+     --commit-date "$(git log -1 --format=%cs "$RELEASE_COMMIT")"
+   rm -rf "$meta"
+   ```
+
+   It requires the heading to be dated within a day of that commit. The
+   release then carries the heading's date, not the day of the tag.
+
+   Then run the Patreon freshness check from the primary
    checkout, not a `.codex/worktrees/*` issue worktree:
 
    ```bash
