@@ -305,6 +305,15 @@ public:
     void engageAutoBypassForTest() noexcept { engageAutoBypass(); }
    #endif
 
+   #if defined(DUSKSTUDIO_TESTS) && DUSKSTUDIO_HAS_OOP_PLUGINS
+    // Sandbox seam: how long the next blocks wait for the child to answer
+    // before the slot bypasses it.
+    void setOopProcessTimeoutNsForTest (long long timeoutNs) noexcept
+    {
+        oopProcessTimeoutNs.store (timeoutNs, std::memory_order_relaxed);
+    }
+   #endif
+
    #if JUCE_MAC && DUSKSTUDIO_HAS_OOP_PLUGINS
     // Mac dual-load shell-instance API. Loads a parent-process copy of
     // the plugin solely to host its editor in the main app window while
@@ -540,6 +549,16 @@ private:
     std::atomic<int>  remoteNumOut      { 0 };
     std::atomic<bool> remoteIsInstrument { false };
     std::atomic<bool> remoteCrashed { false };
+
+    // OOP timeout per processBlock round-trip. Generous because the child
+    // has to memcpy through SHM, run the plugin, memcpy back. A 100 ms cap
+    // is well under the audio-thread starvation point (~250 ms = visible
+    // glitch on most kernels) and well over a misbehaving plugin's typical
+    // stall.
+    static constexpr long long kOopProcessTimeoutNs = 100'000'000LL;
+    // Read by the audio thread once per sandboxed block. Only a test moves it
+    // off the constant.
+    std::atomic<long long> oopProcessTimeoutNs { kOopProcessTimeoutNs };
 
     // The OOP round-trip serialises MIDI to raw bytes; processBlockSync takes
     // a dusk::MidiBuffer. Bridged once per block from the caller's juce buffer

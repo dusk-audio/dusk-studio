@@ -13,17 +13,10 @@ namespace duskstudio
 namespace
 {
 #if DUSKSTUDIO_HAS_OOP_PLUGINS
-// OOP timeout per processBlock round-trip. Generous because the child
-// has to memcpy through SHM, run the plugin, memcpy back. A 100 ms cap
-// is well under the audio-thread starvation point (~250 ms = visible
-// glitch on most kernels) and well over a misbehaving plugin's typical
-// stall.
-constexpr long long kOopProcessTimeoutNs = 100'000'000LL;
-
 // Watchdog budget for OOP plugins. The in-process kBudgetFraction = 0.6
 // is too tight when the IPC round-trip already eats a few hundred
 // microseconds at small buffer sizes. 0.85 leaves headroom for the
-// plugin itself; OOP's hard timeout (kOopProcessTimeoutNs above) is
+// plugin itself; OOP's hard timeout (PluginSlot::kOopProcessTimeoutNs) is
 // the second line of defence.
 constexpr double kOopBudgetFraction = 0.85;
 #endif
@@ -1830,7 +1823,8 @@ std::optional<dusk::ProcessedBlock> PluginSlot::processMonoBlock (float* monoDat
         if (! r->processBlockSync (inPtrs, std::max (rNumIn, 0),
                                        std::max (rNumOut, 0),
                                        numSamples, oopMidiScratch,
-                                       kOopProcessTimeoutNs, transport))
+                                       oopProcessTimeoutNs.load (std::memory_order_relaxed),
+                                       transport))
         {
             engageAutoBypass();
             return std::nullopt;
@@ -2029,7 +2023,8 @@ std::optional<dusk::ProcessedBlock> PluginSlot::processStereoBlock (float* L, fl
         if (! r->processBlockSync (inPtrs, std::max (rNumIn, 0),
                                        std::max (rNumOut, 0),
                                        numSamples, oopMidiScratch,
-                                       kOopProcessTimeoutNs, transport))
+                                       oopProcessTimeoutNs.load (std::memory_order_relaxed),
+                                       transport))
         {
             // Either the futex timed out or the connection was already
             // marked crashed. Engage auto-bypass so the engine sees a

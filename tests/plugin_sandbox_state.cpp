@@ -512,6 +512,11 @@ TEST_CASE ("A standard VST3 sandbox releases held notes after reprepare and dens
     juce::String error;
     REQUIRE (slot.loadFromDescriptor (descriptor, error));
     REQUIRE (slot.isRemote());
+    // The child answers a block once it has taken in all of its MIDI. Under
+    // ThreadSanitizer the 2048 messages of the dense block below take it 50 to
+    // 200 ms, past the 100 ms the slot waits before it bypasses the plug-in.
+    // This case is about which messages arrive, not about that wait.
+    slot.setOopProcessTimeoutNsForTest (10'000'000'000LL);
 
     bool mono = false;
     SECTION ("stereo processing") {}
