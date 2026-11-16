@@ -100,7 +100,7 @@ REGRESS_CLAIM="$HOME/.cache/dusk-regress/source-claim-$(printf '%s' "$REGRESS_SO
 export REGRESS_CLAIM
 if [[ "$REGRESS_CLAIMED" == 1 ]]; then
     holder=""
-    [[ -f "$REGRESS_CLAIM" ]] && read -r holder <"$REGRESS_CLAIM"
+    if [[ -f "$REGRESS_CLAIM" ]]; then read -r holder <"$REGRESS_CLAIM" || true; fi
     [[ "$holder" == "$token" ]] || {
         echo "error: this run no longer holds $REGRESS_SOURCE (its claim names '${holder:-nobody}'); stopping before it touches the checkout" >&2
         exit 76
@@ -370,7 +370,7 @@ for other in "$base"/regress-*; do
     fi
 done
 holder=""
-[[ -f "$REGRESS_CLAIM" ]] && read -r holder <"$REGRESS_CLAIM"
+if [[ -f "$REGRESS_CLAIM" ]]; then read -r holder <"$REGRESS_CLAIM" || true; fi
 if [[ -n "$holder" && "$holder" != "$REGRESS_TOKEN" ]]; then
     holder_age="$(age "$base/$holder" || echo 999999)"
     if pid="$(running_in "$base/$holder")" || ((holder_age <= 600)); then

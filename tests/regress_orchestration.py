@@ -491,9 +491,16 @@ with open(os.environ['REGRESS_TEST_TRACE'],'a') as out:
     out.write(json.dumps({'command':pathlib.Path(sys.argv[0]).name,'args':sys.argv[1:],
                           'cwd':os.getcwd(),'fixtures':os.environ.get('DUSKSTUDIO_FIXTURE_DIR'),
                           'tmpdir':os.environ.get('TMPDIR')})+'\\n')
-if os.environ.get('REGRESS_TEST_STEAL_CLAIM') and pathlib.Path(sys.argv[0]).name == 'cmake':
+if 'REGRESS_TEST_STEAL_CLAIM' in os.environ and pathlib.Path(sys.argv[0]).name == 'cmake':
     for claim in pathlib.Path(os.environ['HOME'], '.cache/dusk-regress').glob('source-claim-*'):
-        claim.write_text('regress-thief-1\\n')
+        claim.write_text(os.environ['REGRESS_TEST_STEAL_CLAIM'])
+if os.environ.get('REGRESS_TEST_HOLD') and pathlib.Path(sys.argv[0]).name == 'cmake':
+    import time
+    deadline = time.monotonic() + 120
+    while not os.path.exists(os.environ['REGRESS_TEST_HOLD']):
+        if time.monotonic() > deadline:
+            sys.exit('the test never let the held build go on')
+        time.sleep(0.05)
 '''
     git_mock = recorder + '''
 args=sys.argv[1:]
@@ -570,22 +577,36 @@ else:
             sorted((home / ".cache/dusk-regress").glob("source-claim*"))
 
     # Two source runs started together: one claims the checkout, the other is
-    # refused in mac-preflight, before it pushes or runs anything there.
+    # refused in mac-preflight, before it pushes or runs anything there. The
+    # winner's build waits until the other run has ended, so the two overlap
+    # however the scheduler orders them.
+    release = root / "claim-release"
     runs = []
     for name in ("first", "second"):
         run_trace = root / f"claim-{name}.jsonl"
         run_trace.write_text("")
         runs.append((run_trace, subprocess.Popen(
-            ["/bin/bash", str(runners / "mac.sh")], env=dict(environment, REGRESS_TEST_TRACE=str(run_trace)),
+            ["/bin/bash", str(runners / "mac.sh")],
+            env=dict(environment, REGRESS_TEST_TRACE=str(run_trace), REGRESS_TEST_HOLD=str(release)),
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)))
+    try:
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline and all(run.poll() is None for _, run in runs):
+            time.sleep(0.05)
+        ended_first = [run.returncode for _, run in runs if run.poll() is not None]
+    finally:
+        release.touch()
     outcomes = []
     for run_trace, run in runs:
         stdout, stderr = run.communicate(timeout=60)
         outcomes.append((run.returncode, stdout, stderr,
                          [json.loads(line) for line in run_trace.read_text().splitlines()]))
+    release.unlink()
     passed = [o for o in outcomes if o[0] == 0]
     refused = [o for o in outcomes if o[0] != 0]
     assert len(passed) == 1 and len(refused) == 1, [o[:3] for o in outcomes]
+    assert len(ended_first) == 1 and ended_first[0] != 0, ("the refused run did not end while the other was held",
+                                                          ended_first)
     code, stdout, stderr, calls = refused[0]
     # Both are this runner's runs, so it is the claim, taken under the mutex,
     # that refuses the second, not the check for an older runner's live call.
@@ -618,11 +639,15 @@ else:
     checksum = subprocess.run(["cksum"], input=str(configured_source), capture_output=True,
                               text=True, check=True).stdout.split()[0]
     stale_claim = remote_home / ".cache/dusk-regress" / f"source-claim-{checksum}"
-    stale_claim.write_text("regress-gone-1\n")
-    result, calls = configured_run({})
-    assert result.returncode == 0, (result.stdout, result.stderr)
-    assert "taking over the claim of regress-gone-1" in result.stdout, result.stdout
-    assert not run_folders(remote_home), run_folders(remote_home)
+    # A claim cut short (a full disk, or a crash between the truncate and the
+    # write) has no newline at its end, or nothing in it, which is no claim.
+    for text in ("regress-gone-1\n", "regress-gone-1", ""):
+        stale_claim.write_text(text)
+        result, calls = configured_run({})
+        assert result.returncode == 0, (text, result.stdout, result.stderr)
+        assert ("taking over the claim of regress-gone-1" in result.stdout) == bool(text), (text, result.stdout)
+        assert f"claimed {configured_source} for this run" in result.stdout, (text, result.stdout)
+        assert not run_folders(remote_home), run_folders(remote_home)
 
     # A restore that fails is a failed row and the exit tries it again; while
     # the checkout is not back, the run keeps its folder and its claim, so no
@@ -641,32 +666,36 @@ else:
 
     # A claim lost in mid run (another run took it): the next call stops with
     # 76 before it starts anything, the checkout is left to the other run, and
-    # the folder goes; the other run's claim stays.
-    result, calls = configured_run({"REGRESS_TEST_STEAL_CLAIM": "1"})
-    assert result.returncode != 0 and "this run no longer holds" in result.stderr, (result.stdout, result.stderr)
-    assert "lost its claim" in result.stderr and "not acknowledged" not in result.stderr, result.stderr
-    assert not any(call["command"] == "ctest" for call in calls), calls
-    left = run_folders(remote_home)
-    assert len(left) == 1 and left[0].read_text().strip() == "regress-thief-1", left
-    left[0].unlink()
+    # the folder goes; the other run's claim stays. A claim cut short there is
+    # not this run's either.
+    for text in ("regress-thief-1\n", "regress-thief-1", ""):
+        result, calls = configured_run({"REGRESS_TEST_STEAL_CLAIM": text})
+        assert result.returncode != 0 and "this run no longer holds" in result.stderr, (text, result.stdout, result.stderr)
+        assert f"its claim names '{text.strip() or 'nobody'}'" in result.stderr, (text, result.stderr)
+        assert "lost its claim" in result.stderr and "not acknowledged" not in result.stderr, (text, result.stderr)
+        assert not any(call["command"] == "ctest" for call in calls), calls
+        left = run_folders(remote_home)
+        assert len(left) == 1 and left[0].read_text() == text, (text, left)
+        left[0].unlink()
 
     # A claim's run is live while its folder was written in the last 600 s.
     checksum = subprocess.run(["cksum"], input=str(configured_source), capture_output=True,
                               text=True, check=True).stdout.split()[0]
     claim_file = remote_home / ".cache/dusk-regress" / f"source-claim-{checksum}"
     holder = remote_home / ".cache/dusk-regress/regress-holder-1"
-    for seconds, live in ((540, True), (660, False)):
+    for seconds, live, ending in ((540, True, "\n"), (540, True, ""), (660, False, "\n"), (660, False, "")):
         holder.mkdir(parents=True, exist_ok=True)
         (holder / "source").write_text(f"{configured_source}\n")
-        claim_file.write_text("regress-holder-1\n")
+        claim_file.write_text("regress-holder-1" + ending)
         stamp = time.time() - seconds
         os.utime(holder, (stamp, stamp))
         result, calls = configured_run({})
         if live:
-            assert result.returncode != 0 and "another source run holds" in result.stderr, (seconds, result.stderr)
+            assert result.returncode != 0 and "another source run holds" in result.stderr, \
+                (seconds, ending, result.stderr)
         else:
             assert result.returncode == 0 and "taking over the claim of regress-holder-1" in result.stdout, \
-                (seconds, result.stdout, result.stderr)
+                (seconds, ending, result.stdout, result.stderr)
     shutil.rmtree(holder)
     assert not run_folders(remote_home), run_folders(remote_home)
 
@@ -1313,6 +1342,21 @@ regress_capture_leg /opt/under-test/DuskStudio
         assert needle in preflight, ("preflight lost its future-stamp handling", needle)
     assert preflight.index("Get-RegressFutureFiles") < preflight.index("Get-RegressFree $root"), \
         "preflight measures the free space before it removes a stale build"
+    # PowerShell is not run here, so these hold the text to the guest-side
+    # behaviour: an output seconds ahead already outlasts the checkout, so the
+    # allowance is file-time granularity, not the 60 s clock margin; the walk
+    # reaches paths past MAX_PATH; and a folder it could not list in or above
+    # the build costs the build rather than passing unseen.
+    assert "Get-RegressFutureFiles $root $now.AddSeconds(2)" in preflight, \
+        "build outputs stamped seconds in the future are kept again"
+    for needle in ("$future.Unlisted", "$buildPrefix.StartsWith($_ + '\\'", "could not be listed",
+                   "-or $blind.Count -gt 0) {\n    if (-not (Remove-RegressTree $build))",
+                   "(Get-RegressPlainPath $_.FullName).StartsWith($buildPrefix"):
+        assert needle in preflight, ("preflight lost its handling of folders the walk could not list", needle)
+    walk = (source / "inline-lib.ps1").read_text().split("function Get-RegressFutureFiles", 1)[1].split("\nfunction ", 1)[0]
+    for needle in ("('\\\\?\\' + $path)", "$result.Unlisted.Add(", "New-Object IO.DirectoryInfo $path"):
+        assert needle in walk, ("Get-RegressFutureFiles lost its long-path walk or its unlisted folders", needle)
+    assert "catch { continue }" not in walk, "Get-RegressFutureFiles skips a folder it cannot list again"
     check = (source / "built-check.ps1").read_text()
     for needle in ("diff --name-only $prev $Head", "build.ninja", "-t deps", "exit 87", "': rerun_cmake'",
                    "$forms['../' + $key]", '": phony`r`n"', "'(?m)^#[^\\n]*'"):

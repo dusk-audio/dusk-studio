@@ -106,24 +106,38 @@ function Remove-RegressTree([string]$path, [string]$marker = '') {
   return $false
 }
 
+function Get-RegressPlainPath([string]$path) { $path -replace '^\\\\\?\\', '' }
+
 # Every file under <path> stamped later than <limit> (UTC), without following a
-# link. EnumerateFileSystemInfos throws on a folder it cannot list, which is
-# skipped rather than ending the walk.
+# link, as .Files, and every folder the walk could not list, as .Unlisted. The
+# walk goes through the \\?\ prefix to reach the paths past MAX_PATH, so the
+# files' FullName carries it. Where .NET refuses the prefix, or <path> cannot
+# be listed through it, the walk takes the plain path, and the folders it then
+# cannot list are named rather than skipped.
 function Get-RegressFutureFiles([string]$path, [DateTime]$limit) {
-  $found = New-Object 'Collections.Generic.List[IO.FileInfo]'
-  if (-not (Test-Path -LiteralPath $path -PathType Container)) { return , $found }
+  $result = [pscustomobject]@{
+    Files = New-Object 'Collections.Generic.List[IO.FileInfo]'
+    Unlisted = New-Object 'Collections.Generic.List[string]'
+  }
+  if (-not (Test-Path -LiteralPath $path -PathType Container)) { return $result }
+  try {
+    $top = New-Object IO.DirectoryInfo ('\\?\' + $path)
+    [void]$top.GetFileSystemInfos()
+  } catch {
+    $top = New-Object IO.DirectoryInfo $path
+  }
   $stack = New-Object 'Collections.Generic.Stack[IO.DirectoryInfo]'
-  $stack.Push((New-Object IO.DirectoryInfo $path))
+  $stack.Push($top)
   while ($stack.Count -gt 0) {
     $dir = $stack.Pop()
-    try { $entries = @($dir.EnumerateFileSystemInfos()) } catch { continue }
+    try { $entries = @($dir.EnumerateFileSystemInfos()) } catch { $result.Unlisted.Add((Get-RegressPlainPath $dir.FullName)); continue }
     foreach ($entry in $entries) {
       if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { continue }
       if ($entry -is [IO.DirectoryInfo]) { $stack.Push($entry) }
-      elseif ($entry.LastWriteTimeUtc -gt $limit) { $found.Add($entry) }
+      elseif ($entry.LastWriteTimeUtc -gt $limit) { $result.Files.Add($entry) }
     }
   }
-  return , $found
+  return $result
 }
 
 # The tree's size by top-level entry, then the free space on its drive, as

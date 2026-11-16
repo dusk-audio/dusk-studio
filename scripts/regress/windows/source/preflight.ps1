@@ -48,22 +48,37 @@ foreach ($leftover in @((Join-Path $root 'tmp'), (Join-Path $root 'regress'))) {
 # A guest whose clock ran ahead (the host compared the two before this) leaves
 # build outputs stamped later than any source checked out after the clock steps
 # back, and ninja then takes the stale build for current: the build goes and
-# this run builds from nothing. Sources and dependencies stamped in the future
-# are only stamped back to now, which costs their objects one rebuild instead
-# of one on every run until that time has passed.
+# this run builds from nothing. A few seconds ahead do that too, as the
+# checkout comes seconds after this, so the only allowance is FAT's 2 s write
+# time granularity, the coarsest Windows keeps; a file written by now is never
+# stamped later than that. A folder in or above the build that could not be
+# listed may hold such files, so it costs the build too. Sources and
+# dependencies stamped in the future are only stamped back to now, which costs
+# their objects one rebuild instead of one on every run until that time has
+# passed, so the same allowance does for them.
 $now = [DateTime]::UtcNow
-$future = Get-RegressFutureFiles $root $now.AddSeconds(60)
-if ($future.Count -gt 0) {
-  $build = Join-Path $root 'src\build-tests'
-  $buildPrefix = $build + '\'
-  $inBuild = @($future | Where-Object { $_.FullName.StartsWith($buildPrefix, [StringComparison]::OrdinalIgnoreCase) })
-  $latest = ($future | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1).LastWriteTimeUtc
+$future = Get-RegressFutureFiles $root $now.AddSeconds(2)
+$build = Join-Path $root 'src\build-tests'
+$buildPrefix = $build + '\'
+$blind = @($future.Unlisted | Where-Object {
+  ($_ + '\').StartsWith($buildPrefix, [StringComparison]::OrdinalIgnoreCase) -or $buildPrefix.StartsWith($_ + '\', [StringComparison]::OrdinalIgnoreCase)
+})
+if ($future.Unlisted.Count -gt $blind.Count) {
+  "note: {0} folder(s) outside {1} could not be listed, so files there were not checked for stamps in the future" -f ($future.Unlisted.Count - $blind.Count), $build
+}
+if ($future.Files.Count -gt 0 -or $blind.Count -gt 0) {
+  $inBuild = @($future.Files | Where-Object { (Get-RegressPlainPath $_.FullName).StartsWith($buildPrefix, [StringComparison]::OrdinalIgnoreCase) })
+  $latest = ($future.Files | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1).LastWriteTimeUtc
   if ($inBuild.Count -gt 0) {
     "warn: {1} holds files stamped as late as {2:yyyy-MM-dd HH:mm:ss} UTC ({0} of them), after the guest's now, {3:yyyy-MM-dd HH:mm:ss} UTC: ninja would take them for newer than anything checked out today and build nothing. REMOVING {1}; this run builds from nothing." -f $inBuild.Count, $build, $latest, $now
+  } elseif ($blind.Count -gt 0) {
+    "warn: {0} folder(s) in or above {1} could not be listed, first {2}, so whether it holds files stamped after the guest's now cannot be told. REMOVING {1}; this run builds from nothing." -f $blind.Count, $build, $blind[0]
+  }
+  if ($inBuild.Count -gt 0 -or $blind.Count -gt 0) {
     if (-not (Remove-RegressTree $build)) { "error: could not remove $build"; exit 1 }
   }
-  $stale = @($future | Where-Object {
-    -not $_.FullName.StartsWith($buildPrefix, [StringComparison]::OrdinalIgnoreCase) -and $_.FullName -notmatch '\\\.git(\\|$)'
+  $stale = @($future.Files | Where-Object {
+    -not (Get-RegressPlainPath $_.FullName).StartsWith($buildPrefix, [StringComparison]::OrdinalIgnoreCase) -and $_.FullName -notmatch '\\\.git(\\|$)'
   })
   $reset = 0
   foreach ($file in $stale) {
