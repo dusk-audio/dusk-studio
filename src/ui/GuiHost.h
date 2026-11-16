@@ -653,6 +653,8 @@ public:
     // Whether any modal's render is still running: bounce, mixdown, master export or freeze.
     virtual bool renderRunning() const = 0;
     virtual std::string statusMessage() const = 0;
+    // The status bar's tooltip, the full path of the file a message names.
+    virtual std::string statusTooltip() const = 0;
     virtual void requestSessionSwitch (const std::filesystem::path& sessionJson) = 0;
     // Opens a session the way File > Open does: a newer autosave beside it
     // raises the recovery prompt instead of loading.

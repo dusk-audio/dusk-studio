@@ -3247,6 +3247,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         return false;
     }
     std::string statusMessage() const override { return owner.statusLabel.getText().toStdString(); }
+    std::string statusTooltip() const override { return owner.statusLabel.getTooltip().toStdString(); }
 
     void requestSessionSwitch (const std::filesystem::path& sessionJson) override
     {
