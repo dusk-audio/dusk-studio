@@ -9,6 +9,9 @@
 # or adding a name is a hand edit, and the change has to say why.
 # Recorded on an 8-core box (six DSP pool workers), 48000 Hz at quantum 512, on
 # Xvfb, where Mesa's llvmpipe threads draw the window.
+# DuskStudio is the framework's timer thread. Its ceiling went up from 496 when
+# the native panels began to pace their own frames on timers; the message
+# thread and the llvmpipe threads came down by far more in the same change.
 DuskDSP *	0.05/block
 DuskFill *	1
 DuskInstance	1
@@ -20,7 +23,7 @@ DuskSampleLoad	51
 DuskSfzArtwork	1
 DuskSfzLibrary	1
 DuskStu:disk$*	1
-DuskStudio	496
-[main]	1479
+DuskStudio	669
+[main]	343
 data-loop.*	1.2/block
-llvmpipe-*	1526
+llvmpipe-*	116
