@@ -69,6 +69,14 @@ canonical source.
 - **Times in Recover from autosave?** The autosave's and the saved session's
   times are shown in local time to the minute, as in `2026-11-08 14:30`, as
   the **Session won't open** alert shows them.
+- **An idle mixer lets the CPU rest.** Multicore DSP woke every worker thread
+  for every block, whatever the tracks had to do. A block now goes to the
+  workers only when tracks in two or more of their groups have work.
+  Otherwise the audio thread runs it alone and the workers sleep. The thread
+  that sends MIDI out and the thread that writes recordings to disk sleep as
+  well, until an output is open or a take is recording. On an 8-core machine
+  at 48 kHz with a 512-sample buffer, a stopped session with nothing
+  monitored wakes those threads about 2,000 times a second less.
 
 ### Fixed
 

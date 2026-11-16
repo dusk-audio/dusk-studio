@@ -1157,6 +1157,50 @@ void ChannelStrip::fillPluginMidiScratch (const dusk::MidiBuffer* events) noexce
         pluginMidiScratch.addEvent (meta.data, meta.numBytes, meta.samplePosition);
 }
 
+bool ChannelStrip::willRunChain (const float* inL, const float* inR, bool isMidi,
+                                 int numSamples, bool passByGate, bool isFrozen) const noexcept
+{
+    // The insert gate at the top of the block swaps the mode once its ramps
+    // are down, and every test below reads the swapped one.
+    const int req = insertMode.load (std::memory_order_acquire);
+    const bool swaps = req != activeInsertMode
+                    && ! (activeInsertGain.getCurrentValue() > 1.0e-4f
+                          || insertDryAlign.getCurrentValue() > 1.0e-4f);
+    const int mode = swaps ? req : activeInsertMode;
+
+    if (numSamples == 0) return false;
+    if (paramsRef == nullptr || (inL == nullptr && ! isMidi)) return false;
+    const bool stereo = (inR != nullptr) || isMidi || isFrozen;
+    if ((int) tempMono.size() < numSamples) return false;
+    if (stereo && tempStereoBuffer.numSamples() < numSamples) return false;
+
+    const bool pingRequested = (req == kInsertHardware || mode == kInsertHardware)
+                            && hardwareSlot.isPingRequested();
+    if (! passByGate && ! (isMidi && hasLoadedMidiConsumer())
+        && ! needsProcessedMono && ! pingRequested && (freezeCapL == nullptr || freezeCapR == nullptr))
+        return false;
+
+    const bool silentSkipEligible = isMidi ? ! hasLoadedMidiConsumer() : mode == kInsertEmpty;
+    if (! silentSkipEligible) return true;
+
+    // A tail still draining runs whatever the input holds; a settled strip
+    // runs only on input that is not exactly silent.
+    const std::int64_t requiredDrain = (std::int64_t) pdcAppliedSamples + 2 * osLatencySamples;
+    const bool settled = ! silentTailActive
+        || (std::min (requiredDrain, silentTailInputSamples + numSamples) >= requiredDrain
+            && silentTailQuietSamples >= silentTailHoldSamples);
+    if (! settled) return true;
+
+    const auto peakAbs = [numSamples] (const float* buf) -> float
+    {
+        if (buf == nullptr) return 0.0f;
+        const auto rng = findSignedMinMax (buf, numSamples);
+        return std::max (std::abs (rng.min), std::abs (rng.max));
+    };
+    if (! (peakAbs (inL) <= 0.0f)) return true;
+    return stereo && inR != nullptr && ! (peakAbs (inR) <= 0.0f);
+}
+
 void ChannelStrip::processAndAccumulate (const float* inL,
                                          const float* inR,
                                          juce::MidiBuffer& trackMidi,
@@ -1228,6 +1272,8 @@ void ChannelStrip::processAndAccumulate (const float* inL,
     currentOutLDb.store (-100.0f, std::memory_order_relaxed);
     currentOutRDb.store (-100.0f, std::memory_order_relaxed);
 
+    // willRunChain predicts the returns from here to the chain; change both
+    // together.
     if (numSamples == 0) return;
 
     const int drySource = isMidi && ! isFrozen ? 0 : (isFrozen ? 2 : 1);

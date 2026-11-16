@@ -96,6 +96,7 @@ add_executable(dusk-studio-tests
     ${CMAKE_SOURCE_DIR}/src/engine/MidiCaptureStream.cpp
     atomic_park.cpp
     audio_worker_pool.cpp
+    audio_worker_pool_inline_blocks.cpp
     rt_priority.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/AudioWorkerPool.cpp
     embedded_modal_close_safety.cpp
@@ -112,6 +113,7 @@ add_executable(dusk-studio-tests
     panic_probe_fixtures.cpp
     plugin_state_diagnostics.cpp
     channel_strip_midi_gate.cpp
+    channel_strip_will_run_chain.cpp
     ${CMAKE_SOURCE_DIR}/src/dsp/ChannelStrip.cpp
     insert_mode_defaults.cpp
     ${CMAKE_SOURCE_DIR}/src/dsp/AuxLaneStrip.cpp

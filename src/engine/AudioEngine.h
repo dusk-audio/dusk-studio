@@ -175,6 +175,33 @@ public:
     // Test-only, Linux: the kernel thread id of every DSP worker, in lane order.
     std::vector<std::int64_t> dspWorkerThreadIdsForTest() const { return workerPool.workerThreadIdsForTest(); }
 
+    // Blocks whose strip pass the worker pool ran since the engine was made.
+    // The audio thread counts them; any thread may read.
+    std::uint64_t getPoolDispatchCount() const noexcept
+    {
+        return poolDispatches.load (std::memory_order_relaxed);
+    }
+
+    // Test-only: the worker threads the pool runs now, 0 when it is off.
+    int activeDspWorkersForTest() const noexcept
+    {
+        return workerPool.isActive() ? workerPool.laneCount() - 1 : 0;
+    }
+
+    // Test-only. True hands every block to an active pool however few lanes
+    // have work; false puts the dispatch rule back.
+    void setPoolDispatchForcedForTest (bool forced) noexcept
+    {
+        poolDispatchMinLanes.store (forced ? 0 : kPoolDispatchMinLanes, std::memory_order_relaxed);
+    }
+
+    // The first track of DSP lane `lane` of `lanes`. Each lane runs the tracks
+    // up to the next lane's first.
+    static constexpr int dspLaneFirstTrack (int lane, int lanes) noexcept
+    {
+        return (Session::kNumTracks * lane) / lanes;
+    }
+
     // The audio-device orchestrator. The settings UI + self-test drive it through
     // the dusk API (IODevice / DeviceSetup / listener callbacks); no JUCE device
     // type crosses this boundary.
@@ -1214,13 +1241,14 @@ private:
     };
     std::array<TrackDspJob, Session::kNumTracks> trackJobs;
 
-    // Opt-in parallel strip DSP
-    // The DSP pass over the 24 strips can be fanned out across worker threads
-    // when DUSKSTUDIO_AUDIO_WORKERS is set (default: serial, the proven path).
-    // Each lane accumulates its strip subset into its OWN buffer set so the
-    // workers never write a shared buffer; a serial reduce then sums the lane
-    // sets into mixL/busL/auxLaneL. Metering + recording stay on a serial tail
-    // pass (audio thread), so worker threads only ever run pure DSP.
+    // Parallel strip DSP
+    // The DSP pass over the 24 strips fans out across worker threads when the
+    // pool runs (Multicore DSP; DUSKSTUDIO_AUDIO_WORKERS overrides the count)
+    // and the block has work for at least two lanes. Each lane accumulates its
+    // strip subset into its OWN buffer set so the workers never write a shared
+    // buffer; a serial reduce then sums the lane sets into mixL/busL/auxLaneL.
+    // Metering + recording stay on a serial tail pass (audio thread), so
+    // worker threads only ever run pure DSP.
     static constexpr int kMaxDspLanes = 16;
     struct AccumSet
     {
@@ -1240,6 +1268,16 @@ private:
     // separately handled: prepare/stopped quiesce the pool first.)
     bool workerPoolStarted = false;
     int  currentBlockSamples = 0;        // stashed for the worker lane job
+
+    // A block goes to the pool only when at least this many lanes hold a strip
+    // that will run its chain. 0 while a test forces every block there.
+    static constexpr int kPoolDispatchMinLanes = 2;
+    std::atomic<int>           poolDispatchMinLanes { kPoolDispatchMinLanes };
+    std::atomic<std::uint64_t> poolDispatches { 0 };
+    // The lanes holding a strip that will run its chain this block, by
+    // ChannelStrip::willRunChain, counted up to `enough`. Hardware inserts are
+    // left out: they run on the audio thread whichever path the block takes.
+    int countBusyLanes (int numSamples, int enough) const noexcept;
 
     // Env DUSKSTUDIO_AUDIO_WORKERS (CI / power users) overrides desiredWorkers.
     int  resolveTargetWorkers() const noexcept;

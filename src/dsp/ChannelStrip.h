@@ -335,6 +335,14 @@ public:
                                int   numDeviceOutputs            = 0,
                                bool  isFrozen                    = false) noexcept;
 
+    // Whether processAndAccumulate, called next with these arguments, runs the
+    // strip's chain rather than returning on its no-input, not-passing or
+    // asleep paths. A scheduling hint for the engine's worker pool only: the
+    // block decides again for itself, so a wrong answer costs time and nothing
+    // else. Audio thread, between blocks.
+    bool willRunChain (const float* inL, const float* inR, bool isMidi,
+                       int numSamples, bool passByGate, bool isFrozen) const noexcept;
+
     // Track freeze. When a frozen track plays back, inL/inR carry the
     // pre-rendered (instrument + EQ + comp) audio, so the strip skips the
     // instrument plugin and the EQ/comp stage (they're baked into the WAV)

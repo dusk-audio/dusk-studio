@@ -5589,6 +5589,25 @@ void AudioEngine::accumulateStrip (int t, float* mL, float* mR,
                                              job.frozen);
 }
 
+int AudioEngine::countBusyLanes (int numSamples, int enough) const noexcept
+{
+    const int lanes = workerPool.laneCount();
+    int busy = 0;
+    for (int lane = 0; lane < lanes && busy < enough; ++lane)
+        for (int t = dspLaneFirstTrack (lane, lanes); t < dspLaneFirstTrack (lane + 1, lanes); ++t)
+        {
+            const auto& job = trackJobs[(size_t) t];
+            if (! job.hardwareInsert
+                && strips[(size_t) t]->willRunChain (job.monoIn, job.monoInR, job.isMidi,
+                                                     numSamples, job.passes, job.frozen))
+            {
+                ++busy;
+                break;
+            }
+        }
+    return busy;
+}
+
 void AudioEngine::processStripLane (int lane) noexcept
 {
     const int lanes = workerPool.laneCount();
@@ -5616,8 +5635,8 @@ void AudioEngine::processStripLane (int lane) noexcept
         aR[(size_t) a] = acc.auxR[(size_t) a].data();
     }
 
-    const int lo = (Session::kNumTracks * lane)       / lanes;
-    const int hi = (Session::kNumTracks * (lane + 1)) / lanes;
+    const int lo = dspLaneFirstTrack (lane, lanes);
+    const int hi = dspLaneFirstTrack (lane + 1, lanes);
     // Hardware-insert strips write the SHARED device-output buffer; a worker
     // lane can't do that concurrently, so they're skipped here and summed on
     // the audio thread after the reduce.
@@ -8147,7 +8166,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
 
     // DSP pass
     // Heavy per-strip DSP (the only thing that fans out). Serial path
-    // accumulates straight into mixL/busL/auxLaneL; the opt-in worker pool
+    // accumulates straight into mixL/busL/auxLaneL; the worker pool
     // instead has each lane accumulate its strip subset into its own buffer
     // set, then a serial reduce sums the lanes in. Metering + recording run on
     // the serial tail below - the audio thread, after all strips are done -
@@ -8157,8 +8176,22 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     // deterministic ~1e-7, far below audibility.)
     perfLap (PerfSections::kPre);
 
+    // The pool takes a block only when the strips that will run their chain
+    // fall in at least two lanes. With none, every lane would wake to find
+    // nothing to do; with one, its strips run one after another in either
+    // path, and the pool adds the lanes' wake, clear and reduce.
+    // willRunChain only steers the choice: both paths run every strip, so a
+    // wrong guess costs time, not correctness.
+    bool dispatch = false;
     if (workerPool.isActive())
     {
+        const int minLanes = poolDispatchMinLanes.load (std::memory_order_relaxed);
+        dispatch = countBusyLanes (numSamples, minLanes) >= minLanes;
+    }
+
+    if (dispatch)
+    {
+        poolDispatches.fetch_add (1, std::memory_order_relaxed);
         currentBlockSamples = numSamples;
         workerPool.runBlock();
         reduceLaneAccum (numSamples);
