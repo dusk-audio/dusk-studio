@@ -196,15 +196,30 @@ public:
         return trackJobs[(size_t) t].hardwareInsert;
     }
 
-    // Test-only. True hands every block to an active pool however few lanes
-    // have work; false puts the dispatch rule back.
+    // Test-only. True hands every block to every lane of an active pool, each
+    // lane running the tracks from its dspLaneFirstTrack to the next lane's,
+    // however few strips have work; false puts the dispatch rule back.
     void setPoolDispatchForcedForTest (bool forced) noexcept
     {
-        poolDispatchMinLanes.store (forced ? 0 : kPoolDispatchMinLanes, std::memory_order_relaxed);
+        poolDispatchForced.store (forced, std::memory_order_relaxed);
     }
 
-    // The first track of DSP lane `lane` of `lanes`. Each lane runs the tracks
-    // up to the next lane's first.
+    // Test-only: the lanes the last block's strips ran on, the audio thread's
+    // own included, or 0 when the audio thread ran them alone. Any thread.
+    int getLastPoolLanesForTest() const noexcept
+    {
+        return lastPoolLanes.load (std::memory_order_relaxed);
+    }
+
+    // Test-only: how many times DSP worker `lane` has woken.
+    std::uint32_t dspWorkerWakesForTest (int lane) const noexcept
+    {
+        return workerPool.workerWakeCountForTest (lane);
+    }
+
+    // The first track of DSP lane `lane` of `lanes` when a test forces every
+    // lane to run (setPoolDispatchForcedForTest). Each lane runs the tracks up
+    // to the next lane's first.
     static constexpr int dspLaneFirstTrack (int lane, int lanes) noexcept
     {
         return (Session::kNumTracks * lane) / lanes;
@@ -1289,9 +1304,9 @@ private:
     // Parallel strip DSP
     // The DSP pass over the 24 strips fans out across worker threads when the
     // pool runs (Multicore DSP; DUSKSTUDIO_AUDIO_WORKERS overrides the count)
-    // and the block has work for at least two lanes. Each lane accumulates its
+    // and two or more strips have work. Each lane that runs accumulates its
     // strip subset into its OWN buffer set so the workers never write a shared
-    // buffer; a serial reduce then sums the lane sets into mixL/busL/auxLaneL.
+    // buffer; a serial reduce then sums those lane sets into mixL/busL/auxLaneL.
     // Metering + recording stay on a serial tail pass (audio thread), so
     // worker threads only ever run pure DSP.
     static constexpr int kMaxDspLanes = 16;
@@ -1314,15 +1329,22 @@ private:
     bool workerPoolStarted = false;
     int  currentBlockSamples = 0;        // stashed for the worker lane job
 
-    // A block goes to the pool only when at least this many lanes hold a strip
-    // that will run its chain. 0 while a test forces every block there.
-    static constexpr int kPoolDispatchMinLanes = 2;
-    std::atomic<int>           poolDispatchMinLanes { kPoolDispatchMinLanes };
+    std::atomic<bool>          poolDispatchForced { false };
     std::atomic<std::uint64_t> poolDispatches { 0 };
-    // The lanes holding a strip that will run its chain this block, by
-    // ChannelStrip::willRunChain, counted up to `enough`. Hardware inserts are
-    // left out: they run on the audio thread whichever path the block takes.
-    int countBusyLanes (int numSamples, int enough) const noexcept;
+    std::atomic<int>           lastPoolLanes { 0 };
+
+    // The block's lane plan. The audio thread writes it before runBlock, whose
+    // dispatch publishes it to the lanes. planStripLanes lists the strips
+    // ChannelStrip::willRunChain says will run their chain, hardware inserts
+    // left out (they run on the audio thread whichever path the block takes),
+    // and returns the lanes to run them on: one each, up to every lane the
+    // pool holds.
+    int planStripLanes (int numSamples) noexcept;
+    bool fixedLanes   = false;    // every lane runs its dspLaneFirstTrack range
+    int  plannedLanes = 0;        // the lanes running, the audio thread's included
+    int  numBusyStrips = 0;
+    std::array<int,  Session::kNumTracks> busyStrips {};
+    std::array<bool, Session::kNumTracks> stripBusy {};
 
     // Env DUSKSTUDIO_AUDIO_WORKERS (CI / power users) overrides desiredWorkers.
     int  resolveTargetWorkers() const noexcept;

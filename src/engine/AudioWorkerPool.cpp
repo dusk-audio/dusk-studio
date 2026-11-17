@@ -2,6 +2,7 @@
 #include "RealtimeScheduling.h"
 #include "RtPriority.h"
 #include "../foundation/RtAttributes.h"
+#include "../foundation/RtWakeEvent.h"
 #include "../foundation/ThreadName.h"
 
 #include <algorithm>
@@ -159,24 +160,31 @@ struct AudioWorkerPool::Worker
             if (shouldExit.load (std::memory_order_acquire)
                 || pool.quit.load (std::memory_order_acquire))
                 break;
-
-            const auto s = pool.seq.load (std::memory_order_acquire);
-            if (s == acked.load (std::memory_order_relaxed))
-                continue;   // stale latched wake from an already-acked epoch
-
-            // A wake from quiesce() must NOT run the job: the lane inputs
-            // (trackJobs device-input pointers) may already be freed by the
-            // device close path. Ack the epoch so quiesce can complete. Nor
-            // may a parked lane, past the count, run one.
-            const int active = pool.numWorkers.load (std::memory_order_relaxed);
-            if (! pool.quiescing.load (std::memory_order_acquire) && lane < active)
-            {
-                pool.job_ (lane);
-                if (pool.done.fetch_add (1, std::memory_order_release) + 1 == active)
-                    pool.completion.signal();
-            }
-            acked.store (s, std::memory_order_release);
+            takeDispatch();
         }
+    }
+
+    void takeDispatch() noexcept
+    {
+        // An epoch already acked is a stale latched wake. A wake from
+        // quiesce() must NOT run the job: the lane inputs (trackJobs
+        // device-input pointers) may already be freed by the device close
+        // path. Nor may a lane the epoch did not dispatch, parked ones
+        // included; the count comes from the same word as the epoch.
+        const auto word = pool.dispatchWord.load (std::memory_order_acquire);
+        const auto epoch = epochOf (word);
+        const bool fresh = epoch != acked.load (std::memory_order_relaxed);
+        const int dispatched = lanesOf (word);
+        if (fresh && lane < dispatched && ! pool.quiescing.load (std::memory_order_acquire))
+        {
+            pool.job_ (lane);
+            if (pool.done.fetch_add (1, std::memory_order_release) + 1 == dispatched)
+                pool.completion.signal();
+        }
+        wakes.fetch_add (1, std::memory_order_relaxed);
+        // Acked even when not run, so quiesce() can complete.
+        if (fresh)
+            acked.store (epoch, std::memory_order_release);
     }
 
     void requestExitAndWake() noexcept
@@ -191,8 +199,9 @@ struct AudioWorkerPool::Worker
     int                   lane;
     int                   rtJucePriority;
     std::thread           th;
-    dusk::AutoResetEvent  wake;             // auto-reset
-    std::atomic<uint32_t> acked { 0 };
+    dusk::RtWakeEvent     wake;
+    std::atomic<std::uint64_t> acked { 0 };
+    std::atomic<uint32_t> wakes { 0 };      // test-only count
     std::atomic<bool>     shouldExit { false };
 
     // Published once the thread has set up its scheduling and is about to
@@ -239,7 +248,7 @@ void AudioWorkerPool::start (int workers, std::function<void (int)> job, int rtJ
     {
         auto w = std::make_unique<Worker> (*this, (int) lane, rtJucePriority);
         // Born at the current epoch: nothing dispatched before it is its to run.
-        w->acked.store (seq.load (std::memory_order_acquire), std::memory_order_relaxed);
+        w->acked.store (epochOf (dispatchWord.load (std::memory_order_acquire)), std::memory_order_relaxed);
         w->start();
         workers_.push_back (std::move (w));
     }
@@ -343,7 +352,14 @@ void AudioWorkerPool::stop()
     numWorkers.store (0, std::memory_order_relaxed);
 }
 
-void AudioWorkerPool::runBlock() noexcept
+void AudioWorkerPool::publishDispatch (int lanes) noexcept
+{
+    done.store (0, std::memory_order_release);
+    const auto epoch = epochOf (dispatchWord.load (std::memory_order_relaxed)) + 1;
+    dispatchWord.store ((epoch << 16) | (std::uint16_t) lanes, std::memory_order_release);
+}
+
+void AudioWorkerPool::runBlock (int workerLanes) noexcept
 {
     const int active = numWorkers.load (std::memory_order_relaxed);
     if (active <= 0)
@@ -351,14 +367,16 @@ void AudioWorkerPool::runBlock() noexcept
         if (job_) job_ (0);           // inactive: caller is the only lane
         return;
     }
-
-    done.store (0, std::memory_order_release);
-    seq.fetch_add (1, std::memory_order_release);
+    const int lanes = std::clamp (workerLanes, 0, active);
+    if (lanes == 0)
     {
-        const dusk::rt::ScopedBlockingAllowed dispatch { "lane dispatch locks each wake event until #1008 replaces it" };
-        for (int lane = 0; lane < active; ++lane)
-            workers_[(std::size_t) lane]->wake.signal();   // dispatch lanes [0, active)
+        job_ (active);
+        return;
     }
+
+    publishDispatch (lanes);
+    for (int lane = 0; lane < lanes; ++lane)
+        workers_[(std::size_t) lane]->wake.signal();
 
     job_ (active);                    // caller runs the last lane
 
@@ -373,13 +391,13 @@ void AudioWorkerPool::runBlock() noexcept
     // bounds any stale-signal consumption.
     for (int i = 0; i < 1024; ++i)
     {
-        if (done.load (std::memory_order_acquire) >= active)
+        if (done.load (std::memory_order_acquire) >= lanes)
             return;
         std::this_thread::yield();
     }
     int waitedMs = 0;
     joinBlocked.store (true, std::memory_order_relaxed);
-    while (done.load (std::memory_order_acquire) < active)
+    while (done.load (std::memory_order_acquire) < lanes)
     {
         completion.wait (1);
         // Stall diagnostic. A worker wedged inside a plugin's processBlock holds
@@ -400,7 +418,7 @@ void AudioWorkerPool::quiesce()
     if (workers_.empty())
         return;
 
-    const auto s = seq.load (std::memory_order_acquire);
+    const auto s = epochOf (dispatchWord.load (std::memory_order_acquire));
     quiescing.store (true, std::memory_order_release);
 
     // Workers whose dispatch signal was delivered before their dispatcher died
@@ -425,14 +443,23 @@ void AudioWorkerPool::dispatchForTest (int signalOnlyFirst, bool killedInJoin)
     if (active <= 0)
         return;
 
-    done.store (0, std::memory_order_release);
-    seq.fetch_add (1, std::memory_order_release);
+    publishDispatch (active);
     const int n = signalOnlyFirst < 0 ? active
                                       : std::min (signalOnlyFirst, active);
     for (int i = 0; i < n; ++i)
         workers_[(size_t) i]->wake.signal();
     if (killedInJoin)
         joinBlocked.store (true, std::memory_order_relaxed);
+}
+
+void AudioWorkerPool::wakeLaneForTest (int lane) noexcept
+{
+    workers_[(std::size_t) lane]->wake.signal();
+}
+
+std::uint32_t AudioWorkerPool::workerWakeCountForTest (int lane) const noexcept
+{
+    return workers_[(std::size_t) lane]->wakes.load (std::memory_order_relaxed);
 }
 
 std::vector<std::int64_t> AudioWorkerPool::workerThreadIdsForTest() const

@@ -98,9 +98,12 @@ add_executable(dusk-studio-tests
     atomic_park.cpp
     audio_worker_pool.cpp
     audio_worker_pool_inline_blocks.cpp
+    audio_worker_pool_partial_dispatch.cpp
     rt_priority.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/AudioWorkerPool.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/RealtimeScheduling.cpp
+    foundation_rt_wake_event.cpp
+    ${CMAKE_SOURCE_DIR}/src/foundation/RtWakeEvent.cpp
     embedded_modal_close_safety.cpp
     native_editor_owner.cpp
     x11_anti_pattern_guard.cpp

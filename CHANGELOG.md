@@ -77,10 +77,12 @@ canonical source.
   the **Session won't open** alert shows them.
 - **An idle mixer lets the CPU rest.** Multicore DSP woke every worker thread
   for every block, whatever the tracks had to do. A block now goes to the
-  workers only when tracks in two or more of their groups have work.
-  Otherwise the audio thread runs it alone and the workers sleep. The thread
-  that sends MIDI out and the thread that writes recordings to disk sleep as
-  well, until an output is open or a take is recording. On an 8-core machine
+  workers only when two or more tracks have work, and wakes one worker for
+  each busy track past the first, up to all of them, while the rest sleep.
+  With one busy track or none the audio thread runs it alone and every
+  worker sleeps. Waking a worker no longer takes a lock on the audio thread.
+  The thread that sends MIDI out and the thread that writes recordings to
+  disk sleep as well, until an output is open or a take is recording. On an 8-core machine
   at 48 kHz with a 512-sample buffer, a stopped session with nothing
   monitored wakes those threads about 2,000 times a second less. A track
   that is muted or has no input also costs the audio thread about a

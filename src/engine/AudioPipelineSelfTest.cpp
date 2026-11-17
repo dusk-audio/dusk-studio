@@ -1330,7 +1330,6 @@ std::string AudioPipelineSelfTest::testPoolDispatchRule()
         return "[PASS] Pool Dispatch Rule: SKIPPED (host < 3 cores: no worker pool)";
     }
     const int lanes = workers + 1;
-    const auto laneOf = [lanes] (int t) { return dspLaneOf (t, lanes); };
 
     // Busy tracks monitor a tone through distinct EQ. Every other track is a
     // muted audio track, whose chain does not run whatever it holds.
@@ -1378,10 +1377,12 @@ std::string AudioPipelineSelfTest::testPoolDispatchRule()
     struct Capture
     {
         std::vector<float> l, r;
-        int pooled   = 0;   // blocks the pool ran
-        int offRule  = 0;   // blocks the pool ran, or did not, against the rule
-        int maxBusy  = 0;   // most strips that ran their chain in one block
-        int maxLanes = 0;   // most lanes those strips fell in
+        int pooled     = 0;   // blocks the pool ran
+        int offRule    = 0;   // blocks run on more or fewer lanes than the rule gives
+        int maxBusy    = 0;   // most strips that ran their chain in one block
+        int maxLanes   = 0;   // most lanes one block ran on, the audio thread's included
+        int idleWakes  = 0;   // wake-ups of workers no block dispatched
+        int extraWakes = 0;   // wake-ups past the blocks that dispatched a worker
     };
     // toggled >= 0 mutes that track for every other run of 8 blocks.
     const auto capture = [&] (int poolWorkers, bool everyBlock, int toggled)
@@ -1400,6 +1401,14 @@ std::string AudioPipelineSelfTest::testPoolDispatchRule()
         duskstudio::device::CallbackContext ctx {};
         const double inc = kTwoPi * (double) kToneHz / sr;
 
+        // Every worker the pool holds, parked ones included. A worker counts a
+        // wake before it acknowledges it, and the setup above waited for every
+        // acknowledgement, so none from before the capture lands inside it.
+        std::vector<std::uint32_t> wakesAt ((size_t) workers);
+        std::vector<int> dispatchedBlocks ((size_t) workers, 0);
+        for (int w = 0; w < workers; ++w)
+            wakesAt[(size_t) w] = engine.dspWorkerWakesForTest (w);
+
         for (int b = 0; b < numBlocks; ++b)
         {
             if (toggled >= 0)
@@ -1414,28 +1423,42 @@ std::string AudioPipelineSelfTest::testPoolDispatchRule()
             engine.audioDeviceIOCallback (inP.data(), numIn, outP.data(), numOut, bs, ctx);
             const bool pooled = engine.getPoolDispatchCount() != before;
 
+            const int ran = engine.getLastPoolLanesForTest();
+
             int busy = 0;
-            std::vector<bool> laneBusy ((size_t) lanes, false);
             for (int t = 0; t < Session::kNumTracks; ++t)
             {
                 const auto& strip = engine.getChannelStrip (t);
                 if (strip.insertMode.load (std::memory_order_relaxed) != ChannelStrip::kInsertHardware
                     && strip.getLastProcessedSamples() > 0)
-                {
                     ++busy;
-                    laneBusy[(size_t) laneOf (t)] = true;
-                }
             }
-            const int busyLanes = (int) std::count (laneBusy.begin(), laneBusy.end(), true);
+            const int wantLanes = poolWorkers == 0 ? 0
+                                : everyBlock      ? lanes
+                                : busy >= 2       ? std::min (busy, lanes)
+                                                  : 0;
             c.maxBusy  = std::max (c.maxBusy, busy);
-            c.maxLanes = std::max (c.maxLanes, busyLanes);
+            c.maxLanes = std::max (c.maxLanes, ran);
             c.pooled += pooled ? 1 : 0;
-            if (pooled != (poolWorkers > 0 && (everyBlock || busyLanes >= 2)))
+            if (pooled != (wantLanes >= 2) || ran != wantLanes)
                 ++c.offRule;
+            for (int w = 0; w + 1 < ran; ++w)
+                ++dispatchedBlocks[(size_t) w];
             c.l.insert (c.l.end(), outs[0].begin(), outs[0].end());
             c.r.insert (c.r.end(), outs[1].begin(), outs[1].end());
         }
         engine.setPoolDispatchForcedForTest (false);
+
+        // The last block's dispatched workers may not have counted their wake
+        // yet; none counts one it was not dispatched for.
+        for (int w = 0; w < workers; ++w)
+        {
+            const int woke = (int) (engine.dspWorkerWakesForTest (w) - wakesAt[(size_t) w]);
+            if (dispatchedBlocks[(size_t) w] == 0)
+                c.idleWakes += woke;
+            else
+                c.extraWakes += std::max (0, woke - dispatchedBlocks[(size_t) w]);
+        }
         return c;
     };
 
@@ -1453,27 +1476,34 @@ std::string AudioPipelineSelfTest::testPoolDispatchRule()
         return a.l.size() == b.l.size() ? d : 1.0f;
     };
 
-    // Neighbouring tracks share a lane until the lanes are as many as the
-    // tracks; the first and last candidates sit in different lanes.
-    const int first = candidates.front(), second = candidates[1], last = candidates.back();
+    // The busy strips run one to a lane, up to every lane the pool holds, so
+    // neighbouring tracks no longer share one. The counts in between take
+    // some of the workers and leave the rest asleep.
+    const int first = candidates.front(), last = candidates.back();
+    const auto firstOf = [&candidates] (int n)
+    {
+        return std::vector<int> (candidates.begin(), candidates.begin() + n);
+    };
     struct Case { std::string name; std::vector<int> busy; int toggled; };
-    const Case cases[] = {
+    std::vector<Case> cases {
         { "no strip busy",                    {},                     -1 },
         { "1 strip busy",                     { first },              -1 },
-        { "2 neighbouring strips busy",       { first, second },      -1 },
+        { "2 neighbouring strips busy",       firstOf (2),            -1 },
         { "2 strips busy, first and last",    { first, last },        -1 },
-        { "16 strips busy",                   std::vector<int> (candidates.begin(), candidates.begin() + 16), -1 },
-        { "first and last, last muted by turns", { first, last },     last },
     };
+    for (const int n : { 3, lanes - 1, lanes })
+        if (n > 2 && (cases.size() == 4 || (int) cases.back().busy.size() < n))
+            cases.push_back ({ std::to_string (n) + " neighbouring strips busy", firstOf (n), -1 });
+    cases.push_back ({ "16 strips busy",                       firstOf (16),      -1 });
+    cases.push_back ({ "first and last, last muted by turns",  { first, last },   last });
 
     bool pass = true;
     std::string detail;
     for (const auto& c : cases)
     {
         configure (c.busy);
-        std::vector<bool> laneBusy ((size_t) lanes, false);
-        for (const int t : c.busy) laneBusy[(size_t) laneOf (t)] = true;
-        const int wantLanes  = (int) std::count (laneBusy.begin(), laneBusy.end(), true);
+        const int busy       = (int) c.busy.size();
+        const int wantLanes  = busy >= 2 ? std::min (busy, lanes) : 0;
         const int wantPooled = wantLanes < 2 ? 0 : c.toggled >= 0 ? numBlocks / 2 : numBlocks;
 
         const auto serialA = capture (0, false, c.toggled);
@@ -1488,27 +1518,31 @@ std::string AudioPipelineSelfTest::testPoolDispatchRule()
         const float ruleVsEvery  = maxAbsDiff (rule, every);
         const float ruleVsSerial = maxAbsDiff (rule, serialA);
 
+        const float tolerance = rule.pooled > 0 ? kReassocTol : 0.0f;
+        const int idleWakes = serialA.idleWakes + serialB.idleWakes + rule.idleWakes + every.idleWakes;
+        const int extraWakes = rule.extraWakes + every.extraWakes;
         const bool ok = serialA.pooled == 0 && serialB.pooled == 0
                      && rule.offRule == 0 && every.offRule == 0
                      && rule.pooled == wantPooled && every.pooled == numBlocks
-                     && rule.maxBusy == (int) c.busy.size() && rule.maxLanes == wantLanes
-                     && ruleVsEvery <= baseline
-                     && ruleVsSerial <= baseline + (rule.pooled > 0 ? kReassocTol : 0.0f)
+                     && rule.maxBusy == busy && rule.maxLanes == wantLanes && every.maxLanes == lanes
+                     && idleWakes == 0 && extraWakes == 0
+                     && ruleVsEvery <= baseline + tolerance
+                     && ruleVsSerial <= baseline + tolerance
                      && (c.busy.empty() || peak > 1.0e-3f);
         pass = pass && ok;
         detail += dusk::text::format (
-            "\n      %-36s busy %2d in %d lane(s), pool ran %2d/%d blocks (%d/%d when every block goes), "
-            "rule vs every-block %.3e, rule vs serial %.3e, serial vs serial %.3e%s",
+            "\n      %-36s busy %2d, on %d lane(s), pool ran %2d/%d blocks (%d/%d when every block goes), "
+            "idle workers woken %d, rule vs every-block %.3e, rule vs serial %.3e, serial vs serial %.3e%s",
             c.name.c_str(), rule.maxBusy, rule.maxLanes, rule.pooled, numBlocks, every.pooled, numBlocks,
-            (double) ruleVsEvery, (double) ruleVsSerial, (double) baseline,
+            idleWakes + extraWakes, (double) ruleVsEvery, (double) ruleVsSerial, (double) baseline,
             ok ? "" : "  <-- off the rule or off the every-block mix");
     }
     engine.setWorkerCountForTest (0);
 
     return dusk::text::format (
-        "%s Pool Dispatch Rule (%d workers): the pool runs a block only when its busy strips fall in 2+ lanes, "
-        "with the mix it makes when every block goes to it%s",
-        fmtPassFail (pass).c_str(), workers, detail.c_str());
+        "%s Pool Dispatch Rule (%d workers): the pool runs a block only when 2+ strips are busy, on one lane "
+        "each up to all %d, waking no other worker, with the mix it makes when every block goes to every lane%s",
+        fmtPassFail (pass).c_str(), workers, lanes, detail.c_str());
 }
 
 std::string AudioPipelineSelfTest::testHardwareInsertLeavesOffLanes()
@@ -2551,10 +2585,12 @@ std::string AudioPipelineSelfTest::runPerfSuite()
         report.push_back ("  (divide serial median by parallel median for the speedup)");
         report.push_back ("");
 
-        // One busy strip, or two in the same lane, keep a block off the pool.
-        // The every-block rows are what waking the pool for them costs. The
-        // two strips are the first two tracks of the first lane that holds
-        // two, as the partition of the 24 tracks over this many lanes falls.
+        // One busy strip keeps a block off the pool; two run on two lanes,
+        // with one worker woken. The every-block rows wake every lane, each
+        // running its own range of tracks. The two strips are the first two
+        // tracks of the first of those ranges that holds two. Before the pool
+        // ran one lane per busy strip they shared a lane; the labels still
+        // say so, as recorded perf rows are matched by label.
         const auto padded = [] (std::string label)
         {
             label.resize (std::max<size_t> (label.size(), 44), ' ');

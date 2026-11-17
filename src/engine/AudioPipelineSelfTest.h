@@ -125,7 +125,7 @@ private:
     std::string testCompHeavyGR();          // extreme settings: characterize harmonics at heavy GR
     std::string testCompPerTrack();         // all 16 tracks under Opto produce identical output
     std::string testParallelMatchesSerial(); // worker-pool mix == serial mix within float-reassoc tol
-    std::string testPoolDispatchRule();      // pool wakes only for busy strips in 2+ lanes; same mix as dispatching every block
+    std::string testPoolDispatchRule();      // pool wakes a lane per busy strip, none for 0 or 1; same mix as dispatching every lane
     std::string testHardwareInsertLeavesOffLanes(); // a strip still running its hardware insert stays on the audio thread
     std::string testMidiPlayAlongMonitor();   // armed+IN MIDI track sounds live notes in Stopped AND Playing
     std::string testAudioPlayAlongSends();    // IN audio track feeds its aux send in Stopped AND Playing

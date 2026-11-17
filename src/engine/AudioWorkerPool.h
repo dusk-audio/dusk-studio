@@ -14,31 +14,37 @@ namespace duskstudio::rt { class RealtimeRestorer; }
 namespace duskstudio
 {
 // Fixed pool of real-time worker threads for the per-block strip-DSP fan-out
-// (opt-in; see AudioEngine). The audio thread calls runBlock(); job(lane) then
-// runs on each of the `workers` worker threads for lane in [0, workers), and on
-// the audio thread itself for lane == workers. So laneCount() == workers + 1.
+// (opt-in; see AudioEngine). The audio thread calls runBlock(n); job(lane) then
+// runs on worker thread `lane` for lane in [0, n), and on the audio thread
+// itself for lane == workers. laneCount() == workers + 1, and the workers past
+// n stay asleep for the block.
 //
-// Workers park on an auto-reset event between blocks and are woken
-// by the audio thread's signal() - a bounded, uncontended, ns-scale event that
-// is the one deliberate exception to the no-lock-on-the-audio-thread rule, used
-// ONLY in this opt-in parallel mode. The join is a short bounded spin (fast
-// path: workers finish within the spin) followed by a blocking wait on a
-// completion event - NEVER an unbounded yield-spin. sched_yield from a SCHED_RR
-// thread does not cede the core to a lower-priority thread, so an unbounded
-// spin deadlocks the callback if a worker is migrated onto the audio thread's
-// core; the blocking wait frees the core and is immune to priority layout.
-// Workers should be started at the SAME realtime priority as the audio thread
-// (see RtPriority.h) so RR round-robins them fairly when they do share a core.
+// Workers park on an RtWakeEvent between blocks, which the audio thread
+// signals without a lock. The join is a short bounded spin (fast path: workers
+// finish within the spin) followed by a blocking wait on a completion event -
+// NEVER an unbounded yield-spin. sched_yield from a SCHED_RR thread does not
+// cede the core to a lower-priority thread, so an unbounded spin deadlocks the
+// callback if a worker is migrated onto the audio thread's core; the blocking
+// wait frees the core and is immune to priority layout. Workers should be
+// started at the SAME realtime priority as the audio thread (see RtPriority.h)
+// so RR round-robins them fairly when they do share a core.
 //
-// Dispatches are identified by an epoch counter (`seq`); each worker records the
-// last epoch it acknowledged. quiesce() - message thread only, and only when no
-// new runBlock can begin - waits until every worker has acknowledged the current
-// epoch, waking and draining any worker whose dispatch signal was delivered but
-// whose dispatcher died (the device I/O thread can be force-killed mid-runBlock
-// by AlsaAudioIODevice::stop's thread timeout). A worker woken BY quiesce skips
+// Dispatches are identified by an epoch; each worker records the last epoch it
+// acknowledged. quiesce() - message thread only, and only when no new runBlock
+// can begin - waits until every worker has acknowledged the current epoch,
+// waking and draining any worker whose dispatch signal was delivered but whose
+// dispatcher died (the device I/O thread can be force-killed mid-runBlock by
+// AlsaAudioIODevice::stop's thread timeout). A worker woken BY quiesce skips
 // the job: its inputs may point into device buffers the close path has already
 // freed. After quiesce returns, no lane is in flight and prepare may safely
 // resize every per-block buffer.
+//
+// A worker quiesce() finds still running its job keeps that wake latched, and
+// can take it after a later block that did not dispatch it has begun. So a
+// block publishes its epoch and the number of worker lanes it dispatched in
+// one word, which a worker reads at once: read apart, a worker could pair the
+// new epoch with another block's count, run a lane twice and count itself
+// done while a dispatched lane is still writing.
 class AudioWorkerPool
 {
 public:
@@ -72,9 +78,12 @@ public:
     bool isActive()  const noexcept { return numWorkers.load (std::memory_order_relaxed) > 0; }
     int  laneCount() const noexcept { return numWorkers.load (std::memory_order_relaxed) + 1; }
 
-    // Audio thread. Dispatches lanes [0, workers) to the worker threads, runs
-    // lane `workers` on the caller, and returns once every lane has finished.
-    void runBlock() noexcept;
+    // Audio thread. Dispatches lanes [0, workerLanes) to their worker threads,
+    // runs lane `workers` on the caller, and returns once each of them has
+    // finished. The dispatch takes no lock and allocates nothing, and the
+    // workers past workerLanes are not woken; the join is the wait above.
+    void runBlock (int workerLanes) noexcept;
+    void runBlock() noexcept { runBlock (numWorkers.load (std::memory_order_relaxed)); }
 
     // Message thread only; caller must guarantee no new runBlock can begin
     // (callback detached, device stopped, or device thread not yet spawned).
@@ -101,9 +110,17 @@ public:
     // the join's blocking wait when it died.
     void dispatchForTest (int signalOnlyFirst = -1, bool killedInJoin = false);
 
+    // Test-only: wakes worker `lane` with nothing dispatched to it, as the
+    // latch quiesce() leaves on a worker it found running its job does.
+    void wakeLaneForTest (int lane) noexcept;
+
     // Test-only, Linux: the kernel thread id of every worker thread the pool
     // holds, active or parked, in lane order. Empty elsewhere.
     std::vector<std::int64_t> workerThreadIdsForTest() const;
+
+    // Test-only: how many times worker `lane` has woken. A worker counts a
+    // wake once it is done with it, before it acknowledges the epoch.
+    std::uint32_t workerWakeCountForTest (int lane) const noexcept;
 
     // Times the per-block join blocked >2 s (a worker wedged in a plugin's
     // processBlock). Bumped RT-safely from runBlock; poll from a non-RT thread.
@@ -126,11 +143,22 @@ private:
     struct Worker;
     std::vector<std::unique_ptr<Worker>> workers_;
     std::function<void (int)> job_;
-    // Lanes dispatched per block; workers_ past it are parked. Written by the
-    // message thread with no block in flight, published to the workers by seq.
+    // The most worker lanes a block dispatches; workers_ past it are parked.
+    // Written by the message thread with no block in flight.
     std::atomic<int>      numWorkers { 0 };
     std::atomic<int>      done { 0 };
-    std::atomic<uint32_t> seq { 0 };          // dispatch epoch; equality-compared only
+    // The dispatch epoch in the high 48 bits, equality-compared only, and the
+    // worker lanes that epoch dispatched in the low 16. A lane no block
+    // dispatches keeps its last ack until the next quiesce(), so the epoch must
+    // not wrap within a stream: 32 bits would, after 17 days at 3000 blocks a
+    // second.
+    std::atomic<std::uint64_t> dispatchWord { 0 };
+    static_assert (std::atomic<std::uint64_t>::is_always_lock_free,
+                   "the audio thread publishes the dispatch word without a lock");
+    static constexpr std::uint64_t epochOf (std::uint64_t word) noexcept { return word >> 16; }
+    static constexpr int lanesOf (std::uint64_t word) noexcept { return (int) (word & 0xFFFFu); }
+    // The dispatcher only: a new epoch for `lanes` worker lanes, done reset.
+    void publishDispatch (int lanes) noexcept;
     std::atomic<bool>     quiescing { false };
     std::atomic<bool>     quit { false };
     std::atomic<int>      joinStalls { 0 };    // count of >2 s join stalls (diagnostic)
