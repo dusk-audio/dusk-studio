@@ -118,6 +118,8 @@ private:
     class SendSourcePanel;
 
     void timerCallback() override;
+
+    void syncShownView();
     void rebuildSlots (int requestedEditor = -1);
     bool usesForeignEditorWindow() const;
     void openPickerForSlot (int slotIdx);

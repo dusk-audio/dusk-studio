@@ -196,6 +196,15 @@ std::optional<ScenarioResult> runIdleMetersStayStill (GuiHost& host, ScenarioCon
     auto auxLeg = std::make_shared<bool> (false);
     auto auxLoaded = std::make_shared<bool> (false);
     auto steps = std::make_shared<std::vector<Step>>();
+    // The console's meters rest while it is hidden, and what follows must hold
+    // for meters that started again.
+    steps->push_back ({ 0, [&host] { host.switchToStage (GuiHost::Stage::Aux); } });
+    steps->push_back ({ kHiddenMs, [&host, &ctx]
+    {
+        const int running = host.meterTimersRunning();
+        ctx.expect (running == 0, std::to_string (running) + " meter timers still run with the console hidden");
+        host.switchToStage (GuiHost::Stage::Recording);
+    } });
     steps->push_back ({ 0, [&host, idleStart] { *idleStart = host.meterRepaintRequests(); },
         quietFor (host, ctx, kSettleMs, "whether the stopped console came to rest"),
         "the stopped console never stopped asking for repaints", {}, kSettleMs });
@@ -361,10 +370,116 @@ std::optional<ScenarioResult> runHiddenViewsShowCurrentState (GuiHost& host, Sce
     return std::nullopt;
 }
 
+// The gain-reduction and VU meters and the mini timeline only draw, so their
+// timers stop while a console page or the whole console is hidden, and start
+// again, with what changed meanwhile, the moment it shows.
+std::optional<ScenarioResult> runHiddenMeterTimersRest (GuiHost& host, ScenarioContext& ctx)
+{
+    if (! host.modalStackEmpty()) return ScenarioResult::skip ("requires no open modal");
+    auto& strip = ctx.session().track (0).strip;
+    keepStage (host, ctx);
+    ctx.keep (strip.hpfEnabled);
+    ctx.keep (strip.hpfFreq);
+    strip.hpfEnabled.store (false);
+    host.switchToStage (GuiHost::Stage::Mixing);
+    int originalPage = -1;
+    for (int page = 0; page < host.consolePageCount(); ++page)
+        if (host.consolePageMatches (page)) originalPage = page;
+    const auto size = host.mainWindowSize();
+    if (size.size() >= 4)
+    {
+        ctx.cleanup ([&host, size] { host.resizeMainWindow (size[0], size[1]); });
+        if (! host.resizeMainWindow (size[2], size[1]))
+            ctx.note ("the window would not take its smallest width");
+    }
+    ctx.cleanup ([&host, originalPage]
+    {
+        if (originalPage >= 0 && originalPage < host.consolePageCount())
+            host.pressKey (std::to_string (originalPage + 1), (char) ('1' + originalPage));
+    });
+
+    auto paged = std::make_shared<bool> (false);
+    auto shownText = std::make_shared<std::string>();
+    const auto showPage = [&host, &ctx] (int page)
+    {
+        return ctx.expect (host.pressKey (std::to_string (page + 1), (char) ('1' + page))
+                               && host.consolePageMatches (page),
+                           "the console would not show page " + std::to_string (page + 1));
+    };
+    const auto expectTimer = [&host, &ctx] (bool running, const std::string& what)
+    {
+        const auto state = host.stripMeterTimerRunning (0);
+        ctx.expect (state.has_value() && *state == running,
+                    ! state ? "the first channel strip is missing"
+                            : "the first channel strip's gain-reduction meter " + what);
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ kHiddenMs, [&host, &ctx, paged, showPage]
+    {
+        *paged = host.consolePageCount() > 1;
+        if (! *paged)
+            ctx.note ("the console shows every strip at its narrowest width, so no page is hidden");
+        else
+            showPage (0);
+    } });
+    steps->push_back ({ kHiddenMs, [&ctx, paged, showPage, expectTimer]
+    {
+        expectTimer (true, "is stopped while its page shows");
+        if (*paged && showPage (1))
+            ctx.note ("page 2 shows, so the first strip is hidden");
+    } });
+    steps->push_back ({ kHiddenMs, [&host, &ctx, &strip, paged, shownText, showPage, expectTimer]
+    {
+        if (*paged)
+        {
+            expectTimer (false, "still runs while its page is hidden");
+            strip.hpfFreq.store (120.0f);
+            strip.hpfEnabled.store (true);
+            if (showPage (0))
+            {
+                expectTimer (true, "did not start again when its page showed");
+                const auto text = host.stripFilterText (0, true);
+                ctx.expect (text && ! text->empty() && *text != "OFF",
+                            "the strip's first paint after its page showed has its high-pass at \""
+                                + text.value_or ("") + "\", though the filter was switched on while it was hidden");
+                *shownText = text.value_or ("");
+            }
+        }
+        host.switchToStage (GuiHost::Stage::Aux);
+    } });
+    steps->push_back ({ kHiddenMs, [&host, &ctx, &strip, shownText, expectTimer]
+    {
+        const int running = host.meterTimersRunning();
+        ctx.expect (running == 0, std::to_string (running) + " meter timers still run with the console hidden");
+        strip.hpfFreq.store (240.0f);
+        strip.hpfEnabled.store (true);
+        host.switchToStage (GuiHost::Stage::Mixing);
+        ctx.expect (host.meterTimersRunning() > 0, "no meter timer started again when the console showed");
+        expectTimer (true, "did not start again when the console showed");
+        const auto text = host.stripFilterText (0, true);
+        if (! text)
+        {
+            ctx.note ("the first channel strip is on another console page, so its first paint is not checked");
+            return;
+        }
+        ctx.expect (! text->empty() && *text != "OFF" && *text != *shownText,
+                    "the strip's first paint after the console showed has its high-pass at \"" + *text
+                        + "\", not the frequency set while it was hidden");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
 const ScenarioRegistrar hiddenViews { Scenario {
     "gui.hidden_meters_show_current_state", { "gui", "meter" }, Needs::Engine | Needs::Gui,
     {}, {}, 30000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runHiddenViewsShowCurrentState (host, ctx); }
+} };
+
+const ScenarioRegistrar hiddenMeterTimers { Scenario {
+    "gui.hidden_meter_timers_rest", { "gui", "meter" }, Needs::Engine | Needs::Gui,
+    {}, {}, 30000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runHiddenMeterTimersRest (host, ctx); }
 } };
 
 const ScenarioRegistrar idleMeters { Scenario {

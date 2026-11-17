@@ -160,6 +160,7 @@ void detail::carveRegions (Session& session, Track& track, std::int64_t start, s
 {
     adoptRegionsNamingNoTake (session, track, start, end, 0);
     carve (track.regions, start, end);
+    session.noteRegionsEdited();
 }
 
 std::optional<AudioRegion> regionFromTake (const AudioTake& take, std::int64_t start, std::int64_t end)
@@ -203,6 +204,7 @@ void promoteTakeRange (Session& session, Track& track, const AudioTake& take,
         region->fadeOutShape   = FadeShape::RaisedCosine;
     }
     track.regions.push_back (std::move (*region));
+    session.noteRegionsEdited();
 }
 
 std::string nextTakeName (const Track& track)

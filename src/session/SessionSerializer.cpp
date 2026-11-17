@@ -2680,6 +2680,7 @@ bool SessionSerializer::load (Session& s, const File& source, SessionLoadError* 
                           slotWithDefaults (trackDefaults, tracks, i),
                           sessionLoadBpm, s.getSessionDirectory(),
                           s.missingAudioFilesAfterLoad);
+        s.noteRegionsEdited();
         repairTakeIds (s);
         s.repairLv2StateTags();
     }

@@ -2,6 +2,7 @@
 #include "../../AppConfig.h"
 #include "../../../engine/audiofile/FileWriter.h"
 #include "../../../engine/audiofile/FileReader.h"
+#include "../../../session/RegionEditActions.h"
 #include "../../../session/SessionSerializer.h"
 
 #include <algorithm>
@@ -305,6 +306,74 @@ std::optional<ScenarioResult> runMiniTimelineMarkers (GuiHost& host, ScenarioCon
     } });
     steps->push_back ({ 200, [&ctx, &session, &transport]
     { ctx.expect (transport.getPlayhead() == session.getMarkers()[1].timelineSamples, "reopened marker did not seek after the alert"); } });
+
+    // The strip rereads the regions only when the session counts an edit, as
+    // every region edit, its undo and its redo do, and then at once.
+    auto shownEnd = std::make_shared<std::int64_t> (-1);
+    auto placed = std::make_shared<AudioRegion>();
+    steps->push_back ({ 0, [&host, &ctx, &session, &engine, rate, shownEnd, placed]
+    {
+        auto& track = session.track (0);
+        ctx.keep (track.mode);
+        ctx.keep (track.frozen);
+        ctx.cleanup ([&session, &engine]
+        {
+            engine.getUndoManager().clearUndoHistory();
+            session.track (0).regions.clear();
+            engine.getPlaybackEngine().preparePlayback();
+        });
+        track.mode.store ((int) Track::Mode::Mono);
+        track.frozen.store (false);
+        const auto length = static_cast<std::int64_t> (rate);
+        const auto path = ctx.tempDir() / "mini-extent.wav";
+        auto writer = dusk::audio::FileWriter::create (path, { rate, 1, 24 });
+        std::vector<float> silence (static_cast<std::size_t> (length), 0.0f);
+        const float* channels[] { silence.data() };
+        if (! ctx.expect (writer != nullptr && writer->write (channels, 1, length), "could not write the region fixture"))
+            return;
+        writer.reset();
+        placed->file = decltype (placed->file) (path.u8string().c_str());
+        placed->lengthInSamples = length;
+        placed->numChannels = 1;
+        track.regions = { *placed };
+        session.noteRegionsEdited();
+        engine.getUndoManager().clearUndoHistory();
+        *shownEnd = host.miniTimelineEnd();
+    } });
+    steps->push_back ({ 700, [&host, &ctx, &session, rate, shownEnd]
+    {
+        ctx.expect (host.miniTimelineEnd() == *shownEnd,
+                    "the mini timeline's end moved with no change to the session's regions");
+        session.track (0).regions[0].timelineStart = static_cast<std::int64_t> (300 * rate);
+    } });
+    steps->push_back ({ 700, [&host, &ctx, &session, &engine, rate, shownEnd, placed]
+    {
+        ctx.expect (host.miniTimelineEnd() == *shownEnd,
+                    "the mini timeline reread the regions though the session counted no edit");
+        session.track (0).regions[0] = *placed;
+        auto moved = *placed;
+        moved.timelineStart = static_cast<std::int64_t> (300 * rate);
+        engine.getUndoManager().beginNewTransaction ("Move region");
+        ctx.expect (engine.getUndoManager().perform (new RegionEditAction (session, engine, 0, 0, *placed, moved)),
+                    "the region move was refused");
+    } });
+    const auto expectEnd = [&host, &ctx, rate, shownEnd] (bool moved, const std::string& after)
+    {
+        const auto end = host.miniTimelineEnd();
+        ctx.expect (moved ? end >= static_cast<std::int64_t> (301 * rate) : end == *shownEnd,
+                    "the mini timeline ends at sample " + std::to_string (end) + " after " + after);
+    };
+    steps->push_back ({ 150, [&engine, expectEnd]
+    {
+        expectEnd (true, "a region move to 300 s");
+        engine.getUndoManager().undo();
+    } });
+    steps->push_back ({ 150, [&engine, expectEnd]
+    {
+        expectEnd (false, "undoing the move");
+        engine.getUndoManager().redo();
+    } });
+    steps->push_back ({ 150, [expectEnd] { expectEnd (true, "redoing the move"); } });
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
 }

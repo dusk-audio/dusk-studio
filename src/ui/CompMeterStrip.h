@@ -44,6 +44,13 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
+    void visibilityChanged() override { showStateChanged(); }
+    void parentHierarchyChanged() override { showStateChanged(); }
+
+    // The timer stops while the meter is hidden. Restarts it when the meter
+    // shows, reading the levels as they are now; a view that shows it calls
+    // this, and so may anything that ticks while it is shown.
+    void showStateChanged();
 
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDrag (const juce::MouseEvent&) override;
@@ -93,6 +100,7 @@ public:
     juce::Rectangle<float> getGrBarArea() const noexcept { return grBarArea; }
 
     bool handleShownForScenario() const noexcept { return showHandle && ! handleArea.isEmpty(); }
+    bool timerRunningForScenario() const noexcept { return isTimerRunning(); }
 
     static constexpr float kFloorDb   = -60.0f;
     static constexpr float kCeilingDb =   0.0f;
@@ -101,6 +109,8 @@ public:
     static constexpr float kBarW      = 10.0f;
 
 private:
+    static constexpr int kTimerHz = 30;
+
     void timerCallback() override;
 
     float dbToFrac (float db) const noexcept;
@@ -131,6 +141,7 @@ private:
     void sampleControls();
     bool lookChanged() noexcept;
     PaintedValue paintedInput, paintedPeak, paintedGr, paintedHandle, paintedFlags;
+    MeterTimerCount timerCount;
 
     // Layout rectangles set in resized().
     juce::Rectangle<float> handleArea;

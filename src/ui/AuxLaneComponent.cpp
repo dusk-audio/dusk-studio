@@ -670,19 +670,49 @@ AuxLaneComponent::~AuxLaneComponent()
 
 void AuxLaneComponent::timerCallback()
 {
-    if (! nameLabel.isBeingEdited() && nameLabel.getText (false) != lane.name)
-        nameLabel.setText (lane.name, juce::dontSendNotification);
-
     for (int i = 0; i < AuxLaneParams::kMaxLanePlugins; ++i)
     {
         // rebuildSlots only runs on lane edits, so without this the lane would
         // hold an abandoned editor until the next one.
         syncNativeEditorOwnersForSlot (i);
-        refreshSlotControls (i);
         // A session load swaps or clears the unit without touching the lane.
         if (builtinViewNeedsSync (i))
             scheduleBuiltinViewSync();
     }
+
+    if (shownInLayout (*this))
+    {
+        syncShownView();
+    }
+    else
+    {
+        if (stripMeter != nullptr) stripMeter->resampleAtNextPaint();
+        if (sendPanel != nullptr) sendPanel->resampleAtNextPaint();
+    }
+
+    // The automation mode's control lock and Write/Touch capture run whether or
+    // not the lane shows: MIDI, a control surface or the lane can move a hidden
+    // return.
+    const int amode = lane.params.automationMode.load (std::memory_order_relaxed);
+    applyAutoMode (amode);
+    const bool isWrite = amode == (int) AutomationMode::Write;
+    const bool isTouch = amode == (int) AutomationMode::Touch;
+    const bool playing = engine.getTransport().isPlaying();
+    recordAutomation (AutomationParam::FaderDb,
+                      playing && (isWrite || (isTouch && lane.params.faderTouched.load (std::memory_order_relaxed))),
+                      lane.params.returnLevelDb.load (std::memory_order_relaxed));
+    recordAutomation (AutomationParam::Mute, playing && isWrite,
+                      lane.params.mute.load (std::memory_order_relaxed) ? 1.0f : 0.0f);
+}
+
+void AuxLaneComponent::syncShownView()
+{
+    if (! nameLabel.isBeingEdited() && nameLabel.getText (false) != lane.name)
+        nameLabel.setText (lane.name, juce::dontSendNotification);
+
+    for (int i = 0; i < AuxLaneParams::kMaxLanePlugins; ++i)
+        refreshSlotControls (i);
+
     if (stripMeter != nullptr)
     {
         if (! shownInLayout (*stripMeter))
@@ -704,15 +734,11 @@ void AuxLaneComponent::timerCallback()
         }
     }
 
-    // Motor-fader animate + Write/Touch capture, mirroring the per-
-    // channel pattern in ChannelStripComponent::timerCallback. Animate
-    // is mode-agnostic - gated only on the user not dragging - so a
-    // MIDI-bound aux return moves the on-screen fader in Off mode too.
+    // Motor-fader animate, mirroring the per-channel pattern in
+    // ChannelStripComponent. Animate is mode-agnostic - gated only on the
+    // user not dragging - so a MIDI-bound aux return moves the on-screen
+    // fader in Off mode too.
     const int amode = lane.params.automationMode.load (std::memory_order_relaxed);
-    applyAutoMode (amode);
-    const bool isWrite = amode == (int) AutomationMode::Write;
-    const bool isTouch = amode == (int) AutomationMode::Touch;
-    const bool playing = engine.getTransport().isPlaying();
 
     {
         const float live    = lane.params.liveReturnLevelDb.load (std::memory_order_relaxed);
@@ -726,9 +752,6 @@ void AuxLaneComponent::timerCallback()
         {
             displayedLiveReturnLevelDb = live;
         }
-
-        recordAutomation (AutomationParam::FaderDb, playing && (isWrite || (isTouch && touched)),
-                          lane.params.returnLevelDb.load (std::memory_order_relaxed));
     }
 
     // Mute visual sync - read the manual atom in Off / Write so we
@@ -747,8 +770,6 @@ void AuxLaneComponent::timerCallback()
         if (muteButton.getToggleState() != effective)
             muteButton.setToggleState (effective, juce::dontSendNotification);
     }
-    recordAutomation (AutomationParam::Mute, playing && isWrite,
-                      lane.params.mute.load (std::memory_order_relaxed) ? 1.0f : 0.0f);
 
     // Rebuild the output-pair menu when the device's ACTIVE output set changes
     // (e.g. the user enabled/swapped outputs in Audio settings - the physical
@@ -2554,6 +2575,8 @@ void AuxLaneComponent::refreshEditorsForShowState()
         rebuildSlots();
     else
         hideEditorsKeepingAlive();
+    if (shownInLayout (*this))
+        syncShownView();
 }
 
 void AuxLaneComponent::parentHierarchyChanged()

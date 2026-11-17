@@ -1108,6 +1108,10 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         return owner.miniTimeline != nullptr ? owner.miniTimeline->markerPaintForScenario()
                                             : std::vector<scenario::MiniMarkerPaint> {};
     }
+    std::int64_t miniTimelineEnd() const override
+    {
+        return owner.miniTimeline != nullptr ? owner.miniTimeline->shownEndForScenario() : -1;
+    }
     bool clickMiniSample (std::int64_t sample) override
     {
         return owner.miniTimeline != nullptr && owner.miniTimeline->clickSampleForScenario (sample);
@@ -2325,6 +2329,16 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     std::uint64_t meterRepaintRequests() const override
     {
         return gatedRepaintRequests.load (std::memory_order_relaxed);
+    }
+    int meterTimersRunning() const override
+    {
+        return runningMeterTimers.load (std::memory_order_relaxed);
+    }
+    std::optional<bool> stripMeterTimerRunning (int track) const override
+    {
+        auto* strip = owner.consoleView != nullptr ? owner.consoleView->getStripComponent (track) : nullptr;
+        if (strip == nullptr) return std::nullopt;
+        return strip->meterTimerRunningForScenario();
     }
 
     MeterRest meterRestPixels (StripKind kind, int index, const std::filesystem::path& ppm) override

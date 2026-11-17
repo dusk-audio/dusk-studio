@@ -1660,6 +1660,14 @@ public:
     void renameMarker  (int index, const juce::String& name);
     int  findMarkerNear (std::int64_t timelineSamples, std::int64_t toleranceSamples) const noexcept;
 
+    // Counts the times the tracks' audio regions may have changed: a load, a
+    // track move, a recording landing, a take comp, a DP import, and every
+    // region edit's playback refresh, undo and redo included. A view that lays
+    // the regions out compares it instead of walking them. A render's worker
+    // rebuilds playback too, so any thread may count.
+    std::uint64_t regionEditCount() const noexcept { return regionEdits.load (std::memory_order_relaxed); }
+    void noteRegionsEdited() noexcept { regionEdits.fetch_add (1, std::memory_order_relaxed); }
+
     MasterBusParams& master() noexcept             { return masterParams; }
     const MasterBusParams& master() const noexcept { return masterParams; }
 
@@ -1982,6 +1990,7 @@ private:
     std::array<Bus, kNumBuses> buses;
     std::array<AuxLane, kNumAuxLanes> auxLanes;
     std::vector<Marker> markers;
+    std::atomic<std::uint64_t> regionEdits { 0 };
     MasterBusParams masterParams;
     MasteringParams masteringParams;
     juce::File sessionDir;

@@ -77,3 +77,21 @@ TEST_CASE ("SessionSerializer clamps out-of-range audio-region fields on load",
 
     dir.deleteRecursively();
 }
+
+TEST_CASE ("Loading a session counts as a region edit", "[session][serializer]")
+{
+    using duskstudio::Session;
+    using duskstudio::SessionSerializer;
+
+    const auto dir = makeTempSessionDir();
+    const auto target = dir.getChildFile ("session.json");
+    Session saved;
+    REQUIRE (SessionSerializer::save (saved, target));
+
+    Session loaded;
+    const auto before = loaded.regionEditCount();
+    REQUIRE (SessionSerializer::load (loaded, target));
+    CHECK (loaded.regionEditCount() > before);
+
+    dir.deleteRecursively();
+}

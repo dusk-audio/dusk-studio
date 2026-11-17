@@ -4,9 +4,9 @@
 
 #include "../foundation/MessageThread.h"
 #include "GuiHost.h"
+#include "RepaintGate.h"
 #include "NativeEmbeddedParent.h"
 
-#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -27,6 +27,7 @@ public:
 
     void captureMarkerPaintForScenario (bool enabled) { capturePaint = enabled; }
     std::vector<scenario::MiniMarkerPaint> markerPaintForScenario() const;
+    std::int64_t shownEndForScenario() const;
     bool clickSampleForScenario (std::int64_t);
     bool clickMarkerForScenario (int);
     bool pressKeyForScenario (const std::string& description);
@@ -39,7 +40,10 @@ public:
     std::function<void (int)> onMarkerEdit;
 
 private:
+    static constexpr int kTimerHz = 30;
+
     void timerCallback() override;
+    void showStateChanged();
     void syncWindow();
     void updateState();
     void hideTooltip();
@@ -61,10 +65,11 @@ private:
     std::string shownTooltip;
    #if DUSKSTUDIO_HAS_NATIVE_UI
     std::int64_t contentEnd = 0;
-    std::uint64_t scannedRegions = 0;
+    std::uint64_t scannedRegions = 0, scannedEdits = 0;
     double scannedRate = 0.0;
-    std::chrono::steady_clock::time_point nextRegionScan {};
+    bool contentScanned = false;
    #endif
+    MeterTimerCount timerCount;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MiniTimelineStrip)
 };

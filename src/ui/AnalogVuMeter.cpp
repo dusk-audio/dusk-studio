@@ -128,6 +128,7 @@ AnalogVuMeter::AnalogVuMeter (const std::atomic<float>* l, const std::atomic<flo
     setOpaque (false);
     timerHz = (int) kRefreshHz;
     startTimerHz (timerHz);
+    timerCount.set (true);
 }
 
 AnalogVuMeter::~AnalogVuMeter() { stopTimer(); }
@@ -215,9 +216,29 @@ void AnalogVuMeter::resized()
     rebuildCachedFace();
 }
 
+void AnalogVuMeter::showStateChanged()
+{
+    if (isTimerRunning() || ! shownInLayout (*this)) return;
+    snapNeedles = true;
+    timerHz = (int) kRefreshHz;
+    startTimerHz (timerHz);
+    timerCount.set (true);
+    timerCallback();
+}
+
 void AnalogVuMeter::timerCallback()
 {
     if (leftRms == nullptr) return;
+    if (! shownInLayout (*this))
+    {
+        // The next paint draws the needles where the level is when the meter shows again.
+        paintedNeedleL.forget();
+        paintedNeedleR.forget();
+        paintedPeakLed.forget();
+        stopTimer();
+        timerCount.set (false);
+        return;
+    }
 
     const float dt      = 1.0f / kRefreshHz;
     const float vuCoeff = 1.0f - std::exp (-1000.0f * dt / kVuTimeConstantMs);
@@ -239,6 +260,12 @@ void AnalogVuMeter::timerCallback()
     auto tickChannel = [&] (const std::atomic<float>* atom, float& pos, float& vel, float& rawVu)
     {
         const float target = vuDbToAngleFrac (rmsToVuDb (atom, rawVu));
+        if (snapNeedles)
+        {
+            pos = target;
+            vel = 0.0f;
+            return true;
+        }
 
         const float springForce  = (target - pos) * kOvershootStiff;
         const float dampingForce = -vel * critDamp;
@@ -257,6 +284,7 @@ void AnalogVuMeter::timerCallback()
     bool settled = tickChannel (leftRms, needlePosL, needleVelL, rawL);
     if (rightRms != nullptr)
         settled = tickChannel (rightRms, needlePosR, needleVelR, rawR) && settled;
+    snapNeedles = false;
 
     const int wantedHz = settled ? kSettledHz : (int) kRefreshHz;
     if (wantedHz != timerHz)
@@ -280,15 +308,6 @@ void AnalogVuMeter::timerCallback()
     {
         rebuildCachedFace();
         faceRebuilt = true;
-    }
-
-    if (! shownInLayout (*this))
-    {
-        // The next paint draws the needles stepped above, not what was last asked for.
-        paintedNeedleL.forget();
-        paintedNeedleR.forget();
-        paintedPeakLed.forget();
-        return;
     }
 
     // Pixels the needle tip travels per unit of angleFrac.

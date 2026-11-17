@@ -5252,8 +5252,9 @@ void ChannelStripComponent::timerCallback()
         closePluginEditor();
    #endif
 
-    // Plugin-slot button reflects the slot's current load state. Cheap -
-    // just an atomic-pointer read + string compare against the cached name.
+    // Runs shown or hidden: besides the slot button it drops any editor whose
+    // instance a clone or undo replaced, and a plug-in editor's own window can
+    // stay open while its strip is on another page or behind another stage.
     refreshPluginSlotButton();
 
     // A device that goes while the popup is open takes its inputs with it.
@@ -5268,6 +5269,109 @@ void ChannelStripComponent::timerCallback()
         nativeEditorReopenPending = false;
         openPluginEditor();
     }
+
+    // An open editor titles itself with the strip's name, so a rename that
+    // lands while it is up has to reach it. The aux popup and the native comp
+    // view read the name for themselves; the EQ popup is pushed from here,
+    // and its filter knobs with it.
+    if (auto* eq = dynamic_cast<ChannelEqEditor*> (eqEditorModal.getBody()))
+    {
+        eq->refreshTitle();
+        eq->refreshFilters();
+    }
+
+    // MIDI activity LED. Read-and-clear the engine's flag each tick - a
+    // continuous stream sets it back to true on the next block, so the LED
+    // stays lit while traffic flows and turns off ~33 ms after it stops.
+    midiActivityFired = track.midiActivity.exchange (false, std::memory_order_relaxed);
+
+    // Input level meter. Stereo mode also smooths the R channel so the second
+    // LED bar can be drawn alongside.
+    const int trackMode = track.mode.load (std::memory_order_relaxed);
+    const bool stereoMode = trackMode == (int) Track::Mode::Stereo;
+
+    // IN keeps its existing input-meter override in every stage. ARM adds the
+    // same pre-fader view only where it is meaningful: an unfrozen audio track
+    // in Recording. A retained ARM stays post-fader in Mixing, and MIDI ARM
+    // never selects the audio-device meter. Mono output shows the hotter
+    // channel so a hard pan doesn't read as silence.
+    const bool inputMon = track.inputMonitor.load (std::memory_order_relaxed);
+    const bool recordArmed = track.recordArmed.load (std::memory_order_relaxed);
+    const bool frozen = track.frozen.load (std::memory_order_relaxed);
+    const bool audioTrack = trackMode != (int) Track::Mode::Midi;
+    const bool showInput = selectTrackMeterSource ({ inputMon, recordArmed,
+                                                     ! mixingMode, audioTrack,
+                                                     frozen })
+                           == TrackMeterSource::Input;
+    const float outL     = track.meterOutLDb.load (std::memory_order_relaxed);
+    const float outR     = track.meterOutRDb.load (std::memory_order_relaxed);
+    const float lDb = showInput ? track.meterInputDb.load (std::memory_order_relaxed)
+                                : (stereoMode ? outL : std::max (outL, outR));
+    inputL.step (lDb);
+    const float rDb = showInput ? track.meterInputRDb.load (std::memory_order_relaxed) : outR;
+    const auto now = std::chrono::steady_clock::now();
+    if (lDb >= 0.0f || (stereoMode && rDb >= 0.0f))
+        meterClipUntil = now + std::chrono::seconds (1);
+    meterClipLit = now < meterClipUntil;
+    meterStereo = stereoMode;
+
+    if (stereoMode)
+    {
+        inputR.step (rDb);
+    }
+    else
+    {
+        // Bleed the R channel back to silence when the user flips out of
+        // stereo so the dual-bar doesn't ghost-hold its last value.
+        inputR.displayed = -100.0f;
+        inputR.peak      = -100.0f;
+    }
+
+    // The levels above step while the strip is hidden, so its first paint after
+    // showing draws them as they are; showing it refreshes the rest at once.
+    if (shownInLayout (*this))
+        syncShownView();
+    else
+        forgetPaintedMeter();
+
+    // The automation mode's control lock and Write/Touch capture run whether or
+    // not the strip shows: a hidden bank's fader can still be moved by MIDI, a
+    // control surface or the lane itself.
+    {
+        const int amode = track.automationMode.load (std::memory_order_relaxed);
+        applyAutoMode (amode);
+        const bool isWrite = amode == (int) AutomationMode::Write;
+        const bool isTouch = amode == (int) AutomationMode::Touch;
+        const bool playing = engine.getTransport().isPlaying();
+        const auto& sp = track.strip;
+        recordAutomation (AutomationParam::FaderDb,
+                          playing && (isWrite || (isTouch && sp.faderTouched.load (std::memory_order_relaxed))),
+                          sp.faderDb.load (std::memory_order_relaxed));
+        recordAutomation (AutomationParam::Pan,
+                          playing && (isWrite || (isTouch && sp.panTouched.load (std::memory_order_relaxed))),
+                          sp.pan.load (std::memory_order_relaxed));
+        // Mute and solo are discrete, so they record in WRITE only.
+        recordAutomation (AutomationParam::Mute, playing && isWrite,
+                          sp.mute.load (std::memory_order_relaxed) ? 1.0f : 0.0f);
+        recordAutomation (AutomationParam::Solo, playing && isWrite,
+                          sp.solo.load (std::memory_order_relaxed) ? 1.0f : 0.0f);
+        for (int i = 0; i < ChannelStripParams::kNumAuxSends; ++i)
+            recordAutomation ((AutomationParam) ((int) AutomationParam::AuxSend1 + i),
+                              playing && (isWrite || (isTouch && sp.auxSendTouched[(size_t) i].load (std::memory_order_relaxed))),
+                              sp.auxSendDb[(size_t) i].load (std::memory_order_relaxed));
+    }
+    if (faderTextEditEnding && ! faderValueLabel.isBeingEdited())
+    {
+        faderTextEditEnding = false;
+        faderSlider.onDragEnd();
+        refreshFaderValueLabel();
+    }
+}
+
+void ChannelStripComponent::syncShownView()
+{
+    if (compMeter != nullptr)
+        compMeter->showStateChanged();
 
     // An import that switches the track, its undo and redo, and a session load
     // all store the mode without going through the selector. Measured against
@@ -5305,16 +5409,6 @@ void ChannelStripComponent::timerCallback()
         && nameLabel.getText (false) != track.name)
         nameLabel.setText (track.name, juce::dontSendNotification);
 
-    // An open editor titles itself with the strip's name, so a rename that
-    // lands while it is up has to reach it. The aux popup and the native comp
-    // view read the name for themselves; the EQ popup is pushed from here,
-    // and its filter knobs with it.
-    if (auto* eq = dynamic_cast<ChannelEqEditor*> (eqEditorModal.getBody()))
-    {
-        eq->refreshTitle();
-        eq->refreshFilters();
-    }
-
     if (lastTrackColour != track.colour)
     {
         lastTrackColour = track.colour;
@@ -5332,16 +5426,10 @@ void ChannelStripComponent::timerCallback()
             lbl.setText (laneName, juce::dontSendNotification);
     }
 
-    // MIDI activity LED. Read-and-clear the engine's flag each tick - a
-    // continuous stream sets it back to true on the next block, so the LED
-    // stays lit while traffic flows and turns off ~33 ms after it stops.
+    if (midiActivityLed.lit != midiActivityFired)
     {
-        const bool fired = track.midiActivity.exchange (false, std::memory_order_relaxed);
-        if (midiActivityLed.lit != fired)
-        {
-            midiActivityLed.lit = fired;
-            midiActivityLed.repaint();
-        }
+        midiActivityLed.lit = midiActivityFired;
+        midiActivityLed.repaint();
     }
 
     // The knob-visibility filter fires only when compMode changed since the
@@ -5424,54 +5512,7 @@ void ChannelStripComponent::timerCallback()
         }
     }
 
-    // Input level meter. Stereo mode also smooths the R channel so the second
-    // LED bar can be drawn alongside.
-    const int trackMode = track.mode.load (std::memory_order_relaxed);
-    const bool stereoMode = trackMode == (int) Track::Mode::Stereo;
-
-    // IN keeps its existing input-meter override in every stage. ARM adds the
-    // same pre-fader view only where it is meaningful: an unfrozen audio track
-    // in Recording. A retained ARM stays post-fader in Mixing, and MIDI ARM
-    // never selects the audio-device meter. Mono output shows the hotter
-    // channel so a hard pan doesn't read as silence.
-    const bool inputMon = track.inputMonitor.load (std::memory_order_relaxed);
-    const bool recordArmed = track.recordArmed.load (std::memory_order_relaxed);
-    const bool frozen = track.frozen.load (std::memory_order_relaxed);
-    const bool audioTrack = trackMode != (int) Track::Mode::Midi;
-    const bool showInput = selectTrackMeterSource ({ inputMon, recordArmed,
-                                                     ! mixingMode, audioTrack,
-                                                     frozen })
-                           == TrackMeterSource::Input;
-    const float outL     = track.meterOutLDb.load (std::memory_order_relaxed);
-    const float outR     = track.meterOutRDb.load (std::memory_order_relaxed);
-    const float lDb = showInput ? track.meterInputDb.load (std::memory_order_relaxed)
-                                : (stereoMode ? outL : std::max (outL, outR));
-    inputL.step (lDb);
-    const float rDb = showInput ? track.meterInputRDb.load (std::memory_order_relaxed) : outR;
-    const auto now = std::chrono::steady_clock::now();
-    if (lDb >= 0.0f || (stereoMode && rDb >= 0.0f))
-        meterClipUntil = now + std::chrono::seconds (1);
-    meterClipLit = now < meterClipUntil;
-    meterStereo = stereoMode;
-
-    if (stereoMode)
-    {
-        inputR.step (rDb);
-    }
-    else
-    {
-        // Bleed the R channel back to silence when the user flips out of
-        // stereo so the dual-bar doesn't ghost-hold its last value.
-        inputR.displayed = -100.0f;
-        inputR.peak      = -100.0f;
-    }
-
-    // The levels above step while the strip is hidden, so its first paint after
-    // showing draws them as they are; visibilityChanged refreshes the rest.
-    if (shownInLayout (*this))
-        refreshShownView();
-    else
-        forgetPaintedMeter();
+    refreshShownView();
 
     // Motor-fader / motor-pan animation: when the audio engine is feeding
     // a live atom from the lane (Read, or Touch when not grabbed), mirror
@@ -5479,143 +5520,113 @@ void ChannelStripComponent::timerCallback()
     // setValue churn every tick when manual mode just mirrors the user's
     // setpoint. While the user is grabbing in Touch mode, their gesture
     // IS the value source, so we don't fight it.
+    const int amode = track.automationMode.load (std::memory_order_relaxed);
+
+    // Fader animate. Animate whenever liveFaderDb diverges from what we've
+    // drawn AND the user isn't dragging - this covers automation Read/Touch
+    // AS WELL AS external sources that mutate faderDb directly (MIDI Learn
+    // bindings, MCU faders, future remote controls). Gating on
+    // `isRead || isTouch` previously meant a CC-bound fader could move the
+    // audio but leave the on-screen slider frozen in Off mode.
     {
-        const int amode = track.automationMode.load (std::memory_order_relaxed);
-        const bool isWrite = amode == (int) AutomationMode::Write;
-        const bool isTouch = amode == (int) AutomationMode::Touch;
-        const bool playing = engine.getTransport().isPlaying();
-        applyAutoMode (amode);
-
-        // Fader animate / capture. Animate whenever liveFaderDb diverges
-        // from what we've drawn AND the user isn't dragging - this covers
-        // automation Read/Touch AS WELL AS external sources that mutate
-        // faderDb directly (MIDI Learn bindings, MCU faders, future
-        // remote controls). Gating on `isRead || isTouch` previously
-        // meant a CC-bound fader could move the audio but leave the
-        // on-screen slider frozen in Off mode.
+        const float live    = track.strip.liveFaderDb.load (std::memory_order_relaxed);
+        const bool  touched = track.strip.faderTouched.load (std::memory_order_relaxed);
+        if (! touched && std::abs (live - displayedLiveFaderDb) > 0.05f)
         {
-            const float live    = track.strip.liveFaderDb.load (std::memory_order_relaxed);
-            const bool  touched = track.strip.faderTouched.load (std::memory_order_relaxed);
-            if (! touched && std::abs (live - displayedLiveFaderDb) > 0.05f)
-            {
-                displayedLiveFaderDb = live;
-                faderSlider.setValue (live, juce::dontSendNotification);
-                // dontSendNotification skips onValueChange, which is what
-                // refreshes the standalone dB readout - do it explicitly so an
-                // external fader move (MIDI binding / MCU / automation) updates
-                // the value shown under the fader, not just the cap position.
-                refreshFaderValueLabel();
-            }
-            else if (touched)
-            {
-                displayedLiveFaderDb = live;
-            }
-
-            recordAutomation (AutomationParam::FaderDb, playing && (isWrite || (isTouch && touched)),
-                              track.strip.faderDb.load (std::memory_order_relaxed));
+            displayedLiveFaderDb = live;
+            faderSlider.setValue (live, juce::dontSendNotification);
+            // dontSendNotification skips onValueChange, which is what
+            // refreshes the standalone dB readout - do it explicitly so an
+            // external fader move (MIDI binding / MCU / automation) updates
+            // the value shown under the fader, not just the cap position.
+            refreshFaderValueLabel();
         }
-
-        // Pan animate / capture. Same shape as fader; threshold is in
-        // pan units (-1..+1), so 0.005 = 0.25 % of the knob's travel,
-        // well below visible.
+        else if (touched)
         {
-            const float live    = track.strip.livePan.load (std::memory_order_relaxed);
-            const bool  touched = track.strip.panTouched.load (std::memory_order_relaxed);
-            if (! touched && std::abs (live - displayedLivePan) > 0.005f)
-            {
-                displayedLivePan = live;
-                panKnob.setValue (live, juce::dontSendNotification);
-            }
-            else if (touched)
-            {
-                displayedLivePan = live;
-            }
-
-            recordAutomation (AutomationParam::Pan, playing && (isWrite || (isTouch && touched)),
-                              track.strip.pan.load (std::memory_order_relaxed));
-        }
-
-        // Mute / Solo - discrete params. In Off / Write modes the button
-        // is authoritative - read the manual atom so we don't race
-        // against the audio thread's 1-block-stale liveSolo / liveMute
-        // (which used to re-light the button right after the user
-        // clicked, making solo / mute look "stuck"). Only Read / Touch
-        // need the live atom because there the audio engine drives the
-        // value from the automation lane.
-        const int amodeForSyncs = track.automationMode.load (std::memory_order_relaxed);
-        const bool laneDrivesMuteSolo =
-               amodeForSyncs == (int) AutomationMode::Read
-            || amodeForSyncs == (int) AutomationMode::Touch;
-        {
-            const bool effective = laneDrivesMuteSolo
-                ? track.strip.liveMute.load (std::memory_order_relaxed)
-                : track.strip.mute    .load (std::memory_order_relaxed);
-            if (muteButton.getToggleState() != effective)
-                muteButton.setToggleState (effective, juce::dontSendNotification);
-        }
-        {
-            const bool effective = laneDrivesMuteSolo
-                ? track.strip.liveSolo.load (std::memory_order_relaxed)
-                : track.strip.solo    .load (std::memory_order_relaxed);
-            if (soloButton.getToggleState() != effective)
-                soloButton.setToggleState (effective, juce::dontSendNotification);
-        }
-        // Mute and solo are discrete, so they record in WRITE only.
-        recordAutomation (AutomationParam::Mute, playing && isWrite,
-                          track.strip.mute.load (std::memory_order_relaxed) ? 1.0f : 0.0f);
-        recordAutomation (AutomationParam::Solo, playing && isWrite,
-                          track.strip.solo.load (std::memory_order_relaxed) ? 1.0f : 0.0f);
-        // ARM has no Live atom (no automation lane) - read recordArmed
-        // directly. Needed so a MIDI-bound arm toggle reflects on screen.
-        {
-            const bool armed = track.recordArmed.load (std::memory_order_relaxed);
-            if (armButton.getToggleState() != armed)
-                armButton.setToggleState (armed, juce::dontSendNotification);
-        }
-
-        // Aux sends - animate + capture in lockstep with fader / pan.
-        // Threshold 0.1 dB on a -60..+6 dB knob (~0.15 % of travel).
-        // Knob is null when the strip isn't in mixing mode (visible).
-        // Same touched-only gate as fader/pan so MIDI-bound sends move
-        // the on-screen knob regardless of automation mode.
-        for (int i = 0; i < ChannelStripParams::kNumAuxSends; ++i)
-        {
-            const float live    = track.strip.liveAuxSendDb[(size_t) i].load (std::memory_order_relaxed);
-            const bool  touched = track.strip.auxSendTouched[(size_t) i].load (std::memory_order_relaxed);
-            if (! touched && std::abs (live - displayedLiveAuxSendDb[(size_t) i]) > 0.1f)
-            {
-                displayedLiveAuxSendDb[(size_t) i] = live;
-                if (auto* knob = auxKnobs[(size_t) i].get())
-                    knob->setValue (live, juce::dontSendNotification);
-                refreshAuxSendLabel (i);   // keep the dB text in step with the live knob
-            }
-            else if (touched)
-            {
-                displayedLiveAuxSendDb[(size_t) i] = live;
-            }
-
-            // External pre/post flips (TrackAuxSendPrePost MIDI binding,
-            // undo, session reload) update the atom without touching the
-            // UI - poll it here so the " PRE" label suffix + amber
-            // outline ring stay in sync without needing a strip rebuild.
-            const bool curPre = track.strip.auxSendPreFader[(size_t) i]
-                                      .load (std::memory_order_relaxed);
-            if (curPre != displayedAuxPreFader[(size_t) i])
-            {
-                displayedAuxPreFader[(size_t) i] = curPre;
-                refreshAuxSendLabel (i);
-            }
-
-            recordAutomation ((AutomationParam) ((int) AutomationParam::AuxSend1 + i),
-                              playing && (isWrite || (isTouch && touched)),
-                              track.strip.auxSendDb[(size_t) i].load (std::memory_order_relaxed));
+            displayedLiveFaderDb = live;
         }
     }
-    if (faderTextEditEnding && ! faderValueLabel.isBeingEdited())
+
+    // Pan animate. Same shape as fader; threshold is in pan units (-1..+1),
+    // so 0.005 = 0.25 % of the knob's travel, well below visible.
     {
-        faderTextEditEnding = false;
-        faderSlider.onDragEnd();
-        refreshFaderValueLabel();
+        const float live    = track.strip.livePan.load (std::memory_order_relaxed);
+        const bool  touched = track.strip.panTouched.load (std::memory_order_relaxed);
+        if (! touched && std::abs (live - displayedLivePan) > 0.005f)
+        {
+            displayedLivePan = live;
+            panKnob.setValue (live, juce::dontSendNotification);
+        }
+        else if (touched)
+        {
+            displayedLivePan = live;
+        }
+    }
+
+    // Mute / Solo - discrete params. In Off / Write modes the button
+    // is authoritative - read the manual atom so we don't race
+    // against the audio thread's 1-block-stale liveSolo / liveMute
+    // (which used to re-light the button right after the user
+    // clicked, making solo / mute look "stuck"). Only Read / Touch
+    // need the live atom because there the audio engine drives the
+    // value from the automation lane.
+    const bool laneDrivesMuteSolo =
+           amode == (int) AutomationMode::Read
+        || amode == (int) AutomationMode::Touch;
+    {
+        const bool effective = laneDrivesMuteSolo
+            ? track.strip.liveMute.load (std::memory_order_relaxed)
+            : track.strip.mute    .load (std::memory_order_relaxed);
+        if (muteButton.getToggleState() != effective)
+            muteButton.setToggleState (effective, juce::dontSendNotification);
+    }
+    {
+        const bool effective = laneDrivesMuteSolo
+            ? track.strip.liveSolo.load (std::memory_order_relaxed)
+            : track.strip.solo    .load (std::memory_order_relaxed);
+        if (soloButton.getToggleState() != effective)
+            soloButton.setToggleState (effective, juce::dontSendNotification);
+    }
+    // ARM has no Live atom (no automation lane) - read recordArmed
+    // directly. Needed so a MIDI-bound arm toggle reflects on screen.
+    {
+        const bool armed = track.recordArmed.load (std::memory_order_relaxed);
+        if (armButton.getToggleState() != armed)
+            armButton.setToggleState (armed, juce::dontSendNotification);
+    }
+
+    // Aux sends - animate in lockstep with fader / pan.
+    // Threshold 0.1 dB on a -60..+6 dB knob (~0.15 % of travel).
+    // Knob is null when the strip isn't in mixing mode (visible).
+    // Same touched-only gate as fader/pan so MIDI-bound sends move
+    // the on-screen knob regardless of automation mode.
+    for (int i = 0; i < ChannelStripParams::kNumAuxSends; ++i)
+    {
+        const float live    = track.strip.liveAuxSendDb[(size_t) i].load (std::memory_order_relaxed);
+        const bool  touched = track.strip.auxSendTouched[(size_t) i].load (std::memory_order_relaxed);
+        if (! touched && std::abs (live - displayedLiveAuxSendDb[(size_t) i]) > 0.1f)
+        {
+            displayedLiveAuxSendDb[(size_t) i] = live;
+            if (auto* knob = auxKnobs[(size_t) i].get())
+                knob->setValue (live, juce::dontSendNotification);
+            refreshAuxSendLabel (i);   // keep the dB text in step with the live knob
+        }
+        else if (touched)
+        {
+            displayedLiveAuxSendDb[(size_t) i] = live;
+        }
+
+        // External pre/post flips (TrackAuxSendPrePost MIDI binding,
+        // undo, session reload) update the atom without touching the
+        // UI - poll it here so the " PRE" label suffix + amber
+        // outline ring stay in sync without needing a strip rebuild.
+        const bool curPre = track.strip.auxSendPreFader[(size_t) i]
+                                  .load (std::memory_order_relaxed);
+        if (curPre != displayedAuxPreFader[(size_t) i])
+        {
+            displayedAuxPreFader[(size_t) i] = curPre;
+            refreshAuxSendLabel (i);
+        }
     }
 }
 
@@ -6330,7 +6341,7 @@ void ChannelStripComponent::visibilityChanged()
 void ChannelStripComponent::refreshForShowState()
 {
     if (shownInLayout (*this))
-        refreshShownView();
+        syncShownView();
 }
 
 void ChannelStripComponent::setCompMode (int modeIndex)

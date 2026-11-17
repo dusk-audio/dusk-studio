@@ -1041,16 +1041,65 @@ void BusComponent::refreshAutoModeButton()
 
 void BusComponent::timerCallback()
 {
-    // Refresh the name label when something external rewrites it (undo,
-    // session reload) so the strip doesn't show a stale name.
-    if (! nameLabel.isBeingEdited() && nameLabel.getText (false) != bus.name)
-        nameLabel.setText (bus.name, juce::dontSendNotification);
+    outputL.step (bus.strip.meterPostBusLDb.load (std::memory_order_relaxed));
+    outputR.step (bus.strip.meterPostBusRDb.load (std::memory_order_relaxed));
 
     // An open editor is titled with the bus name, so the rename has to reach it.
     if (auto* eq = dynamic_cast<BusEqEditorPanel*> (eqEditorModal.getBody()))
         eq->refreshTitle();
     if (auto* comp = dynamic_cast<BusCompEditorPanel*> (compEditorModal.getBody()))
         comp->refreshTitle();
+
+    // The levels above step while the strip is hidden, so its first paint after
+    // showing draws them as they are; showing it refreshes the rest at once.
+    if (shownInLayout (*this))
+    {
+        syncShownView();
+    }
+    else
+    {
+        meterGateL.forget();
+        meterGateR.forget();
+    }
+
+    // The automation mode's control lock and Write/Touch capture run whether or
+    // not the strip shows: MIDI, a control surface or the lane can move a
+    // hidden bus.
+    const int  amode   = bus.strip.automationMode.load (std::memory_order_relaxed);
+    applyAutoMode (amode);
+    const bool isWrite  = amode == (int) AutomationMode::Write;
+    const bool isTouch  = amode == (int) AutomationMode::Touch;
+    const bool playing  = engine.getTransport().isPlaying();
+    recordAutomation (AutomationParam::FaderDb,
+                      playing && (isWrite || (isTouch && bus.strip.faderTouched.load (std::memory_order_relaxed))),
+                      bus.strip.faderDb.load (std::memory_order_relaxed));
+    recordAutomation (AutomationParam::Pan,
+                      playing && (isWrite || (isTouch && bus.strip.panTouched.load (std::memory_order_relaxed))),
+                      bus.strip.pan.load (std::memory_order_relaxed));
+    recordAutomation (AutomationParam::Mute, playing && isWrite,
+                      bus.strip.mute.load (std::memory_order_relaxed) ? 1.0f : 0.0f);
+}
+
+void BusComponent::visibilityChanged()
+{
+    refreshForShowState();
+}
+
+void BusComponent::refreshForShowState()
+{
+    if (shownInLayout (*this))
+        syncShownView();
+}
+
+void BusComponent::syncShownView()
+{
+    if (vuMeter != nullptr) vuMeter->showStateChanged();
+    if (compMeter != nullptr) compMeter->showStateChanged();
+
+    // Refresh the name label when something external rewrites it (undo,
+    // session reload) so the strip doesn't show a stale name.
+    if (! nameLabel.isBeingEdited() && nameLabel.getText (false) != bus.name)
+        nameLabel.setText (bus.name, juce::dontSendNotification);
 
     if (lastBusColour != bus.colour)
     {
@@ -1078,9 +1127,6 @@ void BusComponent::timerCallback()
         }
     }
 
-    outputL.step (bus.strip.meterPostBusLDb.load (std::memory_order_relaxed));
-    outputR.step (bus.strip.meterPostBusRDb.load (std::memory_order_relaxed));
-
     const float maxHold = std::max (outputL.peak, outputR.peak);
     if (peakReadout.update (maxHold))
     {
@@ -1105,18 +1151,13 @@ void BusComponent::timerCallback()
         }
     }
 
-    // Motor-fader / motor-pan animation + Write/Touch capture - same grammar
-    // as ChannelStripComponent. We poll the live* atoms (the engine writes
+    // Motor-fader / motor-pan animation - same grammar as
+    // ChannelStripComponent. We poll the live* atoms (the engine writes
     // them every block: Off mirrors the setpoint, so MIDI-bound moves still
     // sync here; Read/Touch-untouched carry the lane value). Gate the visual
     // update on the user NOT grabbing that control so we never fight a
-    // gesture. A pass records while playing in Write, or in Touch while the
-    // control is held.
-    const int  amode   = bus.strip.automationMode.load (std::memory_order_relaxed);
-    const bool isWrite  = amode == (int) AutomationMode::Write;
-    const bool isTouch  = amode == (int) AutomationMode::Touch;
-    const bool playing  = engine.getTransport().isPlaying();
-    applyAutoMode (amode);
+    // gesture.
+    const int amode = bus.strip.automationMode.load (std::memory_order_relaxed);
     {
         const float live    = bus.strip.liveFaderDb.load (std::memory_order_relaxed);
         const bool  touched = bus.strip.faderTouched.load (std::memory_order_relaxed);
@@ -1130,9 +1171,6 @@ void BusComponent::timerCallback()
         }
         else if (touched)
             displayedLiveFaderDb = live;
-
-        recordAutomation (AutomationParam::FaderDb, playing && (isWrite || (isTouch && touched)),
-                          bus.strip.faderDb.load (std::memory_order_relaxed));
     }
     {
         const float live    = bus.strip.livePan.load (std::memory_order_relaxed);
@@ -1144,9 +1182,6 @@ void BusComponent::timerCallback()
         }
         else if (touched)
             displayedLivePan = live;
-
-        recordAutomation (AutomationParam::Pan, playing && (isWrite || (isTouch && touched)),
-                          bus.strip.pan.load (std::memory_order_relaxed));
     }
     {
         // Mute display follows the active source: the lane value in
@@ -1160,8 +1195,6 @@ void BusComponent::timerCallback()
                                    : bus.strip.mute.load (std::memory_order_relaxed);
         if (muteButton.getToggleState() != m)
             muteButton.setToggleState (m, juce::dontSendNotification);
-        recordAutomation (AutomationParam::Mute, playing && isWrite,
-                          bus.strip.mute.load (std::memory_order_relaxed) ? 1.0f : 0.0f);
     }
     {
         const bool s = bus.strip.solo.load (std::memory_order_relaxed);

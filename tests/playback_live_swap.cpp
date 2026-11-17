@@ -417,6 +417,25 @@ TEST_CASE ("A track rebuilt with nothing to play fades to silence", "[playback][
     CHECK_THAT (out.back(), WithinAbs (0.0f, 1e-6));
 }
 
+TEST_CASE ("Every rebuild from the regions counts as a region edit", "[playback][live-swap]")
+{
+    Rig rig;
+    const auto prepared = rig.session->regionEditCount();
+    CHECK (prepared > 0);
+
+    rig.play (1);
+    rig.rebuildWith (rig.b);
+    const auto rebuilt = rig.session->regionEditCount();
+    CHECK (rebuilt > prepared);
+
+    // Stopped, a rebuild builds nothing, and the next Play counts instead.
+    rig.engine.stopPlayback();
+    rig.rebuildWith (rig.c);
+    CHECK (rig.session->regionEditCount() == rebuilt);
+    rig.engine.preparePlayback();
+    CHECK (rig.session->regionEditCount() > rebuilt);
+}
+
 TEST_CASE ("Stopping frees every stream a track holds, taken or waiting", "[playback][live-swap]")
 {
     const int outside = PlaybackEngine::liveStreamCountForTest();

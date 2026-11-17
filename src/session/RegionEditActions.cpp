@@ -42,6 +42,9 @@ thread_local TrackSlotMask rebuildTracks {};
 // Inside a RegionRebuildBatch the tracks are collected and refreshed once.
 void refreshPlayback (AudioEngine& engine, const TrackSlotMask& tracks)
 {
+    // Counted here, not by the rebuild: a batch, a render or a track being
+    // recorded can hold the rebuild back.
+    engine.getSession().noteRegionsEdited();
     if (rebuildBatchDepth > 0)
     {
         for (std::size_t t = 0; t < tracks.size(); ++t)

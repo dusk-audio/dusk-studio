@@ -88,4 +88,28 @@ inline void countGatedRepaint() noexcept
 {
     gatedRepaintRequests.fetch_add (1, std::memory_order_relaxed);
 }
+
+// Display-only timers running now, process-wide, so the GUI scenarios can tell
+// that the meters of a hidden view have stopped.
+inline std::atomic<int> runningMeterTimers { 0 };
+
+// Whether one display-only timer runs, kept in step with runningMeterTimers.
+class MeterTimerCount
+{
+public:
+    MeterTimerCount() = default;
+    MeterTimerCount (const MeterTimerCount&) = delete;
+    MeterTimerCount& operator= (const MeterTimerCount&) = delete;
+    ~MeterTimerCount() { set (false); }
+
+    void set (bool running) noexcept
+    {
+        if (running == counted) return;
+        counted = running;
+        runningMeterTimers.fetch_add (running ? 1 : -1, std::memory_order_relaxed);
+    }
+
+private:
+    bool counted = false;
+};
 } // namespace duskstudio

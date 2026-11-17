@@ -218,6 +218,7 @@ void PlaybackEngine::refreshLiveRegionParams()
 void PlaybackEngine::preparePlayback (Audition audition)
 {
     ++rebuilds;
+    session.noteRegionsEdited();
     stopPlayback();
     auditionedTrack.store (-1, std::memory_order_relaxed);
     auditionedTake.store (0, std::memory_order_relaxed);
@@ -488,6 +489,7 @@ void PlaybackEngine::refreshTrackPlayback (int trackIndex, Audition audition)
         return;
     requestedAudition[(size_t) trackIndex] = audition;
     ++rebuilds;
+    session.noteRegionsEdited();
     const std::int64_t playhead = transport != nullptr ? transport->getCommittedPlayhead() : 0;
     auto& swap = pending[(size_t) trackIndex];
     swap.stream = buildTrackStream (trackIndex, audition, playhead, swap.auditioned);

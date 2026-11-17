@@ -1085,6 +1085,50 @@ MasterStripComponent::~MasterStripComponent()
 
 void MasterStripComponent::timerCallback()
 {
+    // Output peak per channel - fast attack, slow release; with peak-hold.
+    outputL.step (params.meterPostMasterLDb.load (std::memory_order_relaxed));
+    outputR.step (params.meterPostMasterRDb.load (std::memory_order_relaxed));
+
+    // The levels above step while the strip is hidden, so its first paint after
+    // showing draws them as they are; showing it refreshes the rest at once.
+    if (shownInLayout (*this))
+    {
+        syncShownView();
+    }
+    else
+    {
+        meterGateL.forget();
+        meterGateR.forget();
+    }
+
+    // The automation mode's control lock and Write/Touch capture run whether or
+    // not the strip shows: MIDI, a control surface or the lane can move a
+    // hidden master fader.
+    const int amode = params.automationMode.load (std::memory_order_relaxed);
+    applyAutoMode (amode);
+    const bool isWrite = amode == (int) AutomationMode::Write;
+    const bool isTouch = amode == (int) AutomationMode::Touch;
+    recordFader (engine.getTransport().isPlaying()
+                     && (isWrite || (isTouch && params.faderTouched.load (std::memory_order_relaxed))),
+                 params.faderDb.load (std::memory_order_relaxed));
+}
+
+void MasterStripComponent::visibilityChanged()
+{
+    refreshForShowState();
+}
+
+void MasterStripComponent::refreshForShowState()
+{
+    if (shownInLayout (*this))
+        syncShownView();
+}
+
+void MasterStripComponent::syncShownView()
+{
+    if (vuMeter != nullptr) vuMeter->showStateChanged();
+    if (compMeter != nullptr) compMeter->showStateChanged();
+
     // Compact-mode button illumination - same grammar as bus + channel
     // strips. EQ + COMP pills light up when their corresponding
     // section is engaged so TIMELINE users still see at-a-glance state.
@@ -1113,10 +1157,6 @@ void MasterStripComponent::timerCallback()
         }
     }
 
-    // Output peak per channel - fast attack, slow release; with peak-hold.
-    outputL.step (params.meterPostMasterLDb.load (std::memory_order_relaxed));
-    outputR.step (params.meterPostMasterRDb.load (std::memory_order_relaxed));
-
     // Numeric readout shows the louder of the two channels (typical mixer
     // convention - we don't have room for two separate values).
     const float maxHold = std::max (outputL.peak, outputR.peak);
@@ -1143,18 +1183,11 @@ void MasterStripComponent::timerCallback()
         }
     }
 
-    // Motor-fader animate + Write/Touch capture - mirrors the per-channel
-    // and per-aux pattern. Master only has one automatable param.
-    // Animate whenever liveFaderDb diverges and the user isn't dragging -
-    // mode-agnostic so MIDI-bound master fader moves the on-screen slider
-    // in Off mode too.
+    // Motor-fader animate - mirrors the per-channel and per-aux pattern.
+    // Master only has one automatable param. Animate whenever liveFaderDb
+    // diverges and the user isn't dragging - mode-agnostic so MIDI-bound
+    // master fader moves the on-screen slider in Off mode too.
     {
-        const int amode = params.automationMode.load (std::memory_order_relaxed);
-        const bool isWrite = amode == (int) AutomationMode::Write;
-        const bool isTouch = amode == (int) AutomationMode::Touch;
-        const bool playing = engine.getTransport().isPlaying();
-        applyAutoMode (amode);
-
         const float live    = params.liveFaderDb.load (std::memory_order_relaxed);
         const bool  touched = params.faderTouched.load (std::memory_order_relaxed);
         if (! touched && std::abs (live - displayedLiveFaderDb) > 0.05f)
@@ -1169,9 +1202,6 @@ void MasterStripComponent::timerCallback()
         {
             displayedLiveFaderDb = live;
         }
-
-        recordFader (playing && (isWrite || (isTouch && touched)),
-                     params.faderDb.load (std::memory_order_relaxed));
     }
 
     // Master mute / mono toggle visual sync - poll the atoms so any MIDI
