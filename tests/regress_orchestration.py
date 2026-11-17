@@ -60,6 +60,22 @@ bb_end 0
     assert result.returncode == 0, (result.stdout, result.stderr)
     assert not any(runner_tmp.iterdir()), "interrupted scenario scratch escaped its sandbox"
 
+    # The case sits on the first line of a listing longer than a pipe holds, so a
+    # reader that stops at the match leaves the writer a closed pipe.
+    listing_harness = r'''
+set -euo pipefail
+source "$DUSK_REGRESS_TEST_ROOT/scripts/regress/common.sh"
+source "$DUSK_REGRESS_TEST_ROOT/scripts/regress/scenarios.sh"
+SCENARIOS_LIST_READ=1
+SCENARIOS_LIST="$(printf 'gui.first_case\n'; head -c 300000 /dev/zero | tr '\0' 'x')"
+scenarios_has_case gui.first_case
+! scenarios_has_case gui.missing_case
+'''
+    result = subprocess.run(["bash", "-c", listing_harness],
+                            env=dict(child_environment, DUSK_REGRESS_TEST_ROOT=str(repo)),
+                            capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, ("a listed scenario was not found", result.returncode, result.stderr)
+
     signal_harness = r'''
 set -euo pipefail
 source "$DUSK_REGRESS_TEST_ROOT/scripts/regress/common.sh"
