@@ -3483,7 +3483,8 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
 
             auto& channel = owner.engine.getChannelStrip (index);
             if (channel.getPluginSlot().isLoaded()) lines.push_back (who + " has a hosted plug-in");
-            if (channel.isNativeClapLoaded() || channel.isNativeLv2Loaded() || channel.isNativeVst3Loaded())
+            if (channel.isNativeClapLoaded() || channel.isNativeLv2Loaded() || channel.isNativeVst3Loaded()
+                || channel.isNativeAuLoaded())
                 lines.push_back (who + " has a native plug-in");
             if (channel.isBuiltinLoaded()) lines.push_back (who + " has a built-in unit");
             const auto unit = channel.isBuiltinLoaded() ? channel.getBuiltinSlot().getPluginId() : std::string();
@@ -3501,6 +3502,9 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
                 const auto& params = owner.session.auxLane (index);
                 const auto where = "aux " + std::to_string (index) + " slot " + std::to_string (slot);
                 if (lane.getPluginSlot (slot).isLoaded()) lines.push_back (where + " has a hosted plug-in");
+                if (lane.isNativeClapLoaded (slot) || lane.isNativeLv2Loaded (slot) || lane.isNativeVst3Loaded (slot)
+                    || lane.isNativeAuLoaded (slot))
+                    lines.push_back (where + " has a native plug-in");
                 if (lane.isBuiltinLoaded (slot)) lines.push_back (where + " has a built-in unit");
                 const auto unit = lane.isBuiltinLoaded (slot) ? lane.getBuiltinSlot (slot).getPluginId() : std::string();
                 const auto& carried = params.builtinUnitId[(std::size_t) slot];

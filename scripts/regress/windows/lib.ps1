@@ -230,39 +230,40 @@ function Get-RegressRealFolders {
     return $real | Where-Object { $_ }
 }
 
+# Get-ChildItem in PowerShell 5.1 leaves out the paths past MAX_PATH without an
+# error, so the walk is Get-RegressTree's, and a folder it cannot list fails the
+# snapshot: two snapshots that both miss it would hide a change inside it.
+function Get-RegressSnapshotRows([string]$dir) {
+    $tree = Get-RegressTree $dir
+    if ($tree.Unlisted.Count -gt 0) { throw "the profile snapshot could not list $($tree.Unlisted -join '; ')" }
+    foreach ($entry in $tree.Entries) {
+        $entry.Refresh()
+        $len = if ($entry -is [IO.DirectoryInfo]) { 'dir' } else { $entry.Length }
+        "$(Get-RegressPlainPath $entry.FullName)|$len|$($entry.LastWriteTimeUtc.Ticks)"
+    }
+}
+
 function Get-RegressSnapshot {
     $rows = @()
     foreach ($dir in Get-RegressRealFolders) {
         if (-not (Test-Path $dir)) { $rows += "$dir|absent|"; continue }
-        Get-ChildItem -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue |
-            ForEach-Object {
-                $_.Refresh()
-                $len = if ($_.PSIsContainer) { 'dir' } else { $_.Length }
-                $rows += "$($_.FullName)|$len|$($_.LastWriteTimeUtc.Ticks)"
-            }
+        $rows += @(Get-RegressSnapshotRows $dir)
     }
     # The home folder itself by entry name only: Windows rewrites its registry
     # hive files there all the time, but a launch that took its home from the
     # real profile would leave a new entry beside them.
     $real = [Environment]::GetFolderPath('UserProfile')
-    Get-ChildItem -LiteralPath $real -Force -ErrorAction SilentlyContinue |
+    Get-ChildItem -LiteralPath $real -Force -ErrorAction Stop |
         Where-Object { $_.Name -notlike 'ntuser*' } |
         ForEach-Object { $rows += "$($_.FullName)|home-entry|" }
     # The harness config and music folders land in the temp dir when the
     # environment does not name them.
-    Get-ChildItem -LiteralPath $env:TEMP -Force -ErrorAction SilentlyContinue |
+    Get-ChildItem -LiteralPath $env:TEMP -Force -ErrorAction Stop |
         Where-Object { $_.Name -like 'dusk-studio-*' } |
         ForEach-Object {
             $_.Refresh()
             $rows += "$($_.FullName)|temp|$($_.LastWriteTimeUtc.Ticks)"
-            if ($_.PSIsContainer) {
-                Get-ChildItem -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue |
-                    ForEach-Object {
-                        $_.Refresh()
-                        $len = if ($_.PSIsContainer) { 'dir' } else { $_.Length }
-                        $rows += "$($_.FullName)|$len|$($_.LastWriteTimeUtc.Ticks)"
-                    }
-            }
+            if ($_.PSIsContainer) { $rows += @(Get-RegressSnapshotRows $_.FullName) }
         }
     return $rows
 }

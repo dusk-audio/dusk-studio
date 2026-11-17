@@ -120,6 +120,65 @@ fi
                 for path in paths:
                     shutil.rmtree(path, ignore_errors=True)
 
+    # The real xvfb_run, with an Xvfb that outlives its shell: setpriv is made
+    # a pass-through, as on a host without it.
+    fake_bin = root / "fake-xvfb-bin"
+    fake_bin.mkdir()
+    (fake_bin / "setpriv").write_text('#!/bin/bash\nshift 2\nexec "$@"\n')
+    (fake_bin / "Xvfb").write_text(
+        '#!/bin/bash\necho $$ >"$FAKE_XVFB_PID"\necho 99 >&3\nexec sleep 600 </dev/null >/dev/null 2>&1\n')
+    fake_app = root / "fake-app"
+    fake_app.write_text(
+        '#!/bin/bash\nread -r -a timeout_stat </proc/$PPID/stat\n'
+        'printf "%s\\n%s\\n" "${timeout_stat[3]}" "$XDG_RUNTIME_DIR" >"$SIGNAL_READY"\n'
+        'read -r _ <"$SIGNAL_GATE"\n')
+    for script in (fake_bin / "setpriv", fake_bin / "Xvfb", fake_app):
+        script.chmod(0o755)
+    xvfb_signal_harness = r'''
+set -euo pipefail
+source "$DUSK_REGRESS_TEST_ROOT/scripts/regress/common.sh"
+source "$DUSK_REGRESS_TEST_ROOT/scripts/regress/scenarios.sh"
+source "$DUSK_REGRESS_TEST_ROOT/scripts/regress/xvfb.sh"
+APP_BIN="$FAKE_APP"
+sandboxed_app_run 60 list
+'''
+    ready = root / "xvfb-signal.ready"
+    gate = root / "xvfb-signal.gate"
+    xvfb_pid_file = root / "xvfb-signal.pid"
+    os.mkfifo(gate)
+    with os.fdopen(os.open(gate, os.O_RDWR), "w") as gate_writer:
+        launched = subprocess.Popen(
+            ["bash", "-c", xvfb_signal_harness], start_new_session=True,
+            env=dict(child_environment, DUSK_REGRESS_TEST_ROOT=str(repo), FAKE_APP=str(fake_app),
+                     FAKE_XVFB_PID=str(xvfb_pid_file), SIGNAL_READY=str(ready), SIGNAL_GATE=str(gate),
+                     PATH=f"{fake_bin}:{os.environ['PATH']}", DUSK_REGRESS_SCENARIO_KEEP="0"),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        xvfb_pid = None
+        try:
+            wait_for(lambda: ready.exists() and len(ready.read_text().splitlines()) == 2)
+            shell_pid, runtime = ready.read_text().splitlines()
+            xvfb_pid = int(xvfb_pid_file.read_text())
+            os.kill(int(shell_pid), signal.SIGTERM)
+            gate_writer.write("go\n")
+            gate_writer.flush()
+            stdout, stderr = launched.communicate(timeout=10)
+            assert launched.returncode == 143, (launched.returncode, stdout, stderr)
+            assert not Path(runtime).exists(), runtime
+            left = sorted(path.name for path in runner_tmp.iterdir())
+            assert not left, ("a signalled run left its Xvfb files", left)
+            wait_for(lambda: not running(xvfb_pid), "a signalled run left its Xvfb running")
+        finally:
+            if launched.poll() is None:
+                os.killpg(launched.pid, signal.SIGKILL)
+            launched.wait()
+            if xvfb_pid is not None and running(xvfb_pid):
+                os.kill(xvfb_pid, signal.SIGKILL)
+            for path in runner_tmp.iterdir():
+                if path.is_dir():
+                    shutil.rmtree(path, ignore_errors=True)
+                else:
+                    path.unlink()
+
     # The app binds $XDG_RUNTIME_DIR/dusk-studio/instance-<16 hex>.sock, so a
     # launch gets its single-instance slot only while that fits sun_path.
     long_tmp = runner_tmp / ("a-folder-name-long-enough-to-overrun-a-single-instance-socket-" + "x" * 32)
@@ -1643,25 +1702,31 @@ regress_capture_leg /opt/under-test/DuskStudio
         assert needle in preflight, ("preflight.ps1 lost its ownership check", needle)
     assert preflight.index("Remove-RegressTree $leftover") < preflight.index("Get-RegressFree $root"), \
         "preflight measures the free space before it tidies"
-    for needle in ("Get-RegressFutureFiles $root", "Remove-RegressTree $build", "LastWriteTimeUtc = $now"):
+    for needle in ("Get-RegressTree $root", "Remove-RegressTree $build", "LastWriteTimeUtc = $now"):
         assert needle in preflight, ("preflight lost its future-stamp handling", needle)
-    assert preflight.index("Get-RegressFutureFiles") < preflight.index("Get-RegressFree $root"), \
+    assert preflight.index("Get-RegressTree $root") < preflight.index("Get-RegressFree $root"), \
         "preflight measures the free space before it removes a stale build"
     # PowerShell is not run here, so these hold the text to the guest-side
     # behaviour: an output seconds ahead already outlasts the checkout, so the
     # allowance is file-time granularity, not the 60 s clock margin; the walk
     # reaches paths past MAX_PATH; and a folder it could not list in or above
     # the build costs the build rather than passing unseen.
-    assert "Get-RegressFutureFiles $root $now.AddSeconds(2)" in preflight, \
+    assert "Get-RegressTree $root $now.AddSeconds(2)" in preflight, \
         "build outputs stamped seconds in the future are kept again"
     for needle in ("$future.Unlisted", "$buildPrefix.StartsWith($_ + '\\'", "could not be listed",
                    "-or $blind.Count -gt 0) {\n    if (-not (Remove-RegressTree $build))",
                    "(Get-RegressPlainPath $_.FullName).StartsWith($buildPrefix"):
         assert needle in preflight, ("preflight lost its handling of folders the walk could not list", needle)
-    walk = (source / "inline-lib.ps1").read_text().split("function Get-RegressFutureFiles", 1)[1].split("\nfunction ", 1)[0]
+    walk = (source / "inline-lib.ps1").read_text().split("function Get-RegressTree", 1)[1].split("\nfunction ", 1)[0]
     for needle in ("('\\\\?\\' + $path)", "$result.Unlisted.Add(", "New-Object IO.DirectoryInfo $path"):
-        assert needle in walk, ("Get-RegressFutureFiles lost its long-path walk or its unlisted folders", needle)
-    assert "catch { continue }" not in walk, "Get-RegressFutureFiles skips a folder it cannot list again"
+        assert needle in walk, ("Get-RegressTree lost its long-path walk or its unlisted folders", needle)
+    assert "catch { continue }" not in walk, "Get-RegressTree skips a folder it cannot list again"
+    library = (repo / "scripts/regress/windows/lib.ps1").read_text()
+    snapshot = library.split("function Get-RegressSnapshotRows", 1)[1].split("\n# The Explorer launches", 1)[0]
+    for needle in ("Get-RegressTree $dir", "$tree.Unlisted.Count -gt 0) { throw"):
+        assert needle in snapshot, ("the profile snapshot lost its long-path walk or its unlisted folders", needle)
+    assert "-Recurse" not in snapshot and "SilentlyContinue" not in snapshot, \
+        "the profile snapshot walks with Get-ChildItem again, which skips paths past MAX_PATH unseen"
     check = (source / "built-check.ps1").read_text()
     for needle in ("diff --name-only $prev $Head", "build.ninja", "-t deps", "exit 87", "': rerun_cmake'",
                    "$forms['../' + $key]", '": phony`r`n"', "'(?m)^#[^\\n]*'"):

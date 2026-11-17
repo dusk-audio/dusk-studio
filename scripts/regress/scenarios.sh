@@ -406,8 +406,11 @@ scenarios_list() {
 # in a sandbox that goes away with the run.
 sandboxed_app_run() (
     local secs="$1" spec="$2" dir rc=0
+    # A signal lands between xvfb_run's start and stop, so the EXIT trap stops
+    # the session too; the caller's own session is not this call's to stop.
+    XVFB_PID="" XVFB_DISPLAY_FILE="" XVFB_LOG_FILE="" XVFB_LIBGL_SAVED=0
     dir="$(mktemp -d "${TMPDIR:-/tmp}/duskstudio-scenarios.XXXXXX")" || return 1
-    trap 'sandbox_remove "$dir"' EXIT
+    trap 'sandbox_remove "$dir"; [[ -z "$XVFB_PID$XVFB_DISPLAY_FILE$XVFB_LOG_FILE" ]] || xvfb_session_stop' EXIT
     trap 'exit 130' INT
     trap 'exit 143' TERM
     trap 'exit 129' HUP

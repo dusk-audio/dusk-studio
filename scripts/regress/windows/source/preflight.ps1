@@ -57,7 +57,7 @@ foreach ($leftover in @((Join-Path $root 'tmp'), (Join-Path $root 'regress'))) {
 # their objects one rebuild instead of one on every run until that time has
 # passed, so the same allowance does for them.
 $now = [DateTime]::UtcNow
-$future = Get-RegressFutureFiles $root $now.AddSeconds(2)
+$future = Get-RegressTree $root $now.AddSeconds(2)
 $build = Join-Path $root 'src\build-tests'
 $buildPrefix = $build + '\'
 $blind = @($future.Unlisted | Where-Object {
