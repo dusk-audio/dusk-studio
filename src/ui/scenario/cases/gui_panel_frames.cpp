@@ -80,17 +80,30 @@ std::function<bool()> framesQuiet (GuiHost& host, Panels panels)
 void pushStaysStill (GuiHost& host, ScenarioContext& ctx, std::vector<Step>& steps,
                      const Panels& panels, const std::string& what)
 {
-    auto base = std::make_shared<std::uint64_t> (0);
+    auto base = std::make_shared<std::vector<std::uint64_t>>();
     steps.push_back ({ 0, [] {}, framesQuiet (host, panels),
         what + " never stopped drawing while nothing changed", {}, kDrawBoundMs });
-    steps.push_back ({ 0, [&host, panels, base] { *base = framesOf (host, panels).value_or (0); } });
+    steps.push_back ({ 0, [&host, panels, base]
+    {
+        base->clear();
+        for (const auto& tag : panels)
+            base->push_back (host.panelFrames (tag).value_or (0));
+    } });
     steps.push_back ({ kHoldMs, [&host, &ctx, panels, base, what]
     {
-        const auto frames = framesOf (host, panels);
-        if (! ctx.expect (frames.has_value(), what + " closed while it was watched")) return;
-        const auto drawn = *frames - *base;
+        std::uint64_t drawn = 0;
+        std::string by;
+        for (std::size_t i = 0; i < panels.size(); ++i)
+        {
+            const auto frames = host.panelFrames (panels[i]);
+            if (! ctx.expect (frames.has_value(), what + " closed while it was watched")) return;
+            const auto frameCount = *frames - (*base)[i];
+            if (frameCount == 0) continue;
+            drawn += frameCount;
+            by += (by.empty() ? ": " : ", ") + panels[i] + " " + std::to_string (frameCount);
+        }
         ctx.expect (drawn == 0, what + " drew " + std::to_string (drawn) + " frames in "
-                                    + std::to_string (kHoldMs) + " ms with nothing changing");
+                                    + std::to_string (kHoldMs) + " ms with nothing changing" + by);
     } });
 }
 
