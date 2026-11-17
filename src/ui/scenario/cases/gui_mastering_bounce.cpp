@@ -2352,6 +2352,17 @@ std::optional<ScenarioResult> runSwitchRefusedNamesRender (GuiHost& host, Scenar
             fader.store (fader.load() - 1.0f);
         } });
         (*legs)[index].start (*steps);
+        // The fader move above dirties the session, and the autosave timer may
+        // write it before the render starts, which is allowed. Clear that file
+        // in the step that starts the render, where no timer tick can come in
+        // between, so the check below sees only what was written during it.
+        auto& startsRender = steps->back();
+        startsRender.run = [run = std::move (startsRender.run), folder]
+        {
+            std::error_code ignored;
+            std::filesystem::remove (folder / "session.json.autosave", ignored);
+            run();
+        };
         steps->push_back ({ 300, [&host, &ctx, folder, render]
         {
             ctx.expect (host.renderRunning(), "the " + render + " did not start");
