@@ -76,6 +76,13 @@ GuiHost::Stage guiStage (AudioEngine::Stage stage);
 // that switches stages registers this before it does.
 void keepStage (GuiHost& host, ScenarioContext& ctx);
 
+// An autosave copies the built-in unit or hosted plug-in loaded on a strip or
+// an aux slot into the session, and only the product's own remove path takes it
+// out again. A case that loads one straight onto the engine keeps the session's
+// record with this, so it goes back to what the case found however the case ends.
+void keepCarriedInsert (ScenarioContext& ctx, Track& track);
+void keepCarriedInsert (ScenarioContext& ctx, AuxLane& lane, int slot);
+
 void drainModals (GuiHost& host);
 
 // Reopening a session that a case saved into the directory it also made the

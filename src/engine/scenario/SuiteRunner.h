@@ -22,11 +22,12 @@ class ScenarioWorld;
 // GUI framework, calls it with the suite's exit code.
 std::function<void (int exitCode)>& guiSuiteExit();
 
-// The between-scenario window contract. Both are one line over GuiHost, but
+// The between-scenario window contract. Each is one line over GuiHost, but
 // that interface lives in src/ui, which engine code does not include - so the
-// two calls the runner needs are declared here and defined beside the window.
+// calls the runner needs are declared here and defined beside the window.
 std::vector<std::string> guiLaunchStateDiff (GuiHost&);
 void guiResetForScenario (GuiHost&);
+void guiPublishAsAutosave (GuiHost&);
 
 // Drives a selection of scenarios to completion on the message thread, one at a
 // time, and reports an exit code through onFinished. Scenarios may finish inside

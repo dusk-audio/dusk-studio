@@ -3336,7 +3336,32 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
             if (channel.getPluginSlot().isLoaded()) lines.push_back (who + " has a hosted plug-in");
             if (channel.isNativeClapLoaded() || channel.isNativeLv2Loaded() || channel.isNativeVst3Loaded())
                 lines.push_back (who + " has a native plug-in");
+            if (channel.isBuiltinLoaded()) lines.push_back (who + " has a built-in unit");
+            const auto unit = channel.isBuiltinLoaded() ? channel.getBuiltinSlot().getPluginId() : std::string();
+            if (track.builtinUnitId != unit)
+                lines.push_back (who + " carries built-in '" + track.builtinUnitId + "' in the session, its strip '" + unit + "'");
+            if ((track.pluginDescriptor.has_value() || track.pluginLegacyDescriptionXml.isNotEmpty())
+                && ! channel.getPluginSlot().isLoaded())
+                lines.push_back (who + " carries a hosted plug-in in the session that its strip has not loaded");
         }
+
+        for (int index = 0; index < Session::kNumAuxLanes; ++index)
+            for (int slot = 0; slot < AuxLaneParams::kMaxLanePlugins; ++slot)
+            {
+                auto& lane = owner.engine.getAuxLaneStrip (index);
+                const auto& params = owner.session.auxLane (index);
+                const auto where = "aux " + std::to_string (index) + " slot " + std::to_string (slot);
+                if (lane.getPluginSlot (slot).isLoaded()) lines.push_back (where + " has a hosted plug-in");
+                if (lane.isBuiltinLoaded (slot)) lines.push_back (where + " has a built-in unit");
+                const auto unit = lane.isBuiltinLoaded (slot) ? lane.getBuiltinSlot (slot).getPluginId() : std::string();
+                const auto& carried = params.builtinUnitId[(std::size_t) slot];
+                if (carried != unit)
+                    lines.push_back (where + " carries built-in '" + carried + "' in the session, its strip '" + unit + "'");
+                if ((params.pluginDescriptor[(std::size_t) slot].has_value()
+                     || params.pluginLegacyDescriptionXml[(std::size_t) slot].isNotEmpty())
+                    && ! lane.getPluginSlot (slot).isLoaded())
+                    lines.push_back (where + " carries a hosted plug-in in the session that its strip has not loaded");
+            }
 
         if (owner.consoleView != nullptr)
         {
@@ -3482,6 +3507,15 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         }
     }
 
+    void publishAsAutosave() override
+    {
+        for (auto* modal : EmbeddedModal::activeModalStack())
+            if (auto* render = dynamic_cast<RenderInProgress*> (modal->getBody());
+                render != nullptr && render->hasUnfinishedRender())
+                return;
+        owner.engine.publishPluginStateForSave (false);
+    }
+
     // The move that gives every slot back the strip it launched with; nullopt
     // when none has moved.
     std::optional<TrackMovePlan> moveBackToLaunch() const
@@ -3540,6 +3574,7 @@ namespace scenario
 {
 std::vector<std::string> guiLaunchStateDiff (GuiHost& host) { return host.launchStateDiff(); }
 void guiResetForScenario (GuiHost& host) { host.resetForScenario(); }
+void guiPublishAsAutosave (GuiHost& host) { host.publishAsAutosave(); }
 } // namespace scenario
 
 struct MainComponent::GuiRun
