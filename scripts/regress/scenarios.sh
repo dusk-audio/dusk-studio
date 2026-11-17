@@ -408,7 +408,9 @@ scenarios_binary_has() {
 
 scenarios_has_quit_timer() { scenarios_binary_has DUSKSTUDIO_QUIT_AFTER_MS; }
 scenarios_has_startup_markers() { scenarios_binary_has "Dusk Studio/startup"; }
-scenarios_has_case() { scenarios_list | grep -q -F -- "$1"; }
+# grep reads the listing to its end: one that left at the match would close the
+# pipe under the writer, and pipefail makes that a case that is not there.
+scenarios_has_case() { scenarios_list | grep -F -- "$1" >/dev/null; }
 
 # ------------------------------------------------------------- the legs
 
