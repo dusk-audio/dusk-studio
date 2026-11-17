@@ -34,7 +34,8 @@ usage: scripts/regress.sh [linux|mac|windows|windows-source|all|prepush] [option
 
   linux    (default) build, tests, ctest, JUCE gate, self-test, IPC,
            scenario and manual figure legs
-             --perf              also run the headless engine perf suite
+             --perf              also run the engine perf suite against
+                                 tools/perf-ratchet.tsv (this box only)
              --vst3 <path>       plugin for the out-of-process host test
                                  (default: the first ~/.vst3/*.vst3)
              --scenarios         run the scenario legs (the default)

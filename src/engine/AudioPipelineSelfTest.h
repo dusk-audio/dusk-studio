@@ -40,6 +40,10 @@ public:
     // compare against Reaper / Bitwig / Ardour at the same load.
     std::string runPerfSuite();
 
+    // The rows of the last runPerfSuite as JSON, for the perf ratchet
+    // (scripts/regress/perf-ratchet.sh). Times are in microseconds.
+    std::string perfRowsJson() const;
+
 private:
     struct Measurements
     {
@@ -141,6 +145,17 @@ private:
                                     int workerCount = -1,
                                     bool everyBlockToPool = false,
                                     int firstActiveTrack = 0);
+
+    struct PerfRow
+    {
+        std::string section, label;
+        double sampleRate = 0.0;
+        int blockSize = 0;
+        double medianUs = 0.0, p95Us = 0.0, p99Us = 0.0, maxUs = 0.0, minUs = 0.0, budgetUs = 0.0;
+        int overruns = 0, blocks = 0, pooled = 0;
+    };
+    std::vector<PerfRow> perfRows;
+    std::string perfSection;
 
     AudioEngine& engine;
     device::DeviceManager& deviceManager;

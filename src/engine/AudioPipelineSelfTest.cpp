@@ -1,5 +1,6 @@
 #include "AudioPipelineSelfTest.h"
 #include "../foundation/Fs.h"
+#include "../foundation/Json.h"
 #include "../foundation/Text.h"
 #include "audiofile/FileReader.h"
 #include "../session/RegionEditActions.h"
@@ -2279,6 +2280,22 @@ std::string AudioPipelineSelfTest::runPerfBenchmark (const std::string& label,
     for (auto v : times) if (v > budgetUs) ++overruns;
     const double headroomPctMedian = 100.0 * (1.0 - median / budgetUs);
 
+    PerfRow row;
+    row.section = perfSection;
+    row.label = dusk::text::trim (label);
+    row.sampleRate = sampleRate;
+    row.blockSize = blockSize;
+    row.medianUs = median;
+    row.p95Us = p95;
+    row.p99Us = p99;
+    row.maxUs = maxV;
+    row.minUs = minV;
+    row.budgetUs = budgetUs;
+    row.overruns = overruns;
+    row.blocks = (int) times.size();
+    row.pooled = pooled;
+    perfRows.push_back (std::move (row));
+
     return dusk::text::format (
         "%s %s  median=%.1f us  p95=%.1f us  p99=%.1f us  max=%.1f us  min=%.1f us  "
         "(budget=%.1f us, headroom@median=%.1f%%, overruns=%d/%d, pooled=%d/%d)",
@@ -2290,9 +2307,30 @@ std::string AudioPipelineSelfTest::runPerfBenchmark (const std::string& label,
         pooled, (int) times.size());
 }
 
+std::string AudioPipelineSelfTest::perfRowsJson() const
+{
+    auto rows = dusk::json::Json::array();
+    for (const auto& r : perfRows)
+        rows.push_back ({ { "section", r.section },     { "label", r.label },
+                          { "sample_rate", r.sampleRate }, { "block_size", r.blockSize },
+                          { "median_us", r.medianUs },  { "p95_us", r.p95Us },
+                          { "p99_us", r.p99Us },        { "max_us", r.maxUs },
+                          { "min_us", r.minUs },        { "budget_us", r.budgetUs },
+                          { "overruns", r.overruns },   { "blocks", r.blocks },
+                          { "pooled", r.pooled } });
+    return dusk::json::Json { { "suite", "engine-perf" }, { "version", 1 }, { "rows", std::move (rows) } }
+        .dump (1) + "\n";
+}
+
 std::string AudioPipelineSelfTest::runPerfSuite()
 {
+    perfRows.clear();
     std::vector<std::string> report;
+    const auto beginSection = [&] (const std::string& name)
+    {
+        report.push_back ("--- " + name + " ---");
+        perfSection = dusk::text::trim (name);
+    };
     report.push_back ("=== Dusk Studio Engine Perf Benchmark ===");
     report.push_back ("Time: " + juce::Time::getCurrentTime().toString (true, true).toStdString());
     report.push_back ("Measures pure-engine callback wall time across configs.");
@@ -2323,7 +2361,7 @@ std::string AudioPipelineSelfTest::runPerfSuite()
 
     for (const auto& cfg : configs)
     {
-        report.push_back (std::string ("--- ") + cfg.label + " ---");
+        beginSection (cfg.label);
         report.push_back (runPerfBenchmark ("idle (1 track, EQ off, comp off)            ",
                                        cfg.sr, cfg.bs, 1, false, false, false, /*ox*/ 1,
                                        warm, meas));
@@ -2359,7 +2397,7 @@ std::string AudioPipelineSelfTest::runPerfSuite()
     const int parW = std::max (0, std::min (juce::SystemStats::getNumCpus() - 2, 15));
     if (parW > 0)
     {
-        report.push_back ("--- Multicore scaling (48k/256, 16ch + EQ + comp @1x) ---");
+        beginSection ("Multicore scaling (48k/256, 16ch + EQ + comp @1x)");
         report.push_back (runPerfBenchmark ("serial (0 workers)                          ",
                                        48000.0, 256, 16, true, true, false, /*ox*/ 1,
                                        warm, meas, /*workers*/ 0));
@@ -2390,8 +2428,8 @@ std::string AudioPipelineSelfTest::runPerfSuite()
         const std::string pool = std::to_string (parW) + " worker" + (parW == 1 ? "" : "s");
         for (const int bs : { 256, 1024 })
         {
-            report.push_back ("--- Multicore with one or two busy strips (48k/" + std::to_string (bs)
-                              + ", EQ + comp @1x) ---");
+            beginSection ("Multicore with one or two busy strips (48k/" + std::to_string (bs)
+                          + ", EQ + comp @1x)");
             for (const int busy : { 1, 2 })
             {
                 const std::string strips = busy == 1 ? "1 strip, " : "2 strips in one lane, ";

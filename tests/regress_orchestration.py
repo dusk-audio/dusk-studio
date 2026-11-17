@@ -1006,7 +1006,7 @@ claim_unlock() {
     linux_runners = linux_root / "scripts/regress"
     linux_runners.mkdir(parents=True)
     for name in ("linux.sh", "common.sh", "xvfb.sh", "scenarios.sh", "null-audio.sh", "capture.sh",
-                 "idle-wakeups.sh"):
+                 "idle-wakeups.sh", "perf-ratchet.sh"):
         shutil.copyfile(repo / "scripts/regress" / name, linux_runners / name)
     required_tools = linux_root / "bin"
     required_tools.mkdir()
@@ -1876,8 +1876,84 @@ bb_pipewire_clock_body
         rc, out = idle_judge(within, budget=broken)
         assert rc == 2, (broken, out)
 
+    perf_root = root / "perf-ratchet"
+    perf_runs = perf_root / "runs"
+    perf_runs.mkdir(parents=True)
+    perf_ratchet = perf_root / "ratchet.tsv"
+    perf_saved = perf_root / "saved.tsv"
+    ratchet_text = ("# header comment\n#host\tTest CPU, 8 threads\n\n48k/512 | idle (1 track)\t100.0\n"
+                    "48k/512 | full mixer\t1000.0\n48k/128 | tiny\t20.0\ngone | row\t5.0\n")
+    perf_command = 'source "$1/scripts/regress/perf-ratchet.sh"; shift; perf_ratchet_judge "$@"'
+
+    def perf_judge(runs, mode="check", ratchet=ratchet_text, save=""):
+        perf_ratchet.write_text(ratchet)
+        for stale in perf_runs.iterdir():
+            stale.unlink()
+        for index, run in enumerate(runs, 1):
+            if isinstance(run, str):
+                (perf_runs / f"run{index}.txt").write_text(run)
+                continue
+            rows = [{"section": section, "label": label, "median_us": median}
+                    for (section, label), median in run.items()]
+            (perf_runs / f"run{index}.json").write_text(json.dumps({"suite": "engine-perf", "rows": rows}))
+        result = subprocess.run(
+            ["bash", "-c", perf_command, "judge", str(repo), str(perf_ratchet), "Test CPU, 8 threads",
+             mode, save, str(perf_runs), str(len(runs))],
+            env=child_environment, capture_output=True, text=True, timeout=10)
+        return result.returncode, result.stdout + result.stderr
+
+    def perf_run(idle=100.0, mixer=1000.0, tiny=20.0, extra=None):
+        run = {("48k/512", "idle (1 track)"): idle, ("48k/512", "full mixer"): mixer,
+               ("48k/128", "tiny"): tiny}
+        run.update(extra or {})
+        return run
+
+    # Over by more than 10% but not 5 us, or by more than 5 us but not 10%, passes.
+    rc, out = perf_judge([perf_run(idle=104.0, mixer=1050.0, tiny=24.0)])
+    assert rc == 0, out
+    assert "'gone | row' is recorded but the suite did not run it" in out, out
+    assert "slowest against the ratchet: +20.0% (48k/128 | tiny)" in out, out
+    rc, out = perf_judge([perf_run(idle=110.5)])
+    assert rc == 4 and "SLOWER" in out, out
+    rc, out = perf_judge([perf_run(tiny=25.5)])
+    assert rc == 4 and "SLOWER" in out, out
+    rc, out = perf_judge([perf_run(tiny=25.5, extra={("48k/512", "stranger"): 1.0})])
+    assert rc == 1 and "SLOWER" in out and "UNLISTED" in out, out
+    # A row is the lowest of its medians, so one disturbed run does not fail it.
+    rc, out = perf_judge([perf_run(idle=130.0), perf_run(idle=101.0, mixer=1300.0)])
+    assert rc == 0, out
+    rc, out = perf_judge([perf_run(extra={("48k/512", "stranger"): 1.0})])
+    assert rc == 1 and "UNLISTED" in out and "'48k/512 | stranger' is not in" in out, out
+
+    # A binary that predates the JSON is read from its text table.
+    table = ("--- 48k/512  ---\n"
+             "[OK] idle (1 track)        median=99.0 us  p95=120.0 us  (budget=10666.7 us)\n"
+             "[OVER] full    mixer       median=1001.0 us  p95=1200.0 us\n"
+             "--- 48k/128  ---\n[OK] tiny  median=20.0 us\n")
+    rc, out = perf_judge([table], save=str(perf_saved))
+    assert rc == 0, out
+    assert perf_saved.read_text() == ("#host\tTest CPU, 8 threads\n#runs\t1\n48k/512 | idle (1 track)\t99.0\n"
+                                      "48k/512 | full mixer\t1001.0\n48k/128 | tiny\t20.0\n"), perf_saved.read_text()
+    rc, out = perf_judge(["no rows here\n"])
+    assert rc == 2, out
+
+    rc, out = perf_judge([perf_run(idle=90.04, mixer=1050.0)], mode="update")
+    assert rc == 0, out
+    assert perf_ratchet.read_text() == ("# header comment\n#host\tTest CPU, 8 threads\n\n"
+                                        "48k/512 | idle (1 track)\t90.1\n48k/512 | full mixer\t1000.0\n"
+                                        "48k/128 | tiny\t20.0\n"), perf_ratchet.read_text()
+    rc, out = perf_judge([perf_run(idle=200.0, extra={("48k/512", "stranger"): 1.0})], mode="update")
+    assert rc == 1, out
+    assert "\t100.0\n" in perf_ratchet.read_text(), "--update raised a value"
+    assert "stranger" not in perf_ratchet.read_text(), "--update added a row"
+
+    for broken in ("48k/512 | idle (1 track)\t08\n", "48k/512 | idle (1 track) 5\n",
+                   "row\t5\nrow\t6\n", "row\t-1\n", "row\t5us\n"):
+        rc, out = perf_judge([perf_run()], ratchet=broken)
+        assert rc == 2, (broken, out)
+
 print("regression runner: interrupt cleanup, runtime dirs under a long TMPDIR, prepush log folders, "
       "capture leg, timing cache, Mac paths, "
       "missing app, Windows source leg, added submodule checkouts, the host locks, the host clean pass "
-      "idle wake-up budgets, and an Xvfb that ends with its shell"
+      "idle wake-up budgets, the perf ratchet, and an Xvfb that ends with its shell"
       + ("" if shutil.which("pwsh") else "; no pwsh here, so the guest scripts were not parsed"))

@@ -126,6 +126,26 @@ sandbox_remove() {
     rm -rf "$path"
 }
 
+# sandboxed <command...>: runs the command, shell functions included, with a
+# private HOME, XDG base directories and runtime dir (see sandbox_env), removed
+# afterwards.
+sandboxed() {
+    local dir rc=0
+    dir="$(mktemp -d "${TMPDIR:-/tmp}/duskstudio-regress.XXXXXX")" || return 1
+    regress_at_exit "sandbox_remove $(printf '%q' "$dir")"
+    if sandbox_env "$dir"; then
+        (
+            export "${SANDBOX_ENV[@]}"
+            unset DBUS_SESSION_BUS_ADDRESS
+            "$@"
+        ) || rc=$?
+    else
+        rc=1
+    fi
+    sandbox_remove "$dir"
+    return "$rc"
+}
+
 BB_SDIR=""
 BB_LEG=""
 BB_DEADLINE=0

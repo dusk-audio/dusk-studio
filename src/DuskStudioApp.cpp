@@ -30,6 +30,7 @@
 #include "engine/audiofile/FileReader.h"
 #include "engine/audiofile/FileWriter.h"
 #include "foundation/MessageThread.h"
+#include "foundation/Fs.h"
 #include "foundation/Json.h"
 #include "session/SessionSerializer.h"
 #include "util/CrashHandler.h"
@@ -3073,6 +3074,17 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
         const auto report = test.runPerfSuite();
         std::fprintf (stdout, "%s\n", report.c_str());
         std::fflush (stdout);
+
+        if (const char* jsonPath = std::getenv ("DUSKSTUDIO_PERF_JSON"); jsonPath != nullptr && *jsonPath != 0)
+        {
+            std::error_code error;
+            if (! dusk::fs::writeStringToFile (jsonPath, test.perfRowsJson(), &error))
+            {
+                std::fprintf (stderr, "[Dusk Studio/Perf] cannot write %s: %s\n",
+                              jsonPath, error.message().c_str());
+                setApplicationReturnValue (1);
+            }
+        }
 
         quit();
         return;

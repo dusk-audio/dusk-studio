@@ -467,7 +467,7 @@ leg prompts, and each one either recreates its inputs or checks them.
 
 ```bash
 scripts/regress.sh                       # linux (the default target)
-scripts/regress.sh linux --perf          # plus the headless engine perf suite
+scripts/regress.sh linux --perf          # plus the engine perf suite and its ratchet
 scripts/regress.sh linux --vst3 ~/.vst3/Multi-Q.vst3
 scripts/regress.sh linux --scenarios-only
 scripts/regress.sh linux --tarball /path/to/dusk-studio-X.Y.Z-Linux-x86_64.tar.xz
@@ -708,8 +708,9 @@ which `mac.sh` hands a package run to, with the window-activation cases in
 `mac-window-activation.sh`) over the shared leg bookkeeping in
 `scripts/regress/common.sh`, the private-display plumbing in
 `scripts/regress/xvfb.sh`, the scenario legs in
-`scripts/regress/scenarios.sh` and the idle wake-up leg in
-`scripts/regress/idle-wakeups.sh`, plus the guest-side helpers in
+`scripts/regress/scenarios.sh`, the idle wake-up leg in
+`scripts/regress/idle-wakeups.sh` and the perf leg in
+`scripts/regress/perf-ratchet.sh`, plus the guest-side helpers in
 `scripts/regress/windows/` (the source leg's in `scripts/regress/windows/source/`)
 and the Screen Sharing helper in `scripts/regress/mac/`.
 
@@ -729,7 +730,7 @@ PipeWire.
 | `selftest-xvfb` | `scripts/run-selftest-xvfb.sh` - the headless audio self-test on a private X display, with `DUSKSTUDIO_CLAP_STATE_FIXTURE` pointing at the multi-bus CLAP fixture when `build-tests/` has it, so the clone-track leg runs instead of skipping. |
 | `ipc-selftest` | `DUSKSTUDIO_RUN_IPC_SELFTEST=1`: the shm + futex round-trip against the `dusk-studio-plugin-host` stub. |
 | `ipc-host-test` | `DUSKSTUDIO_IPC_HOST_TEST=<plugin>`: a real plugin loaded out-of-process, 1000 stereo blocks, signal asserted modified. Uses `--vst3`, else the first `~/.vst3/*.vst3`; `SKIP` when there is none. |
-| `perf-suite` | `DUSKSTUDIO_RUN_PERF_TEST=1` across the (rate, buffer, load) matrix. Off unless `--perf`. |
+| `perf-suite` | `DUSKSTUDIO_RUN_PERF_TEST=1` across the (rate, buffer, load) matrix, three runs, each row's lowest median held to `tools/perf-ratchet.tsv`. Fails on a row more than 10% and more than 5 us over its recorded value that stays there through up to two more runs, or on one the ratchet does not list. On a host other than the one the ratchet names, the suite runs once and the leg is `SKIP`. Off unless `--perf`; not in CI. See "The perf ratchet" below. |
 | `scenario-fixtures` | every logical fixture the scenarios name resolves under `DUSKSTUDIO_FIXTURE_DIR`; `SKIP` naming the ones that do not. |
 | `scenarios-headless` | `DUSKSTUDIO_RUN_SCENARIOS=all`: the in-app scenario suite. Passes only on exit 0, no `[FAIL]` line, and the terminal `=== scenarios: ` summary - a crash after the last case must not pass on a lucky exit code. Skipped cases go into the leg's note. |
 | `bb-handoff`, `bb-crash-relaunch`, `bb-no-runtime-dir`, `bb-damaged-recent`, `bb-clean-quit`, `bb-window-close`, `bb-quit-twice`, `bb-quit-during-mixdown`, `bb-quit-save-rate`, `bb-oop-child-kill`, `bb-oop-quit-during-load` | the black-box legs: real app processes spawned, killed and read back through their stderr. See "Scenario legs" below. |
@@ -769,6 +770,47 @@ because the pointer it adds would stay on that display for the legs after it.
 
 `DUSK_REGRESS_BUILD_LOCK=/path/to/lockfile` wraps the two compile legs in
 `flock` when something else may be building the same tree.
+
+#### The perf ratchet
+
+`perf-suite` runs `scripts/regress/perf-ratchet.sh`. The app runs the suite
+`DUSK_PERF_RUNS` times (default 3) on a private Xvfb display and, when it
+starts, the private null PipeWire graph; the suite drives the engine's
+callback itself, so the device only has to open. Each run writes its rows as
+JSON to the file `DUSKSTUDIO_PERF_JSON` names (section, label, rate, block
+size, median, p95, p99, max and min in microseconds, overruns and pooled
+blocks) beside the text table it prints. A binary from before the JSON, such as
+0.16.1, is read from its table instead. A row is named
+`<section> | <label>`, whitespace collapsed, and its value is the lowest of its
+medians over the runs, because load on the machine only ever adds time.
+
+`tools/perf-ratchet.tsv` holds one `row<TAB>microseconds` record per line and
+a `#host` line naming the CPU and thread count it was measured on. Wall times
+are not comparable across machines, so on any other host the suite runs once,
+to show it completes, and the leg is `SKIP`; with `--save` it runs the full
+count there and writes the values first, which is how a ratchet for another
+machine starts. CI runners are too noisy for it and never run it. A row fails when it is more than 10% and more than 5 us over
+its recorded value, so a short row's jitter and a long row's few per cent both
+pass; a row the ratchet does not list fails, and a recorded row the suite no
+longer runs is a note. When the only failures are slow rows, the suite runs
+again, up to `DUSK_PERF_CONFIRM` more times (default 2), and the rows are
+judged over every run so far: one run disturbed by the machine is not a
+regression, and a regression stays slow. The rows that spread the most are the
+ones the DSP pool runs, which need seven free cores on the eight-thread dev
+box, so the leg prints the load average before it starts and before each
+extra run; a busy win11 guest alone can push them past the line. The table
+shows each row's recorded and measured value, the change in microseconds and
+per cent, the spread between the runs' medians,
+and the row furthest over. The first values are 0.16.1's (`07571ad8`) on the
+dev box, for the rows 0.16.1 has; the rows it does not have were added from the
+release candidate.
+
+`bash scripts/regress/perf-ratchet.sh --update` lowers each value the run beat
+and drops the rows the suite no longer has. It never raises a value or adds a
+row: that is a hand edit, and the change says why. `--app <binary>` measures
+another build, `--runs <n>` sets the run count, `--ratchet <file>` judges
+against another file, and `--save <file>` writes this run's values in the
+ratchet's format, for comparing two builds or for the hand edit.
 
 A fixture that does not resolve is reported, never passed over.
 `scenario-fixtures` reads the logical fixture table from
