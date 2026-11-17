@@ -99,6 +99,7 @@ add_executable(dusk-studio-tests
     audio_worker_pool_inline_blocks.cpp
     rt_priority.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/AudioWorkerPool.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/RealtimeScheduling.cpp
     embedded_modal_close_safety.cpp
     native_editor_owner.cpp
     x11_anti_pattern_guard.cpp

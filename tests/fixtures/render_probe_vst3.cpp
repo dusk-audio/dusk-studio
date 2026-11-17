@@ -16,6 +16,19 @@
  #include <sched.h>
  #include <sys/syscall.h>
  #include <unistd.h>
+#elif defined (_WIN32)
+ #ifndef NOMINMAX
+  #define NOMINMAX
+ #endif
+ #ifndef WIN32_LEAN_AND_MEAN
+  #define WIN32_LEAN_AND_MEAN
+ #endif
+ #include <windows.h>
+#elif defined (__APPLE__)
+ #include <mach/mach.h>
+ #include <mach/mach_time.h>
+ #include <mach/thread_policy.h>
+ #include <pthread.h>
 #endif
 
 namespace Steinberg::Vst
@@ -37,6 +50,50 @@ float flushesInputs() noexcept
 {
     volatile float tiniest = std::numeric_limits<float>::denorm_min();
     return tiniest > 0.0f ? 0.0f : 1.0f;
+}
+
+// The calling thread's scheduling into the report (RenderProbeVst3.h).
+void reportScheduling (float* report) noexcept
+{
+    report[Probe::kPolicy] = report[Probe::kPriority] = report[Probe::kThreadId] = -1.0f;
+   #if defined (__linux__)
+    sched_param param {};
+    const int policy = sched_getscheduler (0);
+    if (policy >= 0 && sched_getparam (0, &param) == 0)
+    {
+        report[Probe::kPolicy]   = (float) (policy & ~SCHED_RESET_ON_FORK);
+        report[Probe::kPriority] = (float) param.sched_priority;
+    }
+    report[Probe::kThreadId] = (float) ::syscall (SYS_gettid);
+   #elif defined (_WIN32)
+    // GetThreadInformation's ThreadAbsoluteCpuPriority class, looked up at run
+    // time so no Windows version guard decides whether it compiles.
+    using GetInformation = BOOL (WINAPI*) (HANDLE, int, LPVOID, DWORD);
+    static constexpr int kThreadAbsoluteCpuPriority = 1;
+    const auto getInformation = reinterpret_cast<GetInformation> (reinterpret_cast<void (*)()> (
+        GetProcAddress (GetModuleHandleW (L"kernel32.dll"), "GetThreadInformation")));
+    report[Probe::kPolicy] = (float) GetThreadPriority (GetCurrentThread());
+    LONG priority = 0;
+    if (getInformation != nullptr
+        && getInformation (GetCurrentThread(), kThreadAbsoluteCpuPriority, &priority, (DWORD) sizeof (priority)))
+        report[Probe::kPriority] = (float) priority;
+    report[Probe::kThreadId] = (float) GetCurrentThreadId();
+   #elif defined (__APPLE__)
+    const auto thread = pthread_mach_thread_np (pthread_self());
+    thread_time_constraint_policy_data_t policy {};
+    mach_msg_type_number_t count = THREAD_TIME_CONSTRAINT_POLICY_COUNT;
+    boolean_t getDefault = FALSE;
+    mach_timebase_info_data_t timebase {};
+    if (thread_policy_get (thread, THREAD_TIME_CONSTRAINT_POLICY, (thread_policy_t) &policy, &count, &getDefault)
+            == KERN_SUCCESS
+        && mach_timebase_info (&timebase) == KERN_SUCCESS && timebase.denom != 0)
+    {
+        report[Probe::kPolicy] = getDefault ? 0.0f : 1.0f;
+        if (! getDefault)
+            report[Probe::kPriority] = (float) ((double) policy.period * timebase.numer / timebase.denom / 1000.0);
+    }
+    report[Probe::kThreadId] = (float) thread;
+   #endif
 }
 
 void holdWhileScanned()
@@ -90,17 +147,7 @@ public:
         float* report = data.outputs[0].channelBuffers32[0];
         report[Probe::kFlushesResults] = flushesResults();
         report[Probe::kFlushesInputs]  = flushesInputs();
-        report[Probe::kPolicy] = report[Probe::kPriority] = report[Probe::kThreadId] = -1.0f;
-       #if defined (__linux__)
-        sched_param param {};
-        const int policy = sched_getscheduler (0);
-        if (policy >= 0 && sched_getparam (0, &param) == 0)
-        {
-            report[Probe::kPolicy]   = (float) (policy & ~SCHED_RESET_ON_FORK);
-            report[Probe::kPriority] = (float) param.sched_priority;
-        }
-        report[Probe::kThreadId] = (float) ::syscall (SYS_gettid);
-       #endif
+        reportScheduling (report);
         return kResultOk;
     }
 };

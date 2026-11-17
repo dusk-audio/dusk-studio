@@ -7,9 +7,15 @@ namespace duskstudio::test::renderprobevst3
 {
 constexpr int kFlushesResults = 0;   // 1 when a result below the normal range comes out as zero
 constexpr int kFlushesInputs  = 1;   // 1 when an input below the normal range reads as zero
-constexpr int kPolicy         = 2;   // the thread's scheduling policy on Linux, else -1
-constexpr int kPriority       = 3;   // its realtime priority on Linux, else -1
-constexpr int kThreadId       = 4;   // its kernel thread id on Linux, else -1
+// The thread's scheduling, as each system states it:
+//   Linux    its policy, and its realtime priority under SCHED_RR or SCHED_FIFO
+//   Windows  GetThreadPriority, and the priority the scheduler runs it at, 1 to
+//            31, where 16 and up is the realtime range MMCSS lifts its tasks into
+//   macOS    1 under the time-constraint policy, else 0, and that policy's
+//            period in microseconds, else -1
+constexpr int kPolicy         = 2;
+constexpr int kPriority       = 3;
+constexpr int kThreadId       = 4;   // the calling thread, as the system names it within the process
 constexpr int kReportLength   = 5;
 
 // Linux: names a folder. initialize() writes its process id to `held` there,

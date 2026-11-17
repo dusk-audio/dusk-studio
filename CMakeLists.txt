@@ -888,6 +888,7 @@ target_sources(DuskStudio PRIVATE
     # Native CLAP sources are added below, gated by DUSKSTUDIO_HAS_NATIVE_CLAP.
     src/engine/AudioEngine.cpp
     src/engine/AudioWorkerPool.cpp
+    src/engine/RealtimeScheduling.cpp
     src/engine/BounceEngine.cpp
     src/engine/DpAligner.cpp
     src/engine/DpImporter.cpp
@@ -1628,6 +1629,7 @@ if(_duskstudio_oop_enabled)
         src/engine/ipc/PluginHostMain.cpp
         src/engine/ipc/PluginHostXErrors.cpp
         src/engine/PluginDescriptor.cpp
+        src/engine/RealtimeScheduling.cpp
         src/foundation/MessageThread.cpp
         src/foundation/ThreadName.cpp
         ${_duskstudio_ipc_child_platform_sources})

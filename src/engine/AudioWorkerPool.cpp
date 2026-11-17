@@ -1,4 +1,5 @@
 #include "AudioWorkerPool.h"
+#include "RealtimeScheduling.h"
 #include "RtPriority.h"
 #include "../foundation/RtAttributes.h"
 #include "../foundation/ThreadName.h"
@@ -14,74 +15,13 @@
  #include <unistd.h>
 #elif defined(__APPLE__)
  #include <CoreAudio/CoreAudio.h>
- #include <mach/mach.h>
- #include <mach/mach_time.h>
- #include <mach/thread_policy.h>
  #include <os/workgroup.h>
  #include <pthread.h>
-#elif defined(_WIN32)
- #ifndef NOMINMAX
-  #define NOMINMAX
- #endif
- #ifndef WIN32_LEAN_AND_MEAN
-  #define WIN32_LEAN_AND_MEAN
- #endif
- #include <windows.h>
 #endif
 
 namespace duskstudio
 {
-#if defined(_WIN32)
-namespace
-{
-// The WASAPI callback thread runs in the MMCSS "Pro Audio" task, which JUCE's
-// device thread joins. The workers that thread waits on every block have to
-// run in it too: at normal priority they share the cores with every other
-// normal thread, a software GL renderer's while an editor draws among them,
-// and the callback overruns waiting for its lanes. avrt.dll is loaded at run
-// time, as JUCE does, so nothing new is linked.
-struct ProAudioTask
-{
-    HMODULE avrt = nullptr;
-    HANDLE  task = nullptr;
-};
-
-// GetProcAddress hands back a generic pointer; going through void (*)() is the
-// cast compilers accept to any other function type without a warning.
-template <typename Function>
-Function avrtFunction (HMODULE avrt, const char* name) noexcept
-{
-    return reinterpret_cast<Function> (reinterpret_cast<void (*)()> (GetProcAddress (avrt, name)));
-}
-
-ProAudioTask joinProAudioTask() noexcept
-{
-    using Join = HANDLE (WINAPI*) (LPCWSTR, LPDWORD);
-    ProAudioTask joined;
-    joined.avrt = LoadLibraryW (L"avrt.dll");
-    if (joined.avrt != nullptr)
-        if (const auto join = avrtFunction<Join> (joined.avrt, "AvSetMmThreadCharacteristicsW"))
-        {
-            DWORD taskIndex = 0;
-            joined.task = join (L"Pro Audio", &taskIndex);
-        }
-    // Without MMCSS, still above every normal-priority thread.
-    if (joined.task == nullptr)
-        SetThreadPriority (GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
-    return joined;
-}
-
-void leaveProAudioTask (const ProAudioTask& joined) noexcept
-{
-    using Leave = BOOL (WINAPI*) (HANDLE);
-    if (joined.task != nullptr)
-        if (const auto leave = avrtFunction<Leave> (joined.avrt, "AvRevertMmThreadCharacteristics"))
-            leave (joined.task);
-    if (joined.avrt != nullptr)
-        FreeLibrary (joined.avrt);
-}
-} // namespace
-#elif defined(__APPLE__)
+#if defined(__APPLE__)
 namespace
 {
 // The workgroup CoreAudio runs the named device's IO thread in, retained, or
@@ -137,29 +77,6 @@ os_workgroup_t copyIoWorkgroup (const std::string& deviceName) noexcept
         return nullptr;
     return workgroup;
 }
-
-// Realtime time-constraint policy for the calling thread, as CoreAudio gives
-// its IO thread: woken once a period and allowed to compute through it. The
-// kernel refuses a computation much past 50 ms, which only a very long block
-// reaches.
-void takeTimeConstraint (double periodSeconds) noexcept
-{
-    mach_timebase_info_data_t timebase {};
-    if (periodSeconds <= 0.0 || mach_timebase_info (&timebase) != KERN_SUCCESS || timebase.numer == 0)
-        return;
-    const double ticksPerSecond = 1.0e9 * (double) timebase.denom / (double) timebase.numer;
-    const auto ticks = [ticksPerSecond] (double seconds)
-    {
-        return (uint32_t) std::min (seconds * ticksPerSecond, 4.0e9);
-    };
-    thread_time_constraint_policy_data_t policy {};
-    policy.period      = ticks (periodSeconds);
-    policy.computation = ticks (std::min (periodSeconds, 0.05));
-    policy.constraint  = ticks (periodSeconds);
-    policy.preemptible = 1;
-    thread_policy_set (pthread_mach_thread_np (pthread_self()), THREAD_TIME_CONSTRAINT_POLICY,
-                       (thread_policy_t) &policy, THREAD_TIME_CONSTRAINT_POLICY_COUNT);
-}
 } // namespace
 #endif
 
@@ -182,7 +99,12 @@ struct AudioWorkerPool::Worker
        #if defined(__linux__)
         threadId.store ((std::int64_t) syscall (SYS_gettid), std::memory_order_relaxed);
        #elif defined(_WIN32)
-        const auto proAudio = joinProAudioTask();
+        // The WASAPI callback thread runs in the MMCSS "Pro Audio" task, which
+        // JUCE's device thread joins. The workers it waits on every block run
+        // in it too: at normal priority they share the cores with every other
+        // normal thread, a software GL renderer's while an editor draws among
+        // them, and the callback overruns waiting for its lanes.
+        const auto proAudio = rt::joinProAudioTask();
        #endif
         gotRealtime.store (realtime, std::memory_order_relaxed);
         takeDeadline();
@@ -190,7 +112,7 @@ struct AudioWorkerPool::Worker
         runLanes();
         leaveDeadline();
        #if defined(_WIN32)
-        leaveProAudioTask (proAudio);
+        rt::leaveProAudioTask (proAudio);
        #endif
     }
 
@@ -203,7 +125,7 @@ struct AudioWorkerPool::Worker
        #if defined(__APPLE__)
         leaveDeadline();
         if (pool.deadlineSampleRate > 0.0 && pool.deadlineBlockSize > 0)
-            takeTimeConstraint ((double) pool.deadlineBlockSize / pool.deadlineSampleRate);
+            (void) rt::takeTimeConstraint (pthread_self(), (double) pool.deadlineBlockSize / pool.deadlineSampleRate);
         auto* const workgroup = static_cast<os_workgroup_t> (pool.deadlineWorkgroup);
         if (workgroup != nullptr && os_workgroup_join (workgroup, &joinToken) == 0)
         {
