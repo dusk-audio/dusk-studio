@@ -777,9 +777,10 @@ TEST_CASE ("a mastering view's live stamp holds while what it shows holds, and m
         {
             analyzer.push (silence.data(), silence.data(), (int) silence.size());
             const auto stamp = view->liveStamp();
-            unchanged = stamp == previous ? unchanged + 1 : 0;
+            unchanged = stamp.has_value() && stamp == previous ? unchanged + 1 : 0;
             previous = stamp;
         }
+        REQUIRE (previous.has_value());
         REQUIRE (unchanged >= 16);
     }
 }

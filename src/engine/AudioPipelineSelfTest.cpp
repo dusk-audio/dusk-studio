@@ -14,6 +14,7 @@
 #include <chrono>
 #include <cmath>
 #include <filesystem>
+#include <limits>
 
 namespace duskstudio
 {
@@ -1239,11 +1240,20 @@ std::string AudioPipelineSelfTest::testParallelMatchesSerial()
     capture (testWorkers, pL, pR);
     engine.setWorkerCountForTest (0);   // leave the engine serial for later tests
 
-    auto maxAbsDiff = [] (const std::vector<float>& a, const std::vector<float>& b)
+    // NaN once a sample in either capture is not finite, which fails every bound
+    // the difference is held to; std::max on its own would drop it.
+    auto maxAbsDiff = [] (const std::vector<float>& aL, const std::vector<float>& aR,
+                          const std::vector<float>& bL, const std::vector<float>& bR)
     {
-        const size_t m = std::min (a.size(), b.size());
+        const size_t m = std::min (aL.size(), bL.size());
         float d = 0.0f;
-        for (size_t i = 0; i < m; ++i) d = std::max (d, std::abs (a[i] - b[i]));
+        for (size_t i = 0; i < m; ++i)
+        {
+            const float l = std::abs (aL[i] - bL[i]), r = std::abs (aR[i] - bR[i]);
+            if (! std::isfinite (l) || ! std::isfinite (r))
+                return std::numeric_limits<float>::quiet_NaN();
+            d = std::max ({ d, l, r });
+        }
         return d;
     };
 
@@ -1252,8 +1262,8 @@ std::string AudioPipelineSelfTest::testParallelMatchesSerial()
     for (size_t i = 0; i < n; ++i)
         peak = std::max ({peak, std::abs (sL[i]), std::abs (sR[i])});
 
-    const float serialDiff   = max (maxAbsDiff (sL, s2L), maxAbsDiff (sR, s2R));
-    const float parallelDiff = max (maxAbsDiff (sL, pL),  maxAbsDiff (sR, pR));
+    const float serialDiff   = maxAbsDiff (sL, sR, s2L, s2R);
+    const float parallelDiff = maxAbsDiff (sL, sR, pL, pR);
 
     // The real invariant: enabling workers must not change the mix any more than
     // re-running serial does. We compare parallelDiff against the serial-vs-serial
@@ -1424,11 +1434,17 @@ std::string AudioPipelineSelfTest::testPoolDispatchRule()
         return c;
     };
 
+    // NaN once a sample in either capture is not finite, as in testParallelMatchesSerial.
     const auto maxAbsDiff = [] (const Capture& a, const Capture& b)
     {
         float d = 0.0f;
         for (size_t i = 0; i < std::min (a.l.size(), b.l.size()); ++i)
-            d = std::max ({ d, std::abs (a.l[i] - b.l[i]), std::abs (a.r[i] - b.r[i]) });
+        {
+            const float l = std::abs (a.l[i] - b.l[i]), r = std::abs (a.r[i] - b.r[i]);
+            if (! std::isfinite (l) || ! std::isfinite (r))
+                return std::numeric_limits<float>::quiet_NaN();
+            d = std::max ({ d, l, r });
+        }
         return a.l.size() == b.l.size() ? d : 1.0f;
     };
 

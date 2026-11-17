@@ -144,6 +144,35 @@ void keepStage (GuiHost& host, ScenarioContext& ctx)
     ctx.cleanup ([&host, stage = guiStage (ctx.engine().getStage())] { host.switchToStage (stage); });
 }
 
+void keepCarriedInsert (ScenarioContext& ctx, Track& track)
+{
+    ctx.cleanup ([&track, unit = track.builtinUnitId, unitState = track.builtinStateBase64,
+                  descriptor = track.pluginDescriptor, legacy = track.pluginLegacyDescriptionXml,
+                  pluginState = track.pluginStateBase64]
+    {
+        track.builtinUnitId = unit;
+        track.builtinStateBase64 = unitState;
+        track.pluginDescriptor = descriptor;
+        track.pluginLegacyDescriptionXml = legacy;
+        track.pluginStateBase64 = pluginState;
+    });
+}
+
+void keepCarriedInsert (ScenarioContext& ctx, AuxLane& lane, int slot)
+{
+    const auto at = (std::size_t) slot;
+    ctx.cleanup ([&lane, at, unit = lane.builtinUnitId[at], unitState = lane.builtinStateBase64[at],
+                  descriptor = lane.pluginDescriptor[at], legacy = lane.pluginLegacyDescriptionXml[at],
+                  pluginState = lane.pluginStateBase64[at]]
+    {
+        lane.builtinUnitId[at] = unit;
+        lane.builtinStateBase64[at] = unitState;
+        lane.pluginDescriptor[at] = descriptor;
+        lane.pluginLegacyDescriptionXml[at] = legacy;
+        lane.pluginStateBase64[at] = pluginState;
+    });
+}
+
 void drainModals (GuiHost& host)
 {
     for (int guard = 0; guard < 32 && ! host.modalStackEmpty(); ++guard) host.closeTopModal();

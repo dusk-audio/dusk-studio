@@ -97,8 +97,9 @@ public:
 
     // Test-only: the dispatch half of runBlock without the join, simulating a
     // dispatcher force-killed mid-block. Signals the first `signalOnlyFirst`
-    // workers (all if negative).
-    void dispatchForTest (int signalOnlyFirst = -1);
+    // workers (all if negative). With `killedInJoin` the dispatcher had reached
+    // the join's blocking wait when it died.
+    void dispatchForTest (int signalOnlyFirst = -1, bool killedInJoin = false);
 
     // Test-only, Linux: the kernel thread id of every worker thread the pool
     // holds, active or parked, in lane order. Empty elsewhere.

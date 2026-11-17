@@ -497,6 +497,7 @@ std::optional<ScenarioResult> startSandboxedRelayout (
     auto state = std::make_shared<SandboxState>();
     const bool oopWasEnabled = manager.isOopEnabled();
     oopstub::useStub (manager, *childBinary, "--ipc-host");
+    keepCarriedInsert (ctx, ctx.session().track (kStripIndex));
     ctx.cleanup ([&ctx, &host, strip, &slot, oopWasEnabled]
     {
         strip->closeEditor();
@@ -655,6 +656,7 @@ std::optional<ScenarioResult> runOopEditorFailureNoStrand (GuiHost& host, Scenar
     // editor RPC cannot read, which is the failure this covers.
     const bool oopWasEnabled = manager.isOopEnabled();
     oopstub::useStub (manager, *childBinary, "--ipc-load-reply-stub");
+    keepCarriedInsert (ctx, ctx.session().track (kStripIndex));
     ctx.cleanup ([&ctx, &slot, oopWasEnabled] { restoreInProcessHosting (ctx, slot, oopWasEnabled); });
 
     slot.loadFromDescriptorAsync (oopstub::stubDescriptor(), [state] (bool ok, auto error)
@@ -811,6 +813,8 @@ std::optional<ScenarioResult> runSlotHealthLabels (GuiHost& host, ScenarioContex
 
     const bool oopWasEnabled = manager.isOopEnabled();
     oopstub::useStub (manager, *childBinary, "--ipc-load-reply-stub");
+    keepCarriedInsert (ctx, ctx.session().track (kStripIndex));
+    keepCarriedInsert (ctx, ctx.session().auxLane (kAuxLane), kAuxSlot);
     ctx.cleanup ([&ctx, &host, &slot, &auxSlot, oopWasEnabled]
     {
         auxSlot.clearAutoBypass();
@@ -908,6 +912,7 @@ std::optional<ScenarioResult> runSunsetReopenKeepsEdit (GuiHost& host, ScenarioC
     ctx.keep (track.mode);
     ctx.keep (track.midiInputIndex);
     ctx.keep (track.midiChannel);
+    keepCarriedInsert (ctx, track);
     const auto mode = strip.insertMode.load();
     const auto stage = engine.getStage();
     ctx.cleanup ([&host, &engine, &strip, mode, stage]
@@ -1007,6 +1012,7 @@ std::optional<ScenarioResult> runBuiltinEditorDismiss (GuiHost& host, ScenarioCo
         || strip.isNativeLv2Loaded() || strip.isNativeVst3Loaded() || strip.isNativeAuLoaded()
         || strip.isNativeMultisampleLoaded() || strip.builtinReloadFailed())
         return ScenarioResult::skip ("requires an empty first insert");
+    keepCarriedInsert (ctx, ctx.session().track (0));
     const auto mode = strip.insertMode.load();
     const auto stage = engine.getStage();
     ctx.cleanup ([&host, &engine, &strip, mode, stage]
@@ -1112,8 +1118,8 @@ std::optional<ScenarioResult> runAuxBuiltinEditorLifetime (GuiHost& host, Scenar
 
     keepStage (host, ctx);
     ctx.keep (strip.insertMode[(std::size_t) kAuxSlot]);
-    auto& laneParams = ctx.session().auxLane (kAuxLane);
-    ctx.cleanup ([&host, &engine, &strip, &laneParams]
+    keepCarriedInsert (ctx, ctx.session().auxLane (kAuxLane), kAuxSlot);
+    ctx.cleanup ([&host, &engine, &strip]
     {
         drainModals (host);
         // Whatever the run left, taken off the slot itself rather than through
@@ -1121,8 +1127,6 @@ std::optional<ScenarioResult> runAuxBuiltinEditorLifetime (GuiHost& host, Scenar
         engine.suspendProcessing();
         strip.unloadBuiltin (kAuxSlot);
         engine.resumeProcessing();
-        laneParams.builtinUnitId[(std::size_t) kAuxSlot].clear();
-        laneParams.builtinStateBase64[(std::size_t) kAuxSlot].clear();
         if (auto* lane = host.auxLane (kAuxLane))
         {
             lane->refreshSlot (kAuxSlot);
@@ -2067,8 +2071,9 @@ std::optional<ScenarioResult> runTunerOverEditors (GuiHost& host, ScenarioContex
     keepStage (host, ctx);
     ctx.keep (session.metronomeEnabled);
     ctx.keep (aux.insertMode[(std::size_t) kAuxSlot]);
-    auto& laneParams = session.auxLane (kAuxLane);
-    ctx.cleanup ([&host, &engine, &session, &strip, &aux, &laneParams,
+    keepCarriedInsert (ctx, session.track (0));
+    keepCarriedInsert (ctx, session.auxLane (kAuxLane), kAuxSlot);
+    ctx.cleanup ([&host, &engine, &session, &strip, &aux,
                   mode = strip.insertMode.load(), markers = session.getMarkers()]
     {
         if (host.tunerOpen()) host.pressPeerKey ("escape");
@@ -2080,8 +2085,6 @@ std::optional<ScenarioResult> runTunerOverEditors (GuiHost& host, ScenarioContex
         aux.unloadBuiltin (kAuxSlot);
         engine.resumeProcessing();
         if (auto* handle = host.strip (0)) handle->refreshInsertButton();
-        laneParams.builtinUnitId[(std::size_t) kAuxSlot].clear();
-        laneParams.builtinStateBase64[(std::size_t) kAuxSlot].clear();
         if (auto* lane = host.auxLane (kAuxLane))
         {
             lane->refreshSlot (kAuxSlot);

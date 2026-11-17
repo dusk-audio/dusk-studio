@@ -80,17 +80,30 @@ std::function<bool()> framesQuiet (GuiHost& host, Panels panels)
 void pushStaysStill (GuiHost& host, ScenarioContext& ctx, std::vector<Step>& steps,
                      const Panels& panels, const std::string& what)
 {
-    auto base = std::make_shared<std::uint64_t> (0);
+    auto base = std::make_shared<std::vector<std::uint64_t>>();
     steps.push_back ({ 0, [] {}, framesQuiet (host, panels),
         what + " never stopped drawing while nothing changed", {}, kDrawBoundMs });
-    steps.push_back ({ 0, [&host, panels, base] { *base = framesOf (host, panels).value_or (0); } });
+    steps.push_back ({ 0, [&host, panels, base]
+    {
+        base->clear();
+        for (const auto& tag : panels)
+            base->push_back (host.panelFrames (tag).value_or (0));
+    } });
     steps.push_back ({ kHoldMs, [&host, &ctx, panels, base, what]
     {
-        const auto frames = framesOf (host, panels);
-        if (! ctx.expect (frames.has_value(), what + " closed while it was watched")) return;
-        const auto drawn = *frames - *base;
+        std::uint64_t drawn = 0;
+        std::string by;
+        for (std::size_t i = 0; i < panels.size(); ++i)
+        {
+            const auto frames = host.panelFrames (panels[i]);
+            if (! ctx.expect (frames.has_value(), what + " closed while it was watched")) return;
+            const auto frameCount = *frames - (*base)[i];
+            if (frameCount == 0) continue;
+            drawn += frameCount;
+            by += (by.empty() ? ": " : ", ") + panels[i] + " " + std::to_string (frameCount);
+        }
         ctx.expect (drawn == 0, what + " drew " + std::to_string (drawn) + " frames in "
-                                    + std::to_string (kHoldMs) + " ms with nothing changing");
+                                    + std::to_string (kHoldMs) + " ms with nothing changing" + by);
     } });
 }
 
@@ -99,12 +112,15 @@ enum class Cause { model, input };
 struct Woken
 {
     std::uint64_t base = 0, seen = 0;
-    Clock::time_point at {}, lastFrame {};
+    Clock::time_point at {}, lastFrame {}, lastPoll {};
 };
 
 // Panels at rest draw again once `change` has run, and the first frame after the
 // rest moves Dear ImGui's clock by a frame, not by the rest. After input they keep
-// drawing for long enough that a hover delay can run out.
+// drawing for long enough that a hover delay can run out. That watch times a frame
+// by the poll that finds it, so a poll more than kPollGapMs after the last one,
+// before the watch has seen enough, makes the input again and watches from there:
+// an input `change` must be one that can be made twice.
 void pushDrawsOn (GuiHost& host, ScenarioContext& ctx, std::vector<Step>& steps,
                   const Panels& panels, const std::string& what, std::function<bool()> change,
                   Cause cause = Cause::model)
@@ -117,7 +133,7 @@ void pushDrawsOn (GuiHost& host, ScenarioContext& ctx, std::vector<Step>& steps,
         woken->base = woken->seen = framesOf (host, panels).value_or (0);
         for (const auto& tag : panels)
             host.panelClockAfterRest (tag);
-        woken->at = woken->lastFrame = Clock::now();
+        woken->at = woken->lastFrame = woken->lastPoll = Clock::now();
         ctx.expect (change(), what + " could not be made");
     } });
     steps.push_back ({ 0, [&host, &ctx, panels, what]
@@ -143,10 +159,21 @@ void pushDrawsOn (GuiHost& host, ScenarioContext& ctx, std::vector<Step>& steps,
         const auto ms = std::chrono::duration_cast<std::chrono::milliseconds> (woken->lastFrame - woken->at).count();
         ctx.expect (ms >= kDrawsOnForMs, what + ": the last frame came " + std::to_string (ms) + " ms after the input, under "
                                              + std::to_string (kDrawsOnForMs) + " ms");
-    }, [&host, panels, woken]
+    }, [&host, &ctx, panels, woken, what, change]
     {
         const auto now = Clock::now();
-        if (const auto frames = framesOf (host, panels); frames && *frames != woken->seen)
+        const auto frames = framesOf (host, panels);
+        const bool stalled = now - woken->lastPoll > std::chrono::milliseconds (kPollGapMs);
+        woken->lastPoll = now;
+        if (stalled && woken->lastFrame - woken->at < std::chrono::milliseconds (kDrawsOnForMs))
+        {
+            ctx.note (what + ": a poll came late, so the input was made again");
+            woken->seen = frames.value_or (woken->seen);
+            woken->at = woken->lastFrame = now;
+            ctx.expect (change(), what + " could not be made again");
+            return false;
+        }
+        if (frames && *frames != woken->seen)
         {
             woken->seen = *frames;
             woken->lastFrame = now;
@@ -376,11 +403,13 @@ std::optional<ScenarioResult> runMiniTimelineOnDemand (GuiHost& host, ScenarioCo
     pushStaysStill (host, ctx, *steps, mini, "the mini timeline after a pointer that held Shift");
     pushDrawsOn (host, ctx, *steps, mini, "a key at it",
                  [&host] { return host.pressMiniKey ("left shift"); }, Cause::input);
-    pushDrawsOn (host, ctx, *steps, mini, "resizing the window", [&host, size]
+    // From the size it finds, so a second resize changes the size again.
+    pushDrawsOn (host, ctx, *steps, mini, "resizing the window", [&host]
     {
-        if (size.size() < 4) return false;
-        const int narrower = size[0] - 60;
-        return host.resizeMainWindow (narrower >= size[2] ? narrower : size[0] + 60, size[1]);
+        const auto current = host.mainWindowSize();
+        if (current.size() < 4) return false;
+        const int narrower = current[0] - 60;
+        return host.resizeMainWindow (narrower >= current[2] ? narrower : current[0] + 60, current[1]);
     }, Cause::input);
     pushStaysStill (host, ctx, *steps, mini, "the mini timeline after the changes");
     pushFloor (host, ctx, *steps, mini, "the idle mini timeline");

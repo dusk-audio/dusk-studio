@@ -720,6 +720,10 @@ public:
     // launch values. What a scenario owns - its regions, its loaded plug-ins -
     // is left alone; launchStateDiff() names those instead.
     virtual void resetForScenario() = 0;
+
+    // What an autosave tick does to the session before it writes, under the
+    // same guard.
+    virtual void publishAsAutosave() = 0;
 };
 
 // Whether every native panel has drawn the pointer, key and text input the host

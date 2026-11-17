@@ -174,6 +174,7 @@ void ScenarioContext::complete (ScenarioResult result)
 {
     if (completed) return;
     completed = true;
+    if (beforeCleanupsFn) beforeCleanupsFn();
     runCleanups();
     if (onCompleteFn) onCompleteFn (std::move (result));
 }
