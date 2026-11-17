@@ -138,9 +138,9 @@ Channels 1-24 ───────────────→ 4 Aux Buses ─�
 
 - **DSP** comes from the Dusk Audio plugin suite (4K EQ 2, Multi-Comp
   FET/Opto/VCA, Multi-Q, Tape Machine 2, shared AnalogEmulation), so the mixer
-  and the standalone plugins share one DSP source of truth. The channel and bus
-  EQs run the 4K EQ 2 engine; the master tape runs Tape Machine 2 with the
-  plugin's own editor.
+  and the standalone plugins share one DSP source of truth. The channel EQ runs
+  the 4K EQ 2 engine; the master tape runs Tape Machine 2 with the plugin's own
+  editor.
 - **Built-in units** are compiled into the application, so they need no scan and
   work on a fresh install: Utility, DuskVerb 2, Tape Echo 2, Tape Machine 2 and
   Sunset. DuskVerb 2, Tape Echo 2, Tape Machine 2 and Sunset show the plugin's
@@ -161,13 +161,14 @@ Channels 1-24 ───────────────→ 4 Aux Buses ─�
   hard fork of sfizz, converting SF2 to SFZ on load. No external synth required.
 - **Removing the framework** is a standing campaign, tracked in
   [docs/dejuce/campaign.md](docs/dejuce/campaign.md) and enforced by a ratchet
-  in CI that lets framework coupling fall but never rise. It resumes after 1.0.
+  in CI that lets framework coupling fall but never rise. Its goal is the whole
+  framework gone by 1.0.
 
 ## Repository
 
 ```
 src/
-  dsp/         # ChannelStrip, AuxBusStrip, MasterBus, BrickwallLimiter
+  dsp/         # ChannelStrip, BusStrip, AuxLaneStrip, MasterBus, BrickwallLimiter
   engine/      # AudioEngine, RecordManager, PlaybackEngine, BounceEngine, MasteringChain
     pipewire/  # native PipeWire backend, preferred on Linux
     alsa/      # native ALSA backend, the Linux fallback

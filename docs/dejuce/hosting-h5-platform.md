@@ -2,21 +2,18 @@
 
 # Hosting tower H5 — native platform ports + AU (executable spec)
 
-Status: **H5a MERGED (PRs #120/#121/#122). H5b MERGED (PR #154). H5c IS OPEN
-AS PR #317 ON `dejuce/hosting-h5c`: WINDOWS CLAP/VST3 CORE, CHILD-HWND
-EDITORS, CMAKE GATES, AND WINDOWS CI ENABLEMENT ARE PUSHED, ALL PR CHECKS ARE
-GREEN, AND A DISPATCHED `windows-build.yml` RUN COMPILED AND PACKAGED THE
-WINDOWS APP INCLUDING BOTH EDITOR UNITS. WINDOWS BENCH SIGN-OFF REMAINS OWED.
-MACOS BENCH SIGN-OFF (H5a) AND STOCK APPLE AU EFFECT + INSTRUMENT BENCH
-SIGN-OFF (H5b) REMAIN OWED.** H4 is merged as PR
+Status: **H5 is complete. H5a merged (PRs #120/#121/#122). H5b merged (PR
+#154, `3e9120be`). H5c merged (PR #317, `bc1fcecb`).** Bench sign-offs
+recorded as owed at merge: macOS CLAP/LV2/VST3 (H5a), stock Apple AU effect
+and instrument (H5b), Windows CLAP/VST3 (H5c). H4 is merged as PR
 #119 at `3c5c901`. The H5
 scout verified the live source/CMake/CI surface from that baseline. Windows
 LV2 is deferred. H5 is three sequential PRs: H5a macOS CLAP/LV2/VST3, H5b
 macOS AU, H5c Windows CLAP/VST3. No H5 branch is pushed without Marc's word.
 
 Parent plan: [hosting-plan.md](hosting-plan.md). Campaign ritual:
-[campaign.md](campaign.md). H1d and H2 remain blocked on donor
-consolidation and are not part of H5.
+[campaign.md](campaign.md). H1d merged in PR #700 (`f78042b7`). H2 remains
+blocked on donor consolidation. Neither is part of H5.
 
 ## Goal
 
@@ -384,7 +381,6 @@ H5 is complete only when:
 
 ## Resume phrase
 
-"Hosting H5c, spec docs/dejuce/hosting-h5-platform.md — PR #317 is open with
-green checks; record the Windows CLAP/VST3 bench sign-off (editor DPI,
-resize/reopen, state, latency, ASIO playback), then get Marc's word to merge
-and start H6."
+H5 is merged; the next hosting phase is H6 in
+[hosting-plan.md](hosting-plan.md). The Windows CLAP/VST3 bench sign-off
+(editor DPI, resize/reopen, state, latency, ASIO playback) was owed at merge.

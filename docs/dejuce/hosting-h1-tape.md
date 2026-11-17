@@ -2,7 +2,7 @@
 
 # Hosting tower H1 — TapeMachine2 swap (executable spec)
 
-Status: **H1a–H1c implemented; H1d implemented on `fix/696-donor-main-pin`**
+Status: **H1a–H1c implemented; H1d merged in PR #700 (`f78042b7`)**
 (the master tape runs the Tape Machine 2 DAF plug-in as a static-target
 built-in, its editor hosted through DafEditorHost; TapePanel deleted). H1a–H1c
 landed on `dejuce/hosting`.

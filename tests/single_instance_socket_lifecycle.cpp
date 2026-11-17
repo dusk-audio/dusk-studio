@@ -69,14 +69,15 @@ public:
             hadPrevious = true;
         }
 
-        // Terse name leaves sockaddr_un headroom even under a long system
-        // temporary root. The production path rejects rather than truncates.
         std::string tmpl = (fs::temp_directory_path() / "dusk-si-XXXXXX").string();
 #if defined (__APPLE__)
         constexpr auto socketSuffix = "/dusk-studio/instance.sock";
 #else
         constexpr auto socketSuffix = "/dusk-studio/instance-0123456789abcdef.sock";
 #endif
+        // This directory holds only sockets and lock files, never test payloads.
+        if (tmpl.size() + std::strlen (socketSuffix) >= sizeof (sockaddr_un::sun_path))
+            tmpl = "/tmp/dusk-si-XXXXXX";
         REQUIRE (tmpl.size() + std::strlen (socketSuffix)
                    < sizeof (sockaddr_un::sun_path));
         REQUIRE (::mkdtemp (&tmpl[0]) != nullptr);

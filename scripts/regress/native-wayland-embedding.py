@@ -140,6 +140,20 @@ def interrupted(signum, frame):
     raise KeyboardInterrupt
 
 
+def runtime_dir():
+    """A private runtime dir short enough for the app's single-instance socket.
+
+    The app binds <runtime>/dusk-studio/instance-<16 hex>.sock, 43 bytes past
+    the directory, and sun_path holds 108 bytes with the NUL, so the directory
+    stays within 64 bytes however long TMPDIR is (as regress_runtime_dir in
+    common.sh does it)."""
+    for base in (os.environ.get("XDG_RUNTIME_DIR", ""), "/tmp"):
+        if (base.startswith("/") and os.path.isdir(base) and os.access(base, os.W_OK)
+                and len(os.fsencode(os.path.join(base, "dusk-rt.XXXXXXXX"))) <= 64):
+            return Path(tempfile.mkdtemp(prefix="dusk-rt.", dir=base))
+    raise OSError("no directory short enough for a runtime dir")
+
+
 def run(binary, with_x11=False):
     binary = str(Path(binary).resolve())
     if not os.access(binary, os.X_OK):
@@ -151,9 +165,10 @@ def run(binary, with_x11=False):
             return 77
 
     work = Path(tempfile.mkdtemp(prefix="duskstudio-gnome-native-embed."))
-    runtime, home, scratch = work / "runtime", work / "home", work / "tmp"
-    for folder in (runtime, home, scratch):
+    home, scratch = work / "home", work / "tmp"
+    for folder in (home, scratch):
         folder.mkdir(mode=0o700)
+    runtime = runtime_dir()
     env = dict(PATH="/usr/local/bin:/usr/bin:/bin", HOME=str(home), USER=os.environ.get("USER", ""),
                LANG="C.UTF-8", TMPDIR=str(scratch), XDG_RUNTIME_DIR=str(runtime),
                XDG_CONFIG_HOME=str(home / ".config"), XDG_DATA_HOME=str(home / ".local/share"),
@@ -181,6 +196,7 @@ def run(binary, with_x11=False):
                 code = 130
     finally:
         cleanup(runtime)
+        shutil.rmtree(runtime, ignore_errors=True)
         signal.signal(signal.SIGTERM, old_term)
 
     probe = (work / "probe.log").read_text(errors="replace") if (work / "probe.log").exists() else ""

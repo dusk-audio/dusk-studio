@@ -42,6 +42,9 @@ PROMPT_FILL = (0x1A, 0x1A, 0x20)
 DONT_SAVE = (23, 58)
 # Seconds an X tool gets to answer.
 TOOL_TIMEOUT = 20
+# What the app prints, whatever the reason, when it runs without the
+# single-instance slot.
+NO_SLOT = " - starting without the single-instance slot"
 
 
 def run_cover():
@@ -344,6 +347,9 @@ class Test:
         return problems
 
     def handover(self, session, problems):
+        unslotted = [l for l in read_lines(self.app.err) if NO_SLOT in l]
+        if unslotted:
+            raise Failure("the running instance has no single-instance slot to hand over to: " + unslotted[0])
         rc = self.app.hand_over(session)
         if rc != 0:
             problems.append("the second launch exited %s" % rc)

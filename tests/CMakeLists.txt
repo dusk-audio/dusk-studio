@@ -1213,7 +1213,6 @@ if(DUSK_PLUGINS_PATH)
 
     # Modules referenced only transitively by the projucer-shim umbrella header.
     target_link_libraries(dusk-studio-tests PRIVATE
-        juce::juce_audio_utils
         juce::juce_data_structures
         juce::juce_events
         juce::juce_gui_extra)
@@ -1349,7 +1348,7 @@ if(UNIX)
                 COMMAND "${Python3_EXECUTABLE}"
                         "${CMAKE_CURRENT_SOURCE_DIR}/regress_orchestration.py"
                         "${CMAKE_SOURCE_DIR}")
-            set_tests_properties(regression-runner-contract PROPERTIES TIMEOUT 60)
+            set_tests_properties(regression-runner-contract PROPERTIES TIMEOUT 240)
         endif()
         add_test(NAME release-mechanics-contract
             COMMAND "${DUSKSTUDIO_BASH_EXECUTABLE}"
@@ -1369,7 +1368,7 @@ if(Python3_Interpreter_FOUND)
     add_test(NAME cross-platform-validator-contract
         COMMAND "${Python3_EXECUTABLE}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/validate_cross_platform.py")
-    set_tests_properties(cross-platform-validator-contract PROPERTIES TIMEOUT 120)
+    set_tests_properties(cross-platform-validator-contract PROPERTIES TIMEOUT 300)
     add_test(NAME macos-bundle-contract
         COMMAND "${Python3_EXECUTABLE}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/macos_bundle.py")

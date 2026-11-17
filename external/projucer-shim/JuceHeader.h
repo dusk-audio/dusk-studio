@@ -12,10 +12,13 @@
 #pragma once
 
 #include <juce_audio_basics/juce_audio_basics.h>
-#include <juce_audio_devices/juce_audio_devices.h>
+// The app links JUCE's device module only off Linux; JUCE's CMake defines this
+// for every module a target links, so the shim stays in step per platform.
+#if JUCE_MODULE_AVAILABLE_juce_audio_devices
+ #include <juce_audio_devices/juce_audio_devices.h>
+#endif
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_audio_processors/juce_audio_processors.h>
-#include <juce_audio_utils/juce_audio_utils.h>
 #include <juce_core/juce_core.h>
 #include <juce_data_structures/juce_data_structures.h>
 #include <juce_dsp/juce_dsp.h>

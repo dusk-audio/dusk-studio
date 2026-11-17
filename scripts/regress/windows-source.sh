@@ -21,14 +21,23 @@ DEFAULT_ROOT='C:\Users\marc\dusk-audit-win'
 WIN_HOST="${DUSK_REGRESS_WIN_HOST:-marc@192.168.122.85}"
 WIN_KEY="${DUSK_REGRESS_WIN_KEY:-${HOME}/.ssh/dusk_winvm}"
 WIN_ROOT="${DUSK_REGRESS_WIN_ROOT:-${DEFAULT_ROOT}}"
+FREE_COLD_GB="${DUSK_REGRESS_WIN_FREE_COLD_GB:-$(regress_floor_cold "$REGRESS_WIN_TREE_GB")}"
+FREE_WARM_GB="${DUSK_REGRESS_WIN_FREE_WARM_GB:-$(regress_floor_warm "$REGRESS_WIN_RUN_GB")}"
+# How far the guest's clock may be from this box's, in seconds. A guest whose
+# real-time clock keeps the host's local time under another time zone is off by
+# whole hours; drift between two time syncs is seconds, and the ssh round trip
+# is measured around the reading, not counted against it.
+CLOCK_MARGIN=60
 SSH_OPTS=(-i "$WIN_KEY" -o BatchMode=yes -o ConnectTimeout=15
     -o ServerAliveInterval=30 -o ServerAliveCountMax=4)
 
 [[ $# -eq 0 ]] || regress_die "unknown option '$1' for the windows-source target"
-# The root is spliced into PowerShell and cmd command lines unquoted.
-[[ "$WIN_ROOT" =~ ^[A-Za-z]:(\\[A-Za-z0-9._-]+)+$ ]] \
-    || regress_die "DUSK_REGRESS_WIN_ROOT must be an absolute Windows path of plain names: '$WIN_ROOT'"
-regress_require ssh scp git timeout iconv base64
+regress_win_root_ok "$WIN_ROOT" \
+    || regress_die "DUSK_REGRESS_WIN_ROOT must be an absolute Windows path of plain names, none only dots: '$WIN_ROOT'"
+[[ "$FREE_COLD_GB" =~ ^[0-9]+$ && "$FREE_WARM_GB" =~ ^[0-9]+$ ]] \
+    || regress_die "DUSK_REGRESS_WIN_FREE_COLD_GB and DUSK_REGRESS_WIN_FREE_WARM_GB are whole numbers of GB"
+regress_require ssh scp git timeout iconv base64 flock
+regress_host_lock windows shared || regress_die "could not take the windows host lock"
 cd "$REPO_ROOT"
 
 HEAD_SHA="$(git rev-parse HEAD)"
@@ -46,20 +55,15 @@ remote_cmd() {
     printf '; exit $LASTEXITCODE'
 }
 
-# preflight.ps1 and cancel.ps1 travel inline, so neither depends on the copy
-# of the scripts in the guest. Progress records would come back over the
-# redirected stream as CLIXML.
 remote_ps() {
-    local encoded
-    encoded="$({ printf "\$ProgressPreference = 'SilentlyContinue'\r\n\$root = '%s'\r\n" "$WIN_ROOT"; cat "$1"; } \
-        | iconv -f UTF-8 -t UTF-16LE | base64 -w0)"
-    printf 'powershell -NoProfile -NonInteractive -EncodedCommand %s; exit $LASTEXITCODE' "$encoded"
+    regress_win_ps "$WIN_ROOT" "$@"
 }
 
 win_cancel() {
     printf '\n--- stopping the run in %s ---\n' "$WIN_HOST"
-    if timeout --foreground 120 ssh "${SSH_OPTS[@]}" "$WIN_HOST" \
-        "$(remote_ps "${SOURCE_DIR}/cancel.ps1")" </dev/null; then
+    local command
+    if command="$(remote_ps "${SOURCE_DIR}/cancel.ps1")" \
+        && timeout --foreground 120 ssh "${SSH_OPTS[@]}" "$WIN_HOST" "$command" </dev/null; then
         return 0
     fi
     echo "error: could not confirm that the run in ${WIN_HOST}:${WIN_ROOT} stopped;" \
@@ -101,10 +105,45 @@ last_leg() {
     printf '%s' "${REGRESS_LEG_STATUS[${#REGRESS_LEG_STATUS[@]} - 1]}"
 }
 
+# A guest clock that is off by hours stamps the build later than the sources
+# checked out once it has synced and stepped back, and ninja then builds nothing.
+check_guest_clock() {
+    local before after guest log="${RUN_DIR}/clock.log" off
+    before="$(date +%s%3N)"
+    win_run 120 "$(remote_ps "${SOURCE_DIR}/clock.ps1")" >"$log" 2>&1 || { cat "$log"; return 1; }
+    after="$(date +%s%3N)"
+    guest="$(tr -d '\r' <"$log" | sed -n 's/^regress:utc \([0-9]*\)$/\1/p' | tail -1)"
+    if [[ -z "$guest" ]]; then
+        cat "$log"
+        echo "error: the guest did not report its clock" >&2
+        return 1
+    fi
+    off=0
+    ((guest >= before - CLOCK_MARGIN * 1000)) || off=$((guest - before))
+    ((guest <= after + CLOCK_MARGIN * 1000)) || off=$((guest - after))
+    local guest_text host_text
+    guest_text="$(date -u -d "@$((guest / 1000))" '+%F %T UTC')"
+    host_text="$(date -u -d "@$((after / 1000))" '+%F %T UTC')"
+    if ((off != 0)); then
+        local apart
+        apart="$(awk -v ms="$((guest - (before + after) / 2))" 'BEGIN {
+            s = ms / 1000; way = s < 0 ? "behind" : "ahead"; if (s < 0) s = -s
+            m = int(s / 60 + 0.5); printf "%.0f s (%d h %02d min) %s", s, int(m / 60), m % 60, way }')"
+        echo "error: the guest's clock reads ${guest_text} and this box's ${host_text}: the guest is ${apart}, more than the ${CLOCK_MARGIN} s allowed." \
+            "A guest whose real-time clock keeps local time under another time zone runs that far off from boot until its first time sync." \
+            "Wait for that sync, or set the guest's time zone to the host's; the runner does not change the guest's settings." >&2
+        return 1
+    fi
+    echo "guest clock ${guest_text}, this box ${host_text}: within ${CLOCK_MARGIN} s"
+}
+
 # The guest reads the cmd scripts with CRLF line ends whatever this checkout
 # has them as.
 leg_preflight() {
-    win_run 180 "$(remote_ps "${SOURCE_DIR}/preflight.ps1")" || return 1
+    check_guest_clock || return 1
+    local command
+    command="$(remote_ps "${SOURCE_DIR}/preflight.ps1" coldGb="$FREE_COLD_GB" warmGb="$FREE_WARM_GB")" || return 1
+    win_run 600 "$command" || return 1
     mkdir "${RUN_DIR}/stage"
     local file
     for file in "$SOURCE_DIR"/*.cmd "$SOURCE_DIR"/*.ps1; do
@@ -130,13 +169,18 @@ leg_update() {
 }
 
 # A failed build ends with its compile and link errors gathered from the
-# ninja output, which -k 0 lets run past the first one.
+# ninja output, which -k 0 lets run past the first one. A build that did no
+# work is checked in the same call against the commit the tree last built
+# (built-check.ps1): exit 87 is a stale build, and a warn: line a doubt.
 build_leg() {
     printf '\n--- build ---\n'
     local start=$SECONDS log="${RUN_DIR}/build.log" rc=0 note=""
-    win_run 7200 "$(remote_cmd build.cmd)" >"$log" 2>&1 || rc=$?
+    win_run 7200 "$(remote_cmd build.cmd "$HEAD_SHA")" >"$log" 2>&1 || rc=$?
     cat "$log"
-    if ((rc != 0)); then
+    if ((rc == 87)); then
+        note="$(tr -d '\r' <"$log" | grep -m1 '^error: ' || true)"
+        regress_record build FAIL "$((SECONDS - start))" "${note:-a stale build}"
+    elif ((rc != 0)); then
         local pattern='error C[0-9]+|error LNK[0-9]+|fatal error' errors count first
         errors="$(grep -E "${pattern}|^FAILED: " "$log" | tr -d '\r' || true)"
         note="exit $rc"
@@ -148,12 +192,68 @@ build_leg() {
         fi
         regress_record build FAIL "$((SECONDS - start))" "$note"
     else
-        regress_record build PASS "$((SECONDS - start))"
+        note="$(tr -d '\r' <"$log" | grep -m1 '^warn: ' || true)"
+        if [[ -n "$note" ]]; then
+            regress_record build WARN "$((SECONDS - start))" "$note"
+        else
+            regress_record build PASS "$((SECONDS - start))"
+        fi
     fi
 }
 
 leg_mesa() {
     win_run 600 "$(remote_cmd mesa.cmd)"
+}
+
+# CI's "Check regression profile snapshots" step, taken from the workflow at
+# this commit and run in the guest's checkout the way the step runs it: Windows
+# PowerShell, $ErrorActionPreference Stop, and the step's exit code. Its TEMP is
+# the tree's tmp\ rather than the shared account's. A step that is missing or
+# no longer a powershell one fails rather than checking nothing. It runs from
+# a file in <tree>\regress\, so its command line names the tree for the cancel
+# and the next preflight's busy check, and with nothing of inline-lib.ps1 in
+# scope, as in CI. The guest's execution policy is Restricted, where CI's
+# runners let a .ps1 run, so this process alone bypasses it; and an error goes
+# out as text, since one left to the redirected error stream comes back
+# serialised as CLIXML.
+leg_snapshot() {
+    local workflow="${REPO_ROOT}/.github/workflows/windows-tests.yml" step="${RUN_DIR}/snapshot"
+    mkdir -p "$step"
+    awk '
+        /^[[:space:]]*- name: Check regression profile snapshots[[:space:]]*$/ { found = 1; next }
+        found && !body && /^[[:space:]]*- name:/ { exit }
+        found && !body && /^[[:space:]]*shell:[[:space:]]*powershell[[:space:]]*$/ { shell = 1; next }
+        found && !body && /^[[:space:]]*run:[[:space:]]*\|[[:space:]]*$/ { body = 1; match($0, /^[[:space:]]*/); indent = RLENGTH; next }
+        body && /^[[:space:]]*$/ { print ""; next }
+        body { match($0, /^[[:space:]]*/); if (RLENGTH <= indent) exit; print substr($0, indent + 3) }
+        END { if (!shell) exit 1 }
+    ' "$workflow" >"${step}/block.ps1" || {
+        echo "error: no powershell step 'Check regression profile snapshots' in $workflow" >&2
+        return 1
+    }
+    grep -q 'windows_regress_snapshot\.ps1' "${step}/block.ps1" || {
+        echo "error: the 'Check regression profile snapshots' step in $workflow no longer runs tests\\windows_regress_snapshot.ps1" >&2
+        return 1
+    }
+    sed 's/^/  | /' "${step}/block.ps1"
+    {
+        printf '%s\n' "\$ErrorActionPreference = 'Stop'" \
+            "\$root = '${WIN_ROOT}'" \
+            "\$tmp = Join-Path \$root 'tmp'" \
+            "New-Item -ItemType Directory -Force -Path \$tmp | Out-Null" \
+            "\$env:TEMP = \$tmp" "\$env:TMP = \$tmp" \
+            "Set-Location -LiteralPath (Join-Path \$root 'src')" \
+            "try {"
+        cat "${step}/block.ps1"
+        printf '%s\n' "} catch {" \
+            "  'error: ' + \$_.Exception.Message" \
+            "  \$_.InvocationInfo.PositionMessage" \
+            "  exit 1" \
+            "}" \
+            "if (Test-Path -LiteralPath variable:\\LASTEXITCODE) { exit \$LASTEXITCODE }" "exit 0"
+    } | sed 's/\r$//; s/$/\r/' >"${step}/snapshot.ps1"
+    timeout 300 scp "${SSH_OPTS[@]}" -q "${step}/snapshot.ps1" "${WIN_HOST}:${SCRIPTS//\\//}/snapshot.ps1" || return 1
+    win_run 600 "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ${SCRIPTS}\\snapshot.ps1; exit \$LASTEXITCODE"
 }
 
 # The names CI insists on come from the workflow at this commit, so the two
@@ -209,25 +309,66 @@ echo "started $(date '+%F %T')"
 echo "guest   ${WIN_HOST}:${WIN_ROOT}"
 echo "commit  $(git rev-parse --short HEAD) on merge base $(git rev-parse --short "$BASE_SHA")"
 
-regress_leg "vm-preflight" leg_preflight
-if [[ "$(last_leg)" != PASS ]]; then
+# A warn: line, such as the build folder removed for its future stamps, makes
+# the row a WARN; the run goes on.
+preflight_leg() {
+    printf '\n--- vm-preflight ---\n'
+    local start=$SECONDS log="${RUN_DIR}/preflight.log" rc=0 note
+    leg_preflight >"$log" 2>&1 || rc=$?
+    tr -d '\r' <"$log"
+    if ((rc != 0)); then
+        note="$(tr -d '\r' <"$log" | grep -m1 '^error: ' || true)"
+        regress_record vm-preflight FAIL "$((SECONDS - start))" "${note:-exit ${rc}}"
+    else
+        note="$(tr -d '\r' <"$log" | grep -m1 '^warn: ' || true)"
+        if [[ -n "$note" ]]; then
+            regress_record vm-preflight WARN "$((SECONDS - start))" "$note"
+        else
+            regress_record vm-preflight PASS "$((SECONDS - start))"
+        fi
+    fi
+}
+preflight_leg
+if [[ "$(last_leg)" == FAIL ]]; then
     regress_summary "regress windows-source" || true
     exit 1
 fi
 
 regress_leg "update" leg_update
 if [[ "$(last_leg)" == PASS ]]; then
+    regress_leg "snapshot-check" leg_snapshot
     build_leg
-    if [[ "$(last_leg)" == PASS ]]; then
+    if [[ "$(last_leg)" != FAIL ]]; then
         regress_leg "mesa" leg_mesa
         regress_leg "ctest-inventory" leg_ctest_inventory
         ctest_leg
     else
-        for leg in mesa ctest-inventory ctest; do regress_skip "$leg" "the build failed"; done
+        for leg in mesa ctest-inventory ctest; do regress_skip "$leg" "the build failed, or is not this commit's"; done
     fi
 else
-    for leg in build mesa ctest-inventory ctest; do regress_skip "$leg" "the update failed"; done
+    for leg in snapshot-check build mesa ctest-inventory ctest; do regress_skip "$leg" "the update failed"; done
 fi
+
+# The bundle and tmp go whatever the run's verdict; the warm tree stays, and
+# its size and the drive's free space end the table.
+tidy_leg() {
+    printf '\n--- footprint ---\n'
+    local start=$SECONDS log="${RUN_DIR}/tidy.log" out rc=0 tree="" free="" drive="" parts
+    win_run 900 "$(remote_ps "${SOURCE_DIR}/tidy.ps1")" >"$log" 2>&1 || rc=$?
+    out="$(tr -d '\r' <"$log")"
+    [[ -z "$out" ]] || grep -v '^regress:' <<<"$out" || true
+    read -r tree free drive < <(sed -n 's/^regress:footprint //p' <<<"$out" | tail -1) || true
+    parts="$(sed -n 's/^regress:part \([^ ]*\) \([0-9]*\)$/\1 \2/p' <<<"$out" | sort -k2,2nr \
+        | while read -r name bytes; do printf '%s %s; ' "$name" "$(regress_gb "$bytes")"; done)"
+    [[ -z "$parts" ]] || printf 'tree parts: %s\n' "${parts%; }"
+    if ((rc != 0)) || [[ -z "$tree" ]]; then
+        regress_record footprint FAIL "$((SECONDS - start))" "exit ${rc}: the bundle and tmp may still be in ${WIN_ROOT}"
+    else
+        regress_record footprint PASS "$((SECONDS - start))" \
+            "warm tree ${WIN_ROOT} $(regress_gb "$tree"), ${drive} $(regress_gb "$free") free"
+    fi
+}
+tidy_leg
 
 echo "finished $(date '+%F %T')"
 regress_summary "regress windows-source"

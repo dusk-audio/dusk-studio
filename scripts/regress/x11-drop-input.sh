@@ -17,9 +17,11 @@ set -uo pipefail
 APP="${1:?usage: x11-drop-input.sh <DuskStudio binary>}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP="$(cd "$(dirname "$APP")" && pwd)/$(basename "$APP")"
+# shellcheck source=scripts/regress/common.sh
+source "$HERE/common.sh"
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/duskstudio-x11-drop.XXXXXX")" || exit 1
-RT="$WORK/rt"
+RT=""
 HOME_DIR="$WORK/home"
 started_audio=0
 xvfb_pid=""
@@ -36,14 +38,15 @@ cleanup() {
     fi
     if ((started_audio)); then null_audio_stop; fi
     if [[ "${DUSK_REGRESS_SCENARIO_KEEP:-0}" == 1 ]]; then
-        echo "kept ${WORK}"
+        echo "kept ${WORK} (runtime dir ${RT})"
     else
-        rm -rf "$WORK"
+        rm -rf "$WORK" ${RT:+"$RT"}
     fi
 }
 trap cleanup EXIT
 
-mkdir -m 700 "$RT" && mkdir -p "$HOME_DIR/.config" "$HOME_DIR/.local/share" "$HOME_DIR/.local/state" \
+RT="$(regress_runtime_dir)" || exit 1
+mkdir -p "$HOME_DIR/.config" "$HOME_DIR/.local/share" "$HOME_DIR/.local/state" \
     "$HOME_DIR/.cache" "$WORK/files" "$WORK/app" || exit 1
 
 if ! gcc -O1 -o "$WORK/x11_drop_input" "$HERE/x11_drop_input.c" -lX11 -lXi -lXtst 2>"$WORK/gcc.log"; then

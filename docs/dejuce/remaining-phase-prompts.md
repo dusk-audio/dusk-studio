@@ -2,13 +2,21 @@
 
 # De-JUCE campaign — handoff prompts for remaining phases
 
+> **Historical snapshot (2026-07-30).** The state below and the prompts for
+> H5b, H5c and H1d are out of date: H5b (PR #154), H5c (PR #317) and H1d
+> (PR #700) have merged, `juce_audio_utils` is unlinked, and the gate
+> allowlist holds 155 files. Current state lives in [campaign.md](campaign.md),
+> the tower specs' status lines and `git log`. The GUI spike and spec have
+> also happened: the GUI tower spec is [gui-plan.md](gui-plan.md). The H2 and
+> H6 prompts are still the starting point for those phases once their
+> preconditions are rechecked.
+
 One prompt per remaining phase, each written for a fresh context window
 (Opus execution sessions per [campaign.md](campaign.md)
 §Model/token policy; prompt 10 is a Fable spec session). Snapshot date:
-2026-07-30. If phase statuses have moved since, trust the tower specs'
-status lines and `git log` over this file.
+2026-07-30.
 
-## State at time of writing
+## State at time of writing (2026-07-30)
 
 - Merged on `main`: hosting H1a–c (PR #114), H3 (PR #118), H4 (PR #119),
   and ALL of H5a — PR #120 (H5a.0–.2), PR #121 (H5a.3), PR #122 (H5a.4–.6,
@@ -254,9 +262,8 @@ shrinks to the native scan sandbox — shm/futex layer is already
 tri-platform), JUCE_PLUGINHOST_* defines, and every JUCE-host fallback rung in
 the slot ladders (ladder becomes CLAP > LV2 > VST3 > MS [> AU on mac]).
 Unlink juce_audio_processors from CMake on ALL THREE platforms. Recount the
-current links before recording module totals: AudioThumbnail consumers have
-already migrated, while juce_audio_utils and juce_audio_formats still need a
-separate transitive-include and cross-platform unlink audit. Retire
+current links before recording module totals: juce_audio_utils is already
+unlinked, and juce_audio_formats stays while juce_dsp depends on it. Retire
 tools/tsan_suppressions.txt entries tied to deleted primitives in the SAME PR.
 Update tools/juce-allowlist.txt — expect a large ratchet drop; record
 before/after. Sweep per CLAUDE.md rule 10: grep for every deleted symbol
@@ -268,7 +275,7 @@ through the H4 migration onto native rungs or surface a clear offline row —
 test with a real 0.12 session. Rules: commit locally, never push without
 Marc's word; no attribution trailers. Verify: full Linux bar, macOS +
 Windows CI after authorised push, real-plugin restore matrix on Marc's bench
-(record as debt). Update campaign doc: hosting tower DONE, module count 11,
+(record as debt). Update campaign doc: hosting tower DONE, module count 10,
 GUI tower is next. End with the campaign resume state written down.
 ```
 
@@ -305,7 +312,7 @@ findings in the ledger and a docs/ spike note.
 You are writing the executable spec for the FINAL tower of the Dusk Studio
 de-JUCE campaign: the GUI tower. This is a Fable-tier planning session per
 docs/dejuce/campaign.md §Model/token policy (spec-writing, not execution).
-Preconditions: hosting tower complete (H6 merged, module count 11), GUI spike
+Preconditions: hosting tower complete (H6 merged, module count 10), GUI spike
 returned GO with a findings report — read both, plus docs/dejuce/campaign.md
 §Remaining towers item 2 (the locked framework decision and its owned
 consequences) and the docs/DuskStudio.md spec sections covering the UI.
@@ -320,12 +327,11 @@ sites already converged by PR #112); per-view immediate-mode rewrites of ~120
 files behind the existing DuskComboBox / DuskContextMenu / LookAndFeel /
 EmbeddedModal seams; an ImGui theme replicating the current LookAndFeel
 (screenshot-parity bar); a deliberate accessibility bridge (current JUCE a11y
-handlers must not silently regress — inventory them first); AudioThumbnail
-replacement (unlinks juce_audio_utils + juce_audio_formats); re-hosting the
+handlers must not silently regress — inventory them first); re-hosting the
 H1d TM2 ImGui content onto the in-process Wayland/EGL surface; XWayland
 retained ONLY for third-party plugin editors; macOS/Windows window backends
 (pugl already ships those) so the tower stays tri-platform; and the module
-unlink order for the remaining 11, juce_core last, with the String/File/
+unlink order for the remaining 10, juce_core last, with the String/File/
 Colour/UndoableAction/Logger remnants (see the dissolved string-floor tower
 note) dying with their anchor files. Multi-release: slice phases so the app
 ships between them. Scout with Explore agents before writing; do not edit

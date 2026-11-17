@@ -12,7 +12,8 @@
 # DUSK_REGRESS_UAC_ACCEPT=0 leaves it for a person at the VM console.
 # --installed X.Y.Z runs only the window-activation phase, and the isolation
 # audit after it, against the package already installed in the guest; it
-# installs nothing and removes its run folder from the guest when it is done.
+# installs nothing. Every run that reached the guest ends with run-cleanup,
+# which removes its run folder there; the installed package is what stays.
 # See docs/MAINTAINER-GUIDE.md, "Regression run across platforms".
 
 set -euo pipefail
@@ -35,6 +36,7 @@ COLLECTOR_PORT=9000
 REPO_SLUG="dusk-audio/dusk-studio"
 ENGINE_TIMEOUT=900
 GUI_TIMEOUT=1800
+FREE_GB="${DUSK_REGRESS_WIN_FREE_PACKAGE_GB:-$(regress_floor_warm "$REGRESS_WIN_PACKAGE_GB")}"
 
 MSI_PATH=""
 RELEASE_RUN=""
@@ -103,7 +105,9 @@ if [[ -n "$FIXTURES_DIR" ]]; then
     [[ -d "$FIXTURES_DIR" ]] || regress_die "no such fixture directory: $FIXTURES_DIR"
 fi
 [[ "$UAC_WAIT" =~ ^[0-9]+$ ]] || regress_die "DUSK_REGRESS_UAC_WAIT must be a number of seconds"
-regress_require virsh python3 7z zip ss sha256sum
+[[ "$FREE_GB" =~ ^[0-9]+$ ]] || regress_die "DUSK_REGRESS_WIN_FREE_PACKAGE_GB is a whole number of GB"
+regress_require virsh python3 7z zip ss sha256sum flock
+regress_host_lock windows shared || regress_die "could not take the windows host lock"
 if [[ -n "$RELEASE_RUN" || -n "$FIXTURES_RUN" ]]; then
     regress_require gh
 fi
@@ -130,9 +134,11 @@ PHASE_WARN=""
 stop_servers() {
     if [[ -n "$HTTP_PID" ]]; then
         kill "$HTTP_PID" 2>/dev/null || true
+        wait "$HTTP_PID" 2>/dev/null || true
     fi
     if [[ -n "$COLLECTOR_PID" ]]; then
         kill "$COLLECTOR_PID" 2>/dev/null || true
+        wait "$COLLECTOR_PID" 2>/dev/null || true
     fi
     # Bracketed first character so the pattern cannot match this pkill's own
     # command line and take the calling shell down with it.
@@ -261,7 +267,8 @@ serve_script() {
     )
     local pair
     for pair in "$@"; do subst+=(-e "s|@@${pair%%=*}@@|${pair#*=}|g"); done
-    cat "${WIN_DIR}/lib.ps1" "${WIN_DIR}/${source}" | sed "${subst[@]}" >"${SERVE_DIR}/${served}"
+    cat "${WIN_DIR}/source/inline-lib.ps1" "${WIN_DIR}/lib.ps1" "${WIN_DIR}/${source}" \
+        | sed "${subst[@]}" >"${SERVE_DIR}/${served}"
     if grep -q '@@[A-Z]*@@' "${SERVE_DIR}/${served}"; then
         echo "error: ${served} still has placeholders: $(grep -o '@@[A-Z]*@@' "${SERVE_DIR}/${served}" | sort -u | tr '\n' ' ')" >&2
         return 1
@@ -269,7 +276,7 @@ serve_script() {
 }
 
 install_scripts() {
-    serve_script probe.ps1 p0.ps1 &&
+    serve_script probe.ps1 p0.ps1 FREEGB="$FREE_GB" &&
         serve_script install.ps1 pi.ps1 &&
         serve_script phase1-selftest.ps1 p1.ps1 &&
         serve_script phase2-handoff.ps1 p2.ps1 &&
@@ -288,11 +295,12 @@ install_scripts() {
 leg_servers() {
     stop_servers
     install_scripts || return 1
+    # Without the host lock: a server outliving the run would keep it held.
     python3 -m http.server "$HTTP_PORT" --bind "$HOST_IP" --directory "$SERVE_DIR" \
-        >"${RUN_DIR}/http.log" 2>&1 &
+        >"${RUN_DIR}/http.log" 2>&1 {REGRESS_HOST_LOCK_FD}>&- &
     HTTP_PID=$!
     python3 "${WIN_DIR}/collector.py" --bind "$HOST_IP" --port "$COLLECTOR_PORT" \
-        --save-dir "$POST_DIR" "$REPORT" >"${RUN_DIR}/collector.log" 2>&1 &
+        --save-dir "$POST_DIR" "$REPORT" >"${RUN_DIR}/collector.log" 2>&1 {REGRESS_HOST_LOCK_FD}>&- &
     COLLECTOR_PID=$!
     local waited=0
     while ((waited < 20)); do
@@ -474,14 +482,21 @@ run_guest_phase() {
     [[ "$result" == PASS ]]
 }
 
+# What the run leaves in the guest, which the trailer names: REGRESS-LEFT lines
+# from any phase, and the installed package.
+LEFT_IN_GUEST=()
+
 # guest_leg <leg> <served script> <deadline>: one guest phase as one row. A
 # failed phase carries its first error line, and one that passes with
 # REGRESS-WARN lines is a WARN carrying them.
 guest_leg() {
     local name="$1" script="$2" deadline="$3"
     printf '\n--- %s ---\n' "$name"
-    local start=$SECONDS rc=0 status=PASS note why
+    local start=$SECONDS rc=0 status=PASS note why left
     run_guest_phase "$name" "$script" "$deadline" || rc=$?
+    while IFS= read -r left; do
+        [[ -z "$left" ]] || LEFT_IN_GUEST+=("$left")
+    done < <(sed -n 's/^REGRESS-LEFT //p' <<<"$PHASE_BODY" | tr -d '\r')
     note="$PHASE_NOTE"
     if ((rc != 0)); then
         status=FAIL
@@ -556,10 +571,23 @@ skip_rest() {
 }
 
 trailer() {
+    local i
     echo
     echo "report:      ${REPORT}"
-    echo "suite logs:  ${POST_DIR}/"
+    echo "suite logs:  ${POST_DIR}/ (the guest's logs and crash reports as guest-*)"
     echo "screenshots: ${RUN_DIR}/*.png"
+    for i in "${!REGRESS_LEG_NAME[@]}"; do
+        if [[ "${REGRESS_LEG_NAME[$i]}" == run-cleanup && "${REGRESS_LEG_STATUS[$i]}" == FAIL \
+            && "${LEFT_IN_GUEST[*]-}" != *"${GUEST_ROOT}"* ]]; then
+            LEFT_IN_GUEST+=("the run folder %LOCALAPPDATA%\\${GUEST_ROOT}, if run-cleanup did not get as far as removing it; scripts/regress.sh clean windows removes it")
+        fi
+    done
+    if ((${#LEFT_IN_GUEST[@]} == 0)); then
+        echo "left in the guest: nothing"
+    else
+        echo "left in the guest:"
+        printf '  %s\n' "${LEFT_IN_GUEST[@]}"
+    fi
 }
 
 if [[ -n "$INSTALLED_VERSION" ]]; then
@@ -582,7 +610,7 @@ if [[ -n "$INSTALLED_VERSION" ]]; then
         else
             skip_rest "the installed package is not ${PACKAGE_VERSION}" phase4-window-activation isolation-audit
         fi
-        guest_leg "run-cleanup" px.ps1 240
+        guest_leg "run-cleanup" px.ps1 600
     else
         skip_rest "the guest channel is not up" installed-check phase4-window-activation isolation-audit run-cleanup
     fi
@@ -650,6 +678,12 @@ if [[ "$INSTALL_MODE" == extract ]]; then
     regress_skip "package-uninstall" "nothing installed (--extract-only)"
 else
     regress_skip "package-uninstall" "left installed: uninstalling needs another UAC prompt"
+    ((!installed)) || LEFT_IN_GUEST+=("Dusk Studio ${PACKAGE_VERSION}, installed under Program Files: uninstalling it needs a UAC prompt, so it stays on purpose")
+fi
+if ((channel_ok)); then
+    guest_leg "run-cleanup" px.ps1 600
+else
+    regress_skip "run-cleanup" "the guest channel is not up"
 fi
 
 trailer

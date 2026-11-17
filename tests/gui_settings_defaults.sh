@@ -2,11 +2,12 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$repo_root/scripts/regress/common.sh"
 source "$repo_root/scripts/regress/xvfb.sh"
 source "$repo_root/scripts/regress/scenarios.sh"
 app="${1:-$repo_root/build/DuskStudio_artefacts/Release/DuskStudio}"
 scratch="$(mktemp -d "${TMPDIR:-/tmp}/dusk-settings-defaults.XXXXXX")"
-trap 'xvfb_session_stop; rm -rf "$scratch"' EXIT
+trap 'xvfb_session_stop; sandbox_remove "$scratch"' EXIT
 
 for enabled in 0 1; do
     for attempt in 1 2 3; do
