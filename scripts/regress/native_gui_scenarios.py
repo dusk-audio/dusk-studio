@@ -17,7 +17,9 @@ def drive(binary, work):
              "gui.idle_mini_timeline_draws_on_demand",
              "gui.idle_mastering_panels_draw_on_demand",
              "gui.idle_virtual_keyboard_draws_on_demand",
-             "gui.idle_piano_roll_draws_on_demand"]
+             "gui.idle_piano_roll_draws_on_demand",
+             "gui.idle_window_paints_nothing",
+             "gui.tape_playhead_vblank_only_while_moving"]
     cache = Path(binary).resolve().parents[2] / "CMakeCache.txt"
     if os.environ.get("DISPLAY") and "DUSKSTUDIO_NATIVE_LV2:BOOL=ON" in cache.read_text():
         cases.append("gui.lv2_editor_reflects_state")
