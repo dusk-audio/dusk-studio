@@ -31,6 +31,7 @@
 #include "GuiHost.h"
 #include "MasterStripComponent.h"
 #include "MasteringView.h"
+#include "RepaintGate.h"
 #include "PlatformWindowing.h"
 #include "NativeEditorEmbedScale.h"
 #include "SystemStatusBar.h"
@@ -508,6 +509,19 @@ struct MainComponent::ScenarioAuxLaneHandle final : scenario::AuxLaneHandle
     {
         auto* component = laneComponent();
         return component != nullptr ? component->sourceRowsForScenario() : std::vector<std::string>();
+    }
+
+    std::vector<std::string> drawnSourceRows() override
+    {
+        auto* component = laneComponent();
+        return component != nullptr ? component->drawnSourceRowsForScenario() : std::vector<std::string>();
+    }
+
+    std::array<int, 2> metersDrawSample (int track, float db) override
+    {
+        auto* component = laneComponent();
+        return component != nullptr ? component->metersDrawSampleForScenario (track, db)
+                                    : std::array<int, 2> { -1, -1 };
     }
 
     AuxLaneComponent* laneComponent() const
@@ -1102,6 +1116,43 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     {
         return owner.miniTimeline != nullptr && owner.miniTimeline->pressKeyForScenario (description);
     }
+    void panelFramesOnDemand (bool onDemand, bool floor) override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        imgui::DuskPanelWindow::framesOnDemandForScenario (onDemand, floor);
+       #else
+        (void) onDemand; (void) floor;
+       #endif
+    }
+    std::optional<std::uint64_t> panelFrames (const std::string& logTag) const override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        if (const auto* window = imgui::DuskPanelWindow::openForScenario (logTag))
+            return window->completedFramesForScenario();
+       #else
+        (void) logTag;
+       #endif
+        return std::nullopt;
+    }
+    std::optional<float> panelClockAfterRest (const std::string& logTag) override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        if (auto* window = imgui::DuskPanelWindow::openForScenario (logTag))
+            return window->takeClockAfterRestForScenario();
+       #else
+        (void) logTag;
+       #endif
+        return std::nullopt;
+    }
+    bool panelInput (const std::string& logTag, const std::string& input) override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        auto* window = imgui::DuskPanelWindow::openForScenario (logTag);
+        return window != nullptr && window->inputForScenario (input);
+       #else
+        (void) logTag; (void) input; return false;
+       #endif
+    }
     void refreshMasteringSource() override
     {
         if (owner.masteringView != nullptr) owner.masteringView->followSource();
@@ -1453,6 +1504,11 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         return owner.systemStatusBar != nullptr ? owner.systemStatusBar->dspPaintForScenario() : 0;
     }
 
+    bool dspReadoutFits() const override
+    {
+        return owner.systemStatusBar != nullptr && owner.systemStatusBar->dspReadoutFitsForScenario();
+    }
+
     int consolePageCount() const override { return owner.consoleView->numBanks(); }
     bool consolePageMatches (int index) const override
     {
@@ -1499,6 +1555,13 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     {
         auto* strip = owner.consoleView != nullptr ? owner.consoleView->getStripComponent (track) : nullptr;
         return strip != nullptr ? strip->auxSendLabelForScenario (send) : std::string {};
+    }
+
+    std::optional<std::string> stripFilterText (int track, bool highPass) override
+    {
+        auto* strip = owner.consoleView != nullptr ? owner.consoleView->getStripComponent (track) : nullptr;
+        if (strip == nullptr || ! strip->isShowing()) return std::nullopt;
+        return strip->filterTextForScenario (highPass);
     }
 
     std::string clockText() const override
@@ -1891,13 +1954,15 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
    #if DUSKSTUDIO_HAS_NATIVE_UI
     imgui::DuskPanelWindow* openPanel (const std::string& panel) const
     {
-        if (panel == "audio-editor" && owner.audioEditorShowing()) return owner.audioEditorWindow.get();
-        if (panel == "piano-roll" && owner.pianoRollShowing()) return owner.pianoRollWindow.get();
-        if (panel == "startup" && owner.startupWindow != nullptr && owner.startupWindow->isOpen())
-            return owner.startupWindow.get();
-        if (panel == "settings" && owner.audioSettingsWindow != nullptr && owner.audioSettingsWindow->isOpen())
-            return owner.audioSettingsWindow.get();
-        return nullptr;
+        // A window still open while its editor closes is not one these may read.
+        if (panel == "audio-editor") return owner.audioEditorShowing() ? owner.audioEditorWindow.get() : nullptr;
+        if (panel == "piano-roll") return owner.pianoRollShowing() ? owner.pianoRollWindow.get() : nullptr;
+        if (panel == "startup")
+            return owner.startupWindow != nullptr && owner.startupWindow->isOpen() ? owner.startupWindow.get() : nullptr;
+        if (panel == "settings")
+            return owner.audioSettingsWindow != nullptr && owner.audioSettingsWindow->isOpen()
+                ? owner.audioSettingsWindow.get() : nullptr;
+        return imgui::DuskPanelWindow::openForScenario (panel);
     }
    #endif
     std::array<int, 2> panelNameGlyphs (const std::string& panel) const override
@@ -2251,6 +2316,90 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     {
         auto* strip = owner.consoleView->getStripComponent (index);
         return strip != nullptr && strip->meterClipForScenario();
+    }
+
+    std::uint64_t meterRepaintRequests() const override
+    {
+        return gatedRepaintRequests.load (std::memory_order_relaxed);
+    }
+
+    MeterRest meterRestPixels (StripKind kind, int index, const std::filesystem::path& ppm) override
+    {
+        MeterRest rest;
+       #if defined (__linux__)
+        if (nativeWaylandWindow()) return rest;
+        auto* top = owner.getTopLevelComponent();
+        auto* peer = top != nullptr ? top->getPeer() : nullptr;
+        rest.status = MeterRest::Status::notShown;
+        if (peer == nullptr || top->getWidth() <= 0) return rest;
+
+        std::array<int, 4> meter {};
+        if (kind == StripKind::Channel)
+        {
+            auto* strip = owner.consoleView != nullptr ? owner.consoleView->getStripComponent (index) : nullptr;
+            if (strip == nullptr || ! strip->isShowing()) return rest;
+            meter = strip->inputMeterBoundsForScenario();
+        }
+        else if (kind == StripKind::Aux)
+        {
+            auto* lane = owner.auxView != nullptr ? owner.auxView->getLaneComponent (index) : nullptr;
+            if (lane == nullptr || ! lane->isShowing()) return rest;
+            meter = lane->stripMeterBoundsForScenario();
+        }
+        else
+        {
+            return rest;
+        }
+        rest.height = meter[3];
+        if (meter[2] <= 4 || meter[3] <= 4) return rest;
+
+        rest.status = MeterRest::Status::captureFailed;
+        const auto file = ppm.u8string();
+        if (! platform::captureNativeWindowToPpm (reinterpret_cast<std::uintptr_t> (peer->getNativeHandle()), file))
+            return rest;
+        std::FILE* in = std::fopen (file.c_str(), "rb");
+        if (in == nullptr) return rest;
+        int width = 0, height = 0, maxValue = 0;
+        const bool header = std::fscanf (in, "P6 %d %d %d", &width, &height, &maxValue) == 3
+                         && std::fgetc (in) != EOF && width > 0 && height > 0 && maxValue == 255;
+        std::vector<unsigned char> pixels (header ? (std::size_t) width * (std::size_t) height * 3 : 0);
+        const bool read = header && std::fread (pixels.data(), 1, pixels.size(), in) == pixels.size();
+        std::fclose (in);
+        if (! read) return rest;
+
+        // The window holds device pixels; the bounds are interface units.
+        const double scale = (double) width / (double) top->getWidth();
+        const auto device = [scale] (double v) { return (int) std::lround (v * scale); };
+        // A channel decay ends at the bar's foot, below the clip bar and the
+        // scale. The aux meter's 0 and -20 dB ticks are drawn across it, so
+        // only the part below the -20 dB tick is read there.
+        const double top0 = kind == StripKind::Channel ? meter[1] + meter[3] * 0.6
+                                                       : meter[1] + meter[3] * (1.0 - 40.0 / 66.0) + 3.0;
+        const int x0 = std::max (0, device (meter[0] + 2.0));
+        const int x1 = std::min (width, device (meter[0] + meter[2] - 2.0));
+        const int y0 = std::max (0, device (top0));
+        const int y1 = std::min (height, device (meter[1] + meter[3] - 1.0));
+        int lit = 0;
+        for (int y = y0; y < y1; ++y)
+            for (int x = x0; x < x1; ++x)
+            {
+                const auto* p = &pixels[((std::size_t) y * (std::size_t) width + (std::size_t) x) * 3];
+                const int high = std::max ({ p[0], p[1], p[2] });
+                const int low  = std::min ({ p[0], p[1], p[2] });
+                // Fills and their glow are saturated; the channel peak line is
+                // near white. Backgrounds, outlines and segment gaps are dark
+                // greys, and the aux meter's L / R glyphs a mid grey.
+                const bool saturated = high - low > 24;
+                const bool bright = kind == StripKind::Channel && high > 90;
+                if (saturated || bright) ++lit;
+            }
+        rest.status = MeterRest::Status::read;
+        rest.lit = lit;
+        return rest;
+       #else
+        (void) kind; (void) index; (void) ppm;
+        return rest;
+       #endif
     }
 
     bool groupChipView (int index, std::string& text, int& master, bool& filled) override
@@ -3427,6 +3576,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         for (int guard = 0; guard < 32 && ! stack.empty(); ++guard)
             stack.back()->close();
         abandonPendingFlows();
+        panelFramesOnDemand (false, true);
 
         owner.destroyPianoRoll();
         owner.destroyAudioEditor();

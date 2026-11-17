@@ -14,6 +14,7 @@
 #include <chrono>
 #include <cmath>
 #include <filesystem>
+#include <limits>
 
 namespace duskstudio
 {
@@ -1239,11 +1240,20 @@ std::string AudioPipelineSelfTest::testParallelMatchesSerial()
     capture (testWorkers, pL, pR);
     engine.setWorkerCountForTest (0);   // leave the engine serial for later tests
 
-    auto maxAbsDiff = [] (const std::vector<float>& a, const std::vector<float>& b)
+    // NaN once a sample in either capture is not finite, which fails every bound
+    // the difference is held to; std::max on its own would drop it.
+    auto maxAbsDiff = [] (const std::vector<float>& aL, const std::vector<float>& aR,
+                          const std::vector<float>& bL, const std::vector<float>& bR)
     {
-        const size_t m = std::min (a.size(), b.size());
+        const size_t m = std::min (aL.size(), bL.size());
         float d = 0.0f;
-        for (size_t i = 0; i < m; ++i) d = std::max (d, std::abs (a[i] - b[i]));
+        for (size_t i = 0; i < m; ++i)
+        {
+            const float l = std::abs (aL[i] - bL[i]), r = std::abs (aR[i] - bR[i]);
+            if (! std::isfinite (l) || ! std::isfinite (r))
+                return std::numeric_limits<float>::quiet_NaN();
+            d = std::max ({ d, l, r });
+        }
         return d;
     };
 
@@ -1252,8 +1262,8 @@ std::string AudioPipelineSelfTest::testParallelMatchesSerial()
     for (size_t i = 0; i < n; ++i)
         peak = std::max ({peak, std::abs (sL[i]), std::abs (sR[i])});
 
-    const float serialDiff   = max (maxAbsDiff (sL, s2L), maxAbsDiff (sR, s2R));
-    const float parallelDiff = max (maxAbsDiff (sL, pL),  maxAbsDiff (sR, pR));
+    const float serialDiff   = maxAbsDiff (sL, sR, s2L, s2R);
+    const float parallelDiff = maxAbsDiff (sL, sR, pL, pR);
 
     // The real invariant: enabling workers must not change the mix any more than
     // re-running serial does. We compare parallelDiff against the serial-vs-serial
@@ -1277,6 +1287,223 @@ std::string AudioPipelineSelfTest::testParallelMatchesSerial()
         : ! signalOK      ? "  <-- no signal reached the mix"
         : ! matchOK       ? "  <-- parallel diverged from serial beyond the serial baseline"
                           : "");
+}
+
+std::string AudioPipelineSelfTest::testPoolDispatchRule()
+{
+    static constexpr int    bs = 256, numIn = 16, numOut = 2, numBlocks = 48;
+    static constexpr double sr = 48000.0;
+    static constexpr double kTwoPi = 6.283185307179586;
+    static constexpr float  kReassocTol = 2.0e-5f;
+
+    engine.prepareForSelfTest (sr, bs);
+    engine.setWorkerCountForTest (AudioEngine::getMaxWorkerCount());
+    const int workers = engine.activeDspWorkersForTest();
+    if (workers == 0)
+    {
+        engine.setWorkerCountForTest (0);
+        return "[PASS] Pool Dispatch Rule: SKIPPED (host < 3 cores: no worker pool)";
+    }
+    const int lanes = workers + 1;
+    const auto laneOf = [lanes] (int t)
+    {
+        int lane = 0;
+        while (lane + 1 < lanes && AudioEngine::dspLaneFirstTrack (lane + 1, lanes) <= t) ++lane;
+        return lane;
+    };
+
+    // Busy tracks monitor a tone through distinct EQ. Every other track is a
+    // muted audio track, whose chain does not run whatever it holds. A track
+    // that is frozen, holds a hardware insert or has anything loaded in its
+    // insert is passed over: stopped, a frozen track has no source, a hardware
+    // insert runs outside the lanes, and a loaded slot may be an instrument
+    // that makes nothing of the tone or an effect that does not repeat itself.
+    const auto anythingLoaded = [] (const ChannelStrip& strip)
+    {
+        return strip.getPluginSlot().isLoaded() || strip.isBuiltinLoaded() || strip.isNativeClapLoaded()
+            || strip.isNativeLv2Loaded() || strip.isNativeVst3Loaded() || strip.isNativeAuLoaded()
+            || strip.isNativeMultisampleLoaded();
+    };
+    std::vector<int> candidates;
+    for (int t = 0; t < Session::kNumTracks; ++t)
+    {
+        const auto& strip = engine.getChannelStrip (t);
+        if (! session.track (t).frozen.load (std::memory_order_acquire)
+            && strip.insertMode.load (std::memory_order_relaxed) != ChannelStrip::kInsertHardware
+            && ! anythingLoaded (strip))
+            candidates.push_back (t);
+    }
+    if (candidates.size() < 16)
+    {
+        engine.setWorkerCountForTest (0);
+        return "[PASS] Pool Dispatch Rule: SKIPPED (fewer than 16 tracks free of a freeze or a loaded insert)";
+    }
+
+    const auto configure = [this] (const std::vector<int>& busy)
+    {
+        prepareCleanState();
+        for (int t = 0; t < Session::kNumTracks; ++t)
+        {
+            auto& tr = session.track (t);
+            tr.mode.store         ((int) Track::Mode::Mono, std::memory_order_relaxed);
+            tr.inputMonitor.store (false, std::memory_order_relaxed);
+            tr.strip.mute.store   (true, std::memory_order_relaxed);
+        }
+        for (const int t : busy)
+        {
+            auto& tr = session.track (t);
+            auto& ts = tr.strip;
+            tr.inputSource.store  (t % numIn, std::memory_order_relaxed);
+            tr.inputMonitor.store (true, std::memory_order_relaxed);
+            ts.mute.store         (false, std::memory_order_relaxed);
+            ts.compEnabled.store  (false, std::memory_order_relaxed);
+            ts.hpfEnabled.store   (true,  std::memory_order_relaxed);
+            ts.lfGainDb.store     ((float) (t % 5) - 2.0f, std::memory_order_relaxed);
+            ts.lmGainDb.store     (1.0f - (float) (t % 4), std::memory_order_relaxed);
+            ts.hmGainDb.store     ((float) (t % 3) - 1.0f, std::memory_order_relaxed);
+            ts.hfGainDb.store     (2.0f - (float) (t % 3), std::memory_order_relaxed);
+            ts.faderDb.store      (-3.0f, std::memory_order_relaxed);
+            ts.pan.store          (((float) (t % 7) - 3.0f) / 6.0f, std::memory_order_relaxed);
+            for (int b = 0; b < ChannelStripParams::kNumBuses; ++b)
+                ts.busAssign[(size_t) b].store (false, std::memory_order_relaxed);
+        }
+        session.recomputeRtCounters();
+    };
+
+    struct Capture
+    {
+        std::vector<float> l, r;
+        int pooled   = 0;   // blocks the pool ran
+        int offRule  = 0;   // blocks the pool ran, or did not, against the rule
+        int maxBusy  = 0;   // most strips that ran their chain in one block
+        int maxLanes = 0;   // most lanes those strips fell in
+    };
+    // toggled >= 0 mutes that track for every other run of 8 blocks.
+    const auto capture = [&] (int poolWorkers, bool everyBlock, int toggled)
+    {
+        Capture c;
+        engine.prepareForSelfTest (sr, bs);
+        engine.setWorkerCountForTest (poolWorkers);
+        engine.setPoolDispatchForcedForTest (everyBlock);
+
+        std::vector<std::vector<float>> ins ((size_t) numIn, std::vector<float> ((size_t) bs, 0.0f));
+        std::vector<const float*> inP ((size_t) numIn);
+        for (int ch = 0; ch < numIn; ++ch) inP[(size_t) ch] = ins[(size_t) ch].data();
+        std::vector<std::vector<float>> outs ((size_t) numOut, std::vector<float> ((size_t) bs, 0.0f));
+        std::vector<float*> outP ((size_t) numOut);
+        for (int ch = 0; ch < numOut; ++ch) outP[(size_t) ch] = outs[(size_t) ch].data();
+        duskstudio::device::CallbackContext ctx {};
+        const double inc = kTwoPi * (double) kToneHz / sr;
+
+        for (int b = 0; b < numBlocks; ++b)
+        {
+            if (toggled >= 0)
+                session.track (toggled).strip.mute.store ((b / 8) % 2 == 1, std::memory_order_relaxed);
+            for (int ch = 0; ch < numIn; ++ch)
+                for (int s = 0; s < bs; ++s)
+                    ins[(size_t) ch][(size_t) s] = kInputAmpMinusSixDb
+                        * (float) std::sin (inc * (double) (b * bs + s) + 0.13 * (double) ch);
+            for (auto& o : outs) std::fill (o.begin(), o.end(), 0.0f);
+
+            const auto before = engine.getPoolDispatchCount();
+            engine.audioDeviceIOCallback (inP.data(), numIn, outP.data(), numOut, bs, ctx);
+            const bool pooled = engine.getPoolDispatchCount() != before;
+
+            int busy = 0;
+            std::vector<bool> laneBusy ((size_t) lanes, false);
+            for (int t = 0; t < Session::kNumTracks; ++t)
+            {
+                const auto& strip = engine.getChannelStrip (t);
+                if (strip.insertMode.load (std::memory_order_relaxed) != ChannelStrip::kInsertHardware
+                    && strip.getLastProcessedSamples() > 0)
+                {
+                    ++busy;
+                    laneBusy[(size_t) laneOf (t)] = true;
+                }
+            }
+            const int busyLanes = (int) std::count (laneBusy.begin(), laneBusy.end(), true);
+            c.maxBusy  = std::max (c.maxBusy, busy);
+            c.maxLanes = std::max (c.maxLanes, busyLanes);
+            c.pooled += pooled ? 1 : 0;
+            if (pooled != (poolWorkers > 0 && (everyBlock || busyLanes >= 2)))
+                ++c.offRule;
+            c.l.insert (c.l.end(), outs[0].begin(), outs[0].end());
+            c.r.insert (c.r.end(), outs[1].begin(), outs[1].end());
+        }
+        engine.setPoolDispatchForcedForTest (false);
+        return c;
+    };
+
+    // NaN once a sample in either capture is not finite, as in testParallelMatchesSerial.
+    const auto maxAbsDiff = [] (const Capture& a, const Capture& b)
+    {
+        float d = 0.0f;
+        for (size_t i = 0; i < std::min (a.l.size(), b.l.size()); ++i)
+        {
+            const float l = std::abs (a.l[i] - b.l[i]), r = std::abs (a.r[i] - b.r[i]);
+            if (! std::isfinite (l) || ! std::isfinite (r))
+                return std::numeric_limits<float>::quiet_NaN();
+            d = std::max ({ d, l, r });
+        }
+        return a.l.size() == b.l.size() ? d : 1.0f;
+    };
+
+    // Neighbouring tracks share a lane until the lanes are as many as the
+    // tracks; the first and last candidates sit in different lanes.
+    const int first = candidates.front(), second = candidates[1], last = candidates.back();
+    struct Case { std::string name; std::vector<int> busy; int toggled; };
+    const Case cases[] = {
+        { "no strip busy",                    {},                     -1 },
+        { "1 strip busy",                     { first },              -1 },
+        { "2 neighbouring strips busy",       { first, second },      -1 },
+        { "2 strips busy, first and last",    { first, last },        -1 },
+        { "16 strips busy",                   std::vector<int> (candidates.begin(), candidates.begin() + 16), -1 },
+        { "first and last, last muted by turns", { first, last },     last },
+    };
+
+    bool pass = true;
+    std::string detail;
+    for (const auto& c : cases)
+    {
+        configure (c.busy);
+        std::vector<bool> laneBusy ((size_t) lanes, false);
+        for (const int t : c.busy) laneBusy[(size_t) laneOf (t)] = true;
+        const int wantLanes  = (int) std::count (laneBusy.begin(), laneBusy.end(), true);
+        const int wantPooled = wantLanes < 2 ? 0 : c.toggled >= 0 ? numBlocks / 2 : numBlocks;
+
+        const auto serialA = capture (0, false, c.toggled);
+        const auto serialB = capture (0, false, c.toggled);
+        const auto rule    = capture (workers, false, c.toggled);
+        const auto every   = capture (workers, true, c.toggled);
+
+        float peak = 0.0f;
+        for (size_t i = 0; i < serialA.l.size(); ++i)
+            peak = std::max ({ peak, std::abs (serialA.l[i]), std::abs (serialA.r[i]) });
+        const float baseline     = maxAbsDiff (serialA, serialB);
+        const float ruleVsEvery  = maxAbsDiff (rule, every);
+        const float ruleVsSerial = maxAbsDiff (rule, serialA);
+
+        const bool ok = serialA.pooled == 0 && serialB.pooled == 0
+                     && rule.offRule == 0 && every.offRule == 0
+                     && rule.pooled == wantPooled && every.pooled == numBlocks
+                     && rule.maxBusy == (int) c.busy.size() && rule.maxLanes == wantLanes
+                     && ruleVsEvery <= baseline
+                     && ruleVsSerial <= baseline + (rule.pooled > 0 ? kReassocTol : 0.0f)
+                     && (c.busy.empty() || peak > 1.0e-3f);
+        pass = pass && ok;
+        detail += dusk::text::format (
+            "\n      %-36s busy %2d in %d lane(s), pool ran %2d/%d blocks (%d/%d when every block goes), "
+            "rule vs every-block %.3e, rule vs serial %.3e, serial vs serial %.3e%s",
+            c.name.c_str(), rule.maxBusy, rule.maxLanes, rule.pooled, numBlocks, every.pooled, numBlocks,
+            (double) ruleVsEvery, (double) ruleVsSerial, (double) baseline,
+            ok ? "" : "  <-- off the rule or off the every-block mix");
+    }
+    engine.setWorkerCountForTest (0);
+
+    return dusk::text::format (
+        "%s Pool Dispatch Rule (%d workers): the pool runs a block only when its busy strips fall in 2+ lanes, "
+        "with the mix it makes when every block goes to it%s",
+        fmtPassFail (pass).c_str(), workers, detail.c_str());
 }
 
 std::string AudioPipelineSelfTest::testMidiPlayAlongMonitor()
@@ -1839,6 +2066,7 @@ std::string AudioPipelineSelfTest::runAll()
     report.push_back (testCompHeavyGR());
     report.push_back (testCompPerTrack());
     report.push_back (testParallelMatchesSerial());
+    report.push_back (testPoolDispatchRule());
     report.push_back (testMidiPlayAlongMonitor());
     report.push_back (testAudioPlayAlongSends());
     report.push_back (testLoopRecordTakeStacking());
@@ -1928,19 +2156,25 @@ std::string AudioPipelineSelfTest::runPerfBenchmark (const std::string& label,
                                                       bool eqEnabled, bool compEnabled,
                                                       bool tapeOn, int oversamplingFactor,
                                                       int numWarmupBlocks, int numMeasureBlocks,
-                                                      int workerCount)
+                                                      int workerCount, bool everyBlockToPool,
+                                                      int firstActiveTrack)
 {
     // Configure session for the requested load. prepareCleanState mutes
     // tracks 1..15 - un-mute the requested count and force a non-trivial
     // signal flow (un-bypassed comp / EQ where requested).
     prepareCleanState();
+    if (firstActiveTrack > 0)
+    {
+        session.track (0).strip.mute.store (true, std::memory_order_relaxed);
+        session.track (0).inputMonitor.store (false, std::memory_order_relaxed);
+    }
 
     // Global ox factor is consumed at engine.prepareForSelfTest time below,
     // so set it here before the prepare call.
     const int oxClamped = (oversamplingFactor == 2 || oversamplingFactor == 4) ? oversamplingFactor : 1;
     session.oversamplingFactor.store (oxClamped, std::memory_order_relaxed);
 
-    for (int t = 0; t < numActiveTracks; ++t)
+    for (int t = firstActiveTrack; t < firstActiveTrack + numActiveTracks; ++t)
     {
         auto& s = session.track (t).strip;
         s.mute.store        (false, std::memory_order_relaxed);
@@ -1966,6 +2200,7 @@ std::string AudioPipelineSelfTest::runPerfBenchmark (const std::string& label,
     // so the caller can benchmark a specific worker count. <0 = leave as-is.
     if (workerCount >= 0)
         engine.setWorkerCountForTest (workerCount);
+    engine.setPoolDispatchForcedForTest (everyBlockToPool);
 
     // Per-input synthetic sine. Different freq per channel so each EQ band
     // sees real energy and the comp's detector isn't running on identical
@@ -1996,9 +2231,12 @@ std::string AudioPipelineSelfTest::runPerfBenchmark (const std::string& label,
     const int totalBlocks = numWarmupBlocks + numMeasureBlocks;
     std::vector<double> times;
     times.reserve ((size_t) numMeasureBlocks);
+    std::uint64_t pooledAtMeasure = engine.getPoolDispatchCount();
 
     for (int b = 0; b < totalBlocks; ++b)
     {
+        if (b == numWarmupBlocks)
+            pooledAtMeasure = engine.getPoolDispatchCount();
         for (int c = 0; c < kInChannels; ++c)
         {
             for (int s = 0; s < blockSize; ++s)
@@ -2024,6 +2262,8 @@ std::string AudioPipelineSelfTest::runPerfBenchmark (const std::string& label,
         }
     }
 
+    const auto pooled = (int) (engine.getPoolDispatchCount() - pooledAtMeasure);
+    engine.setPoolDispatchForcedForTest (false);
     if (times.empty())
         return label + ": (no measurement blocks)";
 
@@ -2041,12 +2281,13 @@ std::string AudioPipelineSelfTest::runPerfBenchmark (const std::string& label,
 
     return dusk::text::format (
         "%s %s  median=%.1f us  p95=%.1f us  p99=%.1f us  max=%.1f us  min=%.1f us  "
-        "(budget=%.1f us, headroom@median=%.1f%%, overruns=%d/%d)",
+        "(budget=%.1f us, headroom@median=%.1f%%, overruns=%d/%d, pooled=%d/%d)",
         overruns > 0 ? "[OVER]" : "[OK]",
         label.c_str(),
         median, p95, p99, maxV, minV,
         budgetUs, headroomPctMedian,
-        overruns, (int) times.size());
+        overruns, (int) times.size(),
+        pooled, (int) times.size());
 }
 
 std::string AudioPipelineSelfTest::runPerfSuite()
@@ -2129,6 +2370,43 @@ std::string AudioPipelineSelfTest::runPerfSuite()
                                        warm, meas, /*workers*/ parW));
         report.push_back ("  (divide serial median by parallel median for the speedup)");
         report.push_back ("");
+
+        // One busy strip, or two in the same lane, keep a block off the pool.
+        // The every-block rows are what waking the pool for them costs. The
+        // two strips are the first two tracks of the first lane that holds
+        // two, as the partition of the 24 tracks over this many lanes falls.
+        const auto padded = [] (std::string label)
+        {
+            label.resize (std::max<size_t> (label.size(), 44), ' ');
+            return label;
+        };
+        const int lanes = parW + 1;
+        int pairLane = 0;
+        while (pairLane + 1 < lanes
+               && AudioEngine::dspLaneFirstTrack (pairLane + 1, lanes)
+                      - AudioEngine::dspLaneFirstTrack (pairLane, lanes) < 2)
+            ++pairLane;
+        const int firstTrack = AudioEngine::dspLaneFirstTrack (pairLane, lanes);
+        const std::string pool = std::to_string (parW) + " worker" + (parW == 1 ? "" : "s");
+        for (const int bs : { 256, 1024 })
+        {
+            report.push_back ("--- Multicore with one or two busy strips (48k/" + std::to_string (bs)
+                              + ", EQ + comp @1x) ---");
+            for (const int busy : { 1, 2 })
+            {
+                const std::string strips = busy == 1 ? "1 strip, " : "2 strips in one lane, ";
+                report.push_back (runPerfBenchmark (padded (strips + "serial (0 workers)"),
+                                                    48000.0, bs, busy, true, true, false, /*ox*/ 1,
+                                                    warm, meas, /*workers*/ 0, false, firstTrack));
+                report.push_back (runPerfBenchmark (padded (strips + pool),
+                                                    48000.0, bs, busy, true, true, false, /*ox*/ 1,
+                                                    warm, meas, /*workers*/ parW, false, firstTrack));
+                report.push_back (runPerfBenchmark (padded (strips + pool + ", every block pooled"),
+                                                    48000.0, bs, busy, true, true, false, /*ox*/ 1,
+                                                    warm, meas, /*workers*/ parW, /*every block*/ true, firstTrack));
+            }
+            report.push_back ("");
+        }
         // Leave the engine serial for any later use.
         engine.setWorkerCountForTest (0);
     }

@@ -143,6 +143,19 @@ TEST_CASE ("Session load prints the timing line the load legs match on", "[marke
     REQUIRE (source.find ("total=%dms") != std::string::npos);
 }
 
+TEST_CASE ("An idle app prints the device and startup lines the wake-up leg waits for",
+           "[markers][idle]")
+{
+    const auto device = joinAdjacentLiterals (
+        readSource ("src/engine/pipewire/PipeWireAudioIODevice.cpp"));
+    REQUIRE (device.find ("[Dusk Studio/PipeWire] opened ") != std::string::npos);
+    REQUIRE (device.find (" rate=%d quantum=%d out=") != std::string::npos);
+
+    const auto main = joinAdjacentLiterals (readSource ("src/ui/MainComponent.cpp"));
+    REQUIRE (main.find ("[Dusk Studio] startup plugin scan: toggle=%s") != std::string::npos);
+    REQUIRE (main.find ("\"off - skipped\"") != std::string::npos);
+}
+
 TEST_CASE ("Every single-instance path that gives up the slot keeps its stderr wording",
            "[markers][single-instance]")
 {

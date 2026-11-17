@@ -1,4 +1,5 @@
 #include "ThreadedFileWriter.h"
+#include "../../foundation/ThreadName.h"
 
 #include <algorithm>
 #include <chrono>
@@ -13,7 +14,7 @@ ThreadedFileWriter::ThreadedFileWriter (std::unique_ptr<IFileWriteSink> w, int f
 {
     ring.resize ((size_t) capacityFrames * (size_t) channels, 0.0f);
     if (writer != nullptr && drain == Drain::Internal)
-        worker = std::thread ([this] { run(); });
+        worker = std::thread ([this] { dusk::setCurrentThreadName ("DuskFileWrite"); run(); });
 }
 
 ThreadedFileWriter::~ThreadedFileWriter()

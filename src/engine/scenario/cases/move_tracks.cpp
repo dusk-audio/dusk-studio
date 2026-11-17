@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <string>
@@ -468,28 +469,52 @@ ScenarioResult runMoveRefusals (ScenarioContext& ctx)
 // redoes. Each move waits out the block in flight and rewires the strips with
 // none running, so however the two threads meet, the strips end where the last
 // move left them. Worth running under ThreadSanitizer.
-ScenarioResult runMoveUnderRunningCallback (ScenarioContext& ctx)
+//
+// With every track monitored each block has work for every lane and goes to
+// the pool. Switching, only the first track and one in the last lane are
+// monitored, outside the tracks the moves shift, and the device thread mutes
+// and unmutes the second every few blocks: the blocks then alternate between
+// the serial loop and the pool, and a strip runs on the device thread in one
+// block and on a worker in the next. A round of moves then ends only once the
+// device thread has run a block down each path since the round began, so the
+// two paths alternate under the moves however the threads are scheduled.
+ScenarioResult runMoveUnderRunningCallback (ScenarioContext& ctx, bool switching)
 {
+    static constexpr int kSwitched = 20;
     auto& session = ctx.session();
     auto& engine = ctx.engine();
     for (int t = 0; t < kN; ++t)
-        session.track (t).inputMonitor.store (true);
+        session.track (t).inputMonitor.store (! switching || t == 0 || t == kSwitched);
+    ctx.keep (session.track (kSwitched).strip.mute);
     engine.setWorkerCountForTest (2);
     ctx.cleanup ([&engine] { engine.applyDesiredWorkers(); });
     restoreOrderAtEnd (ctx);
+    if (switching && engine.activeDspWorkersForTest() == 0)
+        return ScenarioResult::skip ("too few cores here for a Multicore DSP worker");
 
     std::atomic<bool> stop { false };
     std::atomic<int> blocks { 0 };
-    std::thread device ([&engine, &stop, &blocks]
+    // Blocks the pool ran and blocks the serial loop ran. A block the gate
+    // turned away is neither.
+    std::atomic<int> pooledBlocks { 0 }, serialBlocks { 0 };
+    std::thread device ([&engine, &session, &stop, &blocks, &pooledBlocks, &serialBlocks, switching]
     {
         std::vector<std::vector<float>> in ((size_t) kInputs, std::vector<float> ((size_t) kFrames, 0.1f));
         std::array<float, kFrames> outL {}, outR {};
         std::vector<const float*> inputs;
         for (auto& channel : in) inputs.push_back (channel.data());
         float* outputs[] = { outL.data(), outR.data() };
-        while (! stop.load (std::memory_order_acquire))
+        for (int block = 0; ! stop.load (std::memory_order_acquire); ++block)
         {
+            if (switching)
+                session.track (kSwitched).strip.mute.store ((block / 3) % 2 == 1);
+            const auto pooledAt = engine.getPoolDispatchCount();
+            const auto gatedAt = engine.getGatedBlockCount();
             engine.audioDeviceIOCallback (inputs.data(), kInputs, outputs, 2, kFrames, {});
+            if (engine.getPoolDispatchCount() != pooledAt)
+                pooledBlocks.fetch_add (1, std::memory_order_release);
+            else if (engine.getGatedBlockCount() == gatedAt)
+                serialBlocks.fetch_add (1, std::memory_order_release);
             blocks.fetch_add (1, std::memory_order_release);
         }
     });
@@ -499,28 +524,52 @@ ScenarioResult runMoveUnderRunningCallback (ScenarioContext& ctx)
         while (blocks.load (std::memory_order_acquire) == seen)
             std::this_thread::yield();
     };
+    const auto bothPathsSince = [&pooledBlocks, &serialBlocks] (int pooledAt, int serialAt)
+    {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds (5);
+        while (std::chrono::steady_clock::now() < deadline)
+        {
+            if (pooledBlocks.load (std::memory_order_acquire) > pooledAt
+                && serialBlocks.load (std::memory_order_acquire) > serialAt)
+                return true;
+            std::this_thread::yield();
+        }
+        return false;
+    };
 
     waitForBlock();
     const auto gatedBefore = engine.getGatedBlockCount();
     const int blocksBefore = blocks.load();
+    const auto pooledBefore = engine.getPoolDispatchCount();
     const auto order = stripOrder (engine);
     const auto plan = planBlockMove ({ 3, kMoved }, 10);
-    int moves = 0;
-    constexpr int kRounds = 25;
+    int moves = 0, switchedRounds = 0;
+    static constexpr int kRounds = 25;
     for (int round = 0; round < kRounds; ++round)
     {
+        const int pooledAt = pooledBlocks.load (std::memory_order_acquire);
+        const int serialAt = serialBlocks.load (std::memory_order_acquire);
         moves += commitTrackMove (engine, plan) ? 1 : 0;
         moves += undoTransaction (engine) ? 1 : 0;
         moves += redoTransaction (engine) ? 1 : 0;
         moves += engine.moveTracks (invertTrackMove (plan)) ? 1 : 0;
+        if (switching && bothPathsSince (pooledAt, serialAt))
+            ++switchedRounds;
     }
     waitForBlock();
     stop.store (true, std::memory_order_release);
     device.join();
 
-    ctx.note (std::to_string (blocks.load() - blocksBefore) + " blocks ran across the moves, "
-              + std::to_string (engine.getGatedBlockCount() - gatedBefore) + " of them gated");
+    const auto ran = (std::uint64_t) (blocks.load() - blocksBefore);
+    const auto gated = engine.getGatedBlockCount() - gatedBefore;
+    const auto pooled = engine.getPoolDispatchCount() - pooledBefore;
+    ctx.note (std::to_string (ran) + " blocks ran across the moves, " + std::to_string (gated)
+              + " of them gated and " + std::to_string (pooled) + " pooled");
     ctx.expect (moves == 4 * kRounds, "only " + std::to_string (moves) + " of the moves ran");
+    if (switching)
+        ctx.expect (switchedRounds == kRounds,
+                    "the blocks switched between the serial loop and the pool in only "
+                        + std::to_string (switchedRounds) + " of the rounds of moves");
     ctx.expect (stripOrder (engine) == order, "the strips did not end where the last move left them");
     ctx.expect (session.track (3).name == "4" && session.track (kMoved).name == "18",
                 "the tracks did not end where the last move left them");
@@ -595,7 +644,15 @@ const ScenarioRegistrar live { Scenario {
     { "session", "move", "rt" },
     Needs::Engine,
     {},
-    [] (ScenarioContext& ctx) -> std::optional<ScenarioResult> { return runMoveUnderRunningCallback (ctx); }
+    [] (ScenarioContext& ctx) -> std::optional<ScenarioResult> { return runMoveUnderRunningCallback (ctx, false); }
+} };
+
+const ScenarioRegistrar liveSwitching { Scenario {
+    "session.move_tracks_under_a_switching_callback",
+    { "session", "move", "rt" },
+    Needs::Engine,
+    {},
+    [] (ScenarioContext& ctx) -> std::optional<ScenarioResult> { return runMoveUnderRunningCallback (ctx, true); }
 } };
 
 const ScenarioRegistrar carries { Scenario {

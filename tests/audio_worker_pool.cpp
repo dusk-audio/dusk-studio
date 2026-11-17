@@ -150,7 +150,7 @@ TEST_CASE ("AudioWorkerPool: quiesce drains lanes orphaned by a dead dispatcher"
         counters.hit (lane);
     });
 
-    pool.dispatchForTest();   // all 3 signalled, no join — dispatcher "dies" here
+    pool.dispatchForTest (-1, true);   // all 3 signalled; the dispatcher "dies" waiting in the join
 
     // Safety net: if requireBefore() below throws (REQUIRE miss), the workers
     // are still blocked in gate.wait() inside job_, so the pool destructor's
@@ -161,11 +161,15 @@ TEST_CASE ("AudioWorkerPool: quiesce drains lanes orphaned by a dead dispatcher"
     struct GateGuard { juce::WaitableEvent& g; ~GateGuard() { g.signal(); } } gateGuard { gate };
 
     requireBefore ([&] { return entered.load (std::memory_order_relaxed) >= 3; });
+    REQUIRE (pool.isJoinBlocked());
 
     std::thread releaser ([&] { juce::Thread::sleep (50); gate.signal(); });
     quiesceWithWatchdog (pool);   // must block until all 3 orphaned lanes complete
     releaser.join();
 
+    // The dead dispatcher never left the join. Left set, the flag would have
+    // the engine's watchdog put every later stall down to a lane.
+    REQUIRE_FALSE (pool.isJoinBlocked());
     for (int lane = 0; lane < 3; ++lane)
         REQUIRE (counters.get (lane) == 1);
 
@@ -231,6 +235,48 @@ TEST_CASE ("AudioWorkerPool: a device deadline reaches every worker without runn
     pool.runBlock();
     for (int lane = 0; lane < 3; ++lane)
         REQUIRE (counters.get (lane) == 3);
+    pool.stop();
+}
+
+TEST_CASE ("AudioWorkerPool: a lane that holds the join past the stall limit is counted once",
+           "[worker-pool][ipc]")
+{
+    // The join counts a stall after this many of its 1 ms waits: 2000 in the
+    // app, 100 here, so the case takes about a tenth of a second.
+    AudioWorkerPool pool;
+    pool.setJoinStallWaitsForTest (100);
+    std::atomic<bool> hold { true };
+    pool.start (1, [&hold] (int lane)
+    {
+        if (lane == 0)
+            while (hold.load (std::memory_order_acquire))
+                std::this_thread::yield();
+    });
+
+    // Lets the lane go once the stall is counted, or at a deadline only a
+    // regression reaches, so a failure fails instead of hanging.
+    bool sawBlocked = false;
+    std::thread release ([&pool, &hold, &sawBlocked]
+    {
+        const auto deadline = juce::Time::getMillisecondCounter() + 5000;
+        while (pool.joinStallCount() == 0 && juce::Time::getMillisecondCounter() < deadline)
+        {
+            sawBlocked = sawBlocked || pool.isJoinBlocked();
+            std::this_thread::yield();
+        }
+        // The join waits on the held lane until the release below, so this
+        // holds even when the stall was counted before this thread first ran.
+        sawBlocked = sawBlocked || pool.isJoinBlocked();
+        hold.store (false, std::memory_order_release);
+    });
+    callWithWatchdog ("runBlock()", [&pool] { pool.runBlock(); }, 10000);
+    release.join();
+    REQUIRE (pool.joinStallCount() == 1);
+    REQUIRE (sawBlocked);
+    REQUIRE_FALSE (pool.isJoinBlocked());
+
+    callWithWatchdog ("runBlock()", [&pool] { pool.runBlock(); });
+    REQUIRE (pool.joinStallCount() == 1);
     pool.stop();
 }
 

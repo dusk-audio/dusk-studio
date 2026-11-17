@@ -3,6 +3,7 @@
 #include "PluginManager.h"
 #include "LegacyStateBase64.h"
 #include "../foundation/ScopedNoDenormals.h"
+#include "../foundation/ThreadName.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -378,6 +379,7 @@ void PluginSlot::beginRemoteLoad (PluginDescriptor descriptor,
          remote = std::move (remote)]
         () mutable
     {
+        dusk::setCurrentThreadName ("DuskOopLoad");
         auto outcome = std::make_shared<Outcome>();
 
         if (! spawned)

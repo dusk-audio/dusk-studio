@@ -6,6 +6,7 @@
 #include "engine/audiofile/IFileWriteSink.h"
 #include "engine/audiofile/ThreadedFileWriter.h"
 #include "engine/audiofile/WriterDrainPool.h"
+#include "support/ThreadWakeups.h"
 
 #include <atomic>
 #include <chrono>
@@ -237,4 +238,122 @@ TEST_CASE ("ThreadedFileWriter external dtor flushes a take a missed remove() le
 
     REQUIRE (fileMatchesRamp (path, kFrames));
     discard (path);
+}
+
+namespace
+{
+using duskstudio::test::eventually;
+using duskstudio::test::returnsPromptly;
+using duskstudio::test::staysAt;
+
+constexpr std::int64_t kBlock = 512;
+
+struct CountingSink final : IFileWriteSink
+{
+    int numChannels() const noexcept override { return kChannels; }
+    bool writeInterleaved (const float*, std::int64_t n) noexcept override
+    {
+        frames.fetch_add (n);
+        return true;
+    }
+    bool flush() override { return true; }
+
+    std::atomic<std::int64_t> frames { 0 };
+};
+
+// A writer over a CountingSink with one block already in its ring.
+struct CountedWriter
+{
+    CountedWriter()
+    {
+        auto owned = std::make_unique<CountingSink>();
+        sink = owned.get();
+        writer = std::make_unique<ThreadedFileWriter> (std::move (owned), 4096,
+                                                       ThreadedFileWriter::Drain::External);
+        const std::vector<float> l ((size_t) kBlock, 0.5f), r ((size_t) kBlock, -0.5f);
+        const float* p[kChannels] = { l.data(), r.data() };
+        REQUIRE (writer->push (p, kChannels, kBlock));
+    }
+
+    bool drained() const { return sink->frames.load() == kBlock; }
+
+    CountingSink* sink = nullptr;
+    std::unique_ptr<ThreadedFileWriter> writer;
+};
+} // namespace
+
+TEST_CASE ("WriterDrainPool makes no timer wake-ups while no writer is registered", "[audiofile][pool]")
+{
+    std::atomic<int> idle { 0 };
+    WriterDrainPool pool (2, [&] { idle.fetch_add (1); });
+
+    REQUIRE (eventually ([&] { return idle.load() > 0; }));
+    CHECK (staysAt (idle, idle.load()));
+}
+
+TEST_CASE ("WriterDrainPool drains a writer added while it sleeps", "[audiofile][pool]")
+{
+    CountedWriter counted;
+    std::atomic<int> idle { 0 };
+    WriterDrainPool pool (2, [&] { idle.fetch_add (1); });
+    REQUIRE (eventually ([&] { return idle.load() > 0; }));
+
+    REQUIRE (pool.add (counted.writer.get()));
+    CHECK (eventually ([&] { return counted.drained(); }));
+    pool.remove (counted.writer.get());
+}
+
+// The add lands after the pool has seen no writer and before it waits, and
+// nothing else wakes it: the add alone has to end that wait. The first take
+// brings the pool back to that point once the hook is armed.
+TEST_CASE ("WriterDrainPool drains a writer added as it goes to sleep", "[audiofile][pool]")
+{
+    CountedWriter first, late;
+    std::atomic<bool> armed { false }, added { false };
+    std::atomic<WriterDrainPool*> self { nullptr };
+    WriterDrainPool pool (2, [&]
+    {
+        auto* p = self.load();
+        if (p == nullptr || ! armed.exchange (false)) return;
+        added.store (p->add (late.writer.get()));
+    });
+    self.store (&pool);
+
+    REQUIRE (pool.add (first.writer.get()));
+    REQUIRE (eventually ([&] { return first.drained(); }));
+    armed.store (true);
+    pool.remove (first.writer.get());
+
+    CHECK (eventually ([&] { return late.drained(); }));
+    CHECK (added.load());
+    pool.remove (late.writer.get());
+}
+
+TEST_CASE ("WriterDrainPool goes back to sleep when its last writer is removed", "[audiofile][pool]")
+{
+    CountedWriter counted;
+    std::atomic<int> idle { 0 };
+    WriterDrainPool pool (2, [&] { idle.fetch_add (1); });
+
+    // Added to a sleeping pool, so the add's wake-up is spent ending that
+    // sleep and none is left over to end the next one.
+    REQUIRE (eventually ([&] { return idle.load() > 0; }));
+    REQUIRE (pool.add (counted.writer.get()));
+    REQUIRE (eventually ([&] { return counted.drained(); }));
+    const int beforeRemove = idle.load();
+    pool.remove (counted.writer.get());
+
+    REQUIRE (eventually ([&] { return idle.load() > beforeRemove; }));
+    CHECK (staysAt (idle, idle.load()));
+}
+
+TEST_CASE ("Destroying a sleeping WriterDrainPool wakes and joins its thread", "[audiofile][pool]")
+{
+    auto idle = std::make_shared<std::atomic<int>> (0);
+    auto pool = std::make_unique<WriterDrainPool> (1, [idle] { idle->fetch_add (1); });
+    REQUIRE (eventually ([&] { return idle->load() > 0; }));
+
+    auto* sleeping = pool.release();
+    // A destructor that never returns still holds the pool, so it is left alive.
+    CHECK (returnsPromptly ([sleeping] { delete sleeping; }));
 }

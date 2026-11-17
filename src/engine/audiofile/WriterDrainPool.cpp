@@ -1,16 +1,18 @@
 #include "WriterDrainPool.h"
 
 #include "ThreadedFileWriter.h"
+#include "../../foundation/ThreadName.h"
 
 #include <algorithm>
+#include <utility>
 
 namespace dusk::audio
 {
-WriterDrainPool::WriterDrainPool (int maxWritersIn)
-    : maxWriters ((std::size_t) std::max (1, maxWritersIn))
+WriterDrainPool::WriterDrainPool (int maxWritersIn, std::function<void()> idleHookForTest)
+    : maxWriters ((std::size_t) std::max (1, maxWritersIn)), idleHook (std::move (idleHookForTest))
 {
     writers.reserve (maxWriters);
-    worker = std::thread ([this] { run(); });
+    worker = std::thread ([this] { dusk::setCurrentThreadName ("DuskRecDrain"); run(); });
 }
 
 WriterDrainPool::~WriterDrainPool()
@@ -56,15 +58,26 @@ void WriterDrainPool::run()
 {
     while (! stop.load (std::memory_order_acquire))
     {
-        bool anyWork = false;
+        bool anyWork = false, anyWriter = false;
         {
             std::lock_guard<std::mutex> lk (m);
+            anyWriter = ! writers.empty();
             for (auto* w : writers)
                 if (w != nullptr && w->drainOnce() > 0)
                     anyWork = true;
         }
-        if (! anyWork)
+        if (anyWork)
+            continue;
+        if (anyWriter)
+        {
             wake.wait (2);
+            continue;
+        }
+        // add() signals after its writer is in, under m, and the destructor
+        // after it sets stop. The event latches, so either landing since the
+        // check above ends this wait at once.
+        if (idleHook) idleHook();
+        wake.wait();
     }
 }
 } // namespace dusk::audio

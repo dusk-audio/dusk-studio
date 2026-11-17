@@ -94,7 +94,7 @@ The upstream-vs-fork `addDefaultFormats` API split is hidden behind [src/engine/
 
 Phases 1a → 5 of [DuskStudio.md](docs/DuskStudio.md) have all shipped, so there is no phase to work toward: the live mixer, multitrack recording with atomic JSON save/load and autosave, send-bus plugin hosting, take folders (every recording pass kept whole as a take on its track, loop passes included) with comping in the audio editor's take lanes, markers, console automation (Write / Read / Touch) with breakpoint editing, punch and loop, and MTC + MIDI Clock sync are working features. Check the feature table in [README.md](README.md) and the relevant chapter of [MANUAL.md](MANUAL.md) before assuming something is unbuilt.
 
-0.16 has shipped. Current focus is milestone 0.17 (GitHub milestone #11), stability and low CPU: its gate is every issue on the milestone, which includes building the automated real-time-safety and CPU checks (#1013, #1014; neither exists yet); de-JUCE work lands on its own PRs and never holds the tag. Close the open issues, then bump and tag. The tag is gated on the maintainer's own manual pass on Linux, macOS and Windows - never tag or run a release flow on your own initiative.
+0.16 has shipped. Current focus is milestone 0.17 (GitHub milestone #11), stability and low CPU: its gate is every issue on the milestone, which includes building the automated real-time-safety and CPU checks (#1013, #1014; so far only the idle wake-up budget exists, as the `bb-idle-wakeups` regress leg); de-JUCE work lands on its own PRs and never holds the tag. Close the open issues, then bump and tag. The tag is gated on the maintainer's own manual pass on Linux, macOS and Windows - never tag or run a release flow on your own initiative.
 
 ## Audio thread rules (MANDATORY)
 
@@ -111,7 +111,7 @@ The audio thread (`AudioEngine::audioDeviceIOCallback` and any `process*` it cal
 - **Memory ordering**: metering atomics use `std::memory_order_relaxed`; state flags that gate audio reads (e.g. plugin instance pointer, RT counters in Session) use `release` on the writer side and `acquire` on the audio-thread reader.
 - **Check `numSamples == 0`** — early return, a device backend can send an empty block during transitions.
 - **Check `mixL.size() < numSamples`** — host-driven oversized blocks are real (see the existing guard in the callback). Either bail with cleared output, or chunk the work.
-- **Smoothers don't tick during skipped passes** — when an aux/track is silent and we skip its DSP, smoothers stay frozen and pick up correctly when audio resumes. Don't "advance" smoothers manually.
+- **Smoothers don't tick during skipped passes** — when an aux/track is silent and we skip its DSP, smoothers stay frozen and pick up correctly when audio resumes. Don't "advance" smoothers manually. The one deliberate exception is a channel strip that is muted, gated out or has no input: `ChannelStrip::parkGainSmoothers` ramps its fader, bus and send gains to zero in one step per block, so the strip fades back in when it mixes again.
 
 ## DSP lifecycle
 

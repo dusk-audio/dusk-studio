@@ -1,4 +1,5 @@
 #include "MidiDevices.h"
+#include "../../foundation/ThreadName.h"
 
 #if defined(__linux__)
  #include "AlsaSeqMidi.h"
@@ -292,9 +293,14 @@ bool MidiOutputBank::ensureOpen (int index)
 
     bool opened = false;
     {
-        // The pump may be sending through the backend.
+        // The pump may be sending through the backend. The flag is published
+        // under the same lock because the pump decides to retire the queue and
+        // sleep under it: an open landing between that check and the retire
+        // would have its first blocks discarded.
         const std::lock_guard<std::mutex> lock (bankMutex);
         opened = backend->open (devices[(size_t) index].identifier);
+        if (opened)
+            openFlags[(size_t) index].store (true, std::memory_order_release);
     }
     if (! opened)
     {
@@ -305,7 +311,7 @@ bool MidiOutputBank::ensureOpen (int index)
                       devices[(size_t) index].identifier.c_str());
         return false;
     }
-    openFlags[(size_t) index].store (true, std::memory_order_release);
+    pumpWake.signal();
     return true;
 }
 
@@ -412,7 +418,7 @@ void MidiOutputBank::queueRt (int port, int stream, const dusk::MidiBuffer& even
     writeCount.store (w + 1, std::memory_order_release);
 }
 
-void MidiOutputBank::drainQueue()
+bool MidiOutputBank::drainQueue()
 {
     // The whole read cycle holds bankMutex - not just the send - so rebuild can
     // discard stale slots under the same mutex without racing a half-finished
@@ -432,21 +438,44 @@ void MidiOutputBank::drainQueue()
         ++r;
     }
     readCount.store (r, std::memory_order_release);
+
+    const int ports = numOpenFlags.load (std::memory_order_acquire);
+    for (int i = 0; i < ports; ++i)
+        if (openFlags[(size_t) i].load (std::memory_order_acquire))
+            return true;
+
+    // No output is open, so the pump sleeps until one opens, however long that
+    // takes. A send that failed for good closes its port without the generation
+    // bump closeAll makes, so a block the audio thread committed against that
+    // port after this drain read `w`, or is still publishing, would wait out
+    // the sleep and reach the port once it reopens. Retire the queue as
+    // closeAll does. Every open flag is written under bankMutex, so no output
+    // opens between the scan above and this retire; a producer that sampled
+    // the generation before it and finds a port opened after it drops its
+    // block, the same rule queueRt follows for a close.
+    queueGeneration.fetch_add (1, std::memory_order_release);
+    readCount.store (writeCount.load (std::memory_order_acquire), std::memory_order_release);
+    return false;
 }
 
 void MidiOutputBank::pumpLoop()
 {
     while (pumpRunning.load (std::memory_order_acquire))
     {
-        drainQueue();
-        pumpWake.wait (1);
+        if (drainQueue())
+        {
+            pumpWake.wait (1);
+            continue;
+        }
+        if (pumpIdleHook) pumpIdleHook();
+        pumpWake.wait();
     }
 }
 
 void MidiOutputBank::startPump()
 {
     if (pumpRunning.exchange (true)) return;
-    pump = std::thread ([this] { pumpLoop(); });
+    pump = std::thread ([this] { dusk::setCurrentThreadName ("DuskMidiOut"); pumpLoop(); });
 }
 
 void MidiOutputBank::stopPump()

@@ -25,11 +25,15 @@ TEST_CASE ("the DSP readout keeps red for backend xruns and amber for risks", "[
     {
         REQUIRE (dspSeverity ({ 0.10, 0, 0, 1 }) == DspSeverity::risk);
     }
+    SECTION ("a stall alone is amber")
+    {
+        REQUIRE (dspSeverity ({ 0.10, 0, 0, 0, 1 }) == DspSeverity::risk);
+    }
     SECTION ("a backend xrun is red alone and beside every risk")
     {
         REQUIRE (dspSeverity ({ 0.10, 0, 1, 0 }) == DspSeverity::disruption);
         REQUIRE (dspSeverity ({ 0.10, 3, 2, 0 }) == DspSeverity::disruption);
-        REQUIRE (dspSeverity ({ 0.95, 3, 1, 2 }) == DspSeverity::disruption);
+        REQUIRE (dspSeverity ({ 0.95, 3, 1, 2, 1 }) == DspSeverity::disruption);
     }
     SECTION ("each severity paints its own colour")
     {

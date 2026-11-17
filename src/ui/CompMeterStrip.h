@@ -3,6 +3,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "../foundation/MessageThread.h"
 #include "../session/Session.h"
+#include "RepaintGate.h"
 #include <functional>
 #include <utility>
 
@@ -83,6 +84,7 @@ public:
         if (ceiling - floor < kMinDbDelta) ceiling = floor + kMinDbDelta;
         src.floorDb   = floor;
         src.ceilingDb = ceiling;
+        repaint();
     }
 
     // GR bar rect in this component's local coordinates. Parent components
@@ -114,6 +116,21 @@ private:
     float inputPeakHoldDb    = -100.0f;
     int   inputPeakHoldFrames = 0;
     float displayedGrDb      = 0.0f;
+
+    // paint() draws only these samples and what look() derives from them, so
+    // the repaint gate keys on exactly what is drawn.
+    float shownThresholdDb = 0.0f;
+    bool  shownEngaged     = false;
+    struct Look
+    {
+        DrawnExtent input, peak, gr;
+        bool peakHot = false, engaged = false;
+        float handleY = 0.0f;
+    };
+    Look look() const noexcept;
+    void sampleControls();
+    bool lookChanged() noexcept;
+    PaintedValue paintedInput, paintedPeak, paintedGr, paintedHandle, paintedFlags;
 
     // Layout rectangles set in resized().
     juce::Rectangle<float> handleArea;

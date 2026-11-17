@@ -30,6 +30,11 @@ void PanelFontFallback::request (std::string_view text)
     }
 }
 
+bool PanelFontFallback::waiting() const
+{
+    return std::any_of (pending.begin(), pending.end(), [this] (auto c) { return attempted.count (c) == 0; });
+}
+
 bool PanelFontFallback::update (float pixels)
 {
     if (! std::isfinite (pixels) || pixels < 1 || pixels > 128) return false;

@@ -30,6 +30,7 @@ public:
     void paint (juce::Graphics&) override;
     void paintOverChildren (juce::Graphics&) override;
     void resized() override;
+    void visibilityChanged() override;
 
     // Keyboard strip focus: Left/Right move the focus ring across the 24
     // strips (auto-flipping the visible bank at a boundary); the focused

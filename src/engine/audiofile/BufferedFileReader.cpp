@@ -1,4 +1,5 @@
 #include "BufferedFileReader.h"
+#include "../../foundation/ThreadName.h"
 
 #include <algorithm>
 #include <cstring>
@@ -31,7 +32,7 @@ BufferedFileReader::BufferedFileReader (std::unique_ptr<FileReader> src,
       fillMode (fill)
 {
     if (fillMode == Fill::Background && channels > 0 && fileInfo.numFrames > 0)
-        worker = std::thread ([this] { run(); });
+        worker = std::thread ([this] { dusk::setCurrentThreadName ("DuskFileRead"); run(); });
 }
 
 BufferedFileReader::~BufferedFileReader()
@@ -51,7 +52,7 @@ void BufferedFileReader::setFillMode (Fill next)
     fillMode = next;
     stop.store (false, std::memory_order_release);
     if (next == Fill::Background && channels > 0 && fileInfo.numFrames > 0)
-        worker = std::thread ([this] { run(); });
+        worker = std::thread ([this] { dusk::setCurrentThreadName ("DuskFileRead"); run(); });
 }
 
 const BufferedFileReader::Window* BufferedFileReader::acquireWindow() const noexcept

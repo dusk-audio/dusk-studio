@@ -118,6 +118,15 @@ public:
     virtual std::string slotLabel (int slot) const = 0;
     virtual bool captureSources (bool enabled) = 0;
     virtual std::vector<std::string> sourceRows() const = 0;
+    // The Sources rows as the lane's next paint draws them, taken without
+    // sampling the session first.
+    virtual std::vector<std::string> drawnSourceRows() = 0;
+    // Samples the lane's meters and a track's input meter at `db`, drops them
+    // to silence without a meter tick, and reports whether the lane's strip
+    // meter and that track's Sources row still draw the sample: 1 drawn, 0
+    // not, -1 when either is not laid out to tell. The audio thread can write
+    // a meter between the store and the sample, so retry a miss.
+    virtual std::array<int, 2> metersDrawSample (int track, float db) = 0;
 };
 
 class GuiHost
@@ -144,6 +153,9 @@ public:
     virtual bool grMetersShown() const = 0;
     // The level text under a channel strip's send knob, as drawn.
     virtual std::string stripSendLabel (int track, int send) const = 0;
+    // The text a channel strip's high- or low-pass knob shows; empty while the
+    // strip is not showing.
+    virtual std::optional<std::string> stripFilterText (int track, bool highPass) = 0;
 
     virtual bool builtinPointer (int track, const std::string& control, float position, bool pressed) = 0;
     virtual void closeBuiltin (int track) = 0;
@@ -283,6 +295,19 @@ public:
     virtual bool clickMiniMarker (int index) = 0;
     // A key at the mini timeline's native child, as a focused child receives it.
     virtual bool pressMiniKey (const std::string& description) = 0;
+    // The native panels draw every frame under the runner, which counts them. On, they
+    // draw on demand as they do outside a run, and with `floor` off they also skip the
+    // periodic frame. Every case that turns this on turns it off in its cleanup.
+    virtual void panelFramesOnDemand (bool onDemand, bool floor) = 0;
+    // Frames the open native panel with this log tag ("mini-timeline", "piano-roll",
+    // "mastering-eq", ...) has completed; empty while none is open.
+    virtual std::optional<std::uint64_t> panelFrames (const std::string& logTag) const = 0;
+    // How far that panel's last frame drawn after a rest moved Dear ImGui's clock, in
+    // seconds. Cleared by the call; empty when it drew none since, or none is open.
+    virtual std::optional<float> panelClockAfterRest (const std::string& logTag) = 0;
+    // Input for that panel as DuskPanelWindow::inputForScenario reads it: a key,
+    // "hover", "shift + hover" or "scroll-down".
+    virtual bool panelInput (const std::string& logTag, const std::string& input) = 0;
     virtual bool clickTimeFormat() = 0;
     // The menu bar's DSP segment, and a double-click on it.
     virtual std::string dspReadout() const = 0;
@@ -292,6 +317,9 @@ public:
     // ARGB, 0 without a status bar.
     virtual bool pinDspReadings (std::optional<DspReadings>) = 0;
     virtual std::uint32_t dspReadoutPaint() = 0;
+    // Whether the DSP segment's text fits inside the segment; false without a
+    // status bar.
+    virtual bool dspReadoutFits() const = 0;
     virtual bool clickRecord() = 0;
     virtual bool clickMidiMerge() = 0;
     virtual bool clickPianoMidiMerge() = 0;
@@ -387,7 +415,8 @@ public:
     // "recent:<path>", "new:<template>", "open-file", "quit" or "skip"; empty
     // until the dialog has been dismissed.
     virtual std::string startupChoice() const = 0;
-    // For "audio-editor", "piano-roll" or "startup": { characters, without a glyph }
+    // For "audio-editor", "piano-roll", "startup", or any other open native panel by
+    // the log tag panelFrames takes: { characters, without a glyph }
     // over the names the panel drew in its last frame, or { -1, -1 } while it is not
     // open.
     virtual std::array<int, 2> panelNameGlyphs (const std::string& panel) const = 0;
@@ -495,6 +524,23 @@ public:
     virtual bool canvasHasKeyboardFocus() const = 0;
 
     virtual bool meterClip (int index) = 0;
+    // Repaints and text refreshes the console's meters and strips have asked for
+    // since launch.
+    virtual std::uint64_t meterRepaintRequests() const = 0;
+    // The window as the display server holds it, read back into `ppm`: of a
+    // Channel strip's input meter (its lower part, where a decay ends) or an
+    // Aux lane's strip meter (below its -20 dB tick), how many pixels are lit,
+    // and the meter's height in interface units. Only noCapture means the
+    // platform cannot read a window back (anything but an X11 window on
+    // Linux); notShown and captureFailed are failures wherever it can.
+    struct MeterRest
+    {
+        enum class Status { noCapture, notShown, captureFailed, read };
+        Status status = Status::noCapture;
+        int lit = 0, height = 0;
+    };
+    virtual MeterRest meterRestPixels (StripKind kind, int index,
+                                       const std::filesystem::path& ppm) = 0;
     virtual bool openMidiIo (int index) = 0;
     virtual bool clickMidiSelector (int index, int kind) = 0;
     virtual std::string midiSelectorText (int index, int kind) const = 0;

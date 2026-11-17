@@ -82,7 +82,20 @@ public:
     std::vector<double> returnRangeForScenario() const { return { returnFader.getMinimum(), returnFader.getMaximum() }; }
     bool attachEditorForSlotForScenario (int slotIdx);
     bool captureSourcesForScenario (bool enabled);
+    // The strip meter's bounds in the top-level window, as x, y, width, height.
+    std::array<int, 4> stripMeterBoundsForScenario() const;
+    // Samples the lane's meters and a track's input meter at `db`, drops the
+    // meters to silence without a tick, and reports whether the strip meter and
+    // that track's Sources row still draw the sample: 1 drawn, 0 not, -1 not
+    // laid out to tell. The audio thread may overwrite a meter between the
+    // store and the sample, so a caller retries a miss.
+    std::array<int, 2> metersDrawSampleForScenario (int track, float db);
+    // Screenshot-harness only: sample the meters and Sources rows the timer
+    // would, since the harness blocks its ticks.
+    void refreshMetersForCapture();
     std::vector<std::string> sourceRowsForScenario() const;
+    // The Sources rows as a paint now draws them, without sampling first.
+    std::vector<std::string> drawnSourceRowsForScenario();
     // Load a built-in unit the way the picker's row does, and read back what the
     // slot's inline editor is: the unit it was built for, or empty when no
     // editor is up. A built-in that brings its own editor never shares a slot

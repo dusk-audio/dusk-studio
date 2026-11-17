@@ -16,6 +16,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
+#include <optional>
 #include <random>
 #include <utility>
 
@@ -284,6 +285,35 @@ public:
         }
         else drawCursor (ctx);
         drawnNameGlyphs = nameGlyphs;
+    }
+
+    // The shell moves the view between regions and takes from outside a frame, so
+    // where the view stands is part of what it draws from.
+    std::optional<std::uint64_t> liveStamp() override
+    {
+        auto& transport = engine.getTransport();
+        if (auditionNote >= 0 || transport.isRecording() || engine.getRecordManager().isActive())
+            return std::nullopt;
+        StampHash hash;
+        hash.add (trackIdx).add (regionIdx).add (covered()).add (editCursorTick).add (scrollX)
+            .add (scrollY).add (pixelsPerTick).add (seenRegionEdits).add (shownRegionCount);
+        if (trackIdx >= 0 && trackIdx < Session::kNumTracks)
+        {
+            const auto& track = session.track (trackIdx);
+            hash.add (track.midiRegions.edits()).add (track.frozen.load (std::memory_order_relaxed))
+                .add (track.nameUtf8()).add (track.colourArgb());
+        }
+        auto& undo = engine.getUndoManager();
+        hash.add (transport.getPlayhead()).add (transport.isPlaying())
+            .add (transport.isLoopEnabled()).add (transport.getLoopStart()).add (transport.getLoopEnd())
+            .add (transport.isPunchEnabled()).add (transport.getPunchIn()).add (transport.getPunchOut())
+            .add (undo.canUndo()).add (undo.canRedo()).add (engine.getTimelineSampleRate())
+            .add (session.editMode).add (session.midiEditorSnap).add (session.pianoRollKeySnap)
+            .add (session.midiMergeEnabled.load (std::memory_order_relaxed))
+            .add (session.beatsPerBar.load (std::memory_order_relaxed))
+            .add (session.tempoBpm.load (std::memory_order_relaxed))
+            .add (session.timeDisplayMode.load (std::memory_order_relaxed));
+        return hash.value;
     }
 
 private:

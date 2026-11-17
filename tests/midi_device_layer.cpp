@@ -3,9 +3,13 @@
 #include "engine/midi/MidiBackend.h"
 #include "engine/midi/MidiDevices.h"
 #include "foundation/MidiBuffer.h"
+#include "support/ThreadWakeups.h"
+#include <atomic>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <set>
 #include <string>
 #include <utility>
@@ -13,6 +17,9 @@
 
 using duskstudio::midi::MidiInputClient;
 using duskstudio::midi::MidiOutputBank;
+using duskstudio::test::eventually;
+using duskstudio::test::returnsPromptly;
+using duskstudio::test::staysAt;
 
 // These run against whatever the platform backend enumerates - no assertion
 // depends on a device being present, so a headless machine exercises the same
@@ -392,4 +399,196 @@ TEST_CASE ("MidiOutputBank reopens the routes a failed send made its backend dro
         CHECK_FALSE (bank.isOpen (0));
         CHECK_FALSE (bank.isOpen (1));
     }
+}
+
+namespace
+{
+// One output port, observed from the test thread while the pump sends to it.
+class LoggingOutputBackend final : public duskstudio::midi::IMidiOutputBackend
+{
+public:
+    std::vector<duskstudio::midi::BackendDeviceInfo> enumerate() override
+    {
+        return { { "Logging", "logging:0" } };
+    }
+
+    std::string migrateIdentifier (const std::string&) override { return {}; }
+
+    bool open (const std::string&) override
+    {
+        if (refuseOpen.load()) return false;
+        routeOpen.store (true);
+        return true;
+    }
+
+    void closeAll() override { routeOpen.store (false); }
+    bool isOpen (const std::string&) const override { return routeOpen.load(); }
+
+    bool send (const std::string&, int, const dusk::MidiBuffer& events, double, double) override
+    {
+        if (! routeOpen.load()) return false;
+        if (failNextSend.exchange (false))
+        {
+            if (duringFailedSend) duringFailedSend();
+            routeOpen.store (false);
+            return false;
+        }
+        const std::lock_guard<std::mutex> lock (mutex);
+        for (const auto meta : events)
+            notes.push_back (meta.data[1]);
+        return true;
+    }
+
+    std::vector<int> delivered() const
+    {
+        const std::lock_guard<std::mutex> lock (mutex);
+        return notes;
+    }
+
+    std::atomic<bool> routeOpen { false }, refuseOpen { false }, failNextSend { false };
+    // Pump thread, inside the send that fails. Set before startPump.
+    std::function<void()> duringFailedSend;
+
+private:
+    mutable std::mutex mutex;
+    std::vector<int> notes;
+};
+
+dusk::MidiBuffer noteBlock (int note)
+{
+    dusk::MidiBuffer buffer;
+    buffer.reserveBytes (64);
+    const std::uint8_t bytes[3] { 0x90, (std::uint8_t) note, 100 };
+    REQUIRE (buffer.addEvent (bytes, 3, 0));
+    return buffer;
+}
+
+LoggingOutputBackend& installLogging (MidiOutputBank& bank)
+{
+    auto owned = std::make_unique<LoggingOutputBackend>();
+    auto& backend = *owned;
+    bank.installBackend (std::move (owned));
+    return backend;
+}
+} // namespace
+
+TEST_CASE ("The MIDI output pump makes no timer wake-ups while no output is open", "[midi][devices]")
+{
+    std::atomic<int> idle { 0 };
+    MidiOutputBank bank;
+    installLogging (bank);
+    bank.setPumpIdleHookForTest ([&] { idle.fetch_add (1); });
+    bank.startPump();
+
+    REQUIRE (eventually ([&] { return idle.load() > 0; }));
+    CHECK (staysAt (idle, idle.load()));
+    bank.stopPump();
+}
+
+TEST_CASE ("An output opened while the MIDI output pump sleeps gets what is queued for it", "[midi][devices]")
+{
+    std::atomic<int> idle { 0 };
+    MidiOutputBank bank;
+    auto& backend = installLogging (bank);
+    bank.setPumpIdleHookForTest ([&] { idle.fetch_add (1); });
+    bank.startPump();
+    REQUIRE (eventually ([&] { return idle.load() > 0; }));
+
+    REQUIRE (bank.ensureOpen (0));
+    bank.queueRt (0, 0, noteBlock (60), 48000.0);
+    CHECK (eventually ([&] { return backend.delivered() == std::vector<int> { 60 }; }));
+    bank.stopPump();
+}
+
+// The open lands after the pump has seen no output open and before it waits,
+// and nothing else wakes it: the open alone has to end that wait.
+TEST_CASE ("An output opened as the MIDI output pump goes to sleep is not missed", "[midi][devices]")
+{
+    std::atomic<bool> armed { true }, opened { false };
+    MidiOutputBank bank;
+    auto& backend = installLogging (bank);
+    bank.setPumpIdleHookForTest ([&]
+    {
+        if (! armed.exchange (false)) return;
+        opened.store (bank.ensureOpen (0));
+        bank.queueRt (0, 0, noteBlock (61), 48000.0);
+    });
+    bank.startPump();
+
+    CHECK (eventually ([&] { return backend.delivered() == std::vector<int> { 61 }; }));
+    CHECK (opened.load());
+    bank.stopPump();
+}
+
+TEST_CASE ("Closing the last MIDI output puts the output pump back to sleep", "[midi][devices]")
+{
+    std::atomic<int> idle { 0 };
+    MidiOutputBank bank;
+    auto& backend = installLogging (bank);
+    REQUIRE (bank.ensureOpen (0));
+    bank.setPumpIdleHookForTest ([&] { idle.fetch_add (1); });
+    bank.startPump();
+
+    // Nothing signals the pump for a queued block, so this one going out is
+    // the open-port poll at work.
+    bank.queueRt (0, 0, noteBlock (62), 48000.0);
+    REQUIRE (eventually ([&] { return backend.delivered() == std::vector<int> { 62 }; }));
+
+    const int beforeClose = idle.load();
+    bank.closeAll();
+    REQUIRE (eventually ([&] { return idle.load() > beforeClose; }));
+    CHECK (staysAt (idle, idle.load()));
+
+    REQUIRE (bank.ensureOpen (0));
+    bank.queueRt (0, 0, noteBlock (63), 48000.0);
+    CHECK (eventually ([&] { return backend.delivered() == std::vector<int> { 62, 63 }; }));
+    bank.stopPump();
+}
+
+// A failed send whose port cannot be reopened leaves no output open, so the
+// pump goes to sleep. A block the audio thread committed against that port
+// while the send was failing must not wait out the sleep and reach the port
+// once it is opened again.
+TEST_CASE ("A block queued for an output the pump gave up on is not sent when it reopens", "[midi][devices]")
+{
+    std::atomic<int> idle { 0 };
+    MidiOutputBank bank;
+    auto& backend = installLogging (bank);
+    REQUIRE (bank.ensureOpen (0));
+    bank.setPumpIdleHookForTest ([&] { idle.fetch_add (1); });
+    backend.duringFailedSend = [&] { bank.queueRt (0, 0, noteBlock (65), 48000.0); };
+    bank.startPump();
+
+    // A block out first spends the open's wake-up in a timed wait, so nothing
+    // wakes the pump between the failed send and the reopen.
+    bank.queueRt (0, 0, noteBlock (63), 48000.0);
+    REQUIRE (eventually ([&] { return backend.delivered() == std::vector<int> { 63 }; }));
+
+    backend.refuseOpen.store (true);
+    backend.failNextSend.store (true);
+    bank.queueRt (0, 0, noteBlock (64), 48000.0);
+    REQUIRE (eventually ([&] { return ! bank.isOpen (0) && idle.load() > 0; }));
+
+    backend.refuseOpen.store (false);
+    REQUIRE (bank.ensureOpen (0));
+    bank.queueRt (0, 0, noteBlock (66), 48000.0);
+    REQUIRE (eventually ([&] { return backend.delivered().size() > 1; }));
+    CHECK (backend.delivered() == std::vector<int> { 63, 66 });
+    bank.stopPump();
+}
+
+TEST_CASE ("Stopping the MIDI output pump wakes it from its sleep", "[midi][devices]")
+{
+    auto bank = std::make_unique<MidiOutputBank>();
+    installLogging (*bank);
+    auto idle = std::make_shared<std::atomic<int>> (0);
+    bank->setPumpIdleHookForTest ([idle] { idle->fetch_add (1); });
+    bank->startPump();
+    REQUIRE (eventually ([&] { return idle->load() > 0; }));
+
+    auto* stopping = bank.get();
+    const bool stopped = returnsPromptly ([stopping] { stopping->stopPump(); });
+    // A stop that never returns still holds the bank.
+    if (! stopped) (void) bank.release();
+    REQUIRE (stopped);
 }

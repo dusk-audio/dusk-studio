@@ -848,6 +848,7 @@ target_sources(DuskStudio PRIVATE
     src/DuskStudioApp.cpp
     src/foundation/Fft.cpp
     src/foundation/MessageThread.cpp
+    src/foundation/ThreadName.cpp
     src/foundation/UndoManager.cpp
     # Native CLAP sources are added below, gated by DUSKSTUDIO_HAS_NATIVE_CLAP.
     src/engine/AudioEngine.cpp
@@ -1003,9 +1004,11 @@ target_sources(DuskStudio PRIVATE
     src/ui/scenario/cases/gui_import_browser.cpp
     src/ui/scenario/cases/gui_keyboard_transport.cpp
     src/ui/scenario/cases/gui_mastering_bounce.cpp
+    src/ui/scenario/cases/gui_meters.cpp
     src/ui/scenario/cases/gui_midi_learn_plugins.cpp
     src/ui/scenario/cases/gui_midi_recovery.cpp
     src/ui/scenario/cases/gui_mixer.cpp
+    src/ui/scenario/cases/gui_panel_frames.cpp
     src/ui/scenario/cases/gui_piano_roll.cpp
     src/ui/scenario/cases/gui_piano_roll_audition.cpp
     src/ui/scenario/cases/gui_plugin_editors.cpp
@@ -1589,6 +1592,7 @@ if(_duskstudio_oop_enabled)
         src/engine/ipc/PluginHostXErrors.cpp
         src/engine/PluginDescriptor.cpp
         src/foundation/MessageThread.cpp
+        src/foundation/ThreadName.cpp
         ${_duskstudio_ipc_child_platform_sources})
     target_compile_features (dusk-studio-plugin-host PRIVATE cxx_std_17)
     target_compile_definitions (dusk-studio-plugin-host PRIVATE

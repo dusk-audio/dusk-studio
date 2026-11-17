@@ -1,5 +1,6 @@
 #include "AudioWorkerPool.h"
 #include "RtPriority.h"
+#include "../foundation/ThreadName.h"
 
 #include <algorithm>
 #include <chrono>
@@ -8,7 +9,6 @@
 
 #if defined(__linux__)
  #include "RealtimeKit.h"
- #include <pthread.h>
  #include <sys/syscall.h>
  #include <unistd.h>
 #elif defined(__APPLE__)
@@ -175,10 +175,10 @@ struct AudioWorkerPool::Worker
         // round-robins fairly if a worker shares the audio thread's core. An
         // RT-denied thread is left to start(), which asks on its behalf.
         const bool realtime = rt::applyRealtimeSchedRR (rtJucePriority);
-       #if defined(__linux__)
         char name[16];
         std::snprintf (name, sizeof name, "DuskDSP %d", lane);
-        pthread_setname_np (pthread_self(), name);
+        dusk::setCurrentThreadName (name);
+       #if defined(__linux__)
         threadId.store ((std::int64_t) syscall (SYS_gettid), std::memory_order_relaxed);
        #elif defined(_WIN32)
         const auto proAudio = joinProAudioTask();
@@ -450,6 +450,7 @@ void AudioWorkerPool::runBlock() noexcept
         std::this_thread::yield();
     }
     int waitedMs = 0;
+    joinBlocked.store (true, std::memory_order_relaxed);
     while (done.load (std::memory_order_acquire) < active)
     {
         completion.wait (1);
@@ -458,9 +459,10 @@ void AudioWorkerPool::runBlock() noexcept
         // NO stderr on the audio thread - and let a non-RT consumer surface
         // joinStallCount(). At 2 s the deadline is long dead, so a reader racing
         // this increment is immaterial.
-        if (++waitedMs == 2000)
+        if (++waitedMs == joinStallWaits)
             joinStalls.fetch_add (1, std::memory_order_relaxed);
     }
+    joinBlocked.store (false, std::memory_order_relaxed);
 }
 
 void AudioWorkerPool::quiesce()
@@ -484,10 +486,12 @@ void AudioWorkerPool::quiesce()
         while (w->acked.load (std::memory_order_acquire) != s)
             std::this_thread::sleep_for (std::chrono::milliseconds (1));
 
+    // A dispatcher killed while it waited in the join never cleared this.
+    joinBlocked.store (false, std::memory_order_relaxed);
     quiescing.store (false, std::memory_order_release);
 }
 
-void AudioWorkerPool::dispatchForTest (int signalOnlyFirst)
+void AudioWorkerPool::dispatchForTest (int signalOnlyFirst, bool killedInJoin)
 {
     const int active = numWorkers.load (std::memory_order_relaxed);
     if (active <= 0)
@@ -499,6 +503,8 @@ void AudioWorkerPool::dispatchForTest (int signalOnlyFirst)
                                       : std::min (signalOnlyFirst, active);
     for (int i = 0; i < n; ++i)
         workers_[(size_t) i]->wake.signal();
+    if (killedInJoin)
+        joinBlocked.store (true, std::memory_order_relaxed);
 }
 
 std::vector<std::int64_t> AudioWorkerPool::workerThreadIdsForTest() const

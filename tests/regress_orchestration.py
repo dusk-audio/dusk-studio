@@ -1005,7 +1005,8 @@ claim_unlock() {
     linux_root = root / "linux-missing-app"
     linux_runners = linux_root / "scripts/regress"
     linux_runners.mkdir(parents=True)
-    for name in ("linux.sh", "common.sh", "xvfb.sh", "scenarios.sh", "null-audio.sh", "capture.sh"):
+    for name in ("linux.sh", "common.sh", "xvfb.sh", "scenarios.sh", "null-audio.sh", "capture.sh",
+                 "idle-wakeups.sh"):
         shutil.copyfile(repo / "scripts/regress" / name, linux_runners / name)
     required_tools = linux_root / "bin"
     required_tools.mkdir()
@@ -1760,8 +1761,70 @@ read -r _ || true
                                 capture_output=True, text=True, timeout=60)
         assert result.returncode == 0, ("a guest script does not parse", result.stdout, result.stderr)
 
+    idle_root = root / "idle-wakeups"
+    idle_root.mkdir()
+    idle_budget = idle_root / "budget.tsv"
+    idle_first = idle_root / "first.tsv"
+    idle_second = idle_root / "second.tsv"
+    idle_table = idle_root / "table.tsv"
+    budget_text = ("# header comment\n\nDuskDSP *\t2/block\nDuskMidiOut\t1001\n"
+                   "DuskStudio\t100\ngone\t5\n")
+    first_text = "1\t10\tDuskStudio\n2\t0\tDuskDSP 0\n3\t0\tDuskDSP 1\n4\t0\tDuskMidiOut\n"
+    judge = 'source "$1/scripts/regress/idle-wakeups.sh"; shift; idle_wakeups_judge "$@"'
+
+    def idle_judge(second, mode="check", budget=budget_text, first=first_text):
+        idle_budget.write_text(budget)
+        idle_first.write_text(first)
+        idle_second.write_text(second)
+        # 48 kHz at a 480-frame quantum is 100 blocks a second; the window is 10 s.
+        result = subprocess.run(
+            ["bash", "-c", judge, "judge", str(repo), str(idle_budget), str(idle_first),
+             str(idle_second), "10", "48000", "480", "250", "100", mode, str(idle_table)],
+            env=child_environment, capture_output=True, text=True, timeout=10)
+        return result.returncode, result.stdout + result.stderr
+
+    within = "1\t60\tDuskStudio\n2\t1000\tDuskDSP 0\n3\t1000\tDuskDSP 1\n4\t10000\tDuskMidiOut\n"
+    rc, out = idle_judge(within)
+    assert rc == 0, out
+    assert "2/block (200/s)" in out and "cpu time 2.50 s over 10.0 s (25.0% of one core)" in out, out
+    assert "hint: 'DuskStudio' could come down from 100 to 8" in out, out
+    assert "'gone' is budgeted but did not run" in out, out
+    assert "DuskDSP *\t2\t2000\t200.000\t2.0000\t" in idle_table.read_text(), idle_table.read_text()
+
+    rc, out = idle_judge(within + "9\t3\tStranger\n")
+    assert rc == 1 and "UNLISTED" in out and "'Stranger' is not in" in out, out
+    rc, out = idle_judge(within.replace("4\t10000", "4\t10020"))
+    assert rc == 1 and "OVER" in out, out
+    rc, out = idle_judge(within.replace("3\t1000\tDuskDSP 1", "3\t1001\tDuskDSP 1"))
+    assert rc == 1 and "OVER" in out, out
+
+    rc, out = idle_judge(within, mode="update")
+    assert rc == 0, out
+    assert idle_budget.read_text() == ("# header comment\n\nDuskDSP *\t2/block\nDuskMidiOut\t1001\n"
+                                       "DuskStudio\t8\n"), idle_budget.read_text()
+    rc, out = idle_judge(within.replace("4\t10000", "4\t10020"), mode="update")
+    assert rc == 1, out
+    assert "DuskMidiOut\t1001\n" in idle_budget.read_text(), "--update raised a ceiling"
+    rc, out = idle_judge(within + "9\t3\tStranger\n", mode="update")
+    assert rc == 1 and "Stranger" not in idle_budget.read_text(), "--update added a name"
+
+    # A thread that ends inside the window cannot hide an unlisted name, cannot
+    # pass for a budgeted name that did not run, and fails no budgeted check.
+    rc, out = idle_judge(within, first=first_text + "8\t5\tGhost\n")
+    assert rc == 1 and "'Ghost' is not in" in out, out
+    rc, out = idle_judge(within, first=first_text + "8\t5\tgone\n")
+    assert rc == 0 and "'gone' is budgeted but did not run" not in out, out
+    rc, out = idle_judge(within, mode="update", first=first_text + "8\t5\tgone\n")
+    assert rc == 3 and "repeat the run" in out, out
+    assert idle_budget.read_text() == budget_text, "--update rewrote the budget from a sample a thread ended in"
+
+    for broken in ("DuskStudio\t08\n", "DuskStudio 5\n", "DuskStudio\t5\nDuskStudio\t6\n",
+                   "DuskStudio\t5/frame\n", "DuskStudio\t-1\n"):
+        rc, out = idle_judge(within, budget=broken)
+        assert rc == 2, (broken, out)
+
 print("regression runner: interrupt cleanup, runtime dirs under a long TMPDIR, prepush log folders, "
       "capture leg, timing cache, Mac paths, "
       "missing app, Windows source leg, added submodule checkouts, the host locks, the host clean pass "
-      "and an Xvfb that ends with its shell"
+      "idle wake-up budgets, and an Xvfb that ends with its shell"
       + ("" if shutil.which("pwsh") else "; no pwsh here, so the guest scripts were not parsed"))

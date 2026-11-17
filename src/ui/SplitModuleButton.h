@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
+#include "RepaintGate.h"
 #include <algorithm>
 #include <functional>
 #include <memory>
@@ -31,6 +32,7 @@ public:
         {
             const auto callback = toggleBypassFn;
             if (callback) callback();
+            refresh();
         };
         editorButton.onClick = [this]
         {
@@ -48,6 +50,7 @@ public:
         toggleBypassFn = std::move (toggleBypass);
         openEditorFn = std::move (openEditor);
         openContextMenuFn = std::move (openContextMenu);
+        paintedBypassed.forget();
         refresh();
     }
 
@@ -70,12 +73,23 @@ public:
     }
 
     // Pull externally-mutated model state into the accessibility-facing
-    // toggle before scheduling the visual update. Owners call this from
-    // their existing UI refresh timers.
+    // toggle and the state paint() draws. Owners call this from their
+    // existing UI refresh timers.
     void refresh()
     {
+        shownBypassed = isBypassed();
         syncIndicatorState();
-        repaint();
+        if (paintedBypassed.changed (shownBypassed ? 1.0f : 0.0f, 0.0f))
+        {
+            countGatedRepaint();
+            repaint();
+        }
+    }
+
+    // Compact-mode buttons go unrefreshed while hidden.
+    void visibilityChanged() override
+    {
+        if (isVisible()) refresh();
     }
 
     void setAccentColour (juce::Colour newAccent)
@@ -97,7 +111,7 @@ public:
         const auto bounds = getLocalBounds().toFloat().reduced (0.75f);
         if (bounds.isEmpty()) return;
 
-        const bool bypassed = isBypassed();
+        const bool bypassed = shownBypassed;
         const auto indicatorArea = indicatorButton.getBounds().toFloat();
         const auto editorArea = editorButton.getBounds().toFloat();
 
@@ -220,7 +234,7 @@ private:
 
     void syncIndicatorState()
     {
-        const bool engaged = ! isBypassed();
+        const bool engaged = ! shownBypassed;
         if (indicatorButton.getToggleState() != engaged)
             indicatorButton.setToggleState (engaged, juce::dontSendNotification);
     }
@@ -267,5 +281,7 @@ private:
     juce::String label;
     juce::Colour accent { 0xff60d060 };
     bool hasCustomAccessibilityTitle = false;
+    bool shownBypassed = true;
+    PaintedValue paintedBypassed;
 };
 } // namespace duskstudio

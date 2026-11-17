@@ -6,6 +6,7 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 #include <utility>
 
 namespace duskstudio::imgui
@@ -78,7 +79,46 @@ public:
         keyboardActive = popupOpen || ImGui::IsAnyItemActive();
     }
 
+    // Stopped, the analyser is still fed silence and its readings drift in their low
+    // bits for seconds while the panel shows the same thing, so each value is taken at
+    // the finest step the panel can show: three decimals of correlation is under a
+    // pixel on the bars and matches the finest readout.
+    std::optional<std::uint64_t> liveStamp() override
+    {
+        const auto& report = analyzer.report();
+        const auto settings = params.snapshot();
+        StampHash hash;
+        hash.add (settings.bands).add (settings.q).add (settings.averagingMs).add (getMono())
+            .add (report.settings.bands).add (report.warming).add (shown (report.windowSeconds, 1.0e-5))
+            .add (shown (report.coherenceTimeSeconds, 0.1));
+        addReading (hash, report.broadband);
+        for (int i = 0; i < report.settings.bands && i < static_cast<int> (report.bands.size()); ++i)
+            addReading (hash, report.bands[static_cast<size_t> (i)]);
+        return hash.value;
+    }
+
 private:
+    static long shown (double value, double step)
+    {
+        return std::isfinite (value) ? std::lround (value / step) : std::numeric_limits<long>::min();
+    }
+
+    // A value the panel shows as "--" is not drawn, so its drift is not hashed either.
+    static void addReading (StampHash& hash, const PhaseAnalyzer::Reading& r)
+    {
+        const auto when = [] (bool valid, double value, double step) { return valid ? shown (value, step) : 0L; };
+        hash.add (shown (r.lowHz, 1.0)).add (shown (r.highHz, 1.0))
+            .add (when (r.correlationValid, r.correlation, 0.001))
+            .add (when (r.minimumValid, r.minimumCorrelation, 0.001))
+            .add (when (r.coherenceValid, r.coherence, 0.001))
+            .add (when (r.phaseValid, r.phaseDegrees, 0.1))
+            .add (when (r.phaseValid, r.equivalentDelayMs, 0.001))
+            .add (when (r.delayValid, r.delayMs, 0.001))
+            .add (when (r.monoValid, r.monoLossDb, 0.01)).add (r.available).add (r.correlationValid)
+            .add (r.minimumValid).add (r.coherenceValid).add (r.phaseValid).add (r.delayValid)
+            .add (r.monoValid).add (r.flagged);
+    }
+
     void drawBody (dw::Context& ctx, ImVec2 origin, ImVec2 size)
     {
         const float inset = ctx.s (8.0f), gap = ctx.s (8.0f), row = ctx.s (24.0f);

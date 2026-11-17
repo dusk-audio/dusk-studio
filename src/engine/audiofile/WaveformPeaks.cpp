@@ -1,5 +1,6 @@
 #include "WaveformPeaks.h"
 #include "../../foundation/PlanarBuffer.h"
+#include "../../foundation/ThreadName.h"
 
 #include <algorithm>
 #include <cmath>
@@ -274,7 +275,8 @@ std::optional<WaveformPeaks::Peak> WaveformDetails::column (
                  + (std::size_t) channel];
 }
 
-WaveformSource::WaveformSource (Use u) : use (u), worker ([this] { run(); }) {}
+WaveformSource::WaveformSource (Use u)
+    : use (u), worker ([this] { dusk::setCurrentThreadName ("DuskWaveform"); run(); }) {}
 
 WaveformSource::~WaveformSource()
 {

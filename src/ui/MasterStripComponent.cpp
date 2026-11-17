@@ -1114,34 +1114,34 @@ void MasterStripComponent::timerCallback()
     }
 
     // Output peak per channel - fast attack, slow release; with peak-hold.
-    auto smoothChannel = [] (float& displayed, float& peakHold, int& peakFrames, float src)
-    {
-        if (src > displayed) displayed = src;
-        else                  displayed += (src - displayed) * 0.15f;
-
-        if (src >= peakHold) { peakHold = src; peakFrames = 18; }
-        else if (peakFrames > 0) --peakFrames;
-        else peakHold = std::max (-100.0f, peakHold - 1.5f);
-    };
-    const float outL = params.meterPostMasterLDb.load (std::memory_order_relaxed);
-    const float outR = params.meterPostMasterRDb.load (std::memory_order_relaxed);
-    smoothChannel (displayedOutputLDb, outputPeakHoldLDb, outputPeakHoldFramesL, outL);
-    smoothChannel (displayedOutputRDb, outputPeakHoldRDb, outputPeakHoldFramesR, outR);
+    outputL.step (params.meterPostMasterLDb.load (std::memory_order_relaxed));
+    outputR.step (params.meterPostMasterRDb.load (std::memory_order_relaxed));
 
     // Numeric readout shows the louder of the two channels (typical mixer
     // convention - we don't have room for two separate values).
-    const float maxHold = std::max (outputPeakHoldLDb, outputPeakHoldRDb);
-    if (maxHold <= -60.0f)
-        outputPeakLabel.setText ("-inf", juce::dontSendNotification);
-    else
-        outputPeakLabel.setText (juce::String (maxHold, 1), juce::dontSendNotification);
-    outputPeakLabel.setColour (juce::Label::textColourId,
-        maxHold >= -3.0f  ? juce::Colour (0xffff5050) :
-        maxHold >= -12.0f ? juce::Colour (0xffe0c050) :
-                             juce::Colour (0xffd0d0d0));
+    const float maxHold = std::max (outputL.peak, outputR.peak);
+    if (peakReadout.update (maxHold))
+    {
+        countGatedRepaint();
+        outputPeakLabel.setText (peakReadout.text, juce::dontSendNotification);
+    }
+    if (paintedPeakColour.changed (maxHold >= -3.0f ? 2.0f : maxHold >= -12.0f ? 1.0f : 0.0f, 0.0f))
+        outputPeakLabel.setColour (juce::Label::textColourId,
+            maxHold >= -3.0f  ? juce::Colour (0xffff5050) :
+            maxHold >= -12.0f ? juce::Colour (0xffe0c050) :
+                                 juce::Colour (0xffd0d0d0));
 
     if (! meterArea.isEmpty())
-        repaint (meterArea);
+    {
+        const float span = (float) meterArea.getHeight() - 4.0f;
+        const bool left  = meterGateL.changed (outputColumnDraw (outputL.displayed, outputMeterFrac (outputL.displayed), span));
+        const bool right = meterGateR.changed (outputColumnDraw (outputR.displayed, outputMeterFrac (outputR.displayed), span));
+        if (left || right)
+        {
+            countGatedRepaint();
+            repaint (meterArea);
+        }
+    }
 
     // Motor-fader animate + Write/Touch capture - mirrors the per-channel
     // and per-aux pattern. Master only has one automatable param.
@@ -1234,6 +1234,15 @@ void MasterStripComponent::timerCallback()
     syncFreqKnob (eqLfFreqKnob,      kLfHzPoll,      4, params.eqLfFreq.load (std::memory_order_relaxed));
     syncFreqKnob (eqHfBoostFreqKnob, kHfBoostHzPoll, 7, params.eqHfBoostFreq.load (std::memory_order_relaxed));
     syncFreqKnob (eqHfAttenFreqKnob, kHfAttenHzPoll, 3, params.eqHfAttenFreq.load (std::memory_order_relaxed));
+}
+
+float MasterStripComponent::outputMeterFrac (float db) const
+{
+    const auto& faderRange = faderSlider.getNormalisableRange();
+    const double clamped = jlimit ((double) faderRange.start,
+                                   (double) faderRange.end,
+                                   (double) db);
+    return (float) jlimit (0.0, 1.0, faderRange.convertTo0to1 (clamped));
 }
 
 void MasterStripComponent::showAutoModeMenu()
@@ -1348,9 +1357,7 @@ void MasterStripComponent::paint (juce::Graphics& g)
         // same range) so "0 dB" on the meter lands at exactly the same
         // Y as the fader's "0" tick. Linear -60..+6 was the prior
         // approach and produced a visible scale mismatch with the fader.
-        const auto& faderRange = faderSlider.getNormalisableRange();
-
-        auto drawColumn = [&] (juce::Rectangle<float> bar, float displayedDb)
+        auto drawColumn = [&] (juce::Rectangle<float> bar, const LevelBallistics& level)
         {
             g.setColour (juce::Colour (0xff0c0c0e));
             g.fillRoundedRectangle (bar, 1.5f);
@@ -1361,32 +1368,24 @@ void MasterStripComponent::paint (juce::Graphics& g)
             const juce::Colour kLedGreen  (0xff20d040);
             const juce::Colour kLedYellow (0xfff0e020);
             const juce::Colour kLedRed    (0xffff2020);
-            auto fracForDb = [&] (float db)
+            auto fracForDb = [this] (float db) { return outputMeterFrac (db); };
+            auto colourForZone = [&] (int zone) -> juce::Colour
             {
-                const double clamped = jlimit ((double) faderRange.start,
-                                                      (double) faderRange.end,
-                                                      (double) db);
-                return (float) jlimit (0.0, 1.0,
-                                              faderRange.convertTo0to1 (clamped));
-            };
-            auto colourForDb = [&] (float db) -> juce::Colour
-            {
-                if (db >=  5.0f) return kLedRed;
-                if (db >= -5.0f) return kLedYellow;
-                return kLedGreen;
+                return zone == 2 ? kLedRed : zone == 1 ? kLedYellow : kLedGreen;
             };
 
-            const float frac = fracForDb (displayedDb);
-            const float fillH = (bar.getHeight() - 4.0f) * frac;
-            if (fillH > 0.5f)
+            const auto draw = outputColumnDraw (level.displayed, fracForDb (level.displayed),
+                                                bar.getHeight() - 4.0f);
+            if (draw.fill.shown)
             {
+                const float fillH = draw.fill.px;
                 const float x = bar.getX() + 1.5f;
                 const float w = bar.getWidth() - 3.0f;
                 const float yFillTop = bar.getBottom() - 2.0f - fillH;
                 const float yFillBot = bar.getBottom() - 2.0f;
                 const auto fillRect = juce::Rectangle<float> (x, yFillTop, w, fillH);
 
-                const auto tipCol = colourForDb (displayedDb);
+                const auto tipCol = colourForZone (draw.fillZone);
                 g.setColour (tipCol.withAlpha (0.20f));
                 g.fillRoundedRectangle (fillRect.expanded (1.5f), 2.0f);
                 g.setColour (tipCol.withAlpha (0.10f));
@@ -1417,10 +1416,10 @@ void MasterStripComponent::paint (juce::Graphics& g)
         const float colW   = (fullBar.getWidth() - kBarGap) * 0.5f;
         drawColumn (juce::Rectangle<float> (fullBar.getX(), fullBar.getY(),
                                               colW, fullBar.getHeight()),
-                     displayedOutputLDb);
+                     outputL);
         drawColumn (juce::Rectangle<float> (fullBar.getX() + colW + kBarGap, fullBar.getY(),
                                               colW, fullBar.getHeight()),
-                     displayedOutputRDb);
+                     outputR);
     }
 
     // Fader dB scale labels - track-3 grammar, drawn LEFT of the slider's

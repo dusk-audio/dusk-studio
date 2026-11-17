@@ -1,6 +1,7 @@
 #include "SingleInstance.h"
 
 #include "../foundation/MessageThread.h"
+#include "../foundation/ThreadName.h"
 
 #include <algorithm>
 #include <atomic>
@@ -483,6 +484,7 @@ Receive readPayload (int fd, int wakeFd, std::string& payload)
 
 void listenLoop (Listener* l)
 {
+    dusk::setCurrentThreadName ("DuskInstance");
     for (;;)
     {
         const int fd = l->listenFd.load();
@@ -1146,6 +1148,7 @@ void serveConnection (Listener& l)
 
 void listenLoop (Listener* l)
 {
+    dusk::setCurrentThreadName ("DuskInstance");
     while (::WaitForSingleObject (l->stopEvent, 0) != WAIT_OBJECT_0)
     {
         if (l->pipe == INVALID_HANDLE_VALUE) l->pipe = createPipe (*l);

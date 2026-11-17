@@ -13,6 +13,7 @@
 #include "ConsoleView.h"
 #include "TransportBar.h"
 #include "TapeStrip.h"
+#include "AuxLaneComponent.h"
 #include "AuxView.h"
 #include "MasteringView.h"
 #if DUSKSTUDIO_HAS_NATIVE_UI
@@ -324,6 +325,10 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
     // AUX stage
     switchToStage (AudioEngine::Stage::Aux);
     resized();
+    if (auxView != nullptr)
+        for (int lane = 0; lane < Session::kNumAuxLanes; ++lane)
+            if (auto* component = auxView->getLaneComponent (lane))
+                component->refreshMetersForCapture();
     settle (300);
     snapshotComponent (auxView.get(), outDir, "np-07-aux-view.png");
 

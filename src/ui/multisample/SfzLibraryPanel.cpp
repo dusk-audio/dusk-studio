@@ -5,6 +5,7 @@
 #include "../DuskFileBrowser.h"
 #include "../WheelScroll.h"
 #include "../../foundation/MessageThread.h"
+#include "../../foundation/ThreadName.h"
 
 #include <algorithm>
 #include <exception>
@@ -265,6 +266,7 @@ void SfzLibraryPanel::startScan()
     auto result = pendingResult;
     scanThread = std::thread ([this, roots = std::move (roots), result]
     {
+        dusk::setCurrentThreadName ("DuskSfzScan");
         try
         {
             *result = sfz::scanLibraryRoots (roots, &cancelScan,

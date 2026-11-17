@@ -97,8 +97,9 @@ public:
 
     // Test-only: the dispatch half of runBlock without the join, simulating a
     // dispatcher force-killed mid-block. Signals the first `signalOnlyFirst`
-    // workers (all if negative).
-    void dispatchForTest (int signalOnlyFirst = -1);
+    // workers (all if negative). With `killedInJoin` the dispatcher had reached
+    // the join's blocking wait when it died.
+    void dispatchForTest (int signalOnlyFirst = -1, bool killedInJoin = false);
 
     // Test-only, Linux: the kernel thread id of every worker thread the pool
     // holds, active or parked, in lane order. Empty elsewhere.
@@ -107,6 +108,19 @@ public:
     // Times the per-block join blocked >2 s (a worker wedged in a plugin's
     // processBlock). Bumped RT-safely from runBlock; poll from a non-RT thread.
     int joinStallCount() const noexcept { return joinStalls.load (std::memory_order_relaxed); }
+
+    // Whether the caller of runBlock is blocked in the join, waiting on a lane
+    // past the short spin. A watchdog that sees a block run long reads it to
+    // tell a lane's stall, which joinStallCount() counts, from one on the
+    // caller's own thread. Any thread.
+    bool isJoinBlocked() const noexcept { return joinBlocked.load (std::memory_order_relaxed); }
+
+    // Test-only: one join stall, counted as runBlock counts one.
+    void noteJoinStallForTest() noexcept { joinStalls.fetch_add (1, std::memory_order_relaxed); }
+
+    // Test-only, with no runBlock in flight: how many 1 ms waits the join makes
+    // before it counts a stall, 2000 otherwise.
+    void setJoinStallWaitsForTest (int waits) noexcept { joinStallWaits = waits; }
 
 private:
     struct Worker;
@@ -120,6 +134,8 @@ private:
     std::atomic<bool>     quiescing { false };
     std::atomic<bool>     quit { false };
     std::atomic<int>      joinStalls { 0 };    // count of >2 s join stalls (diagnostic)
+    std::atomic<bool>     joinBlocked { false };
+    int                   joinStallWaits = 2000;
     dusk::AutoResetEvent  completion;          // auto-reset; signalled by the last worker
 
     // The last setDeviceDeadline. Written by the message thread only while

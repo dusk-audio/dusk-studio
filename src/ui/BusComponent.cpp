@@ -19,6 +19,11 @@ namespace
 template <typename T>
 inline T jlimit (T lo, T hi, T value) noexcept { return std::clamp (value, lo, std::max (lo, hi)); }
 
+float busMeterFrac (float db) noexcept
+{
+    return faderSkewMeterFrac (db, ChannelStripParams::kFaderMinDb, ChannelStripParams::kFaderMaxDb);
+}
+
 void styleSmallKnob (juce::Slider& s, double minV, double maxV, double midPt,
                       double initialV, juce::Colour col, const juce::String& suffix,
                       int decimals)
@@ -1073,31 +1078,32 @@ void BusComponent::timerCallback()
         }
     }
 
-    auto smoothChannel = [] (float& displayed, float& peakHold, int& peakFrames, float src)
+    outputL.step (bus.strip.meterPostBusLDb.load (std::memory_order_relaxed));
+    outputR.step (bus.strip.meterPostBusRDb.load (std::memory_order_relaxed));
+
+    const float maxHold = std::max (outputL.peak, outputR.peak);
+    if (peakReadout.update (maxHold))
     {
-        if (src > displayed) displayed = src;
-        else                  displayed += (src - displayed) * 0.15f;
+        countGatedRepaint();
+        outputPeakLabel.setText (peakReadout.text, juce::dontSendNotification);
+    }
+    if (paintedPeakColour.changed (maxHold >= -3.0f ? 2.0f : maxHold >= -12.0f ? 1.0f : 0.0f, 0.0f))
+        outputPeakLabel.setColour (juce::Label::textColourId,
+            maxHold >= -3.0f  ? juce::Colour (0xffff5050) :
+            maxHold >= -12.0f ? juce::Colour (0xffe0c050) :
+                                 juce::Colour (0xffd0d0d0));
 
-        if (src >= peakHold) { peakHold = src; peakFrames = 18; }
-        else if (peakFrames > 0) --peakFrames;
-        else peakHold = std::max (-100.0f, peakHold - 1.5f);
-    };
-    const float outL = bus.strip.meterPostBusLDb.load (std::memory_order_relaxed);
-    const float outR = bus.strip.meterPostBusRDb.load (std::memory_order_relaxed);
-    smoothChannel (displayedOutputLDb, outputPeakHoldLDb, outputPeakHoldFramesL, outL);
-    smoothChannel (displayedOutputRDb, outputPeakHoldRDb, outputPeakHoldFramesR, outR);
-
-    const float maxHold = std::max (outputPeakHoldLDb, outputPeakHoldRDb);
-    if (maxHold <= -60.0f)
-        outputPeakLabel.setText ("-inf", juce::dontSendNotification);
-    else
-        outputPeakLabel.setText (juce::String (maxHold, 1), juce::dontSendNotification);
-    outputPeakLabel.setColour (juce::Label::textColourId,
-        maxHold >= -3.0f  ? juce::Colour (0xffff5050) :
-        maxHold >= -12.0f ? juce::Colour (0xffe0c050) :
-                             juce::Colour (0xffd0d0d0));
-
-    if (! meterArea.isEmpty())   repaint (meterArea);
+    if (! meterArea.isEmpty())
+    {
+        const float span = (float) meterArea.getHeight() - 4.0f;
+        const bool left  = meterGateL.changed (outputColumnDraw (outputL.displayed, busMeterFrac (outputL.displayed), span));
+        const bool right = meterGateR.changed (outputColumnDraw (outputR.displayed, busMeterFrac (outputR.displayed), span));
+        if (left || right)
+        {
+            countGatedRepaint();
+            repaint (meterArea);
+        }
+    }
 
     // Motor-fader / motor-pan animation + Write/Touch capture - same grammar
     // as ChannelStripComponent. We poll the live* atoms (the engine writes
@@ -1317,12 +1323,9 @@ void BusComponent::paint (juce::Graphics& g)
         // / 6 / 12 / 24 / 40 / off). Without the skew the LED's "0 dB"
         // sat at 91 % of bar height while the fader's "0" tick lived at
         // 73 % - they read as two different scales for the same signal.
-        constexpr float kMinDb = ChannelStripParams::kFaderMinDb;   // -100
-        constexpr float kMaxDb = ChannelStripParams::kFaderMaxDb;   // +12
-        constexpr float kFaderSkewMidDb = -12.0f;
         constexpr float kBarGap = 1.0f;
 
-        auto drawColumn = [&] (juce::Rectangle<float> bar, float displayedDb)
+        auto drawColumn = [&] (juce::Rectangle<float> bar, const LevelBallistics& level)
         {
             g.setColour (juce::Colour (0xff0c0c0e));
             g.fillRoundedRectangle (bar, 1.5f);
@@ -1333,35 +1336,24 @@ void BusComponent::paint (juce::Graphics& g)
             const juce::Colour kLedGreen  (0xff20d040);
             const juce::Colour kLedYellow (0xfff0e020);
             const juce::Colour kLedRed    (0xffff2020);
-            auto fracForDb = [&] (float db)
+            auto fracForDb = [] (float db) { return busMeterFrac (db); };
+            auto colourForZone = [&] (int zone) -> juce::Colour
             {
-                // JUCE setSkewFactorFromMidPoint formula -
-                // skewFactor = log(0.5) / log(midFrac).
-                const float midFrac = (kFaderSkewMidDb - kMinDb)
-                                    / (kMaxDb - kMinDb);
-                const float skewFactor = std::log (0.5f) / std::log (midFrac);
-                const float t = jlimit (0.0f, 1.0f,
-                                                  (db - kMinDb) / (kMaxDb - kMinDb));
-                return std::pow (t, skewFactor);
-            };
-            auto colourForDb = [&] (float db) -> juce::Colour
-            {
-                if (db >=  5.0f) return kLedRed;
-                if (db >= -5.0f) return kLedYellow;
-                return kLedGreen;
+                return zone == 2 ? kLedRed : zone == 1 ? kLedYellow : kLedGreen;
             };
 
-            const float frac = fracForDb (displayedDb);
-            const float fillH = (bar.getHeight() - 4.0f) * frac;
-            if (fillH > 0.5f)
+            const auto draw = outputColumnDraw (level.displayed, fracForDb (level.displayed),
+                                                bar.getHeight() - 4.0f);
+            if (draw.fill.shown)
             {
+                const float fillH = draw.fill.px;
                 const float x = bar.getX() + 1.5f;
                 const float w = bar.getWidth() - 3.0f;
                 const float yFillTop = bar.getBottom() - 2.0f - fillH;
                 const float yFillBot = bar.getBottom() - 2.0f;
                 const auto fillRect = juce::Rectangle<float> (x, yFillTop, w, fillH);
 
-                const auto tipCol = colourForDb (displayedDb);
+                const auto tipCol = colourForZone (draw.fillZone);
                 g.setColour (tipCol.withAlpha (0.20f));
                 g.fillRoundedRectangle (fillRect.expanded (1.5f), 2.0f);
                 g.setColour (tipCol.withAlpha (0.10f));
@@ -1392,10 +1384,10 @@ void BusComponent::paint (juce::Graphics& g)
         const float colW   = (fullBar.getWidth() - kBarGap) * 0.5f;
         drawColumn (juce::Rectangle<float> (fullBar.getX(), fullBar.getY(),
                                               colW, fullBar.getHeight()),
-                     displayedOutputLDb);
+                     outputL);
         drawColumn (juce::Rectangle<float> (fullBar.getX() + colW + kBarGap, fullBar.getY(),
                                               colW, fullBar.getHeight()),
-                     displayedOutputRDb);
+                     outputR);
     }
 
     // Fader dB scale labels - drawn LEFT of the slider's track (track-3
