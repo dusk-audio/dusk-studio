@@ -221,6 +221,7 @@ add_executable(dusk-studio-tests
     mcu_fader_taper.cpp
     comp_mode_fanout.cpp
     foundation_message_thread.cpp
+    foundation_timer_schedule.cpp
     foundation_thread_name.cpp
     foundation_undo_manager.cpp
     foundation_undo_manager_parity.cpp

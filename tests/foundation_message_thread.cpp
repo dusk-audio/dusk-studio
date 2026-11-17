@@ -4,10 +4,13 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <csignal>
 #include <functional>
+#include <memory>
+#include <vector>
 
 // The event seam is a thin wrapper over the platform message loop.
 // ScopedJuceInitialiser_GUI brings the loop up and tears it down when the scope
@@ -120,3 +123,66 @@ TEST_CASE ("a termination signal routes a quit request to the message thread", "
     REQUIRE (asked.load());
 #endif
 }
+
+#if ! defined (__APPLE__)
+namespace
+{
+struct StampingTimer final : dusk::Timer
+{
+    std::vector<std::chrono::steady_clock::time_point>* stamps = nullptr;
+    int fired = 0;
+    void timerCallback() override
+    {
+        ++fired;
+        stamps->push_back (std::chrono::steady_clock::now());
+    }
+};
+} // namespace
+
+TEST_CASE ("dusk::Timers started at different moments fire in shared passes", "[foundation][events][ipc]")
+{
+    juce::ScopedJuceInitialiser_GUI juceInit;
+
+    static constexpr int kTimers = 12;
+    std::vector<std::chrono::steady_clock::time_point> stamps;
+    stamps.reserve (4096);
+    std::vector<std::unique_ptr<StampingTimer>> timers;
+    for (int i = 0; i < kTimers; ++i)
+    {
+        timers.push_back (std::make_unique<StampingTimer>());
+        timers.back()->stamps = &stamps;
+    }
+
+    // Started one by one from the loop, a few milliseconds apart, so each would
+    // keep its own phase on timers of its own.
+    struct Starter final : dusk::Timer
+    {
+        std::vector<std::unique_ptr<StampingTimer>>* toStart = nullptr;
+        std::size_t next = 0;
+        void timerCallback() override
+        {
+            (*toStart)[next]->startTimerHz (30);
+            if (++next == toStart->size()) stopTimer();
+        }
+    } starter;
+    starter.toStart = &timers;
+    starter.startTimer (3);
+
+    const auto begun = std::chrono::steady_clock::now();
+    pumpUntil ([] { return false; }, std::chrono::milliseconds (1200));
+    const double seconds = std::chrono::duration<double> (std::chrono::steady_clock::now() - begun).count();
+    for (auto& timer : timers)
+        timer->stopTimer();
+
+    std::sort (stamps.begin(), stamps.end());
+    int passes = 0;
+    for (std::size_t i = 0; i < stamps.size(); ++i)
+        if (i == 0 || stamps[i] - stamps[i - 1] > std::chrono::milliseconds (2))
+            ++passes;
+
+    for (const auto& timer : timers)
+        REQUIRE (timer->fired >= 20);
+    // One pass per 30 Hz instant, give or take the shorter starter timer's own.
+    REQUIRE (passes <= static_cast<int> (seconds * 30.0) + 4);
+}
+#endif

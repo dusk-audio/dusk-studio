@@ -86,6 +86,7 @@ private:
     float needlePosR = -1.0f;
     float needleVelL = 0.0f;
     float needleVelR = 0.0f;
+    int timerHz = 0;
 
     // Pre-rendered face. Rebuilt on resize/reference-change; the per-frame
     // paint just blits this and overlays the needle(s). Cheaper than
