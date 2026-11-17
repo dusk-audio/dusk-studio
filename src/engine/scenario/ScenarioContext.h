@@ -82,6 +82,9 @@ public:
     // watchdog - before the result is reported, so what a deferred case owns
     // is released even when a wait times out. Latest registered runs first.
     void cleanup (std::function<void()> fn);
+    // Runs once on completion, before the first cleanup. The runner's, not a
+    // scenario's.
+    void beforeCleanups (std::function<void()> fn) { beforeCleanupsFn = std::move (fn); }
 
     // Puts value back to what it holds now when the scenario ends, however it
     // ends.
@@ -121,6 +124,7 @@ private:
     std::vector<std::string> log;
     std::string firstFailure;
     std::vector<std::function<void()>> cleanups;
+    std::function<void()> beforeCleanupsFn;
 
     std::vector<std::vector<float>> inputs, outputs;
     std::vector<const float*> inputPtrs;

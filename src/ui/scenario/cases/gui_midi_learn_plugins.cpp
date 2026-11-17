@@ -41,6 +41,7 @@ std::optional<ScenarioResult> runBuiltinMidiLearn (GuiHost& host, ScenarioContex
         return ScenarioResult::skip ("requires an empty first insert");
     const bool hardwareInputs = engine.setHardwareMidiInputsEnabledForScenario (false);
     ctx.cleanup ([&engine, hardwareInputs] { engine.setHardwareMidiInputsEnabledForScenario (hardwareInputs); });
+    keepCarriedInsert (ctx, session.track (0));
     const auto bindings = session.midiBindings.current();
     const auto capture = session.midiLearnCapture.load();
     const auto mode = strip.insertMode.load();
@@ -922,15 +923,13 @@ std::optional<ScenarioResult> runAuxPickShowsBuiltinEditor (GuiHost& host, Scena
     ctx.keep (strip.insertMode[(std::size_t) kAuxSlot]);
     host.switchToStage (GuiHost::Stage::Aux);
     const int originalLane = host.activeAuxLane();
-    auto& laneParams = ctx.session().auxLane (kAuxLane);
-    ctx.cleanup ([&host, &engine, &strip, &laneParams, originalLane]
+    keepCarriedInsert (ctx, ctx.session().auxLane (kAuxLane), kAuxSlot);
+    ctx.cleanup ([&host, &engine, &strip, originalLane]
     {
         drainModals (host);
         engine.suspendProcessing();
         strip.unloadBuiltin (kAuxSlot);
         engine.resumeProcessing();
-        laneParams.builtinUnitId[(std::size_t) kAuxSlot].clear();
-        laneParams.builtinStateBase64[(std::size_t) kAuxSlot].clear();
         if (auto* lane = host.auxLane (kAuxLane))
         {
             lane->refreshSlot (kAuxSlot);

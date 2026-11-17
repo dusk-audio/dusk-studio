@@ -246,6 +246,11 @@ void SuiteRunner::beginCurrent()
         context = std::make_unique<ScenarioContext> (
             *liveSession, *liveEngine,
             [this] (ScenarioResult result) { finishCurrent (std::move (result)); });
+        // An autosave tick copies whatever units a case has loaded into the
+        // session. Landing one on every case, at its worst moment, makes a
+        // cleanup that unloads without putting the session back show in this
+        // case's sweep rather than in a later case that reopens the session.
+        context->beforeCleanups ([this] { guiPublishAsAutosave (*guiHost); });
     }
     else
     {
