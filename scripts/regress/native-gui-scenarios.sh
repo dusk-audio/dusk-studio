@@ -13,6 +13,6 @@ case "${2:-}" in
     *) echo "unknown argument: $2" >&2; exit 2 ;;
 esac
 rc=0
-gnome_session_run 180 "$HERE/native_gui_scenarios.py" "$APP" "$GNOME_WORK/app" || rc=$?
+gnome_session_run 240 "$HERE/native_gui_scenarios.py" "$APP" "$GNOME_WORK/app" || rc=$?
 ((rc == 0)) || GNOME_KEEP=1
 exit "$rc"

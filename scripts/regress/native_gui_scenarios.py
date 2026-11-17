@@ -13,7 +13,11 @@ def drive(binary, work):
     desktop = Desktop()
     desktop.tap(0xFFE1)
     root = Path(__file__).resolve().parents[2]
-    cases = ["gui.native_wayland_foreign_editors"]
+    cases = ["gui.native_wayland_foreign_editors",
+             "gui.idle_mini_timeline_draws_on_demand",
+             "gui.idle_mastering_panels_draw_on_demand",
+             "gui.idle_virtual_keyboard_draws_on_demand",
+             "gui.idle_piano_roll_draws_on_demand"]
     cache = Path(binary).resolve().parents[2] / "CMakeCache.txt"
     if os.environ.get("DISPLAY") and "DUSKSTUDIO_NATIVE_LV2:BOOL=ON" in cache.read_text():
         cases.append("gui.lv2_editor_reflects_state")
@@ -26,7 +30,7 @@ def drive(binary, work):
                DUSKSTUDIO_RUN_SCENARIOS="gui:" + ",".join(cases),
                DUSKSTUDIO_FIXTURE_DIR=str(root / "build-tests") + ":" + str(root / "tests/fixtures"))
     with (work / "app.out").open("w") as output, (work / "app.err").open("w") as errors:
-        result = subprocess.run([binary], env=env, stdout=output, stderr=errors, timeout=150)
+        result = subprocess.run([binary], env=env, stdout=output, stderr=errors, timeout=210)
     output = (work / "app.out").read_text(errors="replace")
     errors = (work / "app.err").read_text(errors="replace")
     print(output, end="")
