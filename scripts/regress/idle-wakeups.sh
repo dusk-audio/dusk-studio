@@ -22,8 +22,10 @@
 # budget. A name the budget does not list fails, as does one over its ceiling.
 # A ceiling is wake-ups per second, or "<n>/block" for a thread the audio clock
 # drives: n wake-ups per audio block at the rate and quantum the device opened
-# with. A thread that ends inside the window is judged by its name too: an
-# unlisted one fails. --update lowers ceilings to this run plus headroom and
+# with. The record "(non-device total)", a name no thread can have (Linux
+# names stop at 15 characters), holds the sum of every thread whose ceiling is
+# per second, so everything the audio clock does not drive. A thread that ends
+# inside the window is judged by its name too: an unlisted one fails. --update lowers ceilings to this run plus headroom and
 # drops names that did not run, and leaves the budget alone (status 3) when a
 # thread ended inside the window. It never raises a ceiling or adds a name;
 # that is a hand edit.
@@ -125,6 +127,10 @@ for number, line in enumerate(lines, 1):
         print(f"error: {budget_path}:{number}: {name!r} is listed twice")
         sys.exit(2)
     budget[name] = (float(match.group(2)), bool(match.group(3)), number - 1)
+TOTAL = "(non-device total)"
+if TOTAL in budget and budget[TOTAL][1]:
+    print(f"error: {budget_path}: {TOTAL!r} is wake-ups per second, not per block")
+    sys.exit(2)
 
 
 def snapshot(path):
@@ -207,12 +213,30 @@ for name in sorted(set(ended) - set(groups)):
                  f"so the run cannot say what it costs")
 
 print(f"{'total':<17} {total_threads:>3} {total_wakeups / seconds:>10.1f}")
+# Everything the audio clock does not drive: unlisted names and every name with
+# a per-second ceiling.
+non_device = sum(woke for name, (count, woke) in groups.items()
+                 if not (name in budget and budget[name][1])) / seconds
+if TOTAL in budget:
+    ceiling = budget[TOTAL][0]
+    suggested = proposal(non_device, False)
+    if non_device > ceiling:
+        failed = True
+        verdict = "OVER"
+    else:
+        verdict = "ok"
+        if suggested < ceiling:
+            lowered[TOTAL] = suggested
+        if suggested <= ceiling * 0.75:
+            hints.append(f"hint: {TOTAL!r} could come down from {text(ceiling)} to "
+                         f"{text(suggested)} (idle-wakeups.sh --update)")
+    print(f"{'non-device':<17} {'':>3} {non_device:>10.1f}  {text(ceiling):<20} {verdict}")
 print(f"cpu time {cpu_seconds:.2f} s over {seconds:.1f} s ({100 * cpu_seconds / seconds:.1f}% of one core)")
 if born:
     print(f"note: started inside the window, counted from their start: {', '.join(born)}")
 if gone:
     print(f"note: ended inside the window, not counted: {', '.join(gone)}")
-idle = sorted(name for name in budget if name not in groups and name not in ended)
+idle = sorted(name for name in budget if name not in groups and name not in ended and name != TOTAL)
 for name in idle:
     print(f"note: {name!r} is budgeted but did not run; --update drops it")
 for hint in hints:
@@ -221,7 +245,8 @@ for hint in hints:
 if tsv_path:
     with open(tsv_path, "w", encoding="utf-8") as out:
         out.write(f"#rate\t{rate}\n#quantum\t{quantum}\n#seconds\t{seconds:.3f}\n"
-                  f"#cpu_seconds\t{cpu_seconds:.3f}\n#total_per_second\t{total_wakeups / seconds:.3f}\n")
+                  f"#cpu_seconds\t{cpu_seconds:.3f}\n#total_per_second\t{total_wakeups / seconds:.3f}\n"
+                  f"#non_device_per_second\t{non_device:.3f}\n")
         out.write("thread\tthreads\twakeups\tper_second\tper_block\tceiling\tresult\n")
         for name, count, woke, per_second, per_block, ceiling_text, verdict in rows:
             out.write(f"{name}\t{count}\t{woke}\t{per_second:.3f}\t{per_block:.4f}\t{ceiling_text}\t{verdict}\n")

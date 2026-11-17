@@ -1936,6 +1936,20 @@ bb_pipewire_clock_body
     assert rc == 3 and "repeat the run" in out, out
     assert idle_budget.read_text() == budget_text, "--update rewrote the budget from a sample a thread ended in"
 
+    # The non-device total sums every per-second name, here 5 + 1000, and leaves
+    # the per-block DuskDSP out. It is never an idle name, and --update lowers it.
+    total_budget = budget_text.replace("gone\t5\n", "(non-device total)\t1007\n")
+    rc, out = idle_judge(within, budget=total_budget)
+    assert rc == 0 and "non-device" in out and "1005.0" in out, out
+    assert "'(non-device total)' is budgeted but did not run" not in out, out
+    assert "#non_device_per_second\t1005.000" in idle_table.read_text(), idle_table.read_text()
+    rc, out = idle_judge(within.replace("1\t60\tDuskStudio", "1\t90\tDuskStudio"), budget=total_budget)
+    assert rc == 1 and "OVER" in out, out
+    rc, out = idle_judge(within, mode="update", budget=total_budget.replace("\t1007\n", "\t2000\n"))
+    assert rc == 0 and "(non-device total)\t1258\n" in idle_budget.read_text(), idle_budget.read_text()
+    rc, out = idle_judge(within, budget=total_budget.replace("\t1007\n", "\t5/block\n"))
+    assert rc == 2 and "not per block" in out, out
+
     for broken in ("DuskStudio\t08\n", "DuskStudio 5\n", "DuskStudio\t5\nDuskStudio\t6\n",
                    "DuskStudio\t5/frame\n", "DuskStudio\t-1\n"):
         rc, out = idle_judge(within, budget=broken)

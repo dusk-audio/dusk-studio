@@ -1098,7 +1098,11 @@ thread and the DSP pool wake every block, and their ceilings follow the
 quantum instead of pretending to be zero. A name the budget does not list
 fails, as does a name over its ceiling, and that includes a thread that ended
 inside the window; a line that does not parse fails the whole check. A name well under its ceiling passes with a `hint:` naming the
-lower value. `bash scripts/regress/idle-wakeups.sh --update` lowers each
+lower value. The record `(non-device total)`, a name no thread can have since
+Linux thread names stop at 15 characters, caps the sum of every name with a
+per-second ceiling, so the whole app apart from the threads the audio clock
+drives; the table shows it as the `non-device` row, and `--update` lowers it
+like any other ceiling. `bash scripts/regress/idle-wakeups.sh --update` lowers each
 ceiling to the run plus headroom and drops names that did not run, and exits
 3 without touching the budget when a thread ended inside the window, since
 that sample cannot say whether its name still runs; it never raises a ceiling

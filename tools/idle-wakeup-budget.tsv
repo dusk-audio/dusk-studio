@@ -13,6 +13,11 @@
 # deadline. Every dusk::Timer shares one 30 Hz tick, and the framework's window
 # vblank and tooltip timers rest while nothing draws or waits to show, so most
 # of what is left is that tick.
+# (non-device total) is the sum of every name with a per-second ceiling, so
+# everything but the threads the audio clock drives. Of its 206 wake-ups a
+# second, llvmpipe's software rendering of the mini timeline's safety frame is
+# 83; a desktop with a GPU driver has no llvmpipe threads.
+(non-device total)	259
 DuskDSP *	0.05/block
 DuskFill *	1
 DuskInstance	1
