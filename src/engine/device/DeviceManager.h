@@ -79,6 +79,20 @@ public:
     // as a device starts, or as soon as a change broadcast reports a live one.
     bool isDeviceChangePending() const noexcept;
 
+    // The clock the running device has moved to under its stream, else unset
+    // (see IODevice::getMovedClock). A newly moved clock also fires the change
+    // listeners once.
+    DeviceClock getMovedDeviceClock() const;
+    // Restart the running device at the clock it moved to: callbacks get
+    // audioDeviceStopped and then audioDeviceAboutToStart at the new block size
+    // and rate, and getSetup reports them. The user's chosen setup is kept.
+    // `expected` is the moved clock the caller decided on. Returns false, doing
+    // nothing, when the device has not moved or has since moved somewhere
+    // else, which the change listeners then hear of in turn. Also false when
+    // one of those callbacks closes or replaces the device, which ends the
+    // restart there.
+    bool followDeviceClock (const DeviceClock& expected);
+
     void addCallback (IODeviceCallback* callback);
     void removeCallback (IODeviceCallback* callback);
     bool containsCallback (const IODeviceCallback* callback) const;

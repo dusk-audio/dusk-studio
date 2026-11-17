@@ -57,6 +57,7 @@ SCENARIO_BB_LEG_NAMES=(
     bb-explicit-scan-shutdown
     bb-oop-child-kill
     bb-oop-quit-during-load
+    bb-pipewire-clock
 )
 # One row per case of gnome-window-activation.sh, named as the macOS leg names
 # its rows.
@@ -1125,6 +1126,45 @@ bb_oop_quit_during_load_body() {
     return 0
 }
 
+leg_bb_pipewire_clock() {
+    bb_begin bb-pipewire-clock 120 || return 1
+    local rc=0
+    bb_pipewire_clock_body || rc=$?
+    bb_end "$rc" || rc=$?
+    bb_pipewire_clock_release
+    return "$rc"
+}
+
+# The private graph's own clock, put back however the case ended: the legs
+# after this one play through the same graph.
+bb_pipewire_clock_release() {
+    local key
+    for key in clock.force-quantum clock.force-rate; do
+        env -u XDG_RUNTIME_DIR -u PIPEWIRE_REMOTE "PIPEWIRE_RUNTIME_DIR=$NULL_AUDIO_DIR" \
+            timeout 10 pw-metadata -n settings 0 "$key" 0 >/dev/null 2>&1 || true
+    done
+}
+
+# The graph moves to a longer cycle and then to another rate under the playing
+# engine. Only ever on the private graph null_audio_start brought up, which the
+# case checks by its marker before it forces anything.
+bb_pipewire_clock_body() {
+    bb_spawn A "PIPEWIRE_REMOTE=" "DUSKSTUDIO_RUN_SCENARIOS=tag:pipewire-clock" \
+        "DUSKSTUDIO_PIPEWIRE_CLOCK_FIXTURE=$NULL_AUDIO_DIR" \
+        "DUSKSTUDIO_FIXTURE_DIR=${SCENARIO_FIXTURE_ROOTS}" -- || return 1
+    local rc=0 case
+    bb_wait_exit A 90 || rc=$?
+    grep -E -- '^\[(PASS|FAIL|SKIP)\] device\.pipewire_' "$BB_SDIR/A.out" | sed 's/^/    /'
+    for case in device.pipewire_longer_cycle_keeps_playing device.pipewire_rate_change_follows \
+        device.pipewire_open_adopts_graph_rate device.pipewire_longer_cycle_keeps_mastering \
+        device.pipewire_deferred_rate_change_follows device.pipewire_restart_reports_adopted_rate; do
+        grep -qF -- "[PASS] ${case} " "$BB_SDIR/A.out" \
+            || { bb_fail "${case} did not pass (app status $rc)"; return 1; }
+    done
+    ((rc == 0)) || { bb_fail "the cases passed, then the app ended with status $rc"; return 1; }
+    return 0
+}
+
 # ---------------------------------------------------------------- fixtures
 
 # Some cases treat a fixture as optional and pass with that part left out, so a
@@ -1469,6 +1509,13 @@ regress_scenarios_run() {
     else
         regress_skip "bb-oop-child-kill" "needs the session.mint_oop_fixture scenario"
         regress_skip "bb-oop-quit-during-load" "needs the session.mint_oop_fixture scenario"
+    fi
+
+    if [[ -n "$NULL_AUDIO_DIR" ]] && command -v pw-metadata >/dev/null 2>&1 \
+        && scenarios_has_case "device.pipewire_rate_change_follows"; then
+        regress_leg "bb-pipewire-clock" leg_bb_pipewire_clock
+    else
+        regress_skip "bb-pipewire-clock" "needs the private PipeWire graph, pw-metadata and the device.pipewire_* clock scenarios"
     fi
 
     xvfb_session_stop

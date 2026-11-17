@@ -492,7 +492,8 @@ std::optional<ScenarioResult> runLiveMidiJournal (GuiHost& host, ScenarioContext
 // recorded in: its file goes to that session's midi/takes, named after that
 // session's track and at its tempo, and its checkpoint there goes only once
 // that file is on the disk. The session opened gets none of it.
-std::optional<ScenarioResult> runSessionSwitchFilesTake (GuiHost& host, ScenarioContext& ctx)
+std::optional<ScenarioResult> runSessionSwitchFilesTake (GuiHost& host, ScenarioContext& ctx,
+                                                       bool deviceStops)
 {
     auto& engine = ctx.engine();
     auto& session = ctx.session();
@@ -506,9 +507,10 @@ std::optional<ScenarioResult> runSessionSwitchFilesTake (GuiHost& host, Scenario
     std::array<bool, Session::kNumTracks> armed {};
     for (int index = 0; index < Session::kNumTracks; ++index)
         armed[(std::size_t) index] = session.track (index).recordArmed.load();
-    ctx.cleanup ([&host, &engine, &session, originalDir, restore, armed]
+    ctx.cleanup ([&host, &engine, &session, originalDir, restore, armed, deviceStops]
     {
         engine.stop();
+        if (deviceStops) engine.reattachAudioCallback();
         drainModals (host);
         engine.flushMidiRecoveryFiles();
         reopenSavedSession (host, restore);
@@ -587,11 +589,27 @@ std::optional<ScenarioResult> runSessionSwitchFilesTake (GuiHost& host, Scenario
         const auto* preview = engine.getRecordManager().midiCapturePreview (0);
         return preview != nullptr && ! preview->notes.empty();
     }, "the virtual key never reached the recorder", {}, 4000 });
-    steps->push_back ({ 100, [&ctx, &host, &engine, &session, recorded, opened, take]
+    steps->push_back ({ 100, [&ctx, &host, &engine, &session, recorded, opened, take, deviceStops]
     {
+        if (deviceStops)
+        {
+            // Fencing the callback defers the device stop's capture commit.
+            // Open in this same message-loop turn, before its queued cleanup.
+            engine.suspendProcessing();
+            engine.detachAudioCallback();
+            engine.resumeProcessing();
+            ctx.expect (engine.getTransport().isStopped() && engine.getRecordManager().isActive(),
+                        "the device stop did not leave a take waiting for owner-thread cleanup");
+        }
         reopenSavedSession (host, opened / "session.json");
         ctx.expect (currentSessionDirectory (session) == opened && engine.getTransport().isStopped(),
                     "opening the next session did not stop the take and switch to it");
+        ctx.expect (! engine.getRecordManager().isActive(), "the session switch left the recorder active");
+        if (deviceStops)
+        {
+            engine.stop();
+            engine.reattachAudioCallback();
+        }
         engine.flushMidiRecoveryFiles();
         const auto takes = recorded / "midi" / "takes";
         const auto names = namesIn (takes);
@@ -616,7 +634,13 @@ std::optional<ScenarioResult> runSessionSwitchFilesTake (GuiHost& host, Scenario
 const ScenarioRegistrar sessionSwitchFilesTake { Scenario {
     "gui.session_switch_files_take_in_its_session", { "gui", "session", "record", "midi" }, Needs::Engine | Needs::Gui,
     {}, {}, 30000,
-    [] (GuiHost& host, ScenarioContext& ctx) { return runSessionSwitchFilesTake (host, ctx); }
+    [] (GuiHost& host, ScenarioContext& ctx) { return runSessionSwitchFilesTake (host, ctx, false); }
+} };
+
+const ScenarioRegistrar deviceStopSessionSwitchFilesTake { Scenario {
+    "gui.device_stop_session_switch_files_take_in_its_session", { "gui", "session", "record", "midi", "device" },
+    Needs::Engine | Needs::Gui, {}, {}, 30000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runSessionSwitchFilesTake (host, ctx, true); }
 } };
 
 const ScenarioRegistrar liveMidiJournal { Scenario {

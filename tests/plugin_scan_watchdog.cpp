@@ -22,6 +22,10 @@
  #include <spawn.h>
  #include <unistd.h>
  extern "C" char** environ;
+ #if defined(__linux__)
+  #include <poll.h>
+  #include <sys/syscall.h>
+ #endif
 #endif
 
 #if DUSKSTUDIO_HAS_OOP_PLUGINS || DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_VST3
@@ -72,26 +76,64 @@ struct Environment
     std::string name, before;
 };
 
-bool processLive (std::uint64_t pid)
+// Watches a process through a handle opened while the process is known to
+// exist, so no later reading can be about another process that has since taken
+// its ID. On Linux the handle is a pidfd, which becomes readable once every
+// thread has exited and stays readable. /proc/<pid>/stat cannot stand in for
+// it: a process shows 'Z' there until its reaper starts collecting it and 'X'
+// while it does, so a check for 'Z' reads it as gone and then as live.
+class ProcessWatch
 {
+public:
+    explicit ProcessWatch (std::uint64_t id)
+    {
+       #if defined(_WIN32)
+        handle = ::OpenProcess (SYNCHRONIZE, FALSE, static_cast<DWORD> (id));
+        if (handle == nullptr) error = static_cast<int> (::GetLastError());
+       #elif defined(__linux__)
+        handle = static_cast<int> (::syscall (SYS_pidfd_open, static_cast<pid_t> (id), 0));
+        if (handle < 0) error = errno;
+       #else
+        pid = static_cast<pid_t> (id);
+       #endif
+    }
+
+    ~ProcessWatch()
+    {
+       #if defined(_WIN32)
+        if (handle != nullptr) ::CloseHandle (handle);
+       #elif defined(__linux__)
+        if (handle >= 0) ::close (handle);
+       #endif
+    }
+
+    ProcessWatch (const ProcessWatch&) = delete;
+    ProcessWatch& operator= (const ProcessWatch&) = delete;
+
+    int openError() const { return error; }
+
+    bool exited() const
+    {
+       #if defined(_WIN32)
+        return handle != nullptr && ::WaitForSingleObject (handle, 0) == WAIT_OBJECT_0;
+       #elif defined(__linux__)
+        pollfd ready { handle, POLLIN, 0 };
+        return handle >= 0 && ::poll (&ready, 1, 0) == 1 && (ready.revents & (POLLIN | POLLHUP)) != 0;
+       #else
+        return ::kill (pid, 0) != 0 && errno == ESRCH;
+       #endif
+    }
+
+private:
+    int error = 0;
    #if defined(_WIN32)
-    const auto process = ::OpenProcess (SYNCHRONIZE, FALSE, static_cast<DWORD> (pid));
-    if (process == nullptr) return false;
-    const bool live = ::WaitForSingleObject (process, 0) == WAIT_TIMEOUT;
-    ::CloseHandle (process);
-    return live;
+    HANDLE handle = nullptr;
+   #elif defined(__linux__)
+    int handle = -1;
    #else
-    if (::kill (static_cast<pid_t> (pid), 0) != 0 && errno == ESRCH) return false;
-    #if defined(__linux__)
-    // Unreadable once reaped after kill() found it; 'Z' while still a zombie.
-    const auto status = dusk::fs::loadFileAsString ("/proc/" + std::to_string (pid) + "/stat");
-    const auto end = status.rfind (')');
-    if (end == std::string::npos) return false;
-    if (end + 2 < status.size() && status[end + 2] == 'Z') return false;
-    #endif
-    return true;
+    pid_t pid = -1;
    #endif
-}
+};
 
 void checkInheritedWriter (bool cancel, bool parentExits, std::size_t outputLimit = 8 * 1024 * 1024)
 {
@@ -121,6 +163,11 @@ void checkInheritedWriter (bool cancel, bool parentExits, std::size_t outputLimi
     const auto parentPid = readPid ("parent.pid"), leafPid = readPid ("leaf.pid");
     REQUIRE (parentPid > 0);
     REQUIRE (leafPid > 0);
+    // Both IDs still name the fixture's processes here: this process has not
+    // collected the parent, and the leaf sleeps until long after the scan.
+    const ProcessWatch parentProcess (parentPid), leafProcess (leafPid);
+    REQUIRE (parentProcess.openError() == 0);
+    REQUIRE (leafProcess.openError() == 0);
     std::atomic<bool> abortRequested { cancel };
     const auto started = std::chrono::steady_clock::now();
     const auto [completed, cancelled, timedOut] = duskstudio::driveSandboxedScanForTest (
@@ -134,11 +181,11 @@ void checkInheritedWriter (bool cancel, bool parentExits, std::size_t outputLimi
     // hence the long wait. The fixtures also exit by themselves well inside it,
     // so each writes a marker when it does: a marker means nothing killed it.
     const auto cleanupDeadline = std::chrono::steady_clock::now() + std::chrono::seconds (5);
-    while ((processLive (parentPid) || processLive (leafPid))
+    while (! (parentProcess.exited() && leafProcess.exited())
            && std::chrono::steady_clock::now() < cleanupDeadline)
         std::this_thread::sleep_for (std::chrono::milliseconds (1));
-    CHECK_FALSE (processLive (parentPid));
-    CHECK_FALSE (processLive (leafPid));
+    CHECK (parentProcess.exited());
+    CHECK (leafProcess.exited());
     CHECK_FALSE (std::filesystem::exists (directory.path() / "parent.exited"));
     CHECK_FALSE (std::filesystem::exists (directory.path() / "leaf.exited"));
     duskstudio::sfz::DirectoryLease released;

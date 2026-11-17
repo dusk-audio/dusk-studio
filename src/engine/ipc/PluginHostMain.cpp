@@ -61,9 +61,14 @@
 #endif
 #include "../../foundation/AutoResetEvent.h"
 #include "../../foundation/MessageThread.h"
+#include "../../foundation/ScopedNoDenormals.h"
 #include "../../foundation/ThreadName.h"
 #include "../JuceCompat.h"
 #include "../DuskStudioPlayHead.h"
+#if defined (__linux__)
+ #include "../RealtimeKit.h"
+ #include "../RtPriority.h"
+#endif
 #include "platform/ChildAppKit.h"
 #include "platform/IpcChannel.h"
 #include "platform/IpcShm.h"
@@ -98,7 +103,10 @@
 #endif
 
 #if defined (__linux__)
+ #include <pthread.h>
  #include <sys/prctl.h>
+ #include <sys/resource.h>
+ #include <sys/syscall.h>
  #include <unistd.h>
 #endif
 
@@ -903,6 +911,15 @@ struct HostState
 
     std::atomic<bool> shouldQuit { false };
 
+   #if defined (__linux__)
+    // Published once by the audio worker after it has asked for realtime.
+    std::atomic<std::int64_t> renderThreadId { 0 };
+    std::atomic<bool>         renderThreadRealtime { false };
+    // Written once on the main thread, before the audio worker starts.
+    bool                      renderCpuTimeLimited = false;
+    dusk::AutoResetEvent      renderThreadScheduled;
+   #endif
+
    #if JUCE_MAC
     // Mirror state (3c-3b, Mac-only - Linux/Windows children don't
     // have a parent-side shell editor to mirror to, so installing
@@ -1200,6 +1217,36 @@ private:
 };
 #endif
 
+// Adds the format a scan names or a load needs, the first time it is needed.
+// False for a format this build does not host.
+bool addFormatNamed (duskstudio::juce_compat::FormatManager& manager, const std::string& name)
+{
+    for (auto* format : manager.getFormats())
+        if (format->getName().toStdString() == name) return true;
+   #if JUCE_PLUGINHOST_AU && JUCE_MAC
+    if (name == "AudioUnit")
+    {
+        duskstudio::juce_compat::addFormat<juce::AudioUnitPluginFormat> (manager);
+        return true;
+    }
+   #endif
+   #if JUCE_PLUGINHOST_VST3
+    if (name == "VST3")
+    {
+        duskstudio::juce_compat::addFormat<juce::VST3PluginFormat> (manager);
+        return true;
+    }
+   #endif
+   #if JUCE_PLUGINHOST_LV2
+    if (name == "LV2")
+    {
+        duskstudio::juce_compat::addFormat<juce::LV2PluginFormat> (manager);
+        return true;
+    }
+   #endif
+    return false;
+}
+
 bool parsePluginDescriptionXml (const juce::String& xml,
                                   juce::PluginDescription& out)
 {
@@ -1279,9 +1326,13 @@ std::uint32_t handleLoadPlugin (HostState& host,
     // until some later RPC happens to republish it.
     const auto deadline = std::chrono::steady_clock::now()
                         + std::chrono::milliseconds (kHostLifecycleWaitMs);
-    if (desc.pluginFormatName == "LV2"
-        && runOnHostMessageThreadAndWait ([&host]
-        { duskstudio::juce_compat::primeCustomLv2 (host.formatManager, duskstudio::pluginpaths::load()); }, kHostLifecycleWaitMs)
+    // Formats are added on the message thread, which is where JUCE creates the
+    // instances they load.
+    if (runOnHostMessageThreadAndWait ([&host, format = desc.pluginFormatName.toStdString()]
+        {
+            if (addFormatNamed (host.formatManager, format) && format == "LV2")
+                duskstudio::juce_compat::primeCustomLv2 (host.formatManager, duskstudio::pluginpaths::load());
+        }, kHostLifecycleWaitMs)
             != HostDispatchResult::Done)
         return kControlStatusLifecycleFailed;
 
@@ -1450,9 +1501,13 @@ std::uint32_t handleRelease (HostState& host)
 }
 
 // The audio worker, or a handler holding it parked: both use its buffers.
+// The denormal guard is taken per block rather than once for the thread, so a
+// plug-in that changes the flags and leaves them changed cannot carry that into
+// the next block.
 void renderBlock (HostState& host, PluginInstancePtr::element_type& instance,
                   int numChannels, int numSamples)
 {
+    const dusk::audio::ScopedNoDenormals noDenormals;
     juce::AudioBuffer<float> view (host.workBuffer.getArrayOfWritePointers(),
                                    numChannels, numSamples);
     const OwnBlockScope ownBlock;
@@ -1710,8 +1765,79 @@ void handleSetParamAsync (HostState& host,
     });
 }
 
+#if defined (__linux__)
+// Above the parent's 100 ms block deadline (PluginSlot's kOopProcessTimeoutNs),
+// so the guard moves the audio thread off realtime only in a block the parent
+// has already given up on. It is also the soft limit the engine's guard keeps
+// under the 200 ms hard one RTKit asks of the app, so a child that inherits the
+// app's limits and one that sets its own stop at the same point.
+constexpr rlim_t kRenderRealtimeCpuMicros = 150000;
+
+// Main thread, before any thread here can take realtime. The engine's guard
+// moves a thread that computes past the soft RLIMIT_RTTIME without blocking to
+// normal priority, so a stalled plug-in cannot hold a core at realtime, and it
+// keeps a soft limit inherited equal to the hard one from ending the child
+// instead (RealtimeKit.h). An unlimited soft limit gives it nothing to act on.
+//
+// True when a finite soft limit is in place, whoever set it. Without one the
+// kernel never stops a realtime thread that stops blocking, so the worker
+// takes realtime only then. With the limit but without the guard's handler the
+// kernel ends the child at the limit, which the parent reads as a crash.
+bool guardRenderThreadCpuTime() noexcept
+{
+    rlimit limit {};
+    if (::getrlimit (RLIMIT_RTTIME, &limit) != 0) return false;
+    if (limit.rlim_cur == RLIM_INFINITY)
+    {
+        limit.rlim_cur = kRenderRealtimeCpuMicros;
+        if (::setrlimit (RLIMIT_RTTIME, &limit) != 0) return false;
+    }
+    (void) duskstudio::rt::guardRealtimeCpuTime();
+    return true;
+}
+
+// The audio worker, first thing, once for the life of the child. The parent's
+// thread that waits on each block is one of the engine's own audio threads, so
+// this takes the SCHED_RR level they take (RtPriority.h).
+void takeRenderThreadScheduling (HostState& host) noexcept
+{
+    const int priority = duskstudio::rt::queryRealtimePriority().jucePriority;
+    const bool realtime = host.renderCpuTimeLimited && priority >= 0
+                       && duskstudio::rt::applyRealtimeSchedRR (priority);
+    (void) pthread_setname_np (pthread_self(), "DuskPluginAudio");
+    host.renderThreadRealtime.store (realtime, std::memory_order_relaxed);
+    host.renderThreadId.store ((std::int64_t) ::syscall (SYS_gettid), std::memory_order_release);
+    host.renderThreadScheduled.signal();
+}
+
+// Main thread, once, before it dispatches anything. A worker the kernel
+// refused gets the lowest nice level RLIMIT_NICE allows and nothing more. The
+// host is built without the engine's RTKit route: RTKit serves a fixed number
+// of processes and threads per user (15 and 25 by default), the engine's own
+// audio threads and PipeWire draw on the same allowance, and a child per
+// plug-in would use it up. The outcome is written once per child, never per
+// block.
+void reportRenderThreadScheduling (HostState& host)
+{
+    host.renderThreadScheduled.wait();
+    const auto threadId = host.renderThreadId.load (std::memory_order_acquire);
+    if (host.renderThreadRealtime.load (std::memory_order_relaxed))
+    {
+        std::fprintf (stderr, "[dusk-studio-plugin-host] audio thread realtime at SCHED_RR priority %d\n",
+                      duskstudio::rt::threadScheduling (threadId).priority);
+        return;
+    }
+    std::fprintf (stderr, "[dusk-studio-plugin-host] audio thread not realtime, %s: %s\n",
+                  host.renderCpuTimeLimited ? "SCHED_RR was refused" : "no CPU-time limit could be set",
+                  duskstudio::rt::raiseThreadsWithoutRtPrio ({ threadId }).c_str());
+}
+#endif
+
 void audioWorkerLoop (HostState& host) noexcept
 {
+   #if defined (__linux__)
+    takeRenderThreadScheduling (host);
+   #endif
     std::uint32_t lastSeq = 0;
 
     while (! host.shouldQuit.load (std::memory_order_acquire))
@@ -1856,7 +1982,6 @@ int runIpcHost (int argc, const char* const* argv) noexcept
     juce::ScopedJuceInitialiser_GUI juceInit;
 
     hostMessageThreadId = std::this_thread::get_id();
-    duskstudio::juce_compat::addDefaultFormats (host.formatManager);
 
     {
         char k = 'k';
@@ -1864,6 +1989,9 @@ int runIpcHost (int argc, const char* const* argv) noexcept
     }
 
     host.midiScratch.ensureSize (kMidiBytes);
+   #if defined (__linux__)
+    host.renderCpuTimeLimited = guardRenderThreadCpuTime();
+   #endif
     std::thread worker ([&host]
     {
         dusk::setCurrentThreadName ("DuskHostAudio");
@@ -1936,6 +2064,10 @@ int runIpcHost (int argc, const char* const* argv) noexcept
         host.commandSignal.wake (&host.hdr->cmdSeq);
         juce::MessageManager::getInstance()->stopDispatchLoop();
     });
+
+   #if defined (__linux__)
+    reportRenderThreadScheduling (host);
+   #endif
 
    #if JUCE_MAC
     ParamMirrorDrain paramDrain (host);
@@ -2057,33 +2189,32 @@ int runScan (int argc, const char* const* argv) noexcept
     // `const String x (CharPointer_UTF8 (argv[i]))` as a function declaration
     // (most-vexing-parse), then fails because argv[i] isn't a constant array
     // bound. Braces can't be a parameter list, so they disambiguate.
-    const juce::String formatName { juce::CharPointer_UTF8 (argv[scanIdx + 1]) };
-    const juce::String fileOrId   { juce::CharPointer_UTF8 (argv[scanIdx + 2]) };
+    const std::string formatName { argv[scanIdx + 1] };
+    const juce::String fileOrId  { juce::CharPointer_UTF8 (argv[scanIdx + 2]) };
 
     // Some formats post messages to themselves while probing; give them a
     // MessageManager to dispatch to.
     juce::ScopedJuceInitialiser_GUI juceInit;
 
-    duskstudio::juce_compat::FormatManager fm;
-    duskstudio::juce_compat::addDefaultFormats (fm);
-
-    juce::AudioPluginFormat* chosen = nullptr;
-    for (auto* f : fm.getFormats())
-        if (f != nullptr && f->getName() == formatName) { chosen = f; break; }
-
-    if (chosen == nullptr)
+    // The manager goes before the payload does: the LV2 format removes its temp
+    // folder only in its destructor, and the parent kills this process as soon
+    // as it has read the whole payload. The rows are copies; nothing in them
+    // points into a format.
+    std::string payload;
     {
-        std::fprintf (stderr, "[dusk-studio-plugin-host] unknown format \"%s\"\n",
-                      formatName.toRawUTF8());
-        return 65;
+        duskstudio::juce_compat::FormatManager fm;
+        if (! addFormatNamed (fm, formatName))
+        {
+            std::fprintf (stderr, "[dusk-studio-plugin-host] unknown format \"%s\"\n",
+                          formatName.c_str());
+            return 65;
+        }
+
+        juce::OwnedArray<juce::PluginDescription> found;
+        if (formatName == "LV2") duskstudio::juce_compat::primeCustomLv2 (fm, duskstudio::pluginpaths::load());
+        fm.getFormat (0)->findAllTypesForFile (found, fileOrId);   // may crash/hang - that is the point
+        payload = duskstudio::scanproto::makePayload (descriptorsFromJuce (found));
     }
-
-    juce::OwnedArray<juce::PluginDescription> found;
-    if (formatName == "LV2") duskstudio::juce_compat::primeCustomLv2 (fm, duskstudio::pluginpaths::load());
-    chosen->findAllTypesForFile (found, fileOrId);   // may crash/hang - that is the point
-
-    const auto payload = duskstudio::scanproto::makePayload (
-        descriptorsFromJuce (found));
     std::fwrite (payload.data(), 1, payload.size(), stdout);
     std::fflush (stdout);
     return 0;

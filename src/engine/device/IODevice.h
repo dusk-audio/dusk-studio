@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ChannelSet.h"
+#include "GraphClock.h"
 
 #include <string>
 #include <vector>
@@ -55,5 +56,13 @@ public:
     virtual int getInputLatencyInSamples()  = 0;
 
     virtual int getXRunCount() const noexcept = 0;
+
+    // Message thread. The block size and sample rate the running stream's clock
+    // has settled on when they are no longer the ones it was started at, as when
+    // something forces another quantum or rate on a PipeWire graph; unset when
+    // the clock has not moved. Until the stream is restarted the device still
+    // hands the callback blocks no longer than the started block size, and a
+    // start() after stop() adopts the moved clock before the callback prepares.
+    virtual DeviceClock getMovedClock() const { return {}; }
 };
 } // namespace duskstudio::device

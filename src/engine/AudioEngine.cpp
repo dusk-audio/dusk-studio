@@ -51,6 +51,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
@@ -2417,7 +2418,8 @@ void AudioEngine::servicePlayback()
     playbackEngine.service();
     // A swap the audio thread has taken is still fading for a few milliseconds
     // before it hands the old streams back, so the timer outlasts the last work.
-    bool workPending = ! transport.isStopped() || recordManager.isActive() || playbackEngine.hasPendingWork();
+    bool workPending = ! transport.isStopped() || recordManager.isActive() || playbackEngine.hasPendingWork()
+                    || deviceManager.getMovedDeviceClock().isSet();
 #if DUSKSTUDIO_HAS_MULTISAMPLE
     workPending = workPending || hasPendingMultisampleLoads();
 #endif
@@ -2731,9 +2733,57 @@ void AudioEngine::performPendingDspRestartIfIdle()
     if (std::this_thread::get_id() != ownerThread
         || deviceLifecycleDepth.load (std::memory_order_acquire) != 0
         || isProcessingSuspended() || offlineRenderActive.load (std::memory_order_acquire)
-        || ! isAudioCallbackRegistered() || ! transport.isStopped() || ! dspRestartPending_) return;
+        || ! isAudioCallbackRegistered()) return;
+    followMovedDeviceClock();
+    if (! transport.isStopped() || ! dspRestartPending_) return;
     dspRestartPending_ = false;
     performDspRestart();
+}
+
+namespace
+{
+// What the rate-change sink receives for a device that moved from `from` to
+// `to` Hz under a session made at `sessionRate` (0: not known yet).
+std::string deviceRateChangedMessage (double from, double to, double sessionRate)
+{
+    const auto hz = [] (double rate) { return std::to_string (std::llround (rate)) + " Hz"; };
+    std::string message = "Another application or a system audio setting changed the audio device's "
+                          "sample rate from " + hz (from) + " to " + hz (to) + ", so Dusk Studio now "
+                          "runs at " + hz (to) + ". A change of rate stops the transport; a take in "
+                          "progress is kept up to where it stopped.";
+    if (sessionRate > 0.0 && std::abs (sessionRate - to) > 0.5)
+        message += " This session's audio was made at " + hz (sessionRate) + ": recorded tracks play at "
+                   "the wrong speed and pitch until the device runs at " + hz (sessionRate) + " again.";
+    return message;
+}
+} // namespace
+
+void AudioEngine::followMovedDeviceClock()
+{
+    const auto moved = deviceManager.getMovedDeviceClock();
+    if (! moved.isSet()) return;
+    if (std::this_thread::get_id() != ownerThread
+        || deviceLifecycleDepth.load (std::memory_order_acquire) != 0
+        || isProcessingSuspended() || offlineRenderActive.load (std::memory_order_acquire)
+        || ! isAudioCallbackRegistered()) return;
+
+    // A take that runs across a change of rate is wrong, so that one cannot
+    // wait. Restarting the stream stops the transport through
+    // audioDeviceStopped, which commits a take in progress.
+    const double before = currentSampleRate.load (std::memory_order_relaxed);
+    const bool rateMoved = before > 0.0 && std::abs (moved.sampleRate - before) > 0.5;
+    // A new block size alone waits for whatever is playing or recording, the
+    // mastering player included: the restart would cut it off.
+    if (! rateMoved
+        && (! transport.isStopped() || recordManager.isActive() || masteringPlayer.isPlaying()))
+        return;
+    if (! deviceManager.followDeviceClock (moved)) return;
+
+    const double after = currentSampleRate.load (std::memory_order_relaxed);
+    std::fprintf (stderr, "[Dusk Studio/AudioEngine] followed the device clock: now %d samples at %d Hz\n",
+                  currentBlockSize.load (std::memory_order_relaxed), (int) std::llround (after));
+    if (before > 0.0 && after > 0.0 && std::abs (after - before) > 0.5 && onDeviceRateChanged_)
+        onDeviceRateChanged_ (deviceRateChangedMessage (before, after, session.sessionSampleRate));
 }
 
 // Detach + reattach rather than close the device: removeCallback fires
@@ -5552,6 +5602,12 @@ void AudioEngine::onDeviceManagerChanged()
     if (deviceManager.getCurrentDevice() != nullptr && ! deviceFallbackHold_)
         if (const auto blob = deviceManager.getStateBlob(); ! blob.empty())
             saveAudioDeviceState (blob);
+
+    // The manager also broadcasts when the device's clock moved under its
+    // stream.
+    followMovedDeviceClock();
+    if (deviceManager.getMovedDeviceClock().isSet())
+        schedulePlaybackService();
 
     // The hot-unplug signal is "we had a live device, now the
     // current device is null." User-driven settings changes also

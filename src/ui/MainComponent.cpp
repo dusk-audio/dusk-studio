@@ -1043,6 +1043,15 @@ MainComponent::MainComponent()
         showDuskAlert (*this, "Audio device disconnected", msg);
     });
 
+    // A rate the device was moved to from outside. The message already says
+    // what that does to the session's recordings, so the mismatch nag in
+    // timerCallback stays quiet until the rates agree again.
+    engine.setDeviceRateChangedSink ([this] (std::string msg)
+    {
+        warnedSampleRateMismatch = true;
+        showDuskAlert (*this, "Sample rate changed", msg);
+    });
+
     // Surface deferred session restores and later device/render-rate
     // reactivation failures through the same detailed in-window path used by
     // immediate restores.
@@ -1259,6 +1268,7 @@ MainComponent::~MainComponent()
     engine.setMidiRecoveryFailureSink ({});
     releaseMidiJournalFolder();
     engine.setPluginRestoreAlertSink ({});
+    engine.setDeviceRateChangedSink ({});
     engine.onBeforeTracksMove = nullptr;
     engine.onTracksMoved = nullptr;
     engine.onBeforeRecordCommit = nullptr;
@@ -3538,7 +3548,9 @@ void MainComponent::stopTransportForSessionSwitch()
     if (mastering.isPlaying()) mastering.stop();
 
     auto& transport = engine.getTransport();
-    if (! transport.isRecording() && ! transport.isPlaying()) return;
+    // A device stop marks the transport stopped before capture is committed.
+    if (! transport.isRecording() && ! transport.isPlaying()
+        && ! engine.getRecordManager().isActive()) return;
 
     engine.stop();
     if (transportBar != nullptr)

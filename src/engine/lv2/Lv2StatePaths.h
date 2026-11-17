@@ -323,6 +323,41 @@ inline bool generationMatches (const std::filesystem::path& generation,
     return ! input.bad();
 }
 
+enum class StateFileRead { missing, read, failed };
+
+// libstdc++ throws from the stream iterator when a read fails partway (EIO);
+// libc++ ends the read early in silence, which the size taken up front catches.
+inline StateFileRead readStateFile (const std::filesystem::path& file,
+                                    std::vector<std::uint8_t>& bytes)
+{
+    bytes.clear();
+    std::error_code ec;
+    const auto status = std::filesystem::status (file, ec);
+    if (status.type() == std::filesystem::file_type::not_found)
+        return StateFileRead::missing;
+    if (! std::filesystem::is_regular_file (status)) return StateFileRead::failed;
+    const auto size = std::filesystem::file_size (file, ec);
+    if (ec) return StateFileRead::failed;
+
+    std::ifstream input (file, std::ios::binary);
+    if (! input) return StateFileRead::failed;
+    try
+    {
+        bytes.assign (std::istreambuf_iterator<char> (input), std::istreambuf_iterator<char>());
+    }
+    catch (const std::ios_base::failure&)
+    {
+        bytes.clear();
+        return StateFileRead::failed;
+    }
+    if (bytes.size() != size)
+    {
+        bytes.clear();
+        return StateFileRead::failed;
+    }
+    return StateFileRead::read;
+}
+
 // Releases before generation-managed state still created cur/ for every LV2
 // slot, including blob-only slots, but never wrote state.ttl or .ready there.
 // Those two files therefore distinguish a managed cur/ (which must match the

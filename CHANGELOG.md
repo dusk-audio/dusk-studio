@@ -103,6 +103,9 @@ canonical source.
 
 ### Fixed
 
+- **Recording after a device stop.** Opening another session before the
+  stopped device's recording cleanup runs now commits the take to its
+  original session, including its MIDI recovery files.
 - **MIDI notes at playback and Stop.** Starting playback inside a region sounds
   its held notes immediately. Standard VST3 hosting sends explicit note-offs
   at Stop, including through the sandbox, and VST3 note tracking survives an
@@ -120,6 +123,28 @@ canonical source.
   pedal a region plays too on the same channel. One that would have to end
   more than 48 of the regions' notes and pedals at once sends all notes off
   instead, which ends held keys too.
+- **An LV2 plug-in whose state file cannot be read.** Saving or restoring an
+  LV2 plug-in's state ended Dusk Studio when its `state.ttl` could not be
+  read, as when a folder sat in its place or the disk failed. The read now
+  fails cleanly and the plug-in keeps the state it has.
+- **Plug-in host and scan children.** A sandbox or scan child builds only the
+  plug-in format it was started for, so it starts in a few milliseconds
+  instead of loading every installed LV2 bundle first, and on Linux its
+  temporary folder is removed when the child ends. Before, a child that was
+  killed left a `temp_*` folder behind.
+- **Sandboxed plug-ins under load.** On Linux the sandbox child's audio thread
+  runs at realtime priority, the priority of Dusk Studio's own DSP threads,
+  where your account's realtime limit allows it, so a busy machine no longer
+  makes a sandboxed plug-in miss its blocks. On every OS the child flushes
+  denormal numbers while the plug-in processes.
+- **PipeWire graphs that change block size or rate.** When another
+  application or a PipeWire setting moved the graph to a longer block, Dusk
+  Studio went silent with the playhead frozen until the device was reopened,
+  and a change of rate went unnoticed. It now keeps playing through a longer
+  block and takes the new size once nothing plays or records. A new rate
+  stops the transport, restarts the engine at that rate and raises the
+  **Sample rate changed** alert. On opening, it runs at the rate the graph
+  really has.
 
 ## [0.16.1] - 2026-11-07
 

@@ -9,10 +9,12 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 using namespace duskstudio::lv2::statepaths;
 namespace stdfs = std::filesystem;
@@ -435,6 +437,47 @@ TEST_CASE ("LV2 failed file-backed save leaves cur and prev untouched",
     REQUIRE_FALSE (stdfs::exists (next));
     REQUIRE (readText (temp.path() / "cur"  / "state.bin") == "current");
     REQUIRE (readText (temp.path() / "prev" / "state.bin") == "previous");
+}
+
+TEST_CASE ("LV2 state file read reports a file it cannot read instead of throwing",
+           "[lv2][state][regression]")
+{
+    TempDirectory temp ("dusk-lv2-state-read-");
+    const auto stateFile = temp.path() / "cur" / kStateFileName;
+    std::vector<std::uint8_t> bytes { 1, 2, 3 };
+
+    SECTION ("absent")
+    {
+        REQUIRE (readStateFile (stateFile, bytes) == StateFileRead::missing);
+        REQUIRE (bytes.empty());
+    }
+
+    SECTION ("readable")
+    {
+        writeText (stateFile, "saved state");
+        REQUIRE (readStateFile (stateFile, bytes) == StateFileRead::read);
+        REQUIRE (std::string (bytes.begin(), bytes.end()) == "saved state");
+    }
+
+    SECTION ("a directory in its place")
+    {
+        stdfs::create_directories (stateFile);
+        auto result = StateFileRead::read;
+        REQUIRE_NOTHROW (result = readStateFile (stateFile, bytes));
+        REQUIRE (result == StateFileRead::failed);
+        REQUIRE (bytes.empty());
+    }
+
+   #if defined(__linux__)
+    // A regular file that opens, then fails its first read with EIO.
+    SECTION ("a read that fails after a good open")
+    {
+        auto result = StateFileRead::read;
+        REQUIRE_NOTHROW (result = readStateFile ("/proc/self/mem", bytes));
+        REQUIRE (result == StateFileRead::failed);
+        REQUIRE (bytes.empty());
+    }
+   #endif
 }
 
 TEST_CASE ("LV2 restore refuses generations that do not match the persisted blob",

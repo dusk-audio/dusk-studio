@@ -31,7 +31,6 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
-#include <iterator>
 #include <limits>
 #include <string>
 #include <string_view>
@@ -1445,10 +1444,9 @@ bool Lv2Instance::saveState (std::vector<uint8_t>& out) const
         return false;
     }
 
-    std::ifstream input (next / stateFile, std::ios::binary);
-    serialized.assign (std::istreambuf_iterator<char> (input),
-                       std::istreambuf_iterator<char>());
-    if ((! input.good() && ! input.eof()) || serialized.empty())
+    if (statepaths::readStateFile (next / stateFile, serialized)
+            != statepaths::StateFileRead::read
+        || serialized.empty())
     {
         statepaths::discardNextGeneration (impl->stateDir);
         return false;
@@ -1509,10 +1507,12 @@ bool Lv2Instance::loadStateInternal (const std::vector<uint8_t>& in,
 
         const auto cur = impl->stateDir / "cur";
         const auto stateFile = cur / statepaths::kStateFileName;
-        std::ifstream input (stateFile, std::ios::binary);
-        const std::vector<uint8_t> saved {
-            std::istreambuf_iterator<char> (input), std::istreambuf_iterator<char>() };
-        input.close();
+        std::vector<uint8_t> saved;
+        if (statepaths::readStateFile (stateFile, saved) == statepaths::StateFileRead::failed)
+        {
+            impl->stateRestoreFailed = true;
+            return false;
+        }
 
         // A blob predating generation management matches no generation. Adopt
         // it into cur/ rather than leaving it to the string parser, whose state

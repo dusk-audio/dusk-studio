@@ -1761,6 +1761,59 @@ read -r _ || true
                                 capture_output=True, text=True, timeout=60)
         assert result.returncode == 0, ("a guest script does not parse", result.stdout, result.stderr)
 
+    clock_harness = r'''
+set -euo pipefail
+source "$DUSK_REGRESS_TEST_ROOT/scripts/regress/common.sh"
+source "$DUSK_REGRESS_TEST_ROOT/scripts/regress/scenarios.sh"
+child=""
+trap 'if [[ -n "$child" ]]; then kill -9 "$child" 2>/dev/null || true; wait "$child" 2>/dev/null || true; fi' EXIT
+bb_begin() { BB_SDIR="$CLOCK_ROOT/sandbox"; mkdir -p "$BB_SDIR"; }
+bb_pipewire_clock_body() {
+    sleep 300 &
+    child=$!
+    BB_PID[A]=$child
+    BB_TAGS=(A)
+    return "$CLOCK_STATUS"
+}
+bb_pipewire_clock_release() {
+    if kill -0 "$child" 2>/dev/null; then exit 91; fi
+    touch "$CLOCK_ROOT/reset"
+}
+leg_bb_pipewire_clock
+'''
+    for status in (0, 124):
+        clock_root = root / f"clock-cleanup-{status}"
+        clock_root.mkdir()
+        result = subprocess.run(["bash", "-c", clock_harness], capture_output=True, text=True, timeout=10,
+                                env=dict(child_environment, DUSK_REGRESS_TEST_ROOT=str(repo),
+                                         CLOCK_ROOT=str(clock_root), CLOCK_STATUS=str(status)))
+        assert result.returncode == status, ("clock reset ran before the child was reaped", result)
+        assert (clock_root / "reset").exists(), "clock reset was skipped"
+
+    clock_env_root = root / "clock-environment"
+    clock_env_root.mkdir()
+    clock_app = clock_env_root / "app"
+    clock_app.write_text("#!/bin/bash\n[[ ! -v PIPEWIRE_REMOTE ]] || exit 92\n" +
+                        "printf '[PASS] device.pipewire_%s (fixture)\\n' " +
+                        "longer_cycle_keeps_playing rate_change_follows open_adopts_graph_rate " +
+                        "longer_cycle_keeps_mastering deferred_rate_change_follows restart_reports_adopted_rate\n")
+    clock_app.chmod(0o755)
+    result = subprocess.run(["bash", "-c", r'''
+set -euo pipefail
+source "$DUSK_REGRESS_TEST_ROOT/scripts/regress/common.sh"
+source "$DUSK_REGRESS_TEST_ROOT/scripts/regress/scenarios.sh"
+BB_SDIR="$CLOCK_ROOT"
+BB_DEADLINE=$((SECONDS + 10))
+XVFB_DISPLAY=:0
+SANDBOX_ENV=()
+APP_BIN="$CLOCK_ROOT/app"
+trap 'bb_end 0' EXIT
+bb_pipewire_clock_body
+'''], capture_output=True, text=True, timeout=15,
+        env=dict(child_environment, DUSK_REGRESS_TEST_ROOT=str(repo), CLOCK_ROOT=str(clock_env_root),
+                 PIPEWIRE_REMOTE="pipewire-0"))
+    assert result.returncode == 0, ("private clock child inherited PIPEWIRE_REMOTE", result)
+
     idle_root = root / "idle-wakeups"
     idle_root.mkdir()
     idle_budget = idle_root / "budget.tsv"

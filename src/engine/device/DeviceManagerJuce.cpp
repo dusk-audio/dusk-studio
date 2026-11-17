@@ -367,6 +367,11 @@ std::string DeviceManager::setSetup (const DeviceSetup& d, bool treatAsChosen)
     return impl->mgr.setAudioDeviceSetup (s, treatAsChosen).toStdString();
 }
 
+// Only the native PipeWire device reports a clock moved under its stream; the
+// devices this manager wraps report none through this seam.
+DeviceClock DeviceManager::getMovedDeviceClock() const { return {}; }
+bool DeviceManager::followDeviceClock (const DeviceClock&) { return false; }
+
 void DeviceManager::addCallback (IODeviceCallback* callback)
 {
     if (callback == nullptr) return;

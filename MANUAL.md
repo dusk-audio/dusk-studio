@@ -477,6 +477,7 @@ Open **Settings → Settings...**, then select the **Audio** tab to choose your 
 - **Device**: lists every backend driver Dusk Studio detected. On Linux, PipeWire graph nodes appear under "PipeWire"; ALSA devices appear separately. On Windows, ASIO is preferred and selected by default when an ASIO driver is present; if none is installed, Dusk Studio falls back to "Windows Audio (Exclusive Mode)" for low latency, then shared "Windows Audio", then "DirectSound". Install your interface's ASIO driver (or ASIO4ALL) for best latency. Changes apply immediately — there is no Save button — and the device you pick is remembered across restarts (per machine, not per session).
 - **Sample rate**: any rate the device supports. 44.1 kHz, 48 kHz, 88.2 kHz, 96 kHz are common. A session remembers the rate its audio was made at: opening it tries to switch the device to that rate automatically, and Dusk Studio warns if it can't (or if you change the rate mid-session) — recorded tracks play at the wrong speed and pitch until the device runs at the session's rate.
 - **Block size**: smaller blocks give lower latency but cost more CPU per sample. 256 or 512 samples is a good starting point.
+- **On PipeWire** the graph has the last word on rate and block size: Dusk Studio asks for the ones you pick and follows the graph's actual clock. The displayed block size updates once playback and recording have stopped. If another application or a PipeWire setting moves the graph to another block size or rate while Dusk Studio runs, it follows; see [Audio device changes rate or block size mid-session](#audio-device-changes-rate-or-block-size-mid-session). A move like that leaves the saved setup alone, so Dusk Studio asks for that again next time.
 - **Periods (Linux/ALSA only)**: how many buffers the ALSA driver keeps in flight. Two is the lowest-latency safe value; three or more is more robust on a busy machine.
 - **Active output channels**: the master mix uses outputs 1-2. If your interface has more outputs, tick the extra pairs here to open them — each pair then becomes selectable as an aux lane's **Output** (a headphone / cue feed). Off by default; the master stays stereo until you enable more.
 - **Main output**: which physical pair the master mix goes to. **1-2 (default)** in most rigs; move it to another pair (e.g. when you want outputs 1-2 free for a control-room or cue feed). Only pairs the device currently has open are listed. If an aux lane is routed to the same pair as the master, the two sum on that pair.
@@ -1995,6 +1996,8 @@ OOP is supported on:
 
 Plugins run **in-process by default** — it gives the most responsive plugin editors and the lowest CPU cost. To run third-party binary plugins in the OOP sandbox instead, launch with `DUSKSTUDIO_USE_OOP_PLUGINS=1`; a plugin that crashes or hangs then takes down only the host child, not Dusk Studio. The switch reaches standard-host rows only. Native rows — **CLAP** and **VST3-Native** on every OS, **LV2-Native** on Linux and macOS, plus **AudioUnit** on macOS — always run in-process and ignore it, as *Native plugin hosting* above says. If the `dusk-studio-plugin-host` binary is missing the loader falls back to in-process automatically. Standard-host plugin **scanning** runs in the sandboxed child, so a plugin that crashes while being probed is blacklisted instead of crashing the app; native scanning follows the format-specific rules described under *Scanning*. The released macOS DMG includes the child, so standard-host scanning is sandboxed there too. (Dusk Studio's own bundled plugins always run in-process.)
 
+The sandbox child runs the plugin on one audio thread for as long as the child lives. On Linux that thread runs at realtime priority, the same priority as Dusk Studio's own DSP threads, where your account's realtime priority limit (`ulimit -r`) allows it. Where that limit is 0, as on a desktop that hands out realtime only through RTKit, the plugin runs at normal priority and the child says so once in Dusk Studio's console output: RTKit serves a small number of processes per user, and Dusk Studio keeps those for its own audio threads. On every OS the child flushes denormal numbers to zero while the plugin processes, as Dusk Studio does for its own processing.
+
 When a plugin crashes in OOP mode:
 
 - The slot auto-bypasses and shows `! <name> (crashed)` in place of the plugin name. It passes its track through dry and adds no delay, so delay compensation stops making room for the plugin's latency. **Re-enable plugin (crashed)** drops the dead child without starting a new one, so the latency stays out of compensation until you reload the plugin.
@@ -2753,6 +2756,15 @@ Reconnect the interface (or pick a different device in the **Audio** tab under *
 
 If the disconnect happened during a take, the WAV that was being written is committed up to the last full audio block. The region is added to your timeline at the take start position — same as if you'd pressed Stop manually. The session save / autosave path is independent of the audio device.
 
+## Audio device changes rate or block size mid-session
+
+On PipeWire, another application or a PipeWire setting (`clock.force-quantum`, `clock.force-rate`) can move the whole graph to another block size or sample rate while Dusk Studio is running. Dusk Studio notices within a few blocks and follows:
+
+- **A larger block size** keeps playing and recording without a gap: the engine takes each longer block in pieces of the size it was set up for. It changes to the new size once all playback and recording, including mastering playback, have stopped. Switching block size takes a moment of silence. Until then, notes played in from a MIDI keyboard and MIDI sent out to other gear are placed to within one of the graph's longer blocks rather than to the sample. A smaller block size waits the same way.
+- **A new sample rate** stops the transport at once and the engine restarts at the new rate. A take in progress is kept up to where it stopped; Dusk Studio stops within a fraction of a second of the change, so the very end of that take was captured at the new rate. The **Sample rate changed** alert says so; see *Messages*.
+
+The **Audio** tab under **Settings → Settings...** shows the rate and block size the engine has adopted; a pending block size appears after playback and recording stop. The ones you chose stay saved for next time. To go back, undo whatever forced the change, for instance `pw-metadata -n settings 0 clock.force-rate 0`; Dusk Studio follows the graph back the same way.
+
 ## Audio device in use, or won't open at startup
 
 If the interface saved in your settings is held by another application when Dusk Studio launches — PipeWire or the JACK/PipeWire server, an ASIO driver another DAW already opened, a screen recorder, or browser audio holding the device in exclusive mode — Dusk Studio can't open it. Rather than load a silent, dead session, it recovers and tells you what happened:
@@ -3022,6 +3034,15 @@ The hardware-insert ping reports its result inline on the editor (not a modal), 
 - **When**: First launch or after the recents list has been cleared.
 - **Text**: "No recent sessions yet." (inline label in the Startup dialog, not a modal).
 - **Action**: Choose **New** or **Open** from the same dialog.
+
+## Audio device
+
+### Sample rate changed
+
+- **When**: On PipeWire, another application or a PipeWire setting moved the audio graph to another sample rate while Dusk Studio was running, and Dusk Studio followed it. See *Audio device changes rate or block size mid-session* under *Troubleshooting*.
+- **Text**: "Another application or a system audio setting changed the audio device's sample rate from [old rate] Hz to [new rate] Hz, so Dusk Studio now runs at [new rate] Hz. A change of rate stops the transport; a take in progress is kept up to where it stopped." When the session's audio was made at another rate it goes on: "This session's audio was made at [session rate] Hz: recorded tracks play at the wrong speed and pitch until the device runs at [session rate] Hz again."
+- **Buttons**: OK.
+- **Action**: If the change was not yours, undo it where it was made (for a PipeWire setting, `pw-metadata -n settings 0 clock.force-rate 0`), and Dusk Studio follows the graph back. A take stopped by the change is on its track up to where it stopped.
 
 \newpage
 

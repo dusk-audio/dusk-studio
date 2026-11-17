@@ -154,31 +154,12 @@ TEST_CASE ("VCA OverEasy engages below threshold while hard knee does not", "[co
     REQUIRE (outHard > outSoft + 0.2f);
 }
 
-// Leading "[.]" tag = hidden test. catch_discover_tests does NOT
-// register hidden tests with ctest, so this body never runs in the
-// default ctest invocation — neither passes nor fails CI. CI / local
-// donor divergence: my dev-box ../plugins-main donor has the
-// vca_detector_mode choice exposed; the donor CI clones from
-// dusk-audio/dusk-audio-plugins (older revision) does NOT, so the
-// migrated assertion fires false-positive on CI. Re-tag to plain
-// "[compressor][vca][detector]" once both donors converge to the
-// same feature surface.
-TEST_CASE ("VCA detector mode toggle modifies static curve profile", "[.][compressor][vca][detector]")
+TEST_CASE ("VCA detector mode toggle modifies static curve profile", "[compressor][vca][detector]")
 {
-
-    // Donor evolution since the v0.9.0 cut: the multi-comp donor now
-    // exposes a per-mode `vca_detector_mode` choice (0 = Adaptive, 1 =
-    // Classic / dbx-160 fixed 10 ms RMS). Toggling the channel-strip
-    // DetectorClassic flag through the donor's parameter map flips the
-    // detector time-constant, and the RMS output of a 20 Hz burst
-    // diverges between the two settings (adaptive's slower TC at low
-    // level smears more energy past the burst than classic's tighter
-    // window).
-    //
-    // The inverse-shape of the prior baseline: previously asserted
-    // |delta| < 0.05 dB (no-op); now asserts |delta| > 0.3 dB (active
-    // switch). If the donor ever removes the switch, flip back to the
-    // tight equivalence check.
+    // vca_detector_mode: 0 = Adaptive, 1 = Classic (fixed 10 ms RMS). The
+    // RMS output of a 20 Hz burst diverges between the two because the
+    // adaptive detector's slower time constant at low level smears more
+    // energy past each burst.
     auto buildVca = [] (bool classic)
     {
         auto c = makeComp (kSampleRate, kBlockSize);
@@ -240,10 +221,7 @@ TEST_CASE ("VCA detector mode toggle modifies static curve profile", "[.][compre
     const float classicDb  = runBurst (*classic);
 
     INFO ("VCA adaptive=" << adaptiveDb << " classic=" << classicDb);
-    // Donor switches detector TC for VCA — expect a non-trivial RMS
-    // delta between the two detector modes on a burst signal.
-    // 0.3 dB floor is conservative; observed delta at the migration
-    // commit was ~0.45 dB at the same settings.
+    // Measured at about 0.45 dB with these settings.
     REQUIRE (std::abs (adaptiveDb - classicDb) > 0.3f);
 }
 
@@ -317,11 +295,7 @@ TEST_CASE ("Opto sustained material keeps afterglow GR after burst", "[compresso
     REQUIRE (pingLate < 0.0f);   // some compression still active
 }
 
-// Hidden via leading "[.]" — same CI / local donor divergence as the
-// VCA detector test above. The dev-box donor has FET GR-driven HPF;
-// the CI donor does not. ctest skips registration entirely. Re-tag
-// to plain "[compressor][fet][subbass]" once donors converge.
-TEST_CASE ("FET includes GR-driven sub-bass HPF response", "[.][compressor][fet][subbass]")
+TEST_CASE ("FET includes GR-driven sub-bass HPF response", "[compressor][fet][subbass]")
 {
     constexpr double kSubBassHz = 60.0;
     constexpr double kMidHz     = 1000.0;
@@ -354,17 +328,10 @@ TEST_CASE ("FET includes GR-driven sub-bass HPF response", "[.][compressor][fet]
     const float lowDelta = lowHeavy - lowLight;
     const float midDelta = midHeavy - midLight;
     INFO ("FET sub-bass lowDelta=" << lowDelta << " midDelta=" << midDelta);
-    // Donor evolution since the v0.9.0 cut: FET mode now has a
-    // GR-driven sub-bass HPF (separate from the global `sidechain_hp`
-    // param the channel strip wires at 0 Hz for Opto and FET). Under
-    // heavy compression the detector sees less 60 Hz energy than 1 kHz
-    // energy, so the 60 Hz path is reduced less between light and heavy
-    // drive than the 1 kHz path. lowDelta therefore sits MORE NEGATIVE
-    // than midDelta by at least ~1 dB (observed delta at migration:
-    // ~1.28 dB).
-    //
-    // If the donor ever removes the HPF, this test fails — flip back
-    // to REQUIRE (std::abs(lowDelta - midDelta) < 0.5f).
+    // FET mode high-passes its output with a cutoff that follows gain
+    // reduction (20 Hz idle, 80 Hz at 20 dB GR), separate from the
+    // sidechain_hp control. Heavy drive therefore lifts 60 Hz less than
+    // 1 kHz; measured at about 1.2 dB with these settings.
     REQUIRE (lowDelta < midDelta - 1.0f);
 }
 

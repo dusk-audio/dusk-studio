@@ -16,6 +16,7 @@
 #include <iterator>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace
@@ -256,6 +257,71 @@ TEST_CASE ("LV2 failed file-backed restore cannot overwrite carried generations"
                        / duskstudio::lv2::statepaths::kStateFileName)
              == "new current");
     REQUIRE_FALSE (fs::exists (stateDir / "next"));
+}
+
+TEST_CASE ("LV2 restore leaves cur alone when its state.ttl cannot be read",
+           "[lv2][state][integration][regression]")
+{
+    TempDirectory temp ("dusk-lv2-file-state-integration-");
+    const auto stateDir = temp.path() / "state";
+    const auto cur = stateDir / "cur";
+    const auto stateFile = cur / duskstudio::lv2::statepaths::kStateFileName;
+
+    duskstudio::lv2::Lv2Bundle bundle;
+    std::string error;
+    REQUIRE (bundle.load (DUSKSTUDIO_FILE_STATE_LV2_FIXTURE_PATH, error));
+
+    duskstudio::lv2::Lv2Instance source;
+    source.setStateDirectory (stateDir);
+    REQUIRE (source.create (bundle, kPluginUri, error));
+    REQUIRE (source.activate (48000.0, 32, error));
+    std::vector<uint8_t> blob;
+    REQUIRE (source.saveState (blob));
+    source.deactivate();
+
+    SECTION ("a directory in its place")
+    {
+        fs::remove (stateFile);
+        fs::create_directories (stateFile / "inside");
+    }
+
+    SECTION ("a file without read permission")
+    {
+        fs::permissions (stateFile, fs::perms::none);
+        if (std::ifstream (stateFile, std::ios::binary).is_open())
+        {
+            fs::permissions (stateFile, fs::perms::owner_read | fs::perms::owner_write);
+            SKIP ("this user reads files without read permission");
+        }
+    }
+
+    const auto snapshot = [&cur]
+    {
+        std::vector<std::pair<std::string, fs::file_type>> entries;
+        for (const auto& entry : fs::recursive_directory_iterator (cur))
+            entries.emplace_back (entry.path().lexically_relative (cur).generic_string(),
+                                  entry.symlink_status().type());
+        std::sort (entries.begin(), entries.end());
+        return entries;
+    };
+    const auto before = snapshot();
+    const auto stateFileType = fs::symlink_status (stateFile).type();
+    const auto stateFileTime = fs::last_write_time (stateFile);
+
+    duskstudio::lv2::Lv2Instance restored;
+    restored.setStateDirectory (stateDir);
+    REQUIRE (restored.create (bundle, kPluginUri, error));
+    REQUIRE (restored.activate (48000.0, 32, error));
+    REQUIRE_FALSE (restored.loadState (blob));
+    std::vector<uint8_t> replacement { 1, 2, 3 };
+    REQUIRE_FALSE (restored.saveState (replacement));
+    REQUIRE (replacement.empty());
+
+    CHECK (snapshot() == before);
+    CHECK (fs::symlink_status (stateFile).type() == stateFileType);
+    // libc++ uses a 128-bit file clock that Catch2 cannot stringify.
+    CHECK ((fs::last_write_time (stateFile) == stateFileTime));
+    fs::permissions (stateFile, fs::perms::owner_all);
 }
 
 TEST_CASE ("LV2 patch parameters are exposed in a stable order",

@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <set>
@@ -129,6 +130,23 @@ class FormatManager : public juce::AudioPluginFormatManager
     friend pluginpaths::Roots customLv2Bundles (FormatManager&);
     friend void restoreCustomLv2Bundles (FormatManager&, pluginpaths::Roots);
 };
+
+// Adds one format, for a child that needs only that one: building the LV2
+// format loads every installed LV2 bundle and writes JUCE's embedded LV2
+// specifications to a folder in the temp folder. The fork's manager takes a
+// unique_ptr, upstream's a raw pointer it then owns.
+template <typename Format>
+void addFormat (FormatManager& manager)
+{
+   #if DUSKSTUDIO_JUCE_HAS_FREE_ADD_FORMATS
+    manager.addFormat (std::make_unique<Format>());
+   #else
+    auto* format = new Format();
+    manager.addFormat (format);
+    // As in addDefaultFormats: an empty search rebuilds the LV2 class table.
+    if (format->getName() == "LV2") format->searchPathsForPlugins ({}, true, false);
+   #endif
+}
 
 // False when cancelled or when the folder walk hit an error. Neither records
 // anything, so a later call retries and the last complete bundle list survives.

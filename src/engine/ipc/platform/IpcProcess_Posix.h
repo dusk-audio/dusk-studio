@@ -19,6 +19,7 @@ inline bool posixSpawn (const std::string& executablePath,
                         const std::vector<std::string>& args,
                         const NativeHandle& childChannelEnd,
                         const NativeHandle& parentChannelEnd,
+                        char* const* environment,
                         pid_t& childPidOut,
                         std::string& errorOut) noexcept
 {
@@ -128,7 +129,7 @@ inline bool posixSpawn (const std::string& executablePath,
     argv.push_back (nullptr);
 
     result = ::posix_spawn (&childPidOut, executablePath.c_str(), &actions,
-                            &attributes, argv.data(), environ);
+                            &attributes, argv.data(), environment);
     ::posix_spawnattr_destroy (&attributes);
     ::posix_spawn_file_actions_destroy (&actions);
     closeDuplicatedSource();

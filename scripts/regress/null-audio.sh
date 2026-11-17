@@ -32,6 +32,8 @@ null_audio_start() {
     # The socket path has to fit in a sockaddr_un, so this stays short
     # whatever TMPDIR is.
     NULL_AUDIO_DIR="$(mktemp -d /tmp/dusk-pw.XXXXXX)" || { NULL_AUDIO_DIR=""; return 1; }
+    # Only a graph carrying this marker may have its clock forced by a case.
+    : >"${NULL_AUDIO_DIR}/owned-null-graph"
     NULL_AUDIO_LOG="${NULL_AUDIO_DIR}/pipewire.log"
     env -u XDG_RUNTIME_DIR -u PIPEWIRE_REMOTE PIPEWIRE_RUNTIME_DIR="$NULL_AUDIO_DIR" \
         pipewire -c "$conf" >"$NULL_AUDIO_LOG" 2>&1 &

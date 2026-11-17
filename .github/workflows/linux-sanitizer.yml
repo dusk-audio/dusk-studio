@@ -105,8 +105,8 @@ jobs:
         # Linux workflows.
         env:
           JUCE_MIRROR: https://github.com/dusk-audio/JUCE-wayland.git
-          JUCE_TAG: dusk-wayland-v10
-          JUCE_REV: 09fa6b1b9ed131dbf7ff3f62a4b5671a4396f29f
+          JUCE_TAG: dusk-wayland-v11
+          JUCE_REV: 2e409d1aaf18a7849c28173a9cd9653998862037
         run: |
           set -euo pipefail
           git init -q "${RUNNER_TEMP}/JUCE-wayland"
@@ -149,15 +149,10 @@ jobs:
         run: cmake --build build-tsan --target dusk-studio-tests -j6
 
       - name: Run tests under TSan
-        # Excluded tests are pre-existing donor-DSP regressions tracked
-        # separately (UniversalCompressor static-curve assertions that
-        # fail on the pinned donor revision, unrelated to RT-safety).
-        # Re-enable by deleting the -E argument once the donor lands the
-        # fix. TSan itself fires via TSAN_OPTIONS=exitcode=66 above —
-        # any race makes ctest see a non-zero status and fail this step.
+        # TSAN_OPTIONS=exitcode=66 above makes any race end ctest with a
+        # non-zero status, which fails this step.
         run: |
-          ctest --test-dir build-tsan --output-on-failure --parallel 4 \
-                -E "VCA detector mode toggle is a no-op|FET has no GR-driven sub-bass HPF"
+          ctest --test-dir build-tsan --output-on-failure --parallel 4
 
       - name: ccache stats
         if: always()
@@ -238,8 +233,8 @@ jobs:
       - name: Clone JUCE (Dusk-owned Wayland mirror, pinned)
         env:
           JUCE_MIRROR: https://github.com/dusk-audio/JUCE-wayland.git
-          JUCE_TAG: dusk-wayland-v10
-          JUCE_REV: 09fa6b1b9ed131dbf7ff3f62a4b5671a4396f29f
+          JUCE_TAG: dusk-wayland-v11
+          JUCE_REV: 2e409d1aaf18a7849c28173a9cd9653998862037
         run: |
           set -euo pipefail
           git init -q "${RUNNER_TEMP}/JUCE-wayland"
