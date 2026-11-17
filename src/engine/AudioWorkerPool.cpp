@@ -486,10 +486,12 @@ void AudioWorkerPool::quiesce()
         while (w->acked.load (std::memory_order_acquire) != s)
             std::this_thread::sleep_for (std::chrono::milliseconds (1));
 
+    // A dispatcher killed while it waited in the join never cleared this.
+    joinBlocked.store (false, std::memory_order_relaxed);
     quiescing.store (false, std::memory_order_release);
 }
 
-void AudioWorkerPool::dispatchForTest (int signalOnlyFirst)
+void AudioWorkerPool::dispatchForTest (int signalOnlyFirst, bool killedInJoin)
 {
     const int active = numWorkers.load (std::memory_order_relaxed);
     if (active <= 0)
@@ -501,6 +503,8 @@ void AudioWorkerPool::dispatchForTest (int signalOnlyFirst)
                                       : std::min (signalOnlyFirst, active);
     for (int i = 0; i < n; ++i)
         workers_[(size_t) i]->wake.signal();
+    if (killedInJoin)
+        joinBlocked.store (true, std::memory_order_relaxed);
 }
 
 std::vector<std::int64_t> AudioWorkerPool::workerThreadIdsForTest() const

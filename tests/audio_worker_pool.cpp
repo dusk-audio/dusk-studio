@@ -150,7 +150,7 @@ TEST_CASE ("AudioWorkerPool: quiesce drains lanes orphaned by a dead dispatcher"
         counters.hit (lane);
     });
 
-    pool.dispatchForTest();   // all 3 signalled, no join — dispatcher "dies" here
+    pool.dispatchForTest (-1, true);   // all 3 signalled; the dispatcher "dies" waiting in the join
 
     // Safety net: if requireBefore() below throws (REQUIRE miss), the workers
     // are still blocked in gate.wait() inside job_, so the pool destructor's
@@ -161,11 +161,15 @@ TEST_CASE ("AudioWorkerPool: quiesce drains lanes orphaned by a dead dispatcher"
     struct GateGuard { juce::WaitableEvent& g; ~GateGuard() { g.signal(); } } gateGuard { gate };
 
     requireBefore ([&] { return entered.load (std::memory_order_relaxed) >= 3; });
+    REQUIRE (pool.isJoinBlocked());
 
     std::thread releaser ([&] { juce::Thread::sleep (50); gate.signal(); });
     quiesceWithWatchdog (pool);   // must block until all 3 orphaned lanes complete
     releaser.join();
 
+    // The dead dispatcher never left the join. Left set, the flag would have
+    // the engine's watchdog put every later stall down to a lane.
+    REQUIRE_FALSE (pool.isJoinBlocked());
     for (int lane = 0; lane < 3; ++lane)
         REQUIRE (counters.get (lane) == 1);
 
