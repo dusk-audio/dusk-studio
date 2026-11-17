@@ -201,6 +201,24 @@ ASAN_OPTIONS="halt_on_error=1:abort_on_error=1:detect_leaks=0" \
 
 CI runs this nightly via [.github/workflows/linux-sanitizer.yml](../.github/workflows/linux-sanitizer.yml).
 
+### Under RealtimeSanitizer
+
+Clang 20 or later with its RTSan runtime checks the audio callback and the
+Multicore DSP lanes for allocations, locks and blocking calls as the app runs.
+Only the app enters the callback, so it runs the app, not the test binary:
+
+```bash
+CC=clang CXX=clang++ cmake -S . -B build-rtsan -DCMAKE_BUILD_TYPE=Release \
+  -DDUSKSTUDIO_BUILD_TESTS=ON -DDUSKSTUDIO_ENABLE_RTSAN=ON
+bash scripts/regress/rtsan.sh
+```
+
+The script builds the app and the fixture plug-ins in `build-rtsan/`, then runs
+the self-test and the headless scenario suite on it, and fails on any report
+outside `tools/rtsan-suppressions.txt`. Each line there names the issue that
+removes it, and goes when that issue is fixed. The suppressions match
+symbolized stacks, so `llvm-symbolizer` (or addr2line) has to be on `PATH`.
+
 ## Headless self-test
 
 Drives the synthetic DSP pipeline without opening the GUI:

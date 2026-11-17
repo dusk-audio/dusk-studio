@@ -71,7 +71,7 @@ private releases repo, with a signed `SHA256SUMS` beside them. What is left
 before 1.0 is release engineering, low-spec and Raspberry Pi performance, and
 deeper accessibility.
 
-The C++ suite declares 2200 Catch2 test cases across 317 test source files.
+The C++ suite declares 2201 Catch2 test cases across 318 test source files.
 Linux amd64, Linux arm64 and macOS build and run it on every push; Windows runs
 it on every push and PR; ThreadSanitizer and ASan plus UBSan run it on every
 push and PR. All of those, plus the framework-coupling ratchet, are required
@@ -185,7 +185,7 @@ src/
   ui/          # MainComponent, ConsoleView, channel/aux/master strips, mastering view
     imgui/     # native surfaces: startup, audio settings, audio editor, unit editors, keyboard
   util/        # native log storage + CrashHandler signal reports
-tests/         # 2200 Catch2 test cases declared in C++ (session, recording, MIDI, IPC, DSP)
+tests/         # 2201 Catch2 test cases declared in C++ (session, recording, MIDI, IPC, DSP)
 packaging/     # .desktop, AppStream, MIME, macOS bundle, for tarball + DMG builds
 docs/          # maintainer guide, the 1.0 plan, migration plans
   DuskStudio.md  # authoritative product spec
@@ -220,9 +220,11 @@ CI builds and tests every push to `main` on Linux (Ubuntu 22.04 GCC, amd64 and
 arm64) and macOS (14 Apple Silicon, Ninja plus ccache). `windows-tests.yml`
 runs the Catch2 suite on Server 2022 MSVC on every push and PR.
 `linux-sanitizer.yml` runs it under ThreadSanitizer and under ASan plus UBSan on
-every push and PR. A `v*` tag runs `release.yml`, which builds the Windows MSI,
-the macOS DMG, the Linux tarballs and the manual PDF, then publishes them to one
-shared release in the private releases repo. A tag needs
+every push and PR, and runs a RealtimeSanitizer build of the app through its
+self-test and headless scenarios, failing on any report outside
+`tools/rtsan-suppressions.txt`. A `v*` tag runs `release.yml`, which builds the
+Windows MSI, the macOS DMG, the Linux tarballs and the manual PDF, then
+publishes them to one shared release in the private releases repo. A tag needs
 `RELEASE_SIGNING_KEY` and `RELEASE_SIGNING_KEY_PASSWORD`, which sign
 `SHA256SUMS`, and fails without them. The macOS and Windows signing credentials
 are optional: with them a tag signs and notarizes the DMG and

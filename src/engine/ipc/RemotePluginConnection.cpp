@@ -18,6 +18,7 @@
 #endif
 
 #include "../../foundation/MessageThread.h"
+#include "../../foundation/RtAttributes.h"
 #include "../../foundation/ThreadName.h"
 
 namespace duskstudio::ipc
@@ -279,7 +280,10 @@ bool RemotePluginConnection::processBlockSync (const float* const* inChannels,
 
     const std::uint32_t mySeq = ++localSeq;
     hdr->cmdSeq.store (mySeq, std::memory_order_release);
-    commandSignal.wake (&hdr->cmdSeq);
+    {
+        const dusk::rt::ScopedBlockingAllowed wake { "sandbox: one non-blocking wake of the child's futex" };
+        commandSignal.wake (&hdr->cmdSeq);
+    }
 
     auto deserialiseMidiOut = [&]
     {
@@ -350,7 +354,11 @@ bool RemotePluginConnection::processBlockSync (const float* const* inChannels,
         // ValueChanged until the deadline. Reading the live value
         // makes the wait correctly block until the child actually
         // bumps replySeq.
-        const auto r = replySignal.wait (&hdr->replySeq, seen, &sliceDeadline);
+        const auto r = [&]
+        {
+            const dusk::rt::ScopedBlockingAllowed wait { "sandbox: futex wait for the child's reply, bounded by the slice" };
+            return replySignal.wait (&hdr->replySeq, seen, &sliceDeadline);
+        }();
         if (r == platform::WaitResult::Error)
         {
             crashed.store (true, std::memory_order_release);

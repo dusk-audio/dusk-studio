@@ -1,5 +1,6 @@
 #include "AudioWorkerPool.h"
 #include "RtPriority.h"
+#include "../foundation/RtAttributes.h"
 #include "../foundation/ThreadName.h"
 
 #include <algorithm>
@@ -431,10 +432,15 @@ void AudioWorkerPool::runBlock() noexcept
 
     done.store (0, std::memory_order_release);
     seq.fetch_add (1, std::memory_order_release);
-    for (int lane = 0; lane < active; ++lane)
-        workers_[(std::size_t) lane]->wake.signal();   // dispatch lanes [0, active)
+    {
+        const dusk::rt::ScopedBlockingAllowed dispatch { "lane dispatch locks each wake event until #1008 replaces it" };
+        for (int lane = 0; lane < active; ++lane)
+            workers_[(std::size_t) lane]->wake.signal();   // dispatch lanes [0, active)
+    }
 
     job_ (active);                    // caller runs the last lane
+
+    const dusk::rt::ScopedBlockingAllowed join { "pool join: bounded yield spin, then a wait for the slowest lane" };
 
     // Fast path: workers usually finish within a short spin. Past that, BLOCK
     // on the completion event - never spin unboundedly: sched_yield from a

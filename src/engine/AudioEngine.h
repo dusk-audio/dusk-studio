@@ -22,6 +22,7 @@
 #include "../foundation/IntDelayLine.h"
 #include "../foundation/AtomicTransportPosition.h"
 #include "../foundation/MessageThread.h"
+#include "../foundation/RtAttributes.h"
 #include "../foundation/SmoothedValue.h"
 #include "../foundation/TransportPosition.h"
 #include "../foundation/UndoManager.h"
@@ -572,7 +573,7 @@ public:
                                 float* const* outputChannelData,
                                 int numOutputChannels,
                                 int numSamples,
-                                const device::CallbackContext& context) override;
+                                const device::CallbackContext& context) DUSK_RT_NONBLOCKING override;
 
     void audioDeviceAboutToStart (device::IODevice* device) override;
     void audioDeviceStopped() override;
@@ -1328,7 +1329,7 @@ private:
                           const std::array<float*, ChannelStripParams::kNumAuxSends>& aL,
                           const std::array<float*, ChannelStripParams::kNumAuxSends>& aR,
                           int numSamples) noexcept;
-    void processStripLane (int lane) noexcept;            // one worker lane
+    void processStripLane (int lane) noexcept DUSK_RT_NONBLOCKING;   // one worker lane
     void reduceLaneAccum (int numSamples) noexcept;       // sum lanes -> mix
 
     // The MIDI device seam. midiIn owns the per-input collector bank and

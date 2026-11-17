@@ -5508,6 +5508,7 @@ void AudioEngine::setWorkerCountForTest (int n)
 
 void AudioEngine::audioDeviceError (const std::string& message)
 {
+    const dusk::rt::ScopedBlockingAllowed deviceLoss { "device loss: the backend's thread prints and posts the stop" };
     // Fires from the audio thread (ALSA run() at fatal-recover exit;
     // macOS / Windows backends similar). stderr fprintf is RT-safe
     // enough for a dying-device path; everything else (FileLogger
@@ -5559,6 +5560,7 @@ void AudioEngine::requestDeviceStopFinalization()
 
 void AudioEngine::audioDeviceStopped()
 {
+    const dusk::rt::ScopedBlockingAllowed deviceLoss { "device loss: the backend's thread drains the pool and posts the stop" };
     deviceLifecycleDepth.fetch_add (1, std::memory_order_acq_rel);
     struct LifecycleGuard
     {
@@ -5704,7 +5706,7 @@ int AudioEngine::countBusyLanes (int numSamples, int enough) const noexcept
     return busy;
 }
 
-void AudioEngine::processStripLane (int lane) noexcept
+void AudioEngine::processStripLane (int lane) noexcept DUSK_RT_NONBLOCKING
 {
     const int lanes = workerPool.laneCount();
     const int n     = currentBlockSamples;
@@ -5784,7 +5786,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                                          float* const* outputChannelData,
                                          int numOutputChannels,
                                          int numSamples,
-                                         const device::CallbackContext& context)
+                                         const device::CallbackContext& context) DUSK_RT_NONBLOCKING
 {
     dusk::audio::ScopedNoDenormals noDenormals;
 

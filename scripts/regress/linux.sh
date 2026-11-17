@@ -24,11 +24,14 @@ source "${REPO_ROOT}/scripts/regress/capture.sh"
 source "${REPO_ROOT}/scripts/regress/idle-wakeups.sh"
 # shellcheck source=scripts/regress/perf-ratchet.sh
 source "${REPO_ROOT}/scripts/regress/perf-ratchet.sh"
+# shellcheck source=scripts/regress/rtsan.sh
+source "${REPO_ROOT}/scripts/regress/rtsan.sh"
 
 JOBS="${DUSK_JOBS:-6}"
 SELFTEST_TIMEOUT="${DUSK_REGRESS_SELFTEST_TIMEOUT:-180}"
 VST3_PATH=""
 RUN_PERF=0
+RUN_RTSAN=0
 RUN_SCENARIOS=1
 GUI_SCENARIOS=0
 SCENARIOS_ONLY=0
@@ -41,6 +44,10 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --perf)
             RUN_PERF=1
+            shift
+            ;;
+        --rtsan)
+            RUN_RTSAN=1
             shift
             ;;
         --vst3)
@@ -736,6 +743,14 @@ else
     for leg in "${missing_legs[@]}"; do
         regress_skip "$leg" "app binary missing: ${APP_BIN:-no package}"
     done
+fi
+
+if ((PACKAGE_MODE)); then
+    for leg in "${RTSAN_LEG_NAMES[@]}"; do regress_skip "$leg" "source mode only"; done
+elif ((RUN_RTSAN)); then
+    regress_rtsan_run
+else
+    for leg in "${RTSAN_LEG_NAMES[@]}"; do regress_skip "$leg" "not requested (--rtsan)"; done
 fi
 
 if ((INSTALLED)); then

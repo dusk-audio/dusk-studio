@@ -4,7 +4,8 @@ name: Linux sanitizers
 # ThreadSanitizer covers the engine's lock-free and message-thread rules,
 # while AddressSanitizer + UndefinedBehaviorSanitizer cover lifetime, bounds,
 # and invalid-value defects. They use separate jobs because their shadow-memory
-# runtimes cannot coexist in one process.
+# runtimes cannot coexist in one process. RealtimeSanitizer runs the app, not
+# the Catch2 binary, since only the app enters the audio callback.
 
 on:
   push:
@@ -302,6 +303,162 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh cache list --repo "$GITHUB_REPOSITORY" --key ccache-linux-asan-ubsan-ubuntu26- \
+              --sort created_at --order desc --limit 100 --json id \
+            | jq -r '.[1:][].id' \
+            | while IFS= read -r id; do
+                gh cache delete "$id" --repo "$GITHUB_REPOSITORY"
+              done
+
+  rtsan-app:
+    name: App self-test + scenarios (RTSan, Ubuntu 26.04)
+    runs-on: ubuntu-26.04
+
+    env:
+      # Every function marked DUSK_RT_NONBLOCKING (the audio callback and the
+      # Multicore DSP lanes) runs in a real-time context. Reports do not stop
+      # the app, so one run prints every distinct one; the steps fail on any
+      # report they find in the app's output. The suppressions file hides only
+      # the call stacks it names, each under its issue, and matches symbolized
+      # stacks, so the symbolizer is required.
+      RTSAN_OPTIONS: "halt_on_error=false:suppress_equal_stacks=true:suppressions=${{ github.workspace }}/tools/rtsan-suppressions.txt:external_symbolizer_path=/usr/bin/llvm-symbolizer"
+
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 2G
+
+    steps:
+      - name: Checkout Dusk Studio
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Install Linux build deps
+        # clang and its sanitizer runtimes (libclang-rt-dev) build the app;
+        # llvm brings the symbolizer the report stacks go through.
+        uses: ./.github/actions/apt-deps
+        with:
+          packages: >-
+            clang libclang-rt-dev llvm
+            cmake ninja-build pkg-config ccache
+            libasound2-dev libmp3lame-dev libsndfile1-dev libsodium-dev
+            libpipewire-0.3-dev
+            liblilv-dev libsuil-dev lv2-dev
+            ladspa-sdk
+            libcurl4-openssl-dev libarchive-dev
+            libfreetype-dev libfontconfig1-dev
+            libx11-dev libxcomposite-dev libxcursor-dev libxext-dev
+            libxinerama-dev libxrandr-dev libxrender-dev libxss-dev
+            libwebkit2gtk-4.1-dev libgl1-mesa-dev libglu1-mesa-dev xvfb
+            libwayland-dev libxkbcommon-dev libdecor-0-dev
+
+      - name: Check the symbolizer the suppressions need
+        run: |
+          [[ -x /usr/bin/llvm-symbolizer ]] || {
+            echo "::error::/usr/bin/llvm-symbolizer is missing; tools/rtsan-suppressions.txt matches symbolized call stacks and would hide nothing" >&2
+            exit 1; }
+
+      - name: Restore ccache objects
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-linux-rtsan-ubuntu26-${{ github.sha }}
+          restore-keys: |
+            ccache-linux-rtsan-ubuntu26-
+
+      - name: Clone JUCE (Dusk-owned Wayland mirror, pinned)
+        env:
+          JUCE_MIRROR: https://github.com/dusk-audio/JUCE-wayland.git
+          JUCE_TAG: dusk-wayland-v11
+          JUCE_REV: 2e409d1aaf18a7849c28173a9cd9653998862037
+        run: |
+          set -euo pipefail
+          git init -q "${RUNNER_TEMP}/JUCE-wayland"
+          cd "${RUNNER_TEMP}/JUCE-wayland"
+          git remote add origin "${JUCE_MIRROR}"
+          git fetch --depth 1 origin "refs/tags/${JUCE_TAG}"
+          git checkout -q FETCH_HEAD
+          [[ "$(git rev-parse HEAD)" == "${JUCE_REV}" ]] || {
+            echo "ERROR: JUCE checkout $(git rev-parse HEAD) != pinned ${JUCE_REV}" >&2; exit 1; }
+
+      - name: Clone Dusk plugins
+        uses: ./.github/actions/clone-donor
+
+      - name: Clone DAF
+        uses: ./.github/actions/clone-daf-stack
+
+      - name: Configure the app (RTSan, Release)
+        # Tests on for the fixture plug-in targets the scenarios load; only
+        # those and the app are built. Release, as the scenarios look for the
+        # VST3 fixtures under VST3/Release/; the option adds -g.
+        run: |
+          cmake -S . -B build-rtsan -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DDUSKSTUDIO_BUILD_TESTS=ON \
+            -DDUSKSTUDIO_ENABLE_RTSAN=ON \
+            -DDUSKSTUDIO_SKIP_FORK_CHECK=ON \
+            -DDUSKSTUDIO_REQUIRE_NATIVE_LV2=ON \
+            -DDUSKSTUDIO_REQUIRE_PIPEWIRE=ON \
+            -DDUSKSTUDIO_REQUIRE_LAME=ON \
+            -DJUCE_PATH="${RUNNER_TEMP}/JUCE-wayland" \
+            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins" \
+            -DDAF_PATH="${RUNNER_TEMP}/DAF"
+
+      - name: Build the app and the fixture plug-ins (RTSan)
+        run: |
+          set -euo pipefail
+          mapfile -t fixtures < <(cmake --build build-rtsan --target help \
+            | grep -oE 'dusk-studio-[A-Za-z0-9_-]+-fixture' | sort -u)
+          cmake --build build-rtsan --target DuskStudio "${fixtures[@]}" -j6
+
+      - name: Self-test under RTSan (xvfb)
+        run: |
+          set -euo pipefail
+          timeout 120 xvfb-run --auto-servernum \
+            env DUSKSTUDIO_RUN_SELFTEST=1 \
+                DUSKSTUDIO_CLAP_STATE_FIXTURE="$PWD/build-rtsan/dusk-studio-multi-bus-clap-fixture.clap" \
+            build-rtsan/DuskStudio_artefacts/Release/DuskStudio 2>&1 | tee rtsan-selftest.log
+          if grep -q 'ERROR: RealtimeSanitizer' rtsan-selftest.log; then
+            echo "::error::$(grep -c 'ERROR: RealtimeSanitizer' rtsan-selftest.log) RTSan report(s) in the self-test" >&2
+            exit 1
+          fi
+
+      - name: Headless scenario suite under RTSan (xvfb)
+        run: |
+          set -euo pipefail
+          timeout 420 xvfb-run --auto-servernum \
+            env DUSKSTUDIO_RUN_SCENARIOS=all \
+                DUSKSTUDIO_FIXTURE_DIR="$PWD/build-rtsan:$PWD/tests/fixtures" \
+            build-rtsan/DuskStudio_artefacts/Release/DuskStudio 2>&1 | tee rtsan-scenarios.log
+          grep -q '^=== scenarios: ' rtsan-scenarios.log || {
+            echo "::error::the scenario suite printed no summary" >&2; exit 1; }
+          # The case that drives the callback and the lanes under full load can
+          # skip; the gate would then check far less than it says.
+          grep -q '^\[PASS\] engine\.rt_callback_full_load ' rtsan-scenarios.log || {
+            echo "::error::engine.rt_callback_full_load did not pass" >&2; exit 1; }
+          if grep -q 'ERROR: RealtimeSanitizer' rtsan-scenarios.log; then
+            echo "::error::$(grep -c 'ERROR: RealtimeSanitizer' rtsan-scenarios.log) RTSan report(s) in the scenario suite" >&2
+            exit 1
+          fi
+
+      - name: ccache stats
+        if: always()
+        run: ccache -s
+
+      - name: Save ccache objects (main only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-linux-rtsan-ubuntu26-${{ github.sha }}
+
+      - name: Prune older ccache snapshots (main only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh cache list --repo "$GITHUB_REPOSITORY" --key ccache-linux-rtsan-ubuntu26- \
               --sort created_at --order desc --limit 100 --json id \
             | jq -r '.[1:][].id' \
             | while IFS= read -r id; do

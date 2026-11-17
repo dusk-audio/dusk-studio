@@ -365,13 +365,17 @@ To add one: drop `tests/<unit>_<aspect>.cpp` following [tests/smoke_brickwall_li
 ```bash
 cmake -S . -B build-asan -DDUSKSTUDIO_ENABLE_ASAN=ON -DDUSKSTUDIO_BUILD_TESTS=ON   # use-after-free, overflow
 cmake -S . -B build-tsan -DDUSKSTUDIO_ENABLE_TSAN=ON -DDUSKSTUDIO_BUILD_TESTS=ON   # data races (mutually exclusive with ASan)
+CC=clang CXX=clang++ cmake -S . -B build-rtsan -DCMAKE_BUILD_TYPE=Release \
+    -DDUSKSTUDIO_ENABLE_RTSAN=ON -DDUSKSTUDIO_BUILD_TESTS=ON                     # real-time violations (Clang 20+ only)
 ```
 
 TSan is the one that catches "I forgot this cross-thread field should be atomic" — the most common real bug class here.
 
+RTSan (Clang's RealtimeSanitizer) checks the audio thread rules at run time. A function declared `DUSK_RT_NONBLOCKING` ([src/foundation/RtAttributes.h](../src/foundation/RtAttributes.h)) puts its thread in a real-time context for the length of the call; today that is `AudioEngine::audioDeviceIOCallback` and `AudioEngine::processStripLane`, the job each Multicore DSP lane runs. Any allocation, lock, blocking syscall or file I/O under them is reported with its stack. Only the app enters the callback, so RTSan runs the app (the self-test and the headless scenarios, see Part 9b), not the Catch2 binary. A wait the engine makes on purpose carries a `dusk::rt::ScopedBlockingAllowed` with a one-line reason, and nothing else is exempt: the pool's lane dispatch (until #1008 replaces its per-lane lock) and its join, the out-of-process plug-in's futex wake and reply wait, and the device-loss path (`audioDeviceStopped`, `audioDeviceError`), which a backend calls on its device thread. Reports from code Dusk Studio does not own yet are hidden only through `tools/rtsan-suppressions.txt`, one line per issue (Part 9b). GCC and MSVC builds see none of it.
+
 ### CI
 
-`.github/workflows/` builds Release on Linux (amd64 + arm64), macOS, and Windows, runs the Catch2 suite via ctest, and runs ASan/TSan variants on Linux. If CI is red and local is green, it's almost always a dependency-discovery flag difference (`DUSKSTUDIO_SKIP_FORK_CHECK`, explicit `JUCE_PATH`/`DUSK_PLUGINS_PATH`).
+`.github/workflows/` builds Release on Linux (amd64 + arm64), macOS, and Windows, runs the Catch2 suite via ctest, and runs ASan/TSan variants on Linux, and an RTSan build of the app through the self-test and the headless scenarios. If CI is red and local is green, it's almost always a dependency-discovery flag difference (`DUSKSTUDIO_SKIP_FORK_CHECK`, explicit `JUCE_PATH`/`DUSK_PLUGINS_PATH`).
 
 ---
 
@@ -709,8 +713,9 @@ which `mac.sh` hands a package run to, with the window-activation cases in
 `scripts/regress/common.sh`, the private-display plumbing in
 `scripts/regress/xvfb.sh`, the scenario legs in
 `scripts/regress/scenarios.sh`, the idle wake-up leg in
-`scripts/regress/idle-wakeups.sh` and the perf leg in
-`scripts/regress/perf-ratchet.sh`, plus the guest-side helpers in
+`scripts/regress/idle-wakeups.sh`, the perf leg in
+`scripts/regress/perf-ratchet.sh` and the RTSan legs in
+`scripts/regress/rtsan.sh`, plus the guest-side helpers in
 `scripts/regress/windows/` (the source leg's in `scripts/regress/windows/source/`)
 and the Screen Sharing helper in `scripts/regress/mac/`.
 
@@ -731,6 +736,7 @@ PipeWire.
 | `ipc-selftest` | `DUSKSTUDIO_RUN_IPC_SELFTEST=1`: the shm + futex round-trip against the `dusk-studio-plugin-host` stub. |
 | `ipc-host-test` | `DUSKSTUDIO_IPC_HOST_TEST=<plugin>`: a real plugin loaded out-of-process, 1000 stereo blocks, signal asserted modified. Uses `--vst3`, else the first `~/.vst3/*.vst3`; `SKIP` when there is none. |
 | `perf-suite` | `DUSKSTUDIO_RUN_PERF_TEST=1` across the (rate, buffer, load) matrix, three runs, each row's lowest median held to `tools/perf-ratchet.tsv`. Fails on a row more than 10% and more than 5 us over its recorded value that stays there through up to two more runs, or on one the ratchet does not list. On a host other than the one the ratchet names, the suite runs once and the leg is `SKIP`. Off unless `--perf`; not in CI. See "The perf ratchet" below. |
+| `rtsan-build`, `rtsan-selftest`, `rtsan-scenarios` | the app built with Clang's RealtimeSanitizer in `build-rtsan/`, then the self-test and `DUSKSTUDIO_RUN_SCENARIOS=all` on it, on the private null PipeWire graph when it starts. Each run leg passes as its plain twin does and adds a failing `rtsan-selftest:reports` or `rtsan-scenarios:reports` row, with the reports printed, when RTSan reported anything `tools/rtsan-suppressions.txt` does not hide. Off unless `--rtsan`; source mode only. See "The RTSan legs" below. |
 | `scenario-fixtures` | every logical fixture the scenarios name resolves under `DUSKSTUDIO_FIXTURE_DIR`; `SKIP` naming the ones that do not. |
 | `scenarios-headless` | `DUSKSTUDIO_RUN_SCENARIOS=all`: the in-app scenario suite. Passes only on exit 0, no `[FAIL]` line, and the terminal `=== scenarios: ` summary - a crash after the last case must not pass on a lucky exit code. Skipped cases go into the leg's note. |
 | `bb-handoff`, `bb-crash-relaunch`, `bb-no-runtime-dir`, `bb-damaged-recent`, `bb-clean-quit`, `bb-window-close`, `bb-quit-twice`, `bb-quit-during-mixdown`, `bb-quit-save-rate`, `bb-oop-child-kill`, `bb-oop-quit-during-load` | the black-box legs: real app processes spawned, killed and read back through their stderr. See "Scenario legs" below. |
@@ -820,6 +826,43 @@ names it, because some cases treat a fixture as optional and pass with that
 part left out. A case the suite skipped with `missing fixture:` also gets a
 `SKIP` row of its own, `scenarios-headless:fixtures` or
 `scenarios-gui:fixtures`, under the leg that ran it.
+
+#### The RTSan legs
+
+`--rtsan` runs `scripts/regress/rtsan.sh`, which also runs alone:
+`bash scripts/regress/rtsan.sh`, or `--no-build` to run the app already in
+`build-rtsan/` (`DUSK_RTSAN_TREE` names another tree). The first run configures
+the tree with `CC=clang CXX=clang++`, Release (the option adds `-g`; the
+scenarios look for the VST3 fixtures under `VST3/Release/`), the fixture plug-in
+targets and `-DDUSKSTUDIO_ENABLE_RTSAN=ON`, which needs Clang 20 or later with
+its RTSan runtime; `rtsan-build` is `SKIP` without clang. The build is the
+whole app, so allow for a cold build the first time; later runs only rebuild
+what changed.
+
+The app runs with `RTSAN_OPTIONS=halt_on_error=false`, so one run prints every
+distinct report instead of stopping at the first. A report is a real-time
+violation in the callback or a DSP lane: fix it, or, if the wait is deliberate,
+exempt that one scope with `dusk::rt::ScopedBlockingAllowed` and a reason, as
+Part 5's sanitizer notes describe. The only reports hidden are the call stacks
+`tools/rtsan-suppressions.txt` names: one `call-stack-contains:` line per stack,
+anchored with `^` to one function's demangled name, under a comment naming the
+issue that fixes it. A line goes when its issue is fixed, and a new one needs
+an issue of its own. The lines match symbolized stacks, so the legs need
+`llvm-symbolizer` on `PATH`, or addr2line, which RTSan then uses
+(`allow_addr2line`); with neither they fail. Checking a stack against them
+takes time inside the callback, so an RTSan build leaves the plug-in slot's
+time-budget watchdog off: it would otherwise bypass a hosted plug-in for time
+the sanitizer spent.
+`engine.rt_callback_full_load` is the case written for it: the Multicore DSP
+pool taking every block while one track records and CLAP, VST3 and LV2 fixture
+instruments play region MIDI and live keys on tracks in different lanes.
+
+The CI job `rtsan-app` in `linux-sanitizer.yml` runs the same two on the
+ubuntu-26.04 runner, with the same suppressions, and fails on any report
+outside them; it stops before the build when `llvm-symbolizer` is missing. Two
+lines stand today: the mastering chain's multiband compressor (donor
+Multi-Comp) allocates every block (#1045), and JUCE's VST3 host, the standard
+`PluginSlot` path, locks on the audio thread (#1046).
 
 #### Reader pool measurements
 

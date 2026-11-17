@@ -395,9 +395,15 @@ public:
                 item.offset = item.event.sampleOffset;
                 block[items++] = item;
             }
-        std::stable_sort (block.begin(), block.begin() + (std::ptrdiff_t) items, [] (const Item& a, const Item& b)
+        // The arrival order breaks ties, which keeps the sort stable without
+        // the heap buffer std::stable_sort takes on the audio thread.
+        for (std::size_t i = 0; i < items; ++i)
+            block[i].arrival = i;
+        std::sort (block.begin(), block.begin() + (std::ptrdiff_t) items, [] (const Item& a, const Item& b)
         {
-            return a.offset < b.offset || (a.offset == b.offset && a.isPoint && ! b.isPoint);
+            if (a.offset != b.offset) return a.offset < b.offset;
+            if (a.isPoint != b.isPoint) return a.isPoint;
+            return a.arrival < b.arrival;
         });
         for (std::size_t i = 0; i < items; ++i)
             block[i].isPoint ? point (block[i].id, block[i].value) : event (block[i].event);
@@ -443,6 +449,7 @@ private:
         ParamID id = 0;
         ParamValue value = 0.0;
         Event event {};
+        std::size_t arrival = 0;
     };
 
     static bool validNote (int16 channel, int16 pitch) noexcept
