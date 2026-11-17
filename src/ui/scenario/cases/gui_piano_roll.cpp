@@ -2446,13 +2446,20 @@ std::optional<ScenarioResult> runMidiActivityLed (GuiHost& host, ScenarioContext
     if (! ctx.expect (strip != nullptr, "the MIDI activity fixture has no strip")) return ctx.verdict();
     ctx.keep (track.midiInputIndex);
     ctx.keep (track.midiChannel);
-    ctx.cleanup ([&host, strip, mode = track.mode.load()]
+    ctx.cleanup ([&host, &track, strip, mode = track.mode.load(), identifier = track.midiInputIdentifier]
     {
         host.closeTopModal();
         strip->restoreTrackMode (mode);
+        track.midiInputIdentifier = identifier;
     });
     host.switchToStage (GuiHost::Stage::Recording);
-    track.midiInputIndex.store (engine.getVirtualKeyboardInputIndex());
+    const int keyboard = engine.getVirtualKeyboardInputIndex();
+    if (! ctx.expect (keyboard >= 0, "the virtual keyboard has no MIDI input")) return ctx.verdict();
+    track.midiInputIndex.store (keyboard);
+    // With the identifier too, as the strip's picker records it: the keyboard sits
+    // after every real input, so a hot-plug moves its index, and a refresh
+    // re-resolves the route from the identifier.
+    track.midiInputIdentifier = engine.getMidiInputDevices()[(std::size_t) keyboard].identifier;
     track.midiChannel.store (1);
     if (! ctx.expect (strip->openInputSettings ((int) Track::Mode::Midi), "could not open MIDI input settings"))
         return ctx.verdict();
