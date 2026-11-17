@@ -1,4 +1,5 @@
 #include "Lv2Worker.h"
+#include "../../foundation/RtAttributes.h"
 #include "../../foundation/ThreadName.h"
 
 #include <algorithm>
@@ -215,6 +216,7 @@ LV2_Worker_Status Lv2Worker::queueFromRun (uint32_t size, const void* data) noex
     if (! requests.write (data, size))
         return LV2_WORKER_ERR_NO_SPACE;
     ++requestsQueued;
+    wake.signal();
     return LV2_WORKER_SUCCESS;
 }
 
@@ -340,14 +342,13 @@ void Lv2Worker::waitForQueuedWork (const std::atomic<bool>* renderCancelled) noe
     };
     if (! pending())
         return;
-    wake.signal();
+    const dusk::rt::ScopedBlockingAllowed offline { "offline render: waits for the LV2 worker's replies" };
     while (pending() && ! cancelled())
         workDone.wait (kOfflineWaitMs);
 }
 
 void Lv2Worker::threadMain()
 {
-    int fastPolls = 0;
     const auto capacity = (uint32_t) workScratch.size();
     std::vector<uint8_t> other;
     while (! stopRequested.load (std::memory_order_acquire))
@@ -372,12 +373,9 @@ void Lv2Worker::threadMain()
             worked = worked || any;
         }
         if (worked)
-        {
             workDone.signal();
-            fastPolls = kFastPollCount;
-        }
-        wake.wait (fastPolls > 0 ? kFastPollMs : kIdlePollMs);
-        if (fastPolls > 0) --fastPolls;
+        if (idleHook) idleHook();
+        wake.wait();
     }
 }
 } // namespace duskstudio::lv2

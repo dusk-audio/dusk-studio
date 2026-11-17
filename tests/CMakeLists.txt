@@ -687,6 +687,7 @@ if(DUSKSTUDIO_NATIVE_LV2)
             ${CMAKE_SOURCE_DIR}/src/engine/lv2/Lv2Instance.cpp
             ${CMAKE_SOURCE_DIR}/src/engine/lv2/Lv2Editor.cpp
             ${CMAKE_SOURCE_DIR}/src/engine/lv2/Lv2Worker.cpp
+            ${CMAKE_SOURCE_DIR}/src/foundation/RtWakeEvent.cpp
             ${CMAKE_SOURCE_DIR}/src/foundation/ThreadName.cpp)
         target_compile_features(dusk-lv2-editor-tests PRIVATE cxx_std_17)
         target_include_directories(dusk-lv2-editor-tests PRIVATE ${CMAKE_SOURCE_DIR}/src)

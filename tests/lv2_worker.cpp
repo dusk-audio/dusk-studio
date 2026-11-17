@@ -13,8 +13,10 @@
 #include "engine/lv2/Lv2UridMap.h"
 #include "engine/lv2/Lv2Worker.h"
 #include "engine/lv2/NativeLv2Slot.h"
+#include "support/ThreadWakeups.h"
 
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
@@ -23,6 +25,7 @@
 #include <filesystem>
 #include <future>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -30,6 +33,9 @@
 
 using Catch::Matchers::ContainsSubstring;
 using Catch::Matchers::WithinAbs;
+using duskstudio::test::eventually;
+using duskstudio::test::returnsPromptly;
+using duskstudio::test::staysAt;
 
 namespace
 {
@@ -588,6 +594,95 @@ TEST_CASE ("LV2 worker keeps other threads off the request ring during run()", "
     REQUIRE (plugin.responses.size() == 1);
     CHECK (plugin.responses[0] == std::vector<uint8_t> { 0x42 });
     worker.detach();
+}
+
+TEST_CASE ("LV2 worker makes no timer wake-ups while it has no work", "[lv2][worker]")
+{
+    FakePlugin plugin;
+    std::atomic<int> idle { 0 };
+    duskstudio::lv2::Lv2Worker worker;
+    worker.setIdleHookForTest ([&idle] { idle.fetch_add (1); });
+    std::string error;
+    REQUIRE (worker.attach (&plugin, &kFakeInterface, error));
+
+    REQUIRE (eventually ([&idle] { return idle.load() > 0; }));
+    CHECK (staysAt (idle, 1));
+    worker.detach();
+}
+
+// The worker has gone to sleep (its hook ran) before the request is queued, so
+// only the queueing side can end that sleep. Afterwards it sleeps again at once.
+TEST_CASE ("LV2 worker picks up work queued after it went to sleep", "[lv2][worker]")
+{
+    FakePlugin plugin;
+    std::atomic<int> idle { 0 };
+    duskstudio::lv2::Lv2Worker worker;
+    worker.setIdleHookForTest ([&idle] { idle.fetch_add (1); });
+    std::string error;
+    REQUIRE (worker.attach (&plugin, &kFakeInterface, error));
+    REQUIRE (eventually ([&idle] { return idle.load() == 1; }));
+
+    const uint8_t request[] = { 0x21 };
+    SECTION ("from the audio thread inside run()")
+    {
+        worker.beginRun();
+        REQUIRE (schedule (worker, request, sizeof (request)) == LV2_WORKER_SUCCESS);
+        worker.finishRun (false);
+    }
+    SECTION ("from another thread")
+    {
+        REQUIRE (schedule (worker, request, sizeof (request)) == LV2_WORKER_SUCCESS);
+    }
+    REQUIRE (plugin.replied (0x21));
+    REQUIRE (eventually ([&idle] { return idle.load() == 2; }));
+    CHECK (staysAt (idle, 2));
+
+    worker.beginRun();
+    worker.finishRun (false);
+    REQUIRE (plugin.responses.size() == 1);
+    CHECK (plugin.responses[0] == std::vector<uint8_t> { 0x21 });
+    worker.detach();
+}
+
+// The request lands after the worker has found both queues empty and before it
+// waits, and nothing else wakes it: the queueing alone has to end that wait.
+TEST_CASE ("LV2 worker picks up a request queued as it goes to sleep", "[lv2][worker]")
+{
+    static constexpr uint8_t kLate = 0x31;
+    FakePlugin plugin;
+    std::atomic<bool> armed { true };
+    std::atomic<int> status { -1 };
+    duskstudio::lv2::Lv2Worker worker;
+    // Stands in for a block on the audio thread, which can run on any thread
+    // between two blocks.
+    worker.setIdleHookForTest ([&worker, &armed, &status]
+    {
+        if (! armed.exchange (false)) return;
+        worker.beginRun();
+        status.store ((int) schedule (worker, &kLate, 1));
+        worker.finishRun (false);
+    });
+    std::string error;
+    REQUIRE (worker.attach (&plugin, &kFakeInterface, error));
+
+    REQUIRE (plugin.replied (kLate));
+    CHECK (status.load() == (int) LV2_WORKER_SUCCESS);
+    worker.detach();
+}
+
+TEST_CASE ("Stopping a sleeping LV2 worker wakes and joins its thread", "[lv2][worker]")
+{
+    auto plugin = std::make_shared<FakePlugin>();
+    auto idle = std::make_shared<std::atomic<int>> (0);
+    auto worker = std::make_unique<duskstudio::lv2::Lv2Worker>();
+    worker->setIdleHookForTest ([idle] { idle->fetch_add (1); });
+    std::string error;
+    REQUIRE (worker->attach (plugin.get(), &kFakeInterface, error));
+    REQUIRE (eventually ([&idle] { return idle->load() > 0; }));
+
+    auto* sleeping = worker.release();
+    // A destructor that never returns still holds the worker, so it is left alive.
+    CHECK (returnsPromptly ([sleeping, plugin] { delete sleeping; }));
 }
 
 TEST_CASE ("LV2 worker fixture unloads safely with work queued", "[lv2][worker]")
