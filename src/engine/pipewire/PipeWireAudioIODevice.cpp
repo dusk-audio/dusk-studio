@@ -746,12 +746,7 @@ void PipeWireAudioIODevice::start (device::IODeviceCallback* newCallback)
     }
 
     newCallback->audioDeviceAboutToStart (this);
-
-    {
-        const std::lock_guard<std::mutex> sl (callbackLock);
-        callback = newCallback;
-    }
-
+    callback.attach (newCallback);
     isStarted.store (true, std::memory_order_release);
 }
 
@@ -781,12 +776,7 @@ void PipeWireAudioIODevice::stop()
 
     isStarted.store (false, std::memory_order_release);
 
-    device::IODeviceCallback* cb = nullptr;
-    {
-        const std::lock_guard<std::mutex> sl (callbackLock);
-        std::swap (cb, callback);
-    }
-    if (cb != nullptr)
+    if (auto* cb = callback.detach())
         cb->audioDeviceStopped();
 }
 
@@ -844,20 +834,11 @@ void PipeWireAudioIODevice::onProcess (struct spa_io_position* position) noexcep
 
     // A cycle longer than the block the callback was started at (the graph's
     // quantum went up under it) goes over in blocks of that size, back to back,
-    // until a restart adopts the new quantum. The started size is read under
-    // the lock that published the callback, so the two always belong together.
-    const std::lock_guard<std::mutex> sl (callbackLock);
-    if (callback == nullptr)
-        return;
-    const device::CallbackContext context {};
-    device::forEachSubBlock (callbackInPointers.data(), numInputChannels,
-                             callbackOutPointers.data(), numOutputChannels,
-                             (int) n, clockWatch.preparedBufferSize(),
-                             [this, &context] (const float* const* in, float* const* out, int numSamples)
-                             {
-                                 callback->audioDeviceIOCallback (in, numInputChannels, out, numOutputChannels,
-                                                                  numSamples, context);
-                             });
+    // until a restart adopts the new quantum.
+    device::dispatchCycle (callback, clockWatch,
+                           callbackInPointers.data(), numInputChannels,
+                           callbackOutPointers.data(), numOutputChannels,
+                           (int) n, {});
 }
 
 void PipeWireAudioIODevice::onFilterStateChanged() noexcept
