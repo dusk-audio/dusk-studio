@@ -82,7 +82,7 @@ TEST_CASE ("Skipping a block of a gain ramp lands where ticking each sample does
     // (zero or less is inside), and the blocks the two disagreed on whether
     // they were still ramping.
     float idleExcess = -1.0f;
-    int idleStateMismatches = 0;
+    int idleStateMismatches = 0, nonFinite = 0;
     int done = 0, skips = 0;
     while (done < idleSamples)
     {
@@ -107,6 +107,7 @@ TEST_CASE ("Skipping a block of a gain ramp lands where ticking each sample does
             : 0.0f;
         idleExcess = std::max (idleExcess,
                                std::abs (skipped.getCurrentValue() - ticked.getCurrentValue()) - bound);
+        nonFinite += std::isfinite (skipped.getCurrentValue()) && std::isfinite (ticked.getCurrentValue()) ? 0 : 1;
     }
     CHECK (idleStateMismatches == 0);
     CHECK (idleExcess <= 0.0f);
@@ -129,9 +130,12 @@ TEST_CASE ("Skipping a block of a gain ramp lands where ticking each sample does
             ++wakeStateMismatches;
         const float bound = ticked.isSmoothing() ? idleGap + (float) (i + 2) * ulpOf (scale) : 0.0f;
         wakeExcess = std::max (wakeExcess, std::abs (s - t) - bound);
+        nonFinite += std::isfinite (s) && std::isfinite (t) ? 0 : 1;
     }
     CHECK (wakeStateMismatches == 0);
     CHECK (wakeExcess <= 0.0f);
+    // std::max keeps its first argument against a NaN, so the excesses above cannot see one.
+    CHECK (nonFinite == 0);
     REQUIRE_FALSE (ticked.isSmoothing());
     REQUIRE_THAT (skipped.getCurrentValue(), WithinAbs (wakeTarget, 0.0));
 }
@@ -269,6 +273,9 @@ struct Rig
     ChannelStrip strip;
     juce::MidiBuffer midi;
     Outputs out {};
+    // Output samples over every block that were NaN or infinite, which peakOf and
+    // worstGap cannot see: std::max keeps its first argument against a NaN.
+    int nonFinite = 0;
     std::array<float*, ChannelStrip::kNumBuses> busL {}, busR {};
     std::array<float*, ChannelStrip::kNumAuxSends> auxL {}, auxR {};
 
@@ -312,6 +319,9 @@ struct Rig
         strip.processAndAccumulate (inL, inR, midi, false,
                                     out[0].data(), out[1].data(), busL, busR, auxL, auxR,
                                     kBlock, passByGate, nullptr, 0, nullptr, 0, true);
+        for (const auto& channel : out)
+            for (int i = 0; i < kBlock; ++i)
+                nonFinite += std::isfinite (channel[(std::size_t) i]) ? 0 : 1;
     }
 
     // One block on the idle path: the input withheld, or not passing.
@@ -494,6 +504,7 @@ TEST_CASE ("An idle strip's gains wake where ticking each sample leaves them",
     for (int b = 0; b < kWakeBlocks; ++b)
         passing (b < kLateBlock ? t.wake : t.late);
 
+    REQUIRE (rig.nonFinite == 0);
     REQUIRE (peak > 0.1f);
     const float tolerance = toleranceFor (peak);
     INFO ("idle path " << (int) idlePath << ", " << stretchBlocks << " idle blocks, change "
@@ -552,6 +563,8 @@ TEST_CASE ("A strip woken from an idle stretch mixes like one kept running with 
         peak = std::max (peak, peakOf (kept.out));
         worst = std::max (worst, worstGap (idle.out, kept.out));
     }
+    REQUIRE (idle.nonFinite == 0);
+    REQUIRE (kept.nonFinite == 0);
     REQUIRE (peak > 0.1f);
     const float tolerance = toleranceFor (peak);
     INFO ("idle path " << (int) idlePath << ", " << stretchBlocks << " idle blocks, change "
