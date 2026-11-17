@@ -85,6 +85,7 @@ add_executable(dusk-studio-tests
     ${CMAKE_SOURCE_DIR}/src/ui/PianoRollEdit.cpp
     midi_timeline_schedule.cpp
     hosting_midi_fit.cpp
+    juce_compat_midi_fill.cpp
     output_pair_routing.cpp
     multiband_comp_presets.cpp
     midi_merge.cpp

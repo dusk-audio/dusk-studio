@@ -1975,12 +1975,12 @@ void audioWorkerLoop (HostState& host) noexcept
             }
 
             auto& midiScratch = host.midiScratch;
-            midiScratch.clear();
+            duskstudio::juce_compat::OrderedMidiFill fill (midiScratch);
             const auto midiInBytes = host.hdr->midiInBytes;
             if (midiInBytes <= kMidiBytes)
                 midiwire::forEachEvent (midiIn (host.shm.data()), midiInBytes,
-                                        [&midiScratch] (const std::uint8_t* data, int numBytes, int sample)
-                                        { midiScratch.addEvent (data, numBytes, sample); });
+                                        [&fill] (const std::uint8_t* data, int numBytes, int sample)
+                                        { fill.add (data, numBytes, sample); });
 
             try
             {

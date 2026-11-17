@@ -1839,7 +1839,7 @@ std::optional<dusk::ProcessedBlock> PluginSlot::processMonoBlock (float* monoDat
         if (! r->processBlockSync (inPtrs, std::max (rNumIn, 0),
                                        std::max (rNumOut, 0),
                                        numSamples, oopMidiScratch,
-                                       oopProcessTimeoutNs.load (std::memory_order_relaxed),
+                                       kOopProcessTimeoutNs,
                                        transport))
         {
             engageAutoBypass();
@@ -1897,7 +1897,7 @@ std::optional<dusk::ProcessedBlock> PluginSlot::processMonoBlock (float* monoDat
         // AudioBuffer wrapper around the existing buffer.
         float* channels[1] = { monoData };
         juce::AudioBuffer<float> buf (channels, 1, numSamples);
-        if (standardVst3) standardMidi.rewrite (midiMessages);
+        if (standardVst3) juce_compat::copyMidiInOrder (standardMidi.fit (midiMessages), midiMessages);
         p->processBlock (buf, midiMessages);
     }
     else if (numIn == 0 && numOut >= 1)
@@ -1917,7 +1917,7 @@ std::optional<dusk::ProcessedBlock> PluginSlot::processMonoBlock (float* monoDat
         float* procPtrs[2] = { stereoScratch.getWritePointer (0),
                                procCh > 1 ? stereoScratch.getWritePointer (1) : nullptr };
         juce::AudioBuffer<float> buf (procPtrs, procCh, numSamples);
-        if (standardVst3) standardMidi.rewrite (midiMessages);
+        if (standardVst3) juce_compat::copyMidiInOrder (standardMidi.fit (midiMessages), midiMessages);
         p->processBlock (buf, midiMessages);
 
         const float* outL = stereoScratch.getReadPointer (0);
@@ -1936,7 +1936,7 @@ std::optional<dusk::ProcessedBlock> PluginSlot::processMonoBlock (float* monoDat
 
         stereoScratch.copyFrom (0, 0, monoData, numSamples);
         stereoScratch.copyFrom (1, 0, monoData, numSamples);
-        if (standardVst3) standardMidi.rewrite (midiMessages);
+        if (standardVst3) juce_compat::copyMidiInOrder (standardMidi.fit (midiMessages), midiMessages);
         p->processBlock (stereoScratch, midiMessages);
 
         const float* l = stereoScratch.getReadPointer (0);
@@ -2037,7 +2037,7 @@ std::optional<dusk::ProcessedBlock> PluginSlot::processStereoBlock (float* L, fl
         if (! r->processBlockSync (inPtrs, std::max (rNumIn, 0),
                                        std::max (rNumOut, 0),
                                        numSamples, oopMidiScratch,
-                                       oopProcessTimeoutNs.load (std::memory_order_relaxed),
+                                       kOopProcessTimeoutNs,
                                        transport))
         {
             // Either the futex timed out or the connection was already
@@ -2107,7 +2107,7 @@ std::optional<dusk::ProcessedBlock> PluginSlot::processStereoBlock (float* L, fl
         // place. Same shape as the per-aux EQ/comp pass above.
         float* channels[2] = { L, R };
         juce::AudioBuffer<float> buf (channels, 2, numSamples);
-        if (standardVst3) standardMidi.rewrite (midiMessages);
+        if (standardVst3) juce_compat::copyMidiInOrder (standardMidi.fit (midiMessages), midiMessages);
         p->processBlock (buf, midiMessages);
     }
     else if (numIn == 1 && numOut >= 1)
@@ -2134,7 +2134,7 @@ std::optional<dusk::ProcessedBlock> PluginSlot::processStereoBlock (float* L, fl
         float* procPtrs[2] = { stereoScratch.getWritePointer (0),
                                procCh > 1 ? stereoScratch.getWritePointer (1) : nullptr };
         juce::AudioBuffer<float> buf (procPtrs, procCh, numSamples);
-        if (standardVst3) standardMidi.rewrite (midiMessages);
+        if (standardVst3) juce_compat::copyMidiInOrder (standardMidi.fit (midiMessages), midiMessages);
         p->processBlock (buf, midiMessages);
 
         const float* outL = stereoScratch.getReadPointer (0);
@@ -2163,7 +2163,7 @@ std::optional<dusk::ProcessedBlock> PluginSlot::processStereoBlock (float* L, fl
         float* procPtrs[2] = { stereoScratch.getWritePointer (0),
                                procCh > 1 ? stereoScratch.getWritePointer (1) : nullptr };
         juce::AudioBuffer<float> buf (procPtrs, procCh, numSamples);
-        if (standardVst3) standardMidi.rewrite (midiMessages);
+        if (standardVst3) juce_compat::copyMidiInOrder (standardMidi.fit (midiMessages), midiMessages);
         p->processBlock (buf, midiMessages);
 
         const float* outL = stereoScratch.getReadPointer (0);

@@ -72,14 +72,6 @@ constexpr int kSyncOutputMidiStream = Session::kNumTracks;
 
 using dusk::audio::findSignedMinMax;
 
-static void copyDuskMidiToJuce (const dusk::MidiBuffer& source,
-                                juce::MidiBuffer& destination) noexcept
-{
-    destination.clear();
-    for (const auto meta : source)
-        destination.addEvent (meta.data, meta.numBytes, meta.samplePosition);
-}
-
 // Log-span of the HPF sweep band, precomputed once. The MIDI-CC HPF map runs
 // on the audio thread per controller event; without this it would recompute
 // std::log(max/min) on every CC message.
@@ -5677,7 +5669,7 @@ void AudioEngine::accumulateStrip (int t, float* mL, float* mR,
                                    int numSamples) noexcept
 {
     const auto& job = trackJobs[(size_t) t];
-    copyDuskMidiToJuce (perTrackMidi[(size_t) t], perTrackMidiScratch[(size_t) t]);
+    juce_compat::copyMidiInOrder (perTrackMidi[(size_t) t], perTrackMidiScratch[(size_t) t]);
     strips[(size_t) t]->processAndAccumulate (job.monoIn, job.monoInR,
                                              perTrackMidiScratch[(size_t) t], job.isMidi,
                                              mL, mR, bL, bR, aL, aR,

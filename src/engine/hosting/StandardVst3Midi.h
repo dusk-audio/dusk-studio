@@ -21,17 +21,16 @@ public:
         scratch.reserveBytes (dusk::kMidiRoutingBlockBytes);
     }
 
-    // The legacy buffer must reserve kMidiRoutingBlockBytes before processing.
-    // The packed seam uses at least as much storage per event as that buffer.
+    // What the plug-in gets of `input`, for the caller to copy into the buffer
+    // it hands over. That buffer must reserve kMidiRoutingBlockBytes; the packed
+    // seam uses at least as much storage per event.
     template <typename Buffer>
-    void rewrite (Buffer& input) noexcept
+    const dusk::MidiBuffer& fit (const Buffer& input) noexcept
     {
         scratch.clear();
         deliver (input, [&] (const std::uint8_t* data, int bytes, int offset)
         { return scratch.addEvent (data, bytes, offset); });
-        input.clear();
-        for (const auto event : scratch)
-            input.addEvent (event.data, event.numBytes, event.samplePosition);
+        return scratch;
     }
 
     void reset() noexcept
