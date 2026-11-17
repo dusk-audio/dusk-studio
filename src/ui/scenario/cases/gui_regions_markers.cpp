@@ -1838,5 +1838,60 @@ const ScenarioRegistrar tapeRepaintsUnannouncedRegions { Scenario {
     {}, {}, 10000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runTapeRepaintsUnannouncedRegions (host, ctx); }
 } };
+
+// The playhead band follows the display's vblank only while the playhead can
+// move, so an idle window lets the frame timer rest; a locate while stopped
+// still shows on the next tick of the strip's own timer.
+std::optional<ScenarioResult> runTapePlayheadVBlankWhileMoving (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+    if (! transport.isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires stopped transport and no modal");
+    if (engine.getStage() != AudioEngine::Stage::Recording && engine.getStage() != AudioEngine::Stage::Mixing)
+        return ScenarioResult::skip ("requires a stage with the timeline");
+    const auto view = host.tapeView();
+    const bool timeline = host.setTimelineShown (true);
+    ctx.cleanup ([&host, &engine, &transport, timeline, view, position = transport.getPlayhead()]
+    {
+        engine.stop();
+        transport.setPlayhead (position);
+        host.setTimelineShown (timeline);
+        host.restoreTapeView (view);
+    });
+
+    const auto stopped = [&host, &ctx, &engine]
+    {
+        engine.stop();
+        ctx.waitUntil ([&host] { return ! host.tapePlayheadOnVBlank(); }, 3000,
+                       [&ctx] { ctx.complete (ctx.verdict()); },
+                       "the tape strip's playhead stayed on the vblank after the transport stopped");
+    };
+    const auto rolling = [&host, &ctx, &engine, stopped]
+    {
+        engine.play();
+        ctx.waitUntil ([&host] { return host.tapePlayheadOnVBlank(); }, 3000, stopped,
+                       "the tape strip's playhead did not follow the vblank while the transport rolled");
+    };
+    ctx.waitUntil ([&host] { return ! host.tapePlayheadOnVBlank(); }, 3000,
+                   [&host, &ctx, &engine, &transport, rolling]
+    {
+        const auto paints = host.tapePaints();
+        transport.setPlayhead (transport.getPlayhead()
+                               + (std::int64_t) std::llround (engine.getTimelineSampleRate() * 2.0));
+        ctx.waitUntil ([&host, paints] { return host.tapePaints() > paints; }, 2000, [&host, &ctx, rolling]
+        {
+            ctx.waitUntil ([&host] { return ! host.tapePlayheadOnVBlank(); }, 3000, rolling,
+                           "the tape strip's playhead stayed on the vblank after a locate while stopped");
+        }, "a locate while stopped did not repaint the tape strip");
+    }, "the tape strip's playhead followed the vblank with the transport stopped and the playhead still");
+    return std::nullopt;
+}
+
+const ScenarioRegistrar tapePlayheadVBlankWhileMoving { Scenario {
+    "gui.tape_playhead_vblank_only_while_moving", { "gui", "tape" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runTapePlayheadVBlankWhileMoving (host, ctx); }
+} };
 } // namespace
 } // namespace duskstudio::scenario::gui

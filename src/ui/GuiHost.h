@@ -276,6 +276,8 @@ public:
     virtual void tapeDropLeave() = 0;
     // How many times the tape strip has painted; -1 without one.
     virtual int tapePaints() const = 0;
+    // True while the tape strip's playhead follows the display's vblank.
+    virtual bool tapePlayheadOnVBlank() const = 0;
     // The sample under the point dropFilesOnTrack drops on.
     virtual std::int64_t tapeDropPointSample (int track) const = 0;
     virtual int tapeXForSample (std::int64_t sample) const = 0;
@@ -551,6 +553,13 @@ public:
     virtual bool nativeWaylandWindow() const = 0;
     virtual bool modalHasSeparateX11Peer() const = 0;
     virtual bool modalStackEmpty() const = 0;
+    // Frames the main window has painted so far.
+    virtual std::uint64_t windowFramesPainted() const = 0;
+    // Moves the pointer, no button held, onto the centre of a showing control in
+    // the main window that has a tooltip (true) or onto a point whose control has
+    // none (false). False when the window has no such place.
+    virtual bool hoverForTooltip (bool withTip) = 0;
+    virtual bool tooltipShowing() const = 0;
     virtual int modalCount() const = 0;
     virtual std::string modalText() const = 0;
     virtual bool clickModalButton (const std::string& label) = 0;

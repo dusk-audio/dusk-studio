@@ -10,9 +10,9 @@
 # Recorded on an 8-core box (six DSP pool workers), 48000 Hz at quantum 512, on
 # Xvfb, where Mesa's llvmpipe threads draw the window.
 # DuskStudio is the framework's timer thread, which wakes twice for each
-# deadline. Every dusk::Timer shares one 30 Hz tick now; most of what is left is
-# the framework's own timers: the X11 window's vblank timer, which runs at its
-# 100 Hz fallback because Xvfb reports a 0 Hz mode, and the tooltip window's.
+# deadline. Every dusk::Timer shares one 30 Hz tick, and the framework's window
+# vblank and tooltip timers rest while nothing draws or waits to show, so most
+# of what is left is that tick.
 DuskDSP *	0.05/block
 DuskFill *	1
 DuskInstance	1
@@ -24,7 +24,7 @@ DuskSampleLoad	1
 DuskSfzArtwork	1
 DuskSfzLibrary	1
 DuskStu:disk$*	1
-DuskStudio	372
-[main]	243
+DuskStudio	90
+[main]	68
 data-loop.*	1.15/block
 llvmpipe-*	103

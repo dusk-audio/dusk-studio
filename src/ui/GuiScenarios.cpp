@@ -1080,6 +1080,10 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     {
         return owner.tapeStrip != nullptr ? owner.tapeStrip->paintsForScenario() : -1;
     }
+    bool tapePlayheadOnVBlank() const override
+    {
+        return owner.tapeStrip != nullptr && owner.tapeStrip->playheadOnVBlankForScenario();
+    }
     std::int64_t tapeDropPointSample (int track) const override
     {
         return owner.tapeStrip != nullptr ? owner.tapeStrip->dropPointSampleForScenario (track) : -1;
@@ -2439,6 +2443,37 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
        #endif
     }
 
+    std::uint64_t windowFramesPainted() const override
+    {
+        const auto* peer = owner.getPeer();
+        return peer != nullptr ? (std::uint64_t) peer->getNumFramesPainted() : 0;
+    }
+    bool hoverForTooltip (bool withTip) override
+    {
+        auto& tips = owner.tooltipWindow;
+        static constexpr int kStep = 8;
+        for (int y = kStep / 2; y < owner.getHeight(); y += kStep)
+            for (int x = kStep / 2; x < owner.getWidth(); x += kStep)
+            {
+                auto* under = owner.getComponentAt (x, y);
+                if (under == nullptr || under == &tips || under->getPeer() != owner.getPeer()) continue;
+                if (tips.getTipFor (*under).isNotEmpty() != withTip) continue;
+                auto point = owner.getLocalBounds().getCentre();
+                point.setXY (x, y);
+                if (withTip)
+                {
+                    point = owner.getLocalPoint (under, under->getLocalBounds().getCentre());
+                    if (owner.getComponentAt (point) != under) continue;
+                }
+                const auto onWindow = owner.getTopLevelComponent()->getLocalPoint (&owner, point).toFloat();
+                return pointerAt (onWindow.x, onWindow.y, false);
+            }
+        return false;
+    }
+    bool tooltipShowing() const override
+    {
+        return owner.tooltipWindow.isVisible();
+    }
     bool modalStackEmpty() const override
     {
        #if DUSKSTUDIO_HAS_NATIVE_UI
