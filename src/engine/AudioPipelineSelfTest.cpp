@@ -626,6 +626,30 @@ void captureToneOutput (AudioEngine& engine, double sr, int blockSize,
                 outBuffer.push_back (outputs[0][(size_t) s]);
     }
 }
+
+// The DSP lane of `lanes` that runs track t.
+int dspLaneOf (int t, int lanes)
+{
+    int lane = 0;
+    while (lane + 1 < lanes && AudioEngine::dspLaneFirstTrack (lane + 1, lanes) <= t) ++lane;
+    return lane;
+}
+
+// A track the pool tests can drive with a tone: not frozen, and with neither a
+// hardware insert nor anything loaded in its insert. Stopped, a frozen track
+// has no source, a hardware insert runs outside the lanes, and a loaded slot
+// may be an instrument that makes nothing of the tone or an effect that does
+// not repeat itself.
+bool isPlainTrack (const AudioEngine& engine, Session& session, int t)
+{
+    const auto& strip = engine.getChannelStrip (t);
+    const bool anythingLoaded = strip.getPluginSlot().isLoaded() || strip.isBuiltinLoaded()
+        || strip.isNativeClapLoaded() || strip.isNativeLv2Loaded() || strip.isNativeVst3Loaded()
+        || strip.isNativeAuLoaded() || strip.isNativeMultisampleLoaded();
+    return ! session.track (t).frozen.load (std::memory_order_acquire)
+        && strip.insertMode.load (std::memory_order_relaxed) != ChannelStrip::kInsertHardware
+        && ! anythingLoaded;
+}
 } // namespace
 
 std::string AudioPipelineSelfTest::testCompEachMode()
@@ -1306,34 +1330,14 @@ std::string AudioPipelineSelfTest::testPoolDispatchRule()
         return "[PASS] Pool Dispatch Rule: SKIPPED (host < 3 cores: no worker pool)";
     }
     const int lanes = workers + 1;
-    const auto laneOf = [lanes] (int t)
-    {
-        int lane = 0;
-        while (lane + 1 < lanes && AudioEngine::dspLaneFirstTrack (lane + 1, lanes) <= t) ++lane;
-        return lane;
-    };
+    const auto laneOf = [lanes] (int t) { return dspLaneOf (t, lanes); };
 
     // Busy tracks monitor a tone through distinct EQ. Every other track is a
-    // muted audio track, whose chain does not run whatever it holds. A track
-    // that is frozen, holds a hardware insert or has anything loaded in its
-    // insert is passed over: stopped, a frozen track has no source, a hardware
-    // insert runs outside the lanes, and a loaded slot may be an instrument
-    // that makes nothing of the tone or an effect that does not repeat itself.
-    const auto anythingLoaded = [] (const ChannelStrip& strip)
-    {
-        return strip.getPluginSlot().isLoaded() || strip.isBuiltinLoaded() || strip.isNativeClapLoaded()
-            || strip.isNativeLv2Loaded() || strip.isNativeVst3Loaded() || strip.isNativeAuLoaded()
-            || strip.isNativeMultisampleLoaded();
-    };
+    // muted audio track, whose chain does not run whatever it holds.
     std::vector<int> candidates;
     for (int t = 0; t < Session::kNumTracks; ++t)
-    {
-        const auto& strip = engine.getChannelStrip (t);
-        if (! session.track (t).frozen.load (std::memory_order_acquire)
-            && strip.insertMode.load (std::memory_order_relaxed) != ChannelStrip::kInsertHardware
-            && ! anythingLoaded (strip))
+        if (isPlainTrack (engine, session, t))
             candidates.push_back (t);
-    }
     if (candidates.size() < 16)
     {
         engine.setWorkerCountForTest (0);
@@ -1505,6 +1509,143 @@ std::string AudioPipelineSelfTest::testPoolDispatchRule()
         "%s Pool Dispatch Rule (%d workers): the pool runs a block only when its busy strips fall in 2+ lanes, "
         "with the mix it makes when every block goes to it%s",
         fmtPassFail (pass).c_str(), workers, detail.c_str());
+}
+
+std::string AudioPipelineSelfTest::testHardwareInsertLeavesOffLanes()
+{
+    static constexpr int    bs = 256, numIn = 16, numOut = 4, sendL = 2, sendR = 3;
+    static constexpr int    holdBlocks = 4, numBlocks = 40;
+    static constexpr double sr = 48000.0;
+    static constexpr double kTwoPi = 6.283185307179586;
+
+    engine.prepareForSelfTest (sr, bs);
+    engine.setWorkerCountForTest (AudioEngine::getMaxWorkerCount());
+    const int workers = engine.activeDspWorkersForTest();
+    if (workers == 0)
+    {
+        engine.setWorkerCountForTest (0);
+        return "[PASS] Hardware Insert Leaves Off Lanes: SKIPPED (host < 3 cores: no worker pool)";
+    }
+    const int lanes = workers + 1;
+
+    // The first and last plain tracks sit in different lanes, and both send
+    // their hardware insert on one device output pair.
+    std::vector<int> plain;
+    for (int t = 0; t < Session::kNumTracks; ++t)
+        if (isPlainTrack (engine, session, t))
+            plain.push_back (t);
+    if (plain.size() < 2 || dspLaneOf (plain.front(), lanes) == dspLaneOf (plain.back(), lanes))
+    {
+        engine.setWorkerCountForTest (0);
+        return "[PASS] Hardware Insert Leaves Off Lanes: SKIPPED (no two plain tracks in different lanes)";
+    }
+    const std::array<int, 2> pair { plain.front(), plain.back() };
+
+    prepareCleanState();
+    for (int t = 0; t < Session::kNumTracks; ++t)
+    {
+        session.track (t).inputMonitor.store (false, std::memory_order_relaxed);
+        session.track (t).strip.mute.store (true, std::memory_order_relaxed);
+    }
+    std::array<int, 2> savedInsertMode {};
+    std::array<HardwareInsertRouting, 2> savedRouting {};
+    std::array<int, 2> savedAutomationMode {};
+    for (size_t i = 0; i < pair.size(); ++i)
+    {
+        const int t = pair[i];
+        auto& tr = session.track (t);
+        tr.mode.store         ((int) Track::Mode::Mono, std::memory_order_relaxed);
+        tr.inputSource.store  (t % numIn, std::memory_order_relaxed);
+        tr.inputMonitor.store (true, std::memory_order_relaxed);
+        tr.strip.mute.store   (false, std::memory_order_relaxed);
+        // Off, so a mute lane in Read mode cannot override the manual mute above.
+        savedAutomationMode[i] = tr.automationMode.load (std::memory_order_relaxed);
+        tr.automationMode.store ((int) AutomationMode::Off, std::memory_order_relaxed);
+        for (int b = 0; b < ChannelStripParams::kNumBuses; ++b)
+            tr.strip.busAssign[(size_t) b].store (false, std::memory_order_relaxed);
+        savedRouting[i] = *tr.hardwareInsert.routing.read();
+        tr.hardwareInsert.routing.publish (std::make_unique<HardwareInsertRouting> (
+            HardwareInsertRouting { sendL, sendR, 0, 1, 0, 0 }));
+        auto& strip = engine.getChannelStrip (t);
+        savedInsertMode[i] = strip.insertMode.load (std::memory_order_acquire);
+        strip.insertMode.store (ChannelStrip::kInsertHardware, std::memory_order_release);
+    }
+    session.recomputeRtCounters();
+
+    // Every block goes to the pool, so a strip the engine does not hold back
+    // runs in a worker lane.
+    engine.prepareForSelfTest (sr, bs);
+    engine.setWorkerCountForTest (workers);
+    engine.setPoolDispatchForcedForTest (true);
+
+    std::vector<std::vector<float>> ins ((size_t) numIn, std::vector<float> ((size_t) bs, 0.0f));
+    std::vector<const float*> inP ((size_t) numIn);
+    for (int ch = 0; ch < numIn; ++ch) inP[(size_t) ch] = ins[(size_t) ch].data();
+    std::vector<std::vector<float>> outs ((size_t) numOut, std::vector<float> ((size_t) bs, 0.0f));
+    std::vector<float*> outP ((size_t) numOut);
+    for (int ch = 0; ch < numOut; ++ch) outP[(size_t) ch] = outs[(size_t) ch].data();
+    duskstudio::device::CallbackContext ctx {};
+    const double inc = kTwoPi * (double) kToneHz / sr;
+
+    int pooled = 0, hardwareBlocks = 0, leavingBlocks = 0, inLanes = 0;
+    float sendPeak = 0.0f;
+    for (int b = 0; b < numBlocks; ++b)
+    {
+        if (b == holdBlocks)
+            for (const int t : pair)
+                engine.getChannelStrip (t).insertMode.store (ChannelStrip::kInsertEmpty,
+                                                             std::memory_order_release);
+        for (int ch = 0; ch < numIn; ++ch)
+            for (int s = 0; s < bs; ++s)
+                ins[(size_t) ch][(size_t) s] = kInputAmpMinusSixDb
+                    * (float) std::sin (inc * (double) (b * bs + s) + 0.13 * (double) ch);
+        for (auto& o : outs) std::fill (o.begin(), o.end(), 0.0f);
+
+        const auto before = engine.getPoolDispatchCount();
+        engine.audioDeviceIOCallback (inP.data(), numIn, outP.data(), numOut, bs, ctx);
+        pooled += engine.getPoolDispatchCount() != before ? 1 : 0;
+
+        for (const int t : pair)
+        {
+            const auto& strip = engine.getChannelStrip (t);
+            if (strip.getLastProcessedSamples() == 0
+                || strip.getActiveInsertMode() != ChannelStrip::kInsertHardware)
+                continue;
+            ++hardwareBlocks;
+            if (strip.insertMode.load (std::memory_order_acquire) != ChannelStrip::kInsertHardware)
+                ++leavingBlocks;
+            if (! engine.stripHeldOnAudioThreadForTest (t))
+                ++inLanes;
+        }
+        for (const int ch : { sendL, sendR })
+            for (const float v : outs[(size_t) ch])
+                sendPeak = std::max (sendPeak, std::abs (v));
+    }
+    engine.setPoolDispatchForcedForTest (false);
+    engine.setWorkerCountForTest (0);
+
+    bool settled = true;
+    for (size_t i = 0; i < pair.size(); ++i)
+    {
+        const int t = pair[i];
+        auto& strip = engine.getChannelStrip (t);
+        settled = settled && strip.getActiveInsertMode() == ChannelStrip::kInsertEmpty;
+        strip.insertMode.store (savedInsertMode[i], std::memory_order_release);
+        session.track (t).hardwareInsert.routing.publish (
+            std::make_unique<HardwareInsertRouting> (savedRouting[i]));
+        session.track (t).automationMode.store (savedAutomationMode[i], std::memory_order_relaxed);
+    }
+
+    const bool pass = inLanes == 0 && leavingBlocks > 0 && settled
+                   && pooled == numBlocks && sendPeak > 1.0e-3f;
+    return dusk::text::format (
+        "%s Hardware Insert Leaves Off Lanes (%d workers): tracks %d and %d in lanes %d and %d leave "
+        "their hardware inserts on one send pair with the pool taking every block; %d of %d blocks "
+        "that ran a hardware insert ran in a worker lane (want 0), %d ran it through the crossfade out, "
+        "pool ran %d/%d blocks, send peak %.3f%s",
+        fmtPassFail (pass).c_str(), workers, pair[0] + 1, pair[1] + 1,
+        dspLaneOf (pair[0], lanes), dspLaneOf (pair[1], lanes), inLanes, hardwareBlocks,
+        leavingBlocks, pooled, numBlocks, (double) sendPeak, settled ? "" : ", an insert never left");
 }
 
 std::string AudioPipelineSelfTest::testMidiPlayAlongMonitor()
@@ -2068,6 +2209,7 @@ std::string AudioPipelineSelfTest::runAll()
     report.push_back (testCompPerTrack());
     report.push_back (testParallelMatchesSerial());
     report.push_back (testPoolDispatchRule());
+    report.push_back (testHardwareInsertLeavesOffLanes());
     report.push_back (testMidiPlayAlongMonitor());
     report.push_back (testAudioPlayAlongSends());
     report.push_back (testLoopRecordTakeStacking());

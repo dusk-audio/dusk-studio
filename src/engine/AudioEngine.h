@@ -189,6 +189,13 @@ public:
         return workerPool.isActive() ? workerPool.laneCount() - 1 : 0;
     }
 
+    // Test-only, between callbacks: whether the last block kept track t's strip
+    // off the worker lanes for its hardware insert.
+    bool stripHeldOnAudioThreadForTest (int t) const noexcept
+    {
+        return trackJobs[(size_t) t].hardwareInsert;
+    }
+
     // Test-only. True hands every block to an active pool however few lanes
     // have work; false puts the dispatch rule back.
     void setPoolDispatchForcedForTest (bool forced) noexcept
@@ -1272,8 +1279,10 @@ private:
         bool         armed       = false;
         bool         stereoInput = false;
         bool         frozen      = false;   // play pre-rendered WAV, skip plugin + EQ/comp
-        bool         hardwareInsert = false; // send writes a SHARED device output - excluded
-                                             // from parallel lanes, summed on the audio thread
+        // ChannelStrip::mayRunHardwareInsert: the send writes a SHARED device
+        // output, so the strip is excluded from parallel lanes and summed on
+        // the audio thread, through the crossfade out of the insert too.
+        bool         hardwareInsert = false;
     };
     std::array<TrackDspJob, Session::kNumTracks> trackJobs;
 

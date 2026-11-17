@@ -115,6 +115,7 @@ add_executable(dusk-studio-tests
     plugin_state_diagnostics.cpp
     channel_strip_midi_gate.cpp
     channel_strip_will_run_chain.cpp
+    channel_strip_hardware_insert_lanes.cpp
     channel_strip_idle_gains.cpp
     ${CMAKE_SOURCE_DIR}/src/dsp/ChannelStrip.cpp
     insert_mode_defaults.cpp

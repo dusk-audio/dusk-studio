@@ -8256,11 +8256,11 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         // baked WAV (monoIn/monoInR), instrument + EQ/comp skipped. isMidi is
         // therefore false (the plugin path is bypassed); the frozen flag drives
         // the strip. stereoInput true so the R channel is recognised.
+        strips[(size_t) t]->latchInsertRequest();
         trackJobs[(size_t) t] = { monoIn, monoInR, deviceInput,
                                   midiTrack && ! isFrozen, stripPasses, armed,
                                   stereoTrackInput || isFrozen, isFrozen,
-                                  strips[(size_t) t]->insertMode.load (std::memory_order_relaxed)
-                                      == ChannelStrip::kInsertHardware };
+                                  strips[(size_t) t]->mayRunHardwareInsert() };
     }
 
     // DSP pass
