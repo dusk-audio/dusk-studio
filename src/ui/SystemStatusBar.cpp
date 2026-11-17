@@ -77,6 +77,7 @@ void SystemStatusBar::timerCallback()
     // Audio threads a stalled plug-in pushed off realtime priority.
     if (lastReadings.realtimeDemotions > 0)
         dsp += " RT " + std::to_string (lastReadings.realtimeDemotions);
+    // Blocks a hung plug-in held up for seconds.
     if (lastReadings.stalls > 0)
         dsp += " STALL " + std::to_string (lastReadings.stalls);
     if (dspInfo != dsp.c_str())

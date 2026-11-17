@@ -88,7 +88,9 @@ public:
     // and rate, and getSetup reports them. The user's chosen setup is kept.
     // `expected` is the moved clock the caller decided on. Returns false, doing
     // nothing, when the device has not moved or has since moved somewhere
-    // else, which the change listeners then hear of in turn.
+    // else, which the change listeners then hear of in turn. Also false when
+    // one of those callbacks closes or replaces the device, which ends the
+    // restart there.
     bool followDeviceClock (const DeviceClock& expected);
 
     void addCallback (IODeviceCallback* callback);
