@@ -68,6 +68,8 @@
 #if defined (__linux__)
  #include "../RealtimeKit.h"
  #include "../RtPriority.h"
+#elif defined (_WIN32) || defined (__APPLE__)
+ #include "../RealtimeScheduling.h"
 #endif
 #include "platform/ChildAppKit.h"
 #include "platform/IpcChannel.h"
@@ -911,13 +913,22 @@ struct HostState
 
     std::atomic<bool> shouldQuit { false };
 
-   #if defined (__linux__)
+   #if defined (__linux__) || defined (_WIN32)
     // Published once by the audio worker after it has asked for realtime.
-    std::atomic<std::int64_t> renderThreadId { 0 };
     std::atomic<bool>         renderThreadRealtime { false };
+    dusk::AutoResetEvent      renderThreadScheduled;
+   #endif
+   #if defined (__linux__)
+    std::atomic<std::int64_t> renderThreadId { 0 };
     // Written once on the main thread, before the audio worker starts.
     bool                      renderCpuTimeLimited = false;
-    dusk::AutoResetEvent      renderThreadScheduled;
+   #elif defined (_WIN32)
+    std::atomic<bool>         renderThreadTimeCritical { false };
+   #elif defined (__APPLE__)
+    // The audio worker. Written once on the main thread, before the socket
+    // thread starts.
+    pthread_t                 renderThread {};
+    bool                      renderDeadlineReported = false;   // socket thread
    #endif
 
    #if JUCE_MAC
@@ -1301,6 +1312,32 @@ std::uint32_t withParkedHostWorkerOnMessageThread (HostState& host, Fn&& fn,
     return 0;
 }
 
+#if defined (__APPLE__)
+// Socket thread, after a load or a prepare and before its reply, so before the
+// first block at the new rate: the audio worker takes the time-constraint
+// policy for the period the parent now renders at, as the engine's DSP workers
+// do for the device's (RealtimeScheduling.h). It is set from here rather than
+// by the worker so the outcome is written without I/O on the audio thread, and
+// only the first outcome is, once per child. The device's audio workgroup stays
+// in the parent, where the thread that waits on each block already runs in it:
+// a workgroup crosses processes only as a Mach send right, which the socket
+// this child is driven through cannot carry.
+void takeRenderDeadline (HostState& host)
+{
+    if (host.currentSampleRate <= 0.0 || host.currentBlockSize <= 0) return;
+    const double period = (double) host.currentBlockSize / host.currentSampleRate;
+    const bool realtime = duskstudio::rt::takeTimeConstraint (host.renderThread, period);
+    if (host.renderDeadlineReported) return;
+    host.renderDeadlineReported = true;
+    if (realtime)
+        std::fprintf (stderr, "[dusk-studio-plugin-host] audio thread realtime under the time-constraint policy, "
+                              "period %.3f ms\n", period * 1000.0);
+    else
+        std::fprintf (stderr, "[dusk-studio-plugin-host] audio thread not realtime, the time-constraint policy "
+                              "was refused\n");
+}
+#endif
+
 std::uint32_t handleLoadPlugin (HostState& host,
                                   const std::vector<std::uint8_t>& payload,
                                   std::vector<std::uint8_t>& replyOut)
@@ -1413,6 +1450,9 @@ std::uint32_t handleLoadPlugin (HostState& host,
         (void) destroyInstanceFromSocketThread (std::move (fresh));
         return parkStatus;
     }
+   #if defined (__APPLE__)
+    takeRenderDeadline (host);
+   #endif
 
     replyOut.resize (sizeof (reply));
     std::memcpy (replyOut.data(), &reply, sizeof (reply));
@@ -1455,7 +1495,7 @@ std::uint32_t handlePrepareToPlay (HostState& host,
     PrepareToPlayPayload p {};
     std::memcpy (&p, payload.data(), sizeof (p));
     if (host.ownedInstance == nullptr) return kControlStatusNoPluginLoaded;
-    return withParkedHostWorkerOnMessageThread (host, [&host, p]
+    const auto status = withParkedHostWorkerOnMessageThread (host, [&host, p]
     {
         host.transportPosition.publish (nullptr);
         {
@@ -1465,6 +1505,10 @@ std::uint32_t handlePrepareToPlay (HostState& host,
         host.currentSampleRate = p.sampleRate;
         host.currentBlockSize  = p.blockSize;
     }, kHostPrepareWaitMs);
+   #if defined (__APPLE__)
+    if (status == 0) takeRenderDeadline (host);
+   #endif
+    return status;
 }
 
 std::uint32_t handleRelease (HostState& host)
@@ -1831,12 +1875,41 @@ void reportRenderThreadScheduling (HostState& host)
                   host.renderCpuTimeLimited ? "SCHED_RR was refused" : "no CPU-time limit could be set",
                   duskstudio::rt::raiseThreadsWithoutRtPrio ({ threadId }).c_str());
 }
+#elif defined (_WIN32)
+// The audio worker, first thing, once for the life of the child. The engine's
+// DSP workers join the MMCSS task the device's callback thread runs in, and the
+// parent's thread that waits on each block is one of those, so this joins it
+// the same way (RealtimeScheduling.h).
+duskstudio::rt::ProAudioTask takeRenderThreadScheduling (HostState& host) noexcept
+{
+    const auto joined = duskstudio::rt::joinProAudioTask();
+    host.renderThreadRealtime.store (joined.task != nullptr, std::memory_order_relaxed);
+    host.renderThreadTimeCritical.store (joined.timeCritical, std::memory_order_relaxed);
+    host.renderThreadScheduled.signal();
+    return joined;
+}
+
+// Main thread, once, before it dispatches anything.
+void reportRenderThreadScheduling (HostState& host)
+{
+    host.renderThreadScheduled.wait();
+    if (host.renderThreadRealtime.load (std::memory_order_relaxed))
+        std::fprintf (stderr, "[dusk-studio-plugin-host] audio thread realtime in the MMCSS Pro Audio task\n");
+    else if (host.renderThreadTimeCritical.load (std::memory_order_relaxed))
+        std::fprintf (stderr, "[dusk-studio-plugin-host] audio thread not realtime, MMCSS refused the Pro Audio task: "
+                              "at time-critical priority\n");
+    else
+        std::fprintf (stderr, "[dusk-studio-plugin-host] audio thread not realtime, MMCSS and time-critical priority "
+                              "were refused\n");
+}
 #endif
 
 void audioWorkerLoop (HostState& host) noexcept
 {
    #if defined (__linux__)
     takeRenderThreadScheduling (host);
+   #elif defined (_WIN32)
+    const auto proAudio = takeRenderThreadScheduling (host);
    #endif
     std::uint32_t lastSeq = 0;
 
@@ -1902,12 +1975,12 @@ void audioWorkerLoop (HostState& host) noexcept
             }
 
             auto& midiScratch = host.midiScratch;
-            midiScratch.clear();
+            duskstudio::juce_compat::OrderedMidiFill fill (midiScratch);
             const auto midiInBytes = host.hdr->midiInBytes;
             if (midiInBytes <= kMidiBytes)
                 midiwire::forEachEvent (midiIn (host.shm.data()), midiInBytes,
-                                        [&midiScratch] (const std::uint8_t* data, int numBytes, int sample)
-                                        { midiScratch.addEvent (data, numBytes, sample); });
+                                        [&fill] (const std::uint8_t* data, int numBytes, int sample)
+                                        { fill.add (data, numBytes, sample); });
 
             try
             {
@@ -1935,6 +2008,9 @@ void audioWorkerLoop (HostState& host) noexcept
         host.hdr->replySeq.store (cmd, std::memory_order_release);
         host.replySignal.wake (&host.hdr->replySeq);
     }
+   #if defined (_WIN32)
+    duskstudio::rt::leaveProAudioTask (proAudio);
+   #endif
 }
 
 int runIpcHost (int argc, const char* const* argv) noexcept
@@ -1997,6 +2073,9 @@ int runIpcHost (int argc, const char* const* argv) noexcept
         dusk::setCurrentThreadName ("DuskHostAudio");
         audioWorkerLoop (host);
     });
+   #if defined (__APPLE__)
+    host.renderThread = worker.native_handle();
+   #endif
 
     std::thread sockThread ([&host]
     {
@@ -2065,7 +2144,7 @@ int runIpcHost (int argc, const char* const* argv) noexcept
         juce::MessageManager::getInstance()->stopDispatchLoop();
     });
 
-   #if defined (__linux__)
+   #if defined (__linux__) || defined (_WIN32)
     reportRenderThreadScheduling (host);
    #endif
 

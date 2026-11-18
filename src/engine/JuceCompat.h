@@ -4,7 +4,10 @@
 #include "PluginSearchPaths.h"
 
 #include <algorithm>
+#include <cstdint>
+#include <cstring>
 #include <filesystem>
+#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -15,6 +18,86 @@
 
 namespace duskstudio::juce_compat
 {
+// JUCE's MidiBuffer::addEvent finds an event's place by walking the buffer from
+// its start, so a block put in one event at a time costs the square of its
+// events when they share a sample. OrderedMidiFill clears a JUCE MidiBuffer and
+// fills it in one pass from events in time order: an event at or after the last
+// one goes on the end of the buffer's public storage as the record addEvent
+// writes there, an int32 sample position, a uint16 size and the bytes. Anything
+// else takes addEvent: an event that sorts earlier, and a meta event, whose size
+// JUCE reads from its length field. Either way the bytes are those addEvent
+// alone would leave, whatever the order. No allocation once the buffer has its
+// room (ensureSize).
+template <typename Buffer>
+class OrderedMidiFill
+{
+public:
+    explicit OrderedMidiFill (Buffer& destination) noexcept : buffer (destination)
+    {
+        buffer.clear();
+    }
+
+    // As addEvent: false for an event the buffer cannot hold.
+    bool add (const std::uint8_t* data, int maxBytes, int samplePosition)
+    {
+        const int numBytes = data != nullptr && maxBytes > 0 && samplePosition >= last
+                               ? storedSize (data, maxBytes) : -1;
+        if (numBytes < 0)
+        {
+            last = std::max (last, samplePosition);
+            return buffer.addEvent (data, maxBytes, samplePosition);
+        }
+        if (numBytes == 0) return true;
+        if (numBytes > 0xFFFF) return false;
+
+        static constexpr int kHeaderBytes = (int) (sizeof (std::int32_t) + sizeof (std::uint16_t));
+        auto& bytes = buffer.data;
+        const int at = bytes.size();
+        bytes.insertMultiple (at, 0, kHeaderBytes + numBytes);
+        auto* record = bytes.begin() + at;
+        const auto position = (std::int32_t) samplePosition;
+        const auto size = (std::uint16_t) numBytes;
+        std::memcpy (record, &position, sizeof position);
+        std::memcpy (record + sizeof position, &size, sizeof size);
+        std::memcpy (record + kHeaderBytes, data, (std::size_t) numBytes);
+        last = samplePosition;
+        return true;
+    }
+
+private:
+    // The size addEvent stores for an event: 0 for one it drops, -1 for a meta
+    // event, which it sizes itself.
+    static int storedSize (const std::uint8_t* data, int maxBytes) noexcept
+    {
+        const int status = data[0];
+        if (status == 0xF0 || status == 0xF7)
+        {
+            int size = 1;
+            while (size < maxBytes)
+                if (data[size++] == 0xF7) break;
+            return size;
+        }
+        if (status == 0xFF) return -1;
+        if (status < 0x80) return 0;
+        int size = 1;
+        if (status < 0xF0) size = (status & 0xE0) == 0xC0 ? 2 : 3;
+        else if (status == 0xF2) size = 3;
+        else if (status == 0xF1 || status == 0xF3) size = 2;
+        return std::min (size, maxBytes);
+    }
+
+    Buffer& buffer;
+    int last = std::numeric_limits<int>::min();
+};
+
+template <typename Source, typename Buffer>
+void copyMidiInOrder (const Source& source, Buffer& destination)
+{
+    OrderedMidiFill<Buffer> fill (destination);
+    for (const auto meta : source)
+        fill.add (meta.data, meta.numBytes, meta.samplePosition);
+}
+
 // One-call shim hiding the AudioPluginFormatManager::addDefaultFormats
 // vs the wayland fork's free addDefaultFormatsToManager() split.
 // DUSKSTUDIO_JUCE_HAS_FREE_ADD_FORMATS is set by CMake at configure time

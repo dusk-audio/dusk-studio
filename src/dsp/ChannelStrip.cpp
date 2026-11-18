@@ -62,6 +62,7 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
     hardwareSlot.prepare (sampleRate, blockSize);
     activeInsertGain.reset (sampleRate, rampSeconds);
     activeInsertMode = insertMode.load (std::memory_order_relaxed);
+    latchedInsertRequest = -1;
     activeInsertGain.setCurrentAndTargetValue (
         activeInsertMode == kInsertEmpty ? 0.0f : 1.0f);
     insertScratchL.assign ((size_t) std::max (1, blockSize), 0.0f);
@@ -1178,7 +1179,7 @@ bool ChannelStrip::willRunChain (const float* inL, const float* inR, bool isMidi
 {
     // The insert gate at the top of the block swaps the mode once its ramps
     // are down, and every test below reads the swapped one.
-    const int req = insertMode.load (std::memory_order_acquire);
+    const int req = blockInsertRequest();
     const bool swaps = req != activeInsertMode
                     && ! (activeInsertGain.getCurrentValue() > 1.0e-4f
                           || insertDryAlign.getCurrentValue() > 1.0e-4f);
@@ -1244,7 +1245,8 @@ void ChannelStrip::processAndAccumulate (const float* inL,
     //   - Steady state: the gate's target follows the active mode -
     //     1.0 when an insert is active (plugin or hardware), 0.0 when
     //     empty (no DSP runs at all).
-    const int req = insertMode.load (std::memory_order_acquire);
+    const int req = blockInsertRequest();
+    latchedInsertRequest = -1;
     // Bypass rides the same gate as an empty slot: wet ramps out, dry
     // passes. The insert keeps processing underneath so un-bypass picks
     // up live tails instead of a cold restart.

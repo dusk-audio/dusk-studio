@@ -289,6 +289,28 @@ public:
     // a 20 ms crossfade.
     std::atomic<int> insertMode { kInsertPlugin };
 
+    // Engine, audio thread, before each block: fixes the insertMode the next
+    // block acts on, so a change landing while the block waits for a worker
+    // lane cannot reach it. Without a latch the block reads insertMode itself.
+    void latchInsertRequest() noexcept
+    {
+        latchedInsertRequest = insertMode.load (std::memory_order_acquire);
+    }
+
+    // Whether the next block may run the hardware insert, whose send adds
+    // into device outputs other strips share, so the block has to run on the
+    // audio thread. True while the hardware insert is requested, and while the
+    // crossfade out of it still runs it after the request has moved on.
+    // Audio thread, between blocks.
+    bool mayRunHardwareInsert() const noexcept
+    {
+        return blockInsertRequest() == kInsertHardware || activeInsertMode == kInsertHardware;
+    }
+
+    // The insert mode running now, which trails insertMode by the crossfade.
+    // Whoever runs the strip's blocks, between them.
+    int getActiveInsertMode() const noexcept { return activeInsertMode; }
+
     // Engine sets true when the recorder will read getLastProcessedMono
     // this block (armed && recording && printEffects). False allows the
     // strip to skip DSP when also passByGate==false.
@@ -477,6 +499,13 @@ private:
     // activeInsertMode = what we're currently running; insertMode = what
     // the UI wants. Mismatch triggers ramp-out / swap / ramp-in.
     int activeInsertMode = kInsertPlugin;
+    // latchInsertRequest's insertMode for the next block, -1 when none.
+    int latchedInsertRequest = -1;
+    int blockInsertRequest() const noexcept
+    {
+        return latchedInsertRequest >= 0 ? latchedInsertRequest
+                                         : insertMode.load (std::memory_order_acquire);
+    }
     dusk::audio::SmoothedValue<float> activeInsertGain;
 
     std::vector<float> insertScratchL;

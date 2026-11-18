@@ -1091,6 +1091,51 @@ assert f"-R {intentional_leak_filter}" in intentional_leak_step, (
     "the leak-disabled CTest must rerun exactly the documented intentional leaks"
 )
 
+# RealtimeSanitizer runs the app, the only binary that enters the audio
+# callback: the self-test and the headless scenario suite, each failing on a
+# report in the app's output.
+rtsan_job_match = re.search(
+    r"(?ms)^  rtsan-app:\n(?P<body>.*?)(?=^  [a-z0-9-]+:\n|\Z)",
+    sanitizer_workflow,
+)
+assert rtsan_job_match, "linux-sanitizer.yml lost its rtsan-app job"
+rtsan_job = rtsan_job_match.group("body")
+for required in (
+    "runs-on: ubuntu-26.04",
+    "DUSKSTUDIO_ENABLE_RTSAN=ON",
+    "halt_on_error=false",
+):
+    assert required in rtsan_job, f"linux-sanitizer.yml RTSan job lost: {required}"
+assert "continue-on-error" not in rtsan_job, (
+    "the RTSan job is a gate: a report outside tools/rtsan-suppressions.txt must fail it"
+)
+rtsan_options = re.search(r"^      RTSAN_OPTIONS: (.*)$", rtsan_job, re.MULTILINE)
+assert rtsan_options and "suppressions=${{ github.workspace }}/tools/rtsan-suppressions.txt" in rtsan_options.group(1), (
+    "the RTSan job's RTSAN_OPTIONS must name tools/rtsan-suppressions.txt"
+)
+# Every suppression sits under a comment naming the issue that removes it.
+rtsan_suppressions = (
+    source_root / "tools" / "rtsan-suppressions.txt"
+).read_text(encoding="utf-8").splitlines()
+for index, line in enumerate(rtsan_suppressions):
+    if not line.strip() or line.lstrip().startswith("#"):
+        continue
+    above = rtsan_suppressions[index - 1] if index > 0 else ""
+    assert above.lstrip().startswith("#") and re.search(r"#\d{3,}", above), (
+        f"rtsan-suppressions.txt line {index + 1} needs a comment naming its issue directly above it: {line}"
+    )
+for step_name, required in (
+    ("Self-test under RTSan (xvfb)", "DUSKSTUDIO_RUN_SELFTEST=1"),
+    ("Headless scenario suite under RTSan (xvfb)", "DUSKSTUDIO_RUN_SCENARIOS=all"),
+):
+    step = workflow_step(rtsan_job, step_name)
+    assert required in step and "ERROR: RealtimeSanitizer" in step, (
+        f"the RTSan step {step_name!r} must run the app and fail on a report"
+    )
+assert "engine\\.rt_callback_full_load" in workflow_step(
+    rtsan_job, "Headless scenario suite under RTSan (xvfb)"
+), "the RTSan scenario step must fail when engine.rt_callback_full_load does not pass"
+
 # Source-built libsodium must come from the release asset hosted alongside the
 # upstream repository. download.libsodium.org has repeatedly failed DNS lookup
 # on GitHub's macOS runners. Keep all static-build workflows on one audited
@@ -1146,7 +1191,7 @@ dependency_setups = (
     cmake_source.index("add_subdirectory(external/dusk-fizz"),
     cmake_source.index("add_subdirectory(tests)"),
 )
-for sanitizer in ("address,undefined", "thread"):
+for sanitizer in ("address,undefined", "thread", "realtime"):
     for operation in ("compile", "link"):
         setup = cmake_source.index(f"add_{operation}_options(-fsanitize={sanitizer}")
         assert juce_setup < setup < min(dependency_setups), (

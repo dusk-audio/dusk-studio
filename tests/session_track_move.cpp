@@ -515,6 +515,14 @@ TEST_CASE ("Session track move: a take audition follows its track", "[session][t
     }
 }
 
+TEST_CASE ("Session track move counts as a region edit", "[session][track-move]")
+{
+    auto session = std::make_unique<Session>();
+    const auto before = session->regionEditCount();
+    REQUIRE (session->permuteTracks (planBlockMove ({ 17 }, 0)));
+    CHECK (session->regionEditCount() > before);
+}
+
 TEST_CASE ("Session track move: a mapping that is not one to one changes nothing", "[session][track-move]")
 {
     auto session = std::make_unique<Session>();

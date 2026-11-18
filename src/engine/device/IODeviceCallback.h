@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <string>
 
 // The real-time audio callback the device layer drives, mirroring the slice of
 // JUCE's AudioIODeviceCallback the engine implements. A backend (PipeWire, ALSA)

@@ -331,6 +331,11 @@ void ConsoleView::visibilityChanged()
     for (auto& strip : strips)
         if (strip != nullptr)
             strip->refreshForShowState();
+    for (auto& bus : busStrips)
+        if (bus != nullptr)
+            bus->refreshForShowState();
+    if (masterStrip != nullptr)
+        masterStrip->refreshForShowState();
 }
 
 void ConsoleView::setStripsMixingMode (bool mixing)

@@ -1080,6 +1080,10 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     {
         return owner.tapeStrip != nullptr ? owner.tapeStrip->paintsForScenario() : -1;
     }
+    bool tapePlayheadOnVBlank() const override
+    {
+        return owner.tapeStrip != nullptr && owner.tapeStrip->playheadOnVBlankForScenario();
+    }
     std::int64_t tapeDropPointSample (int track) const override
     {
         return owner.tapeStrip != nullptr ? owner.tapeStrip->dropPointSampleForScenario (track) : -1;
@@ -1103,6 +1107,10 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     {
         return owner.miniTimeline != nullptr ? owner.miniTimeline->markerPaintForScenario()
                                             : std::vector<scenario::MiniMarkerPaint> {};
+    }
+    std::int64_t miniTimelineEnd() const override
+    {
+        return owner.miniTimeline != nullptr ? owner.miniTimeline->shownEndForScenario() : -1;
     }
     bool clickMiniSample (std::int64_t sample) override
     {
@@ -2322,6 +2330,16 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     {
         return gatedRepaintRequests.load (std::memory_order_relaxed);
     }
+    int meterTimersRunning() const override
+    {
+        return runningMeterTimers.load (std::memory_order_relaxed);
+    }
+    std::optional<bool> stripMeterTimerRunning (int track) const override
+    {
+        auto* strip = owner.consoleView != nullptr ? owner.consoleView->getStripComponent (track) : nullptr;
+        if (strip == nullptr) return std::nullopt;
+        return strip->meterTimerRunningForScenario();
+    }
 
     MeterRest meterRestPixels (StripKind kind, int index, const std::filesystem::path& ppm) override
     {
@@ -2439,6 +2457,37 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
        #endif
     }
 
+    std::uint64_t windowFramesPainted() const override
+    {
+        const auto* peer = owner.getPeer();
+        return peer != nullptr ? (std::uint64_t) peer->getNumFramesPainted() : 0;
+    }
+    bool hoverForTooltip (bool withTip) override
+    {
+        auto& tips = owner.tooltipWindow;
+        static constexpr int kStep = 8;
+        for (int y = kStep / 2; y < owner.getHeight(); y += kStep)
+            for (int x = kStep / 2; x < owner.getWidth(); x += kStep)
+            {
+                auto* under = owner.getComponentAt (x, y);
+                if (under == nullptr || under == &tips || under->getPeer() != owner.getPeer()) continue;
+                if (tips.getTipFor (*under).isNotEmpty() != withTip) continue;
+                auto point = owner.getLocalBounds().getCentre();
+                point.setXY (x, y);
+                if (withTip)
+                {
+                    point = owner.getLocalPoint (under, under->getLocalBounds().getCentre());
+                    if (owner.getComponentAt (point) != under) continue;
+                }
+                const auto onWindow = owner.getTopLevelComponent()->getLocalPoint (&owner, point).toFloat();
+                return pointerAt (onWindow.x, onWindow.y, false);
+            }
+        return false;
+    }
+    bool tooltipShowing() const override
+    {
+        return owner.tooltipWindow.isVisible();
+    }
     bool modalStackEmpty() const override
     {
        #if DUSKSTUDIO_HAS_NATIVE_UI
@@ -3483,7 +3532,8 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
 
             auto& channel = owner.engine.getChannelStrip (index);
             if (channel.getPluginSlot().isLoaded()) lines.push_back (who + " has a hosted plug-in");
-            if (channel.isNativeClapLoaded() || channel.isNativeLv2Loaded() || channel.isNativeVst3Loaded())
+            if (channel.isNativeClapLoaded() || channel.isNativeLv2Loaded() || channel.isNativeVst3Loaded()
+                || channel.isNativeAuLoaded())
                 lines.push_back (who + " has a native plug-in");
             if (channel.isBuiltinLoaded()) lines.push_back (who + " has a built-in unit");
             const auto unit = channel.isBuiltinLoaded() ? channel.getBuiltinSlot().getPluginId() : std::string();
@@ -3501,6 +3551,9 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
                 const auto& params = owner.session.auxLane (index);
                 const auto where = "aux " + std::to_string (index) + " slot " + std::to_string (slot);
                 if (lane.getPluginSlot (slot).isLoaded()) lines.push_back (where + " has a hosted plug-in");
+                if (lane.isNativeClapLoaded (slot) || lane.isNativeLv2Loaded (slot) || lane.isNativeVst3Loaded (slot)
+                    || lane.isNativeAuLoaded (slot))
+                    lines.push_back (where + " has a native plug-in");
                 if (lane.isBuiltinLoaded (slot)) lines.push_back (where + " has a built-in unit");
                 const auto unit = lane.isBuiltinLoaded (slot) ? lane.getBuiltinSlot (slot).getPluginId() : std::string();
                 const auto& carried = params.builtinUnitId[(std::size_t) slot];

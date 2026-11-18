@@ -85,6 +85,7 @@ add_executable(dusk-studio-tests
     ${CMAKE_SOURCE_DIR}/src/ui/PianoRollEdit.cpp
     midi_timeline_schedule.cpp
     hosting_midi_fit.cpp
+    juce_compat_midi_fill.cpp
     output_pair_routing.cpp
     multiband_comp_presets.cpp
     midi_merge.cpp
@@ -97,8 +98,12 @@ add_executable(dusk-studio-tests
     atomic_park.cpp
     audio_worker_pool.cpp
     audio_worker_pool_inline_blocks.cpp
+    audio_worker_pool_partial_dispatch.cpp
     rt_priority.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/AudioWorkerPool.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/RealtimeScheduling.cpp
+    foundation_rt_wake_event.cpp
+    ${CMAKE_SOURCE_DIR}/src/foundation/RtWakeEvent.cpp
     embedded_modal_close_safety.cpp
     native_editor_owner.cpp
     x11_anti_pattern_guard.cpp
@@ -114,6 +119,7 @@ add_executable(dusk-studio-tests
     plugin_state_diagnostics.cpp
     channel_strip_midi_gate.cpp
     channel_strip_will_run_chain.cpp
+    channel_strip_hardware_insert_lanes.cpp
     channel_strip_idle_gains.cpp
     ${CMAKE_SOURCE_DIR}/src/dsp/ChannelStrip.cpp
     insert_mode_defaults.cpp
@@ -167,6 +173,7 @@ add_executable(dusk-studio-tests
     device_manager_native.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/device/DeviceManager.cpp
     graph_clock.cpp
+    device_leased_callback.cpp
     update_checker_version.cpp
     session_schema_migration.cpp
     dsp_components_test.cpp
@@ -214,6 +221,7 @@ add_executable(dusk-studio-tests
     mcu_fader_taper.cpp
     comp_mode_fanout.cpp
     foundation_message_thread.cpp
+    foundation_timer_schedule.cpp
     foundation_thread_name.cpp
     foundation_undo_manager.cpp
     foundation_undo_manager_parity.cpp
@@ -363,6 +371,7 @@ target_sources(dusk-studio-tests PRIVATE
     foundation_midi_buffer.cpp
     foundation_midi_note_name.cpp
     foundation_planar_buffer.cpp
+    foundation_rt_attributes.cpp
     midi_ring.cpp
     midi_collector.cpp
     lv2_state_paths.cpp)
@@ -678,6 +687,7 @@ if(DUSKSTUDIO_NATIVE_LV2)
             ${CMAKE_SOURCE_DIR}/src/engine/lv2/Lv2Instance.cpp
             ${CMAKE_SOURCE_DIR}/src/engine/lv2/Lv2Editor.cpp
             ${CMAKE_SOURCE_DIR}/src/engine/lv2/Lv2Worker.cpp
+            ${CMAKE_SOURCE_DIR}/src/foundation/RtWakeEvent.cpp
             ${CMAKE_SOURCE_DIR}/src/foundation/ThreadName.cpp)
         target_compile_features(dusk-lv2-editor-tests PRIVATE cxx_std_17)
         target_include_directories(dusk-lv2-editor-tests PRIVATE ${CMAKE_SOURCE_DIR}/src)

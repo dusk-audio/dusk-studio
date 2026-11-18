@@ -2,6 +2,7 @@
 #include "AtomicPark.h"
 #include "PluginManager.h"
 #include "LegacyStateBase64.h"
+#include "../foundation/RtAttributes.h"
 #include "../foundation/ScopedNoDenormals.h"
 #include "../foundation/ThreadName.h"
 #include <algorithm>
@@ -23,6 +24,21 @@ constexpr double kOopBudgetFraction = 0.85;
 #endif
 
 constexpr const char* kNotPreparedError = "plugin slot not prepared";
+
+// The block length the time-budget watchdog holds a plugin to, or 0 to leave
+// it off. An RTSan build checks every intercepted call inside processBlock
+// against its suppressions, which can take longer than the block itself, so
+// there the watchdog would bypass a plugin for time the plugin never spent.
+double watchdogBufferMs (int numSamples, double sampleRate) noexcept
+{
+   #if defined(DUSK_RT_SANITIZER)
+    (void) numSamples;
+    (void) sampleRate;
+    return 0.0;
+   #else
+    return sampleRate > 0.0 ? 1000.0 * (double) numSamples / sampleRate : 0.0;
+   #endif
+}
 
 // JUCE-hosted plugins often expose more than one bus (main + sidechain on
 // effects, main + aux output on some synths). Our processBlock contract
@@ -1787,9 +1803,7 @@ std::optional<dusk::ProcessedBlock> PluginSlot::processMonoBlock (float* monoDat
     //     plugin. Require kMaxConsecutiveOverruns in a row.
     constexpr int    kGraceBlocks            = 16;
     constexpr int    kMaxConsecutiveOverruns = 4;
-    const double bufferMs = (preparedSampleRate > 0.0)
-                              ? 1000.0 * (double) numSamples / preparedSampleRate
-                              : 0.0;
+    const double bufferMs = watchdogBufferMs (numSamples, preparedSampleRate);
 
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
     if (auto* r = currentRemote.load (std::memory_order_acquire))
@@ -1825,7 +1839,7 @@ std::optional<dusk::ProcessedBlock> PluginSlot::processMonoBlock (float* monoDat
         if (! r->processBlockSync (inPtrs, std::max (rNumIn, 0),
                                        std::max (rNumOut, 0),
                                        numSamples, oopMidiScratch,
-                                       oopProcessTimeoutNs.load (std::memory_order_relaxed),
+                                       kOopProcessTimeoutNs,
                                        transport))
         {
             engageAutoBypass();
@@ -1883,7 +1897,7 @@ std::optional<dusk::ProcessedBlock> PluginSlot::processMonoBlock (float* monoDat
         // AudioBuffer wrapper around the existing buffer.
         float* channels[1] = { monoData };
         juce::AudioBuffer<float> buf (channels, 1, numSamples);
-        if (standardVst3) standardMidi.rewrite (midiMessages);
+        if (standardVst3) juce_compat::copyMidiInOrder (standardMidi.fit (midiMessages), midiMessages);
         p->processBlock (buf, midiMessages);
     }
     else if (numIn == 0 && numOut >= 1)
@@ -1903,7 +1917,7 @@ std::optional<dusk::ProcessedBlock> PluginSlot::processMonoBlock (float* monoDat
         float* procPtrs[2] = { stereoScratch.getWritePointer (0),
                                procCh > 1 ? stereoScratch.getWritePointer (1) : nullptr };
         juce::AudioBuffer<float> buf (procPtrs, procCh, numSamples);
-        if (standardVst3) standardMidi.rewrite (midiMessages);
+        if (standardVst3) juce_compat::copyMidiInOrder (standardMidi.fit (midiMessages), midiMessages);
         p->processBlock (buf, midiMessages);
 
         const float* outL = stereoScratch.getReadPointer (0);
@@ -1922,7 +1936,7 @@ std::optional<dusk::ProcessedBlock> PluginSlot::processMonoBlock (float* monoDat
 
         stereoScratch.copyFrom (0, 0, monoData, numSamples);
         stereoScratch.copyFrom (1, 0, monoData, numSamples);
-        if (standardVst3) standardMidi.rewrite (midiMessages);
+        if (standardVst3) juce_compat::copyMidiInOrder (standardMidi.fit (midiMessages), midiMessages);
         p->processBlock (stereoScratch, midiMessages);
 
         const float* l = stereoScratch.getReadPointer (0);
@@ -1970,9 +1984,7 @@ std::optional<dusk::ProcessedBlock> PluginSlot::processStereoBlock (float* L, fl
 
     constexpr int    kGraceBlocks            = 16;
     constexpr int    kMaxConsecutiveOverruns = 4;
-    const double bufferMs = (preparedSampleRate > 0.0)
-                              ? 1000.0 * (double) numSamples / preparedSampleRate
-                              : 0.0;
+    const double bufferMs = watchdogBufferMs (numSamples, preparedSampleRate);
 
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
     if (auto* r = currentRemote.load (std::memory_order_acquire))
@@ -2025,7 +2037,7 @@ std::optional<dusk::ProcessedBlock> PluginSlot::processStereoBlock (float* L, fl
         if (! r->processBlockSync (inPtrs, std::max (rNumIn, 0),
                                        std::max (rNumOut, 0),
                                        numSamples, oopMidiScratch,
-                                       oopProcessTimeoutNs.load (std::memory_order_relaxed),
+                                       kOopProcessTimeoutNs,
                                        transport))
         {
             // Either the futex timed out or the connection was already
@@ -2095,7 +2107,7 @@ std::optional<dusk::ProcessedBlock> PluginSlot::processStereoBlock (float* L, fl
         // place. Same shape as the per-aux EQ/comp pass above.
         float* channels[2] = { L, R };
         juce::AudioBuffer<float> buf (channels, 2, numSamples);
-        if (standardVst3) standardMidi.rewrite (midiMessages);
+        if (standardVst3) juce_compat::copyMidiInOrder (standardMidi.fit (midiMessages), midiMessages);
         p->processBlock (buf, midiMessages);
     }
     else if (numIn == 1 && numOut >= 1)
@@ -2122,7 +2134,7 @@ std::optional<dusk::ProcessedBlock> PluginSlot::processStereoBlock (float* L, fl
         float* procPtrs[2] = { stereoScratch.getWritePointer (0),
                                procCh > 1 ? stereoScratch.getWritePointer (1) : nullptr };
         juce::AudioBuffer<float> buf (procPtrs, procCh, numSamples);
-        if (standardVst3) standardMidi.rewrite (midiMessages);
+        if (standardVst3) juce_compat::copyMidiInOrder (standardMidi.fit (midiMessages), midiMessages);
         p->processBlock (buf, midiMessages);
 
         const float* outL = stereoScratch.getReadPointer (0);
@@ -2151,7 +2163,7 @@ std::optional<dusk::ProcessedBlock> PluginSlot::processStereoBlock (float* L, fl
         float* procPtrs[2] = { stereoScratch.getWritePointer (0),
                                procCh > 1 ? stereoScratch.getWritePointer (1) : nullptr };
         juce::AudioBuffer<float> buf (procPtrs, procCh, numSamples);
-        if (standardVst3) standardMidi.rewrite (midiMessages);
+        if (standardVst3) juce_compat::copyMidiInOrder (standardMidi.fit (midiMessages), midiMessages);
         p->processBlock (buf, midiMessages);
 
         const float* outL = stereoScratch.getReadPointer (0);

@@ -82,6 +82,7 @@ public:
     bool armLitForScenario() const { return armButton.getToggleState(); }
     bool midiActivityVisibleForScenario() const { return midiActivityLed.isShowing(); }
     bool midiActivityLitForScenario() const { return midiActivityLed.lit; }
+    bool meterTimerRunningForScenario() const { return compMeter != nullptr && compMeter->timerRunningForScenario(); }
     bool inputSettingsOpenForScenario() const { return ioConfigModal.isOpen(); }
     void loadBuiltinForScenario (const std::string& id) { loadBuiltinForChannel (id); }
     void clickMonitorForScenario() { monitorButton.triggerClick(); }
@@ -203,6 +204,7 @@ public:
 
 private:
     void timerCallback() override;
+    void syncShownView();
     void refreshShownView();
     void forgetPaintedMeter();
     void rebuildMidiInputDropdown();
@@ -419,6 +421,7 @@ private:
         void paint (juce::Graphics& g) override;
     };
     MidiActivityLed midiActivityLed;
+    bool midiActivityFired = false;
 
     // PRE/POST toggle per channel-per-aux is auxSendPreFader[i].
     // Index labels coloured per aux so the user can identify N at a

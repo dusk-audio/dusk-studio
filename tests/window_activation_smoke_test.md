@@ -146,7 +146,12 @@ The same runner invokes `scripts/regress/native-gui-scenarios.sh` with and
 without Xwayland. It exercises channel and aux editor open/close cycles,
 separate X11 parents, aux stage-switch cleanup and refusal without Xwayland.
 With native LV2 enabled, it also verifies the fixture editor receives live
-parameter updates across reopening.
+parameter updates across reopening. It also runs the four
+`gui.idle_*_draw(s)_on_demand` cases, so the native panels are shown to stop
+drawing at rest and to draw again on input and on a change on native Wayland
+as well as on Xvfb, and `gui.idle_window_paints_nothing` and
+`gui.tape_playhead_vblank_only_while_moving`, so the main window's frame timer
+is shown to rest there too.
 
 ## What still needs a person
 

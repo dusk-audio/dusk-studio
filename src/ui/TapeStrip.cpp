@@ -238,8 +238,7 @@ void TapeStrip::promptRenameMarker (int markerIdx, const juce::String& title)
 }
 
 TapeStrip::TapeStrip (Session& s, AudioEngine& e)
-    : session (s), engine (e),
-      vBlankAttachment (this, [this] { updatePlayheadBand(); })
+    : session (s), engine (e)
 {
     setOpaque (true);
     startTimerHz (30);
@@ -1308,6 +1307,7 @@ void TapeStrip::timerCallback()
     }
 
     syncRecordingState();
+    updatePlayheadVBlank();
 
     // Poll arm-flag changes - the user can toggle ARM from the channel
     // strip at any time, and that flips a row into / out of the visible
@@ -1370,6 +1370,24 @@ bool TapeStrip::followPlayhead (std::int64_t playhead) noexcept
     if (next == scrollSamples) return false;
     scrollSamples = next;
     return true;
+}
+
+void TapeStrip::updatePlayheadVBlank()
+{
+    const auto& transport = engine.getTransport();
+    const bool moving = ! transport.isStopped() || transport.getPlayhead() != lastPlayhead;
+
+    if (moving != playheadOnVBlank)
+    {
+        playheadOnVBlank = moving;
+        vBlankAttachment = moving ? PlayheadVBlank (this, [this] { updatePlayheadBand(); })
+                                  : PlayheadVBlank();
+    }
+
+    // A locate while stopped shows on this tick; the vblank carries the
+    // frames that follow while it keeps moving.
+    if (transport.isStopped())
+        updatePlayheadBand();
 }
 
 void TapeStrip::updatePlayheadBand()

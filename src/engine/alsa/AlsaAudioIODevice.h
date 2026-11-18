@@ -3,6 +3,7 @@
 #include "../device/ChannelSet.h"
 #include "../device/IODevice.h"
 #include "../device/IODeviceCallback.h"
+#include "../device/LeasedCallback.h"
 #include "../../foundation/AutoResetEvent.h"
 
 #include <alsa/asoundlib.h>
@@ -10,7 +11,6 @@
 #include <atomic>
 #include <functional>
 #include <memory>
-#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -111,7 +111,7 @@ public:
     // Wedged-thread abandonment. stop() gives the I/O thread 2000 ms to exit;
     // on timeout it detaches the thread and marks this device abandoned. The
     // detached thread still dereferences all of this object (PCM handles,
-    // mutex, scratch, the exit flag and event), so an abandoned device must be
+    // callback, scratch, the exit flag and event), so an abandoned device must be
     // leaked, never destroyed - owners route destruction through destroyOrPark,
     // which parks an abandoned device in a process-lifetime holder instead of
     // running its destructor. A destructor that runs while the thread is live
@@ -213,8 +213,7 @@ private:
     std::vector<float*>       callbackInWritePointers;  // deinterleave target
     std::vector<const float*> callbackInPointers;       // callback view of the same store
 
-    std::mutex callbackLock;
-    device::IODeviceCallback* callback = nullptr;
+    device::LeasedCallback callback;
 
     std::thread          ioThread;
     std::atomic<bool>    ioShouldExit { false };

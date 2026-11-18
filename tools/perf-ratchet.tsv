@@ -1,0 +1,71 @@
+# Engine perf suite rows, the lowest median of each in microseconds, checked
+# by scripts/regress/perf-ratchet.sh (the perf-suite leg, scripts/regress.sh
+# linux --perf). One row<TAB>microseconds record per line; a row is named
+# <section> | <label> as the suite prints them, whitespace collapsed. A row
+# fails when it is more than 10% and more than 5 us over its value here, and an
+# unlisted row fails. Wall times only compare on the machine named by #host;
+# anywhere else the leg is a SKIP, and CI never runs it.
+# Lower values after a fix with: bash scripts/regress/perf-ratchet.sh --update
+# It only lowers values and drops rows the suite no longer runs. Raising a
+# value or adding a row is a hand edit, and the change has to say why.
+# Recorded with 0.16.1 (07571ad8), the lowest of six runs, for the rows it has.
+# The Multicore with one or two busy strips rows are newer than 0.16.1 and
+# carry the 0.17 candidate's values (507f9013 plus the JSON rows), also the
+# lowest of six runs.
+#host	Intel(R) Core(TM) i7-8809G CPU @ 3.10GHz, 8 threads
+48k/128 | idle (1 track, EQ off, comp off)	20.0
+48k/128 | 16ch EQ only (comp off)	101.0
+48k/128 | 16ch comp only (EQ off)	446.0
+48k/128 | 16ch + EQ + comp (full mixer) @1x	448.0
+48k/128 | 16ch + EQ + comp + tape on @1x	768.0
+48k/128 | 16ch + EQ + comp + tape on @2x	1336.0
+48k/128 | 16ch + EQ + comp + tape on @4x	2273.0
+48k/256 | idle (1 track, EQ off, comp off)	35.0
+48k/256 | 16ch EQ only (comp off)	206.0
+48k/256 | 16ch comp only (EQ off)	886.0
+48k/256 | 16ch + EQ + comp (full mixer) @1x	876.0
+48k/256 | 16ch + EQ + comp + tape on @1x	1533.0
+48k/256 | 16ch + EQ + comp + tape on @2x	2651.0
+48k/256 | 16ch + EQ + comp + tape on @4x	4526.0
+48k/512 | idle (1 track, EQ off, comp off)	65.0
+48k/512 | 16ch EQ only (comp off)	412.0
+48k/512 | 16ch comp only (EQ off)	1779.0
+48k/512 | 16ch + EQ + comp (full mixer) @1x	1761.0
+48k/512 | 16ch + EQ + comp + tape on @1x	3042.0
+48k/512 | 16ch + EQ + comp + tape on @2x	5336.0
+48k/512 | 16ch + EQ + comp + tape on @4x	9027.0
+96k/256 | idle (1 track, EQ off, comp off)	35.0
+96k/256 | 16ch EQ only (comp off)	204.0
+96k/256 | 16ch comp only (EQ off)	885.0
+96k/256 | 16ch + EQ + comp (full mixer) @1x	892.0
+96k/256 | 16ch + EQ + comp + tape on @1x	1513.0
+96k/256 | 16ch + EQ + comp + tape on @2x	2642.0
+96k/256 | 16ch + EQ + comp + tape on @4x	4496.0
+96k/512 | idle (1 track, EQ off, comp off)	65.0
+96k/512 | 16ch EQ only (comp off)	411.0
+96k/512 | 16ch comp only (EQ off)	1776.0
+96k/512 | 16ch + EQ + comp (full mixer) @1x	1769.0
+96k/512 | 16ch + EQ + comp + tape on @1x	3012.0
+96k/512 | 16ch + EQ + comp + tape on @2x	5241.0
+96k/512 | 16ch + EQ + comp + tape on @4x	9005.0
+96k/1024 | idle (1 track, EQ off, comp off)	128.0
+96k/1024 | 16ch EQ only (comp off)	819.0
+96k/1024 | 16ch comp only (EQ off)	3530.0
+96k/1024 | 16ch + EQ + comp (full mixer) @1x	3518.0
+96k/1024 | 16ch + EQ + comp + tape on @1x	6010.0
+96k/1024 | 16ch + EQ + comp + tape on @2x	10484.0
+96k/1024 | 16ch + EQ + comp + tape on @4x	18191.0
+Multicore scaling (48k/256, 16ch + EQ + comp @1x) | serial (0 workers)	896.0
+Multicore scaling (48k/256, 16ch + EQ + comp @1x) | 6 workers (cores-2)	285.0
+Multicore with one or two busy strips (48k/256, EQ + comp @1x) | 1 strip, serial (0 workers)	59.0
+Multicore with one or two busy strips (48k/256, EQ + comp @1x) | 1 strip, 6 workers	60.0
+Multicore with one or two busy strips (48k/256, EQ + comp @1x) | 1 strip, 6 workers, every block pooled	77.0
+Multicore with one or two busy strips (48k/256, EQ + comp @1x) | 2 strips in one lane, serial (0 workers)	109.0
+Multicore with one or two busy strips (48k/256, EQ + comp @1x) | 2 strips in one lane, 6 workers	108.0
+Multicore with one or two busy strips (48k/256, EQ + comp @1x) | 2 strips in one lane, 6 workers, every block pooled	137.0
+Multicore with one or two busy strips (48k/1024, EQ + comp @1x) | 1 strip, serial (0 workers)	237.0
+Multicore with one or two busy strips (48k/1024, EQ + comp @1x) | 1 strip, 6 workers	234.0
+Multicore with one or two busy strips (48k/1024, EQ + comp @1x) | 1 strip, 6 workers, every block pooled	328.0
+Multicore with one or two busy strips (48k/1024, EQ + comp @1x) | 2 strips in one lane, serial (0 workers)	469.0
+Multicore with one or two busy strips (48k/1024, EQ + comp @1x) | 2 strips in one lane, 6 workers	468.0
+Multicore with one or two busy strips (48k/1024, EQ + comp @1x) | 2 strips in one lane, 6 workers, every block pooled	573.0

@@ -5956,6 +5956,7 @@ void MainComponent::finishDpImport()
         // PlaybackEngine isn't iterating regions - mutating in place is safe
         // (mirrors runAudioImportFlow).
         track.regions.push_back (std::move (out.res.region));
+        session.noteRegionsEdited();
         track.name = it.name;
         track.mode.store ((int) (frag.stereo ? Track::Mode::Stereo : Track::Mode::Mono),
                           std::memory_order_relaxed);

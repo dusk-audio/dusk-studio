@@ -120,6 +120,65 @@ fi
                 for path in paths:
                     shutil.rmtree(path, ignore_errors=True)
 
+    # The real xvfb_run, with an Xvfb that outlives its shell: setpriv is made
+    # a pass-through, as on a host without it.
+    fake_bin = root / "fake-xvfb-bin"
+    fake_bin.mkdir()
+    (fake_bin / "setpriv").write_text('#!/bin/bash\nshift 2\nexec "$@"\n')
+    (fake_bin / "Xvfb").write_text(
+        '#!/bin/bash\necho $$ >"$FAKE_XVFB_PID"\necho 99 >&3\nexec sleep 600 </dev/null >/dev/null 2>&1\n')
+    fake_app = root / "fake-app"
+    fake_app.write_text(
+        '#!/bin/bash\nread -r -a timeout_stat </proc/$PPID/stat\n'
+        'printf "%s\\n%s\\n" "${timeout_stat[3]}" "$XDG_RUNTIME_DIR" >"$SIGNAL_READY"\n'
+        'read -r _ <"$SIGNAL_GATE"\n')
+    for script in (fake_bin / "setpriv", fake_bin / "Xvfb", fake_app):
+        script.chmod(0o755)
+    xvfb_signal_harness = r'''
+set -euo pipefail
+source "$DUSK_REGRESS_TEST_ROOT/scripts/regress/common.sh"
+source "$DUSK_REGRESS_TEST_ROOT/scripts/regress/scenarios.sh"
+source "$DUSK_REGRESS_TEST_ROOT/scripts/regress/xvfb.sh"
+APP_BIN="$FAKE_APP"
+sandboxed_app_run 60 list
+'''
+    ready = root / "xvfb-signal.ready"
+    gate = root / "xvfb-signal.gate"
+    xvfb_pid_file = root / "xvfb-signal.pid"
+    os.mkfifo(gate)
+    with os.fdopen(os.open(gate, os.O_RDWR), "w") as gate_writer:
+        launched = subprocess.Popen(
+            ["bash", "-c", xvfb_signal_harness], start_new_session=True,
+            env=dict(child_environment, DUSK_REGRESS_TEST_ROOT=str(repo), FAKE_APP=str(fake_app),
+                     FAKE_XVFB_PID=str(xvfb_pid_file), SIGNAL_READY=str(ready), SIGNAL_GATE=str(gate),
+                     PATH=f"{fake_bin}:{os.environ['PATH']}", DUSK_REGRESS_SCENARIO_KEEP="0"),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        xvfb_pid = None
+        try:
+            wait_for(lambda: ready.exists() and len(ready.read_text().splitlines()) == 2)
+            shell_pid, runtime = ready.read_text().splitlines()
+            xvfb_pid = int(xvfb_pid_file.read_text())
+            os.kill(int(shell_pid), signal.SIGTERM)
+            gate_writer.write("go\n")
+            gate_writer.flush()
+            stdout, stderr = launched.communicate(timeout=10)
+            assert launched.returncode == 143, (launched.returncode, stdout, stderr)
+            assert not Path(runtime).exists(), runtime
+            left = sorted(path.name for path in runner_tmp.iterdir())
+            assert not left, ("a signalled run left its Xvfb files", left)
+            wait_for(lambda: not running(xvfb_pid), "a signalled run left its Xvfb running")
+        finally:
+            if launched.poll() is None:
+                os.killpg(launched.pid, signal.SIGKILL)
+            launched.wait()
+            if xvfb_pid is not None and running(xvfb_pid):
+                os.kill(xvfb_pid, signal.SIGKILL)
+            for path in runner_tmp.iterdir():
+                if path.is_dir():
+                    shutil.rmtree(path, ignore_errors=True)
+                else:
+                    path.unlink()
+
     # The app binds $XDG_RUNTIME_DIR/dusk-studio/instance-<16 hex>.sock, so a
     # launch gets its single-instance slot only while that fits sun_path.
     long_tmp = runner_tmp / ("a-folder-name-long-enough-to-overrun-a-single-instance-socket-" + "x" * 32)
@@ -1006,7 +1065,7 @@ claim_unlock() {
     linux_runners = linux_root / "scripts/regress"
     linux_runners.mkdir(parents=True)
     for name in ("linux.sh", "common.sh", "xvfb.sh", "scenarios.sh", "null-audio.sh", "capture.sh",
-                 "idle-wakeups.sh"):
+                 "idle-wakeups.sh", "perf-ratchet.sh", "rtsan.sh"):
         shutil.copyfile(repo / "scripts/regress" / name, linux_runners / name)
     required_tools = linux_root / "bin"
     required_tools.mkdir()
@@ -1643,25 +1702,31 @@ regress_capture_leg /opt/under-test/DuskStudio
         assert needle in preflight, ("preflight.ps1 lost its ownership check", needle)
     assert preflight.index("Remove-RegressTree $leftover") < preflight.index("Get-RegressFree $root"), \
         "preflight measures the free space before it tidies"
-    for needle in ("Get-RegressFutureFiles $root", "Remove-RegressTree $build", "LastWriteTimeUtc = $now"):
+    for needle in ("Get-RegressTree $root", "Remove-RegressTree $build", "LastWriteTimeUtc = $now"):
         assert needle in preflight, ("preflight lost its future-stamp handling", needle)
-    assert preflight.index("Get-RegressFutureFiles") < preflight.index("Get-RegressFree $root"), \
+    assert preflight.index("Get-RegressTree $root") < preflight.index("Get-RegressFree $root"), \
         "preflight measures the free space before it removes a stale build"
     # PowerShell is not run here, so these hold the text to the guest-side
     # behaviour: an output seconds ahead already outlasts the checkout, so the
     # allowance is file-time granularity, not the 60 s clock margin; the walk
     # reaches paths past MAX_PATH; and a folder it could not list in or above
     # the build costs the build rather than passing unseen.
-    assert "Get-RegressFutureFiles $root $now.AddSeconds(2)" in preflight, \
+    assert "Get-RegressTree $root $now.AddSeconds(2)" in preflight, \
         "build outputs stamped seconds in the future are kept again"
     for needle in ("$future.Unlisted", "$buildPrefix.StartsWith($_ + '\\'", "could not be listed",
                    "-or $blind.Count -gt 0) {\n    if (-not (Remove-RegressTree $build))",
                    "(Get-RegressPlainPath $_.FullName).StartsWith($buildPrefix"):
         assert needle in preflight, ("preflight lost its handling of folders the walk could not list", needle)
-    walk = (source / "inline-lib.ps1").read_text().split("function Get-RegressFutureFiles", 1)[1].split("\nfunction ", 1)[0]
+    walk = (source / "inline-lib.ps1").read_text().split("function Get-RegressTree", 1)[1].split("\nfunction ", 1)[0]
     for needle in ("('\\\\?\\' + $path)", "$result.Unlisted.Add(", "New-Object IO.DirectoryInfo $path"):
-        assert needle in walk, ("Get-RegressFutureFiles lost its long-path walk or its unlisted folders", needle)
-    assert "catch { continue }" not in walk, "Get-RegressFutureFiles skips a folder it cannot list again"
+        assert needle in walk, ("Get-RegressTree lost its long-path walk or its unlisted folders", needle)
+    assert "catch { continue }" not in walk, "Get-RegressTree skips a folder it cannot list again"
+    library = (repo / "scripts/regress/windows/lib.ps1").read_text()
+    snapshot = library.split("function Get-RegressSnapshotRows", 1)[1].split("\n# The Explorer launches", 1)[0]
+    for needle in ("Get-RegressTree $dir", "$tree.Unlisted.Count -gt 0) { throw"):
+        assert needle in snapshot, ("the profile snapshot lost its long-path walk or its unlisted folders", needle)
+    assert "-Recurse" not in snapshot and "SilentlyContinue" not in snapshot, \
+        "the profile snapshot walks with Get-ChildItem again, which skips paths past MAX_PATH unseen"
     check = (source / "built-check.ps1").read_text()
     for needle in ("diff --name-only $prev $Head", "build.ninja", "-t deps", "exit 87", "': rerun_cmake'",
                    "$forms['../' + $key]", '": phony`r`n"', "'(?m)^#[^\\n]*'"):
@@ -1871,13 +1936,103 @@ bb_pipewire_clock_body
     assert rc == 3 and "repeat the run" in out, out
     assert idle_budget.read_text() == budget_text, "--update rewrote the budget from a sample a thread ended in"
 
+    # The non-device total sums every per-second name, here 5 + 1000, and leaves
+    # the per-block DuskDSP out. It is never an idle name, and --update lowers it.
+    total_budget = budget_text.replace("gone\t5\n", "(non-device total)\t1007\n")
+    rc, out = idle_judge(within, budget=total_budget)
+    assert rc == 0 and "non-device" in out and "1005.0" in out, out
+    assert "'(non-device total)' is budgeted but did not run" not in out, out
+    assert "#non_device_per_second\t1005.000" in idle_table.read_text(), idle_table.read_text()
+    rc, out = idle_judge(within.replace("1\t60\tDuskStudio", "1\t90\tDuskStudio"), budget=total_budget)
+    assert rc == 1 and "OVER" in out, out
+    rc, out = idle_judge(within, mode="update", budget=total_budget.replace("\t1007\n", "\t2000\n"))
+    assert rc == 0 and "(non-device total)\t1258\n" in idle_budget.read_text(), idle_budget.read_text()
+    rc, out = idle_judge(within, budget=total_budget.replace("\t1007\n", "\t5/block\n"))
+    assert rc == 2 and "not per block" in out, out
+
     for broken in ("DuskStudio\t08\n", "DuskStudio 5\n", "DuskStudio\t5\nDuskStudio\t6\n",
                    "DuskStudio\t5/frame\n", "DuskStudio\t-1\n"):
         rc, out = idle_judge(within, budget=broken)
         assert rc == 2, (broken, out)
 
+    perf_root = root / "perf-ratchet"
+    perf_runs = perf_root / "runs"
+    perf_runs.mkdir(parents=True)
+    perf_ratchet = perf_root / "ratchet.tsv"
+    perf_saved = perf_root / "saved.tsv"
+    ratchet_text = ("# header comment\n#host\tTest CPU, 8 threads\n\n48k/512 | idle (1 track)\t100.0\n"
+                    "48k/512 | full mixer\t1000.0\n48k/128 | tiny\t20.0\ngone | row\t5.0\n")
+    perf_command = 'source "$1/scripts/regress/perf-ratchet.sh"; shift; perf_ratchet_judge "$@"'
+
+    def perf_judge(runs, mode="check", ratchet=ratchet_text, save=""):
+        perf_ratchet.write_text(ratchet)
+        for stale in perf_runs.iterdir():
+            stale.unlink()
+        for index, run in enumerate(runs, 1):
+            if isinstance(run, str):
+                (perf_runs / f"run{index}.txt").write_text(run)
+                continue
+            rows = [{"section": section, "label": label, "median_us": median}
+                    for (section, label), median in run.items()]
+            (perf_runs / f"run{index}.json").write_text(json.dumps({"suite": "engine-perf", "rows": rows}))
+        result = subprocess.run(
+            ["bash", "-c", perf_command, "judge", str(repo), str(perf_ratchet), "Test CPU, 8 threads",
+             mode, save, str(perf_runs), str(len(runs))],
+            env=child_environment, capture_output=True, text=True, timeout=10)
+        return result.returncode, result.stdout + result.stderr
+
+    def perf_run(idle=100.0, mixer=1000.0, tiny=20.0, extra=None):
+        run = {("48k/512", "idle (1 track)"): idle, ("48k/512", "full mixer"): mixer,
+               ("48k/128", "tiny"): tiny}
+        run.update(extra or {})
+        return run
+
+    # Over by more than 10% but not 5 us, or by more than 5 us but not 10%, passes.
+    rc, out = perf_judge([perf_run(idle=104.0, mixer=1050.0, tiny=24.0)])
+    assert rc == 0, out
+    assert "'gone | row' is recorded but the suite did not run it" in out, out
+    assert "slowest against the ratchet: +20.0% (48k/128 | tiny)" in out, out
+    rc, out = perf_judge([perf_run(idle=110.5)])
+    assert rc == 4 and "SLOWER" in out, out
+    rc, out = perf_judge([perf_run(tiny=25.5)])
+    assert rc == 4 and "SLOWER" in out, out
+    rc, out = perf_judge([perf_run(tiny=25.5, extra={("48k/512", "stranger"): 1.0})])
+    assert rc == 1 and "SLOWER" in out and "UNLISTED" in out, out
+    # A row is the lowest of its medians, so one disturbed run does not fail it.
+    rc, out = perf_judge([perf_run(idle=130.0), perf_run(idle=101.0, mixer=1300.0)])
+    assert rc == 0, out
+    rc, out = perf_judge([perf_run(extra={("48k/512", "stranger"): 1.0})])
+    assert rc == 1 and "UNLISTED" in out and "'48k/512 | stranger' is not in" in out, out
+
+    # A binary that predates the JSON is read from its text table.
+    table = ("--- 48k/512  ---\n"
+             "[OK] idle (1 track)        median=99.0 us  p95=120.0 us  (budget=10666.7 us)\n"
+             "[OVER] full    mixer       median=1001.0 us  p95=1200.0 us\n"
+             "--- 48k/128  ---\n[OK] tiny  median=20.0 us\n")
+    rc, out = perf_judge([table], save=str(perf_saved))
+    assert rc == 0, out
+    assert perf_saved.read_text() == ("#host\tTest CPU, 8 threads\n#runs\t1\n48k/512 | idle (1 track)\t99.0\n"
+                                      "48k/512 | full mixer\t1001.0\n48k/128 | tiny\t20.0\n"), perf_saved.read_text()
+    rc, out = perf_judge(["no rows here\n"])
+    assert rc == 2, out
+
+    rc, out = perf_judge([perf_run(idle=90.04, mixer=1050.0)], mode="update")
+    assert rc == 0, out
+    assert perf_ratchet.read_text() == ("# header comment\n#host\tTest CPU, 8 threads\n\n"
+                                        "48k/512 | idle (1 track)\t90.1\n48k/512 | full mixer\t1000.0\n"
+                                        "48k/128 | tiny\t20.0\n"), perf_ratchet.read_text()
+    rc, out = perf_judge([perf_run(idle=200.0, extra={("48k/512", "stranger"): 1.0})], mode="update")
+    assert rc == 1, out
+    assert "\t100.0\n" in perf_ratchet.read_text(), "--update raised a value"
+    assert "stranger" not in perf_ratchet.read_text(), "--update added a row"
+
+    for broken in ("48k/512 | idle (1 track)\t08\n", "48k/512 | idle (1 track) 5\n",
+                   "row\t5\nrow\t6\n", "row\t-1\n", "row\t5us\n"):
+        rc, out = perf_judge([perf_run()], ratchet=broken)
+        assert rc == 2, (broken, out)
+
 print("regression runner: interrupt cleanup, runtime dirs under a long TMPDIR, prepush log folders, "
       "capture leg, timing cache, Mac paths, "
       "missing app, Windows source leg, added submodule checkouts, the host locks, the host clean pass "
-      "idle wake-up budgets, and an Xvfb that ends with its shell"
+      "idle wake-up budgets, the perf ratchet, and an Xvfb that ends with its shell"
       + ("" if shutil.which("pwsh") else "; no pwsh here, so the guest scripts were not parsed"))

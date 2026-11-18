@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../../foundation/AutoResetEvent.h"
+#include "../../foundation/RtWakeEvent.h"
 
 #include <lv2/core/lv2.h>
 #include <lv2/worker/worker.h>
@@ -8,9 +9,11 @@
 #include <atomic>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace duskstudio::lv2
@@ -77,12 +80,14 @@ private:
 // runs only on that thread or inside a HostCallScope, always under workMutex,
 // so never twice at once.
 //
-// The audio thread only touches atomics, so it cannot wake the thread; the
-// thread polls its event every kFastPollMs after it has had work and every
-// kIdlePollMs otherwise. An offline render is not realtime: finishRun wakes the
-// thread and waits for every ring request, so the replies land in the same
-// block they would in any other render of the same material, unless the render
-// is cancelled, when they land in a later block.
+// The thread sleeps with no timeout while both queues are empty. Whoever queues
+// a request signals `wake` once it is in, the audio thread included:
+// RtWakeEvent's signal takes no lock and allocates nothing, and one that lands
+// between the thread's last look at the queues and its wait ends that wait at
+// once. An offline render is not realtime: finishRun waits for every ring
+// request, so the replies land in the same block they would in any other
+// render of the same material, unless the render is cancelled, when they land
+// in a later block.
 class Lv2Worker
 {
 public:
@@ -140,6 +145,10 @@ public:
 
     bool isRunning() const noexcept { return threadRunning.load (std::memory_order_acquire); }
 
+    // Before attach. Runs on the worker thread each time it has found both
+    // queues empty, just before it sleeps.
+    void setIdleHookForTest (std::function<void()> hook) { idleHook = std::move (hook); }
+
     // Audio thread, around lilv_instance_run. finishRun delivers replies and
     // calls end_run. An offlineRender first waits for the queued work, until
     // renderCancelled (when given) turns true.
@@ -147,9 +156,6 @@ public:
     void finishRun (bool offlineRender, const std::atomic<bool>* renderCancelled = nullptr) noexcept;
 
 private:
-    static constexpr int kFastPollMs    = 1;
-    static constexpr int kFastPollCount = 100;
-    static constexpr int kIdlePollMs    = 20;
     static constexpr int kOfflineWaitMs = 10;
 
     static LV2_Worker_Status scheduleWork (LV2_Worker_Schedule_Handle, uint32_t, const void*);
@@ -195,11 +201,13 @@ private:
     std::deque<std::vector<uint8_t>>  otherRequests;  // otherLock
     std::size_t                       otherBytes = 0; // otherLock
 
-    std::mutex           workMutex;   // never taken on the audio thread
-    std::atomic<bool>    stopRequested { false };
-    std::atomic<bool>    threadRunning { false };
-    dusk::AutoResetEvent wake, workDone;
-    std::thread          thread;
+    std::mutex            workMutex;   // never taken on the audio thread
+    std::atomic<bool>     stopRequested { false };
+    std::atomic<bool>     threadRunning { false };
+    dusk::RtWakeEvent     wake;
+    dusk::AutoResetEvent  workDone;
+    std::function<void()> idleHook;
+    std::thread           thread;
 
     // Message thread only.
     bool                              holdingForInstantiate = false;

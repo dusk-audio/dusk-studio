@@ -39,6 +39,9 @@ constexpr float kVuMax =   3.0f;
 // spring overshoot. Same constants TapeMachine uses so the needles share
 // dynamic behaviour, not just scale.
 constexpr float kRefreshHz         = 60.0f;
+// A settled needle only has to notice a level arriving, and stepping it at the
+// refresh rate would keep a 60 Hz deadline running in an idle app.
+constexpr int   kSettledHz         = 30;
 constexpr float kVuTimeConstantMs  = 65.0f;
 constexpr float kOvershootDamping  = 0.78f;
 constexpr float kOvershootStiff    = 180.0f;
@@ -123,7 +126,9 @@ AnalogVuMeter::AnalogVuMeter (const std::atomic<float>* l, const std::atomic<flo
 {
     setInterceptsMouseClicks (false, false);
     setOpaque (false);
-    startTimerHz ((int) kRefreshHz);
+    timerHz = (int) kRefreshHz;
+    startTimerHz (timerHz);
+    timerCount.set (true);
 }
 
 AnalogVuMeter::~AnalogVuMeter() { stopTimer(); }
@@ -211,9 +216,29 @@ void AnalogVuMeter::resized()
     rebuildCachedFace();
 }
 
+void AnalogVuMeter::showStateChanged()
+{
+    if (isTimerRunning() || ! shownInLayout (*this)) return;
+    snapNeedles = true;
+    timerHz = (int) kRefreshHz;
+    startTimerHz (timerHz);
+    timerCount.set (true);
+    timerCallback();
+}
+
 void AnalogVuMeter::timerCallback()
 {
     if (leftRms == nullptr) return;
+    if (! shownInLayout (*this))
+    {
+        // The next paint draws the needles where the level is when the meter shows again.
+        paintedNeedleL.forget();
+        paintedNeedleR.forget();
+        paintedPeakLed.forget();
+        stopTimer();
+        timerCount.set (false);
+        return;
+    }
 
     const float dt      = 1.0f / kRefreshHz;
     const float vuCoeff = 1.0f - std::exp (-1000.0f * dt / kVuTimeConstantMs);
@@ -235,6 +260,12 @@ void AnalogVuMeter::timerCallback()
     auto tickChannel = [&] (const std::atomic<float>* atom, float& pos, float& vel, float& rawVu)
     {
         const float target = vuDbToAngleFrac (rmsToVuDb (atom, rawVu));
+        if (snapNeedles)
+        {
+            pos = target;
+            vel = 0.0f;
+            return true;
+        }
 
         const float springForce  = (target - pos) * kOvershootStiff;
         const float dampingForce = -vel * critDamp;
@@ -243,14 +274,24 @@ void AnalogVuMeter::timerCallback()
         pos += vuCoeff * (target - pos) * 0.3f;
         pos  = std::clamp (pos, -1.0f, 1.0f);
 
-        if (std::abs (vel) < 0.001f && std::abs (target - pos) < 0.001f)
+        const bool settled = std::abs (vel) < 0.001f && std::abs (target - pos) < 0.001f;
+        if (settled)
             vel = 0.0f;
+        return settled;
     };
 
     float rawL = kVuMin, rawR = kVuMin;
-    tickChannel (leftRms, needlePosL, needleVelL, rawL);
+    bool settled = tickChannel (leftRms, needlePosL, needleVelL, rawL);
     if (rightRms != nullptr)
-        tickChannel (rightRms, needlePosR, needleVelR, rawR);
+        settled = tickChannel (rightRms, needlePosR, needleVelR, rawR) && settled;
+    snapNeedles = false;
+
+    const int wantedHz = settled ? kSettledHz : (int) kRefreshHz;
+    if (wantedHz != timerHz)
+    {
+        timerHz = wantedHz;
+        startTimerHz (timerHz);
+    }
 
     const auto nowMs = juce::Time::getMillisecondCounter();
     const float maxRaw = std::max (rawL, rawR);
@@ -267,15 +308,6 @@ void AnalogVuMeter::timerCallback()
     {
         rebuildCachedFace();
         faceRebuilt = true;
-    }
-
-    if (! shownInLayout (*this))
-    {
-        // The next paint draws the needles stepped above, not what was last asked for.
-        paintedNeedleL.forget();
-        paintedNeedleR.forget();
-        paintedPeakLed.forget();
-        return;
     }
 
     // Pixels the needle tip travels per unit of angleFrac.

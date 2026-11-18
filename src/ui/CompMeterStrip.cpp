@@ -17,7 +17,8 @@ CompMeterStrip::CompMeterStrip (Source s) : src (std::move (s))
     setOpaque (false);
     setMouseCursor (juce::MouseCursor::PointingHandCursor);
     sampleControls();
-    startTimerHz (30);
+    startTimerHz (kTimerHz);
+    timerCount.set (true);
 }
 
 // Track-bound convenience: builds the per-mode Source from a Track& so
@@ -154,8 +155,34 @@ void CompMeterStrip::setHandleOnRight (bool right)
     repaint();
 }
 
+void CompMeterStrip::showStateChanged()
+{
+    if (isTimerRunning() || ! shownInLayout (*this)) return;
+    // From rest, the first tick takes every level as it is now.
+    displayedInputDb = -100.0f;
+    inputPeakHoldDb = -100.0f;
+    inputPeakHoldFrames = 0;
+    displayedGrDb = 0.0f;
+    startTimerHz (kTimerHz);
+    timerCount.set (true);
+    timerCallback();
+}
+
 void CompMeterStrip::timerCallback()
 {
+    if (! shownInLayout (*this))
+    {
+        // The next paint draws whatever the levels are when the meter shows again.
+        paintedInput.forget();
+        paintedPeak.forget();
+        paintedGr.forget();
+        paintedHandle.forget();
+        paintedFlags.forget();
+        stopTimer();
+        timerCount.set (false);
+        return;
+    }
+
     const float inputDb = src.getInputDb ? src.getInputDb() : -100.0f;
     if (inputDb > displayedInputDb)
         displayedInputDb = inputDb;
@@ -200,16 +227,7 @@ void CompMeterStrip::timerCallback()
     if (displayedGrDb > -0.05f) displayedGrDb = 0.0f;
 
     sampleControls();
-    if (! shownInLayout (*this))
-    {
-        // The next paint draws the levels stepped above, not what was last asked for.
-        paintedInput.forget();
-        paintedPeak.forget();
-        paintedGr.forget();
-        paintedHandle.forget();
-        paintedFlags.forget();
-    }
-    else if (lookChanged())
+    if (lookChanged())
     {
         countGatedRepaint();
         repaint();

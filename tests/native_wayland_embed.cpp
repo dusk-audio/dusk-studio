@@ -441,6 +441,36 @@ private:
         return shell.getWidth() >= kFullWidth && shell.getHeight() >= kFullHeight;
     }
 
+    // Blocking the message thread between the configure and the hide keeps any frame from carrying
+    // the configure's window geometry, so the hide has to apply it without an empty surface. The
+    // compositor reports a violation in its log, which the driver fails on.
+    static void hideRightAfterConfigure()
+    {
+        auto* const display = juce::WaylandWindowSystem::getInstance()->getDisplay();
+        const auto dispatchUntil = [display] (auto&& done, const char* failure)
+        {
+            const auto until = std::chrono::steady_clock::now() + std::chrono::seconds (10);
+            while (! done())
+            {
+                require (std::chrono::steady_clock::now() < until, failure);
+                require (juce::WaylandSymbols::getInstance()->displayRoundtrip (display) >= 0,
+                         "Wayland roundtrip failed");
+            }
+        };
+        Shell window;
+        window.setBounds (100, 100, 320, 240);
+        window.setOpaque (true);
+        window.addToDesktop (juce::ComponentPeer::windowIsResizable);
+        window.setVisible (true);
+        dispatchUntil ([&window] { window.getPeer()->performAnyPendingRepaintsNow(); return window.mapped(); },
+                       "configure check window never mapped");
+        window.getPeer()->setFullScreen (true);
+        dispatchUntil ([&window] { return window.getWidth() >= kFullWidth; },
+                       "configure check window never maximized");
+        window.setVisible (false);
+        window.removeFromDesktop();
+    }
+
     bool bothRendered() const
     {
         require (a.window() != nullptr && b.window() != nullptr, "a panel disappeared before rendering");
@@ -466,6 +496,7 @@ private:
             {
                 case Stage::open:
                 {
+                    hideRightAfterConfigure();
                     const auto descriptor = platform::describeEmbeddedParent (parent());
                     require (descriptor.backend == platform::NativeEmbeddedParent::Backend::wayland,
                              "shell is not native Wayland");

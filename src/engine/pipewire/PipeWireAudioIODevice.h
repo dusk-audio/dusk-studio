@@ -3,10 +3,10 @@
 #include "../device/GraphClock.h"
 #include "../device/IODevice.h"
 #include "../device/IODeviceCallback.h"
+#include "../device/LeasedCallback.h"
 
 #include <atomic>
 #include <cstdint>
-#include <mutex>
 #include <string>
 #include <vector>
 
@@ -107,8 +107,7 @@ public:
 
     // pw_filter process entry point. Public only so the C trampoline in the .cpp
     // can reach it; not part of the device::IODevice contract. Runs on
-    // PipeWire's RT data thread; allocation-free, lock-free bar the uncontended
-    // callback lock.
+    // PipeWire's RT data thread; allocation- and lock-free.
     void onProcess (struct spa_io_position* position) noexcept;
 
     // Runs on the thread loop. Terminal states publish closure for the manager's
@@ -159,8 +158,7 @@ private:
 
     device::ChannelSet currentOutputChannels, currentInputChannels;
 
-    std::mutex callbackLock;
-    device::IODeviceCallback* callback = nullptr;
+    device::LeasedCallback callback;
 
     // Pointer arrays handed to the device callback (sized on open, only indexed
     // on the RT thread). For an unlinked port the slot points at the shared scratch.

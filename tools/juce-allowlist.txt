@@ -5,7 +5,7 @@ src/dsp/AuxLaneStrip.h	23
 src/dsp/ChannelStrip.cpp	22
 src/dsp/ChannelStrip.h	29
 src/dsp/MasteringChain.h	4
-src/engine/AudioEngine.cpp	79
+src/engine/AudioEngine.cpp	78
 src/engine/AudioEngine.h	11
 src/engine/AudioPipelineSelfTest.cpp	22
 src/engine/BounceEngine.cpp	41

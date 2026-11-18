@@ -40,7 +40,7 @@ try {
         $rgLeft = @()
         $rgLog = ''
         $rgEvidenceCap = 64MB
-        function Get-RegressFutureFiles { [pscustomobject]@{ Files = @(); Unlisted = @($deep) } }
+        function Get-RegressTree { [pscustomobject]@{ Files = @(); Unlisted = @($deep) } }
         . $evidencePass
         Assert-Evidence ($rgKeep -and ($rgLeft -join '; ') -like '*could not list*') 'Cleanup discarded an unlisted evidence folder'
     }

@@ -505,6 +505,7 @@ void Session::landTrackMove (StagedTrackMove& staged)
 
     if (auto& audition = takeAudition; audition.trackIdx >= 0 && audition.trackIdx < kNumTracks)
         audition.trackIdx = staged.plan.oldToNew[(size_t) audition.trackIdx];
+    noteRegionsEdited();
 }
 
 void Session::reclaimTrackSnapshots() noexcept

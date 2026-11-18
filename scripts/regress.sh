@@ -34,7 +34,13 @@ usage: scripts/regress.sh [linux|mac|windows|windows-source|all|prepush] [option
 
   linux    (default) build, tests, ctest, JUCE gate, self-test, IPC,
            scenario and manual figure legs
-             --perf              also run the headless engine perf suite
+             --perf              also run the engine perf suite against
+                                 tools/perf-ratchet.tsv (this box only)
+             --rtsan             also build the app with Clang's
+                                 RealtimeSanitizer in build-rtsan/ and run
+                                 the self-test and the headless scenario
+                                 suite on it (bash scripts/regress/rtsan.sh
+                                 runs those legs alone)
              --vst3 <path>       plugin for the out-of-process host test
                                  (default: the first ~/.vst3/*.vst3)
              --scenarios         run the scenario legs (the default)
@@ -217,6 +223,7 @@ fi
 # every platform that tests its packages.
 declare -A OPTION_OWNER=(
     [--perf]=linux
+    [--rtsan]=linux
     [--vst3]=linux
     [--scenarios]=linux
     [--no-scenarios]="linux windows"

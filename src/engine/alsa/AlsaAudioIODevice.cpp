@@ -814,11 +814,7 @@ void AlsaAudioIODevice::start (device::IODeviceCallback* newCallback)
         return;
 
     newCallback->audioDeviceAboutToStart (this);
-
-    {
-        std::lock_guard<std::mutex> sl (callbackLock);
-        callback = newCallback;
-    }
+    callback.attach (newCallback);
 
     xrunCount.store (0, std::memory_order_relaxed);
 
@@ -927,7 +923,7 @@ void AlsaAudioIODevice::stop()
         else
         {
             // No kill escape hatch with std::thread, and the wedged thread
-            // still dereferences this whole object (PCM handles, mutex,
+            // still dereferences this whole object (PCM handles, callback,
             // scratch, the flags). Detach it and mark the device abandoned:
             // close() stops releasing resources and destroyOrPark leaks the
             // object instead of destroying it, so the owner always outlives
@@ -944,12 +940,7 @@ void AlsaAudioIODevice::stop()
 
     if (! threadAbandoned.load (std::memory_order_acquire))
     {
-        device::IODeviceCallback* cb = nullptr;
-        {
-            std::lock_guard<std::mutex> sl (callbackLock);
-            std::swap (cb, callback);
-        }
-        if (cb != nullptr)
+        if (auto* cb = callback.detach())
             cb->audioDeviceStopped();
 
         if (outHandle != nullptr) snd_pcm_drop (outHandle);
@@ -959,17 +950,11 @@ void AlsaAudioIODevice::stop()
     }
     else
     {
-        // The live thread may be wedged inside a client callback holding
-        // callbackLock, so a blocking lock here could deadlock stop(). Detach
-        // the callback only if the lock is free, and leave the PCM handles
-        // alone - the thread is still using them.
-        device::IODeviceCallback* cb = nullptr;
-        {
-            std::unique_lock<std::mutex> sl (callbackLock, std::try_to_lock);
-            if (sl.owns_lock())
-                std::swap (cb, callback);
-        }
-        if (cb != nullptr)
+        // The live thread may be wedged inside a client callback, so stop()
+        // must not wait for its cycle to end. The callback is detached either
+        // way and reported stopped only when no cycle holds it. The PCM
+        // handles stay alone - the thread is still using them.
+        if (auto* cb = callback.detachIfIdle())
             cb->audioDeviceStopped();
     }
 }
@@ -1200,10 +1185,10 @@ void AlsaAudioIODevice::ioThreadRun()
         std::fill (callbackOutStore.begin(), callbackOutStore.end(), 0.0f);
 
         {
-            std::lock_guard<std::mutex> sl (callbackLock);
-            if (callback != nullptr)
+            const device::LeasedCallback::Lease lease (callback);
+            if (auto* cb = lease.get())
             {
-                callback->audioDeviceIOCallback (
+                cb->audioDeviceIOCallback (
                     callbackInPointers.data(),
                     (int) callbackInPointers.size(),
                     callbackOutPointers.data(),
@@ -1285,9 +1270,9 @@ loopExit: ;
                        + ": " + snd_strerror (fatalErr);
         std::fprintf (stderr, "[Dusk Studio/ALSA] fatal: %s\n", msg.c_str());
 
-        std::lock_guard<std::mutex> sl (callbackLock);
-        if (callback != nullptr)
-            callback->audioDeviceError (msg);
+        const device::LeasedCallback::Lease lease (callback);
+        if (auto* cb = lease.get())
+            cb->audioDeviceError (msg);
     }
 
     ioExited.signal();

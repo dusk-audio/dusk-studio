@@ -9,7 +9,6 @@
 #endif
 
 #include <algorithm>
-#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <utility>
@@ -33,7 +32,8 @@ MiniTimelineStrip::MiniTimelineStrip (Session& s, AudioEngine& e) : session (s),
    #if ! DUSKSTUDIO_HAS_NATIVE_UI
     latch.openFailed();
    #endif
-    startTimerHz (30);
+    startTimerHz (kTimerHz);
+    timerCount.set (true);
 }
 
 MiniTimelineStrip::~MiniTimelineStrip()
@@ -47,10 +47,6 @@ MiniTimelineStrip::~MiniTimelineStrip()
 #if DUSKSTUDIO_HAS_NATIVE_UI
 namespace
 {
-// A region moved or trimmed in place changes no count, so the regions are also
-// walked again on this period.
-constexpr auto kRegionRescan = std::chrono::milliseconds (500);
-
 template <typename Shown, typename Markers>
 bool markersMatch (const Shown& shown, const Markers& markers)
 {
@@ -108,15 +104,17 @@ void MiniTimelineStrip::updateState()
         for (const auto& marker : markers)
             state.markers.push_back ({ marker.name.toStdString(), marker.timelineSamples, marker.colour.getARGB() });
     }
-    const auto now = std::chrono::steady_clock::now();
     const auto rate = engine.getTimelineSampleRate();
     const auto regions = regionSignature();
-    if (markersMoved || now >= nextRegionScan || std::abs (rate - scannedRate) > 0.0 || regions != scannedRegions)
+    const auto edits = session.regionEditCount();
+    if (! contentScanned || markersMoved || std::abs (rate - scannedRate) > 0.0
+        || regions != scannedRegions || edits != scannedEdits)
     {
         contentEnd = contentEndSamples();
-        nextRegionScan = now + kRegionRescan;
         scannedRate = rate;
         scannedRegions = regions;
+        scannedEdits = edits;
+        contentScanned = true;
     }
     state.playhead = engine.getTransport().getPlayhead();
     state.end = std::max (contentEnd, state.playhead);
@@ -265,12 +263,34 @@ void MiniTimelineStrip::syncWindow()
 void MiniTimelineStrip::timerCallback()
 {
     syncWindow();
-    if (isShowing()) updateState();
+    if (isShowing())
+    {
+        updateState();
+        return;
+    }
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    if (closing || (window != nullptr && window->isOpen())) return;
+   #endif
+    // A minimised window still counts as shown, as restoring it tells no component.
+    if (! shownInLayout (*this))
+    {
+        stopTimer();
+        timerCount.set (false);
+    }
 }
 
-void MiniTimelineStrip::resized() { hideTooltip(); syncWindow(); }
-void MiniTimelineStrip::visibilityChanged() { syncWindow(); }
-void MiniTimelineStrip::parentHierarchyChanged() { syncWindow(); }
+void MiniTimelineStrip::showStateChanged()
+{
+    syncWindow();
+    if (isTimerRunning() || ! shownInLayout (*this)) return;
+    startTimerHz (kTimerHz);
+    timerCount.set (true);
+    timerCallback();
+}
+
+void MiniTimelineStrip::resized() { hideTooltip(); showStateChanged(); }
+void MiniTimelineStrip::visibilityChanged() { showStateChanged(); }
+void MiniTimelineStrip::parentHierarchyChanged() { showStateChanged(); }
 
 void MiniTimelineStrip::paint (juce::Graphics& g)
 {
@@ -288,6 +308,14 @@ std::vector<scenario::MiniMarkerPaint> MiniTimelineStrip::markerPaintForScenario
     if (capturePaint && view != nullptr && ! closing) return view->markerPaint;
    #endif
     return {};
+}
+
+std::int64_t MiniTimelineStrip::shownEndForScenario() const
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    if (view != nullptr && ! closing) return view->state.end;
+   #endif
+    return -1;
 }
 
 bool MiniTimelineStrip::clickSampleForScenario (std::int64_t sample)

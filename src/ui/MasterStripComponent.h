@@ -30,6 +30,10 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
     void mouseDown (const juce::MouseEvent& e) override;
+    void visibilityChanged() override;
+    // A stage switch changes only the console's visible flag, so ConsoleView
+    // passes its changes on here.
+    void refreshForShowState();
 
     void setCompactVu (bool compact);
     void setCompactMode (bool compact);
@@ -65,6 +69,7 @@ private:
     int lastCompactCompOn = -1;
     int lastTapeOn        = -1;
     void timerCallback() override;
+    void syncShownView();
 
     MasterBusParams& params;
     class Session& session;

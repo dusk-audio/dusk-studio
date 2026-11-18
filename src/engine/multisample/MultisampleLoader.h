@@ -47,7 +47,7 @@ public:
     ~MultisampleLoader();
     void submit (Request);
     void cancelAll();
-    void setPaused (bool value) noexcept { paused.store (value, std::memory_order_release); }
+    void setPaused (bool value) noexcept;
     std::vector<Result> takeCompleted();
     bool hasPendingWork() const;
 

@@ -12,6 +12,7 @@
 #include <fstream>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <random>
 #include <stdexcept>
 #include <string>
@@ -446,4 +447,129 @@ TEST_CASE ("Multisample loader destroys superseded prepared occupants after unlo
     REQUIRE_FALSE (results[0].primed);
     REQUIRE (results[0].error == "Soundfont load superseded by a newer request");
     REQUIRE (results[1].request.requestGeneration == 2);
+}
+
+namespace
+{
+#if defined(__linux__)
+struct LoaderTask
+{
+    long wakeups = 0;
+    char state = '?';
+};
+
+// The loader thread's voluntary context switches, one for each time it blocked,
+// and its scheduler state. Empty until the thread exists and has named itself.
+std::optional<LoaderTask> loaderTask()
+{
+    std::error_code error;
+    for (const auto& task : std::filesystem::directory_iterator ("/proc/self/task", error))
+    {
+        std::ifstream comm (task.path() / "comm");
+        std::string name;
+        if (! std::getline (comm, name) || name != "DuskSampleLoad") continue;
+        LoaderTask result;
+        std::ifstream stat (task.path() / "stat");
+        std::string line;
+        std::getline (stat, line);
+        const auto close = line.rfind (')');
+        if (close == std::string::npos || close + 2 >= line.size()) return std::nullopt;
+        result.state = line[close + 2];
+        std::ifstream status (task.path() / "status");
+        for (std::string field; std::getline (status, field);)
+            if (field.rfind ("voluntary_ctxt_switches:", 0) == 0)
+                result.wakeups = std::stol (field.substr (field.find (':') + 1));
+        return result;
+    }
+    return std::nullopt;
+}
+
+// Waits until the loader thread is blocked, having blocked more than `after`
+// times: it has taken whatever woke it and gone back to waiting.
+std::optional<LoaderTask> waitUntilLoaderBlocks (long after = -1)
+{
+    const auto deadline = Clock::now() + std::chrono::seconds (2);
+    while (Clock::now() < deadline)
+    {
+        const auto task = loaderTask();
+        if (task && task->state == 'S' && task->wakeups > after)
+            return task;
+        std::this_thread::yield();
+    }
+    return std::nullopt;
+}
+#endif
+} // namespace
+
+TEST_CASE ("Multisample loader sleeps until a request arrives and still takes one after a rest",
+           "[multisample][loader][ipc]")
+{
+    std::atomic<int> primed { 0 };
+    MultisampleLoader loader ([&] (MultisampleLoader::Request input)
+    {
+        ++primed;
+        return outcome (std::move (input));
+    });
+
+   #if defined(__linux__)
+    // Four polls' worth of the 25 ms wait this replaced.
+    const auto resting = waitUntilLoaderBlocks();
+    REQUIRE (resting.has_value());
+    std::this_thread::sleep_for (std::chrono::milliseconds (100));
+    const auto rested = loaderTask();
+    REQUIRE (rested.has_value());
+    REQUIRE (rested->wakeups - resting->wakeups <= 1);
+   #endif
+
+    loader.submit (request (0, 1));
+    auto results = waitForResults (loader, 1);
+    REQUIRE (results[0].request.requestGeneration == 1);
+
+   #if defined(__linux__)
+    const auto idle = waitUntilLoaderBlocks();
+    REQUIRE (idle.has_value());
+   #endif
+    loader.setPaused (true);
+   #if defined(__linux__)
+    const auto pausedRest = waitUntilLoaderBlocks (idle->wakeups);
+    REQUIRE (pausedRest.has_value());
+   #endif
+    loader.submit (request (1, 2));
+   #if defined(__linux__)
+    // Woken by the request, it found the loader paused and went back to sleep.
+    REQUIRE (waitUntilLoaderBlocks (pausedRest->wakeups).has_value());
+   #endif
+    REQUIRE (primed.load() == 1);
+    loader.setPaused (false);
+    results = waitForResults (loader, 1);
+    REQUIRE (results[0].request.requestGeneration == 2);
+    REQUIRE (primed.load() == 2);
+}
+
+TEST_CASE ("Multisample loader shutdown wakes and joins a resting worker promptly", "[multisample][loader][ipc]")
+{
+    for (const bool paused : { false, true })
+    {
+        auto loader = std::make_unique<MultisampleLoader> ([] (MultisampleLoader::Request input)
+            { return outcome (std::move (input)); });
+       #if defined(__linux__)
+        auto resting = waitUntilLoaderBlocks();
+        REQUIRE (resting.has_value());
+       #endif
+        if (paused)
+        {
+            loader->setPaused (true);
+           #if defined(__linux__)
+            resting = waitUntilLoaderBlocks (resting->wakeups);
+            REQUIRE (resting.has_value());
+           #endif
+            loader->submit (request (0, 1));
+           #if defined(__linux__)
+            REQUIRE (waitUntilLoaderBlocks (resting->wakeups).has_value());
+           #endif
+        }
+        const auto started = Clock::now();
+        loader.reset();
+        REQUIRE (Clock::now() - started < std::chrono::milliseconds (500));
+    }
 }

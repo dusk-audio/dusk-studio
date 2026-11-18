@@ -108,14 +108,16 @@ function Remove-RegressTree([string]$path, [string]$marker = '') {
 
 function Get-RegressPlainPath([string]$path) { $path -replace '^\\\\\?\\', '' }
 
-# Every file under <path> stamped later than <limit> (UTC), without following a
-# link, as .Files, and every folder the walk could not list, as .Unlisted. The
+# Every entry under <path> as .Entries, the files among them stamped later than
+# <limit> (UTC) as .Files, and every folder the walk could not list, as
+# .Unlisted; links are listed, never followed, and never count as files. The
 # walk goes through the \\?\ prefix to reach the paths past MAX_PATH, so the
-# files' FullName carries it. Where .NET refuses the prefix, or <path> cannot
+# entries' FullName carries it. Where .NET refuses the prefix, or <path> cannot
 # be listed through it, the walk takes the plain path, and the folders it then
 # cannot list are named rather than skipped.
-function Get-RegressFutureFiles([string]$path, [DateTime]$limit) {
+function Get-RegressTree([string]$path, [DateTime]$limit = [DateTime]::MaxValue) {
   $result = [pscustomobject]@{
+    Entries = New-Object 'Collections.Generic.List[IO.FileSystemInfo]'
     Files = New-Object 'Collections.Generic.List[IO.FileInfo]'
     Unlisted = New-Object 'Collections.Generic.List[string]'
   }
@@ -132,6 +134,7 @@ function Get-RegressFutureFiles([string]$path, [DateTime]$limit) {
     $dir = $stack.Pop()
     try { $entries = @($dir.EnumerateFileSystemInfos()) } catch { $result.Unlisted.Add((Get-RegressPlainPath $dir.FullName)); continue }
     foreach ($entry in $entries) {
+      $result.Entries.Add($entry)
       if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { continue }
       if ($entry -is [IO.DirectoryInfo]) { $stack.Push($entry) }
       elseif ($entry.LastWriteTimeUtc -gt $limit) { $result.Files.Add($entry) }

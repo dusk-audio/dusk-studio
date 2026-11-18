@@ -205,6 +205,7 @@ public:
     std::int64_t dropPointSampleForScenario (int track) const { return sampleAtX (dropPointForScenario (track).x); }
     int dropLineXForScenario() const { return dropAccepted ? dropHoverX : -1; }
     int paintsForScenario() const noexcept { return paints; }
+    bool playheadOnVBlankForScenario() const noexcept { return playheadOnVBlank; }
     int xForSampleForScenario (std::int64_t sample) const { return xForSample (sample); }
     // Stands in for the Alt key a drop reads; nullopt goes back to the key.
     void setDropAtMouseForScenario (std::optional<bool> atMouse) { dropAtMouseOverride = atMouse; }
@@ -411,9 +412,14 @@ private:
     // once per frame. A free-running 30 Hz Timer beats against the
     // compositor's refresh and reads as stutter. The timer keeps the
     // cheap state polling (names, colours, loop/punch, recording's
-    // full-frame repaint).
+    // full-frame repaint). The vblank is attached only while the playhead
+    // can move: the transport rolls, or the last timer tick saw it move. A
+    // window with no vblank listener lets the display's frame timer rest.
     void updatePlayheadBand();
-    juce::VBlankAttachment vBlankAttachment;
+    void updatePlayheadVBlank();
+    using PlayheadVBlank = juce::VBlankAttachment;
+    PlayheadVBlank vBlankAttachment;
+    bool playheadOnVBlank = false;
 
     // Handles the Stopped <-> Recording transition. Called from both the
     // timer and the vblank, so whichever runs first after it wins.

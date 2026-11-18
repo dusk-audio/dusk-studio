@@ -567,3 +567,21 @@ TEST_CASE ("findTake finds a take by id and never by the none id", "[take][comp]
     CHECK (findTake (track, 4) == nullptr);
     CHECK (findTake (track, 0) == nullptr);
 }
+
+TEST_CASE ("Placing a take or carving a range counts as a region edit", "[take][comp]")
+{
+    auto session = std::make_unique<Session>();
+    auto& track = session->track (0);
+    AudioTake take;
+    take.id = session->allocateTakeId();
+    take.lengthInSamples = 48000;
+    take.numChannels = 1;
+    track.takes.push_back (take);
+
+    const auto before = session->regionEditCount();
+    promoteTakeRange (*session, track, track.takes[0], 0, 24000);
+    const auto placed = session->regionEditCount();
+    CHECK (placed > before);
+    detail::carveRegions (*session, track, 0, 12000);
+    CHECK (session->regionEditCount() > placed);
+}

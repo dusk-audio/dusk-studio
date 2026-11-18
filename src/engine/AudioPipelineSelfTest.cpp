@@ -1,5 +1,6 @@
 #include "AudioPipelineSelfTest.h"
 #include "../foundation/Fs.h"
+#include "../foundation/Json.h"
 #include "../foundation/Text.h"
 #include "audiofile/FileReader.h"
 #include "../session/RegionEditActions.h"
@@ -624,6 +625,30 @@ void captureToneOutput (AudioEngine& engine, double sr, int blockSize,
                               && (int) outBuffer.size() < captureSamples; ++s)
                 outBuffer.push_back (outputs[0][(size_t) s]);
     }
+}
+
+// The DSP lane of `lanes` that runs track t.
+int dspLaneOf (int t, int lanes)
+{
+    int lane = 0;
+    while (lane + 1 < lanes && AudioEngine::dspLaneFirstTrack (lane + 1, lanes) <= t) ++lane;
+    return lane;
+}
+
+// A track the pool tests can drive with a tone: not frozen, and with neither a
+// hardware insert nor anything loaded in its insert. Stopped, a frozen track
+// has no source, a hardware insert runs outside the lanes, and a loaded slot
+// may be an instrument that makes nothing of the tone or an effect that does
+// not repeat itself.
+bool isPlainTrack (const AudioEngine& engine, Session& session, int t)
+{
+    const auto& strip = engine.getChannelStrip (t);
+    const bool anythingLoaded = strip.getPluginSlot().isLoaded() || strip.isBuiltinLoaded()
+        || strip.isNativeClapLoaded() || strip.isNativeLv2Loaded() || strip.isNativeVst3Loaded()
+        || strip.isNativeAuLoaded() || strip.isNativeMultisampleLoaded();
+    return ! session.track (t).frozen.load (std::memory_order_acquire)
+        && strip.insertMode.load (std::memory_order_relaxed) != ChannelStrip::kInsertHardware
+        && ! anythingLoaded;
 }
 } // namespace
 
@@ -1305,34 +1330,13 @@ std::string AudioPipelineSelfTest::testPoolDispatchRule()
         return "[PASS] Pool Dispatch Rule: SKIPPED (host < 3 cores: no worker pool)";
     }
     const int lanes = workers + 1;
-    const auto laneOf = [lanes] (int t)
-    {
-        int lane = 0;
-        while (lane + 1 < lanes && AudioEngine::dspLaneFirstTrack (lane + 1, lanes) <= t) ++lane;
-        return lane;
-    };
 
     // Busy tracks monitor a tone through distinct EQ. Every other track is a
-    // muted audio track, whose chain does not run whatever it holds. A track
-    // that is frozen, holds a hardware insert or has anything loaded in its
-    // insert is passed over: stopped, a frozen track has no source, a hardware
-    // insert runs outside the lanes, and a loaded slot may be an instrument
-    // that makes nothing of the tone or an effect that does not repeat itself.
-    const auto anythingLoaded = [] (const ChannelStrip& strip)
-    {
-        return strip.getPluginSlot().isLoaded() || strip.isBuiltinLoaded() || strip.isNativeClapLoaded()
-            || strip.isNativeLv2Loaded() || strip.isNativeVst3Loaded() || strip.isNativeAuLoaded()
-            || strip.isNativeMultisampleLoaded();
-    };
+    // muted audio track, whose chain does not run whatever it holds.
     std::vector<int> candidates;
     for (int t = 0; t < Session::kNumTracks; ++t)
-    {
-        const auto& strip = engine.getChannelStrip (t);
-        if (! session.track (t).frozen.load (std::memory_order_acquire)
-            && strip.insertMode.load (std::memory_order_relaxed) != ChannelStrip::kInsertHardware
-            && ! anythingLoaded (strip))
+        if (isPlainTrack (engine, session, t))
             candidates.push_back (t);
-    }
     if (candidates.size() < 16)
     {
         engine.setWorkerCountForTest (0);
@@ -1373,10 +1377,12 @@ std::string AudioPipelineSelfTest::testPoolDispatchRule()
     struct Capture
     {
         std::vector<float> l, r;
-        int pooled   = 0;   // blocks the pool ran
-        int offRule  = 0;   // blocks the pool ran, or did not, against the rule
-        int maxBusy  = 0;   // most strips that ran their chain in one block
-        int maxLanes = 0;   // most lanes those strips fell in
+        int pooled     = 0;   // blocks the pool ran
+        int offRule    = 0;   // blocks run on more or fewer lanes than the rule gives
+        int maxBusy    = 0;   // most strips that ran their chain in one block
+        int maxLanes   = 0;   // most lanes one block ran on, the audio thread's included
+        int idleWakes  = 0;   // wake-ups of workers no block dispatched
+        int extraWakes = 0;   // wake-ups past the blocks that dispatched a worker
     };
     // toggled >= 0 mutes that track for every other run of 8 blocks.
     const auto capture = [&] (int poolWorkers, bool everyBlock, int toggled)
@@ -1395,6 +1401,14 @@ std::string AudioPipelineSelfTest::testPoolDispatchRule()
         duskstudio::device::CallbackContext ctx {};
         const double inc = kTwoPi * (double) kToneHz / sr;
 
+        // Every worker the pool holds, parked ones included. A worker counts a
+        // wake before it acknowledges it, and the setup above waited for every
+        // acknowledgement, so none from before the capture lands inside it.
+        std::vector<std::uint32_t> wakesAt ((size_t) workers);
+        std::vector<int> dispatchedBlocks ((size_t) workers, 0);
+        for (int w = 0; w < workers; ++w)
+            wakesAt[(size_t) w] = engine.dspWorkerWakesForTest (w);
+
         for (int b = 0; b < numBlocks; ++b)
         {
             if (toggled >= 0)
@@ -1409,28 +1423,42 @@ std::string AudioPipelineSelfTest::testPoolDispatchRule()
             engine.audioDeviceIOCallback (inP.data(), numIn, outP.data(), numOut, bs, ctx);
             const bool pooled = engine.getPoolDispatchCount() != before;
 
+            const int ran = engine.getLastPoolLanesForTest();
+
             int busy = 0;
-            std::vector<bool> laneBusy ((size_t) lanes, false);
             for (int t = 0; t < Session::kNumTracks; ++t)
             {
                 const auto& strip = engine.getChannelStrip (t);
                 if (strip.insertMode.load (std::memory_order_relaxed) != ChannelStrip::kInsertHardware
                     && strip.getLastProcessedSamples() > 0)
-                {
                     ++busy;
-                    laneBusy[(size_t) laneOf (t)] = true;
-                }
             }
-            const int busyLanes = (int) std::count (laneBusy.begin(), laneBusy.end(), true);
+            const int wantLanes = poolWorkers == 0 ? 0
+                                : everyBlock      ? lanes
+                                : busy >= 2       ? std::min (busy, lanes)
+                                                  : 0;
             c.maxBusy  = std::max (c.maxBusy, busy);
-            c.maxLanes = std::max (c.maxLanes, busyLanes);
+            c.maxLanes = std::max (c.maxLanes, ran);
             c.pooled += pooled ? 1 : 0;
-            if (pooled != (poolWorkers > 0 && (everyBlock || busyLanes >= 2)))
+            if (pooled != (wantLanes >= 2) || ran != wantLanes)
                 ++c.offRule;
+            for (int w = 0; w + 1 < ran; ++w)
+                ++dispatchedBlocks[(size_t) w];
             c.l.insert (c.l.end(), outs[0].begin(), outs[0].end());
             c.r.insert (c.r.end(), outs[1].begin(), outs[1].end());
         }
         engine.setPoolDispatchForcedForTest (false);
+
+        // The last block's dispatched workers may not have counted their wake
+        // yet; none counts one it was not dispatched for.
+        for (int w = 0; w < workers; ++w)
+        {
+            const int woke = (int) (engine.dspWorkerWakesForTest (w) - wakesAt[(size_t) w]);
+            if (dispatchedBlocks[(size_t) w] == 0)
+                c.idleWakes += woke;
+            else
+                c.extraWakes += std::max (0, woke - dispatchedBlocks[(size_t) w]);
+        }
         return c;
     };
 
@@ -1448,27 +1476,34 @@ std::string AudioPipelineSelfTest::testPoolDispatchRule()
         return a.l.size() == b.l.size() ? d : 1.0f;
     };
 
-    // Neighbouring tracks share a lane until the lanes are as many as the
-    // tracks; the first and last candidates sit in different lanes.
-    const int first = candidates.front(), second = candidates[1], last = candidates.back();
+    // The busy strips run one to a lane, up to every lane the pool holds, so
+    // neighbouring tracks no longer share one. The counts in between take
+    // some of the workers and leave the rest asleep.
+    const int first = candidates.front(), last = candidates.back();
+    const auto firstOf = [&candidates] (int n)
+    {
+        return std::vector<int> (candidates.begin(), candidates.begin() + n);
+    };
     struct Case { std::string name; std::vector<int> busy; int toggled; };
-    const Case cases[] = {
+    std::vector<Case> cases {
         { "no strip busy",                    {},                     -1 },
         { "1 strip busy",                     { first },              -1 },
-        { "2 neighbouring strips busy",       { first, second },      -1 },
+        { "2 neighbouring strips busy",       firstOf (2),            -1 },
         { "2 strips busy, first and last",    { first, last },        -1 },
-        { "16 strips busy",                   std::vector<int> (candidates.begin(), candidates.begin() + 16), -1 },
-        { "first and last, last muted by turns", { first, last },     last },
     };
+    for (const int n : { 3, lanes - 1, lanes })
+        if (n > 2 && (cases.size() == 4 || (int) cases.back().busy.size() < n))
+            cases.push_back ({ std::to_string (n) + " neighbouring strips busy", firstOf (n), -1 });
+    cases.push_back ({ "16 strips busy",                       firstOf (16),      -1 });
+    cases.push_back ({ "first and last, last muted by turns",  { first, last },   last });
 
     bool pass = true;
     std::string detail;
     for (const auto& c : cases)
     {
         configure (c.busy);
-        std::vector<bool> laneBusy ((size_t) lanes, false);
-        for (const int t : c.busy) laneBusy[(size_t) laneOf (t)] = true;
-        const int wantLanes  = (int) std::count (laneBusy.begin(), laneBusy.end(), true);
+        const int busy       = (int) c.busy.size();
+        const int wantLanes  = busy >= 2 ? std::min (busy, lanes) : 0;
         const int wantPooled = wantLanes < 2 ? 0 : c.toggled >= 0 ? numBlocks / 2 : numBlocks;
 
         const auto serialA = capture (0, false, c.toggled);
@@ -1483,27 +1518,168 @@ std::string AudioPipelineSelfTest::testPoolDispatchRule()
         const float ruleVsEvery  = maxAbsDiff (rule, every);
         const float ruleVsSerial = maxAbsDiff (rule, serialA);
 
+        const float tolerance = rule.pooled > 0 ? kReassocTol : 0.0f;
+        const int idleWakes = serialA.idleWakes + serialB.idleWakes + rule.idleWakes + every.idleWakes;
+        const int extraWakes = rule.extraWakes + every.extraWakes;
         const bool ok = serialA.pooled == 0 && serialB.pooled == 0
                      && rule.offRule == 0 && every.offRule == 0
                      && rule.pooled == wantPooled && every.pooled == numBlocks
-                     && rule.maxBusy == (int) c.busy.size() && rule.maxLanes == wantLanes
-                     && ruleVsEvery <= baseline
-                     && ruleVsSerial <= baseline + (rule.pooled > 0 ? kReassocTol : 0.0f)
+                     && rule.maxBusy == busy && rule.maxLanes == wantLanes && every.maxLanes == lanes
+                     && idleWakes == 0 && extraWakes == 0
+                     && ruleVsEvery <= baseline + tolerance
+                     && ruleVsSerial <= baseline + tolerance
                      && (c.busy.empty() || peak > 1.0e-3f);
         pass = pass && ok;
         detail += dusk::text::format (
-            "\n      %-36s busy %2d in %d lane(s), pool ran %2d/%d blocks (%d/%d when every block goes), "
-            "rule vs every-block %.3e, rule vs serial %.3e, serial vs serial %.3e%s",
+            "\n      %-36s busy %2d, on %d lane(s), pool ran %2d/%d blocks (%d/%d when every block goes), "
+            "idle workers woken %d, rule vs every-block %.3e, rule vs serial %.3e, serial vs serial %.3e%s",
             c.name.c_str(), rule.maxBusy, rule.maxLanes, rule.pooled, numBlocks, every.pooled, numBlocks,
-            (double) ruleVsEvery, (double) ruleVsSerial, (double) baseline,
+            idleWakes + extraWakes, (double) ruleVsEvery, (double) ruleVsSerial, (double) baseline,
             ok ? "" : "  <-- off the rule or off the every-block mix");
     }
     engine.setWorkerCountForTest (0);
 
     return dusk::text::format (
-        "%s Pool Dispatch Rule (%d workers): the pool runs a block only when its busy strips fall in 2+ lanes, "
-        "with the mix it makes when every block goes to it%s",
-        fmtPassFail (pass).c_str(), workers, detail.c_str());
+        "%s Pool Dispatch Rule (%d workers): the pool runs a block only when 2+ strips are busy, on one lane "
+        "each up to all %d, waking no other worker, with the mix it makes when every block goes to every lane%s",
+        fmtPassFail (pass).c_str(), workers, lanes, detail.c_str());
+}
+
+std::string AudioPipelineSelfTest::testHardwareInsertLeavesOffLanes()
+{
+    static constexpr int    bs = 256, numIn = 16, numOut = 4, sendL = 2, sendR = 3;
+    static constexpr int    holdBlocks = 4, numBlocks = 40;
+    static constexpr double sr = 48000.0;
+    static constexpr double kTwoPi = 6.283185307179586;
+
+    engine.prepareForSelfTest (sr, bs);
+    engine.setWorkerCountForTest (AudioEngine::getMaxWorkerCount());
+    const int workers = engine.activeDspWorkersForTest();
+    if (workers == 0)
+    {
+        engine.setWorkerCountForTest (0);
+        return "[PASS] Hardware Insert Leaves Off Lanes: SKIPPED (host < 3 cores: no worker pool)";
+    }
+    const int lanes = workers + 1;
+
+    // The first and last plain tracks sit in different lanes, and both send
+    // their hardware insert on one device output pair.
+    std::vector<int> plain;
+    for (int t = 0; t < Session::kNumTracks; ++t)
+        if (isPlainTrack (engine, session, t))
+            plain.push_back (t);
+    if (plain.size() < 2 || dspLaneOf (plain.front(), lanes) == dspLaneOf (plain.back(), lanes))
+    {
+        engine.setWorkerCountForTest (0);
+        return "[PASS] Hardware Insert Leaves Off Lanes: SKIPPED (no two plain tracks in different lanes)";
+    }
+    const std::array<int, 2> pair { plain.front(), plain.back() };
+
+    prepareCleanState();
+    for (int t = 0; t < Session::kNumTracks; ++t)
+    {
+        session.track (t).inputMonitor.store (false, std::memory_order_relaxed);
+        session.track (t).strip.mute.store (true, std::memory_order_relaxed);
+    }
+    std::array<int, 2> savedInsertMode {};
+    std::array<HardwareInsertRouting, 2> savedRouting {};
+    std::array<int, 2> savedAutomationMode {};
+    for (size_t i = 0; i < pair.size(); ++i)
+    {
+        const int t = pair[i];
+        auto& tr = session.track (t);
+        tr.mode.store         ((int) Track::Mode::Mono, std::memory_order_relaxed);
+        tr.inputSource.store  (t % numIn, std::memory_order_relaxed);
+        tr.inputMonitor.store (true, std::memory_order_relaxed);
+        tr.strip.mute.store   (false, std::memory_order_relaxed);
+        // Off, so a mute lane in Read mode cannot override the manual mute above.
+        savedAutomationMode[i] = tr.automationMode.load (std::memory_order_relaxed);
+        tr.automationMode.store ((int) AutomationMode::Off, std::memory_order_relaxed);
+        for (int b = 0; b < ChannelStripParams::kNumBuses; ++b)
+            tr.strip.busAssign[(size_t) b].store (false, std::memory_order_relaxed);
+        savedRouting[i] = *tr.hardwareInsert.routing.read();
+        tr.hardwareInsert.routing.publish (std::make_unique<HardwareInsertRouting> (
+            HardwareInsertRouting { sendL, sendR, 0, 1, 0, 0 }));
+        auto& strip = engine.getChannelStrip (t);
+        savedInsertMode[i] = strip.insertMode.load (std::memory_order_acquire);
+        strip.insertMode.store (ChannelStrip::kInsertHardware, std::memory_order_release);
+    }
+    session.recomputeRtCounters();
+
+    // Every block goes to the pool, so a strip the engine does not hold back
+    // runs in a worker lane.
+    engine.prepareForSelfTest (sr, bs);
+    engine.setWorkerCountForTest (workers);
+    engine.setPoolDispatchForcedForTest (true);
+
+    std::vector<std::vector<float>> ins ((size_t) numIn, std::vector<float> ((size_t) bs, 0.0f));
+    std::vector<const float*> inP ((size_t) numIn);
+    for (int ch = 0; ch < numIn; ++ch) inP[(size_t) ch] = ins[(size_t) ch].data();
+    std::vector<std::vector<float>> outs ((size_t) numOut, std::vector<float> ((size_t) bs, 0.0f));
+    std::vector<float*> outP ((size_t) numOut);
+    for (int ch = 0; ch < numOut; ++ch) outP[(size_t) ch] = outs[(size_t) ch].data();
+    duskstudio::device::CallbackContext ctx {};
+    const double inc = kTwoPi * (double) kToneHz / sr;
+
+    int pooled = 0, hardwareBlocks = 0, leavingBlocks = 0, inLanes = 0;
+    float sendPeak = 0.0f;
+    for (int b = 0; b < numBlocks; ++b)
+    {
+        if (b == holdBlocks)
+            for (const int t : pair)
+                engine.getChannelStrip (t).insertMode.store (ChannelStrip::kInsertEmpty,
+                                                             std::memory_order_release);
+        for (int ch = 0; ch < numIn; ++ch)
+            for (int s = 0; s < bs; ++s)
+                ins[(size_t) ch][(size_t) s] = kInputAmpMinusSixDb
+                    * (float) std::sin (inc * (double) (b * bs + s) + 0.13 * (double) ch);
+        for (auto& o : outs) std::fill (o.begin(), o.end(), 0.0f);
+
+        const auto before = engine.getPoolDispatchCount();
+        engine.audioDeviceIOCallback (inP.data(), numIn, outP.data(), numOut, bs, ctx);
+        pooled += engine.getPoolDispatchCount() != before ? 1 : 0;
+
+        for (const int t : pair)
+        {
+            const auto& strip = engine.getChannelStrip (t);
+            if (strip.getLastProcessedSamples() == 0
+                || strip.getActiveInsertMode() != ChannelStrip::kInsertHardware)
+                continue;
+            ++hardwareBlocks;
+            if (strip.insertMode.load (std::memory_order_acquire) != ChannelStrip::kInsertHardware)
+                ++leavingBlocks;
+            if (! engine.stripHeldOnAudioThreadForTest (t))
+                ++inLanes;
+        }
+        for (const int ch : { sendL, sendR })
+            for (const float v : outs[(size_t) ch])
+                sendPeak = std::max (sendPeak, std::abs (v));
+    }
+    engine.setPoolDispatchForcedForTest (false);
+    engine.setWorkerCountForTest (0);
+
+    bool settled = true;
+    for (size_t i = 0; i < pair.size(); ++i)
+    {
+        const int t = pair[i];
+        auto& strip = engine.getChannelStrip (t);
+        settled = settled && strip.getActiveInsertMode() == ChannelStrip::kInsertEmpty;
+        strip.insertMode.store (savedInsertMode[i], std::memory_order_release);
+        session.track (t).hardwareInsert.routing.publish (
+            std::make_unique<HardwareInsertRouting> (savedRouting[i]));
+        session.track (t).automationMode.store (savedAutomationMode[i], std::memory_order_relaxed);
+    }
+
+    const bool pass = inLanes == 0 && leavingBlocks > 0 && settled
+                   && pooled == numBlocks && sendPeak > 1.0e-3f;
+    return dusk::text::format (
+        "%s Hardware Insert Leaves Off Lanes (%d workers): tracks %d and %d in lanes %d and %d leave "
+        "their hardware inserts on one send pair with the pool taking every block; %d of %d blocks "
+        "that ran a hardware insert ran in a worker lane (want 0), %d ran it through the crossfade out, "
+        "pool ran %d/%d blocks, send peak %.3f%s",
+        fmtPassFail (pass).c_str(), workers, pair[0] + 1, pair[1] + 1,
+        dspLaneOf (pair[0], lanes), dspLaneOf (pair[1], lanes), inLanes, hardwareBlocks,
+        leavingBlocks, pooled, numBlocks, (double) sendPeak, settled ? "" : ", an insert never left");
 }
 
 std::string AudioPipelineSelfTest::testMidiPlayAlongMonitor()
@@ -2067,6 +2243,7 @@ std::string AudioPipelineSelfTest::runAll()
     report.push_back (testCompPerTrack());
     report.push_back (testParallelMatchesSerial());
     report.push_back (testPoolDispatchRule());
+    report.push_back (testHardwareInsertLeavesOffLanes());
     report.push_back (testMidiPlayAlongMonitor());
     report.push_back (testAudioPlayAlongSends());
     report.push_back (testLoopRecordTakeStacking());
@@ -2279,6 +2456,22 @@ std::string AudioPipelineSelfTest::runPerfBenchmark (const std::string& label,
     for (auto v : times) if (v > budgetUs) ++overruns;
     const double headroomPctMedian = 100.0 * (1.0 - median / budgetUs);
 
+    PerfRow row;
+    row.section = perfSection;
+    row.label = dusk::text::trim (label);
+    row.sampleRate = sampleRate;
+    row.blockSize = blockSize;
+    row.medianUs = median;
+    row.p95Us = p95;
+    row.p99Us = p99;
+    row.maxUs = maxV;
+    row.minUs = minV;
+    row.budgetUs = budgetUs;
+    row.overruns = overruns;
+    row.blocks = (int) times.size();
+    row.pooled = pooled;
+    perfRows.push_back (std::move (row));
+
     return dusk::text::format (
         "%s %s  median=%.1f us  p95=%.1f us  p99=%.1f us  max=%.1f us  min=%.1f us  "
         "(budget=%.1f us, headroom@median=%.1f%%, overruns=%d/%d, pooled=%d/%d)",
@@ -2290,9 +2483,30 @@ std::string AudioPipelineSelfTest::runPerfBenchmark (const std::string& label,
         pooled, (int) times.size());
 }
 
+std::string AudioPipelineSelfTest::perfRowsJson() const
+{
+    auto rows = dusk::json::Json::array();
+    for (const auto& r : perfRows)
+        rows.push_back ({ { "section", r.section },     { "label", r.label },
+                          { "sample_rate", r.sampleRate }, { "block_size", r.blockSize },
+                          { "median_us", r.medianUs },  { "p95_us", r.p95Us },
+                          { "p99_us", r.p99Us },        { "max_us", r.maxUs },
+                          { "min_us", r.minUs },        { "budget_us", r.budgetUs },
+                          { "overruns", r.overruns },   { "blocks", r.blocks },
+                          { "pooled", r.pooled } });
+    return dusk::json::Json { { "suite", "engine-perf" }, { "version", 1 }, { "rows", std::move (rows) } }
+        .dump (1) + "\n";
+}
+
 std::string AudioPipelineSelfTest::runPerfSuite()
 {
+    perfRows.clear();
     std::vector<std::string> report;
+    const auto beginSection = [&] (const std::string& name)
+    {
+        report.push_back ("--- " + name + " ---");
+        perfSection = dusk::text::trim (name);
+    };
     report.push_back ("=== Dusk Studio Engine Perf Benchmark ===");
     report.push_back ("Time: " + juce::Time::getCurrentTime().toString (true, true).toStdString());
     report.push_back ("Measures pure-engine callback wall time across configs.");
@@ -2323,7 +2537,7 @@ std::string AudioPipelineSelfTest::runPerfSuite()
 
     for (const auto& cfg : configs)
     {
-        report.push_back (std::string ("--- ") + cfg.label + " ---");
+        beginSection (cfg.label);
         report.push_back (runPerfBenchmark ("idle (1 track, EQ off, comp off)            ",
                                        cfg.sr, cfg.bs, 1, false, false, false, /*ox*/ 1,
                                        warm, meas));
@@ -2359,7 +2573,7 @@ std::string AudioPipelineSelfTest::runPerfSuite()
     const int parW = std::max (0, std::min (juce::SystemStats::getNumCpus() - 2, 15));
     if (parW > 0)
     {
-        report.push_back ("--- Multicore scaling (48k/256, 16ch + EQ + comp @1x) ---");
+        beginSection ("Multicore scaling (48k/256, 16ch + EQ + comp @1x)");
         report.push_back (runPerfBenchmark ("serial (0 workers)                          ",
                                        48000.0, 256, 16, true, true, false, /*ox*/ 1,
                                        warm, meas, /*workers*/ 0));
@@ -2371,10 +2585,12 @@ std::string AudioPipelineSelfTest::runPerfSuite()
         report.push_back ("  (divide serial median by parallel median for the speedup)");
         report.push_back ("");
 
-        // One busy strip, or two in the same lane, keep a block off the pool.
-        // The every-block rows are what waking the pool for them costs. The
-        // two strips are the first two tracks of the first lane that holds
-        // two, as the partition of the 24 tracks over this many lanes falls.
+        // One busy strip keeps a block off the pool; two run on two lanes,
+        // with one worker woken. The every-block rows wake every lane, each
+        // running its own range of tracks. The two strips are the first two
+        // tracks of the first of those ranges that holds two. Before the pool
+        // ran one lane per busy strip they shared a lane; the labels still
+        // say so, as recorded perf rows are matched by label.
         const auto padded = [] (std::string label)
         {
             label.resize (std::max<size_t> (label.size(), 44), ' ');
@@ -2390,8 +2606,8 @@ std::string AudioPipelineSelfTest::runPerfSuite()
         const std::string pool = std::to_string (parW) + " worker" + (parW == 1 ? "" : "s");
         for (const int bs : { 256, 1024 })
         {
-            report.push_back ("--- Multicore with one or two busy strips (48k/" + std::to_string (bs)
-                              + ", EQ + comp @1x) ---");
+            beginSection ("Multicore with one or two busy strips (48k/" + std::to_string (bs)
+                          + ", EQ + comp @1x)");
             for (const int busy : { 1, 2 })
             {
                 const std::string strips = busy == 1 ? "1 strip, " : "2 strips in one lane, ";

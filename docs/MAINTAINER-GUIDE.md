@@ -216,6 +216,7 @@ After binding, the audio thread reads parameters straight from the session's ato
 | **Playback prefetch** | `ReaderFillPool` workers in `PlaybackEngine` | read WAVs ahead of the playhead | — |
 | **Record disk** | `DuskRecDrain`, the `WriterDrainPool` in `RecordManager` | drain each take's write ring to disk, every 2 ms while a take is registered; with none it sleeps until one is | — |
 | **MIDI out pump** | `DuskMidiOut`, the pump in `MidiOutputBank` | drain the MIDI-out queue into the backend's send, which can block, so it cannot run on the audio thread; every 1 ms while an output is open, and with none it sleeps until one opens | — |
+| **LV2 worker** | `DuskLv2Worker`, one per loaded LV2 plug-in with a worker interface (`Lv2Worker`) | run the plug-in's `work()` for each request it queued and hand the replies to the next block; with nothing queued it sleeps until a request is, woken through `dusk::RtWakeEvent`, which the audio thread may signal | — |
 
 Cross-thread state is *always* `std::atomic` or a lock-free FIFO. Metering atomics use `memory_order_relaxed`. Flags that gate audio reads of newly-published data (automation mode, swapped plugin pointer) use `release` on the writer and `acquire` on the audio reader. This is the single subtlest thing in the codebase — when in doubt, find an existing pattern (PluginSlot's swap, RecordManager's in-flight counter) and copy its ordering exactly.
 
@@ -365,13 +366,17 @@ To add one: drop `tests/<unit>_<aspect>.cpp` following [tests/smoke_brickwall_li
 ```bash
 cmake -S . -B build-asan -DDUSKSTUDIO_ENABLE_ASAN=ON -DDUSKSTUDIO_BUILD_TESTS=ON   # use-after-free, overflow
 cmake -S . -B build-tsan -DDUSKSTUDIO_ENABLE_TSAN=ON -DDUSKSTUDIO_BUILD_TESTS=ON   # data races (mutually exclusive with ASan)
+CC=clang CXX=clang++ cmake -S . -B build-rtsan -DCMAKE_BUILD_TYPE=Release \
+    -DDUSKSTUDIO_ENABLE_RTSAN=ON -DDUSKSTUDIO_BUILD_TESTS=ON                     # real-time violations (Clang 20+ only)
 ```
 
 TSan is the one that catches "I forgot this cross-thread field should be atomic" — the most common real bug class here.
 
+RTSan (Clang's RealtimeSanitizer) checks the audio thread rules at run time. A function declared `DUSK_RT_NONBLOCKING` ([src/foundation/RtAttributes.h](../src/foundation/RtAttributes.h)) puts its thread in a real-time context for the length of the call; today that is `AudioEngine::audioDeviceIOCallback` and `AudioEngine::processStripLane`, the job each Multicore DSP lane runs. Any allocation, lock, blocking syscall or file I/O under them is reported with its stack. Only the app enters the callback, so RTSan runs the app (the self-test and the headless scenarios, see Part 9b), not the Catch2 binary. A wait the engine makes on purpose carries a `dusk::rt::ScopedBlockingAllowed` with a one-line reason, and nothing else is exempt: the pool's join, the out-of-process plug-in's futex wake and reply wait, an offline render's wait for an LV2 worker's replies, and the device-loss path (`audioDeviceStopped`, `audioDeviceError`), which a backend calls on its device thread. Reports from code Dusk Studio does not own yet are hidden only through `tools/rtsan-suppressions.txt`, one line per issue (Part 9b). GCC and MSVC builds see none of it.
+
 ### CI
 
-`.github/workflows/` builds Release on Linux (amd64 + arm64), macOS, and Windows, runs the Catch2 suite via ctest, and runs ASan/TSan variants on Linux. If CI is red and local is green, it's almost always a dependency-discovery flag difference (`DUSKSTUDIO_SKIP_FORK_CHECK`, explicit `JUCE_PATH`/`DUSK_PLUGINS_PATH`).
+`.github/workflows/` builds Release on Linux (amd64 + arm64), macOS, and Windows, runs the Catch2 suite via ctest, and runs ASan/TSan variants on Linux, and an RTSan build of the app through the self-test and the headless scenarios. If CI is red and local is green, it's almost always a dependency-discovery flag difference (`DUSKSTUDIO_SKIP_FORK_CHECK`, explicit `JUCE_PATH`/`DUSK_PLUGINS_PATH`).
 
 ---
 
@@ -467,7 +472,7 @@ leg prompts, and each one either recreates its inputs or checks them.
 
 ```bash
 scripts/regress.sh                       # linux (the default target)
-scripts/regress.sh linux --perf          # plus the headless engine perf suite
+scripts/regress.sh linux --perf          # plus the engine perf suite and its ratchet
 scripts/regress.sh linux --vst3 ~/.vst3/Multi-Q.vst3
 scripts/regress.sh linux --scenarios-only
 scripts/regress.sh linux --tarball /path/to/dusk-studio-X.Y.Z-Linux-x86_64.tar.xz
@@ -708,8 +713,10 @@ which `mac.sh` hands a package run to, with the window-activation cases in
 `mac-window-activation.sh`) over the shared leg bookkeeping in
 `scripts/regress/common.sh`, the private-display plumbing in
 `scripts/regress/xvfb.sh`, the scenario legs in
-`scripts/regress/scenarios.sh` and the idle wake-up leg in
-`scripts/regress/idle-wakeups.sh`, plus the guest-side helpers in
+`scripts/regress/scenarios.sh`, the idle wake-up leg in
+`scripts/regress/idle-wakeups.sh`, the perf leg in
+`scripts/regress/perf-ratchet.sh` and the RTSan legs in
+`scripts/regress/rtsan.sh`, plus the guest-side helpers in
 `scripts/regress/windows/` (the source leg's in `scripts/regress/windows/source/`)
 and the Screen Sharing helper in `scripts/regress/mac/`.
 
@@ -729,7 +736,8 @@ PipeWire.
 | `selftest-xvfb` | `scripts/run-selftest-xvfb.sh` - the headless audio self-test on a private X display, with `DUSKSTUDIO_CLAP_STATE_FIXTURE` pointing at the multi-bus CLAP fixture when `build-tests/` has it, so the clone-track leg runs instead of skipping. |
 | `ipc-selftest` | `DUSKSTUDIO_RUN_IPC_SELFTEST=1`: the shm + futex round-trip against the `dusk-studio-plugin-host` stub. |
 | `ipc-host-test` | `DUSKSTUDIO_IPC_HOST_TEST=<plugin>`: a real plugin loaded out-of-process, 1000 stereo blocks, signal asserted modified. Uses `--vst3`, else the first `~/.vst3/*.vst3`; `SKIP` when there is none. |
-| `perf-suite` | `DUSKSTUDIO_RUN_PERF_TEST=1` across the (rate, buffer, load) matrix. Off unless `--perf`. |
+| `perf-suite` | `DUSKSTUDIO_RUN_PERF_TEST=1` across the (rate, buffer, load) matrix, three runs, each row's lowest median held to `tools/perf-ratchet.tsv`. Fails on a row more than 10% and more than 5 us over its recorded value that stays there through up to two more runs, or on one the ratchet does not list. On a host other than the one the ratchet names, the suite runs once and the leg is `SKIP`. Off unless `--perf`; not in CI. See "The perf ratchet" below. |
+| `rtsan-build`, `rtsan-selftest`, `rtsan-scenarios` | the app built with Clang's RealtimeSanitizer in `build-rtsan/`, then the self-test and `DUSKSTUDIO_RUN_SCENARIOS=all` on it, on the private null PipeWire graph when it starts. Each run leg passes as its plain twin does and adds a failing `rtsan-selftest:reports` or `rtsan-scenarios:reports` row, with the reports printed, when RTSan reported anything `tools/rtsan-suppressions.txt` does not hide. Off unless `--rtsan`; source mode only. See "The RTSan legs" below. |
 | `scenario-fixtures` | every logical fixture the scenarios name resolves under `DUSKSTUDIO_FIXTURE_DIR`; `SKIP` naming the ones that do not. |
 | `scenarios-headless` | `DUSKSTUDIO_RUN_SCENARIOS=all`: the in-app scenario suite. Passes only on exit 0, no `[FAIL]` line, and the terminal `=== scenarios: ` summary - a crash after the last case must not pass on a lucky exit code. Skipped cases go into the leg's note. |
 | `bb-handoff`, `bb-crash-relaunch`, `bb-no-runtime-dir`, `bb-damaged-recent`, `bb-clean-quit`, `bb-window-close`, `bb-quit-twice`, `bb-quit-during-mixdown`, `bb-quit-save-rate`, `bb-oop-child-kill`, `bb-oop-quit-during-load` | the black-box legs: real app processes spawned, killed and read back through their stderr. See "Scenario legs" below. |
@@ -770,6 +778,47 @@ because the pointer it adds would stay on that display for the legs after it.
 `DUSK_REGRESS_BUILD_LOCK=/path/to/lockfile` wraps the two compile legs in
 `flock` when something else may be building the same tree.
 
+#### The perf ratchet
+
+`perf-suite` runs `scripts/regress/perf-ratchet.sh`. The app runs the suite
+`DUSK_PERF_RUNS` times (default 3) on a private Xvfb display and, when it
+starts, the private null PipeWire graph; the suite drives the engine's
+callback itself, so the device only has to open. Each run writes its rows as
+JSON to the file `DUSKSTUDIO_PERF_JSON` names (section, label, rate, block
+size, median, p95, p99, max and min in microseconds, overruns and pooled
+blocks) beside the text table it prints. A binary from before the JSON, such as
+0.16.1, is read from its table instead. A row is named
+`<section> | <label>`, whitespace collapsed, and its value is the lowest of its
+medians over the runs, because load on the machine only ever adds time.
+
+`tools/perf-ratchet.tsv` holds one `row<TAB>microseconds` record per line and
+a `#host` line naming the CPU and thread count it was measured on. Wall times
+are not comparable across machines, so on any other host the suite runs once,
+to show it completes, and the leg is `SKIP`; with `--save` it runs the full
+count there and writes the values first, which is how a ratchet for another
+machine starts. CI runners are too noisy for it and never run it. A row fails when it is more than 10% and more than 5 us over
+its recorded value, so a short row's jitter and a long row's few per cent both
+pass; a row the ratchet does not list fails, and a recorded row the suite no
+longer runs is a note. When the only failures are slow rows, the suite runs
+again, up to `DUSK_PERF_CONFIRM` more times (default 2), and the rows are
+judged over every run so far: one run disturbed by the machine is not a
+regression, and a regression stays slow. The rows that spread the most are the
+ones the DSP pool runs, which need seven free cores on the eight-thread dev
+box, so the leg prints the load average before it starts and before each
+extra run; a busy win11 guest alone can push them past the line. The table
+shows each row's recorded and measured value, the change in microseconds and
+per cent, the spread between the runs' medians,
+and the row furthest over. The first values are 0.16.1's (`07571ad8`) on the
+dev box, for the rows 0.16.1 has; the rows it does not have were added from the
+release candidate.
+
+`bash scripts/regress/perf-ratchet.sh --update` lowers each value the run beat
+and drops the rows the suite no longer has. It never raises a value or adds a
+row: that is a hand edit, and the change says why. `--app <binary>` measures
+another build, `--runs <n>` sets the run count, `--ratchet <file>` judges
+against another file, and `--save <file>` writes this run's values in the
+ratchet's format, for comparing two builds or for the hand edit.
+
 A fixture that does not resolve is reported, never passed over.
 `scenario-fixtures` reads the logical fixture table from
 `src/engine/scenario/ScenarioFixtures.cpp` and checks each name against
@@ -778,6 +827,43 @@ names it, because some cases treat a fixture as optional and pass with that
 part left out. A case the suite skipped with `missing fixture:` also gets a
 `SKIP` row of its own, `scenarios-headless:fixtures` or
 `scenarios-gui:fixtures`, under the leg that ran it.
+
+#### The RTSan legs
+
+`--rtsan` runs `scripts/regress/rtsan.sh`, which also runs alone:
+`bash scripts/regress/rtsan.sh`, or `--no-build` to run the app already in
+`build-rtsan/` (`DUSK_RTSAN_TREE` names another tree). The first run configures
+the tree with `CC=clang CXX=clang++`, Release (the option adds `-g`; the
+scenarios look for the VST3 fixtures under `VST3/Release/`), the fixture plug-in
+targets and `-DDUSKSTUDIO_ENABLE_RTSAN=ON`, which needs Clang 20 or later with
+its RTSan runtime; `rtsan-build` is `SKIP` without clang. The build is the
+whole app, so allow for a cold build the first time; later runs only rebuild
+what changed.
+
+The app runs with `RTSAN_OPTIONS=halt_on_error=false`, so one run prints every
+distinct report instead of stopping at the first. A report is a real-time
+violation in the callback or a DSP lane: fix it, or, if the wait is deliberate,
+exempt that one scope with `dusk::rt::ScopedBlockingAllowed` and a reason, as
+Part 5's sanitizer notes describe. The only reports hidden are the call stacks
+`tools/rtsan-suppressions.txt` names: one `call-stack-contains:` line per stack,
+anchored with `^` to one function's demangled name, under a comment naming the
+issue that fixes it. A line goes when its issue is fixed, and a new one needs
+an issue of its own. The lines match symbolized stacks, so the legs need
+`llvm-symbolizer` on `PATH`, or addr2line, which RTSan then uses
+(`allow_addr2line`); with neither they fail. Checking a stack against them
+takes time inside the callback, so an RTSan build leaves the plug-in slot's
+time-budget watchdog off: it would otherwise bypass a hosted plug-in for time
+the sanitizer spent.
+`engine.rt_callback_full_load` is the case written for it: the Multicore DSP
+pool taking every block while one track records and CLAP, VST3 and LV2 fixture
+instruments play region MIDI and live keys on tracks in different lanes.
+
+The CI job `rtsan-app` in `linux-sanitizer.yml` runs the same two on the
+ubuntu-26.04 runner, with the same suppressions, and fails on any report
+outside them; it stops before the build when `llvm-symbolizer` is missing. Two
+lines stand today: the mastering chain's multiband compressor (donor
+Multi-Comp) allocates every block (#1045), and JUCE's VST3 host, the standard
+`PluginSlot` path, locks on the audio thread (#1046).
 
 #### Reader pool measurements
 
@@ -1012,7 +1098,11 @@ thread and the DSP pool wake every block, and their ceilings follow the
 quantum instead of pretending to be zero. A name the budget does not list
 fails, as does a name over its ceiling, and that includes a thread that ended
 inside the window; a line that does not parse fails the whole check. A name well under its ceiling passes with a `hint:` naming the
-lower value. `bash scripts/regress/idle-wakeups.sh --update` lowers each
+lower value. The record `(non-device total)`, a name no thread can have since
+Linux thread names stop at 15 characters, caps the sum of every name with a
+per-second ceiling, so the whole app apart from the threads the audio clock
+drives; the table shows it as the `non-device` row, and `--update` lowers it
+like any other ceiling. `bash scripts/regress/idle-wakeups.sh --update` lowers each
 ceiling to the run plus headroom and drops names that did not run, and exits
 3 without touching the budget when a thread ended inside the window, since
 that sample cannot say whether its name still runs; it never raises a ceiling

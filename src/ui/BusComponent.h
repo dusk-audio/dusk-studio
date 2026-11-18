@@ -27,6 +27,10 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
     void mouseDown (const juce::MouseEvent& e) override;
+    void visibilityChanged() override;
+    // A stage switch changes only the console's visible flag, so ConsoleView
+    // passes its changes on here.
+    void refreshForShowState();
 
     // Shrinks the VU meter's vertical footprint when the tape TIMELINE
     // is expanded - frees pixels for the fader. Toggled by ConsoleView
@@ -61,6 +65,7 @@ private:
     int lastCompactCompOn = -1;
     juce::Colour lastBusColour;   // cached so the timer repaints on external colour change (undo)
     void timerCallback() override;
+    void syncShownView();
     void showColourMenu();
     void applyBusColour (juce::Colour c);
 

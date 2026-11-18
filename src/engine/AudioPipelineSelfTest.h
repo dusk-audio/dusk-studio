@@ -40,6 +40,10 @@ public:
     // compare against Reaper / Bitwig / Ardour at the same load.
     std::string runPerfSuite();
 
+    // The rows of the last runPerfSuite as JSON, for the perf ratchet
+    // (scripts/regress/perf-ratchet.sh). Times are in microseconds.
+    std::string perfRowsJson() const;
+
 private:
     struct Measurements
     {
@@ -121,7 +125,8 @@ private:
     std::string testCompHeavyGR();          // extreme settings: characterize harmonics at heavy GR
     std::string testCompPerTrack();         // all 16 tracks under Opto produce identical output
     std::string testParallelMatchesSerial(); // worker-pool mix == serial mix within float-reassoc tol
-    std::string testPoolDispatchRule();      // pool wakes only for busy strips in 2+ lanes; same mix as dispatching every block
+    std::string testPoolDispatchRule();      // pool wakes a lane per busy strip, none for 0 or 1; same mix as dispatching every lane
+    std::string testHardwareInsertLeavesOffLanes(); // a strip still running its hardware insert stays on the audio thread
     std::string testMidiPlayAlongMonitor();   // armed+IN MIDI track sounds live notes in Stopped AND Playing
     std::string testAudioPlayAlongSends();    // IN audio track feeds its aux send in Stopped AND Playing
     std::string testLoopRecordTakeStacking(); // one callback crosses loop seam into a second audio+MIDI take
@@ -141,6 +146,17 @@ private:
                                     int workerCount = -1,
                                     bool everyBlockToPool = false,
                                     int firstActiveTrack = 0);
+
+    struct PerfRow
+    {
+        std::string section, label;
+        double sampleRate = 0.0;
+        int blockSize = 0;
+        double medianUs = 0.0, p95Us = 0.0, p99Us = 0.0, maxUs = 0.0, minUs = 0.0, budgetUs = 0.0;
+        int overruns = 0, blocks = 0, pooled = 0;
+    };
+    std::vector<PerfRow> perfRows;
+    std::string perfSection;
 
     AudioEngine& engine;
     device::DeviceManager& deviceManager;

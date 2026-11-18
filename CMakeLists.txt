@@ -315,12 +315,47 @@ option(DUSKSTUDIO_ENABLE_ASAN "Enable AddressSanitizer + UBSan" OFF)
 
 option(DUSKSTUDIO_ENABLE_TSAN "Enable ThreadSanitizer (TSan)" OFF)
 
+option(DUSKSTUDIO_ENABLE_RTSAN "Enable RealtimeSanitizer (RTSan, Clang only)" OFF)
+
 if(DUSKSTUDIO_ENABLE_TSAN AND DUSKSTUDIO_ENABLE_ASAN)
     message(FATAL_ERROR
         "DUSKSTUDIO_ENABLE_TSAN and DUSKSTUDIO_ENABLE_ASAN are mutually "
         "exclusive - ThreadSanitizer and AddressSanitizer cannot share "
         "the same binary. Pick one for this configure, and run a "
         "separate build directory for the other.")
+endif()
+
+if(DUSKSTUDIO_ENABLE_RTSAN)
+    if(DUSKSTUDIO_ENABLE_ASAN OR DUSKSTUDIO_ENABLE_TSAN)
+        message(FATAL_ERROR
+            "DUSKSTUDIO_ENABLE_RTSAN cannot share a binary with ASan or TSan. "
+            "Configure a separate build directory for it.")
+    endif()
+    if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR NOT CMAKE_C_COMPILER_ID MATCHES "Clang"
+       OR CMAKE_CXX_SIMULATE_ID STREQUAL "MSVC")
+        message(FATAL_ERROR
+            "DUSKSTUDIO_ENABLE_RTSAN needs Clang for C and C++ "
+            "(CC=clang CXX=clang++); this configure has "
+            "${CMAKE_C_COMPILER_ID} and ${CMAKE_CXX_COMPILER_ID}.")
+    endif()
+    include(CheckCXXSourceCompiles)
+    set(CMAKE_REQUIRED_FLAGS "-fsanitize=realtime")
+    set(CMAKE_REQUIRED_LINK_OPTIONS "-fsanitize=realtime")
+    check_cxx_source_compiles(
+        "void f() [[clang::nonblocking]] {} int main() { f(); }"
+        DUSKSTUDIO_HAS_RTSAN_RUNTIME)
+    unset(CMAKE_REQUIRED_FLAGS)
+    unset(CMAKE_REQUIRED_LINK_OPTIONS)
+    if(NOT DUSKSTUDIO_HAS_RTSAN_RUNTIME)
+        message(FATAL_ERROR
+            "${CMAKE_CXX_COMPILER} cannot build and link with "
+            "-fsanitize=realtime. RTSan needs Clang 20 or later and its "
+            "sanitizer runtime (libclang_rt.rtsan; on Ubuntu the "
+            "libclang-rt-dev package).")
+    endif()
+    # The fast unwinder needs frame pointers for whole report stacks.
+    add_compile_options(-fsanitize=realtime -fno-omit-frame-pointer -g)
+    add_link_options(-fsanitize=realtime)
 endif()
 
 if(DUSKSTUDIO_ENABLE_ASAN AND NOT MSVC)
@@ -848,11 +883,13 @@ target_sources(DuskStudio PRIVATE
     src/DuskStudioApp.cpp
     src/foundation/Fft.cpp
     src/foundation/MessageThread.cpp
+    src/foundation/RtWakeEvent.cpp
     src/foundation/ThreadName.cpp
     src/foundation/UndoManager.cpp
     # Native CLAP sources are added below, gated by DUSKSTUDIO_HAS_NATIVE_CLAP.
     src/engine/AudioEngine.cpp
     src/engine/AudioWorkerPool.cpp
+    src/engine/RealtimeScheduling.cpp
     src/engine/BounceEngine.cpp
     src/engine/DpAligner.cpp
     src/engine/DpImporter.cpp
@@ -902,6 +939,7 @@ target_sources(DuskStudio PRIVATE
     src/engine/scenario/cases/device_clock_follow.cpp
     src/engine/scenario/cases/device_loss.cpp
     src/engine/scenario/cases/engine_muted_midi_track_skips_chain.cpp
+    src/engine/scenario/cases/engine_rt_callback_full_load.cpp
     src/engine/scenario/cases/import_smf_irregular.cpp
     src/engine/scenario/cases/lv2_file_state_inside_session.cpp
     src/engine/scenario/cases/lv2_large_store_timing_bound.cpp
@@ -1002,6 +1040,7 @@ target_sources(DuskStudio PRIVATE
     src/ui/scenario/cases/gui_audio_editor.cpp
     src/ui/scenario/cases/gui_audio_editor_keys.cpp
     src/ui/scenario/cases/gui_audio_takes.cpp
+    src/ui/scenario/cases/gui_idle_window.cpp
     src/ui/scenario/cases/gui_import_browser.cpp
     src/ui/scenario/cases/gui_keyboard_transport.cpp
     src/ui/scenario/cases/gui_mastering_bounce.cpp
@@ -1592,6 +1631,7 @@ if(_duskstudio_oop_enabled)
         src/engine/ipc/PluginHostMain.cpp
         src/engine/ipc/PluginHostXErrors.cpp
         src/engine/PluginDescriptor.cpp
+        src/engine/RealtimeScheduling.cpp
         src/foundation/MessageThread.cpp
         src/foundation/ThreadName.cpp
         ${_duskstudio_ipc_child_platform_sources})

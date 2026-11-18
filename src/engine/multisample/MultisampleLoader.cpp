@@ -3,7 +3,6 @@
 #include "../../foundation/ThreadName.h"
 
 #include <algorithm>
-#include <chrono>
 #include <exception>
 #include <utility>
 
@@ -29,11 +28,25 @@ MultisampleLoader::MultisampleLoader (PrimingFactory factory)
 {
 }
 
+// The flags the worker waits on change under the mutex, so a change cannot fall
+// between its check and its wait and leave it asleep.
 MultisampleLoader::~MultisampleLoader()
 {
-    stopping.store (true, std::memory_order_release);
+    {
+        std::lock_guard<std::mutex> lock (mutex);
+        stopping.store (true, std::memory_order_release);
+    }
     wake.notify_all();
     worker.join();
+}
+
+void MultisampleLoader::setPaused (bool value) noexcept
+{
+    {
+        std::lock_guard<std::mutex> lock (mutex);
+        paused.store (value, std::memory_order_release);
+    }
+    wake.notify_all();
 }
 
 void MultisampleLoader::submit (Request request)
@@ -154,7 +167,7 @@ void MultisampleLoader::run()
         std::uint64_t epoch = 0, ticket = 0;
         {
             std::unique_lock<std::mutex> lock (mutex);
-            wake.wait_for (lock, std::chrono::milliseconds (25), [this]
+            wake.wait (lock, [this]
                 { return stopping.load (std::memory_order_acquire)
                     || (! paused.load (std::memory_order_acquire) && ! requests.empty()); });
             if (stopping.load (std::memory_order_acquire)) break;
@@ -175,7 +188,7 @@ void MultisampleLoader::run()
                        && ! stopping.load (std::memory_order_acquire)
                        && cancelEpoch == epoch
                        && trackTickets[(std::size_t) request.trackIndex] == ticket)
-                    wake.wait_for (lock, std::chrono::milliseconds (25));
+                    wake.wait (lock);
                 cancelled = stopping.load (std::memory_order_acquire) || cancelEpoch != epoch
                     || trackTickets[(std::size_t) request.trackIndex] != ticket;
             }

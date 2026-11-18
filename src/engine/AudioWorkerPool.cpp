@@ -1,5 +1,8 @@
 #include "AudioWorkerPool.h"
+#include "RealtimeScheduling.h"
 #include "RtPriority.h"
+#include "../foundation/RtAttributes.h"
+#include "../foundation/RtWakeEvent.h"
 #include "../foundation/ThreadName.h"
 
 #include <algorithm>
@@ -13,74 +16,13 @@
  #include <unistd.h>
 #elif defined(__APPLE__)
  #include <CoreAudio/CoreAudio.h>
- #include <mach/mach.h>
- #include <mach/mach_time.h>
- #include <mach/thread_policy.h>
  #include <os/workgroup.h>
  #include <pthread.h>
-#elif defined(_WIN32)
- #ifndef NOMINMAX
-  #define NOMINMAX
- #endif
- #ifndef WIN32_LEAN_AND_MEAN
-  #define WIN32_LEAN_AND_MEAN
- #endif
- #include <windows.h>
 #endif
 
 namespace duskstudio
 {
-#if defined(_WIN32)
-namespace
-{
-// The WASAPI callback thread runs in the MMCSS "Pro Audio" task, which JUCE's
-// device thread joins. The workers that thread waits on every block have to
-// run in it too: at normal priority they share the cores with every other
-// normal thread, a software GL renderer's while an editor draws among them,
-// and the callback overruns waiting for its lanes. avrt.dll is loaded at run
-// time, as JUCE does, so nothing new is linked.
-struct ProAudioTask
-{
-    HMODULE avrt = nullptr;
-    HANDLE  task = nullptr;
-};
-
-// GetProcAddress hands back a generic pointer; going through void (*)() is the
-// cast compilers accept to any other function type without a warning.
-template <typename Function>
-Function avrtFunction (HMODULE avrt, const char* name) noexcept
-{
-    return reinterpret_cast<Function> (reinterpret_cast<void (*)()> (GetProcAddress (avrt, name)));
-}
-
-ProAudioTask joinProAudioTask() noexcept
-{
-    using Join = HANDLE (WINAPI*) (LPCWSTR, LPDWORD);
-    ProAudioTask joined;
-    joined.avrt = LoadLibraryW (L"avrt.dll");
-    if (joined.avrt != nullptr)
-        if (const auto join = avrtFunction<Join> (joined.avrt, "AvSetMmThreadCharacteristicsW"))
-        {
-            DWORD taskIndex = 0;
-            joined.task = join (L"Pro Audio", &taskIndex);
-        }
-    // Without MMCSS, still above every normal-priority thread.
-    if (joined.task == nullptr)
-        SetThreadPriority (GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
-    return joined;
-}
-
-void leaveProAudioTask (const ProAudioTask& joined) noexcept
-{
-    using Leave = BOOL (WINAPI*) (HANDLE);
-    if (joined.task != nullptr)
-        if (const auto leave = avrtFunction<Leave> (joined.avrt, "AvRevertMmThreadCharacteristics"))
-            leave (joined.task);
-    if (joined.avrt != nullptr)
-        FreeLibrary (joined.avrt);
-}
-} // namespace
-#elif defined(__APPLE__)
+#if defined(__APPLE__)
 namespace
 {
 // The workgroup CoreAudio runs the named device's IO thread in, retained, or
@@ -136,29 +78,6 @@ os_workgroup_t copyIoWorkgroup (const std::string& deviceName) noexcept
         return nullptr;
     return workgroup;
 }
-
-// Realtime time-constraint policy for the calling thread, as CoreAudio gives
-// its IO thread: woken once a period and allowed to compute through it. The
-// kernel refuses a computation much past 50 ms, which only a very long block
-// reaches.
-void takeTimeConstraint (double periodSeconds) noexcept
-{
-    mach_timebase_info_data_t timebase {};
-    if (periodSeconds <= 0.0 || mach_timebase_info (&timebase) != KERN_SUCCESS || timebase.numer == 0)
-        return;
-    const double ticksPerSecond = 1.0e9 * (double) timebase.denom / (double) timebase.numer;
-    const auto ticks = [ticksPerSecond] (double seconds)
-    {
-        return (uint32_t) std::min (seconds * ticksPerSecond, 4.0e9);
-    };
-    thread_time_constraint_policy_data_t policy {};
-    policy.period      = ticks (periodSeconds);
-    policy.computation = ticks (std::min (periodSeconds, 0.05));
-    policy.constraint  = ticks (periodSeconds);
-    policy.preemptible = 1;
-    thread_policy_set (pthread_mach_thread_np (pthread_self()), THREAD_TIME_CONSTRAINT_POLICY,
-                       (thread_policy_t) &policy, THREAD_TIME_CONSTRAINT_POLICY_COUNT);
-}
 } // namespace
 #endif
 
@@ -181,7 +100,12 @@ struct AudioWorkerPool::Worker
        #if defined(__linux__)
         threadId.store ((std::int64_t) syscall (SYS_gettid), std::memory_order_relaxed);
        #elif defined(_WIN32)
-        const auto proAudio = joinProAudioTask();
+        // The WASAPI callback thread runs in the MMCSS "Pro Audio" task, which
+        // JUCE's device thread joins. The workers it waits on every block run
+        // in it too: at normal priority they share the cores with every other
+        // normal thread, a software GL renderer's while an editor draws among
+        // them, and the callback overruns waiting for its lanes.
+        const auto proAudio = rt::joinProAudioTask();
        #endif
         gotRealtime.store (realtime, std::memory_order_relaxed);
         takeDeadline();
@@ -189,7 +113,7 @@ struct AudioWorkerPool::Worker
         runLanes();
         leaveDeadline();
        #if defined(_WIN32)
-        leaveProAudioTask (proAudio);
+        rt::leaveProAudioTask (proAudio);
        #endif
     }
 
@@ -202,7 +126,7 @@ struct AudioWorkerPool::Worker
        #if defined(__APPLE__)
         leaveDeadline();
         if (pool.deadlineSampleRate > 0.0 && pool.deadlineBlockSize > 0)
-            takeTimeConstraint ((double) pool.deadlineBlockSize / pool.deadlineSampleRate);
+            (void) rt::takeTimeConstraint (pthread_self(), (double) pool.deadlineBlockSize / pool.deadlineSampleRate);
         auto* const workgroup = static_cast<os_workgroup_t> (pool.deadlineWorkgroup);
         if (workgroup != nullptr && os_workgroup_join (workgroup, &joinToken) == 0)
         {
@@ -236,24 +160,31 @@ struct AudioWorkerPool::Worker
             if (shouldExit.load (std::memory_order_acquire)
                 || pool.quit.load (std::memory_order_acquire))
                 break;
-
-            const auto s = pool.seq.load (std::memory_order_acquire);
-            if (s == acked.load (std::memory_order_relaxed))
-                continue;   // stale latched wake from an already-acked epoch
-
-            // A wake from quiesce() must NOT run the job: the lane inputs
-            // (trackJobs device-input pointers) may already be freed by the
-            // device close path. Ack the epoch so quiesce can complete. Nor
-            // may a parked lane, past the count, run one.
-            const int active = pool.numWorkers.load (std::memory_order_relaxed);
-            if (! pool.quiescing.load (std::memory_order_acquire) && lane < active)
-            {
-                pool.job_ (lane);
-                if (pool.done.fetch_add (1, std::memory_order_release) + 1 == active)
-                    pool.completion.signal();
-            }
-            acked.store (s, std::memory_order_release);
+            takeDispatch();
         }
+    }
+
+    void takeDispatch() noexcept
+    {
+        // An epoch already acked is a stale latched wake. A wake from
+        // quiesce() must NOT run the job: the lane inputs (trackJobs
+        // device-input pointers) may already be freed by the device close
+        // path. Nor may a lane the epoch did not dispatch, parked ones
+        // included; the count comes from the same word as the epoch.
+        const auto word = pool.dispatchWord.load (std::memory_order_acquire);
+        const auto epoch = epochOf (word);
+        const bool fresh = epoch != acked.load (std::memory_order_relaxed);
+        const int dispatched = lanesOf (word);
+        if (fresh && lane < dispatched && ! pool.quiescing.load (std::memory_order_acquire))
+        {
+            pool.job_ (lane);
+            if (pool.done.fetch_add (1, std::memory_order_release) + 1 == dispatched)
+                pool.completion.signal();
+        }
+        wakes.fetch_add (1, std::memory_order_relaxed);
+        // Acked even when not run, so quiesce() can complete.
+        if (fresh)
+            acked.store (epoch, std::memory_order_release);
     }
 
     void requestExitAndWake() noexcept
@@ -268,8 +199,9 @@ struct AudioWorkerPool::Worker
     int                   lane;
     int                   rtJucePriority;
     std::thread           th;
-    dusk::AutoResetEvent  wake;             // auto-reset
-    std::atomic<uint32_t> acked { 0 };
+    dusk::RtWakeEvent     wake;
+    std::atomic<std::uint64_t> acked { 0 };
+    std::atomic<uint32_t> wakes { 0 };      // test-only count
     std::atomic<bool>     shouldExit { false };
 
     // Published once the thread has set up its scheduling and is about to
@@ -316,7 +248,7 @@ void AudioWorkerPool::start (int workers, std::function<void (int)> job, int rtJ
     {
         auto w = std::make_unique<Worker> (*this, (int) lane, rtJucePriority);
         // Born at the current epoch: nothing dispatched before it is its to run.
-        w->acked.store (seq.load (std::memory_order_acquire), std::memory_order_relaxed);
+        w->acked.store (epochOf (dispatchWord.load (std::memory_order_acquire)), std::memory_order_relaxed);
         w->start();
         workers_.push_back (std::move (w));
     }
@@ -420,7 +352,14 @@ void AudioWorkerPool::stop()
     numWorkers.store (0, std::memory_order_relaxed);
 }
 
-void AudioWorkerPool::runBlock() noexcept
+void AudioWorkerPool::publishDispatch (int lanes) noexcept
+{
+    done.store (0, std::memory_order_release);
+    const auto epoch = epochOf (dispatchWord.load (std::memory_order_relaxed)) + 1;
+    dispatchWord.store ((epoch << 16) | (std::uint16_t) lanes, std::memory_order_release);
+}
+
+void AudioWorkerPool::runBlock (int workerLanes) noexcept
 {
     const int active = numWorkers.load (std::memory_order_relaxed);
     if (active <= 0)
@@ -428,13 +367,20 @@ void AudioWorkerPool::runBlock() noexcept
         if (job_) job_ (0);           // inactive: caller is the only lane
         return;
     }
+    const int lanes = std::clamp (workerLanes, 0, active);
+    if (lanes == 0)
+    {
+        job_ (active);
+        return;
+    }
 
-    done.store (0, std::memory_order_release);
-    seq.fetch_add (1, std::memory_order_release);
-    for (int lane = 0; lane < active; ++lane)
-        workers_[(std::size_t) lane]->wake.signal();   // dispatch lanes [0, active)
+    publishDispatch (lanes);
+    for (int lane = 0; lane < lanes; ++lane)
+        workers_[(std::size_t) lane]->wake.signal();
 
     job_ (active);                    // caller runs the last lane
+
+    const dusk::rt::ScopedBlockingAllowed join { "pool join: bounded yield spin, then a wait for the slowest lane" };
 
     // Fast path: workers usually finish within a short spin. Past that, BLOCK
     // on the completion event - never spin unboundedly: sched_yield from a
@@ -445,13 +391,13 @@ void AudioWorkerPool::runBlock() noexcept
     // bounds any stale-signal consumption.
     for (int i = 0; i < 1024; ++i)
     {
-        if (done.load (std::memory_order_acquire) >= active)
+        if (done.load (std::memory_order_acquire) >= lanes)
             return;
         std::this_thread::yield();
     }
     int waitedMs = 0;
     joinBlocked.store (true, std::memory_order_relaxed);
-    while (done.load (std::memory_order_acquire) < active)
+    while (done.load (std::memory_order_acquire) < lanes)
     {
         completion.wait (1);
         // Stall diagnostic. A worker wedged inside a plugin's processBlock holds
@@ -472,7 +418,7 @@ void AudioWorkerPool::quiesce()
     if (workers_.empty())
         return;
 
-    const auto s = seq.load (std::memory_order_acquire);
+    const auto s = epochOf (dispatchWord.load (std::memory_order_acquire));
     quiescing.store (true, std::memory_order_release);
 
     // Workers whose dispatch signal was delivered before their dispatcher died
@@ -497,14 +443,23 @@ void AudioWorkerPool::dispatchForTest (int signalOnlyFirst, bool killedInJoin)
     if (active <= 0)
         return;
 
-    done.store (0, std::memory_order_release);
-    seq.fetch_add (1, std::memory_order_release);
+    publishDispatch (active);
     const int n = signalOnlyFirst < 0 ? active
                                       : std::min (signalOnlyFirst, active);
     for (int i = 0; i < n; ++i)
         workers_[(size_t) i]->wake.signal();
     if (killedInJoin)
         joinBlocked.store (true, std::memory_order_relaxed);
+}
+
+void AudioWorkerPool::wakeLaneForTest (int lane) noexcept
+{
+    workers_[(std::size_t) lane]->wake.signal();
+}
+
+std::uint32_t AudioWorkerPool::workerWakeCountForTest (int lane) const noexcept
+{
+    return workers_[(std::size_t) lane]->wakes.load (std::memory_order_relaxed);
 }
 
 std::vector<std::int64_t> AudioWorkerPool::workerThreadIdsForTest() const

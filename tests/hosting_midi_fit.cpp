@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <juce_audio_basics/juce_audio_basics.h>
 
+#include "engine/JuceCompat.h"
 #include "engine/hosting/MidiFit.h"
 #include "engine/hosting/StandardVst3Midi.h"
 #include "support/AllocationObserver.h"
@@ -326,7 +327,7 @@ TEST_CASE ("standard VST3 panic expansion preserves bounded note releases", "[mi
             const auto* storage = block.data.begin();
             {
                 duskstudio::test::AllocationObserver observer;
-                adapter.rewrite (block);
+                duskstudio::juce_compat::copyMidiInOrder (adapter.fit (block), block);
                 allocations = observer.count();
             }
             CHECK (allocations == 0);

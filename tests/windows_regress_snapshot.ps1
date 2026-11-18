@@ -1,6 +1,8 @@
 param([string]$LibraryPath = (Join-Path $PSScriptRoot '../scripts/regress/windows/lib.ps1'),
+      [string]$InlineLibraryPath = (Join-Path $PSScriptRoot '../scripts/regress/windows/source/inline-lib.ps1'),
       [string]$ScenarioPath = (Join-Path $PSScriptRoot '../scripts/regress/windows/scenarios.ps1'))
 
+. $InlineLibraryPath
 . $LibraryPath
 $ErrorActionPreference = 'Stop'
 $snapshotRoot = Join-Path ([IO.Path]::GetFullPath((Get-Item -LiteralPath $env:TEMP).FullName)) ('dusk-regress-snapshot-' + [Guid]::NewGuid().ToString('N'))
@@ -67,6 +69,34 @@ try {
     })
     Assert-Snapshot (($beforeTemp -join "`n") -ne ($afterTemp -join "`n")) `
         'The snapshot missed a real change in a watched temporary directory'
+
+    # Past MAX_PATH, where Get-ChildItem in PowerShell 5.1 stops without an error.
+    $deepRoot = Join-Path $watched 'deep'
+    $deep = $deepRoot
+    while ($deep.Length -lt 300) { $deep = Join-Path $deep ('d' * 48) }
+    $deepFile = Join-Path $deep 'changed'
+    try {
+        [void][IO.Directory]::CreateDirectory('\\?\' + $deep)
+        [IO.File]::WriteAllText('\\?\' + $deepFile, 'a')
+        Assert-Snapshot (@(Get-OwnedSnapshot | Where-Object { $_.StartsWith($deepFile + '|1|') }).Count -eq 1) `
+            'The snapshot missed a file past MAX_PATH'
+        [IO.File]::WriteAllText('\\?\' + $deepFile, ('b' * 42))
+        Assert-Snapshot (@(Get-OwnedSnapshot | Where-Object { $_.StartsWith($deepFile + '|42|') }).Count -eq 1) `
+            'The snapshot missed a change to a file past MAX_PATH'
+    } finally {
+        & cmd.exe /d /c rd /s /q "\\?\$deepRoot" 2>&1 | Out-Null
+        $global:LASTEXITCODE = 0
+    }
+
+    # A deny ACE does not stop an elevated account that holds the backup
+    # privilege, so the walk's report of a folder it could not list is stubbed.
+    & {
+        function Get-RegressTree { [pscustomobject]@{ Entries = @(); Files = @(); Unlisted = @('C:\unlistable') } }
+        $refused = $null
+        try { $null = Get-OwnedSnapshot } catch { $refused = $_.Exception.Message }
+        Assert-Snapshot ($refused -like '*could not list C:\unlistable*') `
+            "The snapshot passed over a folder it could not list: $refused"
+    }
     $allowed = Get-RegressWindowsGuiSkips
     Assert-Snapshot ($allowed.Count -eq 21) 'The Windows skip policy must name exactly 21 unsupported paths'
     $skips = $allowed.Count
@@ -268,7 +298,7 @@ try {
     }
     Write-Output "Windows foreground timing: 14 integer boundary controls, 2 session controls, $script:foregroundRejections invalid inputs rejected"
 
-    Write-Output 'Windows regression snapshots: 7 checks passed'
+    Write-Output 'Windows regression snapshots: 10 checks passed'
     & (Join-Path $PSScriptRoot 'windows_regress_cleanup.ps1')
 } finally {
     $env:TEMP = $originalTemp

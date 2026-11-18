@@ -56,6 +56,13 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
+    void visibilityChanged() override { showStateChanged(); }
+    void parentHierarchyChanged() override { showStateChanged(); }
+
+    // The timer stops while the meter is hidden. Restarts it when the meter
+    // shows, with the needles where the level is now; a view that shows it
+    // calls this, and so may anything that ticks while it is shown.
+    void showStateChanged();
 
 private:
     void timerCallback() override;
@@ -86,6 +93,9 @@ private:
     float needlePosR = -1.0f;
     float needleVelL = 0.0f;
     float needleVelR = 0.0f;
+    int timerHz = 0;
+    bool snapNeedles = false;
+    MeterTimerCount timerCount;
 
     // Pre-rendered face. Rebuilt on resize/reference-change; the per-frame
     // paint just blits this and overlays the needle(s). Cheaper than

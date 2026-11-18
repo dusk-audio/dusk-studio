@@ -22,11 +22,16 @@ source "${REPO_ROOT}/scripts/regress/scenarios.sh"
 source "${REPO_ROOT}/scripts/regress/capture.sh"
 # shellcheck source=scripts/regress/idle-wakeups.sh
 source "${REPO_ROOT}/scripts/regress/idle-wakeups.sh"
+# shellcheck source=scripts/regress/perf-ratchet.sh
+source "${REPO_ROOT}/scripts/regress/perf-ratchet.sh"
+# shellcheck source=scripts/regress/rtsan.sh
+source "${REPO_ROOT}/scripts/regress/rtsan.sh"
 
 JOBS="${DUSK_JOBS:-6}"
 SELFTEST_TIMEOUT="${DUSK_REGRESS_SELFTEST_TIMEOUT:-180}"
 VST3_PATH=""
 RUN_PERF=0
+RUN_RTSAN=0
 RUN_SCENARIOS=1
 GUI_SCENARIOS=0
 SCENARIOS_ONLY=0
@@ -39,6 +44,10 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --perf)
             RUN_PERF=1
+            shift
+            ;;
+        --rtsan)
+            RUN_RTSAN=1
             shift
             ;;
         --vst3)
@@ -326,26 +335,6 @@ PY
     printf '%s\n' "$out"
 }
 
-# sandboxed <command...>: runs the command, shell functions included, with a
-# private HOME, XDG base directories and runtime dir (see sandbox_env), removed
-# afterwards.
-sandboxed() {
-    local dir rc=0
-    dir="$(mktemp -d "${TMPDIR:-/tmp}/duskstudio-regress.XXXXXX")" || return 1
-    regress_at_exit "sandbox_remove $(printf '%q' "$dir")"
-    if sandbox_env "$dir"; then
-        (
-            export "${SANDBOX_ENV[@]}"
-            unset DBUS_SESSION_BUS_ADDRESS
-            "$@"
-        ) || rc=$?
-    else
-        rc=1
-    fi
-    sandbox_remove "$dir"
-    return "$rc"
-}
-
 # The hosted Ubuntu runners grant no realtime priority and a 64 KiB memlock
 # limit. A test that needs either and does not skip cleanly without it passes
 # on this box and fails in CI, so the suite runs once more under those limits.
@@ -369,10 +358,6 @@ leg_ipc_selftest() {
 
 leg_ipc_host_test() {
     sandboxed xvfb_run "$SELFTEST_TIMEOUT" env "DUSKSTUDIO_IPC_HOST_TEST=${VST3_PATH}" "$APP_BIN"
-}
-
-leg_perf() {
-    sandboxed xvfb_run "$SELFTEST_TIMEOUT" env DUSKSTUDIO_RUN_PERF_TEST=1 "$APP_BIN"
 }
 
 # ------------------------------------------------------------ package mode
@@ -758,6 +743,14 @@ else
     for leg in "${missing_legs[@]}"; do
         regress_skip "$leg" "app binary missing: ${APP_BIN:-no package}"
     done
+fi
+
+if ((PACKAGE_MODE)); then
+    for leg in "${RTSAN_LEG_NAMES[@]}"; do regress_skip "$leg" "source mode only"; done
+elif ((RUN_RTSAN)); then
+    regress_rtsan_run
+else
+    for leg in "${RTSAN_LEG_NAMES[@]}"; do regress_skip "$leg" "not requested (--rtsan)"; done
 fi
 
 if ((INSTALLED)); then

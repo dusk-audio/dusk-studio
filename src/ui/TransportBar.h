@@ -23,7 +23,12 @@ public:
     TransportIconButton (const juce::String& name, Icon icon, juce::Colour activeColour);
 
     // Used by timeFormatToggle to flip clock <-> bar/beat without rebuilding.
-    void setIcon (Icon newIcon) noexcept { iconType = newIcon; repaint(); }
+    void setIcon (Icon newIcon) noexcept
+    {
+        if (newIcon == iconType) return;
+        iconType = newIcon;
+        repaint();
+    }
 
     void paintButton (juce::Graphics&, bool isMouseOver, bool isButtonDown) override;
 

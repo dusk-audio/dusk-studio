@@ -37,7 +37,7 @@ try {
     $rgEvidence = @()
     $rgKeep = $false
     if (Test-Path -LiteralPath $rgRoot) {
-        $rgWalk = Get-RegressFutureFiles $rgRoot ([DateTime]::MinValue)
+        $rgWalk = Get-RegressTree $rgRoot ([DateTime]::MinValue)
         foreach ($dir in $rgWalk.Unlisted) {
             $rgLeft += "could not list evidence in $dir"
             $rgKeep = $true

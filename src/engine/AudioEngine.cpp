@@ -72,14 +72,6 @@ constexpr int kSyncOutputMidiStream = Session::kNumTracks;
 
 using dusk::audio::findSignedMinMax;
 
-static void copyDuskMidiToJuce (const dusk::MidiBuffer& source,
-                                juce::MidiBuffer& destination) noexcept
-{
-    destination.clear();
-    for (const auto meta : source)
-        destination.addEvent (meta.data, meta.numBytes, meta.samplePosition);
-}
-
 // Log-span of the HPF sweep band, precomputed once. The MIDI-CC HPF map runs
 // on the audio thread per controller event; without this it would recompute
 // std::log(max/min) on every CC message.
@@ -5508,6 +5500,7 @@ void AudioEngine::setWorkerCountForTest (int n)
 
 void AudioEngine::audioDeviceError (const std::string& message)
 {
+    const dusk::rt::ScopedBlockingAllowed deviceLoss { "device loss: the backend's thread prints and posts the stop" };
     // Fires from the audio thread (ALSA run() at fatal-recover exit;
     // macOS / Windows backends similar). stderr fprintf is RT-safe
     // enough for a dying-device path; everything else (FileLogger
@@ -5559,6 +5552,7 @@ void AudioEngine::requestDeviceStopFinalization()
 
 void AudioEngine::audioDeviceStopped()
 {
+    const dusk::rt::ScopedBlockingAllowed deviceLoss { "device loss: the backend's thread drains the pool and posts the stop" };
     deviceLifecycleDepth.fetch_add (1, std::memory_order_acq_rel);
     struct LifecycleGuard
     {
@@ -5675,7 +5669,7 @@ void AudioEngine::accumulateStrip (int t, float* mL, float* mR,
                                    int numSamples) noexcept
 {
     const auto& job = trackJobs[(size_t) t];
-    copyDuskMidiToJuce (perTrackMidi[(size_t) t], perTrackMidiScratch[(size_t) t]);
+    juce_compat::copyMidiInOrder (perTrackMidi[(size_t) t], perTrackMidiScratch[(size_t) t]);
     strips[(size_t) t]->processAndAccumulate (job.monoIn, job.monoInR,
                                              perTrackMidiScratch[(size_t) t], job.isMidi,
                                              mL, mR, bL, bR, aL, aR,
@@ -5685,33 +5679,30 @@ void AudioEngine::accumulateStrip (int t, float* mL, float* mR,
                                              job.frozen);
 }
 
-int AudioEngine::countBusyLanes (int numSamples, int enough) const noexcept
+int AudioEngine::planStripLanes (int numSamples) noexcept
 {
-    const int lanes = workerPool.laneCount();
-    int busy = 0;
-    for (int lane = 0; lane < lanes && busy < enough; ++lane)
-        for (int t = dspLaneFirstTrack (lane, lanes); t < dspLaneFirstTrack (lane + 1, lanes); ++t)
-        {
-            const auto& job = trackJobs[(size_t) t];
-            if (! job.hardwareInsert
-                && strips[(size_t) t]->willRunChain (job.monoIn, job.monoInR, job.isMidi,
-                                                     numSamples, job.passes, job.frozen))
-            {
-                ++busy;
-                break;
-            }
-        }
-    return busy;
+    numBusyStrips = 0;
+    for (int t = 0; t < Session::kNumTracks; ++t)
+    {
+        const auto& job = trackJobs[(size_t) t];
+        const bool busy = ! job.hardwareInsert
+            && strips[(size_t) t]->willRunChain (job.monoIn, job.monoInR, job.isMidi,
+                                                 numSamples, job.passes, job.frozen);
+        stripBusy[(size_t) t] = busy;
+        if (busy)
+            busyStrips[(size_t) numBusyStrips++] = t;
+    }
+    return std::min (numBusyStrips, workerPool.laneCount());
 }
 
-void AudioEngine::processStripLane (int lane) noexcept
+void AudioEngine::processStripLane (int lane) noexcept DUSK_RT_NONBLOCKING
 {
     const int lanes = workerPool.laneCount();
     const int n     = currentBlockSamples;
     auto& acc = laneAccum[(size_t) lane];
 
     // Each lane owns its accum set - clear it, build pointer views, accumulate
-    // a contiguous strip subset. No lane writes another lane's buffers.
+    // its strips. No lane writes another lane's buffers.
     dusk::audio::vecClear (acc.mixL.data(), n);
     dusk::audio::vecClear (acc.mixR.data(), n);
     std::array<float*, ChannelStrip::kNumBuses> bL {}, bR {};
@@ -5731,14 +5722,28 @@ void AudioEngine::processStripLane (int lane) noexcept
         aR[(size_t) a] = acc.auxR[(size_t) a].data();
     }
 
-    const int lo = dspLaneFirstTrack (lane, lanes);
-    const int hi = dspLaneFirstTrack (lane + 1, lanes);
     // Hardware-insert strips write the SHARED device-output buffer; a worker
     // lane can't do that concurrently, so they're skipped here and summed on
     // the audio thread after the reduce.
-    for (int t = lo; t < hi; ++t)
-        if (! trackJobs[(size_t) t].hardwareInsert)
-            accumulateStrip (t, acc.mixL.data(), acc.mixR.data(), bL, bR, aL, aR, n);
+    if (fixedLanes)
+    {
+        for (int t = dspLaneFirstTrack (lane, lanes); t < dspLaneFirstTrack (lane + 1, lanes); ++t)
+            if (! trackJobs[(size_t) t].hardwareInsert)
+                accumulateStrip (t, acc.mixL.data(), acc.mixR.data(), bL, bR, aL, aR, n);
+        return;
+    }
+
+    // The busy strips split into one share per running lane. The audio
+    // thread's lane takes the first share, and with it every strip predicted
+    // not to run its chain, so one predicted wrongly still runs, inline.
+    const bool onCaller = lane == lanes - 1;
+    const int share = onCaller ? 0 : lane + 1;
+    for (int i = numBusyStrips * share / plannedLanes; i < numBusyStrips * (share + 1) / plannedLanes; ++i)
+        accumulateStrip (busyStrips[(size_t) i], acc.mixL.data(), acc.mixR.data(), bL, bR, aL, aR, n);
+    if (onCaller)
+        for (int t = 0; t < Session::kNumTracks; ++t)
+            if (! stripBusy[(size_t) t] && ! trackJobs[(size_t) t].hardwareInsert)
+                accumulateStrip (t, acc.mixL.data(), acc.mixR.data(), bL, bR, aL, aR, n);
 }
 
 void AudioEngine::reduceLaneAccum (int numSamples) noexcept
@@ -5746,6 +5751,9 @@ void AudioEngine::reduceLaneAccum (int numSamples) noexcept
     const int lanes = workerPool.laneCount();
     for (int lane = 0; lane < lanes; ++lane)
     {
+        // A worker lane the block left asleep still holds an older block's sums.
+        if (lane >= plannedLanes - 1 && lane != lanes - 1)
+            continue;
         auto& acc = laneAccum[(size_t) lane];
         dusk::audio::vecAdd (mixL.data(), acc.mixL.data(), numSamples);
         dusk::audio::vecAdd (mixR.data(), acc.mixR.data(), numSamples);
@@ -5784,7 +5792,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                                          float* const* outputChannelData,
                                          int numOutputChannels,
                                          int numSamples,
-                                         const device::CallbackContext& context)
+                                         const device::CallbackContext& context) DUSK_RT_NONBLOCKING
 {
     dusk::audio::ScopedNoDenormals noDenormals;
 
@@ -8254,11 +8262,11 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         // baked WAV (monoIn/monoInR), instrument + EQ/comp skipped. isMidi is
         // therefore false (the plugin path is bypassed); the frozen flag drives
         // the strip. stereoInput true so the R channel is recognised.
+        strips[(size_t) t]->latchInsertRequest();
         trackJobs[(size_t) t] = { monoIn, monoInR, deviceInput,
                                   midiTrack && ! isFrozen, stripPasses, armed,
                                   stereoTrackInput || isFrozen, isFrozen,
-                                  strips[(size_t) t]->insertMode.load (std::memory_order_relaxed)
-                                      == ChannelStrip::kInsertHardware };
+                                  strips[(size_t) t]->mayRunHardwareInsert() };
     }
 
     // DSP pass
@@ -8273,24 +8281,26 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     // deterministic ~1e-7, far below audibility.)
     perfLap (PerfSections::kPre);
 
-    // The pool takes a block only when the strips that will run their chain
-    // fall in at least two lanes. With none, every lane would wake to find
-    // nothing to do; with one, its strips run one after another in either
-    // path, and the pool adds the lanes' wake, clear and reduce.
-    // willRunChain only steers the choice: both paths run every strip, so a
-    // wrong guess costs time, not correctness.
-    bool dispatch = false;
+    // The pool takes a block only when two or more strips will run their
+    // chain, and wakes a worker for each of them past the first, up to every
+    // worker it holds; the others sleep through the block. With none or one,
+    // the audio thread runs the block's strips itself and no worker wakes.
+    // willRunChain only steers the plan: every strip runs exactly once either
+    // way, so a wrong guess costs time, not correctness.
+    int poolLanes = 0;
     if (workerPool.isActive())
     {
-        const int minLanes = poolDispatchMinLanes.load (std::memory_order_relaxed);
-        dispatch = countBusyLanes (numSamples, minLanes) >= minLanes;
+        fixedLanes = poolDispatchForced.load (std::memory_order_relaxed);
+        poolLanes = fixedLanes ? workerPool.laneCount() : planStripLanes (numSamples);
     }
 
-    if (dispatch)
+    if (poolLanes >= 2)
     {
         poolDispatches.fetch_add (1, std::memory_order_relaxed);
+        lastPoolLanes.store (poolLanes, std::memory_order_relaxed);
+        plannedLanes = poolLanes;
         currentBlockSamples = numSamples;
-        workerPool.runBlock();
+        workerPool.runBlock (poolLanes - 1);
         reduceLaneAccum (numSamples);
         // Hardware-insert strips were skipped in the lanes (processStripLane)
         // because their send writes the shared device-output buffer; sum them
@@ -8302,6 +8312,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     }
     else
     {
+        lastPoolLanes.store (0, std::memory_order_relaxed);
         for (int t = 0; t < Session::kNumTracks; ++t)
             accumulateStrip (t, mixL.data(), mixR.data(),
                              busLPtrs, busRPtrs, auxLanePtrsL, auxLanePtrsR, numSamples);
