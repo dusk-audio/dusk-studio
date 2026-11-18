@@ -149,6 +149,7 @@ TEST_CASE ("Tape Echo 2's parameters sit at the plug-in's indices and symbols",
         "treble", "input_volume", "wow_flutter", "dry_level", "tempo_sync",
         "sync_division", "tape_age", "daf_bypass", "out_level", "output_volume",
         "echo_pan", "reverb_pan", "input_send", "peak_level", "mix", "echo_rate_note",
+        "noise", "hum_frequency",
     };
     const int count = (int) (sizeof (symbols) / sizeof (symbols[0]));
     REQUIRE (slot.paramCount() == count);
@@ -173,6 +174,27 @@ TEST_CASE ("Tape Echo 2's parameters sit at the plug-in's indices and symbols",
     REQUIRE_THAT (get (slot, "echo_volume"), WithinAbs (0.5, 1e-6));
     REQUIRE_THAT (get (slot, "mix"), WithinAbs (0.5, 1e-6));
     REQUIRE_THAT (get (slot, "echo_rate_note"), WithinAbs (5.0, 1e-6));
+
+    // Noise lifts the noise floor from its captured level at 0; Hum Frequency
+    // picks the mains hum in it, 60 Hz first and by default.
+    const auto* noise = slot.paramInfo (paramIndex (slot, "noise"));
+    REQUIRE_FALSE (noise->hidden);
+    REQUIRE (noise->kind == ParamKind::Continuous);
+    REQUIRE_THAT (noise->minValue, WithinAbs (0.0, 1e-6));
+    REQUIRE_THAT (noise->maxValue, WithinAbs (1.0, 1e-6));
+    REQUIRE_THAT (noise->defaultValue, WithinAbs (0.0, 1e-6));
+    REQUIRE_THAT (get (slot, "noise"), WithinAbs (0.0, 1e-6));
+
+    const auto* hum = slot.paramInfo (paramIndex (slot, "hum_frequency"));
+    REQUIRE_FALSE (hum->hidden);
+    REQUIRE (hum->kind == ParamKind::Choice);
+    REQUIRE (hum->choiceCount == 2);
+    REQUIRE (std::string (hum->choices[0]) == "60 Hz");
+    REQUIRE (std::string (hum->choices[1]) == "50 Hz");
+    REQUIRE_THAT (hum->minValue, WithinAbs (0.0, 1e-6));
+    REQUIRE_THAT (hum->maxValue, WithinAbs (1.0, 1e-6));
+    REQUIRE_THAT (hum->defaultValue, WithinAbs (0.0, 1e-6));
+    REQUIRE_THAT (get (slot, "hum_frequency"), WithinAbs (0.0, 1e-6));
 }
 
 TEST_CASE ("Tape Echo 2 turns silence into its tape's noise floor", "[builtin][tape-echo-2]")

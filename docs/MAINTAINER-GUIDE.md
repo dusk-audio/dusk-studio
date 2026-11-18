@@ -297,7 +297,7 @@ CMake auto-detects three external repos at configure time, on top of four git su
 - **Submodules** (`external/clap`, `external/dusk-fizz`, `external/sheenbidi`, `external/vst3sdk`): clone with `--recurse-submodules`, or run `git submodule update --init --recursive`. They fail in different ways, which is worth knowing before you debug the wrong one. Missing `external/sheenbidi` is fatal whenever the native UI or the tests are built: configure stops with "SheenBidi is missing at external/sheenbidi". Missing `external/clap` is fatal: the native CLAP host defaults ON on Linux, macOS, and Windows, and the configure stops with a "CLAP headers missing" error. Missing `external/vst3sdk` is loud but survivable: a STATUS line, native VST3 disabled, unless you explicitly asked for `-DDUSKSTUDIO_NATIVE_VST3=ON`, which turns it fatal. Missing `external/dusk-fizz` says **nothing at all**: the block is wrapped in a bare `EXISTS` test, so SF2 / multisample support simply isn't in the binary.
 
 - **JUCE:** `-DJUCE_PATH=…` wins; else on Linux it prefers `../JUCE-wayland` (Dusk's mirror `dusk-audio/JUCE-wayland`, built on plugdata-team's `wayland-juce8` branch and cloned by CI at the tag set as `JUCE_TAG` in the Linux workflows; it carries local commits Dusk Studio depends on: XEmbed, X11-on-Wayland fix, peer-creation latch), falling back to `../JUCE`; on macOS it uses `../JUCE` (upstream). The upstream-vs-fork API difference (`addDefaultFormatsToManager`) is hidden behind [src/engine/JuceCompat.h](../src/engine/JuceCompat.h) — call `duskstudio::juce_compat::addDefaultFormats(fm)` and never sprinkle `#ifdef __linux__` at call sites.
-- **Dusk plugins:** `-DDUSK_PLUGINS_PATH=…` wins; otherwise configure fetches the commit named in the `DONOR_REV` file into `build/_deps/dusk-plugins`, the same commit every CI and release workflow clones. Point `-DDUSK_PLUGINS_PATH` at your `../plugins` checkout only to try donor edits against Dusk Studio. If the fetch fails (no network, no git), configure stops with an error; reconfigure with network access or pass `-DDUSK_PLUGINS_PATH`. To move the donor, change `DONOR_REV` and the donor revisions in LICENSES.txt together.
+- **Dusk plugins:** `-DDUSK_PLUGINS_PATH=…` wins; otherwise configure fetches the commit named in the `DONOR_REV` file into `build/_deps/dusk-plugins`, the same commit every CI and release workflow clones. Point `-DDUSK_PLUGINS_PATH` at your `../plugins` checkout only to try donor edits against Dusk Studio. If the fetch fails (no network, no git), configure stops with an error; reconfigure with network access or pass `-DDUSK_PLUGINS_PATH`. To move the donor, follow "Moving the donor and DAF pins" below.
 - **SFZ repository libraries:** [cmake/SfzDependencies.cmake](../cmake/SfzDependencies.cmake)
   links libcurl >= 7.62.0 for HTTPS and libarchive >= 3.4.0 for ZIP extraction.
   Linux uses pkg-config for libcurl and libarchive. Install `libarchive-dev`
@@ -341,6 +341,41 @@ To move DAF, merge the change in DAF first, then put the new DAF commit in
 third-party component, update that component's LICENSES.txt entry in the same
 commit. Pugl and the widget kit are vendored inside DAF; no extra checkout is
 needed.
+
+#### Moving the donor and DAF pins
+
+Dusk Studio builds the plug-in and framework code the two pins name, so a fix
+released in either repository reaches the app only when its pin moves.
+[`scripts/check-pins.sh`](../scripts/check-pins.sh) says whether they are
+current: the newest release tag of every plug-in built in (`4k-eq-2`,
+`duskverb-2`, `tapemachine-2`, `tape-echo-2`, `sunset-circuits`, `multi-q`) must
+be an ancestor of `DONOR_REV`, and `DAF_REV` must be on DAF's default branch,
+which must hold nothing newer outside its tests, examples, CI and documents.
+A git checkout runs it when it configures and on every build, from a cache it
+refreshes twice a day, and prints a CMake warning naming each tag the pin lacks
+(`-DDUSKSTUDIO_PIN_CHECK=OFF` silences it). CI and a Windows host do not ask,
+and a build of some other target does not either. The release workflow runs it
+as a gate, on a dry run too, and stops when a pin is behind or cannot be
+checked. For the donor, ancestry is all it proves: it cannot see a path the
+pin holds back.
+
+To move them:
+
+1. DAF: write the newest commit on its default branch into `DAF_REV`, then
+   fetch and check that commit out in the DAF checkout CMake uses (`../DAF`,
+   or `DAF_PATH`), so configure stops warning that the two differ.
+2. Donor: `DONOR_REV` names a commit on the donor's `dusk-studio-pin` branch.
+   While the strip, bus and master compressors build from the old compressor
+   core, that commit is a merge of the branch and the donor commit of the
+   newest release tag, whose tree is that commit's with `plugins/multi-comp`
+   and `plugins/shared/DryWetMixer.h` byte for byte as at `9f46563`. Push it,
+   then write its hash into `DONOR_REV` and into the two donor revisions in
+   LICENSES.txt.
+3. Reconfigure both build trees, build, and run the suite. A donor that added
+   a source file to a plug-in fails at link time until the file joins that
+   plug-in's list in the root `CMakeLists.txt`; one that added a parameter
+   fails the test that pins the plug-in's parameter table.
+4. `scripts/check-pins.sh` must end with both pins current.
 
 `DUSKSTUDIO_ENABLE_NATIVE_UI` is a cached `option()`, which makes the OFF sticky in a nasty way: configure a build dir before the checkouts exist, add them later, and re-running CMake in that same dir leaves the notepad off — and the STATUS line above no longer prints, because its guard also requires the deps to be missing. Use a fresh build dir after cloning, or pass `-DDUSKSTUDIO_ENABLE_NATIVE_UI=ON` to overwrite the cache entry.
 
@@ -1772,6 +1807,14 @@ Set `RELEASE_VERSION=X.Y.Z` in the shell used for the guarded commands.
 [`CPACK_PACKAGE_CONTACT`](../CMakeLists.txt) holds the maintainer address and
 feeds only DEB/RPM package metadata. Neither format is among the seven assets the
 current tag workflows publish, so nothing a tagged release produces uses it.
+
+Before step 1, `scripts/check-pins.sh` must say both pins are current; move
+them first if it does not ("Moving the donor and DAF pins" in Part 5). The
+release workflow refuses a tag built from a pin that is behind, so run the
+script once more right before pushing the tag: if it now reports a pin behind,
+move that pin in a new release commit. **Re-run failed jobs** on a tag workflow whose gate passed does
+not run the gate again, so a platform job that failed can be retried;
+**Re-run all jobs** does.
 
 1. Finish the `## [X.Y.Z] - Unreleased` section in
    [CHANGELOG.md](../CHANGELOG.md), then run

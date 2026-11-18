@@ -84,22 +84,20 @@ TEST_CASE ("synth unit is registered as an instrument", "[builtin][synth]")
     REQUIRE (slot.isLoadedInstrument());
 }
 
-TEST_CASE ("synth unit reports the latency of its own oversampling", "[builtin][synth]")
+TEST_CASE ("synth unit reports one latency at every oversampling setting", "[builtin][synth]")
 {
     NativeBuiltinSlot slot;
     loadSynth (slot);
     const int oversampling = paramIndex (slot, "oversampling");
     REQUIRE_THAT (slot.getParamValue (oversampling), WithinAbs (1.0, 1e-9));
-    const int atTwice = slot.getLatencySamples();
-    REQUIRE (atTwice > 0);
+    REQUIRE (slot.getLatencySamples() == 13);
 
-    slot.setParamValue (oversampling, 0.0f);
-    renderPeak (slot, 2, nullptr);
-    REQUIRE (slot.getLatencySamples() == 0);
-
-    slot.setParamValue (oversampling, 2.0f);
-    renderPeak (slot, 2, nullptr);
-    REQUIRE (slot.getLatencySamples() > atTwice);
+    for (const float mode : { 0.0f, 2.0f })
+    {
+        slot.setParamValue (oversampling, mode);
+        renderPeak (slot, 2, nullptr);
+        REQUIRE (slot.getLatencySamples() == 13);
+    }
 }
 
 TEST_CASE ("synth unit reaches an instrument picker and not an effect one",

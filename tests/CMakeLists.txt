@@ -446,6 +446,9 @@ target_sources(dusk-studio-tests PRIVATE
     ${CMAKE_SOURCE_DIR}/src/engine/audiofile/WriterDrainPool.cpp)
 target_link_libraries(dusk-studio-tests PRIVATE dusk_sndfile)
 target_link_libraries(dusk-studio-tests PRIVATE dusk_sfz_dependencies)
+if(TARGET duskstudio-pin-check)
+    add_dependencies(dusk-studio-tests duskstudio-pin-check)
+endif()
 
 if(DUSK_PLUGINS_PATH)
     # Built-in units are the app's own static libraries of the donor's DAF

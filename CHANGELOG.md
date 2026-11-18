@@ -61,6 +61,29 @@ canonical source.
 
 ### Changed
 
+- **Built-in units at their plug-ins' released versions.** DuskVerb 2, Tape
+  Echo 2, Tape Machine 2 and Sunset now build from DuskVerb 2 1.0.1, Tape
+  Echo 2 1.0.9, Tape Machine 2 1.0.12 and Sunset Circuits 1.1.0. DuskVerb 2
+  gains a **Nonlinear** engine with four presets of its own and **MIX LOCK**,
+  which keeps Dry / Wet and Bus Mode where they are when a preset or **INIT**
+  is recalled; its editor is smaller, and **FREEZE** is hidden on the Reverse
+  and Nonlinear engines, which have no tail to hold. Tape Echo 2 gains a
+  **NOISE** knob, which raises its hum and hiss by up to 60 dB, and a **HUM**
+  switch for 60 or 50 Hz mains. Sunset reports the same 13 samples of latency
+  at every **Oversampling** setting, where it reported none at 1x and more at
+  4x than at 2x. The DuskVerb 2 and Tape Echo 2 editors show the version that
+  is built in, where they showed 0.1.0 and 1.0.1 whatever it was.
+  A MIDI binding on DuskVerb 2's **Algorithm** or on a Sunset mod-matrix
+  destination covers the plug-in's longer list of choices, so a controller
+  value that picked one engine or destination in 0.16 can pick another:
+  re-learn or re-map such a binding.
+- **Plug-in and DAF pins checked against what has been released.** A build
+  from a git checkout on Linux or macOS warns, when it configures and every
+  time it builds the app or the tests, if
+  `DONOR_REV` lacks the newest release tag of a plug-in built into Dusk Studio
+  or `DAF_REV` is behind DAF `main`, and names what is missing. The release
+  workflow runs the same check, `scripts/check-pins.sh`, and stops on a pin
+  that is behind. `-DDUSKSTUDIO_PIN_CHECK=OFF` turns the warning off.
 - **Folders that hold a session's files.** Save As and **New** refuse a
   folder that holds a `session.json`, an autosave, notes, a `midi/` or a
   `backups/` folder, where before only a `session.json` counted, and a new

@@ -1642,6 +1642,7 @@ PY
 # checker must reject each way the four metadata files can disagree, and the
 # tag workflow must run it against the tagged commit.
 bash -n "$SOURCE_ROOT/scripts/release-metadata-check.sh"
+bash -n "$SOURCE_ROOT/scripts/check-pins.sh"
 "$SOURCE_ROOT/scripts/release-metadata-check.sh" --root "$SOURCE_ROOT" >/dev/null \
     || { echo "FAIL: release-metadata-check.sh rejects the source tree" >&2; exit 1; }
 
@@ -1713,6 +1714,10 @@ assert re.search(
     r"scripts/release-metadata-check\.sh --tag \S+ \\\n\s*--commit-date ",
     release_workflow,
 ), "the tag workflow must run the release metadata checker against the tag and its commit date"
+assert re.search(
+    r"\n        run: scripts/check-pins\.sh --cache-dir ",
+    release_workflow,
+), "the release workflow must refuse a donor or DAF pin that is behind what has been released"
 
 # Configure examples in the maintainer guide leave the donor to DONOR_REV: an
 # explicit DUSK_PLUGINS_PATH builds whatever that checkout holds, not the

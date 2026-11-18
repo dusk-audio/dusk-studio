@@ -1858,11 +1858,11 @@ The controls are applied in the order polarity, width, mono, gain. Every one of 
 
 ### DuskVerb 2
 
-Dusk Audio's DuskVerb 2 plug-in is Dusk Studio's built-in reverb. It combines sixteen plate, room, chamber, hall, spring, gated, reverse and shimmer engines with the plug-in's own DSP and editor, so a setting sounds the same here as in the plug-in. Controls change labels or availability where an engine needs them; click **?** in the editor for its complete engine-specific reference.
+Dusk Audio's DuskVerb 2 plug-in is Dusk Studio's built-in reverb. Its engine menu offers thirteen plate, room, chamber, hall, spring, gated, reverse, shimmer and nonlinear engines, which run on the plug-in's own DSP and editor, so a setting sounds the same here as in the plug-in. Controls change labels or availability where an engine needs them; click **?** in the editor for its complete engine-specific reference.
 
 | Section | Controls and ranges | What they do |
 |---|---|---|
-| Engine | **Algorithm**: 16 engines | Chooses the reverb topology. |
+| Engine | **Algorithm**: 13 engines | Chooses the reverb topology. |
 | Input | **Pre-Delay**: 0 to 250 ms; **Pre-Delay Sync**: Free, 1/32, 1/16, 1/8, 1/4, 1/2 or 1/1; **Saturation**: 0 to 100% | Separates the source from the tail, optionally follows session tempo, and adds colour before the reverb. |
 | Filter | **Low Cut**: 5 to 500 Hz; **High Cut**: 1 to 20 kHz; **Mono Below**: 20 to 300 Hz; **Mono Depth**: 0 to 100% | Shapes what reaches the reverb and controls the low-frequency stereo content. |
 | Decay / Size | **Decay**: 0.2 to 30 s; **Size**: 0 to 100% | Sets the tail length and scale of the selected space. |
@@ -1871,11 +1871,11 @@ Dusk Audio's DuskVerb 2 plug-in is Dusk Studio's built-in reverb. It combines si
 | Damping | **Bass Multiply**, **Mid Multiply**: 0.3 to 2.5; **Treble Multiply**: 0.1 to 1.5; **Low Crossover**: 200 Hz to 4 kHz; **High Crossover**: 1 to 12 kHz | Shapes how long different frequency bands decay. |
 | Modulation | **Depth**: 0 to 100%; **Rate**: 0.1 to 10 Hz | Adds movement to the tail, with engine-specific labels where applicable. |
 | Macro | **Tone**: −1 to +1; **Character**, **Duck**: 0 to 100% | Provides broad dark-to-bright, movement/grit and wet-ducking adjustments. |
-| Holds and modes | **Freeze**, **Gate**, **Tonal Correction**: Off / On | Freeze holds the tail; Gate and Tonal Correction appear on the engines that support them. |
+| Holds and modes | **Freeze**, **Gate**, **Tonal Correction**: Off / On | Freeze holds the tail, and is hidden on the Reverse and Nonlinear engines, which have no tail loop to hold. Gate and Tonal Correction appear on the engines that support them. |
 
-DuskVerb 2 keeps the plug-in's own defaults everywhere. Its first factory preset has **Mix (Dry / Wet) at 35%**, so a freshly loaded instance is audible. On an aux lane, turn on **Bus Mode** for a 100% wet return.
+DuskVerb 2 keeps the plug-in's own defaults everywhere. Its first factory preset has **Mix (Dry / Wet) at 35%**, so a freshly loaded instance is audible. On an aux lane, turn on **Bus Mode** for a 100% wet return. **MIX LOCK**, under the **BUS** switch, keeps Dry / Wet and Bus Mode where they are when you recall a preset or **INIT**, so a return stays fully wet while you audition presets. **A** and **B** still bring back the complete sound. Its setting is saved with the session.
 
-The unit reports zero latency. Its tail can run for up to 30 seconds, and an aux lane keeps processing for as long as its return remains audible.
+The unit reports zero latency. Its tail can run for more than 30 seconds at the longest Decay settings, and an aux lane keeps processing for as long as its return remains audible.
 
 Presets and **INIT** in DuskVerb 2's editor are saved with the session, as is whichever of **A** and **B** is active when you save. The other comparison slot lasts as long as the session is open, and comes back holding the saved sound when you reopen it. Sessions saved with the old built-in Reverb still load under the same unit, but they return at DuskVerb 2's defaults; the old Reverb settings are not converted.
 
@@ -1898,6 +1898,8 @@ Dusk Audio's Tape Echo 2 plug-in, compiled into Dusk Studio and running the plug
 | Bass / Treble | −1 to +1 | 0 | Shelves on the echo path. |
 | Wow & Flutter | 0 to 1 | 0 | Transport instability. |
 | Tape Age | New / Used / Old | Used | Worn tape: hiss, extra wow, high-frequency loss and level wobble. Even new tape carries a hiss floor, around −113 dBFS. |
+| Noise | 0 to 1 | 0 | Raises the tape and electronics noise, hum, machine bed and hiss together, by up to 60 dB; the editor's **NOISE** knob shows the lift in dB. At 0 the noise sits at its quiet captured level. Tape Age still scales it. |
+| Hum Frequency | 60 Hz / 50 Hz | 60 Hz | The mains hum in that noise, the editor's **HUM** switch. Set it to match your region. It is not stored in presets, so recalling one leaves it where you set it. |
 | Echo Pan / Reverb Pan | 0 to 1 | 0.5 | Where the repeats and the spring sit, from left to right. |
 | Input Send | Off / On | On | Feeds the input to the tape. Off lets what is already on the tape play out, the dub move. |
 | Tempo Sync | Off / On | Off | Locks the first active head to the session tempo. |
@@ -1940,7 +1942,7 @@ The editor's preset bar holds the plug-in's factory presets and any you save you
 
 Dusk Audio's Sunset Circuits plug-in, compiled into Dusk Studio with the plug-in's own DSP and editor. A polyphonic synthesiser: six engines (Cosmos, Oracle, Mono, Modular, Prism and Acid), each with its own oscillators, filter, envelopes, LFOs, modulation matrix and effects, plus unison, glide and an arpeggiator. It is an **instrument**, so it appears only on a MIDI track's picker, and loading it converts an audio track to MIDI the way a soundfont does.
 
-Every control the plug-in has is in its editor, and the editor's preset menu holds the plug-in's factory presets and any you save yourself. The keyboard in the editor plays the instrument: click a key to hear it. Its **Oversampling** switch (1x, 2x or 4x, 2x by default) costs a few samples of latency above 1x, which the unit reports and delay compensation covers. Its settings are saved with the session as the plug-in's own parameter values. Sessions saved with the older knob-panel Sunset load with their settings, and everything that panel did not have starts at the plug-in's defaults. A setting the panel saved between two steps plays the step the panel played, except PB Range, which takes the nearest whole semitone. MIDI bindings learned on the panel's knobs stay on the controls they were learned on.
+Every control the plug-in has is in its editor, and the editor's preset menu holds the plug-in's factory presets and any you save yourself. The keyboard in the editor plays the instrument: click a key to hear it. Its **Oversampling** switch (1x, 2x or 4x, 2x by default) does not change the latency: the unit reports the same 13 samples at every setting, which delay compensation covers. Its settings are saved with the session as the plug-in's own parameter values. Sessions saved with the older knob-panel Sunset load with their settings, and everything that panel did not have starts at the plug-in's defaults. A setting the panel saved between two steps plays the step the panel played, except PB Range, which takes the nearest whole semitone. MIDI bindings learned on the panel's knobs stay on the controls they were learned on.
 
 It responds to note velocity, pitch bend, the mod wheel, the sustain pedal and channel and polyphonic aftertouch, and it stops cleanly when the transport does. A MIDI program change loads the factory preset with that number, counting from 0, and the session saves the preset it loaded.
 

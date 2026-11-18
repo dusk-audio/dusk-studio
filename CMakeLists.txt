@@ -635,6 +635,29 @@ if(DUSKSTUDIO_DAF_SOURCE_DIR AND EXISTS "${DUSKSTUDIO_DAF_SOURCE_DIR}/.git")
     endif()
 endif()
 
+# A git checkout asks at configure time and on every build whether the two pins
+# still hold what has been released. CI does not ask: a pull request must not
+# turn red because another repository published, and the release workflow runs
+# the same script as a gate of its own. Nor does a Windows host, where the bash
+# on PATH is as likely the WSL launcher as a shell that can run the script.
+option(DUSKSTUDIO_PIN_CHECK
+    "Warn when DONOR_REV or DAF_REV is behind the released plug-ins or DAF main" ON)
+find_program(DUSKSTUDIO_PIN_BASH bash)
+if(DUSKSTUDIO_PIN_CHECK AND DUSKSTUDIO_PIN_BASH AND NOT CMAKE_HOST_WIN32
+   AND NOT DEFINED ENV{CI} AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/.git")
+    set(DUSKSTUDIO_PIN_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+    set(DUSKSTUDIO_PIN_CACHE_DIR "${CMAKE_BINARY_DIR}/_deps/pin-check")
+    include(cmake/PinCheck.cmake)
+    add_custom_target(duskstudio-pin-check ALL
+        COMMAND "${CMAKE_COMMAND}"
+            "-DDUSKSTUDIO_PIN_BASH=${DUSKSTUDIO_PIN_BASH}"
+            "-DDUSKSTUDIO_PIN_SOURCE_DIR=${DUSKSTUDIO_PIN_SOURCE_DIR}"
+            "-DDUSKSTUDIO_PIN_CACHE_DIR=${DUSKSTUDIO_PIN_CACHE_DIR}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/PinCheck.cmake"
+        VERBATIM)
+    add_dependencies(DuskStudio duskstudio-pin-check)
+endif()
+
 # OFF drops every native view - the notepad and the GUI tower's ported dialogs and
 # panels (DUSKSTUDIO_HAS_NATIVE_UI guards their call sites) - so a configure without
 # the framework checkouts - a test-only tree, say - is still possible. The default follows the checkouts, same as the native LV2
@@ -1902,6 +1925,21 @@ static const unsigned int ${symbol}_len = ${_fontSize}u;
             target_compile_definitions("${target}" PRIVATE DUSKSTUDIO_DAF_UNIT_EDITOR=1)
         endfunction()
 
+        # A plug-in's version is its own CMake project's, and its editor shows it.
+        function(duskstudio_donor_project_version out dir project prefix)
+            file(STRINGS "${dir}/CMakeLists.txt" _project REGEX "^project\\(${project} ")
+            if(NOT _project MATCHES "VERSION ([0-9]+)\\.([0-9]+)\\.([0-9]+)")
+                message(FATAL_ERROR "Cannot read the ${project} version from the donor")
+            endif()
+            set(${out}
+                ${prefix}_VERSION_MAJOR=${CMAKE_MATCH_1}
+                ${prefix}_VERSION_MINOR=${CMAKE_MATCH_2}
+                ${prefix}_VERSION_PATCH=${CMAKE_MATCH_3}
+                PARENT_SCOPE)
+        endfunction()
+
+        duskstudio_donor_project_version(_duskstudio_tape_echo_2_definitions
+            "${_duskstudio_tape_echo_2_dir}" TapeEchoDAF TE2)
         set(_duskstudio_tape_echo_2_dsp_sources
             "${_duskstudio_tape_echo_2_dir}/TapeEchoPlugin.cpp"
             "${DUSK_PLUGINS_PATH}/plugins/tape-echo/core/TapeEchoDSP.cpp")
@@ -1913,19 +1951,11 @@ static const unsigned int ${symbol}_len = ${_fontSize}u;
             "${CMAKE_CURRENT_SOURCE_DIR}/src/engine/builtin/daf/TapeEcho2.cpp"
             DSP_SOURCES ${_duskstudio_tape_echo_2_dsp_sources}
             INCLUDE_DIRS ${_duskstudio_tape_echo_2_includes}
+            COMPILE_DEFINITIONS ${_duskstudio_tape_echo_2_definitions}
             UI_SOURCE "${_duskstudio_tape_echo_2_dir}/TapeEchoUI.cpp")
 
-        # The plug-in's version is its own CMake project's; the editor shows it.
-        file(STRINGS "${_duskstudio_tape_machine_2_dir}/CMakeLists.txt"
-             _duskstudio_tape_machine_2_project REGEX "^project\\(TapeMachine2DAF ")
-        if(NOT _duskstudio_tape_machine_2_project MATCHES
-               "VERSION ([0-9]+)\\.([0-9]+)\\.([0-9]+)")
-            message(FATAL_ERROR "Cannot read the Tape Machine 2 version from the donor")
-        endif()
-        set(_duskstudio_tape_machine_2_definitions
-            TM2_VERSION_MAJOR=${CMAKE_MATCH_1}
-            TM2_VERSION_MINOR=${CMAKE_MATCH_2}
-            TM2_VERSION_PATCH=${CMAKE_MATCH_3})
+        duskstudio_donor_project_version(_duskstudio_tape_machine_2_definitions
+            "${_duskstudio_tape_machine_2_dir}" TapeMachine2DAF TM2)
         set(_duskstudio_tape_machine_2_dsp_sources
             "${_duskstudio_tape_machine_2_dir}/TapeMachinePlugin.cpp"
             "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/core/TapeMachineDSP.cpp")
@@ -1978,6 +2008,7 @@ static const unsigned int ${symbol}_len = ${_fontSize}u;
             "${_duskstudio_duskverb_2_dir}/DuskVerbPlugin.cpp"
             "${DUSK_PLUGINS_PATH}/plugins/DuskVerb/core/DuskVerbDSP.cpp"
             "${DUSK_PLUGINS_PATH}/plugins/DuskVerb/core/DuskVerbPresetEngineConfig.cpp"
+            "${DUSK_PLUGINS_PATH}/plugins/DuskVerb/core/dsp/NonLinBurstEngine.cpp"
             ${_duskstudio_duskverb_2_engine_sources})
         set(_duskstudio_duskverb_2_generated_dir
             "${CMAKE_CURRENT_BINARY_DIR}/generated/duskverb-2")
@@ -2010,11 +2041,11 @@ static const unsigned int ${symbol}_len = ${_fontSize}u;
             "${DUSK_PLUGINS_PATH}/plugins/DuskVerb/src"
             "${DUSK_PLUGINS_PATH}/plugins/shared-daf/dsp"
             "${DUSK_PLUGINS_PATH}/plugins/shared-daf/ui")
+        duskstudio_donor_project_version(_duskstudio_duskverb_2_version
+            "${_duskstudio_duskverb_2_dir}" DuskVerb2DAF DUSKVERB2)
         set(_duskstudio_duskverb_2_definitions
             DGL_USE_FILE_BROWSER
-            DUSKVERB2_VERSION_MAJOR=0
-            DUSKVERB2_VERSION_MINOR=1
-            DUSKVERB2_VERSION_PATCH=0)
+            ${_duskstudio_duskverb_2_version})
         duskstudio_add_daf_builtin_library(
             dusk_daf_duskverb_2 OFF DuskVerb2
             "${_duskstudio_duskverb_2_dir}"
@@ -2032,6 +2063,7 @@ static const unsigned int ${symbol}_len = ${_fontSize}u;
                 "${CMAKE_CURRENT_SOURCE_DIR}/src/engine/builtin/daf/TapeEcho2.cpp"
                 DSP_SOURCES ${_duskstudio_tape_echo_2_dsp_sources}
                 INCLUDE_DIRS ${_duskstudio_tape_echo_2_includes}
+                COMPILE_DEFINITIONS ${_duskstudio_tape_echo_2_definitions}
                 UI_SOURCE "${_duskstudio_tape_echo_2_dir}/TapeEchoUI.cpp")
             duskstudio_add_daf_builtin_library(
                 dusk_daf_duskverb_2_ui ON DuskVerb2
