@@ -152,6 +152,9 @@ add_executable(dusk-studio-tests
     session_corrupted_recovery.cpp
     session_clamp_corrupt_values.cpp
     session_appendix_parameters.cpp
+    session_comp_params.cpp
+    session_comp_serialization.cpp
+    session_comp_migration.cpp
     session_format_version.cpp
     session_write_atomic.cpp
     session_portable_paths.cpp
@@ -305,6 +308,8 @@ add_executable(dusk-studio-tests
     ${CMAKE_SOURCE_DIR}/src/engine/MidiTimeCodeReceiver.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/MidiTimeCodeEmitter.cpp
     session_arm_input_gate.cpp
+    ${CMAKE_SOURCE_DIR}/src/session/CompMigration.cpp
+    ${CMAKE_SOURCE_DIR}/src/session/CompParams.cpp
     ${CMAKE_SOURCE_DIR}/src/session/Session.cpp
     ${CMAKE_SOURCE_DIR}/src/session/SessionSerializer.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/MidiSyncReceiver.cpp

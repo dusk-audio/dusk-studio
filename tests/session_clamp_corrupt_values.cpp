@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include "session/CompMigration.h"
 #include "session/Session.h"
 #include "session/SessionSerializer.h"
 
@@ -12,6 +13,7 @@
 #include <nlohmann/json.hpp>
 
 using duskstudio::AutomationParam;
+using duskstudio::CompParamId;
 using duskstudio::Session;
 using duskstudio::SessionSerializer;
 using Catch::Matchers::WithinAbs;
@@ -161,16 +163,18 @@ TEST_CASE ("SessionSerializer::load defaults present invalid master floats",
     Session s;
     s.master().eqLfBoost.store (7.0f);
     s.master().eqLfAtten.store (8.0f);
-    s.master().compThreshDb.store (-12.0f);
-    s.master().compRatio.store (2.0f);
+    s.master().comp.set (CompParamId::BusThreshold, -12.0f);
+    s.master().comp.set (CompParamId::BusRatio, 2.0f);
 
     REQUIRE (SessionSerializer::load (s, target));
     const duskstudio::MasterBusParams def;
     REQUIRE_THAT (s.master().eqLfBoost.load(), WithinAbs (def.eqLfBoost.load(), 1e-6f));
     REQUIRE_THAT (s.master().eqLfAtten.load(), WithinAbs (3.5f, 1e-6f));
-    REQUIRE_THAT (s.master().compThreshDb.load(), WithinAbs (def.compThreshDb.load(), 1e-6f));
-    // A missing key in a present master section retains the live value.
-    REQUIRE_THAT (s.master().compRatio.load(), WithinAbs (2.0f, 1e-6f));
+    REQUIRE_THAT (s.master().comp.get (CompParamId::BusThreshold),
+                  WithinAbs (duskstudio::legacycomp::busThreshold (0.0f), 1e-6f));
+    // A missing key in a present master section retains the live value, through
+    // the conversion of an older session too.
+    REQUIRE_THAT (s.master().comp.get (CompParamId::BusRatio), WithinAbs (2.0f, 1e-6f));
 
     target.getParentDirectory().deleteRecursively();
 }
@@ -192,55 +196,64 @@ TEST_CASE ("SessionSerializer::load defaults present invalid master bools",
     Session s;
     s.master().eqEnabled.store (true);
     s.master().compEnabled.store (false);
-    s.master().compReleaseAuto.store (false);
+    s.master().comp.set (CompParamId::BusRelease, 0.0f);
 
     REQUIRE (SessionSerializer::load (s, target));
-    // Model defaults, not a blanket false: auto-release defaults to ON, so a
-    // corrupt value must not silently switch the bus comp to manual release.
+    // Model defaults, not a blanket false: the old auto-release defaulted to ON,
+    // so a corrupt value must not silently switch the bus comp to a fixed release.
     REQUIRE (s.master().eqEnabled.load() == false);
     REQUIRE (s.master().compEnabled.load() == true);
-    REQUIRE (s.master().compReleaseAuto.load() == true);
+    REQUIRE_THAT (s.master().comp.get (CompParamId::BusRelease), WithinAbs (4.0f, 1e-6));
 
     target.getParentDirectory().deleteRecursively();
 }
 
 // The mastering chain reads its values the same way the master strip does, so
 // a value of the wrong type resolves to the model default rather than to a
-// blanket zero / false. comp_ratio 0 would divide into the compressor's ratio
-// math, and auto-release defaults ON, so neither can be the silent fallback.
+// blanket zero / false: a band left disabled or bypassed by a junk value would
+// silently drop out of the multiband compressor.
 TEST_CASE ("SessionSerializer::load defaults present invalid mastering values",
            "[session][serializer][corruption]")
 {
     const auto target = writeSession (R"JSON(
     {
-      "version": 3,
+      "version": 12,
       "mastering": {
-        "comp_ratio": "x",
-        "comp_attack_ms": 12.0,
-        "comp_thresh_db": 1e40,
-        "comp_release_auto": "maybe",
+        "comp": {
+          "mb_ratio_0": "x",
+          "mb_attack_1": 0.25,
+          "mb_threshold_2": 1e40,
+          "mb_enabled_3": "maybe",
+          "enabled": "maybe"
+        },
         "eq_enabled": true
       }
     }
     )JSON");
 
+    using duskstudio::CompBandField;
+    using duskstudio::compBandParam;
     Session s;
-    s.mastering().compRatio.store (8.0f);
-    s.mastering().compAttackMs.store (99.0f);
-    s.mastering().compThreshDb.store (-24.0f);
-    s.mastering().compReleaseAuto.store (false);
+    auto& comp = s.mastering().comp;
+    comp.set (compBandParam (0, CompBandField::Ratio), 0.9f);
+    comp.set (compBandParam (1, CompBandField::Attack), 0.9f);
+    comp.set (compBandParam (2, CompBandField::Threshold), -50.0f);
+    comp.set (compBandParam (3, CompBandField::Enabled), 0.0f);
+    comp.set (compBandParam (0, CompBandField::Makeup), 6.0f);
+    s.mastering().compEnabled.store (true);
     s.mastering().eqEnabled.store (false);
-    s.mastering().compMakeupDb.store (6.0f);
 
     REQUIRE (SessionSerializer::load (s, target));
-    const duskstudio::MasteringParams def;
-    REQUIRE_THAT (s.mastering().compRatio.load(), WithinAbs (def.compRatio.load(), 1e-6f));
-    REQUIRE_THAT (s.mastering().compAttackMs.load(), WithinAbs (12.0f, 1e-6f));
-    REQUIRE_THAT (s.mastering().compThreshDb.load(), WithinAbs (def.compThreshDb.load(), 1e-6f));
-    REQUIRE (s.mastering().compReleaseAuto.load() == def.compReleaseAuto.load());
+    const auto defaultOf = [] (duskstudio::CompParamId id) { return duskstudio::compParamSpec (id).hostDefault; };
+    REQUIRE_THAT (comp.get (compBandParam (0, CompBandField::Ratio)),
+                  WithinAbs (defaultOf (compBandParam (0, CompBandField::Ratio)), 1e-6f));
+    REQUIRE_THAT (comp.get (compBandParam (1, CompBandField::Attack)), WithinAbs (0.25f, 1e-6f));
+    REQUIRE_THAT (comp.get (compBandParam (2, CompBandField::Threshold)), WithinAbs (-20.0f, 1e-6f));
+    REQUIRE_THAT (comp.get (compBandParam (3, CompBandField::Enabled)), WithinAbs (1.0f, 1e-6));
+    REQUIRE_FALSE (s.mastering().compEnabled.load());
     REQUIRE (s.mastering().eqEnabled.load() == true);
     // A missing key in a present mastering section retains the live value.
-    REQUIRE_THAT (s.mastering().compMakeupDb.load(), WithinAbs (6.0f, 1e-6f));
+    REQUIRE_THAT (comp.get (compBandParam (0, CompBandField::Makeup)), WithinAbs (6.0f, 1e-6f));
 
     target.getParentDirectory().deleteRecursively();
 }
@@ -257,8 +270,8 @@ TEST_CASE ("SessionSerializer::load treats a non-object master as absent",
 
     Session s;
     s.master().eqLfBoost.store (7.0f);
-    s.master().compRatio.store (9.0f);
-    s.master().compReleaseAuto.store (false);
+    s.master().comp.set (CompParamId::BusRatio, 2.0f);
+    s.master().comp.set (CompParamId::BusRelease, 0.0f);
 
     REQUIRE (SessionSerializer::load (s, target));
     // "master" is not an object, so the section never parsed - every field has
@@ -266,8 +279,8 @@ TEST_CASE ("SessionSerializer::load treats a non-object master as absent",
     // loaded session left in the live Session.
     const duskstudio::MasterBusParams def;
     REQUIRE_THAT (s.master().eqLfBoost.load(), WithinAbs (def.eqLfBoost.load(), 1e-6f));
-    REQUIRE_THAT (s.master().compRatio.load(), WithinAbs (def.compRatio.load(), 1e-6f));
-    REQUIRE (s.master().compReleaseAuto.load() == def.compReleaseAuto.load());
+    REQUIRE_THAT (s.master().comp.get (CompParamId::BusRatio), WithinAbs (def.comp.get (CompParamId::BusRatio), 1e-6));
+    REQUIRE_THAT (s.master().comp.get (CompParamId::BusRelease), WithinAbs (def.comp.get (CompParamId::BusRelease), 1e-6));
 
     target.getParentDirectory().deleteRecursively();
 }
@@ -321,15 +334,18 @@ TEST_CASE ("SessionSerializer::load clamps corrupt strip and hardware values",
 
     REQUIRE_THAT (track.strip.hpfFreq.load(), WithinAbs (20.0f, 1e-6f));
     REQUIRE_THAT (track.strip.lpfFreq.load(), WithinAbs (20000.0f, 1e-3f));
+    // The old loader's clamp comes first, then the conversion.
     REQUIRE (track.strip.compMode.load() == 2);
-    REQUIRE_THAT (track.strip.compVcaRatio.load(), WithinAbs (120.0f, 1e-6f));
-    REQUIRE_THAT (track.strip.compFetAttack.load(), WithinAbs (0.02f, 1e-6f));
+    REQUIRE_THAT (track.strip.comp.get (CompParamId::VcaCompression),
+                  WithinAbs (duskstudio::legacycomp::vcaCompression (120.0f), 1e-6f));
+    REQUIRE_THAT (track.strip.comp.get (CompParamId::FetAttack),
+                  WithinAbs (duskstudio::legacycomp::fetAttack (0.02f, 0), 1e-6f));
     REQUIRE_THAT (track.hardwareInsert.outputGainDb.load(), WithinAbs (12.0f, 1e-6f));
     REQUIRE_THAT (track.hardwareInsert.dryWet.load(), WithinAbs (0.0f, 1e-6f));
 
     const auto& bus = s.bus (0).strip;
     REQUIRE_THAT (bus.faderDb.load(), WithinAbs (-100.0f, 1e-6f));
-    REQUIRE_THAT (bus.compRatio.load(), WithinAbs (10.0f, 1e-6f));
+    REQUIRE_THAT (bus.comp.get (CompParamId::BusRatio), WithinAbs (2.0f, 1e-6));
     REQUIRE_THAT (bus.eqLfGainDb.load(), WithinAbs (9.0f, 1e-6f));
 
     target.getParentDirectory().deleteRecursively();
@@ -344,16 +360,19 @@ TEST_CASE ("SessionSerializer::load clamps out-of-range mastering values",
 {
     const auto target = writeSession (R"JSON(
     {
-      "version": 3,
+      "version": 12,
       "mastering": {
         "eq_band_0_freq": -1e30,
         "eq_band_2_freq": 1e30,
         "eq_band_2_gain_db": 1e30,
         "eq_band_2_q": -1e30,
         "eq_tube_drive": 1e30,
-        "comp_thresh_db": -1e30,
-        "comp_ratio": 1e30,
-        "comp_makeup_db": 1e30,
+        "comp": {
+          "mb_threshold_0": -1e30,
+          "mb_ratio_1": 1e30,
+          "mb_makeup_2": 1e30,
+          "mb_output": -1e30
+        },
         "limiter_drive_db": 1e30,
         "limiter_ceiling_db": 1e30,
         "limiter_release_ms": -1e30,
@@ -375,9 +394,12 @@ TEST_CASE ("SessionSerializer::load clamps out-of-range mastering values",
     REQUIRE_THAT (m.eqBandQ[2].load(), WithinAbs (0.3f, 1e-6f));
     REQUIRE_THAT (m.eqTubeDrive.load(), WithinAbs (1.0f, 1e-6f));
 
-    REQUIRE_THAT (m.compThreshDb.load(), WithinAbs (-60.0f, 1e-6f));
-    REQUIRE_THAT (m.compRatio.load(), WithinAbs (10.0f, 1e-6f));
-    REQUIRE_THAT (m.compMakeupDb.load(), WithinAbs (20.0f, 1e-6f));
+    using duskstudio::CompBandField;
+    using duskstudio::compBandParam;
+    REQUIRE_THAT (m.comp.get (compBandParam (0, CompBandField::Threshold)), WithinAbs (-60.0f, 1e-6));
+    REQUIRE_THAT (m.comp.get (compBandParam (1, CompBandField::Ratio)), WithinAbs (1.0f, 1e-6));
+    REQUIRE_THAT (m.comp.get (compBandParam (2, CompBandField::Makeup)), WithinAbs (12.0f, 1e-6));
+    REQUIRE_THAT (m.comp.get (CompParamId::MbOutput), WithinAbs (-24.0f, 1e-6));
 
     REQUIRE_THAT (m.limiterDriveDb.load(), WithinAbs (20.0f, 1e-6f));
     REQUIRE_THAT (m.limiterCeilingDb.load(), WithinAbs (0.0f, 1e-6f));
@@ -419,8 +441,8 @@ TEST_CASE ("SessionSerializer::load clamps out-of-range master values",
     REQUIRE_THAT (mb.eqLfBoost.load(), WithinAbs (10.0f, 1e-6f));
     REQUIRE_THAT (mb.eqHfAttenFreq.load(), WithinAbs (5000.0f, 1e-3f));
     REQUIRE_THAT (mb.eqOutputGainDb.load(), WithinAbs (12.0f, 1e-6f));
-    REQUIRE_THAT (mb.compRatio.load(), WithinAbs (10.0f, 1e-6f));
-    REQUIRE_THAT (mb.compAttackMs.load(), WithinAbs (0.1f, 1e-6f));
+    REQUIRE_THAT (mb.comp.get (CompParamId::BusRatio), WithinAbs (2.0f, 1e-6));
+    REQUIRE_THAT (mb.comp.get (CompParamId::BusAttack), WithinAbs (0.0f, 1e-6));
 
     target.getParentDirectory().deleteRecursively();
 }

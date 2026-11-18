@@ -79,6 +79,8 @@ void eachTrackField (Track& dst, Src& src, Fields& f)
     f.atomic (d.compVcaOutput, s.compVcaOutput);
     f.atomic (d.compVcaOverEasy, s.compVcaOverEasy);
     f.atomic (d.compVcaDetectorClassic, s.compVcaDetectorClassic);
+    for (std::size_t i = 0; i < kCompParamCount; ++i)
+        f.atomic (d.comp.atom ((CompParamId) i), s.comp.atom ((CompParamId) i));
 
     f.atomic (d.liveFaderDb, s.liveFaderDb);
     f.atomic (d.livePan, s.livePan);

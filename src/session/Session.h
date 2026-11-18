@@ -19,6 +19,7 @@
 #include <utility>
 #include <vector>
 #include "AtomicSnapshot.h"
+#include "CompParams.h"
 #include "MidiEvents.h"
 #include "MidiPlayback.h"
 #include "MidiBindings.h"
@@ -422,6 +423,8 @@ struct ChannelStripParams
     std::atomic<bool>  compVcaOverEasy { false };
     // false = Adaptive (donor's 35->5 ms RMS TC); true = Classic (fixed 10 ms).
     std::atomic<bool>  compVcaDetectorClassic { false };
+
+    CompParams comp;
 
     // Engine writes liveFaderDb at the top of every block: Off mode
     // mirrors faderDb; Read mode carries lane value. ChannelStrip
@@ -1325,6 +1328,8 @@ struct BusParams
     std::atomic<bool>  compReleaseAuto { true };
     std::atomic<float> compMakeupDb  { 0.0f };
 
+    CompParams comp;
+
     // Audio reads THESE (post-automation) so the Off/Read/Write/Touch
     // hand-off lives in the engine; BusStrip::updateGainTargets and the
     // engine's mute gate stay lane-agnostic. Only FaderDb / Pan / Mute are
@@ -1545,6 +1550,8 @@ struct MasterBusParams
     std::atomic<bool>  compReleaseAuto { true };
     std::atomic<float> compMakeupDb   { 0.0f };
 
+    CompParams comp;
+
     mutable std::atomic<float> meterPostMasterLDb  { -100.0f };
     mutable std::atomic<float> meterPostMasterRDb  { -100.0f };
     mutable std::atomic<float> meterPostMasterRmsL { 0.0f };
@@ -1582,6 +1589,8 @@ struct MasteringParams
     std::atomic<float> compReleaseMs  { 250.0f };
     std::atomic<bool>  compReleaseAuto { true };
     std::atomic<float> compMakeupDb   { 0.0f };
+
+    CompParams comp;
 
     // -0.3 dB ceiling matches streaming-platform headroom.
     std::atomic<bool>  limiterEnabled  { true };

@@ -895,6 +895,7 @@ struct CloneTrackAction::Impl
     float compVcaThreshDb = 0.0f, compVcaRatio = 4.0f, compVcaAttack = 1.0f, compVcaRelease = 100.0f, compVcaOutput = 0.0f;
     bool  compVcaOverEasy = false;
     bool  compVcaDetectorClassic = false;
+    CompParams::Values comp {};
 
     // Recording surface.
     bool  recordArmed = false;
@@ -1105,6 +1106,7 @@ CloneTrackAction::Impl captureTrack (Track& t, AudioEngine& engine, int idx)
     s.compVcaOutput   = t.strip.compVcaOutput.load   (std::memory_order_relaxed);
     s.compVcaOverEasy = t.strip.compVcaOverEasy.load (std::memory_order_relaxed);
     s.compVcaDetectorClassic = t.strip.compVcaDetectorClassic.load (std::memory_order_relaxed);
+    s.comp = t.strip.comp.values();
 
     s.recordArmed    = t.recordArmed.load    (std::memory_order_relaxed);
     s.inputMonitor   = t.inputMonitor.load   (std::memory_order_relaxed);
@@ -1356,6 +1358,7 @@ void applyTrack (Track& t, AudioEngine& engine, int idx,
     t.strip.compVcaOutput.store   (s.compVcaOutput,   std::memory_order_relaxed);
     t.strip.compVcaOverEasy.store (s.compVcaOverEasy, std::memory_order_relaxed);
     t.strip.compVcaDetectorClassic.store (s.compVcaDetectorClassic, std::memory_order_relaxed);
+    t.strip.comp.setValues (s.comp);
 
     t.recordArmed.store    (s.recordArmed,    std::memory_order_relaxed);
     t.inputMonitor.store   (s.inputMonitor,   std::memory_order_relaxed);

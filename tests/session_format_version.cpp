@@ -31,7 +31,7 @@ void writeRaw (const juce::File& target, const juce::String& contents)
 } // namespace
 
 // Format-version contract:
-//   * Manual save writes "version": kFormatVersion (currently 11).
+//   * Manual save writes "version": kFormatVersion (currently 12).
 //   * Load rejects sessions whose version is HIGHER than the build's
 //     kFormatVersion — newer Dusk Studio can read older sessions (via the
 //     migrateSession switch) but older Dusk Studio must refuse newer ones
@@ -93,7 +93,7 @@ TEST_CASE ("SessionSerializer round-trip preserves version field",
     auto root = juce::JSON::parse (target);
     REQUIRE (root.isObject());
     REQUIRE (root.hasProperty ("version"));
-    REQUIRE ((int) root["version"] == 11);
+    REQUIRE ((int) root["version"] == 12);
 
     dir.deleteRecursively();
 }
@@ -120,7 +120,7 @@ TEST_CASE ("SessionSerializer stamps the current version on a session carrying b
     const auto root = nlohmann::json::parse (
         target.loadFileAsString().toStdString(), nullptr, false);
     REQUIRE (root.is_object());
-    REQUIRE (root["version"].get<int>() == 11);
+    REQUIRE (root["version"].get<int>() == 12);
     REQUIRE (root["version"].get<int>() > kLastReleasedReaderMaxVersion);
 
     auto loadedPtr = std::make_unique<Session>();
@@ -145,7 +145,7 @@ TEST_CASE ("SessionSerializer refuses a future session before touching the live 
     // One version above this build's format, carrying values the loader would
     // otherwise write into the live Session.
     writeRaw (target,
-              R"({"version":12,"tempo":76.0,)"
+              R"({"version":13,"tempo":76.0,)"
               R"("tracks":[{"name":"From the future","builtin_id":"dusk.builtin.utility"}]})");
 
     auto livePtr = std::make_unique<Session>();
@@ -179,7 +179,7 @@ TEST_CASE ("SessionSerializer explains rejected loads and clears stale errors", 
     CHECK_FALSE (SessionSerializer::load (*live, path, &error));
     CHECK (error.failure == SessionLoadFailure::FileUnavailable);
     CHECK (error.fileVersion == 0);
-    CHECK (error.supportedVersion == 11);
+    CHECK (error.supportedVersion == 12);
     CHECK (live->track (0).name == "Keep this session");
 
     writeRaw (target, "not JSON");
@@ -188,25 +188,25 @@ TEST_CASE ("SessionSerializer explains rejected loads and clears stale errors", 
     CHECK (error.fileVersion == 0);
     CHECK (live->track (0).name == "Keep this session");
 
-    writeRaw (target, R"({"version":12,"tracks":[{"name":"Future"}]})");
+    writeRaw (target, R"({"version":13,"tracks":[{"name":"Future"}]})");
     CHECK_FALSE (SessionSerializer::load (*live, path, &error));
     CHECK (error.failure == SessionLoadFailure::NewerVersion);
-    CHECK (error.fileVersion == 12);
-    CHECK (error.supportedVersion == 11);
+    CHECK (error.fileVersion == 13);
+    CHECK (error.supportedVersion == 12);
     CHECK (live->track (0).name == "Keep this session");
 
     writeRaw (target, R"({"version":0,"tracks":[{"name":"Unsupported migration"}]})");
     CHECK_FALSE (SessionSerializer::load (*live, target, &error));
     CHECK (error.failure == SessionLoadFailure::MigrationFailed);
     CHECK (error.fileVersion == 0);
-    CHECK (error.supportedVersion == 11);
+    CHECK (error.supportedVersion == 12);
     CHECK (live->track (0).name == "Keep this session");
 
     writeRaw (target, R"({"version":11,"tracks":[{"name":"Loaded"}]})");
     REQUIRE (SessionSerializer::load (*live, target, &error));
     CHECK (error.failure == SessionLoadFailure::None);
     CHECK (error.fileVersion == 11);
-    CHECK (error.supportedVersion == 11);
+    CHECK (error.supportedVersion == 12);
     CHECK (live->track (0).name == "Loaded");
     dir.deleteRecursively();
 }
@@ -268,7 +268,7 @@ TEST_CASE ("SessionSerializer loads an unchanged format-10 file written by relea
     CHECK_FALSE (loaded->mastering().compEnabled.load());
     CHECK (loaded->mastering().limiterEnabled.load());
     const auto saved = nlohmann::json::parse (SessionSerializer::serialize (*loaded).toStdString());
-    CHECK (saved["version"].get<int>() == 11);
+    CHECK (saved["version"].get<int>() == 12);
     CHECK_THAT (saved["tracks"][0]["fader_db"].get<float>(), WithinAbs (-3.0f, 1.0e-6f));
     CHECK_THAT (saved["session_sample_rate"].get<double>(), WithinAbs (48000.0, 1.0e-6));
 }

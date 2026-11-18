@@ -1027,6 +1027,8 @@ target_sources(DuskStudio PRIVATE
     src/dsp/ChordAnalyzer.cpp
     src/session/MidiBindings.cpp
     src/session/MidiBindingsPreset.cpp
+    src/session/CompMigration.cpp
+    src/session/CompParams.cpp
     src/session/Session.cpp
     src/session/SessionSerializer.cpp
     src/session/UnreferencedAudio.cpp

@@ -175,6 +175,13 @@ void fillTrack (Track& t, int k)
     s.compVcaOutput = step (k, -3.0f, 0.2f);
     s.compVcaOverEasy = odd (k);
     s.compVcaDetectorClassic = ! odd (k);
+    for (const auto id : compStageParams (CompStage::Strip))
+    {
+        const auto& spec = compParamSpec (id);
+        const float span = spec.hostMax - spec.hostMin;
+        s.comp.set (id, spec.integer ? spec.hostMin + (float) (k % ((int) span + 1))
+                                     : spec.hostMin + span * (0.05f + 0.035f * (float) k));
+    }
 
     auto& hw = t.hardwareInsert;
     hw.enabled = odd (k);
