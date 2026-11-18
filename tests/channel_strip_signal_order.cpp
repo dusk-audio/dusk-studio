@@ -154,12 +154,12 @@ struct Rig
 
     void compressHard()
     {
-        // VCA at the bottom of its threshold range, 8:1, so any tone the tests
-        // use sits well into gain reduction.
+        // VCA at the bottom of its threshold range, about 9:1 (COMPRESSION 80),
+        // so any tone the tests use sits well into gain reduction.
         params.compEnabled.store (true);
         params.compMode.store (2);
-        params.compVcaThreshDb.store (-38.0f);
-        params.compVcaRatio.store (8.0f);
+        params.comp.set (duskstudio::CompParamId::VcaThreshold, -55.0f);
+        params.comp.set (duskstudio::CompParamId::VcaCompression, 80.0f);
     }
 };
 } // namespace

@@ -65,6 +65,9 @@ private:
         std::array<int,   Session::kNumTracks> mode {};
         std::array<int,   Session::kNumTracks> inputSource {};
         std::array<bool,  Session::kNumTracks> compEnabled {};
+        // The comp tests set each strip's mode and compressor values.
+        std::array<int,   Session::kNumTracks> compMode {};
+        std::array<CompParams::Values, Session::kNumTracks> comp {};
         std::array<bool,  Session::kNumTracks> phaseInvert {};
         std::array<bool,  Session::kNumTracks> hpfEnabled {};
         std::array<float, Session::kNumTracks> lfGainDb {};

@@ -37,13 +37,12 @@
 #include "HardwareInsertSlot.h"
 
 #if DUSKSTUDIO_HAS_DUSK_DSP
-  // Framework-free donor cores. The strip drives the full comp feature set
-  // (Opto/FET/VCA) with the core's internal oversampling left off because the
-  // strip wraps EQ+Comp in its own StereoOversampler - running both would
-  // double-OS. The EQ likewise runs 1x internally inside that same wrap (its
-  // console saturation is the only saturating stage and the wrap band-limits it).
+  // The EQ is the framework-free donor core, run 1x internally inside the
+  // strip's own StereoOversampler (its console saturation is the only
+  // saturating stage there and the wrap band-limits it). The compressor is
+  // Multi-Comp 2, which oversamples itself and runs after the wrap.
   #include <dsp/FourKEQDSP.hpp>
-  #include <core/UniversalCompressorDSP.hpp>
+  #include "MultiCompStage.h"
 #endif
 
 namespace duskstudio
@@ -85,9 +84,15 @@ public:
     PluginSlot&       getPluginSlot()       noexcept { return pluginSlot; }
     const PluginSlot& getPluginSlot() const noexcept { return pluginSlot; }
 
-    // How far the always-oversampled EQ/comp stage delays the strip's output
-    // at the prepared factor, rounded; 0 at 1x.
+    // How far the always-oversampled EQ stage delays the strip's output at the
+    // prepared factor, rounded; 0 at 1x. An engaged compressor's own delay is
+    // not part of it.
     int getOversamplingLatencySamples() const noexcept { return osLatencySamples; }
+
+#if DUSKSTUDIO_HAS_DUSK_DSP
+    // The compressor a block of that width runs, for its editor. Message thread.
+    MultiCompStage& getCompressor (bool stereo) noexcept { return stereo ? stereoComp : monoComp; }
+#endif
     // The latency of the plug-in the insert runs in plug-in mode: a loaded
     // native or built-in instance, otherwise the JUCE slot's.
     int getInsertPluginLatencySamples() const noexcept;
@@ -425,18 +430,17 @@ private:
     // fault on missing filter / envelope state.
     dusk::audio::PlanarBuffer tempStereoBuffer;
 
-    // Per-strip Dusk Studio-side oversampler wrapping (EQ + Comp). The donor
-    // EQ's always-on console saturation and the comp's saturation alias hard at
-    // native rate; the wrap moves the whole per-channel DSP to the oversampled
-    // rate so the half-band FIRs band-limit it before downsampling. One
-    // StereoOversampler serves both track widths: mono feeds channel 0 with a
-    // silent channel 1 (osMonoScratchR) and processes only channel 0 - the
-    // wasted R half-band FIR runs on silence, but avoids doubling the expensive
-    // EQ + comp work a duplicate-mono approach would incur, and no mono-only
-    // primitive exists.
+    // Per-strip Dusk Studio-side oversampler wrapping the EQ. The donor EQ's
+    // always-on console saturation aliases hard at native rate; the wrap moves
+    // it to the oversampled rate so the half-band FIRs band-limit it before
+    // downsampling. One StereoOversampler serves both track widths: mono feeds
+    // channel 0 with a silent channel 1 (osMonoScratchR) and processes only
+    // channel 0 - the wasted R half-band FIR runs on silence, but avoids
+    // doubling the EQ work a duplicate-mono approach would incur, and no
+    // mono-only primitive exists.
     dusk::audio::StereoOversampler oversampler;
     std::vector<float> osMonoScratchR;
-    int oversampleFactor = 1;    // 1 / 2 / 4 - drives the comp sub-chunk size
+    int oversampleFactor = 1;    // 1 / 2 / 4
 
     // Sits between phase invert and the EQ stage.
     PluginSlot pluginSlot;
@@ -603,27 +607,17 @@ private:
     static EqSnapshot eqSnapshotFor (const ChannelStripParams& params) noexcept;
     static void applyEqSnapshot (duskaudio::FourKEQDSP& core, const EqSnapshot& p) noexcept;
 
-    duskaudio::UniversalCompressorDSP compressor;
-
-    // 20 ms ramps for continuous params so knob drags don't zipper.
-    // Discrete params (mode, bypass, LIMIT, FET ratio) bypass. Their per-chunk
-    // published values feed the core's atomic setters (no APVTS atoms to cache
-    // - the core does not port the donor's analog-hiss stage, so the old
-    // noise_enable force-off is unnecessary).
-    dusk::audio::SmoothedValue<float> smoothedOptoPeakRed;
-    dusk::audio::SmoothedValue<float> smoothedOptoGain;
-    dusk::audio::SmoothedValue<float> smoothedFetInput;
-    dusk::audio::SmoothedValue<float> smoothedFetOutput;
-    dusk::audio::SmoothedValue<float> smoothedFetAttack;
-    dusk::audio::SmoothedValue<float> smoothedFetRelease;
-    dusk::audio::SmoothedValue<float> smoothedFetThreshold;
-    dusk::audio::SmoothedValue<float> smoothedVcaThresh;
-    dusk::audio::SmoothedValue<float> smoothedVcaRatio;
-    dusk::audio::SmoothedValue<float> smoothedVcaAttack;
-    dusk::audio::SmoothedValue<float> smoothedVcaRelease;
-    dusk::audio::SmoothedValue<float> smoothedVcaOutput;
-
-    void publishSmoothedCompParams (int numSamples) noexcept;
+    // The strip's width can change from one block to the next (a track's mode
+    // or its R input moves without a re-prepare), so it holds a compressor for
+    // each and runs the one the block's width calls for: a mono track pays for
+    // one channel. The other keeps its settings and catches up on the
+    // parameters when it next runs.
+    MultiCompStage monoComp   { CompStage::Strip };
+    MultiCompStage stereoComp { CompStage::Strip };
+    // Runs the compressor for this block's width, when engaged, on L (and R on
+    // a stereo block) in place, and clears whichever did not run so neither
+    // replays held audio when it next does.
+    void runCompressor (float* L, float* R, int numSamples, bool engaged) noexcept;
 #endif
 
     std::atomic<float> currentGrDb { 0.0f };
@@ -656,6 +650,5 @@ private:
 #endif
     void parkGainSmoothers (int numSamples) noexcept;
     void updateEqParameters() noexcept;
-    void updateCompParameters() noexcept;
 };
 } // namespace duskstudio

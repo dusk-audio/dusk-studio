@@ -164,4 +164,15 @@ std::unique_ptr<DafPlugin> createTapeEcho2();
 std::unique_ptr<DafPlugin> createDuskVerb2();
 std::unique_ptr<DafPlugin> createTapeMachine2();
 std::unique_ptr<DafPlugin> createSunset();
+
+// Multi-Comp 2, the compressor the mixer's strips, buses and master each hold;
+// not an insertable unit. Bit n of faceMask lets its editor's mode row offer
+// mode n.
+std::unique_ptr<DafPlugin> createMultiComp2 (std::uint32_t faceMask);
+
+// Gives a plug-in createMultiComp2 made a mono (1) or stereo (2) main layout
+// and no sidechain: run() then reads inputs[0 .. channels - 1] and writes
+// outputs[0 .. channels - 1] only. Message thread, plug-in deactivated. False,
+// and nothing set, for any other plug-in.
+bool setMultiComp2Channels (DafPlugin& multiComp2, int channels) noexcept;
 } // namespace duskstudio::builtin

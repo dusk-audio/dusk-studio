@@ -336,13 +336,13 @@ ScenarioResult busDrainsAfterInputStops (ScenarioContext& ctx)
     });
     engine.prepareForSelfTest (ScenarioContext::kSampleRate, kFrames);
     engine.getChannelStrip (kTrack).prepare (ScenarioContext::kSampleRate, kFrames, 1);
-    engine.getBusStrip (0).prepare (ScenarioContext::kSampleRate, kFrames, 4);
-    engine.getBusStrip (1).prepare (ScenarioContext::kSampleRate, kFrames, 1);
+    engine.getBusStrip (0).prepare (ScenarioContext::kSampleRate, kFrames);
+    engine.getBusStrip (1).prepare (ScenarioContext::kSampleRate, kFrames);
 
     BusParams referenceParams;
     BusStrip reference;
     reference.bind (referenceParams);
-    reference.prepare (ScenarioContext::kSampleRate, kFrames, 4);
+    reference.prepare (ScenarioContext::kSampleRate, kFrames);
     std::array<float, kFrames> input {}, outL {}, outR {};
     std::array<std::array<float, kFrames>, 2> busL {}, busR {};
     const float* inputs[] { input.data(), input.data() };
@@ -357,7 +357,7 @@ ScenarioResult busDrainsAfterInputStops (ScenarioContext& ctx)
         if (block == 81)
         {
             session.bus (0).strip.mute.store (true);
-            reference.prepare (ScenarioContext::kSampleRate, kFrames, 4);
+            reference.prepare (ScenarioContext::kSampleRate, kFrames);
         }
         if (block == 82) session.bus (0).strip.mute.store (false);
         input.fill (0.0f);

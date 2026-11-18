@@ -10,8 +10,8 @@
 
 #if DUSKSTUDIO_HAS_DUSK_DSP
   #include "MasterTape.h"                    // Tape Machine 2 - master tape emulation (built-in DAF plug-in)
+  #include "MultiCompStage.h"                // Multi-Comp 2 - Bus mode master comp (built-in DAF plug-in)
   #include <core/MultiQTube.hpp>             // multi-q - Pultec-style Tube EQ (framework-free donor core)
-  #include <core/UniversalCompressorDSP.hpp> // multi-comp - Bus mode master comp (framework-free donor core)
 #endif
 
 namespace duskstudio
@@ -25,20 +25,22 @@ public:
     MasterBus();
 
     // oversamplingFactor: 1 = native (default), 2 = 2× ox, 4 = 4× ox. Sets the
-    // oversampler around the tube EQ and bus compressor; the tape keeps its own.
-    // Other values are clamped to 1.
+    // oversampler around the tube EQ; the compressor and the tape keep their
+    // own. Other values are clamped to 1.
     void prepare (double sampleRate, int blockSize, int oversamplingFactor = 1);
     void bind (const MasterBusParams& params) noexcept;
 
     void processInPlace (float* L, float* R, int numSamples) noexcept;
 
-    // How far the EQ/comp stage delays the master at the prepared oversampling
-    // factor, engaged or not; 0 at 1x. The tape's delay is separate.
+    // How far the EQ stage delays the master at the prepared oversampling
+    // factor, engaged or not; 0 at 1x. The tape's delay is separate, and an
+    // engaged compressor's is not part of either.
     int getOversamplingLatencySamples() const noexcept { return osLatencySamples; }
 
 #if DUSKSTUDIO_HAS_DUSK_DSP
-    // The master tape, for its editor. Message thread.
+    // The master tape and compressor, for their editors. Message thread.
     MasterTape& getTape() noexcept { return tape; }
+    MultiCompStage& getCompressor() noexcept { return busComp; }
 #endif
 
 private:
@@ -59,40 +61,34 @@ private:
     bool                        tapeMixPrimed = false;
     std::vector<float>          tapeDryL;
     std::vector<float>          tapeDryR;
-    duskaudio::MultiQTube             tubeEQ;
-    duskaudio::UniversalCompressorDSP busComp;
-    // Max samples per busComp.processBlock call (the oversampled prepare block
-    // size - the core degrades to dry passthrough beyond it); the process chunk
-    // loop splits anything larger. The tube EQ has no block-size limit.
-    int compMaxBlock = 0;
+    duskaudio::MultiQTube tubeEQ;
+    // Runs after the EQ's wrap and before the tape; it oversamples itself.
+    MultiCompStage busComp { CompStage::Bus };
 
     void updateEqParameters() noexcept;
-    void updateCompParameters() noexcept;
 #endif
 
     int currentOxFactor      = 1;     // 1, 2 or 4 - set in prepare(); drives the
-                                       // Dusk Studio-side oversampler around (TubeEQ
-                                       // + comp). The comp core's internal
-                                       // oversampling path is never engaged because
-                                       // the Dusk Studio-side wrap handles it.
+                                       // Dusk Studio-side oversampler around the
+                                       // TubeEQ.
 
-    // Master oversampler around (TubeEQ + bus comp). Both stages saturate (tube
-    // + comp) and alias at native rate; running them at oversampled rate inside
-    // this wrap suppresses it. The tape core has its own internal oversampling
-    // so it's processed at native rate AFTER this wrap.
+    // Master oversampler around the TubeEQ, whose tube stage saturates and
+    // aliases at native rate; running it at oversampled rate inside this wrap
+    // suppresses it. The compressor and the tape core oversample internally, so
+    // they're processed at native rate AFTER this wrap.
     dusk::audio::StereoOversampler oversampler;
 
-    // When EQ + comp are both bypassed the oversampler is skipped. Its FIR round
-    // trip imposes 23 (2x) / 26.5 (4x) native samples of latency, so delay the
-    // skip path by that amount to keep the master's latency invariant to the
-    // EQ/comp toggle. Integer delay - the 0.5-sample residual at 4x is inaudible.
+    // When the EQ is bypassed the oversampler is skipped. Its FIR round trip
+    // imposes 23 (2x) / 26.5 (4x) native samples of latency, so delay the skip
+    // path by that amount to keep the master's latency invariant to the EQ
+    // toggle. Integer delay - the 0.5-sample residual at 4x is inaudible.
     static constexpr int kMaxOsLatency = 32;
     dusk::audio::IntDelayLine osSkipDelayL;
     dusk::audio::IntDelayLine osSkipDelayR;
     int osLatencySamples = 0;
 
     // The skip ring is fed on EVERY block at OS factors > 1 (wrap-on blocks
-    // push and discard) so toggling EQ+comp off emits continuous delayed dry
+    // push and discard) so toggling the EQ off emits continuous delayed dry
     // instead of a zero-filled gap while the ring refills. The oversampler is
     // reset on the wrap-on edge so its FIR ramps in from silence, not a stale
     // tail from the last time the wrap ran.

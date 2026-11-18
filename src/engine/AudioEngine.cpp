@@ -5122,11 +5122,12 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
     }
 
     // Read the global oversampling factor once per prepare and propagate it to
-    // every strip/bus/master that wraps EQ+Comp in a Dusk Studio-side
-    // oversampler (each rebuilds its JUCE dsp::Oversampling at this factor in
-    // prepare). Aux lanes host plugin chains only (no Dusk EQ/Comp), so they
-    // don't take the factor. The cost only materialises when a strip is
-    // actually processing audio - silent / skipped strips dodge the chain.
+    // every strip and the master, which wrap their EQ in a Dusk Studio-side
+    // oversampler (each rebuilds it at this factor in prepare). The buses' EQ
+    // is linear and every compressor runs Multi-Comp 2's own 2x, and aux lanes
+    // host plugin chains only, so none of those take the factor. The cost only
+    // materialises when a strip is actually processing audio - silent /
+    // skipped strips dodge the chain.
     // An offline bounce overrides the factor (e.g. 4×) so the printed mix is
     // alias-free even though realtime monitoring runs at the user's lighter
     // setting; the override is cleared before the engine re-prepares for live.
@@ -5186,7 +5187,7 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
         }
 #endif
     }
-    for (auto& a : busStrips)     a.prepare (sr, bs, oxFactor);
+    for (auto& a : busStrips)     a.prepare (sr, bs);
     busAlignSamples.store (busStrips[0].getOversamplingLatencySamples(), std::memory_order_relaxed);
     for (int lane = 0; lane < Session::kNumAuxLanes; ++lane)
     {

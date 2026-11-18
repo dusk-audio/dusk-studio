@@ -1194,14 +1194,13 @@ target_compile_definitions(dusk-studio-tests PRIVATE
     DUSKSTUDIO_TESTS=1
     DUSKSTUDIO_SFZ_LICENSE_FIXTURES=\"${CMAKE_CURRENT_SOURCE_DIR}/fixtures/licenses\")
 
-# UniversalCompressor (multi-comp donor) tests — gated on the donor being
-# available. Mirrors the main app's DUSK_PLUGINS_PATH wiring exactly so the
-# tests link against the same DSP code paths the channel strip uses.
+# Donor DSP tests, gated on the donor being available. Mirrors the main app's
+# DUSK_PLUGINS_PATH wiring exactly so the tests link against the same DSP code
+# paths the strips, buses and master use.
 if(DUSK_PLUGINS_PATH)
     target_sources(dusk-studio-tests PRIVATE
-        comp_static_curve.cpp
-        comp_timing.cpp
-        bus_stereo_link.cpp
+        multi_comp_stage.cpp
+        comp_donor_guards.cpp
         tape_core_regression.cpp
         bus_strip.cpp
         channel_strip_signal_order.cpp
@@ -1224,7 +1223,6 @@ if(DUSK_PLUGINS_PATH)
         eq_nyquist_response.cpp
         session_eq_dial_migration.cpp
         tube_multiq_ab.cpp
-        comp_core_ab.cpp
         smoke_brickwall_limiter.cpp
         dsp_loudness_meter.cpp
         master_tape_alignment.cpp
@@ -1232,6 +1230,7 @@ if(DUSK_PLUGINS_PATH)
         master_strip_chain.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/MasterBus.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/MasterTape.cpp
+        ${CMAKE_SOURCE_DIR}/src/dsp/MultiCompStage.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/BrickwallLimiter.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/BusStrip.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/MasteringChain.cpp
@@ -1239,14 +1238,16 @@ if(DUSK_PLUGINS_PATH)
         ${CMAKE_SOURCE_DIR}/src/dsp/LoudnessMeter.cpp
         "${DUSKSTUDIO_DONOR_DSP_DIR}/FourKEQDSP.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/multicomp.cpp"
-        "${DUSKSTUDIO_COMPRESSOR_CORE_SOURCE}"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/AnalogLookAndFeel.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/EnhancedCompressorEditor.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/shared/LEDMeter.cpp")
 
     # The master tape is the Tape Machine 2 built-in, which also carries the
-    # tape core tape_core_regression.cpp measures.
-    target_link_libraries(dusk-studio-tests PRIVATE dusk_daf_tape_machine_2)
+    # tape core tape_core_regression.cpp measures. The strips, buses and
+    # master compress through the Multi-Comp 2 built-in.
+    target_link_libraries(dusk-studio-tests PRIVATE
+        dusk_daf_tape_machine_2
+        dusk_daf_multi_comp_2)
 
     # projucer-shim satisfies TubeEQProcessor.h's `#include <JuceHeader.h>`
     # (the donor EQ under A/B test in tube_multiq_ab.cpp); the shim pulls in a
@@ -1259,7 +1260,6 @@ if(DUSK_PLUGINS_PATH)
         "${DUSK_PLUGINS_PATH}/plugins/shared/channel-comp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-q"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp"
-        "${DUSK_PLUGINS_PATH}/plugins/multi-comp/core"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/HardwareEmulation"
         "${DUSKSTUDIO_DONOR_DSP_DIR}"
         "${DUSK_PLUGINS_PATH}/plugins/TapeMachine")

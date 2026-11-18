@@ -337,6 +337,10 @@ public:
     uint32_t editorWidth() const noexcept override  { return kEditorWidth; }
     uint32_t editorHeight() const noexcept override { return kEditorHeight; }
 
+    // The plug-in object itself, for a bridge that reaches the plug-in's own
+    // host access functions.
+    void* instancePointer() const noexcept { return exporter.getInstancePointer(); }
+
     std::unique_ptr<duskstudio::builtin::DafEditor> createEditor (
         const uintptr_t nativeParent, const uint32_t width, const uint32_t height,
         const double scaleFactor, duskstudio::builtin::DafEditorCallbacks callbacks,

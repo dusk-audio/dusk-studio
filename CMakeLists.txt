@@ -552,14 +552,6 @@ if(DEFINED DUSK_PLUGINS_PATH)
     list(GET _duskstudio_compatible_donor_dsp_dirs 0 DUSKSTUDIO_DONOR_DSP_DIR)
     get_filename_component(DUSKSTUDIO_DONOR_SHARED_DIR
         "${DUSKSTUDIO_DONOR_DSP_DIR}" DIRECTORY)
-
-    set(DUSKSTUDIO_COMPRESSOR_CORE_SOURCE
-        "${DUSK_PLUGINS_PATH}/plugins/multi-comp/core/UniversalCompressorDSP.cpp")
-    if(NOT EXISTS "${DUSKSTUDIO_COMPRESSOR_CORE_SOURCE}")
-        message(FATAL_ERROR
-            "Dusk plugins donor lacks the 0.13-compatible compressor core; "
-            "use the revision in DONOR_REV")
-    endif()
 endif()
 
 # Resolves a framework checkout into <outVar>, or leaves it empty when none is
@@ -1759,10 +1751,9 @@ if(DEFINED DUSK_PLUGINS_PATH)
     #   - shared-daf/dsp (FourKEQDSP, the 4K EQ 2 core every channel EQ
     #                 runs)
     #   - multi-q    (MultiQTube, the master program EQ core)
-    #   - multi-comp (UniversalCompressor — per-channel Opto/FET/VCA comp,
-    #                 used here as a JUCE AudioProcessor; only its DSP path is
-    #                 active — the plugin editor is compiled-in but never
-    #                 instantiated by Dusk Studio's UI)
+    #   - multi-comp (UniversalCompressor, the JUCE Multi-Comp the mastering
+    #                 chain runs in Multiband mode; its plugin editor is
+    #                 compiled in but never instantiated by Dusk Studio's UI)
     # SYSTEM include — vendored DSP headers carry benign warnings
     # (shadows, sign conversions) we don't own. Marking them SYSTEM
     # tells GCC/Clang to suppress those warnings on inclusion, which
@@ -1776,23 +1767,20 @@ if(DEFINED DUSK_PLUGINS_PATH)
         "${DUSKSTUDIO_DONOR_DSP_DIR}"
         "${DUSK_PLUGINS_PATH}/plugins/multi-q"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp"
-        "${DUSK_PLUGINS_PATH}/plugins/multi-comp/core"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/HardwareEmulation"
         "${DUSK_PLUGINS_PATH}/plugins/DuskVerb/src/dsp")
 
     # Compile multi-comp's processor + editor + shared LEDMeter so
     # UniversalCompressor links cleanly. Editor sources are linked but not
     # invoked from Dusk Studio's UI — they exist only because UniversalCompressor's
-    # createEditor() references them. The framework-free cores
-    # (UniversalCompressorDSP / FourKEQDSP) are the de-JUCE'd donors BusStrip
-    # uses directly.
+    # createEditor() references them.
     #
-    # MasterTape.cpp lives here rather than in the main source list: it runs
-    # the Tape Machine 2 built-in below, which exists only under
-    # DUSK_PLUGINS_PATH.
+    # MasterTape.cpp and MultiCompStage.cpp live here rather than in the main
+    # source list: they run the Tape Machine 2 and Multi-Comp 2 built-ins
+    # below, which exist only under DUSK_PLUGINS_PATH.
     target_sources(DuskStudio PRIVATE
         src/dsp/MasterTape.cpp
-        "${DUSKSTUDIO_COMPRESSOR_CORE_SOURCE}"
+        src/dsp/MultiCompStage.cpp
         "${DUSKSTUDIO_DONOR_DSP_DIR}/FourKEQDSP.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/multicomp.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/AnalogLookAndFeel.cpp"
@@ -1822,6 +1810,7 @@ if(DEFINED DUSK_PLUGINS_PATH)
         set(_duskstudio_duskverb_2_dir "${DUSK_PLUGINS_PATH}/plugins/DuskVerb/daf-plugin")
         set(_duskstudio_tape_machine_2_dir "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/daf-plugin")
         set(_duskstudio_sunset_dir "${DUSK_PLUGINS_PATH}/plugins/sunset-circuits/daf-plugin")
+        set(_duskstudio_multi_comp_2_dir "${DUSK_PLUGINS_PATH}/plugins/multi-comp/daf-plugin")
         if(NOT EXISTS "${_duskstudio_tape_echo_2_dir}/TapeEchoPlugin.cpp")
             message(FATAL_ERROR
                 "Dusk plugins donor lacks the Tape Echo 2 plug-in; "
@@ -1841,6 +1830,18 @@ if(DEFINED DUSK_PLUGINS_PATH)
             message(FATAL_ERROR
                 "Dusk plugins donor lacks the Sunset Circuits plug-in; "
                 "use the revision pinned by the build workflows")
+        endif()
+        # The mixer's compressors set each instance's channel layout through the
+        # plug-in's host access, which older Multi-Comp 2 releases lack.
+        if(EXISTS "${_duskstudio_multi_comp_2_dir}/MultiCompAccess.hpp")
+            file(STRINGS "${_duskstudio_multi_comp_2_dir}/MultiCompAccess.hpp"
+                 _duskstudio_multi_comp_2_host_access REGEX "multiCompSetHostChannels")
+        endif()
+        if(NOT EXISTS "${_duskstudio_multi_comp_2_dir}/MultiCompPlugin.cpp"
+           OR NOT _duskstudio_multi_comp_2_host_access)
+            message(FATAL_ERROR
+                "Dusk plugins donor lacks the Multi-Comp 2 plug-in with host channel "
+                "access; use the revision pinned by the build workflows")
         endif()
 
         function(duskstudio_embed_font symbol ttf out)
@@ -2060,6 +2061,45 @@ static const unsigned int ${symbol}_len = ${_fontSize}u;
             UI_SOURCE "${_duskstudio_duskverb_2_dir}/DuskVerbUI.cpp")
         set_target_properties(dusk_daf_duskverb_2 PROPERTIES UNITY_BUILD OFF)
 
+        # Multi-Comp 2, the compressor of every channel strip, bus and the
+        # master. It is not an insertable unit: the mixer holds its instances.
+        # MULTICOMP2_EMBEDDED_UI builds the editor a host frames itself, and
+        # must reach every source: DafPluginInfo.h reads it for the editor size.
+        set(_duskstudio_multi_comp_2_dsp_sources
+            "${_duskstudio_multi_comp_2_dir}/MultiCompPlugin.cpp"
+            "${DUSK_PLUGINS_PATH}/plugins/multi-comp/core/MultiCompDSP.cpp")
+        set(_duskstudio_multi_comp_2_generated_dir
+            "${CMAKE_CURRENT_BINARY_DIR}/generated/multi-comp-2")
+        duskstudio_embed_font(kMcFontSemiBold
+            "${DUSK_PLUGINS_PATH}/plugins/shared-daf/fonts/BarlowCondensed/BarlowCondensed-SemiBold.ttf"
+            "${_duskstudio_multi_comp_2_generated_dir}/MultiCompFontSemiBold.inc")
+        duskstudio_embed_font(kMcFontRegular
+            "${DUSK_PLUGINS_PATH}/plugins/shared-daf/fonts/BarlowCondensed/BarlowCondensed-Regular.ttf"
+            "${_duskstudio_multi_comp_2_generated_dir}/MultiCompFontRegular.inc")
+        set(_duskstudio_multi_comp_2_includes
+            "${_duskstudio_multi_comp_2_generated_dir}"
+            "${DUSK_PLUGINS_PATH}/plugins/multi-comp/core"
+            "${DUSK_PLUGINS_PATH}/plugins/shared-daf/dsp"
+            "${DUSK_PLUGINS_PATH}/plugins/shared-daf/ui")
+        duskstudio_donor_project_version(_duskstudio_multi_comp_2_version
+            "${_duskstudio_multi_comp_2_dir}" MultiComp2DAF MULTICOMP2)
+        set(_duskstudio_multi_comp_2_definitions
+            MULTICOMP2_EMBEDDED_UI=1
+            ${_duskstudio_multi_comp_2_version})
+        duskstudio_add_daf_builtin_library(
+            dusk_daf_multi_comp_2 OFF DuskMultiComp2
+            "${_duskstudio_multi_comp_2_dir}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/engine/builtin/daf/MultiComp2.cpp"
+            DSP_SOURCES ${_duskstudio_multi_comp_2_dsp_sources}
+            INCLUDE_DIRS ${_duskstudio_multi_comp_2_includes}
+            COMPILE_DEFINITIONS ${_duskstudio_multi_comp_2_definitions}
+            UI_SOURCE "${_duskstudio_multi_comp_2_dir}/MultiCompUI.cpp")
+        # The donor builds Multi-Comp 2 without contraction, so its DSP renders
+        # the same bits on every platform, which its captured references assume.
+        if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+            target_compile_options(dusk_daf_multi_comp_2 PRIVATE -ffp-contract=off)
+        endif()
+
         if(TARGET dusk_native_ui)
             duskstudio_add_daf_builtin_library(
                 dusk_daf_tape_echo_2_ui ON DuskTapeEcho2
@@ -2094,23 +2134,37 @@ static const unsigned int ${symbol}_len = ${_fontSize}u;
                 INCLUDE_DIRS ${_duskstudio_sunset_includes}
                 COMPILE_DEFINITIONS ${_duskstudio_sunset_definitions}
                 UI_SOURCE "${_duskstudio_sunset_dir}/MultiSynthUI.cpp")
+            duskstudio_add_daf_builtin_library(
+                dusk_daf_multi_comp_2_ui ON DuskMultiComp2
+                "${_duskstudio_multi_comp_2_dir}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/src/engine/builtin/daf/MultiComp2.cpp"
+                DSP_SOURCES ${_duskstudio_multi_comp_2_dsp_sources}
+                INCLUDE_DIRS ${_duskstudio_multi_comp_2_includes}
+                COMPILE_DEFINITIONS ${_duskstudio_multi_comp_2_definitions}
+                UI_SOURCE "${_duskstudio_multi_comp_2_dir}/MultiCompUI.cpp")
+            if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+                target_compile_options(dusk_daf_multi_comp_2_ui PRIVATE -ffp-contract=off)
+            endif()
             target_link_libraries(DuskStudio PRIVATE
                 dusk_daf_tape_echo_2_ui
                 dusk_daf_duskverb_2_ui
                 dusk_daf_tape_machine_2_ui
-                dusk_daf_sunset_ui)
+                dusk_daf_sunset_ui
+                dusk_daf_multi_comp_2_ui)
             if(TARGET dusk-native-wayland-probe)
                 target_compile_definitions(dusk-native-wayland-probe PRIVATE DUSK_NATIVE_PROBE_DAF=1)
                 target_link_libraries(dusk-native-wayland-probe PRIVATE
                     dusk_daf_tape_echo_2_ui dusk_daf_duskverb_2_ui
-                    dusk_daf_tape_machine_2_ui dusk_daf_sunset_ui)
+                    dusk_daf_tape_machine_2_ui dusk_daf_sunset_ui
+                    dusk_daf_multi_comp_2_ui)
             endif()
         else()
             target_link_libraries(DuskStudio PRIVATE
                 dusk_daf_tape_echo_2
                 dusk_daf_duskverb_2
                 dusk_daf_tape_machine_2
-                dusk_daf_sunset)
+                dusk_daf_sunset
+                dusk_daf_multi_comp_2)
         endif()
         target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_DAF_UNITS=1)
     else()

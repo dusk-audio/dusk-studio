@@ -3,6 +3,7 @@
 #include "../foundation/Json.h"
 #include "../foundation/Text.h"
 #include "audiofile/FileReader.h"
+#include "../session/CompMigration.h"
 #include "../session/RegionEditActions.h"
 #if defined(__linux__)
  #include "alsa/AlsaAudioIODevice.h"
@@ -67,6 +68,8 @@ AudioPipelineSelfTest::SavedState AudioPipelineSelfTest::saveState() const
         s.mode[(size_t) t]         = tt.mode.load (std::memory_order_relaxed);
         s.inputSource[(size_t) t]  = tt.inputSource.load (std::memory_order_relaxed);
         s.compEnabled[(size_t) t]  = ts.compEnabled.load (std::memory_order_relaxed);
+        s.compMode[(size_t) t]     = ts.compMode.load (std::memory_order_relaxed);
+        s.comp[(size_t) t]         = ts.comp.values();
         s.phaseInvert[(size_t) t]  = ts.phaseInvert.load (std::memory_order_relaxed);
         s.hpfEnabled[(size_t) t]   = ts.hpfEnabled.load (std::memory_order_relaxed);
         s.lfGainDb[(size_t) t]     = ts.lfGainDb.load (std::memory_order_relaxed);
@@ -106,6 +109,8 @@ void AudioPipelineSelfTest::restoreState (const SavedState& s)
         tt.mode.store         (s.mode[(size_t) t],         std::memory_order_relaxed);
         tt.inputSource.store  (s.inputSource[(size_t) t],  std::memory_order_relaxed);
         ts.compEnabled.store  (s.compEnabled[(size_t) t],  std::memory_order_relaxed);
+        ts.compMode.store     (s.compMode[(size_t) t],     std::memory_order_relaxed);
+        ts.comp.setValues     (s.comp[(size_t) t]);
         ts.phaseInvert.store  (s.phaseInvert[(size_t) t],  std::memory_order_relaxed);
         ts.hpfEnabled.store   (s.hpfEnabled[(size_t) t],   std::memory_order_relaxed);
         ts.lfGainDb.store     (s.lfGainDb[(size_t) t],     std::memory_order_relaxed);
@@ -350,12 +355,11 @@ std::string AudioPipelineSelfTest::testMasterFaderMinusSix()
 std::string AudioPipelineSelfTest::testMasterCompNoNoiseFloor()
 {
     prepareCleanState();
-    // Engage the master bus compressor over SILENT input. The donor comp's
-    // "Analog Noise" feature (~-80 dB white noise, default ON for analog
-    // modes) is now forced off in MasterBus::bindCompParams. Because the
-    // master chain runs the comp every block when engaged, leaving the noise
-    // on printed a continuous ~-67 dB peak floor into the output (and every
-    // bounce). With it disabled, an engaged comp over silence stays silent.
+    // Engage the master bus compressor over SILENT input. Multi-Comp 2's
+    // "Analog Noise" (white noise under the signal) is off by default and no
+    // stage stores it. Because the master chain runs the comp every block when
+    // engaged, noise left on would print a continuous floor into the output
+    // (and every bounce). With it off, an engaged comp over silence stays silent.
     session.master().compEnabled.store (true, std::memory_order_relaxed);
 
     auto m = runSynthetic (48000.0, 512, 16, 2, 0.0f, kToneHz, 12, 8);
@@ -650,6 +654,35 @@ bool isPlainTrack (const AudioEngine& engine, Session& session, int t)
         && strip.insertMode.load (std::memory_order_relaxed) != ChannelStrip::kInsertHardware
         && ! anythingLoaded;
 }
+
+// A strip compressor setting as the old core took it, which the comp cases
+// were written in.
+struct LegacyStripComp
+{
+    float optoPeakRed, optoGain;
+    float fetInput, fetOutput, fetAttackMs;
+    int   fetRatio;
+    float fetReleaseMs;
+    float vcaThresholdDb, vcaRatio, vcaOutputDb;
+};
+
+// Sets the strip's Multi-Comp 2 values to what a format-11 session holding
+// `old` migrates to, over the strip defaults.
+void setStripComp (ChannelStripParams& strip, const LegacyStripComp& old)
+{
+    auto& comp = strip.comp;
+    comp.resetToDefaults (CompStage::Strip);
+    comp.set (CompParamId::OptoPeakReduction, legacycomp::optoPeakReduction (old.optoPeakRed));
+    comp.set (CompParamId::OptoGain,          legacycomp::optoGain (old.optoGain));
+    comp.set (CompParamId::FetInput,          legacycomp::fetInput (old.fetInput));
+    comp.set (CompParamId::FetOutput,         legacycomp::fetOutput (old.fetOutput));
+    comp.set (CompParamId::FetAttack,         legacycomp::fetAttack (old.fetAttackMs, old.fetRatio));
+    comp.set (CompParamId::FetRelease,        legacycomp::fetRelease (old.fetReleaseMs));
+    comp.set (CompParamId::FetRatio,          (float) old.fetRatio);
+    comp.set (CompParamId::VcaThreshold,      legacycomp::vcaThreshold (old.vcaThresholdDb));
+    comp.set (CompParamId::VcaCompression,    legacycomp::vcaCompression (old.vcaRatio));
+    comp.set (CompParamId::VcaOutput,         legacycomp::vcaOutput (old.vcaOutputDb));
+}
 } // namespace
 
 std::string AudioPipelineSelfTest::testCompEachMode()
@@ -685,21 +718,12 @@ std::string AudioPipelineSelfTest::testCompEachMode()
         t0s.compEnabled.store (true, std::memory_order_relaxed);
         t0s.compMode   .store (m.idx, std::memory_order_relaxed);
 
-        // Moderate, mode-appropriate defaults so all 3 actually engage on a
+        // Moderate, mode-appropriate settings so all 3 actually engage on a
         // -18 dBFS sine + audibly compress without slamming the donor's
-        // hard ±2.0 clip.
-        t0s.compOptoPeakRed.store (50.0f, std::memory_order_relaxed);
-        t0s.compOptoGain   .store (60.0f, std::memory_order_relaxed);
-        t0s.compFetInput   .store (12.0f, std::memory_order_relaxed);
-        t0s.compFetOutput  .store ( 0.0f, std::memory_order_relaxed);
-        t0s.compFetAttack  .store ( 1.0f, std::memory_order_relaxed);
-        t0s.compFetRelease .store (200.0f, std::memory_order_relaxed);
-        t0s.compFetRatio   .store (1, std::memory_order_relaxed);   // 8:1
-        t0s.compVcaThreshDb.store (-24.0f, std::memory_order_relaxed);
-        t0s.compVcaRatio   .store (4.0f, std::memory_order_relaxed);
-        t0s.compVcaAttack  .store (5.0f, std::memory_order_relaxed);
-        t0s.compVcaRelease .store (100.0f, std::memory_order_relaxed);
-        t0s.compVcaOutput  .store (0.0f, std::memory_order_relaxed);
+        // hard ±2.0 clip: the old core's values as a format-11 session holding
+        // them plays them now.
+        setStripComp (t0s, { 50.0f, 60.0f, 12.0f, 0.0f, 1.0f, 1, 200.0f,
+                             -24.0f, 4.0f, 0.0f });
 
         std::vector<float> buf;
         captureToneOutput (engine, sr, bs, 16, 2, inputAmp, kToneHz,
@@ -759,26 +783,19 @@ std::string AudioPipelineSelfTest::testCompHeavyGR()
     struct Spec
     {
         int idx; const char* label;
-        // mode-specific extreme settings
-        float opto_peakRed; float opto_gain;
-        float fet_input;    float fet_output;    float fet_attack;
-        int   fet_ratio;    float fet_release;
-        float vca_thresh;   float vca_ratio;     float vca_attack;
-        float vca_release;  float vca_output;
+        // mode-specific extreme settings, in the old core's terms
+        LegacyStripComp settings;
     };
     const Spec specs[] = {
         // Opto: max peak-red + high gain = LA-2A "slammed" sound
-        { 0, "Opto-extreme",  100.0f, 80.0f,
-                                 0.0f, 0.0f, 1.0f, 0, 200.0f,
-                                 0.0f, 4.0f, 5.0f, 100.0f, 0.0f },
+        { 0, "Opto-extreme",  { 100.0f, 80.0f, 0.0f, 0.0f, 1.0f, 0, 200.0f,
+                                0.0f, 4.0f, 0.0f } },
         // FET: +40 dB input drive + ALL ratio = 1176 "British Mode" smash
-        { 1, "FET-allbutton",  50.0f, 50.0f,
-                                 40.0f, -10.0f, 0.02f, 4, 50.0f,
-                                 0.0f, 4.0f, 5.0f, 100.0f, 0.0f },
-        // VCA: -36 dB thresh + 20:1 ratio + +18 dB makeup = brick limiter
-        { 2, "VCA-brick",      50.0f, 50.0f,
-                                 0.0f, 0.0f, 1.0f, 0, 200.0f,
-                                 -36.0f, 20.0f, 1.0f, 50.0f, 12.0f }
+        { 1, "FET-allbutton", { 50.0f, 50.0f, 40.0f, -10.0f, 0.02f, 4, 50.0f,
+                                0.0f, 4.0f, 0.0f } },
+        // VCA: -36 dB thresh + 20:1 ratio + +12 dB makeup = brick limiter
+        { 2, "VCA-brick",     { 50.0f, 50.0f, 0.0f, 0.0f, 1.0f, 0, 200.0f,
+                                -36.0f, 20.0f, 12.0f } }
     };
 
     std::string table;
@@ -788,18 +805,7 @@ std::string AudioPipelineSelfTest::testCompHeavyGR()
         auto& t0s = session.track (0).strip;
         t0s.compEnabled.store (true, std::memory_order_relaxed);
         t0s.compMode   .store (s.idx, std::memory_order_relaxed);
-        t0s.compOptoPeakRed.store (s.opto_peakRed, std::memory_order_relaxed);
-        t0s.compOptoGain   .store (s.opto_gain,    std::memory_order_relaxed);
-        t0s.compFetInput   .store (s.fet_input,    std::memory_order_relaxed);
-        t0s.compFetOutput  .store (s.fet_output,   std::memory_order_relaxed);
-        t0s.compFetAttack  .store (s.fet_attack,   std::memory_order_relaxed);
-        t0s.compFetRelease .store (s.fet_release,  std::memory_order_relaxed);
-        t0s.compFetRatio   .store (s.fet_ratio,    std::memory_order_relaxed);
-        t0s.compVcaThreshDb.store (s.vca_thresh,   std::memory_order_relaxed);
-        t0s.compVcaRatio   .store (s.vca_ratio,    std::memory_order_relaxed);
-        t0s.compVcaAttack  .store (s.vca_attack,   std::memory_order_relaxed);
-        t0s.compVcaRelease .store (s.vca_release,  std::memory_order_relaxed);
-        t0s.compVcaOutput  .store (s.vca_output,   std::memory_order_relaxed);
+        setStripComp (t0s, s.settings);
 
         std::vector<float> buf;
         captureToneOutput (engine, sr, bs, 16, 2, inputAmp, kToneHz,
@@ -864,8 +870,9 @@ std::string AudioPipelineSelfTest::testCompPerTrack()
             ts.solo        .store (false, std::memory_order_relaxed);
             ts.compEnabled .store (i == t, std::memory_order_relaxed);
             ts.compMode    .store (0, std::memory_order_relaxed);   // Opto
-            ts.compOptoPeakRed.store (50.0f, std::memory_order_relaxed);
-            ts.compOptoGain   .store (60.0f, std::memory_order_relaxed);
+            ts.comp.resetToDefaults (CompStage::Strip);
+            ts.comp.set (CompParamId::OptoPeakReduction, legacycomp::optoPeakReduction (50.0f));
+            ts.comp.set (CompParamId::OptoGain, legacycomp::optoGain (60.0f));
             // Force every tested track direct-to-master; a live bus assignment
             // would route it through bus EQ/comp/fader and skew the per-track
             // peak comparison. (saveState/restoreState round-trip the routing.)

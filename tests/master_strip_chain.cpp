@@ -121,7 +121,7 @@ TEST_CASE ("master program EQ comes before the master compressor", "[master][eq]
     {
         MasterBusParams params;
         params.compEnabled.store (true);
-        params.compThreshDb.store (-30.0f);
+        params.comp.set (duskstudio::CompParamId::BusThreshold, -30.0f);
         if (boost) boostLows (params);
         MasterBus master;
         master.bind (params);
@@ -204,7 +204,7 @@ TEST_CASE ("master output meters read post-fader peak and 300 ms VU per side", "
 TEST_CASE ("master GR meter reads the master compressor's reduction", "[master][meters]")
 {
     MasterBusParams params;
-    params.compThreshDb.store (-20.0f);
+    params.comp.set (duskstudio::CompParamId::BusThreshold, -20.0f);
     MasterBus master;
     master.bind (params);
     master.prepare (kSr, kBlock, 1);

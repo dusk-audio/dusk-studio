@@ -1,27 +1,31 @@
 #include <catch2/catch_test_macros.hpp>
-#include <catch2/generators/catch_generators.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "dsp/BusStrip.h"
 #include "dsp/ChannelStrip.h"
 #include "dsp/MasterBus.h"
+#include "dsp/MultiCompStage.h"
+#include "engine/builtin/DafPlugin.h"
 #include "session/Session.h"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <functional>
 #include <vector>
 
+using Catch::Matchers::WithinAbs;
 using duskstudio::ChannelStrip;
 
-// MANUAL "Configuring audio > Advanced": Effect Oversampling raises the
-// internal rate of the channel EQ and compressor, the bus compressor, and the
-// master EQ and compressor. Each stage named there saturates, and a stage that
-// saturates a 15 kHz tone at 48 kHz folds its 2nd and 3rd harmonics (30 and
-// 45 kHz) back to 18 and 3 kHz. Run at 2x or 4x, those harmonics sit below the
-// raised Nyquist and the downsampler removes them, so the folded tones fall
-// away. That drop is what shows the factor reached the stage; the reported
-// latency shows the unit's own oversampler took the factor.
+// Effect Oversampling raises the internal rate of the channel EQ and the
+// master EQ. Each saturates, and a stage that saturates a 15 kHz tone at
+// 48 kHz folds its 2nd and 3rd harmonics (30 and 45 kHz) back to 18 and 3 kHz.
+// Run at 2x or 4x, those harmonics sit below the raised Nyquist and the
+// downsampler removes them, so the folded tones fall away. That drop is what
+// shows the factor reached the stage, and the unit's own oversampler's
+// reported latency that it took the factor. The compressors are Multi-Comp 2
+// at its own 2x whatever the factor, which they read back.
 
 namespace
 {
@@ -76,15 +80,9 @@ std::vector<float> probe (const std::function<void (float*, float*, int)>& proce
     return out;
 }
 
-double channelFolded (int factor, bool comp)
+double channelEqFolded (int factor)
 {
     duskstudio::ChannelStripParams params;
-    if (comp)
-    {
-        params.compEnabled.store (true);
-        params.compMode.store (1);
-        params.compFetInput.store (40.0f);
-    }
     ChannelStrip strip;
     strip.bind (params);
     strip.insertMode.store (ChannelStrip::kInsertEmpty);
@@ -104,27 +102,34 @@ double channelFolded (int factor, bool comp)
     }, 0.5f));
 }
 
-double busFolded (int factor)
-{
-    duskstudio::BusParams params;
-    params.compEnabled.store (true);
-    params.compThreshDb.store (-20.0f);
-    duskstudio::BusStrip strip;
-    strip.prepare (kSr, kBlock, factor);
-    strip.bind (params);
-    return foldedDb (probe ([&] (float* l, float* r, int n) { strip.processInPlace (l, r, n); }, 0.5f));
-}
-
-double masterFolded (int factor, bool eq, bool comp)
+double masterEqFolded (int factor)
 {
     duskstudio::MasterBusParams params;
-    params.eqEnabled.store (eq);
-    params.compEnabled.store (comp);
-    params.compThreshDb.store (-20.0f);
+    params.eqEnabled.store (true);
     duskstudio::MasterBus master;
     master.bind (params);
     master.prepare (kSr, kBlock, factor);
     return foldedDb (probe ([&] (float* l, float* r, int n) { master.processInPlace (l, r, n); }, 0.5f));
+}
+
+int oversamplingIndex (duskstudio::MultiCompStage& stage)
+{
+    const auto& descs = stage.plugin().params();
+    for (std::size_t i = 0; i < descs.size(); ++i)
+        if (descs[i].symbol == "oversampling")
+            return (int) i;
+    return -1;
+}
+
+// The compressor's plug-in runs its own default Oversampling, 2x (parameter
+// value 1), once a block has pushed the stage's values.
+void checkOwnOversampling (duskstudio::MultiCompStage& stage)
+{
+    const int index = oversamplingIndex (stage);
+    REQUIRE (index >= 0);
+    const float setting = stage.plugin().getParameterValue ((std::uint32_t) index);
+    CHECK_THAT (setting, WithinAbs (stage.plugin().params()[(std::size_t) index].defaultValue, 0.0f));
+    CHECK_THAT (setting, WithinAbs (1.0f, 0.0f));
 }
 
 // The half-band round trip: 23 samples at 2x, 26.5 rounded at 4x.
@@ -134,71 +139,93 @@ int expectedLatency (int factor)
 }
 } // namespace
 
-TEST_CASE ("Effect oversampling raises the channel EQ and compressor rate", "[oversampling]")
+TEST_CASE ("Effect oversampling raises the channel EQ rate", "[oversampling]")
 {
-    const double eqNative   = channelFolded (1, false);
-    const double compNative = channelFolded (1, true);
-    CAPTURE (eqNative, compNative);
-    // The EQ core's console saturator always runs, so it is the EQ stage the
-    // comp-off probe hears. The FET compressor driven hard folds far more than
-    // the saturator does, so the comp-on probe measures the compressor.
-    REQUIRE (eqNative > -90.0);
-    REQUIRE (compNative - eqNative > 20.0);
-
-    for (const int factor : { 2, 4 })
-    {
-        ChannelStrip strip;
-        duskstudio::ChannelStripParams params;
-        strip.bind (params);
-        strip.prepare (kSr, kBlock, factor);
-        const double eq   = channelFolded (factor, false);
-        const double comp = channelFolded (factor, true);
-        CAPTURE (factor, eq, comp);
-        REQUIRE (strip.getOversamplingLatencySamples() == expectedLatency (factor));
-        REQUIRE (eq - eqNative < -30.0);
-        REQUIRE (comp - compNative < -15.0);
-    }
-
-    ChannelStrip native;
-    duskstudio::ChannelStripParams params;
-    native.bind (params);
-    native.prepare (kSr, kBlock, 1);
-    REQUIRE (native.getOversamplingLatencySamples() == 0);
-}
-
-TEST_CASE ("Effect oversampling raises the bus compressor rate", "[oversampling]")
-{
-    const double native = busFolded (1);
+    // The EQ core's console saturator always runs, so the probe hears the EQ
+    // stage.
+    const double native = channelEqFolded (1);
     CAPTURE (native);
     REQUIRE (native > -90.0);
 
     for (const int factor : { 1, 2, 4 })
     {
-        duskstudio::BusStrip strip;
+        CAPTURE (factor);
+        ChannelStrip strip;
+        duskstudio::ChannelStripParams params;
+        strip.bind (params);
         strip.prepare (kSr, kBlock, factor);
         REQUIRE (strip.getOversamplingLatencySamples() == expectedLatency (factor));
         if (factor == 1) continue;
-        const double folded = busFolded (factor);
-        CAPTURE (factor, folded);
+        const double folded = channelEqFolded (factor);
+        CAPTURE (folded);
         REQUIRE (folded - native < -30.0);
     }
 }
 
-TEST_CASE ("Effect oversampling raises the master EQ and compressor rate", "[oversampling]")
+TEST_CASE ("Effect oversampling raises the master EQ rate", "[oversampling]")
 {
-    const bool eq = GENERATE (true, false);
-    const double native = masterFolded (1, eq, ! eq);
-    CAPTURE (eq, native);
+    const double native = masterEqFolded (1);
+    CAPTURE (native);
     REQUIRE (native > -90.0);
 
     for (const int factor : { 1, 2, 4 })
     {
+        CAPTURE (factor);
         duskstudio::MasterBus master;
         master.prepare (kSr, kBlock, factor);
         REQUIRE (master.getOversamplingLatencySamples() == expectedLatency (factor));
         if (factor == 1) continue;
-        const double folded = masterFolded (factor, eq, ! eq);
-        CAPTURE (factor, folded);
+        const double folded = masterEqFolded (factor);
+        CAPTURE (folded);
         REQUIRE (folded - native < -30.0);
+    }
+}
+
+TEST_CASE ("Effect oversampling leaves every compressor at Multi-Comp 2's own 2x", "[oversampling]")
+{
+    // Multi-Comp 2's reference parity was established at its default 2x, so
+    // every compressor runs that whatever the strip, bus or master was
+    // prepared with, and keeps one latency.
+    std::vector<float> l ((std::size_t) kBlock, 0.1f), r ((std::size_t) kBlock, 0.1f);
+    std::array<float*, ChannelStrip::kNumBuses> busL {}, busR {};
+    std::array<float*, ChannelStrip::kNumAuxSends> auxL {}, auxR {};
+    std::vector<float> mL ((std::size_t) kBlock), mR ((std::size_t) kBlock);
+    juce::MidiBuffer midi;
+    int latency = -1;
+    for (const int factor : { 1, 2, 4 })
+    {
+        CAPTURE (factor);
+        duskstudio::ChannelStripParams stripParams;
+        stripParams.compEnabled.store (true);
+        ChannelStrip strip;
+        strip.bind (stripParams);
+        strip.insertMode.store (ChannelStrip::kInsertEmpty);
+        strip.prepare (kSr, kBlock, factor);
+        for (const bool stereo : { false, true })
+            strip.processAndAccumulate (l.data(), stereo ? r.data() : nullptr, midi, false,
+                                        mL.data(), mR.data(), busL, busR, auxL, auxR, kBlock, true);
+        checkOwnOversampling (strip.getCompressor (false));
+        checkOwnOversampling (strip.getCompressor (true));
+
+        duskstudio::BusParams busParams;
+        busParams.compEnabled.store (true);
+        duskstudio::BusStrip bus;
+        bus.bind (busParams);
+        bus.prepare (kSr, kBlock);
+        bus.processInPlace (l.data(), r.data(), kBlock);
+        checkOwnOversampling (bus.getCompressor());
+
+        duskstudio::MasterBusParams masterParams;
+        masterParams.compEnabled.store (true);
+        duskstudio::MasterBus master;
+        master.bind (masterParams);
+        master.prepare (kSr, kBlock, factor);
+        master.processInPlace (l.data(), r.data(), kBlock);
+        checkOwnOversampling (master.getCompressor());
+
+        if (latency < 0) latency = master.getCompressor().latencySamples();
+        CHECK (strip.getCompressor (false).latencySamples() == latency);
+        CHECK (strip.getCompressor (true).latencySamples() == latency);
+        CHECK (master.getCompressor().latencySamples() == latency);
     }
 }
