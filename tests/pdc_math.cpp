@@ -766,8 +766,18 @@ TEST_CASE ("Channel silent-input skip preserves slow filter tails before a close
     CAPTURE (stereo, factor, highQ, compressed);
     StripPdcHarness actual { stereo, 96, factor }, reference { stereo, 96, factor, false },
                     frozen { stereo, 96, factor, false };
+    // The compressor runs inside the strips' stage, held on as an engaged one
+    // holds it.
+    duskstudio::CompStageClock stage;
+#if DUSKSTUDIO_HAS_DUSK_DSP
+    stage.prepare (48000.0, actual.strip.getCompressor (stereo).latencySamples());
+#else
+    stage.prepare (48000.0, 0);
+#endif
+    stage.snap (compressed);
     for (auto* harness : { &actual, &reference, &frozen })
     {
+        harness->strip.setCompStage (&stage.block());
         auto& params = harness->params;
         params.liveFaderDb.store (-100.0f);
         params.eqEnabled.store (true);

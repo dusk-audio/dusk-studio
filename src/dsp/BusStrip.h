@@ -1,6 +1,7 @@
 #pragma once
 
 #include "BusToneEq.h"
+#include "CompStageAlign.h"
 #include "../foundation/SmoothedValue.h"
 #include "../session/Session.h"
 #include <atomic>
@@ -36,9 +37,10 @@ public:
     bool hasPendingDrain() const noexcept { return drainQuietRemaining > 0; }
     void discardPendingDrain() noexcept;
 
-    // The bus has no oversampler of its own. An engaged compressor's delay is
-    // not part of this.
-    int getOversamplingLatencySamples() const noexcept { return 0; }
+    // The buses' compressor stage (see CompStageClock), which the engine
+    // rewrites before each block's bus pass. Unbound, the stage is off and
+    // the compressor never runs.
+    void setCompStage (const CompStageBlock* stage) noexcept { compStage = stage; }
 
 #if DUSKSTUDIO_HAS_DUSK_DSP
     // The bus compressor, for its editor. Message thread.
@@ -58,6 +60,8 @@ private:
 #if DUSKSTUDIO_HAS_DUSK_DSP
     MultiCompStage busComp { CompStage::Bus };
 #endif
+    CompStageAlign compAlign;
+    const CompStageBlock* compStage = nullptr;
 
     void updateGainTargets() noexcept;
 

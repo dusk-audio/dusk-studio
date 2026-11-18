@@ -293,46 +293,71 @@ TEST_CASE ("MultiCompStage: the plug-in keeps its own Oversampling", "[compresso
     }
 }
 
-TEST_CASE ("MultiCompStage: a cleared stage does not replay the audio its delay held", "[compressor][multicomp]")
+TEST_CASE ("MultiCompStage: a reset stage plays silence as a fresh one does", "[compressor][multicomp]")
 {
-    // Clearing runs silence through the delay. The plug-in's analog-modelled
-    // filters keep their state and decay as they would on silence, which no
-    // host call can reset on the audio thread, so what is held to account is
-    // the delayed signal: an uncleared twin plays its last latency's worth of
-    // the compressed sine when silence follows, and a cleared stage plays at
-    // least 20 dB under that (measured 26 dB for FET, more for Opto and VCA).
-    for (int mode = 0; mode < 3; ++mode)
-        for (const int channels : { 1, 2 })
+    // A twin that is not reset plays its last latency's worth of the
+    // compressed sine, and its filters' decay after it, when silence follows.
+    // Reset, the plug-in is back at the rest its activation leaves, so
+    // silence comes out as it does from a fresh instance: exactly zero in
+    // FET, VCA and Bus, and in Opto the floor its modelled cell settles to,
+    // under 1e-12.
+    struct Case
+    {
+        const char* name;
+        CompStage kind;
+        int mode;
+        int channels;
+        float floor;
+    };
+    const Case cases[] {
+        { "Opto, mono",   CompStage::Strip, 0, 1, 1.0e-12f },
+        { "Opto, stereo", CompStage::Strip, 0, 2, 1.0e-12f },
+        { "FET, mono",    CompStage::Strip, 1, 1, 0.0f },
+        { "FET, stereo",  CompStage::Strip, 1, 2, 0.0f },
+        { "VCA, mono",    CompStage::Strip, 2, 1, 0.0f },
+        { "VCA, stereo",  CompStage::Strip, 2, 2, 0.0f },
+        { "Bus",          CompStage::Bus,   0, 2, 0.0f },
+    };
+    const auto silence = [] (MultiCompStage& stage, int channels)
+    {
+        std::vector<float> L (4096, 0.0f), R (4096, 0.0f);
+        run (stage, L, channels == 2 ? &R : nullptr, 64);
+        float peak = 0.0f;
+        for (std::size_t i = 0; i < L.size(); ++i)
+            peak = std::max ({ peak, std::abs (L[i]), std::abs (R[i]) });
+        return peak;
+    };
+    for (const auto& c : cases)
+    {
+        CAPTURE (c.name);
+        MultiCompStage reset (c.kind), held (c.kind), fresh (c.kind);
+        CompParams comp;
+        comp.set (CompParamId::OptoPeakReduction, 60.0f);
+        comp.set (CompParamId::FetThreshold, -30.0f);
+        comp.set (CompParamId::VcaThreshold, -40.0f);
+        comp.set (CompParamId::BusThreshold, -20.0f);
+        for (auto* stage : { &reset, &held, &fresh })
         {
-            CAPTURE (mode, channels);
-            MultiCompStage cleared (CompStage::Strip), held (CompStage::Strip);
-            CompParams comp;
-            comp.set (CompParamId::OptoPeakReduction, 60.0f);
-            for (auto* stage : { &cleared, &held })
-            {
-                stage->prepare (kSr, 64, channels);
-                stage->pushParameters (comp, true, mode);
-                auto L = sine (150.0, 0.7f, 4096);
-                auto R = L;
-                run (*stage, L, channels == 2 ? &R : nullptr, 64);
-            }
-            cleared.clearHistory();
-
-            const auto silence = [&] (MultiCompStage& stage)
-            {
-                std::vector<float> L (4096, 0.0f), R (4096, 0.0f);
-                run (stage, L, channels == 2 ? &R : nullptr, 64);
-                float peak = 0.0f;
-                for (std::size_t i = 0; i < L.size(); ++i)
-                    peak = std::max ({ peak, std::abs (L[i]), std::abs (R[i]) });
-                return peak;
-            };
-            const float replayed = silence (held);
-            const float residue = silence (cleared);
-            CAPTURE (replayed, residue);
-            CHECK (replayed > 0.05f);
-            CHECK (residue < 0.1f * replayed);
+            stage->prepare (kSr, 64, c.channels);
+            stage->pushParameters (comp, true, c.mode);
         }
+        for (auto* stage : { &reset, &held })
+        {
+            auto L = sine (150.0, 0.7f, 4096);
+            auto R = L;
+            run (*stage, L, c.channels == 2 ? &R : nullptr, 64);
+        }
+        reset.reset();
+
+        const float replayed = silence (held, c.channels);
+        const float afterReset = silence (reset, c.channels);
+        const float fromFresh = silence (fresh, c.channels);
+        CAPTURE (replayed, afterReset, fromFresh);
+        // The held twin replays at least 0.016 in every case here.
+        CHECK (replayed > 1.0e-3f);
+        CHECK (afterReset <= c.floor);
+        CHECK (fromFresh <= c.floor);
+    }
 }
 
 TEST_CASE ("MultiCompStage: a block over the prepared size runs as prepared-size parts", "[compressor][multicomp]")

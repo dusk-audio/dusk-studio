@@ -122,6 +122,8 @@ add_executable(dusk-studio-tests
     channel_strip_hardware_insert_lanes.cpp
     channel_strip_idle_gains.cpp
     ${CMAKE_SOURCE_DIR}/src/dsp/ChannelStrip.cpp
+    comp_stage_align.cpp
+    ${CMAKE_SOURCE_DIR}/src/dsp/CompStageAlign.cpp
     insert_mode_defaults.cpp
     ${CMAKE_SOURCE_DIR}/src/dsp/AuxLaneStrip.cpp
     channel_strip_context_rename.cpp
@@ -1200,6 +1202,7 @@ target_compile_definitions(dusk-studio-tests PRIVATE
 if(DUSK_PLUGINS_PATH)
     target_sources(dusk-studio-tests PRIVATE
         multi_comp_stage.cpp
+        comp_stage_strips.cpp
         comp_donor_guards.cpp
         tape_core_regression.cpp
         bus_strip.cpp

@@ -5187,6 +5187,9 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     // Bypass instruments on tracks the session restored as frozen (frozenRegion
     // was rebuilt during deserialize; this is the engine-side half).
     engine.reapplyFreezeState();
+    // The compressor stages hold the latency the loaded session's compressors
+    // call for from its first block, without fading into it.
+    engine.snapCompStages();
 
     // Resolve saved identifiers against the existing banks without reopening
     // every MIDI device during session load.

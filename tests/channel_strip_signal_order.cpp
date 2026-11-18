@@ -2,6 +2,7 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "dsp/ChannelStrip.h"
+#include "dsp/CompStageAlign.h"
 #include "session/Session.h"
 
 #include <algorithm>
@@ -65,6 +66,8 @@ struct Rig
     duskstudio::ChannelStripParams   params;
     duskstudio::HardwareInsertParams hw;
     ChannelStrip strip;
+    // The strips' compressor stage, held where an engaged compressor puts it.
+    duskstudio::CompStageClock compStage;
 
     std::vector<float> in, masterL, masterR, sendL, sendR, returnL, returnR;
     std::array<std::vector<float>, ChannelStrip::kNumBuses>    busL, busR;
@@ -103,7 +106,13 @@ struct Rig
         strip.insertMode.store (insertMode, std::memory_order_release);
     }
 
-    void prepare() { strip.prepare (kSr, kBlock); }
+    void prepare()
+    {
+        strip.prepare (kSr, kBlock);
+        compStage.prepare (kSr, strip.getCompressor (false).latencySamples());
+        compStage.snap (params.compEnabled.load());
+        strip.setCompStage (&compStage.block());
+    }
 
     // `returnTone` null: the outboard is a wire, returning exactly what it was
     // sent in the same block.

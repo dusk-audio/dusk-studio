@@ -76,12 +76,9 @@ struct MultiCompStage::Impl
     int channels = 2;
     int maxBlock = 0;
     int latency = 0;
-    int flushSamples = 0;
     bool prepared = false;
-    // The stage has run since it last cleared, so it may hold audio.
+    // The stage has run since it was last at rest.
     bool held = false;
-
-    std::vector<float> silence, discardL, discardR;
 
     float modeFor (int stripMode) const noexcept
     {
@@ -172,15 +169,6 @@ void MultiCompStage::prepare (double sampleRate, int blockSize, int channels)
 
     plugin.activate (sampleRate, bs);
     impl->latency = std::max (0, plugin.latencySamples());
-    // What the plug-in's delay still holds once its input falls silent: the
-    // latency and the anti-alias filters' far half beyond it. Its
-    // analog-modelled filters keep their state and decay on their own; the
-    // plug-in offers a host no reset it could call on the audio thread.
-    impl->flushSamples = 2 * impl->latency;
-
-    impl->silence.assign ((std::size_t) bs, 0.0f);
-    impl->discardL.assign ((std::size_t) bs, 0.0f);
-    impl->discardR.assign ((std::size_t) bs, 0.0f);
     impl->maxBlock = bs;
     impl->held = false;
     impl->prepared = true;
@@ -224,17 +212,13 @@ void MultiCompStage::process (float* L, float* R, int numSamples) noexcept
     }
 }
 
-void MultiCompStage::clearHistory() noexcept
+void MultiCompStage::reset() noexcept
 {
     auto& s = *impl;
     if (! s.held || ! s.prepared) return;
     s.held = false;
-
-    const float* silentR = s.channels == 2 ? s.silence.data() : nullptr;
-    float* discardR = s.channels == 2 ? s.discardR.data() : nullptr;
-    for (int done = 0; done < s.flushSamples; done += s.maxBlock)
-        s.run (s.silence.data(), silentR, s.discardL.data(), discardR,
-               std::min (s.maxBlock, s.flushSamples - done));
+    [[maybe_unused]] const bool reset = builtin::resetMultiComp2 (*s.plugin);
+    assert (reset);
 }
 
 float MultiCompStage::gainReductionDb() const noexcept

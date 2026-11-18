@@ -21,4 +21,13 @@ bool setMultiComp2Channels (DafPlugin& multiComp2, int channels) noexcept
     multiCompSetHostChannels (bridge->instancePointer(), channels);
     return true;
 }
+
+bool resetMultiComp2 (DafPlugin& multiComp2) noexcept
+{
+    auto* bridge = dynamic_cast<DAF_NAMESPACE::ExporterBridge*> (&multiComp2);
+    if (bridge == nullptr)
+        return false;
+    multiCompResetHost (bridge->instancePointer());
+    return true;
+}
 } // namespace duskstudio::builtin

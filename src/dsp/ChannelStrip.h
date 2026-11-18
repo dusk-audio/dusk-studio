@@ -34,6 +34,7 @@
   #include "../engine/multisample/NativeMultisampleSlot.h"
 #endif
 
+#include "CompStageAlign.h"
 #include "HardwareInsertSlot.h"
 
 #if DUSKSTUDIO_HAS_DUSK_DSP
@@ -85,9 +86,14 @@ public:
     const PluginSlot& getPluginSlot() const noexcept { return pluginSlot; }
 
     // How far the always-oversampled EQ stage delays the strip's output at the
-    // prepared factor, rounded; 0 at 1x. An engaged compressor's own delay is
-    // not part of it.
+    // prepared factor, rounded; 0 at 1x. The compressor stage's latency is the
+    // engine's, the same on every strip (see setCompStage).
     int getOversamplingLatencySamples() const noexcept { return osLatencySamples; }
+
+    // The strips' compressor stage (see CompStageClock), which the engine
+    // rewrites before each block's strip pass; read only inside that pass.
+    // Unbound, the stage is off and the compressor never runs.
+    void setCompStage (const CompStageBlock* stage) noexcept { compStage = stage; }
 
 #if DUSKSTUDIO_HAS_DUSK_DSP
     // The compressor a block of that width runs, for its editor. Message thread.
@@ -614,11 +620,24 @@ private:
     // parameters when it next runs.
     MultiCompStage monoComp   { CompStage::Strip };
     MultiCompStage stereoComp { CompStage::Strip };
-    // Runs the compressor for this block's width, when engaged, on L (and R on
-    // a stereo block) in place, and clears whichever did not run so neither
-    // replays held audio when it next does.
+    // The compressor stage on L (and R on a stereo block) in place: this
+    // block's width's compressor when engaged, the stage's plain delay when
+    // not, nothing while the stage's latency is off. Kept out of line, as
+    // parkGainSmoothers is.
+#if defined(_MSC_VER)
+    __declspec(noinline)
+#elif defined(__GNUC__)
+    __attribute__((noinline))
+#endif
     void runCompressor (float* L, float* R, int numSamples, bool engaged) noexcept;
 #endif
+    CompStageAlign compAlign;
+    const CompStageBlock* compStage = nullptr;
+    const CompStageBlock& compStageBlock() const noexcept;
+    // Input-silent samples the strip must still run before its output has
+    // settled: the PDC delay, the oversampler's full FIR support and the
+    // compressor stage's tail.
+    std::int64_t silentTailDrainSamples() const noexcept;
 
     std::atomic<float> currentGrDb { 0.0f };
     std::atomic<float> currentOutLDb { -100.0f };

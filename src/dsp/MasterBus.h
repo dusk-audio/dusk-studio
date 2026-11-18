@@ -3,6 +3,7 @@
 #include <atomic>
 #include <memory>
 #include <vector>
+#include "CompStageAlign.h"
 #include "../foundation/IntDelayLine.h"
 #include "../foundation/SmoothedValue.h"
 #include "../foundation/StereoOversampler.h"
@@ -33,9 +34,14 @@ public:
     void processInPlace (float* L, float* R, int numSamples) noexcept;
 
     // How far the EQ stage delays the master at the prepared oversampling
-    // factor, engaged or not; 0 at 1x. The tape's delay is separate, and an
-    // engaged compressor's is not part of either.
+    // factor, engaged or not; 0 at 1x. The tape's delay is separate, and so is
+    // the compressor stage's, which is the engine's (see setCompStage).
     int getOversamplingLatencySamples() const noexcept { return osLatencySamples; }
+
+    // The master's compressor stage (see CompStageClock), which the engine
+    // rewrites before each block. Unbound, the stage is off and the
+    // compressor never runs.
+    void setCompStage (const CompStageBlock* stage) noexcept { compStage = stage; }
 
 #if DUSKSTUDIO_HAS_DUSK_DSP
     // The master tape and compressor, for their editors. Message thread.
@@ -67,6 +73,8 @@ private:
 
     void updateEqParameters() noexcept;
 #endif
+    CompStageAlign compAlign;
+    const CompStageBlock* compStage = nullptr;
 
     int currentOxFactor      = 1;     // 1, 2 or 4 - set in prepare(); drives the
                                        // Dusk Studio-side oversampler around the

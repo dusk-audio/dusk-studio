@@ -305,6 +305,11 @@ ScenarioResult busHpfCornerAndSlope (ScenarioContext& ctx)
     return ctx.verdict();
 }
 
+// What a bus delays outlives its input. While bus 3's compressor holds the
+// buses' stage on, buses 1 and 2 carry its latency as a plain delay. The
+// track feeds both; bus 2 is played on through a reference bus that never
+// sleeps, and bus 1, which does, has to keep running until its delay is out
+// to sound the same.
 ScenarioResult busDrainsAfterInputStops (ScenarioContext& ctx)
 {
     liveInput (ctx, Track::Mode::Stereo);
@@ -329,26 +334,36 @@ ScenarioResult busDrainsAfterInputStops (ScenarioContext& ctx)
         params.pan.store (0.0f);
         strip.busAssign[(std::size_t) bus].store (true);
     }
-    ctx.cleanup ([&engine]
+    auto& stageHolder = session.bus (2).strip;
+    ctx.keep (stageHolder.compEnabled);
+    stageHolder.compEnabled.store (true);
+    auto& trackStrip = engine.getChannelStrip (kTrack);
+    ctx.cleanup ([&engine, &trackStrip]
     {
         for (int bus = 0; bus < 2; ++bus) engine.setBusStemCapture (bus, nullptr, nullptr);
+        trackStrip.setStemCapture (nullptr, nullptr);
         engine.prepareForSelfTest (ScenarioContext::kSampleRate, kFrames);
     });
     engine.prepareForSelfTest (ScenarioContext::kSampleRate, kFrames);
-    engine.getChannelStrip (kTrack).prepare (ScenarioContext::kSampleRate, kFrames, 1);
+    trackStrip.prepare (ScenarioContext::kSampleRate, kFrames, 1);
     engine.getBusStrip (0).prepare (ScenarioContext::kSampleRate, kFrames);
     engine.getBusStrip (1).prepare (ScenarioContext::kSampleRate, kFrames);
+    ctx.note ("bus stage latency " + std::to_string (engine.getBusCompLatencySamples()));
+    if (! ctx.expect (engine.getBusCompLatencySamples() > 0,
+                      "an engaged bus compressor did not hold the buses' latency on"))
+        return ctx.verdict();
 
     BusParams referenceParams;
     BusStrip reference;
     reference.bind (referenceParams);
     reference.prepare (ScenarioContext::kSampleRate, kFrames);
-    std::array<float, kFrames> input {}, outL {}, outR {};
+    std::array<float, kFrames> input {}, outL {}, outR {}, trackL {}, trackR {};
     std::array<std::array<float, kFrames>, 2> busL {}, busR {};
     const float* inputs[] { input.data(), input.data() };
     float* outputs[] { outL.data(), outR.data() };
     for (int bus = 0; bus < 2; ++bus)
         engine.setBusStemCapture (bus, busL[(std::size_t) bus].data(), busR[(std::size_t) bus].data());
+    trackStrip.setStemCapture (trackL.data(), trackR.data());
     float error = 0.0f, expectedTail = 0.0f, actualTail = 0.0f, mutedInputPeak = 0.0f;
     for (int block = 0; block < 100; ++block)
     {
@@ -365,14 +380,17 @@ ScenarioResult busDrainsAfterInputStops (ScenarioContext& ctx)
         if (block == 60 || block == 80) input.back() = 0.5f;
         for (auto& channel : busL) channel.fill (0.0f);
         for (auto& channel : busR) channel.fill (0.0f);
+        trackL.fill (0.0f);
+        trackR.fill (0.0f);
         engine.audioDeviceIOCallback (inputs, 2, outputs, 2, kFrames, {});
         if (strip.mute.load())
             for (int sample = 0; sample < kFrames; ++sample)
             {
                 const auto i = (std::size_t) sample;
-                mutedInputPeak = std::max (mutedInputPeak, std::abs (busL[1][i]));
-                mutedInputPeak = std::max (mutedInputPeak, std::abs (busR[1][i]));
+                mutedInputPeak = std::max ({ mutedInputPeak, std::abs (trackL[i]), std::abs (trackR[i]) });
             }
+        // Muted, bus 1 drops what its delay held; the reference is re-prepared
+        // for the same.
         if (block == 81)
         {
             busL[1].fill (0.0f);
@@ -384,8 +402,7 @@ ScenarioResult busDrainsAfterInputStops (ScenarioContext& ctx)
         for (int sample = 0; sample < kFrames; ++sample)
         {
             const auto i = (std::size_t) sample;
-            error = std::max (error, std::abs (busL[0][i] - busL[1][i]));
-            error = std::max (error, std::abs (busR[0][i] - busR[1][i]));
+            error = std::max ({ error, std::abs (busL[0][i] - busL[1][i]), std::abs (busR[0][i] - busR[1][i]) });
             if (block > 60 && block < 80)
             {
                 expectedTail = std::max (expectedTail, std::abs (busL[1][i]));

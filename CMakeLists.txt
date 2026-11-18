@@ -951,6 +951,7 @@ target_sources(DuskStudio PRIVATE
     src/engine/scenario/cases/clap_queued_param_capture.cpp
     src/engine/scenario/cases/clap_state_roundtrip.cpp
     src/engine/scenario/cases/clone_track_keeps_native_state.cpp
+    src/engine/scenario/cases/comp_stage_latency.cpp
     src/engine/scenario/cases/device_clock_follow.cpp
     src/engine/scenario/cases/device_loss.cpp
     src/engine/scenario/cases/engine_muted_midi_track_skips_chain.cpp
@@ -1002,6 +1003,7 @@ target_sources(DuskStudio PRIVATE
     src/dsp/BusToneEq.cpp
     src/dsp/BrickwallLimiter.cpp
     src/dsp/ChannelStrip.cpp
+    src/dsp/CompStageAlign.cpp
     src/dsp/HardwareInsertSlot.cpp
     src/dsp/LoudnessMeter.cpp
     src/dsp/MasterBus.cpp
@@ -1831,17 +1833,21 @@ if(DEFINED DUSK_PLUGINS_PATH)
                 "Dusk plugins donor lacks the Sunset Circuits plug-in; "
                 "use the revision pinned by the build workflows")
         endif()
-        # The mixer's compressors set each instance's channel layout through the
-        # plug-in's host access, which older Multi-Comp 2 releases lack.
+        # The mixer's compressors set each instance's channel layout and reset it
+        # on the audio thread through the plug-in's host access, which older
+        # Multi-Comp 2 releases lack.
         if(EXISTS "${_duskstudio_multi_comp_2_dir}/MultiCompAccess.hpp")
             file(STRINGS "${_duskstudio_multi_comp_2_dir}/MultiCompAccess.hpp"
                  _duskstudio_multi_comp_2_host_access REGEX "multiCompSetHostChannels")
+            file(STRINGS "${_duskstudio_multi_comp_2_dir}/MultiCompAccess.hpp"
+                 _duskstudio_multi_comp_2_host_reset REGEX "multiCompResetHost")
         endif()
         if(NOT EXISTS "${_duskstudio_multi_comp_2_dir}/MultiCompPlugin.cpp"
-           OR NOT _duskstudio_multi_comp_2_host_access)
+           OR NOT _duskstudio_multi_comp_2_host_access
+           OR NOT _duskstudio_multi_comp_2_host_reset)
             message(FATAL_ERROR
                 "Dusk plugins donor lacks the Multi-Comp 2 plug-in with host channel "
-                "access; use the revision pinned by the build workflows")
+                "access and reset; use the revision pinned by the build workflows")
         endif()
 
         function(duskstudio_embed_font symbol ttf out)

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "CompStageAlign.h"
 #include "../session/CompParams.h"
 
 #include <atomic>
@@ -16,12 +17,12 @@ namespace builtin { class DafPlugin; }
 // editor shows.
 //
 // prepare allocates and must run with the audio thread fenced; pushParameters,
-// process, clearHistory and gainReductionDb are audio-thread and lock-free.
-class MultiCompStage
+// process, reset and gainReductionDb are audio-thread and lock-free.
+class MultiCompStage final : public CompStageProcessor
 {
 public:
     explicit MultiCompStage (CompStage kind);
-    ~MultiCompStage();
+    ~MultiCompStage() override;
 
     // channels is the layout the plug-in runs: 1 (mono) or 2 (stereo). The
     // plug-in keeps its own Oversampling, 2x, whatever the engine's factor:
@@ -37,13 +38,12 @@ public:
     void pushParameters (const CompParams& comp, bool enabled, int stripMode) noexcept;
 
     // In place. R is null on a mono layout and required on a stereo one.
-    void process (float* L, float* R, int numSamples) noexcept;
+    void process (float* L, float* R, int numSamples) noexcept override;
 
-    // For a stage that stopped running: runs silence through its delay so the
-    // audio held there never plays when it next runs. The plug-in's
-    // analog-modelled filters keep their state and decay from it then. Does
-    // nothing when the stage has not run since it last cleared.
-    void clearHistory() noexcept;
+    // Back to the rest the plug-in's activation leaves, every delay, filter
+    // and envelope included, keeping its parameters; its next block runs as
+    // the first one after prepare. Does nothing when it has not run since.
+    void reset() noexcept override;
 
     // The plug-in's GR output, in dB at or below 0.
     float gainReductionDb() const noexcept;

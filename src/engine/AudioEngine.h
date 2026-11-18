@@ -15,6 +15,7 @@
 #include "../dsp/AuxLaneStrip.h"
 #include "../dsp/BusStrip.h"
 #include "../dsp/ChannelStrip.h"
+#include "../dsp/CompStageAlign.h"
 #include "../dsp/MasterBus.h"
 #include "../dsp/MasteringChain.h"
 #include "../dsp/Metronome.h"
@@ -725,13 +726,28 @@ public:
 
     // How far behind the timeline each point a render can capture runs, in
     // samples; a bounce drops that many from the head of what it takes there.
-    // A track's output carries its plugin compensation and its oversampler; a
-    // bus adds its own oversampler; an aux return waits for the deepest lane
-    // and the bus alignment; the mix adds the master's oversampler and tape.
+    // A track's output carries its plugin compensation, its oversampler and the
+    // strips' compressor stage; a bus adds the buses' compressor stage; an aux
+    // return waits for the deepest lane and the buses' stage; the mix adds the
+    // master's oversampler, its compressor stage and the tape.
     int getTrackOutputLatencySamples() const noexcept;
     int getBusOutputLatencySamples() const noexcept;
     int getAuxReturnLatencySamples() const noexcept;
     int getMixLatencySamples() const noexcept;
+
+    // Each compressor stage's latency (see CompStageClock): the plug-in's
+    // while any compressor of the stage keeps it, 0 otherwise. Any thread; the
+    // audio thread decides it at the top of each block, and a prepare, an
+    // offline render's start and snapCompStages set it from the session.
+    int getStripCompLatencySamples() const noexcept  { return stripCompStage.reportedLatencySamples(); }
+    int getBusCompLatencySamples() const noexcept    { return busCompStage.reportedLatencySamples(); }
+    int getMasterCompLatencySamples() const noexcept { return masterCompStage.reportedLatencySamples(); }
+
+    // Sets every compressor stage to what the session calls for at the next
+    // block, with no fade: a stage whose compressors are all off drops its
+    // latency even with the transport rolling. For a session just loaded.
+    // Any thread, after the session's compressor switches are stored.
+    void snapCompStages() noexcept;
 
     // Offline-render only - call with the audio callback DETACHED. The
     // in-callback relatch of the master-stage PDC is gated on a stopped
@@ -1206,13 +1222,27 @@ private:
     int masterDryPdcApplied = 0;                                   // audio thread only
     std::array<int, Session::kNumAuxLanes> auxReturnPdcApplied {}; // audio thread only
 
-    // Every bus's oversampler delays its output, bypassed or not, so a
-    // bus-routed track would trail a direct one by that much. The direct
-    // tracks and every aux return wait the same amount before the buses join.
-    // Set at prepare; 0 at 1x, which skips the delay.
-    MasterPdcDelay busAlignL;
-    MasterPdcDelay busAlignR;
-    std::atomic<int> busAlignSamples { 0 };
+    // The compressor stages, one clock each, run on the audio thread before
+    // the strips fan out to the worker lanes, which read the strips' block
+    // through the pool's dispatch. While the buses' stage holds its latency,
+    // the paths that pass the buses by (the direct tracks, summed, and each
+    // aux return) carry it too, as every bus does.
+    CompStageClock stripCompStage;
+    CompStageClock busCompStage;
+    CompStageClock masterCompStage;
+    CompStageAlign directBusAlign;
+    std::array<CompStageAlign, Session::kNumAuxLanes> auxBusAlign;
+    // Samples an aux return's bus alignment may still sound after its input
+    // fell silent; the lane does not sleep before. Audio thread.
+    std::array<int, Session::kNumAuxLanes> auxBusAlignHeld {};
+    std::atomic<std::uint32_t> compStageSnapRequests { 0 };
+    std::uint32_t compStageSnapsSeen = 0;                          // audio thread only
+    // Bumped by every callback the mixer did not run (suspended, oversized):
+    // the stages' delays and compressors must not replay across that gap.
+    std::atomic<std::uint32_t> compStageGapRequests { 0 };
+    std::uint32_t compStageGapsSeen = 0;                           // audio thread only
+    void snapCompStagesFromSession() noexcept;
+    void advanceCompStages (bool transportStopped, int numSamples) noexcept;
 
     // Render-time oversampling override (0 = use session factor). See
     // setRenderOversamplingOverride.

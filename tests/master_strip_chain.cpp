@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include "dsp/CompStageAlign.h"
 #include "dsp/MasterBus.h"
 #include "session/Session.h"
 
@@ -91,6 +92,15 @@ void boostLows (MasterBusParams& params)
     params.eqLfFreq.store (100.0f);
     params.eqLfBoost.store (10.0f);
 }
+
+// The master's compressor stage held on, as the engine holds it while the
+// master compressor is engaged; a compressor runs only inside one.
+void holdCompStage (duskstudio::CompStageClock& clock, MasterBus& master)
+{
+    clock.prepare (kSr, master.getCompressor().latencySamples());
+    clock.snap (true);
+    master.setCompStage (&clock.block());
+}
 } // namespace
 
 TEST_CASE ("master program EQ plays in the master chain", "[master][eq][order]")
@@ -126,6 +136,8 @@ TEST_CASE ("master program EQ comes before the master compressor", "[master][eq]
         MasterBus master;
         master.bind (params);
         master.prepare (kSr, kBlock, 1);
+        duskstudio::CompStageClock stage;
+        holdCompStage (stage, master);
         drive (master, 100.0, 0.1f, 0.1f, 60, 60);
         return (double) params.meterGrDb.load();
     };
@@ -208,6 +220,8 @@ TEST_CASE ("master GR meter reads the master compressor's reduction", "[master][
     MasterBus master;
     master.bind (params);
     master.prepare (kSr, kBlock, 1);
+    duskstudio::CompStageClock stage;
+    holdCompStage (stage, master);
 
     params.compEnabled.store (true);
     drive (master, 1000.0, 0.5f, 0.5f, 60, 60);

@@ -6,6 +6,11 @@
 
 namespace duskstudio
 {
+namespace
+{
+const CompStageBlock kNoCompStage {};
+} // namespace
+
 MasterBus::MasterBus() = default;
 
 void MasterBus::bind (const MasterBusParams& params) noexcept
@@ -81,6 +86,9 @@ void MasterBus::prepare (double sampleRate, int blockSize, int oversamplingFacto
     tubeEQ.reset();
 
     busComp.prepare (sampleRate, bsClamped, 2);
+    compAlign.prepare (bsClamped, busComp.latencySamples());
+#else
+    compAlign.prepare (std::max (1, blockSize), 0);
 #endif
 }
 
@@ -200,20 +208,13 @@ void MasterBus::processInPlace (float* L, float* R, int numSamples) noexcept
     }
     // else (factor == 1, EQ off): signal passes through.
 
-    if (compOn)
-    {
+    if (paramsRef != nullptr && (compOn || compAlign.compressorRunning()))
         busComp.pushParameters (paramsRef->comp, true, 0);
-        busComp.process (L, R, numSamples);
-    }
-    else
-    {
-        // Whatever it held from before it went out must not play when it
-        // comes back in.
-        busComp.clearHistory();
-    }
+    compAlign.process (L, R, numSamples, compStage != nullptr ? *compStage : kNoCompStage,
+                       compOn, &busComp);
 
     if (paramsRef != nullptr)
-        paramsRef->meterGrDb.store (compOn ? busComp.gainReductionDb() : 0.0f,
+        paramsRef->meterGrDb.store (compAlign.compressorRunning() ? busComp.gainReductionDb() : 0.0f,
                                      std::memory_order_relaxed);
 #endif
 

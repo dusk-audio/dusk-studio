@@ -12,6 +12,9 @@ namespace duskstudio
 namespace
 {
 constexpr float kHalfPi = 1.57079632679489661923f;
+// What an unbound strip plays: a stage with no latency, so its compressor
+// stays out.
+const CompStageBlock kNoCompStage {};
 } // namespace
 
 using dusk::audio::findSignedMinMax;
@@ -436,6 +439,9 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
     // native rate and runs after the wrap.
     monoComp.prepare (sampleRate, bsClamped, 1);
     stereoComp.prepare (sampleRate, bsClamped, 2);
+    compAlign.prepare (bsClamped, std::max (monoComp.latencySamples(), stereoComp.latencySamples()));
+#else
+    compAlign.prepare (bsClamped, 0);
 #endif
 }
 
@@ -587,23 +593,27 @@ void ChannelStrip::updateEqParameters() noexcept
 #endif
 }
 
+const CompStageBlock& ChannelStrip::compStageBlock() const noexcept
+{
+    return compStage != nullptr ? *compStage : kNoCompStage;
+}
+
+std::int64_t ChannelStrip::silentTailDrainSamples() const noexcept
+{
+    return (std::int64_t) pdcAppliedSamples + 2 * osLatencySamples + compAlign.tailSamples();
+}
+
 #if DUSKSTUDIO_HAS_DUSK_DSP
 void ChannelStrip::runCompressor (float* L, float* R, int numSamples, bool engaged) noexcept
 {
     auto& active = R != nullptr ? stereoComp : monoComp;
-    auto& idle   = R != nullptr ? monoComp : stereoComp;
-    idle.clearHistory();
-    if (! engaged)
-    {
-        active.clearHistory();
-        // The plug-in's meter holds its last reading while the stage is out.
-        currentGrDb.store (0.0f, std::memory_order_relaxed);
-        return;
-    }
-    active.pushParameters (paramsRef->comp, true,
-                           paramsRef->compMode.load (std::memory_order_relaxed));
-    active.process (L, R, numSamples);
-    currentGrDb.store (active.gainReductionDb(), std::memory_order_relaxed);
+    if (engaged || compAlign.compressorRunning())
+        active.pushParameters (paramsRef->comp, true,
+                               paramsRef->compMode.load (std::memory_order_relaxed));
+    compAlign.process (L, R, numSamples, compStageBlock(), engaged, &active);
+    // The plug-in's meter holds its last reading while it is out.
+    currentGrDb.store (compAlign.compressorRunning() ? active.gainReductionDb() : 0.0f,
+                       std::memory_order_relaxed);
 }
 #endif
 
@@ -1031,11 +1041,8 @@ void ChannelStrip::drainPdcForSkip() noexcept
     }
     // A closed gate is a silent gap even when the current delay is zero.
     pdcSilentRun = std::max (pdcSilentRun, std::int64_t { 1 });
-#if DUSKSTUDIO_HAS_DUSK_DSP
-    // The compressors' own delay holds audio from before the skip too.
-    monoComp.clearHistory();
-    stereoComp.clearHistory();
-#endif
+    // The compressor stage's delay holds audio from before the skip too.
+    compAlign.discard();
 }
 
 // The MIDI dispatch below hands the block's MIDI to whichever slot is loaded,
@@ -1122,7 +1129,7 @@ bool ChannelStrip::willRunChain (const float* inL, const float* inR, bool isMidi
 
     // A tail still draining runs whatever the input holds; a settled strip
     // runs only on input that is not exactly silent.
-    const std::int64_t requiredDrain = (std::int64_t) pdcAppliedSamples + 2 * osLatencySamples;
+    const std::int64_t requiredDrain = silentTailDrainSamples();
     const bool settled = ! silentTailActive
         || (std::min (requiredDrain, silentTailInputSamples + numSamples) >= requiredDrain
             && silentTailQuietSamples >= silentTailHoldSamples);
@@ -1253,11 +1260,13 @@ void ChannelStrip::processAndAccumulate (const float* inL,
     if ((int) tempMono.size() < numSamples)
     {
         resetInsertDryHistory();
+        compAlign.discard();
         return;  // can't allocate on the audio thread; bail safely (silence)
     }
     if (stereo && tempStereoBuffer.numSamples() < numSamples)
     {
         resetInsertDryHistory();
+        compAlign.discard();
         return;
     }
 
@@ -1316,8 +1325,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
         }
         else
         {
-            const std::int64_t requiredDrain = (std::int64_t) pdcAppliedSamples
-                                              + 2 * osLatencySamples;
+            const std::int64_t requiredDrain = silentTailDrainSamples();
             silentTailInputSamples = std::min (requiredDrain, silentTailInputSamples + numSamples);
             if (! silentTailActive || (silentTailInputSamples >= requiredDrain
                                        && silentTailQuietSamples >= silentTailHoldSamples))

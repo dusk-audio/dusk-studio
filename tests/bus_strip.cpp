@@ -3,6 +3,7 @@
 
 #include "dsp/BusStrip.h"
 #include "dsp/BusToneEq.h"
+#include "dsp/CompStageAlign.h"
 #include "session/Session.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
@@ -65,6 +66,21 @@ float peak (const std::vector<float>& v)
     for (float x : v) p = std::max (p, std::abs (x));
     return p;
 }
+
+// The buses' compressor stage held on, as the engine holds it while a bus
+// compressor is engaged, and left as it is: a fixed stage. A compressor runs
+// only inside one.
+struct HeldStage
+{
+    duskstudio::CompStageClock clock;
+
+    void bind (duskstudio::BusStrip& strip)
+    {
+        clock.prepare (kSr, strip.getCompressor().latencySamples());
+        clock.snap (true);
+        strip.setCompStage (&clock.block());
+    }
+};
 } // namespace
 
 TEST_CASE ("BusStrip: unity fader + center pan + flat EQ + comp off ~= passthrough",
@@ -133,6 +149,8 @@ TEST_CASE ("BusStrip: silent input -> silent output", "[BusStrip]")
     duskstudio::BusStrip strip;
     strip.prepare (kSr, kBlock);
     strip.bind (params);
+    HeldStage stage;
+    stage.bind (strip);
 
     std::vector<float> L (kBlock, 0.0f), R (kBlock, 0.0f);
     float outPeak = 0.0f;
@@ -247,14 +265,16 @@ TEST_CASE ("BusStrip: a band move or the highpass leaving OFF engages the bus EQ
 
 TEST_CASE ("BusStrip: turning the comp off leaves no silent gap", "[BusStrip]")
 {
-    // The first comp-off block plays the input straight through, not a gap
-    // while anything refills.
+    // The first comp-off block fades the compressor out into the stage's
+    // delayed dry, not a gap while anything refills.
     duskstudio::BusParams params;
     params.compEnabled.store (true, std::memory_order_relaxed);
 
     duskstudio::BusStrip strip;
     strip.prepare (kSr, kBlock);
     strip.bind (params);
+    HeldStage stage;
+    stage.bind (strip);
 
     const float amp = juce::Decibels::decibelsToGain (-12.0f);
     double phase = driveSine (strip, 0.0, 1000.0, amp, 16);   // settle comp-on
@@ -287,6 +307,8 @@ TEST_CASE ("BusStrip: hot input stays finite", "[BusStrip]")
     duskstudio::BusStrip strip;
     strip.prepare (kSr, kBlock);
     strip.bind (params);
+    HeldStage stage;
+    stage.bind (strip);
 
     const float amp = juce::Decibels::decibelsToGain (6.0f);   // +6 dBFS, hot
     std::vector<float> outL, outR;
@@ -367,10 +389,12 @@ TEST_CASE ("BusStrip: silent-input skipping preserves delayed and filtered outpu
             params.hpfFreq.store (20.0f);
             params.compEnabled.store (effect == 2);
             duskstudio::BusStrip gated, reference;
+            HeldStage stage;
             for (auto* strip : { &gated, &reference })
             {
                 strip->bind (params);
                 strip->prepare (kSr, blockSize);
+                if (effect == 2) stage.bind (*strip);
             }
             REQUIRE_FALSE (gated.hasPendingDrain());
             std::vector<float> left ((std::size_t) blockSize), right (left),
@@ -404,7 +428,8 @@ TEST_CASE ("BusStrip: silent-input skipping preserves delayed and filtered outpu
             CHECK (worst < 2.0e-6f);
             CHECK (slept);
             CHECK_FALSE (gated.hasPendingDrain());
-            // The filter rings past the impulse and the compressor delays it.
+            // The filter rings past the impulse, and the compressor stage
+            // delays it.
             if (effect != 0) CHECK (referenceTail > 1.0e-6f);
         }
 }
@@ -466,10 +491,12 @@ TEST_CASE ("BusStrip: an explicit output gate discards held audio before resumin
         params.hpfFreq.store (20.0f);
         params.compEnabled.store (compressor);
         duskstudio::BusStrip strip, kept;
+        HeldStage stage;
         for (auto* bus : { &strip, &kept })
         {
             bus->bind (params);
             bus->prepare (kSr, 16);
+            if (compressor) stage.bind (*bus);
             std::array<float, 16> left {}, right {};
             left.back() = right.back() = 0.5f;
             bus->processInPlace (left.data(), right.data(), 16);
@@ -500,11 +527,9 @@ TEST_CASE ("BusStrip: an explicit output gate discards held audio before resumin
             continue;
         }
         // The compressor's delay holds the impulse past its block, so the
-        // kept bus plays it and the discarded one must not. Its
-        // analog-modelled filters keep their state and decay on their own,
-        // which Multi-Comp 2 offers a host no audio-thread reset for, so
-        // the discarded bus is held to staying far under the impulse.
+        // kept bus plays it. The discarded one resets its compressor, which
+        // is then as a fresh one: silence in, exactly silence out.
         CHECK (keptWorst > 0.1f);
-        CHECK (worst < 1.0e-3f);
+        CHECK (worst <= 0.0f);
     }
 }

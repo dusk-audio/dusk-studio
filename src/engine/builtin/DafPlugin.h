@@ -175,4 +175,10 @@ std::unique_ptr<DafPlugin> createMultiComp2 (std::uint32_t faceMask);
 // outputs[0 .. channels - 1] only. Message thread, plug-in deactivated. False,
 // and nothing set, for any other plug-in.
 bool setMultiComp2Channels (DafPlugin& multiComp2, int channels) noexcept;
+
+// Puts a plug-in createMultiComp2 made back to the rest its activation leaves,
+// parameters, layout and latency kept, without deactivating it. Audio thread,
+// between two run() calls; allocates nothing and takes no lock. False, and
+// nothing done, for any other plug-in.
+bool resetMultiComp2 (DafPlugin& multiComp2) noexcept;
 } // namespace duskstudio::builtin

@@ -195,12 +195,23 @@ TEST_CASE ("Effect oversampling leaves every compressor at Multi-Comp 2's own 2x
     for (const int factor : { 1, 2, 4 })
     {
         CAPTURE (factor);
+        // Each compressor runs inside its stage, held on as an engaged one
+        // holds it.
+        duskstudio::CompStageClock stage;
+        const auto hold = [&stage] (int compLatency)
+        {
+            stage.prepare (kSr, compLatency);
+            stage.snap (true);
+            return &stage.block();
+        };
+
         duskstudio::ChannelStripParams stripParams;
         stripParams.compEnabled.store (true);
         ChannelStrip strip;
         strip.bind (stripParams);
         strip.insertMode.store (ChannelStrip::kInsertEmpty);
         strip.prepare (kSr, kBlock, factor);
+        strip.setCompStage (hold (strip.getCompressor (true).latencySamples()));
         for (const bool stereo : { false, true })
             strip.processAndAccumulate (l.data(), stereo ? r.data() : nullptr, midi, false,
                                         mL.data(), mR.data(), busL, busR, auxL, auxR, kBlock, true);
@@ -212,6 +223,7 @@ TEST_CASE ("Effect oversampling leaves every compressor at Multi-Comp 2's own 2x
         duskstudio::BusStrip bus;
         bus.bind (busParams);
         bus.prepare (kSr, kBlock);
+        bus.setCompStage (hold (bus.getCompressor().latencySamples()));
         bus.processInPlace (l.data(), r.data(), kBlock);
         checkOwnOversampling (bus.getCompressor());
 
@@ -220,6 +232,7 @@ TEST_CASE ("Effect oversampling leaves every compressor at Multi-Comp 2's own 2x
         duskstudio::MasterBus master;
         master.bind (masterParams);
         master.prepare (kSr, kBlock, factor);
+        master.setCompStage (hold (master.getCompressor().latencySamples()));
         master.processInPlace (l.data(), r.data(), kBlock);
         checkOwnOversampling (master.getCompressor());
 

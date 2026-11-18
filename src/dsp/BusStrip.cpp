@@ -11,6 +11,7 @@ namespace
 {
 constexpr float kHalfPi = 1.57079632679489661923f;
 constexpr float kSqrt2  = 1.41421356237309504880f;
+const CompStageBlock kNoCompStage {};
 } // namespace
 
 void BusStrip::bind (const BusParams& params) noexcept
@@ -41,16 +42,20 @@ void BusStrip::prepare (double sampleRate, int blockSize)
 
 #if DUSKSTUDIO_HAS_DUSK_DSP
     busComp.prepare (sampleRate, blockSize, 2);
+    const int compLatency = busComp.latencySamples();
+#else
+    const int compLatency = 0;
 #endif
+    compAlign.prepare (blockSize, compLatency);
+    // The quiet dwell outlasts what the compressor stage holds.
+    drainQuietTarget = std::max (drainQuietTarget, 2 * compLatency + 1);
 }
 
 void BusStrip::discardPendingDrain() noexcept
 {
     if (! hasPendingDrain()) return;
     toneEq.reset();
-#if DUSKSTUDIO_HAS_DUSK_DSP
-    busComp.clearHistory();
-#endif
+    compAlign.discard();
     drainQuietRemaining = 0;
     vuRmsLinL = vuRmsLinR = 0.0f;
     if (paramsRef != nullptr)
@@ -121,24 +126,19 @@ void BusStrip::processInPlace (float* L, float* R, int numSamples) noexcept
     updateEqParameters();
     toneEq.process (L, R, numSamples);
 
+    const auto& stage = compStage != nullptr ? *compStage : kNoCompStage;
 #if DUSKSTUDIO_HAS_DUSK_DSP
     const bool compEnabled = paramsRef != nullptr
                           && paramsRef->compEnabled.load (std::memory_order_relaxed);
-    if (compEnabled)
-    {
+    if (paramsRef != nullptr && (compEnabled || compAlign.compressorRunning()))
         busComp.pushParameters (paramsRef->comp, true, 0);
-        busComp.process (L, R, numSamples);
-    }
-    else
-    {
-        // Whatever it held from before it went out must not play when it
-        // comes back in.
-        busComp.clearHistory();
-    }
+    compAlign.process (L, R, numSamples, stage, compEnabled, &busComp);
 
     if (paramsRef != nullptr)
-        paramsRef->meterGrDb.store (compEnabled ? busComp.gainReductionDb() : 0.0f,
+        paramsRef->meterGrDb.store (compAlign.compressorRunning() ? busComp.gainReductionDb() : 0.0f,
                                      std::memory_order_relaxed);
+#else
+    compAlign.process (L, R, numSamples, stage, false, nullptr);
 #endif
 
     float postPeakL = 0.0f, postPeakR = 0.0f;
