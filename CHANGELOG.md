@@ -160,12 +160,15 @@ canonical source.
   at 48 kHz with a 512-sample buffer, a stopped session with nothing
   monitored wakes those threads about 2,000 times a second less. A track
   that is muted or has no input also costs the audio thread about a
-  twentieth of what it did.
+  twentieth of what it did. An LV2 plug-in's worker thread sleeps until the
+  plug-in queues work for it, where it woke about 50 times a second.
 - **A still console stays still.** The VU meters, gain-reduction meters, level
   meters, peak readouts and section lights repaint only when what they show
   has changed, so a stopped console with no input no longer redraws them 30
-  to 60 times a second. The mini timeline rereads the regions twice a second,
-  at once when a region is added or removed or a marker changes.
+  to 60 times a second. Meters on a page or view that is hidden rest until it
+  is shown again, and Dusk Studio's own timers run from one shared 30 Hz
+  tick. The mini timeline rereads the regions twice a second, at once when a
+  region is added or removed or a marker changes.
 - **Native panels draw only when something changes.** The mini timeline, the
   mastering EQ, limiter and phase panels, the piano roll and the virtual
   keyboard draw when the pointer moves over them, on a click, a key or a
@@ -221,11 +224,27 @@ canonical source.
   instead of loading every installed LV2 bundle first, and on Linux its
   temporary folder is removed when the child ends. Before, a child that was
   killed left a `temp_*` folder behind.
-- **Sandboxed plug-ins under load.** On Linux the sandbox child's audio thread
-  runs at realtime priority, the priority of Dusk Studio's own DSP threads,
-  where your account's realtime limit allows it, so a busy machine no longer
-  makes a sandboxed plug-in miss its blocks. On every OS the child flushes
-  denormal numbers while the plug-in processes.
+- **Sandboxed plug-ins under load.** The sandbox child's audio thread ran at
+  normal priority, so a busy machine could make a sandboxed plug-in miss its
+  blocks. On Linux it now runs at realtime priority, the priority of Dusk
+  Studio's own DSP threads, where your account's realtime limit allows it. On
+  macOS and Windows it runs at the priority the system gives audio threads.
+  On every OS the child flushes denormal numbers while the plug-in processes.
+- **Starting and stopping the audio device.** On Linux the audio thread took
+  a lock around every block, the one the device's start and stop take, so a
+  start or stop on a busy machine could hold a block up. The PipeWire and
+  ALSA audio threads now take no lock.
+- **Leaving a hardware insert with Multicore DSP on.** For the 20 ms
+  crossfade after a track switched away from a hardware insert, a Multicore
+  DSP thread could write the insert's send to the device. Two tracks leaving
+  inserts on the same outputs at the same moment then wrote them from two
+  threads at once. Such a track now stays on the audio thread until its
+  crossfade ends.
+- **Dense MIDI into a plug-in.** A block with very many MIDI messages at one
+  position, as a stuck controller or a burst at a loop boundary can send, was
+  copied one message at a time into the buffer of a sandboxed plug-in or of
+  one on the standard VST3 host. At 2,048 messages that took over 4 ms, more
+  than a whole 64-sample block at 48 kHz, and now takes about 0.02 ms.
 - **PipeWire graphs that change block size or rate.** When another
   application or a PipeWire setting moved the graph to a longer block, Dusk
   Studio went silent with the playhead frozen until the device was reopened,
