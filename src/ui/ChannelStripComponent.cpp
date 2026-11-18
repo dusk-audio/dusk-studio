@@ -392,33 +392,45 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     lastAppliedCompMode = jlimit (0, 2,
         track.strip.compMode.load (std::memory_order_relaxed));
 
-    auto setupCompKnob = [this] (juce::Slider& k, juce::Label& label, const juce::String& labelText,
-                              double rangeMin, double rangeMax, double defaultVal,
-                              double skewMid, const juce::String& tooltip,
-                              std::atomic<float>& target,
-                              const juce::String& valueSuffix, int decimals)
+    // Every knob is one of Multi-Comp 2's own controls: it travels the
+    // plug-in's host range, double-click returns it to the plug-in's default
+    // and it reads as the plug-in prints the value.
+    auto setupCompKnob = [this] (juce::Slider& k, juce::Label& label, const char* labelText,
+                                 CompParamId id, const std::string& tooltip)
     {
-        k.setRange (rangeMin, rangeMax, 0.01);
-        if (skewMid > 0) k.setSkewFactorFromMidPoint (skewMid);
-        k.setValue (target.load (std::memory_order_relaxed), juce::dontSendNotification);
-        k.setDoubleClickReturnValue (true, defaultVal);
+        const auto& spec = compParamSpec (id);
+        k.setRange (spec.hostMin, spec.hostMax, spec.integer ? 1.0 : 0.0);
+        k.setValue (track.strip.comp.get (id), juce::dontSendNotification);
+        k.setDoubleClickReturnValue (true, spec.hostDefault);
         k.setColour (juce::Slider::rotarySliderFillColourId, juce::Colour (fourKColors::kCompGold));
         k.setColour (juce::Slider::rotarySliderOutlineColourId, juce::Colour (0xff404048));
         k.setTooltip (tooltip);
-        // Accessibility (H4): tooltip drives the help text spoken on
-        // focus/hover; labelText (e.g. "PEAK", "ATK") becomes the
-        // role-name spoken before the value (e.g. "PEAK 30 percent").
-        // textFromValueFunction (or the suffix + decimals fed to
-        // enableValueLabel) supplies the spoken value via JUCE's
-        // default AccessibilityHandler on juce::Slider.
+        // Accessibility (H4): the tooltip is the help text spoken on focus or
+        // hover; labelText (e.g. "MAK", "ATK") is the role name spoken before
+        // the value, which is the plug-in's own text through
+        // textFromValueFunction.
         k.setTitle (labelText);
         k.setHelpText (tooltip);
-        enableValueLabel (k, valueSuffix, decimals);
-        k.onValueChange = [this, &k, &target]
+        // Four cells to a row leave "-12.5 dB" no room at the regular size, so
+        // the text shrinks to fit rather than losing its unit to an ellipsis.
+        k.getProperties().set ("dusk_compactValueText", true);
+        enableValueLabel (k, "", 0);
+        k.textFromValueFunction = [eng = &engine, id] (double v) -> std::string
         {
-            target.store ((float) k.getValue(), std::memory_order_relaxed);
+            return eng->compValueText (CompStage::Strip, id, (float) v);
+        };
+        k.valueFromTextFunction = [eng = &engine, &k, id] (const auto& text)
+        {
+            float value = 0.0f;
+            return eng->compValueFromText (CompStage::Strip, id, text.toStdString(), value)
+                       ? (double) value : k.getValue();
+        };
+        k.onValueChange = [this, &k, id]
+        {
+            track.strip.comp.set (id, (float) k.getValue());
             armCompOnUserEdit();
         };
+        k.updateText();
 
         label.setText (labelText, juce::dontSendNotification);
         label.setJustificationType (juce::Justification::centred);
@@ -426,31 +438,16 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         label.setFont (juce::Font (juce::FontOptions (9.0f, juce::Font::bold)));
     };
 
-    // Opto knobs (LA-2A: peak reduction + gain + LIMIT toggle)
-    setupCompKnob (optoPeakRedKnob, optoPeakRedLabel, "PEAK",
-                   0.0, 100.0, 30.0, 0.0, "Peak Reduction (%)",
-                   track.strip.compOptoPeakRed, "", 0);
-    setupCompKnob (optoGainKnob, optoGainLabel, "MAK",
-                   0.0, 100.0, 50.0, 0.0, "Output gain (50 % = unity = 0 dB)",
-                   track.strip.compOptoGain, "", 0);
-    // Display the OPTO gain in dB. Storage stays in percent (0..100,
-    // 50 = unity) - the dial-to-dB conversion is the donor's, and the
-    // popup editor's MAKEUP knob reads the same helper.
-    optoGainKnob.textFromValueFunction = [] (double pct) -> juce::String
-    {
-        return juce::String (comp::optoGainPctToMakeupDb ((float) pct), 1) + " dB";
-    };
-    optoGainKnob.updateText();
-    // Comp threshold + makeup right-click hooks. Each per-mode "threshold-
-    // ish" / "makeup-ish" knob routes to the same logical MIDI Learn
-    // target so one binding tracks the user's mode switches.
-    optoPeakRedKnob.addMouseListener (this, false);
-    optoGainKnob   .addMouseListener (this, false);
-    addAndMakeVisible (optoPeakRedKnob);  addAndMakeVisible (optoPeakRedLabel);
+    // Opto: gain + LIMIT; its peak reduction is the meter strip's handle.
+    setupCompKnob (optoGainKnob, optoGainLabel, "MAK", CompParamId::OptoGain,
+                   "Gain after the optical cell. Double-click returns to unity.");
+    // The makeup knob of every mode routes to the same logical MIDI Learn
+    // target, so one binding follows the user's mode switches.
+    optoGainKnob.addMouseListener (this, false);
     addAndMakeVisible (optoGainKnob);     addAndMakeVisible (optoGainLabel);
 
     optoLimitButton.setClickingTogglesState (true);
-    optoLimitButton.setToggleState (track.strip.compOptoLimit.load (std::memory_order_relaxed),
+    optoLimitButton.setToggleState (track.strip.comp.get (CompParamId::OptoLimit) > 0.5f,
                                      juce::dontSendNotification);
     optoLimitButton.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff181820));
     optoLimitButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xffd09060));
@@ -460,7 +457,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     optoLimitButton.onClick = [this]
     {
         const bool nowOn = optoLimitButton.getToggleState();
-        track.strip.compOptoLimit.store (nowOn, std::memory_order_relaxed);
+        track.strip.comp.set (CompParamId::OptoLimit, nowOn ? 1.0f : 0.0f);
         // Only arm the comp when the user is ENGAGING limit, not when
         // they're disengaging it. Toggling a sub-feature off shouldn't
         // imply "user wants the comp engaged".
@@ -468,80 +465,32 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     };
     addAndMakeVisible (optoLimitButton);
 
-    // FET knobs (1176: in/out/atk/rel + ratio button row)
-    setupCompKnob (fetInputKnob,   fetInputLabel,   "IN",
-                   -20.0, 40.0, 0.0, 0.0, "Input drive (dB)",
-                   track.strip.compFetInput, " dB", 1);
-    setupCompKnob (fetOutputKnob,  fetOutputLabel,  "MAK",
-                   -20.0, 20.0, 0.0, 0.0, "Output gain (dB)",
-                   track.strip.compFetOutput, " dB", 1);
-    setupCompKnob (fetAttackKnob,  fetAttackLabel,  "ATK",
-                   0.02, 80.0, 0.2, 0.5, "Attack (ms)",
-                   track.strip.compFetAttack, " ms", 2);
-    setupCompKnob (fetReleaseKnob, fetReleaseLabel, "REL",
-                   50.0, 1100.0, 400.0, 300.0, "Release (ms)",
-                   track.strip.compFetRelease, " ms", 0);
-    fetInputKnob .addMouseListener (this, false);
-    fetOutputKnob.addMouseListener (this, false);
-    addAndMakeVisible (fetInputKnob);   addAndMakeVisible (fetInputLabel);
-    addAndMakeVisible (fetOutputKnob);  addAndMakeVisible (fetOutputLabel);
-    addAndMakeVisible (fetAttackKnob);  addAndMakeVisible (fetAttackLabel);
-    addAndMakeVisible (fetReleaseKnob); addAndMakeVisible (fetReleaseLabel);
-
-    // FET ratio: 5-step knob (4:1 / 8:1 / 12:1 / 20:1 / All) - replaces the
-    // earlier button row which couldn't fit the "All" label in narrow strips.
-    fetRatioKnob.setRange (0.0, 4.0, 1.0);
-    fetRatioKnob.setValue ((double) track.strip.compFetRatio.load (std::memory_order_relaxed),
-                            juce::dontSendNotification);
-    fetRatioKnob.setDoubleClickReturnValue (true, 0.0);
-    fetRatioKnob.setColour (juce::Slider::rotarySliderFillColourId, juce::Colour (fourKColors::kCompGold));
-    fetRatioKnob.setColour (juce::Slider::rotarySliderOutlineColourId, juce::Colour (0xff404048));
-    fetRatioKnob.setTooltip ("FET Ratio (4 / 8 / 12 / 20 / All-buttons)");
+    // FET: ratio + attack + release + output; its input is the meter strip's
+    // handle. The ratio is a 5-step knob (4:1 / 8:1 / 12:1 / 20:1 / All).
+    setupCompKnob (fetRatioKnob, fetRatioLabel, "RATIO", CompParamId::FetRatio,
+                   "FET ratio: " + engine.compStepsText (CompStage::Strip, CompParamId::FetRatio, " / "));
     fetRatioKnob.setTitle ("FET ratio");
     fetRatioKnob.setHelpText ("FET compressor ratio: 4 to 1, 8 to 1, 12 to 1, 20 to 1, or All-buttons-in mode.");
-    enableValueLabel (fetRatioKnob, "", 0);
-    fetRatioKnob.textFromValueFunction = [] (double v) -> juce::String
-    {
-        const int idx = jlimit (0, 4, (int) std::round (v));
-        const char* names[] = { "4:1", "8:1", "12:1", "20:1", "All" };
-        return names[idx];
-    };
-    fetRatioKnob.onValueChange = [this]
-    {
-        track.strip.compFetRatio.store (
-            jlimit (0, 4, (int) std::round (fetRatioKnob.getValue())),
-            std::memory_order_relaxed);
-        armCompOnUserEdit();
-    };
-    fetRatioKnob.updateText();
-    addAndMakeVisible (fetRatioKnob);
+    setupCompKnob (fetAttackKnob,  fetAttackLabel,  "ATK", CompParamId::FetAttack,
+                   "Attack, " + engine.compStepsText (CompStage::Strip, CompParamId::FetAttack, " to ") + "; higher is faster.");
+    setupCompKnob (fetReleaseKnob, fetReleaseLabel, "REL", CompParamId::FetRelease,
+                   "Release, " + engine.compStepsText (CompStage::Strip, CompParamId::FetRelease, " to ") + "; higher is faster.");
+    setupCompKnob (fetOutputKnob,  fetOutputLabel,  "MAK", CompParamId::FetOutput, "Output gain (dB)");
+    fetOutputKnob.addMouseListener (this, false);
+    addAndMakeVisible (fetRatioKnob);   addAndMakeVisible (fetRatioLabel);
+    addAndMakeVisible (fetAttackKnob);  addAndMakeVisible (fetAttackLabel);
+    addAndMakeVisible (fetReleaseKnob); addAndMakeVisible (fetReleaseLabel);
+    addAndMakeVisible (fetOutputKnob);  addAndMakeVisible (fetOutputLabel);
 
-    fetRatioLabel.setText ("RATIO", juce::dontSendNotification);
-    fetRatioLabel.setJustificationType (juce::Justification::centred);
-    fetRatioLabel.setColour (juce::Label::textColourId, juce::Colour (0xffb07050));
-    fetRatioLabel.setFont (juce::Font (juce::FontOptions (9.0f, juce::Font::bold)));
-    addAndMakeVisible (fetRatioLabel);
-
-    // VCA knobs (ratio/attack/release/output - threshold lives on the
-    //   meter-strip drag handle so the engineer pulls it directly against
-    // the input level, the way a real VCA panel works)
-    setupCompKnob (vcaRatioKnob,   vcaRatioLabel,   "RAT",
-                   1.0, 120.0, 4.0, 4.0, "Ratio (n:1)",
-                   track.strip.compVcaRatio, ":1", 1);
-    setupCompKnob (vcaAttackKnob,  vcaAttackLabel,  "ATK",
-                   0.1, 50.0, 1.0, 5.0, "Attack (ms)",
-                   track.strip.compVcaAttack, " ms", 1);
-    setupCompKnob (vcaReleaseKnob, vcaReleaseLabel, "REL",
-                   10.0, 5000.0, 100.0, 200.0, "Release (ms)",
-                   track.strip.compVcaRelease, " ms", 0);
-    setupCompKnob (vcaOutputKnob,  vcaOutputLabel,  "MAK",
-                   -20.0, 20.0, 0.0, 0.0, "Output gain (dB)",
-                   track.strip.compVcaOutput, " dB", 1);
-
+    // VCA: compression + output; its threshold is the meter strip's handle, so
+    // the engineer pulls it directly against the input level, the way a real
+    // VCA panel works. VCA has no attack or release of its own.
+    setupCompKnob (vcaRatioKnob,  vcaRatioLabel,  "RAT", CompParamId::VcaCompression,
+                   "Compression, read as the ratio it sets: "
+                       + engine.compStepsText (CompStage::Strip, CompParamId::VcaCompression, " to ") + ".");
+    setupCompKnob (vcaOutputKnob, vcaOutputLabel, "MAK", CompParamId::VcaOutput, "Output gain (dB)");
     vcaOutputKnob.addMouseListener (this, false);
     addAndMakeVisible (vcaRatioKnob);    addAndMakeVisible (vcaRatioLabel);
-    addAndMakeVisible (vcaAttackKnob);   addAndMakeVisible (vcaAttackLabel);
-    addAndMakeVisible (vcaReleaseKnob);  addAndMakeVisible (vcaReleaseLabel);
     addAndMakeVisible (vcaOutputKnob);   addAndMakeVisible (vcaOutputLabel);
 
     // Vertical comp metering with threshold drag-handle (Mixbus-style).
@@ -553,22 +502,13 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         // edge clean against the main meter glued to it on the left.
         compMeter->setHandleOnRight (true);
         // Lock the threshold-drag range to the level-meter scale's visible
-        // range (no +6 headroom, no +12 VCA neutral extension) so the
-        // triangle handle's y position is 1:1 with the fader scale: drag
-        // to -18 dB and the handle sits on the "-18" tick of the fader
-        // scale. VCA's +12 "no compression" neutral can still be reached
-        // via the COMP editor's threshold rotary if needed.
+        // range so the triangle handle's y position is 1:1 with the fader
+        // scale in VCA: drag to -18 dB and the handle sits on the "-18" tick.
+        // Opto's peak reduction and FET's input drive run the same travel,
+        // least at the top.
         compMeter->setRangeDb (-60.0f, 0.0f);
-        // Drop unit suffixes on the single-row FET / VCA comp knobs so
-        // the value text ("0.0", "0.20", "400", "4.0") fits in the narrow
-        // 4-knob cell width. Units already implied by the RAT/OUT/ATK/REL
-        // header labels.
-        for (auto* k : { &fetOutputKnob, &fetAttackKnob, &fetReleaseKnob,
-                         &vcaRatioKnob, &vcaAttackKnob, &vcaReleaseKnob, &vcaOutputKnob })
-        {
-            k->setTextValueSuffix ("");
-            k->updateText();
-        }
+        // Right-click on the handle offers the threshold's MIDI Learn.
+        compMeter->addMouseListener (this, false);
     }
     {
         for (auto& l : auxIndexLabels) l.setVisible (true);
@@ -1622,22 +1562,18 @@ void ChannelStripComponent::setEqSectionVisible (bool visible)
 void ChannelStripComponent::setCompSectionVisible (bool visible)
 {
     if (compModeButton != nullptr) compModeButton->setVisible (visible);
-    optoPeakRedKnob .setVisible (visible);  optoPeakRedLabel.setVisible (visible);
     optoGainKnob    .setVisible (visible);  optoGainLabel   .setVisible (visible);
     optoLimitButton .setVisible (visible);
-    fetInputKnob    .setVisible (visible);  fetInputLabel   .setVisible (visible);
     fetOutputKnob   .setVisible (visible);  fetOutputLabel  .setVisible (visible);
     fetAttackKnob   .setVisible (visible);  fetAttackLabel  .setVisible (visible);
     fetReleaseKnob  .setVisible (visible);  fetReleaseLabel .setVisible (visible);
     fetRatioKnob    .setVisible (visible);  fetRatioLabel   .setVisible (visible);
     vcaRatioKnob    .setVisible (visible);  vcaRatioLabel   .setVisible (visible);
-    vcaAttackKnob   .setVisible (visible);  vcaAttackLabel  .setVisible (visible);
-    vcaReleaseKnob  .setVisible (visible);  vcaReleaseLabel .setVisible (visible);
     vcaOutputKnob   .setVisible (visible);  vcaOutputLabel  .setVisible (visible);
 
     // Re-apply the per-mode filter so only the active mode's knobs are
     // shown. Without this, flipping out of TIMELINE (or any path that
-    // re-shows the section) leaves all 13 per-mode knobs visible at the
+    // re-shows the section) leaves every mode's knobs visible at the
     // same physical positions and they overlap.
     if (visible)
     {
@@ -5471,17 +5407,7 @@ void ChannelStripComponent::syncShownView()
             k.setValue (target, juce::dontSendNotification);
         };
         const auto& sp = track.strip;
-        syncKnob (optoPeakRedKnob, sp.compOptoPeakRed.load (std::memory_order_relaxed));
-        syncKnob (optoGainKnob,    sp.compOptoGain.load    (std::memory_order_relaxed));
-        syncKnob (fetInputKnob,    sp.compFetInput.load    (std::memory_order_relaxed));
-        syncKnob (fetOutputKnob,   sp.compFetOutput.load   (std::memory_order_relaxed));
-        syncKnob (fetAttackKnob,   sp.compFetAttack.load   (std::memory_order_relaxed));
-        syncKnob (fetReleaseKnob,  sp.compFetRelease.load  (std::memory_order_relaxed));
-        syncKnob (fetRatioKnob,    (float) sp.compFetRatio.load (std::memory_order_relaxed));
-        syncKnob (vcaRatioKnob,    sp.compVcaRatio.load    (std::memory_order_relaxed));
-        syncKnob (vcaAttackKnob,   sp.compVcaAttack.load   (std::memory_order_relaxed));
-        syncKnob (vcaReleaseKnob,  sp.compVcaRelease.load  (std::memory_order_relaxed));
-        syncKnob (vcaOutputKnob,   sp.compVcaOutput.load   (std::memory_order_relaxed));
+        syncCompControls();
         syncKnob (hpfKnob,         sp.hpfFreq.load         (std::memory_order_relaxed));
         syncKnob (lpfKnob,         sp.lpfFreq.load         (std::memory_order_relaxed));
         for (size_t i = 0; i < eqRows.size(); ++i)
@@ -5882,18 +5808,13 @@ void ChannelStripComponent::mouseDown (const juce::MouseEvent& e)
                 return;
             }
         }
-        // Comp threshold/makeup: each per-mode knob routes to the LOGICAL
-        // target so the binding survives mode swaps (audio thread reads
-        // compMode and writes to the matching atom). VCA threshold has
-        // no dedicated knob in the UI (it lives on the GR-strip drag
-        // handle); right-clicking the Opto/FET threshold knob binds it
-        // for all modes.
-        if (e.eventComponent == &optoPeakRedKnob
-            || e.eventComponent == &fetInputKnob)
+        // Comp threshold/makeup: each per-mode control routes to the LOGICAL
+        // target so the binding survives mode swaps (the audio thread reads
+        // compMode and moves the parameter that mode plays for the role).
+        // Every mode's threshold is the GR-strip drag handle.
+        if (compMeter != nullptr && e.eventComponent == compMeter.get())
         {
-            auto& src = (e.eventComponent == &optoPeakRedKnob)
-                            ? optoPeakRedKnob : fetInputKnob;
-            midilearn::showLearnMenu (src, session,
+            midilearn::showLearnMenu (*compMeter, session,
                                         MidiBindingTarget::TrackCompThresh, trackIndex);
             return;
         }
@@ -6376,16 +6297,12 @@ void ChannelStripComponent::refreshCompKnobVisibility()
     // compCompactButton). Bail before touching per-mode knob visibility.
     if (compactMode) return;
 
-    const int m = jlimit (0, 2, track.strip.compMode.load (std::memory_order_relaxed));
-    const bool isOpto = (m == 0), isFet = (m == 1), isVca = (m == 2);
+    const int m = comp::compModeOf (track.strip);
+    const bool isOpto = (m == comp::kOptoMode), isFet = (m == comp::kFetMode), isVca = (m == comp::kVcaMode);
 
-    // OPTO peak-reduction + FET input + VCA threshold are all set via
-    // the triangle drag handle on the GR meter strip. No "main amount"
-    // knob is shown for any mode - the per-mode knobs in the right-side
-    // grid are the remaining mode-specific controls only.
-    optoPeakRedKnob.setVisible (false);  optoPeakRedLabel.setVisible (false);
-    fetInputKnob   .setVisible (false);  fetInputLabel   .setVisible (false);
-
+    // Opto's peak reduction, FET's input and VCA's threshold are all set via
+    // the triangle drag handle on the GR meter strip, so the knob grid holds
+    // the mode's other controls only.
     optoGainKnob   .setVisible (isOpto);  optoGainLabel   .setVisible (isOpto);
     optoLimitButton.setVisible (isOpto);
 
@@ -6395,8 +6312,6 @@ void ChannelStripComponent::refreshCompKnobVisibility()
     fetRatioKnob   .setVisible (isFet);   fetRatioLabel   .setVisible (isFet);
 
     vcaRatioKnob   .setVisible (isVca);   vcaRatioLabel   .setVisible (isVca);
-    vcaAttackKnob  .setVisible (isVca);   vcaAttackLabel  .setVisible (isVca);
-    vcaReleaseKnob .setVisible (isVca);   vcaReleaseLabel .setVisible (isVca);
     vcaOutputKnob  .setVisible (isVca);   vcaOutputLabel  .setVisible (isVca);
 }
 
@@ -6532,26 +6447,35 @@ void ChannelStripComponent::resetEqSection()
     if (eqHeaderBtn != nullptr) eqHeaderBtn->refresh();
 }
 
+// Every mode's controls, the threshold handle's included, go back to the
+// plug-in's defaults; the mode and the engage switch stay as they were.
 void ChannelStripComponent::resetCompSection()
 {
-    // Same replay-the-defaults pattern as resetEqSection. VCA threshold has
-    // no knob (it lives on the GR meter-strip drag handle) so it has no
-    // double-click precedent and is left untouched.
-    const bool wasEnabled = track.strip.compEnabled.load (std::memory_order_relaxed);
-    auto reset = [] (juce::Slider& s)
-    {
-        if (s.isDoubleClickReturnEnabled())
-            s.setValue (s.getDoubleClickReturnValue(), juce::sendNotificationSync);
-    };
-    reset (optoPeakRedKnob);  reset (optoGainKnob);
-    reset (fetInputKnob);     reset (fetOutputKnob);
-    reset (fetAttackKnob);    reset (fetReleaseKnob);  reset (fetRatioKnob);
-    reset (vcaRatioKnob);     reset (vcaAttackKnob);
-    reset (vcaReleaseKnob);   reset (vcaOutputKnob);
-    if (optoLimitButton.getToggleState())
-        optoLimitButton.setToggleState (false, juce::sendNotificationSync);
-    track.strip.compEnabled.store (wasEnabled, std::memory_order_relaxed);
+    track.strip.comp.resetToDefaults (CompStage::Strip);
+    syncCompControls();
+    if (compMeter != nullptr) compMeter->repaint();
     refreshCompModeButtonState();
+}
+
+void ChannelStripComponent::syncCompControls()
+{
+    const auto& c = track.strip.comp;
+    auto sync = [&c] (auto& knob, CompParamId id)
+    {
+        const double target = c.get (id);
+        if (knob.isMouseButtonDown() || std::abs (knob.getValue() - target) < 1.0e-4) return;
+        knob.setValue (target, juce::dontSendNotification);
+    };
+    sync (optoGainKnob,   CompParamId::OptoGain);
+    sync (fetRatioKnob,   CompParamId::FetRatio);
+    sync (fetAttackKnob,  CompParamId::FetAttack);
+    sync (fetReleaseKnob, CompParamId::FetRelease);
+    sync (fetOutputKnob,  CompParamId::FetOutput);
+    sync (vcaRatioKnob,   CompParamId::VcaCompression);
+    sync (vcaOutputKnob,  CompParamId::VcaOutput);
+    const bool limit = c.get (CompParamId::OptoLimit) > 0.5f;
+    if (optoLimitButton.getToggleState() != limit)
+        optoLimitButton.setToggleState (limit, juce::dontSendNotification);
 }
 
 void ChannelStripComponent::resetAuxSection()
@@ -7161,29 +7085,22 @@ void ChannelStripComponent::resized()
                 layoutKnobCell (row2,                        fetReleaseKnob, fetReleaseLabel);
             }
         }
-        else  // VCA
+        else  // VCA: RAT and MAK in FET's slots; it has no attack or release
         {
             if (oneRowComp)
             {
-                // RAT / ATK / REL / MAK - matches the bus comp's single-row
-                // order so every comp in the mixer reads identically.
                 auto row = body.removeFromTop (kCompKnobRowH);
                 const int colW = row.getWidth() / 4;
-                layoutKnobCell (row.removeFromLeft (colW), vcaRatioKnob,   vcaRatioLabel);
-                layoutKnobCell (row.removeFromLeft (colW), vcaAttackKnob,  vcaAttackLabel);
-                layoutKnobCell (row.removeFromLeft (colW), vcaReleaseKnob, vcaReleaseLabel);
-                layoutKnobCell (row,                        vcaOutputKnob,  vcaOutputLabel);
+                layoutKnobCell (row.removeFromLeft (colW), vcaRatioKnob,  vcaRatioLabel);
+                row.removeFromLeft (colW * 2);
+                layoutKnobCell (row,                        vcaOutputKnob, vcaOutputLabel);
             }
             else
             {
                 auto row1 = body.removeFromTop (kCompKnobRowH);
-                body.removeFromTop (kCompKnobGap);
-                auto row2 = body.removeFromTop (kCompKnobRowH);
                 const int colW = row1.getWidth() / 2;
-                layoutKnobCell (row1.removeFromLeft (colW), vcaRatioKnob,   vcaRatioLabel);
-                layoutKnobCell (row1,                       vcaOutputKnob,  vcaOutputLabel);
-                layoutKnobCell (row2.removeFromLeft (colW), vcaAttackKnob,  vcaAttackLabel);
-                layoutKnobCell (row2,                        vcaReleaseKnob, vcaReleaseLabel);
+                layoutKnobCell (row1.removeFromLeft (colW), vcaRatioKnob,  vcaRatioLabel);
+                layoutKnobCell (row1,                       vcaOutputKnob, vcaOutputLabel);
             }
         }
     }

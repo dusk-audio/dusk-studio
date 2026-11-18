@@ -90,8 +90,7 @@ void liveInput (ScenarioContext& ctx, Track::Mode mode)
     auto& bus = session.bus (0).strip;
     auto& master = session.master();
 
-    for (auto* value : { &track.mode, &track.inputSource, &track.inputSourceR, &strip.compMode,
-                         &strip.compFetRatio })
+    for (auto* value : { &track.mode, &track.inputSource, &track.inputSourceR, &strip.compMode })
         ctx.keep (*value);
     for (auto* value : { &track.inputMonitor, &strip.busAssign[0], &strip.auxSendsBypassed,
                          &strip.auxSendPreFader[0], &strip.eqEnabled, &strip.hpfEnabled,
@@ -103,6 +102,8 @@ void liveInput (ScenarioContext& ctx, Track::Mode mode)
                          &strip.compFetThresholdDb, &strip.compVcaThreshDb, &strip.compVcaRatio,
                          &bus.eqLfGainDb, &bus.eqMidGainDb, &bus.eqHfGainDb, &bus.hpfFreq })
         ctx.keep (*value);
+    for (const auto id : compStageParams (CompStage::Strip))
+        ctx.keep (strip.comp.atom (id));
 
     track.mode.store ((int) mode);
     track.inputSource.store (-2);
@@ -503,13 +504,13 @@ ScenarioResult compModesKeepTheirSettings (ScenarioContext& ctx)
 
     strip.compEnabled.store (true);
     strip.compMode.store (1);
-    strip.compFetThresholdDb.store (-30.0f);
-    strip.compFetRatio.store (3);
+    strip.comp.set (CompParamId::FetInput, 20.0f);
+    strip.comp.set (CompParamId::FetRatio, 3.0f);
     const double fet = playTone (ctx, 440.0, 0.5f, 0.0f).left;
 
     strip.compMode.store (2);
-    strip.compVcaThreshDb.store (0.0f);
-    strip.compVcaRatio.store (2.0f);
+    strip.comp.set (CompParamId::VcaThreshold, 0.0f);
+    strip.comp.set (CompParamId::VcaCompression, 20.0f);
     const double vca = playTone (ctx, 440.0, 0.5f, 0.0f).left;
 
     strip.compMode.store (1);
@@ -522,8 +523,8 @@ ScenarioResult compModesKeepTheirSettings (ScenarioContext& ctx)
     ctx.expect (std::abs (db (fet, vca)) > 3.0, "the two settings did not sound different, so nothing was proven");
     ctx.expect (std::abs (db (fetAgain, fet)) < 0.2, "FET did not sound the same after a turn in VCA");
     ctx.expect (std::abs (db (vcaAgain, vca)) < 0.2, "VCA did not sound the same after a turn in FET");
-    ctx.expect (std::abs (strip.compFetThresholdDb.load() + 30.0f) < 1.0e-6f
-                    && std::abs (strip.compVcaThreshDb.load()) < 1.0e-6f,
+    ctx.expect (std::abs (strip.comp.get (CompParamId::FetInput) - 20.0f) < 1.0e-6f
+                    && std::abs (strip.comp.get (CompParamId::VcaThreshold)) < 1.0e-6f,
                 "switching modes changed another mode's threshold");
     return ctx.verdict();
 }

@@ -5,6 +5,7 @@
 
 #include <atomic>
 #include <memory>
+#include <string>
 
 namespace duskstudio
 {
@@ -50,6 +51,24 @@ public:
 
     // The plug-in, for building its editor. Message thread.
     builtin::DafPlugin& plugin() noexcept;
+
+    // What Multi-Comp 2 prints for a value, in the host domain, of one of the
+    // kind's parameters: the plug-in's own text where it has some, otherwise
+    // its enumeration label, otherwise the value with the unit it declares.
+    // Empty for a parameter the kind does not hold. Message thread only, so
+    // the audio thread never formats text; the formatter is a pure function of
+    // the value, which is why the stage's playing instance can answer.
+    std::string valueText (CompParamId id, float value) const;
+
+    // A stepped parameter's steps as valueText prints them, in order, between
+    // separators; its two ends for a continuous one. Message thread only.
+    std::string stepsText (CompParamId id, const char* separator) const;
+
+    // Text typed for one of the kind's parameters back to a host value: as the
+    // plug-in reads it where it reads text of its own, otherwise a label or a
+    // number with or without the unit. False, and value untouched, when the
+    // text does not read. Message thread only.
+    bool valueFromText (CompParamId id, const std::string& text, float& value) const;
 
     CompStage kind() const noexcept;
 

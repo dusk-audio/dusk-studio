@@ -436,22 +436,16 @@ ScenarioResult runCloneSavedFields (ScenarioContext& ctx)
     set (st.compEnabled, true);
     set (st.compModePicked, true);
     set (st.compMode, 1);
-    set (st.compOptoPeakRed, 44.0f);
-    set (st.compOptoGain, 61.0f);
-    set (st.compOptoLimit, true);
-    set (st.compFetInput, 12.0f);
-    set (st.compFetOutput, 3.0f);
-    set (st.compFetAttack, 0.5f);
-    set (st.compFetRelease, 600.0f);
-    set (st.compFetRatio, 2);
-    set (st.compFetThresholdDb, -20.0f);
-    set (st.compVcaThreshDb, -15.0f);
-    set (st.compVcaRatio, 6.0f);
-    set (st.compVcaAttack, 3.0f);
-    set (st.compVcaRelease, 250.0f);
-    set (st.compVcaOutput, 2.0f);
-    set (st.compVcaOverEasy, true);
-    set (st.compVcaDetectorClassic, true);
+    // Every compressor parameter the strip saves, off its default: a stepped
+    // one a step on, a continuous one part of the way to the far end.
+    for (const auto id : compStageParams (CompStage::Strip))
+    {
+        const auto& spec = compParamSpec (id);
+        const float farEnd = spec.hostDefault < spec.hostMax ? spec.hostMax : spec.hostMin;
+        set (st.comp.atom (id), spec.integer ? (spec.hostDefault < spec.hostMax ? spec.hostDefault + 1.0f
+                                                                                 : spec.hostDefault - 1.0f)
+                                             : spec.hostDefault + 0.37f * (farEnd - spec.hostDefault));
+    }
 
     auto& hw = src.hardwareInsert;
     set (hw.enabled, true);

@@ -295,33 +295,28 @@ private:
     };
     std::array<BandRow, 4> eqRows;
 
-    // Holds the union of all three modes' params; shows only the current mode.
-    // The label includes that mode and opens the editor; the status light
-    // controls compEnabled.
+    // Holds the union of all three modes' controls; shows only the current
+    // mode's. The label includes that mode and opens the editor; the status
+    // light controls compEnabled. Each mode's threshold (Opto's peak
+    // reduction, FET's input, VCA's threshold) is the meter strip's handle.
     std::unique_ptr<SplitModuleButton> compModeButton;
 
-    // Opto (LA-2A): peak-red + gain + LIMIT.
-    juce::Slider     optoPeakRedKnob { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };
+    // Opto: gain + LIMIT.
     juce::Slider     optoGainKnob    { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };
-    juce::Label      optoPeakRedLabel, optoGainLabel;
+    juce::Label      optoGainLabel;
     juce::TextButton optoLimitButton { "LIMIT" };
 
-    // FET (1176): input + output + attack + release + ratio (5-step).
-    juce::Slider     fetInputKnob   { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };
+    // FET: output + attack + release + ratio (5-step).
     juce::Slider     fetOutputKnob  { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };
     juce::Slider     fetAttackKnob  { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };
     juce::Slider     fetReleaseKnob { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };
     juce::Slider     fetRatioKnob   { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };
-    juce::Label      fetInputLabel, fetOutputLabel, fetAttackLabel, fetReleaseLabel, fetRatioLabel;
+    juce::Label      fetOutputLabel, fetAttackLabel, fetReleaseLabel, fetRatioLabel;
 
-    // VCA (classic): threshold via meter-strip drag handle (not a
-    // knob); ratio + attack + release + output as knobs.
+    // VCA: compression (its ratio) + output, in FET's ratio and output slots.
     juce::Slider     vcaRatioKnob   { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };
-    juce::Slider     vcaAttackKnob  { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };
-    juce::Slider     vcaReleaseKnob { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };
     juce::Slider     vcaOutputKnob  { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };
-
-    juce::Label      vcaRatioLabel, vcaAttackLabel, vcaReleaseLabel, vcaOutputLabel;
+    juce::Label      vcaRatioLabel, vcaOutputLabel;
 
     std::unique_ptr<CompMeterStrip> compMeter;
 
@@ -462,12 +457,16 @@ private:
     void showEqSectionMenu();
     void showCompSectionMenu();
     void showAuxSectionMenu();
-    // Whole-section resets - replays each section knob's own double-click
-    // return value through its live onValueChange path (message thread).
+    // Whole-section resets (message thread). EQ and AUX replay each knob's
+    // own double-click return value through its live onValueChange path;
+    // COMP returns every compressor parameter to the plug-in's default.
     void resetEqSection();
     void resetCompSection();
     void resetAuxSection();
     void armCompOnUserEdit();
+    // Pulls the comp knobs and the LIMIT switch from the strip's CompParams,
+    // leaving a knob the mouse holds alone.
+    void syncCompControls();
     // Right-click context menu uses this since the button itself is
     // the mode picker.
     void setCompEnabled (bool enabled);

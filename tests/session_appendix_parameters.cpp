@@ -2,7 +2,6 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "TestTempDirectory.h"
-#include "engine/CompModeMap.h"
 #include "foundation/Json.h"
 #include "session/Session.h"
 #include "session/SessionSerializer.h"
@@ -170,9 +169,6 @@ TEST_CASE ("Appendix A: channel defaults and load ranges", "[session][appendix]"
             }
         }
     }
-    CHECK_THAT (comp::optoGainPctToMakeupDb (0), WithinAbs (-40, 1e-6));
-    CHECK_THAT (comp::optoGainPctToMakeupDb (50), WithinAbs (0, 1e-6));
-    CHECK_THAT (comp::optoGainPctToMakeupDb (100), WithinAbs (40, 1e-6));
 
     for (int choice = 0; choice < 5; ++choice)
     {

@@ -22,7 +22,7 @@ namespace duskstudio::scenario
 namespace
 {
 using Target = MidiBindingTarget;
-enum class Mapping { Linear, Log, Send, TrackHpf, BusHpf, Button, Noop };
+enum class Mapping { Linear, Log, Step, Send, TrackHpf, BusHpf, Button, Noop };
 
 struct Control
 {
@@ -163,16 +163,19 @@ void buildOperations (Matrix& state)
                         sub == 1 || sub == 2 ? p + ".q" + s : std::string(),
                         sub == 1 || sub == 2 ? Mapping::Linear : Mapping::Noop, 0.4, 4, p + ".eq", bank);
             }
+            // The threshold runs toward less compression: Opto's peak reduction
+            // and FET's input down from their tops, VCA's threshold up.
             for (int mode = 0; mode < 3; ++mode)
             {
-                const std::string s = std::to_string (mode);
-                static constexpr double thresholdLow[] { 100, -60, -38 };
-                static constexpr double thresholdHigh[] { 0, 0, 12 };
+                static constexpr const char* thresholds[] { ".opto_peak_reduction", ".fet_input", ".vca_threshold" };
+                static constexpr double thresholdLow[] { 100, 40, -55 };
+                static constexpr double thresholdHigh[] { 0, -20, 0 };
+                static constexpr const char* makeups[] { ".opto_gain", ".fet_output", ".vca_output" };
                 append (state, target (Target::TrackCompThresh, Target::TrackCompThreshBank), index,
-                        p + ".threshold" + s, Mapping::Linear, thresholdLow[mode], thresholdHigh[mode],
+                        p + thresholds[mode], Mapping::Linear, thresholdLow[mode], thresholdHigh[mode],
                         p + ".comp", bank, -1, p + ".compMode", mode);
                 append (state, target (Target::TrackCompMakeup, Target::TrackCompMakeupBank), index,
-                        p + ".makeup" + s, Mapping::Linear, mode == 0 ? 0 : -20, mode == 0 ? 100 : 20,
+                        p + makeups[mode], Mapping::Linear, mode == 0 ? 0 : -20, mode == 0 ? 100 : 20,
                         p + ".comp", bank, -1, p + ".compMode", mode);
             }
             for (const int parameter : { 0, 2 })
@@ -211,9 +214,9 @@ void buildOperations (Matrix& state)
     append (state, Target::MasterFader, 0, "m.fader", Mapping::Linear, -90, 12);
     append (state, Target::MasterEqLfBoost, 0, "m.lf", Mapping::Linear, 0, 10);
     append (state, Target::MasterEqHfBoost, 0, "m.hf", Mapping::Linear, 0, 10);
-    append (state, Target::MasterCompThresh, 0, "m.threshold", Mapping::Linear, -38, 12);
-    append (state, Target::MasterCompMakeup, 0, "m.makeup", Mapping::Linear, -20, 20);
-    append (state, Target::MasterCompRatio, 0, "m.ratio", Mapping::Linear, 1, 20);
+    append (state, Target::MasterCompThresh, 0, "m.bus_threshold", Mapping::Linear, -30, 15);
+    append (state, Target::MasterCompMakeup, 0, "m.bus_makeup", Mapping::Linear, 0, 20);
+    append (state, Target::MasterCompRatio, 0, "m.bus_ratio", Mapping::Step, 0, 2);
 }
 
 void next (ScenarioContext& ctx, const std::shared_ptr<Matrix>& state)
@@ -243,6 +246,7 @@ void next (ScenarioContext& ctx, const std::shared_ptr<Matrix>& state)
             double expected = op.low + (op.high - op.low) * fraction;
             if (op.mapping == Mapping::Log || op.mapping == Mapping::TrackHpf || op.mapping == Mapping::BusHpf)
                 expected = op.low * std::pow (op.high / op.low, fraction);
+            if (op.mapping == Mapping::Step) expected = op.low + std::round ((op.high - op.low) * fraction);
             if (op.mapping == Mapping::Send && value == 0) expected = -100;
             if (op.mapping == Mapping::Button) expected = state->position < 2 ? 1 : 0;
             state->controls.at (op.destination).expected = expected;
@@ -326,13 +330,9 @@ std::optional<ScenarioResult> runMatrix (ScenarioContext& ctx)
         add (".gain0", s.lfGainDb); add (".gain1", s.lmGainDb); add (".gain2", s.hmGainDb); add (".gain3", s.hfGainDb);
         add (".freq0", s.lfFreq); add (".freq1", s.lmFreq); add (".freq2", s.hmFreq); add (".freq3", s.hfFreq);
         add (".q1", s.lmQ); add (".q2", s.hmQ);
-        add (".comp", s.compEnabled); add (".compMode", s.compMode);
-        add (".threshold0", s.compOptoPeakRed); add (".threshold1", s.compFetThresholdDb); add (".threshold2", s.compVcaThreshDb);
-        add (".makeup0", s.compOptoGain); add (".makeup1", s.compFetOutput); add (".makeup2", s.compVcaOutput);
-        add (".modePicked", s.compModePicked); add (".optoLimit", s.compOptoLimit); add (".fetInput", s.compFetInput);
-        add (".fetRatio", s.compFetRatio); add (".vcaRatio", s.compVcaRatio);
-        add (".fetAttack", s.compFetAttack); add (".fetRelease", s.compFetRelease);
-        add (".vcaAttack", s.compVcaAttack); add (".vcaRelease", s.compVcaRelease);
+        add (".comp", s.compEnabled); add (".compMode", s.compMode); add (".modePicked", s.compModePicked);
+        for (const auto id : compStageParams (CompStage::Strip))
+            state->add (ctx, p + "." + compParamSpec (id).symbol, s.comp.atom (id));
         for (int sub = 0; sub < 4; ++sub)
         {
             state->add (ctx, p + ".send" + std::to_string (sub), s.auxSendDb[static_cast<std::size_t> (sub)]);
@@ -350,7 +350,9 @@ std::optional<ScenarioResult> runMatrix (ScenarioContext& ctx)
         add (".fader", s.faderDb); add (".pan", s.pan); add (".mute", s.mute); add (".solo", s.solo);
         add (".eq", s.eqEnabled); add (".hpf", s.hpfEnabled); add (".hpfFreq", s.hpfFreq);
         add (".gain0", s.eqLfGainDb); add (".gain1", s.eqMidGainDb); add (".gain2", s.eqHfGainDb);
-        add (".comp", s.compEnabled); add (".threshold", s.compThreshDb); add (".makeup", s.compMakeupDb);
+        add (".comp", s.compEnabled);
+        for (const auto id : compStageParams (CompStage::Bus))
+            state->add (ctx, p + "." + compParamSpec (id).symbol, s.comp.atom (id));
         state->set (p + ".solo", 0);
         state->add (ctx, "a" + std::to_string (bus) + ".fader", session.auxLane (bus).params.returnLevelDb);
         state->add (ctx, "a" + std::to_string (bus) + ".mute", session.auxLane (bus).params.mute);
@@ -358,8 +360,9 @@ std::optional<ScenarioResult> runMatrix (ScenarioContext& ctx)
     auto& m = session.master();
     state->add (ctx, "m.fader", m.faderDb); state->add (ctx, "m.eq", m.eqEnabled);
     state->add (ctx, "m.lf", m.eqLfBoost); state->add (ctx, "m.hf", m.eqHfBoost);
-    state->add (ctx, "m.comp", m.compEnabled); state->add (ctx, "m.threshold", m.compThreshDb);
-    state->add (ctx, "m.makeup", m.compMakeupDb); state->add (ctx, "m.ratio", m.compRatio);
+    state->add (ctx, "m.comp", m.compEnabled);
+    for (const auto id : compStageParams (CompStage::Bus))
+        state->add (ctx, std::string ("m.") + compParamSpec (id).symbol, m.comp.atom (id));
     state->set ("m.eq", 0); state->set ("m.comp", 0);
     for (int index = 0; index < 28; ++index)
     {

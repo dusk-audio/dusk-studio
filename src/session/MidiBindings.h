@@ -60,9 +60,9 @@ enum class MidiBindingTarget : int
     TrackAuxSend      = 105, // targetIndex = track * kNumAuxSends + auxIdx
     TrackHpfFreq      = 106,
     TrackEqGain       = 107, // targetIndex = track * 4 + band (0=LF 1=LM 2=HM 3=HF)
-    // Comp targets bind the LOGICAL knob - apply path reads compMode and
-    // writes the matching per-mode atom so a single binding survives
-    // mode flips (Opto/FET/VCA all have different ranges).
+    // Comp targets bind the LOGICAL control - the apply path reads compMode
+    // and sweeps the parameter that mode plays for the role across its host
+    // range, so a single binding survives mode flips (comp::Role).
     TrackCompThresh   = 108,
     TrackCompMakeup   = 109,
     TrackPluginParam  = 110, // paramIndex (separate field) = plugin slot.

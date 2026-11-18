@@ -1,5 +1,6 @@
 #include "BusComponent.h"
 #include "../engine/AudioEngine.h"
+#include "../engine/CompModeMap.h"
 #include "DuskContextMenu.h"
 #include "DuskLabelEditor.h"
 #include "SteppedKnob.h"
@@ -703,15 +704,14 @@ BusComponent::BusComponent (Bus& b, Session& s, AudioEngine& e, int idx)
                                   return std::max (l, r);
                               };
     compSrc.getGrDb        = [this] { return bus.strip.meterGrDb.load (std::memory_order_relaxed); };
-    compSrc.getThresholdDb = [this] { return bus.strip.compThreshDb.load (std::memory_order_relaxed); };
+    compSrc.getThresholdDb = [this] { return comp::thresholdAxisValue (bus.strip.comp, comp::kBusMode); };
     compSrc.setThresholdDb = [this] (float db)
                               {
-                                  bus.strip.compThreshDb.store (jlimit (-60.0f, 0.0f, db),
-                                                                  std::memory_order_relaxed);
+                                  comp::applyThresholdAxisValue (bus.strip.comp, comp::kBusMode, db);
                               };
     compSrc.resetThreshold = [this]
                               {
-                                  bus.strip.compThreshDb.store (0.0f, std::memory_order_relaxed);
+                                  comp::resetRole (bus.strip.comp, comp::kBusMode, comp::Role::Threshold);
                               };
     compSrc.isEngaged      = [this] { return bus.strip.compEnabled.load (std::memory_order_relaxed); };
     compSrc.autoEnable     = [this]
@@ -721,51 +721,59 @@ BusComponent::BusComponent (Bus& b, Session& s, AudioEngine& e, int idx)
                               };
     // Fader-side GR LED (matches channel-strip grammar): slim widget that
     // shows only the GR bar + threshold-drag handle, glued next to the
-    // level meter to the right of the fader. setRangeDb(-60, 0) maps the
-    // drag y position 1:1 with the level-meter scale so dragging to -18 dB
-    // lands the triangle on the level meter's -18 tick.
-    compSrc.floorDb        = -60.0f;
-    compSrc.ceilingDb      =   0.0f;
+    // level meter to the right of the fader. The handle travels the bus
+    // threshold's whole host range, -30 dB at the bottom to +15 dB at the
+    // top, so its 0 dB default is not the level meter's 0 dB tick.
+    const auto busThresholdAxis = comp::thresholdAxis (comp::kBusMode);
+    compSrc.floorDb        = busThresholdAxis.lo;
+    compSrc.ceilingDb      = busThresholdAxis.hi;
     compMeter = std::make_unique<CompMeterStrip> (std::move (compSrc));
     compMeter->setShowInputBar (false);
     compMeter->setHandleVisible (true);
     compMeter->setHandleOnRight (true);
-    compMeter->setRangeDb (-60.0f, 0.0f);
     addAndMakeVisible (compMeter.get());
 
-    styleSmallKnob (compRatio,     1.0,   10.0,    4.0, bus.strip.compRatio.load(),     compGold, ":1", 1);
-    styleSmallKnob (compAttack,    0.1,   50.0,    5.0, bus.strip.compAttackMs.load(),  compGold, "",   1);
-    styleSmallKnob (compRelease,  50.0, 1000.0,  200.0, bus.strip.compReleaseMs.load(), compGold, "",   0);
-    styleSmallKnob (compMakeup,  -10.0,   20.0,    0.0, bus.strip.compMakeupDb.load(),  compGold, "",   1);
-    compRatio  .setTooltip ("Bus comp ratio (stepped: 2:1 / 4:1 / 10:1).");
-    compAttack .setTooltip ("Bus comp attack (stepped: 0.1 / 0.3 / 1 / 3 / 10 / 30 ms).");
-    compRelease.setTooltip ("Bus comp release (stepped: 0.1 / 0.3 / 0.6 / 1.2 s, top = AUTO).");
-    compMakeup .setTooltip ("Bus comp make-up gain (-10..+20 dB). Double-click for 0 dB; Shift-drag for fine.");
+    // RAT / ATK / REL / MAK are Multi-Comp 2's Bus-mode controls: each travels
+    // the plug-in's host range (ratio, attack and release by step), returns to
+    // the plug-in's default on double-click and reads as the plug-in prints the
+    // value. Moving one leaves the engage switch as it is.
+    const auto bindCompKnob = [this, compGold] (auto& knob, CompParamId id, const std::string& tooltip)
+    {
+        const auto& spec = compParamSpec (id);
+        styleSmallKnob (knob, spec.hostMin, spec.hostMax, spec.hostDefault, bus.strip.comp.get (id),
+                        compGold, "", 0);
+        knob.setRange (spec.hostMin, spec.hostMax, spec.integer ? 1.0 : 0.0);
+        knob.setSkewFactor (1.0);
+        knob.setDoubleClickReturnValue (true, spec.hostDefault);
+        knob.textFromValueFunction = [eng = &engine, id] (double v) -> std::string
+        {
+            return eng->compValueText (CompStage::Bus, id, (float) v);
+        };
+        knob.valueFromTextFunction = [eng = &engine, &knob, id] (const auto& text)
+        {
+            float value = 0.0f;
+            return eng->compValueFromText (CompStage::Bus, id, text.toStdString(), value)
+                       ? (double) value : knob.getValue();
+        };
+        knob.onValueChange = [this, &knob, id] { bus.strip.comp.set (id, (float) knob.getValue()); };
+        knob.setTooltip (tooltip);
+        knob.updateText();
+    };
+    const auto steps = [this] (CompParamId id) { return engine.compStepsText (CompStage::Bus, id, " / "); };
+    bindCompKnob (compRatio,   CompParamId::BusRatio,   "Bus comp ratio (stepped: " + steps (CompParamId::BusRatio) + ").");
+    bindCompKnob (compAttack,  CompParamId::BusAttack,  "Bus comp attack (stepped: " + steps (CompParamId::BusAttack) + ").");
+    bindCompKnob (compRelease, CompParamId::BusRelease, "Bus comp release (stepped: " + steps (CompParamId::BusRelease) + ").");
+    bindCompKnob (compMakeup,  CompParamId::BusMakeup,
+                  "Bus comp make-up gain (" + engine.compStepsText (CompStage::Bus, CompParamId::BusMakeup, " to ")
+                      + "). Double-click for "
+                      + engine.compValueText (CompStage::Bus, CompParamId::BusMakeup,
+                                              compParamSpec (CompParamId::BusMakeup).hostDefault)
+                      + "; Shift-drag for fine.");
     // White pointer on the powder-blue body - matches the SSL G-bus
     // comp's painted-line indicator. styleSmallKnob's default thumb
     // (fill-brightened) washes out against the light blue.
     for (auto* k : { &compRatio, &compAttack, &compRelease, &compMakeup })
         k->setColour (juce::Slider::thumbColourId, juce::Colours::white);
-    compMakeup .onValueChange = [this] { bus.strip.compMakeupDb .store ((float) compMakeup .getValue(), std::memory_order_relaxed); };
-
-    // Ratio / attack / release are SSL-style stepped selectors - the donor's
-    // bus_* params are Choices, so the knob detents on the real values and the
-    // readout shows them (no more continuous knob landing between steps).
-    configureSteppedKnob (compRatio, sslsteps::ratioValues(), sslsteps::ratioLabels(),
-                          bus.strip.compRatio.load(),
-                          [this] (double v) { bus.strip.compRatio.store ((float) v, std::memory_order_relaxed); });
-    configureSteppedKnob (compAttack, sslsteps::attackValues(), sslsteps::attackLabels(),
-                          bus.strip.compAttackMs.load(),
-                          [this] (double v) { bus.strip.compAttackMs.store ((float) v, std::memory_order_relaxed); });
-    configureSteppedKnob (compRelease, sslsteps::releaseValues(), sslsteps::releaseLabels(),
-                          bus.strip.compReleaseAuto.load() ? -1.0 : (double) bus.strip.compReleaseMs.load(),
-                          [this] (double v)
-                          {
-                              const bool autoOn = v < 0.0;
-                              bus.strip.compReleaseAuto.store (autoOn, std::memory_order_relaxed);
-                              if (! autoOn)
-                                  bus.strip.compReleaseMs.store ((float) v, std::memory_order_relaxed);
-                          });
 
     addAndMakeVisible (compRatio);  addAndMakeVisible (compAttack);
     addAndMakeVisible (compRelease); addAndMakeVisible (compMakeup);
@@ -1202,6 +1210,7 @@ void BusComponent::syncShownView()
             soloButton.setToggleState (s, juce::dontSendNotification);
     }
     syncEqKnobs();
+    syncCompKnobs();
 
     // Refresh both split headers so external atom changes (session reload,
     // editor actions, MIDI bindings) are reflected without a click.
@@ -1849,17 +1858,31 @@ void BusComponent::resetEqSection()
     if (eqHeaderBtn != nullptr) eqHeaderBtn->refresh();
 }
 
+// The bus compressor editor, the strip's own threshold handle and a reset all
+// write the CompParams directly, so the knobs follow them here, a knob held by
+// the mouse left alone.
+void BusComponent::syncCompKnobs()
+{
+    const auto& c = bus.strip.comp;
+    auto sync = [&c] (auto& knob, CompParamId id)
+    {
+        const double target = c.get (id);
+        if (knob.isMouseButtonDown() || std::abs (knob.getValue() - target) < 1.0e-4) return;
+        knob.setValue (target, juce::dontSendNotification);
+    };
+    sync (compRatio,   CompParamId::BusRatio);
+    sync (compAttack,  CompParamId::BusAttack);
+    sync (compRelease, CompParamId::BusRelease);
+    sync (compMakeup,  CompParamId::BusMakeup);
+}
+
+// Every Bus-mode control, the threshold handle's included, back to the
+// plug-in's default, the compressor engaged or bypassed as it was.
 void BusComponent::resetCompSection()
 {
-    // Comp threshold lives on the meter-strip drag handle (no knob), so it has
-    // no double-click precedent and is left untouched.
-    auto reset = [] (juce::Slider& s)
-    {
-        if (s.isDoubleClickReturnEnabled())
-            s.setValue (s.getDoubleClickReturnValue(), juce::sendNotificationSync);
-    };
-    reset (compRatio);  reset (compAttack);
-    reset (compRelease); reset (compMakeup);
+    bus.strip.comp.resetToDefaults (CompStage::Bus);
+    syncCompKnobs();
+    if (compMeter != nullptr) compMeter->repaint();
     if (compHeaderBtn != nullptr) compHeaderBtn->refresh();
 }
 } // namespace duskstudio

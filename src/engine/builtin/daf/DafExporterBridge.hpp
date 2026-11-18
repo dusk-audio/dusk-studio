@@ -237,6 +237,36 @@ public:
         exporter.setParameterValue (index, value);
     }
 
+    bool getParameterValueText (uint32_t index, float value, char* text,
+                                uint32_t capacity) const noexcept override
+    {
+        if (index >= descs.size() || text == nullptr || capacity == 0)
+            return false;
+        try
+        {
+            return exporter.getParameterValueText (index, value, text, capacity);
+        }
+        catch (...)
+        {
+            return false;
+        }
+    }
+
+    bool getParameterValueFromText (uint32_t index, const char* text,
+                                    float& value) const noexcept override
+    {
+        if (index >= descs.size() || text == nullptr)
+            return false;
+        try
+        {
+            return exporter.getParameterValueFromText (index, text, value);
+        }
+        catch (...)
+        {
+            return false;
+        }
+    }
+
     uint32_t getStateCount() const noexcept override
     {
         return (uint32_t) stateKeys.size();

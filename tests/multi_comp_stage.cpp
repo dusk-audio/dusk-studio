@@ -454,3 +454,84 @@ TEST_CASE ("MultiCompStage: the editor reads and writes the session behind each 
     }
 }
 
+
+// A control on a mixer face shows what Multi-Comp 2 itself prints for its
+// value: the plug-in's own readouts (the Opto dials, the FET 1-7 timing dials,
+// VCA compression as a ratio), its stepped controls' labels, and otherwise the
+// value with the unit it declares, never a law of Dusk's own.
+TEST_CASE ("MultiCompStage: values read as Multi-Comp 2 prints them", "[compressor][multicomp]")
+{
+    const MultiCompStage strip (CompStage::Strip);
+    const CompParams fresh;
+
+    CHECK (strip.valueText (CompParamId::OptoGain, fresh.get (CompParamId::OptoGain)) == "20");
+    CHECK (strip.valueText (CompParamId::OptoPeakReduction, 0.0f) == "0");
+    CHECK (strip.valueText (CompParamId::OptoPeakReduction, 100.0f) == "100");
+    CHECK (strip.valueText (CompParamId::FetAttack, fresh.get (CompParamId::FetAttack)) == "2.0");
+    CHECK (strip.valueText (CompParamId::FetAttack, 1.0f) == "7.0");
+    CHECK (strip.valueText (CompParamId::FetRelease, 400.0f) == "3.0");
+    CHECK (strip.valueText (CompParamId::FetRelease, 50.0f) == "1.0");
+    CHECK (strip.valueText (CompParamId::FetRatio, 0.0f) == "4:1");
+    CHECK (strip.valueText (CompParamId::FetRatio, 4.0f) == "All");
+    CHECK (strip.valueText (CompParamId::VcaCompression, 100.0f) == "INF");
+    const auto ratio = strip.valueText (CompParamId::VcaCompression, fresh.get (CompParamId::VcaCompression));
+    CHECK (ratio.size() > 2);
+    CHECK (ratio.substr (ratio.size() - 2) == ":1");
+    CHECK (strip.valueText (CompParamId::VcaThreshold, -27.0f) == "-27.0 dB");
+    CHECK (strip.valueText (CompParamId::FetOutput, -0.04f) == "0.0 dB");
+    CHECK (strip.valueText (CompParamId::OptoLimit, 1.0f) == "On");
+    CHECK (strip.valueText (CompParamId::BusRatio, 0.0f).empty());
+
+    const MultiCompStage bus (CompStage::Bus);
+    CHECK (bus.valueText (CompParamId::BusRatio, 2.0f) == "10:1");
+    CHECK (bus.valueText (CompParamId::BusAttack, 0.0f) == "0.1ms");
+    CHECK (bus.valueText (CompParamId::BusRelease, 4.0f) == "Auto");
+    CHECK (bus.valueText (CompParamId::BusMakeup, 20.0f) == "20.0 dB");
+    CHECK (bus.valueText (CompParamId::BusThreshold, 15.0f) == "15.0 dB");
+    CHECK (bus.stepsText (CompParamId::BusRatio, " / ") == "2:1 / 4:1 / 10:1");
+    CHECK (bus.stepsText (CompParamId::BusMakeup, " to ") == "0.0 dB to 20.0 dB");
+    CHECK (bus.valueText (CompParamId::FetRatio, 0.0f).empty());
+}
+
+// What a user types into a readout reads as the plug-in reads it, so typing
+// back a readout lands on a value that prints the same.
+TEST_CASE ("MultiCompStage: typed text reads back as the plug-in reads it", "[compressor][multicomp]")
+{
+    const MultiCompStage strip (CompStage::Strip);
+    const MultiCompStage bus (CompStage::Bus);
+
+    for (const auto id : duskstudio::compStageParams (CompStage::Strip))
+    {
+        const auto& spec = duskstudio::compParamSpec (id);
+        for (const float t : { 0.0f, 0.3f, 1.0f })
+        {
+            const float v = duskstudio::clampCompParam (id, spec.hostMin + t * (spec.hostMax - spec.hostMin));
+            const auto text = strip.valueText (id, v);
+            CAPTURE (spec.symbol, v, text);
+            float read = std::nanf ("");
+            REQUIRE (strip.valueFromText (id, text, read));
+            CHECK (strip.valueText (id, read) == text);
+        }
+    }
+
+    float value = 0.0f;
+    CHECK (strip.valueFromText (CompParamId::FetRatio, "all", value));
+    CHECK_THAT (value, WithinAbs (4.0f, 0.0f));
+    CHECK (strip.valueFromText (CompParamId::FetOutput, " -12 dB ", value));
+    CHECK_THAT (value, WithinAbs (-12.0f, 1e-6f));
+    CHECK (strip.valueFromText (CompParamId::FetOutput, "35", value));
+    CHECK_THAT (value, WithinAbs (20.0f, 0.0f));
+    CHECK (strip.valueFromText (CompParamId::VcaCompression, "INF", value));
+    CHECK_THAT (value, WithinAbs (100.0f, 0.0f));
+    CHECK (strip.valueFromText (CompParamId::FetAttack, "4", value));
+    CHECK_THAT (value, WithinAbs (0.5f, 1e-6f));
+
+    value = -1.0f;
+    CHECK_FALSE (strip.valueFromText (CompParamId::FetOutput, "12 ms", value));
+    CHECK_FALSE (strip.valueFromText (CompParamId::FetAttack, "4 ms", value));
+    CHECK_FALSE (strip.valueFromText (CompParamId::BusRatio, "2:1", value));
+    CHECK_THAT (value, WithinAbs (-1.0f, 0.0f));
+
+    CHECK (bus.valueFromText (CompParamId::BusRelease, "auto", value));
+    CHECK_THAT (value, WithinAbs (4.0f, 0.0f));
+}

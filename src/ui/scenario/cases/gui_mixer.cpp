@@ -1607,7 +1607,7 @@ std::optional<ScenarioResult> runAccessibleControls (GuiHost& host, ScenarioCont
     ctx.keep (strip.faderDb);
     ctx.keep (strip.pan);
     ctx.keep (strip.hpfFreq);
-    ctx.keep (strip.compFetRatio);
+    ctx.keep (strip.comp.atom (CompParamId::FetRatio));
     ctx.keep (strip.auxSendDb[0]);
     keepStage (host, ctx);
     host.switchToStage (GuiHost::Stage::Recording);

@@ -1,104 +1,72 @@
 #pragma once
 
+#include "../session/CompParams.h"
 #include "../session/Session.h"
 
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cstdlib>
 
 namespace duskstudio
 {
 namespace comp
 {
-// A channel strip shows one set of comp controls - THRESHOLD, RATIO,
-// ATTACK, RELEASE, MAKEUP - over three modes that share neither the
-// parameter behind a control nor its range. Everything that has to land on
-// "whatever the active mode reads" routes through here, so the MCU
-// encoders, the MIDI bindings, the comp editor and the GR-meter handle
-// cannot drift apart: a value written into the wrong mode's domain is
-// either inaudible - the param that mode never reads - or wildly off.
+// Every compressor in the mixer is a Multi-Comp 2. A control that moves one,
+// whether a knob on a strip, bus or master face, a threshold handle, a MIDI
+// binding or a Mackie V-pot, names a role rather than a parameter: the mode
+// that plays picks the plug-in parameter behind the role, and the role moves
+// it across the plug-in's whole host range, the travel of the plug-in's own
+// knob. Everything that has to land on "whatever the active mode reads"
+// routes through here, so those controls cannot drift apart.
 //
-// Every range below is the donor's, taken from UniversalCompressorDSP.hpp's
-// setter contracts, not from what some knob happens to sweep.
+// Values are the session's CompParams: the plug-in's host domain, under its
+// own symbols. Nothing here formats text; what a value reads as is the
+// plug-in's to say (MultiCompStage::valueText).
 //
-// applyTrackComp*Db / trackComp*Db are exact inverses, and the binding frac
-// pairs sitting on them are the shape FaderBindingMap.h uses for fader
-// targets: a binding's apply and its soft-takeover read-back must stay
-// inverses or pickup latches at the wrong position.
+// A role's fraction (0..1) is its position along the role's own direction. For
+// the threshold that is a threshold's direction, up being less compression, in
+// every mode: VCA and Bus have a threshold, while Opto's PEAK REDUCTION and
+// FET's INPUT compress more as they turn up, so their threshold fraction runs
+// against the host value. A binding's apply and its soft-takeover read-back
+// are these two functions and stay exact inverses.
 //
-// Relative controls (the MCU V-pots) take their base from the read-back
-// rather than any stored value of their own, so a nudge continues from what
-// the strip is actually playing no matter who wrote it last - UI knob, MIDI
-// binding, a comp-mode switch, or a session saved by an older build.
+// Relative controls (the Mackie V-pots) start from the value held, whoever
+// wrote it last: a knob, a binding, a mode switch or a session load.
 //
-// Every public entry point loads compMode exactly once and carries it
-// through the detail layer. The mode is written from the message thread
-// while these run on the audio thread, so a second load could pick up a
-// different mode - clamping against one domain and storing into another
-// puts an out-of-range value in front of the DSP.
+// Every strip entry point loads compMode once and carries it through: the mode
+// is written from the message thread while these run on the audio thread, and
+// a second load could move a parameter the block's mode never reads.
 //
 // RT-safe: no allocation, no locks, relaxed loads and stores per the param
-// convention. Callable from the audio thread (McuReceiver, the binding
-// apply and read-back) and the message thread alike.
+// convention. Callable from the audio thread (McuReceiver, the binding apply
+// and read-back) and the message thread alike.
 
-// Makeup. Opto's GAIN is the donor's 0..100 hardware dial - 50 is unity,
-// one unit is 0.8 dB, so the span is +/-40 dB. FET and VCA carry dB
-// straight over their -20..20 output params.
-constexpr float kOptoGainUnityPct = 50.0f;
-constexpr float kOptoGainPctPerDb =  1.25f;   // 1 / 0.8 dB per dial unit
-constexpr float kOptoMakeupMaxDb  = 40.0f;    // Opto dial span
-constexpr float kOutMakeupMaxDb   = 20.0f;    // FET / VCA output params
+// Multi-Comp 2's modes as the mixer runs them: a strip's compMode picks one of
+// the first three; the buses and the master run the Bus mode.
+constexpr int kOptoMode = 0;
+constexpr int kFetMode  = 1;
+constexpr int kVcaMode  = 2;
+constexpr int kBusMode  = 3;
 
-// Threshold. The donor gives Opto no threshold at all - the optical cell's
-// PEAK REDUCTION dial is the control a threshold moves, and it runs the
-// other way, so Dusk's convention (shared with the GR-meter handle) is that
-// 0 dB is no reduction and -60 dB is the dial hard over. FET and VCA carry
-// dB straight over the donor's own -60..0 dBFS and -38..+12 dB.
-constexpr float kOptoPeakRedPctPerDb = 100.0f / 60.0f;
-constexpr float kOptoThreshMinDb = -60.0f, kOptoThreshMaxDb =  0.0f;
-constexpr float kFetThreshMinDb  = -60.0f, kFetThreshMaxDb  =  0.0f;
-constexpr float kVcaThreshMinDb  = -38.0f, kVcaThreshMaxDb  = 12.0f;
+enum class Role { Threshold, Makeup, Ratio, Attack, Release };
 
-// Ratio and timing. Opto has none of the three: the optical curve is its
-// own ratio and the photocell's program-dependent lag is its attack and
-// release, so the donor exposes no parameter for any of them and the comp
-// editor hides those knobs in Opto. Controls that fan out through here
-// no-op in that mode rather than writing a param it never reads.
-constexpr float kFetAttackMinMs   =  0.02f, kFetAttackMaxMs   =   80.0f;
-constexpr float kVcaAttackMinMs   =  0.1f,  kVcaAttackMaxMs   =   50.0f;
-constexpr float kFetReleaseMinMs  = 50.0f,  kFetReleaseMaxMs  = 1100.0f;
-constexpr float kVcaReleaseMinMs  = 10.0f,  kVcaReleaseMaxMs  = 5000.0f;
-constexpr float kVcaRatioMin      =  1.0f,  kVcaRatioMax      =  120.0f;
-constexpr int   kFetRatioMaxIndex = 4;      // 0=4:1 1=8:1 2=12:1 3=20:1 4=All
-// FET's ratio is a switch, so a continuous knob needs a sweep to pick rungs
-// from rather than a parameter range; 1..20 covers the printed markings.
-constexpr float kFetRatioKnobMin  =  1.0f,  kFetRatioKnobMax  =   20.0f;
+// A relative control crosses a continuous parameter's host range in this many
+// detents and moves a stepped one a single step per event: an accelerated
+// encoder packs up to 63 detents into one event, enough to slam a switch from
+// end to end.
+constexpr float kDetentsPerSweep = 100.0f;
 
-// Push-to-reset lands on the mode's own default, so a reset in FET does not
-// leave the strip holding VCA's timings. These mirror ChannelStripParams'
-// initialisers - comp_mode_fanout.cpp pins them against a fresh strip.
-constexpr int   kFetRatioDefaultIndex  =   0;
-constexpr float kFetAttackDefaultMs    =   0.2f;
-constexpr float kFetReleaseDefaultMs   = 400.0f;
-constexpr float kVcaRatioDefault       =   4.0f;
-constexpr float kVcaAttackDefaultMs    =   1.0f;
-constexpr float kVcaReleaseDefaultMs   = 100.0f;
+// The threshold handle's span for Opto and FET, whose threshold role is not in
+// dB: their host travel runs down the strip meter's 60 dB, more reduction or
+// drive lower, as a lower threshold compresses more.
+constexpr float kReversedThresholdSpanDb = 60.0f;
 
 struct Domain
 {
     float lo;
     float hi;
 };
-
-inline int compModeOf (const ChannelStripParams& strip) noexcept
-{
-    return std::clamp (strip.compMode.load (std::memory_order_relaxed), 0, 2);
-}
-
-inline bool compModeHasTimingControls (const ChannelStripParams& strip) noexcept
-{
-    return compModeOf (strip) != 0;
-}
 
 inline float fracToValue (Domain d, float frac) noexcept
 {
@@ -111,357 +79,183 @@ inline float valueToFrac (Domain d, float value) noexcept
                        : 0.0f;
 }
 
-// Opto's two dials against the dB axis the controls speak in. Declared here
-// so the fan-out below and the UI both go through the same expression.
-inline float makeupDbToOptoGainPct (float db) noexcept
+inline int compModeOf (const ChannelStripParams& strip) noexcept
 {
-    return std::clamp (kOptoGainUnityPct + db * kOptoGainPctPerDb, 0.0f, 100.0f);
+    return std::clamp (strip.compMode.load (std::memory_order_relaxed), kOptoMode, kVcaMode);
 }
 
-inline float optoGainPctToMakeupDb (float pct) noexcept
+struct RoleParam
 {
-    return (std::clamp (pct, 0.0f, 100.0f) - kOptoGainUnityPct) / kOptoGainPctPerDb;
-}
+    bool exists;
+    CompParamId id;
+    // The role's fraction runs against the host value.
+    bool reversed;
+};
 
-inline float thresholdDbToOptoPeakRedPct (float db) noexcept
+// The plug-in parameter behind a role in a mode. Opto has no ratio, attack or
+// release, VCA no attack or release: the plug-in exposes none.
+constexpr RoleParam roleParam (int mode, Role role) noexcept
 {
-    return std::clamp (-db * kOptoPeakRedPctPerDb, 0.0f, 100.0f);
-}
-
-inline float optoPeakRedPctToThresholdDb (float pct) noexcept
-{
-    return -std::clamp (pct, 0.0f, 100.0f) / kOptoPeakRedPctPerDb;
-}
-
-// Mode-taking cores. The public wrappers below are the only callers that
-// touch the compMode atom; everything here works from the mode they read.
-namespace detail
-{
-inline Domain makeupDomain (int mode) noexcept
-{
-    const float span = mode == 0 ? kOptoMakeupMaxDb : kOutMakeupMaxDb;
-    return { -span, span };
-}
-
-inline Domain thresholdDomain (int mode) noexcept
-{
-    switch (mode)
+    using Id = CompParamId;
+    switch (role)
     {
-        case 0:  return { kOptoThreshMinDb, kOptoThreshMaxDb };
-        case 1:  return { kFetThreshMinDb,  kFetThreshMaxDb  };
-        default: return { kVcaThreshMinDb,  kVcaThreshMaxDb  };
-    }
-}
-
-inline Domain attackDomain (int mode) noexcept
-{
-    switch (mode)
-    {
-        case 1:  return { kFetAttackMinMs, kFetAttackMaxMs };
-        case 2:  return { kVcaAttackMinMs, kVcaAttackMaxMs };
-        default: return { 0.0f, 0.0f };
-    }
-}
-
-inline Domain releaseDomain (int mode) noexcept
-{
-    switch (mode)
-    {
-        case 1:  return { kFetReleaseMinMs, kFetReleaseMaxMs };
-        case 2:  return { kVcaReleaseMinMs, kVcaReleaseMaxMs };
-        default: return { 0.0f, 0.0f };
-    }
-}
-
-inline Domain ratioKnobDomain (int mode) noexcept
-{
-    switch (mode)
-    {
-        case 1:  return { kFetRatioKnobMin, kFetRatioKnobMax };
-        case 2:  return { kVcaRatioMin,     kVcaRatioMax     };
-        default: return { 0.0f, 0.0f };
-    }
-}
-
-inline float makeupDb (const ChannelStripParams& strip, int mode) noexcept
-{
-    switch (mode)
-    {
-        case 0:
-            return optoGainPctToMakeupDb (
-                strip.compOptoGain.load (std::memory_order_relaxed));
-        case 1:
-            return std::clamp (strip.compFetOutput.load (std::memory_order_relaxed),
-                               -kOutMakeupMaxDb, kOutMakeupMaxDb);
-        default:
-            return std::clamp (strip.compVcaOutput.load (std::memory_order_relaxed),
-                               -kOutMakeupMaxDb, kOutMakeupMaxDb);
-    }
-}
-
-inline void storeMakeupDb (ChannelStripParams& strip, int mode, float db) noexcept
-{
-    const float outDb = std::clamp (db, -kOutMakeupMaxDb, kOutMakeupMaxDb);
-    switch (mode)
-    {
-        case 0:
-            strip.compOptoGain.store (makeupDbToOptoGainPct (db),
-                                      std::memory_order_relaxed);
+        case Role::Threshold:
+            switch (mode)
+            {
+                case kOptoMode: return { true, Id::OptoPeakReduction, true };
+                case kFetMode:  return { true, Id::FetInput, true };
+                case kVcaMode:  return { true, Id::VcaThreshold, false };
+                case kBusMode:  return { true, Id::BusThreshold, false };
+                default: break;
+            }
             break;
-        case 1:  strip.compFetOutput.store (outDb, std::memory_order_relaxed); break;
-        default: strip.compVcaOutput.store (outDb, std::memory_order_relaxed); break;
-    }
-}
-
-inline float thresholdDb (const ChannelStripParams& strip, int mode) noexcept
-{
-    const auto domain = thresholdDomain (mode);
-    switch (mode)
-    {
-        case 0:
-            return std::clamp (optoPeakRedPctToThresholdDb (
-                                   strip.compOptoPeakRed.load (std::memory_order_relaxed)),
-                               domain.lo, domain.hi);
-        case 1:
-            return std::clamp (strip.compFetThresholdDb.load (std::memory_order_relaxed),
-                               domain.lo, domain.hi);
-        default:
-            return std::clamp (strip.compVcaThreshDb.load (std::memory_order_relaxed),
-                               domain.lo, domain.hi);
-    }
-}
-
-inline void storeThresholdDb (ChannelStripParams& strip, int mode, float db) noexcept
-{
-    const auto domain = thresholdDomain (mode);
-    const float v = std::clamp (db, domain.lo, domain.hi);
-    switch (mode)
-    {
-        case 0:
-            strip.compOptoPeakRed.store (thresholdDbToOptoPeakRedPct (v),
-                                         std::memory_order_relaxed);
+        case Role::Makeup:
+            switch (mode)
+            {
+                case kOptoMode: return { true, Id::OptoGain, false };
+                case kFetMode:  return { true, Id::FetOutput, false };
+                case kVcaMode:  return { true, Id::VcaOutput, false };
+                case kBusMode:  return { true, Id::BusMakeup, false };
+                default: break;
+            }
             break;
-        case 1:  strip.compFetThresholdDb.store (v, std::memory_order_relaxed); break;
-        default: strip.compVcaThreshDb.store (v, std::memory_order_relaxed); break;
+        case Role::Ratio:
+            switch (mode)
+            {
+                case kFetMode:  return { true, Id::FetRatio, false };
+                case kVcaMode:  return { true, Id::VcaCompression, false };
+                case kBusMode:  return { true, Id::BusRatio, false };
+                default: break;
+            }
+            break;
+        case Role::Attack:
+            switch (mode)
+            {
+                case kFetMode:  return { true, Id::FetAttack, false };
+                case kBusMode:  return { true, Id::BusAttack, false };
+                default: break;
+            }
+            break;
+        case Role::Release:
+            switch (mode)
+            {
+                case kFetMode:  return { true, Id::FetRelease, false };
+                case kBusMode:  return { true, Id::BusRelease, false };
+                default: break;
+            }
+            break;
     }
-}
-} // namespace detail
-
-//==============================================================================
-// Makeup
-//==============================================================================
-inline Domain makeupDomainFor (const ChannelStripParams& strip) noexcept
-{
-    return detail::makeupDomain (compModeOf (strip));
+    return { false, Id::Mix, false };
 }
 
-inline void applyTrackCompMakeupDb (ChannelStripParams& strip, float db) noexcept
+constexpr bool modeHasRole (int mode, Role role) noexcept
 {
-    detail::storeMakeupDb (strip, compModeOf (strip), db);
+    return roleParam (mode, role).exists;
 }
 
-inline float trackCompMakeupDb (const ChannelStripParams& strip) noexcept
+inline Domain hostDomain (CompParamId id) noexcept
 {
-    return detail::makeupDb (strip, compModeOf (strip));
+    const auto& spec = compParamSpec (id);
+    return { spec.hostMin, spec.hostMax };
 }
 
-inline float makeupBindingFracToDb (const ChannelStripParams& strip, float frac) noexcept
+// The role's position, or -1 when the mode has no such control. A value held
+// outside the host range reads as the end it is past.
+inline float roleFrac (const CompParams& comp, int mode, Role role) noexcept
 {
-    return fracToValue (makeupDomainFor (strip), frac);
+    const auto p = roleParam (mode, role);
+    if (! p.exists) return -1.0f;
+    const float t = valueToFrac (hostDomain (p.id), comp.get (p.id));
+    return p.reversed ? 1.0f - t : t;
 }
 
-inline float makeupBindingFrac (const ChannelStripParams& strip) noexcept
+// A stepped parameter takes the step nearest the fraction. False, and nothing
+// moved, when the mode has no such control.
+inline bool applyRoleFrac (CompParams& comp, int mode, Role role, float frac) noexcept
 {
-    const int mode = compModeOf (strip);
-    return valueToFrac (detail::makeupDomain (mode), detail::makeupDb (strip, mode));
+    const auto p = roleParam (mode, role);
+    if (! p.exists) return false;
+    const float t = std::clamp (frac, 0.0f, 1.0f);
+    comp.set (p.id, fracToValue (hostDomain (p.id), p.reversed ? 1.0f - t : t));
+    return true;
+}
+
+// detents > 0 turns the role up its own direction.
+inline bool nudgeRole (CompParams& comp, int mode, Role role, int detents) noexcept
+{
+    const auto p = roleParam (mode, role);
+    if (! p.exists) return false;
+    if (detents == 0) return true;
+    const auto& spec = compParamSpec (p.id);
+    const float sign = (detents > 0) != p.reversed ? 1.0f : -1.0f;
+    const float held = clampCompParam (p.id, comp.get (p.id));
+    const float step = spec.integer ? 1.0f
+                                    : (float) std::abs (detents) * (spec.hostMax - spec.hostMin)
+                                          / kDetentsPerSweep;
+    comp.set (p.id, held + sign * step);
+    return true;
+}
+
+// Back to the plug-in's default.
+inline bool resetRole (CompParams& comp, int mode, Role role) noexcept
+{
+    const auto p = roleParam (mode, role);
+    if (! p.exists) return false;
+    comp.set (p.id, compParamSpec (p.id).hostDefault);
+    return true;
+}
+
+// The threshold handle's scale: dB for VCA and Bus, whose parameter is a
+// threshold, and 0 down to -kReversedThresholdSpanDb for Opto and FET.
+inline Domain thresholdAxis (int mode) noexcept
+{
+    const auto p = roleParam (mode, Role::Threshold);
+    return p.reversed ? Domain { -kReversedThresholdSpanDb, 0.0f } : hostDomain (p.id);
+}
+
+inline float thresholdAxisValue (const CompParams& comp, int mode) noexcept
+{
+    return fracToValue (thresholdAxis (mode), roleFrac (comp, mode, Role::Threshold));
+}
+
+inline void applyThresholdAxisValue (CompParams& comp, int mode, float value) noexcept
+{
+    applyRoleFrac (comp, mode, Role::Threshold, valueToFrac (thresholdAxis (mode), value));
 }
 
 //==============================================================================
-// Threshold
+// A channel strip, in the mode it plays.
 //==============================================================================
-inline Domain thresholdDomainFor (const ChannelStripParams& strip) noexcept
+inline float trackRoleFrac (const ChannelStripParams& strip, Role role) noexcept
 {
-    return detail::thresholdDomain (compModeOf (strip));
+    return roleFrac (strip.comp, compModeOf (strip), role);
 }
 
-inline void applyTrackCompThresholdDb (ChannelStripParams& strip, float db) noexcept
+inline bool applyTrackRoleFrac (ChannelStripParams& strip, Role role, float frac) noexcept
 {
-    detail::storeThresholdDb (strip, compModeOf (strip), db);
+    return applyRoleFrac (strip.comp, compModeOf (strip), role, frac);
 }
 
-inline float trackCompThresholdDb (const ChannelStripParams& strip) noexcept
+inline bool nudgeTrackRole (ChannelStripParams& strip, Role role, int detents) noexcept
 {
-    return detail::thresholdDb (strip, compModeOf (strip));
+    return nudgeRole (strip.comp, compModeOf (strip), role, detents);
 }
 
-// Neutral is the top of the domain, not zero: VCA's ceiling is +12 dB and
-// 0 dB there still compresses everything above 0 dBFS.
-inline void resetTrackCompThreshold (ChannelStripParams& strip) noexcept
+inline bool resetTrackRole (ChannelStripParams& strip, Role role) noexcept
 {
-    const int mode = compModeOf (strip);
-    detail::storeThresholdDb (strip, mode, detail::thresholdDomain (mode).hi);
+    return resetRole (strip.comp, compModeOf (strip), role);
 }
 
-inline float thresholdBindingFracToDb (const ChannelStripParams& strip, float frac) noexcept
+inline float trackThresholdAxisValue (const ChannelStripParams& strip) noexcept
 {
-    return fracToValue (thresholdDomainFor (strip), frac);
+    return thresholdAxisValue (strip.comp, compModeOf (strip));
 }
 
-inline float thresholdBindingFrac (const ChannelStripParams& strip) noexcept
+inline void applyTrackThresholdAxisValue (ChannelStripParams& strip, float value) noexcept
 {
-    const int mode = compModeOf (strip);
-    return valueToFrac (detail::thresholdDomain (mode), detail::thresholdDb (strip, mode));
-}
-
-//==============================================================================
-// Attack / release
-//==============================================================================
-inline Domain attackDomainFor (const ChannelStripParams& strip) noexcept
-{
-    return detail::attackDomain (compModeOf (strip));
-}
-
-inline Domain releaseDomainFor (const ChannelStripParams& strip) noexcept
-{
-    return detail::releaseDomain (compModeOf (strip));
-}
-
-inline void applyTrackCompAttackMs (ChannelStripParams& strip, float ms) noexcept
-{
-    const int mode = compModeOf (strip);
-    const auto domain = detail::attackDomain (mode);
-    switch (mode)
-    {
-        case 1:
-            strip.compFetAttack.store (std::clamp (ms, domain.lo, domain.hi),
-                                       std::memory_order_relaxed);
-            break;
-        case 2:
-            strip.compVcaAttack.store (std::clamp (ms, domain.lo, domain.hi),
-                                       std::memory_order_relaxed);
-            break;
-        default: break;
-    }
-}
-
-inline float trackCompAttackMs (const ChannelStripParams& strip) noexcept
-{
-    const int mode = compModeOf (strip);
-    const auto domain = detail::attackDomain (mode);
-    switch (mode)
-    {
-        case 1:  return std::clamp (strip.compFetAttack.load (std::memory_order_relaxed),
-                                    domain.lo, domain.hi);
-        case 2:  return std::clamp (strip.compVcaAttack.load (std::memory_order_relaxed),
-                                    domain.lo, domain.hi);
-        default: return 0.0f;
-    }
-}
-
-inline void applyTrackCompReleaseMs (ChannelStripParams& strip, float ms) noexcept
-{
-    const int mode = compModeOf (strip);
-    const auto domain = detail::releaseDomain (mode);
-    switch (mode)
-    {
-        case 1:
-            strip.compFetRelease.store (std::clamp (ms, domain.lo, domain.hi),
-                                        std::memory_order_relaxed);
-            break;
-        case 2:
-            strip.compVcaRelease.store (std::clamp (ms, domain.lo, domain.hi),
-                                        std::memory_order_relaxed);
-            break;
-        default: break;
-    }
-}
-
-inline float trackCompReleaseMs (const ChannelStripParams& strip) noexcept
-{
-    const int mode = compModeOf (strip);
-    const auto domain = detail::releaseDomain (mode);
-    switch (mode)
-    {
-        case 1:  return std::clamp (strip.compFetRelease.load (std::memory_order_relaxed),
-                                    domain.lo, domain.hi);
-        case 2:  return std::clamp (strip.compVcaRelease.load (std::memory_order_relaxed),
-                                    domain.lo, domain.hi);
-        default: return 0.0f;
-    }
-}
-
-inline void resetTrackCompAttack (ChannelStripParams& strip) noexcept
-{
-    switch (compModeOf (strip))
-    {
-        case 1: strip.compFetAttack.store (kFetAttackDefaultMs, std::memory_order_relaxed); break;
-        case 2: strip.compVcaAttack.store (kVcaAttackDefaultMs, std::memory_order_relaxed); break;
-        default: break;
-    }
-}
-
-inline void resetTrackCompRelease (ChannelStripParams& strip) noexcept
-{
-    switch (compModeOf (strip))
-    {
-        case 1: strip.compFetRelease.store (kFetReleaseDefaultMs, std::memory_order_relaxed); break;
-        case 2: strip.compVcaRelease.store (kVcaReleaseDefaultMs, std::memory_order_relaxed); break;
-        default: break;
-    }
-}
-
-//==============================================================================
-// Ratio
-//==============================================================================
-// FET's ratio is a five-position switch (4:1 / 8:1 / 12:1 / 20:1 / All,
-// measured 3.85 / 7.4 / 12.5 / 21.5 / 21.5 in the donor, with All taking a
-// different curve entirely) while VCA's is a continuous 1..120:1 sweep. No
-// single scalar means the same thing in both - the two 21.5s alone make a
-// numeric read-back ambiguous - so ratio gets no apply / read-back pair. A
-// continuous knob picks a rung through the sweep ratioKnobDomainFor gives
-// it; a relative control steps the switch a position at a time.
-inline Domain ratioKnobDomainFor (const ChannelStripParams& strip) noexcept
-{
-    return detail::ratioKnobDomain (compModeOf (strip));
-}
-
-// One event carries however many detents arrived in the block, and an
-// accelerated encoder can send 63 of them - enough to slam the switch from
-// end to end. FET moves a single rung per event; VCA consumes the whole
-// count, scaling by the caller's factor per detent the way the timing
-// controls do, because 1..120:1 is a logarithmic range too.
-inline void nudgeTrackCompRatio (ChannelStripParams& strip, int detents,
-                                 float vcaFactorPerDetent) noexcept
-{
-    if (detents == 0) return;
-    switch (compModeOf (strip))
-    {
-        case 1:
-            strip.compFetRatio.store (
-                std::clamp (strip.compFetRatio.load (std::memory_order_relaxed)
-                                + (detents > 0 ? 1 : -1),
-                            0, kFetRatioMaxIndex),
-                std::memory_order_relaxed);
-            break;
-        case 2:
-            strip.compVcaRatio.store (
-                std::clamp (strip.compVcaRatio.load (std::memory_order_relaxed)
-                                * std::pow (vcaFactorPerDetent, (float) detents),
-                            kVcaRatioMin, kVcaRatioMax),
-                std::memory_order_relaxed);
-            break;
-        default: break;
-    }
-}
-
-inline void resetTrackCompRatio (ChannelStripParams& strip) noexcept
-{
-    switch (compModeOf (strip))
-    {
-        case 1: strip.compFetRatio.store (kFetRatioDefaultIndex, std::memory_order_relaxed); break;
-        case 2: strip.compVcaRatio.store (kVcaRatioDefault, std::memory_order_relaxed); break;
-        default: break;
-    }
+    applyThresholdAxisValue (strip.comp, compModeOf (strip), value);
 }
 } // namespace comp
 } // namespace duskstudio
+
+#include "CompModeMapLegacy.h"

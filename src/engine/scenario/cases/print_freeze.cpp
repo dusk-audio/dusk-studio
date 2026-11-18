@@ -85,7 +85,7 @@ void restoreStrip (ScenarioContext& ctx)
     for (auto* value : { &track.printEffects, &strip.eqEnabled,
                          &strip.hpfEnabled, &strip.compEnabled })
         ctx.keep (*value);
-    for (auto* value : { &strip.hpfFreq, &strip.compFetThresholdDb, &strip.hfGainDb })
+    for (auto* value : { &strip.hpfFreq, &strip.comp.atom (CompParamId::FetInput), &strip.hfGainDb })
         ctx.keep (*value);
 }
 
@@ -170,7 +170,7 @@ ScenarioResult printCommitsTheStrip (ScenarioContext& ctx)
     strip.eqEnabled.store (false);
     strip.compEnabled.store (true);
     strip.compMode.store (1);
-    strip.compFetThresholdDb.store (-30.0f);
+    strip.comp.set (CompParamId::FetInput, 20.0f);
     const auto* compressed = recordTone (ctx, 1000.0, 0.5f, 1.0);
     if (ctx.expect (compressed != nullptr, "recording with the compressor on made no take"))
     {

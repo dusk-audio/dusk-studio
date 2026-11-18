@@ -2,6 +2,7 @@
 #include "DuskContextMenu.h"
 #include "DuskComboBox.h"
 #include "../engine/AudioEngine.h"
+#include "../engine/CompModeMap.h"
 #include "DimOverlay.h"
 #include "DuskAlerts.h"
 #include "DuskStudioLookAndFeel.h"
@@ -815,7 +816,7 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
     // Comp section. The split header matches the bus + channel strips; the
     // processor remains a fixed SSL-style glue topology.
     //   - CompMeterStrip on the LEFT (triangle-handle threshold, IN bar
-    //     + dB scale + GR bar). Threshold drag writes compThreshDb.
+    //     + dB scale + GR bar). Threshold drag writes bus_threshold.
     //   - Knob grid (RAT / MAK on top, ATK / REL on bottom) on the
     //     RIGHT. The standalone THR knob is gone.
     compHeaderBtn = std::make_unique<SplitModuleButton> ("COMP");
@@ -841,15 +842,14 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
                                   return std::max (l, r);
                               };
     compSrc.getGrDb        = [this] { return params.meterGrDb.load (std::memory_order_relaxed); };
-    compSrc.getThresholdDb = [this] { return params.compThreshDb.load (std::memory_order_relaxed); };
+    compSrc.getThresholdDb = [this] { return comp::thresholdAxisValue (params.comp, comp::kBusMode); };
     compSrc.setThresholdDb = [this] (float db)
                               {
-                                  params.compThreshDb.store (jlimit (-60.0f, 0.0f, db),
-                                                              std::memory_order_relaxed);
+                                  comp::applyThresholdAxisValue (params.comp, comp::kBusMode, db);
                               };
     compSrc.resetThreshold = [this]
                               {
-                                  params.compThreshDb.store (0.0f, std::memory_order_relaxed);
+                                  comp::resetRole (params.comp, comp::kBusMode, comp::Role::Threshold);
                               };
     compSrc.isEngaged      = [this] { return params.compEnabled.load (std::memory_order_relaxed); };
     compSrc.autoEnable     = [this]
@@ -859,47 +859,57 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
                               };
     // Fader-side GR LED (matches channel + bus grammar). Slim GR-only widget
     // with the threshold-drag handle on the right side, glued next to the
-    // level meter. setRangeDb(-60, 0) maps drag y 1:1 with the level meter
-    // scale so the triangle sits on the same dB tick as it's set to.
-    compSrc.floorDb        = -60.0f;
-    compSrc.ceilingDb      =   0.0f;
+    // level meter. The handle travels the bus threshold's whole host range,
+    // -30 dB at the bottom to +15 dB at the top, so its 0 dB default is not
+    // the level meter's 0 dB tick.
+    const auto busThresholdAxis = comp::thresholdAxis (comp::kBusMode);
+    compSrc.floorDb        = busThresholdAxis.lo;
+    compSrc.ceilingDb      = busThresholdAxis.hi;
     compMeter = std::make_unique<CompMeterStrip> (std::move (compSrc));
     compMeter->setShowInputBar (false);
     compMeter->setHandleVisible (true);
     compMeter->setHandleOnRight (true);
-    compMeter->setRangeDb (-60.0f, 0.0f);
     addAndMakeVisible (compMeter.get());
 
-    styleSmallKnob (compRatio,       1.0, 10.0,    4.0, params.compRatio.load(),       compGold, ":1", 1);
-    styleSmallKnob (compAttack,      0.1, 50.0,    5.0, params.compAttackMs.load(),    compGold, "",   1);
-    styleSmallKnob (compRelease,    50.0,1000.0, 200.0, params.compReleaseMs.load(),   compGold, "",   0);
-    styleSmallKnob (compMakeup,    -10.0, 20.0,    0.0, params.compMakeupDb.load(),    compGold, "",   1);
-    compRatio  .setTooltip ("Master bus comp ratio (stepped: 2:1 / 4:1 / 10:1).");
-    compAttack .setTooltip ("Master bus comp attack (stepped: 0.1 / 0.3 / 1 / 3 / 10 / 30 ms).");
-    compRelease.setTooltip ("Master bus comp release (stepped: 0.1 / 0.3 / 0.6 / 1.2 s, top = AUTO).");
-    compMakeup .setTooltip ("Master bus comp make-up gain (-10..+20 dB). Double-click for 0 dB; Shift-drag for fine.");
+    // RAT / ATK / REL / MAK are Multi-Comp 2's Bus-mode controls: each travels
+    // the plug-in's host range (ratio, attack and release by step), returns to
+    // the plug-in's default on double-click and reads as the plug-in prints the
+    // value. Moving one leaves the engage switch as it is.
+    const auto bindCompKnob = [this, compGold] (auto& knob, CompParamId id, const std::string& tooltip)
+    {
+        const auto& spec = compParamSpec (id);
+        styleSmallKnob (knob, spec.hostMin, spec.hostMax, spec.hostDefault, params.comp.get (id),
+                        compGold, "", 0);
+        knob.setRange (spec.hostMin, spec.hostMax, spec.integer ? 1.0 : 0.0);
+        knob.setSkewFactor (1.0);
+        knob.setDoubleClickReturnValue (true, spec.hostDefault);
+        knob.textFromValueFunction = [eng = &engine, id] (double v) -> std::string
+        {
+            return eng->compValueText (CompStage::Bus, id, (float) v);
+        };
+        knob.valueFromTextFunction = [eng = &engine, &knob, id] (const auto& text)
+        {
+            float value = 0.0f;
+            return eng->compValueFromText (CompStage::Bus, id, text.toStdString(), value)
+                       ? (double) value : knob.getValue();
+        };
+        knob.onValueChange = [this, &knob, id] { params.comp.set (id, (float) knob.getValue()); };
+        knob.setTooltip (tooltip);
+        knob.updateText();
+    };
+    const auto steps = [this] (CompParamId id) { return engine.compStepsText (CompStage::Bus, id, " / "); };
+    bindCompKnob (compRatio,   CompParamId::BusRatio,   "Master bus comp ratio (stepped: " + steps (CompParamId::BusRatio) + ").");
+    bindCompKnob (compAttack,  CompParamId::BusAttack,  "Master bus comp attack (stepped: " + steps (CompParamId::BusAttack) + ").");
+    bindCompKnob (compRelease, CompParamId::BusRelease, "Master bus comp release (stepped: " + steps (CompParamId::BusRelease) + ").");
+    bindCompKnob (compMakeup,  CompParamId::BusMakeup,
+                  "Master bus comp make-up gain ("
+                      + engine.compStepsText (CompStage::Bus, CompParamId::BusMakeup, " to ")
+                      + "). Double-click for "
+                      + engine.compValueText (CompStage::Bus, CompParamId::BusMakeup,
+                                              compParamSpec (CompParamId::BusMakeup).hostDefault)
+                      + "; Shift-drag for fine.");
     for (auto* k : { &compRatio, &compAttack, &compRelease, &compMakeup })
         k->setColour (juce::Slider::thumbColourId, juce::Colours::white);
-
-    compMakeup   .onValueChange = [this] { params.compMakeupDb .store ((float) compMakeup   .getValue(), std::memory_order_relaxed); };
-
-    // Ratio / attack / release are SSL-style stepped selectors - the donor's
-    // bus_* params are Choices, so the knob detents on the real values.
-    configureSteppedKnob (compRatio, sslsteps::ratioValues(), sslsteps::ratioLabels(),
-                          params.compRatio.load(),
-                          [this] (double v) { params.compRatio.store ((float) v, std::memory_order_relaxed); });
-    configureSteppedKnob (compAttack, sslsteps::attackValues(), sslsteps::attackLabels(),
-                          params.compAttackMs.load(),
-                          [this] (double v) { params.compAttackMs.store ((float) v, std::memory_order_relaxed); });
-    configureSteppedKnob (compRelease, sslsteps::releaseValues(), sslsteps::releaseLabels(),
-                          params.compReleaseAuto.load() ? -1.0 : (double) params.compReleaseMs.load(),
-                          [this] (double v)
-                          {
-                              const bool autoOn = v < 0.0;
-                              params.compReleaseAuto.store (autoOn, std::memory_order_relaxed);
-                              if (! autoOn)
-                                  params.compReleaseMs.store ((float) v, std::memory_order_relaxed);
-                          });
 
     addAndMakeVisible (compRatio);    addAndMakeVisible (compAttack);
     addAndMakeVisible (compRelease);  addAndMakeVisible (compMakeup);
@@ -1264,6 +1274,7 @@ void MasterStripComponent::syncShownView()
     syncFreqKnob (eqLfFreqKnob,      kLfHzPoll,      4, params.eqLfFreq.load (std::memory_order_relaxed));
     syncFreqKnob (eqHfBoostFreqKnob, kHfBoostHzPoll, 7, params.eqHfBoostFreq.load (std::memory_order_relaxed));
     syncFreqKnob (eqHfAttenFreqKnob, kHfAttenHzPoll, 3, params.eqHfAttenFreq.load (std::memory_order_relaxed));
+    syncCompKnobs();
 }
 
 float MasterStripComponent::outputMeterFrac (float db) const
@@ -2092,17 +2103,31 @@ void MasterStripComponent::resetEqSection()
     if (eqHeaderBtn != nullptr) eqHeaderBtn->refresh();
 }
 
+// Every Bus-mode control, the threshold handle's included, back to the
+// plug-in's default, the compressor engaged or bypassed as it was.
 void MasterStripComponent::resetCompSection()
 {
-    // Comp threshold lives on the meter-strip drag handle (no knob), so it
-    // has no double-click precedent and is left untouched.
-    auto reset = [] (juce::Slider& s)
-    {
-        if (s.isDoubleClickReturnEnabled())
-            s.setValue (s.getDoubleClickReturnValue(), juce::sendNotificationSync);
-    };
-    reset (compRatio);  reset (compAttack);
-    reset (compRelease); reset (compMakeup);
+    params.comp.resetToDefaults (CompStage::Bus);
+    syncCompKnobs();
+    if (compMeter != nullptr) compMeter->repaint();
     if (compHeaderBtn != nullptr) compHeaderBtn->refresh();
+}
+
+// The master compressor editor, a MIDI binding and a reset all write the
+// CompParams directly, so the knobs follow them here, a knob held by the mouse
+// left alone.
+void MasterStripComponent::syncCompKnobs()
+{
+    const auto& c = params.comp;
+    auto sync = [&c] (auto& knob, CompParamId id)
+    {
+        const double target = c.get (id);
+        if (knob.isMouseButtonDown() || std::abs (knob.getValue() - target) < 1.0e-4) return;
+        knob.setValue (target, juce::dontSendNotification);
+    };
+    sync (compRatio,   CompParamId::BusRatio);
+    sync (compAttack,  CompParamId::BusAttack);
+    sync (compRelease, CompParamId::BusRelease);
+    sync (compMakeup,  CompParamId::BusMakeup);
 }
 } // namespace duskstudio

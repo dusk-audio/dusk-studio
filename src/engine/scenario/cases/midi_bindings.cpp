@@ -327,7 +327,8 @@ ScenarioResult runMovesEngage (ScenarioContext& ctx)
     for (const auto f : { EqFreq::Hpf, EqFreq::Lm })
         ctx.keep (strip.eqFreq (f));
     for (auto* value : { &strip.lfGainDb, &strip.hfGainDb, &strip.hmQ,
-                         &strip.compFetThresholdDb, &strip.compFetOutput })
+                         &strip.comp.atom (CompParamId::FetInput),
+                         &strip.comp.atom (CompParamId::FetOutput) })
         ctx.keep (*value);
     for (auto* value : { &strip.eqEnabled, &strip.hpfEnabled, &strip.compEnabled,
                          &bus.eqEnabled, &bus.hpfEnabled })

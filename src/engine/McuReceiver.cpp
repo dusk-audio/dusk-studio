@@ -44,19 +44,13 @@ namespace mcu_local
 constexpr float kVpotPanStep      = 0.02f;     // 100 ticks -> full sweep
 constexpr float kVpotSendStepDb   = 0.5f;      // per tick
 
-// COMP encoder steps. Each is a step in the user-facing unit, which the
-// comp map turns into whatever the active mode reads.
-constexpr float kVpotCompThreshStepDb = 0.5f;
-constexpr float kVpotCompMakeupStepDb = 0.3f;
-
-// Timing and ratio are logarithmic controls - FET's attack alone spans
-// 4000:1, so a fixed millisecond step spends the whole 1176 region in two
-// detents and leaves VCA's release a 500-detent crawl. These scale by a
-// fixed factor per detent instead, matching the log skew the editor's
-// knobs already use: a full sweep is 142 detents on FET attack, 107 on VCA
-// attack, 53 on FET release, 107 on VCA release and 82 on VCA ratio. FET's
-// ratio is a switch, so it takes rungs and ignores the factor.
-constexpr float kVpotCompScaleFactor = 1.06f;
+// COMP encoders 1..5, by the comp map's role; 6, 7 and 8 are unused. Each
+// moves the parameter the selected strip's mode plays for its role, as the
+// comp map steps it.
+constexpr comp::Role kCompEncoderRoles[] = { comp::Role::Threshold, comp::Role::Ratio,
+                                             comp::Role::Attack, comp::Role::Release,
+                                             comp::Role::Makeup };
+constexpr int kCompEncoderCount = (int) (sizeof (kCompEncoderRoles) / sizeof (kCompEncoderRoles[0]));
 } // namespace mcu_local
 
 void McuReceiver::reset() noexcept
@@ -99,19 +93,10 @@ void McuReceiver::resetVpotTarget (int stripIndex) noexcept
                 default: break;
             }
         }
-        else
+        else if (stripIndex >= 0 && stripIndex < mcu_local::kCompEncoderCount)
         {
-            // COMP encoders 1=thresh, 2=ratio, 3=attack, 4=release,
-            // 5=makeup. 6/7/8 unused. Push -> the active mode's default.
-            switch (stripIndex)
-            {
-                case 0: comp::resetTrackCompThreshold (strip); break;
-                case 1: comp::resetTrackCompRatio (strip); break;
-                case 2: comp::resetTrackCompAttack (strip); break;
-                case 3: comp::resetTrackCompRelease (strip); break;
-                case 4: comp::applyTrackCompMakeupDb (strip, 0.0f); break;
-                default: break;
-            }
+            // Push -> the plug-in's default for the active mode's parameter.
+            comp::resetTrackRole (strip, mcu_local::kCompEncoderRoles[stripIndex]);
         }
         return;
     }
@@ -165,30 +150,11 @@ void McuReceiver::applyVpotDelta (int stripIndex, int delta) noexcept
                 default: break;
             }
         }
-        else
+        else if (stripIndex >= 0 && stripIndex < mcu_local::kCompEncoderCount)
         {
-            switch (stripIndex)
-            {
-                case 0: comp::applyTrackCompThresholdDb (
-                            strip, comp::trackCompThresholdDb (strip)
-                                       + d * mcu_local::kVpotCompThreshStepDb); break;
-                case 1: comp::nudgeTrackCompRatio (
-                            strip, delta, mcu_local::kVpotCompScaleFactor); break;
-                case 2: comp::applyTrackCompAttackMs (
-                            strip, comp::trackCompAttackMs (strip)
-                                       * std::pow (mcu_local::kVpotCompScaleFactor, d)); break;
-                case 3: comp::applyTrackCompReleaseMs (
-                            strip, comp::trackCompReleaseMs (strip)
-                                       * std::pow (mcu_local::kVpotCompScaleFactor, d)); break;
-                case 4: comp::applyTrackCompMakeupDb (
-                            strip, comp::trackCompMakeupDb (strip)
-                                       + d * mcu_local::kVpotCompMakeupStepDb); break;
-                default: break;
-            }
-            // Opto has no ratio, attack or release, so those encoders move
-            // nothing there and engage nothing.
-            if (stripIndex == 0 || stripIndex == 4
-                || (stripIndex <= 3 && comp::compModeHasTimingControls (strip)))
+            // A role the mode lacks (Opto's ratio, attack and release, VCA's
+            // attack and release) moves nothing and engages nothing.
+            if (comp::nudgeTrackRole (strip, mcu_local::kCompEncoderRoles[stripIndex], delta))
                 strip.armComp();
         }
         return;

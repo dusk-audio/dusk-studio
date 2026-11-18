@@ -172,10 +172,9 @@ static float currentFracForTarget (Session& session, const MidiBinding& b) noexc
         case MidiBindingTarget::TrackCompMakeup:
         {
             if (b.targetIndex < 0 || b.targetIndex >= Session::kNumTracks) return -1.0f;
-            const auto& s = session.track (b.targetIndex).strip;
-            return b.target == MidiBindingTarget::TrackCompMakeup
-                       ? comp::makeupBindingFrac (s)
-                       : comp::thresholdBindingFrac (s);
+            return comp::trackRoleFrac (session.track (b.targetIndex).strip,
+                                        b.target == MidiBindingTarget::TrackCompMakeup
+                                            ? comp::Role::Makeup : comp::Role::Threshold);
         }
         case MidiBindingTarget::BusFader:
             if (b.targetIndex < 0 || b.targetIndex >= Session::kNumBuses) return -1.0f;
@@ -220,11 +219,11 @@ static float currentFracForTarget (Session& session, const MidiBinding& b) noexc
         case MidiBindingTarget::MasterEqHfBoost:
             return inv (session.master().eqHfBoost.load (std::memory_order_relaxed), 0.0f, 10.0f);
         case MidiBindingTarget::MasterCompThresh:
-            return inv (session.master().compThreshDb.load (std::memory_order_relaxed), -38.0f, 12.0f);
+            return comp::roleFrac (session.master().comp, comp::kBusMode, comp::Role::Threshold);
         case MidiBindingTarget::MasterCompMakeup:
-            return inv (session.master().compMakeupDb.load (std::memory_order_relaxed), -20.0f, 20.0f);
+            return comp::roleFrac (session.master().comp, comp::kBusMode, comp::Role::Makeup);
         case MidiBindingTarget::MasterCompRatio:
-            return inv (session.master().compRatio.load (std::memory_order_relaxed), 1.0f, 20.0f);
+            return comp::roleFrac (session.master().comp, comp::kBusMode, comp::Role::Ratio);
         default:
             return -1.0f;
     }
@@ -1419,6 +1418,42 @@ int AudioEngine::getMixLatencySamples() const noexcept
     return getTrackOutputLatencySamples() + getBusCompLatencySamples()
          + getMasterDryPdcTargetSamples() + master.getOversamplingLatencySamples()
          + getMasterCompLatencySamples() + getMasterTapeLatencySamples();
+}
+
+std::string AudioEngine::compValueText (CompStage kind, CompParamId id, float value)
+{
+#if DUSKSTUDIO_HAS_DUSK_DSP
+    const auto& textStage = kind == CompStage::Strip ? stripStorage[0].getCompressor (true)
+                                                     : busStrips[0].getCompressor();
+    return textStage.valueText (id, value);
+#else
+    (void) kind; (void) id; (void) value;
+    return {};
+#endif
+}
+
+bool AudioEngine::compValueFromText (CompStage kind, CompParamId id, const std::string& text, float& value)
+{
+#if DUSKSTUDIO_HAS_DUSK_DSP
+    const auto& textStage = kind == CompStage::Strip ? stripStorage[0].getCompressor (true)
+                                                     : busStrips[0].getCompressor();
+    return textStage.valueFromText (id, text, value);
+#else
+    (void) kind; (void) id; (void) text; (void) value;
+    return false;
+#endif
+}
+
+std::string AudioEngine::compStepsText (CompStage kind, CompParamId id, const char* separator)
+{
+#if DUSKSTUDIO_HAS_DUSK_DSP
+    const auto& textStage = kind == CompStage::Strip ? stripStorage[0].getCompressor (true)
+                                                     : busStrips[0].getCompressor();
+    return textStage.stepsText (id, separator);
+#else
+    (void) kind; (void) id; (void) separator;
+    return {};
+#endif
 }
 
 void AudioEngine::snapCompStagesFromSession() noexcept
@@ -6758,21 +6793,17 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                         case MidiBindingTarget::TrackCompThresh:
                         case MidiBindingTarget::TrackCompMakeup:
                         {
-                            // Mode-aware: the strip exposes Opto / FET / VCA
-                            // each with its own "threshold-ish" and "makeup-
-                            // ish" knob, on different ranges. The comp map
-                            // remaps CC 0..127 onto the CURRENT mode's
-                            // domain, so a single binding tracks whatever
-                            // mode the user has selected.
+                            // The comp map sweeps the CC across the host range
+                            // of whichever parameter the strip's CURRENT mode
+                            // plays for the role, so one binding follows the
+                            // user's mode switches.
                             if (b.targetIndex < 0 || b.targetIndex >= Session::kNumTracks)
                                 break;
                             auto& strip = session.track (b.targetIndex).strip;
-                            if (b.target == MidiBindingTarget::TrackCompMakeup)
-                                comp::applyTrackCompMakeupDb (
-                                    strip, comp::makeupBindingFracToDb (strip, frac));
-                            else
-                                comp::applyTrackCompThresholdDb (
-                                    strip, comp::thresholdBindingFracToDb (strip, frac));
+                            comp::applyTrackRoleFrac (strip,
+                                                      b.target == MidiBindingTarget::TrackCompMakeup
+                                                          ? comp::Role::Makeup : comp::Role::Threshold,
+                                                      frac);
                             strip.armComp();
                             break;
                         }
@@ -7046,24 +7077,21 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                             session.master().eqHfBoost.store (
                                 frac * 10.0f, std::memory_order_relaxed);
                             break;
+                        // The master's Bus-mode threshold, makeup and ratio
+                        // steps, across their host ranges. The master
+                        // compressor's engage switch is its own: a bound
+                        // control leaves it as it is.
                         case MidiBindingTarget::MasterCompThresh:
-                            // -38..+12 dB matches the channel-strip
-                            // VCA threshold range so a learned CC feels
-                            // identical when re-bound to the master.
-                            session.master().compThreshDb.store (
-                                -38.0f + frac * 50.0f, std::memory_order_relaxed);
+                            comp::applyRoleFrac (session.master().comp, comp::kBusMode,
+                                                 comp::Role::Threshold, frac);
                             break;
                         case MidiBindingTarget::MasterCompMakeup:
-                            // -20..+20 dB matches the per-track comp
-                            // makeup range.
-                            session.master().compMakeupDb.store (
-                                -20.0f + frac * 40.0f, std::memory_order_relaxed);
+                            comp::applyRoleFrac (session.master().comp, comp::kBusMode,
+                                                 comp::Role::Makeup, frac);
                             break;
                         case MidiBindingTarget::MasterCompRatio:
-                            // 1..20:1 covers gentle bus glue through
-                            // brick-wall summing.
-                            session.master().compRatio.store (
-                                1.0f + frac * 19.0f, std::memory_order_relaxed);
+                            comp::applyRoleFrac (session.master().comp, comp::kBusMode,
+                                                 comp::Role::Ratio, frac);
                             break;
 
                         case MidiBindingTarget::None:

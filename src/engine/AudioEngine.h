@@ -9,6 +9,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
 #include <utility>
@@ -337,6 +338,17 @@ public:
     void setMasteringMonoMonitor (bool mono) noexcept { masteringMonoMonitor.store (mono, std::memory_order_relaxed); }
     MasterBus&        getMasterBus()       noexcept { return master; }
     Metronome&        getMetronome()       noexcept { return metronome; }
+
+    // What a value of one of the mixer's compressor parameters reads as, from
+    // a Multi-Comp 2 of that kind (MultiCompStage::valueText, valueFromText
+    // and stepsText): the first channel strip's stereo stage for a Strip
+    // parameter, the first bus's for a Bus one, the master's included. The
+    // plug-in's formatter is a pure function of the value, so every stage of a
+    // kind prints alike, and the one asked can be running. Message thread
+    // only; empty, or false, in a build without the donor DSP.
+    std::string compValueText (CompStage kind, CompParamId id, float value);
+    bool        compValueFromText (CompStage kind, CompParamId id, const std::string& text, float& value);
+    std::string compStepsText (CompStage kind, CompParamId id, const char* separator);
 
     // Message thread. Puts a loudness measurement taken before a re-prepare
     // back on the mastering chain, with the process gate held.

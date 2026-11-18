@@ -127,6 +127,23 @@ public:
     virtual float getParameterValue (std::uint32_t index) const noexcept = 0;
     virtual void  setParameterValue (std::uint32_t index, float value) noexcept = 0;
 
+    // The plug-in's own text for a value of a parameter, in its host domain,
+    // written into text with its terminator. False when the plug-in prints no
+    // text of its own for that parameter, or the text does not fit. The
+    // plug-in's formatter may allocate, so never the audio thread.
+    virtual bool getParameterValueText (std::uint32_t, float, char*, std::uint32_t) const noexcept
+    {
+        return false;
+    }
+
+    // Text typed for a parameter back to a host value, as the plug-in reads it.
+    // False when the plug-in reads no text of its own for that parameter or
+    // this text does not parse. Never the audio thread.
+    virtual bool getParameterValueFromText (std::uint32_t, const char*, float&) const noexcept
+    {
+        return false;
+    }
+
     // Full-state access. A plug-in without DAF full state reports a count of zero.
     virtual std::uint32_t getStateCount() const noexcept = 0;
     virtual const std::string& getStateKey (std::uint32_t index) const noexcept = 0;

@@ -168,6 +168,7 @@ private:
     void showTapeSectionMenu();
     void resetEqSection();
     void resetCompSection();
+    void syncCompKnobs();
     juce::Label outputPeakLabel;
     // The output meter draws only what the timer sampled into these, so its
     // repaint gate keys on exactly what paint() shows.
