@@ -923,15 +923,22 @@ std::optional<ScenarioResult> runAudioEditorPasteFocuses (GuiHost& host, Scenari
     const auto clipboard = engine.getRegionClipboard();
     ctx.cleanup ([&engine, clipboard] { engine.getRegionClipboard() = clipboard; });
     ctx.cleanup ([&engine, at = engine.getTransport().getPlayhead()] { engine.getTransport().setPlayhead (at); });
+    engine.getRegionClipboard() = {};
     engine.getTransport().setPlayhead (12000);
 
     auto steps = std::make_shared<std::vector<Step>>();
-    steps->push_back ({ 100, [&host, &ctx] { ctx.expect (host.pressAudioEditorKey ("command + C"), "Copy was not handled"); },
-                        [&host, &track] { const auto focus = editorFocus (host, track); return focus && focus->timelineStart == 0; },
+    steps->push_back ({ 100, [&host, &ctx] { ctx.expect (host.pressAudioEditorKey ("command + C"), "Copy was not delivered"); },
+                        [&host, &track] { return editorShows (host, track, 0); },
                         "the editor never showed the first region" });
-    for (std::size_t left = 3; left > 0; --left)
-        steps->push_back ({ 100, [&host, &ctx] { ctx.expect (host.pressAudioEditorKey ("delete"), "Delete was not handled"); },
-                            [&track, left] { return track.regions.size() == left; }, "Delete did not remove one region" });
+    const auto pressDelete = [&host, &ctx] { ctx.expect (host.pressAudioEditorKey ("delete"), "Delete was not delivered"); };
+    steps->push_back ({ 100, pressDelete, [&engine, first = track.regions.front()]
+    {
+        const auto& clip = engine.getRegionClipboard();
+        return clip.hasContent && clip.sourceTrack == 0 && sameRegions ({ clip.region }, { first });
+    }, "Copy did not put the focused region on the clipboard" });
+    for (std::size_t left = 2; left > 0; --left)
+        steps->push_back ({ 100, pressDelete, [&track, left] { return track.regions.size() == left; },
+                            "Delete did not remove one region" });
     steps->push_back ({ 100, [&host, &ctx]
     {
         const auto selection = host.audioEditorSelection();
