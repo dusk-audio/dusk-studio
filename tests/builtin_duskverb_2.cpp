@@ -69,6 +69,10 @@ TEST_CASE ("The reverb built-in is DuskVerb 2 under its existing id",
     REQUIRE (std::string (unit->category) == "Fx|Reverb");
     REQUIRE_FALSE (unit->isInstrument);
     REQUIRE (unit->createPlugin != nullptr);
+    const auto plugin = unit->createPlugin();
+    REQUIRE (plugin != nullptr);
+    CHECK (plugin->isParameterSnapshotState ("parameters"));
+    CHECK_FALSE (plugin->isParameterSnapshotState ("mix_lock"));
 
     NativeBuiltinSlot slot;
     load (slot);

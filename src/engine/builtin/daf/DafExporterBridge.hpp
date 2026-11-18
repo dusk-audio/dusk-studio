@@ -252,6 +252,16 @@ public:
         return stateDefaults[index];
     }
 
+    bool isParameterSnapshotState (const std::string& key) const noexcept override
+    {
+       #if DAF_PLUGIN_WANT_STATE && DAF_PLUGIN_WANT_FULL_STATE
+        return exporter.isParameterSnapshotState (key.c_str());
+       #else
+        (void) key;
+        return false;
+       #endif
+    }
+
     std::string getStateValue (const std::string& key) const override
     {
        #if DAF_PLUGIN_WANT_STATE && DAF_PLUGIN_WANT_FULL_STATE

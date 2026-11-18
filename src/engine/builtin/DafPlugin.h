@@ -131,6 +131,7 @@ public:
     virtual std::uint32_t getStateCount() const noexcept = 0;
     virtual const std::string& getStateKey (std::uint32_t index) const noexcept = 0;
     virtual const std::string& getStateDefaultValue (std::uint32_t index) const noexcept = 0;
+    virtual bool isParameterSnapshotState (const std::string& key) const noexcept = 0;
     virtual std::string getStateValue (const std::string& key) const = 0;
     virtual void setState (const std::string& key, const std::string& value) = 0;
     virtual void  setTimePosition (const dusk::TransportPosition& position) noexcept = 0;
