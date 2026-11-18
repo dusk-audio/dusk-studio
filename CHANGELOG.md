@@ -253,6 +253,11 @@ canonical source.
   stops the transport, restarts the engine at that rate and raises the
   **Sample rate changed** alert. On opening, it runs at the rate the graph
   really has.
+- **Block size picked on PipeWire.** With the PipeWire graph held at another
+  block size, the block size you picked in the audio settings was not saved:
+  the graph's was, and the next launch asked for that. The rate and block
+  size you pick are now what is saved, even when the graph runs at others.
+  Opening a session updates the saved rate only if PipeWire adopts the session's rate.
 
 ## [0.16.1] - 2026-11-07
 

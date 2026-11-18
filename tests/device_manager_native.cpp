@@ -84,6 +84,11 @@ public:
         log->add (name + ".open");
         if (! openErr.empty()) return openErr;
         inMask = in; outMask = out; appliedRate = sr; appliedBuf = bs; opened = true;
+        if (openClock.isSet())
+        {
+            appliedBuf = openClock.bufferSize;
+            appliedRate = openClock.sampleRate;
+        }
         return {};
     }
     void close() override { if (opened) log->add (name + ".close"); opened = false; }
@@ -128,6 +133,10 @@ public:
     // What a PipeWire graph forced to another quantum or rate reports; the next
     // start() adopts it, as the real device does.
     DeviceClock movedClock;
+
+    // The clock open() lands on whatever it was asked for: a graph held at
+    // another quantum or rate, or a driver that rounds the block size.
+    DeviceClock openClock;
 
     // Drive one synthetic block / error through whatever start() installed (the
     // manager's fan-out).
@@ -179,11 +188,15 @@ public:
                         : rejectedInputs.count (inputName) ? std::string ("sample rate not supported")
                         : std::string();
         auto d = std::make_unique<MockDevice> (log, devName, inChans, outChans, rates, defBuf, err);
+        d->openClock = openClock;
         created.push_back (d.get());
         return d;
     }
 
+    bool clockSetByGraph() const override { return typeName == "PipeWire"; }
+
     int scans = 0;
+    DeviceClock openClock;               // handed to every device it creates
     std::string typeName;
     int defOut = 0, defIn = 0;
     std::set<std::string> busy;          // device names whose open() fails
@@ -1080,6 +1093,164 @@ TEST_CASE ("DeviceManager announces a device clock that moved, then restarts the
     dm.removeChangeListener (&fired);
     dm.removeCallback (&engine);
 }
+
+TEST_CASE ("DeviceManager saves the picked rate and block size when a graph opens it at another clock",
+           "[audio][device][pipewire]")
+{
+    juce::ScopedJuceInitialiser_GUI juceInit;
+    Harness h;
+    DeviceManager dm;
+    dm.setDeviceTypesForTest (h.build());
+    REQUIRE (dm.initialise (2, 2, "", true).empty());
+
+    SECTION ("PipeWire: the graph has the last word, the pick is saved")
+    {
+        h.pw->openClock = { 1024, 44100.0 };
+        auto pick = dm.getSetup();
+        pick.sampleRate = 48000.0;
+        pick.bufferSize = 512;
+        REQUIRE (dm.setSetup (pick, /*treatAsChosen*/ true).empty());
+
+        REQUIRE (dm.getSetup().bufferSize == 1024);
+        REQUIRE_THAT (dm.getSetup().sampleRate, Catch::Matchers::WithinAbs (44100.0, 1e-9));
+
+        const auto blob = DeviceStateBlob::parse (dm.getStateBlob());
+        REQUIRE (blob.has_value());
+        REQUIRE (blob->setup.bufferSize == 512);
+        REQUIRE_THAT (blob->setup.sampleRate, Catch::Matchers::WithinAbs (48000.0, 1e-9));
+
+        // The next launch, with the graph no longer held, asks for the pick.
+        Harness next;
+        DeviceManager relaunched;
+        relaunched.setDeviceTypesForTest (next.build());
+        REQUIRE (relaunched.initialise (2, 2, dm.getStateBlob(), true).empty());
+        REQUIRE (relaunched.getCurrentDeviceType()->getTypeName() == "PipeWire");
+        REQUIRE (relaunched.getSetup().bufferSize == 512);
+        REQUIRE_THAT (relaunched.getSetup().sampleRate, Catch::Matchers::WithinAbs (48000.0, 1e-9));
+    }
+
+    SECTION ("PipeWire: a session rate becomes the preference only when the graph adopts it")
+    {
+        auto pick = dm.getSetup();
+        pick.bufferSize = 512;
+        REQUIRE (dm.setSetup (pick, true).empty());
+        const auto saved = dm.getStateBlob();
+        REQUIRE_FALSE (saved.empty());
+
+        h.pw->openClock = { 1024, 48000.0 };
+        REQUIRE (dm.setSessionSampleRate (96000.0).empty());
+        REQUIRE_THAT (dm.getSetup().sampleRate, Catch::Matchers::WithinAbs (48000.0, 1e-9));
+        REQUIRE (dm.getStateBlob() == saved);
+
+        h.pw->openClock = { 1024, 96000.0 };
+        REQUIRE (dm.setSessionSampleRate (96000.0).empty());
+        const auto accepted = DeviceStateBlob::parse (dm.getStateBlob());
+        REQUIRE (accepted.has_value());
+        REQUIRE_THAT (accepted->setup.sampleRate, Catch::Matchers::WithinAbs (96000.0, 1e-9));
+        REQUIRE (accepted->setup.bufferSize == 512);
+    }
+
+    SECTION ("PipeWire: a rejected session rate on first launch leaves the preference unset")
+    {
+        h.pw->openClock = { 1024, 48000.0 };
+        REQUIRE (dm.setSessionSampleRate (96000.0).empty());
+        REQUIRE (dm.getStateBlob().empty());
+    }
+
+    SECTION ("PipeWire: a device change naming neither saves what was asked of the device")
+    {
+        h.pw->openClock = { 1024, 44100.0 };
+        auto change = dm.getSetup();
+        change.outputDeviceName = change.inputDeviceName = "pw-alt";
+        change.sampleRate = 0.0;
+        change.bufferSize = 0;
+        REQUIRE (dm.setSetup (change, /*treatAsChosen*/ true).empty());
+        REQUIRE (dm.getSetup().bufferSize == 1024);
+
+        // 48 kHz is the manager's first choice from the listed rates and 256 the
+        // mock type's default block size.
+        const auto blob = DeviceStateBlob::parse (dm.getStateBlob());
+        REQUIRE (blob.has_value());
+        REQUIRE (blob->setup.outputDeviceName == "pw-alt");
+        REQUIRE (blob->setup.bufferSize == 256);
+        REQUIRE_THAT (blob->setup.sampleRate, Catch::Matchers::WithinAbs (48000.0, 1e-9));
+    }
+
+    SECTION ("ALSA: the block size the driver rounded to is saved")
+    {
+        dm.setCurrentDeviceType ("ALSA", /*treatAsChosen*/ true);
+        h.alsa->openClock = { 384, 48000.0 };
+        DeviceSetup pick;
+        pick.outputDeviceName = "hw0";
+        pick.sampleRate = 48000.0;
+        pick.bufferSize = 400;
+        REQUIRE (dm.setSetup (pick, /*treatAsChosen*/ true).empty());
+
+        const auto blob = DeviceStateBlob::parse (dm.getStateBlob());
+        REQUIRE (blob.has_value());
+        REQUIRE (blob->deviceType == "ALSA");
+        REQUIRE (blob->setup.bufferSize == 384);
+    }
+}
+
+TEST_CASE ("DeviceManager on a held graph saves only what a request changes from the running clock",
+           "[audio][device][pipewire]")
+{
+    juce::ScopedJuceInitialiser_GUI juceInit;
+    Harness h;
+    DeviceManager dm;
+    dm.setDeviceTypesForTest (h.build());
+    REQUIRE (dm.initialise (2, 2, "", true).empty());
+
+    h.pw->openClock = { 1024, 44100.0 };
+    auto pick = dm.getSetup();
+    pick.sampleRate = 48000.0;
+    pick.bufferSize = 512;
+    REQUIRE (dm.setSetup (pick, /*treatAsChosen*/ true).empty());
+
+    // Callers start a request from getSetup(), which reports the graph's clock.
+    auto request = dm.getSetup();
+    REQUIRE (request.bufferSize == 1024);
+    REQUIRE_THAT (request.sampleRate, Catch::Matchers::WithinAbs (44100.0, 1e-9));
+
+    double savedRate = 0.0;
+    int savedBuf = 0;
+    SECTION ("only the block size changed")
+    {
+        request.bufferSize = 256;
+        REQUIRE (dm.setSetup (request, /*treatAsChosen*/ true).empty());
+        savedRate = 48000.0;
+        savedBuf = 256;
+    }
+    SECTION ("only the rate changed")
+    {
+        request.sampleRate = 96000.0;
+        REQUIRE (dm.setSetup (request, /*treatAsChosen*/ true).empty());
+        savedRate = 96000.0;
+        savedBuf = 512;
+    }
+    SECTION ("the running setup sent back to a live device")
+    {
+        REQUIRE (dm.setSetup (request, /*treatAsChosen*/ true).empty());
+        savedRate = 48000.0;
+        savedBuf = 512;
+    }
+    SECTION ("the running setup sent back after a close")
+    {
+        dm.closeDevice();
+        REQUIRE (dm.setSetup (request, /*treatAsChosen*/ true).empty());
+        REQUIRE (dm.getCurrentDevice() != nullptr);
+        savedRate = 48000.0;
+        savedBuf = 512;
+    }
+
+    REQUIRE (dm.getSetup().bufferSize == 1024);
+    const auto blob = DeviceStateBlob::parse (dm.getStateBlob());
+    REQUIRE (blob.has_value());
+    REQUIRE (blob->setup.bufferSize == savedBuf);
+    REQUIRE_THAT (blob->setup.sampleRate, Catch::Matchers::WithinAbs (savedRate, 1e-9));
+}
+
 TEST_CASE ("DeviceManager clock restart respects device changes from lifecycle callbacks", "[audio][device]")
 {
     Harness h;

@@ -5087,9 +5087,7 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
         else if (deviceSr > 0.0
                  && std::abs (session.sessionSampleRate - deviceSr) > 0.5)
         {
-            auto setup = engine.getDeviceManager().getSetup();
-            setup.sampleRate = session.sessionSampleRate;
-            const auto err = engine.getDeviceManager().setSetup (setup, true);
+            const auto err = engine.getDeviceManager().setSessionSampleRate (session.sessionSampleRate);
             const double after = engine.getDeviceManager().getSetup().sampleRate;
             if (! err.empty() || std::abs (after - session.sessionSampleRate) > 0.5)
             {

@@ -32,6 +32,8 @@ namespace duskstudio::device
 {
 namespace
 {
+enum class SetupOrigin { transient, userChoice, session };
+
 // Rate defaulting when a setup carries 0: prefer 48k, then 44.1k, then the
 // largest listed rate at or above 44.1k, then the max available. Re-derived
 // contract (JUCE prefers the 44.1-48k band), pinned by the mock tests.
@@ -66,6 +68,19 @@ bool sameSetup (const DeviceSetup& a, const DeviceSetup& b) noexcept
         && a.outputChannels == b.outputChannels
         && a.useDefaultInputChannels  == b.useDefaultInputChannels
         && a.useDefaultOutputChannels == b.useDefaultOutputChannels;
+}
+
+// The rate or block size to record as chosen where the graph decides what runs.
+// Callers build a request from getSetup(), which reports the graph's clock, so a
+// value equal to what it reported before the open was copied through, not picked.
+double chosenOnGraph (double requested, double resolved, double reportedBefore,
+                      std::optional<double> saved)
+{
+    if (requested <= 0.0) return resolved;
+    const auto same = [] (double a, double b) { return std::abs (a - b) < 0.5; };
+    if (saved && *saved > 0.0 && same (requested, reportedBefore) && ! same (requested, *saved))
+        return *saved;
+    return requested;
 }
 
 // The single IODeviceCallback handed to IODevice::start. Fans the device's RT
@@ -362,11 +377,18 @@ struct DeviceManager::Impl : private dusk::Timer
         return s;
     }
 
-    // Stop+close the live device, create the requested one on currentType, open
-    // and start it. Empty string on success, else the backend error. treatAsChosen
-    // records the applied setup as the user's chosen configuration.
-    std::string openDeviceFromSetup (const DeviceSetup& requested, bool treatAsChosen)
+    std::string changeSetup (const DeviceSetup& setup, SetupOrigin origin)
     {
+        if (sameSetup (setup, currentSetup) && currentDevice != nullptr && currentDevice->isOpen())
+            return {};
+
+        deviceChangePending.store (true, std::memory_order_release);
+        return openDeviceFromSetup (setup, origin);
+    }
+
+    std::string openDeviceFromSetup (const DeviceSetup& requested, SetupOrigin origin)
+    {
+        const DeviceSetup reportedBefore = currentSetup;
         if (currentDevice != nullptr)
         {
             currentDevice->stop();     // fan-out delivers audioDeviceStopped
@@ -420,11 +442,28 @@ struct DeviceManager::Impl : private dusk::Timer
         currentSetup.bufferSize = currentDevice->getCurrentBufferSizeSamples();
         startTimerHz (30);
 
-        if (treatAsChosen)
+        const bool graphClock = currentType->clockSetByGraph();
+        const bool rateMatches = std::abs (currentSetup.sampleRate - requested.sampleRate) <= 0.5;
+        if (origin == SetupOrigin::userChoice || (origin == SetupOrigin::session && (! graphClock || rateMatches)))
         {
             DeviceStateBlob b;
             b.deviceType = currentType->getTypeName();
             b.setup      = currentSetup;
+            if (graphClock)
+            {
+                std::optional<double> savedRate, savedBuf;
+                if (lastExplicitSettings && lastExplicitSettings->deviceType == b.deviceType
+                    && lastExplicitSettings->setup.outputDeviceName == requested.outputDeviceName
+                    && lastExplicitSettings->setup.inputDeviceName == requested.inputDeviceName)
+                {
+                    savedRate = lastExplicitSettings->setup.sampleRate;
+                    savedBuf  = lastExplicitSettings->setup.bufferSize;
+                }
+                b.setup.sampleRate = chosenOnGraph (requested.sampleRate, rate,
+                                                    reportedBefore.sampleRate, savedRate);
+                b.setup.bufferSize = static_cast<int> (chosenOnGraph (requested.bufferSize, buf,
+                                                                      reportedBefore.bufferSize, savedBuf));
+            }
             lastExplicitSettings = b;
         }
 
@@ -564,9 +603,8 @@ std::string DeviceManager::initialise (int numInputChannels, int numOutputChanne
     const bool usedSaved = saved.has_value();
     const DeviceSetup setup = usedSaved ? saved->setup : impl->defaultSetupFor (type);
 
-    // Open the saved (or default) setup. treatAsChosen=false: lastExplicitSettings
-    // is already seeded (or intentionally empty for a fresh machine).
-    std::string err = impl->openDeviceFromSetup (setup, /*treatAsChosen*/ false);
+    // lastExplicitSettings is already seeded, or empty for a fresh machine.
+    std::string err = impl->openDeviceFromSetup (setup, SetupOrigin::transient);
     if (err.empty()) return {};
     if (! selectDefaultOnFailure) return err;
     if (! usedSaved) return err;   // the first attempt was already the default
@@ -574,7 +612,7 @@ std::string DeviceManager::initialise (int numInputChannels, int numOutputChanne
     // Fallback: open the type's default device WITHOUT clobbering
     // lastExplicitSettings, so the saved intent survives a busy device (the
     // engine's DeviceFallbackMessage + deviceIdentityFromState depend on it).
-    return impl->openDeviceFromSetup (impl->defaultSetupFor (type), /*treatAsChosen*/ false);
+    return impl->openDeviceFromSetup (impl->defaultSetupFor (type), SetupOrigin::transient);
 }
 
 std::string DeviceManager::getStateBlob() const
@@ -625,13 +663,14 @@ DeviceSetup DeviceManager::getSetup() const { return impl->currentSetup; }
 
 std::string DeviceManager::setSetup (const DeviceSetup& d, bool treatAsChosen)
 {
-    // An unchanged setup against a live device is a no-op: no broadcast, pending
-    // untouched (parity with the wrapped manager's short-circuit).
-    if (sameSetup (d, impl->currentSetup) && impl->currentDevice != nullptr && impl->currentDevice->isOpen())
-        return {};
+    return impl->changeSetup (d, treatAsChosen ? SetupOrigin::userChoice : SetupOrigin::transient);
+}
 
-    impl->deviceChangePending.store (true, std::memory_order_release);
-    return impl->openDeviceFromSetup (d, treatAsChosen);
+std::string DeviceManager::setSessionSampleRate (double sampleRate)
+{
+    auto setup = getSetup();
+    setup.sampleRate = sampleRate;
+    return impl->changeSetup (setup, SetupOrigin::session);
 }
 
 DeviceClock DeviceManager::getMovedDeviceClock() const
