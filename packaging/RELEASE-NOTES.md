@@ -1,14 +1,20 @@
 <!-- summary-start -->
-Dusk Studio 0.16.1 fixes SFZ and SF2 instruments that stayed silent after loading until the audio device restarted. LV2 plug-ins a Linux distribution installs in its lib64 folder, such as openSUSE's and Fedora's sfizz, now appear in the plug-in picker. The Linux download now needs the liblilv-0-0 and libserd-0-0 packages.
+Dusk Studio 0.17.0 puts Multi-Comp 2 on every compressor and lets an idle mixer rest. The channel strips run Multi-Comp 2's Opto, FET and VCA modes, the buses and the master its Bus mode, and the mastering stage its Multiband mode, and each COMP button opens the plug-in's own editor. A compressor that is engaged costs more CPU than the one it replaces, about three times as much at 48 kHz, because it always runs at the plug-in's own 2x oversampling. One that is out costs nothing. The channel EQ's frequency and Q knobs read and sound as they do on 4K EQ 2.
 
-Native panels show Greek, Cyrillic, Chinese, Japanese and Korean names, and Hebrew and Arabic names read right to left. Seeks during playback at 192 kHz no longer cause a dropout, mice and tablets plugged in after launch work on X11, and sandboxed plug-in editors on Linux close and reopen reliably.
+An idle mixer lets the CPU rest: Multicore DSP wakes only the threads a block needs, meters repaint only when what they show changes, several native panels draw far less often when idle, and a track with no plug-in on it that is muted or has no input costs the audio thread about a twentieth of what it did. On Linux the audio thread is now tested for locks and allocations with every change, and the PipeWire and ALSA audio threads no longer take a lock around each block.
 
-Sessions still save in format 11, so 0.16.0 opens them, but Dusk Studio 0.15.1 and earlier cannot. Keep a copy before saving if you need to use an older version.
+MIDI is safer. Each recorded MIDI pass is written to the session folder as a Standard MIDI File, a pass in progress is saved as you play, at most once a second, and every save keeps a backup of the session. A session that cannot be opened offers its autosave and backups instead of failing. Clicking a key on the piano roll keyboard plays it.
+
+SFZ and SF2 instruments that stayed silent after loading in 0.16.0 play again. A take recorded with PRINT on lands where a dry take of the same input does, where it used to land late by the channel's delay. LV2 plug-ins a Linux distribution installs in its lib64 folder appear in the plug-in picker, and the Linux download now needs the liblilv-0-0 and libserd-0-0 packages. A PipeWire graph that moves to a longer block no longer silences playback, a change of its rate is followed instead of going unnoticed, VST3 synths stop their notes at Stop, and sandboxed plug-ins run at audio priority where the system allows it. The built-in reverb, tape echo, tape machine and Sunset are their plug-ins' released versions, DuskVerb 2 1.0.1, Tape Echo 2 1.0.9, Tape Machine 2 1.0.12 and Sunset Circuits 1.1.0. Native panels show Greek, Cyrillic, Chinese, Japanese and Korean names, and Hebrew and Arabic names read right to left.
+
+Sessions save in format 12, which Dusk Studio 0.16.0 and earlier cannot open. Keep a copy before saving if you need to use an older version. An older session opens with its compressor settings converted to Multi-Comp 2's controls, so an older mix can sound different, and with each channel EQ band on the knob marking that plays where it played.
 <!-- summary-end -->
 
 ### Known limitations
 
 At very small audio buffers, other busy programs can make occasional blocks run late. If you hear clicks, raise the audio buffer size.
+
+On Linux, while a PipeWire graph runs a longer block than the one Dusk Studio started with, notes played in from a MIDI keyboard and MIDI sent to other gear are placed to within one of the graph's blocks rather than to the sample. Exact timing returns once playback and recording have stopped.
 
 ### Downloads
 
@@ -52,7 +58,7 @@ key is `packaging/release-signing.pub` in the source repository; download it
 from this release's tag, compare its fingerprint with the one on the project
 site, import it, then check the signature before the hashes:
 
-    VERSION=0.16.1   # this release
+    VERSION=0.17.0   # this release
     curl -fsSLO "https://raw.githubusercontent.com/dusk-audio/dusk-studio/v$VERSION/packaging/release-signing.pub"
     gpg --show-keys --with-fingerprint release-signing.pub
     gpg --import release-signing.pub

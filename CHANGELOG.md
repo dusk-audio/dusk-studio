@@ -5,7 +5,7 @@ All notable changes to Dusk Studio. Format loosely follows
 back-filled from `git log`; once tags exist this file is the
 canonical source.
 
-## [0.17.0] - Unreleased
+## [0.17.0] - 2026-11-19
 
 ### Added
 
@@ -58,6 +58,11 @@ canonical source.
   was still running after about 3 seconds. A terminal line says which. The
   count turns the readout amber, and the double-click that resets the other
   counters resets it.
+- **Experimental native Wayland for source builds.** A source build with
+  shared Wayland embedding support can run its main window without Xwayland
+  when started with `DUSKSTUDIO_NATIVE_WAYLAND=1`. X11 plug-in editors still
+  need Xwayland and open in separate windows. The release downloads keep
+  using Xwayland.
 
 ### Changed
 
@@ -159,14 +164,15 @@ canonical source.
   disk sleep as well, until an output is open or a take is recording. On an 8-core machine
   at 48 kHz with a 512-sample buffer, a stopped session with nothing
   monitored wakes those threads about 2,000 times a second less. A track
-  that is muted or has no input also costs the audio thread about a
-  twentieth of what it did. An LV2 plug-in's worker thread sleeps until the
-  plug-in queues work for it, where it woke about 50 times a second.
+  with no plug-in on it that is muted or has no input also costs the audio
+  thread about a twentieth of what it did. An LV2 plug-in's worker thread
+  sleeps until the plug-in queues work for it, where it woke about 50 times
+  a second.
 - **A still console stays still.** The VU meters, gain-reduction meters, level
   meters, peak readouts and section lights repaint only when what they show
   has changed, so a stopped console with no input no longer redraws them 30
-  to 60 times a second. Meters on a page or view that is hidden rest until it
-  is shown again, and Dusk Studio's own timers run from one shared 30 Hz
+  to 60 times a second. Meters on a console page or view that is hidden rest
+  until it is shown again, and Dusk Studio's own timers run from one shared
   tick. The mini timeline rereads the regions twice a second, at once when a
   region is added or removed or a marker changes.
 - **Native panels draw only when something changes.** The mini timeline, the
@@ -179,9 +185,21 @@ canonical source.
   The audio editor, the startup window, the audio settings, the SFZ library,
   the compressor editors, the built-in unit editors on the strips and
   the aux lane's built-in unit panel still draw every frame.
+- **DSP readout colours.** The readout turns red only for a backend xrun, a
+  stream disruption the audio backend reported. An engine overrun on its own,
+  load above 85% or a realtime warning turns it amber, since device buffering
+  can absorb a late block.
+- **DAF pinned.** CI and release builds take DAF from the commit in the new
+  `DAF_REV` file instead of the tip of DAF `main`, so a DAF merge no longer
+  changes what Dusk Studio builds. Configure warns when the local DAF
+  checkout is at another commit.
 
 ### Fixed
 
+- **Soundfonts that made no sound.** An SFZ or SF2 instrument loaded through
+  SFZ Manager, **Browse...** or an opened session plays again. In 0.16.0 it
+  stayed silent until the audio device restarted, for example after a buffer
+  size change.
 - **Takes recorded with PRINT on landed late.** A printed take is the
   channel's output, which trails its input by the channel's delay: the
   compressors' 73 samples at 44.1 and 48 kHz and 79 at 96 kHz while any
@@ -233,7 +251,7 @@ canonical source.
 - **Starting and stopping the audio device.** On Linux the audio thread took
   a lock around every block, the one the device's start and stop take, so a
   start or stop on a busy machine could hold a block up. The PipeWire and
-  ALSA audio threads now take no lock.
+  ALSA audio threads no longer take that lock.
 - **Leaving a hardware insert with Multicore DSP on.** For the 20 ms
   crossfade after a track switched away from a hardware insert, a Multicore
   DSP thread could write the insert's send to the device. Two tracks leaving
@@ -258,34 +276,6 @@ canonical source.
   the graph's was, and the next launch asked for that. The rate and block
   size you pick are now what is saved, even when the graph runs at others.
   Opening a session updates the saved rate only if PipeWire adopts the session's rate.
-
-## [0.16.1] - 2026-11-07
-
-### Added
-
-- **Experimental native Wayland for source builds.** A source build with
-  shared Wayland embedding support can run its main window without Xwayland
-  when started with `DUSKSTUDIO_NATIVE_WAYLAND=1`. X11 plug-in editors still
-  need Xwayland and open in separate windows. The release downloads keep
-  using Xwayland.
-
-### Changed
-
-- **DSP readout colours.** The readout turns red only for a backend xrun, a
-  stream disruption the audio backend reported. An engine overrun on its own,
-  load above 85% or a realtime warning turns it amber, since device buffering
-  can absorb a late block.
-- **DAF pinned.** CI and release builds take DAF from the commit in the new
-  `DAF_REV` file instead of the tip of DAF `main`, so a DAF merge no longer
-  changes what Dusk Studio builds. Configure warns when the local DAF
-  checkout is at another commit.
-
-### Fixed
-
-- **Soundfonts that made no sound.** An SFZ or SF2 instrument loaded through
-  SFZ Manager, **Browse...** or an opened session plays again. In 0.16.0 it
-  stayed silent until the audio device restarted, for example after a buffer
-  size change.
 - **Rate-limit notice.** When an online SFZ repository is rate limited, a
   reset time that has already passed, or lies more than a day away, reads
   "Try again later." instead of a clock time.
