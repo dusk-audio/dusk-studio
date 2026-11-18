@@ -1927,6 +1927,7 @@ static const unsigned int ${symbol}_len = ${_fontSize}u;
 
         # A plug-in's version is its own CMake project's, and its editor shows it.
         function(duskstudio_donor_project_version out dir project prefix)
+            set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${dir}/CMakeLists.txt")
             file(STRINGS "${dir}/CMakeLists.txt" _project REGEX "^project\\(${project} ")
             if(NOT _project MATCHES "VERSION ([0-9]+)\\.([0-9]+)\\.([0-9]+)")
                 message(FATAL_ERROR "Cannot read the ${project} version from the donor")
@@ -1972,6 +1973,7 @@ static const unsigned int ${symbol}_len = ${_fontSize}u;
 
         # The plug-in's version is the default its own CMake falls back to; the
         # editor shows it.
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_duskstudio_sunset_dir}/CMakeLists.txt")
         file(STRINGS "${_duskstudio_sunset_dir}/CMakeLists.txt"
              _duskstudio_sunset_version REGEX "^set\\(SUNSETCIRCUITS_DEFAULT_VERSION ")
         if(NOT _duskstudio_sunset_version MATCHES "\"([0-9]+)\\.([0-9]+)\\.([0-9]+)\"")
