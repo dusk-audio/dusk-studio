@@ -553,8 +553,8 @@ const ScenarioRegistrar compResetStrip { Scenario {
 
 // On a bypassed channel strip, dragging the gain-reduction handle, turning a
 // knob or switching LIMIT on engages the compressor and switching LIMIT off does
-// not. A double-click on an engaged strip's handle returns only that control to
-// its default and leaves the compressor engaged.
+// not. A double-click on the handle returns only that control to its default
+// and leaves the compressor engaged or bypassed as it was.
 std::optional<ScenarioResult> runCompStripFaceEngages (GuiHost& host, ScenarioContext& ctx)
 {
     auto& engine = ctx.engine();
@@ -630,12 +630,24 @@ std::optional<ScenarioResult> runCompStripFaceEngages (GuiHost& host, ScenarioCo
     } });
     steps->push_back ({ 700, [&host, &ctx]
     { ctx.expect (host.clickStripComp (Kind::Channel, kStripIndex, "handle", 2), "the strip's GR handle is not on screen"); } });
-    steps->push_back ({ 300, [&ctx, &strip, moved, othersKept]
+    steps->push_back ({ 300, [&ctx, &strip, moved, othersKept, others]
     {
         ctx.expect (! moved (CompParamId::OptoPeakReduction), "a double-click on the engaged strip's handle left PEAK REDUCTION at "
                                                                + std::to_string (strip.comp.get (CompParamId::OptoPeakReduction)));
         othersKept ("a double-click on the engaged strip's handle");
         ctx.expect (strip.compEnabled.load(), "a double-click on the handle bypassed the compressor");
+        strip.compEnabled.store (false);
+        strip.comp.set (CompParamId::OptoPeakReduction, 40.0f);
+        others->copyFrom (strip.comp);
+    } });
+    steps->push_back ({ 700, [&host, &ctx]
+    { ctx.expect (host.clickStripComp (Kind::Channel, kStripIndex, "handle", 2), "the strip's GR handle is not on screen"); } });
+    steps->push_back ({ 300, [&ctx, &strip, moved, othersKept]
+    {
+        ctx.expect (! moved (CompParamId::OptoPeakReduction), "a double-click on the bypassed strip's handle left PEAK REDUCTION at "
+                                                               + std::to_string (strip.comp.get (CompParamId::OptoPeakReduction)));
+        othersKept ("a double-click on the bypassed strip's handle");
+        ctx.expect (! strip.compEnabled.load(), "a double-click on the bypassed strip's handle engaged the compressor");
     } });
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
@@ -649,7 +661,8 @@ const ScenarioRegistrar compStripFaceEngages { Scenario {
 
 // On a bypassed bus and on the bypassed master, RAT, ATK, REL and MAK on the
 // strip face move their values and leave the compressor off; dragging the
-// gain-reduction handle turns it on.
+// gain-reduction handle turns it on, and a double-click on the handle of the
+// bypassed compressor returns only the threshold to its default.
 std::optional<ScenarioResult> runCompBusMasterFace (GuiHost& host, ScenarioContext& ctx)
 {
     static constexpr int kBus = 0;
@@ -710,6 +723,27 @@ std::optional<ScenarioResult> runCompBusMasterFace (GuiHost& host, ScenarioConte
                                   - compParamSpec (CompParamId::BusThreshold).hostDefault) > 1.0e-6f,
                         std::string ("dragging the ") + face.name + "'s handle left the threshold at its default");
             ctx.expect (face.engaged->load(), std::string ("dragging the ") + face.name + "'s handle did not engage the compressor");
+            face.engaged->store (false);
+            face.comp->set (CompParamId::BusThreshold, -12.0f);
+        } });
+        const auto others = std::make_shared<CompParams>();
+        steps->push_back ({ 700, [&host, &ctx, face, others]
+        {
+            others->copyFrom (*face.comp);
+            ctx.expect (host.clickStripComp (face.kind, face.index, "handle", 2),
+                        std::string ("the ") + face.name + "'s GR handle is not on screen");
+        } });
+        steps->push_back ({ 300, [&ctx, face, others]
+        {
+            const std::string when = std::string ("a double-click on the bypassed ") + face.name + "'s handle";
+            ctx.expect (std::abs (face.comp->get (CompParamId::BusThreshold)
+                                  - compParamSpec (CompParamId::BusThreshold).hostDefault) < 1.0e-6f,
+                        when + " left the threshold at " + std::to_string (face.comp->get (CompParamId::BusThreshold)));
+            for (const auto id : compStageParams (CompStage::Bus))
+                if (id != CompParamId::BusThreshold)
+                    ctx.expect (std::abs (face.comp->get (id) - others->get (id)) < 1.0e-6f,
+                                when + " moved " + symbolOf (id) + " to " + std::to_string (face.comp->get (id)));
+            ctx.expect (! face.engaged->load(), when + " engaged the compressor");
         } });
     }
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });

@@ -417,6 +417,11 @@ BusComponent::BusComponent (Bus& b, Session& s, AudioEngine& e, int idx)
                                   bus.strip.compEnabled.store (true, std::memory_order_release);
                                   if (compHeaderBtn != nullptr) compHeaderBtn->refresh();
                               };
+    compSrc.bypass         = [this]
+                              {
+                                  bus.strip.compEnabled.store (false, std::memory_order_release);
+                                  if (compHeaderBtn != nullptr) compHeaderBtn->refresh();
+                              };
     // Fader-side GR LED (matches channel-strip grammar): slim widget that
     // shows only the GR bar + threshold-drag handle, glued next to the
     // level meter to the right of the fader. The handle travels the bus

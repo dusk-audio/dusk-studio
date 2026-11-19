@@ -29,6 +29,7 @@ public:
         std::function<void()>      resetThreshold;    // dbl-click: the plug-in's default
         std::function<bool()>      isEngaged;         // controls triangle colour
         std::function<void()>      autoEnable;        // touching threshold auto-enables the comp
+        std::function<void()>      bypass;            // dbl-click undoes its first press's autoEnable
         float floorDb   = -60.0f;                     // bottom of IN-meter scale
         float ceilingDb =   0.0f;                     // top of IN-meter scale
     };
@@ -146,6 +147,7 @@ private:
     bool hasCaptions = false;            // computed in resized(); paint reads without re-querying bounds
 
     bool draggingThreshold = false;
+    bool bypassedBeforeGesture = false;
     bool showInputBar = true;
     bool showHandle   = true;
     bool handleOnRight = false;

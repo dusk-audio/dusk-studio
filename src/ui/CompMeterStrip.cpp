@@ -36,6 +36,7 @@ CompMeterStrip::CompMeterStrip (Track& t)
           /*resetThreshold*/ [&t] { comp::resetTrackRole (t.strip, comp::Role::Threshold); },
           /*isEngaged*/      [&t] { return t.strip.compEnabled.load (std::memory_order_relaxed); },
           /*autoEnable*/     [&t] { t.strip.armComp(); },
+          /*bypass*/         [&t] { t.strip.compEnabled.store (false, std::memory_order_relaxed); },
       })
 {
 }
@@ -478,8 +479,14 @@ void CompMeterStrip::paint (juce::Graphics& g)
 
 void CompMeterStrip::mouseDown (const juce::MouseEvent& e)
 {
-    // pure-GR mode has no threshold drag; a right-click is the owner's menu.
-    if (! showHandle || e.mods.isPopupMenu()) return;
+    // A right-click is the owner's menu.
+    if (e.mods.isPopupMenu()) return;
+    // A double-click arrives on its second release, after both of its presses
+    // have engaged the comp, so it puts back the state from before the first.
+    if (e.getNumberOfClicks() == 1)
+        bypassedBeforeGesture = src.isEngaged && ! src.isEngaged();
+    // pure-GR mode has no threshold drag.
+    if (! showHandle) return;
     // Hit area = union of bar + handle column so clicks land whichever
     // side the triangle is on. Without this, flipping handleOnRight=true
     // (channel-strip fader-side layout) broke drag because the old test
@@ -521,6 +528,7 @@ void CompMeterStrip::mouseDoubleClick (const juce::MouseEvent& e)
 {
     if (e.mods.isPopupMenu()) return;
     if (src.resetThreshold) src.resetThreshold();
+    if (bypassedBeforeGesture && src.bypass) src.bypass();
     sampleControls();
     lookChanged();
     repaint();

@@ -568,6 +568,11 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
                                   params.compEnabled.store (true, std::memory_order_relaxed);
                                   if (compHeaderBtn != nullptr) compHeaderBtn->refresh();
                               };
+    compSrc.bypass         = [this]
+                              {
+                                  params.compEnabled.store (false, std::memory_order_relaxed);
+                                  if (compHeaderBtn != nullptr) compHeaderBtn->refresh();
+                              };
     // Fader-side GR LED (matches channel + bus grammar). Slim GR-only widget
     // with the threshold-drag handle on the right side, glued next to the
     // level meter. The handle travels the bus threshold's whole host range,
