@@ -513,6 +513,28 @@ TEST_CASE ("Channel strip: the processed buffer trails its input by the latency 
     }
 }
 
+TEST_CASE ("Channel strip: the latency it reports is the compensation it applies, not one waiting for a silence", "[pdc][channel-strip][print]")
+{
+    const bool stereo = GENERATE (false, true);
+    static constexpr int kApplied = 64, kWaiting = 512;
+    CAPTURE (stereo);
+    StripPdcHarness rig { stereo, kApplied };
+    for (int block = 0; block < 40; ++block) { rig.signal (block); rig.run(); }
+    REQUIRE (rig.strip.getProcessedLatencySamples() == kApplied);
+
+    // An input that never falls silent keeps the delay it has.
+    rig.strip.setPdcCompensationSamples (kWaiting);
+    for (int block = 40; block < 52; ++block) { rig.signal (block); rig.run(); }
+    REQUIRE (rig.strip.getPdcCompensationSamples() == kWaiting);
+    CHECK (rig.strip.getProcessedLatencySamples() == kApplied);
+
+    rig.silence();
+    for (int block = 0; block < (kApplied + kBlock - 1) / kBlock + 1; ++block) rig.run();
+    rig.signal (0);
+    rig.run();
+    CHECK (rig.strip.getProcessedLatencySamples() == kWaiting);
+}
+
 TEST_CASE ("Channel insert LED preserves the wet path timing through both transitions", "[pdc][channel-strip][insert-led]")
 {
     const bool stereo = GENERATE (false, true);

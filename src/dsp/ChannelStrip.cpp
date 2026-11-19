@@ -930,8 +930,7 @@ int ChannelStrip::getProcessedLatencySamples() const noexcept
     // one fading it out is heading for none.
     const auto& stage = compStageBlock();
     const int comp = stage.write && stage.alignDir >= 0 ? stage.latency : 0;
-    return std::clamp (insert, 0, kMaxPdcSamples) + getPdcCompensationSamples()
-         + osLatencySamples + comp;
+    return std::clamp (insert, 0, kMaxPdcSamples) + pdcAppliedSamples + osLatencySamples + comp;
 }
 
 // While the dry is (even partly) aligned, the zeros stand in for the latency's

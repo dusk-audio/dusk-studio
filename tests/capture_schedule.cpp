@@ -190,6 +190,38 @@ TEST_CASE ("CaptureSchedule forgets spans behind the horizon and drops the oldes
     CHECK (read (schedule, 0, 1'000'000).empty());
 }
 
+TEST_CASE ("CaptureSchedule starts a new span rather than let one outgrow its length",
+           "[record][print]")
+{
+    static constexpr std::int64_t kLongest = CaptureSchedule::kLongestSpan;
+    static constexpr std::int64_t kTimeline = 7000;
+    CaptureSchedule schedule;
+    schedule.add ({ 0, CaptureSchedule::kLongestSpan - 100, 0, kTimeline, false, false });
+    schedule.add ({ kLongest - 100, 100, 0, kTimeline + kLongest - 100, false, false });
+    REQUIRE (schedule.size() == 1);
+    // The next block of the same linear take.
+    schedule.add ({ kLongest, 256, 0, kTimeline + kLongest, false, false });
+    schedule.add ({ kLongest + 256, 256, 0, kTimeline + kLongest + 256, false, false });
+    REQUIRE (schedule.size() == 2);
+
+    const auto parts = read (schedule, kLongest - 10, kLongest + 300);
+    REQUIRE (parts.size() == 2);
+    CHECK (parts[0].inputStart == kLongest - 10);
+    CHECK (parts[0].length == 10);
+    CHECK (parts[0].timelineStart == kTimeline + kLongest - 10);
+    CHECK (parts[1].inputStart == kLongest);
+    CHECK (parts[1].length == 300);
+    CHECK (parts[1].timelineStart == kTimeline + kLongest);
+    for (const auto& part : parts)
+    {
+        CHECK_FALSE (part.startsPass);
+        CHECK_FALSE (part.endsPass);
+    }
+
+    schedule.forgetBefore (kLongest);
+    CHECK (schedule.size() == 1);
+}
+
 TEST_CASE ("CaptureSchedule read late keeps what the input capture kept, in its passes and places",
            "[record][print]")
 {

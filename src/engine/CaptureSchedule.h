@@ -36,6 +36,9 @@ public:
     // of passes fits in the capacity with room for a seek in each.
     static constexpr std::int64_t kHorizonSamples = 40960;
     static constexpr int kCapacity = 1024;
+    // A span stops growing here and the next one carries on from it, so a
+    // linear take of any length never overflows a span's length.
+    static constexpr int kLongestSpan = 1 << 30;
 
     void reset() noexcept
     {
@@ -55,7 +58,8 @@ public:
             if (span.inputStart == last.inputEnd()
                 && span.passOrdinal == last.passOrdinal
                 && span.timelineStart == last.timelineStart + last.length
-                && ! last.endsPass && ! span.startsPass)
+                && ! last.endsPass && ! span.startsPass
+                && span.length <= kLongestSpan - last.length)
             {
                 last.length += span.length;
                 last.endsPass = span.endsPass;
