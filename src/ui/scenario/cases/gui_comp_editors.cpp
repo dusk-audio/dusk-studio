@@ -425,5 +425,372 @@ const ScenarioRegistrar masteringCompEditor { Scenario {
     {}, {}, 30000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runMasteringCompEditor (host, ctx); }
 } };
+
+std::string symbolOf (CompParamId id) { return compParamSpec (id).symbol; }
+
+// A press anywhere on a channel strip selects its track and focuses the strip.
+void keepTrackFocus (GuiHost& host, ScenarioContext& ctx)
+{
+    ctx.cleanup ([&host, track = host.tapeSelectedTrack(), strip = host.consoleFocusedStrip()]
+                 { host.restoreTrackFocus (track, strip); });
+}
+
+// Every value a strip stores away from its default, the handle's and knobs'
+// included, so a reset that misses one shows.
+void moveEveryStripValue (CompParams& comp)
+{
+    for (const auto id : compStageParams (CompStage::Strip))
+    {
+        const auto& spec = compParamSpec (id);
+        comp.set (id, spec.hostMax - spec.hostDefault > 1.0e-6f ? spec.hostMax : spec.hostMin);
+    }
+}
+
+void expectStripDefaults (ScenarioContext& ctx, const CompParams& comp, const std::string& when)
+{
+    for (const auto id : compStageParams (CompStage::Strip))
+        ctx.expect (std::abs (comp.get (id) - compParamSpec (id).hostDefault) < 1.0e-6f,
+                    when + " left " + symbolOf (id) + " at " + std::to_string (comp.get (id))
+                        + ", not the plug-in's " + std::to_string (compParamSpec (id).hostDefault));
+}
+
+// Reset comp in a channel strip's COMP menu returns every strip compressor
+// value, in all three modes, to the plug-in's default, and leaves the mode, the
+// mode the user picked and the status light as they were, engaged or not.
+std::optional<ScenarioResult> runCompResetStrip (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& track = ctx.session().track (kStripIndex);
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires stopped transport and no modal");
+    if (track.frozen.load()) return ScenarioResult::skip ("requires an unfrozen first track");
+    if (readyStrip (host, ctx) == nullptr) return ScenarioResult::fail ("channel strip is unavailable");
+    auto& strip = track.strip;
+    keepComp (ctx, strip.comp);
+    ctx.keep (strip.compEnabled);
+    ctx.keep (strip.compMode);
+    ctx.keep (strip.compModePicked);
+    const bool originalCompact = host.setStripCompact (kStripIndex, false);
+    ctx.cleanup ([&host, originalCompact]
+    {
+        drainModals (host);
+        host.setStripCompact (kStripIndex, originalCompact);
+    });
+    keepTrackFocus (host, ctx);
+    strip.comp.resetToDefaults (CompStage::Strip);
+    strip.compEnabled.store (true);
+    strip.compModePicked.store (true);
+    strip.compMode.store (0);
+
+    // One knob a mode on the face, then every other value as the editor, MIDI
+    // or a loaded session leaves it.
+    const auto moved = [&host, &ctx, &strip] (CompParamId id)
+    {
+        ctx.expect (host.dragStripComp (Kind::Channel, kStripIndex, symbolOf (id), 60),
+                    "the strip's " + symbolOf (id) + " knob is not on screen");
+        ctx.expect (std::abs (strip.comp.get (id) - compParamSpec (id).hostDefault) > 1.0e-6f,
+                    "a drag on the strip's " + symbolOf (id) + " knob left it at its default");
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 300, [moved, &strip]
+    {
+        moved (CompParamId::OptoGain);
+        strip.compMode.store (2);
+    } });
+    steps->push_back ({ 300, [moved, &strip]
+    {
+        moved (CompParamId::VcaOutput);
+        strip.compMode.store (1);
+    } });
+    steps->push_back ({ 300, [&host, &ctx, &strip, moved]
+    {
+        moved (CompParamId::FetAttack);
+        CompParams faceMoves;
+        faceMoves.copyFrom (strip.comp);
+        moveEveryStripValue (strip.comp);
+        for (const auto id : { CompParamId::OptoGain, CompParamId::VcaOutput, CompParamId::FetAttack })
+            strip.comp.set (id, faceMoves.get (id));
+        ctx.expect (strip.compEnabled.load() && strip.compMode.load() == 1 && strip.compModePicked.load(),
+                    "the strip is not an engaged FET strip with its mode picked before the reset");
+        ctx.expect (host.clickStripModule (kStripIndex, 1, true, true), "the strip's COMP header took no right-click");
+    } });
+    steps->push_back ({ 0, [&host, &ctx] { ctx.expect (host.clickContextMenuItem ("Reset comp"), "the COMP menu has no Reset comp"); },
+        [&host] { return ! host.contextMenuItems().empty(); }, "the COMP menu did not open" });
+    steps->push_back ({ 300, [&host, &ctx, &strip]
+    {
+        expectStripDefaults (ctx, strip.comp, "Reset comp on an engaged FET strip");
+        ctx.expect (strip.compEnabled.load(), "Reset comp bypassed the compressor");
+        ctx.expect (strip.compMode.load() == 1, "Reset comp moved the mode to " + std::to_string (strip.compMode.load()));
+        ctx.expect (strip.compModePicked.load(), "Reset comp cleared the mode the user picked");
+        ctx.expect (host.stripCompLabel (kStripIndex) == "COMP - FET",
+                    "the strip face shows '" + host.stripCompLabel (kStripIndex) + "' after Reset comp");
+        // And from the other side: a bypassed VCA strip whose mode was never picked.
+        moveEveryStripValue (strip.comp);
+        strip.compEnabled.store (false);
+        strip.compMode.store (2);
+        strip.compModePicked.store (false);
+    } });
+    steps->push_back ({ 300, [&host, &ctx]
+    { ctx.expect (host.clickStripModule (kStripIndex, 1, true, true), "the strip's COMP header took no second right-click"); } });
+    steps->push_back ({ 0, [&host, &ctx] { ctx.expect (host.clickContextMenuItem ("Reset comp"), "the COMP menu has no Reset comp"); },
+        [&host] { return ! host.contextMenuItems().empty(); }, "the COMP menu did not open again" });
+    steps->push_back ({ 300, [&ctx, &strip]
+    {
+        expectStripDefaults (ctx, strip.comp, "Reset comp on a bypassed VCA strip");
+        ctx.expect (! strip.compEnabled.load(), "Reset comp engaged the compressor");
+        ctx.expect (strip.compMode.load() == 2, "Reset comp moved the VCA mode to " + std::to_string (strip.compMode.load()));
+        ctx.expect (! strip.compModePicked.load(), "Reset comp marked the mode picked");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar compResetStrip { Scenario {
+    "gui.comp_reset_strip", { "gui", "strip", "comp" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runCompResetStrip (host, ctx); }
+} };
+
+// On a bypassed channel strip, dragging the gain-reduction handle, turning a
+// knob or switching LIMIT on engages the compressor and switching LIMIT off does
+// not. A double-click on an engaged strip's handle returns only that control to
+// its default and leaves the compressor engaged.
+std::optional<ScenarioResult> runCompStripFaceEngages (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& track = ctx.session().track (kStripIndex);
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires stopped transport and no modal");
+    if (track.frozen.load()) return ScenarioResult::skip ("requires an unfrozen first track");
+    if (readyStrip (host, ctx) == nullptr) return ScenarioResult::fail ("channel strip is unavailable");
+    auto& strip = track.strip;
+    keepComp (ctx, strip.comp);
+    ctx.keep (strip.compEnabled);
+    ctx.keep (strip.compMode);
+    ctx.keep (strip.compModePicked);
+    const bool originalCompact = host.setStripCompact (kStripIndex, false);
+    ctx.cleanup ([&host, originalCompact]
+    {
+        drainModals (host);
+        host.setStripCompact (kStripIndex, originalCompact);
+    });
+    keepTrackFocus (host, ctx);
+    strip.comp.resetToDefaults (CompStage::Strip);
+    strip.compEnabled.store (false);
+    strip.compMode.store (1);
+
+    const auto value = [&strip] (CompParamId id) { return strip.comp.get (id); };
+    const auto moved = [&strip] (CompParamId id)
+    { return std::abs (strip.comp.get (id) - compParamSpec (id).hostDefault) > 1.0e-6f; };
+    // Every value but the handle's, as the double-click finds them.
+    auto others = std::make_shared<CompParams>();
+    const auto othersKept = [&ctx, &strip, others] (const std::string& when)
+    {
+        for (const auto id : compStageParams (CompStage::Strip))
+            if (id != CompParamId::OptoPeakReduction)
+                ctx.expect (std::abs (strip.comp.get (id) - others->get (id)) < 1.0e-6f,
+                            when + " moved " + symbolOf (id) + " to " + std::to_string (strip.comp.get (id)));
+    };
+
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 300, [&host, &ctx]
+    { ctx.expect (host.dragStripComp (Kind::Channel, kStripIndex, "handle", 30), "the strip's GR handle is not on screen"); } });
+    steps->push_back ({ 100, [&ctx, &strip, moved]
+    {
+        ctx.expect (moved (CompParamId::FetInput), "dragging the FET strip's handle left INPUT at its default");
+        ctx.expect (strip.compEnabled.load(), "dragging the handle did not engage the compressor");
+        strip.compEnabled.store (false);
+    } });
+    steps->push_back ({ 600, [&host, &ctx]
+    { ctx.expect (host.dragStripComp (Kind::Channel, kStripIndex, "fet_attack", 60), "the strip's FET ATK knob is not on screen"); } });
+    steps->push_back ({ 100, [&ctx, &strip, moved]
+    {
+        ctx.expect (moved (CompParamId::FetAttack), "dragging the FET ATK knob left it at its default");
+        ctx.expect (strip.compEnabled.load(), "turning a FET knob did not engage the compressor");
+        strip.compEnabled.store (false);
+        strip.compMode.store (0);
+    } });
+    steps->push_back ({ 300, [&host, &ctx]
+    { ctx.expect (host.clickStripComp (Kind::Channel, kStripIndex, "opto_limit", 1), "the strip's LIMIT switch is not on screen"); } });
+    steps->push_back ({ 100, [&ctx, &strip, value]
+    {
+        ctx.expect (value (CompParamId::OptoLimit) > 0.5f, "a click on LIMIT did not switch it on");
+        ctx.expect (strip.compEnabled.load(), "switching LIMIT on did not engage the compressor");
+        strip.compEnabled.store (false);
+    } });
+    steps->push_back ({ 700, [&host, &ctx]
+    { ctx.expect (host.clickStripComp (Kind::Channel, kStripIndex, "opto_limit", 1), "the strip's LIMIT switch is not on screen"); } });
+    steps->push_back ({ 100, [&ctx, &strip, value, others]
+    {
+        ctx.expect (value (CompParamId::OptoLimit) < 0.5f, "a second click on LIMIT did not switch it off");
+        ctx.expect (! strip.compEnabled.load(), "switching LIMIT off engaged the compressor");
+        strip.compEnabled.store (true);
+        strip.comp.set (CompParamId::OptoPeakReduction, 40.0f);
+        others->copyFrom (strip.comp);
+    } });
+    steps->push_back ({ 700, [&host, &ctx]
+    { ctx.expect (host.clickStripComp (Kind::Channel, kStripIndex, "handle", 2), "the strip's GR handle is not on screen"); } });
+    steps->push_back ({ 300, [&ctx, &strip, moved, othersKept]
+    {
+        ctx.expect (! moved (CompParamId::OptoPeakReduction), "a double-click on the engaged strip's handle left PEAK REDUCTION at "
+                                                               + std::to_string (strip.comp.get (CompParamId::OptoPeakReduction)));
+        othersKept ("a double-click on the engaged strip's handle");
+        ctx.expect (strip.compEnabled.load(), "a double-click on the handle bypassed the compressor");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar compStripFaceEngages { Scenario {
+    "gui.comp_strip_face_engages", { "gui", "strip", "comp" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runCompStripFaceEngages (host, ctx); }
+} };
+
+// On a bypassed bus and on the bypassed master, RAT, ATK, REL and MAK on the
+// strip face move their values and leave the compressor off; dragging the
+// gain-reduction handle turns it on.
+std::optional<ScenarioResult> runCompBusMasterFace (GuiHost& host, ScenarioContext& ctx)
+{
+    static constexpr int kBus = 0;
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires stopped transport and no modal");
+    const auto size = host.mainWindowSize();
+    if (size.size() < 2) return ScenarioResult::fail ("the window size is unavailable");
+    if (readyStrip (host, ctx) == nullptr) return ScenarioResult::fail ("channel strip is unavailable");
+    auto& bus = session.bus (kBus).strip;
+    auto& master = session.master();
+    keepComp (ctx, bus.comp);
+    keepComp (ctx, master.comp);
+    ctx.keep (bus.compEnabled);
+    ctx.keep (master.compEnabled);
+    ctx.cleanup ([&host, size] { host.resizeMainWindow (size[0], size[1]); });
+    // Tall enough that neither face is compact, which hides the knobs.
+    if (! host.resizeMainWindow (std::max (1440, size[0]), std::max (1000, size[1])))
+        return ScenarioResult::fail ("could not enlarge the window");
+    bus.comp.resetToDefaults (CompStage::Bus);
+    master.comp.resetToDefaults (CompStage::Bus);
+    bus.compEnabled.store (false);
+    master.compEnabled.store (false);
+
+    struct Face { Kind kind; int index; const char* name; CompParams* comp; std::atomic<bool>* engaged; };
+    const Face faces[] { { Kind::Bus, kBus, "bus", &bus.comp, &bus.compEnabled },
+                         { Kind::Master, 0, "master", &master.comp, &master.compEnabled } };
+    auto steps = std::make_shared<std::vector<Step>>();
+    for (const auto& face : faces)
+    {
+        for (const auto id : { CompParamId::BusRatio, CompParamId::BusAttack, CompParamId::BusRelease, CompParamId::BusMakeup })
+        {
+            const auto before = std::make_shared<float> (0.0f);
+            steps->push_back ({ 300, [&host, &ctx, face, id, before]
+            {
+                *before = face.comp->get (id);
+                ctx.expect (host.dragStripComp (face.kind, face.index, symbolOf (id), 150),
+                            std::string ("the ") + face.name + "'s " + symbolOf (id) + " knob is not on screen");
+            } });
+            steps->push_back ({ 100, [&ctx, face, id, before]
+            {
+                ctx.expect (std::abs (face.comp->get (id) - *before) > 1.0e-6f,
+                            std::string ("a drag on the ") + face.name + "'s " + symbolOf (id) + " knob left it at "
+                                + std::to_string (*before));
+                ctx.expect (! face.engaged->load(),
+                            std::string ("turning the ") + face.name + "'s " + symbolOf (id) + " knob engaged the compressor");
+            } });
+        }
+        steps->push_back ({ 300, [&host, &ctx, face]
+        {
+            ctx.expect (host.dragStripComp (face.kind, face.index, "handle", 30),
+                        std::string ("the ") + face.name + "'s GR handle is not on screen");
+        } });
+        steps->push_back ({ 100, [&ctx, face]
+        {
+            ctx.expect (std::abs (face.comp->get (CompParamId::BusThreshold)
+                                  - compParamSpec (CompParamId::BusThreshold).hostDefault) > 1.0e-6f,
+                        std::string ("dragging the ") + face.name + "'s handle left the threshold at its default");
+            ctx.expect (face.engaged->load(), std::string ("dragging the ") + face.name + "'s handle did not engage the compressor");
+        } });
+    }
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar compBusMasterFace { Scenario {
+    "gui.comp_bus_master_face", { "gui", "master", "comp" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runCompBusMasterFace (host, ctx); }
+} };
+
+// The Multiband face closes when a dialog opens over the window, Save As here,
+// and when the MASTERING stage is left, both from the keyboard the face leaves
+// with the window.
+std::optional<ScenarioResult> runMasteringCompEditorCloses (GuiHost& host, ScenarioContext& ctx)
+{
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI || ! DUSKSTUDIO_HAS_DUSK_DSP
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("requires the native UI and the Dusk DSP");
+   #else
+    auto& engine = ctx.engine();
+    if (! engine.getTransport().isStopped() || engine.getMasteringPlayer().isPlaying() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires stopped transport and mastering player and no modal");
+    if (! host.canEmbedPluginEditors())
+        return ScenarioResult::skip ("requires a window the compressor editor can embed into");
+    const auto size = host.mainWindowSize();
+    if (size.size() < 2) return ScenarioResult::fail ("the window size is unavailable");
+
+    keepComp (ctx, ctx.session().mastering().comp);
+    ctx.keep (ctx.session().mastering().compEnabled);
+    keepStage (host, ctx);
+    ctx.cleanup ([&host, size]
+    {
+        host.closeMasteringCompEditor();
+        drainModals (host);
+        host.resizeMainWindow (size[0], size[1]);
+    });
+    if (! host.resizeMainWindow (std::max (1440, size[0]), std::max (900, size[1])))
+        return ScenarioResult::fail ("could not widen the mastering workspace");
+    host.switchToStage (GuiHost::Stage::Mastering);
+
+    const auto drawn = [&host]
+    {
+        return host.masteringCompEditorDrawn() && host.masteringCompEditorShows ("mode").has_value();
+    };
+    const auto saveAsUp = [&host] { return host.modalText().rfind ("Save session as...", 0) == 0; };
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 300, [&host, &ctx]
+    { ctx.expect (host.clickMasteringCompHeader (true), "the MULTIBAND COMP label is not on screen"); } });
+    steps->push_back ({ 300, [&host, &ctx] { ctx.expect (host.pressPeerKey ("command + shift + S"), "the window took no Cmd+Shift+S"); },
+        drawn, "the Multiband face never drew a frame" });
+    steps->push_back ({ 0, [] {}, saveAsUp, "Cmd+Shift+S over the Multiband face did not bring up Save As" });
+    steps->push_back ({ 0, [&host, &ctx, saveAsUp]
+    {
+        ctx.expect (saveAsUp(), "Save As went down before the Multiband face closed");
+        host.closeTopModal();
+    }, [&host] { return ! host.masteringCompEditorOpen(); }, "Save As opened over the Multiband face and left it open",
+       {}, kSettleBoundMs });
+    steps->push_back ({ 300, [&host, &ctx]
+    { ctx.expect (host.clickMasteringCompHeader (true), "the MULTIBAND COMP label is not on screen after Save As"); },
+        [&host] { return host.modalStackEmpty(); }, "Save As did not close" });
+    steps->push_back ({ 300, [&host, &ctx] { ctx.expect (host.pressPeerKey ("command + 2"), "the window took no Cmd+2"); },
+        drawn, "the Multiband face did not reopen" });
+    steps->push_back ({ 0, [] {}, [&host] { return host.stageViewMatches (GuiHost::Stage::Mixing); },
+                       "Cmd+2 over the Multiband face did not switch to MIXING", {}, kSettleBoundMs });
+    runSteps (ctx, steps, [&host, &ctx]
+    {
+        ctx.waitUntil ([&host] { return ! host.masteringCompEditorOpen(); }, kSettleBoundMs,
+                       [&ctx] { ctx.complete (ctx.verdict()); },
+                       "leaving the MASTERING stage left the Multiband face open");
+    });
+    return std::nullopt;
+   #endif
+}
+
+const ScenarioRegistrar masteringCompEditorCloses { Scenario {
+    "gui.mastering_comp_editor_closes", { "gui", "mastering", "comp" }, Needs::Engine | Needs::Gui,
+    {}, {}, 30000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runMasteringCompEditorCloses (host, ctx); }
+} };
 } // namespace
 } // namespace duskstudio::scenario::gui

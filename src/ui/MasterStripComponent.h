@@ -3,6 +3,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <memory>
 #include <string>
+#include <utility>
 #include "../session/AutomationRecorder.h"
 #include "../session/Session.h"
 #include "AnalogVuMeter.h"
@@ -44,6 +45,23 @@ public:
     {
         return compMeter != nullptr && compMeter->isVisible() && ! compMeter->getBounds().isEmpty()
             && compMeter->handleShownForScenario();
+    }
+    // Where a press reaches a compressor control on the face, in this strip's
+    // coordinates: "handle", the meter's threshold handle, or a knob's parameter
+    // symbol, its value text left out. Empty while it is not showing.
+    auto compControlAreaForScenario (const std::string& control) const
+    {
+        auto area = decltype (getLocalBounds()) {};
+        if (control == "handle" && compMeter != nullptr && compMeter->isShowing())
+            area = getLocalArea (compMeter.get(), compMeter->getLocalBounds());
+        const std::pair<const decltype (compRatio)*, CompParamId> knobs[] {
+            { &compRatio, CompParamId::BusRatio },     { &compAttack, CompParamId::BusAttack },
+            { &compRelease, CompParamId::BusRelease }, { &compMakeup, CompParamId::BusMakeup },
+        };
+        for (const auto& [knob, id] : knobs)
+            if (control == compParamSpec (id).symbol && knob->isShowing())
+                area = getLocalArea (knob, knob->getLocalBounds().withTrimmedBottom (knob->getTextBoxHeight()));
+        return area;
     }
     bool faderEnabledForScenario() const { return faderSlider.isEnabled(); }
 

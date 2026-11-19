@@ -501,6 +501,14 @@ public:
     virtual bool clickCompEditorDim() = 0;
     // The COMP header's label on a channel strip, as the strip shows it.
     virtual std::string stripCompLabel (int track) const = 0;
+    // A compressor control on the face of a channel strip, a bus or the master,
+    // worked through the window as the mouse works it: "handle", the threshold
+    // handle on the gain-reduction meter, or the parameter symbol of a knob or of
+    // LIMIT ("fet_attack", "opto_limit", "bus_makeup"). A drag presses at the
+    // control's centre and lets go `pixels` higher; a click presses and lets go
+    // there `clicks` times in a row. False while the control is not on screen.
+    virtual bool dragStripComp (StripKind kind, int index, const std::string& control, int pixels) = 0;
+    virtual bool clickStripComp (StripKind kind, int index, const std::string& control, int clicks) = 0;
     virtual bool clickInsert (int track, bool right = false) = 0;
     virtual std::vector<std::string> pickerRows (bool headers) const = 0;
     virtual bool clickPickerRow (const std::string& text) = 0;
@@ -719,6 +727,9 @@ public:
     virtual int tapeMoveLineY() const = 0;
     // The strip carrying the console's focus ring, -1 when none does.
     virtual int consoleFocusedStrip() const = 0;
+    // Puts back the selected track and the focused strip a click on a strip
+    // moved, as tapeSelectedTrack and consoleFocusedStrip read them before it.
+    virtual void restoreTrackFocus (int tapeTrack, int consoleStrip) = 0;
     // What a channel strip's input selector shows; empty when it is not built.
     virtual std::string stripInputText (int track) const = 0;
     // The console strips whose insert is not the one the engine runs in their

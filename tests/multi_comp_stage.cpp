@@ -147,6 +147,19 @@ TEST_CASE ("MultiCompStage: a bypassed stage is the input delayed by its reporte
         }
 }
 
+TEST_CASE ("MultiCompStage: the delay is 73 samples at 44.1 and 48 kHz and 79 at 96 kHz", "[compressor][multicomp]")
+{
+    struct RateCase { double sr; int latency; };
+    for (const auto rate : { RateCase { 44100.0, 73 }, RateCase { 48000.0, 73 }, RateCase { 96000.0, 79 } })
+        for (const auto& k : kKinds)
+        {
+            CAPTURE (rate.sr, k.name);
+            MultiCompStage stage (k.kind);
+            stage.prepare (rate.sr, kBlock, k.channels);
+            CHECK (stage.latencySamples() == rate.latency);
+        }
+}
+
 TEST_CASE ("MultiCompStage: an engaged stage reduces a hot sine and reports it", "[compressor][multicomp]")
 {
     struct Case

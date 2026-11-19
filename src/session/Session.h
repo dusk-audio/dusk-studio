@@ -1249,7 +1249,7 @@ struct StagedTrack
     std::array<std::unique_ptr<std::vector<AutomationPoint>>, kNumAutomationParams> lanes;
 };
 
-// Bus comp = UniversalCompressor in Bus mode.
+// Bus comp = Multi-Comp 2's Bus mode, a CompStage::Bus MultiCompStage.
 struct BusParams
 {
     std::atomic<float> faderDb { 0.0f };

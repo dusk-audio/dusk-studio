@@ -9,6 +9,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include "CompMeterStrip.h"
 #include "SplitModuleButton.h"
 #include "ConsoleLayout.h"
@@ -185,6 +186,23 @@ public:
     {
         return compMeter != nullptr && compMeter->isVisible() && ! compMeter->getBounds().isEmpty()
             && compMeter->handleShownForScenario();
+    }
+    // Where a press reaches a compressor control on the face, in this strip's
+    // coordinates: "handle", the meter strip's threshold handle, or the
+    // parameter symbol of a knob or of LIMIT. Empty while it is not showing.
+    auto compControlAreaForScenario (const std::string& control) const
+    {
+        const std::pair<const Component*, CompParamId> controls[] {
+            { &optoGainKnob, CompParamId::OptoGain },     { &optoLimitButton, CompParamId::OptoLimit },
+            { &fetRatioKnob, CompParamId::FetRatio },     { &fetAttackKnob, CompParamId::FetAttack },
+            { &fetReleaseKnob, CompParamId::FetRelease }, { &fetOutputKnob, CompParamId::FetOutput },
+            { &vcaRatioKnob, CompParamId::VcaCompression }, { &vcaOutputKnob, CompParamId::VcaOutput },
+        };
+        const Component* found = control == "handle" ? compMeter.get() : nullptr;
+        for (const auto& [component, id] : controls)
+            if (control == compParamSpec (id).symbol) found = component;
+        return found != nullptr && found->isShowing() ? getLocalArea (found, found->getLocalBounds())
+                                                      : decltype (getLocalBounds()) {};
     }
 
     // Swaps the input/IN/ARM/PRINT row at the top for 4 AUX send knobs.

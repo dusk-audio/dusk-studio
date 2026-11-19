@@ -2329,6 +2329,42 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         auto* strip = owner.consoleView != nullptr ? owner.consoleView->getStripComponent (track) : nullptr;
         return strip != nullptr ? strip->compLabelForScenario() : std::string {};
     }
+    // The centre of a strip face's compressor control, in the window's coordinates.
+    bool stripCompPoint (StripKind kind, int index, const std::string& control, float& x, float& y)
+    {
+        auto* console = owner.consoleView.get();
+        const auto centre = [this, &x, &y] (auto* strip, auto area)
+        {
+            if (area.isEmpty()) return false;
+            const auto at = owner.getTopLevelComponent()->getLocalPoint (strip, area.getCentre()).toFloat();
+            x = at.x;
+            y = at.y;
+            return true;
+        };
+        if (console == nullptr) return false;
+        if (kind == StripKind::Channel)
+        {
+            auto* strip = console->getStripComponent (index);
+            return strip != nullptr && centre (strip, strip->compControlAreaForScenario (control));
+        }
+        if (kind == StripKind::Bus)
+        {
+            auto* bus = console->getBusComponent (index);
+            return bus != nullptr && centre (bus, bus->compControlAreaForScenario (control));
+        }
+        auto* master = kind == StripKind::Master ? console->getMasterStripComponent() : nullptr;
+        return master != nullptr && centre (master, master->compControlAreaForScenario (control));
+    }
+    bool dragStripComp (StripKind kind, int index, const std::string& control, int pixels) override
+    {
+        float x = 0.0f, y = 0.0f;
+        return stripCompPoint (kind, index, control, x, y) && dragAt (x, y, x, y - (float) pixels);
+    }
+    bool clickStripComp (StripKind kind, int index, const std::string& control, int clicks) override
+    {
+        float x = 0.0f, y = 0.0f;
+        return stripCompPoint (kind, index, control, x, y) && clickAt (x, y, clicks);
+    }
     bool clickCompEditorDim() override
     {
         if (! anyCompEditorOpen()) return false;
@@ -3195,6 +3231,11 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     int consoleFocusedStrip() const override
     {
         return owner.consoleView != nullptr ? owner.consoleView->getFocusedStrip() : -1;
+    }
+    void restoreTrackFocus (int tapeTrack, int consoleStrip) override
+    {
+        if (owner.consoleView != nullptr) owner.consoleView->restoreFocusForScenario (consoleStrip);
+        if (owner.tapeStrip != nullptr) owner.tapeStrip->setSelectedTrack (tapeTrack);
     }
     std::string stripInputText (int track) const override
     {
