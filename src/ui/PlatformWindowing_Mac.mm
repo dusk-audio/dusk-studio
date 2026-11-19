@@ -123,6 +123,7 @@ private:
 bool hasUsableDisplay()                                   { return true; }
 bool captureNativeWindowToPpm (std::uintptr_t, const std::string&) { return false; }
 bool sendEscapeThroughDisplayServer (std::uintptr_t) { return false; }
+bool sendPointerThroughDisplayServer (std::uintptr_t, int, int, int, bool) { return false; }
 std::optional<std::uintptr_t> topmostSiblingAtCentre (std::uintptr_t) { return std::nullopt; }
 double nativeViewBackingScale (void* nativeViewHandle)
 {

@@ -557,6 +557,63 @@ bool sendEscapeThroughDisplayServer (std::uintptr_t nativeWindow)
     return sent;
 }
 
+bool sendPointerThroughDisplayServer (std::uintptr_t nativeWindow, int x, int y, int button, bool held)
+{
+    if (nativeWindow == 0)
+        return false;
+    auto* display = ::XOpenDisplay (nullptr);
+    if (display == nullptr)
+        return false;
+
+    bool sent = false;
+    {
+        const std::lock_guard<std::mutex> lock (editorTeardownTrapMutex);
+        ScopedCaptureErrorTrap errors (display);
+        const auto window = (::Window) nativeWindow;
+        const auto root = DefaultRootWindow (display);
+        ::Window child = 0;
+        int rootX = x, rootY = y;
+        ::XTranslateCoordinates (display, window, root, x, y, &rootX, &rootY, &child);
+
+        ::XMotionEvent motion {};
+        motion.type = MotionNotify;
+        motion.display = display;
+        motion.window = window;
+        motion.root = root;
+        motion.time = CurrentTime;
+        motion.x = x;
+        motion.y = y;
+        motion.x_root = rootX;
+        motion.y_root = rootY;
+        motion.state = held ? (unsigned) Button1Mask : 0u;
+        motion.same_screen = True;
+        sent = ::XSendEvent (display, window, True,
+                             held ? (PointerMotionMask | ButtonMotionMask | Button1MotionMask) : PointerMotionMask,
+                             reinterpret_cast<::XEvent*> (&motion)) != 0;
+        if (sent && button != 0)
+        {
+            ::XButtonEvent edge {};
+            edge.type = button > 0 ? ButtonPress : ButtonRelease;
+            edge.display = display;
+            edge.window = window;
+            edge.root = root;
+            edge.time = CurrentTime;
+            edge.x = x;
+            edge.y = y;
+            edge.x_root = rootX;
+            edge.y_root = rootY;
+            edge.state = button > 0 ? 0u : (unsigned) Button1Mask;
+            edge.button = Button1;
+            edge.same_screen = True;
+            sent = ::XSendEvent (display, window, True, button > 0 ? ButtonPressMask : ButtonReleaseMask,
+                                 reinterpret_cast<::XEvent*> (&edge)) != 0;
+        }
+        sent = sent && errors.ok();
+    }
+    ::XCloseDisplay (display);
+    return sent;
+}
+
 bool captureNativeWindowToPpm (std::uintptr_t nativeWindow, const std::string& path)
 {
     if (nativeWindow == 0)

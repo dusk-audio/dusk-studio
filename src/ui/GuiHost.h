@@ -557,6 +557,27 @@ public:
     // height; empty while none is open.
     virtual std::vector<int> masteringCompEditorBounds() const = 0;
     virtual void closeMasteringCompEditor() = 0;
+    // An open compressor editor's own window as the display server holds it:
+    // on a channel strip, a bus or the master (whose index is ignored), or the
+    // mastering page's Multiband face. RGB, row by row, width * height * 3
+    // bytes; `ppm` is a file it may write. Only noCapture means the platform
+    // cannot read the editor back (anything but an X11 window on Linux).
+    struct FacePixels
+    {
+        enum class Status { noCapture, notShown, captureFailed, read };
+        Status status = Status::noCapture;
+        int width = 0, height = 0;
+        std::vector<unsigned char> rgb;
+    };
+    virtual FacePixels compEditorPixels (StripKind kind, int index, const std::filesystem::path& ppm) = 0;
+    virtual FacePixels masteringCompEditorPixels (const std::filesystem::path& ppm) = 0;
+    // The left button in the same editor, through the display server as the
+    // user's pointer reaches it: the pointer moves to x, y in the editor
+    // window's own pixels, then the button goes down (button 1), comes up (-1)
+    // or stays as it is (0), so a move between a press and a release drags.
+    // False where the editor cannot be read back, or none is open.
+    virtual bool compEditorPointer (StripKind kind, int index, float x, float y, int button) = 0;
+    virtual bool masteringCompEditorPointer (float x, float y, int button) = 0;
     virtual std::string masteringTargetText() const = 0;
     // The Mastering page's source line, and the file its waveform was last
     // pointed at (empty once cleared). Both empty before the page is built.

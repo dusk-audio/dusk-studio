@@ -2814,6 +2814,75 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     {
         if (owner.masteringView != nullptr) owner.masteringView->closeCompEditorPopup();
     }
+    // The window of an open compressor editor, or 0.
+    std::uintptr_t compEditorWindow (StripKind kind, int index, bool mastering) const
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        auto* editor = mastering ? masteringCompEditor() : compEditorHost (kind, index);
+        return editor != nullptr && editor->isOpen() ? editor->nativeWindow() : 0;
+       #else
+        (void) kind; (void) index; (void) mastering;
+        return 0;
+       #endif
+    }
+    FacePixels readFace (std::uintptr_t window, const std::filesystem::path& ppm) const
+    {
+        FacePixels face;
+       #if defined (__linux__)
+        if (nativeWaylandWindow()) return face;
+        face.status = FacePixels::Status::notShown;
+        if (window == 0) return face;
+        face.status = FacePixels::Status::captureFailed;
+        const auto file = ppm.u8string();
+        if (! platform::captureNativeWindowToPpm (window, file)) return face;
+        std::FILE* in = std::fopen (file.c_str(), "rb");
+        if (in == nullptr) return face;
+        int width = 0, height = 0, maxValue = 0;
+        const bool header = std::fscanf (in, "P6 %d %d %d", &width, &height, &maxValue) == 3
+                         && std::fgetc (in) != EOF && width > 0 && height > 0 && maxValue == 255;
+        face.rgb.resize (header ? (std::size_t) width * (std::size_t) height * 3 : 0);
+        const bool read = header && std::fread (face.rgb.data(), 1, face.rgb.size(), in) == face.rgb.size();
+        std::fclose (in);
+        if (! read) return face;
+        face.width = width;
+        face.height = height;
+        face.status = FacePixels::Status::read;
+       #else
+        (void) window;
+        (void) ppm;
+       #endif
+        return face;
+    }
+    FacePixels compEditorPixels (StripKind kind, int index, const std::filesystem::path& ppm) override
+    {
+        return readFace (compEditorWindow (kind, index, false), ppm);
+    }
+    FacePixels masteringCompEditorPixels (const std::filesystem::path& ppm) override
+    {
+        return readFace (compEditorWindow (StripKind::Master, 0, true), ppm);
+    }
+    bool facePointer (std::uintptr_t window, float x, float y, int button)
+    {
+       #if defined (__linux__)
+        if (window == 0 || nativeWaylandWindow()) return false;
+        const bool held = button <= 0 && faceButtonHeld;
+        const bool sent = platform::sendPointerThroughDisplayServer (window, (int) std::lround (x),
+                                                                     (int) std::lround (y), button, held);
+        if (button != 0) faceButtonHeld = button > 0;
+        return sent;
+       #else
+        (void) window; (void) x; (void) y; (void) button;
+        return false;
+       #endif
+    }
+    bool compEditorPointer (StripKind kind, int index, float x, float y, int button) override
+    {
+        return facePointer (compEditorWindow (kind, index, false), x, y, button);
+    }
+    bool masteringCompEditorPointer (float x, float y, int button) override
+    {
+        return facePointer (compEditorWindow (StripKind::Master, 0, true), x, y, button);
+    }
     std::string masteringTargetText() const override
     {
         return owner.masteringView != nullptr ? owner.masteringView->targetTextForScenario() : std::string();
@@ -4051,6 +4120,8 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     LaunchState launch;
     // Where a name drag went down, while the button is held.
     std::optional<std::pair<float, float>> heldTapePress;
+    // The button a compressor editor was last sent through the display server.
+    bool faceButtonHeld = false;
     std::vector<std::string> startupErrors;
     std::string startupChoiceMade;
     std::array<std::unique_ptr<ScenarioStripHandle>, Session::kNumTracks> strips;

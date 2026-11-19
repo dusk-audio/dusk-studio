@@ -1061,6 +1061,7 @@ target_sources(DuskStudio PRIVATE
     src/ui/scenario/cases/gui_audio_editor_keys.cpp
     src/ui/scenario/cases/gui_audio_takes.cpp
     src/ui/scenario/cases/gui_comp_editors.cpp
+    src/ui/scenario/cases/gui_comp_faces.cpp
     src/ui/scenario/cases/gui_idle_window.cpp
     src/ui/scenario/cases/gui_import_browser.cpp
     src/ui/scenario/cases/gui_keyboard_transport.cpp
