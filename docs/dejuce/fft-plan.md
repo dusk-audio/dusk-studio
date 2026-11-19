@@ -14,7 +14,9 @@ Branch `dejuce/fft`. One PR. Read
 DpAligner and MasteringEqEditor off JUCE's dsp::FFT and WindowingFunction,
 onto a vendored pffft behind a `dusk::audio::Fft` wrapper with
 JUCE-compatible call semantics. `juce_dsp` stays linked (ProcessSpec /
-DelayLine / Oversampling consumers remain); no gate movement expected —
+DelayLine / Oversampling consumers remain; it has since unlinked from the
+app, and only the test binary links it, for the parity tests); no gate
+movement expected —
 both files keep other JUCE tokens. tests/console_saturation.cpp keeps its
 JUCE FFT (tests may link JUCE freely).
 

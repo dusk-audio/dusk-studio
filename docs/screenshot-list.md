@@ -37,8 +37,8 @@ Panels ported to the native GUI stack are still automatic, by a different route:
 `createComponentSnapshot` cannot reach a framework child, so those panels read
 their own steady frame back as a PPM and the script converts it. Their figures
 are taken at the end of the run, after the bounce phase, which leaves the input
-meter reading - so the harness parks the compressor panel's meters at rest
-before capturing it, because that figure is of the panel and not of a signal.
+meter reading. The compressor editor is Multi-Comp 2's own window and is read
+back from it once painted, as the tape editor is.
 The startup dialog, the virtual keyboard, the audio settings panel and the audio
 editor have no meters to settle. The settings figure shows the Audio tab;
 the other sections are reached through the tabs along the top.
@@ -90,8 +90,8 @@ the other sections are reached through the tabs along the top.
 | `ed-05-piano-roll-full.png`     | L1508  | ✅   | Piano roll with MIDI notes and the velocity lane.        |
 | `ed-06-take-lanes.png`          | L1476  | ✅   | Audio editor with three take lanes under a comp drawn from all three. The harness stages three takes over the same four seconds of the Vox track, comps them (take 1, then take 3, then take 2) and opens the editor on the lanes; the takes exist only for this figure. Native panel, same route as `np-10-region-editor.png`. |
 | `fx-01-eq.png`                  | L786   | ✅   | Channel EQ editor — HPF/LPF + 4 bands, curve-shaped.      |
-| `fx-02-comp.png`                | L812   | ✅   | Channel compressor editor (VCA mode). Native panel: the app reads its own frame back and the script converts it. |
-| `vkb-01-virtual-keyboard.png`   | L595   | ✅   | Virtual MIDI keyboard. Native panel, same route as `fx-02-comp.png`. |
+| `fx-02-comp.png`                | L845   | ✅   | Channel compressor editor (VCA mode): Multi-Comp 2's own editor, 1120 × 336 at its design size, read back from its window once painted, same route as `fx-03-tape.png`. The committed figure still shows the old compressor panel and needs recapturing. |
+| `vkb-01-virtual-keyboard.png`   | L595   | ✅   | Virtual MIDI keyboard. Native panel: the app reads its own frame back and the script converts it. |
 | `fx-03-tape.png`                | L976   | ✅   | Master tape editor: Tape Machine 2's own editor, read back from its window once painted, same route as the built-in units' plug-in editors. |
 | `mm-01-automation-modes.png`    | L1598  | ✅   | A fader's automation-mode label (READ / WRITE / TOUCH).   |
 | `mm-02-mastering-chain.png`     | L1059  | ✅   | Mastering chain with EQ, comp, limiter and Phase panels. |

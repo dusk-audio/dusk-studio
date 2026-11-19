@@ -61,6 +61,47 @@ canonical source.
 
 ### Changed
 
+- **Every compressor is Multi-Comp 2.** The channel, bus, master and
+  mastering compressors run Dusk Audio's Multi-Comp 2 plug-in, compiled
+  in, so a setting sounds as it does in the plug-in. A channel strip offers
+  its Opto, FET and VCA modes, the buses and the master its Bus mode, and
+  the mastering chain its Multiband mode. **COMP** on a strip, a bus or the
+  master and **MULTIBAND COMP** on the mastering page open the plug-in's
+  own editor, which replaces Dusk Studio's old compressor panels. The strip
+  faces keep the controls that fit: the threshold handle moves Opto's peak
+  reduction, FET's input or VCA's threshold, and the knobs are the mode's
+  own, with the plug-in's ranges, readouts and defaults. On a bus and the
+  master only the threshold engages the compressor. VCA attack, release,
+  soft knee and detector are gone, as Multi-Comp 2's VCA has none, and so is
+  negative make-up on the buses and the master, which runs from 0 to 20 dB.
+  The plug-in's settings drawer is not offered, so its settings stay at the
+  plug-in's defaults.
+- **Compressors run at the plug-in's own 2x, and cost more.** Every
+  compressor runs Multi-Comp 2's own 2x oversampling, whatever **Effect
+  Oversampling** is set to, because that is where its sound was matched to
+  the plug-in. An engaged strip compressor costs roughly three times the
+  CPU the old one did. A compressor that is off is not run at all and costs
+  nothing.
+- **Compressor latency only while it is needed.** Multi-Comp 2 delays the
+  signal by about 73 samples at 44.1 and 48 kHz and 79 at 96 kHz. The
+  strips, the buses and the master each carry that delay only while one of
+  their compressors is engaged, on every path through them so the tracks
+  stay lined up, and drop it once the transport is stopped with all of them
+  off. Switching a compressor in or out while playing never moves the
+  timing. Bounces and freezes trim the delay out.
+- **Session format 12.** Sessions store Multi-Comp 2's settings for every
+  compressor, the mastering multiband's band settings included, which were
+  lost when a session was reopened before. Sessions from earlier versions
+  open with their compressor settings converted to Multi-Comp 2's controls.
+  The conversion keeps the settings as closely as the new controls allow
+  rather than matching the old sound, so an older mix can sound slightly
+  different. Dusk Studio 0.16 cannot open a session saved by 0.17.
+- **Strip EQ knob travel.** The channel EQ's band frequency and Q knobs, on
+  the strip and in the editor, travel as 4K EQ 2's do: they pass through
+  the settings the console was measured at, one at every twentieth of their
+  travel. The Q knobs turn the other way: 3 at the left end and 0.5 at the
+  right, so turning one clockwise widens the band. Stored values, MIDI and
+  Mackie Control are unchanged.
 - **Built-in units at their plug-ins' released versions.** DuskVerb 2, Tape
   Echo 2, Tape Machine 2 and Sunset now build from DuskVerb 2 1.0.1, Tape
   Echo 2 1.0.9, Tape Machine 2 1.0.12 and Sunset Circuits 1.1.0. DuskVerb 2
@@ -123,11 +164,14 @@ canonical source.
   times a second. Before, every native panel drew 60 frames a second, so the
   mini timeline kept the main window rendering with the transport stopped.
   The audio editor, the startup window, the audio settings, the SFZ library,
-  the channel compressor editor, the built-in unit editors on the strips and
+  the compressor editors, the built-in unit editors on the strips and
   the aux lane's built-in unit panel still draw every frame.
 
 ### Fixed
 
+- **Mastering multiband compressor on the audio thread** (#1045). It
+  allocated memory in every block it processed, which the audio thread must
+  never do. Multi-Comp 2, which replaces it, does not.
 - **Recording after a device stop.** Opening another session before the
   stopped device's recording cleanup runs now commits the take to its
   original session, including its MIDI recovery files.

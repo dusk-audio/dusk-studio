@@ -243,24 +243,24 @@ Cross-thread state is *always* `std::atomic` or a lock-free FIFO. Metering atomi
 
 ### The fixed channel chain
 
-Per channel: **HPF → 4-band EQ → compressor (Opto/FET/VCA) → sends → pan → bus assign → fader → mute/solo.** This order is fixed by product constraint #2 — it is not configurable, and that is the point.
+Per channel: **HPF → 4-band EQ → compressor (Multi-Comp 2: Opto/FET/VCA) → sends → pan → bus assign → fader → mute/solo.** This order is fixed by product constraint #2 — it is not configurable, and that is the point.
 
 ### Where the actual EQ/comp/tape code lives (vendored DSP)
 
-This is a gotcha that will confuse you the first time: **the EQ, compressor, and tape DSP are not in this repo.** They are "cores" shared with the Dusk Audio plugins, pulled in from the plugins repo at configure time (`-DDUSK_PLUGINS_PATH`, else fetched at the commit in `DONOR_REV`). The channel EQ `duskaudio::FourKEQDSP`, the channel, bus and master compressor `duskaudio::UniversalCompressorDSP`, the master tube EQ `duskaudio::MultiQTube`, the mastering multiband `UniversalCompressor` and the Tape Machine 2 plug-in come from there.
+This is a gotcha that will confuse you the first time: **the EQ, compressor, and tape DSP are not in this repo.** They are "cores" shared with the Dusk Audio plugins, pulled in from the plugins repo at configure time (`-DDUSK_PLUGINS_PATH`, else fetched at the commit in `DONOR_REV`). The channel EQ `duskaudio::FourKEQDSP`, the master tube EQ `duskaudio::MultiQTube`, the Multi-Comp 2 plug-in behind every compressor (channel, bus, master and the mastering multiband) and the Tape Machine 2 plug-in come from there.
 
 If the plugins repo can't be fetched, configure stops with an error. There is no build without it: the mastering EQ, loudness meter and oversampler include donor headers too. Reconfigure with network access, or point `-DDUSK_PLUGINS_PATH` at a plugins checkout.
 
 ### Feeding parameters to vendored DSP (the one pattern to copy)
 
-Every vendored core but one takes its parameters through plain setters. At the top of each block the strip reads the session atomics and calls those setters: `ChannelStrip::updateCompParameters()` in [src/dsp/ChannelStrip.cpp](../src/dsp/ChannelStrip.cpp) drives `duskaudio::UniversalCompressorDSP`, whose setters are atomic stores, and `ChannelStrip::updateEqParameters()` drives `duskaudio::FourKEQDSP` when the EQ settings have changed. Copy that shape for any new vendored processor: no string lookup, no allocation, no host notification.
+Vendored cores take their parameters through plain setters. At the top of each block the strip reads the session atomics and calls those setters: `ChannelStrip::updateEqParameters()` in [src/dsp/ChannelStrip.cpp](../src/dsp/ChannelStrip.cpp) drives `duskaudio::FourKEQDSP` when the EQ settings have changed. Copy that shape for any new vendored processor: no string lookup, no allocation, no host notification.
 
-The exception exposes its parameters through a JUCE `AudioProcessorValueTreeState` (APVTS): the mastering multiband `UniversalCompressor`. Looking up an APVTS parameter by name (`getRawParameterValue("threshold")`) is a **string hash lookup, forbidden on the audio thread.** So `MasteringChain::bindCompParams()` in [src/dsp/MasteringChain.cpp](../src/dsp/MasteringChain.cpp) caches each returned `std::atomic<float>*` once in `prepare`, `MasteringChain::updateCompParameters()` writes the session value through it with `storeAtom(cachedPtr, value)` every block, and the donor's `processBlock` reads the same atomics. Do not add another APVTS-backed processor.
+A whole donor plug-in built in as one of Dusk's DAF plug-ins follows the same rule through its stage class: `MultiCompStage` ([src/dsp/MultiCompStage.cpp](../src/dsp/MultiCompStage.cpp)) for Multi-Comp 2 and `MasterTape` ([src/dsp/MasterTape.cpp](../src/dsp/MasterTape.cpp)) for Tape Machine 2. The session holds the plug-in's parameters (`CompParams` in Multi-Comp 2's host domain, under its own symbols), the stage resolves each parameter index from its symbol once when it is built, and `pushParameters` on the audio thread sends only the values that changed at the top of each block. No processor in `src/` exposes a JUCE `AudioProcessorValueTreeState`; do not add one.
 
 ### Parameters: the two sources
 
 1. **Session atomics** — plain `std::atomic<T>` members of the param structs in [src/session/Session.h](../src/session/Session.h) (`faderDb`, `eqLfGainDb`, …). UI stores, audio loads, both `relaxed`. **New audio params go here.**
-2. **APVTS atoms in vendored DSP** — reached via the cached-pointer pattern above.
+2. **Donor plug-in parameters** — `CompParams` and `TapeParams`, session atomics too, pushed into the plug-in by its stage as above.
 
 Metering uses `mutable std::atomic<float>` on the param struct so DSP holding a `const Params*` can still update meters.
 
@@ -268,7 +268,7 @@ Metering uses `mutable std::atomic<float>` on the param struct so DSP holding a 
 
 There is **one** oversampling control: the **Effect Oversampling** dropdown in Audio Device settings. The engine drives the chosen factor (1×/2×/4×) through every processor. Individual DSP units **must not** enable their own internal oversampling — doing so double-oversamples and wastes CPU. When you add a processor, wire it to read the engine-wide setting; never call its `setInternalOversamplingEnabled`.
 
-Three units in the mastering chain run a fixed 4× of their own on purpose, and are not violations to fix. [BrickwallLimiter](../src/dsp/BrickwallLimiter.h) cannot limit true peak without it, and as the terminal stage it has nothing downstream to double-oversample. [MasteringDigitalEq](../src/dsp/MasteringDigitalEq.h) runs its biquads at 4× so its curves do not cramp near Nyquist. The [LoudnessMeter](../src/dsp/LoudnessMeter.cpp) true-peak detector measures at 4×, as ITU-R BS.1770 Annex 2 defines true peak; it is a meter and changes no audio.
+Every compressor runs at a fixed 2× of its own on purpose: each is Multi-Comp 2 at the plug-in's own Oversampling setting, where its parity with the plug-in was established, and `MultiCompStage` never writes that parameter. Three units in the mastering chain run a fixed 4× of their own on purpose. None of these are violations to fix. [BrickwallLimiter](../src/dsp/BrickwallLimiter.h) cannot limit true peak without it, and as the terminal stage it has nothing downstream to double-oversample. [MasteringDigitalEq](../src/dsp/MasteringDigitalEq.h) runs its biquads at 4× so its curves do not cramp near Nyquist. The [LoudnessMeter](../src/dsp/LoudnessMeter.cpp) true-peak detector measures at 4×, as ITU-R BS.1770 Annex 2 defines true peak; it is a meter and changes no audio.
 
 ---
 
@@ -895,10 +895,9 @@ instruments play region MIDI and live keys on tracks in different lanes.
 
 The CI job `rtsan-app` in `linux-sanitizer.yml` runs the same two on the
 ubuntu-26.04 runner, with the same suppressions, and fails on any report
-outside them; it stops before the build when `llvm-symbolizer` is missing. Two
-lines stand today: the mastering chain's multiband compressor (donor
-Multi-Comp) allocates every block (#1045), and JUCE's VST3 host, the standard
-`PluginSlot` path, locks on the audio thread (#1046).
+outside them; it stops before the build when `llvm-symbolizer` is missing. One
+line stands today: JUCE's VST3 host, the standard `PluginSlot` path, locks on
+the audio thread (#1046).
 
 #### Reader pool measurements
 
@@ -2282,7 +2281,7 @@ OVERRIDE DEPS    -DJUCE_PATH=…  -DDUSK_PLUGINS_PATH=…
 
 THE HEART        AudioEngine::audioDeviceIOCallback()              src/engine/AudioEngine.cpp
 THE DATA         src/session/Session.h
-THE PATTERN      ChannelStrip::updateCompParameters()              src/dsp/ChannelStrip.cpp
+THE PATTERN      ChannelStrip::updateEqParameters()                src/dsp/ChannelStrip.cpp
 THE NERVOUS SYS  UI writes atom → audio reads atom → audio writes meter atom → UI timer reads it
 THE RULES        Part 3's thread table — no alloc / lock / I/O / UI on the audio thread
 ```

@@ -760,7 +760,7 @@ Module unlink order, each step its own commit so a bisect lands on one module:
 
 ```
 juce_gui_extra -> juce_gui_basics -> juce_graphics
-  -> juce_audio_formats (once juce_dsp, which depends on it, is gone)
+  -> juce_audio_formats (juce_dsp, which depended on it, is gone from the app)
   -> juce_data_structures -> juce_events -> juce_core
 ```
 

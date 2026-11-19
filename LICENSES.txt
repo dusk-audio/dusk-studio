@@ -177,15 +177,16 @@ Dusk Audio plugins (donor DSP cores)
   Components used:
     - shared-daf/dsp (FourKEQDSP, the 4K EQ 2 core)
     - multi-q      (MultiQTube)
-    - multi-comp   (UniversalCompressor)
+    - multi-comp   (Multi-Comp 2: its DSP core and editor)
     - tape-echo    (Tape Echo 2 DSP and editor)
     - TapeMachine  (full tape emulation)
     - DuskVerb     (DuskVerb 2 DSP and editor)
     - sunset-circuits (Sunset Circuits DSP and editor)
     - shared/AnalogEmulation (TubeEmulation, TransformerEmulation, etc.)
     - shared-daf/fonts/BarlowCondensed (Regular and SemiBold font data embedded
-      in the DuskVerb 2 and Tape Echo 2 editors; SIL Open Font License 1.1,
-      Copyright 2017 The Barlow Project Authors; full text reproduced below)
+      in the DuskVerb 2, Tape Echo 2 and Multi-Comp 2 editors; SIL Open Font
+      License 1.1, Copyright 2017 The Barlow Project Authors; full text
+      reproduced below)
 
 dusk-fizz (SFZ / SoundFont sampler engine — powers the multisample instrument)
   Version  : 1.2.3 lineage, submodule rev

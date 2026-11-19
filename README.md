@@ -136,10 +136,12 @@ Channels 1-24 ───────────────→ 4 Aux Buses ─�
    Fader / Mute / Solo
 ```
 
-- **DSP** comes from the Dusk Audio plugin suite (4K EQ 2, Multi-Comp
-  FET/Opto/VCA, Multi-Q, Tape Machine 2, shared AnalogEmulation), so the mixer
-  and the standalone plugins share one DSP source of truth. The channel EQ runs
-  the 4K EQ 2 engine; the master tape runs Tape Machine 2 with the plugin's own
+- **DSP** comes from the Dusk Audio plugin suite (4K EQ 2, Multi-Comp 2,
+  Multi-Q, Tape Machine 2, shared AnalogEmulation), so the mixer and the
+  standalone plugins share one DSP source of truth. The channel EQ runs the 4K
+  EQ 2 engine. Every compressor runs Multi-Comp 2 with the plugin's own editor:
+  Opto, FET and VCA on the strips, Bus on the buses and the master, Multiband
+  in mastering. The master tape runs Tape Machine 2 with the plugin's own
   editor.
 - **Built-in units** are compiled into the application, so they need no scan and
   work on a fresh install: Utility, DuskVerb 2, Tape Echo 2, Tape Machine 2 and

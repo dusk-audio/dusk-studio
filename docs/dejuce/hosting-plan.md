@@ -5,7 +5,7 @@
 Status: **H1a-c merged (PR #114); H1d merged (PR #700, `f78042b7`); H3
 merged (PR #118); H4 merged (PR #119, `3c5c901`); H5a merged (PRs
 #120/#121/#122); H5b merged (PR #154, `3e9120be`); H5c merged (PR #317,
-`bc1fcecb`); H2 blocked on the donor multiband port; H6 not started.** Marc's call on
+`bc1fcecb`); H2 done on `feat/017-multi-comp-2`: the mastering multiband runs Multi-Comp 2 as a DAF built-in and `juce_dsp` no longer links into the app; H6 not started.** Marc's call on
 2026-07-26 reversed the 2026-07-01 keep-JUCE-fallback decision: the JUCE
 plugin-hosting path gets deleted entirely; native hosting must cover CLAP and
 VST3 on Linux, macOS, and Windows, LV2 on Linux and macOS, plus AU on macOS.
@@ -17,15 +17,17 @@ merges. Read `docs/dejuce/campaign.md` + the memory ledger first.
 
 - Only hosts: `INativeInstance` implementations (clap/, lv2/, vst3/, au/).
 - `juce_audio_processors` unlinked on all three platforms (module count
-  11 -> 10; `juce_audio_utils` is already gone, and `juce_audio_formats`
-  stays while `juce_dsp` depends on it).
+  11 -> 10; `juce_audio_utils` is already gone, `juce_dsp` no longer links
+  into the app (the test binary still links it for the A/B parity tests),
+  and `juce_audio_formats` is still on the app's link line).
 - Deleted: PluginSlot, PluginManager's JUCE half (AudioPluginFormatManager /
   KnownPluginList / createPluginInstance), JuceCompat.h, PluginHostMain's
   JUCE message loop + MessageManagerLock sites (the OOP child shrinks to the
   native scan sandbox — the shm/futex layer is already tri-platform),
   JUCE_PLUGINHOST_* defines.
 - Donor JUCE processors out of the app: TapeMachineAudioProcessor and
-  UniversalCompressor (Multiband) replaced by JUCE-free cores + native UI.
+  UniversalCompressor (Multiband) replaced by the Tape Machine 2 and
+  Multi-Comp 2 DAF built-ins with the plug-ins' own editors. DONE.
 - DuskMultisampleProcessor re-homed off juce::AudioPluginInstance.
 
 ## Ground truth (2026-07-26 scouts)
@@ -38,7 +40,9 @@ merges. Read `docs/dejuce/campaign.md` + the memory ledger first.
   excludes Multiband.
 - Remaining JUCE donor in-app: UniversalCompressor mode 7 Multiband
   (MasteringChain bindCompParams + MasteringView's embedded donor
-  MultibandCompressorPanel writing mb_*).
+  MultibandCompressorPanel writing mb_*). Gone since H2: every compressor,
+  the strips', buses', master's and the mastering multiband, is Multi-Comp 2
+  behind `MultiCompStage`, with its parameters in the session's `CompParams`.
 - TapeMachine2 = the donor's legacy TapeMachine plug-in wrapper (locate it by
   `PluginProcessor.cpp`, not a framework-era directory name) +
   TapeMachine/core TapeMachineDSP:
@@ -78,7 +82,10 @@ merges. Read `docs/dejuce/campaign.md` + the memory ledger first.
   `tests/tape_core_ab.cpp`. H1d (TM2 DAF UI) replaced TapePanel with the
   plug-in's own editor - see
   [hosting-h1-tape.md](hosting-h1-tape.md).
-- **H2 — Mastering multiband (donor first, then Dusk Studio).** Donor:
+- **H2 — Mastering multiband (donor first, then Dusk Studio). DONE** on
+  `feat/017-multi-comp-2` (aa9d849b): the chain runs a Multiband
+  `MultiCompStage`, the page opens Multi-Comp 2's Multiband face, and the
+  donor's JUCE compressor sources left the build. As planned: Donor:
   port Multiband mode into a JUCE-free core (extend
   multi-comp/core scope or sibling MultibandCompressorDSP; Marc's direction
   was to port Multicomp onto the Dusk framework). Merge donor main, bump
