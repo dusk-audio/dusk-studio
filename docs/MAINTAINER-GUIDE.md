@@ -348,7 +348,8 @@ Dusk Studio builds the plug-in and framework code the two pins name, so a fix
 released in either repository reaches the app only when its pin moves.
 [`scripts/check-pins.sh`](../scripts/check-pins.sh) says whether they are
 current: the newest release tag of every plug-in built in (`4k-eq-2`,
-`duskverb-2`, `tapemachine-2`, `tape-echo-2`, `sunset-circuits`, `multi-q`) must
+`duskverb-2`, `tapemachine-2`, `tape-echo-2`, `sunset-circuits`, `multi-q`,
+`multi-comp-2` once it has one) must
 be an ancestor of `DONOR_REV`, and `DAF_REV` must be on DAF's default branch,
 which must hold nothing newer outside its tests, examples, CI and documents.
 A git checkout runs it when it configures and on every build, from a cache it
@@ -356,21 +357,25 @@ refreshes twice a day, and prints a CMake warning naming each tag the pin lacks
 (`-DDUSKSTUDIO_PIN_CHECK=OFF` silences it). CI and a Windows host do not ask,
 and a build of some other target does not either. The release workflow runs it
 as a gate, on a dry run too, and stops when a pin is behind or cannot be
-checked. For the donor, ancestry is all it proves: it cannot see a path the
-pin holds back.
+checked. For the donor, ancestry is all it proves: it does not compare the
+pin's tree with the tag's.
 
 To move them:
 
 1. DAF: write the newest commit on its default branch into `DAF_REV`, then
    fetch and check that commit out in the DAF checkout CMake uses (`../DAF`,
    or `DAF_PATH`), so configure stops warning that the two differ.
-2. Donor: `DONOR_REV` names a commit on the donor's `dusk-studio-pin` branch.
-   While the strip, bus and master compressors build from the old compressor
-   core, that commit is a merge of the branch and the donor commit of the
-   newest release tag, whose tree is that commit's with `plugins/multi-comp`
-   and `plugins/shared/DryWetMixer.h` byte for byte as at `9f46563`. Push it,
-   then write its hash into `DONOR_REV` and into the two donor revisions in
-   LICENSES.txt.
+2. Donor: `DONOR_REV` names a commit on the donor's `dusk-studio-pin` branch:
+   a merge of that branch and the donor commit to pin, carrying that commit's
+   tree, so the branch moves forward without a force and every release tag
+   pinned before stays an ancestor. The commit to pin is the one the newest
+   release tag names. While no release tag holds the accessors Dusk Studio
+   embeds Multi-Comp 2 through (`plugins/multi-comp/daf-plugin/MultiCompAccess.hpp`,
+   donor PR #382), pin that tag's commit with the PR's commits on top instead.
+   Make the merge with
+   `git commit-tree <commit>^{tree} -p <dusk-studio-pin head> -p <commit>`,
+   push it, then write its hash into `DONOR_REV` and into the two donor
+   revisions in LICENSES.txt.
 3. Reconfigure both build trees, build, and run the suite. A donor that added
    a source file to a plug-in fails at link time until the file joins that
    plug-in's list in the root `CMakeLists.txt`; one that added a parameter

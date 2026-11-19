@@ -170,7 +170,7 @@ JUCE (audio framework)
              from VST3's.
 
 Dusk Audio plugins (donor DSP cores)
-  Version  : dusk-audio/plugins rev 46e232d30bfc088f5d15c90d861e3b22458b82cf
+  Version  : dusk-audio/plugins rev b71840984cbd10aca89eb73ba1a7307b7c0c8b9b
              (the DONOR_REV file at the top of the Dusk Studio source)
   License  : GPL-3.0-or-later (matches Dusk Studio)
   Path     : plugins/ in the donor checkout, fetched at configure time
@@ -4451,7 +4451,7 @@ distribute, and modify this file as you see fit.
 --------------------------------------------------------------------------------
 Barlow Condensed — SIL Open Font License 1.1
 plugins/shared-daf/fonts/BarlowCondensed/OFL.txt at dusk-audio/plugins rev
-46e232d30bfc088f5d15c90d861e3b22458b82cf
+b71840984cbd10aca89eb73ba1a7307b7c0c8b9b
 --------------------------------------------------------------------------------
 
 Copyright 2017 The Barlow Project Authors (https://github.com/jpt/barlow)

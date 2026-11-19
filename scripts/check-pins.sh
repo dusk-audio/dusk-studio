@@ -4,7 +4,7 @@
 #   - Dusk plugins: the newest release tag of every plugin Dusk Studio builds in
 #     must be an ancestor of DONOR_REV. A tag with a suffix after its version
 #     (-alpha1, -rc2) is not a release. Ancestry is all it proves: the pin's
-#     tree may still hold a path back, as it does plugins/multi-comp.
+#     tree is not compared with the tag's.
 #   - DAF has no release tags: DAF_REV must be on its main branch, and main
 #     must hold nothing newer outside its tests, examples, CI and documents.
 #
@@ -25,7 +25,7 @@ set -uo pipefail
 DONOR_URL=https://github.com/dusk-audio/dusk-audio-plugins.git
 DAF_URL=https://github.com/dusk-audio/DAF.git
 # One tag family per donor plugin compiled into the app: <family>-v<version>.
-DONOR_FAMILIES=(4k-eq-2 duskverb-2 tapemachine-2 tape-echo-2 sunset-circuits multi-q)
+DONOR_FAMILIES=(4k-eq-2 duskverb-2 tapemachine-2 tape-echo-2 sunset-circuits multi-q multi-comp-2)
 # What a DAF commit can change without changing a Dusk Studio build.
 DAF_IGNORED=(':(exclude).github' ':(exclude)tests' ':(exclude)examples' ':(exclude,glob)**/*.md')
 
