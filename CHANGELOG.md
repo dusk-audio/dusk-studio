@@ -179,6 +179,16 @@ canonical source.
 
 ### Fixed
 
+- **Takes recorded with PRINT on landed late.** A printed take is the
+  channel's output, which trails its input by the channel's delay: the
+  compressors' 73 samples at 44.1 and 48 kHz and 79 at 96 kHz while any
+  channel compressor is engaged, the EQ at **Effect Oversampling** 2x and 4x,
+  an insert plug-in's latency and the track's delay compensation. The take was
+  placed as if there were none, so it played late and combed against a dry
+  take of the same source. It now lands where the dry take does, and a punch
+  window and each loop pass hold what was played in them. PRINT is read when
+  Record is pressed, a take keeps the delay it started with, and at Stop a
+  printed take ends that delay before a dry one.
 - **Mastering multiband compressor on the audio thread** (#1045). It
   allocated memory in every block it processed, which the audio thread must
   never do. Multi-Comp 2, which replaces it, does not.

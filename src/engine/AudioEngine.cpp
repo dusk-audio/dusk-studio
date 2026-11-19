@@ -1513,6 +1513,34 @@ void AudioEngine::advanceCompStages (bool transportStopped, int numSamples) noex
                              transportStopped, numSamples);
 }
 
+void AudioEngine::capturePrinted (int track, const float* left, const float* right,
+                                  const PrintCapture& print, int numSamples, bool loop) noexcept
+{
+    // This block's strip output is its input from print.delay samples ago.
+    const auto outputFrom = captureClock - print.delay;
+    captureSchedule.forEachIn (std::max (outputFrom, print.from), outputFrom + numSamples,
+        [&] (const CaptureSchedule::Span& kept) noexcept
+        {
+            const int offset = (int) (kept.inputStart - outputFrom);
+            const float* writeL = left + offset;
+            const float* writeR = right != nullptr ? right + offset : nullptr;
+            if (! loop)
+            {
+                recordManager.writeInputBlock (track, writeL, writeR, kept.length);
+                return;
+            }
+            RecordManager::LoopCaptureSpan span;
+            span.passOrdinal = kept.passOrdinal;
+            span.timelineStart = kept.timelineStart;
+            span.callbackBaseOffset = offset;
+            span.inputOffset = offset;
+            span.numSamples = kept.length;
+            span.startsPass = kept.startsPass;
+            span.endsPass = kept.endsPass;
+            recordManager.writeInputBlock (track, writeL, writeR, kept.length, &span);
+        });
+}
+
 void AudioEngine::applyMasterPdcTargetsNow() noexcept
 {
     recomputePdc();
@@ -3084,6 +3112,11 @@ void AudioEngine::record()
     }
 
     lastBlockWasLoopRecording = false;
+    printCaptures = {};
+    captureSchedule.reset();
+    captureClock = 0;
+    anyPrintCapture = false;
+    longestPrintDelay = 0;
 
     std::optional<std::int64_t> linearMidiEndSample;
     if (! loopPlan.enabled && transport.isPunchEnabled())
@@ -8333,9 +8366,18 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         // Tell the strip whether the recorder is going to ask for the
         // post-effects buffer this block - if so, the strip MUST run its
         // DSP even when it's not passing to master. Otherwise we let it
-        // skip the heavy pass to save CPU on silent tracks.
-        const bool needPrintBuffer = isRecording && armed && deviceInput != nullptr
-                                  && session.track (t).printEffects.load (std::memory_order_relaxed);
+        // skip the heavy pass to save CPU on silent tracks. PRINT is read
+        // once, at the track's first block of the take, so the take never
+        // switches between its input and the strip's delayed output.
+        auto& print = printCaptures[(size_t) t];
+        if (isRecording && armed && deviceInput != nullptr && ! print.latched)
+        {
+            print.latched = true;
+            print.print = session.track (t).printEffects.load (std::memory_order_relaxed);
+            print.from = captureClock;
+            anyPrintCapture = anyPrintCapture || print.print;
+        }
+        const bool needPrintBuffer = isRecording && armed && deviceInput != nullptr && print.print;
         strips[(size_t) t]->setNeedsProcessedMono (needPrintBuffer);
 
         // Stereo input source for stereo tracks. Two paths:
@@ -8433,6 +8475,58 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
 
     perfLap (PerfSections::kStrips);
 
+    // The part of this block a linear take keeps - from activeRecordStart
+    // (past count-in and pre-roll) and inside the punch window - shared by
+    // every armed track. Outside samples are discarded, NOT written as zeros,
+    // so the WAV's frame count equals the punch window length. Loop capture
+    // uses the immutable per-pass spans instead.
+    int linearCaptureOffset = 0;
+    int linearCaptureLength = 0;
+    if (recordManagerActive && ! loopRecordingActive)
+    {
+        const auto recStart = activeRecordStart.load (std::memory_order_relaxed);
+        std::int64_t effIn  = recStart;
+        std::int64_t effOut = std::numeric_limits<std::int64_t>::max();
+        if (transport.isPunchEnabled())
+        {
+            const auto pIn  = transport.getPunchIn();
+            const auto pOut = transport.getPunchOut();
+            if (pOut > pIn)
+            {
+                effIn  = std::max (effIn, pIn);
+                effOut = pOut;
+            }
+            else
+            {
+                effIn = effOut;
+            }
+        }
+
+        const auto sliceStart = std::max (blockStartSamples, effIn);
+        const auto sliceEnd   = std::min (blockStartSamples + numSamples, effOut);
+        if (sliceEnd > sliceStart)
+        {
+            linearCaptureOffset = (int) (sliceStart - blockStartSamples);
+            linearCaptureLength = (int) (sliceEnd - sliceStart);
+        }
+    }
+
+    // What the input capture keeps of this block, so a printed track keeps
+    // the same input samples, passes and positions when its strip delivers
+    // them.
+    if (recordManagerActive && anyPrintCapture)
+    {
+        if (loopRecordingActive)
+            forEachRecordCaptureSpan ([this] (const RecordManager::LoopCaptureSpan& span) noexcept
+            {
+                captureSchedule.add ({ captureClock + span.inputOffset, span.numSamples, span.passOrdinal,
+                                       span.timelineStart, span.startsPass, span.endsPass });
+            });
+        else if (linearCaptureLength > 0)
+            captureSchedule.add ({ captureClock + linearCaptureOffset, linearCaptureLength, 0,
+                                   blockStartSamples + linearCaptureOffset, false, false });
+    }
+
     // Post-DSP serial tail: metering + recording (audio thread).
     const double auditionRate = currentSampleRate.load (std::memory_order_relaxed);
     for (int t = 0; t < Session::kNumTracks; ++t)
@@ -8480,26 +8574,21 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
 
         // Recording capture - armed tracks always commit their input to
         // disk while recording. By default the raw deviceInput is written;
-        // when `printEffects` is engaged, the post-EQ/post-comp buffer that
-        // the strip just produced is written instead, "printing" the
-        // channel-strip processing to the WAV.
-        //
-        // Punch: when transport.isPunchEnabled(), only samples whose timeline
-        // position lies inside [punchIn, punchOut) are committed. The block
-        // is sliced to the intersection of [blockStart, blockEnd) and the
-        // punch window; outside samples are silently discarded (NOT written
-        // as zeros, so the WAV's frame count equals the punch window length).
+        // when the take prints (PRINT was on at its start), the post-EQ/
+        // post-comp buffer that the strip just produced is written instead,
+        // "printing" the channel-strip processing to the WAV.
         if (isRecording && job.armed && job.deviceInput != nullptr)
         {
-            const bool printEfx = session.track (t).printEffects.load (std::memory_order_relaxed);
-
             // Default sources: deviceInput on L; deviceInputR on R for stereo
-            // tracks (resolved earlier as monoInR). printEffects swaps both
-            // L and R to the strip's post-effect buffers when available.
+            // tracks (resolved earlier as monoInR).
             const float* recL = job.deviceInput;
             const float* recR = job.stereoInput ? job.monoInR : nullptr;
-            if (printEfx)
+            auto& print = printCaptures[(size_t) t];
+            if (print.print)
             {
+                // The strip's post-effect buffers, both L and R. A strip
+                // resting on a silent input produced none, and its output
+                // would be that silence.
                 auto& strip = *strips[(size_t) t];
                 if (auto* processed = strip.getLastProcessedMono();
                     processed != nullptr
@@ -8509,9 +8598,15 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                     if (job.stereoInput)
                         recR = strip.getLastProcessedR();  // may be nullptr -> recorder duplicates L
                 }
+                if (print.delay < 0)
+                {
+                    print.delay = (int) std::min<std::int64_t> (strip.getProcessedLatencySamples(),
+                                                                CaptureSchedule::kHorizonSamples);
+                    longestPrintDelay = std::max (longestPrintDelay, print.delay);
+                }
+                capturePrinted (t, recL, recR, print, numSamples, loopRecordingActive);
             }
-
-            if (loopRecordingActive)
+            else if (loopRecordingActive)
             {
                 forEachRecordCaptureSpan (
                     [&] (const RecordManager::LoopCaptureSpan& span) noexcept
@@ -8523,44 +8618,20 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                             t, writeL, writeR, span.numSamples, &span);
                     });
             }
-            else
+            else if (linearCaptureLength > 0)
             {
-                // Unified linear write-gate - honours BOTH:
-                //   - activeRecordStart (count-in/pre-roll)
-                //   - punch-in / punch-out
-                // Loop capture uses the immutable per-pass spans above.
-                const auto recStart = activeRecordStart.load (std::memory_order_relaxed);
-                std::int64_t effIn  = recStart;
-                std::int64_t effOut = std::numeric_limits<std::int64_t>::max();
-                if (transport.isPunchEnabled())
-                {
-                    const auto pIn  = transport.getPunchIn();
-                    const auto pOut = transport.getPunchOut();
-                    if (pOut > pIn)
-                    {
-                        effIn  = std::max (effIn, pIn);
-                        effOut = pOut;
-                    }
-                    else
-                    {
-                        effIn = effOut;
-                    }
-                }
-
-                const auto blockEnd = blockStartSamples + numSamples;
-                const auto sliceStart = std::max (blockStartSamples, effIn);
-                const auto sliceEnd   = std::min (blockEnd, effOut);
-                if (sliceEnd > sliceStart)
-                {
-                    const int writeOffset = (int) (sliceStart - blockStartSamples);
-                    const int writeLength = (int) (sliceEnd - sliceStart);
-                    const float* writeL = recL + writeOffset;
-                    const float* writeR = recR != nullptr ? recR + writeOffset : nullptr;
-                    recordManager.writeInputBlock (t, writeL, writeR, writeLength);
-                }
+                const float* writeL = recL + linearCaptureOffset;
+                const float* writeR = recR != nullptr ? recR + linearCaptureOffset : nullptr;
+                recordManager.writeInputBlock (t, writeL, writeR, linearCaptureLength);
             }
         }
 
+    }
+
+    if (recordManagerActive)
+    {
+        captureClock += numSamples;
+        captureSchedule.forgetBefore (captureClock - longestPrintDelay);
     }
 
     perfLap (PerfSections::kMeterRecordTail);

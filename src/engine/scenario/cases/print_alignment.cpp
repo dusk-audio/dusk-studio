@@ -1,0 +1,567 @@
+#include "../Scenario.h"
+#include "../ScenarioContext.h"
+#include "../../AudioEngine.h"
+#include "../../audiofile/FileReader.h"
+#include "../../../session/Session.h"
+#include "../../../dsp/ChannelStrip.h"
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstdint>
+#include <optional>
+#include <string>
+#include <vector>
+
+// A take recorded with PRINT on is the channel strip's output, which trails
+// the input by the strip's delay: the compressors' stage latency, the
+// oversampled EQ, an insert's latency and the delay compensation the track
+// carries. These record the same clicks on a dry and a printed track and find
+// them on the same samples.
+namespace duskstudio::scenario
+{
+namespace
+{
+constexpr double kRate = ScenarioContext::kSampleRate;
+constexpr int kFrames = ScenarioContext::kBlockSize;
+constexpr int kDry = 0;
+constexpr int kPrinted = 1;
+constexpr int kOther = 2;
+constexpr float kClick = 0.5f;
+
+std::string str (std::int64_t v) { return std::to_string (v); }
+
+// Input fed to the engine a block at a time: silence with a click at each
+// listed input sample, counted from the first block fed, on input 1 (left) and
+// input 2 (right).
+struct Feed
+{
+    std::vector<std::int64_t> left, right;
+    std::int64_t fed = 0;
+    std::array<float, kFrames> inL {}, inR {}, outL {}, outR {};
+
+    void blocks (AudioEngine& engine, int count)
+    {
+        for (int block = 0; block < count; ++block)
+        {
+            inL.fill (0.0f);
+            inR.fill (0.0f);
+            for (const auto at : left)
+                if (at >= fed && at < fed + kFrames) inL[(std::size_t) (at - fed)] = kClick;
+            for (const auto at : right)
+                if (at >= fed && at < fed + kFrames) inR[(std::size_t) (at - fed)] = kClick;
+            const float* inputs[] = { inL.data(), inR.data() };
+            float* outputs[] = { outL.data(), outR.data() };
+            engine.audioDeviceIOCallback (inputs, 2, outputs, 2, kFrames, {});
+            fed += kFrames;
+        }
+    }
+};
+
+struct Click
+{
+    std::int64_t at = 0;
+    bool inverted = false;
+    bool operator== (const Click& other) const noexcept
+    {
+        return at == other.at && inverted == other.inverted;
+    }
+};
+
+std::string describe (const std::vector<Click>& clicks)
+{
+    std::string text;
+    for (const auto& click : clicks)
+        text += (text.empty() ? "" : ", ") + str (click.at) + (click.inverted ? " (-)" : " (+)");
+    return text.empty() ? "none" : text;
+}
+
+// A take channel's clicks on the timeline: each sample that stands out of the
+// silence and is the largest within 8 samples either side. Clicks are fed at
+// least 20 samples apart.
+std::vector<Click> clicksIn (const AudioTake& take, int channel)
+{
+    std::vector<Click> clicks;
+    auto reader = dusk::audio::FileReader::open (take.filePath());
+    if (reader == nullptr) return clicks;
+    const auto frames = take.lengthInSamples;
+    std::vector<float> left ((std::size_t) frames, 0.0f), right (left);
+    float* dest[] = { left.data(), right.data() };
+    if (reader->read (dest, std::min (2, reader->info().numChannels), take.sourceOffset, frames) != frames)
+        return clicks;
+    const auto& x = channel == 0 ? left : right;
+    for (std::int64_t i = 0; i < frames; ++i)
+    {
+        const float level = std::abs (x[(std::size_t) i]);
+        if (level < 0.2f) continue;
+        bool peak = true;
+        for (auto j = std::max<std::int64_t> (0, i - 8); j < std::min (frames, i + 9) && peak; ++j)
+        {
+            const float other = std::abs (x[(std::size_t) j]);
+            peak = j < i ? other < level : (j == i || other <= level);
+        }
+        if (peak) clicks.push_back ({ take.timelineStart + i, x[(std::size_t) i] < 0.0f });
+    }
+    return clicks;
+}
+
+// The dry track records input 1 (and 2, stereo) as it arrives. The printed
+// track records its strip, which flips the polarity, so a printed click reads
+// negative, and runs a compressor set to leave a half-scale click alone.
+// Everything changed here goes back when the case ends.
+bool setUpTracks (ScenarioContext& ctx, int oversampling, bool stereo)
+{
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    ctx.cleanup ([&engine, &session, factorWas = session.oversamplingFactor.load()]
+    {
+        session.oversamplingFactor.store (factorWas);
+        engine.prepareForSelfTest (kRate, kFrames);
+    });
+    ctx.cleanup ([&engine, offsetWas = engine.getRecordingLatencyOffsetSamples()]
+    {
+        engine.setRecordingLatencyOffsetSamples (offsetWas);
+    });
+    for (auto* value : { &session.countInEnabled, &session.preRollEnabled, &session.postRollEnabled })
+    {
+        ctx.keep (*value);
+        value->store (false);
+    }
+    ctx.keep (session.deviceCaptureChannels);
+    session.deviceCaptureChannels.store (2);
+    engine.setRecordingLatencyOffsetSamples (0);
+    for (const int t : { kDry, kPrinted })
+    {
+        auto& track = session.track (t);
+        auto& strip = track.strip;
+        ctx.keep (track.printEffects);
+        ctx.keep (track.inputSourceR);
+        for (auto* value : { &strip.phaseInvert, &strip.compEnabled, &strip.eqEnabled })
+            ctx.keep (*value);
+        ctx.keep (strip.compMode);
+        ctx.cleanup ([&strip, values = strip.comp.values()] { strip.comp.setValues (values); });
+        track.mode.store ((int) (stereo ? Track::Mode::Stereo : Track::Mode::Mono));
+        track.inputSource.store (0);
+        track.inputSourceR.store (1);
+        track.recordArmed.store (true);
+        track.printEffects.store (t == kPrinted);
+        strip.phaseInvert.store (t == kPrinted);
+        strip.eqEnabled.store (false);
+        strip.compMode.store (2);
+        strip.comp.set (CompParamId::VcaThreshold, 0.0f);
+        strip.compEnabled.store (t == kPrinted);
+    }
+    session.recomputeRtCounters();
+    session.oversamplingFactor.store (oversampling);
+    engine.prepareForSelfTest (kRate, kFrames);
+    ctx.note ("strip compressor latency " + str (engine.getStripCompLatencySamples())
+              + ", oversampled EQ " + str (engine.getChannelStrip (kPrinted).getOversamplingLatencySamples()));
+    return ctx.expect (engine.getStripCompLatencySamples() > 0,
+                       "an engaged strip compressor gave the strips no latency to print through");
+}
+
+// How far the printed track's strip output trails its input.
+int stripDelay (AudioEngine& engine)
+{
+    auto& strip = engine.getChannelStrip (kPrinted);
+    return engine.getStripCompLatencySamples() + strip.getOversamplingLatencySamples()
+         + strip.getPdcCompensationSamples() + strip.getInsertPluginLatencySamples();
+}
+
+void clearTakes (ScenarioContext& ctx)
+{
+    for (const int t : { kDry, kPrinted })
+    {
+        ctx.session().track (t).regions.clear();
+        ctx.session().track (t).takes.clear();
+    }
+    ctx.engine().getPlaybackEngine().preparePlayback();
+}
+
+const AudioTake* onlyTake (ScenarioContext& ctx, int track, const std::string& leg)
+{
+    const auto& takes = ctx.session().track (track).takes;
+    if (! ctx.expect (takes.size() == 1, leg + ": track " + str (track + 1) + " holds "
+                                         + str ((std::int64_t) takes.size()) + " takes, not one"))
+        return nullptr;
+    return &takes.front();
+}
+
+const AudioTake* passTake (ScenarioContext& ctx, int track, int pass)
+{
+    for (const auto& take : ctx.session().track (track).takes)
+        if (take.provenance.loopPassOrdinal == pass) return &take;
+    ctx.expect (false, "track " + str (track + 1) + " has no take for pass " + str (pass));
+    return nullptr;
+}
+
+// The dry take holds a click at each of `at` and the printed take the same
+// clicks, flipped.
+void expectSameClicks (ScenarioContext& ctx, const AudioTake& dry, const AudioTake& printed,
+                       const std::vector<std::int64_t>& at, int channel, const std::string& leg)
+{
+    const auto dryClicks = clicksIn (dry, channel);
+    const auto printedClicks = clicksIn (printed, channel);
+    std::vector<Click> wantDry, wantPrinted;
+    for (const auto sample : at)
+    {
+        wantDry.push_back ({ sample, false });
+        wantPrinted.push_back ({ sample, true });
+    }
+    ctx.note (leg + ": dry clicks " + describe (dryClicks) + ", printed " + describe (printedClicks));
+    ctx.expect (dryClicks == wantDry, leg + ": the dry take holds clicks at " + describe (dryClicks)
+                                          + ", not at " + describe (wantDry));
+    ctx.expect (printedClicks == wantPrinted, leg + ": the printed take holds clicks at "
+                                                  + describe (printedClicks) + ", the dry take at "
+                                                  + describe (dryClicks));
+}
+
+void expectSameStart (ScenarioContext& ctx, const AudioTake& dry, const AudioTake& printed,
+                      std::int64_t start, const std::string& leg)
+{
+    ctx.expect (dry.timelineStart == start && printed.timelineStart == start,
+                leg + ": the dry take starts at " + str (dry.timelineStart) + " and the printed one at "
+                    + str (printed.timelineStart) + ", not at " + str (start));
+}
+
+// A printed take stops short of the dry one by the strip's delay: that much of
+// what was played was still in the strip when the transport stopped.
+void expectEndsShortBy (ScenarioContext& ctx, const AudioTake& dry, const AudioTake& printed,
+                        int delay, const std::string& leg)
+{
+    ctx.expect (printed.lengthInSamples == dry.lengthInSamples - delay,
+                leg + ": the printed take is " + str (printed.lengthInSamples) + " samples long and the dry one "
+                    + str (dry.lengthInSamples) + ", where the strip's delay is " + str (delay));
+}
+
+// Records from a stopped transport at `from`, the clicks `at` samples into the
+// take, and checks both takes.
+void recordFromStopped (ScenarioContext& ctx, std::int64_t from, const std::vector<std::int64_t>& at,
+                        const std::string& leg)
+{
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+    const int delay = stripDelay (engine);
+    Feed feed;
+    feed.left = at;
+    transport.setPlayhead (from);
+    engine.record();
+    if (! ctx.expect (transport.isRecording(), leg + ": Record did not start"))
+        return;
+    feed.blocks (engine, 48);
+    engine.stop();
+    const auto* dry = onlyTake (ctx, kDry, leg);
+    const auto* printed = onlyTake (ctx, kPrinted, leg);
+    if (dry == nullptr || printed == nullptr) return;
+    expectSameStart (ctx, *dry, *printed, from, leg);
+    std::vector<std::int64_t> expected;
+    for (const auto sample : at) expected.push_back (from + sample);
+    expectSameClicks (ctx, *dry, *printed, expected, 0, leg);
+    expectEndsShortBy (ctx, *dry, *printed, delay, leg);
+}
+
+// ------------------------------------------------------------------ linear
+
+// From a stopped and a rolling start, the printed take's clicks land on the
+// dry take's samples. PRINT is read when Record is pressed: switching it
+// during a take changes nothing until the next one.
+ScenarioResult printLandsWithDry (ScenarioContext& ctx, int oversampling)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& transport = engine.getTransport();
+    if (! setUpTracks (ctx, oversampling, false))
+        return ctx.verdict();
+    const int delay = stripDelay (engine);
+    ctx.note ("the printed track's strip delays its input by " + str (delay) + " samples");
+
+    recordFromStopped (ctx, 48000, { 1000, 9000 }, "from stopped");
+    clearTakes (ctx);
+
+    // A click 10 samples before Record is pressed is still inside the strip
+    // when the take starts; it must stay out of both takes.
+    {
+        const std::string leg = "from rolling";
+        static constexpr std::int64_t kFrom = 96000;
+        static constexpr int kPreBlocks = 20;
+        static constexpr std::int64_t kPress = kPreBlocks * kFrames;
+        session.track (kPrinted).inputMonitor.store (true);
+        Feed feed;
+        feed.left = { kPress - 10, kPress + 10, kPress + 6000 };
+        transport.setPlayhead (kFrom);
+        engine.play();
+        feed.blocks (engine, kPreBlocks);
+        const auto start = transport.getPlayhead();
+        engine.record();
+        if (ctx.expect (transport.isRecording(), leg + ": Record did not start while playing"))
+        {
+            feed.blocks (engine, 40);
+            engine.stop();
+            const auto* dry = onlyTake (ctx, kDry, leg);
+            const auto* printed = onlyTake (ctx, kPrinted, leg);
+            if (dry != nullptr && printed != nullptr)
+            {
+                ctx.expect (start == kFrom + kPress, leg + ": the transport was at " + str (start)
+                                                         + " when Record was pressed");
+                expectSameStart (ctx, *dry, *printed, start, leg);
+                expectSameClicks (ctx, *dry, *printed, { start + 10, start + 6000 }, 0, leg);
+                expectEndsShortBy (ctx, *dry, *printed, delay, leg);
+            }
+        }
+        session.track (kPrinted).inputMonitor.store (false);
+        clearTakes (ctx);
+    }
+
+    {
+        const std::string leg = "PRINT switched during the take";
+        static constexpr std::int64_t kFrom = 144000;
+        Feed feed;
+        feed.left = { 1000, 8000 };
+        transport.setPlayhead (kFrom);
+        engine.record();
+        if (ctx.expect (transport.isRecording(), leg + ": Record did not start"))
+        {
+            feed.blocks (engine, 16);
+            session.track (kPrinted).printEffects.store (false);
+            session.track (kDry).printEffects.store (true);
+            feed.blocks (engine, 24);
+            engine.stop();
+            session.track (kPrinted).printEffects.store (true);
+            session.track (kDry).printEffects.store (false);
+            const auto* dry = onlyTake (ctx, kDry, leg);
+            const auto* printed = onlyTake (ctx, kPrinted, leg);
+            if (dry != nullptr && printed != nullptr)
+                expectSameClicks (ctx, *dry, *printed, { kFrom + 1000, kFrom + 8000 }, 0, leg);
+        }
+    }
+    return ctx.verdict();
+}
+
+// A take keeps the delay its strip had when it started. The first compressor
+// engaged while recording brings the strips' latency in, and the printed
+// take, which never jumps, carries the rest of the way that much later.
+ScenarioResult printKeepsItsStartingDelay (ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& transport = engine.getTransport();
+    if (! setUpTracks (ctx, 1, false))
+        return ctx.verdict();
+    const int stageLatency = engine.getStripCompLatencySamples();
+    session.track (kPrinted).strip.compEnabled.store (false);
+    engine.prepareForSelfTest (kRate, kFrames);
+    if (! ctx.expect (engine.getStripCompLatencySamples() == 0,
+                      "with every compressor off the strips kept their latency"))
+        return ctx.verdict();
+
+    static constexpr std::int64_t kFrom = 48000;
+    Feed feed;
+    feed.left = { 1000, 9000 };
+    transport.setPlayhead (kFrom);
+    engine.record();
+    if (! ctx.expect (transport.isRecording(), "Record did not start"))
+        return ctx.verdict();
+    feed.blocks (engine, 16);
+    session.track (kPrinted).strip.compEnabled.store (true);
+    feed.blocks (engine, 32);
+    engine.stop();
+    ctx.expect (engine.getStripCompLatencySamples() == stageLatency,
+                "the compressor engaged while recording did not bring the strips' latency in");
+    const auto* dry = onlyTake (ctx, kDry, "compressor engaged during the take");
+    const auto* printed = onlyTake (ctx, kPrinted, "compressor engaged during the take");
+    if (dry == nullptr || printed == nullptr)
+        return ctx.verdict();
+    const auto dryClicks = clicksIn (*dry, 0);
+    const auto printedClicks = clicksIn (*printed, 0);
+    ctx.note ("dry clicks " + describe (dryClicks) + ", printed " + describe (printedClicks));
+    ctx.expect (dryClicks == std::vector<Click> { { kFrom + 1000, false }, { kFrom + 9000, false } },
+                "the dry take holds clicks at " + describe (dryClicks));
+    ctx.expect (printedClicks == std::vector<Click> { { kFrom + 1000, true }, { kFrom + 9000 + stageLatency, true } },
+                "the printed take holds clicks at " + describe (printedClicks) + "; the click before the "
+                    "compressor came in belongs on the dry one's sample, the one after it "
+                    + str (stageLatency) + " samples later");
+    ctx.expect (printed->lengthInSamples == dry->lengthInSamples,
+                "a take that started with no delay ends short of the dry one");
+    return ctx.verdict();
+}
+
+// A plug-in with a latency on another track gives the printed track delay
+// compensation, which is on its print path too. The plug-in stays off the
+// printed track: Tape Machine 2's own click peaks past its reported latency,
+// which is its sound, so the insert's own latency is held by the strip's tests
+// with a plug-in that delays by exactly what it reports.
+ScenarioResult printFollowsDelayCompensation (ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    if (! setUpTracks (ctx, 1, false))
+        return ctx.verdict();
+    auto& other = engine.getChannelStrip (kOther);
+    ctx.keep (other.insertMode);
+    std::string error;
+    if (! ctx.expect (other.loadBuiltin ("dusk.builtin.tape", error), "could not load Tape Machine 2: " + error))
+        return ctx.verdict();
+    ctx.cleanup ([&other] { other.unloadBuiltin(); });
+    other.insertMode.store (ChannelStrip::kInsertPlugin);
+    ctx.pump (4);
+    const int insertLatency = other.getInsertPluginLatencySamples();
+    ctx.note ("Tape Machine 2 on track " + str (kOther + 1) + " reports " + str (insertLatency)
+              + " samples; the printed track's compensation is "
+              + str (engine.getChannelStrip (kPrinted).getPdcCompensationSamples()));
+    if (! ctx.expect (insertLatency > 0, "Tape Machine 2 reports no latency, so there is no compensation to print through"))
+        return ctx.verdict();
+    ctx.expect (engine.getChannelStrip (kPrinted).getPdcCompensationSamples() == insertLatency,
+                "the printed track is not compensated for the other track's insert");
+    recordFromStopped (ctx, 48000, { 1000, 9000 }, "through delay compensation");
+    return ctx.verdict();
+}
+
+// ------------------------------------------------------------------- punch
+
+// The punch window holds the clicks played inside it, on both tracks, and
+// neither the one just before the punch-in nor the one just after the
+// punch-out.
+ScenarioResult printPunchHoldsTheWindow (ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+    if (! setUpTracks (ctx, 1, false))
+        return ctx.verdict();
+    ctx.cleanup ([&transport, in = transport.getPunchIn(), out = transport.getPunchOut(),
+                  on = transport.isPunchEnabled()]
+    {
+        transport.setPunchRange (in, out);
+        transport.setPunchEnabled (on);
+    });
+    static constexpr std::int64_t kFrom = 50000, kIn = 60000, kOut = 70000;
+    transport.setPunchRange (kIn, kOut);
+    transport.setPunchEnabled (true);
+    Feed feed;
+    for (const auto at : { kIn - 5, kIn + 5, kIn + 5000, kOut - 5, kOut + 5 })
+        feed.left.push_back (at - kFrom);
+    transport.setPlayhead (kFrom);
+    engine.record();
+    if (! ctx.expect (transport.isRecording() && transport.getPlayhead() == kFrom,
+                      "Record did not start rolling from before the punch-in"))
+        return ctx.verdict();
+    feed.blocks (engine, (int) ((kOut + 4096 - kFrom) / kFrames));
+    engine.stop();
+    const auto* dry = onlyTake (ctx, kDry, "punch");
+    const auto* printed = onlyTake (ctx, kPrinted, "punch");
+    if (dry == nullptr || printed == nullptr)
+        return ctx.verdict();
+    expectSameStart (ctx, *dry, *printed, kIn, "punch");
+    ctx.expect (dry->lengthInSamples == kOut - kIn && printed->lengthInSamples == kOut - kIn,
+                "punch: the dry take is " + str (dry->lengthInSamples) + " samples long and the printed one "
+                    + str (printed->lengthInSamples) + ", the window " + str (kOut - kIn));
+    expectSameClicks (ctx, *dry, *printed, { kIn + 5, kIn + 5000, kOut - 5 }, 0, "punch");
+    return ctx.verdict();
+}
+
+// -------------------------------------------------------------------- loop
+
+// Every pass of a loop take keeps the clicks played in it on both tracks,
+// including those just before a seam, which reach the printed track only after
+// the transport has wrapped, and one on a pass's last sample.
+ScenarioResult printLoopPassesAlign (ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+    if (! setUpTracks (ctx, 1, false))
+        return ctx.verdict();
+    const int delay = stripDelay (engine);
+    static constexpr std::int64_t kStart = 48000, kLength = 4096, kEnd = kStart + kLength;
+    static constexpr std::int64_t kLastPass = 1024;
+    transport.setLoopRange (kStart, kEnd);
+    transport.setLoopEnabled (true);
+    // Input sample f plays at kStart + f % kLength, in pass f / kLength + 1.
+    Feed feed;
+    feed.left = { kLength - 10, kLength + 3, 2 * kLength - 40, 2 * kLength + 100, 3 * kLength - 1,
+                  3 * kLength + 500 };
+    const std::vector<std::vector<std::int64_t>> expected {
+        { kEnd - 10 }, { kStart + 3, kEnd - 40 }, { kStart + 100, kEnd - 1 }, { kStart + 500 } };
+    transport.setPlayhead (kStart);
+    engine.record();
+    if (! ctx.expect (transport.isRecording(), "Record did not start in the loop"))
+        return ctx.verdict();
+    feed.blocks (engine, (int) ((3 * kLength + kLastPass) / kFrames));
+    engine.stop();
+
+    for (int pass = 1; pass <= 4; ++pass)
+    {
+        const auto leg = "pass " + str (pass);
+        const auto* dry = passTake (ctx, kDry, pass);
+        const auto* printed = passTake (ctx, kPrinted, pass);
+        if (dry == nullptr || printed == nullptr) continue;
+        expectSameStart (ctx, *dry, *printed, kStart, leg);
+        if (pass < 4)
+        {
+            ctx.expect (dry->lengthInSamples == kLength && printed->lengthInSamples == kLength,
+                        leg + ": the dry pass is " + str (dry->lengthInSamples) + " samples long and the printed one "
+                            + str (printed->lengthInSamples) + ", the loop " + str (kLength));
+            ctx.expect (! dry->provenance.partialPass && ! printed->provenance.partialPass,
+                        leg + ": a whole pass is marked partial");
+        }
+        else
+        {
+            ctx.expect (dry->lengthInSamples == kLastPass, leg + ": the dry pass is "
+                                                               + str (dry->lengthInSamples) + " samples long");
+            expectEndsShortBy (ctx, *dry, *printed, delay, leg);
+        }
+        expectSameClicks (ctx, *dry, *printed, expected[(std::size_t) pass - 1], 0, leg);
+    }
+    return ctx.verdict();
+}
+
+// ------------------------------------------------------------------ stereo
+
+ScenarioResult printStereoLandsWithDry (ScenarioContext& ctx)
+{
+    auto& engine = ctx.engine();
+    auto& transport = engine.getTransport();
+    if (! setUpTracks (ctx, 1, true))
+        return ctx.verdict();
+    static constexpr std::int64_t kFrom = 48000;
+    Feed feed;
+    feed.left = { 1000, 5000 };
+    feed.right = { 3000, 5040 };
+    transport.setPlayhead (kFrom);
+    engine.record();
+    if (! ctx.expect (transport.isRecording(), "Record did not start"))
+        return ctx.verdict();
+    feed.blocks (engine, 32);
+    engine.stop();
+    const auto* dry = onlyTake (ctx, kDry, "stereo");
+    const auto* printed = onlyTake (ctx, kPrinted, "stereo");
+    if (dry == nullptr || printed == nullptr)
+        return ctx.verdict();
+    ctx.expect (dry->numChannels == 2 && printed->numChannels == 2, "a stereo track recorded a mono take");
+    expectSameStart (ctx, *dry, *printed, kFrom, "stereo");
+    expectSameClicks (ctx, *dry, *printed, { kFrom + 1000, kFrom + 5000 }, 0, "stereo left");
+    expectSameClicks (ctx, *dry, *printed, { kFrom + 3000, kFrom + 5040 }, 1, "stereo right");
+    expectEndsShortBy (ctx, *dry, *printed, stripDelay (engine), "stereo");
+    return ctx.verdict();
+}
+
+const ScenarioRegistrar linearRegistrar { Scenario {
+    "record.print_lands_with_dry", { "record", "print", "comp" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return printLandsWithDry (ctx, 1); } } };
+const ScenarioRegistrar oversampledRegistrar { Scenario {
+    "record.print_lands_with_dry_at_2x", { "record", "print", "comp", "oversampling" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return printLandsWithDry (ctx, 2); } } };
+const ScenarioRegistrar startingDelayRegistrar { Scenario {
+    "record.print_keeps_its_starting_delay", { "record", "print", "comp" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return printKeepsItsStartingDelay (ctx); } } };
+const ScenarioRegistrar pdcRegistrar { Scenario {
+    "record.print_follows_delay_compensation", { "record", "print", "pdc", "builtin" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return printFollowsDelayCompensation (ctx); } } };
+const ScenarioRegistrar punchRegistrar { Scenario {
+    "record.print_punch_holds_the_window", { "record", "print", "punch" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return printPunchHoldsTheWindow (ctx); } } };
+const ScenarioRegistrar loopRegistrar { Scenario {
+    "record.print_loop_passes_align", { "record", "print", "loop" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return printLoopPassesAlign (ctx); } } };
+const ScenarioRegistrar stereoRegistrar { Scenario {
+    "record.print_stereo_lands_with_dry", { "record", "print", "stereo" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return printStereoLandsWithDry (ctx); } } };
+} // namespace
+} // namespace duskstudio::scenario

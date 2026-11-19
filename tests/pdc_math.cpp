@@ -176,7 +176,7 @@ struct InsertPdcHarness : StripPdcHarness
     duskstudio::HardwareInsertParams hardwareParams;
     TransparentDelay* plugin = nullptr;
 
-    InsertPdcHarness (bool useStereo, int latency, bool hardware = false)
+    InsertPdcHarness (bool useStereo, int latency, bool hardware = false, int factor = 1)
         : StripPdcHarness (useStereo, 0)
     {
         strip.insertMode.store (hardware ? ChannelStrip::kInsertHardware : ChannelStrip::kInsertPlugin);
@@ -185,7 +185,7 @@ struct InsertPdcHarness : StripPdcHarness
             hardwareParams.routing.mutate ([latency] (auto& routing) { routing.latencySamples = latency; });
             strip.bindHardwareInsert (hardwareParams);
         }
-        strip.prepare (48000.0, kBlock, 1);
+        strip.prepare (48000.0, kBlock, factor);
         if (hardware)
             strip.getHardwareInsertSlot().setOfflineRender (true);
         else
@@ -452,6 +452,65 @@ TEST_CASE ("Channel strip PDC retargets after an inactive gate", "[pdc][channel-
     actual.run (false);
     REQUIRE (actual.strip.getLastProcessedSamples() == 0);
     actual.expectImpulseAt (change[1]);
+}
+
+TEST_CASE ("Channel strip: the processed buffer trails its input by the latency the strip reports", "[pdc][channel-strip][print]")
+{
+    const bool stereo = GENERATE (false, true);
+    const int factor = GENERATE (1, 2);
+    const int insertLatency = GENERATE (0, 96);
+    const bool stageOn = GENERATE (false, true);
+    static constexpr int kCompensation = 64;
+    CAPTURE (stereo, factor, insertLatency, stageOn);
+    InsertPdcHarness rig { stereo, insertLatency, false, factor };
+    const int stageLatency = rig.strip.getCompressor (false).latencySamples();
+    REQUIRE (stageLatency > 0);
+    duskstudio::CompStageClock clock;
+    clock.prepare (48000.0, stageLatency);
+    clock.snap (stageOn);
+    rig.strip.setCompStage (&clock.block());
+    rig.strip.setPdcCompensationSamples (kCompensation);
+    const auto runBlock = [&rig, &clock, stageOn]
+    {
+        clock.advance (stageOn, false, kBlock);
+        rig.run();
+    };
+    rig.silence();
+    for (int block = 0; block < 64; ++block) runBlock();
+
+    const int reported = rig.strip.getProcessedLatencySamples();
+    REQUIRE (reported == insertLatency + kCompensation + rig.strip.getOversamplingLatencySamples()
+                             + (stageOn ? stageLatency : 0));
+    std::array<float, 2> peaks {};
+    std::array<int, 2> positions { -1, -1 };
+    for (int block = 0; block < reported / kBlock + 4; ++block)
+    {
+        rig.silence();
+        // The same click on both sides: at 2x the EQ's console saturation
+        // moves the peak of a quiet negative click by a sample.
+        if (block == 0) { rig.left[0] = 0.5f; rig.right[0] = 0.5f; }
+        runBlock();
+        const std::array<const float*, 2> processed { rig.strip.getLastProcessedMono(),
+                                                      rig.strip.getLastProcessedR() };
+        REQUIRE (processed[0] != nullptr);
+        REQUIRE (rig.strip.getLastProcessedSamples() == kBlock);
+        for (std::size_t c = 0; c < (stereo ? 2u : 1u); ++c)
+        {
+            REQUIRE (processed[c] != nullptr);
+            for (int i = 0; i < kBlock; ++i)
+                if (std::abs (processed[c][i]) > peaks[c])
+                {
+                    peaks[c] = std::abs (processed[c][i]);
+                    positions[c] = block * kBlock + i;
+                }
+        }
+    }
+    for (std::size_t c = 0; c < (stereo ? 2u : 1u); ++c)
+    {
+        CAPTURE (c);
+        REQUIRE (peaks[c] > 0.1f);
+        CHECK (positions[c] == reported);
+    }
 }
 
 TEST_CASE ("Channel insert LED preserves the wet path timing through both transitions", "[pdc][channel-strip][insert-led]")

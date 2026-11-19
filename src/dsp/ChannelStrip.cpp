@@ -921,6 +921,19 @@ int ChannelStrip::getInsertPluginLatencySamples() const noexcept
     return pluginSlot.getLatencySamples();
 }
 
+int ChannelStrip::getProcessedLatencySamples() const noexcept
+{
+    int insert = 0;
+    if (activeInsertMode == kInsertHardware)    insert = hardwareSlot.getLatencySamples();
+    else if (activeInsertMode == kInsertPlugin) insert = getInsertPluginLatencySamples();
+    // A stage filling its delay or fading it in is heading for its latency;
+    // one fading it out is heading for none.
+    const auto& stage = compStageBlock();
+    const int comp = stage.write && stage.alignDir >= 0 ? stage.latency : 0;
+    return std::clamp (insert, 0, kMaxPdcSamples) + getPdcCompensationSamples()
+         + osLatencySamples + comp;
+}
+
 // While the dry is (even partly) aligned, the zeros stand in for the latency's
 // onset the way the insert's own cold start does. Otherwise the history must
 // fill with real input again before the dry may move onto it.

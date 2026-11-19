@@ -213,6 +213,7 @@ add_executable(dusk-studio-tests
     aux_send_text.cpp
     dsp_readout_severity.cpp
     loop_timeline.cpp
+    capture_schedule.cpp
     generated_midi_budget.cpp
     midi_bindings_preset.cpp
     midi_button_edges.cpp

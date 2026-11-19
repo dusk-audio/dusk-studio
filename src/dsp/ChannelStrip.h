@@ -118,6 +118,14 @@ public:
     // native or built-in instance, otherwise the JUCE slot's.
     int getInsertPluginLatencySamples() const noexcept;
 
+    // How many samples getLastProcessedMono trails the strip's input once its
+    // delays have settled where they are heading: the running insert's
+    // latency, the delay compensation, the oversampled EQ and the compressor
+    // stage's latency. The compensation and the stage move to a new value
+    // only at a silence or by a fade, so this is what a block that runs now
+    // carries, or soon will. Audio thread, between blocks.
+    int getProcessedLatencySamples() const noexcept;
+
     // Native CLAP host path (replaces JUCE hosting for this insert when loaded). When
     // a native CLAP is loaded, the insert pass runs through it instead of pluginSlot.
     // Mirrors AuxLaneStrip. Message thread; engine fences load/unload via its gate.

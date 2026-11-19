@@ -46,6 +46,7 @@
 #include "../session/MidiRecoveryWriter.h"
 #include "MidiTimelineSchedule.h"
 #include "AudioWorkerPool.h"
+#include "CaptureSchedule.h"
 #include "MasteringPlayer.h"
 #include "PlaybackEngine.h"
 #include "PluginManager.h"
@@ -1807,5 +1808,31 @@ private:
     bool         wasRolling          = false;
     std::int64_t  lastBlockEndSample  = 0;
     bool         lastBlockWasLoopRecording = false;
+
+    // How each armed track records the take in progress, fixed at the first
+    // block it captures: its input, or its strip's output (PRINT) and that
+    // output's delay. A printed track writes each input sample once the strip
+    // has delayed it, on what captureSchedule says the take kept of the input,
+    // so it lands where its input would. Audio thread; record() resets them
+    // while processing is suspended.
+    struct PrintCapture
+    {
+        bool latched = false;
+        bool print = false;
+        // The strip's delay, taken after its first block of the take.
+        int delay = -1;
+        // The schedule's clock at that block: nothing before it is the track's.
+        std::int64_t from = 0;
+    };
+    std::array<PrintCapture, Session::kNumTracks> printCaptures {};
+    CaptureSchedule captureSchedule;
+    // Input samples of the take so far.
+    std::int64_t captureClock = 0;
+    bool anyPrintCapture = false;
+    // The longest delay a printed track of the take has taken: no track reads
+    // the schedule further back. One latched later reads only from its block on.
+    int longestPrintDelay = 0;
+    void capturePrinted (int track, const float* left, const float* right,
+                         const PrintCapture& print, int numSamples, bool loop) noexcept;
 };
 } // namespace duskstudio
