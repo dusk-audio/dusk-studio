@@ -37,6 +37,7 @@ fields introduced later. It does not supply released MIDI or marker coverage.
 `format11-compressors.json` is written by hand, not by a released binary. It
 holds only the keys format 11 stored for the compressors, each away from its
 default: three tracks, one in each mode (Opto, FET, VCA), whose comp objects
-set every mode's controls, a bus, the master and the mastering chain. The
-loader fills the rest from the model defaults. It exists to pin the 11 -> 12
+set every mode's controls, two buses, the master and the mastering chain. The
+second bus keeps the default Auto release, the one setting it needs to show.
+The loader fills the rest from the model defaults. It exists to pin the 11 -> 12
 conversion of every compressor key to Multi-Comp 2's host values.

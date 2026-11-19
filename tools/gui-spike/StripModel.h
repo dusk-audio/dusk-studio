@@ -42,11 +42,11 @@ struct StripParams
     std::atomic<float> lfGainDb { 3.0f };  std::atomic<float> lfFreq { 100.0f };
 
     std::atomic<bool>  compEnabled { true };
-    std::atomic<float> compFetRatioIndex { 0.0f };
-    std::atomic<float> compFetAttack  { 0.2f };
-    std::atomic<float> compFetRelease { 400.0f };
-    std::atomic<float> compFetOutput  { 0.0f };
-    std::atomic<float> compFetThresholdDb { -14.0f };
+    std::atomic<float> compRatioIndex { 0.0f };
+    std::atomic<float> compAttack     { 0.2f };
+    std::atomic<float> compRelease    { 400.0f };
+    std::atomic<float> compMakeup     { 0.0f };
+    std::atomic<float> compThresholdDb { -14.0f };
 
     std::array<std::atomic<float>, 4> auxSendDb { { { -12.0f }, { -100.0f }, { -24.0f }, { -100.0f } } };
     std::array<std::atomic<bool>, 4>  auxSendPreFader {};
@@ -110,7 +110,7 @@ public:
 
                 params.meterInputDb.store (db, std::memory_order_relaxed);
 
-                const float over = db - params.compFetThresholdDb.load (std::memory_order_relaxed);
+                const float over = db - params.compThresholdDb.load (std::memory_order_relaxed);
                 params.meterGrDb.store (over > 0.0f ? -over * 0.6f : 0.0f, std::memory_order_relaxed);
 
                 std::this_thread::sleep_until (next);

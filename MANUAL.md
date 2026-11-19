@@ -878,7 +878,7 @@ A clean, fast, full-featured compressor.
 - **Soft Knee**: when on, a parabolic (soft) knee replaces the hard knee.
 - **Detector**: **Adaptive** (default, level-dependent RMS time constant from 35 ms down to 5 ms) or **Classic** (fixed 10 ms RMS).
 
-The soft-knee and detector toggles appear only in VCA mode. The sidechain has a built-in 60 Hz high-pass filter in VCA mode (so bass doesn't pump the compressor); Opto and FET have it disabled by default to preserve their period-correct character.
+The soft-knee and detector toggles appear only in VCA mode. The VCA face has a **PULL/SC** switch under its threshold, out by default. Out, the compressor hears lows and mids alike. In, it tilts the sidechain so lows drive the compressor less and mids and highs drive it more, which keeps bass from pumping it.
 
 The gain-reduction meter (the thin vertical bar beside the fader, right of the level meter) shows real-time reduction in dB, regardless of mode.
 

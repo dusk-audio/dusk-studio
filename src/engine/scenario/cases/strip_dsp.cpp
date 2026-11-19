@@ -99,7 +99,6 @@ void liveInput (ScenarioContext& ctx, Track::Mode mode)
                          &master.tapeEnabled })
         ctx.keep (*value);
     for (auto* value : { &strip.faderDb, &strip.pan, &strip.auxSendDb[0], &strip.hpfFreq, &strip.lpfFreq,
-                         &strip.compFetThresholdDb, &strip.compVcaThreshDb, &strip.compVcaRatio,
                          &bus.eqLfGainDb, &bus.eqMidGainDb, &bus.eqHfGainDb, &bus.hpfFreq })
         ctx.keep (*value);
     for (const auto id : compStageParams (CompStage::Strip))
@@ -542,26 +541,29 @@ double reduction (ScenarioContext& ctx, int mode, double hz)
     return db (wet, dry);
 }
 
-// VCA mode's sidechain has a 60 Hz high-pass, so bass below it barely drives
-// the compressor; FET's has none.
-ScenarioResult vcaSidechainIgnoresBass (ScenarioContext& ctx)
+// VCA mode's PULL/SC switch (sidechain_hp) tilts the sidechain up with
+// frequency. Out, the detector hears 100 Hz and 1 kHz alike; in, 1 kHz drives
+// it harder and is pulled down further.
+ScenarioResult vcaPullScCompressesMidsHarder (ScenarioContext& ctx)
 {
     liveInput (ctx, Track::Mode::Mono);
     auto& strip = ctx.session().track (kTrack).strip;
-    strip.compFetThresholdDb.store (-30.0f);
-    strip.compVcaThreshDb.store (-30.0f);
-    strip.compVcaRatio.store (10.0f);
+    strip.comp.set (CompParamId::VcaThreshold, -30.0f);
 
-    const double vcaBass = reduction (ctx, 2, 25.0);
-    const double vcaMid = reduction (ctx, 2, 1000.0);
-    const double fetBass = reduction (ctx, 1, 25.0);
-    const double fetMid = reduction (ctx, 1, 1000.0);
-    ctx.note ("gain change at 25 Hz / 1 kHz: VCA " + std::to_string (vcaBass) + " / "
-              + std::to_string (vcaMid) + " dB, FET " + std::to_string (fetBass) + " / "
-              + std::to_string (fetMid) + " dB");
-    ctx.expect (vcaMid < -6.0, "VCA did not compress a 1 kHz tone above its threshold");
-    ctx.expect (vcaBass - vcaMid > 6.0, "VCA compressed 25 Hz about as hard as 1 kHz, so its sidechain passes bass");
-    ctx.expect (std::abs (fetBass - fetMid) < 6.0, "FET treated 25 Hz differently, as if its sidechain were filtered");
+    strip.comp.set (CompParamId::SidechainHp, 0.0f);
+    const double lowOut = reduction (ctx, 2, 100.0);
+    const double midOut = reduction (ctx, 2, 1000.0);
+    // 20 Hz under the control's square-root taper over 0..500 Hz, the setting
+    // the face's switch first goes in at.
+    strip.comp.set (CompParamId::SidechainHp, std::sqrt (20.0f / 500.0f));
+    const double midIn = reduction (ctx, 2, 1000.0);
+    ctx.note ("gain change, PULL/SC out: 100 Hz " + std::to_string (lowOut) + " dB, 1 kHz "
+              + std::to_string (midOut) + " dB; in: 1 kHz " + std::to_string (midIn) + " dB");
+    ctx.expect (midOut < -6.0, "VCA did not compress a 1 kHz tone above its threshold");
+    // Out, the two sit about 0.1 dB apart; in, they sit 7 to 8 dB apart.
+    ctx.expect (std::abs (lowOut - midOut) < 0.5,
+                "with PULL/SC out, VCA compressed 100 Hz and 1 kHz differently");
+    ctx.expect (midIn < midOut - 2.0, "PULL/SC in did not compress 1 kHz harder than with it out");
     return ctx.verdict();
 }
 
@@ -930,7 +932,7 @@ const ScenarioRegistrar auxCueTailRegistrar { Scenario {
     "aux.cue_tail_outlives_return_gate", { "aux", "cue", "insert", "dsp" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (auxCueTailOutlivesReturnGate, ctx); } } };
 const ScenarioRegistrar vcaRegistrar { Scenario {
-    "strip.vca_sidechain_ignores_bass", { "strip", "comp", "dsp" }, Needs::Engine, {},
-    [] (ScenarioContext& ctx) { return run (vcaSidechainIgnoresBass, ctx); } } };
+    "strip.vca_pull_sc_compresses_mids_harder", { "strip", "comp", "dsp" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (vcaPullScCompressesMidsHarder, ctx); } } };
 } // namespace
 } // namespace duskstudio::scenario

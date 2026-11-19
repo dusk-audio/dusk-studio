@@ -63,22 +63,6 @@ void eachTrackField (Track& dst, Src& src, Fields& f)
     f.atomic (d.compEnabled, s.compEnabled);
     f.atomic (d.compMode, s.compMode);
     f.atomic (d.compModePicked, s.compModePicked);
-    f.atomic (d.compOptoPeakRed, s.compOptoPeakRed);
-    f.atomic (d.compOptoGain, s.compOptoGain);
-    f.atomic (d.compOptoLimit, s.compOptoLimit);
-    f.atomic (d.compFetInput, s.compFetInput);
-    f.atomic (d.compFetOutput, s.compFetOutput);
-    f.atomic (d.compFetAttack, s.compFetAttack);
-    f.atomic (d.compFetRelease, s.compFetRelease);
-    f.atomic (d.compFetRatio, s.compFetRatio);
-    f.atomic (d.compFetThresholdDb, s.compFetThresholdDb);
-    f.atomic (d.compVcaThreshDb, s.compVcaThreshDb);
-    f.atomic (d.compVcaRatio, s.compVcaRatio);
-    f.atomic (d.compVcaAttack, s.compVcaAttack);
-    f.atomic (d.compVcaRelease, s.compVcaRelease);
-    f.atomic (d.compVcaOutput, s.compVcaOutput);
-    f.atomic (d.compVcaOverEasy, s.compVcaOverEasy);
-    f.atomic (d.compVcaDetectorClassic, s.compVcaDetectorClassic);
     for (std::size_t i = 0; i < kCompParamCount; ++i)
         f.atomic (d.comp.atom ((CompParamId) i), s.comp.atom ((CompParamId) i));
 

@@ -159,22 +159,6 @@ void fillTrack (Track& t, int k)
     s.compEnabled = odd (k);
     s.compModePicked = ! odd (k);
     s.compMode = k % 3;
-    s.compOptoPeakRed = step (k, 10.0f, 1.0f);
-    s.compOptoGain = step (k, 20.0f, 1.0f);
-    s.compOptoLimit = odd (k);
-    s.compFetInput = step (k, 1.0f, 0.5f);
-    s.compFetOutput = step (k, -5.0f, 0.25f);
-    s.compFetAttack = step (k, 0.1f, 0.01f);
-    s.compFetRelease = step (k, 100.0f, 1.0f);
-    s.compFetRatio = k % 5;
-    s.compFetThresholdDb = step (k, -30.0f, 0.5f);
-    s.compVcaThreshDb = step (k, -20.0f, 0.5f);
-    s.compVcaRatio = step (k, 2.0f, 0.1f);
-    s.compVcaAttack = step (k, 1.0f, 0.1f);
-    s.compVcaRelease = step (k, 50.0f, 1.0f);
-    s.compVcaOutput = step (k, -3.0f, 0.2f);
-    s.compVcaOverEasy = odd (k);
-    s.compVcaDetectorClassic = ! odd (k);
     for (const auto id : compStageParams (CompStage::Strip))
     {
         const auto& spec = compParamSpec (id);

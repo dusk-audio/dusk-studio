@@ -887,14 +887,6 @@ struct CloneTrackAction::Impl
     bool  compEnabled = false;
     int   compMode = 2;
     bool  compModePicked = false;
-    float compOptoPeakRed = 30.0f, compOptoGain = 50.0f;
-    bool  compOptoLimit = false;
-    float compFetInput = 0.0f, compFetOutput = 0.0f, compFetAttack = 0.2f, compFetRelease = 400.0f;
-    float compFetThresholdDb = -10.0f;
-    int   compFetRatio = 0;
-    float compVcaThreshDb = 0.0f, compVcaRatio = 4.0f, compVcaAttack = 1.0f, compVcaRelease = 100.0f, compVcaOutput = 0.0f;
-    bool  compVcaOverEasy = false;
-    bool  compVcaDetectorClassic = false;
     CompParams::Values comp {};
 
     // Recording surface.
@@ -1090,22 +1082,6 @@ CloneTrackAction::Impl captureTrack (Track& t, AudioEngine& engine, int idx)
     s.compEnabled    = t.strip.compEnabled.load    (std::memory_order_relaxed);
     s.compMode       = t.strip.compMode.load       (std::memory_order_relaxed);
     s.compModePicked = t.strip.compModePicked.load (std::memory_order_relaxed);
-    s.compOptoPeakRed = t.strip.compOptoPeakRed.load (std::memory_order_relaxed);
-    s.compOptoGain    = t.strip.compOptoGain.load    (std::memory_order_relaxed);
-    s.compOptoLimit   = t.strip.compOptoLimit.load   (std::memory_order_relaxed);
-    s.compFetInput    = t.strip.compFetInput.load    (std::memory_order_relaxed);
-    s.compFetThresholdDb = t.strip.compFetThresholdDb.load (std::memory_order_relaxed);
-    s.compFetOutput   = t.strip.compFetOutput.load   (std::memory_order_relaxed);
-    s.compFetAttack   = t.strip.compFetAttack.load   (std::memory_order_relaxed);
-    s.compFetRelease  = t.strip.compFetRelease.load  (std::memory_order_relaxed);
-    s.compFetRatio    = t.strip.compFetRatio.load    (std::memory_order_relaxed);
-    s.compVcaThreshDb = t.strip.compVcaThreshDb.load (std::memory_order_relaxed);
-    s.compVcaRatio    = t.strip.compVcaRatio.load    (std::memory_order_relaxed);
-    s.compVcaAttack   = t.strip.compVcaAttack.load   (std::memory_order_relaxed);
-    s.compVcaRelease  = t.strip.compVcaRelease.load  (std::memory_order_relaxed);
-    s.compVcaOutput   = t.strip.compVcaOutput.load   (std::memory_order_relaxed);
-    s.compVcaOverEasy = t.strip.compVcaOverEasy.load (std::memory_order_relaxed);
-    s.compVcaDetectorClassic = t.strip.compVcaDetectorClassic.load (std::memory_order_relaxed);
     s.comp = t.strip.comp.values();
 
     s.recordArmed    = t.recordArmed.load    (std::memory_order_relaxed);
@@ -1342,22 +1318,6 @@ void applyTrack (Track& t, AudioEngine& engine, int idx,
     t.strip.compEnabled.store    (s.compEnabled,    std::memory_order_relaxed);
     t.strip.compMode.store       (s.compMode,       std::memory_order_relaxed);
     t.strip.compModePicked.store (s.compModePicked, std::memory_order_relaxed);
-    t.strip.compOptoPeakRed.store (s.compOptoPeakRed, std::memory_order_relaxed);
-    t.strip.compOptoGain.store    (s.compOptoGain,    std::memory_order_relaxed);
-    t.strip.compOptoLimit.store   (s.compOptoLimit,   std::memory_order_relaxed);
-    t.strip.compFetInput.store    (s.compFetInput,    std::memory_order_relaxed);
-    t.strip.compFetThresholdDb.store (s.compFetThresholdDb, std::memory_order_relaxed);
-    t.strip.compFetOutput.store   (s.compFetOutput,   std::memory_order_relaxed);
-    t.strip.compFetAttack.store   (s.compFetAttack,   std::memory_order_relaxed);
-    t.strip.compFetRelease.store  (s.compFetRelease,  std::memory_order_relaxed);
-    t.strip.compFetRatio.store    (s.compFetRatio,    std::memory_order_relaxed);
-    t.strip.compVcaThreshDb.store (s.compVcaThreshDb, std::memory_order_relaxed);
-    t.strip.compVcaRatio.store    (s.compVcaRatio,    std::memory_order_relaxed);
-    t.strip.compVcaAttack.store   (s.compVcaAttack,   std::memory_order_relaxed);
-    t.strip.compVcaRelease.store  (s.compVcaRelease,  std::memory_order_relaxed);
-    t.strip.compVcaOutput.store   (s.compVcaOutput,   std::memory_order_relaxed);
-    t.strip.compVcaOverEasy.store (s.compVcaOverEasy, std::memory_order_relaxed);
-    t.strip.compVcaDetectorClassic.store (s.compVcaDetectorClassic, std::memory_order_relaxed);
     t.strip.comp.setValues (s.comp);
 
     t.recordArmed.store    (s.recordArmed,    std::memory_order_relaxed);

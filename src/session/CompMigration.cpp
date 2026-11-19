@@ -58,6 +58,53 @@ constexpr double kFetHalfReleaseAtMidSeconds = 0.337;
 constexpr float kVcaPeakToRmsDb = 3.0103f;
 constexpr float kVcaOnsetTrimDb = 0.29f;
 
+// The bus tables below were measured, old core against new, at 48 kHz;
+// neither donor holds them. Attack steps are 0.1, 0.3, 1, 3, 10 and
+// 30 ms, release steps 0.1, 0.3, 0.6 and 1.2 s and Auto, on both cores.
+//
+// The new 2:1 plays closest to every old ratio (the old steps played 1.5,
+// 1.74 and 1.89:1), so every old ratio converts to it.
+constexpr int kBusNewRatio = 0;
+
+// Old attack and release step to the new step that plays closest at 2:1. The
+// old release steps ran four times their label and old Auto was a fixed 0.6 s,
+// while the new Auto follows the programme and runs far slower.
+constexpr std::array<int, 6> kBusAttackStep { 2, 2, 2, 3, 4, 5 };
+constexpr std::array<int, 5> kBusReleaseStep { 2, 3, 3, 3, 2 };
+
+// How many dB the new 2:1's onset moves per unit of its threshold knob.
+constexpr float kBusThresholdSlope = 1.3186f;
+
+// Per old ratio (2:1, 4:1, 10:1), at the new 10 ms and Auto: the old threshold
+// plus this, over the slope, is the knob that sounds closest to the old step.
+constexpr std::array<float, 3> kBusOffsetAtNewTwoToOne { 39.85f, 37.60f, 36.61f };
+
+// The new 2:1's onset in dB, [attack step][release step].
+constexpr std::array<std::array<float, 5>, 6> kBusNewOnsetDb {{
+    {{ -36.87f, -37.58f, -38.79f, -39.86f, -38.30f }},
+    {{ -36.36f, -37.09f, -38.32f, -39.40f, -37.84f }},
+    {{ -35.86f, -36.62f, -37.86f, -38.95f, -37.41f }},
+    {{ -34.57f, -35.42f, -36.75f, -37.89f, -36.36f }},
+    {{ -33.06f, -34.00f, -35.52f, -36.71f, -35.17f }},
+    {{ -30.47f, -31.61f, -33.37f, -34.82f, -33.10f }} }};
+
+// bus_headroom 3 drives the detector at unity, and each step below it takes
+// 4 dB off (core/MultiCompBusControls.hpp headroomDrive).
+constexpr int   kBusUnityHeadroom = 3;
+constexpr float kBusHeadroomStepDb = 4.0f;
+
+// The old bus detector's fixed high-pass measured like 27 Hz.
+constexpr float kBusSidechainHz = 27.0f;
+
+// sidechain_hp's plain range is 0..500 Hz under a 0.5 skew.
+constexpr float kSidechainHpMaxHz = 500.0f;
+
+// 2:1, 4:1 and 10:1, the old steps an old ratio played.
+int oldBusRatioStep (float ratio) noexcept
+{
+    return ratio < 3.0f ? 0 : (ratio < 7.0f ? 1 : 2);
+}
+
 float clampOld (const nlohmann::json& obj, const char* key, float fallback, float lo, float hi)
 {
     return std::clamp (json::getFiniteFloat (obj, key, fallback), lo, hi);
@@ -144,25 +191,32 @@ void migrateBusComp (nlohmann::json& stage, bool keepAbsentKeys)
         comp["enabled"] = json::getBool (stage, "comp_enabled", false);
 
     const auto& d = kOldBusDefaults;
+    const int attack = legacycomp::busAttack (clampOld (stage, "comp_attack_ms", d.attackMs, 0.1f, 50.0f));
+    const int release = legacycomp::busRelease (clampOld (stage, "comp_release_ms", d.releaseMs, 50.0f, 1000.0f),
+                                                json::getBool (stage, "comp_release_auto", d.releaseAuto));
+    int headroom = kBusUnityHeadroom;
     if (present ("comp_thresh_db"))
-        put (comp, CompParamId::BusThreshold,
-             legacycomp::busThreshold (clampOld (stage, "comp_thresh_db", d.thresholdDb, -60.0f, 0.0f)));
+    {
+        const auto threshold = legacycomp::busThreshold (
+            clampOld (stage, "comp_thresh_db", d.thresholdDb, -60.0f, 0.0f),
+            clampOld (stage, "comp_ratio", d.ratio, 1.0f, 10.0f), attack, release);
+        put (comp, CompParamId::BusThreshold, threshold.threshold);
+        headroom = threshold.headroom;
+    }
+    put (comp, CompParamId::BusHeadroom, (float) headroom);
     if (present ("comp_ratio"))
-        put (comp, CompParamId::BusRatio,
-             (float) legacycomp::busRatio (clampOld (stage, "comp_ratio", d.ratio, 1.0f, 10.0f)));
+        put (comp, CompParamId::BusRatio, (float) kBusNewRatio);
     if (present ("comp_attack_ms"))
-        put (comp, CompParamId::BusAttack,
-             (float) legacycomp::busAttack (clampOld (stage, "comp_attack_ms", d.attackMs, 0.1f, 50.0f)));
+        put (comp, CompParamId::BusAttack, (float) attack);
     if (present ("comp_release_ms") || present ("comp_release_auto"))
-        put (comp, CompParamId::BusRelease,
-             (float) legacycomp::busRelease (clampOld (stage, "comp_release_ms", d.releaseMs, 50.0f, 1000.0f),
-                                             json::getBool (stage, "comp_release_auto", d.releaseAuto)));
+        put (comp, CompParamId::BusRelease, (float) release);
     if (present ("comp_makeup_db"))
         put (comp, CompParamId::BusMakeup,
              legacycomp::busMakeup (clampOld (stage, "comp_makeup_db", d.makeupDb, -10.0f, 20.0f)));
 
-    putFixedDefaults (comp, { CompParamId::SidechainHp, CompParamId::AutoMakeup, CompParamId::BusMix,
-                              CompParamId::BusHeadroom, CompParamId::BusFadeRate, CompParamId::BusFade });
+    put (comp, CompParamId::SidechainHp, legacycomp::busSidechainHp());
+    putFixedDefaults (comp, { CompParamId::AutoMakeup, CompParamId::BusMix, CompParamId::BusFadeRate,
+                              CompParamId::BusFade });
     for (const auto* key : kOldBusKeys) stage.erase (key);
     stage["comp"] = std::move (comp);
 }
@@ -323,39 +377,56 @@ float vcaOutput (float outputDb) noexcept
     return std::clamp (outputDb, -20.0f, 20.0f);
 }
 
-// The new threshold is the reference console's measured knob law
-// (core/MultiCompBusLaw.hpp drive), not decibels at the detector, so the
-// setting keeps its value within the knob's range.
-float busThreshold (float thresholdDb) noexcept
-{
-    return std::clamp (thresholdDb, -30.0f, 15.0f);
-}
-
-// The stepped indices the old bus and master strips played (BusStrip and
-// MasterBus updateCompParameters).
-int busRatio (float ratio) noexcept
-{
-    return ratio < 3.0f ? 0 : (ratio < 7.0f ? 1 : 2);
-}
-
+// The old bus and master strips played their settings as steps (BusStrip and
+// MasterBus updateCompParameters); each old value goes to the step it played.
 int busAttack (float attackMs) noexcept
 {
-    return attackMs < 0.2f ? 0
-         : attackMs < 0.65f ? 1
-         : attackMs < 2.0f ? 2
-         : attackMs < 6.5f ? 3
-         : attackMs < 20.0f ? 4 : 5;
+    const int old = attackMs < 0.2f ? 0
+                  : attackMs < 0.65f ? 1
+                  : attackMs < 2.0f ? 2
+                  : attackMs < 6.5f ? 3
+                  : attackMs < 20.0f ? 4 : 5;
+    return kBusAttackStep[(std::size_t) old];
 }
 
 int busRelease (float releaseMs, bool autoRelease) noexcept
 {
-    if (autoRelease) return 4;
-    return releaseMs < 200.0f ? 0 : (releaseMs < 450.0f ? 1 : (releaseMs < 900.0f ? 2 : 3));
+    const int old = autoRelease ? 4
+                  : releaseMs < 200.0f ? 0 : (releaseMs < 450.0f ? 1 : (releaseMs < 900.0f ? 2 : 3));
+    return kBusReleaseStep[(std::size_t) old];
+}
+
+// The new threshold is a knob law, not decibels at the detector. The knob
+// that starts the new 2:1 where the old step started is the old threshold plus
+// the old ratio's offset, less how far the new attack and release move the
+// onset from 10 ms and Auto. Past the knob's +15 top, each step of headroom
+// taken off reaches 4 dB further.
+BusThreshold busThreshold (float thresholdDb, float ratio, int newAttack, int newRelease) noexcept
+{
+    const auto& onset = kBusNewOnsetDb;
+    const float onsetShift = onset[(std::size_t) std::clamp (newAttack, 0, 5)]
+                                  [(std::size_t) std::clamp (newRelease, 0, 4)]
+                           - onset[4][4];
+    float knob = (thresholdDb + kBusOffsetAtNewTwoToOne[(std::size_t) oldBusRatioStep (ratio)] - onsetShift)
+               / kBusThresholdSlope;
+    int headroom = kBusUnityHeadroom;
+    while (knob > 15.0f && headroom > 0)
+    {
+        --headroom;
+        knob -= kBusHeadroomStepDb / kBusThresholdSlope;
+    }
+    return { std::clamp (knob, -30.0f, 15.0f), headroom };
 }
 
 float busMakeup (float makeupDb) noexcept
 {
     return std::clamp (makeupDb, 0.0f, 20.0f);
+}
+
+// The host value is the plain value's share of the range raised to the skew.
+float busSidechainHp() noexcept
+{
+    return std::sqrt (kBusSidechainHz / kSidechainHpMaxHz);
 }
 } // namespace legacycomp
 

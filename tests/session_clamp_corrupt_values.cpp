@@ -170,8 +170,12 @@ TEST_CASE ("SessionSerializer::load defaults present invalid master floats",
     const duskstudio::MasterBusParams def;
     REQUIRE_THAT (s.master().eqLfBoost.load(), WithinAbs (def.eqLfBoost.load(), 1e-6f));
     REQUIRE_THAT (s.master().eqLfAtten.load(), WithinAbs (3.5f, 1e-6f));
+    // The old 0 dB default, converted at the old 4:1, 10 ms and Auto defaults.
     REQUIRE_THAT (s.master().comp.get (CompParamId::BusThreshold),
-                  WithinAbs (duskstudio::legacycomp::busThreshold (0.0f), 1e-6f));
+                  WithinAbs (duskstudio::legacycomp::busThreshold (
+                                 0.0f, 4.0f, duskstudio::legacycomp::busAttack (10.0f),
+                                 duskstudio::legacycomp::busRelease (100.0f, true)).threshold,
+                             1e-6f));
     // A missing key in a present master section retains the live value, through
     // the conversion of an older session too.
     REQUIRE_THAT (s.master().comp.get (CompParamId::BusRatio), WithinAbs (2.0f, 1e-6f));
@@ -188,6 +192,7 @@ TEST_CASE ("SessionSerializer::load defaults present invalid master bools",
       "master": {
         "eq_enabled": "maybe",
         "comp_enabled": true,
+        "comp_release_ms": 300.0,
         "comp_release_auto": "maybe"
       }
     }
@@ -200,10 +205,14 @@ TEST_CASE ("SessionSerializer::load defaults present invalid master bools",
 
     REQUIRE (SessionSerializer::load (s, target));
     // Model defaults, not a blanket false: the old auto-release defaulted to ON,
-    // so a corrupt value must not silently switch the bus comp to a fixed release.
+    // so a corrupt value converts as old Auto (the 0.6 s step), not as the
+    // fixed 300 ms beside it (the 1.2 s step).
     REQUIRE (s.master().eqEnabled.load() == false);
     REQUIRE (s.master().compEnabled.load() == true);
-    REQUIRE_THAT (s.master().comp.get (CompParamId::BusRelease), WithinAbs (4.0f, 1e-6));
+    REQUIRE_THAT (s.master().comp.get (CompParamId::BusRelease),
+                  WithinAbs ((float) duskstudio::legacycomp::busRelease (300.0f, true), 1e-6));
+    REQUIRE (duskstudio::legacycomp::busRelease (300.0f, true)
+             != duskstudio::legacycomp::busRelease (300.0f, false));
 
     target.getParentDirectory().deleteRecursively();
 }
@@ -345,7 +354,7 @@ TEST_CASE ("SessionSerializer::load clamps corrupt strip and hardware values",
 
     const auto& bus = s.bus (0).strip;
     REQUIRE_THAT (bus.faderDb.load(), WithinAbs (-100.0f, 1e-6f));
-    REQUIRE_THAT (bus.comp.get (CompParamId::BusRatio), WithinAbs (2.0f, 1e-6));
+    REQUIRE_THAT (bus.comp.get (CompParamId::BusRatio), WithinAbs (0.0f, 1e-6));
     REQUIRE_THAT (bus.eqLfGainDb.load(), WithinAbs (9.0f, 1e-6f));
 
     target.getParentDirectory().deleteRecursively();
@@ -441,8 +450,9 @@ TEST_CASE ("SessionSerializer::load clamps out-of-range master values",
     REQUIRE_THAT (mb.eqLfBoost.load(), WithinAbs (10.0f, 1e-6f));
     REQUIRE_THAT (mb.eqHfAttenFreq.load(), WithinAbs (5000.0f, 1e-3f));
     REQUIRE_THAT (mb.eqOutputGainDb.load(), WithinAbs (12.0f, 1e-6f));
-    REQUIRE_THAT (mb.comp.get (CompParamId::BusRatio), WithinAbs (2.0f, 1e-6));
-    REQUIRE_THAT (mb.comp.get (CompParamId::BusAttack), WithinAbs (0.0f, 1e-6));
+    REQUIRE_THAT (mb.comp.get (CompParamId::BusRatio), WithinAbs (0.0f, 1e-6));
+    REQUIRE_THAT (mb.comp.get (CompParamId::BusAttack),
+                  WithinAbs ((float) duskstudio::legacycomp::busAttack (0.1f), 1e-6));
 
     target.getParentDirectory().deleteRecursively();
 }

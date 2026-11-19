@@ -85,6 +85,16 @@
       "comp_release_ms": 600.0,
       "comp_release_auto": false,
       "comp_makeup_db": 4.5
+    },
+    {
+      "name": "Vocal bus",
+      "comp_enabled": false,
+      "comp_thresh_db": -30.0,
+      "comp_ratio": 5.0,
+      "comp_attack_ms": 1.0,
+      "comp_release_ms": 300.0,
+      "comp_release_auto": true,
+      "comp_makeup_db": 2.0
     }
   ],
   "master": {

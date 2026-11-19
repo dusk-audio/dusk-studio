@@ -18,11 +18,13 @@ float fetThreshold (float thresholdDb) noexcept;
 float vcaThreshold (float thresholdDb) noexcept;
 float vcaCompression (float ratio) noexcept;
 float vcaOutput (float outputDb) noexcept;
-float busThreshold (float thresholdDb) noexcept;
-int   busRatio (float ratio) noexcept;
+// Bus and master: every old ratio plays as the new 2:1 (bus_ratio 0).
 int   busAttack (float attackMs) noexcept;
 int   busRelease (float releaseMs, bool autoRelease) noexcept;
+struct BusThreshold { float threshold; int headroom; };
+BusThreshold busThreshold (float thresholdDb, float ratio, int newAttack, int newRelease) noexcept;
 float busMakeup (float makeupDb) noexcept;
+float busSidechainHp() noexcept;
 } // namespace legacycomp
 
 // The 11 -> 12 step: every track's comp object and the flat comp_* keys of the

@@ -71,11 +71,14 @@ void checkDefaults (const CompParams& comp, CompStage stage)
 }
 
 // The old strip and bus cores had no control for these, so a converted
-// session sets them where the plug-in starts.
+// session sets them where the plug-in starts, except the bus side chain:
+// the old bus detector's fixed high-pass measured like 27 Hz, host value
+// (27 / 500) ^ 0.5.
 const Expected kStripFixed { { Id::Mix, 100.0f }, { Id::SidechainHp, 0.0f }, { Id::AutoMakeup, 0.0f },
                              { Id::OptoMeter, 0.0f }, { Id::FetMeter, 0.0f } };
-const Expected kBusFixed { { Id::SidechainHp, 0.0f }, { Id::AutoMakeup, 0.0f }, { Id::BusMix, 100.0f },
-                           { Id::BusHeadroom, 3.0f }, { Id::BusFadeRate, 0.674074054f }, { Id::BusFade, 0.0f } };
+constexpr float kBusSidechainHp = 0.23237900f;
+const Expected kBusFixed { { Id::SidechainHp, kBusSidechainHp }, { Id::AutoMakeup, 0.0f }, { Id::BusMix, 100.0f },
+                           { Id::BusFadeRate, 0.674074054f }, { Id::BusFade, 0.0f } };
 } // namespace
 
 // Every value below was worked out from the two donor trees' laws separately
@@ -123,16 +126,33 @@ TEST_CASE ("A format-11 session converts every compressor setting to Multi-Comp 
         { Id::VcaThreshold, -3.0396f }, { Id::VcaCompression, 97.828711f }, { Id::VcaOutput, -12.0f } });
     check (vca.comp, kStripFixed);
 
+    // Bus and master threshold knob: (old threshold + the old ratio's offset
+    // 39.85 / 37.60 / 36.61 - (new onset at the new attack and release - its
+    // -35.17 at 10 ms and Auto)) / 1.3186, less 4 / 1.3186 per headroom step
+    // taken off while it is above +15.
+
+    // Old 10:1, 3 ms, 0.6 s, -18 dB: attack 3 ms, release 1.2 s, onset -37.89;
+    // (-18 + 36.61 + 2.72) / 1.3186 = 16.18 is past the top, so headroom 2.
     CHECK (session->bus (0).strip.compEnabled.load());
     check (session->bus (0).strip.comp, {
-        { Id::BusThreshold, -18.0f }, { Id::BusRatio, 2.0f }, { Id::BusAttack, 3.0f },
-        { Id::BusRelease, 2.0f }, { Id::BusMakeup, 4.5f } });
+        { Id::BusThreshold, 13.142727f }, { Id::BusRatio, 0.0f }, { Id::BusAttack, 3.0f },
+        { Id::BusRelease, 3.0f }, { Id::BusHeadroom, 2.0f }, { Id::BusMakeup, 4.5f } });
     check (session->bus (0).strip.comp, kBusFixed);
 
+    // Old 5:1 (the 4:1 step), 1 ms, Auto, -30 dB: attack 1 ms, release 0.6 s,
+    // onset -37.86.
+    CHECK_FALSE (session->bus (1).strip.compEnabled.load());
+    check (session->bus (1).strip.comp, {
+        { Id::BusThreshold, 7.803731f }, { Id::BusRatio, 0.0f }, { Id::BusAttack, 2.0f },
+        { Id::BusRelease, 2.0f }, { Id::BusHeadroom, 3.0f }, { Id::BusMakeup, 2.0f } });
+    check (session->bus (1).strip.comp, kBusFixed);
+
+    // Old 2:1, 25 ms, 0.3 s, -45 dB, makeup -4: attack 30 ms, release 1.2 s,
+    // onset -34.82; makeup below 0 dB has no counterpart.
     CHECK (session->master().compEnabled.load());
     check (session->master().comp, {
-        { Id::BusThreshold, -30.0f }, { Id::BusRatio, 0.0f }, { Id::BusAttack, 5.0f },
-        { Id::BusRelease, 1.0f }, { Id::BusMakeup, 0.0f } });
+        { Id::BusThreshold, -4.171091f }, { Id::BusRatio, 0.0f }, { Id::BusAttack, 5.0f },
+        { Id::BusRelease, 3.0f }, { Id::BusHeadroom, 3.0f }, { Id::BusMakeup, 0.0f } });
     check (session->master().comp, kBusFixed);
 
     CHECK (session->mastering().compEnabled.load());
@@ -141,7 +161,7 @@ TEST_CASE ("A format-11 session converts every compressor setting to Multi-Comp 
     const auto resaved = Json::parse (SessionSerializer::serialize (*session).toStdString());
     CHECK (resaved["version"].get<int>() == 12);
     CHECK_THAT (resaved["tracks"][0]["comp"]["opto_gain"].get<float>(), WithinAbs (53.184524f, 1e-4));
-    CHECK (resaved["buses"][0]["comp"]["bus_ratio"].get<int>() == 2);
+    CHECK (resaved["buses"][0]["comp"]["bus_headroom"].get<int>() == 2);
 }
 
 TEST_CASE ("The format 11 to 12 step leaves none of the old compressor keys", "[session][comp][migration]")
@@ -189,16 +209,17 @@ TEST_CASE ("The released format-10 session loads through both migrations with it
             { Id::FetRelease, 854.0559f }, { Id::FetRatio, 0.0f }, { Id::FetThreshold, -10.0f },
             { Id::VcaThreshold, 0.0f }, { Id::VcaCompression, 48.451684f }, { Id::VcaOutput, 0.0f } });
     }
+    // The old defaults, 4:1, 10 ms, Auto, 0 dB: (0 + 37.60 + 0.35) / 1.3186
+    // = 28.78 stays past +15 with every headroom step taken off.
+    const Expected oldBusDefaults { { Id::BusThreshold, 15.0f }, { Id::BusRatio, 0.0f }, { Id::BusAttack, 4.0f },
+                                    { Id::BusRelease, 2.0f }, { Id::BusHeadroom, 0.0f }, { Id::BusMakeup, 0.0f },
+                                    { Id::SidechainHp, kBusSidechainHp } };
     for (int b = 0; b < Session::kNumBuses; ++b)
     {
         CAPTURE (b);
-        check (session->bus (b).strip.comp, {
-            { Id::BusThreshold, 0.0f }, { Id::BusRatio, 1.0f }, { Id::BusAttack, 4.0f },
-            { Id::BusRelease, 4.0f }, { Id::BusMakeup, 0.0f } });
+        check (session->bus (b).strip.comp, oldBusDefaults);
     }
-    check (session->master().comp, {
-        { Id::BusThreshold, 0.0f }, { Id::BusRatio, 1.0f }, { Id::BusAttack, 4.0f },
-        { Id::BusRelease, 4.0f }, { Id::BusMakeup, 0.0f } });
+    check (session->master().comp, oldBusDefaults);
     checkDefaults (session->mastering().comp, CompStage::Multiband);
     CHECK_FALSE (session->mastering().compEnabled.load());
 }
@@ -234,15 +255,17 @@ TEST_CASE ("The format 11 to 12 step converts what the old loader would have rea
     }
 
     const auto& bus = root["buses"][0]["comp"];
-    CHECK (bus["bus_ratio"].get<int>() == 2);
+    CHECK (bus["bus_ratio"].get<int>() == 0);
     CHECK_THAT (bus["bus_makeup"].get<float>(), WithinAbs (0.0f, 1e-6));
-    CHECK_THAT (bus["bus_threshold"].get<float>(), WithinAbs (0.0f, 1e-6));
+    CHECK_THAT (bus["bus_threshold"].get<float>(),
+                WithinAbs (legacycomp::busThreshold (0.0f, 10.0f, 4, 2).threshold, 1e-6));
+    CHECK (bus["bus_headroom"].get<int>() == legacycomp::busThreshold (0.0f, 10.0f, 4, 2).headroom);
     CHECK (bus["bus_attack"].get<int>() == 4);
-    CHECK (bus["bus_release"].get<int>() == 4);
+    CHECK (bus["bus_release"].get<int>() == 2);
     CHECK_FALSE (bus.contains ("enabled"));
 
     const auto& master = root["master"]["comp"];
-    CHECK (master["bus_release"].get<int>() == 0);
+    CHECK (master["bus_release"].get<int>() == 2);
     for (const auto* key : { "enabled", "bus_threshold", "bus_ratio", "bus_attack", "bus_makeup" })
         CHECK_FALSE (master.contains (key));
     CHECK (master["bus_headroom"].get<int>() == 3);
@@ -255,7 +278,7 @@ TEST_CASE ("The format 11 to 12 step converts what the old loader would have rea
     session->master().comp.set (Id::BusThreshold, -9.0f);
     load (*session, root);
     CHECK_THAT (session->master().comp.get (Id::BusThreshold), WithinAbs (-9.0f, 1e-6));
-    CHECK_THAT (session->master().comp.get (Id::BusRelease), WithinAbs (0.0f, 1e-6));
+    CHECK_THAT (session->master().comp.get (Id::BusRelease), WithinAbs (2.0f, 1e-6));
 }
 
 TEST_CASE ("Legacy compressor conversions keep the old settings' sound", "[session][comp][migration]")
@@ -314,23 +337,41 @@ TEST_CASE ("Legacy compressor conversions keep the old settings' sound", "[sessi
         CHECK_THAT (legacycomp::vcaCompression (1.0f), WithinAbs (0.0f, 1e-6));
         CHECK_THAT (legacycomp::vcaCompression (4.137f), WithinAbs (50.0f, 1e-3));
     }
-    SECTION ("bus steps are the ones the old strips played")
+    SECTION ("bus steps go to the new steps that play closest at 2:1")
     {
-        CHECK_THAT (legacycomp::busRatio (2.0f), WithinAbs (0, 1e-6));
-        CHECK_THAT (legacycomp::busRatio (4.0f), WithinAbs (1, 1e-6));
-        CHECK_THAT (legacycomp::busRatio (10.0f), WithinAbs (2, 1e-6));
-        CHECK_THAT (legacycomp::busAttack (0.1f), WithinAbs (0, 1e-6));
-        CHECK_THAT (legacycomp::busAttack (0.3f), WithinAbs (1, 1e-6));
-        CHECK_THAT (legacycomp::busAttack (1.0f), WithinAbs (2, 1e-6));
-        CHECK_THAT (legacycomp::busAttack (3.0f), WithinAbs (3, 1e-6));
-        CHECK_THAT (legacycomp::busAttack (10.0f), WithinAbs (4, 1e-6));
-        CHECK_THAT (legacycomp::busAttack (30.0f), WithinAbs (5, 1e-6));
-        CHECK_THAT (legacycomp::busRelease (100.0f, false), WithinAbs (0, 1e-6));
-        CHECK_THAT (legacycomp::busRelease (300.0f, false), WithinAbs (1, 1e-6));
-        CHECK_THAT (legacycomp::busRelease (600.0f, false), WithinAbs (2, 1e-6));
-        CHECK_THAT (legacycomp::busRelease (1000.0f, false), WithinAbs (3, 1e-6));
-        CHECK_THAT (legacycomp::busRelease (100.0f, true), WithinAbs (4, 1e-6));
-        CHECK_THAT (legacycomp::busThreshold (-60.0f), WithinAbs (-30.0f, 1e-6));
+        // The old steps 0.1 / 0.3 / 1 ms all played about as fast as the new 1 ms.
+        CHECK (legacycomp::busAttack (0.1f) == 2);
+        CHECK (legacycomp::busAttack (0.3f) == 2);
+        CHECK (legacycomp::busAttack (1.0f) == 2);
+        CHECK (legacycomp::busAttack (3.0f) == 3);
+        CHECK (legacycomp::busAttack (10.0f) == 4);
+        CHECK (legacycomp::busAttack (30.0f) == 5);
+        // Old releases ran four times their label; old Auto was a fixed 0.6 s.
+        CHECK (legacycomp::busRelease (100.0f, false) == 2);
+        CHECK (legacycomp::busRelease (300.0f, false) == 3);
+        CHECK (legacycomp::busRelease (600.0f, false) == 3);
+        CHECK (legacycomp::busRelease (1000.0f, false) == 3);
+        CHECK (legacycomp::busRelease (100.0f, true) == 2);
         CHECK_THAT (legacycomp::busMakeup (-10.0f), WithinAbs (0.0f, 1e-6));
+        CHECK_THAT (legacycomp::busSidechainHp(), WithinAbs (kBusSidechainHp, 1e-7));
+    }
+    SECTION ("bus threshold starts the new 2:1 where the old step started")
+    {
+        // At 10 ms and Auto the onset table adds nothing: (thr + offset) / 1.3186.
+        const auto twoToOne = legacycomp::busThreshold (-40.0f, 2.0f, 4, 4);
+        CHECK_THAT (twoToOne.threshold, WithinAbs ((-40.0f + 39.85f) / 1.3186f, 1e-5));
+        CHECK (twoToOne.headroom == 3);
+        // 0.1 ms and 0.1 s set in 1.70 dB lower than 10 ms and Auto, so the
+        // knob sits 1.70 dB higher to start at the same level.
+        const auto fast = legacycomp::busThreshold (-40.0f, 2.0f, 0, 0);
+        CHECK_THAT (fast.threshold, WithinAbs ((-40.0f + 39.85f + 1.70f) / 1.3186f, 1e-5));
+        // Old 4:1 at -15 dB: 17.14 is past +15, one headroom step brings it in.
+        const auto hot = legacycomp::busThreshold (-15.0f, 4.0f, 4, 4);
+        CHECK (hot.headroom == 2);
+        CHECK_THAT (hot.threshold, WithinAbs ((-15.0f + 37.60f - 4.0f) / 1.3186f, 1e-5));
+        // Out of reach at headroom 0: the knob holds at its top.
+        const auto top = legacycomp::busThreshold (0.0f, 2.0f, 5, 3);
+        CHECK (top.headroom == 0);
+        CHECK_THAT (top.threshold, WithinAbs (15.0f, 1e-6));
     }
 }

@@ -397,33 +397,6 @@ struct ChannelStripParams
     // does not, as a double-click on the threshold handle does not.
     void armComp() noexcept { compEnabled.store (true, std::memory_order_relaxed); }
 
-    // Opto (LA-2A style).
-    std::atomic<float> compOptoPeakRed { 0.0f };   // 0..100 %
-    std::atomic<float> compOptoGain    { 50.0f };  // 0..100 % (50 = unity)
-    std::atomic<bool>  compOptoLimit   { false };
-
-    // FET (1176 style).
-    std::atomic<float> compFetInput   { 0.0f };    // -20..40 dB (drive into detection)
-    std::atomic<float> compFetOutput  { 0.0f };    // -20..20 dB
-    std::atomic<float> compFetAttack  { 0.2f };    // 0.02..80 ms
-    std::atomic<float> compFetRelease { 400.0f };  // 50..1100 ms
-    std::atomic<int>   compFetRatio   { 0 };       // 0=4:1, 1=8:1, 2=12:1, 3=20:1, 4=All
-    // Adjustable FET threshold - donor's original was a hardcoded -10
-    // dBFS; defaulting here to the same value preserves saved-state
-    // behaviour for sessions written before fet_threshold existed.
-    std::atomic<float> compFetThresholdDb { -10.0f }; // -60..0 dB
-
-    // VCA (textbook).
-    std::atomic<float> compVcaThreshDb { 12.0f };   // -38..12 dB
-    std::atomic<float> compVcaRatio    { 4.0f };    // 1..120
-    std::atomic<float> compVcaAttack   { 1.0f };    // 0.1..50 ms
-    std::atomic<float> compVcaRelease  { 100.0f };  // 10..5000 ms
-    std::atomic<float> compVcaOutput   { 0.0f };    // -20..20 dB
-    // dbx 160X OverEasy parabolic soft knee.
-    std::atomic<bool>  compVcaOverEasy { false };
-    // false = Adaptive (donor's 35->5 ms RMS TC); true = Classic (fixed 10 ms).
-    std::atomic<bool>  compVcaDetectorClassic { false };
-
     CompParams comp;
 
     // Engine writes liveFaderDb at the top of every block: Off mode
