@@ -51,8 +51,9 @@ struct CompStageBlock
 // engaged and off only once none is engaged and the transport is stopped, so
 // switching a compressor in and out while playing never moves the stage's
 // timing. Off -> on stores the latency's worth of input before the delayed
-// path fades in; on -> off fades back. The engine owns one per stage and runs
-// it on the audio thread at the top of each block.
+// path fades in; on -> off fades back, and a transport that rolls again before
+// that fade ends puts the stage straight back on. The engine owns one per
+// stage and runs it on the audio thread at the top of each block.
 class CompStageClock
 {
 public:

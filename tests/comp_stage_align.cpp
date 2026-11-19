@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <functional>
 #include <vector>
 
@@ -194,6 +195,87 @@ TEST_CASE ("CompStageClock: a stage's latency comes with its first compressor an
     none.advance (true, false, kBlock);
     CHECK_FALSE (none.block().write);
     CHECK (none.reportedLatencySamples() == 0);
+}
+
+TEST_CASE ("CompStageClock: the transport rolling again inside the fall puts the stage back on at once", "[compressor][comp-stage]")
+{
+    // The transport stops at block 10 with nothing engaged, which starts the
+    // 20 ms fall, and rolls again at block 11. What a stopped transport plays
+    // is silence, then the music from the first rolled sample, here a sine.
+    static constexpr int kStop = 10;
+    const int total = 30 * kBlock;
+    auto in = sine (1000.0, 0.5f, total);
+    std::fill (in.begin() + kStop * kBlock, in.begin() + (kStop + 1) * kBlock, 0.0f);
+
+    for (const bool stereo : { false, true })
+    {
+        CAPTURE (stereo);
+        CompStageClock restarted, stayed;
+        CompStageAlign restartedMember, stayedMember;
+        FakeComp restartedComp (kLatency, 0.5f), stayedComp (kLatency, 0.5f);
+        for (auto* c : { &restarted, &stayed })
+        {
+            c->prepare (kSr, kLatency);
+            c->snap (true);
+        }
+        restartedMember.prepare (kBlock, kLatency);
+        stayedMember.prepare (kBlock, kLatency);
+
+        auto L = in, R = in, stayedL = in, stayedR = in;
+        std::vector<int> reported;
+        for (int b = 0; b * kBlock < total; ++b)
+        {
+            const bool stopped = b == kStop;
+            restarted.advance (false, stopped, kBlock);
+            stayed.advance (false, false, kBlock);
+            reported.push_back (restarted.reportedLatencySamples());
+            CHECK (restarted.latencySamples() == reported.back());
+            const auto offset = (std::size_t) (b * kBlock);
+            restartedMember.process (L.data() + offset, stereo ? R.data() + offset : nullptr, kBlock,
+                                     restarted.block(), false, &restartedComp);
+            stayedMember.process (stayedL.data() + offset, stereo ? stayedR.data() + offset : nullptr, kBlock,
+                                  stayed.block(), false, &stayedComp);
+        }
+
+        // The stopped block falls; the stage reports it off, where it heads.
+        CHECK (reported[(std::size_t) kStop - 1] == kLatency);
+        CHECK (reported[(std::size_t) kStop] == 0);
+        // Rolling, it is on from the first sample: the same latency reported
+        // and the same samples played as by a stage that never stopped.
+        for (int b = kStop + 1; b * kBlock < total; ++b)
+            CHECK (reported[(std::size_t) b] == kLatency);
+        CHECK (restarted.block().settledOn());
+        const auto from = (std::ptrdiff_t) ((kStop + 1) * kBlock);
+        CHECK (std::equal (L.begin() + from, L.end(), stayedL.begin() + from));
+        if (stereo) CHECK (std::equal (R.begin() + from, R.end(), stayedR.begin() + from));
+        CHECK (worstAgainst (L, (kStop + 1) * kBlock + kLatency, total,
+                             [&] (int i) { return in[(std::size_t) (i - kLatency)]; }) <= 0.0f);
+        CHECK (restartedComp.calls == 0);
+    }
+}
+
+TEST_CASE ("CompStageClock: a fall that ends while stopped leaves the stage off when the transport rolls", "[compressor][comp-stage]")
+{
+    static constexpr int kStop = 10;
+    static constexpr int kRoll = kStop + (kRamp + kBlock - 1) / kBlock + 1;
+    const int total = (kRoll + 10) * kBlock;
+    const auto in = sine (1000.0, 0.5f, total);
+    auto L = in;
+    CompStageClock clock;
+    clock.prepare (kSr, kLatency);
+    clock.snap (true);
+    CompStageAlign member;
+    member.prepare (kBlock, kLatency);
+    FakeComp comp (kLatency, 0.5f);
+    run (clock, member, &comp, L, nullptr,
+         [] (int b) { return Step { false, b >= kStop && b < kRoll, false }; });
+
+    CHECK_FALSE (clock.block().write);
+    CHECK (clock.reportedLatencySamples() == 0);
+    CHECK (worstAgainst (L, kRoll * kBlock, total, [&] (int i) { return in[(std::size_t) i]; }) <= 0.0f);
+    // The fall itself, a fade between the delayed and the undelayed input.
+    const float bound = (float) (0.5 * kTwoPi * 1000.0 / kSr) + 2.0f * 0.5f / (float) kRamp + 1.0e-5f;
+    CHECK (maxStep (L) <= bound);
 }
 
 TEST_CASE ("CompStageAlign: an impulse lands at 0 with the stage off and at the latency with it on", "[compressor][comp-stage]")

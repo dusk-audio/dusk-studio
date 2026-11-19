@@ -66,7 +66,20 @@ void CompStageClock::advance (bool anyEngaged, bool transportStopped, int numSam
                 if (! wantOn) state = State::Falling;
                 break;
             case State::Falling:
-                if (wantOn) state = State::Rising;
+                // The members kept storing their input through the fall, so a
+                // transport that rolls again inside it finds the delayed path
+                // whole, and the stage takes it back from the first sample
+                // played rather than moving the timing while rolling.
+                if (! transportStopped)
+                {
+                    state = State::On;
+                    pos = ramp;
+                    wantOn = true;
+                }
+                else if (wantOn)
+                {
+                    state = State::Rising;
+                }
                 break;
         }
     }
