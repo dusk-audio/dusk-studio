@@ -225,9 +225,9 @@ TEST_CASE ("The released format-10 session loads through both migrations with it
 }
 
 // A track or bus filled a missing or unreadable key from the old model's
-// default, so the conversion starts from that default; the master and mastering
-// kept their live value, so the converted key stays absent and the new loader
-// keeps the live value as well.
+// default, so the conversion starts from that default. The master kept its
+// live value, which a fresh start held at that default, so it converts from it
+// as well, and the new loader keeps no live compressor value anywhere.
 TEST_CASE ("The format 11 to 12 step converts what the old loader would have read", "[session][comp][migration]")
 {
     Json root {
@@ -264,11 +264,17 @@ TEST_CASE ("The format 11 to 12 step converts what the old loader would have rea
     CHECK (bus["bus_release"].get<int>() == 2);
     CHECK_FALSE (bus.contains ("enabled"));
 
+    // Old 0 dB, 4:1, 10 ms and the fixed 100 ms the file asked for instead of
+    // Auto: attack 10 ms, release 0.6 s.
+    const auto masterThreshold = legacycomp::busThreshold (0.0f, 4.0f, 4, 2);
     const auto& master = root["master"]["comp"];
+    CHECK_FALSE (master.contains ("enabled"));
+    CHECK_THAT (master["bus_threshold"].get<float>(), WithinAbs (masterThreshold.threshold, 1e-6));
+    CHECK (master["bus_headroom"].get<int>() == masterThreshold.headroom);
+    CHECK (master["bus_ratio"].get<int>() == 0);
+    CHECK (master["bus_attack"].get<int>() == 4);
     CHECK (master["bus_release"].get<int>() == 2);
-    for (const auto* key : { "enabled", "bus_threshold", "bus_ratio", "bus_attack", "bus_makeup" })
-        CHECK_FALSE (master.contains (key));
-    CHECK (master["bus_headroom"].get<int>() == 3);
+    CHECK_THAT (master["bus_makeup"].get<float>(), WithinAbs (0.0f, 1e-6));
 
     const auto& mastering = root["mastering"]["comp"];
     CHECK_FALSE (mastering.contains ("enabled"));
@@ -276,9 +282,11 @@ TEST_CASE ("The format 11 to 12 step converts what the old loader would have rea
 
     auto session = std::make_unique<Session>();
     session->master().comp.set (Id::BusThreshold, -9.0f);
+    session->master().compEnabled.store (true);
     load (*session, root);
-    CHECK_THAT (session->master().comp.get (Id::BusThreshold), WithinAbs (-9.0f, 1e-6));
+    CHECK_THAT (session->master().comp.get (Id::BusThreshold), WithinAbs (masterThreshold.threshold, 1e-6));
     CHECK_THAT (session->master().comp.get (Id::BusRelease), WithinAbs (2.0f, 1e-6));
+    CHECK_FALSE (session->master().compEnabled.load());
 }
 
 TEST_CASE ("Legacy compressor conversions keep the old settings' sound", "[session][comp][migration]")

@@ -89,6 +89,17 @@ struct CompEditorHost::Impl final : private dusk::Timer
     {
         stopTimer();
         host.shutdown();
+        show (nullptr);
+    }
+
+    // The stage the editor draws keeps the session's values in its plug-in,
+    // which the editor reads back, for as long as the editor is up.
+    void show (MultiCompStage* stage)
+    {
+        if (stage == shown) return;
+        if (shown != nullptr) shown->setEditorOpen (false);
+        shown = stage;
+        if (shown != nullptr) shown->setEditorOpen (true);
     }
 
     void setCallbacks (DafEditorHost::Callbacks given)
@@ -112,10 +123,10 @@ struct CompEditorHost::Impl final : private dusk::Timer
     {
         stopTimer();
         closing = false;
-        shown = &runningStage();
+        show (&runningStage());
         if (! host.open (parent, geometry))
         {
-            shown = nullptr;
+            show (nullptr);
             return false;
         }
         nativeParent = parent;
@@ -140,7 +151,7 @@ struct CompEditorHost::Impl final : private dusk::Timer
     void forget()
     {
         stopTimer();
-        shown = nullptr;
+        show (nullptr);
         closing = false;
     }
 
@@ -151,7 +162,7 @@ struct CompEditorHost::Impl final : private dusk::Timer
         if (closing || shown == nullptr || ! host.isOpen()) return;
         auto& running = runningStage();
         if (&running == shown) return;
-        shown = &running;
+        show (&running);
         const auto geometry = callbacks.geometry ? callbacks.geometry() : DafEditorHost::Geometry {};
         if (host.open (nativeParent, geometry)) return;
         forget();

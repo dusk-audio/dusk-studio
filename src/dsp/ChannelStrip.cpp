@@ -605,7 +605,7 @@ void ChannelStrip::runCompressor (float* L, float* R, int numSamples, bool engag
 {
     auto& active = R != nullptr ? stereoComp : monoComp;
     compRunWidth.store (R != nullptr ? 2 : 1, std::memory_order_relaxed);
-    if (engaged || compAlign.compressorRunning())
+    if (engaged || compAlign.compressorRunning() || active.editorOpen())
         active.pushParameters (paramsRef->comp, true,
                                paramsRef->compMode.load (std::memory_order_relaxed));
     compAlign.process (L, R, numSamples, compStageBlock(), engaged, &active);

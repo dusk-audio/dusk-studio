@@ -408,4 +408,15 @@ std::optional<CompParamId> MultiCompStage::sessionParam (int index) const noexce
     if (id < 0) return std::nullopt;
     return (CompParamId) id;
 }
+
+void MultiCompStage::setEditorOpen (bool open) noexcept
+{
+    editorsOpen.fetch_add (open ? 1 : -1, std::memory_order_relaxed);
+}
+
+float MultiCompStage::editorReading (int index) const noexcept
+{
+    if (index < 0 || index >= (int) impl->idByIndex.size()) return 0.0f;
+    return builtin::multiComp2EditorValue (impl->instance, (std::uint32_t) index);
+}
 } // namespace duskstudio

@@ -149,11 +149,12 @@ void MasteringChain::processInPlace (float* L, float* R, int numSamples, bool ca
 #if DUSKSTUDIO_HAS_DUSK_DSP
     {
         // Out, the plug-in costs nothing: only the delay beside it runs. The
-        // plug-in takes the session's values only while it runs, and its own
-        // bypass stays off, since being out is the delay's job.
+        // plug-in takes the session's values while it runs and while its
+        // editor, which reads values back from it, is open; its own bypass
+        // stays off, since being out is the delay's job.
         const bool compOn = paramsRef != nullptr
                          && paramsRef->compEnabled.load (std::memory_order_relaxed);
-        if (paramsRef != nullptr && (compOn || compAlign.compressorRunning()))
+        if (paramsRef != nullptr && (compOn || compAlign.compressorRunning() || comp.editorOpen()))
             comp.pushParameters (paramsRef->comp, true, 0);
         compAlign.process (L, R, numSamples, compClock.block(), compOn, &comp);
         if (paramsRef != nullptr)

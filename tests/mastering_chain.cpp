@@ -11,6 +11,7 @@
 #include <array>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <iterator>
 #include <string>
 #include <vector>
@@ -568,6 +569,158 @@ TEST_CASE ("MasteringChain: with the compressor out the plug-in does not run", "
     for (std::size_t i = 0; i < held.size(); ++i)
         CHECK_THAT (later[i], WithinAbs (held[i], 0.0f));
     CHECK_THAT (params.meterCompGrDb.load(), WithinAbs (0.0f, 0.0f));
+#else
+    SKIP ("requires the mastering compressor donor");
+#endif
+}
+
+#if DUSKSTUDIO_HAS_DUSK_DSP
+namespace
+{
+// Drives a chain with a signal loud enough for every band to compress.
+struct LoudDrive
+{
+    explicit LoudDrive (duskstudio::MasteringChain& driven) : chain (driven) {}
+
+    duskstudio::MasteringChain& chain;
+    std::vector<float> out;
+    double phase = 0.0;
+
+    void blocks (int count)
+    {
+        std::vector<float> L (kBlock), R (kBlock);
+        for (int b = 0; b < count; ++b)
+        {
+            for (int i = 0; i < kBlock; ++i)
+            {
+                const double x = phase;
+                phase += 1.0;
+                L[(size_t) i] = 1.5f * (0.25f * (float) std::sin (x * 0.01) + 0.25f * (float) std::sin (x * 0.13)
+                                        + 0.25f * (float) std::sin (x * 0.6) + 0.25f * (float) std::sin (x * 1.6));
+                R[(size_t) i] = 0.8f * L[(size_t) i];
+            }
+            chain.processInPlace (L.data(), R.data(), kBlock);
+            out.insert (out.end(), L.begin(), L.end());
+            out.insert (out.end(), R.begin(), R.end());
+        }
+    }
+};
+} // namespace
+#endif
+
+// The Multiband face reads the three crossovers back from the plug-in every
+// frame, and every control when it opens. With the compressor out the plug-in
+// does not run, yet while the face is open it holds the session's values.
+TEST_CASE ("MasteringChain: with the compressor out, an open editor reads the session's values from the plug-in",
+           "[MasteringChain][editor]")
+{
+#if DUSKSTUDIO_HAS_DUSK_DSP
+    duskstudio::MasteringParams params;
+    params.compEnabled.store (false, std::memory_order_relaxed);
+    params.limiterEnabled.store (false, std::memory_order_relaxed);
+    duskstudio::MasteringChain chain;
+    chain.bind (params);
+    chain.prepare (kSr, kBlock);
+    auto& stage = chain.getCompressor();
+    LoudDrive drive { chain };
+    drive.blocks (2);
+
+    struct Edit { CompParamId id; const char* symbol; float value; };
+    // Host values whose crossover frequencies are already in order, so the
+    // plug-in reads back what it was given, to its 1 Hz step.
+    const Edit edits[] { { CompParamId::MbCrossover1, "mb_crossover_1", 0.6f },
+                         { CompParamId::MbCrossover3, "mb_crossover_3", 0.8f },
+                         { compBandParam (1, CompBandField::Threshold), "mb_threshold_1", -33.0f },
+                         { CompParamId::MbMix, "mb_mix", 60.0f } };
+    stage.setEditorOpen (true);
+    for (const auto& edit : edits)
+        params.comp.set (edit.id, edit.value);
+    drive.blocks (1);
+    for (const auto& edit : edits)
+    {
+        CAPTURE (edit.symbol);
+        const int index = paramIndex (stage, edit.symbol);
+        REQUIRE (index >= 0);
+        CHECK_THAT (stage.editorReading (index), WithinAbs (edit.value, 2.0e-3f));
+    }
+    CHECK_THAT (params.meterCompGrDb.load(), WithinAbs (0.0f, 0.0f));
+
+    // Closed, a compressor that is out takes nothing.
+    stage.setEditorOpen (false);
+    params.comp.set (CompParamId::MbCrossover1, 0.3f);
+    drive.blocks (2);
+    CHECK_THAT (stage.editorReading (paramIndex (stage, "mb_crossover_1")), WithinAbs (0.6f, 2.0e-3f));
+#else
+    SKIP ("requires the mastering compressor donor");
+#endif
+}
+
+// What an open editor had the plug-in take while it was out leaves its rest
+// state alone: switched in again it plays exactly what it plays when the
+// values reach it as it starts, as they do with no editor open.
+TEST_CASE ("MasteringChain: values an open editor gave a compressor that is out play as they did without it",
+           "[MasteringChain][editor]")
+{
+#if DUSKSTUDIO_HAS_DUSK_DSP
+    duskstudio::MasteringParams watchedParams, plainParams;
+    duskstudio::MasteringChain watched, plain;
+    for (auto* params : { &watchedParams, &plainParams })
+        params->limiterEnabled.store (false, std::memory_order_relaxed);
+    watched.bind (watchedParams);
+    plain.bind (plainParams);
+    watched.prepare (kSr, kBlock);
+    plain.prepare (kSr, kBlock);
+    LoudDrive watchedDrive { watched }, plainDrive { plain };
+
+    const auto both = [&] (auto&& change, int blocks)
+    {
+        change (watchedParams);
+        change (plainParams);
+        watchedDrive.blocks (blocks);
+        plainDrive.blocks (blocks);
+    };
+    using Params = duskstudio::MasteringParams;
+    both ([] (Params& p) { p.compEnabled.store (true, std::memory_order_relaxed); }, 30);
+    // Out long enough for the fade to end and the plug-in to go back to rest.
+    both ([] (Params& p) { p.compEnabled.store (false, std::memory_order_relaxed); }, 30);
+    watched.getCompressor().setEditorOpen (true);
+    // A first set of values, then the one the compressor comes back with, so
+    // the open editor's plug-in takes both and the other only the second.
+    both ([] (Params& p)
+    {
+        p.comp.set (CompParamId::AutoMakeup, 1.0f);
+        p.comp.set (CompParamId::MbMix, 30.0f);
+        p.comp.set (CompParamId::MbCrossover2, 0.5f);
+        p.comp.set (compBandParam (0, CompBandField::Threshold), -40.0f);
+    }, 5);
+    both ([] (Params& p)
+    {
+        p.comp.set (CompParamId::MbMix, 70.0f);
+        p.comp.set (CompParamId::MbOutput, 3.0f);
+        p.comp.set (CompParamId::MbCrossover1, 0.6f);
+        p.comp.set (compBandParam (0, CompBandField::Threshold), -45.0f);
+        p.comp.set (compBandParam (2, CompBandField::Ratio), 0.8f);
+        p.comp.set (compBandParam (3, CompBandField::Enabled), 0.0f);
+    }, 5);
+    const int mix = paramIndex (watched.getCompressor(), "mb_mix");
+    REQUIRE (mix >= 0);
+    CHECK_THAT (watched.getCompressor().editorReading (mix), WithinAbs (70.0f, 1.0e-4f));
+    CHECK_THAT (plain.getCompressor().editorReading (mix), WithinAbs (100.0f, 1.0e-4f));
+    both ([] (Params& p) { p.compEnabled.store (true, std::memory_order_relaxed); }, 30);
+
+    const auto& a = watchedDrive.out;
+    const auto& b = plainDrive.out;
+    REQUIRE (a.size() == b.size());
+    std::size_t firstDifference = a.size();
+    for (std::size_t i = 0; i < a.size(); ++i)
+        if (std::memcmp (&a[i], &b[i], sizeof (float)) != 0)
+        {
+            firstDifference = i;
+            break;
+        }
+    CAPTURE (firstDifference, a.size());
+    CHECK (firstDifference == a.size());
+    CHECK (watchedParams.meterCompGrDb.load() < -1.0f);
 #else
     SKIP ("requires the mastering compressor donor");
 #endif

@@ -203,4 +203,10 @@ void setMultiComp2Channels (void* instance, int channels) noexcept;
 // run() calls: a plain call that allocates nothing and takes no lock. Nothing
 // for a null instance.
 void resetMultiComp2 (void* instance) noexcept;
+
+// A parameter of that plug-in as its own editor reads it back from the plug-in
+// rather than from the values its host hands it: the value the plug-in holds,
+// the three crossovers as its DSP orders them. Any thread; 0 for a null
+// instance.
+float multiComp2EditorValue (void* instance, std::uint32_t index) noexcept;
 } // namespace duskstudio::builtin

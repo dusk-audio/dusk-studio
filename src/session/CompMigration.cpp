@@ -181,11 +181,11 @@ constexpr OldBusComp kOldBusDefaults { 0.0f, 4.0f, 10.0f, 100.0f, 0.0f, true };
 constexpr const char* kOldBusKeys[] { "comp_enabled", "comp_thresh_db", "comp_ratio", "comp_attack_ms",
                                       "comp_release_ms", "comp_release_auto", "comp_makeup_db" };
 
-// Buses fall back to the old defaults for a key they lack, as the old loader
-// filled them; the master kept its live value, so its absent keys stay absent.
-void migrateBusComp (nlohmann::json& stage, bool keepAbsentKeys)
+// A key the stage lacks converts from the old default. The old loader filled
+// a bus's from it and kept the master's live value, which a fresh start held
+// at the same default.
+void migrateBusComp (nlohmann::json& stage)
 {
-    const auto present = [&] (const char* key) { return ! keepAbsentKeys || json::has (stage, key); };
     nlohmann::json comp = nlohmann::json::object();
     if (json::has (stage, "comp_enabled"))
         comp["enabled"] = json::getBool (stage, "comp_enabled", false);
@@ -194,25 +194,16 @@ void migrateBusComp (nlohmann::json& stage, bool keepAbsentKeys)
     const int attack = legacycomp::busAttack (clampOld (stage, "comp_attack_ms", d.attackMs, 0.1f, 50.0f));
     const int release = legacycomp::busRelease (clampOld (stage, "comp_release_ms", d.releaseMs, 50.0f, 1000.0f),
                                                 json::getBool (stage, "comp_release_auto", d.releaseAuto));
-    int headroom = kBusUnityHeadroom;
-    if (present ("comp_thresh_db"))
-    {
-        const auto threshold = legacycomp::busThreshold (
-            clampOld (stage, "comp_thresh_db", d.thresholdDb, -60.0f, 0.0f),
-            clampOld (stage, "comp_ratio", d.ratio, 1.0f, 10.0f), attack, release);
-        put (comp, CompParamId::BusThreshold, threshold.threshold);
-        headroom = threshold.headroom;
-    }
-    put (comp, CompParamId::BusHeadroom, (float) headroom);
-    if (present ("comp_ratio"))
-        put (comp, CompParamId::BusRatio, (float) kBusNewRatio);
-    if (present ("comp_attack_ms"))
-        put (comp, CompParamId::BusAttack, (float) attack);
-    if (present ("comp_release_ms") || present ("comp_release_auto"))
-        put (comp, CompParamId::BusRelease, (float) release);
-    if (present ("comp_makeup_db"))
-        put (comp, CompParamId::BusMakeup,
-             legacycomp::busMakeup (clampOld (stage, "comp_makeup_db", d.makeupDb, -10.0f, 20.0f)));
+    const auto threshold = legacycomp::busThreshold (
+        clampOld (stage, "comp_thresh_db", d.thresholdDb, -60.0f, 0.0f),
+        clampOld (stage, "comp_ratio", d.ratio, 1.0f, 10.0f), attack, release);
+    put (comp, CompParamId::BusThreshold, threshold.threshold);
+    put (comp, CompParamId::BusHeadroom, (float) threshold.headroom);
+    put (comp, CompParamId::BusRatio, (float) kBusNewRatio);
+    put (comp, CompParamId::BusAttack, (float) attack);
+    put (comp, CompParamId::BusRelease, (float) release);
+    put (comp, CompParamId::BusMakeup,
+         legacycomp::busMakeup (clampOld (stage, "comp_makeup_db", d.makeupDb, -10.0f, 20.0f)));
 
     put (comp, CompParamId::SidechainHp, legacycomp::busSidechainHp());
     putFixedDefaults (comp, { CompParamId::AutoMakeup, CompParamId::BusMix, CompParamId::BusFadeRate,
@@ -440,10 +431,10 @@ void migrateCompressorsToFormat12 (nlohmann::json& root)
 
     if (const auto buses = root.find ("buses"); buses != root.end() && buses->is_array())
         for (auto& bus : *buses)
-            if (bus.is_object()) migrateBusComp (bus, false);
+            if (bus.is_object()) migrateBusComp (bus);
 
     if (const auto master = root.find ("master"); master != root.end() && master->is_object())
-        migrateBusComp (*master, true);
+        migrateBusComp (*master);
 
     if (const auto mastering = root.find ("mastering"); mastering != root.end() && mastering->is_object())
         migrateMasteringComp (*mastering);

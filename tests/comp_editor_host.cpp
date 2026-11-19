@@ -177,3 +177,22 @@ TEST_CASE ("comp editor: on the mastering multiband only BYPASS switches the com
     CHECK_FALSE (engaged.load());
     CHECK_THAT (compEditorValue (stage, target, bypass), WithinAbs (1.0f, 0.0f));
 }
+
+// The stage an editor draws keeps the session's values in its plug-in only
+// while the editor is up; one that never opened leaves no such duty behind.
+TEST_CASE ("comp editor: an editor that could not open leaves its compressor's plug-in alone")
+{
+    MultiCompStage stage (CompStage::Bus);
+    CompParams comp;
+    std::atomic<bool> engaged { false };
+    CompEditorTarget target;
+    target.comp = &comp;
+    target.engaged = &engaged;
+    {
+        duskstudio::imgui::CompEditorHost host ([&stage] () -> MultiCompStage& { return stage; }, target);
+        CHECK_FALSE (host.open (0, { 0, 0, 640, 480, 1.0 }));
+        CHECK (host.shownStage() == nullptr);
+        CHECK_FALSE (stage.editorOpen());
+    }
+    CHECK_FALSE (stage.editorOpen());
+}

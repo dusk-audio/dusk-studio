@@ -176,9 +176,9 @@ TEST_CASE ("SessionSerializer::load defaults present invalid master floats",
                                  0.0f, 4.0f, duskstudio::legacycomp::busAttack (10.0f),
                                  duskstudio::legacycomp::busRelease (100.0f, true)).threshold,
                              1e-6f));
-    // A missing key in a present master section retains the live value, through
-    // the conversion of an older session too.
-    REQUIRE_THAT (s.master().comp.get (CompParamId::BusRatio), WithinAbs (2.0f, 1e-6f));
+    // The compressor keeps no live value: the absent old ratio converts from
+    // its old 4:1 default, to the new 2:1.
+    REQUIRE_THAT (s.master().comp.get (CompParamId::BusRatio), WithinAbs (0.0f, 1e-6f));
 
     target.getParentDirectory().deleteRecursively();
 }
@@ -261,8 +261,8 @@ TEST_CASE ("SessionSerializer::load defaults present invalid mastering values",
     REQUIRE_THAT (comp.get (compBandParam (3, CompBandField::Enabled)), WithinAbs (1.0f, 1e-6));
     REQUIRE_FALSE (s.mastering().compEnabled.load());
     REQUIRE (s.mastering().eqEnabled.load() == true);
-    // A missing key in a present mastering section retains the live value.
-    REQUIRE_THAT (comp.get (compBandParam (0, CompBandField::Makeup)), WithinAbs (6.0f, 1e-6f));
+    // A key the comp object omits takes its default, not the live value.
+    REQUIRE_THAT (comp.get (compBandParam (0, CompBandField::Makeup)), WithinAbs (0.0f, 1e-6f));
 
     target.getParentDirectory().deleteRecursively();
 }

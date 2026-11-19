@@ -130,7 +130,7 @@ void BusStrip::processInPlace (float* L, float* R, int numSamples) noexcept
 #if DUSKSTUDIO_HAS_DUSK_DSP
     const bool compEnabled = paramsRef != nullptr
                           && paramsRef->compEnabled.load (std::memory_order_relaxed);
-    if (paramsRef != nullptr && (compEnabled || compAlign.compressorRunning()))
+    if (paramsRef != nullptr && (compEnabled || compAlign.compressorRunning() || busComp.editorOpen()))
         busComp.pushParameters (paramsRef->comp, true, 0);
     compAlign.process (L, R, numSamples, stage, compEnabled, &busComp);
 

@@ -371,6 +371,85 @@ TEST_CASE ("Comp stage: a master whose stage is off plays as one with no stage",
     CHECK (same);
 }
 
+namespace
+{
+int paramIndex (duskstudio::MultiCompStage& stage, const char* symbol)
+{
+    const auto& descs = stage.plugin().params();
+    for (std::size_t i = 0; i < descs.size(); ++i)
+        if (descs[i].symbol == symbol)
+            return (int) i;
+    return -1;
+}
+
+// One of the kind's controls set in the session while the compressor is out,
+// once with its editor open and once with it closed, a processed block after
+// each: the plug-in takes the value only while the editor reads it.
+template <typename Process>
+void checkOutStageFollowsOpenEditor (duskstudio::MultiCompStage& stage, duskstudio::CompParams& comp,
+                                     CompParamId id, float value, Process&& process)
+{
+    const auto* symbol = duskstudio::compParamSpec (id).symbol;
+    CAPTURE (symbol);
+    const int index = paramIndex (stage, symbol);
+    REQUIRE (index >= 0);
+    const float before = stage.editorReading (index);
+    REQUIRE (std::abs (before - value) > 0.5f);
+
+    stage.setEditorOpen (true);
+    comp.set (id, value);
+    process();
+    CHECK_THAT (stage.editorReading (index), Catch::Matchers::WithinAbs (value, 1.0e-4f));
+
+    stage.setEditorOpen (false);
+    comp.set (id, before);
+    process();
+    CHECK_THAT (stage.editorReading (index), Catch::Matchers::WithinAbs (value, 1.0e-4f));
+}
+} // namespace
+
+TEST_CASE ("Comp stage: a compressor that is out takes the session's values while its editor is open", "[comp-stage][editor]")
+{
+    SECTION ("channel strip")
+    {
+        StripRig rig (nullptr);
+        std::fill (rig.in.begin(), rig.in.end(), 0.1f);
+        REQUIRE_FALSE (rig.params.compEnabled.load());
+        checkOutStageFollowsOpenEditor (rig.strip.getEditorCompressor (false), rig.params.comp,
+                                        CompParamId::OptoGain, 70.0f, [&rig] { rig.block(); });
+        CHECK (rig.strip.compressorRunWidth() == 1);
+    }
+    SECTION ("bus")
+    {
+        BusParams params;
+        BusStrip bus;
+        bus.bind (params);
+        bus.prepare (kSr, kBlock);
+        std::vector<float> L ((std::size_t) kBlock), R ((std::size_t) kBlock);
+        checkOutStageFollowsOpenEditor (bus.getCompressor(), params.comp, CompParamId::BusMakeup, 6.0f, [&]
+        {
+            std::fill (L.begin(), L.end(), 0.1f);
+            std::fill (R.begin(), R.end(), 0.1f);
+            bus.processInPlace (L.data(), R.data(), kBlock);
+        });
+    }
+    SECTION ("master")
+    {
+        MasterBusParams params;
+        quietTape (params);
+        MasterBus master;
+        master.bind (params);
+        master.prepare (kSr, kBlock, 1);
+        std::vector<float> L ((std::size_t) kBlock), R ((std::size_t) kBlock);
+        checkOutStageFollowsOpenEditor (master.getCompressor(), params.comp, CompParamId::BusAttack, 4.0f, [&]
+        {
+            std::fill (L.begin(), L.end(), 0.1f);
+            std::fill (R.begin(), R.end(), 0.1f);
+            master.processInPlace (L.data(), R.data(), kBlock);
+        });
+    }
+}
+
 TEST_CASE ("Comp stage: a strip's editor follows the width its compressor last ran at", "[comp-stage][channel-strip]")
 {
     StripRig rig (nullptr);

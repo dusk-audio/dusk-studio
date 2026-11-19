@@ -179,9 +179,11 @@ const ScenarioRegistrar compEditorStrip { Scenario {
 } };
 
 // COMP on a bus and on the master opens Multi-Comp 2's own editor for that
-// compressor. Its knobs leave the engage switch alone, as the face's do; its
-// threshold engages, as the face's handle does; BYPASS is the status light's
-// switch. One compressor editor at a time: opening another closes the first.
+// compressor. Its knobs leave the engage switch alone, as the face's do, and
+// with the master's compressor out its plug-in still holds what they set, which
+// the editor reads back; its threshold engages, as the face's handle does;
+// BYPASS is the status light's switch. One compressor editor at a time:
+// opening another closes the first.
 std::optional<ScenarioResult> runCompEditorBusMaster (GuiHost& host, ScenarioContext& ctx)
 {
    #if ! DUSKSTUDIO_HAS_NATIVE_UI
@@ -215,6 +217,13 @@ std::optional<ScenarioResult> runCompEditorBusMaster (GuiHost& host, ScenarioCon
 
     const MultiCompStage* busStage = &engine.getBusStrip (kBus).getCompressor();
     const MultiCompStage* masterStage = &engine.getMasterBus().getCompressor();
+    int masterAttackIndex = -1;
+    {
+        const auto& params = engine.getMasterBus().getCompressor().plugin().params();
+        for (std::size_t i = 0; i < params.size(); ++i)
+            if (params[i].symbol == "bus_attack") masterAttackIndex = (int) i;
+    }
+    if (masterAttackIndex < 0) return ScenarioResult::fail ("the master's plug-in lacks bus_attack");
 
     auto steps = std::make_shared<std::vector<Step>>();
     steps->push_back ({ 200, [&host, &ctx]
@@ -251,13 +260,21 @@ std::optional<ScenarioResult> runCompEditorBusMaster (GuiHost& host, ScenarioCon
         ctx.expect (std::abs (master.comp.get (CompParamId::BusAttack) - 3.0f) < 1.0e-4f,
                     "the Attack edit missed the master session");
         ctx.expect (! master.compEnabled.load(), "a master knob in the editor engaged the compressor");
+    }, [&host] { return host.compEditorDrawn (Kind::Master, 0); }, "the master compressor editor never drew a frame" });
+    steps->push_back ({ 300, [&host, &ctx, &master, masterStage, masterAttackIndex]
+    {
+        // The editor reads every control back from the plug-in when it opens:
+        // with the compressor out, the plug-in still holds the session's.
+        const float attack = masterStage->editorReading (masterAttackIndex);
+        ctx.expect (std::abs (attack - 3.0f) < 1.0e-4f,
+                    "with the master compressor out its plug-in holds Attack at " + std::to_string (attack));
         ctx.expect (host.compEditorEdit (Kind::Master, 0, "bus_threshold", -6.0f), "the master editor took no Threshold edit");
         ctx.expect (master.compEnabled.load(), "the master editor's Threshold did not engage the compressor");
         ctx.expect (host.compEditorEdit (Kind::Master, 0, "daf_bypass", 1.0f), "the master editor took no BYPASS edit");
         ctx.expect (! master.compEnabled.load(), "BYPASS in the master editor left the compressor engaged");
         // Another compressor's editor takes the window's place.
         host.openCompEditor (Kind::Bus, kBus);
-    }, [&host] { return host.compEditorDrawn (Kind::Master, 0); }, "the master compressor editor never drew a frame" });
+    } });
     steps->push_back ({ 0, [&host] { host.openCompEditor (Kind::Channel, kStripIndex); },
         [&host] { return host.compEditorDrawn (Kind::Bus, kBus) && ! host.compEditorOpen (Kind::Master, 0); },
         "opening the bus editor did not take the master's place" });
@@ -284,9 +301,10 @@ const ScenarioRegistrar compEditorBusMaster { Scenario {
 // The MULTIBAND COMP label on the mastering page opens Multi-Comp 2's own
 // Multiband face over the dimmed window, drawing the mastering chain's
 // compressor at the face's design size where the window holds it. A band
-// control lands in the session and leaves the compressor as it was; BYPASS is
-// the header's status light, both ways; a preset picked on the page shows on
-// the face. Escape and a click on the dim close it.
+// control lands in the session and leaves the compressor as it was, and with
+// the compressor out its plug-in still holds what the face set, which the face
+// reads back; BYPASS is the header's status light, both ways; a preset picked
+// on the page shows on the face. Escape and a click on the dim close it.
 std::optional<ScenarioResult> runMasteringCompEditor (GuiHost& host, ScenarioContext& ctx)
 {
    #if ! DUSKSTUDIO_HAS_NATIVE_UI || ! DUSKSTUDIO_HAS_DUSK_DSP
@@ -340,6 +358,20 @@ std::optional<ScenarioResult> runMasteringCompEditor (GuiHost& host, ScenarioCon
         return shown && std::abs (*shown - value) < 1.0e-4f;
     };
     const auto band1Threshold = compBandParam (1, CompBandField::Threshold);
+    // The face reads the crossovers back from the plug-in itself every frame,
+    // not from the values the host hands it, so the plug-in is what it shows.
+    const auto indexOf = [&compressor] (const char* symbol)
+    {
+        const auto& params = compressor.plugin().params();
+        for (std::size_t i = 0; i < params.size(); ++i)
+            if (params[i].symbol == symbol) return (int) i;
+        return -1;
+    };
+    const int crossover1Index = indexOf ("mb_crossover_1");
+    const int band1ThresholdIndex = indexOf ("mb_threshold_1");
+    if (crossover1Index < 0 || band1ThresholdIndex < 0)
+        return ScenarioResult::fail ("the Multiband plug-in lacks a crossover or band threshold");
+    static constexpr float kCrossover1 = 0.6f;
 
     auto steps = std::make_shared<std::vector<Step>>();
     steps->push_back ({ 300, [&host, &ctx]
@@ -357,10 +389,23 @@ std::optional<ScenarioResult> runMasteringCompEditor (GuiHost& host, ScenarioCon
         ctx.expect (host.masteringCompEditorEdit ("mb_threshold_1", -33.0f), "the face took no band threshold edit");
         ctx.expect (std::abs (mastering.comp.get (band1Threshold) + 33.0f) < 1.0e-4f,
                     "the threshold edit left the session at " + std::to_string (mastering.comp.get (band1Threshold)));
+        ctx.expect (host.masteringCompEditorEdit ("mb_crossover_1", kCrossover1), "the face took no crossover edit");
         ctx.expect (! mastering.compEnabled.load(), "a band control engaged the compressor");
+    }, drawn, "the Multiband face never drew a frame" });
+    steps->push_back ({ 300, [&host, &ctx, &mastering, stage, crossover1Index, band1ThresholdIndex]
+    {
+        // Still out: the plug-in has not run, yet it holds what the face set.
+        ctx.expect (! mastering.compEnabled.load(), "the compressor engaged before BYPASS was touched");
+        const float crossover = stage->editorReading (crossover1Index);
+        ctx.expect (std::abs (crossover - kCrossover1) < 2.0e-3f,
+                    "with the compressor out the face reads its low split back as " + std::to_string (crossover)
+                        + ", not the " + std::to_string (kCrossover1) + " it set");
+        const float threshold = stage->editorReading (band1ThresholdIndex);
+        ctx.expect (std::abs (threshold + 33.0f) < 1.0e-3f,
+                    "with the compressor out the plug-in holds the band threshold at " + std::to_string (threshold));
         ctx.expect (host.masteringCompEditorEdit ("daf_bypass", 0.0f), "the face took no BYPASS edit");
         ctx.expect (mastering.compEnabled.load(), "BYPASS off on the face did not engage the compressor");
-    }, drawn, "the Multiband face never drew a frame" });
+    } });
     steps->push_back ({ 300, [&ctx, &mastering, shows]
     {
         ctx.expect (shows ("daf_bypass", 0.0f), "BYPASS did not follow the engage");

@@ -201,58 +201,100 @@ TEST_CASE ("SessionSerializer clamps corrupt compressor values on load", "[sessi
     CHECK_THAT (mb.get (CompParamId::MbOutput), WithinAbs (0.0f, 1e-6));
 }
 
-// Tracks and buses fill what their slot leaves out from the model defaults;
-// the master and mastering sections keep the live value for a key they omit
-// and reset only when the whole section is gone.
-TEST_CASE ("SessionSerializer applies each section's rule to missing compressor keys", "[session][serializer][comp]")
+// Session B plays its own compressors, at the stage's default for whatever it
+// leaves out, never at session A's values: on a track, a bus, the master and the
+// mastering chain alike, for a missing comp object, a key missing inside one
+// and a missing engage switch. The strip's check covers every mode's values,
+// since a strip stores all three.
+TEST_CASE ("SessionSerializer gives a compressor value a session leaves out the stage's default", "[session][serializer][comp]")
 {
+    auto a = std::make_unique<Session>();
+    a->track (0).strip.compEnabled.store (true);
+    a->track (0).strip.compMode.store (2);
+    a->track (0).strip.compModePicked.store (true);
+    fill (a->track (0).strip.comp, CompStage::Strip, 2);
+    a->bus (0).strip.compEnabled.store (true);
+    fill (a->bus (0).strip.comp, CompStage::Bus, 3);
+    a->master().compEnabled.store (true);
+    fill (a->master().comp, CompStage::Bus, 4);
+    a->mastering().compEnabled.store (true);
+    fill (a->mastering().comp, CompStage::Multiband, 5);
+    const auto sessionA = saved (*a);
+
     auto s = std::make_unique<Session>();
-    fill (s->track (0).strip.comp, CompStage::Strip, 2);
-    fill (s->bus (0).strip.comp, CompStage::Bus, 3);
-    fill (s->master().comp, CompStage::Bus, 4);
-    fill (s->mastering().comp, CompStage::Multiband, 5);
-    s->master().compEnabled.store (true);
-    s->mastering().compEnabled.store (true);
-    const float liveMasterThreshold = s->master().comp.get (CompParamId::BusThreshold);
-    const float liveBand = s->mastering().comp.get (compBandParam (0, CompBandField::Makeup));
+    load (*s, sessionA);
+    REQUIRE (s->master().compEnabled.load());
+    REQUIRE (s->mastering().compEnabled.load());
 
-    SECTION ("keys missing")
+    const auto checkDefaultsBut = [] (const CompParams& comp, CompStage stage, CompParamId loaded)
     {
-        Json document {
-            { "version", 12 },
-            { "tracks", Json::array ({ Json { { "comp", Json { { "fet_ratio", 3 } } } } }) },
-            { "buses", Json::array ({ Json { { "comp", Json { { "bus_ratio", 1 } } } } }) },
-            { "master", Json { { "comp", Json { { "bus_ratio", 1 } } } } },
-            { "mastering", Json { { "comp", Json { { "mb_mix", 40.0 } } } } } };
-        load (*s, document);
+        for (const auto id : compStageParams (stage))
+        {
+            if (id == loaded) continue;
+            CAPTURE (compParamSpec (id).symbol);
+            CHECK_THAT (comp.get (id), WithinAbs (compParamSpec (id).hostDefault, 1e-6));
+        }
+    };
+    const auto checkSwitchesDefault = [&s]
+    {
+        CHECK_FALSE (s->track (0).strip.compEnabled.load());
+        CHECK (s->track (0).strip.compMode.load() == 0);
+        CHECK_FALSE (s->track (0).strip.compModePicked.load());
+        CHECK_FALSE (s->bus (0).strip.compEnabled.load());
+        CHECK_FALSE (s->master().compEnabled.load());
+        CHECK_FALSE (s->mastering().compEnabled.load());
+    };
 
-        CHECK_THAT (s->track (0).strip.comp.get (CompParamId::FetRatio), WithinAbs (3.0f, 1e-6));
-        CHECK_THAT (s->track (0).strip.comp.get (CompParamId::VcaThreshold), WithinAbs (-27.0f, 1e-6));
-        CHECK_THAT (s->bus (0).strip.comp.get (CompParamId::BusRatio), WithinAbs (1.0f, 1e-6));
-        CHECK_THAT (s->bus (0).strip.comp.get (CompParamId::BusAttack), WithinAbs (2.0f, 1e-6));
-        CHECK_THAT (s->master().comp.get (CompParamId::BusRatio), WithinAbs (1.0f, 1e-6));
-        CHECK_THAT (s->master().comp.get (CompParamId::BusThreshold), WithinAbs (liveMasterThreshold, 1e-6));
-        CHECK (s->master().compEnabled.load());
-        CHECK_THAT (s->mastering().comp.get (CompParamId::MbMix), WithinAbs (40.0f, 1e-6));
-        CHECK_THAT (s->mastering().comp.get (compBandParam (0, CompBandField::Makeup)), WithinAbs (liveBand, 1e-6));
-        CHECK (s->mastering().compEnabled.load());
-    }
     SECTION ("comp objects missing")
     {
-        Json document {
+        load (*s, Json {
             { "version", 12 },
             { "tracks", Json::array ({ Json { { "name", "No comp" } } }) },
             { "buses", Json::array ({ Json { { "name", "No comp" } } }) },
             { "master", Json { { "fader_db", -2.0 } } },
-            { "mastering", Json { { "eq_enabled", true } } } };
-        load (*s, document);
+            { "mastering", Json { { "eq_enabled", true } } } });
 
         checkDefaults (s->track (0).strip.comp, CompStage::Strip);
         checkDefaults (s->bus (0).strip.comp, CompStage::Bus);
-        CHECK_THAT (s->master().comp.get (CompParamId::BusThreshold), WithinAbs (liveMasterThreshold, 1e-6));
-        CHECK (s->master().compEnabled.load());
-        CHECK_THAT (s->mastering().comp.get (compBandParam (0, CompBandField::Makeup)), WithinAbs (liveBand, 1e-6));
-        CHECK (s->mastering().compEnabled.load());
+        checkDefaults (s->master().comp, CompStage::Bus);
+        checkDefaults (s->mastering().comp, CompStage::Multiband);
+        checkSwitchesDefault();
+    }
+    SECTION ("comp objects with keys missing")
+    {
+        load (*s, Json {
+            { "version", 12 },
+            { "tracks", Json::array ({ Json { { "comp", Json { { "fet_ratio", 3 } } } } }) },
+            { "buses", Json::array ({ Json { { "comp", Json { { "bus_ratio", 1 } } } } }) },
+            { "master", Json { { "comp", Json { { "bus_ratio", 2 } } } } },
+            { "mastering", Json { { "comp", Json { { "mb_mix", 40.0 } } } } } });
+
+        CHECK_THAT (s->track (0).strip.comp.get (CompParamId::FetRatio), WithinAbs (3.0f, 1e-6));
+        checkDefaultsBut (s->track (0).strip.comp, CompStage::Strip, CompParamId::FetRatio);
+        CHECK_THAT (s->bus (0).strip.comp.get (CompParamId::BusRatio), WithinAbs (1.0f, 1e-6));
+        checkDefaultsBut (s->bus (0).strip.comp, CompStage::Bus, CompParamId::BusRatio);
+        CHECK_THAT (s->master().comp.get (CompParamId::BusRatio), WithinAbs (2.0f, 1e-6));
+        checkDefaultsBut (s->master().comp, CompStage::Bus, CompParamId::BusRatio);
+        CHECK_THAT (s->mastering().comp.get (CompParamId::MbMix), WithinAbs (40.0f, 1e-6));
+        checkDefaultsBut (s->mastering().comp, CompStage::Multiband, CompParamId::MbMix);
+        checkSwitchesDefault();
+    }
+    SECTION ("engage switches missing")
+    {
+        auto document = sessionA;
+        for (auto* comp : { &document["tracks"][0]["comp"], &document["buses"][0]["comp"],
+                            &document["master"]["comp"], &document["mastering"]["comp"] })
+            comp->erase ("enabled");
+        load (*s, document);
+
+        checkEqual (a->track (0).strip.comp, s->track (0).strip.comp, CompStage::Strip);
+        checkEqual (a->bus (0).strip.comp, s->bus (0).strip.comp, CompStage::Bus);
+        checkEqual (a->master().comp, s->master().comp, CompStage::Bus);
+        checkEqual (a->mastering().comp, s->mastering().comp, CompStage::Multiband);
+        CHECK_FALSE (s->track (0).strip.compEnabled.load());
+        CHECK_FALSE (s->bus (0).strip.compEnabled.load());
+        CHECK_FALSE (s->master().compEnabled.load());
+        CHECK_FALSE (s->mastering().compEnabled.load());
     }
     SECTION ("sections missing")
     {
@@ -261,8 +303,7 @@ TEST_CASE ("SessionSerializer applies each section's rule to missing compressor 
         checkDefaults (s->track (0).strip.comp, CompStage::Strip);
         checkDefaults (s->bus (0).strip.comp, CompStage::Bus);
         checkDefaults (s->master().comp, CompStage::Bus);
-        CHECK_FALSE (s->master().compEnabled.load());
         checkDefaults (s->mastering().comp, CompStage::Multiband);
-        CHECK_FALSE (s->mastering().compEnabled.load());
+        checkSwitchesDefault();
     }
 }

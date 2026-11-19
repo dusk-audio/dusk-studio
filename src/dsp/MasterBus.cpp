@@ -208,7 +208,7 @@ void MasterBus::processInPlace (float* L, float* R, int numSamples) noexcept
     }
     // else (factor == 1, EQ off): signal passes through.
 
-    if (paramsRef != nullptr && (compOn || compAlign.compressorRunning()))
+    if (paramsRef != nullptr && (compOn || compAlign.compressorRunning() || busComp.editorOpen()))
         busComp.pushParameters (paramsRef->comp, true, 0);
     compAlign.process (L, R, numSamples, compStage != nullptr ? *compStage : kNoCompStage,
                        compOn, &busComp);

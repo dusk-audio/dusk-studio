@@ -255,17 +255,16 @@ void putCompParams (JObj& obj, const CompParams& comp, CompStage stage)
     }
 }
 
-// A present value that is not a finite number takes the parameter's default;
-// an absent one is left alone unless resetAbsent.
-void loadCompParams (CompParams& comp, CompStage stage, const nlohmann::json& obj, bool resetAbsent)
+// An absent value, or one that is not a finite number, takes the parameter's
+// default, in every section: the object holds Multi-Comp 2's parameters, whose
+// set grows with the plug-in, so a key a session lacks is one it never set.
+void loadCompParams (CompParams& comp, CompStage stage, const nlohmann::json& obj)
 {
     for (const auto id : compStageParams (stage))
     {
         const auto& spec = compParamSpec (id);
-        if (json::has (obj, spec.symbol))
-            comp.set (id, json::finiteFloat (obj[spec.symbol], spec.hostDefault));
-        else if (resetAbsent)
-            comp.set (id, spec.hostDefault);
+        comp.set (id, json::has (obj, spec.symbol) ? json::finiteFloat (obj[spec.symbol], spec.hostDefault)
+                                                   : spec.hostDefault);
     }
 }
 
@@ -1851,7 +1850,7 @@ void restoreTrack (Track& t, int trackIndex, const nlohmann::json& v,
         loadB ("enabled",     t.strip.compEnabled);
         loadB ("mode_picked", t.strip.compModePicked);
         loadI ("mode", t.strip.compMode, 0, 0, 2);
-        loadCompParams (t.strip.comp, CompStage::Strip, comp, false);
+        loadCompParams (t.strip.comp, CompStage::Strip, comp);
     }
 
     // Enabled is stored unconditionally: load() reuses the live Session,
@@ -2163,7 +2162,7 @@ void restoreBus (Bus& a, const nlohmann::json& v, double defaultRecordBpm)
     {
         const auto& comp = json::child (v, "comp");
         if (json::has (comp, "enabled")) a.strip.compEnabled.store (json::getBool (comp, "enabled", false));
-        loadCompParams (a.strip.comp, CompStage::Bus, comp, false);
+        loadCompParams (a.strip.comp, CompStage::Bus, comp);
     }
 
     // Automation - mirror restoreTrack: exactly one publish per lane (empty
@@ -2960,7 +2959,8 @@ bool SessionSerializer::load (Session& s, const File& source, SessionLoadError* 
         // value instead of resetting to the model default - the clamp tests
         // pin that retention. Only a wholly absent section resets every field,
         // so nothing inherits the previously loaded session's master chain.
-        // Present-but-invalid values fall to the default too.
+        // Present-but-invalid values fall to the default too. The compressor
+        // is the exception: its comp object resets whatever it omits.
         // Mirror json::child's resolution above: it yields the shared empty
         // object unless "master" is an object, so a non-object must count as
         // absent here or every field silently inherits.
@@ -2999,11 +2999,8 @@ bool SessionSerializer::load (Session& s, const File& source, SessionLoadError* 
 
         {
             const auto& comp = json::child (master, "comp");
-            if (json::has (comp, "enabled"))
-                s.master().compEnabled.store (json::getBool (comp, "enabled", kMasterDefaults.compEnabled.load()));
-            else if (! haveMaster)
-                s.master().compEnabled.store (kMasterDefaults.compEnabled.load());
-            loadCompParams (s.master().comp, CompStage::Bus, comp, ! haveMaster);
+            s.master().compEnabled.store (json::getBool (comp, "enabled", kMasterDefaults.compEnabled.load()));
+            loadCompParams (s.master().comp, CompStage::Bus, comp);
         }
         // Mode publish happens AFTER the lane publishes below - same
         // ordering rationale as the track-load + aux-load blocks, and
@@ -3045,7 +3042,8 @@ bool SessionSerializer::load (Session& s, const File& source, SessionLoadError* 
         // nothing inherits the previously loaded session's chain. A non-object
         // counts as absent - json::child resolves it to the shared empty
         // object, which would otherwise read as present-but-empty and retain
-        // everything.
+        // everything. The compressor's comp object resets whatever it omits,
+        // as on the master.
         static const MasteringParams kMasteringDefaults;
         const bool haveMastering = json::has (root, "mastering") && root["mastering"].is_object();
         const auto& mast = json::child (root, "mastering");
@@ -3092,11 +3090,8 @@ bool SessionSerializer::load (Session& s, const File& source, SessionLoadError* 
         loadF ("eq_output_gain_db", m.eqOutputGainDb,  kMasteringDefaults.eqOutputGainDb, -12.0f, 12.0f);
         {
             const auto& comp = json::child (mast, "comp");
-            if (json::has (comp, "enabled"))
-                m.compEnabled.store (json::getBool (comp, "enabled", kMasteringDefaults.compEnabled.load()));
-            else if (! haveMastering)
-                m.compEnabled.store (kMasteringDefaults.compEnabled.load());
-            loadCompParams (m.comp, CompStage::Multiband, comp, ! haveMastering);
+            m.compEnabled.store (json::getBool (comp, "enabled", kMasteringDefaults.compEnabled.load()));
+            loadCompParams (m.comp, CompStage::Multiband, comp);
         }
         // The limiter is newer than the section around it, so a session saved
         // before it exists still carries "mastering" - these reset on an absent

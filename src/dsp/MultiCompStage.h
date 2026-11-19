@@ -95,8 +95,23 @@ public:
     // unbound parameter.
     std::optional<CompParamId> sessionParam (int index) const noexcept;
 
+    // Multi-Comp 2's editor reads some values back from the plug-in rather
+    // than from what its host hands it: all of them when it opens, the three
+    // crossovers every frame. While one is open the owner pushes the session's
+    // values on every block it processes, so a stage that is out keeps them
+    // current without running. That changes nothing it plays: a plug-in that
+    // is out sits at rest, is not reset again before it next runs, and stores
+    // a pushed value until then. setEditorOpen counts opens and closes;
+    // message thread.
+    void setEditorOpen (bool open) noexcept;
+    bool editorOpen() const noexcept { return editorsOpen.load (std::memory_order_relaxed) > 0; }
+
+    // What the editor reads back from the plug-in for one of its indices.
+    float editorReading (int index) const noexcept;
+
 private:
     struct Impl;
     std::unique_ptr<Impl> impl;
+    std::atomic<int> editorsOpen { 0 };
 };
 } // namespace duskstudio

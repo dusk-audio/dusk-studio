@@ -604,7 +604,7 @@ TEST_CASE ("loading a session without a mastering section resets the chain",
 // Mastering follows the master strip rather than the per-track fill: a section
 // that IS there describes the chain, and a key it omits keeps the live value.
 // Limiter and Phase keys reset when absent, including in older sessions with
-// a mastering section.
+// a mastering section, and so does the compressor.
 TEST_CASE ("a partial mastering section retains the keys it omits",
            "[session][serializer]")
 {
@@ -634,10 +634,10 @@ TEST_CASE ("a partial mastering section retains the keys it omits",
     const MasteringParams def;
     // The older session's comp_ratio never reached the multiband compressor, so
     // its conversion plays the plug-in's band settings; comp_enabled is absent,
-    // so the switch keeps the live value.
+    // so the switch takes its default.
     REQUIRE_THAT (m.comp.get (compBandParam (0, CompBandField::Ratio)),
                   WithinAbs (def.comp.get (compBandParam (0, CompBandField::Ratio)), 1e-6f));
-    REQUIRE (m.compEnabled.load());
+    REQUIRE (m.compEnabled.load() == def.compEnabled.load());
     // Past float range: unusable, so the model default rather than the file's
     // value or the live one.
     REQUIRE_THAT (m.eqOutputGainDb.load(), WithinAbs (def.eqOutputGainDb.load(), 1e-6f));

@@ -2,6 +2,10 @@
 
 #include "MultiCompAccess.hpp"
 
+// Defined in the plug-in. MultiCompAccess.hpp leaves it out, so this is the
+// declaration the plug-in's editor makes for itself.
+DUSK_WEAK float multiCompGetParameterValue (void* pluginInstancePointer, uint32_t index) noexcept;
+
 namespace duskstudio::builtin
 {
 std::unique_ptr<DafPlugin> createMultiComp2 (std::uint32_t faceMask)
@@ -29,5 +33,10 @@ void resetMultiComp2 (void* instance) noexcept
 {
     if (instance != nullptr)
         multiCompResetHost (instance);
+}
+
+float multiComp2EditorValue (void* instance, std::uint32_t index) noexcept
+{
+    return instance != nullptr ? multiCompGetParameterValue (instance, index) : 0.0f;
 }
 } // namespace duskstudio::builtin
