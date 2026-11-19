@@ -5,6 +5,7 @@
 #include "DuskLabelEditor.h"
 #include "DuskStudioLookAndFeel.h"
 #include "ChannelEqEditor.h"
+#include "EqKnobTravel.h"
 #if DUSKSTUDIO_HAS_NATIVE_UI
  #include "NativeEditorEmbedScale.h"
  #include "imgui/BuiltinUnitView.h"
@@ -103,6 +104,7 @@ struct BandSpec
     float freqMin, freqMax, freqDefault;
     std::atomic<float>* (*gainPtr) (ChannelStripParams&);
     ChannelStripParams::EqFreq freq;
+    EqKnob freqKnob;
     // qPtr is non-null for bell-only mid bands (HM, LM). Shelf bands (HF, LF)
     // leave it null and get a 2-knob row instead of 3.
     std::atomic<float>* (*qPtr)    (ChannelStripParams&) = nullptr;
@@ -117,18 +119,18 @@ static const std::array<BandSpec, 4>& bandSpecs()
     static const std::array<BandSpec, 4> specs {{
         { "HF", juce::Colour (sslEqColors::kHfRed),    ChannelStripParams::kHfFreqMin, ChannelStripParams::kHfFreqMax, 8000.0f,
             [] (ChannelStripParams& s) -> std::atomic<float>* { return &s.hfGainDb; },
-            ChannelStripParams::EqFreq::Hf },
+            ChannelStripParams::EqFreq::Hf, EqKnob::HfFreq },
         { "HM", juce::Colour (sslEqColors::kHmGreen),  ChannelStripParams::kHmFreqMin, ChannelStripParams::kHmFreqMax, 2000.0f,
             [] (ChannelStripParams& s) -> std::atomic<float>* { return &s.hmGainDb; },
-            ChannelStripParams::EqFreq::Hm,
+            ChannelStripParams::EqFreq::Hm, EqKnob::HmFreq,
             [] (ChannelStripParams& s) -> std::atomic<float>* { return &s.hmQ; } },
         { "LM", juce::Colour (sslEqColors::kLmBlue),   ChannelStripParams::kLmFreqMin, ChannelStripParams::kLmFreqMax, 600.0f,
             [] (ChannelStripParams& s) -> std::atomic<float>* { return &s.lmGainDb; },
-            ChannelStripParams::EqFreq::Lm,
+            ChannelStripParams::EqFreq::Lm, EqKnob::LmFreq,
             [] (ChannelStripParams& s) -> std::atomic<float>* { return &s.lmQ; } },
         { "LF", juce::Colour (sslEqColors::kLfBlack),  ChannelStripParams::kLfFreqMin, ChannelStripParams::kLfFreqMax, 100.0f,
             [] (ChannelStripParams& s) -> std::atomic<float>* { return &s.lfGainDb; },
-            ChannelStripParams::EqFreq::Lf },
+            ChannelStripParams::EqFreq::Lf, EqKnob::LfFreq },
     }};
     return specs;
 }
@@ -558,8 +560,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
 
         row.freq = std::make_unique<juce::Slider>();
         styleCompactKnob (*row.freq, spec.accent);
-        row.freq->setRange (spec.freqMin, spec.freqMax, 1.0);
-        row.freq->setSkewFactorFromMidPoint ((double) spec.freqDefault);
+        followEqKnobTravel (*row.freq, { spec.freqKnob, spec.freqMin, spec.freqMax, spec.freqDefault }, 1.0);
         row.freq->setDoubleClickReturnValue (true, spec.freqDefault);
         row.freq->setTooltip (juce::String (spec.rowName) + " Frequency (Hz)");
         enableValueLabel (*row.freq, "", 0, ValueLabelDensity::compactAtEightUp);
@@ -587,8 +588,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         {
             row.q = std::make_unique<juce::Slider>();
             styleCompactKnob (*row.q, spec.accent);
-            row.q->setRange (ChannelStripParams::kBandQMin, ChannelStripParams::kBandQMax, 0.01);
-            row.q->setSkewFactorFromMidPoint (1.0);  // Q midpoint at 1.0
+            followEqKnobTravel (*row.q, { EqKnob::Q, ChannelStripParams::kBandQMin, ChannelStripParams::kBandQMax, 1.0 }, 0.01);
             row.q->setDoubleClickReturnValue (true, 0.7);
             row.q->setTooltip (juce::String (spec.rowName) + " Q (bandwidth)");
             enableValueLabel (*row.q, "", 1, ValueLabelDensity::compactAtEightUp);

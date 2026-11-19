@@ -1227,6 +1227,7 @@ if(DUSK_PLUGINS_PATH)
         eq_core_regression.cpp
         eq_nyquist_response.cpp
         session_eq_dial_migration.cpp
+        eq_knob_travel.cpp
         tube_multiq_ab.cpp
         smoke_brickwall_limiter.cpp
         dsp_loudness_meter.cpp
@@ -1243,6 +1244,11 @@ if(DUSK_PLUGINS_PATH)
         ${CMAKE_SOURCE_DIR}/src/dsp/MasteringDigitalEq.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/LoudnessMeter.cpp
         "${DUSKSTUDIO_DONOR_DSP_DIR}/FourKEQDSP.cpp")
+
+    # eq_knob_travel.cpp reads 4K EQ 2's parameter defaults; only that file
+    # sees the plug-in's directory.
+    set_source_files_properties(eq_knob_travel.cpp PROPERTIES
+        INCLUDE_DIRECTORIES "${DUSK_PLUGINS_PATH}/plugins/4k-eq/daf-plugin")
 
     # The master tape is the Tape Machine 2 built-in, which also carries the
     # tape core tape_core_regression.cpp measures. The strips, buses and

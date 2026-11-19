@@ -74,6 +74,12 @@ using HostFile   = std::decay_t<decltype (std::declval<const Session&>().getSess
 using HostString = std::decay_t<decltype (std::declval<const Session&>()
                                               .getSessionDirectory().getFullPathName())>;
 
+// The framework's slider, named through the fader helper that takes one.
+template <typename> struct FirstParameter;
+template <typename Result, typename Parameter, typename... Rest>
+struct FirstParameter<Result (*) (Parameter&, Rest...)> { using Type = Parameter; };
+using Knob = FirstParameter<decltype (&faderYForDb)>::Type;
+
 struct ScenarioInputScope
 {
     explicit ScenarioInputScope (bool& value) : flag (value), previous (std::exchange (value, true)) {}
@@ -1997,6 +2003,13 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     }
     bool capturePanel (const std::string& panel, const std::filesystem::path& path) override
     {
+        if (panel == "main")
+        {
+            auto* peer = owner.getTopLevelComponent() != nullptr ? owner.getTopLevelComponent()->getPeer() : nullptr;
+            return peer != nullptr && ! nativeWaylandWindow()
+                && platform::captureNativeWindowToPpm (reinterpret_cast<std::uintptr_t> (peer->getNativeHandle()),
+                                                       path.u8string());
+        }
        #if DUSKSTUDIO_HAS_NATIVE_UI
         const auto* window = openPanel (panel);
         return window != nullptr
@@ -2934,6 +2947,28 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
             if (auto* box = dynamic_cast<ValueBox*> (child))
                 return box->getText().toStdString();
         return "<no value box>";
+    }
+
+    Knob* findTitledKnob (const std::string& title)
+    {
+        return dynamic_cast<Knob*> (findTitledControl (*owner.getTopLevelComponent(), title));
+    }
+
+    std::optional<double> knobTravelPosition (const std::string& title) override
+    {
+        auto* knob = findTitledKnob (title);
+        if (knob == nullptr) return std::nullopt;
+        return knob->valueToProportionOfLength (knob->getValue());
+    }
+
+    bool turnKnobTo (const std::string& title, double position) override
+    {
+        auto* knob = findTitledKnob (title);
+        auto* handler = knob != nullptr ? knob->getAccessibilityHandler() : nullptr;
+        auto* valueInterface = handler != nullptr ? handler->getValueInterface() : nullptr;
+        if (valueInterface == nullptr || valueInterface->isReadOnly()) return false;
+        valueInterface->setValue (knob->proportionOfLengthToValue (position));
+        return true;
     }
 
     bool clickTitledControl (const std::string& title, bool right) override

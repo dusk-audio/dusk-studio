@@ -1,5 +1,6 @@
 #include "../GuiScenarioSupport.h"
 #include "../../AppConfig.h"
+#include "../../EqKnobTravel.h"
 #include "../../../foundation/AppConfigDir.h"
 #include "../../../foundation/Fs.h"
 #include "../../../engine/audiofile/FileWriter.h"
@@ -1991,6 +1992,113 @@ const ScenarioRegistrar eqBandKnobRanges { Scenario {
     "gui.eq_band_knob_ranges", { "gui", "eq" }, Needs::Engine | Needs::Gui,
     {}, {}, 10000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runEqBandKnobRanges (host, ctx); }
+} };
+
+// The LM frequency and Q knobs travel as EqKnobTravel says, on the strip and in
+// the EQ editor alike: turned to a point between two of the core's anchors,
+// each stores what the travel gives there to within its step, and the other
+// view's knob sits where that value belongs. With DUSKSTUDIO_SCENARIO_CAPTURE_DIR
+// the window is kept there with both knobs at mid-travel, strip and editor.
+std::optional<ScenarioResult> runEqKnobTravel (GuiHost& host, ScenarioContext& ctx)
+{
+    auto& strip = ctx.session().track (0).strip;
+    if (! host.modalStackEmpty()) return ScenarioResult::skip ("requires no modal");
+    ctx.keep (strip.eqEnabled);
+    ctx.keep (strip.lmFreq);
+    ctx.keep (strip.lmQ);
+    keepStage (host, ctx);
+    host.switchToStage (GuiHost::Stage::Mixing);
+    const bool originalCompact = host.setStripCompact (0, false);
+    ctx.cleanup ([&host, originalCompact]
+    {
+        host.closeStripModuleEditors (0);
+        drainModals (host);
+        host.setStripCompact (0, originalCompact);
+    });
+
+    const EqKnobTravel freq { EqKnob::LmFreq, ChannelStripParams::kLmFreqMin, ChannelStripParams::kLmFreqMax, 600.0 };
+    const EqKnobTravel q { EqKnob::Q, ChannelStripParams::kBandQMin, ChannelStripParams::kBandQMax, 1.0 };
+    const auto stores = [&ctx, &strip, freq, q] (double position, const std::string& view)
+    {
+        const double hz = freq.valueAt (position), bandwidth = q.valueAt (position);
+        ctx.expect (std::abs (strip.lmFreq.load() - hz) <= 0.5 + 1.0e-3,
+                    view + " LM frequency at " + std::to_string (position) + " stored "
+                        + std::to_string (strip.lmFreq.load()) + ", the travel gives " + std::to_string (hz));
+        ctx.expect (std::abs (strip.lmQ.load() - bandwidth) <= 0.005 + 1.0e-5,
+                    view + " LM Q at " + std::to_string (position) + " stored "
+                        + std::to_string (strip.lmQ.load()) + ", the travel gives " + std::to_string (bandwidth));
+    };
+    const auto sits = [&host, &ctx, &strip, freq, q] (const std::string& prefix)
+    {
+        const auto atFreq = host.knobTravelPosition (prefix + " LM frequency");
+        const auto atQ = host.knobTravelPosition (prefix + " LM Q");
+        ctx.expect (atFreq && std::abs (*atFreq - freq.positionOf (strip.lmFreq.load())) < 1.0e-6,
+                    prefix + " LM frequency knob sits at " + std::to_string (atFreq.value_or (-1.0)) + ", not at "
+                        + std::to_string (freq.positionOf (strip.lmFreq.load())));
+        ctx.expect (atQ && std::abs (*atQ - q.positionOf (strip.lmQ.load())) < 1.0e-6,
+                    prefix + " LM Q knob sits at " + std::to_string (atQ.value_or (-1.0)) + ", not at "
+                        + std::to_string (q.positionOf (strip.lmQ.load())));
+    };
+    const auto keepWindow = [&host, &ctx] (const std::string& name)
+    {
+        const auto* destination = std::getenv ("DUSKSTUDIO_SCENARIO_CAPTURE_DIR");
+        if (destination == nullptr || *destination == '\0') return;
+        const auto directory = std::filesystem::u8path (destination);
+        std::error_code error;
+        std::filesystem::create_directories (directory, error);
+        ctx.expect (! error && host.capturePanel ("main", directory / (name + ".ppm")),
+                    "could not keep the window as " + name);
+    };
+
+    // Neither 0.3125 nor 0.6875 is one of the anchors' twentieths.
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 100, [&host, &ctx]
+    {
+        ctx.expect (host.turnKnobTo ("Track 1 LM frequency", 0.3125), "the strip's LM frequency knob is unavailable");
+        ctx.expect (host.turnKnobTo ("Track 1 LM Q", 0.3125), "the strip's LM Q knob is unavailable");
+    } });
+    steps->push_back ({ 100, [&host, &ctx, stores]
+    {
+        stores (0.3125, "the strip's");
+        ctx.expect (host.clickStripModule (0, 0, true, false), "EQ module label is unavailable");
+    } });
+    steps->push_back ({ 500, [&host, &ctx, sits]
+    {
+        ctx.expect (host.stripModuleEditorOpen (0, 0), "the EQ label did not open its editor");
+        sits ("EQ editor");
+        ctx.expect (host.turnKnobTo ("EQ editor LM frequency", 0.6875), "the editor's LM frequency knob is unavailable");
+        ctx.expect (host.turnKnobTo ("EQ editor LM Q", 0.6875), "the editor's LM Q knob is unavailable");
+    } });
+    steps->push_back ({ 300, [&host, stores, sits]
+    {
+        stores (0.6875, "the editor's");
+        sits ("Track 1");
+        host.closeStripModuleEditors (0);
+    } });
+    steps->push_back ({ 200, [&host, &ctx]
+    {
+        ctx.expect (host.turnKnobTo ("Track 1 LM frequency", 0.5) && host.turnKnobTo ("Track 1 LM Q", 0.5),
+                    "the strip's LM knobs are unavailable");
+    } });
+    steps->push_back ({ 300, [&host, &ctx, keepWindow]
+    {
+        keepWindow ("eq-knob-travel-strip");
+        ctx.expect (host.clickStripModule (0, 0, true, false), "EQ module label is unavailable");
+    } });
+    steps->push_back ({ 500, [&ctx, stores, sits, keepWindow]
+    {
+        stores (0.5, "the strip's");
+        sits ("EQ editor");
+        keepWindow ("eq-knob-travel-editor");
+    } });
+    runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
+    return std::nullopt;
+}
+
+const ScenarioRegistrar eqKnobTravel { Scenario {
+    "gui.eq_knob_travel", { "gui", "eq" }, Needs::Engine | Needs::Gui,
+    {}, {}, 15000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runEqKnobTravel (host, ctx); }
 } };
 
 // The strip lists its bands HF first, top to bottom; a binding numbers them

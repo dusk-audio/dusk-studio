@@ -433,8 +433,9 @@ public:
     // The names the same panel drew in its last frame, as drawn, one per line. Empty
     // while it is not open.
     virtual std::string panelNameText (const std::string& panel) const = 0;
-    // Reads the same panel's window back into a PPM at `path`, now. False while it is
-    // not open or where the platform cannot read a window back.
+    // Reads the same panel's window back into a PPM at `path`, now; "main" reads the
+    // main window, embedded modals included. False while it is not open or where the
+    // platform cannot read a window back.
     virtual bool capturePanel (const std::string& panel, const std::filesystem::path& path) = 0;
     virtual double uiScale() const = 0;
     virtual void restoreUiScale (float scale) = 0;
@@ -631,6 +632,11 @@ public:
     // The text a titled slider's value box shows, as drawn: "<missing>" when no
     // control carries the title, "<no value box>" when it has none.
     virtual std::string valueBoxText (const std::string& title) = 0;
+    // A titled knob's place on its travel, 0 to 1: read, or turned to through
+    // the slider's own travel and set as its accessible value. nullopt and
+    // false when no slider carries the title.
+    virtual std::optional<double> knobTravelPosition (const std::string& title) = 0;
+    virtual bool turnKnobTo (const std::string& title, double position) = 0;
     virtual bool clickTitledControl (const std::string& title, bool right) = 0;
     // One pointer edge on a titled control, so a scenario can hold it down.
     virtual bool pressTitledControl (const std::string& title, bool down) = 0;

@@ -1,5 +1,6 @@
 #include "ChannelEqEditor.h"
 #include "DuskStudioLookAndFeel.h"
+#include "EqKnobTravel.h"
 #include "../foundation/Text.h"
 
 #include <algorithm>
@@ -15,6 +16,7 @@ struct BandSpec
     float freqMin, freqMax;
     std::atomic<float>* (*gain) (ChannelStripParams&);
     ChannelStripParams::EqFreq freq;
+    EqKnob freqKnob;
     // q is non-null only for bell bands (HM, LM). Shelves return nullptr.
     std::atomic<float>* (*q)    (ChannelStripParams&);
 };
@@ -24,19 +26,19 @@ const std::array<BandSpec, 4>& bandSpecs()
     static const std::array<BandSpec, 4> specs {{
         { "HF", juce::Colour (sslEqColors::kHfRed),    ChannelStripParams::kHfFreqMin, ChannelStripParams::kHfFreqMax,
             [] (ChannelStripParams& s) -> std::atomic<float>* { return &s.hfGainDb; },
-            ChannelStripParams::EqFreq::Hf,
+            ChannelStripParams::EqFreq::Hf, EqKnob::HfFreq,
             [] (ChannelStripParams&)   -> std::atomic<float>* { return nullptr; } },
         { "HM", juce::Colour (sslEqColors::kHmGreen),  ChannelStripParams::kHmFreqMin, ChannelStripParams::kHmFreqMax,
             [] (ChannelStripParams& s) -> std::atomic<float>* { return &s.hmGainDb; },
-            ChannelStripParams::EqFreq::Hm,
+            ChannelStripParams::EqFreq::Hm, EqKnob::HmFreq,
             [] (ChannelStripParams& s) -> std::atomic<float>* { return &s.hmQ; } },
         { "LM", juce::Colour (sslEqColors::kLmBlue),   ChannelStripParams::kLmFreqMin, ChannelStripParams::kLmFreqMax,
             [] (ChannelStripParams& s) -> std::atomic<float>* { return &s.lmGainDb; },
-            ChannelStripParams::EqFreq::Lm,
+            ChannelStripParams::EqFreq::Lm, EqKnob::LmFreq,
             [] (ChannelStripParams& s) -> std::atomic<float>* { return &s.lmQ; } },
         { "LF", juce::Colour (sslEqColors::kLfBlack),  ChannelStripParams::kLfFreqMin, ChannelStripParams::kLfFreqMax,
             [] (ChannelStripParams& s) -> std::atomic<float>* { return &s.lfGainDb; },
-            ChannelStripParams::EqFreq::Lf,
+            ChannelStripParams::EqFreq::Lf, EqKnob::LfFreq,
             [] (ChannelStripParams&)   -> std::atomic<float>* { return nullptr; } },
     }};
     return specs;
@@ -224,8 +226,8 @@ ChannelEqEditor::ChannelEqEditor (Track& t) : track (t)
 
         const float defaultFreq = (i == 0 ? 8000.0f : i == 1 ? 2000.0f : i == 2 ? 600.0f : 100.0f);
         row.freq = std::make_unique<juce::Slider>();
-        makeKnob (*row.freq, spec.accent, spec.freqMin, spec.freqMax,
-                   defaultFreq, defaultFreq);
+        makeKnob (*row.freq, spec.accent, spec.freqMin, spec.freqMax, defaultFreq, 0.0);
+        followEqKnobTravel (*row.freq, { spec.freqKnob, spec.freqMin, spec.freqMax, defaultFreq }, 1.0);
         row.freq->setNumDecimalPlacesToDisplay (0);
         row.freq->textFromValueFunction = [held = &track.strip.eqFreq (spec.freq), lo = spec.freqMin, hi = spec.freqMax] (double v)
         {
@@ -258,6 +260,8 @@ ChannelEqEditor::ChannelEqEditor (Track& t) : track (t)
                 makeKnob (*row.q, spec.accent,
                           ChannelStripParams::kBandQMin, ChannelStripParams::kBandQMax,
                           0.7, 0.0, 0.01);
+                followEqKnobTravel (*row.q, { EqKnob::Q, ChannelStripParams::kBandQMin,
+                                              ChannelStripParams::kBandQMax, 1.0 }, 0.01);
                 row.q->setNumDecimalPlacesToDisplay (2);
                 row.q->setTitle ("EQ editor " + std::string (spec.name) + " Q");
                 row.q->setValue (qAtom->load (std::memory_order_relaxed),
