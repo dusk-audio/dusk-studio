@@ -4,6 +4,7 @@
 #include "../session/CompParams.h"
 
 #include <atomic>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -106,6 +107,18 @@ public:
     void setEditorOpen (bool open) noexcept;
     bool editorOpen() const noexcept { return editorsOpen.load (std::memory_order_relaxed) > 0; }
 
+    // Message thread, as an editor is built: the session's values straight
+    // into the plug-in, which a strip or bus that is silent may not have run a
+    // block to push for a long while, and the plug-in's BYPASS set to show
+    // `engaged`, which a push never does. The plug-in's parameters are atomics
+    // on both sides, so a push the audio thread makes meanwhile races nothing;
+    // the stage's record of what it pushed is the audio thread's alone, so the
+    // seed leaves it and has the next push send everything again. The plug-in
+    // gets its own bypass back from the audio thread before it next runs or
+    // is reset, and at the next push while it runs, so what it plays is
+    // unchanged.
+    void seedEditor (const CompParams& comp, bool engaged, int stripMode) noexcept;
+
     // What the editor reads back from the plug-in for one of its indices.
     float editorReading (int index) const noexcept;
 
@@ -113,5 +126,6 @@ private:
     struct Impl;
     std::unique_ptr<Impl> impl;
     std::atomic<int> editorsOpen { 0 };
+    std::atomic<std::uint32_t> editorSeeds { 0 };
 };
 } // namespace duskstudio

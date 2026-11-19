@@ -27,7 +27,7 @@ std::filesystem::path firstFrameMarkerPath (const std::string& logTag);
 // focus back when it ends - unless the editor's loop worked several parameters at
 // once, which is a program loading rather than a hand on a control - and every
 // value the unit holds, its meters included, is pushed into the editor as it
-// changes.
+// opens and as it changes.
 //
 // The host owns the editor's size. A user-resizable editor asking for one of its
 // own is left where the host put it, because the host is what knows the room.

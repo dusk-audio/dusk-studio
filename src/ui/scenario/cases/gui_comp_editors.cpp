@@ -33,6 +33,8 @@ void keepComp (ScenarioContext& ctx, CompParams& comp)
         ctx.keep (comp.atom ((CompParamId) i));
 }
 
+std::string symbolOf (CompParamId id) { return compParamSpec (id).symbol; }
+
 // COMP on a channel strip opens Multi-Comp 2's own editor for the stage that
 // strip runs: the instance of the width it last ran its compressor at, or,
 // before it has run, the one the track's mode calls for, so the mono instance on
@@ -176,6 +178,146 @@ const ScenarioRegistrar compEditorStrip { Scenario {
     "gui.comp_editor_strip", { "gui", "strip", "comp" }, Needs::Engine | Needs::Gui,
     {}, {}, 30000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runCompEditorStrip (host, ctx); }
+} };
+
+int paramIndex (MultiCompStage& stage, const std::string& symbol)
+{
+    const auto& params = stage.plugin().params();
+    for (std::size_t i = 0; i < params.size(); ++i)
+        if (params[i].symbol == symbol) return (int) i;
+    return -1;
+}
+
+// A value a third of the parameter's range or more from `now`.
+float awayFrom (CompParamId id, float now)
+{
+    const auto& spec = compParamSpec (id);
+    const float range = spec.hostMax - spec.hostMin;
+    const float mid = spec.hostMin + 0.5f * range;
+    return clampCompParam (id, now < mid ? spec.hostMax - 0.1f * range : spec.hostMin + 0.1f * range);
+}
+
+// Multi-Comp 2's editor reads every control back from the plug-in as it draws
+// its first frame, and a strip or bus that is silent with its compressor
+// bypassed runs no block to hand the plug-in the session's values. Opened
+// there, the editor still finds them, BYPASS showing the compressor out, both
+// in the plug-in it reads and in what its host hands it. Read the moment the
+// editor is up, before it has drawn or been pumped.
+std::optional<ScenarioResult> runCompEditorOpensOnSession (GuiHost& host, ScenarioContext& ctx)
+{
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    (void) host;
+    (void) ctx;
+    return ScenarioResult::skip ("requires the native UI");
+   #else
+    static constexpr int kBus = 0;
+    auto& engine = ctx.engine();
+    auto& session = ctx.session();
+    auto& track = session.track (kStripIndex);
+    auto& bus = session.bus (kBus).strip;
+    if (! engine.getTransport().isStopped() || ! host.modalStackEmpty())
+        return ScenarioResult::skip ("requires stopped transport and no modal");
+    if (! host.canEmbedPluginEditors())
+        return ScenarioResult::skip ("requires a window the compressor editor can embed into");
+    if (track.frozen.load()) return ScenarioResult::skip ("requires an unfrozen first track");
+    auto* strip = readyStrip (host, ctx);
+    if (strip == nullptr) return ScenarioResult::fail ("channel strip is unavailable");
+
+    keepComp (ctx, track.strip.comp);
+    keepComp (ctx, bus.comp);
+    ctx.keep (track.strip.compEnabled);
+    ctx.keep (track.strip.compMode);
+    ctx.keep (track.strip.compModePicked);
+    ctx.keep (bus.compEnabled);
+    ctx.cleanup ([&host, strip, mode = track.mode.load()]
+    {
+        host.closeCompEditor (Kind::Channel, kStripIndex);
+        host.closeCompEditor (Kind::Bus, kBus);
+        drainModals (host);
+        strip->restoreTrackMode (mode);
+    });
+    strip->restoreTrackMode ((int) Track::Mode::Mono);
+    track.strip.compEnabled.store (false);
+    bus.compEnabled.store (false);
+
+    // Opens one compressor's editor on values its plug-in does not hold yet
+    // and reads what the editor finds there. `mode` is the strip's, or -1.
+    const auto opensOn = [&host, &ctx] (Kind kind, int index, MultiCompStage& stage, CompParams& comp,
+                                        const std::vector<CompParamId>& ids, int mode, const std::string& name)
+    {
+        std::vector<std::pair<int, float>> wanted;
+        for (const auto id : ids)
+        {
+            const int at = paramIndex (stage, compParamSpec (id).symbol);
+            if (! ctx.expect (at >= 0, name + "'s plug-in lacks " + symbolOf (id))) return;
+            const float value = awayFrom (id, stage.editorReading (at));
+            comp.set (id, value);
+            wanted.push_back ({ at, value });
+        }
+        host.openCompEditor (kind, index);
+        if (! ctx.expect (host.compEditorOpen (kind, index), "the " + name + " compressor editor did not open"))
+            return;
+        ctx.expect (host.compEditorStage (kind, index) == &stage,
+                    "the " + name + " editor does not draw the compressor the case set up");
+        for (std::size_t i = 0; i < wanted.size(); ++i)
+        {
+            const float read = stage.editorReading (wanted[i].first);
+            ctx.expect (std::abs (read - wanted[i].second) < 1.0e-3f,
+                        "the " + name + " editor opened on " + symbolOf (ids[i]) + " " + std::to_string (read)
+                            + " from the plug-in, not the session's " + std::to_string (wanted[i].second));
+        }
+        if (mode >= 0)
+        {
+            const int at = paramIndex (stage, "mode");
+            const float read = at >= 0 ? stage.editorReading (at) : -1.0f;
+            ctx.expect (std::lround (read) == mode, "the " + name + " editor opened on mode "
+                                                        + std::to_string (read) + ", not the strip's "
+                                                        + std::to_string (mode));
+        }
+        const int bypass = paramIndex (stage, "daf_bypass");
+        ctx.expect (bypass >= 0 && stage.editorReading (bypass) > 0.5f,
+                    "the " + name + " editor reads BYPASS in from the plug-in for a compressor switched out");
+        const auto handed = host.compEditorShows (kind, index, "daf_bypass");
+        ctx.expect (handed && *handed > 0.5f,
+                    "the " + name + " editor was handed BYPASS "
+                        + (handed ? std::to_string (*handed) : std::string ("nothing")) + " as it opened");
+        host.closeCompEditor (kind, index);
+    };
+
+    auto& stripStage = engine.getChannelStrip (kStripIndex).getEditorCompressor (false);
+    auto& busStage = engine.getBusStrip (kBus).getCompressor();
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 200, [&track, &stripStage, opensOn]
+    {
+        // A mode the plug-in is not in either.
+        const int modeAt = paramIndex (stripStage, "mode");
+        const int held = modeAt >= 0 ? (int) std::lround (stripStage.editorReading (modeAt)) : 0;
+        const int mode = (std::clamp (held, 0, 2) + 1) % 3;
+        track.strip.compMode.store (mode);
+        opensOn (Kind::Channel, kStripIndex, stripStage, track.strip.comp,
+                 { CompParamId::FetInput, CompParamId::FetRelease, CompParamId::VcaOutput, CompParamId::OptoGain },
+                 mode, "strip");
+    } });
+    steps->push_back ({ 100, [&bus, &busStage, opensOn]
+    {
+        opensOn (Kind::Bus, kBus, busStage, bus.comp,
+                 { CompParamId::BusMakeup, CompParamId::BusThreshold, CompParamId::BusMix }, -1, "bus");
+    }, [&host] { return ! host.compEditorOpen (Kind::Channel, kStripIndex); },
+       "the strip compressor editor did not close" });
+    runSteps (ctx, steps, [&host, &ctx]
+    {
+        ctx.waitUntil ([&host] { return ! host.compEditorOpen (Kind::Bus, kBus); }, kSettleBoundMs,
+                       [&ctx] { ctx.complete (ctx.verdict()); },
+                       "the bus compressor editor did not close");
+    });
+    return std::nullopt;
+   #endif
+}
+
+const ScenarioRegistrar compEditorOpensOnSession { Scenario {
+    "gui.comp_editor_opens_on_session", { "gui", "strip", "comp" }, Needs::Engine | Needs::Gui,
+    {}, {}, 20000,
+    [] (GuiHost& host, ScenarioContext& ctx) { return runCompEditorOpensOnSession (host, ctx); }
 } };
 
 // COMP on a bus and on the master opens Multi-Comp 2's own editor for that
@@ -470,8 +612,6 @@ const ScenarioRegistrar masteringCompEditor { Scenario {
     {}, {}, 30000,
     [] (GuiHost& host, ScenarioContext& ctx) { return runMasteringCompEditor (host, ctx); }
 } };
-
-std::string symbolOf (CompParamId id) { return compParamSpec (id).symbol; }
 
 // A press anywhere on a channel strip selects its track and focuses the strip.
 void keepTrackFocus (GuiHost& host, ScenarioContext& ctx)

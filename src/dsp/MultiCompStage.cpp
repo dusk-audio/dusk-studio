@@ -132,6 +132,10 @@ struct MultiCompStage::Impl
 
     int modeIndex = -1, bypassIndex = -1, grIndex = -1;
     float pushedMode = kUnsent, pushedBypass = kUnsent;
+    // The plug-in's own bypass as the last push asked for it.
+    float wantBypass = 0.0f;
+    // The editor seeds the audio thread has taken into account.
+    std::uint32_t seedsSeen = 0;
     const char* unresolved = nullptr;
 
     int channels = 2;
@@ -169,11 +173,20 @@ struct MultiCompStage::Impl
         return -1;
     }
 
-    void forgetPushed() noexcept
+    void forgetValues() noexcept
     {
         for (std::size_t i = 0; i < boundCount; ++i)
             bound[i].pushed = kUnsent;
-        pushedMode = pushedBypass = kUnsent;
+        pushedMode = kUnsent;
+    }
+
+    // Before the plug-in runs from rest or goes back to it: an editor's seed
+    // may have left its BYPASS showing in the plug-in's own bypass.
+    void restoreBypass() noexcept
+    {
+        if (bypassIndex < 0) return;
+        pushedBypass = wantBypass;
+        plugin->setParameterValue ((std::uint32_t) bypassIndex, wantBypass);
     }
 
     void run (const float* L, const float* R, float* outL, float* outR, int numSamples) noexcept
@@ -232,16 +245,20 @@ void MultiCompStage::prepare (double sampleRate, int blockSize, int channels)
     builtin::setMultiComp2Channels (impl->instance, impl->channels);
 
     // A fixed mode is in place before the plug-in prepares, so its first block
-    // runs it from rest.
+    // runs it from rest, and so is its own bypass, which an editor's seed may
+    // have left showing the engage switch.
     if (impl->modeIndex >= 0 && impl->kind != CompStage::Strip)
         plugin.setParameterValue ((std::uint32_t) impl->modeIndex, impl->modeFor (0));
+    if (impl->bypassIndex >= 0)
+        plugin.setParameterValue ((std::uint32_t) impl->bypassIndex, impl->wantBypass);
 
     plugin.activate (sampleRate, bs);
     impl->latency = std::max (0, plugin.latencySamples());
     impl->maxBlock = bs;
     impl->held = false;
     impl->prepared = true;
-    impl->forgetPushed();
+    impl->forgetValues();
+    impl->pushedBypass = kUnsent;
 }
 
 int MultiCompStage::latencySamples() const noexcept
@@ -252,13 +269,24 @@ int MultiCompStage::latencySamples() const noexcept
 void MultiCompStage::pushParameters (const CompParams& comp, bool enabled, int stripMode) noexcept
 {
     auto& s = *impl;
+    const float bypass = enabled ? 0.0f : 1.0f;
+    s.wantBypass = bypass;
+    // A seed went into the plug-in behind this record of what was pushed, so
+    // everything goes again. The seed's BYPASS stays while the plug-in is at
+    // rest: process() restores the plug-in's own before it runs.
+    if (const auto seeds = editorSeeds.load (std::memory_order_acquire); seeds != s.seedsSeen)
+    {
+        s.seedsSeen = seeds;
+        s.forgetValues();
+        s.pushedBypass = s.held ? kUnsent : bypass;
+    }
     for (std::size_t i = 0; i < s.boundCount; ++i)
     {
         auto& b = s.bound[i];
         s.send ((int) b.index, comp.get (b.id), b.pushed);
     }
     s.send (s.modeIndex, s.modeFor (stripMode), s.pushedMode);
-    s.send (s.bypassIndex, enabled ? 0.0f : 1.0f, s.pushedBypass);
+    s.send (s.bypassIndex, bypass, s.pushedBypass);
 }
 
 void MultiCompStage::process (float* L, float* R, int numSamples) noexcept
@@ -268,7 +296,11 @@ void MultiCompStage::process (float* L, float* R, int numSamples) noexcept
     assert (s.channels == 1 || R != nullptr);
     if (s.channels == 2 && R == nullptr) return;
 
-    s.held = true;
+    if (! s.held)
+    {
+        s.held = true;
+        s.restoreBypass();
+    }
     // The plug-in reads every input sample before it writes that output
     // sample, so in place is contractual. A block over the prepared size runs
     // in prepared-size parts.
@@ -286,6 +318,8 @@ void MultiCompStage::reset() noexcept
     auto& s = *impl;
     if (! s.held || ! s.prepared) return;
     s.held = false;
+    // The rest the reset leaves starts from the plug-in's bypass as it is.
+    s.restoreBypass();
     builtin::resetMultiComp2 (s.instance);
 }
 
@@ -412,6 +446,21 @@ std::optional<CompParamId> MultiCompStage::sessionParam (int index) const noexce
 void MultiCompStage::setEditorOpen (bool open) noexcept
 {
     editorsOpen.fetch_add (open ? 1 : -1, std::memory_order_relaxed);
+}
+
+void MultiCompStage::seedEditor (const CompParams& comp, bool engaged, int stripMode) noexcept
+{
+    // Only what the constructor resolved is read here, and only the plug-in's
+    // parameters are written: none of the audio thread's own state.
+    const auto& s = *impl;
+    auto& plugin = *s.plugin;
+    for (std::size_t i = 0; i < s.boundCount; ++i)
+        plugin.setParameterValue (s.bound[i].index, comp.get (s.bound[i].id));
+    if (s.modeIndex >= 0)
+        plugin.setParameterValue ((std::uint32_t) s.modeIndex, s.modeFor (stripMode));
+    if (s.bypassIndex >= 0)
+        plugin.setParameterValue ((std::uint32_t) s.bypassIndex, engaged ? 0.0f : 1.0f);
+    editorSeeds.fetch_add (1, std::memory_order_release);
 }
 
 float MultiCompStage::editorReading (int index) const noexcept

@@ -72,6 +72,10 @@ struct CompEditorHost::Impl final : private dusk::Timer
                 error = "no compressor is bound.";
                 return nullptr;
             }
+            // The editor reads every control back from the plug-in as it draws
+            // its first frame.
+            const int mode = target.stripMode != nullptr ? target.stripMode->load (std::memory_order_relaxed) : 0;
+            shown->seedEditor (*target.comp, target.engaged->load (std::memory_order_relaxed), mode);
             return shown->plugin().createEditor (parent, width, height, scale, std::move (editorCallbacks), error);
         };
         unit.paramCount = [this] { return shown != nullptr ? (int) shown->plugin().params().size() : 0; };
