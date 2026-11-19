@@ -1013,7 +1013,7 @@ void MasteringView::resized()
     // The compressor's face opens over the page, so its slot holds the header,
     // the presets and the band overview, and the EQ takes the width it gave up.
     constexpr int kPanelGap = 8;
-    constexpr int kEqMin = 480, kCompMin = 200, kLimiterMin = 200, kPhaseMin = 200;
+    static constexpr int kEqMin = 480, kCompMin = 200, kLimiterMin = 200, kPhaseMin = 200;
     const bool compact = area.getWidth() < kEqMin + kCompMin + kLimiterMin + kPhaseMin + 3 * kPanelGap;
     compactPanelCombo.setVisible (compact);
     if (compact)
