@@ -810,7 +810,7 @@ if(DUSKSTUDIO_ENABLE_NATIVE_UI)
         src/ui/imgui/PianoRollView.cpp
         src/ui/imgui/AudioDeviceSelector.cpp
         src/ui/imgui/AudioSettingsView.cpp
-        src/ui/imgui/ChannelCompView.cpp
+        src/ui/imgui/CompEditorHost.cpp
         src/ui/imgui/MasteringEqView.cpp
         src/ui/imgui/BuiltinLaneView.cpp
         src/ui/imgui/BuiltinUnitView.cpp
@@ -1059,6 +1059,7 @@ target_sources(DuskStudio PRIVATE
     src/ui/scenario/cases/gui_audio_editor.cpp
     src/ui/scenario/cases/gui_audio_editor_keys.cpp
     src/ui/scenario/cases/gui_audio_takes.cpp
+    src/ui/scenario/cases/gui_comp_editors.cpp
     src/ui/scenario/cases/gui_idle_window.cpp
     src/ui/scenario/cases/gui_import_browser.cpp
     src/ui/scenario/cases/gui_keyboard_transport.cpp

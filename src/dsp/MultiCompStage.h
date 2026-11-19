@@ -5,6 +5,7 @@
 
 #include <atomic>
 #include <memory>
+#include <optional>
 #include <string>
 
 namespace duskstudio
@@ -87,6 +88,12 @@ public:
     void  setSessionValue (CompParams& comp, std::atomic<bool>& engaged,
                            std::atomic<int>* stripMode, int index, float value) const noexcept;
     bool  isEngageParam (int index) const noexcept;
+    bool  isModeParam (int index) const noexcept;
+
+    // The session value a plug-in index stands for when it is one of the
+    // kind's parameters; empty for the mode, the bypass, an output and an
+    // unbound parameter.
+    std::optional<CompParamId> sessionParam (int index) const noexcept;
 
 private:
     struct Impl;

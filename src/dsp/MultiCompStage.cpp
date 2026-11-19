@@ -389,4 +389,17 @@ bool MultiCompStage::isEngageParam (int index) const noexcept
 {
     return index >= 0 && index == impl->bypassIndex;
 }
+
+bool MultiCompStage::isModeParam (int index) const noexcept
+{
+    return index >= 0 && index == impl->modeIndex;
+}
+
+std::optional<CompParamId> MultiCompStage::sessionParam (int index) const noexcept
+{
+    if (index < 0 || index >= (int) impl->idByIndex.size()) return std::nullopt;
+    const int id = impl->idByIndex[(std::size_t) index];
+    if (id < 0) return std::nullopt;
+    return (CompParamId) id;
+}
 } // namespace duskstudio

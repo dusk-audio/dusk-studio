@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 
 namespace duskstudio::imgui
@@ -117,6 +118,10 @@ public:
     // gesture start, edit and gesture end, as a drag in the editor would. False
     // while no editor is open.
     bool editForScenario (int index, float value);
+
+    // The value the open editor was last handed, or taken from it, for that
+    // parameter. Empty while no editor is open or before its first push.
+    std::optional<float> shownValueForScenario (int index) const;
 
 private:
     struct Impl;

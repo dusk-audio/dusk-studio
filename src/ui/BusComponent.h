@@ -12,6 +12,7 @@
 #include "LevelMeterDraw.h"
 #include "RepaintGate.h"
 #include "EmbeddedModal.h"
+#include "imgui/CompEditorHost.h"
 
 namespace duskstudio
 {
@@ -54,6 +55,17 @@ public:
     }
     // A short window compacts the strip, and the EQ pill then stands in for the header.
     SplitModuleButton* eqHeaderForScenario() { return compactMode ? &eqCompactButton : eqHeaderBtn.get(); }
+    SplitModuleButton* compHeaderForScenario() { return compactMode ? &compCompactButton : compHeaderBtn.get(); }
+
+    // The bus compressor's editor, Multi-Comp 2's own over a dimmed window.
+    // Opening toggles, as the COMP label does; the shell closes it before a
+    // modal and on Escape.
+    void openCompEditorPopup();
+    void closeCompEditorPopup();
+    bool isCompEditorOpen() const noexcept;
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    imgui::CompEditorHost* compEditorForScenario() noexcept { return compEditor.get(); }
+   #endif
 
 private:
     bool compactVu = false;
@@ -142,13 +154,16 @@ private:
     // label opens the editor, and right-click anywhere opens the section menu.
     SplitModuleButton eqCompactButton  { "EQ"   };
     SplitModuleButton compCompactButton { "COMP" };
-    // Compact-mode popups: clicking the placeholder button shows a
-    // mini-editor mirroring the bus's EQ / COMP knobs so the user can
-    // tweak without expanding the strip back to full mode.
+    // The EQ label's popup, a mini-editor mirroring the bus's EQ knobs.
     EmbeddedModal eqEditorModal { EmbeddedModal::SafeAcrossTrackMove {} };
-    EmbeddedModal compEditorModal { EmbeddedModal::SafeAcrossTrackMove {} };
     void openEqEditorPopup();
-    void openCompEditorPopup();
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    imgui::DafEditorHost::Geometry compEditorGeometry();
+    void finishCompEditorClose();
+    std::unique_ptr<imgui::CompEditorHost> compEditor;
+    std::unique_ptr<class DimOverlay> compEditorDim;
+    PluginEditorHider compEditorHider;
+   #endif
     // Unified section context menus (right-click on a header or compact pill):
     // whole-section reset + open editor. Fixed-topology, so no character items.
     void showEqSectionMenu();

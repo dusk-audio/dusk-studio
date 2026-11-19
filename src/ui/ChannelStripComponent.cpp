@@ -8,7 +8,6 @@
 #if DUSKSTUDIO_HAS_NATIVE_UI
  #include "NativeEditorEmbedScale.h"
  #include "imgui/BuiltinUnitView.h"
- #include "imgui/ChannelCompView.h"
  #include "imgui/DuskPanelWindow.h"
  #include "imgui/SfzRepositoryView.h"
 #endif
@@ -1454,9 +1453,9 @@ ChannelStripComponent::~ChannelStripComponent()
     eqEditorModal.closeAndDeleteBodyNow();
     auxEditorModal.closeAndDeleteBodyNow();
    #if DUSKSTUDIO_HAS_NATIVE_UI
-    // The native comp window's teardown drops its own view and framework child; no
-    // deferred message-loop tick is involved, so a quit with it open is safe here.
-    compEditorWindow.reset();
+    // The native windows go synchronously here; no deferred message-loop tick is
+    // involved, so a quit with one open is safe.
+    compEditor.reset();
     compEditorDim.reset();
     builtinEditorWindow.reset();
     builtinEditorDim.reset();
@@ -4187,25 +4186,41 @@ void ChannelStripComponent::openEqEditorPopup()
                         /*dismissOnEscape*/ true, kEditorDimAlpha);
 }
 
-bool ChannelStripComponent::openCompEditorForCapture (const std::string& capturePath)
+void ChannelStripComponent::openCompEditorForCapture()
 {
-    openCompEditorPopup();
+    if (! isCompEditorOpen())
+        openCompEditorPopup();
+}
+
+bool ChannelStripComponent::compEditorDrawnForCapture() const noexcept
+{
    #if DUSKSTUDIO_HAS_NATIVE_UI
-    if (compEditorWindow == nullptr || ! compEditorWindow->isOpen())
-        return false;
-    compEditorWindow->captureNextFrameTo (capturePath);
-    return true;
+    return isCompEditorOpen() && compEditor->hasRenderedFrame();
+   #else
+    return false;
+   #endif
+}
+
+void ChannelStripComponent::captureCompEditor (const std::string& capturePath)
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    // A partial file, or one left by an earlier run, would still be converted
+    // into a manual figure.
+    if (! compEditorDrawnForCapture()
+        || ! duskstudio::platform::captureNativeWindowToPpm (compEditor->nativeWindow(), capturePath))
+    {
+        std::remove (capturePath.c_str());
+        std::fprintf (stderr, "[capture] the compressor editor gave no frame for %s\n",
+                      capturePath.c_str());
+    }
    #else
     (void) capturePath;
-    return false;
    #endif
 }
 
 bool ChannelStripComponent::inputPanelForScenario (const std::string& input)
 {
    #if DUSKSTUDIO_HAS_NATIVE_UI
-    if (compEditorWindow != nullptr && compEditorWindow->isOpen())
-        return compEditorWindow->inputForScenario (input);
     if (builtinEditorWindow != nullptr && builtinEditorWindow->isOpen())
         return builtinEditorWindow->inputForScenario (input);
    #else
@@ -4224,7 +4239,7 @@ bool ChannelStripComponent::moduleEditorOpenForScenario (int module) const
 bool ChannelStripComponent::isCompEditorOpen() const noexcept
 {
    #if DUSKSTUDIO_HAS_NATIVE_UI
-    return compEditorWindow != nullptr && compEditorWindow->isOpen();
+    return compEditor != nullptr && compEditor->isOpen();
    #else
     return false;
    #endif
@@ -4253,8 +4268,8 @@ void ChannelStripComponent::closeCompEditorForCapture()
 void ChannelStripComponent::closeCompEditorPopup()
 {
    #if DUSKSTUDIO_HAS_NATIVE_UI
-    if (compEditorWindow != nullptr && compEditorWindow->isOpen())
-        compEditorWindow->close();
+    if (compEditor != nullptr && compEditor->isOpen())
+        compEditor->close();
    #endif
 }
 
@@ -4753,8 +4768,7 @@ void ChannelStripComponent::openBuiltinEditorPopup()
         builtinEditorWindow->setShellKeys (imgui::PanelShellKeys::dialog);
 
         // Raw `this`: the strip owns the window, and the window's teardown drops
-        // the host's callbacks before anything can fire (see the compressor
-        // editor above).
+        // the host's callbacks before anything can fire.
         imgui::DuskPanelWindow::Callbacks callbacks;
         callbacks.dismissed = [this] { closeBuiltinEditorPopup(); };
         callbacks.closed = [this]
@@ -4818,6 +4832,32 @@ void ChannelStripComponent::openBuiltinEditorPopup()
    #endif
 }
 
+#if DUSKSTUDIO_HAS_NATIVE_UI
+imgui::DafEditorHost::Geometry ChannelStripComponent::compEditorGeometry()
+{
+    auto* const topLevel = getTopLevelComponent();
+    if (topLevel == nullptr || compEditor == nullptr)
+        return {};
+    const auto fitted = embedscale::fittedChildGeometry (*topLevel, (int) compEditor->designWidth(),
+                                                         (int) compEditor->designHeight());
+    if (compEditorDim != nullptr)
+    {
+        compEditorDim->setBounds (topLevel->getLocalBounds());
+        compEditorDim->setNativeChildArea (fitted.logical.expanded (1));
+    }
+    const auto& g = fitted.geometry;
+    return { g.x, g.y, g.width, g.height, g.scale };
+}
+
+void ChannelStripComponent::finishCompEditorClose()
+{
+    compEditorDim.reset();
+    compEditorHider.restore();
+    if (auto* target = EmbeddedModal::focusRestoreTarget().getComponent())
+        target->grabKeyboardFocus();
+}
+#endif
+
 void ChannelStripComponent::openCompEditorPopup()
 {
    #if ! DUSKSTUDIO_HAS_NATIVE_UI
@@ -4825,9 +4865,9 @@ void ChannelStripComponent::openCompEditorPopup()
                    "The compressor editor needs the native UI, which this build "
                    "was made without.");
    #else
-    if (compEditorWindow != nullptr && compEditorWindow->isOpen())
+    if (isCompEditorOpen())
     {
-        compEditorWindow->close();
+        closeCompEditorPopup();
         return;
     }
 
@@ -4845,85 +4885,60 @@ void ChannelStripComponent::openCompEditorPopup()
     }
 
     // A modal centred over an embedded native child lands inside it, so the notepad
-    // has to go before another native surface takes the window.
+    // and every other native editor go before this one takes the window.
     if (auto hook = EmbeddedModal::beforeModalShown())
         hook();
 
-    if (compEditorWindow == nullptr)
+    if (compEditor == nullptr)
     {
-        compEditorWindow = std::make_unique<imgui::DuskPanelWindow> (
-            "dusk-studio-comp-editor", "comp-editor", "Compressor");
-        compEditorWindow->setShellKeys (imgui::PanelShellKeys::dialog);
+        // A mono block runs the mono instance and every other block the stereo
+        // one, so the editor follows the track's width: its meters read the
+        // instance it was built from.
+        imgui::CompEditorTarget binding;
+        binding.comp       = &track.strip.comp;
+        binding.engaged    = &track.strip.compEnabled;
+        binding.stripMode  = &track.strip.compMode;
+        binding.modePicked = &track.strip.compModePicked;
+        compEditor = std::make_unique<imgui::CompEditorHost> (
+            [this]() -> MultiCompStage&
+            {
+                const bool stereo = track.mode.load (std::memory_order_relaxed) != (int) Track::Mode::Mono
+                                 || track.frozen.load (std::memory_order_relaxed);
+                return engine.getChannelStrip (trackIndex).getCompressor (stereo);
+            },
+            binding);
 
-        // Raw `this` rather than a SafePointer: the strip owns the window, and the
-        // window's teardown drops the host's callbacks before anything can fire, so
-        // no callback outlives the strip.
-        imgui::DuskPanelWindow::Callbacks callbacks;
-        callbacks.dismissed = [this] { closeCompEditorPopup(); };
-        callbacks.closed = [this]
+        // Raw `this`: the strip owns the host and destroys it before its own
+        // teardown, so none of these outlives the strip.
+        imgui::DafEditorHost::Callbacks callbacks;
+        callbacks.closed = [this] { finishCompEditorClose(); };
+        callbacks.gestureEnded = []
         {
-            compEditorDim.reset();
-            compEditorHider.restore();
             if (auto* target = EmbeddedModal::focusRestoreTarget().getComponent())
                 target->grabKeyboardFocus();
         };
-        callbacks.shortcut = [] (imgui::ShellShortcut shortcut)
-        {
-            return dispatchShellShortcut (shortcut);
-        };
-        // Polled while the panel is open, so a host resized underneath it re-centres
-        // the child and the dim's click-through region together.
-        callbacks.geometry = [this]
-        {
-            auto* const top = getTopLevelComponent();
-            if (top == nullptr || compEditorWindow == nullptr)
-                return imgui::DuskPanelWindow::Geometry {};
-
-            const auto plate = compEditorWindow->plateSize();
-            const auto bounds = embedscale::centredChildBounds (*top, plate.width,
-                                                                plate.height);
-            if (compEditorDim != nullptr)
-            {
-                compEditorDim->setBounds (top->getLocalBounds());
-                compEditorDim->setNativeChildArea (bounds.expanded (1));
-            }
-            const auto g = embedscale::childGeometryFor (*top, bounds);
-            return imgui::DuskPanelWindow::Geometry { g.x, g.y, g.width, g.height, g.scale };
-        };
-        compEditorWindow->setCallbacks (std::move (callbacks));
+        callbacks.geometry = [this] { return compEditorGeometry(); };
+        compEditor->setCallbacks (std::move (callbacks));
     }
 
-    compEditorWindow->setView (imgui::makeChannelCompView (track));
-
-    const auto plate = compEditorWindow->plateSize();
-    const auto logical = embedscale::centredChildBounds (*topLevel, plate.width, plate.height);
-
-    compEditorDim = std::make_unique<DimOverlay> (compEditorWindow->dimAlpha());
+    compEditorDim = std::make_unique<DimOverlay> (kEditorDimAlpha);
     compEditorDim->setBounds (topLevel->getLocalBounds());
-    // A press over the child reaches the overlay too - JUCE takes XInput2 on the
-    // top-level while the raw child takes core events - so the child's own area must
-    // not read as a click outside. One pixel of slack absorbs the rounding.
-    compEditorDim->setNativeChildArea (logical.expanded (1));
     compEditorDim->onClick = [this] { closeCompEditorPopup(); };
     topLevel->addAndMakeVisible (compEditorDim.get());
-
     // Native plugin editors paint above any framework child regardless of z-order,
-    // so they hide for the panel's lifetime exactly as under an embedded modal.
+    // so they hide for the editor's lifetime exactly as under an embedded modal.
     compEditorHider.hideUnder (*topLevel, { compEditorDim.get() });
 
-    const auto geometry = embedscale::childGeometryFor (*topLevel, logical);
-    if (! compEditorWindow->open (parentHandle,
-                                  { geometry.x, geometry.y, geometry.width,
-                                    geometry.height, geometry.scale }))
-    {
-        compEditorDim.reset();
-        compEditorHider.restore();
-        const auto& why = compEditorWindow->lastOpenFailure();
-        showDuskAlert (*topLevel, "Compressor",
-                       why.empty() ? "The compressor editor cannot open on this display "
-                                     "backend."
-                                   : why.c_str());
-    }
+    const auto geometry = compEditorGeometry();
+    if (geometry.width >= 2 && geometry.height >= 2 && compEditor->open (parentHandle, geometry))
+        return;
+
+    compEditorDim.reset();
+    compEditorHider.restore();
+    const auto& why = compEditor->lastOpenFailure();
+    showDuskAlert (*topLevel, "Compressor",
+                   why.empty() ? "The compressor editor cannot open on this display backend."
+                               : why.c_str());
    #endif
 }
 

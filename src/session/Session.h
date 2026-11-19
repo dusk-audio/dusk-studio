@@ -1319,14 +1319,6 @@ struct BusParams
     }
 
     std::atomic<bool>  compEnabled   { false };
-    std::atomic<float> compThreshDb  { 0.0f };
-    std::atomic<float> compRatio     { 4.0f };
-    std::atomic<float> compAttackMs  { 10.0f };
-    std::atomic<float> compReleaseMs { 100.0f };
-    // Donor's bus-comp choice param clamps non-discrete values to
-    // "Auto" anyway, so this matches what existing sessions hear.
-    std::atomic<bool>  compReleaseAuto { true };
-    std::atomic<float> compMakeupDb  { 0.0f };
 
     CompParams comp;
 
@@ -1541,14 +1533,7 @@ struct MasterBusParams
     std::atomic<float> eqHfAttenFreq   { 10000.0f }; // discrete: 5k/10k/20k Hz
     std::atomic<float> eqOutputGainDb  { 0.0f };
 
-    // SSL-style bus comp.
     std::atomic<bool>  compEnabled    { false };
-    std::atomic<float> compThreshDb   { 0.0f };
-    std::atomic<float> compRatio      { 4.0f };
-    std::atomic<float> compAttackMs   { 10.0f };
-    std::atomic<float> compReleaseMs  { 100.0f };
-    std::atomic<bool>  compReleaseAuto { true };
-    std::atomic<float> compMakeupDb   { 0.0f };
 
     CompParams comp;
 

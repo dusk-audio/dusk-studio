@@ -257,5 +257,3 @@ inline void applyTrackThresholdAxisValue (ChannelStripParams& strip, float value
 }
 } // namespace comp
 } // namespace duskstudio
-
-#include "CompModeMapLegacy.h"

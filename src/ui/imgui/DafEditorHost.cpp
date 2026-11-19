@@ -538,4 +538,13 @@ bool DafEditorHost::editForScenario (int index, float value)
     handed.gesture ((std::uint32_t) index, false);
     return true;
 }
+
+std::optional<float> DafEditorHost::shownValueForScenario (int index) const
+{
+    const auto& pushed = impl->pushedValues;
+    if (impl->editor == nullptr || impl->closeRequested || impl->pushAllValues
+        || index < 0 || index >= (int) pushed.size())
+        return std::nullopt;
+    return pushed[(std::size_t) index];
+}
 } // namespace duskstudio::imgui

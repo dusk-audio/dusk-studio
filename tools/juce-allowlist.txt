@@ -59,7 +59,7 @@ src/ui/AuxView.cpp	60
 src/ui/AuxView.h	5
 src/ui/BounceDialog.cpp	45
 src/ui/BounceDialog.h	12
-src/ui/BusComponent.cpp	288
+src/ui/BusComponent.cpp	236
 src/ui/BusComponent.h	45
 src/ui/ChannelEqEditor.cpp	77
 src/ui/ChannelEqEditor.h	13
@@ -105,7 +105,7 @@ src/ui/Lv2PluginEditorComponent.cpp	3
 src/ui/Lv2PluginEditorComponent.h	4
 src/ui/MainComponent.cpp	403
 src/ui/MainComponent.h	54
-src/ui/MasterStripComponent.cpp	325
+src/ui/MasterStripComponent.cpp	270
 src/ui/MasterStripComponent.h	55
 src/ui/MasteringView.cpp	143
 src/ui/MasteringView.h	26
@@ -132,7 +132,6 @@ src/ui/SelfTestPanel.cpp	10
 src/ui/SelfTestPanel.h	7
 src/ui/ShortcutsPanel.h	36
 src/ui/SplitModuleButton.h	42
-src/ui/SteppedKnob.h	12
 src/ui/SupportersPanel.h	41
 src/ui/SystemStatusBar.cpp	28
 src/ui/SystemStatusBar.h	11

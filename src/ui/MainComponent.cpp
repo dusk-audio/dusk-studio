@@ -1532,6 +1532,18 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
                 master->closeTapeEditor();
                 return true;
             }
+            if (auto* const master = consoleView->getMasterStripComponent();
+                master != nullptr && master->isCompEditorOpen())
+            {
+                master->closeCompEditorPopup();
+                return true;
+            }
+            for (int b = 0; b < Session::kNumBuses; ++b)
+                if (auto* const bus = consoleView->getBusComponent (b); bus != nullptr && bus->isCompEditorOpen())
+                {
+                    bus->closeCompEditorPopup();
+                    return true;
+                }
             for (int t = 0; t < Session::kNumTracks; ++t)
             {
                 auto* const strip = consoleView->getStripComponent (t);
@@ -6813,7 +6825,13 @@ void MainComponent::closeNativePanelsForModal (bool keepPianoRoll)
                 strip->closeCompEditorPopup();
                 strip->closeBuiltinEditorPopup();
             }
-        if (auto* master = consoleView->getMasterStripComponent()) master->closeTapeEditor();
+        for (int b = 0; b < Session::kNumBuses; ++b)
+            if (auto* bus = consoleView->getBusComponent (b)) bus->closeCompEditorPopup();
+        if (auto* master = consoleView->getMasterStripComponent())
+        {
+            master->closeTapeEditor();
+            master->closeCompEditorPopup();
+        }
     }
 }
 #endif

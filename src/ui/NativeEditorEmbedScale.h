@@ -143,6 +143,25 @@ inline PinnedChild pinnedChildGeometry (const juce::Component& topLevel,
     return { bounds, geometry };
 }
 
+// A native editor at its own design size, centred, and scaled down rather than
+// cropped when the window cannot hold it.
+template <typename TopLevel>
+PinnedChild fittedChildGeometry (const TopLevel& topLevel, int designWidth, int designHeight)
+{
+    if (designWidth < 2 || designHeight < 2)
+        return {};
+    const auto window = topLevel.getLocalBounds();
+    const double fit = std::min (
+        1.0, std::min ((double) std::max (0, window.getWidth() - 16) / designWidth,
+                       (double) std::max (0, window.getHeight() - 16) / designHeight));
+    const auto logical = centredChildBounds (topLevel,
+                                             static_cast<int> (std::lround (designWidth * fit)),
+                                             static_cast<int> (std::lround (designHeight * fit)));
+    auto geometry = childGeometryFor (topLevel, logical);
+    geometry.scale *= fit;
+    return { logical, geometry };
+}
+
 // The handle a native child embeds into, or 0 when the window is not realised yet.
 inline std::uintptr_t nativeParentHandle (const juce::Component& topLevel)
 {

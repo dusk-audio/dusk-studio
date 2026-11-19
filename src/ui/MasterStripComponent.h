@@ -12,7 +12,7 @@
 #include "SplitModuleButton.h"
 #include "LevelMeterDraw.h"
 #include "RepaintGate.h"
-#include "imgui/DafEditorHost.h"
+#include "imgui/CompEditorHost.h"
 #include "../foundation/MessageThread.h"
 
 namespace duskstudio
@@ -58,6 +58,19 @@ public:
         return compactMode ? &tapeButton : tapeHeaderBtn.get();
     }
     bool tapeEditorDrawnForScenario() const noexcept;
+
+    // The master compressor's editor, Multi-Comp 2's own over a dimmed window.
+    // Opening toggles, as the COMP label does.
+    void openCompEditorPopup();
+    void closeCompEditorPopup();
+    bool isCompEditorOpen() const noexcept;
+    SplitModuleButton* compButtonForScenario() noexcept
+    {
+        return compactMode ? &compCompactButton : compHeaderBtn.get();
+    }
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    imgui::CompEditorHost* compEditorForScenario() noexcept { return compEditor.get(); }
+   #endif
     bool tapeEditForScenario (const std::string& paramSymbol, float value);
 
 private:
@@ -123,6 +136,11 @@ private:
     std::unique_ptr<imgui::DafEditorHost> tapeEditor;
     std::unique_ptr<class DimOverlay> tapeEditorDim;
     PluginEditorHider tapeEditorHider;
+    imgui::DafEditorHost::Geometry compEditorGeometry();
+    void finishCompEditorClose();
+    std::unique_ptr<imgui::CompEditorHost> compEditor;
+    std::unique_ptr<class DimOverlay> compEditorDim;
+    PluginEditorHider compEditorHider;
    #endif
 
     juce::Slider faderSlider { juce::Slider::LinearVertical, juce::Slider::TextBoxBelow };
@@ -157,9 +175,7 @@ private:
     SplitModuleButton eqCompactButton  { "EQ"   };
     SplitModuleButton compCompactButton { "COMP" };
     EmbeddedModal eqEditorModal { EmbeddedModal::SafeAcrossTrackMove {} };
-    EmbeddedModal compEditorModal { EmbeddedModal::SafeAcrossTrackMove {} };
     void openEqEditorPopup();
-    void openCompEditorPopup();
     // Unified section context menus (right-click on a header or compact pill):
     // whole-section reset (where a per-knob reset precedent exists) + open
     // editor. Master sections are fixed-topology, so no character items.

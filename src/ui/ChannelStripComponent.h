@@ -13,7 +13,7 @@
 #include "SplitModuleButton.h"
 #include "ConsoleLayout.h"
 #include "EmbeddedModal.h"
-#include "imgui/DafEditorHost.h"
+#include "imgui/CompEditorHost.h"
 #include "DuskComboBox.h"
 #include "NativeEditorOwner.h"
 #include "LevelMeterDraw.h"
@@ -46,11 +46,11 @@ public:
     // toggles synchronously because the harness blocks normal timer delivery.
     void refreshMetersForCapture();
 
-    // Screenshot-harness only: open / close the native compressor panel, whose
-    // framework child createComponentSnapshot cannot reach. `capturePath` asks the
-    // panel to read its own steady frame back into that file. False when the panel did
-    // not open to take the request.
-    bool openCompEditorForCapture (const std::string& capturePath);
+    // Screenshot-harness only: the compressor editor is Multi-Comp 2's own window,
+    // which createComponentSnapshot cannot reach, so it is read back once drawn.
+    void openCompEditorForCapture();
+    bool compEditorDrawnForCapture() const noexcept;
+    void captureCompEditor (const std::string& capturePath);
     void closeCompEditorForCapture();
 
     // Screenshot-harness only: force the track into the given mode (0=mono,
@@ -118,12 +118,16 @@ public:
                                                               : std::string {};
     }
     bool moduleEditorOpenForScenario (int module) const;
+    std::string compLabelForScenario() const
+    {
+        return compModeButton != nullptr ? compModeButton->getLabelText().toStdString() : std::string {};
+    }
     // The strip name the open EQ editor is titled with, empty when it is not
-    // up. The comp editor is a framework panel with no JUCE text to read.
+    // up. The comp editor is Multi-Comp 2's own and carries no title of ours.
     std::string moduleEditorTitleForScenario (int module) const;
     void closeModuleEditorsForScenario();
-    // A key into the open compressor editor or built-in unit editor, as its child
-    // would take it with the keyboard.
+    // A key into the open built-in unit editor, as its child would take it with
+    // the keyboard.
     bool inputPanelForScenario (const std::string& input);
     bool meterClipForScenario();
     // The text the high- or low-pass knob shows.
@@ -584,10 +588,14 @@ public:
     void dropPluginEditor (NativeEditorTeardown teardown);
 
     // Public for the same reason: the shell closes this before showing a modal,
-    // because the panel is an opaque native child and a modal opening behind it
-    // can be neither seen nor clicked.
+    // because the editor is an opaque native child and a modal opening behind it
+    // can be neither seen nor clicked. Opening toggles, as the COMP label does.
+    void openCompEditorPopup();
     void closeCompEditorPopup();
     bool isCompEditorOpen() const noexcept;
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    imgui::CompEditorHost* compEditorForScenario() noexcept { return compEditor.get(); }
+   #endif
 
     // Same reason again: the built-in unit editor is another native child, and
     // the shell has to be able to close it and to ask whether it is open.
@@ -628,14 +636,12 @@ private:
     // the others.
     EmbeddedModal eqEditorModal { EmbeddedModal::SafeAcrossTrackMove {} };
     EmbeddedModal auxEditorModal { EmbeddedModal::SafeAcrossTrackMove {} };
-    // COMP is native: a framework child covering the host window, drawing its own
-    // dim and plate. Built on first open because the framework window is a real
-    // graphics resource and most strips never open one.
+    // COMP opens Multi-Comp 2's own editor for the stage this strip runs, built on
+    // first open because most strips never open one.
    #if DUSKSTUDIO_HAS_NATIVE_UI
-    std::unique_ptr<imgui::DuskPanelWindow> compEditorWindow;
-    // The built-in unit editor, hosted exactly as the compressor editor is: one
-    // native child over a dim, dismissed by Escape, a click outside or the same
-    // slot control that opened it.
+    std::unique_ptr<imgui::CompEditorHost> compEditor;
+    // The built-in unit editor: one native child over a dim, dismissed by Escape,
+    // a click outside or the same slot control that opened it.
     std::unique_ptr<imgui::DuskPanelWindow> builtinEditorWindow;
     std::unique_ptr<imgui::DuskPanelWindow> sfzLibraryWindow;
     // A unit that is one of Dusk's own DAF plug-ins brings its own editor; the
@@ -655,9 +661,10 @@ private:
     PluginEditorHider sfzLibraryHider;
    #endif
     void openEqEditorPopup();
-    void openCompEditorPopup();
     void openBuiltinEditorPopup();
    #if DUSKSTUDIO_HAS_NATIVE_UI
+    imgui::DafEditorHost::Geometry compEditorGeometry();
+    void finishCompEditorClose();
     void openBuiltinPluginEditor (std::uintptr_t parentHandle);
     // Where the plug-in's editor belongs: its own size, centred, scaled down when
     // the window cannot hold it. Also follows the dim's click-through region.

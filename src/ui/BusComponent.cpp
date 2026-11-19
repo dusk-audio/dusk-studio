@@ -3,8 +3,12 @@
 #include "../engine/CompModeMap.h"
 #include "DuskContextMenu.h"
 #include "DuskLabelEditor.h"
-#include "SteppedKnob.h"
 #include "DuskStudioLookAndFeel.h"  // fourKColors palette
+#include "DimOverlay.h"
+#include "DuskAlerts.h"
+#if DUSKSTUDIO_HAS_NATIVE_UI
+ #include "NativeEditorEmbedScale.h"
+#endif
 #include "../foundation/Text.h"
 #include "../session/MidiBindings.h"
 #include "../session/ParamEditAction.h"
@@ -108,10 +112,9 @@ void setUpBusHpfKnob (juce::Slider& s, const BusParams& strip)
     s.updateText();
 }
 
-// Dusk editor-modal styling helpers - match ChannelEqEditor / ChannelCompEditor
-// (380-wide popups, 56-px rotary knobs, 80×18 text boxes, 16-pt bold accent
-// band labels). Used by Bus / Master EQ + COMP modals so the UI conforms
-// across every strip type.
+// Dusk editor-modal styling helpers - match ChannelEqEditor (380-wide popups,
+// 56-px rotary knobs, 80×18 text boxes, 16-pt bold accent band labels), so the
+// bus and master EQ popups conform with the channel strip's.
 constexpr int kEditorKnobSize    = 56;
 constexpr int kEditorValueH      = 18;
 constexpr int kEditorKnobBlockH  = kEditorKnobSize + kEditorValueH + 6;   // 80
@@ -150,8 +153,8 @@ void styleEditorLabel (juce::Label& l, const juce::String& text, juce::Colour ac
     l.setFont (juce::Font (juce::FontOptions (16.0f, juce::Font::bold)));
 }
 
-// Centred accent-red caption - the comp editors' 11-pt knob captions, and at
-// editorTitle::kFontSize the strip name every editor popup carries on its top row.
+// Centred caption: at editorTitle::kFontSize the strip name every editor popup
+// carries on its top row.
 void styleEditorAccentLabel (juce::Label& l, const juce::String& text,
                               float fontHeight = 11.0f,
                               std::uint32_t colour = 0xffb07050)
@@ -273,311 +276,6 @@ private:
     juce::Label  lfLbl, midLbl, hfLbl, hpfLbl;
 };
 
-// Bus COMP modal. Mirrors ChannelCompEditor:
-//   - ON button top-right
-//   - LEFT: handle column (threshold drag) | IN meter | GR meter
-//   - RIGHT: 2×2 knob grid (RAT / MAK top, ATK / REL bottom)
-// No mode picker (bus comp is a fixed SSL-style glue topology). No
-// standalone THR knob - threshold is set via the triangle handle.
-class BusCompEditorPanel final : public juce::Component, private dusk::Timer
-{
-public:
-    BusCompEditorPanel (Bus& busRef) : bus (busRef)
-    {
-        // SSL G-bus comp palette: powder-blue knob body + near-black
-        // chassis. Variable name kept for callsite compatibility.
-        const auto compGold = juce::Colour (0xff7da8c5);
-        styleEditorEnableBtn (enableBtn, compGold);
-        enableBtn.setButtonText ("ON");
-        enableBtn.setToggleState (bus.strip.compEnabled.load (std::memory_order_relaxed),
-                                    juce::dontSendNotification);
-        enableBtn.onClick = [this]
-        {
-            bus.strip.compEnabled.store (enableBtn.getToggleState(),
-                                           std::memory_order_release);
-        };
-        addAndMakeVisible (enableBtn);
-
-        // Which bus this editor belongs to, centred left of the ON pill.
-        styleEditorAccentLabel (titleLbl, bus.name, editorTitle::kFontSize, editorTitle::kColour);
-        titleLbl.setMinimumHorizontalScale (1.0f);
-        addAndMakeVisible (titleLbl);
-
-        styleEditorKnob (rat, compGold,   1.0,   10.0,    4.0,    4.0, ":1",  1);
-        styleEditorKnob (atk, compGold,   0.1,   50.0,    5.0,   10.0, " ms", 1);
-        styleEditorKnob (rel, compGold,  50.0, 1000.0,  200.0,  200.0, " ms", 0);
-        styleEditorKnob (mak, compGold, -10.0,   20.0,    0.0,    0.0, " dB", 1);
-        for (auto* k : { &rat, &atk, &rel, &mak })
-            k->setColour (juce::Slider::thumbColourId, juce::Colours::white);
-        mak.setValue (bus.strip.compMakeupDb .load(), juce::dontSendNotification);
-
-        rat.setTooltip ("Bus comp ratio (stepped: 2:1 / 4:1 / 10:1).");
-        atk.setTooltip ("Bus comp attack (stepped: 0.1 / 0.3 / 1 / 3 / 10 / 30 ms).");
-        rel.setTooltip ("Bus comp release (stepped: 0.1 / 0.3 / 0.6 / 1.2 s, top = AUTO).");
-        mak.setTooltip ("Bus comp make-up gain (-10..+20 dB). Double-click for 0 dB; Shift-drag for fine.");
-        mak.onValueChange = [this] { bus.strip.compMakeupDb .store ((float) mak.getValue(), std::memory_order_relaxed); };
-
-        // Stepped SSL selectors (see the inline-strip comp setup).
-        configureSteppedKnob (rat, sslsteps::ratioValues(), sslsteps::ratioLabels(),
-                              bus.strip.compRatio.load(),
-                              [this] (double v) { bus.strip.compRatio.store ((float) v, std::memory_order_relaxed); });
-        configureSteppedKnob (atk, sslsteps::attackValues(), sslsteps::attackLabels(),
-                              bus.strip.compAttackMs.load(),
-                              [this] (double v) { bus.strip.compAttackMs.store ((float) v, std::memory_order_relaxed); });
-        configureSteppedKnob (rel, sslsteps::releaseValues(), sslsteps::releaseLabels(),
-                              bus.strip.compReleaseAuto.load() ? -1.0 : (double) bus.strip.compReleaseMs.load(),
-                              [this] (double v)
-                              {
-                                  const bool autoOn = v < 0.0;
-                                  bus.strip.compReleaseAuto.store (autoOn, std::memory_order_relaxed);
-                                  if (! autoOn)
-                                      bus.strip.compReleaseMs.store ((float) v, std::memory_order_relaxed);
-                              });
-
-        addAndMakeVisible (rat); addAndMakeVisible (atk);
-        addAndMakeVisible (rel); addAndMakeVisible (mak);
-
-        styleEditorAccentLabel (ratLbl, "RATIO");
-        styleEditorAccentLabel (atkLbl, "ATTACK");
-        styleEditorAccentLabel (relLbl, "RELEASE");
-        styleEditorAccentLabel (makLbl, "GAIN");
-        addAndMakeVisible (ratLbl); addAndMakeVisible (atkLbl);
-        addAndMakeVisible (relLbl); addAndMakeVisible (makLbl);
-
-        // Same fixed size as ChannelCompEditor's grid mode for visual
-        // parity. Channel computes: kHeaderH(24)+gap(8)+modeRow(24)+gap(12)
-        // + 2×knobBlockH(80) + footerPad(16) + 24 = 268. Bus has no
-        // mode row - drop those rows + use ~244h.
-        setSize (380, 268);
-        startTimerHz (30);
-    }
-
-    ~BusCompEditorPanel() override { stopTimer(); }
-
-    void paint (juce::Graphics& g) override
-    {
-        // SSL G-bus comp chassis - near-black with powder-blue accent.
-        g.fillAll (juce::Colour (0xff0a0a0a));
-        g.setColour (juce::Colour (0xff7da8c5).withAlpha (0.40f));
-        g.drawRect (getLocalBounds(), 1);
-
-        auto drawVerticalMeter = [&] (juce::Rectangle<int> area,
-                                       float dB, float minDb, float maxDb,
-                                       juce::Colour fillTop, juce::Colour fillBottom,
-                                       const juce::String& caption,
-                                       const juce::String& valueText)
-        {
-            if (area.isEmpty()) return;
-            const auto bar = area.toFloat();
-            g.setColour (juce::Colour (0xff0c0c0e));
-            g.fillRoundedRectangle (bar, 2.0f);
-            g.setColour (juce::Colour (0xff2a2a2e));
-            g.drawRoundedRectangle (bar, 2.0f, 0.8f);
-
-            const float clamped = jlimit (minDb, maxDb, dB);
-            const float frac = (clamped - minDb) / (maxDb - minDb);
-            if (frac > 0.001f)
-            {
-                const float fillH = (bar.getHeight() - 4.0f) * frac;
-                auto fillRect = juce::Rectangle<float> (bar.getX() + 2.0f,
-                                                          bar.getBottom() - 2.0f - fillH,
-                                                          bar.getWidth() - 4.0f, fillH);
-                juce::ColourGradient grad (fillTop, fillRect.getX(), fillRect.getY(),
-                                             fillBottom, fillRect.getX(), fillRect.getBottom(),
-                                             false);
-                g.setGradientFill (grad);
-                g.fillRoundedRectangle (fillRect, 1.5f);
-            }
-
-            g.setColour (juce::Colour (0xffa0a0a0));
-            g.setFont (juce::Font (juce::FontOptions (10.0f, juce::Font::bold)));
-            g.drawText (caption, area.withY (area.getY() - 14).withHeight (12),
-                         juce::Justification::centred, false);
-            g.setFont (juce::Font (juce::FontOptions (9.5f)));
-            g.drawText (valueText, area.withY (area.getBottom()).withHeight (14),
-                         juce::Justification::centred, false);
-        };
-
-        drawVerticalMeter (inputMeterArea, displayedInputDb, -60.0f, 0.0f,
-                            juce::Colour (0xffd05a5a),
-                            juce::Colour (0xff60c060),
-                            "IN",
-                            displayedInputDb <= -99.0f ? std::string ("-inf")
-                                                       : dusk::text::format ("%.1f", displayedInputDb));
-
-        drawVerticalMeter (grMeterArea, -displayedGrDb, 0.0f, 20.0f,
-                            juce::Colour (0xffff7060),
-                            juce::Colour (0xffe0c050).brighter (0.2f),
-                            "GR",
-                            dusk::text::format ("%.1f", displayedGrDb));
-
-        // Threshold triangle handle, drawn on the LEFT of the IN meter.
-        if (! inputMeterArea.isEmpty() && ! threshHandleArea.isEmpty())
-        {
-            const float thresh = jlimit (-60.0f, 0.0f,
-                bus.strip.compThreshDb.load (std::memory_order_relaxed));
-            const float frac = (thresh - (-60.0f)) / 60.0f;
-            const auto inBar = inputMeterArea.toFloat();
-            const float y = inBar.getBottom() - 2.0f - frac * (inBar.getHeight() - 4.0f);
-
-            const float halfH = 9.0f;
-            const float baseX = (float) threshHandleArea.getX();
-            const float tipX  = (float) threshHandleArea.getRight() + 2.0f;
-            juce::Path tri;
-            tri.addTriangle (baseX, y - halfH, baseX, y + halfH, tipX, y);
-
-            const bool engaged = bus.strip.compEnabled.load (std::memory_order_relaxed);
-            const auto fill = engaged ? juce::Colour (0xffe0c050).brighter (0.30f)
-                                       : juce::Colour (0xff909098);
-            g.setColour (juce::Colours::black.withAlpha (0.45f));
-            juce::Path shadow;
-            shadow.addTriangle (baseX, y - halfH + 1.0f,
-                                  baseX, y + halfH + 1.0f,
-                                  tipX + 1.0f, y + 1.0f);
-            g.fillPath (shadow);
-            g.setColour (fill);
-            g.fillPath (tri);
-            g.setColour (juce::Colour (0xff0a0a0a));
-            g.strokePath (tri, juce::PathStrokeType (1.0f));
-            g.setColour (juce::Colour (0xfff8c878).withAlpha (engaged ? 0.75f : 0.40f));
-            g.drawLine (inBar.getX() - 1.0f, y, inBar.getRight() + 1.0f, y, 1.2f);
-        }
-    }
-
-    void mouseDown (const juce::MouseEvent& e) override
-    {
-        const auto hitArea = threshHandleArea.getUnion (inputMeterArea).expanded (2);
-        draggingThreshold = hitArea.contains (e.getPosition());
-        if (draggingThreshold)
-        {
-            writeThresholdFromY (e.y);
-            bus.strip.compEnabled.store (true, std::memory_order_release);
-            enableBtn.setToggleState (true, juce::dontSendNotification);
-            repaint();
-        }
-    }
-
-    void mouseDrag (const juce::MouseEvent& e) override
-    {
-        if (! draggingThreshold) return;
-        writeThresholdFromY (e.y);
-        bus.strip.compEnabled.store (true, std::memory_order_release);
-        enableBtn.setToggleState (true, juce::dontSendNotification);
-        repaint();
-    }
-
-    void mouseUp (const juce::MouseEvent&) override { draggingThreshold = false; }
-
-    void mouseDoubleClick (const juce::MouseEvent& e) override
-    {
-        const auto hitArea = threshHandleArea.getUnion (inputMeterArea).expanded (2);
-        if (! hitArea.contains (e.getPosition())) return;
-        // Reset to 0 dB (no compression).
-        bus.strip.compThreshDb.store (0.0f, std::memory_order_relaxed);
-        repaint();
-    }
-
-    void resized() override
-    {
-        auto area = getLocalBounds().reduced (kEditorOuterPad);
-
-        auto header = area.removeFromTop (kEditorHeaderH);
-        titleLbl.setBounds (header.withTrimmedLeft (60).withTrimmedRight (60));
-        enableBtn.setBounds (header.removeFromRight (60));
-        area.removeFromTop (kEditorHeaderGap);
-
-        constexpr int kHandleW    = 14;
-        constexpr int kMeterW     = 28;
-        constexpr int kMeterGap   = 4;
-        constexpr int kMeterStripW = kHandleW + kMeterGap + kMeterW * 2 + kMeterGap;
-        constexpr int kMeterTopPad = 16;
-        constexpr int kMeterBotPad = 14;
-        constexpr int kColGap = 12;
-
-        auto body = area;
-        auto meterStrip = body.removeFromLeft (kMeterStripW);
-        body.removeFromLeft (kColGap);
-        auto rotariesCol = body;
-
-        auto handleCol = meterStrip.removeFromLeft (kHandleW);
-        meterStrip.removeFromLeft (kMeterGap);
-        auto inMeter = meterStrip.removeFromLeft (kMeterW);
-        meterStrip.removeFromLeft (kMeterGap);
-        auto grMeter = meterStrip.removeFromLeft (kMeterW);
-        handleCol = handleCol.withTrimmedTop (kMeterTopPad).withTrimmedBottom (kMeterBotPad);
-        inMeter   = inMeter  .withTrimmedTop (kMeterTopPad).withTrimmedBottom (kMeterBotPad);
-        grMeter   = grMeter  .withTrimmedTop (kMeterTopPad).withTrimmedBottom (kMeterBotPad);
-        threshHandleArea = handleCol;
-        inputMeterArea   = inMeter;
-        grMeterArea      = grMeter;
-
-        constexpr int kRowLabelH = 14;
-        const int rowH = (rotariesCol.getHeight() - kRowLabelH * 2 - 12) / 2;
-        auto layoutCell = [&] (juce::Rectangle<int> cell,
-                                 juce::Slider& k, juce::Label& l)
-        {
-            l.setBounds (cell.removeFromTop (kRowLabelH));
-            k.setBounds (cell.reduced (4));
-        };
-        auto rowTop    = rotariesCol.removeFromTop (kRowLabelH + rowH);
-        rotariesCol.removeFromTop (12);
-        auto rowBottom = rotariesCol.removeFromTop (kRowLabelH + rowH);
-        const int colW = rowTop.getWidth() / 2;
-        layoutCell (rowTop   .removeFromLeft (colW), rat, ratLbl);
-        layoutCell (rowTop,                          mak, makLbl);
-        layoutCell (rowBottom.removeFromLeft (colW), atk, atkLbl);
-        layoutCell (rowBottom,                        rel, relLbl);
-    }
-
-    // A bus rename lands while the popup is open, pushed in by the strip's poll.
-    void refreshTitle()
-    {
-        if (titleLbl.getText (false) != bus.name)
-            styleEditorAccentLabel (titleLbl, bus.name, editorTitle::kFontSize, editorTitle::kColour);
-    }
-
-private:
-    void timerCallback() override
-    {
-        // Smooth IN meter (fast-up, slow-down).
-        const float l = bus.strip.meterPostBusLDb.load (std::memory_order_relaxed);
-        const float r = bus.strip.meterPostBusRDb.load (std::memory_order_relaxed);
-        const float in = std::max (l, r);
-        if (in > displayedInputDb) displayedInputDb = in;
-        else                        displayedInputDb += (in - displayedInputDb) * 0.10f;
-
-        // Smooth GR (fast-down on hit, slow release back to 0).
-        const float gr = bus.strip.meterGrDb.load (std::memory_order_relaxed);
-        if (gr < displayedGrDb) displayedGrDb = gr;
-        else                     displayedGrDb += (gr - displayedGrDb) * 0.5f;  // ~48 ms recovery (was ~167 ms)
-
-        if (! grMeterArea  .isEmpty()) repaint (grMeterArea  .expanded (0, 14));
-        if (! inputMeterArea.isEmpty()) repaint (inputMeterArea.expanded (0, 14));
-        if (! threshHandleArea.isEmpty()) repaint (threshHandleArea.expanded (4, 14));
-    }
-
-    void writeThresholdFromY (int y)
-    {
-        const int height = inputMeterArea.getHeight() - 4;
-        if (height <= 0) return;
-        const float relY = (float) (inputMeterArea.getBottom() - 2 - y)
-                            / (float) height;
-        const float dbOnInAxis = jlimit (-60.0f, 0.0f,
-            -60.0f + jlimit (0.0f, 1.0f, relY) * 60.0f);
-        bus.strip.compThreshDb.store (jlimit (-60.0f, 0.0f, dbOnInAxis),
-                                        std::memory_order_relaxed);
-    }
-
-    Bus& bus;
-    juce::TextButton enableBtn;
-    juce::Label titleLbl;
-    juce::Slider rat, atk, rel, mak;
-    juce::Label  ratLbl, atkLbl, relLbl, makLbl;
-    juce::Rectangle<int> inputMeterArea, grMeterArea, threshHandleArea;
-    float displayedInputDb = -100.0f;
-    float displayedGrDb    = 0.0f;
-    bool  draggingThreshold = false;
-};
 } // namespace
 
 BusComponent::BusComponent (Bus& b, Session& s, AudioEngine& e, int idx)
@@ -951,6 +649,11 @@ BusComponent::~BusComponent()
     stopTimer();
     for (int p = 0; p < kNumAutomationParams; ++p)
         recordAutomation ((AutomationParam) p, false, 0.0f);
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    if (compEditor != nullptr)
+        compEditor->shutdown();
+    compEditorDim.reset();
+   #endif
 }
 
 void BusComponent::recordAutomation (AutomationParam param, bool recording, float value)
@@ -1055,8 +758,6 @@ void BusComponent::timerCallback()
     // An open editor is titled with the bus name, so the rename has to reach it.
     if (auto* eq = dynamic_cast<BusEqEditorPanel*> (eqEditorModal.getBody()))
         eq->refreshTitle();
-    if (auto* comp = dynamic_cast<BusCompEditorPanel*> (compEditorModal.getBody()))
-        comp->refreshTitle();
 
     // The levels above step while the strip is hidden, so its first paint after
     // showing draws them as they are; showing it refreshes the rest at once.
@@ -1773,7 +1474,7 @@ void BusComponent::resized()
 void BusComponent::openEqEditorPopup()
 {
     if (eqEditorModal.isOpen()) { eqEditorModal.close(); return; }
-    if (compEditorModal.isOpen()) compEditorModal.close();
+    closeCompEditorPopup();
     auto* host = getTopLevelComponent();
     if (host == nullptr) host = this;
     eqEditorModal.show (*host, std::make_unique<BusEqEditorPanel> (bus),
@@ -1781,15 +1482,117 @@ void BusComponent::openEqEditorPopup()
                         /*dismissOnEscape*/ true, kEditorDimAlpha);
 }
 
+#if DUSKSTUDIO_HAS_NATIVE_UI
+imgui::DafEditorHost::Geometry BusComponent::compEditorGeometry()
+{
+    auto* const topLevel = getTopLevelComponent();
+    if (topLevel == nullptr || compEditor == nullptr)
+        return {};
+    const auto fitted = embedscale::fittedChildGeometry (*topLevel, (int) compEditor->designWidth(),
+                                                         (int) compEditor->designHeight());
+    if (compEditorDim != nullptr)
+    {
+        compEditorDim->setBounds (topLevel->getLocalBounds());
+        compEditorDim->setNativeChildArea (fitted.logical.expanded (1));
+    }
+    const auto& g = fitted.geometry;
+    return { g.x, g.y, g.width, g.height, g.scale };
+}
+
+void BusComponent::finishCompEditorClose()
+{
+    compEditorDim.reset();
+    compEditorHider.restore();
+    if (auto* target = EmbeddedModal::focusRestoreTarget().getComponent())
+        target->grabKeyboardFocus();
+}
+#endif
+
 void BusComponent::openCompEditorPopup()
 {
-    if (compEditorModal.isOpen()) { compEditorModal.close(); return; }
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    showDuskAlert (*this, "Compressor",
+                   "The compressor editor needs the native UI, which this build was made without.");
+   #else
+    if (isCompEditorOpen())
+    {
+        closeCompEditorPopup();
+        return;
+    }
     if (eqEditorModal.isOpen()) eqEditorModal.close();
-    auto* host = getTopLevelComponent();
-    if (host == nullptr) host = this;
-    compEditorModal.show (*host, std::make_unique<BusCompEditorPanel> (bus),
-                          /*onDismiss*/ {}, /*dismissOnClickOutside*/ true,
-                          /*dismissOnEscape*/ true, kEditorDimAlpha);
+
+    auto* topLevel = getTopLevelComponent();
+    if (topLevel == nullptr) topLevel = this;
+    const auto parentHandle = embedscale::nativeParentHandle (*topLevel);
+    if (parentHandle == 0)
+    {
+        showDuskAlert (*topLevel, "Compressor",
+                       "The compressor editor cannot open: the main window is not ready.");
+        return;
+    }
+
+    if (auto hook = EmbeddedModal::beforeModalShown())
+        hook();
+
+    if (compEditor == nullptr)
+    {
+        // The bus face engages the compressor from its threshold handle only;
+        // its knobs leave the switch alone, and so do the editor's.
+        imgui::CompEditorTarget binding;
+        binding.comp = &bus.strip.comp;
+        binding.engaged = &bus.strip.compEnabled;
+        binding.engagedOnlyBy = comp::roleParam (comp::kBusMode, comp::Role::Threshold).id;
+        compEditor = std::make_unique<imgui::CompEditorHost> (
+            [this]() -> MultiCompStage& { return engine.getBusStrip (busIndex).getCompressor(); },
+            binding);
+
+        // Raw `this`: the strip owns the host and shuts it down before its own
+        // teardown, so none of these outlives the strip.
+        imgui::DafEditorHost::Callbacks callbacks;
+        callbacks.closed = [this] { finishCompEditorClose(); };
+        callbacks.gestureEnded = []
+        {
+            if (auto* target = EmbeddedModal::focusRestoreTarget().getComponent())
+                target->grabKeyboardFocus();
+        };
+        callbacks.geometry = [this] { return compEditorGeometry(); };
+        compEditor->setCallbacks (std::move (callbacks));
+    }
+
+    compEditorDim = std::make_unique<DimOverlay> (kEditorDimAlpha);
+    compEditorDim->setBounds (topLevel->getLocalBounds());
+    compEditorDim->onClick = [this] { closeCompEditorPopup(); };
+    topLevel->addAndMakeVisible (compEditorDim.get());
+    compEditorHider.hideUnder (*topLevel, { compEditorDim.get() });
+
+    const auto geometry = compEditorGeometry();
+    if (geometry.width >= 2 && geometry.height >= 2 && compEditor->open (parentHandle, geometry))
+        return;
+
+    compEditorDim.reset();
+    compEditorHider.restore();
+    const auto& why = compEditor->lastOpenFailure();
+    showDuskAlert (*topLevel, "Compressor",
+                   why.empty() ? "The compressor editor cannot open on this display backend."
+                               : why.c_str());
+   #endif
+}
+
+void BusComponent::closeCompEditorPopup()
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    if (compEditor != nullptr && compEditor->isOpen())
+        compEditor->close();
+   #endif
+}
+
+bool BusComponent::isCompEditorOpen() const noexcept
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    return compEditor != nullptr && compEditor->isOpen();
+   #else
+    return false;
+   #endif
 }
 
 void BusComponent::showEqSectionMenu()

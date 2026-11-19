@@ -2198,6 +2198,130 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         if (auto* master = owner.consoleView->getMasterStripComponent())
             master->closeTapeEditor();
     }
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    imgui::CompEditorHost* compEditorHost (StripKind kind, int index) const
+    {
+        if (owner.consoleView == nullptr) return nullptr;
+        switch (kind)
+        {
+            case StripKind::Channel:
+                if (auto* strip = owner.consoleView->getStripComponent (index)) return strip->compEditorForScenario();
+                break;
+            case StripKind::Bus:
+                if (auto* bus = owner.consoleView->getBusComponent (index)) return bus->compEditorForScenario();
+                break;
+            case StripKind::Master:
+                if (auto* master = owner.consoleView->getMasterStripComponent()) return master->compEditorForScenario();
+                break;
+            case StripKind::Aux: break;
+        }
+        return nullptr;
+    }
+   #endif
+    bool openCompEditor (StripKind kind, int index) override
+    {
+        if (owner.consoleView == nullptr) return false;
+        switch (kind)
+        {
+            case StripKind::Channel:
+                if (auto* strip = owner.consoleView->getStripComponent (index)) { strip->openCompEditorPopup(); return true; }
+                break;
+            case StripKind::Bus:
+                if (auto* bus = owner.consoleView->getBusComponent (index)) { bus->openCompEditorPopup(); return true; }
+                break;
+            case StripKind::Master:
+                if (auto* master = owner.consoleView->getMasterStripComponent()) { master->openCompEditorPopup(); return true; }
+                break;
+            case StripKind::Aux: break;
+        }
+        return false;
+    }
+    bool compEditorOpen (StripKind kind, int index) const override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        auto* editor = compEditorHost (kind, index);
+        return editor != nullptr && editor->isOpen();
+       #else
+        (void) kind; (void) index;
+        return false;
+       #endif
+    }
+    bool compEditorDrawn (StripKind kind, int index) const override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        auto* editor = compEditorHost (kind, index);
+        return editor != nullptr && editor->isOpen() && editor->hasRenderedFrame();
+       #else
+        (void) kind; (void) index;
+        return false;
+       #endif
+    }
+    bool compEditorEdit (StripKind kind, int index, const std::string& paramSymbol, float value) override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        auto* editor = compEditorHost (kind, index);
+        return editor != nullptr && editor->isOpen() && editor->editForScenario (paramSymbol, value);
+       #else
+        (void) kind; (void) index; (void) paramSymbol; (void) value;
+        return false;
+       #endif
+    }
+    std::optional<float> compEditorShows (StripKind kind, int index, const std::string& paramSymbol) const override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        auto* editor = compEditorHost (kind, index);
+        return editor != nullptr && editor->isOpen() ? editor->shownValueForScenario (paramSymbol) : std::nullopt;
+       #else
+        (void) kind; (void) index; (void) paramSymbol;
+        return std::nullopt;
+       #endif
+    }
+    const MultiCompStage* compEditorStage (StripKind kind, int index) const override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        auto* editor = compEditorHost (kind, index);
+        return editor != nullptr ? editor->shownStage() : nullptr;
+       #else
+        (void) kind; (void) index;
+        return nullptr;
+       #endif
+    }
+    void closeCompEditor (StripKind kind, int index) override
+    {
+        if (owner.consoleView == nullptr) return;
+        switch (kind)
+        {
+            case StripKind::Channel:
+                if (auto* strip = owner.consoleView->getStripComponent (index)) strip->closeCompEditorPopup();
+                break;
+            case StripKind::Bus:
+                if (auto* bus = owner.consoleView->getBusComponent (index)) bus->closeCompEditorPopup();
+                break;
+            case StripKind::Master:
+                if (auto* master = owner.consoleView->getMasterStripComponent()) master->closeCompEditorPopup();
+                break;
+            case StripKind::Aux: break;
+        }
+    }
+    bool anyCompEditorOpen() const
+    {
+        for (int t = 0; t < Session::kNumTracks; ++t)
+            if (compEditorOpen (StripKind::Channel, t)) return true;
+        for (int b = 0; b < Session::kNumBuses; ++b)
+            if (compEditorOpen (StripKind::Bus, b)) return true;
+        return compEditorOpen (StripKind::Master, 0);
+    }
+    std::string stripCompLabel (int track) const override
+    {
+        auto* strip = owner.consoleView != nullptr ? owner.consoleView->getStripComponent (track) : nullptr;
+        return strip != nullptr ? strip->compLabelForScenario() : std::string {};
+    }
+    bool clickCompEditorDim() override
+    {
+        if (! anyCompEditorOpen()) return false;
+        const auto corner = owner.getTopLevelComponent()->getLocalBounds().getTopLeft().translated (4, 4).toFloat();
+        return clickAt (corner.x, corner.y, 1);
+    }
     bool clickInsert (int track, bool right) override
     {
         auto* strip = owner.consoleView->getStripComponent (track);
@@ -2834,10 +2958,17 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
             auto* lane = owner.auxView != nullptr ? owner.auxView->getLaneComponent (index) : nullptr;
             return lane != nullptr && click (lane, lane->controlPointForScenario (control));
         }
-        if (kind == StripKind::Bus && control == "eq")
+        if (kind == StripKind::Bus && (control == "eq" || control == "comp"))
         {
             auto* bus = owner.consoleView != nullptr ? owner.consoleView->getBusComponent (index) : nullptr;
-            auto* header = bus != nullptr ? bus->eqHeaderForScenario() : nullptr;
+            auto* header = bus == nullptr ? nullptr
+                         : control == "eq" ? bus->eqHeaderForScenario() : bus->compHeaderForScenario();
+            return header != nullptr && click (header, header->getLocalBounds().getRelativePoint (0.6f, 0.5f));
+        }
+        if (kind == StripKind::Master && control == "comp")
+        {
+            auto* master = owner.consoleView != nullptr ? owner.consoleView->getMasterStripComponent() : nullptr;
+            auto* header = master != nullptr ? master->compButtonForScenario() : nullptr;
             return header != nullptr && click (header, header->getLocalBounds().getRelativePoint (0.6f, 0.5f));
         }
         return false;
@@ -3581,6 +3712,11 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         if (virtualKeyboardOpen()) lines.push_back ("virtual keyboard open");
         if (tunerOpen())          lines.push_back ("tuner open");
         if (masterTapeEditorOpen()) lines.push_back ("master tape editor open");
+        for (int t = 0; t < Session::kNumTracks; ++t)
+            if (compEditorOpen (StripKind::Channel, t)) lines.push_back ("track " + std::to_string (t + 1) + " compressor editor open");
+        for (int b = 0; b < Session::kNumBuses; ++b)
+            if (compEditorOpen (StripKind::Bus, b)) lines.push_back ("bus " + std::to_string (b + 1) + " compressor editor open");
+        if (compEditorOpen (StripKind::Master, 0)) lines.push_back ("master compressor editor open");
         if (owner.engineDetached) lines.push_back ("a quit holds the audio off");
         if (! owner.isTimerRunning()) lines.push_back ("autosave stopped");
         if (owner.startupPickInFlight != 0) lines.push_back ("a startup pick still waits");
@@ -3645,6 +3781,9 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         owner.closeVirtualKeyboard();
         owner.closeTuner();
         closeMasterTape();
+        closeCompEditor (StripKind::Master, 0);
+        for (int b = 0; b < Session::kNumBuses; ++b)
+            closeCompEditor (StripKind::Bus, b);
         for (int track = 0; track < Session::kNumTracks; ++track)
             if (auto* component = owner.consoleView != nullptr
                                       ? owner.consoleView->getStripComponent (track) : nullptr)

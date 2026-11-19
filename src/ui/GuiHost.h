@@ -15,6 +15,11 @@
 // reach through the component tree, expressed in std types so the cases stay
 // free of the GUI framework; MainComponent implements it in GuiScenarios.cpp,
 // which is the only place that knows how any of this is realised.
+namespace duskstudio
+{
+class MultiCompStage;
+}
+
 namespace duskstudio::scenario
 {
 struct MiniMarkerPaint
@@ -358,7 +363,8 @@ public:
     // A named control on a strip: "name" on a channel strip or an aux lane,
     // "print" (PRINT / FREEZE, shown outside MIXING) on a channel strip,
     // "mute", "fader" (its return fader) or "insert" (the slot's header
-    // button) on an aux lane, "eq" (the EQ header's label) on a bus strip.
+    // button) on an aux lane, "eq" (the EQ header's label) on a bus strip,
+    // "comp" (the COMP header's label) on a bus strip or the master.
     virtual bool clickStripControl (StripKind kind, int index, const std::string& control,
                                     int clicks, bool right) = 0;
     virtual std::vector<double> auxReturnRange (int lane) const = 0;
@@ -473,6 +479,26 @@ public:
     // through the callbacks a drag in the editor calls.
     virtual bool masterTapeEdit (const std::string& paramSymbol, float value) = 0;
     virtual void closeMasterTape() = 0;
+    // A compressor's editor, Multi-Comp 2's own over a dimmed window, on a channel
+    // strip, a bus or the master (whose index is ignored). openCompEditor goes
+    // through the strip's own open, which toggles as its COMP label does.
+    virtual bool openCompEditor (StripKind kind, int index) = 0;
+    virtual bool compEditorOpen (StripKind kind, int index) const = 0;
+    virtual bool compEditorDrawn (StripKind kind, int index) const = 0;
+    // Works one control of the open editor, by its parameter symbol, through the
+    // callbacks a drag in the editor calls.
+    virtual bool compEditorEdit (StripKind kind, int index, const std::string& paramSymbol, float value) = 0;
+    // What the open editor was last given for that parameter; empty while none is open.
+    virtual std::optional<float> compEditorShows (StripKind kind, int index,
+                                                  const std::string& paramSymbol) const = 0;
+    // The compressor stage the open editor draws; null while none is open.
+    virtual const MultiCompStage* compEditorStage (StripKind kind, int index) const = 0;
+    virtual void closeCompEditor (StripKind kind, int index) = 0;
+    // A press on the dim behind whichever compressor editor is up, in the window's
+    // corner, which the centred editor never covers. False when none is up.
+    virtual bool clickCompEditorDim() = 0;
+    // The COMP header's label on a channel strip, as the strip shows it.
+    virtual std::string stripCompLabel (int track) const = 0;
     virtual bool clickInsert (int track, bool right = false) = 0;
     virtual std::vector<std::string> pickerRows (bool headers) const = 0;
     virtual bool clickPickerRow (const std::string& text) = 0;

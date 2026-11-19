@@ -1688,11 +1688,13 @@ const ScenarioRegistrar oopEditorFailure { Scenario {
     }
 } };
 
-// The compressor editor, Utility's knob panel and Audio settings are native
-// windows over the main one, and they keep keys the way any dialog does. A key
-// that reaches the window, as every key does on Windows: M, C, T and ? do
-// nothing behind the panel, L toggles the loop, Cmd+Z and Cmd+Shift+Z reach the
-// history, and Escape closes the panel. A key the panel itself holds, as on
+// The compressor editor is Multi-Comp 2's own, which leaves the shortcuts with
+// the window: C toggles the click behind it, L the loop, Cmd+Z and Cmd+Shift+Z
+// reach the history, and Escape closes it. Utility's knob panel and
+// Audio settings are native windows over the main one, and they keep keys the
+// way any dialog does. A key that reaches the window, as every key does on
+// Windows: M, C, T and ? do nothing behind the panel, L toggles the loop, Cmd+Z
+// and Cmd+Shift+Z reach the history, and Escape closes the panel. A key the panel itself holds, as on
 // Linux and macOS: Cmd+Z, Cmd+Shift+Z, Cmd+Y and Cmd+S reach the history and
 // save the session, and Cmd+Shift+S opens Save As with the panel out of its
 // way. Utility's panel steps aside for Save As the same way. The startup
@@ -1794,10 +1796,34 @@ std::optional<ScenarioResult> runNativeDialogKeys (GuiHost& host, ScenarioContex
         } });
     };
 
-    // The compressor editor, with every key at the window.
+    // The compressor editor is Multi-Comp 2's own and, like every unit's own editor,
+    // leaves the shortcuts working at the window; Escape there closes it.
     steps->push_back ({ 200, [&host, &ctx]
     { ctx.expect (host.clickStripModule (0, 1, true, false), "the first strip's compressor label is not on screen"); } });
-    atWindow ("the compressor editor", [&host] { return host.stripModuleEditorOpen (0, 1); });
+    auto clickWas = std::make_shared<bool>();
+    steps->push_back ({ 500, [&host, &ctx, &session, clickWas]
+    {
+        if (! ctx.expect (host.stripModuleEditorOpen (0, 1), "the compressor editor did not open")) return;
+        *clickWas = session.metronomeEnabled.load();
+        host.pressPeerKey (keyCodeDescription ('c'), 'c');
+    } });
+    steps->push_back ({ 300, [&host, &ctx, &session, &transport, clickWas, newEdit, edits]
+    {
+        ctx.expect (session.metronomeEnabled.load() != *clickWas,
+                    "C at the window behind the compressor editor did not toggle the click");
+        session.metronomeEnabled.store (*clickWas);
+        ctx.expect (host.modalStackEmpty(), "a key behind the compressor editor opened '" + host.modalText() + "'");
+        if (! ctx.expect (host.stripModuleEditorOpen (0, 1), "the keys at the window closed the compressor editor")) return;
+        const bool loopWas = transport.isLoopEnabled();
+        host.pressPeerKey (keyCodeDescription ('l'), 'l');
+        ctx.expect (transport.isLoopEnabled() != loopWas, "L at the window behind the compressor editor did not reach the loop");
+        transport.setLoopEnabled (loopWas);
+        const int start = newEdit();
+        host.pressPeerKey ("command + Z");
+        ctx.expect (*edits == start - 1, "Cmd+Z at the window behind the compressor editor did not undo");
+        host.pressPeerKey ("command + shift + Z");
+        ctx.expect (*edits == start, "Cmd+Shift+Z at the window behind the compressor editor did not redo");
+    } });
     steps->push_back ({ 100, [&host, &ctx]
     { ctx.expect (host.pressPeerKey ("escape"), "Escape at the window was not handled over the compressor editor"); } });
     steps->push_back ({ 300, [&host, &ctx, &engine, &dsp]

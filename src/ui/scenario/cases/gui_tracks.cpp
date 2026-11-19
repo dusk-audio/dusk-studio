@@ -1316,9 +1316,10 @@ const ScenarioRegistrar trackMoveUndoUnderMenu { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runTrackMoveUndoUnderMenu (host, ctx); }
 } };
 
-// Undo and Redo typed into the compressor editor or Utility's knob panel of a
-// moved strip run once the panel's frame is out, so the move they take back
-// closes the panel with its strip instead of destroying it mid-frame.
+// Undo with a moved strip's compressor editor up, which leaves the keys with the
+// window, and Redo typed into Utility's knob panel, run outside any panel's
+// frame, so the move they take back closes the editor or panel with its strip
+// instead of destroying it mid-frame.
 std::optional<ScenarioResult> runTrackMoveUndoFromPanel (GuiHost& host, ScenarioContext& ctx)
 {
    #if ! DUSKSTUDIO_HAS_NATIVE_UI
@@ -1412,22 +1413,23 @@ std::optional<ScenarioResult> runTrackMoveUndoFromPanel (GuiHost& host, Scenario
     {
         if (! ctx.expect (host.stripModuleEditorOpen (0, 1), "the compressor label did not open its editor")) return;
         pushProbe();
-        ctx.expect (host.inputStripPanel (0, "command + Z"), "the compressor editor did not take Cmd+Z");
+        ctx.expect (host.pressPeerKey ("command + Z"), "the window did not take Cmd+Z over the compressor editor");
     } });
     auto inFrame = std::make_shared<bool> (true);
     steps->push_back ({ 300, [&host, &ctx, probeUndone, undoneInFrame, inFrame]
     {
-        if (! ctx.expect (*probeUndone == 1, "Cmd+Z in the compressor editor did not reach the history")) return;
+        if (! ctx.expect (*probeUndone == 1, "Cmd+Z over the compressor editor did not reach the history")) return;
         *inFrame = *undoneInFrame;
-        if (! ctx.expect (! *inFrame, "Cmd+Z in the compressor editor ran inside the panel's frame, "
-                                      "where undoing the move would destroy the panel; that leg was not driven"))
+        if (! ctx.expect (! *inFrame, "Cmd+Z over the compressor editor ran inside a panel's frame, "
+                                      "where undoing the move would destroy it; that leg was not driven"))
             return;
-        ctx.expect (host.inputStripPanel (0, "command + Z"), "the compressor editor did not take Cmd+Z for the move");
+        ctx.expect (host.stripModuleEditorOpen (0, 1), "the first Cmd+Z closed the compressor editor");
+        ctx.expect (host.pressPeerKey ("command + Z"), "the window did not take Cmd+Z for the move");
     } });
     steps->push_back ({ 400, [&host, &ctx, &engine, inPlace, panelsClosed, inFrame]
     {
         if (*inFrame) return;
-        ctx.expect (inPlace(), "Cmd+Z in the moved strip's compressor editor did not undo the move ('" + host.modalText() + "')");
+        ctx.expect (inPlace(), "Cmd+Z over the moved strip's compressor editor did not undo the move ('" + host.modalText() + "')");
         ctx.expect (host.modalStackEmpty(), "the undo from the compressor editor left '" + host.modalText() + "' up");
         ctx.expect (panelsClosed(), "the undo left a compressor editor open");
         std::string error;
