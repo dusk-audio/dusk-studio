@@ -4892,8 +4892,9 @@ void ChannelStripComponent::openCompEditorPopup()
     if (compEditor == nullptr)
     {
         // A mono block runs the mono instance and every other block the stereo
-        // one, so the editor follows the track's width: its meters read the
-        // instance it was built from.
+        // one. The editor follows the width the strip last ran, which the
+        // track's mode alone can miss, so its meters read the instance that
+        // plays; before the strip has run, it follows the mode.
         imgui::CompEditorTarget binding;
         binding.comp       = &track.strip.comp;
         binding.engaged    = &track.strip.compEnabled;
@@ -4904,7 +4905,7 @@ void ChannelStripComponent::openCompEditorPopup()
             {
                 const bool stereo = track.mode.load (std::memory_order_relaxed) != (int) Track::Mode::Mono
                                  || track.frozen.load (std::memory_order_relaxed);
-                return engine.getChannelStrip (trackIndex).getCompressor (stereo);
+                return engine.getChannelStrip (trackIndex).getEditorCompressor (stereo);
             },
             binding);
 

@@ -98,6 +98,21 @@ public:
 #if DUSKSTUDIO_HAS_DUSK_DSP
     // The compressor a block of that width runs, for its editor. Message thread.
     MultiCompStage& getCompressor (bool stereo) noexcept { return stereo ? stereoComp : monoComp; }
+
+    // The width the strip last ran its compressor stage at: 1 mono, 2 stereo,
+    // 0 when it has not run since prepare. The track's mode does not settle it:
+    // a stereo track whose live R input does not resolve, or whose capture
+    // takes one side, runs mono. Any thread.
+    int compressorRunWidth() const noexcept { return compRunWidth.load (std::memory_order_relaxed); }
+
+    // The compressor the strip's editor draws, so its meters read the instance
+    // the audio thread runs: the one it last ran, or, before it has run, the
+    // one the track's mode (trackStereo) calls for. Message thread.
+    MultiCompStage& getEditorCompressor (bool trackStereo) noexcept
+    {
+        const int ran = compressorRunWidth();
+        return getCompressor (ran != 0 ? ran == 2 : trackStereo);
+    }
 #endif
     // The latency of the plug-in the insert runs in plug-in mode: a loaded
     // native or built-in instance, otherwise the JUCE slot's.
@@ -640,6 +655,9 @@ private:
     std::int64_t silentTailDrainSamples() const noexcept;
 
     std::atomic<float> currentGrDb { 0.0f };
+#if DUSKSTUDIO_HAS_DUSK_DSP
+    std::atomic<int> compRunWidth { 0 };
+#endif
     std::atomic<float> currentOutLDb { -100.0f };
     std::atomic<float> currentOutRDb { -100.0f };
     const float* lastProcessedPtr = nullptr;

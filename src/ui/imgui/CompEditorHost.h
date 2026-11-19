@@ -29,6 +29,9 @@ struct CompEditorTarget
     // and master threshold handle). Unset, every control but the mode and the
     // bypass engages it, except a switch turned off, as on the channel strip.
     std::optional<CompParamId> engagedOnlyBy;
+    // False where BYPASS is the only control that switches the compressor
+    // (the mastering multiband, whose header carries its engage switch).
+    bool editsEngage = true;
 };
 
 // What the editor shows for one of the plug-in's parameter indices.

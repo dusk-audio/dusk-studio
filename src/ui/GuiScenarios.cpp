@@ -2309,7 +2309,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
             if (compEditorOpen (StripKind::Channel, t)) return true;
         for (int b = 0; b < Session::kNumBuses; ++b)
             if (compEditorOpen (StripKind::Bus, b)) return true;
-        return compEditorOpen (StripKind::Master, 0);
+        return compEditorOpen (StripKind::Master, 0) || masteringCompEditorOpen();
     }
     std::string stripCompLabel (int track) const override
     {
@@ -2695,6 +2695,75 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
     int masteringCompPanelUnpaintedPixels() override
     {
         return owner.masteringView != nullptr ? owner.masteringView->unpaintedCompPanelPixelsForScenario() : -1;
+    }
+    bool clickMasteringCompHeader (bool label) override
+    {
+        auto* view = owner.masteringView.get();
+        auto* header = view != nullptr && view->isShowing() ? view->compHeaderForScenario() : nullptr;
+        if (header == nullptr || ! header->isShowing()) return false;
+        const auto point = owner.getTopLevelComponent()->getLocalPoint (
+            header, header->getLocalBounds().getRelativePoint (label ? 0.6f : 0.1f, 0.5f)).toFloat();
+        return clickAt (point.x, point.y, 1);
+    }
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    imgui::CompEditorHost* masteringCompEditor() const
+    {
+        return owner.masteringView != nullptr ? owner.masteringView->compEditorForScenario() : nullptr;
+    }
+   #endif
+    bool masteringCompEditorOpen() const override
+    {
+        return owner.masteringView != nullptr && owner.masteringView->isCompEditorOpen();
+    }
+    bool masteringCompEditorDrawn() const override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        auto* editor = masteringCompEditor();
+        return editor != nullptr && editor->isOpen() && editor->hasRenderedFrame();
+       #else
+        return false;
+       #endif
+    }
+    bool masteringCompEditorEdit (const std::string& paramSymbol, float value) override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        auto* editor = masteringCompEditor();
+        return editor != nullptr && editor->isOpen() && editor->editForScenario (paramSymbol, value);
+       #else
+        (void) paramSymbol; (void) value;
+        return false;
+       #endif
+    }
+    std::optional<float> masteringCompEditorShows (const std::string& paramSymbol) const override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        auto* editor = masteringCompEditor();
+        return editor != nullptr && editor->isOpen() ? editor->shownValueForScenario (paramSymbol) : std::nullopt;
+       #else
+        (void) paramSymbol;
+        return std::nullopt;
+       #endif
+    }
+    const MultiCompStage* masteringCompEditorStage() const override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        auto* editor = masteringCompEditor();
+        return editor != nullptr ? editor->shownStage() : nullptr;
+       #else
+        return nullptr;
+       #endif
+    }
+    std::vector<int> masteringCompEditorBounds() const override
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        return owner.masteringView != nullptr ? owner.masteringView->compEditorBoundsForScenario() : std::vector<int> {};
+       #else
+        return {};
+       #endif
+    }
+    void closeMasteringCompEditor() override
+    {
+        if (owner.masteringView != nullptr) owner.masteringView->closeCompEditorPopup();
     }
     std::string masteringTargetText() const override
     {
@@ -3717,6 +3786,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         for (int b = 0; b < Session::kNumBuses; ++b)
             if (compEditorOpen (StripKind::Bus, b)) lines.push_back ("bus " + std::to_string (b + 1) + " compressor editor open");
         if (compEditorOpen (StripKind::Master, 0)) lines.push_back ("master compressor editor open");
+        if (masteringCompEditorOpen()) lines.push_back ("mastering compressor editor open");
         if (owner.engineDetached) lines.push_back ("a quit holds the audio off");
         if (! owner.isTimerRunning()) lines.push_back ("autosave stopped");
         if (owner.startupPickInFlight != 0) lines.push_back ("a startup pick still waits");
@@ -3782,6 +3852,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
         owner.closeTuner();
         closeMasterTape();
         closeCompEditor (StripKind::Master, 0);
+        closeMasteringCompEditor();
         for (int b = 0; b < Session::kNumBuses; ++b)
             closeCompEditor (StripKind::Bus, b);
         for (int track = 0; track < Session::kNumTracks; ++track)

@@ -494,8 +494,9 @@ public:
     // The compressor stage the open editor draws; null while none is open.
     virtual const MultiCompStage* compEditorStage (StripKind kind, int index) const = 0;
     virtual void closeCompEditor (StripKind kind, int index) = 0;
-    // A press on the dim behind whichever compressor editor is up, in the window's
-    // corner, which the centred editor never covers. False when none is up.
+    // A press on the dim behind whichever compressor editor is up, the mastering
+    // page's included, in the window's corner, which the centred editor never
+    // covers. False when none is up.
     virtual bool clickCompEditorDim() = 0;
     // The COMP header's label on a channel strip, as the strip shows it.
     virtual std::string stripCompLabel (int track) const = 0;
@@ -527,9 +528,26 @@ public:
     // How many of the mastering stage's three native panels are open, or -1 when
     // this build has none. Zero while the stage is not up.
     virtual int masteringPanelsOpen() const = 0;
-    // Pixels around the multiband comp's editor that nothing painted, or -1
-    // while the stage is not up.
+    // Pixels of the multiband comp's slot that nothing painted, or -1 while the
+    // stage is not up.
     virtual int masteringCompPanelUnpaintedPixels() = 0;
+    // The multiband comp's header: its status light (the engage switch) or
+    // its label, which opens Multi-Comp 2's Multiband face over a dimmed
+    // window. False while the stage is not up.
+    virtual bool clickMasteringCompHeader (bool label) = 0;
+    virtual bool masteringCompEditorOpen() const = 0;
+    virtual bool masteringCompEditorDrawn() const = 0;
+    // Works one control of the open face, by its parameter symbol, through the
+    // callbacks a drag in it calls.
+    virtual bool masteringCompEditorEdit (const std::string& paramSymbol, float value) = 0;
+    // What the open face was last given for that parameter; empty while none is open.
+    virtual std::optional<float> masteringCompEditorShows (const std::string& paramSymbol) const = 0;
+    // The compressor stage the open face draws; null while none is open.
+    virtual const MultiCompStage* masteringCompEditorStage() const = 0;
+    // Where the open face sits, in the window's logical pixels: x, y, width,
+    // height; empty while none is open.
+    virtual std::vector<int> masteringCompEditorBounds() const = 0;
+    virtual void closeMasteringCompEditor() = 0;
     virtual std::string masteringTargetText() const = 0;
     // The Mastering page's source line, and the file its waveform was last
     // pointed at (empty once cleared). Both empty before the page is built.

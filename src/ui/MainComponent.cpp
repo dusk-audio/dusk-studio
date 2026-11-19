@@ -1524,6 +1524,11 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
             closeAudioEditor();
             return true;
         }
+        if (masteringView != nullptr && masteringView->isCompEditorOpen())
+        {
+            masteringView->closeCompEditorPopup();
+            return true;
+        }
         if (consoleView != nullptr)
         {
             if (auto* const master = consoleView->getMasterStripComponent();
@@ -6817,6 +6822,7 @@ void MainComponent::closeNativePanelsForModal (bool keepPianoRoll)
     closeAudioSettings();
     closeAudioEditor();
     if (! keepPianoRoll) closePianoRoll();
+    if (masteringView != nullptr) masteringView->closeCompEditorPopup();
     if (consoleView != nullptr)
     {
         for (int t = 0; t < Session::kNumTracks; ++t)

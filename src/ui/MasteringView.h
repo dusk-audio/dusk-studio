@@ -14,6 +14,9 @@
 #include "../session/Session.h"
 #include "../foundation/MessageThread.h"
 #include "../dsp/PhaseAnalyzer.h"
+#if DUSKSTUDIO_HAS_NATIVE_UI
+ #include "imgui/CompEditorHost.h"
+#endif
 
 namespace duskstudio
 {
@@ -84,9 +87,23 @@ public:
         return getLocalPoint (&compPresetCombo, compPresetCombo.getLocalBounds().getCentre());
     }
     bool compPresetShownForScenario() const { return compPresetCombo.isShowing(); }
-    // Pixels of the multiband comp panel, outside the donor editor, that nothing
-    // painted; -1 while the page is not on screen.
+    // Pixels of the multiband comp panel that nothing painted; -1 while the
+    // page is not on screen.
     int unpaintedCompPanelPixelsForScenario();
+
+    // Multi-Comp 2's own Multiband face, over a dimmed window, as the strip,
+    // bus and master COMP labels open theirs: the slot is too narrow to show
+    // it at a readable size. Its BYPASS is the header's engage switch.
+    void openCompEditorPopup();
+    void closeCompEditorPopup();
+    bool isCompEditorOpen() const noexcept;
+    juce::Component* compHeaderForScenario() noexcept;
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    imgui::CompEditorHost* compEditorForScenario() noexcept { return compEditor.get(); }
+    // Where the open editor sits in the window, in its logical pixels:
+    // x, y, width, height; empty while none is open.
+    std::vector<int> compEditorBoundsForScenario() const;
+   #endif
     // How many of the three framework children are up, or -1 when this build has
     // no native panels to open.
     int nativePanelsOpenForScenario() const;
@@ -145,9 +162,9 @@ private:
     void doExport();
     void openExportBrowser (int preset);
 
-    // Apply a DP-24-style 3-band preset to the mastering multiband compressor
-    // (no-op without donor DSP). See dsp/MultibandCompPresets.h.
-    void applyMultibandPreset (int presetIndex);
+    // The band overview under the preset picker, rebuilt when a multiband
+    // value changes; true when it did.
+    bool refreshCompOverview();
 
     Session& session;
     AudioEngine& engine;
@@ -184,11 +201,8 @@ private:
     bool phaseActive = false, phaseStreamValid = false;
 
     // EQ = curve + band controls, Limiter = Waves L4-style; both are native framework
-    // children over the shell, placed on their proxy's rectangle. Comp embeds ONLY the
-    // donor's MultibandCompressorPanel (not the full UniversalCompressor editor - the
-    // mode selector for Opto/FET/VCA/Bus is irrelevant here). Each panel has its own ON
-    // toggle.
-    std::unique_ptr<juce::Component> compEditor;
+    // children over the shell, placed on their proxy's rectangle. Each panel has its
+    // own ON toggle.
    #if DUSKSTUDIO_HAS_NATIVE_UI
     std::unique_ptr<imgui::DuskPanelWindow> eqWindow;
     std::unique_ptr<imgui::DuskPanelWindow> limiterWindow;
@@ -199,17 +213,20 @@ private:
     bool nativeSyncPending = false;
    #endif
 
-    // Plugin editor draws to its own bounds with no header - wrapper
-    // hosts (title + ON toggle) above it. Without the wrapper there's
-    // no way to bypass the comp outside a context menu.
+    // The comp slot: the split header (status light = engage, label = the
+    // editor), the preset picker and a read-only overview of the bands.
     std::unique_ptr<juce::Component>              compPanelWrapper;
-    // Shared console chrome for the donor multiband panel - the same LED-pill
-    // header the EQ + limiter editors now use, so all three sections match.
-    std::unique_ptr<class CompHeaderButton>       compHeaderBtn;
-    // Last compEnabled state pushed to compHeaderBtn - the button only repaints
-    // on its own click, so the 30 Hz timer watches this to pick up external
-    // changes (e.g. session load).
-    bool compHeaderEnabledSeen { false };
+    std::unique_ptr<class SplitModuleButton>      compHeaderBtn;
+    std::vector<std::string> compOverview;
+    std::uint64_t compOverviewSignature = 0;
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    imgui::DafEditorHost::Geometry compEditorGeometry();
+    void finishCompEditorClose();
+    std::unique_ptr<imgui::CompEditorHost> compEditor;
+    std::unique_ptr<class DimOverlay> compEditorDim;
+    PluginEditorHider compEditorHider;
+    std::vector<int> compEditorBounds;
+   #endif
 
     EmbeddedModal exportModal;
 };

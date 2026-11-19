@@ -1734,7 +1734,6 @@ endif()
 
 target_include_directories(DuskStudio PRIVATE
     src
-    external/projucer-shim   # JuceHeader.h shim used by vendored plugin DSP headers
     external/clap/include)    # CLAP C API (native plugin host)
 
 # nlohmann/json single header (MIT) — de-JUCE JSON replacement for juce::var.
@@ -1754,41 +1753,27 @@ if(DEFINED DUSK_PLUGINS_PATH)
     #   - shared-daf/dsp (FourKEQDSP, the 4K EQ 2 core every channel EQ
     #                 runs)
     #   - multi-q    (MultiQTube, the master program EQ core)
-    #   - multi-comp (UniversalCompressor, the JUCE Multi-Comp the mastering
-    #                 chain runs in Multiband mode; its plugin editor is
-    #                 compiled in but never instantiated by Dusk Studio's UI)
+    # Every compressor is the Multi-Comp 2 built-in below.
     # SYSTEM include — vendored DSP headers carry benign warnings
     # (shadows, sign conversions) we don't own. Marking them SYSTEM
     # tells GCC/Clang to suppress those warnings on inclusion, which
     # lets DUSKSTUDIO_STRICT_WARNINGS=-Werror apply to Dusk Studio's own sources
     # without the vendored headers blocking the build.
     target_include_directories(DuskStudio SYSTEM PRIVATE
-        "${DUSK_PLUGINS_PATH}/plugins/shared"
         "${DUSKSTUDIO_DONOR_SHARED_DIR}"
         "${DUSK_PLUGINS_PATH}/plugins/shared/AnalogEmulation"
-        "${DUSK_PLUGINS_PATH}/plugins/shared/channel-comp"
         "${DUSKSTUDIO_DONOR_DSP_DIR}"
         "${DUSK_PLUGINS_PATH}/plugins/multi-q"
-        "${DUSK_PLUGINS_PATH}/plugins/multi-comp"
-        "${DUSK_PLUGINS_PATH}/plugins/multi-comp/HardwareEmulation"
         "${DUSK_PLUGINS_PATH}/plugins/DuskVerb/src/dsp")
 
-    # Compile multi-comp's processor + editor + shared LEDMeter so
-    # UniversalCompressor links cleanly. Editor sources are linked but not
-    # invoked from Dusk Studio's UI — they exist only because UniversalCompressor's
-    # createEditor() references them.
-    #
-    # MasterTape.cpp and MultiCompStage.cpp live here rather than in the main
-    # source list: they run the Tape Machine 2 and Multi-Comp 2 built-ins
-    # below, which exist only under DUSK_PLUGINS_PATH.
+    # MasterTape.cpp, MultiCompStage.cpp and MultibandCompPresets.cpp live here
+    # rather than in the main source list: they run the Tape Machine 2 and
+    # Multi-Comp 2 built-ins below, which exist only under DUSK_PLUGINS_PATH.
     target_sources(DuskStudio PRIVATE
         src/dsp/MasterTape.cpp
         src/dsp/MultiCompStage.cpp
-        "${DUSKSTUDIO_DONOR_DSP_DIR}/FourKEQDSP.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/multi-comp/multicomp.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/multi-comp/AnalogLookAndFeel.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/multi-comp/EnhancedCompressorEditor.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/shared/LEDMeter.cpp")
+        src/dsp/MultibandCompPresets.cpp
+        "${DUSKSTUDIO_DONOR_DSP_DIR}/FourKEQDSP.cpp")
 
     # DUSKSTUDIO_HAS_DUSK_DSP gates the donor's framework-era processors as
     # well as its cores.
@@ -2326,12 +2311,7 @@ target_compile_definitions(DuskStudio PRIVATE
     JUCE_PLUGINHOST_LV2=1
     # AU is the dominant native plugin format on macOS; without this
     # define the format is silently absent from addDefaultFormats().
-    JUCE_PLUGINHOST_AU=$<IF:$<PLATFORM_ID:Darwin>,1,0>
-    # Projucer-style macros that vendored plugin sources expect: multi-comp
-    # uses VersionString / Name / Manufacturer.
-    JucePlugin_VersionString="${PROJECT_VERSION}"
-    JucePlugin_Name="DuskStudio_Comp"
-    JucePlugin_Manufacturer="Marc Korte")
+    JUCE_PLUGINHOST_AU=$<IF:$<PLATFORM_ID:Darwin>,1,0>)
 
 if((CMAKE_SYSTEM_NAME STREQUAL "Linux") AND TARGET juce::pkgconfig_JUCE_WAYLAND_LINUX_DEPS)
     # Pulls in wayland-client / xkbcommon / libdecor-0 include paths.
@@ -2353,7 +2333,6 @@ target_link_libraries(DuskStudio PRIVATE
     juce::juce_audio_processors
     juce::juce_core
     juce::juce_data_structures
-    juce::juce_dsp
     juce::juce_events
     juce::juce_graphics
     juce::juce_gui_basics
@@ -2380,12 +2359,8 @@ else()
 endif()
 
 # Treat warnings as errors on the Dusk Studio target. Off by default; opt-in
-# via -DDUSKSTUDIO_STRICT_WARNINGS=ON. Not yet enabled in CI because the
-# vendored multi-comp .cpp sources compiled into Dusk Studio still emit
-# shadow / sign-conversion warnings (vendored DSP HEADERS are marked
-# SYSTEM above and suppressed; the COMPILED .cpp from the plugins repo
-# is not). Flip the CI workflow once those are cleaned upstream or
-# wrapped with per-source warning overrides via set_source_files_properties.
+# via -DDUSKSTUDIO_STRICT_WARNINGS=ON. Vendored DSP HEADERS are marked SYSTEM
+# above and suppressed; a .cpp compiled from the plugins repo is not.
 option(DUSKSTUDIO_STRICT_WARNINGS "Treat warnings as errors on the Dusk Studio target" OFF)
 if(DUSKSTUDIO_STRICT_WARNINGS)
     if(MSVC)

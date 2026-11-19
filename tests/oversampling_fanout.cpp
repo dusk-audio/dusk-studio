@@ -4,6 +4,7 @@
 #include "dsp/BusStrip.h"
 #include "dsp/ChannelStrip.h"
 #include "dsp/MasterBus.h"
+#include "dsp/MasteringChain.h"
 #include "dsp/MultiCompStage.h"
 #include "engine/builtin/DafPlugin.h"
 #include "session/Session.h"
@@ -236,9 +237,19 @@ TEST_CASE ("Effect oversampling leaves every compressor at Multi-Comp 2's own 2x
         master.processInPlace (l.data(), r.data(), kBlock);
         checkOwnOversampling (master.getCompressor());
 
+        // The mastering chain takes no factor at all.
+        duskstudio::MasteringParams masteringParams;
+        masteringParams.compEnabled.store (true);
+        duskstudio::MasteringChain mastering;
+        mastering.bind (masteringParams);
+        mastering.prepare (kSr, kBlock);
+        mastering.processInPlace (l.data(), r.data(), kBlock);
+        checkOwnOversampling (mastering.getCompressor());
+
         if (latency < 0) latency = master.getCompressor().latencySamples();
         CHECK (strip.getCompressor (false).latencySamples() == latency);
         CHECK (strip.getCompressor (true).latencySamples() == latency);
         CHECK (master.getCompressor().latencySamples() == latency);
+        CHECK (mastering.getCompressor().latencySamples() == latency);
     }
 }

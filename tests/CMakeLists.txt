@@ -1236,16 +1236,13 @@ if(DUSK_PLUGINS_PATH)
         ${CMAKE_SOURCE_DIR}/src/dsp/MasterBus.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/MasterTape.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/MultiCompStage.cpp
+        ${CMAKE_SOURCE_DIR}/src/dsp/MultibandCompPresets.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/BrickwallLimiter.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/BusStrip.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/MasteringChain.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/MasteringDigitalEq.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/LoudnessMeter.cpp
-        "${DUSKSTUDIO_DONOR_DSP_DIR}/FourKEQDSP.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/multi-comp/multicomp.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/multi-comp/AnalogLookAndFeel.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/multi-comp/EnhancedCompressorEditor.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/shared/LEDMeter.cpp")
+        "${DUSKSTUDIO_DONOR_DSP_DIR}/FourKEQDSP.cpp")
 
     # The master tape is the Tape Machine 2 built-in, which also carries the
     # tape core tape_core_regression.cpp measures. The strips, buses and
@@ -1262,10 +1259,10 @@ if(DUSK_PLUGINS_PATH)
         "${DUSK_PLUGINS_PATH}/plugins/shared"
         "${DUSKSTUDIO_DONOR_SHARED_DIR}"
         "${DUSK_PLUGINS_PATH}/plugins/shared/AnalogEmulation"
-        "${DUSK_PLUGINS_PATH}/plugins/shared/channel-comp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-q"
+        # Multi-Comp 2's framework-free core, which comp_donor_guards.cpp
+        # holds the session's copied tables to.
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp"
-        "${DUSK_PLUGINS_PATH}/plugins/multi-comp/HardwareEmulation"
         "${DUSKSTUDIO_DONOR_DSP_DIR}"
         "${DUSK_PLUGINS_PATH}/plugins/TapeMachine")
 
@@ -1275,18 +1272,7 @@ if(DUSK_PLUGINS_PATH)
         juce::juce_events
         juce::juce_gui_extra)
 
-    target_compile_definitions(dusk-studio-tests PRIVATE
-        DUSKSTUDIO_HAS_DUSK_DSP=1
-        # Projucer-style macros the donor sources reference unguarded.
-        # Mirror the main app's defaults — the values are not load-bearing
-        # for tests; they just need to exist.
-        JucePlugin_VersionString="${PROJECT_VERSION}"
-        JucePlugin_Name="DuskStudio_Comp_Tests"
-        JucePlugin_Manufacturer="Marc Korte"
-        JucePlugin_IsMidiEffect=0
-        JucePlugin_IsSynth=0
-        JucePlugin_WantsMidiInput=0
-        JucePlugin_ProducesMidiOutput=0)
+    target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_HAS_DUSK_DSP=1)
 endif()
 
 # The native path-opening regression runs even without LAME; encoding coverage

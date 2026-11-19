@@ -103,7 +103,11 @@ bool hostValueFromText (const builtin::DafParamDesc& desc, const std::string& ra
 
 struct MultiCompStage::Impl
 {
-    explicit Impl (CompStage k) : kind (k), plugin (builtin::createMultiComp2 (faceMaskFor (k))) {}
+    explicit Impl (CompStage k)
+        : kind (k), plugin (builtin::createMultiComp2 (faceMaskFor (k))),
+          instance (builtin::multiComp2Instance (*plugin))
+    {
+    }
 
     struct Bound
     {
@@ -114,6 +118,9 @@ struct MultiCompStage::Impl
 
     CompStage kind;
     std::unique_ptr<builtin::DafPlugin> plugin;
+    // The plug-in object, resolved here so that reset() on the audio thread
+    // is a plain call.
+    void* instance = nullptr;
 
     // The kind's parameters, each with its plug-in index and the value it
     // last received (NaN forces the next push).
@@ -210,6 +217,7 @@ MultiCompStage::MultiCompStage (CompStage kind) : impl (std::make_unique<Impl> (
 
     // A symbol the plug-in lacks would leave its session value unplayed.
     assert (impl->unresolved == nullptr);
+    assert (impl->instance != nullptr);
 }
 
 MultiCompStage::~MultiCompStage() = default;
@@ -221,8 +229,7 @@ void MultiCompStage::prepare (double sampleRate, int blockSize, int channels)
 
     plugin.deactivate();
     impl->channels = channels == 1 ? 1 : 2;
-    [[maybe_unused]] const bool laidOut = builtin::setMultiComp2Channels (plugin, impl->channels);
-    assert (laidOut);
+    builtin::setMultiComp2Channels (impl->instance, impl->channels);
 
     // A fixed mode is in place before the plug-in prepares, so its first block
     // runs it from rest.
@@ -279,8 +286,7 @@ void MultiCompStage::reset() noexcept
     auto& s = *impl;
     if (! s.held || ! s.prepared) return;
     s.held = false;
-    [[maybe_unused]] const bool reset = builtin::resetMultiComp2 (*s.plugin);
-    assert (reset);
+    builtin::resetMultiComp2 (s.instance);
 }
 
 float MultiCompStage::gainReductionDb() const noexcept

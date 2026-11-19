@@ -32,11 +32,11 @@ public:
 
     void paint (juce::Graphics& g) override
     {
-        // Match CompHeaderButton's LED grammar: tight 1 px dark ring,
-        // LED face occupies most of the bounds. Previous double-reduce
-        // (1 px outer + 2 px inner) shrank the visible green to ~50 %
-        // of the bounds and made the EQ bypass LED read much smaller
-        // than the COMP header button's LED at the same widget size.
+        // The header LEDs' grammar: tight 1 px dark ring, LED face
+        // occupies most of the bounds. Previous double-reduce (1 px
+        // outer + 2 px inner) shrank the visible green to ~50 % of the
+        // bounds and made the EQ bypass LED read much smaller than the
+        // COMP header button's LED at the same widget size.
         //
         // The visual caps at 10 px and centres in the bounds, so callers
         // can give the widget a larger hit area than the dot - an 8 px

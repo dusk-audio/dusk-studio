@@ -1566,15 +1566,9 @@ struct MasteringParams
     std::atomic<float> eqTubeDrive     { 0.3f };
     std::atomic<float> eqOutputGainDb  { 0.0f };
 
-    // Mastering tends slower / softer than bus comp; defaults reflect.
+    // The multiband compressor: its engage switch and Multi-Comp 2's
+    // Multiband parameters.
     std::atomic<bool>  compEnabled    { false };
-    std::atomic<float> compThreshDb   { 0.0f };
-    std::atomic<float> compRatio      { 2.0f };
-    std::atomic<float> compAttackMs   { 30.0f };
-    std::atomic<float> compReleaseMs  { 250.0f };
-    std::atomic<bool>  compReleaseAuto { true };
-    std::atomic<float> compMakeupDb   { 0.0f };
-
     CompParams comp;
 
     // -0.3 dB ceiling matches streaming-platform headroom.

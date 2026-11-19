@@ -187,15 +187,20 @@ std::unique_ptr<DafPlugin> createSunset();
 // mode n.
 std::unique_ptr<DafPlugin> createMultiComp2 (std::uint32_t faceMask);
 
-// Gives a plug-in createMultiComp2 made a mono (1) or stereo (2) main layout
-// and no sidechain: run() then reads inputs[0 .. channels - 1] and writes
-// outputs[0 .. channels - 1] only. Message thread, plug-in deactivated. False,
-// and nothing set, for any other plug-in.
-bool setMultiComp2Channels (DafPlugin& multiComp2, int channels) noexcept;
+// The plug-in object inside a plug-in createMultiComp2 made, which the two
+// calls below take; null for any other plug-in. Finding it is a cast across
+// the bridge, so it is resolved once, off the audio thread, and kept: the
+// object lives as long as the plug-in.
+void* multiComp2Instance (DafPlugin& multiComp2) noexcept;
 
-// Puts a plug-in createMultiComp2 made back to the rest its activation leaves,
-// parameters, layout and latency kept, without deactivating it. Audio thread,
-// between two run() calls; allocates nothing and takes no lock. False, and
-// nothing done, for any other plug-in.
-bool resetMultiComp2 (DafPlugin& multiComp2) noexcept;
+// Gives that plug-in a mono (1) or stereo (2) main layout and no sidechain:
+// run() then reads inputs[0 .. channels - 1] and writes outputs[0 .. channels
+// - 1] only. Message thread, plug-in deactivated. Nothing for a null instance.
+void setMultiComp2Channels (void* instance, int channels) noexcept;
+
+// Puts that plug-in back to the rest its activation leaves, parameters,
+// layout and latency kept, without deactivating it. Audio thread, between two
+// run() calls: a plain call that allocates nothing and takes no lock. Nothing
+// for a null instance.
+void resetMultiComp2 (void* instance) noexcept;
 } // namespace duskstudio::builtin

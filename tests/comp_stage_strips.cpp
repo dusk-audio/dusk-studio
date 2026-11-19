@@ -370,3 +370,36 @@ TEST_CASE ("Comp stage: a master whose stage is off plays as one with no stage",
     }
     CHECK (same);
 }
+
+TEST_CASE ("Comp stage: a strip's editor follows the width its compressor last ran at", "[comp-stage][channel-strip]")
+{
+    StripRig rig (nullptr);
+    auto& strip = rig.strip;
+    const auto* mono = &strip.getCompressor (false);
+    const auto* stereo = &strip.getCompressor (true);
+
+    // Before the strip has run, the track's mode decides.
+    CHECK (strip.compressorRunWidth() == 0);
+    CHECK (&strip.getEditorCompressor (true) == stereo);
+    CHECK (&strip.getEditorCompressor (false) == mono);
+
+    // A stereo track whose R input does not resolve plays mono blocks, so its
+    // editor draws the mono compressor, the one whose meters move.
+    std::fill (rig.in.begin(), rig.in.end(), 0.1f);
+    rig.block();
+    CHECK (strip.compressorRunWidth() == 1);
+    CHECK (&strip.getEditorCompressor (true) == mono);
+
+    // And a block fed both sides runs the stereo one, whatever the mode says.
+    std::vector<float> right ((std::size_t) kBlock, 0.1f);
+    juce::MidiBuffer midi;
+    strip.processAndAccumulate (rig.in.data(), right.data(), midi, false, rig.masterL.data(), rig.masterR.data(),
+                                rig.busLPtrs, rig.busRPtrs, rig.auxLPtrs, rig.auxRPtrs, kBlock, true);
+    CHECK (strip.compressorRunWidth() == 2);
+    CHECK (&strip.getEditorCompressor (false) == stereo);
+
+    // A prepare starts over from the mode.
+    strip.prepare (kSr, kBlock);
+    CHECK (strip.compressorRunWidth() == 0);
+    CHECK (&strip.getEditorCompressor (false) == mono);
+}

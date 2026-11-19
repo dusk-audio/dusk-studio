@@ -4,7 +4,6 @@ src/dsp/AuxLaneStrip.cpp	17
 src/dsp/AuxLaneStrip.h	23
 src/dsp/ChannelStrip.cpp	22
 src/dsp/ChannelStrip.h	29
-src/dsp/MasteringChain.h	4
 src/engine/AudioEngine.cpp	78
 src/engine/AudioEngine.h	11
 src/engine/AudioPipelineSelfTest.cpp	22
@@ -68,7 +67,6 @@ src/ui/ChannelStripComponent.h	94
 src/ui/ClapPluginEditorComponent.cpp	18
 src/ui/ClapPluginEditorComponent.h	8
 src/ui/CompBypassLed.h	10
-src/ui/CompHeaderButton.h	35
 src/ui/CompMeterStrip.cpp	53
 src/ui/CompMeterStrip.h	14
 src/ui/ConsoleView.cpp	4
@@ -107,7 +105,7 @@ src/ui/MainComponent.cpp	403
 src/ui/MainComponent.h	54
 src/ui/MasterStripComponent.cpp	270
 src/ui/MasterStripComponent.h	55
-src/ui/MasteringView.cpp	143
+src/ui/MasteringView.cpp	142
 src/ui/MasteringView.h	26
 src/ui/MidiBindingsPanel.cpp	46
 src/ui/MidiBindingsPanel.h	15

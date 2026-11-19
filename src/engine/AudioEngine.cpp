@@ -5397,7 +5397,7 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
             a.getPluginSlot (p).setHostPlayHead (playHead.get());
         a.setTransport (&blockTransport);
     }
-    masteringChain.prepare (sr, bs, oxFactor);
+    masteringChain.prepare (sr, bs);
     masteringPlayer.prepare (bs, sr);
     masteringMonoMix.reset (sr, 0.02);
     masteringMonoMix.setCurrentAndTargetValue (getMasteringMonoMonitor() ? 1.0f : 0.0f);

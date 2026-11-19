@@ -440,6 +440,7 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
     monoComp.prepare (sampleRate, bsClamped, 1);
     stereoComp.prepare (sampleRate, bsClamped, 2);
     compAlign.prepare (bsClamped, std::max (monoComp.latencySamples(), stereoComp.latencySamples()));
+    compRunWidth.store (0, std::memory_order_relaxed);
 #else
     compAlign.prepare (bsClamped, 0);
 #endif
@@ -607,6 +608,7 @@ std::int64_t ChannelStrip::silentTailDrainSamples() const noexcept
 void ChannelStrip::runCompressor (float* L, float* R, int numSamples, bool engaged) noexcept
 {
     auto& active = R != nullptr ? stereoComp : monoComp;
+    compRunWidth.store (R != nullptr ? 2 : 1, std::memory_order_relaxed);
     if (engaged || compAlign.compressorRunning())
         active.pushParameters (paramsRef->comp, true,
                                paramsRef->compMode.load (std::memory_order_relaxed));

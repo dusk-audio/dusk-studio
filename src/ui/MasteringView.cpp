@@ -1,15 +1,17 @@
 #include "MasteringView.h"
 #include "BounceDialog.h"
-#include "CompHeaderButton.h"
+#include "DimOverlay.h"
 #include "DuskAlerts.h"
 #include "DuskContextMenu.h"
 #include "DuskFileBrowser.h"
 #include "EmbeddedModal.h"
 #include "SaveTargetChecks.h"
+#include "SplitModuleButton.h"
 #include "../dsp/MultibandCompPresets.h"
 #include "../engine/BounceEngine.h"
 #include "../engine/MasteringPlayer.h"
 #include "../engine/audiofile/FileReader.h"
+#include "../session/CompParams.h"
 #if DUSKSTUDIO_HAS_NATIVE_UI
  #include "NativeEditorEmbedScale.h"
  #include "imgui/DuskPanelWindow.h"
@@ -19,10 +21,8 @@
 #endif
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <utility>
-#if DUSKSTUDIO_HAS_DUSK_DSP
-  #include "ModernCompressorPanels.h"   // multi-comp - MultibandCompressorPanel
-#endif
 
 namespace duskstudio
 {
@@ -30,24 +30,6 @@ namespace
 {
 template <typename T>
 inline T jlimit (T lo, T hi, T value) noexcept { return std::clamp (value, lo, std::max (lo, hi)); }
-
-#if DUSKSTUDIO_HAS_DUSK_DSP
-void styleMasteringCompressor (juce::Component& panel, bool engaged)
-{
-    using Button = juce::TextButton;
-    using Colour = juce::Colour;
-    for (int i = 0; i < panel.getNumChildComponents(); ++i)
-        if (auto* button = dynamic_cast<Button*> (panel.getChildComponent (i)))
-        {
-            const bool solo = button->getButtonText() == "S";
-            button->setColour (Button::buttonColourId, Colour (0xff25252e));
-            button->setColour (Button::buttonOnColourId,
-                               Colour (solo ? 0xff756335 : engaged ? 0xff394153 : 0xff303039));
-            button->setColour (Button::textColourOffId, Colour (0xffb0b0ba));
-            button->setColour (Button::textColourOnId, Colour (0xffe0e0e6));
-        }
-}
-#endif
 
 #if DUSKSTUDIO_HAS_NATIVE_UI
 // Where a panel's framework child belongs, from the rectangle its proxy occupies in the
@@ -356,42 +338,29 @@ MasteringView::MasteringView (Session& s, AudioEngine& e)
     compactPanelCombo.onChange = [this] { resized(); };
     addChildComponent (compactPanelCombo);
 
-    // Embedded Multiband Comp editor + header wrapper
-    // The mastering chain's UniversalCompressor is in Multiband mode (7),
-    // so the editor we get back is the Multi-Comp's multiband UI. Wrap it
-    // in a panel that has its own title + ON toggle so the user can bypass
-    // the multiband comp from the same place as the EQ / Limiter sections.
+    // The multiband compressor's slot: its split header, whose status light
+    // engages it and whose label opens Multi-Comp 2's Multiband face, as the
+    // console's COMP headers do; the preset picker; and an overview of the
+    // bands the face holds.
     compPanelWrapper = std::make_unique<juce::Component>();
     addAndMakeVisible (compPanelWrapper.get());
 
-    compHeaderBtn = std::make_unique<CompHeaderButton> (
-        [this] { return session.mastering().compEnabled.load (std::memory_order_relaxed); },
+    compHeaderBtn = std::make_unique<SplitModuleButton> ("MULTIBAND COMP");
+    compHeaderBtn->setCallbacks (
+        [this] { return ! session.mastering().compEnabled.load (std::memory_order_relaxed); },
         [this]
         {
             auto& mp = session.mastering();
-            const bool now = ! mp.compEnabled.load (std::memory_order_relaxed);
-            mp.compEnabled.store (now, std::memory_order_relaxed);
-            if (compHeaderBtn != nullptr) compHeaderBtn->repaint();
-        });
-    compHeaderBtn->setLabelText ("MULTIBAND COMP");
-    compHeaderEnabledSeen = session.mastering().compEnabled.load (std::memory_order_relaxed);
-    compHeaderBtn->setAlpha (compHeaderEnabledSeen ? 1.0f : 0.65f);
+            mp.compEnabled.store (! mp.compEnabled.load (std::memory_order_relaxed), std::memory_order_relaxed);
+            if (compHeaderBtn != nullptr) compHeaderBtn->refresh();
+        },
+        [this] { openCompEditorPopup(); },
+        {});
+    compHeaderBtn->setTooltip ("Click the status light to engage or bypass the multiband compressor; "
+                               "click MULTIBAND COMP to open its editor.");
     compPanelWrapper->addAndMakeVisible (compHeaderBtn.get());
 
-    // Embed ONLY the donor's MultibandCompressorPanel rather than the full
-    // EnhancedCompressorEditor (which carries the mode selector + extra
-    // mode panels we don't want surfaced in the mastering view). The
-    // mastering chain has already pinned the UC into multiband mode, so
-    // hosting the multiband panel by itself gives us the focused UI we
-    // actually need.
 #if DUSKSTUDIO_HAS_DUSK_DSP
-    if (auto* compProc = engine.getMasteringChain().getCompProcessor())
-    {
-        compEditor = std::make_unique<MultibandCompressorPanel> (compProc->getParameters());
-        styleMasteringCompressor (*compEditor, compHeaderEnabledSeen);
-        compPanelWrapper->addAndMakeVisible (compEditor.get());
-    }
-
     // DP-24-style 3-band preset picker in the comp header. A muted caption to
     // its left (matching the Mode / Target / Release caption style elsewhere in
     // this view) reads as a deliberate labelled control rather than a lone combo.
@@ -409,15 +378,18 @@ MasteringView::MasteringView (Session& s, AudioEngine& e)
                                   "Maps onto the multiband comp with the high-mid band disabled.");
     compPresetCombo.onChange = [this]
     {
+        // The preset goes into the session, which the compressor and its
+        // face both read. The picked name stays showing: a starting point,
+        // not live state.
         const int id = compPresetCombo.getSelectedId();
         if (id >= 2)
-            applyMultibandPreset (id - 2);
-        // Leave the picked preset name showing so the user sees what's loaded
-        // (it stays selected even after they tweak a band - it's a starting
-        // point, not live state).
+            mbpresets::apply (id - 2, engine.getMasteringChain().getCompressor(), session.mastering().comp);
+        if (refreshCompOverview() && compPanelWrapper != nullptr)
+            repaint (compPanelWrapper->getBounds());
     };
     compPanelWrapper->addAndMakeVisible (compPresetCombo);
 #endif
+    refreshCompOverview();
 
     // The session's source is already in the player: every session switch
     // loads it, whether or not this page exists yet.
@@ -436,11 +408,17 @@ MasteringView::~MasteringView()
     eqWindow.reset();
     limiterWindow.reset();
     phaseWindow.reset();
+    if (compEditor != nullptr)
+        compEditor->shutdown();
+    compEditorDim.reset();
    #endif
 }
 
 void MasteringView::visibilityChanged()
 {
+    // The compressor editor belongs to this page and goes with it.
+    if (! isShowing())
+        closeCompEditorPopup();
     scheduleNativePanelSync();
 }
 
@@ -720,68 +698,178 @@ bool MasteringView::nativePanelsOpenForCapture() const
    #endif
 }
 
-void MasteringView::applyMultibandPreset ([[maybe_unused]] int presetIndex)
+// Each overview row is its label and, after a tab, what it reads, in the
+// plug-in's own text.
+bool MasteringView::refreshCompOverview()
 {
-#if DUSKSTUDIO_HAS_DUSK_DSP
-    if (presetIndex < 0 || presetIndex >= mbpresets::kNumPresets) return;
-    auto* comp = engine.getMasteringChain().getCompProcessor();
-    if (comp == nullptr) return;
-
-    auto& apvts = comp->getParameters();
-    const auto& preset = mbpresets::kPresets[(size_t) presetIndex];
-
-    const auto setP = [&apvts] (const juce::String& id, float value)
+   #if DUSKSTUDIO_HAS_DUSK_DSP
+    static constexpr const char* kBandNames[kCompBandCount] = { "LOW", "LOW-MID", "HIGH-MID", "HIGH" };
+    const auto& comp = session.mastering().comp;
+    std::uint64_t signature = 1469598103934665603ull;
+    for (const auto id : compStageParams (CompStage::Multiband))
     {
-        if (auto* param = apvts.getParameter (id))
-            param->setValueNotifyingHost (
-                jlimit (0.0f, 1.0f, apvts.getParameterRange (id).convertTo0to1 (value)));
-    };
-    const auto setBand = [&setP] (const char* band, const mbpresets::Band& b)
-    {
-        const juce::String pre = "mb_" + juce::String (band) + "_";
-        setP (pre + "threshold", b.thresholdDb);
-        setP (pre + "ratio",     b.ratio);
-        setP (pre + "makeup",    b.makeupDb);
-        setP (pre + "attack",    b.attackMs);
-        setP (pre + "release",   b.releaseMs);
-        setP (pre + "enabled",   1.0f);
-        setP (pre + "bypass",    0.0f);
-        setP (pre + "solo",      0.0f);
-    };
-
-    setBand ("low",    preset.low);
-    setBand ("lowmid", preset.mid);
-    setBand ("high",   preset.high);
-
-    // Map the chart's 3 bands (low / mid / high) onto the 4-band multiband comp.
-    // crossover_2 maxes at 5 kHz, so when the chart's Hi-Xover is above that we
-    // can't fit the whole "mid" band into lowmid alone. Rather than disabling
-    // high-mid (which would leave 5 kHz..Hi-Xover uncompressed), keep it enabled
-    // and give it the SAME params as lowmid so lowmid+highmid together form one
-    // continuous chart-"mid" band with no seam.
-    setP ("mb_crossover_1", preset.lowXoverHz);
-    if (preset.hiXoverHz > 5000.0f)
-    {
-        setBand ("highmid", preset.mid);
-        setP ("mb_highmid_enabled", 1.0f);
-        setP ("mb_crossover_2", 5000.0f);
-        setP ("mb_crossover_3", preset.hiXoverHz);
+        const float value = comp.get (id);
+        std::uint32_t bits = 0;
+        std::memcpy (&bits, &value, sizeof bits);
+        signature = (signature ^ bits) * 1099511628211ull;
     }
-    else
+    if (signature == compOverviewSignature && ! compOverview.empty())
+        return false;
+    compOverviewSignature = signature;
+
+    const auto& stage = engine.getMasteringChain().getCompressor();
+    const auto text = [&stage, &comp] (CompParamId id) { return stage.valueText (id, comp.get (id)); };
+    compOverview.clear();
+    compOverview.push_back ("XOVER\t" + text (CompParamId::MbCrossover1) + "  " + text (CompParamId::MbCrossover2)
+                            + "  " + text (CompParamId::MbCrossover3));
+    for (int b = 0; b < kCompBandCount; ++b)
     {
-        // 3-band collapse: high-mid off, mid/high split lands on Hi-Xover.
-        setP ("mb_highmid_enabled", 0.0f);
-        setP ("mb_crossover_2", preset.hiXoverHz);
-        setP ("mb_crossover_3", 5000.0f);   // > crossover_2; band is disabled anyway
+        std::string row = std::string (kBandNames[b]) + "\t";
+        if (comp.get (compBandParam (b, CompBandField::Enabled)) < 0.5f)
+            row += "off";
+        else
+        {
+            row += text (compBandParam (b, CompBandField::Threshold)) + "  "
+                 + text (compBandParam (b, CompBandField::Ratio));
+            if (comp.get (compBandParam (b, CompBandField::Bypass)) >= 0.5f) row += "  BYP";
+            if (comp.get (compBandParam (b, CompBandField::Solo)) >= 0.5f)   row += "  SOLO";
+        }
+        compOverview.push_back (std::move (row));
     }
+    compOverview.push_back ("OUTPUT\t" + text (CompParamId::MbOutput));
+    return true;
+   #else
+    return false;
+   #endif
+}
 
-    setP ("auto_makeup", 0.0f);   // Choice: 0 = Off, matching the chart
+juce::Component* MasteringView::compHeaderForScenario() noexcept
+{
+    return compHeaderBtn.get();
+}
 
-    // No explicit panel refresh: the donor's MultibandCompressorPanel now picks
-    // up programmatic APVTS writes on its own - the visible band's knobs are
-    // live SliderAttachments and its repaint timer re-syncs the crossover faders
-    // and per-band enable layout within a tick.
+#if DUSKSTUDIO_HAS_NATIVE_UI
+imgui::DafEditorHost::Geometry MasteringView::compEditorGeometry()
+{
+    auto* const topLevel = getTopLevelComponent();
+    if (topLevel == nullptr || compEditor == nullptr)
+        return {};
+    const auto fitted = embedscale::fittedChildGeometry (*topLevel, (int) compEditor->designWidth(),
+                                                         (int) compEditor->designHeight());
+    if (compEditorDim != nullptr)
+    {
+        compEditorDim->setBounds (topLevel->getLocalBounds());
+        compEditorDim->setNativeChildArea (fitted.logical.expanded (1));
+    }
+    compEditorBounds = { fitted.logical.getX(), fitted.logical.getY(),
+                         fitted.logical.getWidth(), fitted.logical.getHeight() };
+    const auto& g = fitted.geometry;
+    return { g.x, g.y, g.width, g.height, g.scale };
+}
+
+void MasteringView::finishCompEditorClose()
+{
+    compEditorDim.reset();
+    compEditorHider.restore();
+    compEditorBounds.clear();
+    if (auto* target = EmbeddedModal::focusRestoreTarget().getComponent())
+        target->grabKeyboardFocus();
+}
+
+std::vector<int> MasteringView::compEditorBoundsForScenario() const
+{
+    return isCompEditorOpen() ? compEditorBounds : std::vector<int> {};
+}
 #endif
+
+void MasteringView::openCompEditorPopup()
+{
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI || ! DUSKSTUDIO_HAS_DUSK_DSP
+    showDuskAlert (*this, "Multiband compressor",
+                   "The compressor editor needs the native UI and the Dusk DSP, which this build was made without.");
+   #else
+    if (isCompEditorOpen())
+    {
+        closeCompEditorPopup();
+        return;
+    }
+
+    auto* topLevel = getTopLevelComponent();
+    if (topLevel == nullptr) topLevel = this;
+    const auto parentHandle = embedscale::nativeParentHandle (*topLevel);
+    if (parentHandle == 0)
+    {
+        showDuskAlert (*topLevel, "Multiband compressor",
+                       "The compressor editor cannot open: the main window is not ready.");
+        return;
+    }
+
+    // Closes the notepad and any other native editor before this one takes
+    // the window.
+    if (auto hook = EmbeddedModal::beforeModalShown())
+        hook();
+
+    if (compEditor == nullptr)
+    {
+        // BYPASS is the header's engage switch; no other control of the face
+        // engages the compressor, as none on this page does.
+        imgui::CompEditorTarget binding;
+        binding.comp = &session.mastering().comp;
+        binding.engaged = &session.mastering().compEnabled;
+        binding.editsEngage = false;
+        compEditor = std::make_unique<imgui::CompEditorHost> (
+            [this]() -> MultiCompStage& { return engine.getMasteringChain().getCompressor(); }, binding);
+
+        // Raw `this`: the view owns the host and shuts it down before its own
+        // teardown, so none of these outlives it.
+        imgui::DafEditorHost::Callbacks callbacks;
+        callbacks.closed = [this] { finishCompEditorClose(); };
+        callbacks.gestureEnded = []
+        {
+            if (auto* target = EmbeddedModal::focusRestoreTarget().getComponent())
+                target->grabKeyboardFocus();
+        };
+        callbacks.geometry = [this] { return compEditorGeometry(); };
+        compEditor->setCallbacks (std::move (callbacks));
+    }
+
+    // The page's native panels paint above any framework child, so they hide
+    // for the editor's lifetime exactly as under an embedded modal.
+    compEditorDim = std::make_unique<DimOverlay> (kEditorDimAlpha);
+    compEditorDim->setBounds (topLevel->getLocalBounds());
+    compEditorDim->onClick = [this] { closeCompEditorPopup(); };
+    topLevel->addAndMakeVisible (compEditorDim.get());
+    compEditorHider.hideUnder (*topLevel, { compEditorDim.get() });
+
+    const auto geometry = compEditorGeometry();
+    if (geometry.width >= 2 && geometry.height >= 2 && compEditor->open (parentHandle, geometry))
+        return;
+
+    compEditorDim.reset();
+    compEditorHider.restore();
+    compEditorBounds.clear();
+    const auto& why = compEditor->lastOpenFailure();
+    showDuskAlert (*topLevel, "Multiband compressor",
+                   why.empty() ? "The compressor editor cannot open on this display backend."
+                               : why.c_str());
+   #endif
+}
+
+void MasteringView::closeCompEditorPopup()
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    if (compEditor != nullptr && compEditor->isOpen())
+        compEditor->close();
+   #endif
+}
+
+bool MasteringView::isCompEditorOpen() const noexcept
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    return compEditor != nullptr && compEditor->isOpen();
+   #else
+    return false;
+   #endif
 }
 
 void MasteringView::paint (juce::Graphics& g)
@@ -801,15 +889,34 @@ void MasteringView::paint (juce::Graphics& g)
         g.drawRoundedRectangle (box, 4.0f, 1.2f);
     }
 
-    // The comp wrapper paints nothing itself, so its margin and header row show
-    // this fill; the colours are the ones the EQ and limiter panels draw.
-    if (compPanelWrapper != nullptr)
+    // The comp wrapper paints nothing itself, so its margin, header row and
+    // overview show this fill; the colours are the ones the EQ and limiter
+    // panels draw.
+    if (compPanelWrapper != nullptr && compPanelWrapper->isVisible())
     {
         const auto panel = compPanelWrapper->getBounds();
         g.setColour (juce::Colour (0xff20202a));
         g.fillRect (panel);
         g.setColour (juce::Colour (0xff3a3a46));
         g.drawRect (panel, 1);
+
+        // The overview, under the preset picker: a dim label, the values on
+        // the right.
+        const int top = panel.getY() + (compPresetCombo.isVisible() ? compPresetCombo.getBottom()
+                                                                    : compHeaderBtn->getBottom()) + 14;
+        auto rows = panel.reduced (12, 0).withTop (top).withBottom (panel.getBottom() - 8);
+        g.setFont (11.0f);
+        for (const auto& line : compOverview)
+        {
+            if (rows.getHeight() < 16) break;
+            auto row = rows.removeFromTop (18);
+            const auto tab = line.find ('\t');
+            g.setColour (juce::Colour (0xff808088));
+            g.drawText (line.substr (0, tab), row, juce::Justification::centredLeft, true);
+            g.setColour (juce::Colour (0xffd0d0d6));
+            g.drawText (tab == std::string::npos ? std::string() : line.substr (tab + 1),
+                        row.withTrimmedLeft (64), juce::Justification::centredRight, true);
+        }
     }
 }
 
@@ -821,15 +928,12 @@ int MasteringView::unpaintedCompPanelPixelsForScenario()
     // page never paints pure black.
     const auto image = createComponentSnapshot (getLocalBounds());
     const auto panel = compPanelWrapper->getBounds();
-    auto editor = panel.withSize (0, 0);
-    if (compEditor != nullptr)
-        editor = compEditor->getBounds() + panel.getPosition();
     int unpainted = 0;
     for (int y = panel.getY(); y < panel.getBottom(); ++y)
         for (int x = panel.getX(); x < panel.getRight(); ++x)
         {
             const auto argb = image.getPixelAt (x, y).getARGB();
-            if (! editor.contains (x, y) && ((argb >> 24) != 0xff || argb == 0xff000000))
+            if ((argb >> 24) != 0xff || argb == 0xff000000)
                 ++unpainted;
         }
     return unpainted;
@@ -906,8 +1010,10 @@ void MasteringView::resized()
         waveform->setBounds (area.removeFromTop (kWaveH));
     area.removeFromTop (6);
 
+    // The compressor's face opens over the page, so its slot holds the header,
+    // the presets and the band overview, and the EQ takes the width it gave up.
     constexpr int kPanelGap = 8;
-    constexpr int kEqMin = 280, kCompMin = 401, kLimiterMin = 200, kPhaseMin = 200;
+    constexpr int kEqMin = 480, kCompMin = 200, kLimiterMin = 200, kPhaseMin = 200;
     const bool compact = area.getWidth() < kEqMin + kCompMin + kLimiterMin + kPhaseMin + 3 * kPanelGap;
     compactPanelCombo.setVisible (compact);
     if (compact)
@@ -917,11 +1023,10 @@ void MasteringView::resized()
     }
     auto panelsRow = area;
     const int totalW    = std::max (0, panelsRow.getWidth() - 3 * kPanelGap);
-    // The donor compressor has seven fixed 55px knobs, plus the wrapper's insets.
     const int spare    = std::max (0, totalW - kEqMin - kCompMin - kLimiterMin - kPhaseMin);
-    const int eqW      = kEqMin + (int) std::round (spare * 0.38);
-    const int compW    = kCompMin + (int) std::round (spare * 0.20);
-    const int limW     = kLimiterMin + (int) std::round (spare * 0.17);
+    const int eqW      = kEqMin + (int) std::round (spare * 0.40);
+    const int compW    = kCompMin + (int) std::round (spare * 0.06);
+    const int limW     = kLimiterMin + (int) std::round (spare * 0.22);
 
     auto eqPanel = panelsRow, compPanel = panelsRow, limPanel = panelsRow;
     auto phasePanel = panelsRow;
@@ -949,8 +1054,8 @@ void MasteringView::resized()
     placeNativePanel (eqProxy, eqPanel);
    #endif
 
-    // Multiband Comp panel - wrapper hosts its own title + ON toggle on
-    // top, then the embedded plugin editor takes the rest of the panel.
+    // Multiband Comp panel: the split header on top, the preset picker under
+    // it; paint() draws the band overview below.
     if (compPanelWrapper != nullptr)
     {
         compPanelWrapper->setVisible (! compact || selected == 1);
@@ -981,9 +1086,6 @@ void MasteringView::resized()
             compPresetCombo.setBounds (cluster);
         }
 #endif
-        inner.removeFromTop (8);
-        if (compEditor != nullptr)
-            compEditor->setBounds (inner);
     }
 
    #if DUSKSTUDIO_HAS_NATIVE_UI
@@ -1058,28 +1160,12 @@ void MasteringView::timerCallback()
     if (player.getSourceGeneration() != labelSourceGeneration)
         updateLabels();
 
-    // The comp header button only repaints itself on click; pick up external
-    // toggles (e.g. session load) here.
-    const bool compOn = m.compEnabled.load (std::memory_order_relaxed);
-    if (compOn != compHeaderEnabledSeen)
-    {
-        compHeaderEnabledSeen = compOn;
-        if (compHeaderBtn != nullptr) compHeaderBtn->setAlpha (compOn ? 1.0f : 0.65f);
-#if DUSKSTUDIO_HAS_DUSK_DSP
-        if (compEditor != nullptr) styleMasteringCompressor (*compEditor, compOn);
-#endif
-    }
-
-#if DUSKSTUDIO_HAS_DUSK_DSP
-    // Pump per-band gain reduction into the embedded comp panel. The donor's
-    // GR meters are fed externally (EnhancedCompressorEditor does this in the
-    // full plugin); since we host the bare MultibandCompressorPanel, we drive
-    // them here or they stay flat despite audible compression.
-    if (auto* panel = dynamic_cast<MultibandCompressorPanel*> (compEditor.get()))
-        if (auto* comp = engine.getMasteringChain().getCompProcessor())
-            for (int b = 0; b < 4; ++b)
-                panel->setBandGainReduction (b, comp->getBandGainReduction (b));
-#endif
+    // The engage switch and the band values change from the editor's BYPASS
+    // and controls, a session load, MIDI or a preset; each repaints only on a
+    // change.
+    if (compHeaderBtn != nullptr) compHeaderBtn->refresh();
+    if (refreshCompOverview() && compPanelWrapper != nullptr && compPanelWrapper->isVisible())
+        repaint (compPanelWrapper->getBounds());
 
     // Clock from the player playhead.
     const double sr = player.getSourceSampleRate();

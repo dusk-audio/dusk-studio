@@ -11,23 +11,23 @@ std::unique_ptr<DafPlugin> createMultiComp2 (std::uint32_t faceMask)
     return bridge;
 }
 
-bool setMultiComp2Channels (DafPlugin& multiComp2, int channels) noexcept
+void* multiComp2Instance (DafPlugin& multiComp2) noexcept
 {
     // Each bridge's ExporterBridge lives in its library's DAF namespace, so
     // only a plug-in createMultiComp2 made passes this cast.
     auto* bridge = dynamic_cast<DAF_NAMESPACE::ExporterBridge*> (&multiComp2);
-    if (bridge == nullptr)
-        return false;
-    multiCompSetHostChannels (bridge->instancePointer(), channels);
-    return true;
+    return bridge != nullptr ? bridge->instancePointer() : nullptr;
 }
 
-bool resetMultiComp2 (DafPlugin& multiComp2) noexcept
+void setMultiComp2Channels (void* instance, int channels) noexcept
 {
-    auto* bridge = dynamic_cast<DAF_NAMESPACE::ExporterBridge*> (&multiComp2);
-    if (bridge == nullptr)
-        return false;
-    multiCompResetHost (bridge->instancePointer());
-    return true;
+    if (instance != nullptr)
+        multiCompSetHostChannels (instance, channels);
+}
+
+void resetMultiComp2 (void* instance) noexcept
+{
+    if (instance != nullptr)
+        multiCompResetHost (instance);
 }
 } // namespace duskstudio::builtin
