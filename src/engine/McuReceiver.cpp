@@ -16,10 +16,10 @@ template <typename T>
 inline T jlimit (T lo, T hi, T value) noexcept { return std::clamp (value, lo, std::max (lo, hi)); }
 
 // One encoder turn on a band or filter frequency. A converted older session can
-// hold a frequency past its knob's range: a turn further toward the end it is
+// hold the HPF past its knob's range: a turn further toward the end it is
 // already past leaves it where it is, and a turn back starts from the end stop,
 // as dragging the knob on screen does. A turn that stores is a move, as the
-// knob's: it drops the band's format-7 dial and engages the EQ.
+// knob's: it drops a filter's format-7 dial and engages the EQ.
 void nudgeEqFreq (ChannelStripParams& strip, ChannelStripParams::EqFreq f,
                   float lo, float hi, float step, float d) noexcept
 {
@@ -84,12 +84,12 @@ void McuReceiver::resetVpotTarget (int stripIndex) noexcept
                 case 0: strip.setEqFreq (ChannelStripParams::EqFreq::Hpf, ChannelStripParams::kHpfOffHz);
                         strip.hpfEnabled.store (false, std::memory_order_relaxed); break;
                 case 1: strip.lfGainDb.store (0.0f, std::memory_order_relaxed); break;
-                case 2: strip.setEqFreq (ChannelStripParams::EqFreq::Lf, 100.0f); break;
+                case 2: strip.setEqFreq (ChannelStripParams::EqFreq::Lf, ChannelStripParams::kLfFreqDefault); break;
                 case 3: strip.lmGainDb.store (0.0f, std::memory_order_relaxed); break;
-                case 4: strip.setEqFreq (ChannelStripParams::EqFreq::Lm, 600.0f); break;
+                case 4: strip.setEqFreq (ChannelStripParams::EqFreq::Lm, ChannelStripParams::kLmFreqDefault); break;
                 case 5: strip.hmGainDb.store (0.0f, std::memory_order_relaxed); break;
                 case 6: strip.hfGainDb.store (0.0f, std::memory_order_relaxed); break;
-                case 7: strip.setEqFreq (ChannelStripParams::EqFreq::Hf, 8000.0f); break;
+                case 7: strip.setEqFreq (ChannelStripParams::EqFreq::Hf, ChannelStripParams::kHfFreqDefault); break;
                 default: break;
             }
         }

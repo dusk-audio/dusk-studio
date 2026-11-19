@@ -612,18 +612,19 @@ private:
     // struct (no padding) value-init to zero so memcmp is byte-reliable, and
     // so a bypassed EQ's flat defaults (all bands 0 dB, filters off) are the
     // literal zero image.
-    // A *Dial field above 0 is a format-7 dial the band or filter plays
-    // through the core's dial API instead of its Hz (LegacyEqDial).
+    // A filter's *Dial above 0 is a format-7 dial it plays through the core's
+    // dial API instead of its Hz (LegacyEqDial). A band's frequency is its
+    // marking, always played through the dial API.
     struct EqSnapshot
     {
         float hpfEnabled = 0, hpfFreq = 0, hpfDial = 0, lpfEnabled = 0, lpfFreq = 0, lpfDial = 0;
-        float lfGain = 0, lfFreq = 0, lfDial = 0, lfBell = 0;
-        float lmGain = 0, lmFreq = 0, lmDial = 0, lmQ = 0;
-        float hmGain = 0, hmFreq = 0, hmDial = 0, hmQ = 0;
-        float hfGain = 0, hfFreq = 0, hfDial = 0, hfBell = 0;
+        float lfGain = 0, lfFreq = 0, lfBell = 0;
+        float lmGain = 0, lmFreq = 0, lmQ = 0;
+        float hmGain = 0, hmFreq = 0, hmQ = 0;
+        float hfGain = 0, hfFreq = 0, hfBell = 0;
         float eqType = 0, saturation = 0, inputGain = 0, outputGain = 0;
     };
-    static_assert (sizeof (EqSnapshot) == 26 * sizeof (float), "EqSnapshot must stay padding-free for memcmp");
+    static_assert (sizeof (EqSnapshot) == 22 * sizeof (float), "EqSnapshot must stay padding-free for memcmp");
     EqSnapshot lastEqParams {};
     static EqSnapshot eqSnapshotFor (const ChannelStripParams& params) noexcept;
     static void applyEqSnapshot (duskaudio::FourKEQDSP& core, const EqSnapshot& p) noexcept;

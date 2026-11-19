@@ -149,12 +149,8 @@ void fillTrack (Track& t, int k)
     s.hmQ = step (k, 0.6f, 0.1f);
     s.hfGainDb = step (k, -7.0f, 0.5f);
     s.hfFreq = step (k, 5000.0f, 50.0f);
-    for (int f = 0; f < ChannelStripParams::kNumEqFreqs; ++f)
-    {
-        const auto which = (ChannelStripParams::EqFreq) f;
-        s.legacyDial (which).set (step (k, 1.0f + 0.01f * (float) f, 0.1f),
-                                  s.eqFreq (which).load(), odd (k + f));
-    }
+    s.hpfDial.set (step (k, 1.0f, 0.1f), s.hpfFreq.load(), odd (k));
+    s.lpfDial.set (step (k, 1.01f, 0.1f), s.lpfFreq.load(), odd (k + 1));
 
     s.compEnabled = odd (k);
     s.compModePicked = ! odd (k);

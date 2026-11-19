@@ -227,10 +227,10 @@ ScenarioResult runClone (ScenarioContext& ctx)
 }
 #endif
 
-// A converted older session's band plays its format-7 dial while its frequency
-// and voicing are the ones it was converted under. Clone Track copies the dial
-// with both, so the copy sounds like its source, and the undo puts back the
-// destination's own.
+// A converted older session's filter plays its format-7 dial while its
+// frequency and voicing are the ones it was converted under. Clone Track
+// copies the dial with both, and each band's marking, so the copy sounds like
+// its source, and the undo puts back the destination's own.
 ScenarioResult runCloneEqDials (ScenarioContext& ctx)
 {
     using EqFreq = ChannelStripParams::EqFreq;
@@ -241,40 +241,43 @@ ScenarioResult runCloneEqDials (ScenarioContext& ctx)
     auto& src = session.track (kSource).strip;
     auto& dst = session.track (kDest).strip;
 
-    std::array<std::uint64_t, ChannelStripParams::kNumEqFreqs> srcWords {};
-    for (size_t i = 0; i < srcWords.size(); ++i) srcWords[i] = src.eqFreqDial[i].raw();
+    const auto words = [] (const ChannelStripParams& strip)
+    {
+        return std::array<std::uint64_t, 2> { strip.hpfDial.raw(), strip.lpfDial.raw() };
+    };
+    const auto srcWords = words (src);
     ctx.cleanup ([&src, srcWords]
     {
-        for (size_t i = 0; i < srcWords.size(); ++i) src.eqFreqDial[i].setRaw (srcWords[i]);
+        src.hpfDial.setRaw (srcWords[0]);
+        src.lpfDial.setRaw (srcWords[1]);
     });
-    for (const auto f : { EqFreq::Hpf, EqFreq::Lpf, EqFreq::Lf, EqFreq::Lm })
+    for (const auto f : { EqFreq::Hpf, EqFreq::Lpf, EqFreq::Lf })
         ctx.keep (src.eqFreq (f));
     ctx.keep (src.eqBlackMode);
     ctx.keep (src.lpfEnabled);
     auto& undo = engine.getUndoManager();
     ctx.cleanup ([&undo] { undo.clearUndoHistory(); });
 
-    const auto dialOf = [] (const ChannelStripParams& strip, EqFreq f)
+    const auto dialOf = [] (const ChannelStripParams& strip, const LegacyEqDial& dial, const std::atomic<float>& freq)
     {
         float hz = 0.0f;
-        return strip.legacyDial (f).dialFor (strip.eqFreq (f), strip.eqBlackMode.load(), hz);
+        return dial.dialFor (freq, strip.eqBlackMode.load(), hz);
     };
-    const auto hold = [] (ChannelStripParams& strip, EqFreq f, float hz, float dial)
+    const auto hold = [] (ChannelStripParams& strip, LegacyEqDial& dial, std::atomic<float>& freq, float hz, float at)
     {
-        strip.eqFreq (f).store (hz);
-        strip.legacyDial (f).set (dial, hz, strip.eqBlackMode.load());
+        freq.store (hz);
+        dial.set (at, hz, strip.eqBlackMode.load());
     };
     src.eqBlackMode.store (true);
     src.lpfEnabled.store (true);
-    hold (src, EqFreq::Lf, 660.0f, 400.0f);
-    hold (src, EqFreq::Hpf, 316.0f, 300.0f);
-    hold (src, EqFreq::Lpf, 9000.0f, 12000.0f);
-    src.legacyDial (EqFreq::Lm).clear();
+    src.lfFreq.store (400.0f);
+    hold (src, src.hpfDial, src.hpfFreq, 316.0f, 300.0f);
+    hold (src, src.lpfDial, src.lpfFreq, 9000.0f, 12000.0f);
 
-    std::array<std::uint64_t, ChannelStripParams::kNumEqFreqs> dstBefore {};
-    for (size_t i = 0; i < dstBefore.size(); ++i) dstBefore[i] = dst.eqFreqDial[i].raw();
+    const auto dstBefore = words (dst);
     const bool dstBlack = dst.eqBlackMode.load();
     const float dstLpf = dst.lpfFreq.load();
+    const float dstLf = dst.lfFreq.load();
 
     undo.clearUndoHistory();
     undo.beginNewTransaction();
@@ -283,20 +286,17 @@ ScenarioResult runCloneEqDials (ScenarioContext& ctx)
         return ctx.verdict();
     const auto copied = [&]
     {
-        bool same = dst.eqBlackMode.load() && std::abs (dst.lpfFreq.load() - 9000.0f) < 1.0e-3f
-                    && dst.lpfEnabled.load();
-        for (size_t i = 0; i < srcWords.size(); ++i)
-            same = same && dst.eqFreqDial[i].raw() == src.eqFreqDial[i].raw();
-        return same && dialOf (dst, EqFreq::Lf) > 0.0f && dialOf (dst, EqFreq::Hpf) > 0.0f
-                    && dialOf (dst, EqFreq::Lpf) > 0.0f && dialOf (dst, EqFreq::Lm) <= 0.0f;
+        return dst.eqBlackMode.load() && std::abs (dst.lpfFreq.load() - 9000.0f) < 1.0e-3f
+               && dst.lpfEnabled.load() && std::abs (dst.lfFreq.load() - 400.0f) < 1.0e-3f
+               && words (dst) == words (src)
+               && dialOf (dst, dst.hpfDial, dst.hpfFreq) > 0.0f && dialOf (dst, dst.lpfDial, dst.lpfFreq) > 0.0f;
     };
-    ctx.expect (copied(), "the clone did not carry the source's dials, voicing and LPF");
+    ctx.expect (copied(), "the clone did not carry the source's dials, LF marking, voicing and LPF");
 
     ctx.expect (undo.undo(), "undo refused");
-    bool restored = dst.eqBlackMode.load() == dstBlack && std::abs (dst.lpfFreq.load() - dstLpf) < 1.0e-3f;
-    for (size_t i = 0; i < dstBefore.size(); ++i)
-        restored = restored && dst.eqFreqDial[i].raw() == dstBefore[i];
-    ctx.expect (restored, "undo did not put back the destination's own dials, voicing and LPF");
+    const bool restored = dst.eqBlackMode.load() == dstBlack && std::abs (dst.lpfFreq.load() - dstLpf) < 1.0e-3f
+                          && std::abs (dst.lfFreq.load() - dstLf) < 1.0e-3f && words (dst) == dstBefore;
+    ctx.expect (restored, "undo did not put back the destination's own dials, LF marking, voicing and LPF");
 
     ctx.expect (undo.redo(), "redo refused");
     ctx.expect (copied(), "redo did not carry the source's dials again");
@@ -428,7 +428,7 @@ ScenarioResult runCloneSavedFields (ScenarioContext& ctx)
     set (st.lmFreq, 800.0f);
     set (st.lmQ, 1.5f);
     set (st.hmGainDb, 4.0f);
-    set (st.hmFreq, 3000.0f);
+    set (st.hmFreq, 4000.0f);
     set (st.hmQ, 2.0f);
     set (st.hfGainDb, -5.0f);
     set (st.hfFreq, 10000.0f);

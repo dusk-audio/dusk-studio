@@ -117,18 +117,22 @@ struct BandSpec
 static const std::array<BandSpec, 4>& bandSpecs()
 {
     static const std::array<BandSpec, 4> specs {{
-        { "HF", juce::Colour (sslEqColors::kHfRed),    ChannelStripParams::kHfFreqMin, ChannelStripParams::kHfFreqMax, 8000.0f,
+        { "HF", juce::Colour (sslEqColors::kHfRed),    ChannelStripParams::kHfFreqMin, ChannelStripParams::kHfFreqMax,
+            ChannelStripParams::kHfFreqDefault,
             [] (ChannelStripParams& s) -> std::atomic<float>* { return &s.hfGainDb; },
             ChannelStripParams::EqFreq::Hf, EqKnob::HfFreq },
-        { "HM", juce::Colour (sslEqColors::kHmGreen),  ChannelStripParams::kHmFreqMin, ChannelStripParams::kHmFreqMax, 2000.0f,
+        { "HM", juce::Colour (sslEqColors::kHmGreen),  ChannelStripParams::kHmFreqMin, ChannelStripParams::kHmFreqMax,
+            ChannelStripParams::kHmFreqDefault,
             [] (ChannelStripParams& s) -> std::atomic<float>* { return &s.hmGainDb; },
             ChannelStripParams::EqFreq::Hm, EqKnob::HmFreq,
             [] (ChannelStripParams& s) -> std::atomic<float>* { return &s.hmQ; } },
-        { "LM", juce::Colour (sslEqColors::kLmBlue),   ChannelStripParams::kLmFreqMin, ChannelStripParams::kLmFreqMax, 600.0f,
+        { "LM", juce::Colour (sslEqColors::kLmBlue),   ChannelStripParams::kLmFreqMin, ChannelStripParams::kLmFreqMax,
+            ChannelStripParams::kLmFreqDefault,
             [] (ChannelStripParams& s) -> std::atomic<float>* { return &s.lmGainDb; },
             ChannelStripParams::EqFreq::Lm, EqKnob::LmFreq,
             [] (ChannelStripParams& s) -> std::atomic<float>* { return &s.lmQ; } },
-        { "LF", juce::Colour (sslEqColors::kLfBlack),  ChannelStripParams::kLfFreqMin, ChannelStripParams::kLfFreqMax, 100.0f,
+        { "LF", juce::Colour (sslEqColors::kLfBlack),  ChannelStripParams::kLfFreqMin, ChannelStripParams::kLfFreqMax,
+            ChannelStripParams::kLfFreqDefault,
             [] (ChannelStripParams& s) -> std::atomic<float>* { return &s.lfGainDb; },
             ChannelStripParams::EqFreq::Lf, EqKnob::LfFreq },
     }};
@@ -181,9 +185,9 @@ inline std::string formatFrequency (double hz)
     return dusk::text::format ("%d", (int) std::round (hz));
 }
 
-// What a frequency knob reads: a converted older session can hold a band or
-// filter past the knob's range, where it keeps playing while the knob rests on
-// its end stop.
+// What a filter knob reads: a converted older session can hold a filter past
+// the knob's range, where it keeps playing while the knob rests on its end
+// stop.
 inline double shownFrequency (double knob, float held, double lo, double hi)
 {
     return (knob <= lo && held < lo) || (knob >= hi && held > hi) ? (double) held : knob;
@@ -567,19 +571,14 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         // textFromValueFunction must be set BEFORE setValue, otherwise the
         // initial text is rendered with the default formatter ("2000") and
         // doesn't get our "2.0k" notation until the user moves the knob.
-        row.shownFreq = track.strip.eqFreq (spec.freq).load (std::memory_order_relaxed);
-        row.freqText.changed (row.shownFreq, 0.0f);
-        row.freq->textFromValueFunction = [&row, lo = spec.freqMin, hi = spec.freqMax] (double v)
-        {
-            return formatFrequency (shownFrequency (v, row.shownFreq, lo, hi));
-        };
+        row.freq->textFromValueFunction = [] (double v) { return formatFrequency (v); };
         row.freq->valueFromTextFunction = [parseFrequencyText] (const auto& text)
         {
             return parseFrequencyText (text, 0.0);
         };
         row.freq->setValue (track.strip.eqFreq (spec.freq).load (std::memory_order_relaxed),
                             juce::dontSendNotification);
-        row.freq->updateText();  // a held value clamps to the knob's end, where setValue sees no change
+        row.freq->updateText();  // setValue skips updateText() when the value lands where the knob already sits
 
         // Q knob (mid-bands only - bell-only HM/LM). Same size and styling
         // as gain and freq, with a "Q 0.7"-style value label below so the
@@ -6208,20 +6207,6 @@ void ChannelStripComponent::refreshShownView()
         countGatedRepaint();
         lpfKnob.updateText();
     }
-    for (size_t i = 0; i < eqRows.size(); ++i)
-    {
-        auto& row = eqRows[i];
-        if (row.freq == nullptr) continue;
-        // A frequency held past the knob's range leaves it on its end stop, where a
-        // new held value moves nothing, but the text reads it.
-        const float held = track.strip.eqFreq (bandSpecs()[i].freq).load (std::memory_order_relaxed);
-        if (row.freqText.changed (held, 0.0f))
-        {
-            row.shownFreq = held;
-            countGatedRepaint();
-            row.freq->updateText();
-        }
-    }
 
     // GR repaint is handled inside CompMeterStrip's own Timer.
     if (! inputMeterArea.isEmpty())
@@ -6435,11 +6420,11 @@ void ChannelStripComponent::resetEqSection()
     // Replays each EQ knob's own double-click return value through its live
     // onValueChange path (no new defaults invented). A knob that moves notifies
     // as a drag does, screen readers included. One already there gets its
-    // onValueChange by hand, so the stored value resets too: a converted older
-    // session's band can sit on the default, or between the knob's steps,
-    // while it plays the format-7 dial it was converted with. The band knobs
-    // auto-arm eqEnabled on change, so restore the prior engaged state
-    // afterwards - a reset flattens the EQ but shouldn't toggle it on.
+    // onValueChange by hand, so the stored value resets too: a stored value can
+    // sit between the knob's steps, and a converted older session's filter on
+    // its default while it plays the format-7 dial it was converted with. The
+    // band knobs auto-arm eqEnabled on change, so restore the prior engaged
+    // state afterwards - a reset flattens the EQ but shouldn't toggle it on.
     const bool wasEnabled = track.strip.eqEnabled.load (std::memory_order_relaxed);
     auto reset = [] (juce::Slider& s)
     {

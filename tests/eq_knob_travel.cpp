@@ -38,13 +38,13 @@ std::vector<Knob> knobs()
 {
     using P = ChannelStripParams;
     return {
-        { "LF frequency", { EqKnob::LfFreq, P::kLfFreqMin, P::kLfFreqMax, 100.0 },
+        { "LF frequency", { EqKnob::LfFreq, P::kLfFreqMin, P::kLfFreqMax, P::kLfFreqDefault },
           EQ::frequencyControlAnchors (EQ::Band::LF), kLfFreq },
-        { "LM frequency", { EqKnob::LmFreq, P::kLmFreqMin, P::kLmFreqMax, 600.0 },
+        { "LM frequency", { EqKnob::LmFreq, P::kLmFreqMin, P::kLmFreqMax, P::kLmFreqDefault },
           EQ::frequencyControlAnchors (EQ::Band::LM), kLmFreq },
-        { "HM frequency", { EqKnob::HmFreq, P::kHmFreqMin, P::kHmFreqMax, 2000.0 },
+        { "HM frequency", { EqKnob::HmFreq, P::kHmFreqMin, P::kHmFreqMax, P::kHmFreqDefault },
           EQ::frequencyControlAnchors (EQ::Band::HM), kHmFreq },
-        { "HF frequency", { EqKnob::HfFreq, P::kHfFreqMin, P::kHfFreqMax, 8000.0 },
+        { "HF frequency", { EqKnob::HfFreq, P::kHfFreqMin, P::kHfFreqMax, P::kHfFreqDefault },
           EQ::frequencyControlAnchors (EQ::Band::HF), kHfFreq },
         { "Q", { EqKnob::Q, P::kBandQMin, P::kBandQMax, 1.0 }, EQ::qControlAnchors(), kLmQ },
     };
@@ -148,10 +148,6 @@ TEST_CASE ("Channel EQ knob ends: a frequency knob spans its stored range, a Q v
         CHECK_THAT (travel.valueAt (-1.0), WithinULP (travel.valueAt (0.0), 0));
         CHECK_THAT (travel.valueAt (2.0), WithinULP (travel.valueAt (1.0), 0));
     }
-    const auto lm = knobs()[1].travel;
-    const auto hm = knobs()[2].travel;
-    CHECK_THAT (lm.positionOf (ChannelStripParams::kLmFreqHeldMin), WithinAbs (0.0, 0.0));
-    CHECK_THAT (hm.positionOf (ChannelStripParams::kHmFreqHeldMax), WithinAbs (1.0, 0.0));
 }
 
 TEST_CASE ("Channel EQ knob defaults land where 4K EQ 2 puts them")
@@ -172,6 +168,9 @@ TEST_CASE ("Channel EQ knob defaults land where 4K EQ 2 puts them")
         REQUIRE (pluginStep >= 0);
         CHECK_THAT (knob.travel.positionOf (param.def), WithinAbs (pluginStep / 20.0, 1.0e-12));
 
+        if (knob.travel.knob != EqKnob::Q)
+            CHECK_THAT ((float) knob.travel.mid, WithinULP (param.def, 0));
+
         const double stripDefault = knob.travel.knob == EqKnob::Q ? 0.7 : knob.travel.mid;
         const double position = knob.travel.positionOf (stripDefault);
         CHECK (position > 0.0);
@@ -179,4 +178,11 @@ TEST_CASE ("Channel EQ knob defaults land where 4K EQ 2 puts them")
         CHECK_THAT (knob.travel.valueAt (position), WithinRel (stripDefault, 1.0e-9));
     }
     CHECK_THAT (kFourKParams[kHmQ].def, WithinULP (kFourKParams[kLmQ].def, 0));
+
+    // A fresh strip starts on them too.
+    ChannelStripParams fresh;
+    CHECK_THAT (fresh.lfFreq.load(), WithinULP (kFourKParams[kLfFreq].def, 0));
+    CHECK_THAT (fresh.lmFreq.load(), WithinULP (kFourKParams[kLmFreq].def, 0));
+    CHECK_THAT (fresh.hmFreq.load(), WithinULP (kFourKParams[kHmFreq].def, 0));
+    CHECK_THAT (fresh.hfFreq.load(), WithinULP (kFourKParams[kHfFreq].def, 0));
 }

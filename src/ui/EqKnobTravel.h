@@ -17,9 +17,10 @@ enum class EqKnob { LfFreq, LmFreq, HmFreq, HfFreq, Q };
 // taken at, each carrying the core's anchor, and linearly between them. A
 // frequency knob rises clockwise; a Q knob runs from its narrowest anchor at
 // the left end to its broadest at the right. At any position the strip stores
-// the number the plug-in's knob reads there. A stored value past the anchors,
-// which MIDI, a control surface or an older session can leave, rests the knob
-// on the nearer end until it moves.
+// the number the plug-in's knob reads there, and plays it as the plug-in does.
+// A stored value past the anchors, such as a Q that MIDI, a control surface or
+// an older session left, rests the knob on the nearer end until it moves; a
+// band's dial law plays flat past them.
 //
 // lo and hi are the range the knob's slider holds. Without the donor core the
 // knob skews about mid between them, as JUCE's skew from a midpoint does.

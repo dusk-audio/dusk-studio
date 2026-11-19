@@ -1,4 +1,5 @@
 #include "SessionSerializer.h"
+#include "ChannelEqMarking.h"
 #include "CompMigration.h"
 #include "../foundation/AtomicFile.h"
 #include "../foundation/Fs.h"
@@ -371,10 +372,12 @@ bool keptV7DialMatches (ChannelStripParams::EqFreq f, float dial, bool black, fl
 // Up to format 7 a channel EQ band's "freq", and the HPF's and LPF's, was a
 // dial position of the 4K EQ core, clamped on load to kV7DialRanges; the
 // core's measured dial law put the band or filter somewhere else. Rewrites each
-// one as the exact Hz that position played, past today's knob range if that is
-// where it played (the loader holds it, ChannelStripParams::k*Held*), and keeps
-// the position as "freq_dial" so the strip plays it through the core's dial API
-// exactly as before until the frequency moves (LegacyEqDial).
+// one as the exact Hz that position played, past the knob's range if that is
+// where it played, and keeps the position as "freq_dial", which formats 8 to
+// 11 played through the core's dial API until the frequency moved. A filter
+// still does (LegacyEqDial; the loader holds an HPF past its knob,
+// ChannelStripParams::kHpfHeldMaxHz); a band's dial becomes its marking again
+// in the 11 -> 12 step (migrateStripEqBandsToMarkings).
 bool migrateStripEqDialsToHz (nlohmann::json& root)
 {
 #if DUSKSTUDIO_HAS_DUSK_DSP
@@ -431,6 +434,63 @@ bool migrateStripEqDialsToHz (nlohmann::json& root)
     std::fprintf (stderr,
                   "[Dusk Studio/SessionSerializer] this build has no 4K EQ core to convert "
                   "a v7 session's EQ dial positions - refusing to load it\n");
+    return false;
+#endif
+}
+
+// Formats 8 to 11 stored a channel EQ band's "freq" as the Hz it played
+// through the core's Hz API, with the format-7 dial a converted band still
+// played beside it as "freq_dial". Format 12 stores the band's frequency
+// marking, which the strip plays through the core's dial law as 4K EQ 2 does.
+// A band still carrying the dial the v7 -> v8 step kept for its Hz takes that
+// dial, in whichever voicing it was kept; any other band takes the marking
+// that plays its Hz in the track's voicing. Both are held at the ends of the
+// core's anchor table. The filters keep their Hz and their dials.
+bool migrateStripEqBandsToMarkings (nlohmann::json& root)
+{
+#if DUSKSTUDIO_HAS_DUSK_DSP
+    using EQ = duskaudio::FourKEQDSP;
+    using EqFreq = ChannelStripParams::EqFreq;
+    struct Band { const char* key; EqFreq freq; EQ::Band band; };
+    static constexpr Band kBands[] {
+        { "lf", EqFreq::Lf, EQ::Band::LF },
+        { "lm", EqFreq::Lm, EQ::Band::LM },
+        { "hm", EqFreq::Hm, EQ::Band::HM },
+        { "hf", EqFreq::Hf, EQ::Band::HF },
+    };
+    static constexpr float kNaN = std::numeric_limits<float>::quiet_NaN();
+
+    const auto tracks = root.find ("tracks");
+    if (tracks == root.end() || ! tracks->is_array()) return true;
+    for (auto& track : *tracks)
+    {
+        if (! track.is_object()) continue;
+        const auto eq = track.find ("eq");
+        if (eq == track.end() || ! eq->is_object()) continue;
+        const bool trackBlack = json::getString (*eq, "type") == "black";
+        for (const auto& b : kBands)
+        {
+            const auto band = eq->find (b.key);
+            if (band == eq->end() || ! band->is_object()) continue;
+            const float dial = json::getFiniteFloat (*band, kFreqDialKey, kNaN);
+            const auto type = json::getString (*band, kFreqDialTypeKey, trackBlack ? "black" : "brown");
+            band->erase (kFreqDialKey);
+            band->erase (kFreqDialTypeKey);
+            const float hz = json::getFiniteFloat (*band, "freq", kNaN);
+            if (std::isnan (hz)) continue;
+            const bool dialBlack = type == "black";
+            const bool kept = (dialBlack || type == "brown") && keptV7DialMatches (b.freq, dial, dialBlack, hz);
+            const float* anchors = EQ::frequencyControlAnchors (b.band);
+            (*band)["freq"] = std::clamp (kept ? dial : channelEqMarkingForHz (b.freq, hz, trackBlack),
+                                          anchors[0], anchors[EQ::kControlAnchorCount - 1]);
+        }
+    }
+    return true;
+#else
+    (void) root;
+    std::fprintf (stderr,
+                  "[Dusk Studio/SessionSerializer] this build has no 4K EQ core to convert "
+                  "a v11 session's EQ band frequencies - refusing to load it\n");
     return false;
 #endif
 }
@@ -754,10 +814,16 @@ bool migrateSession (nlohmann::json& root, int from)
                 // v11 -> v12: every compressor holds Multi-Comp 2's parameters
                 // under its symbols, in its host domain, in one comp object per
                 // stage; the old cores' values are converted to the settings
-                // that play closest to them. The bump exists because a v11
-                // build would read none of them and save its defaults over them.
+                // that play closest to them. A channel EQ band's freq is now
+                // its frequency marking, played through the core's dial law as
+                // 4K EQ 2 plays it, where v11 stored the Hz it played. The bump
+                // exists because a v11 build would read none of the compressor
+                // settings and save its defaults over them, and would play
+                // every band's marking as Hz.
                 if (root.is_object())
                 {
+                    if (! migrateStripEqBandsToMarkings (root))
+                        return false;
                     migrateCompressorsToFormat12 (root);
                     root["version"] = 12;
                 }
@@ -1051,49 +1117,48 @@ JObj trackToObject (const Track& t, const juce::File& sessionDir)
     obj["aux_send_db"]        = std::move (auxLevels);
     obj["aux_send_pre_fader"] = std::move (auxPrePost);
 
-    using EqFreq = ChannelStripParams::EqFreq;
     const bool eqBlack = t.strip.eqBlackMode.load();
-    // A format-7 dial goes out while its frequency has not moved, with the
-    // voicing it plays in: one a voicing switch suspended plays again when the
-    // reopened session switches back (LegacyEqDial).
-    auto writeFreq = [&t] (JObj& o, EqFreq f)
+    // A filter's format-7 dial goes out while its frequency has not moved,
+    // with the voicing it plays in: one a voicing switch suspended plays again
+    // when the reopened session switches back (LegacyEqDial).
+    auto writeFilterFreq = [] (JObj& o, const LegacyEqDial& dial, const std::atomic<float>& freq)
     {
         float hz = 0.0f;
         bool dialBlack = false;
-        const float dial = t.strip.legacyDial (f).kept (t.strip.eqFreq (f), hz, dialBlack);
+        const float kept = dial.kept (freq, hz, dialBlack);
         o["freq"] = hz;
-        if (dial > 0.0f)
+        if (kept > 0.0f)
         {
-            o[kFreqDialKey] = dial;
+            o[kFreqDialKey] = kept;
             o[kFreqDialTypeKey] = dialBlack ? "black" : "brown";
         }
     };
 
     JObj hpf;
     hpf["enabled"] = t.strip.hpfEnabled.load();
-    writeFreq (hpf, EqFreq::Hpf);
+    writeFilterFreq (hpf, t.strip.hpfDial, t.strip.hpfFreq);
     obj["hpf"] = std::move (hpf);
 
     JObj lpf;
     lpf["enabled"] = t.strip.lpfEnabled.load();
-    writeFreq (lpf, EqFreq::Lpf);
+    writeFilterFreq (lpf, t.strip.lpfDial, t.strip.lpfFreq);
     obj["lpf"] = std::move (lpf);
 
     JObj eq;
     eq["enabled"] = t.strip.eqEnabled.load();
     eq["type"]    = eqBlack ? "black" : "brown";
-    auto bandObj = [&writeFreq] (float gain, EqFreq freq, float q = -1.0f)
+    auto bandObj = [] (float gain, float freq, float q = -1.0f)
     {
         JObj b;
         b["gain"] = gain;
-        writeFreq (b, freq);
+        b["freq"] = freq;
         if (q >= 0.0f) b["q"] = q;
         return b;
     };
-    eq["lf"] = bandObj (t.strip.lfGainDb.load(), EqFreq::Lf);
-    eq["lm"] = bandObj (t.strip.lmGainDb.load(), EqFreq::Lm, t.strip.lmQ.load());
-    eq["hm"] = bandObj (t.strip.hmGainDb.load(), EqFreq::Hm, t.strip.hmQ.load());
-    eq["hf"] = bandObj (t.strip.hfGainDb.load(), EqFreq::Hf);
+    eq["lf"] = bandObj (t.strip.lfGainDb.load(), t.strip.lfFreq.load());
+    eq["lm"] = bandObj (t.strip.lmGainDb.load(), t.strip.lmFreq.load(), t.strip.lmQ.load());
+    eq["hm"] = bandObj (t.strip.hmGainDb.load(), t.strip.hmFreq.load(), t.strip.hmQ.load());
+    eq["hf"] = bandObj (t.strip.hfGainDb.load(), t.strip.hfFreq.load());
     obj["eq"] = std::move (eq);
 
     JObj comp;
@@ -1733,14 +1798,14 @@ void restoreTrack (Track& t, int trackIndex, const nlohmann::json& v,
                                          ChannelStripParams::kBandQMin,
                                          ChannelStripParams::kBandQMax);
         };
-        restoreBand ("lf", &t.strip.lfGainDb, &t.strip.lfFreq, nullptr, 100.0f,
-                     ChannelStripParams::kLfFreqHeldMin, ChannelStripParams::kLfFreqHeldMax);
-        restoreBand ("lm", &t.strip.lmGainDb, &t.strip.lmFreq, &t.strip.lmQ, 600.0f,
-                     ChannelStripParams::kLmFreqHeldMin, ChannelStripParams::kLmFreqHeldMax);
-        restoreBand ("hm", &t.strip.hmGainDb, &t.strip.hmFreq, &t.strip.hmQ, 2000.0f,
-                     ChannelStripParams::kHmFreqHeldMin, ChannelStripParams::kHmFreqHeldMax);
-        restoreBand ("hf", &t.strip.hfGainDb, &t.strip.hfFreq, nullptr, 8000.0f,
-                     ChannelStripParams::kHfFreqHeldMin, ChannelStripParams::kHfFreqHeldMax);
+        restoreBand ("lf", &t.strip.lfGainDb, &t.strip.lfFreq, nullptr, ChannelStripParams::kLfFreqDefault,
+                     ChannelStripParams::kLfFreqMin, ChannelStripParams::kLfFreqMax);
+        restoreBand ("lm", &t.strip.lmGainDb, &t.strip.lmFreq, &t.strip.lmQ, ChannelStripParams::kLmFreqDefault,
+                     ChannelStripParams::kLmFreqMin, ChannelStripParams::kLmFreqMax);
+        restoreBand ("hm", &t.strip.hmGainDb, &t.strip.hmFreq, &t.strip.hmQ, ChannelStripParams::kHmFreqDefault,
+                     ChannelStripParams::kHmFreqMin, ChannelStripParams::kHmFreqMax);
+        restoreBand ("hf", &t.strip.hfGainDb, &t.strip.hfFreq, nullptr, ChannelStripParams::kHfFreqDefault,
+                     ChannelStripParams::kHfFreqMin, ChannelStripParams::kHfFreqMax);
     }
 
     {
@@ -1748,30 +1813,26 @@ void restoreTrack (Track& t, int trackIndex, const nlohmann::json& v,
         // dial plays in the voicing its "freq_dial_type" names, the track's
         // own when it names none. Only a dial the migrator kept for the
         // frequency just loaded plays; any other, and an absent one, leaves
-        // the band on its Hz, as does every band the previous session held a
-        // dial for.
+        // the filter on its Hz, as does every filter the previous session held
+        // a dial for.
         using EqFreq = ChannelStripParams::EqFreq;
-        const auto& eq = json::child (v, "eq");
-        const std::pair<EqFreq, const nlohmann::json*> dials[] {
-            { EqFreq::Hpf, &json::child (v, "hpf") },
-            { EqFreq::Lpf, &json::child (v, "lpf") },
-            { EqFreq::Lf,  &json::child (eq, "lf") },
-            { EqFreq::Lm,  &json::child (eq, "lm") },
-            { EqFreq::Hm,  &json::child (eq, "hm") },
-            { EqFreq::Hf,  &json::child (eq, "hf") },
+        struct Filter { EqFreq freq; LegacyEqDial& dial; const nlohmann::json& saved; };
+        const Filter filters[] {
+            { EqFreq::Hpf, t.strip.hpfDial, json::child (v, "hpf") },
+            { EqFreq::Lpf, t.strip.lpfDial, json::child (v, "lpf") },
         };
         const std::string trackType = t.strip.eqBlackMode.load() ? "black" : "brown";
-        for (const auto& [f, parent] : dials)
+        for (const auto& f : filters)
         {
-            const float dial = json::getFiniteFloat (*parent, kFreqDialKey,
+            const float dial = json::getFiniteFloat (f.saved, kFreqDialKey,
                                                      std::numeric_limits<float>::quiet_NaN());
-            const auto type = json::getString (*parent, kFreqDialTypeKey, trackType);
+            const auto type = json::getString (f.saved, kFreqDialTypeKey, trackType);
             const bool black = type == "black";
-            const float hz = t.strip.eqFreq (f).load();
-            if ((black || type == "brown") && keptV7DialMatches (f, dial, black, hz))
-                t.strip.legacyDial (f).set (dial, hz, black);
+            const float hz = t.strip.eqFreq (f.freq).load();
+            if ((black || type == "brown") && keptV7DialMatches (f.freq, dial, black, hz))
+                f.dial.set (dial, hz, black);
             else
-                t.strip.legacyDial (f).clear();
+                f.dial.clear();
         }
     }
 

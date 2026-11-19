@@ -4,6 +4,10 @@
 #include "session/Session.h"
 #include "session/SessionSerializer.h"
 
+#if DUSKSTUDIO_HAS_DUSK_DSP
+ #include <dsp/FourKEQDSP.hpp>
+#endif
+
 #include <juce_core/juce_core.h>
 #include <nlohmann/json.hpp>
 
@@ -271,4 +275,30 @@ TEST_CASE ("SessionSerializer loads an unchanged format-10 file written by relea
     CHECK (saved["version"].get<int>() == 12);
     CHECK_THAT (saved["tracks"][0]["fader_db"].get<float>(), WithinAbs (-3.0f, 1.0e-6f));
     CHECK_THAT (saved["session_sample_rate"].get<double>(), WithinAbs (48000.0, 1.0e-6));
+
+#if DUSKSTUDIO_HAS_DUSK_DSP
+    // Format 10 stored the Hz each band played, here the defaults of the day in
+    // Brown. Each band loads at the marking whose band the dial law plays
+    // there; no Brown HF marking reaches an 8 kHz corner, so HF rests on the
+    // top of its knob.
+    using EQ = duskaudio::FourKEQDSP;
+    const auto& strip = loaded->track (0).strip;
+    struct Band { const char* key; float marking, hz; EQ::Band band; bool bell; };
+    const Band bands[] {
+        { "lf", strip.lfFreq.load(),  100.0f, EQ::Band::LF, false },
+        { "lm", strip.lmFreq.load(),  600.0f, EQ::Band::LM, true },
+        { "hm", strip.hmFreq.load(), 2000.0f, EQ::Band::HM, true },
+    };
+    for (const auto& b : bands)
+    {
+        CAPTURE (b.key, b.marking);
+        REQUIRE_THAT (original["tracks"][0]["eq"][b.key]["freq"].get<float>(), WithinAbs (b.hz, 0.0f));
+        const float played = EQ::calibratedEqFrequency (b.marking, EQ::kEqReferenceGainDb, b.band, false, b.bell);
+        const float asked = EQ::calibratedEqFrequencyForHz (b.hz, EQ::kEqReferenceGainDb, b.band, false, b.bell);
+        CHECK_THAT (played, Catch::Matchers::WithinRel (asked, 1.0e-4f));
+        CHECK_FALSE (saved["tracks"][0]["eq"][b.key].contains ("freq_dial"));
+    }
+    CHECK (EQ::hzForCalibratedEqControl (ChannelStripParams::kHfFreqMax, EQ::Band::HF, false, false) < 8000.0f);
+    CHECK_THAT (strip.hfFreq.load(), WithinAbs (ChannelStripParams::kHfFreqMax, 0.0f));
+#endif
 }

@@ -160,15 +160,17 @@ TEST_CASE ("migrateSession carries an ordinary v6 session to the current format"
     dir.deleteRecursively();
 }
 
-TEST_CASE ("migrateSession rewrites only the channel EQ frequencies of a v7 session",
+TEST_CASE ("migrateSession keeps a v7 session's EQ band dials as markings and rewrites only its filter frequencies",
            "[session][serializer][migration][eq]")
 {
     // v7 -> v8 turns each stored EQ and filter dial position into the Hz it
-    // played and keeps the position beside it as freq_dial, which the strip
-    // plays until the frequency moves (session_eq_dial_migration.cpp checks
-    // the values and the sound against the core). A filter at OFF keeps its
-    // frequency and gets its dial too. Everything else, gains, Qs and filter
-    // switches included, passes through.
+    // played and keeps the position beside it as freq_dial. v11 -> v12 turns a
+    // band's kept dial back into its frequency marking, which the strip plays
+    // through the core's dial law, and drops it; a filter keeps its Hz and its
+    // dial, which the strip plays until the frequency moves
+    // (session_eq_dial_migration.cpp checks the values and the sound against
+    // the core). A filter at OFF keeps its frequency and gets its dial too.
+    // Everything else, gains, Qs and filter switches included, passes through.
     nlohmann::json root {
         { "version", 7 },
         { "tempo", 97.0 },
@@ -189,20 +191,11 @@ TEST_CASE ("migrateSession rewrites only the channel EQ frequencies of a v7 sess
     REQUIRE (duskstudio::migrateSession (root, 7));
     CHECK (root["version"].get<int>() == 12);
 
-    const auto& eq = root["tracks"][0]["eq"];
-    CHECK (std::abs (eq["lf"]["freq"].get<double>() - 100.0) > 1.0);
-    CHECK (std::abs (eq["hm"]["freq"].get<double>() - 2000.0) > 1.0);
-    CHECK (eq["hf"]["freq"].get<double>() < 8000.0);
     CHECK (root["tracks"][0]["hpf"]["freq"].get<double>() < 100.0);
     CHECK (root["tracks"][1]["lpf"]["freq"].get<double>() > 9000.0);
 
     auto expected = original;
     expected["version"] = 12;
-    for (const char* band : { "lf", "hm", "hf" })
-    {
-        expected["tracks"][0]["eq"][band]["freq"] = eq[band]["freq"];
-        expected["tracks"][0]["eq"][band]["freq_dial"] = original["tracks"][0]["eq"][band]["freq"];
-    }
     expected["tracks"][0]["hpf"]["freq"] = root["tracks"][0]["hpf"]["freq"];
     expected["tracks"][0]["hpf"]["freq_dial"] = 120.0;
     expected["tracks"][0]["lpf"]["freq_dial"] = 20000.0;

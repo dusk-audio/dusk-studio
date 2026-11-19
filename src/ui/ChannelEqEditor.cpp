@@ -13,7 +13,7 @@ struct BandSpec
 {
     const char* name;
     juce::Colour accent;
-    float freqMin, freqMax;
+    float freqMin, freqMax, freqDefault;
     std::atomic<float>* (*gain) (ChannelStripParams&);
     ChannelStripParams::EqFreq freq;
     EqKnob freqKnob;
@@ -25,18 +25,22 @@ const std::array<BandSpec, 4>& bandSpecs()
 {
     static const std::array<BandSpec, 4> specs {{
         { "HF", juce::Colour (sslEqColors::kHfRed),    ChannelStripParams::kHfFreqMin, ChannelStripParams::kHfFreqMax,
+            ChannelStripParams::kHfFreqDefault,
             [] (ChannelStripParams& s) -> std::atomic<float>* { return &s.hfGainDb; },
             ChannelStripParams::EqFreq::Hf, EqKnob::HfFreq,
             [] (ChannelStripParams&)   -> std::atomic<float>* { return nullptr; } },
         { "HM", juce::Colour (sslEqColors::kHmGreen),  ChannelStripParams::kHmFreqMin, ChannelStripParams::kHmFreqMax,
+            ChannelStripParams::kHmFreqDefault,
             [] (ChannelStripParams& s) -> std::atomic<float>* { return &s.hmGainDb; },
             ChannelStripParams::EqFreq::Hm, EqKnob::HmFreq,
             [] (ChannelStripParams& s) -> std::atomic<float>* { return &s.hmQ; } },
         { "LM", juce::Colour (sslEqColors::kLmBlue),   ChannelStripParams::kLmFreqMin, ChannelStripParams::kLmFreqMax,
+            ChannelStripParams::kLmFreqDefault,
             [] (ChannelStripParams& s) -> std::atomic<float>* { return &s.lmGainDb; },
             ChannelStripParams::EqFreq::Lm, EqKnob::LmFreq,
             [] (ChannelStripParams& s) -> std::atomic<float>* { return &s.lmQ; } },
         { "LF", juce::Colour (sslEqColors::kLfBlack),  ChannelStripParams::kLfFreqMin, ChannelStripParams::kLfFreqMax,
+            ChannelStripParams::kLfFreqDefault,
             [] (ChannelStripParams& s) -> std::atomic<float>* { return &s.lfGainDb; },
             ChannelStripParams::EqFreq::Lf, EqKnob::LfFreq,
             [] (ChannelStripParams&)   -> std::atomic<float>* { return nullptr; } },
@@ -50,9 +54,9 @@ inline std::string formatFrequency (double hz)
     return dusk::text::format ("%d Hz", (int) std::round (hz));
 }
 
-// What a frequency knob reads: a converted older session can hold a band or
-// filter past the knob's range, where it keeps playing while the knob rests on
-// its end stop.
+// What a filter knob reads: a converted older session can hold a filter past
+// the knob's range, where it keeps playing while the knob rests on its end
+// stop.
 inline double shownFrequency (double knob, float held, double lo, double hi)
 {
     return (knob <= lo && held < lo) || (knob >= hi && held > hi) ? (double) held : knob;
@@ -224,20 +228,16 @@ ChannelEqEditor::ChannelEqEditor (Track& t) : track (t)
         }
         addAndMakeVisible (row.gain.get());
 
-        const float defaultFreq = (i == 0 ? 8000.0f : i == 1 ? 2000.0f : i == 2 ? 600.0f : 100.0f);
         row.freq = std::make_unique<juce::Slider>();
-        makeKnob (*row.freq, spec.accent, spec.freqMin, spec.freqMax, defaultFreq, 0.0);
-        followEqKnobTravel (*row.freq, { spec.freqKnob, spec.freqMin, spec.freqMax, defaultFreq }, 1.0);
+        makeKnob (*row.freq, spec.accent, spec.freqMin, spec.freqMax, spec.freqDefault, 0.0);
+        followEqKnobTravel (*row.freq, { spec.freqKnob, spec.freqMin, spec.freqMax, spec.freqDefault }, 1.0);
         row.freq->setNumDecimalPlacesToDisplay (0);
-        row.freq->textFromValueFunction = [held = &track.strip.eqFreq (spec.freq), lo = spec.freqMin, hi = spec.freqMax] (double v)
-        {
-            return formatFrequency (shownFrequency (v, held->load (std::memory_order_relaxed), lo, hi));
-        };
+        row.freq->textFromValueFunction = [] (double v) { return formatFrequency (v); };
         row.freq->setTitle ("EQ editor " + std::string (spec.name) + " frequency");
         row.freq->setValue (track.strip.eqFreq (spec.freq).load (std::memory_order_relaxed),
                              juce::dontSendNotification);
-        // setValue skips updateText() when the stored value clamps to where
-        // the knob already sits, and the text was built before the formatter.
+        // setValue skips updateText() when the stored value lands where the
+        // knob already sits, and the text was built before the formatter.
         row.freq->updateText();
         {
             auto* strip = &track.strip;

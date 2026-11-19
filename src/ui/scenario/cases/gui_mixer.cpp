@@ -1687,12 +1687,13 @@ const ScenarioRegistrar accessibleControls { Scenario {
     [] (GuiHost& host, ScenarioContext& ctx) { return runAccessibleControls (host, ctx); }
 } };
 
-// Format 7 stored channel EQ dial positions, and some played past today's
-// knobs. The session loads at the Hz it played and keeps each dial, which the
-// band plays until its frequency moves; the knob rests on its end stop reading
-// that Hz, and nothing writes the end stop back, or drops the dial, until the
-// knob moves. The strip's knobs and the EQ editor's each drop only their own
-// dial, and Reset EQ drops them all.
+// Format 7 stored channel EQ dial positions. A band's dial is its frequency
+// marking, so it loads as that marking, held at the knob's end if it was past
+// it, and plays through the core's dial law. A filter's loads at the Hz it
+// played and keeps its dial, which it plays until its frequency moves, and an
+// HPF can sit past its knob: the knob rests on its end stop reading that Hz,
+// and nothing writes the end stop back, or drops the dial, until the knob
+// moves. Switching the voicing moves no band knob and no band read-out.
 std::optional<ScenarioResult> runEqHeldPastKnob (GuiHost& host, ScenarioContext& ctx)
 {
     using EqFreq = ChannelStripParams::EqFreq;
@@ -1715,9 +1716,9 @@ std::optional<ScenarioResult> runEqHeldPastKnob (GuiHost& host, ScenarioContext&
         applySessionDirectory (session, originalDir);
     });
 
-    // A Black LF dial at 400 played about 660 Hz and a Black HPF at 300 about
-    // 316 Hz, past the 450 Hz and 300 Hz tops of today's knobs. A Black HF
-    // dial at 1000 played about 637 Hz, below the knob's 1.5 kHz.
+    // A Black HPF dial at 300 played about 316 Hz, past the 300 Hz top of
+    // today's knob. An LF dial at 400 is a marking on the LF knob, and an HF
+    // dial at 1000 sits below the HF knob's 1.5 kHz end, which plays the same.
     const auto legacy = ctx.tempDir() / "legacy" / "session.json";
     std::error_code created;
     std::filesystem::create_directories (legacy.parent_path(), created);
@@ -1729,15 +1730,17 @@ std::optional<ScenarioResult> runEqHeldPastKnob (GuiHost& host, ScenarioContext&
     }
     if (! host.openSession (legacy)) return ScenarioResult::fail ("could not open the format 7 session");
     auto& strip = session.track (0).strip;
-    const float lf = strip.lfFreq.load(), hf = strip.hfFreq.load(), hpf = strip.hpfFreq.load();
-    const auto dialOf = [&strip] (EqFreq f)
+    const float hpf = strip.hpfFreq.load();
+    const auto hpfDial = [&strip]
     {
         float hz = 0.0f;
-        return strip.legacyDial (f).dialFor (strip.eqFreq (f), strip.eqBlackMode.load(), hz);
+        return strip.hpfDial.dialFor (strip.hpfFreq, strip.eqBlackMode.load(), hz);
     };
-    if (! (lf > ChannelStripParams::kLfFreqMax && hf < ChannelStripParams::kHfFreqMin
+    const auto at = [] (const std::atomic<float>& freq, float marking) { return std::abs (freq.load() - marking) < 1.0e-3f; };
+    if (! (at (strip.lfFreq, 400.0f) && at (strip.hfFreq, ChannelStripParams::kHfFreqMin)
            && hpf > ChannelStripParams::kHpfMaxHz))
-        return ScenarioResult::fail ("the format 7 session did not load past the knobs, or opening it wrote the end stops back");
+        return ScenarioResult::fail ("the format 7 session's bands did not load at their markings, or its HPF "
+                                     "did not load past the knob, or opening it wrote the end stop back");
 
     const auto reads = [&host] (const std::string& title)
     {
@@ -1750,57 +1753,66 @@ std::optional<ScenarioResult> runEqHeldPastKnob (GuiHost& host, ScenarioContext&
         const auto text = host.valueBoxText (title);
         ctx.expect (text == expected, what + " reads " + text + ", expected " + expected);
     };
-    auto steps = std::make_shared<std::vector<Step>>();
-    steps->push_back ({ 300, [&ctx, &strip, lf, hf, hpf, reads, shown, boxReads, dialOf]
+    const auto bandsRead = [boxReads] (const std::string& when)
     {
-        ctx.expect (dialOf (EqFreq::Lf) > 0.0f && dialOf (EqFreq::Hf) > 0.0f && dialOf (EqFreq::Hpf) > 0.0f,
-                    "the format 7 session's bands are not playing their dials");
-        ctx.expect (std::abs (strip.lfFreq.load() - lf) < 1.0e-3f, "building the strip wrote the LF knob's end stop back");
-        ctx.expect (std::abs (strip.hfFreq.load() - hf) < 1.0e-3f, "building the strip wrote the HF knob's end stop back");
+        boxReads ("Track 1 LF frequency", "400", "the LF value box " + when);
+        boxReads ("Track 1 HF frequency", "1.5k", "the HF value box " + when);
+    };
+    auto steps = std::make_shared<std::vector<Step>>();
+    steps->push_back ({ 300, [&ctx, &strip, hpf, at, reads, shown, boxReads, bandsRead, hpfDial]
+    {
+        ctx.expect (hpfDial() > 0.0f, "the format 7 session's HPF is not playing its dial");
         ctx.expect (std::abs (strip.hpfFreq.load() - hpf) < 1.0e-3f, "building the strip wrote the HPF knob's end stop back");
-        ctx.expect (reads ("Track 1 LF frequency") == shown (lf),
-                    "the LF knob reads " + reads ("Track 1 LF frequency") + ", the band plays " + shown (lf));
+        ctx.expect (at (strip.hfFreq, ChannelStripParams::kHfFreqMin), "building the strip moved the HF band");
+        ctx.expect (reads ("Track 1 LF frequency") == "400", "the LF knob reads " + reads ("Track 1 LF frequency"));
         ctx.expect (reads ("Track 1 high-pass filter frequency") == shown (hpf),
                     "the HPF knob reads " + reads ("Track 1 high-pass filter frequency") + ", the filter plays " + shown (hpf));
-        boxReads ("Track 1 LF frequency", shown (lf), "the LF value box");
-        boxReads ("Track 1 HF frequency", shown (hf), "the HF value box");
+        bandsRead ("as loaded");
         boxReads ("Track 1 high-pass filter frequency", shown (hpf), "the HPF value box");
         boxReads ("Track 2 high-pass filter frequency", "OFF", "track 2's HPF value box");
+        // Brown, as the EQ menu switches it: the bands play elsewhere, their
+        // knobs stay.
+        strip.eqBlackMode.store (false);
     } });
-    steps->push_back ({ 100, [&host, &ctx]
+    steps->push_back ({ 200, [&ctx, &strip, at, bandsRead, hpfDial]
     {
+        bandsRead ("in Brown");
+        ctx.expect (at (strip.lfFreq, 400.0f) && at (strip.hfFreq, ChannelStripParams::kHfFreqMin),
+                    "switching the voicing moved a band");
+        ctx.expect (! (hpfDial() > 0.0f) && strip.hpfDial.raw() != 0, "switching the voicing did not suspend the HPF's dial");
+        strip.eqBlackMode.store (true);
+    } });
+    steps->push_back ({ 100, [&host, &ctx, hpfDial]
+    {
+        ctx.expect (hpfDial() > 0.0f, "switching back did not play the HPF's dial again");
         ctx.expect (host.setAccessibleValue ("Track 1 LF frequency", "300"), "the LF knob takes no value");
         ctx.expect (host.setAccessibleValue ("Track 1 high-pass filter frequency", "120"), "the HPF knob takes no value");
     } });
-    steps->push_back ({ 100, [&ctx, &strip, reads, dialOf]
+    steps->push_back ({ 100, [&ctx, &strip, reads]
     {
-        ctx.expect (std::abs (strip.lfFreq.load() - 300.0f) < 0.5f, "moving the LF knob did not bring the band into range");
+        ctx.expect (std::abs (strip.lfFreq.load() - 300.0f) < 0.5f, "moving the LF knob did not move the band");
         ctx.expect (std::abs (strip.hpfFreq.load() - 120.0f) < 0.5f && strip.hpfEnabled.load(),
                     "moving the HPF knob did not bring the filter into range");
         ctx.expect (reads ("Track 1 LF frequency") == "300", "the LF knob reads " + reads ("Track 1 LF frequency"));
-        ctx.expect (strip.legacyDial (EqFreq::Lf).raw() == 0 && strip.legacyDial (EqFreq::Hpf).raw() == 0,
-                    "moving the LF and HPF knobs kept their format 7 dials");
-        ctx.expect (dialOf (EqFreq::Hf) > 0.0f, "moving the LF and HPF knobs dropped the HF band's dial");
+        ctx.expect (strip.hpfDial.raw() == 0, "moving the HPF knob kept its format 7 dial");
         strip.setEqFreq (EqFreq::Hpf, ChannelStripParams::kHpfOffHz);
         strip.hpfEnabled.store (false);
     } });
     // The EQ editor builds its knobs on each open, from the stored values.
     steps->push_back ({ 100, [&host, &ctx]
     { ctx.expect (host.clickStripModule (0, 0, true, false), "EQ module label is unavailable"); } });
-    steps->push_back ({ 500, [&host, &ctx, &strip, hf, shown, boxReads, dialOf]
+    steps->push_back ({ 500, [&host, &ctx, &strip, at, boxReads]
     {
         ctx.expect (host.stripModuleEditorOpen (0, 0), "the EQ label did not open its editor");
-        boxReads ("EQ editor HF frequency", shown (hf) + " Hz", "the editor's HF value box");
+        boxReads ("EQ editor HF frequency", "1.5 kHz", "the editor's HF value box");
         boxReads ("EQ editor LF frequency", "300 Hz", "the editor's LF value box");
         boxReads ("EQ editor high-pass filter frequency", "off", "the editor's HPF value box");
-        ctx.expect (std::abs (strip.hfFreq.load() - hf) < 1.0e-3f && dialOf (EqFreq::Hf) > 0.0f,
-                    "opening the EQ editor wrote the HF band back or dropped its dial");
+        ctx.expect (at (strip.hfFreq, ChannelStripParams::kHfFreqMin), "opening the EQ editor wrote the HF band back");
         ctx.expect (host.setAccessibleValue ("EQ editor HF frequency", "2000"), "the editor's HF knob takes no value");
     } });
     steps->push_back ({ 100, [&host, &ctx, &strip]
     {
         ctx.expect (std::abs (strip.hfFreq.load() - 2000.0f) < 0.5f, "moving the editor's HF knob did not move the band");
-        ctx.expect (strip.legacyDial (EqFreq::Hf).raw() == 0, "moving the editor's HF knob kept its format 7 dial");
         host.closeStripModuleEditors (0);
     } });
     // A write from MIDI or a control surface lands on the strip's own knobs.
@@ -1817,21 +1829,20 @@ std::optional<ScenarioResult> runEqHeldPastKnob (GuiHost& host, ScenarioContext&
         boxReads ("Track 1 LM Q", "1.5", "the LM Q value box after an outside write");
     } });
     // Reset EQ writes each knob's default even onto a knob already there: an
-    // LM band stored between the knob's 1 Hz steps, with a dial, reads 600.
+    // LM band stored between the knob's 1 Hz steps reads 1000.
     steps->push_back ({ 200, [&host, &ctx, &strip]
     {
-        strip.lmFreq.store (600.3f);
-        strip.legacyDial (EqFreq::Lm).set (870.0f, 600.3f, strip.eqBlackMode.load());
+        strip.lmFreq.store (ChannelStripParams::kLmFreqDefault + 0.3f);
         ctx.expect (host.clickStripModule (0, 0, true, true), "EQ module right-click failed");
     } });
     steps->push_back ({ 200, [&host, &ctx]
     { ctx.expect (host.clickContextMenuItem ("Reset EQ"), "the EQ menu did not offer Reset EQ"); } });
-    steps->push_back ({ 200, [&ctx, &strip]
+    steps->push_back ({ 200, [&ctx, &strip, at]
     {
-        ctx.expect (std::abs (strip.lmFreq.load() - 600.0f) < 1.0e-3f && strip.legacyDial (EqFreq::Lm).raw() == 0,
-                    "Reset EQ left LM between its knob's steps, or kept its dial");
-        ctx.expect (std::abs (strip.lfFreq.load() - 100.0f) < 0.5f && std::abs (strip.hfFreq.load() - 8000.0f) < 0.5f,
-                    "Reset EQ did not reset LF and HF");
+        ctx.expect (at (strip.lmFreq, ChannelStripParams::kLmFreqDefault),
+                    "Reset EQ left LM between its knob's steps");
+        ctx.expect (at (strip.lfFreq, ChannelStripParams::kLfFreqDefault) && at (strip.hfFreq, ChannelStripParams::kHfFreqDefault),
+                    "Reset EQ did not reset LF and HF to 4K EQ 2's defaults");
     } });
     runSteps (ctx, steps, [&ctx] { ctx.complete (ctx.verdict()); });
     return std::nullopt;
@@ -2016,7 +2027,8 @@ std::optional<ScenarioResult> runEqKnobTravel (GuiHost& host, ScenarioContext& c
         host.setStripCompact (0, originalCompact);
     });
 
-    const EqKnobTravel freq { EqKnob::LmFreq, ChannelStripParams::kLmFreqMin, ChannelStripParams::kLmFreqMax, 600.0 };
+    const EqKnobTravel freq { EqKnob::LmFreq, ChannelStripParams::kLmFreqMin, ChannelStripParams::kLmFreqMax,
+                              ChannelStripParams::kLmFreqDefault };
     const EqKnobTravel q { EqKnob::Q, ChannelStripParams::kBandQMin, ChannelStripParams::kBandQMax, 1.0 };
     const auto stores = [&ctx, &strip, freq, q] (double position, const std::string& view)
     {

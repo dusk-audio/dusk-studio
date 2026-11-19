@@ -56,8 +56,8 @@ void eachTrackField (Track& dst, Src& src, Fields& f)
     f.atomic (d.hfGainDb, s.hfGainDb);
     f.atomic (d.hfFreq, s.hfFreq);
     f.atomic (d.eqBlackMode, s.eqBlackMode);
-    for (size_t i = 0; i < d.eqFreqDial.size(); ++i)
-        f.dial (d.eqFreqDial[i], s.eqFreqDial[i]);
+    f.dial (d.hpfDial, s.hpfDial);
+    f.dial (d.lpfDial, s.lpfDial);
     f.atomic (d.eqEnabled, s.eqEnabled, std::memory_order_release);
 
     f.atomic (d.compEnabled, s.compEnabled);

@@ -171,6 +171,13 @@ struct Rig
         params.comp.set (duskstudio::CompParamId::VcaCompression, 80.0f);
     }
 };
+
+// Where the dial law plays an LM band marked 1 kHz at gainDb, in Brown.
+double lmPlayedHz (float gainDb)
+{
+    using EQ = duskaudio::FourKEQDSP;
+    return EQ::calibratedEqFrequency (1000.0f, gainDb, EQ::Band::LM, false, true);
+}
 } // namespace
 
 TEST_CASE ("channel strip order: phase invert comes before the insert", "[channel-strip][order]")
@@ -240,7 +247,7 @@ TEST_CASE ("channel strip order: the insert comes before HPF / EQ / LPF", "[chan
     }
     SECTION ("EQ band")
     {
-        check (1000.0, [] (duskstudio::ChannelStripParams& p)
+        check (lmPlayedHz (12.0f), [] (duskstudio::ChannelStripParams& p)
         {
             p.lmFreq.store (1000.0f);
             p.lmGainDb.store (12.0f);
@@ -287,8 +294,8 @@ TEST_CASE ("channel strip order: HPF / EQ / LPF come before the compressor", "[c
     }
     SECTION ("EQ band")
     {
-        const double open = grDb (1000.0, none);
-        const double cut  = grDb (1000.0, [] (duskstudio::ChannelStripParams& p)
+        const double open = grDb (lmPlayedHz (-12.0f), none);
+        const double cut  = grDb (lmPlayedHz (-12.0f), [] (duskstudio::ChannelStripParams& p)
         {
             p.lmFreq.store (1000.0f);
             p.lmGainDb.store (-12.0f);

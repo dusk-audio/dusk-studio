@@ -95,13 +95,23 @@ canonical source.
   open with their compressor settings converted to Multi-Comp 2's controls.
   The conversion keeps the settings as closely as the new controls allow
   rather than matching the old sound, so an older mix can sound slightly
-  different. Dusk Studio 0.16 cannot open a session saved by 0.17.
-- **Strip EQ knob travel.** The channel EQ's band frequency and Q knobs, on
-  the strip and in the editor, travel as 4K EQ 2's do: they pass through
-  the settings the console was measured at, one at every twentieth of their
-  travel. The Q knobs turn the other way: 3 at the left end and 0.5 at the
-  right, so turning one clockwise widens the band. Stored values, MIDI and
-  Mackie Control are unchanged.
+  different. A channel EQ band's saved frequency is its knob's marking,
+  where it was the frequency the band played. Dusk Studio 0.16 cannot open
+  a session saved by 0.17.
+- **Strip EQ knobs as on 4K EQ 2.** The channel EQ's band frequency and Q
+  knobs, on the strip and in the editor, travel as 4K EQ 2's do: they pass
+  through the settings the console was measured at, one at every twentieth
+  of their travel. The Q knobs turn the other way: 3 at the left end and 0.5
+  at the right, so turning one clockwise widens the band. The band frequency
+  knobs carry the console's markings and play them as the plug-in does, so
+  the same setting reads and sounds the same on both: a band plays where
+  measurements of the console put its marking, which differs from the
+  marking and between E and G. LM at 1 kHz peaks near 800 Hz with E and near
+  590 Hz with G. A new strip's bands start on the plug-in's defaults, LF
+  200 Hz, LM 1 kHz, HM 3 kHz and HF 8 kHz, with each knob straight up. MIDI
+  and control surfaces move the markings. Sessions from 0.14 to 0.16 open
+  with each band on the marking that plays where it played, or at the end of
+  its knob when no marking reaches that far.
 - **Built-in units at their plug-ins' released versions.** DuskVerb 2, Tape
   Echo 2, Tape Machine 2 and Sunset now build from DuskVerb 2 1.0.1, Tape
   Echo 2 1.0.9, Tape Machine 2 1.0.12 and Sunset Circuits 1.1.0. DuskVerb 2

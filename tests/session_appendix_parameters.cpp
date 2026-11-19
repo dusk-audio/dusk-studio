@@ -114,15 +114,15 @@ TEST_CASE ("Appendix A: channel defaults and load ranges", "[session][appendix]"
         { "/tracks/0/pan", &p.pan, 0, -1, 1 },
         { "/tracks/0/hpf/freq", &p.hpfFreq, 20, 20, 320 },
         { "/tracks/0/lpf/freq", &p.lpfFreq, 20000, 3000, 20000 },
-        { "/tracks/0/eq/lf/freq", &p.lfFreq, 100, 30, 670 },
+        { "/tracks/0/eq/lf/freq", &p.lfFreq, 200, 30, 450 },
         { "/tracks/0/eq/lf/gain", &p.lfGainDb, 0, -15, 15 },
-        { "/tracks/0/eq/lm/freq", &p.lmFreq, 600, 135, 2500 },
+        { "/tracks/0/eq/lm/freq", &p.lmFreq, 1000, 200, 2500 },
         { "/tracks/0/eq/lm/gain", &p.lmGainDb, 0, -15, 15 },
         { "/tracks/0/eq/lm/q", &p.lmQ, 0.7f, 0.4f, 4 },
-        { "/tracks/0/eq/hm/freq", &p.hmFreq, 2000, 600, 8800 },
+        { "/tracks/0/eq/hm/freq", &p.hmFreq, 3000, 600, 7000 },
         { "/tracks/0/eq/hm/gain", &p.hmGainDb, 0, -15, 15 },
         { "/tracks/0/eq/hm/q", &p.hmQ, 0.7f, 0.4f, 4 },
-        { "/tracks/0/eq/hf/freq", &p.hfFreq, 8000, 630, 16000 },
+        { "/tracks/0/eq/hf/freq", &p.hfFreq, 8000, 1500, 16000 },
         { "/tracks/0/eq/hf/gain", &p.hfGainDb, 0, -15, 15 },
     };
     addComp (numbers, p.comp, CompStage::Strip, "/tracks/0");
@@ -136,8 +136,8 @@ TEST_CASE ("Appendix A: channel defaults and load ranges", "[session][appendix]"
         { "/tracks/0/comp/mode_picked", &p.compModePicked },
     });
     // Appendix A's knob ranges load as written. Ten hertz past a knob's end
-    // loads as written where a converted older session can play there, and
-    // stops at the knob's end where none can.
+    // loads as written where a converted older session can play there, the
+    // HPF's top, and stops at the knob's end where none can.
     struct KnobRange
     {
         const char* path;
@@ -147,10 +147,10 @@ TEST_CASE ("Appendix A: channel defaults and load ranges", "[session][appendix]"
     const KnobRange knobs[] {
         { "/tracks/0/hpf/freq",   &p.hpfFreq,   20,   300,   20,   310 },
         { "/tracks/0/lpf/freq",   &p.lpfFreq, 3000, 20000, 3000, 20000 },
-        { "/tracks/0/eq/lf/freq", &p.lfFreq,    30,   450,   30,   460 },
-        { "/tracks/0/eq/lm/freq", &p.lmFreq,   200,  2500,  190,  2500 },
-        { "/tracks/0/eq/hm/freq", &p.hmFreq,   600,  7000,  600,  7010 },
-        { "/tracks/0/eq/hf/freq", &p.hfFreq,  1500, 16000, 1490, 16000 },
+        { "/tracks/0/eq/lf/freq", &p.lfFreq,    30,   450,   30,   450 },
+        { "/tracks/0/eq/lm/freq", &p.lmFreq,   200,  2500,  200,  2500 },
+        { "/tracks/0/eq/hm/freq", &p.hmFreq,   600,  7000,  600,  7000 },
+        { "/tracks/0/eq/hf/freq", &p.hfFreq,  1500, 16000, 1500, 16000 },
     };
     for (const float past : { 0.0f, 10.0f })
     {

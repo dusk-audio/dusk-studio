@@ -317,10 +317,8 @@ std::optional<ScenarioResult> runMatrix (ScenarioContext& ctx)
         auto& t = session.track (track);
         auto& s = t.strip;
         const std::string p = "t" + std::to_string (track);
-        std::array<std::uint64_t, ChannelStripParams::kNumEqFreqs> dials {};
-        for (std::size_t i = 0; i < dials.size(); ++i) dials[i] = s.eqFreqDial[i].raw();
-        ctx.cleanup ([&s, dials]
-        { for (std::size_t i = 0; i < dials.size(); ++i) s.eqFreqDial[i].setRaw (dials[i]); });
+        const auto hpfDial = s.hpfDial.raw(), lpfDial = s.lpfDial.raw();
+        ctx.cleanup ([&s, hpfDial, lpfDial] { s.hpfDial.setRaw (hpfDial); s.lpfDial.setRaw (lpfDial); });
         const auto add = [&] (const char* name, auto& atom) { state->add (ctx, p + name, atom); };
         add (".fader", s.faderDb); add (".pan", s.pan); add (".mute", s.mute); add (".solo", s.solo);
         add (".arm", t.recordArmed); add (".hardware", t.hardwareInsert.enabled);

@@ -787,7 +787,7 @@ TEST_CASE ("Channel silent-input skip preserves slow filter tails before a close
         params.comp.set (duskstudio::CompParamId::VcaCompression, 80.0f);
         if (highQ)
         {
-            params.lmFreq.store (100.0f);
+            params.lmFreq.store (duskstudio::ChannelStripParams::kLmFreqMin);
             params.lmGainDb.store (15.0f);
             params.lmQ.store (3.5f);
         }

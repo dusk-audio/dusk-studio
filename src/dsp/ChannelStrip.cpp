@@ -514,31 +514,30 @@ void ChannelStrip::parkGainSmoothers (int numSamples) noexcept
 // (filters off, every band 0 dB) so only the saturation + transformer
 // character is applied - the tone shaping is what bypasses. FourKEQDSP
 // tolerates the zero-freq/zero-Q flat image: the HPF/LPF are gated by their
-// enable flags (so their coeffs never process), the Hz setters lift a zero
-// frequency to the core's floor, and a band at 0 dB is flat wherever it sits.
+// enable flags (so their coeffs never process), the filters' Hz setters lift a
+// zero frequency to the core's floor, the dial law holds a zero marking at its
+// table's low end, and a band at 0 dB is flat wherever it sits.
 ChannelStrip::EqSnapshot ChannelStrip::eqSnapshotFor (const ChannelStripParams& params) noexcept
 {
-    using EqFreq = ChannelStripParams::EqFreq;
     EqSnapshot p {};
     const bool black = params.eqBlackMode.load (std::memory_order_relaxed);
     if (params.eqEnabled.load (std::memory_order_acquire))
     {
-        const auto& dial = params.eqFreqDial;
         p.hpfEnabled = params.hpfEnabled.load (std::memory_order_relaxed) ? 1.0f : 0.0f;
-        p.hpfDial    = dial[(size_t) EqFreq::Hpf].dialFor (params.hpfFreq, black, p.hpfFreq);
+        p.hpfDial    = params.hpfDial.dialFor (params.hpfFreq, black, p.hpfFreq);
         p.lpfEnabled = params.lpfEnabled.load (std::memory_order_relaxed) ? 1.0f : 0.0f;
-        p.lpfDial    = dial[(size_t) EqFreq::Lpf].dialFor (params.lpfFreq, black, p.lpfFreq);
+        p.lpfDial    = params.lpfDial.dialFor (params.lpfFreq, black, p.lpfFreq);
         p.lfGain     = params.lfGainDb.load (std::memory_order_relaxed);
-        p.lfDial     = dial[(size_t) EqFreq::Lf].dialFor (params.lfFreq, black, p.lfFreq);
+        p.lfFreq     = params.lfFreq.load   (std::memory_order_relaxed);
         p.lfBell     = 0.0f;
         p.lmGain     = params.lmGainDb.load (std::memory_order_relaxed);
-        p.lmDial     = dial[(size_t) EqFreq::Lm].dialFor (params.lmFreq, black, p.lmFreq);
+        p.lmFreq     = params.lmFreq.load   (std::memory_order_relaxed);
         p.lmQ        = params.lmQ.load      (std::memory_order_relaxed);
         p.hmGain     = params.hmGainDb.load (std::memory_order_relaxed);
-        p.hmDial     = dial[(size_t) EqFreq::Hm].dialFor (params.hmFreq, black, p.hmFreq);
+        p.hmFreq     = params.hmFreq.load   (std::memory_order_relaxed);
         p.hmQ        = params.hmQ.load      (std::memory_order_relaxed);
         p.hfGain     = params.hfGainDb.load (std::memory_order_relaxed);
-        p.hfDial     = dial[(size_t) EqFreq::Hf].dialFor (params.hfFreq, black, p.hfFreq);
+        p.hfFreq     = params.hfFreq.load   (std::memory_order_relaxed);
         p.hfBell     = 0.0f;
     }
     p.eqType     = black ? 1.0f : 0.0f;
@@ -548,22 +547,19 @@ ChannelStrip::EqSnapshot ChannelStrip::eqSnapshotFor (const ChannelStripParams& 
     return p;
 }
 
-// Each band and filter takes exactly one frequency setter per push: the core
-// plays whichever of its dial and Hz setters ran last.
+// Each filter takes exactly one frequency setter per push: the core plays
+// whichever of its dial and Hz setters ran last. A band's marking goes to the
+// dial setter, as 4K EQ 2 hands over its parameter.
 void ChannelStrip::applyEqSnapshot (duskaudio::FourKEQDSP& core, const EqSnapshot& p) noexcept
 {
     core.setHpfEnabled (p.hpfEnabled > 0.5f);
     if (p.hpfDial > 0.0f) core.setHpfFreq (p.hpfDial); else core.setHpfFreqHz (p.hpfFreq);
     core.setLpfEnabled (p.lpfEnabled > 0.5f);
     if (p.lpfDial > 0.0f) core.setLpfFreq (p.lpfDial); else core.setLpfFreqHz (p.lpfFreq);
-    core.setLfGain (p.lfGain);  core.setLfBell (p.lfBell > 0.5f);
-    if (p.lfDial > 0.0f) core.setLfFreq (p.lfDial); else core.setLfFreqHz (p.lfFreq);
-    core.setLmGain (p.lmGain);  core.setLmQ (p.lmQ);
-    if (p.lmDial > 0.0f) core.setLmFreq (p.lmDial); else core.setLmFreqHz (p.lmFreq);
-    core.setHmGain (p.hmGain);  core.setHmQ (p.hmQ);
-    if (p.hmDial > 0.0f) core.setHmFreq (p.hmDial); else core.setHmFreqHz (p.hmFreq);
-    core.setHfGain (p.hfGain);  core.setHfBell (p.hfBell > 0.5f);
-    if (p.hfDial > 0.0f) core.setHfFreq (p.hfDial); else core.setHfFreqHz (p.hfFreq);
+    core.setLfGain (p.lfGain);  core.setLfBell (p.lfBell > 0.5f);  core.setLfFreq (p.lfFreq);
+    core.setLmGain (p.lmGain);  core.setLmQ (p.lmQ);               core.setLmFreq (p.lmFreq);
+    core.setHmGain (p.hmGain);  core.setHmQ (p.hmQ);               core.setHmFreq (p.hmFreq);
+    core.setHfGain (p.hfGain);  core.setHfBell (p.hfBell > 0.5f);  core.setHfFreq (p.hfFreq);
     core.setEqType ((int) p.eqType);
     core.setSaturation (p.saturation);
     core.setInputGainDb (p.inputGain);

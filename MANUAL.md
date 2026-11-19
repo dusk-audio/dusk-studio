@@ -825,12 +825,14 @@ The four bands are:
 
 | Band   | Type       | Freq range     | Default freq | Gain   | Q range |
 | ------ | ---------- | -------------- | ------------ | ------ | ------- |
-| **LF** | Low shelf  | 30–450 Hz      | 100 Hz       | ±15 dB | n/a     |
-| **LM** | Peaking    | 200 Hz–2.5 kHz | 600 Hz       | ±15 dB | 0.4–4.0 |
-| **HM** | Peaking    | 600 Hz–7 kHz   | 2 kHz        | ±15 dB | 0.4–4.0 |
+| **LF** | Low shelf  | 30–450 Hz      | 200 Hz       | ±15 dB | n/a     |
+| **LM** | Peaking    | 200 Hz–2.5 kHz | 1 kHz        | ±15 dB | 0.4–4.0 |
+| **HM** | Peaking    | 600 Hz–7 kHz   | 3 kHz        | ±15 dB | 0.4–4.0 |
 | **HF** | High shelf | 1.5–16 kHz     | 8 kHz        | ±15 dB | n/a     |
 
-The frequency is where you hear the band: a peaking band is centred on it, and a shelf has its corner there. From 3 dB of boost or cut, roughly half to two-thirds of a shelf's boost or cut is in at its frequency, and nearly all of it two octaves further out. As on the console, gain moves a peaking band's centre, by up to about 2.5%. Sessions saved by earlier versions are converted when they open. Each knob shows the frequency its band plays, and each band keeps the frequency and shape it had until its frequency is changed (knob, MIDI or control surface). The one difference is at the very top of the audio band at 1× and 2× **Effect oversampling**, where the EQ no longer cramps (below). Switching such a track's saturation character plays each band at the frequency its knob shows, and switching back brings the old sound back, also after the session is saved and reopened in between. A band that played outside today's range keeps that frequency: its knob rests at the end and shows it, and the band moves into the range only when its frequency is changed.
+The frequency knobs carry the console's frequency markings, as the knobs of the 4K EQ 2 plug-in do: a knob turned to the same place reads the same and sounds the same on both. The frequency a band plays is not the one its knob reads. The strip plays each marking where measurements of the console put it, and that differs with the saturation character: with **E**, LM at 1 kHz peaks near 800 Hz and HF at 8 kHz has its corner near 2.7 kHz; with **G**, LM at 1 kHz peaks near 590 Hz. Switching between **E** and **G** moves where each band plays, not its knob or what the knob reads. From 3 dB of boost or cut, roughly half to two-thirds of a shelf's boost or cut is in at its corner, and nearly all of it two octaves further out. As on the console, gain moves a peaking band's centre, by up to about 2.5%.
+
+Sessions saved by earlier versions are converted when they open. A band saved by 0.14 to 0.16 moves to the marking that plays where it played, with the track's saturation character, so it keeps its frequency. A band that played further out than any marking on its knob reaches, such as an **E** HF shelf with its corner above about 6 kHz, moves to that end of the knob, the nearest it can play. A band saved before 0.14 keeps its setting, at the end of its knob if it was further out, and plays as it did, apart from the very top of the audio band at 1× and 2× **Effect oversampling**, where the EQ no longer cramps (below).
 
 Each knob is a rotary slider. Drag up to turn it clockwise, down to turn it back. Use a vertical drag for gain, a horizontal drag for frequency. There are no numeric text boxes on the knobs; the values display below.
 
@@ -2228,7 +2230,7 @@ Once connected:
 - **Channel Left** / **Channel Right** step the selected channel by 1.
 - **Mute / Solo / Arm / Select** buttons mirror and drive the on-screen buttons. LEDs reflect state.
 - **V-pot** rotaries drive pan, sends, the channel EQ, or compressor depending on the **assign mode**. Press **Pan**, **Send** (repeated presses cycle sends 1–4), **EQ**, or the **Track** button (mapped to the compressor in Dusk Studio) to switch. The surface's **Plugin** and **Inst** assign buttons are not mapped.
-- In **EQ** assign mode the encoders act on the *selected* channel: 1 = HPF frequency, 2 = LF gain, 3 = LF frequency, 4 = LM gain, 5 = LM frequency, 6 = HM gain, 7 = HF gain, 8 = HF frequency. Turning an encoder engages the channel's EQ if it was bypassed, as moving the knob does. Turning the HPF encoder up from OFF switches the HPF on and engages the EQ, and turning it back down to OFF switches the HPF off and leaves the EQ engaged. Pushing an encoder resets it to its knob's default without engaging the EQ: the HPF to OFF, switched off; a gain to 0 dB; LF to 100 Hz, LM to 600 Hz, HF to 8 kHz. A band that a converted older session holds past its knob's range stays there when turned further out, and steps in from the end of the range when turned back.
+- In **EQ** assign mode the encoders act on the *selected* channel: 1 = HPF frequency, 2 = LF gain, 3 = LF frequency, 4 = LM gain, 5 = LM frequency, 6 = HM gain, 7 = HF gain, 8 = HF frequency. Turning an encoder engages the channel's EQ if it was bypassed, as moving the knob does. Turning the HPF encoder up from OFF switches the HPF on and engages the EQ, and turning it back down to OFF switches the HPF off and leaves the EQ engaged. Pushing an encoder resets it to its knob's default without engaging the EQ: the HPF to OFF, switched off; a gain to 0 dB; LF to 200 Hz, LM to 1 kHz, HF to 8 kHz. An HPF that a converted older session holds past its knob's range stays there when turned further out, and steps in from the end of the range when turned back.
 - In **compressor** assign mode the encoders act on the *selected* channel: 1 = threshold, 2 = ratio, 3 = attack, 4 = release, 5 = makeup. Each moves the control the active mode plays for that role across the plug-in's whole range: the threshold is Opto's peak reduction, FET's input or VCA's threshold, and turning it right means less compression in every mode; the ratio is FET's ratio or VCA's compression. Turning an encoder engages the compressor if it was bypassed, as the strip's knobs and threshold handle do. Pushing an encoder returns its control to the plug-in's default without engaging the compressor. Opto has no ratio, attack or release, and VCA no attack or release, so those encoders do nothing in those modes. A continuous control moves a hundredth of its range per detent. The FET ratio is a five-position switch, so its encoder moves one position per turn of the wrist however fast you spin it.
 - **Transport buttons** map to Play, Stop, Record, Rewind, Forward, Loop.
 - **Jog wheel** scrubs the playhead.
@@ -3090,12 +3092,12 @@ The hardware-insert ping reports its result inline on the editor (not a modal), 
 | LPF      | Frequency (−3 dB) | 3–20 kHz                   | 20 kHz   |
 | EQ       | Enable         | Off / On                      | Off      |
 | EQ       | Mode           | E (brown) / G (black)         | E        |
-| EQ LF    | Frequency      | 30–450 Hz                     | 100 Hz   |
+| EQ LF    | Frequency      | 30–450 Hz                     | 200 Hz   |
 | EQ LF    | Gain           | ±15 dB                        | 0 dB     |
-| EQ LM    | Frequency      | 200 Hz–2.5 kHz                | 600 Hz   |
+| EQ LM    | Frequency      | 200 Hz–2.5 kHz                | 1 kHz    |
 | EQ LM    | Gain           | ±15 dB                        | 0 dB     |
 | EQ LM    | Q              | 0.4–4.0                       | 0.7      |
-| EQ HM    | Frequency      | 600 Hz–7 kHz                  | 2 kHz    |
+| EQ HM    | Frequency      | 600 Hz–7 kHz                  | 3 kHz    |
 | EQ HM    | Gain           | ±15 dB                        | 0 dB     |
 | EQ HM    | Q              | 0.4–4.0                       | 0.7      |
 | EQ HF    | Frequency      | 1.5–16 kHz                    | 8 kHz    |

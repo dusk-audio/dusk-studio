@@ -312,8 +312,6 @@ private:
         // populated only for mid (HM/LM) bell bands; nullptr for HF/LF shelves.
         std::unique_ptr<juce::Slider> q;
         juce::Label rowLabel;
-        float shownFreq = 0.0f;
-        PaintedValue freqText;
     };
     std::array<BandRow, 4> eqRows;
 

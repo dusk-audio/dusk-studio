@@ -874,15 +874,15 @@ struct CloneTrackAction::Impl
 
     bool  hpfEnabled = false; float hpfFreq = 20.0f;
     bool  lpfEnabled = false; float lpfFreq = 20000.0f;
-    float lfGainDb = 0.0f, lfFreq = 100.0f;
-    float lmGainDb = 0.0f, lmFreq = 600.0f, lmQ = 0.7f;
-    float hmGainDb = 0.0f, hmFreq = 2000.0f, hmQ = 0.7f;
-    float hfGainDb = 0.0f, hfFreq = 8000.0f;
+    float lfGainDb = 0.0f, lfFreq = ChannelStripParams::kLfFreqDefault;
+    float lmGainDb = 0.0f, lmFreq = ChannelStripParams::kLmFreqDefault, lmQ = 0.7f;
+    float hmGainDb = 0.0f, hmFreq = ChannelStripParams::kHmFreqDefault, hmQ = 0.7f;
+    float hfGainDb = 0.0f, hfFreq = ChannelStripParams::kHfFreqDefault;
     bool  eqBlackMode = false;
     bool  eqEnabled = false;
-    // Each frequency's format-7 dial with the frequency and voicing it pairs
+    // Each filter's format-7 dial with the frequency and voicing it pairs
     // with (LegacyEqDial::raw), so a clone and its undo keep the exact sound.
-    std::array<std::uint64_t, ChannelStripParams::kNumEqFreqs> eqFreqDial {};
+    std::uint64_t hpfDial = 0, lpfDial = 0;
 
     bool  compEnabled = false;
     int   compMode = 2;
@@ -1076,8 +1076,8 @@ CloneTrackAction::Impl captureTrack (Track& t, AudioEngine& engine, int idx)
     s.hfFreq     = t.strip.hfFreq.load     (std::memory_order_relaxed);
     s.eqBlackMode = t.strip.eqBlackMode.load (std::memory_order_relaxed);
     s.eqEnabled   = t.strip.eqEnabled.load   (std::memory_order_relaxed);
-    for (size_t i = 0; i < s.eqFreqDial.size(); ++i)
-        s.eqFreqDial[i] = t.strip.eqFreqDial[i].raw();
+    s.hpfDial = t.strip.hpfDial.raw();
+    s.lpfDial = t.strip.lpfDial.raw();
 
     s.compEnabled    = t.strip.compEnabled.load    (std::memory_order_relaxed);
     s.compMode       = t.strip.compMode.load       (std::memory_order_relaxed);
@@ -1311,8 +1311,8 @@ void applyTrack (Track& t, AudioEngine& engine, int idx,
     t.strip.hfFreq.store     (s.hfFreq,     std::memory_order_relaxed);
     t.strip.eqBlackMode.store (s.eqBlackMode, std::memory_order_relaxed);
     // After the frequencies and voicing they pair with.
-    for (size_t i = 0; i < s.eqFreqDial.size(); ++i)
-        t.strip.eqFreqDial[i].setRaw (s.eqFreqDial[i]);
+    t.strip.hpfDial.setRaw (s.hpfDial);
+    t.strip.lpfDial.setRaw (s.lpfDial);
     t.strip.eqEnabled.store (s.eqEnabled, std::memory_order_release);
 
     t.strip.compEnabled.store    (s.compEnabled,    std::memory_order_relaxed);
