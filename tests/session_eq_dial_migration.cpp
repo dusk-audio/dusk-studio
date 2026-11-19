@@ -119,7 +119,11 @@ double worstDifference (const std::vector<float>& a, const std::vector<float>& b
 {
     double worst = 0.0;
     for (size_t i = 0; i < a.size(); ++i)
+    {
+        if (! std::isfinite (a[i]) || ! std::isfinite (b[i]))
+            return std::numeric_limits<double>::infinity();
         worst = std::max (worst, (double) std::abs (a[i] - b[i]));
+    }
     return worst;
 }
 
@@ -662,10 +666,10 @@ TEST_CASE ("A converted filter dial plays only in the voicing it was converted i
 
 // Formats 8 to 11 stored each band's Hz, with the dial the v7 -> v8 step kept
 // beside it while the band still played it. A band carrying a dial the
-// migrator kept for its Hz takes that dial as its marking, in whichever
-// voicing it was kept. Any other band takes the marking whose band the dial
-// law plays where the Hz API played the Hz in the track's voicing, held at
-// the ends of the table. A filter keeps its Hz, and a dial only beside the
+// migrator kept for its Hz in the track's voicing takes that dial as its
+// marking. Any other band, one whose dial a voicing switch suspended
+// included, takes the marking whose band the dial law plays where the Hz API
+// played the Hz in the track's voicing, held at the ends of the table. A filter keeps its Hz, and a dial only beside the
 // frequency the migrator kept it for.
 TEST_CASE ("A format 8 to 11 band takes its kept dial as its marking, or the marking that plays its Hz",
            "[session][serializer][migration][eq]")
@@ -733,7 +737,7 @@ TEST_CASE ("A format 8 to 11 band takes its kept dial as its marking, or the mar
     const auto& kept = session->track (0).strip;
     CHECK_THAT (kept.lfFreq.load(), WithinAbs (100.0, 0.0));
     CHECK_THAT (kept.lmFreq.load(), WithinAbs (600.0, 0.0));
-    CHECK_THAT (kept.hmFreq.load(), WithinAbs (3000.0, 0.0));
+    CHECK (kept.hmFreq.load() != 3000.0f);
     CHECK_THAT (kept.hfFreq.load(), WithinAbs (ChannelStripParams::kHfFreqDefault, 0.0));
     CHECK_THAT (dialOf (kept, EqFreq::Lpf), WithinAbs (19999.6f, 0.0));
     {
@@ -756,6 +760,7 @@ TEST_CASE ("A format 8 to 11 band takes its kept dial as its marking, or the mar
         const float asked = EQ::calibratedEqFrequencyForHz (hz, EQ::kEqReferenceGainDb, band, black, bell);
         return std::abs (played - asked) <= 1.0e-4f * asked;
     };
+    CHECK (playsHz (kept.hmFreq.load(), hmBlack, EQ::Band::HM, false));
     const auto& unkept = session->track (1).strip;
     CHECK (playsHz (unkept.lfFreq.load(), 300.0f, EQ::Band::LF, false));
     CHECK (playsHz (unkept.lmFreq.load(), 700.0f, EQ::Band::LM, false));

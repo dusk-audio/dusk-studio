@@ -441,10 +441,11 @@ bool migrateStripEqDialsToHz (nlohmann::json& root)
 // through the core's Hz API, with the format-7 dial a converted band still
 // played beside it as "freq_dial". Format 12 stores the band's frequency
 // marking, which the strip plays through the core's dial law as 4K EQ 2 does.
-// A band still carrying the dial the v7 -> v8 step kept for its Hz takes that
-// dial, in whichever voicing it was kept; any other band takes the marking
-// that plays its Hz in the track's voicing. Both are held at the ends of the
-// core's anchor table. The filters keep their Hz and their dials.
+// A band still carrying the dial the v7 -> v8 step kept for its Hz in the
+// track's voicing takes that dial; any other band, one whose dial a voicing
+// switch suspended included, takes the marking that plays its Hz in the
+// track's voicing. Both are held at the ends of the core's anchor table. The
+// filters keep their Hz and their dials.
 bool migrateStripEqBandsToMarkings (nlohmann::json& root)
 {
 #if DUSKSTUDIO_HAS_DUSK_DSP
@@ -478,7 +479,8 @@ bool migrateStripEqBandsToMarkings (nlohmann::json& root)
             const float hz = json::getFiniteFloat (*band, "freq", kNaN);
             if (std::isnan (hz)) continue;
             const bool dialBlack = type == "black";
-            const bool kept = (dialBlack || type == "brown") && keptV7DialMatches (b.freq, dial, dialBlack, hz);
+            const bool kept = dialBlack == trackBlack && (dialBlack || type == "brown")
+                           && keptV7DialMatches (b.freq, dial, dialBlack, hz);
             const float* anchors = EQ::frequencyControlAnchors (b.band);
             (*band)["freq"] = std::clamp (kept ? dial : channelEqMarkingForHz (b.freq, hz, trackBlack),
                                           anchors[0], anchors[EQ::kControlAnchorCount - 1]);
