@@ -3992,6 +3992,7 @@ struct MainComponent::ScenarioGuiHost final : scenario::GuiHost
             owner.tapeStrip->cancelTrackMoveDrag();
         }
         if (heldTapePress) releaseTapeTrackName (-1);
+        faceButtonHeld = false;
         closeStartupDialog();
         owner.closeVirtualKeyboard();
         owner.closeTuner();
