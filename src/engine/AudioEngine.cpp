@@ -7154,7 +7154,8 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                 = std::numeric_limits<double>::quiet_NaN();
         hostedTransport.publish (&stopped);
         const auto block = masteringPlayer.process (mixL.data(), mixR.data(), numSamples);
-        const bool capturePhase = ! context.offlineRender && block.stable && block.completeSourceRead;
+        const bool capturePhase = ! context.offlineRender && block.stable && block.completeSourceRead
+                               && session.mastering().phase.enabled.load (std::memory_order_relaxed);
         const auto gatedBlocks = getGatedBlockCount();
         if (capturePhase && (! phaseContinuityValid || gatedBlocks != phaseGatedBlockCount
             || block.revision != previousPhaseBlock.revision

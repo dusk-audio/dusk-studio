@@ -27,6 +27,9 @@ struct MasteringPhaseSettings
 
 struct MasteringPhaseParams
 {
+    // The module's engage switch: out, nothing is analysed and the Mono fold is
+    // released.
+    std::atomic<bool> enabled { true };
     std::atomic<int> bands { 16 };
     std::atomic<float> q { 2.0f };
     std::atomic<float> averagingMs { 500.0f };

@@ -57,8 +57,8 @@ public:
     }
 
 #if DUSKSTUDIO_HAS_DUSK_DSP
-    // Multi-Comp 2 in Multiband mode, for its editor and the presets. Message
-    // thread.
+    // Multi-Comp 2 in Multiband mode, for the page's panel and the presets.
+    // Message thread.
     MultiCompStage& getCompressor() noexcept { return comp; }
 #endif
     BrickwallLimiter& getLimiter() noexcept { return limiter; }
