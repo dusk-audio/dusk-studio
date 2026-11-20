@@ -3,6 +3,7 @@ import fcntl
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import signal
 import socket
@@ -1306,11 +1307,15 @@ for arg in sys.argv[1:-1]:
     assert "the guest's clock reads" in result.stdout and "this box's" in result.stdout, result.stdout
     assert "FAIL   vm-preflight" in result.stdout and "error: the guest's clock reads" in result.stdout.split("FAIL   vm-preflight", 1)[1], \
         result.stdout
-    assert "10800 s (3 h 00 min) ahead" in result.stdout and "set the guest's time zone to the host's" in result.stdout, \
-        result.stdout
+    # The runner measures from the middle of its round trip to the guest, so
+    # the seconds it prints move with how long that trip took.
+    apart = re.search(r"the guest is (\d+) s \(3 h 00 min\) ahead", result.stdout)
+    assert apart and abs(int(apart.group(1)) - 10800) < 30, result.stdout
+    assert "set the guest's time zone to the host's" in result.stdout, result.stdout
     result, calls = windows_source({"REGRESS_TEST_CLOCK_SKEW": "-7200"})
     assert result.returncode != 0 and [kind for kind, _ in calls] == ["clock"], (result.stdout, calls)
-    assert "7200 s (2 h 00 min) behind" in result.stdout, result.stdout
+    apart = re.search(r"the guest is (\d+) s \(2 h 00 min\) behind", result.stdout)
+    assert apart and abs(int(apart.group(1)) - 7200) < 30, result.stdout
     result, calls = windows_source({"REGRESS_TEST_CLOCK_SKEW": "30"})
     assert result.returncode == 0, (result.stdout, result.stderr)
 

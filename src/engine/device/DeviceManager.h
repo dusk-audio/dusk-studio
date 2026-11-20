@@ -68,6 +68,9 @@ public:
     DeviceSetup getSetup() const;
     // Apply a setup. Returns an empty string on success, else an error message.
     std::string setSetup (const DeviceSetup& setup, bool treatAsChosen);
+    // A session's automatic rate switch becomes the saved PipeWire rate only
+    // if the graph actually adopts it.
+    std::string setSessionSampleRate (double sampleRate);
 
     // True between a deliberate device change - a type switch, a setup change,
     // or an explicit closeDevice - and the next device coming up. All of those

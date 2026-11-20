@@ -29,5 +29,9 @@ public:
     // empty (output-only / input-only). Returns null if neither resolves.
     virtual std::unique_ptr<IODevice> createDevice (const std::string& outputDeviceName,
                                                     const std::string& inputDeviceName) = 0;
+
+    // True where a shared graph, not the request, decides the rate and block
+    // size a device opens at, so what it opens at is no record of the pick.
+    virtual bool clockSetByGraph() const { return false; }
 };
 } // namespace duskstudio::device

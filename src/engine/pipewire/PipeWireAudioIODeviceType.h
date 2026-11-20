@@ -38,6 +38,7 @@ public:
     int                getIndexOfDevice (device::IODevice* dev, bool asInput) const override;
     std::unique_ptr<device::IODevice> createDevice (const std::string& outputDeviceName,
                                                     const std::string& inputDeviceName) override;
+    bool               clockSetByGraph() const override { return true; }
 
 private:
     std::vector<std::string> inputNames, outputNames;

@@ -367,6 +367,13 @@ std::string DeviceManager::setSetup (const DeviceSetup& d, bool treatAsChosen)
     return impl->mgr.setAudioDeviceSetup (s, treatAsChosen).toStdString();
 }
 
+std::string DeviceManager::setSessionSampleRate (double sampleRate)
+{
+    auto setup = getSetup();
+    setup.sampleRate = sampleRate;
+    return setSetup (setup, true);
+}
+
 // Only the native PipeWire device reports a clock moved under its stream; the
 // devices this manager wraps report none through this seam.
 DeviceClock DeviceManager::getMovedDeviceClock() const { return {}; }
